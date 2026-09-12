@@ -173,3 +173,30 @@ async def test_delete_falls_back_to_kill(client) -> None:
     response = await http.delete("/api/v1/workspaces/ws-k", headers=auth())
     assert response.status_code == 200
     assert ("kill", "ws-k") in stub.calls
+
+
+async def test_create_race_maps_to_409(client, monkeypatch) -> None:
+    http, app, _stub = client
+    from sqlalchemy.exc import IntegrityError
+
+    async def lose(spec):
+        raise IntegrityError("stmt", {}, Exception("unique"))
+
+    monkeypatch.setattr(app.state.model, "create_workspace", lose)
+    response = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-race", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert response.status_code == 409
+
+
+async def test_delete_never_started_workspace(client) -> None:
+    http, _app, _stub = client
+    await http.post(
+        "/api/v1/workspaces",
+        json={"id": "never-started", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    response = await http.delete("/api/v1/workspaces/never-started", headers=auth())
+    assert response.status_code == 200

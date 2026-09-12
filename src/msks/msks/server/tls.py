@@ -16,6 +16,7 @@ certificate — one surface, one trust story.
 import datetime
 import hashlib
 import ipaddress
+import os
 from pathlib import Path
 
 from cryptography import x509
@@ -41,9 +42,14 @@ def _name(common_name: str) -> x509.Name:
 
 
 def _write(path: Path, data: bytes, mode: int) -> None:
+    """Create the file with its final mode — no default-umask window
+    between write and chmod on private keys."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(data)
-    path.chmod(mode)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    try:
+        os.write(fd, data)
+    finally:
+        os.close(fd)
 
 
 def generate_ca() -> tuple[bytes, bytes]:
@@ -139,7 +145,7 @@ def _self_signed(state_dir: Path, host: str) -> tuple[str, str, str]:
     """The CA + leaf pair under ``state_dir``, generated as needed."""
     ca_cert = state_dir / CA_CERT
     ca_key = state_dir / CA_KEY
-    if not ca_cert.is_file():
+    if not ca_cert.is_file() or not ca_key.is_file():
         cert_pem, key_pem = generate_ca()
         _write(ca_cert, cert_pem, 0o644)
         _write(ca_key, key_pem, 0o600)

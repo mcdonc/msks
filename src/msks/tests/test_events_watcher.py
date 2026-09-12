@@ -10,9 +10,10 @@ from fastapi.testclient import TestClient
 from msks.app import build_app
 from msks.microvm import MicrovmError, VmSpec
 from msks.microvm.spec import VmInfo, VmStatus
+from msks.server import events
 from msks.server.api import build_api, wait_for_disconnect
 from msks.server.events import EventHub, close_all, relay
-from msks.server.watcher import scan_once, watch_loop
+from msks.server.watcher import scan_once, scan_workspace, watch_loop
 from msks.settings import ServerSettings, Settings
 from test_api import TOKEN, StubMicrovm, auth
 
@@ -160,3 +161,69 @@ async def test_watch_loop_survives_scan_errors(tmp_path: Path) -> None:
         except asyncio.CancelledError:
             pass
         assert flaky.calls >= 2
+
+
+def test_deliver_drops_oldest_when_full() -> None:
+    import asyncio as aio
+
+    queue: aio.Queue = aio.Queue(maxsize=1)
+    events.deliver(queue, "one")
+    events.deliver(queue, "two")
+    assert queue.get_nowait() == "two"
+
+
+async def test_scan_workspace_reports_probe_failure(tmp_path: Path) -> None:
+    api, app, _stub = api_with_stub(tmp_path)
+    async with api.router.lifespan_context(api):
+        row = await app.state.model.create_workspace(
+            VmSpec(workspace_id="ws-p", kernel=Path("/k"), rootfs=Path("/r"))
+        )
+
+        class Broken:
+            async def info(self, workspace_id: str) -> VmInfo:
+                raise MicrovmError("probe failed")
+
+        app.state.microvm = Broken()
+        assert await scan_workspace(app, api.state.hub, row) is False
+
+
+async def test_scan_skips_absent_over_created(tmp_path: Path) -> None:
+    api, app, stub = api_with_stub(tmp_path)
+    async with api.router.lifespan_context(api):
+        row = await app.state.model.create_workspace(
+            VmSpec(workspace_id="ws-c", kernel=Path("/k"), rootfs=Path("/r"))
+        )
+        assert await scan_workspace(app, api.state.hub, row) is False
+        assert (await app.state.model.get_workspace("ws-c"))["status"] == "created"
+
+
+async def test_scan_publishes_when_row_vanishes(tmp_path: Path) -> None:
+    api, app, stub = api_with_stub(tmp_path)
+    async with api.router.lifespan_context(api):
+        row = await app.state.model.create_workspace(
+            VmSpec(workspace_id="ws-v", kernel=Path("/k"), rootfs=Path("/r"))
+        )
+        await app.state.model.delete_workspace("ws-v")
+        stub.statuses["ws-v"] = VmStatus.RUNNING
+        assert await scan_workspace(app, api.state.hub, row) is False
+
+
+async def test_watch_loop_logs_scan_failure(tmp_path: Path) -> None:
+    api, app, _stub = api_with_stub(tmp_path)
+    async with api.router.lifespan_context(api):
+
+        async def exploding(app, hub):
+            raise RuntimeError("scan exploded")
+
+        import msks.server.watcher as watcher_mod
+
+        monkey_target = watcher_mod.scan_once
+        watcher_mod.scan_once = exploding
+        task = asyncio.create_task(watch_loop(app, api.state.hub))
+        await asyncio.sleep(0.15)
+        task.cancel()
+        watcher_mod.scan_once = monkey_target
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass

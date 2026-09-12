@@ -30,6 +30,7 @@ def server_config(app) -> uvicorn.Config:
         host=server.host,
         port=server.port,
         log_level="info",
+        access_log=server.access_log,
         **ssl_kwargs,
     )
 

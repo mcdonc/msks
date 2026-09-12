@@ -36,3 +36,20 @@ def test_non_numeric_float_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MSKSD_REQUEST_TIMEOUT_S", "soon")
     with pytest.raises(ValueError, match="MSKSD_REQUEST_TIMEOUT_S"):
         Settings.from_env()
+
+
+def test_bad_port_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MSKSD_PORT", "https")
+    with pytest.raises(ValueError, match="MSKSD_PORT"):
+        Settings.from_env()
+
+
+def test_nonpositive_poll_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MSKSD_EVENT_POLL_S", "0")
+    with pytest.raises(ValueError, match="MSKSD_EVENT_POLL_S"):
+        Settings.from_env()
+
+
+def test_access_log_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MSKSD_ACCESS_LOG", "true")
+    assert Settings.from_env().server.access_log is True

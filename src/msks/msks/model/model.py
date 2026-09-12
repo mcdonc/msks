@@ -16,9 +16,9 @@ from .workspaces import WORKSPACE_STATUSES, Workspace
 
 TOKEN_ENTROPY_BYTES = 32
 
-# The repo-root migrations/ tree (the daemon runs from a checkout;
-# the appliance build will bake it in — see #10).
-MIGRATIONS_DIR = Path(__file__).resolve().parents[4] / "migrations"
+# Inside the package, so the wheel ships it: a pip-installed msksd
+# can run its migrations (the appliance build inherits this).
+MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "migrations"
 
 
 def alembic_config(db_path: Path) -> AlembicConfig:

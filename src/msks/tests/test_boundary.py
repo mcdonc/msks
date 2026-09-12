@@ -25,15 +25,32 @@ def server_imports(path: Path) -> list[str]:
                 found.append(f"from {node.module}")
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if any(alias.name == m for m in FORBIDDEN):
+                if any(
+                    alias.name == m or alias.name.startswith(m + ".") for m in FORBIDDEN
+                ):
                     found.append(f"import {alias.name}")
+        if isinstance(node, ast.ImportFrom) and node.module == "msks":
+            for alias in node.names:
+                if any(f"msks.{alias.name}" == m for m in FORBIDDEN):
+                    found.append(f"from msks import {alias.name}")
     return found
 
 
 def test_checker_catches_violations(tmp_path: Path) -> None:
     bad = tmp_path / "bad.py"
-    bad.write_text("from msks.server.api import build_api\nimport msks.model\n")
-    assert server_imports(bad) == ["from msks.server.api", "import msks.model"]
+    bad.write_text(
+        "from msks.server.api import build_api\n"
+        "import msks.model\n"
+        "import msks.server.api\n"
+        "from msks import server, model\n"
+    )
+    assert server_imports(bad) == [
+        "from msks.server.api",
+        "import msks.model",
+        "import msks.server.api",
+        "from msks import server",
+        "from msks import model",
+    ]
 
 
 def test_checker_allows_clean_client(tmp_path: Path) -> None:

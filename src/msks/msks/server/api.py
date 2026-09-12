@@ -15,6 +15,7 @@ from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconn
 from fastapi import __version__ as fastapi_version
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 
 from .. import __version__
 from ..microvm.errors import MicrovmError
@@ -112,7 +113,11 @@ def build_api(app) -> FastAPI:
     async def create_workspace(body: WorkspaceCreate) -> Response:
         if await app.state.model.get_workspace(body.id) is not None:
             raise HTTPException(status_code=409, detail="workspace exists")
-        row = await app.state.model.create_workspace(spec_for(body.model_dump()))
+        try:
+            row = await app.state.model.create_workspace(spec_for(body.model_dump()))
+        except IntegrityError:
+            # The check-then-insert race lost; same answer for the client.
+            raise HTTPException(status_code=409, detail="workspace exists") from None
         return Response(
             status_code=201, content=json.dumps(row), media_type="application/json"
         )

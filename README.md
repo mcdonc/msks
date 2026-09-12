@@ -91,7 +91,13 @@ MSKSD_STATE_DIR=/tmp/msksd MSKSD_BOOTSTRAP_TOKEN=dev-secret MSKSD_PORT=8660 msks
   minting real tokens). `--no-tls` serves plain HTTP for development.
 - **Events**: `wss://host/api/v1/events?token=<token>` streams workspace
   status transitions (browsers cannot set websocket Authorization headers,
-  so the token rides the query string).
+  so the token rides the query string). Because that token would appear in
+  an access log, uvicorn's access log is **off by default** — set
+  `MSKSD_ACCESS_LOG=true` only if you accept credentials in logs. A bad
+  token rejects the websocket handshake with HTTP 403.
+- **Rotating the bootstrap token**: setting `MSKSD_BOOTSTRAP_TOKEN` to a
+  new value *adds* a token; the previous bootstrap credential stays valid
+  until revoked via the API.
 - **Schema**: the SQLite database is created and upgraded by Alembic at
   startup (`migrations/`).
 

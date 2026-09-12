@@ -26,19 +26,41 @@ SEAM_TO_MODEL_STATUS = {
 
 async def scan_once(app, hub: EventHub) -> int:
     """One reconcile-and-publish pass; returns transitions published."""
-    model = app.state.model
-    microvm = app.state.microvm
     published = 0
-    for row in await model.list_workspaces():
-        info = await microvm.info(row["id"])
-        status = SEAM_TO_MODEL_STATUS[info.status]
-        if status != row["status"] and await model.set_status(row["id"], status):
-            await hub.publish(
-                "workspace.status",
-                {"id": row["id"], "status": status},
-            )
+    for row in await app.state.model.list_workspaces():
+        if await scan_workspace(app, hub, row):
             published += 1
     return published
+
+
+async def scan_workspace(app, hub: EventHub, row: dict) -> bool:
+    """Reconcile one workspace; a failing one starves no other.
+
+    A freshly created row (never started) reports ``created`` while
+    the seam says ``absent`` — that is the steady state until the
+    first start, not a transition: neither written nor published.
+    """
+    try:
+        info = await app.state.microvm.info(row["id"])
+    except Exception:
+        LOG.exception("status probe failed for %s; continuing", row["id"])
+        return False
+    status = SEAM_TO_MODEL_STATUS[info.status]
+    if status == row["status"]:
+        return False
+    if status == "absent" and row["status"] == "created":
+        return False
+    return await publish_transition(app, hub, row["id"], status)
+
+
+async def publish_transition(
+    app, hub: EventHub, workspace_id: str, status: str
+) -> bool:
+    """Write the new status and announce it; False when the row vanished."""
+    if not await app.state.model.set_status(workspace_id, status):
+        return False
+    await hub.publish("workspace.status", {"id": workspace_id, "status": status})
+    return True
 
 
 async def watch_loop(app, hub: EventHub) -> None:
