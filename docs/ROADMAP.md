@@ -24,6 +24,19 @@ no web frontend yet.
   with the first endpoints, not later; terminal streaming and consent
   events are API-level commitments (WSS); client config uses its own
   `MSKSC_*` namespace.
+- **msksd always runs in a microvm.** The daemon is deployed as a
+  nix-built appliance VM supervised by the host (the microvm.nix /
+  systemd shape already proven on keithmoon); workspace VMs run via
+  nested KVM inside it (CPU host-passthrough, `/dev/kvm` in the
+  guest). Rationale: an extra security layer — at least two VM
+  boundaries between a workspace and the metal — and a pure
+  client/host division: the physical host runs only the appliance's
+  supervisor and exposes only the appliance's HTTPS listener. The
+  privileged helper (taps + nftables for egress consent) lives inside
+  the appliance VM, so no msks-owned privileged process ever runs on
+  the host. Costs accepted: nested-virtualization overhead on
+  workspace VMs, and a second image flavor (the appliance) in the
+  nix-built artifact set (#5).
 - **VMM: cloud-hypervisor.** Chosen for its unix-socket REST API
   (no CLI scraping), first-class virtiofs (the podman-volume
   analogue), and snapshot/restore (pre-warmed instant-start
@@ -66,8 +79,10 @@ no web frontend yet.
 2. **Microvm seam** — `Microvm(app)` with local (cloud-hypervisor
    REST) and k8s (runner pod) backends, review-hardened against the
    real v52 binary (#1, PR #4).
-3. **Self-contained guest assets** — nix-built kernel/initrd/rootfs,
-   smoke tests self-provision, `msks:demo-vm` zero-setup task (#5).
+3. **Self-contained guest assets** — nix-built kernel/initrd/rootfs
+   for workspace guests **and the msksd appliance image**, smoke tests
+   self-provision, `msks:demo-vm` zero-setup task (#5, scope widened
+   by the appliance decision).
 4. **CI** — the unit-test workflow, same invocation as local (#6).
 5. **Daemon scaffold + API surface** — msksd around the seam:
    live-swappable settings (SIGHUP posture), model layer + Alembic,
