@@ -1,0 +1,17 @@
+# devenv state
+.devenv
+.direnv
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+
+# test artifacts
+.coverage
+.coverage.*
+.pytest_cache/
+.testmondata
+
+# nix build outputs
+result
