@@ -143,12 +143,17 @@ class KubernetesRunner(MicrovmDriver):
         return VmInfo(workspace_id, map_phase(phase))
 
     async def shutdown(self, workspace_id: str, timeout_s: float | None = None) -> None:
-        """Delete with the graceful termination period."""
+        """Delete with the graceful termination period.
+
+        A missing pod is success, not an error: stopping a workspace
+        that was never started (or already died) must not wedge the
+        caller — the absent-VM contract every backend honors.
+        """
         grace = 30 if timeout_s is None else int(timeout_s)
-        await self._delete(workspace_id, grace)
+        await self._delete(workspace_id, grace, tolerate_missing=True)
 
     async def kill(self, workspace_id: str) -> None:
-        await self._delete(workspace_id, 0)
+        await self._delete(workspace_id, 0, tolerate_missing=True)
 
     async def cleanup(self, workspace_id: str) -> None:
         await self._delete(workspace_id, 0, tolerate_missing=True)

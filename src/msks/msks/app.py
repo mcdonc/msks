@@ -8,6 +8,7 @@ propagates without per-subsystem reconfiguration.
 """
 
 from .microvm import Microvm
+from .model import Model
 from .settings import Settings
 
 
@@ -17,6 +18,7 @@ class AppState:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.microvm: Microvm | None = None
+        self.model: Model | None = None
 
 
 class App:
@@ -25,6 +27,7 @@ class App:
     def __init__(self, settings: Settings) -> None:
         self.state = AppState(settings)
         self.state.microvm = Microvm(self)
+        self.state.model = Model(self)
 
 
 def build_app(settings: Settings | None = None) -> App:

@@ -21,6 +21,14 @@ def _env(name: str, default: str) -> str:
     return default if value in (None, "") else value
 
 
+def _parse_int(name: str, default: int) -> int:
+    raw = _env(name, str(default))
+    try:
+        return int(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be a number, got {raw!r}") from None
+
+
 def _env_float(name: str, default: float) -> float:
     raw = _env(name, str(default))
     try:
@@ -60,6 +68,28 @@ class VmmSettings:
 
 
 @dataclass
+class ServerSettings:
+    """The API server's own settings (HTTPS + WSS on one listener)."""
+
+    host: str = "127.0.0.1"
+    port: int = 8660
+    tls_cert: str | None = None
+    tls_key: str | None = None
+    db_path: Path = field(
+        default_factory=lambda: Path("~/.local/state/msksd/msks.db").expanduser()
+    )
+    event_poll_s: float = 1.0
+    bootstrap_token: str | None = None
+    # Off by default: the events websocket carries its token in the
+    # query string, which uvicorn's access log would persist.
+    access_log: bool = False
+
+    @classmethod
+    def from_env(cls) -> ServerSettings:
+        return _server_settings_from_env(cls)
+
+
+@dataclass
 class K8sSettings:
     """Kubernetes runner-driver settings."""
 
@@ -84,7 +114,31 @@ class Settings:
 
     vmm: VmmSettings = field(default_factory=VmmSettings)
     k8s: K8sSettings = field(default_factory=K8sSettings)
+    server: ServerSettings = field(default_factory=ServerSettings)
 
     @classmethod
     def from_env(cls) -> Settings:
-        return cls(vmm=VmmSettings.from_env(), k8s=K8sSettings.from_env())
+        return cls(
+            vmm=VmmSettings.from_env(),
+            k8s=K8sSettings.from_env(),
+            server=ServerSettings.from_env(),
+        )
+
+
+def _server_settings_from_env(cls: type[ServerSettings]) -> ServerSettings:
+    """Build ServerSettings from the environment (helper: keeps the
+    class block itself at xenon rank A)."""
+    state = Path(_env("MSKSD_STATE_DIR", "~/.local/state/msksd")).expanduser()
+    poll = _env_float("MSKSD_EVENT_POLL_S", cls.event_poll_s)
+    if poll <= 0:
+        raise ValueError(f"MSKSD_EVENT_POLL_S must be positive, got {poll}")
+    return cls(
+        host=_env("MSKSD_HOST", cls.host),
+        port=_parse_int("MSKSD_PORT", cls.port),
+        tls_cert=_env("MSKSD_TLS_CERT", "") or None,
+        tls_key=_env("MSKSD_TLS_KEY", "") or None,
+        db_path=state / "msks.db",
+        event_poll_s=poll,
+        bootstrap_token=_env("MSKSD_BOOTSTRAP_TOKEN", "") or None,
+        access_log=_env("MSKSD_ACCESS_LOG", "false").lower() == "true",
+    )

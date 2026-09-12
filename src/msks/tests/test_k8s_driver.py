@@ -44,10 +44,11 @@ def app_with_k8s(tmp_path, monkeypatch, handler) -> object:
     )
     (tmp_path / "kubeconfig").write_text(KUBECONFIG)
     transport = httpx.MockTransport(handler)
-    client = httpx.AsyncClient(transport=transport, base_url="https://127.0.0.1:6443")
 
     def fake_client(_settings):
-        return client
+        # A fresh client per call, matching the real kube_client the
+        # driver closes after each request.
+        return httpx.AsyncClient(transport=transport, base_url="https://127.0.0.1:6443")
 
     monkeypatch.setattr("msks.microvm.kube.kube_client", fake_client)
     return build_app(settings)
@@ -296,3 +297,12 @@ def test_kube_client_requires_server(tmp_path) -> None:
     )
     with pytest.raises(MicrovmError, match="no server"):
         kube_client(K8sSettings(kubeconfig=str(path)))
+
+
+async def test_shutdown_and_kill_tolerate_absent_pod(tmp_path, monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404)
+
+    app = app_with_k8s(tmp_path, monkeypatch, handler)
+    await app.state.microvm.shutdown(WID)
+    await app.state.microvm.kill(WID)
