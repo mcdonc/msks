@@ -4,12 +4,16 @@ version = "0.1.0"
 description = "Microvm workspace daemon (klangkd analogue on cloud-hypervisor)"
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+  "httpx>=0.28",
+  "pyyaml>=6.0",
+]
 
 [dependency-groups]
 dev = [
   "coverage[toml]",
   "pytest",
+  "pytest-asyncio",
   "pytest-cov",
   "pytest-testmon",
   "pytest-xdist",
@@ -27,6 +31,7 @@ packages = ["src/msks/msks"]
 # src/msks/tests -v -n auto`) is the gated one; scoped runs pass
 # --no-cov (see the `testmon` devenv task).
 addopts = "--cov=msks --cov-branch --cov-report=term-missing -ra"
+asyncio_mode = "auto"
 testpaths = ["src/msks/tests"]
 
 [tool.coverage.run]

@@ -43,3 +43,15 @@ Booting a real microvm requires `/dev/kvm`; make sure your user is in
 the `kvm` group (`users.users.<name>.extraGroups = [ "kvm" ];` on
 NixOS, then re-login). Smoke tests that need a VM skip themselves when
 the `MSKSD_TEST_*` variables are unset.
+
+### The microvm seam (#1)
+
+`msks.microvm.Microvm(app)` is the single VM lifecycle surface —
+`launch` / `info` / `shutdown` / `kill` / `cleanup` — dispatched to the
+driver named by the live setting `settings.vmm.driver` (`local` runs
+one cloud-hypervisor process per workspace; `k8s` runs one runner pod
+per workspace). Opt-in smoke tests:
+
+- local: `MSKSD_TEST_VMLINUX` + `MSKSD_TEST_ROOTFS` (plus `/dev/kvm`)
+- k8s: `MSKSD_TEST_KUBECONFIG` (and optional `MSKSD_TEST_NAMESPACE`);
+  `nixos/k3s-dev.nix` provides a single-node k3s role for dev hosts.
