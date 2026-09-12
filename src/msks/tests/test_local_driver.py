@@ -153,18 +153,16 @@ async def test_launch_rejects_double_launch(env, fake, tmp_path: Path) -> None:
     await app.state.microvm.kill(WID)
 
 
-async def test_launch_missing_binary_maps_to_error(tmp_path: Path) -> None:
-    settings = Settings(
-        vmm=VmmSettings(cloud_hypervisor="/nonexistent/ch", state_dir=tmp_path)
-    )
-    app = build_app(settings)
+async def test_launch_missing_binary_maps_to_error(env, tmp_path: Path) -> None:
+    app, _, _ = env
+    app.state.settings.vmm.cloud_hypervisor = "/nonexistent/ch"
     with pytest.raises(MicrovmError, match="not found"):
         await app.state.microvm.launch(spec(tmp_path))
 
 
-async def test_launch_binary_exits_early_maps_to_error(tmp_path: Path) -> None:
-    settings = Settings(vmm=VmmSettings(cloud_hypervisor="false", state_dir=tmp_path))
-    app = build_app(settings)
+async def test_launch_binary_exits_early_maps_to_error(env, tmp_path: Path) -> None:
+    app, _, _ = env
+    app.state.settings.vmm.cloud_hypervisor = "false"
     with pytest.raises(MicrovmError, match="exited with"):
         await app.state.microvm.launch(spec(tmp_path))
 
