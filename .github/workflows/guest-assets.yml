@@ -9,12 +9,35 @@
 #
 # Needs none of the test-run plumbing (no TMPDIR pin, no coverage
 # env): just the devenv shell and the msks:build-guest task.
+#
+# Path-filtered: runs only when the guest inputs change — the nix
+# expressions, the build script, the devenv files that pin nixpkgs
+# and define the task, or this workflow itself. The trade vs. #5's
+# anti-rot criterion is accepted deliberately: unrelated PRs skip
+# this job (and show it as skipped), guest-touching PRs and any
+# devenv pin move still build from cold.
 name: Guest assets
 
 on:
   push:
     branches: [main]
+    paths:
+      - .github/workflows/guest-assets.yml
+      - devenv.nix
+      - devenv.yaml
+      - nix/guest.nix
+      - nix/guest-assets.nix
+      - nix/runner-image.nix
+      - scripts/build-guest.sh
   pull_request:
+    paths:
+      - .github/workflows/guest-assets.yml
+      - devenv.nix
+      - devenv.yaml
+      - nix/guest.nix
+      - nix/guest-assets.nix
+      - nix/runner-image.nix
+      - scripts/build-guest.sh
 
 permissions:
   contents: read
