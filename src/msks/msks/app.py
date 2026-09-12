@@ -16,7 +16,7 @@ class AppState:
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self.microvm: Microvm = None  # type: ignore[assignment]
+        self.microvm: Microvm | None = None
 
 
 class App:

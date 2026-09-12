@@ -75,8 +75,9 @@ def test_pod_manifest_shape(tmp_path) -> None:
     assert container["image"] == "example/runner:1"
     env = {e["name"]: e["value"] for e in container["env"]}
     assert env["MSKSD_VMLINUX"] == str(tmp_path / "vmlinux")
-    assert container["devices"] == [
-        {"containerPath": "/dev/kvm", "hostPath": "/dev/kvm"}
+    assert container["volumeMounts"] == [{"name": "kvm", "mountPath": "/dev/kvm"}]
+    assert manifest["spec"]["volumes"] == [
+        {"name": "kvm", "hostPath": {"path": "/dev/kvm", "type": "CharDevice"}}
     ]
 
 
@@ -253,12 +254,18 @@ def test_verify_setting_variants(tmp_path) -> None:
 
 
 def test_auth_header_rejects_client_certs() -> None:
-    with pytest.raises(MicrovmError, match="client-certificate"):
-        auth_header({"token": "t", "client-certificate": "/x"})
+    with pytest.raises(MicrovmError, match="unsupported credential fields"):
+        auth_header({"client-certificate": "/x", "client-key": "/y"})
 
 
-def test_auth_header_empty() -> None:
-    assert auth_header({}) == {}
+def test_auth_header_rejects_missing_token() -> None:
+    with pytest.raises(MicrovmError, match="no token"):
+        auth_header({})
+
+
+def test_verify_setting_rejects_inline_ca() -> None:
+    with pytest.raises(MicrovmError, match="certificate-authority-data"):
+        verify_setting({"certificate-authority-data": "aGk="})
 
 
 def test_kube_client_builds(tmp_path) -> None:

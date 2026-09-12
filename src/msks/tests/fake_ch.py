@@ -66,7 +66,7 @@ class FakeCH:
                 b"HTTP/1.1 %d\r\nContent-Length: %d\r\n\r\n%s"
                 % (status, len(data), data)
             )
-        elif path == "/vm.info":
+        elif path == "/api/v1/vm.info":
             payload = json.dumps(self.state).encode()
             writer.write(
                 b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n%s"
@@ -74,7 +74,7 @@ class FakeCH:
             )
         else:
             writer.write(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
-            if path == "/vm.shutdown":
+            if path == "/api/v1/vm.shutdown":
                 for hook in self.on_shutdown:
                     hook()
         await writer.drain()

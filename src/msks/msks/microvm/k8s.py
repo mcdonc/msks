@@ -3,8 +3,12 @@
 msksd stays the control plane; each VM is a pod named
 ``msks-vm-<workspace_id>`` in the configured namespace, carrying the
 VMM artifacts as environment variables for the runner image to
-consume, with ``/dev/kvm`` attached. Lifecycle calls map onto plain
-Kubernetes API requests; no CLI parsing anywhere.
+consume, with ``/dev/kvm`` exposed through a hostPath CharDevice
+volume (works on any cluster; the device-plugin extended-resource
+idiom is the hardened alternative once a cluster runs the KVM device
+plugin). Lifecycle calls map onto plain Kubernetes API requests; no
+CLI parsing anywhere. Shutdown/kill request a pod deletion with the
+given grace period and do not wait for deletion to complete.
 """
 
 import httpx
@@ -63,12 +67,18 @@ def pod_manifest(spec: VmSpec, settings: K8sSettings) -> dict:
         },
         "spec": {
             "restartPolicy": "Never",
+            "volumes": [
+                {
+                    "name": "kvm",
+                    "hostPath": {"path": "/dev/kvm", "type": "CharDevice"},
+                }
+            ],
             "containers": [
                 {
                     "name": "runner",
                     "image": settings.runner_image,
                     "env": spec_env(spec),
-                    "devices": [{"containerPath": "/dev/kvm", "hostPath": "/dev/kvm"}],
+                    "volumeMounts": [{"name": "kvm", "mountPath": "/dev/kvm"}],
                 }
             ],
         },

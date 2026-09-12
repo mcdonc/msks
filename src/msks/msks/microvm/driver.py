@@ -24,7 +24,10 @@ class MicrovmDriver(abc.ABC):
 
     @abc.abstractmethod
     async def shutdown(self, workspace_id: str, timeout_s: float | None = None) -> None:
-        """Ask the VM to power off and wait, failing on timeout."""
+        """Ask the VM to power off. Backends bound to a local process
+        wait for the exit within the deadline and raise on timeout;
+        remote backends (k8s) request deletion with a grace period and
+        do not wait for it to complete."""
 
     @abc.abstractmethod
     async def kill(self, workspace_id: str) -> None:

@@ -56,21 +56,46 @@ def verify_setting(cluster: dict) -> str | bool:
     """The ``httpx`` verify argument a cluster section implies."""
     if cluster.get("insecure-skip-tls-verify"):
         return False
+    if cluster.get("certificate-authority-data"):
+        raise MicrovmError(
+            "kubeconfig certificate-authority-data is not supported; "
+            "export the CA to a file and point certificate-authority at it"
+        )
     ca = cluster.get("certificate-authority")
     if ca:
         return str(Path(ca).expanduser())
     return True
 
 
+UNSUPPORTED_USER_KEYS = (
+    "client-certificate",
+    "client-certificate-data",
+    "client-key",
+    "client-key-data",
+    "exec",
+    "auth-provider",
+)
+
+
 def auth_header(user: dict) -> dict[str, str]:
-    """The Authorization headers a user section implies."""
+    """The Authorization headers a user section implies.
+
+    Credential shapes msksd cannot speak raise instead of silently
+    producing an unauthenticated client: an empty header set is only
+    correct when nothing was configured at all, which is itself
+    rejected below so every failure names its cause.
+    """
+    unsupported = [key for key in UNSUPPORTED_USER_KEYS if key in user]
+    if unsupported:
+        raise MicrovmError(
+            "kubeconfig user uses unsupported credential fields: "
+            + ", ".join(unsupported)
+            + "; use a token-based ServiceAccount kubeconfig"
+        )
     token = user.get("token")
     if not token:
-        return {}
-    if user.get("client-certificate"):
         raise MicrovmError(
-            "client-certificate kubeconfig users are not supported; "
-            "use a token-based ServiceAccount kubeconfig"
+            "kubeconfig user has no token; use a token-based ServiceAccount kubeconfig"
         )
     return {"Authorization": f"Bearer {token}"}
 

@@ -1,16 +1,19 @@
 """Async client for cloud-hypervisor's REST API over an AF_UNIX socket.
 
 No CLI scraping anywhere: every lifecycle call is an HTTP request
-against the per-VM ``--api-socket`` (PUT /vm.create, PUT /vm.start,
-GET /vm.info, PUT /vm.shutdown). Responses carry no body on success
-except ``GET /vm.info`` (200 + JSON); errors map to
-:class:`~msks.microvm.errors.MicrovmError` with the HTTP status
-attached.
+against the per-VM ``--api-socket``. Routes carry the ``/api/v1``
+prefix (the VMM's ``HTTP_ROOT``), boot is ``PUT /vm.boot`` (there is
+no ``vm.start`` route), and errors map to
+:class:`~msks.microvm.errors.MicrovmError` — including transport
+failures (a stale socket left behind by a SIGKILLed VMM surfaces as a
+connection error, which must not escape the seam raw).
 """
 
 import httpx
 
 from .errors import MicrovmError
+
+API_ROOT = "/api/v1"
 
 
 class CloudHypervisorApi:
@@ -29,26 +32,31 @@ class CloudHypervisorApi:
         await self._client.aclose()
 
     async def create(self, config: dict) -> None:
-        """PUT /vm.create — install the full VM configuration."""
-        await self._request("PUT", "/vm.create", json=config)
+        """PUT /api/v1/vm.create — install the full VM configuration."""
+        await self._request("PUT", f"{API_ROOT}/vm.create", json=config)
 
-    async def start(self) -> None:
-        """PUT /vm.start — begin execution."""
-        await self._request("PUT", "/vm.start")
+    async def boot(self) -> None:
+        """PUT /api/v1/vm.boot — begin execution."""
+        await self._request("PUT", f"{API_ROOT}/vm.boot")
 
     async def info(self) -> dict:
-        """GET /vm.info — the parsed VM status document."""
-        result = await self._request("GET", "/vm.info")
+        """GET /api/v1/vm.info — the parsed VM status document."""
+        result = await self._request("GET", f"{API_ROOT}/vm.info")
         return result if isinstance(result, dict) else {}
 
     async def shutdown(self) -> None:
-        """PUT /vm.shutdown — request a graceful power-off."""
-        await self._request("PUT", "/vm.shutdown")
+        """PUT /api/v1/vm.shutdown — request a graceful power-off."""
+        await self._request("PUT", f"{API_ROOT}/vm.shutdown")
 
     async def _request(
         self, method: str, path: str, json: dict | None = None
     ) -> dict | None:
-        response = await self._client.request(method, path, json=json)
+        try:
+            response = await self._client.request(method, path, json=json)
+        except httpx.HTTPError as exc:
+            raise MicrovmError(
+                f"cloud-hypervisor API unreachable at {path}: {exc}"
+            ) from exc
         if response.status_code >= 400:
             detail = response.text.strip()
             raise MicrovmError(

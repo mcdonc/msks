@@ -1,8 +1,13 @@
-"""Local backend unit tests against the faked CH API socket."""
+"""Local backend unit tests against the faked CH API socket.
+
+The fake encodes the verified v52 contract: routes under /api/v1,
+``vm.boot`` (no ``vm.start``), the v52 create-body schema, and the
+daemon-style shutdown sequence (PUT vm.shutdown -> guest state leaves
+Running -> VMM SIGTERM).
+"""
 
 import asyncio
 import os
-import stat
 from pathlib import Path
 
 import pytest
@@ -10,13 +15,14 @@ from fake_ch import FakeCH
 from msks.app import build_app
 from msks.microvm import MicrovmError, MicrovmTimeoutError, VmSpec
 from msks.microvm.local import map_ch_state, vm_config
+from msks.microvm.spec import VmStatus
 from msks.settings import Settings, VmmSettings
 
 WID = "ws-test"
 
 
 @pytest.fixture
-def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def env(tmp_path: Path):
     """An app whose VMM points at a stub binary under a tmp state dir."""
     stub = tmp_path / "ch-stub"
     stub.write_text("#!/bin/sh\nexec sleep 600\n")
@@ -25,7 +31,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     settings = Settings(
         vmm=VmmSettings(cloud_hypervisor=str(stub), state_dir=state_dir)
     )
-    return build_app(settings), state_dir, monkeypatch
+    return build_app(settings), state_dir, None
 
 
 @pytest.fixture
@@ -48,7 +54,7 @@ def spec(tmp_path: Path) -> VmSpec:
     )
 
 
-def test_vm_config_includes_spec(tmp_path: Path) -> None:
+def test_vm_config_matches_v52_schema(tmp_path: Path) -> None:
     config = vm_config(
         VmSpec(
             workspace_id=WID,
@@ -59,11 +65,16 @@ def test_vm_config_includes_spec(tmp_path: Path) -> None:
         ),
         tmp_path / "serial.log",
     )
-    assert config["cpus"] == {"boot_count": 4}
-    assert config["memory"] == {"size": 2048}
-    assert config["kernel"] == {"path": str(tmp_path / "k")}
-    assert config["disks"][0]["is_root_device"] is True
-    assert "initramfs" not in config
+    assert config["cpus"] == {"boot_vcpus": 4, "max_vcpus": 4}
+    assert config["memory"] == {"size": 2048 * 1024 * 1024}
+    assert config["payload"]["kernel"] == str(tmp_path / "k")
+    assert config["payload"]["cmdline"] == "console=hvc0 root=/dev/vda rw"
+    assert config["disks"] == [{"path": str(tmp_path / "r")}]
+    assert config["serial"] == {
+        "mode": "File",
+        "file": str(tmp_path / "serial.log"),
+    }
+    assert "initramfs" not in config["payload"]
 
 
 def test_vm_config_with_initrd(tmp_path: Path) -> None:
@@ -76,33 +87,35 @@ def test_vm_config_with_initrd(tmp_path: Path) -> None:
         ),
         tmp_path / "serial.log",
     )
-    assert config["initramfs"] == {"path": str(tmp_path / "i")}
+    assert config["payload"]["initramfs"] == str(tmp_path / "i")
 
 
-def test_map_ch_state() -> None:
-    from msks.microvm.spec import VmStatus
-
+def test_map_ch_state_covers_v52_states() -> None:
     assert map_ch_state("Running") == VmStatus.RUNNING
     assert map_ch_state("Paused") == VmStatus.PAUSED
+    assert map_ch_state("Created") == VmStatus.STARTING
+    assert map_ch_state("Shutdown") == VmStatus.STOPPED
     assert map_ch_state("SomethingNew") == VmStatus.UNKNOWN
     assert map_ch_state(None) == VmStatus.UNKNOWN
 
 
-async def test_launch_puts_create_then_start(env, fake, tmp_path: Path) -> None:
+async def test_launch_puts_create_then_boot(env, fake, tmp_path: Path) -> None:
     app, _, _ = env
     await app.state.microvm.launch(spec(tmp_path))
     methods = [(m, p) for m, p, _b in fake.requests]
-    assert methods == [("PUT", "/vm.create"), ("PUT", "/vm.start")]
+    assert methods == [("PUT", "/api/v1/vm.create"), ("PUT", "/api/v1/vm.boot")]
     body = dict(fake.requests[0][2])
-    assert body["kernel"]["path"] == str(tmp_path / "vmlinux")
-    assert body["cmdline"]["args"] == "console=hvc0 root=/dev/vda rw"
+    assert body["payload"]["kernel"] == str(tmp_path / "vmlinux")
+    assert body["memory"]["size"] == 1024 * 1024 * 1024
 
 
-async def test_launch_error_maps_to_microvm_error(env, tmp_path: Path) -> None:
+async def test_launch_error_maps_and_reaps_process(env, tmp_path: Path) -> None:
     app, state_dir, _ = env
     socket_path = state_dir / "vms" / WID / "api.sock"
     socket_path.parent.mkdir(parents=True, exist_ok=True)
-    server = FakeCH(socket_path, responses={("PUT", "/vm.create"): (500, "boom")})
+    server = FakeCH(
+        socket_path, responses={("PUT", "/api/v1/vm.create"): (500, "boom")}
+    )
     await server.start()
     try:
         with pytest.raises(MicrovmError) as excinfo:
@@ -110,31 +123,57 @@ async def test_launch_error_maps_to_microvm_error(env, tmp_path: Path) -> None:
         assert excinfo.value.status == 500
     finally:
         await server.stop()
+    proc = app.state.microvm.local._procs.get(WID)
+    assert proc is None or proc.returncode is not None
+
+
+async def test_launch_rejects_double_launch(env, fake, tmp_path: Path) -> None:
+    app, _, _ = env
+    await app.state.microvm.launch(spec(tmp_path))
+    with pytest.raises(MicrovmError, match="already exists"):
+        await app.state.microvm.launch(spec(tmp_path))
     await app.state.microvm.kill(WID)
 
 
+async def test_launch_missing_binary_maps_to_error(tmp_path: Path) -> None:
+    settings = Settings(
+        vmm=VmmSettings(cloud_hypervisor="/nonexistent/ch", state_dir=tmp_path)
+    )
+    app = build_app(settings)
+    with pytest.raises(MicrovmError, match="not found"):
+        await app.state.microvm.launch(spec(tmp_path))
+
+
+async def test_launch_binary_exits_early_maps_to_error(tmp_path: Path) -> None:
+    settings = Settings(vmm=VmmSettings(cloud_hypervisor="false", state_dir=tmp_path))
+    app = build_app(settings)
+    with pytest.raises(MicrovmError, match="exited with"):
+        await app.state.microvm.launch(spec(tmp_path))
+
+
 async def test_launch_socket_timeout(env, tmp_path: Path) -> None:
-    app, state_dir, _ = env
+    app, _, _ = env
     app.state.settings.vmm.socket_wait_timeout_s = 0.05
     # No fake server bound: the socket never appears.
     with pytest.raises(MicrovmTimeoutError, match="never appeared"):
         await app.state.microvm.launch(spec(tmp_path))
-    await app.state.microvm.kill(WID)
+    proc = app.state.microvm.local._procs.get(WID)
+    assert proc is None or proc.returncode is not None
 
 
 async def test_info_absent_when_no_dir(env) -> None:
     app, _, _ = env
     info = await app.state.microvm.info("nope")
-    assert info.status.value == "absent"
+    assert info.status is VmStatus.ABSENT
 
 
-async def test_info_stopped_when_socket_gone(env, fake) -> None:
+async def test_info_stopped_when_socket_gone(env, fake, tmp_path: Path) -> None:
     app, _, _ = env
-    await app.state.microvm.launch(spec(Path("/tmp")))
+    await app.state.microvm.launch(spec(tmp_path))
     await fake.stop()
     info = await app.state.microvm.info(WID)
-    assert info.status.value == "stopped"
-    assert info.pid == os.getpid() or info.pid  # pid file written
+    assert info.status is VmStatus.STOPPED
+    assert info.pid  # pid file written
     await app.state.microvm.kill(WID)
 
 
@@ -142,16 +181,49 @@ async def test_info_running_via_api(env, fake, tmp_path: Path) -> None:
     app, _, _ = env
     await app.state.microvm.launch(spec(tmp_path))
     info = await app.state.microvm.info(WID)
-    assert info.status.value == "running"
+    assert info.status is VmStatus.RUNNING
     await app.state.microvm.kill(WID)
 
 
-async def test_info_unknown_on_api_error(env, fake, tmp_path: Path) -> None:
+async def test_info_created_maps_to_starting(env, fake, tmp_path: Path) -> None:
     app, _, _ = env
     await app.state.microvm.launch(spec(tmp_path))
-    fake.responses = {("GET", "/vm.info"): (500, "oops")}
+    fake.state = {"state": "Created"}
     info = await app.state.microvm.info(WID)
-    assert info.status.value == "unknown"
+    assert info.status is VmStatus.STARTING
+    await app.state.microvm.kill(WID)
+
+
+async def test_info_unknown_on_api_error_with_live_pid(
+    env, fake, tmp_path: Path
+) -> None:
+    app, _, _ = env
+    await app.state.microvm.launch(spec(tmp_path))
+    fake.responses = {("GET", "/api/v1/vm.info"): (500, "oops")}
+    info = await app.state.microvm.info(WID)
+    assert info.status is VmStatus.UNKNOWN
+    await app.state.microvm.kill(WID)
+
+
+async def test_info_stopped_on_stale_socket_with_dead_pid(env) -> None:
+    # A SIGKILLed VMM leaves the socket file behind; the pid is dead.
+    app, state_dir, _ = env
+    vm_dir = state_dir / "vms" / WID
+    vm_dir.mkdir(parents=True)
+    (vm_dir / "api.sock").write_bytes(b"")
+    (vm_dir / "ch.pid").write_text("4000000")
+    info = await app.state.microvm.info(WID)
+    assert info.status is VmStatus.STOPPED
+
+
+async def test_info_non_dict_document_maps_to_unknown(
+    env, fake, tmp_path: Path
+) -> None:
+    app, _, _ = env
+    await app.state.microvm.launch(spec(tmp_path))
+    fake.responses = {("GET", "/api/v1/vm.info"): (200, "null")}
+    info = await app.state.microvm.info(WID)
+    assert info.status is VmStatus.UNKNOWN
     await app.state.microvm.kill(WID)
 
 
@@ -159,17 +231,23 @@ async def test_shutdown_graceful(env, fake, tmp_path: Path) -> None:
     app, _, _ = env
     await app.state.microvm.launch(spec(tmp_path))
     proc = app.state.microvm.local._procs[WID]
-    fake.on_shutdown.append(lambda: proc.terminate())
+
+    def guest_powers_off() -> None:
+        fake.state = {"state": "Shutdown"}
+        proc.terminate()
+
+    fake.on_shutdown.append(guest_powers_off)
     await app.state.microvm.shutdown(WID, timeout_s=5)
-    assert ("PUT", "/vm.shutdown") in [(m, p) for m, p, _b in fake.requests]
+    assert ("PUT", "/api/v1/vm.shutdown") in [(m, p) for m, p, _b in fake.requests]
 
 
-async def test_shutdown_timeout_raises(env, fake, tmp_path: Path) -> None:
+async def test_shutdown_timeout_when_guest_never_powers_off(
+    env, fake, tmp_path: Path
+) -> None:
     app, _, _ = env
     await app.state.microvm.launch(spec(tmp_path))
-    app.state.settings.vmm.shutdown_timeout_s = 0.1
-    with pytest.raises(MicrovmTimeoutError, match="did not exit"):
-        await app.state.microvm.shutdown(WID)
+    with pytest.raises(MicrovmTimeoutError, match="did not power off"):
+        await app.state.microvm.shutdown(WID, timeout_s=0.2)
     await app.state.microvm.kill(WID)
 
 
@@ -179,11 +257,41 @@ async def test_shutdown_without_socket_is_noop(env, tmp_path: Path) -> None:
     await app.state.microvm.shutdown(WID)
 
 
-async def test_shutdown_without_process_ref_returns(env, fake, tmp_path: Path) -> None:
-    app, _, _ = env
-    await app.state.microvm.launch(spec(tmp_path))
-    app.state.microvm.local._procs.pop(WID)
-    await app.state.microvm.shutdown(WID, timeout_s=1)
+async def test_shutdown_without_process_ref_terminates_pidfile_pid(env, fake) -> None:
+    app, state_dir, _ = env
+    fake.state = {"state": "Shutdown"}
+    sleeper = await asyncio.create_subprocess_exec("sleep", "600")
+    (state_dir / "vms" / WID / "ch.pid").write_text(str(sleeper.pid))
+    await app.state.microvm.shutdown(WID, timeout_s=5)
+    await sleeper.wait()
+
+
+async def test_shutdown_timeout_when_vmm_ignores_sigterm(env, tmp_path: Path) -> None:
+    # A stub that traps SIGTERM: the guest powers off, the VMM refuses to die.
+    app, state_dir, _ = env
+    stubborn = tmp_path / "ch-stubborn"
+    stubborn.write_text("#!/bin/sh\ntrap '' TERM\nexec sleep 600\n")
+    stubborn.chmod(0o755)
+    app.state.settings.vmm.cloud_hypervisor = str(stubborn)
+    socket_path = state_dir / "vms" / WID / "api.sock"
+    socket_path.parent.mkdir(parents=True, exist_ok=True)
+    server = FakeCH(socket_path)
+    server.state = {"state": "Shutdown"}
+    await server.start()
+    try:
+        await app.state.microvm.launch(spec(tmp_path))
+        with pytest.raises(MicrovmTimeoutError, match="did not exit after SIGTERM"):
+            await app.state.microvm.shutdown(WID, timeout_s=0.5)
+    finally:
+        await server.stop()
+    await app.state.microvm.kill(WID)
+
+
+async def test_shutdown_without_pidfile_returns_after_guest_down(env, fake) -> None:
+    app, state_dir, _ = env
+    fake.state = {"state": "Shutdown"}
+    await app.state.microvm.shutdown(WID, timeout_s=5)
+    assert not (state_dir / "vms" / WID / "ch.pid").exists()
 
 
 async def test_kill_via_pidfile(env, tmp_path: Path) -> None:
@@ -219,10 +327,3 @@ async def test_driver_switch_and_validation(env) -> None:
     app.state.settings.vmm.driver = "bogus"
     with pytest.raises(MicrovmError, match="unknown vmm driver"):
         app.state.microvm.driver
-
-
-def test_stub_is_executable(env) -> None:
-    _app, _state, _mp = env
-    assert (
-        stat.S_IMODE(os.stat(_app.state.settings.vmm.cloud_hypervisor).st_mode) & 0o111
-    )
