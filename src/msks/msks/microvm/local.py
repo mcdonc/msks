@@ -82,6 +82,7 @@ class LocalCloudHypervisor(MicrovmDriver):
         vmm = self._settings().vmm
         vm_dir = self._dir(spec.workspace_id)
         self._ensure_launchable(spec.workspace_id, vm_dir)
+        self._check_socket_path(vm_dir / "api.sock")
         vm_dir.mkdir(parents=True, exist_ok=True)
         socket_path = vm_dir / "api.sock"
         serial_log = vm_dir / "serial.log"
@@ -96,6 +97,19 @@ class LocalCloudHypervisor(MicrovmDriver):
         except BaseException:
             await self._reap(spec.workspace_id, proc)
             raise
+
+    def _check_socket_path(self, socket_path: Path) -> None:
+        """AF_UNIX sun_path caps at 108 bytes; fail with a named cause.
+
+        cloud-hypervisor dies with an opaque "path must be shorter than
+        SUN_LEN" when handed an over-long --api-socket, so the driver
+        checks first and names the fix (shorter state_dir or id).
+        """
+        if len(str(socket_path).encode()) >= 108:
+            raise MicrovmError(
+                f"API socket path exceeds the AF_UNIX 108-byte limit: "
+                f"{socket_path}; use a shorter state_dir or workspace id"
+            )
 
     def _ensure_launchable(self, workspace_id: str, vm_dir: Path) -> None:
         if workspace_id in self._procs or self._pid_alive(self._pid(workspace_id)):

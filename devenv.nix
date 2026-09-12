@@ -70,6 +70,26 @@
     "msks:xenon" = {
       exec = ''exec bash "$DEVENV_ROOT/scripts/xenon-gate.sh" "$@"'';
     };
+    # Guest VM assets out of the pinned nixpkgs, no manual downloads
+    # (#5). ${pkgs.path} is the nixpkgs source the devenv lock itself
+    # evaluated — the guest toolchain cannot drift from the dev shell,
+    # and the build needs nothing from the host but nix.
+    "msks:build-guest" = {
+      description = "Build the microvm guest assets (kernel, initrd, ext4 rootfs) into .guest/";
+      exec = ''
+        exec env MSKS_GUEST_NIXPKGS=${pkgs.path} bash "$DEVENV_ROOT/scripts/build-guest.sh"
+      '';
+    };
+    "msks:build-runner-image" = {
+      description = "Build the k8s vm-runner container image archive into .guest/";
+      exec = ''
+        exec env MSKS_GUEST_NIXPKGS=${pkgs.path} bash "$DEVENV_ROOT/scripts/build-runner-image.sh"
+      '';
+    };
+    "msks:demo-vm" = {
+      description = "Boot one microvm from the built guest assets (serial console on this terminal)";
+      exec = ''exec bash "$DEVENV_ROOT/scripts/demo-vm.sh"'';
+    };
   };
 
   # CI-identical full suite: -n auto is how CI runs it — never optional
