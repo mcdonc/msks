@@ -1,0 +1,133 @@
+{
+  pkgs,
+  config,
+  lib,
+  ...
+}:
+
+{
+  # msks dev environment: Python 3.14 + cloud-hypervisor toolchain (#2).
+  # Mirrors the klangk conventions (AGENTS.md): CI-identical test task,
+  # testmon for scoped iteration, xenon rank-A gate via a single script
+  # shared with the pre-commit hook.
+  languages.python = {
+    enable = true;
+    # Pinned to the channel's python314 rather than the `python3` alias —
+    # the toolchain version is a project decision, not an accident of the
+    # pinned nixpkgs channel's default minor (klangk #2844 precedent).
+    package = pkgs.python314;
+    venv.enable = true;
+    uv = {
+      enable = true;
+      # sync.enable left off: devenv's sync gate fingerprints only the root
+      # pyproject.toml and not uv.lock, so lock-only bumps (uv lock
+      # --upgrade) skip sync and the venv goes stale. msks:uv-sync below
+      # owns dependency sync (klangk workaround, see their devenv.nix).
+    };
+    directory = ".";
+  };
+
+  packages =
+    with pkgs;
+    [
+      bash # explicit bash for shell scripts (CI /bin/sh may be dash)
+      cloud-hypervisor # VMM driven by the local backend (#1); ships ch-remote
+      curl # unix-socket REST poking during CH debugging
+      qemu # qemu-img for rootfs conversion during guest-image experiments
+      ruff
+      socat # AF_UNIX <-> pty/stdio plumbing for CH socket debugging
+      # cyclomatic-complexity gate tool: built against python3.14 because
+      # nixpkgs' top-level xenon runs on an older python whose parser can
+      # reject syntax ruff format writes for a 3.14 codebase, silently
+      # skipping files (klangk #3411/#3415 precedent). scripts/xenon-gate.sh
+      # turns any such skip into a hard failure.
+      (pkgs.callPackage (pkgs.path + "/pkgs/by-name/xe/xenon/package.nix") {
+        python3 = pkgs.python314;
+      })
+      (python314Packages.radon) # complexity introspection (radon cc)
+    ];
+
+  env.UV_PYTHON = config.languages.python.package;
+
+  tasks = {
+    # WORKAROUND (klangk pattern): devenv's uv sync gate only hashes the
+    # root pyproject.toml, never uv.lock — lock-only changes skip sync and
+    # the venv silently goes stale. This task runs `uv sync` unconditionally:
+    # on a current venv it is a ~0.1s no-op, cheaper than getting the gate
+    # right. `after` pins ordering: the venv must exist before sync, or
+    # devenv:python:virtualenv would `rm -rf` the freshly-synced deps.
+    "msks:uv-sync" = {
+      exec = ''
+        cd "$DEVENV_ROOT"
+        uv sync -p "$UV_PYTHON" --group dev
+      '';
+      after = [ "devenv:python:virtualenv" ];
+      before = [ "devenv:enterShell" ];
+    };
+    # The complexity gate as a one-word task: delegates to
+    # scripts/xenon-gate.sh, the single definition of the invocation
+    # (thresholds + graded file set) that the pre-commit hook also runs.
+    "msks:xenon" = {
+      exec = ''exec bash "$DEVENV_ROOT/scripts/xenon-gate.sh" "$@"'';
+    };
+  };
+
+  # CI-identical full suite: -n auto is how CI runs it — never optional
+  # (sysmon branch coverage under-counts in a single-process run; klangk
+  # AGENTS.md has the full story). addopts in pyproject.toml carry the
+  # coverage flags; the conftest pins COVERAGE_CORE=sysmon.
+  scripts.test.exec = ''
+    cd $DEVENV_ROOT
+    exec python -m pytest src/msks/tests -v -n auto "$@"
+  '';
+
+  # Scoped run: re-run only tests whose coverage touches changed source
+  # lines (pytest-testmon). Inert on CI — CI runs the full suite via
+  # `test`; this is the local tight-loop accelerator. First run on a
+  # clean tree baselines the line->test map into .testmondata at the
+  # repo root (pytest rootdir = repo root; gitignored); delete it after
+  # a large refactor to re-baseline.
+  #
+  # COVERAGE_CORE=ctrace: testmon maps lines->tests via dynamic
+  # contexts (switch_context per test), which the sysmon core does not
+  # support — coverage>=7.15 warns and the mapping is degraded. The C
+  # tracer supports contexts, so scoped runs pin it explicitly (the
+  # conftest's setdefault does not override a preset env var). The
+  # gated `test` run stays on sysmon per conftest.py.
+  scripts.testmon.exec = ''
+    cd $DEVENV_ROOT
+    exec env COVERAGE_CORE=ctrace python -m pytest src/msks/tests -v -n auto --no-cov --testmon "$@"
+  '';
+
+  # --- Pre-commit hooks ---
+  git-hooks.hooks = {
+    ruff-lint = {
+      enable = true;
+      name = "ruff check";
+      entry = "${pkgs.ruff}/bin/ruff check --fix";
+      files = "\\.py$";
+      language = "system";
+      pass_filenames = true;
+    };
+    ruff-format = {
+      enable = true;
+      name = "ruff format";
+      entry = "${pkgs.ruff}/bin/ruff format";
+      files = "\\.py$";
+      language = "system";
+      pass_filenames = true;
+    };
+    # Complexity gate: rank A everywhere. pass_filenames = false — the
+    # hook grades the full tree via scripts/xenon-gate.sh (a staged
+    # subset's average can exceed 5 while the whole tree passes);
+    # `files` stays as the run trigger.
+    xenon = {
+      enable = true;
+      name = "xenon";
+      entry = "scripts/xenon-gate.sh";
+      files = "^src/msks/msks/.*\\.py$|^scripts/.*\\.py$";
+      language = "system";
+      pass_filenames = false;
+    };
+  };
+}

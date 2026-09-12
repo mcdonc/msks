@@ -1,0 +1,47 @@
+[project]
+name = "msks"
+version = "0.1.0"
+description = "Microvm workspace daemon (klangkd analogue on cloud-hypervisor)"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = []
+
+[dependency-groups]
+dev = [
+  "coverage[toml]",
+  "pytest",
+  "pytest-cov",
+  "pytest-testmon",
+  "pytest-xdist",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/msks/msks"]
+
+[tool.pytest.ini_options]
+# Coverage rides in addopts so the plain CI invocation (`python -m pytest
+# src/msks/tests -v -n auto`) is the gated one; scoped runs pass
+# --no-cov (see the `testmon` devenv task).
+addopts = "--cov=msks --cov-branch --cov-report=term-missing -ra"
+testpaths = ["src/msks/tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["msks"]
+# No `concurrency` option: the suites pin COVERAGE_CORE=sysmon in
+# conftest.py (sys.monitoring on 3.14 measures branches and tracks
+# greenlet-executed code natively); sysmon does not support concurrency.
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+
+[tool.ruff]
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP"]
