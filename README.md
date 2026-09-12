@@ -22,7 +22,7 @@ Run the test suite the way CI runs it (`-n auto` is never optional —
 see AGENTS.md for the coverage story):
 
 ```bash
-devenv --quiet -O dotenv.enable:bool false shell -- test
+devenv --quiet -O dotenv.enable:bool false shell -- unit-tests
 ```
 
 Scoped iteration picks only tests whose coverage touches changed lines:

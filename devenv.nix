@@ -76,7 +76,7 @@
   # (sysmon branch coverage under-counts in a single-process run; klangk
   # AGENTS.md has the full story). addopts in pyproject.toml carry the
   # coverage flags; the conftest pins COVERAGE_CORE=sysmon.
-  scripts.test.exec = ''
+  scripts.unit-tests.exec = ''
     cd $DEVENV_ROOT
     exec python -m pytest src/msks/tests -v -n auto "$@"
   '';
