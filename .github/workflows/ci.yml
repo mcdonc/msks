@@ -1,0 +1,65 @@
+# CI: the authoritative unit-test run (#6).
+#
+# Everything runs inside the devenv shell built from this repo's
+# devenv.nix/devenv.yaml — the same pinned nixpkgs, the same uv venv,
+# the same cloud-hypervisor as every contributor gets — so a green run
+# here means the dev environment itself is healthy too.
+#
+# The opt-in smoke tests skip themselves on the runner: kvm_available()
+# gates the .guest/ self-provisioning, and GitHub-hosted runners have
+# no nested KVM (real-VM CI coverage arrives with the QEMU/TCG driver,
+# #9). No MSKSD_TEST_* wiring exists here by design.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+
+      - uses: cachix/cachix-action@v16
+        with:
+          name: devenv
+
+      - name: Install devenv.sh
+        run: nix profile add nixpkgs#devenv
+
+      # Fail fast: lint + format before anything expensive runs.
+      - name: Lint (ruff check + format)
+        run: >-
+          devenv --quiet -O dotenv.enable:bool false shell --
+          bash -c 'ruff check src/ && ruff format --check src/'
+
+      - name: Complexity gate (xenon rank A)
+        run: >-
+          devenv --quiet -O dotenv.enable:bool false shell --
+          devenv tasks run msks:xenon
+
+      # The CI-identical invocation (AGENTS.md): pytest -n auto with
+      # coverage flags from pyproject addopts, COVERAGE_CORE=sysmon
+      # pinned by conftest, fail_under = 100 branch coverage.
+      - name: Unit tests
+        run: >-
+          devenv --quiet -O dotenv.enable:bool false shell --
+          unit-tests
+
+      # Cold-checkout derivation check (#5's ubuntu-latest criterion):
+      # keeps the guest-asset nix build from silently rotting. The
+      # artifacts are not consumed on the runner — CH smoke needs KVM.
+      - name: Build guest assets
+        run: >-
+          devenv --quiet -O dotenv.enable:bool false shell --
+          devenv tasks run msks:build-guest
