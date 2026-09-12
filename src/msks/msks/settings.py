@@ -60,6 +60,34 @@ class VmmSettings:
 
 
 @dataclass
+class ServerSettings:
+    """The API server's own settings (HTTPS + WSS on one listener)."""
+
+    host: str = "127.0.0.1"
+    port: int = 8660
+    tls_cert: str | None = None
+    tls_key: str | None = None
+    db_path: Path = field(
+        default_factory=lambda: Path("~/.local/state/msksd/msks.db").expanduser()
+    )
+    event_poll_s: float = 1.0
+    bootstrap_token: str | None = None
+
+    @classmethod
+    def from_env(cls) -> ServerSettings:
+        state = Path(_env("MSKSD_STATE_DIR", "~/.local/state/msksd")).expanduser()
+        return cls(
+            host=_env("MSKSD_HOST", cls.host),
+            port=int(_env("MSKSD_PORT", str(cls.port))),
+            tls_cert=_env("MSKSD_TLS_CERT", "") or None,
+            tls_key=_env("MSKSD_TLS_KEY", "") or None,
+            db_path=state / "msks.db",
+            event_poll_s=_env_float("MSKSD_EVENT_POLL_S", 1.0),
+            bootstrap_token=_env("MSKSD_BOOTSTRAP_TOKEN", "") or None,
+        )
+
+
+@dataclass
 class K8sSettings:
     """Kubernetes runner-driver settings."""
 
@@ -84,7 +112,12 @@ class Settings:
 
     vmm: VmmSettings = field(default_factory=VmmSettings)
     k8s: K8sSettings = field(default_factory=K8sSettings)
+    server: ServerSettings = field(default_factory=ServerSettings)
 
     @classmethod
     def from_env(cls) -> Settings:
-        return cls(vmm=VmmSettings.from_env(), k8s=K8sSettings.from_env())
+        return cls(
+            vmm=VmmSettings.from_env(),
+            k8s=K8sSettings.from_env(),
+            server=ServerSettings.from_env(),
+        )

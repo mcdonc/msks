@@ -5,8 +5,15 @@ description = "Microvm workspace daemon (klangkd analogue on cloud-hypervisor)"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+  "alembic>=1.14",
+  "cryptography>=44",
+  "fastapi>=0.115",
   "httpx>=0.28",
+  "pydantic>=2.5",
   "pyyaml>=6.0",
+  "sqlalchemy[asyncio]>=2.0",
+  "aiosqlite>=0.20",
+  "uvicorn[standard]>=0.32",
 ]
 
 [dependency-groups]
@@ -23,10 +30,21 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[project.scripts]
+msksd = "msks.server.main:main"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/msks/msks"]
 
 [tool.pytest.ini_options]
+# Library-internal deprecations our code paths cannot fix (last-resort
+# filters, house rules): starlette's TestClient wants httpx2 and anyio
+# renamed BlockingPortal — both fire inside fastapi.testclient imports,
+# not in msks code. Revisit when starlette ships httpx2 support.
+filterwarnings = [
+  "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+  "ignore:The anyio.abc.BlockingPortal alias is deprecated",
+]
 # Coverage rides in addopts so the plain CI invocation (`python -m pytest
 # src/msks/tests -v -n auto`) is the gated one; scoped runs pass
 # --no-cov (see the `testmon` devenv task).
