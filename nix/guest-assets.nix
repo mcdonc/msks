@@ -33,8 +33,12 @@ let
 
   # Static busybox: the guest userspace closure is busybox alone (no
   # libc runtime to copy into the image), and the same binary is the
-  # initrd's only userspace.
-  busybox = pkgs.busybox.override { enableStatic = true; };
+  # initrd's only userspace. pkgsStatic (musl) rather than an
+  # enableStatic override: the override's output is not on
+  # cache.nixos.org, so every cold machine compiled busybox from
+  # source; pkgsStatic.busybox is substituted as a prebuilt binary
+  # while staying inside the pinned nixpkgs.
+  busybox = pkgs.pkgsStatic.busybox;
 
   kernelCmdline = "console=ttyS0 root=/dev/vda rootfstype=ext4 ro";
 
