@@ -137,6 +137,14 @@ async def test_launch_error_maps_and_reaps_process(env, tmp_path: Path) -> None:
     assert proc is None or proc.returncode is not None
 
 
+async def test_dir_rejects_unsafe_ids(env) -> None:
+    app, _, _ = env
+    driver = app.state.microvm.local
+    for bad in ("..", ".", "", "a/b", "a\\b", " spaced"):
+        with pytest.raises(MicrovmError, match="unsafe workspace id"):
+            driver._dir(bad)
+
+
 async def test_launch_rejects_overlong_socket_path(tmp_path: Path) -> None:
     deep = tmp_path / ("x" * 90) / ("y" * 30)
     settings = Settings(vmm=VmmSettings(cloud_hypervisor="false", state_dir=deep))

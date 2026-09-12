@@ -5,6 +5,7 @@ from pathlib import Path
 import httpx
 import pytest
 from msks.app import build_app
+from msks.microvm.errors import MicrovmError, MicrovmTimeoutError
 from msks.microvm.spec import VmInfo, VmSpec, VmStatus
 from msks.server.api import build_api
 from msks.settings import ServerSettings, Settings
@@ -84,7 +85,7 @@ async def test_auth_required(client) -> None:
 async def test_token_admin(client) -> None:
     http, _app, _stub = client
     created = await http.post("/api/v1/tokens", json={"name": "cli"}, headers=auth())
-    assert created.status_code == 200
+    assert created.status_code == 201
     plaintext = created.json()["token"]
     listed = await http.get("/api/v1/tokens", headers=auth())
     assert listed.status_code == 200
@@ -107,7 +108,7 @@ async def test_workspace_lifecycle(client) -> None:
         json={"id": "ws-a", "kernel": "/k", "rootfs": "/r", "mem_mib": 256},
         headers=auth(),
     )
-    assert created.status_code == 200
+    assert created.status_code == 201
     assert created.json()["status"] == "created"
     dup = await http.post(
         "/api/v1/workspaces",
@@ -138,3 +139,37 @@ async def test_workspace_validation(client) -> None:
         "/api/v1/workspaces", json={"id": "x", "kernel": "/k"}, headers=auth()
     )
     assert bad.status_code == 422
+
+
+async def test_microvm_error_maps_to_503(client) -> None:
+    http, _app, stub = client
+    await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-e", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+
+    async def explode(spec):
+        raise MicrovmError("boom")
+
+    stub.launch = explode
+    response = await http.post("/api/v1/workspaces/ws-e/start", headers=auth())
+    assert response.status_code == 503
+    assert response.json()["detail"] == "boom"
+
+
+async def test_delete_falls_back_to_kill(client) -> None:
+    http, _app, stub = client
+    await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-k", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+
+    async def wedged(workspace_id, timeout_s=None):
+        raise MicrovmTimeoutError("wedged")
+
+    stub.shutdown = wedged
+    response = await http.delete("/api/v1/workspaces/ws-k", headers=auth())
+    assert response.status_code == 200
+    assert ("kill", "ws-k") in stub.calls

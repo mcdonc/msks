@@ -6,10 +6,13 @@ from msks.settings import Settings
 from sqlalchemy import engine_from_config, pool
 
 config = context.config
-config.set_main_option(
-    "sqlalchemy.url",
-    f"sqlite:///{Settings.from_env().server.db_path}",
-)
+if not config.get_main_option("sqlalchemy.url"):
+    # Bare `alembic` CLI use only; the daemon always passes the
+    # programmatic URL for the live database path.
+    config.set_main_option(
+        "sqlalchemy.url",
+        f"sqlite:///{Settings.from_env().server.db_path}",
+    )
 target_metadata = Base.metadata
 
 

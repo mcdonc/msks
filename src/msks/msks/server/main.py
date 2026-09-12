@@ -35,9 +35,17 @@ def server_config(app) -> uvicorn.Config:
 
 
 def serve(app, no_tls: bool) -> None:
-    """Resolve listener TLS material, then run the server forever."""
+    """Resolve listener TLS material, then run the server forever.
+
+    ``--no-tls`` wins over configured cert paths: an operator asking
+    for plain HTTP in development must not get TLS because the
+    environment still carries stale variables.
+    """
     server = app.state.settings.server
-    if not no_tls:
+    if no_tls:
+        server.tls_cert = None
+        server.tls_key = None
+    else:
         state_dir = Path(server.db_path).parent
         cert, key, ca_fp = load_or_generate(
             state_dir, server.host, server.tls_cert, server.tls_key

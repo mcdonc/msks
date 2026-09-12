@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pytest
 from msks.server.tls import fingerprint, generate_ca, generate_leaf, load_or_generate
 
 
@@ -36,8 +37,25 @@ def test_load_or_generate_creates_and_reuses(tmp_path: Path) -> None:
     assert fp2 == fp
 
 
-def test_partial_operator_config_falls_back(tmp_path: Path) -> None:
-    # Only a cert path is given: treated as not operator-provided.
-    cert, key, fp = load_or_generate(tmp_path, "h", "/op/c.pem", None)
-    assert Path(cert).is_file()
-    assert fp is not None
+def test_partial_operator_config_is_an_error(tmp_path: Path) -> None:
+    # Only a cert path is given: a misconfiguration, not a silent
+    # fallback to a different trust story.
+    with pytest.raises(ValueError, match="together"):
+        load_or_generate(tmp_path, "h", "/op/c.pem", None)
+
+
+def test_leaf_regenerates_on_host_change(tmp_path: Path) -> None:
+    cert, _key, _fp = load_or_generate(tmp_path, "alpha.local", None, None)
+    first = Path(cert).read_bytes()
+    cert2, _key2, _fp2 = load_or_generate(tmp_path, "beta.local", None, None)
+    assert Path(cert2).read_bytes() != first
+
+
+def test_leaf_regenerates_on_ca_change(tmp_path: Path) -> None:
+    cert, _key, _fp = load_or_generate(tmp_path, "h", None, None)
+    first = Path(cert).read_bytes()
+    (tmp_path / "msks-ca.pem").unlink()
+    (tmp_path / "msks-ca-key.pem").unlink()
+    cert2, _key2, _fp2 = load_or_generate(tmp_path, "h", None, None)
+    assert Path(cert2).read_bytes() != first
+    assert _fp2 != _fp

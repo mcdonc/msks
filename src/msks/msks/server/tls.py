@@ -113,30 +113,55 @@ class _suppress_value_error:
         return exc_type is ValueError
 
 
+LEAF_HOST = "msks-cert.host"
+
+
 def load_or_generate(
     state_dir: Path, host: str, tls_cert: str | None, tls_key: str | None
 ) -> tuple[str, str, str | None]:
     """Resolve ``(cert_path, key_path, ca_fingerprint)`` for the listener.
 
     Operator-provided paths win as-is (no fingerprint — the operator's
-    CA is the trust story). Otherwise a CA + leaf are generated under
-    ``state_dir`` once and reused, and the CA fingerprint is returned
-    for startup logging (TOFU pinning).
+    CA is the trust story); setting one without the other is an error,
+    not a silent fallback to self-signed. Otherwise a CA + leaf are
+    generated under ``state_dir`` once and reused, the leaf is
+    regenerated whenever the host (or the CA beside it) changed, and
+    the CA fingerprint is returned for startup logging (TOFU pinning).
     """
-    if tls_cert and tls_key:
+    if tls_cert or tls_key:
+        if not (tls_cert and tls_key):
+            raise ValueError("MSKSD_TLS_CERT and MSKSD_TLS_KEY must be set together")
         return tls_cert, tls_key, None
+    return _self_signed(state_dir, host)
+
+
+def _self_signed(state_dir: Path, host: str) -> tuple[str, str, str]:
+    """The CA + leaf pair under ``state_dir``, generated as needed."""
     ca_cert = state_dir / CA_CERT
     ca_key = state_dir / CA_KEY
-    leaf_cert = state_dir / LEAF_CERT
-    leaf_key = state_dir / LEAF_KEY
     if not ca_cert.is_file():
         cert_pem, key_pem = generate_ca()
         _write(ca_cert, cert_pem, 0o644)
         _write(ca_key, key_pem, 0o600)
-    if not leaf_cert.is_file():
+    ca_fingerprint = fingerprint(ca_cert.read_bytes())
+    leaf_cert = state_dir / LEAF_CERT
+    leaf_key = state_dir / LEAF_KEY
+    leaf_host = state_dir / LEAF_HOST
+    if leaf_stale(leaf_cert, leaf_host, host, ca_fingerprint):
         cert_pem, key_pem = generate_leaf(
             ca_cert.read_bytes(), ca_key.read_bytes(), host
         )
         _write(leaf_cert, cert_pem, 0o644)
         _write(leaf_key, key_pem, 0o600)
-    return str(leaf_cert), str(leaf_key), fingerprint(ca_cert.read_bytes())
+        _write(leaf_host, f"{host}\n{ca_fingerprint}\n".encode(), 0o644)
+    return str(leaf_cert), str(leaf_key), ca_fingerprint
+
+
+def leaf_stale(
+    leaf_cert: Path, leaf_host: Path, host: str, ca_fingerprint: str
+) -> bool:
+    """Whether the leaf must be regenerated (missing, host, or CA change)."""
+    if not leaf_cert.is_file() or not leaf_host.is_file():
+        return True
+    recorded = leaf_host.read_text().splitlines()
+    return recorded != [host, ca_fingerprint]

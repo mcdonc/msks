@@ -4,11 +4,12 @@ import asyncio
 import json
 from pathlib import Path
 
+import pytest
 from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 from msks.app import build_app
-from msks.microvm import VmSpec
-from msks.microvm.spec import VmStatus
+from msks.microvm import MicrovmError, VmSpec
+from msks.microvm.spec import VmInfo, VmStatus
 from msks.server.api import build_api, wait_for_disconnect
 from msks.server.events import EventHub, close_all, relay
 from msks.server.watcher import scan_once, watch_loop
@@ -62,7 +63,7 @@ def api_with_stub(tmp_path: Path):
 def test_websocket_receives_transitions(tmp_path: Path) -> None:
     api, app, stub = api_with_stub(tmp_path)
     with TestClient(api) as client:
-        with client.websocket_connect("/api/v1/events") as socket:
+        with client.websocket_connect(f"/api/v1/events?token={TOKEN}") as socket:
             # Create a workspace, then flip the seam underneath it: the
             # watcher must publish the transition within a few polls.
             client.post(
@@ -122,3 +123,40 @@ async def test_wait_for_disconnect_returns_on_disconnect() -> None:
             raise WebSocketDisconnect(code=1000)
 
     assert await wait_for_disconnect(DisconnectingSocket()) is None
+
+
+def test_websocket_rejects_bad_token(tmp_path: Path) -> None:
+    api, _app, _stub = api_with_stub(tmp_path)
+    with TestClient(api) as client:
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect("/api/v1/events?token=wrong"):
+                pass
+
+
+async def test_watch_loop_survives_scan_errors(tmp_path: Path) -> None:
+    api, app, stub = api_with_stub(tmp_path)
+    async with api.router.lifespan_context(api):
+
+        class FlakyInfo:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def info(self, workspace_id: str) -> VmInfo:
+                self.calls += 1
+                if self.calls == 1:
+                    raise MicrovmError("transient")
+                return VmInfo(workspace_id, VmStatus.ABSENT)
+
+        await app.state.model.create_workspace(
+            VmSpec(workspace_id="ws-f", kernel=Path("/k"), rootfs=Path("/r"))
+        )
+        flaky = FlakyInfo()
+        app.state.microvm = flaky
+        task = asyncio.create_task(watch_loop(app, api.state.hub))
+        await asyncio.sleep(0.2)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        assert flaky.calls >= 2

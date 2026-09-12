@@ -58,6 +58,23 @@ def vm_config(spec: VmSpec, serial_log: Path) -> dict:
     }
 
 
+def _check_id(workspace_id: str) -> None:
+    """Reject ids that would escape the vms/ directory.
+
+    The API already enforces the charset; this is the driver-side
+    backstop so no future caller can turn ``../..`` into an rmtree of
+    the state directory or plant artifacts at absolute paths.
+    """
+    unsafe = (
+        workspace_id in ("", ".", "..")
+        or "/" in workspace_id
+        or "\\" in workspace_id
+        or workspace_id != workspace_id.strip()
+    )
+    if unsafe:
+        raise MicrovmError(f"unsafe workspace id: {workspace_id!r}")
+
+
 def map_ch_state(state: str | None) -> VmStatus:
     """Translate a CH ``vm.info`` state string."""
     if state is None:
@@ -76,6 +93,7 @@ class LocalCloudHypervisor(MicrovmDriver):
         return self.app.state.settings
 
     def _dir(self, workspace_id: str) -> Path:
+        _check_id(workspace_id)
         return self._settings().vmm.state_dir / "vms" / workspace_id
 
     async def launch(self, spec: VmSpec) -> None:

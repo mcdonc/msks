@@ -4,6 +4,8 @@ import hashlib
 import secrets
 from pathlib import Path
 
+from alembic import command
+from alembic.config import Config as AlembicConfig
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -13,6 +15,18 @@ from .tokens import Token
 from .workspaces import WORKSPACE_STATUSES, Workspace
 
 TOKEN_ENTROPY_BYTES = 32
+
+# The repo-root migrations/ tree (the daemon runs from a checkout;
+# the appliance build will bake it in — see #10).
+MIGRATIONS_DIR = Path(__file__).resolve().parents[4] / "migrations"
+
+
+def alembic_config(db_path: Path) -> AlembicConfig:
+    """The programmatic Alembic config for one database path."""
+    config = AlembicConfig()
+    config.set_main_option("script_location", str(MIGRATIONS_DIR))
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
+    return config
 
 
 def hash_token(plaintext: str) -> str:
@@ -42,9 +56,15 @@ class Model:
         return self._engine
 
     async def create_all(self) -> None:
-        """Create tables for a fresh database (Alembic owns changes)."""
+        """Create tables for a fresh database (tests; Alembic owns changes)."""
         async with self.engine().begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
+
+    def migrate(self) -> None:
+        """Run Alembic migrations to head for the live database path."""
+        db_path = self._db_path()
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        command.upgrade(alembic_config(db_path), "head")
 
     async def close(self) -> None:
         """Dispose the engine (tests swap database paths)."""
@@ -67,7 +87,7 @@ class Model:
             return row.id, token
 
     async def list_tokens(self) -> list[dict]:
-        """All tokens, newest first, hashes included (operator view)."""
+        """All tokens, insertion order, without hashes (operator view)."""
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
             rows = await session.scalars(select(Token).order_by(Token.id))
@@ -101,11 +121,21 @@ class Model:
             return result.rowcount > 0
 
     async def bootstrap_token(self) -> str | None:
-        """The configured bootstrap token, inserted when absent."""
+        """The configured bootstrap token, inserted when absent.
+
+        A token that exists in any state — valid or revoked — is left
+        alone: re-inserting a revoked row would trip the unique index
+        on ``token_hash`` and crash startup.
+        """
         plaintext = self.app.state.settings.server.bootstrap_token
         if plaintext is None:
             return None
-        if await self.token_valid(plaintext):
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            row = await session.scalar(
+                select(Token).where(Token.token_hash == hash_token(plaintext))
+            )
+        if row is not None:
             return None
         await self.create_token("bootstrap", plaintext)
         return plaintext

@@ -7,9 +7,12 @@ watcher honest across driver restarts and both backends.
 """
 
 import asyncio
+import logging
 
 from ..microvm.spec import VmStatus
 from .events import EventHub
+
+LOG = logging.getLogger(__name__)
 
 SEAM_TO_MODEL_STATUS = {
     VmStatus.ABSENT: "absent",
@@ -39,8 +42,15 @@ async def scan_once(app, hub: EventHub) -> int:
 
 
 async def watch_loop(app, hub: EventHub) -> None:
-    """The background task: scan, sleep, repeat."""
+    """The background task: scan, sleep, repeat — surviving seam errors.
+
+    One raising ``info()`` (a restarted VMM, a stale socket) must not
+    end the loop: statuses would freeze silently until daemon restart.
+    """
     interval = app.state.settings.server.event_poll_s
     while True:
-        await scan_once(app, hub)
+        try:
+            await scan_once(app, hub)
+        except Exception:
+            LOG.exception("workspace status scan failed; retrying next interval")
         await asyncio.sleep(interval)
