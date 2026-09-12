@@ -85,18 +85,28 @@ async def test_local_vm_boot_and_shutdown() -> None:
 
 
 @needs_k8s
-async def test_k8s_pod_lifecycle(tmp_path: Path) -> None:
+async def test_k8s_pod_lifecycle() -> None:
     settings = Settings(
         vmm=VmmSettings(driver="k8s"),
         k8s=K8sSettings(
             kubeconfig=KUBECONFIG,
             namespace=os.environ.get("MSKSD_TEST_NAMESPACE", "default"),
+            # The image devenv task `msks:build-runner-image` builds and
+            # `k3s ctr images import` loads; conftest.py exposes it via
+            # MSKSD_TEST_RUNNER_IMAGE once the archive exists.
+            runner_image=os.environ.get(
+                "MSKSD_TEST_RUNNER_IMAGE", K8sSettings.runner_image
+            ),
         ),
     )
     app = build_app(settings)
     wid = f"smoke-{uuid.uuid4().hex[:8]}"
     spec = VmSpec(
-        workspace_id=wid, kernel=tmp_path / "vmlinux", rootfs=tmp_path / "rootfs"
+        workspace_id=wid,
+        kernel=Path(VMLINUX),
+        rootfs=Path(ROOTFS),
+        initrd=Path(INITRD) if INITRD else None,
+        cmdline=CMDLINE or "console=hvc0 root=/dev/vda rw",
     )
     await app.state.microvm.launch(spec)
     info = await app.state.microvm.info(wid)

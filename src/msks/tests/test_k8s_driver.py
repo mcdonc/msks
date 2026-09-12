@@ -75,10 +75,24 @@ def test_pod_manifest_shape(tmp_path) -> None:
     assert container["image"] == "example/runner:1"
     env = {e["name"]: e["value"] for e in container["env"]}
     assert env["MSKSD_VMLINUX"] == str(tmp_path / "vmlinux")
+    assert "MSKSD_INITRD" not in env
     assert container["volumeMounts"] == [{"name": "kvm", "mountPath": "/dev/kvm"}]
     assert manifest["spec"]["volumes"] == [
         {"name": "kvm", "hostPath": {"path": "/dev/kvm", "type": "CharDevice"}}
     ]
+
+
+def test_pod_manifest_with_initrd(tmp_path) -> None:
+    settings = K8sSettings(namespace="ns1")
+    with_initrd = VmSpec(
+        workspace_id=WID,
+        kernel=tmp_path / "vmlinux",
+        rootfs=tmp_path / "rootfs.ext4",
+        initrd=tmp_path / "initrd",
+    )
+    container = pod_manifest(with_initrd, settings)["spec"]["containers"][0]
+    env = {e["name"]: e["value"] for e in container["env"]}
+    assert env["MSKSD_INITRD"] == str(tmp_path / "initrd")
 
 
 def test_map_phase() -> None:

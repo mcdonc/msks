@@ -43,13 +43,16 @@ def map_phase(phase: str | None) -> VmStatus:
 
 def spec_env(spec: VmSpec) -> list[dict]:
     """The VM spec, passed to the runner container as env vars."""
-    return [
+    env = [
         {"name": "MSKSD_VMLINUX", "value": str(spec.kernel)},
         {"name": "MSKSD_ROOTFS", "value": str(spec.rootfs)},
         {"name": "MSKSD_CMDLINE", "value": spec.cmdline},
         {"name": "MSKSD_CPUS", "value": str(spec.cpus)},
         {"name": "MSKSD_MEM_MIB", "value": str(spec.mem_mib)},
     ]
+    if spec.initrd is not None:
+        env.append({"name": "MSKSD_INITRD", "value": str(spec.initrd)})
+    return env
 
 
 def pod_manifest(spec: VmSpec, settings: K8sSettings) -> dict:

@@ -1,11 +1,12 @@
 # Container image for the k8s backend's vm-runner pods (#5).
 #
 # One pod runs this image with /dev/kvm attached; the entrypoint execs
-# cloud-hypervisor with the VM spec taken from MSKS_* environment
-# variables (the pod template may override any of them). The image
-# carries the same cloud-hypervisor the devenv shell pins and the same
-# guest assets `msks:build-guest` produces, so local and k8s backends
-# boot identical guests.
+# cloud-hypervisor with the VM spec taken from the MSKSD_* environment
+# variables the backend's pod template sets (see spec_env in
+# src/msks/msks/microvm/k8s.py). The image carries the same
+# cloud-hypervisor the devenv shell pins and the same guest assets
+# `msks:build-guest` produces, so local and k8s backends boot
+# identical guests.
 {
   lib,
   pkgs,
@@ -19,25 +20,30 @@ let
 
   entrypoint = pkgs.writeShellScriptBin "msks-vm-runner" ''
     set -euo pipefail
-    : "''${MSKS_VMLINUX:=/opt/msks/vmlinux}"
-    : "''${MSKS_INITRD:=/opt/msks/initrd}"
-    : "''${MSKS_ROOTFS:=/opt/msks/rootfs.ext4}"
-    : "''${MSKS_CMDLINE:=console=ttyS0 root=/dev/vda rootfstype=ext4 ro}"
-    : "''${MSKS_API_SOCKET:=/run/msks/api.sock}"
-    : "''${MSKS_CPUS:=1}"
-    : "''${MSKS_MEMORY:=512}"
-    : "''${MSKS_SERIAL:=file=/run/msks/serial.log}"
+    : "''${MSKSD_VMLINUX:=/opt/msks/vmlinux}"
+    : "''${MSKSD_INITRD:=/opt/msks/initrd}"
+    : "''${MSKSD_ROOTFS:=/opt/msks/rootfs.ext4}"
+    : "''${MSKSD_CMDLINE:=console=ttyS0 root=/dev/vda rootfstype=ext4 ro}"
+    : "''${MSKSD_API_SOCKET:=/run/msks/api.sock}"
+    : "''${MSKSD_CPUS:=1}"
+    : "''${MSKSD_MEM_MIB:=512}"
+    : "''${MSKSD_SERIAL:=file=/run/msks/serial.log}"
 
-    mkdir -p "$(dirname "$MSKS_API_SOCKET")" "$(dirname "$MSKS_SERIAL")"
+    initramfs_args=()
+    if [ -n "$MSKSD_INITRD" ]; then
+      initramfs_args+=(--initramfs "$MSKSD_INITRD")
+    fi
+
+    mkdir -p "$(dirname "$MSKSD_API_SOCKET")" "$(dirname "$MSKSD_SERIAL")"
     exec cloud-hypervisor \
-      --api-socket "$MSKS_API_SOCKET" \
-      --kernel "$MSKS_VMLINUX" \
-      --initramfs "$MSKS_INITRD" \
-      --disk "path=$MSKS_ROOTFS,readonly=on" \
-      --cmdline "$MSKS_CMDLINE" \
-      --cpus "boot=$MSKS_CPUS" \
-      --memory "size=''${MSKS_MEMORY}M" \
-      --serial "$MSKS_SERIAL" \
+      --api-socket "$MSKSD_API_SOCKET" \
+      --kernel "$MSKSD_VMLINUX" \
+      "''${initramfs_args[@]}" \
+      --disk "path=$MSKSD_ROOTFS,readonly=on" \
+      --cmdline "$MSKSD_CMDLINE" \
+      --cpus "boot=$MSKSD_CPUS" \
+      --memory "size=''${MSKSD_MEM_MIB}M" \
+      --serial "$MSKSD_SERIAL" \
       --console off
   '';
 in
@@ -64,14 +70,14 @@ pkgs.dockerTools.buildImage {
   config = {
     Entrypoint = [ "/bin/msks-vm-runner" ];
     Env = [
-      "MSKS_VMLINUX=/opt/msks/vmlinux"
-      "MSKS_INITRD=/opt/msks/initrd"
-      "MSKS_ROOTFS=/opt/msks/rootfs.ext4"
-      "MSKS_CMDLINE=console=ttyS0 root=/dev/vda rootfstype=ext4 ro"
-      "MSKS_API_SOCKET=/run/msks/api.sock"
-      "MSKS_CPUS=1"
-      "MSKS_MEMORY=512"
-      "MSKS_SERIAL=file=/run/msks/serial.log"
+      "MSKSD_VMLINUX=/opt/msks/vmlinux"
+      "MSKSD_INITRD=/opt/msks/initrd"
+      "MSKSD_ROOTFS=/opt/msks/rootfs.ext4"
+      "MSKSD_CMDLINE=console=ttyS0 root=/dev/vda rootfstype=ext4 ro"
+      "MSKSD_API_SOCKET=/run/msks/api.sock"
+      "MSKSD_CPUS=1"
+      "MSKSD_MEM_MIB=512"
+      "MSKSD_SERIAL=file=/run/msks/serial.log"
     ];
   };
 }
