@@ -67,7 +67,8 @@ devenv tasks run msks:demo-vm
 Boot tests self-provision: when `.guest/` holds built artifacts and
 `/dev/kvm` is usable, the smoke tests find them without any exported
 variables (`MSKSD_TEST_VMLINUX` / `MSKSD_TEST_INITRD` /
-`MSKSD_TEST_ROOTFS` keep precedence when you do export them). When the
+`MSKSD_TEST_ROOTFS` / `MSKSD_TEST_CMDLINE` / `MSKSD_TEST_RUNNER_IMAGE`
+keep precedence when you do export them). When the
 artifacts were never built, or `/dev/kvm` is missing or not accessible
 to your user (add yourself to the `kvm` group,
 `users.users.<name>.extraGroups = [ "kvm" ];` on NixOS, then

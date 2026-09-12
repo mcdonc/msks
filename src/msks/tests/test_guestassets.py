@@ -61,11 +61,11 @@ def test_load_invalid_json(tmp_path: Path) -> None:
 
 
 def test_load_unreadable_manifest(tmp_path: Path) -> None:
+    # A directory in place of the file: reading it raises OSError
+    # (EISDIR) for every user — root included, unlike a chmod 000 file.
     guest = tmp_path / ".guest"
     guest.mkdir(parents=True)
-    path = guest / "guest-manifest.json"
-    path.write_text("{}", encoding="utf-8")
-    path.chmod(0o000)
+    (guest / "guest-manifest.json").mkdir()
     assert guestassets.load_guest_assets(tmp_path) is None
 
 
