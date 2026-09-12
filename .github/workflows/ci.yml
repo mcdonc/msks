@@ -1,0 +1,89 @@
+# CI: the authoritative unit-test run (#6).
+#
+# Everything runs inside the devenv shell built from this repo's
+# devenv.nix/devenv.yaml — the same pinned nixpkgs, the same uv venv,
+# the same cloud-hypervisor as every contributor gets — so a green run
+# here means the dev environment itself is healthy too.
+#
+# The opt-in smoke tests skip themselves on the runner: kvm_available()
+# gates the .guest/ self-provisioning, and GitHub-hosted runners have
+# no nested KVM (real-VM CI coverage arrives with the QEMU/TCG driver,
+# #9). No MSKSD_TEST_* wiring exists here by design.
+#
+# Gate steps run with `if: !cancelled()` so one deliberately-red
+# verification run exercises every gate at once instead of failing
+# fast and hiding the rest (a lint failure must not mask test status).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: cachix/cachix-action@v17
+        with:
+          name: devenv
+
+      # Pinned release, not the moving default registry: the devenv
+      # that evaluates the 2.x tasks syntax and parses -O is the one
+      # moving part otherwise — an upstream break would red CI with no
+      # repo change.
+      - name: Install devenv.sh
+        run: nix profile add github:cachix/devenv/v2.3.1
+
+      # The runner's TMPDIR nests deep enough to push AF_UNIX socket
+      # paths past the 108-byte limit; pytest's basetemp belongs under
+      # /tmp (belt to the fixtures' shallow state dirs).
+      - name: Lint (ruff check + format)
+        if: ${{ !cancelled() }}
+        env:
+          TMPDIR: /tmp
+        run: >-
+          devenv --quiet -O dotenv.enable:bool false shell --
+          bash -c 'ruff check src/ && ruff format --check src/'
+
+      - name: Complexity gate (xenon rank A)
+        if: ${{ !cancelled() }}
+        env:
+          TMPDIR: /tmp
+        run: >-
+          devenv --quiet -O dotenv.enable:bool false shell --
+          devenv tasks run msks:xenon
+
+      # The CI-identical invocation (AGENTS.md): pytest -n auto with
+      # coverage flags from pyproject addopts, COVERAGE_CORE=sysmon
+      # pinned by conftest, fail_under = 100 branch coverage.
+      - name: Unit tests
+        if: ${{ !cancelled() }}
+        env:
+          TMPDIR: /tmp
+        run: >-
+          devenv --quiet -O dotenv.enable:bool false shell --
+          unit-tests
+
+      # Cold-checkout derivation check (#5's ubuntu-latest criterion):
+      # keeps the guest-asset nix build from silently rotting. The
+      # artifacts are not consumed on the runner — CH smoke needs KVM.
+      - name: Build guest assets
+        if: ${{ !cancelled() }}
+        run: >-
+          devenv --quiet -O dotenv.enable:bool false shell --
+          devenv tasks run msks:build-guest

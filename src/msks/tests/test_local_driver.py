@@ -8,6 +8,8 @@ Running -> VMM SIGTERM).
 
 import asyncio
 import os
+import shutil
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -23,15 +25,23 @@ WID = "ws-test"
 
 @pytest.fixture
 def env(tmp_path: Path):
-    """An app whose VMM points at a stub binary under a tmp state dir."""
+    """An app whose VMM points at a stub binary under a tmp state dir.
+
+    The state dir lives under a shallow generated path in /tmp: deep
+    per-test tmp trees (GitHub runners nest far deeper than dev
+    boxes) can push the API socket path past the AF_UNIX 108-byte
+    limit, which _check_socket_path rejects before the test's own
+    subject gets exercised.
+    """
     stub = tmp_path / "ch-stub"
     stub.write_text("#!/bin/sh\nexec sleep 600\n")
     stub.chmod(0o755)
-    state_dir = tmp_path / "state"
+    state_dir = Path(tempfile.mkdtemp(prefix="msks-test-", dir="/tmp"))
     settings = Settings(
         vmm=VmmSettings(cloud_hypervisor=str(stub), state_dir=state_dir)
     )
-    return build_app(settings), state_dir, None
+    yield build_app(settings), state_dir, None
+    shutil.rmtree(state_dir, ignore_errors=True)
 
 
 @pytest.fixture
@@ -143,18 +153,16 @@ async def test_launch_rejects_double_launch(env, fake, tmp_path: Path) -> None:
     await app.state.microvm.kill(WID)
 
 
-async def test_launch_missing_binary_maps_to_error(tmp_path: Path) -> None:
-    settings = Settings(
-        vmm=VmmSettings(cloud_hypervisor="/nonexistent/ch", state_dir=tmp_path)
-    )
-    app = build_app(settings)
+async def test_launch_missing_binary_maps_to_error(env, tmp_path: Path) -> None:
+    app, _, _ = env
+    app.state.settings.vmm.cloud_hypervisor = "/nonexistent/ch"
     with pytest.raises(MicrovmError, match="not found"):
         await app.state.microvm.launch(spec(tmp_path))
 
 
-async def test_launch_binary_exits_early_maps_to_error(tmp_path: Path) -> None:
-    settings = Settings(vmm=VmmSettings(cloud_hypervisor="false", state_dir=tmp_path))
-    app = build_app(settings)
+async def test_launch_binary_exits_early_maps_to_error(env, tmp_path: Path) -> None:
+    app, _, _ = env
+    app.state.settings.vmm.cloud_hypervisor = "false"
     with pytest.raises(MicrovmError, match="exited with"):
         await app.state.microvm.launch(spec(tmp_path))
 
