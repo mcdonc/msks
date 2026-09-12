@@ -114,3 +114,4 @@ sudo k3s ctr images import .guest/msks-vm-runner.docker.tar.gz
 The k8s smoke tests reference the imported `msks-vm-runner:dev` image
 automatically once the archive is built; they skip when
 `MSKSD_TEST_KUBECONFIG` does not point at a cluster kubeconfig.
+<!-- t -->
