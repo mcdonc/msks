@@ -1,0 +1,59 @@
+# Lint + complexity gates (#17).
+#
+# Split out of ci.yml so a lint or xenon failure reports as its own
+# check: it can neither mask the unit-test result nor be masked by it,
+# and both run in parallel. Invocations are byte-identical to the
+# pre-split steps — ruff check + ruff format --check over src/, then
+# the msks:xenon rank-A gate — everything inside the repo's own devenv.
+#
+# The `if: !cancelled()` chaining the old single job needed is gone
+# with the single job.
+name: Lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: cachix/cachix-action@v17
+        with:
+          name: devenv
+
+      # Pinned release, not the moving default registry: the devenv
+      # that evaluates the 2.x tasks syntax and parses -O is the one
+      # moving part otherwise — an upstream break would red CI with no
+      # repo change.
+      - name: Install devenv.sh
+        run: nix profile add github:cachix/devenv/v2.3.1
+
+      - name: Lint (ruff check + format)
+        env:
+          TMPDIR: /tmp
+        run: >-
+          devenv --quiet -O dotenv.enable:bool false shell --
+          bash -c 'ruff check src/ && ruff format --check src/'
+
+      - name: Complexity gate (xenon rank A)
+        env:
+          TMPDIR: /tmp
+        run: >-
+          devenv --quiet -O dotenv.enable:bool false shell --
+          devenv tasks run msks:xenon

@@ -1,0 +1,51 @@
+# Guest-asset build (#17, split out of ci.yml).
+#
+# The nix-heavy derivation check from #5's ubuntu-latest criterion:
+# a cold checkout must still build the kernel/initrd/rootfs/runner
+# image, so the guest-asset expressions cannot silently rot. The
+# artifacts are not consumed on the runner — CH smoke needs KVM —
+# which is exactly why this reports as its own check: slow and
+# independent of both lint and the unit tests.
+#
+# Needs none of the test-run plumbing (no TMPDIR pin, no coverage
+# env): just the devenv shell and the msks:build-guest task.
+name: Guest assets
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: guest-assets-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-guest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: cachix/cachix-action@v17
+        with:
+          name: devenv
+
+      # Pinned release, not the moving default registry: the devenv
+      # that evaluates the 2.x tasks syntax and parses -O is the one
+      # moving part otherwise — an upstream break would red CI with no
+      # repo change.
+      - name: Install devenv.sh
+        run: nix profile add github:cachix/devenv/v2.3.1
+
+      - name: Build guest assets
+        run: >-
+          devenv --quiet -O dotenv.enable:bool false shell --
+          devenv tasks run msks:build-guest
