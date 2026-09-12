@@ -74,7 +74,13 @@ def test_pod_manifest_shape(tmp_path) -> None:
     container = manifest["spec"]["containers"][0]
     assert container["image"] == "example/runner:1"
     env = {e["name"]: e["value"] for e in container["env"]}
-    assert env["MSKSD_VMLINUX"] == str(tmp_path / "vmlinux")
+    # Sizing rides env vars; the runner image owns the guest artifacts
+    # and the cmdline that matches them (host paths would not exist in
+    # the container), so none of the artifact variables appear here.
+    assert env == {
+        "MSKSD_CPUS": "2",
+        "MSKSD_MEM_MIB": "1024",
+    }
     assert container["volumeMounts"] == [{"name": "kvm", "mountPath": "/dev/kvm"}]
     assert manifest["spec"]["volumes"] == [
         {"name": "kvm", "hostPath": {"path": "/dev/kvm", "type": "CharDevice"}}

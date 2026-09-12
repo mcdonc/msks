@@ -127,6 +127,14 @@ async def test_launch_error_maps_and_reaps_process(env, tmp_path: Path) -> None:
     assert proc is None or proc.returncode is not None
 
 
+async def test_launch_rejects_overlong_socket_path(tmp_path: Path) -> None:
+    deep = tmp_path / ("x" * 90) / ("y" * 30)
+    settings = Settings(vmm=VmmSettings(cloud_hypervisor="false", state_dir=deep))
+    app = build_app(settings)
+    with pytest.raises(MicrovmError, match="AF_UNIX"):
+        await app.state.microvm.launch(spec(tmp_path))
+
+
 async def test_launch_rejects_double_launch(env, fake, tmp_path: Path) -> None:
     app, _, _ = env
     await app.state.microvm.launch(spec(tmp_path))

@@ -14,5 +14,8 @@ __pycache__/
 .pytest_cache/
 .testmondata
 
+# nix-built guest VM assets (devenv tasks write here)
+.guest/
+
 # nix build outputs
 result
