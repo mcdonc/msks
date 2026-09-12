@@ -1,6 +1,7 @@
 # devenv state
 .devenv
 .direnv
+.pre-commit-config.yaml
 
 # python
 __pycache__/
