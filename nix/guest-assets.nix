@@ -1,8 +1,9 @@
 # Guest VM assets for direct kernel boot on cloud-hypervisor (#5).
 #
 # Everything a microvm needs comes out of this file as plain store
-# paths, built by pure derivations — no manual downloads, no NixOS
-# host, no host container runtime:
+# paths, built from the pinned nixpkgs by pure derivations: the build
+# runs on any Linux host with nix and touches nothing outside the
+# repo.
 #
 #   $out/vmlinux            - the stock nixpkgs kernel image (bzImage
 #                             format; the kernel carries the PVH entry

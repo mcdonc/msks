@@ -82,6 +82,14 @@ def test_load_unknown_schema(tmp_path: Path, schema: object) -> None:
     assert guestassets.load_guest_assets(tmp_path) is None
 
 
+@pytest.mark.parametrize("name", ["../vmlinux", "sub/vmlinux", "/etc/passwd"])
+def test_load_rejects_artifact_names_outside_guest_dir(
+    tmp_path: Path, name: str
+) -> None:
+    write_manifest(tmp_path, vmlinux=name)
+    assert guestassets.load_guest_assets(tmp_path) is None
+
+
 def test_load_missing_artifact_file(tmp_path: Path) -> None:
     write_manifest(tmp_path)
     (tmp_path / ".guest" / "rootfs.ext4").unlink()

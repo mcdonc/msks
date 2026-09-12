@@ -50,9 +50,14 @@ def _as_str(value: object) -> str | None:
 
 
 def _artifact(base: Path, value: object) -> Path | None:
-    """Resolve a manifest-named artifact below ``base`` that exists."""
+    """Resolve a manifest-named artifact below ``base`` that exists.
+
+    Names must be plain filenames within the guest directory: the
+    manifest is a local, gitignored build product, but a stray
+    ``../`` in a hand-edited one should not resolve outside it.
+    """
     name = _as_str(value)
-    if name is None:
+    if name is None or name.startswith("/") or "/" in name:
         return None
     path = base / GUEST_DIR / name
     return path if path.is_file() else None
@@ -128,7 +133,7 @@ def load_runner_image(root: Path | None = None) -> str | None:
     """Image reference of the built vm-runner archive below ``root``, if any.
 
     Written by ``devenv tasks run msks:build-runner-image`` once the
-    container archive has been imported-able on the k3s node.
+    container archive is ready to import on the k3s node.
     """
     base = root if root is not None else _root()
     try:

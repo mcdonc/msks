@@ -46,8 +46,8 @@ Everything needed to boot a microvm is built by nix from the nixpkgs
 revision devenv itself pins — kernel (bzImage with the PVH entry
 point), an initrd carrying the virtio/ext4 modules the stock kernel
 builds as modules, a read-only ext4 rootfs around a static busybox,
-and the k8s vm-runner container archive. No manual downloads, no
-hand-run `qemu-img`, nothing outside the repo:
+and the k8s vm-runner container archive. Every step of the build runs
+inside the repo on any Linux host with nix:
 
 ```bash
 devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:build-guest
@@ -80,7 +80,7 @@ the local backend's cloud-hypervisor:
 
 ```bash
 devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:build-runner-image
-sudo k3s ctr images import .guest/msks-vm-runner.docker.tar
+sudo k3s ctr images import .guest/msks-vm-runner.docker.tar.gz
 ```
 
 The k8s smoke tests reference the imported `msks-vm-runner:dev` image

@@ -34,7 +34,10 @@ let
       initramfs_args+=(--initramfs "$MSKSD_INITRD")
     fi
 
-    mkdir -p "$(dirname "$MSKSD_API_SOCKET")" "$(dirname "$MSKSD_SERIAL")"
+    # MSKSD_SERIAL is a CH serial spec like "file=/run/msks/serial.log"
+    # (or "tty"/"off") — only the file form carries a directory.
+    serial_dir=$(dirname "''${MSKSD_SERIAL#*=}")
+    mkdir -p "$(dirname "$MSKSD_API_SOCKET")" "$serial_dir"
     exec cloud-hypervisor \
       --api-socket "$MSKSD_API_SOCKET" \
       --kernel "$MSKSD_VMLINUX" \

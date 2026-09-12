@@ -47,10 +47,14 @@ ch_pid=$!
 
 stop_vm() {
   # Graceful first: the guest's acpid turns the ACPI signal into a
-  # poweroff. cloud-hypervisor can keep the VMM process alive after
-  # the VM exits (serial tty mode), so always finish it with SIGTERM,
-  # which CH handles by shutting down and exiting.
+  # poweroff. Give the VMM a short window to exit on its own (CH can
+  # keep the process alive after the VM exits in serial tty mode),
+  # then SIGTERM it, which CH handles by shutting down and exiting.
   ch-remote --api-socket "$api_socket" shutdown >/dev/null 2>&1 || true
+  for _ in 1 2 3 4 5; do
+    kill -0 "$ch_pid" 2>/dev/null || return 0
+    sleep 1
+  done
   kill "$ch_pid" 2>/dev/null || true
 }
 trap stop_vm INT TERM

@@ -2,9 +2,9 @@
 # Build the microvm guest assets with nix and land them in .guest/ (#5).
 #
 # Runs against the nixpkgs revision pinned by devenv.lock: the devenv
-# task passes the pinned source via MSKS_GUEST_NIXPKGS. Pure
-# derivations only — any Linux host with nix works, nothing outside
-# the repo is fetched by hand.
+# task passes the pinned source via MSKS_GUEST_NIXPKGS. The build is
+# pure derivations all the way down, so any Linux host with nix runs
+# it unchanged.
 set -euo pipefail
 
 root="${DEVENV_ROOT:?not running inside the devenv shell}"
