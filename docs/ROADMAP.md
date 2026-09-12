@@ -14,6 +14,16 @@ no web frontend yet.
 
 ## Standing decisions
 
+- **Client/server split from day one.** The core (`msksd`) exposes
+  API endpoints (HTTPS + WSS on one listener) and nothing else; every
+  UI surface — CLI, TUI, and any future web client — is a remote
+  client speaking to them over HTTPS. The client package imports
+  nothing from the server package (the klangk `klangk.cli` isolation
+  rule, promoted to the whole architecture), enforced by an
+  import-boundary test. Consequences: auth and API versioning land
+  with the first endpoints, not later; terminal streaming and consent
+  events are API-level commitments (WSS); client config uses its own
+  `MSKSC_*` namespace.
 - **VMM: cloud-hypervisor.** Chosen for its unix-socket REST API
   (no CLI scraping), first-class virtiofs (the podman-volume
   analogue), and snapshot/restore (pre-warmed instant-start
@@ -59,14 +69,19 @@ no web frontend yet.
 3. **Self-contained guest assets** — nix-built kernel/initrd/rootfs,
    smoke tests self-provision, `msks:demo-vm` zero-setup task (#5).
 4. **CI** — the unit-test workflow, same invocation as local (#6).
-5. **Daemon scaffold** — msksd around the seam: live-swappable
-   settings (SIGHUP posture), model layer + Alembic, minimal auth.
-6. **Guest agent + terminal** — vsock agent serving PTYs; the TUI
-   bridges to it (the klangk wshandler role, minus browsers).
+5. **Daemon scaffold + API surface** — msksd around the seam:
+   live-swappable settings (SIGHUP posture), model layer + Alembic,
+   the `/api/v1` skeleton with auth (tokens + TLS with a trust story),
+   and the WSS event channel. This is the milestone gate: no UI work
+   before it.
+6. **Guest agent + terminal** — vsock agent serving PTYs; exposed
+   through the API as a WSS terminal stream.
 7. **Networking + egress consent** — pre-created tap pool, per-VM
-   nftables/NFQUEUE, consent UI in the TUI, audit rows.
-8. **Client polish** — textual TUI parity with klangkc's workflow
-   list/forms/spatial navigation.
+   nftables/NFQUEUE, consent requests and decisions as API events,
+   audit rows.
+8. **Clients** — the CLI and then the textual TUI, both pure API
+   clients (TUI parity with klangkc's workflow list/forms/spatial
+   navigation).
 
 Later / optional: pre-warmed VMs via snapshot/restore, docker
 deployment of msksd (`/dev/kvm` passthrough), k8s runner hardening
