@@ -18,12 +18,16 @@ covered by the faked-transport unit suites).
 
 import asyncio
 import contextlib
+import json
 import os
 import shutil
+import subprocess
 import uuid
 from pathlib import Path
 
+import httpx
 import pytest
+from httpx import AsyncClient
 from msks.app import build_app
 from msks.microvm import VmSpec
 from msks.settings import K8sSettings, Settings, VmmSettings
@@ -33,6 +37,8 @@ INITRD = os.environ.get("MSKSD_TEST_INITRD")
 ROOTFS = os.environ.get("MSKSD_TEST_ROOTFS")
 CMDLINE = os.environ.get("MSKSD_TEST_CMDLINE")
 KUBECONFIG = os.environ.get("MSKSD_TEST_KUBECONFIG")
+REPO_ROOT = Path(__file__).resolve().parents[3]
+client = AsyncClient(verify=False, timeout=10.0)
 
 needs_local = pytest.mark.skipif(
     not VMLINUX or not ROOTFS or not os.access("/dev/kvm", os.W_OK),
@@ -169,3 +175,153 @@ async def test_k8s_pod_lifecycle() -> None:
         # gone, on both the success and failure paths.
         with contextlib.suppress(Exception):
             await microvm.cleanup(wid)
+
+
+# --- appliance smoke (#10) -------------------------------------------------
+#
+# Boots the real appliance through the devenv supervisor scripts — the
+# same path an operator uses — then drives one workspace VM through
+# the API served from inside it. Opt-in: it needs /dev/kvm (nested
+# virt: the workspace boots inside the appliance VM), sudo -n for the
+# one-time bridge/tap, and built appliance + guest assets.
+APPLIANCE = os.environ.get("MSKSD_TEST_APPLIANCE")
+
+
+def _sudo_available() -> bool:
+    try:
+        return (
+            subprocess.run(
+                ["sudo", "-n", "true"], capture_output=True, timeout=10
+            ).returncode
+            == 0
+        )
+    except OSError, subprocess.TimeoutExpired:
+        return False
+
+
+needs_appliance = pytest.mark.skipif(
+    not APPLIANCE
+    or not os.access("/dev/kvm", os.W_OK)
+    or not (REPO_ROOT / ".appliance" / "vmlinux").is_file()
+    or not _sudo_available(),
+    reason=(
+        "set MSKSD_TEST_APPLIANCE=1 with /dev/kvm, sudo -n (bridge/tap), "
+        "and devenv tasks run msks:appliance-build + msks:build-guest"
+    ),
+)
+
+
+def _run_task(script: str) -> None:
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / script)],
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    assert result.returncode == 0, (
+        f"{script} failed ({result.returncode}):\n{result.stdout}\n{result.stderr}"
+    )
+
+
+def _guest_asset_store_paths() -> dict:
+    """Store paths of the workspace guest assets (nix-build, cached).
+
+    Inside the appliance /nix/store is the host's, so the store paths
+    this build prints are valid on both sides of the share.
+    """
+    cmd = ["nix-build", "--no-out-link"]
+    pinned = os.environ.get("MSKS_GUEST_NIXPKGS")
+    if pinned:  # the devenv task exports it; plain pytest falls back
+        cmd += ["-I", f"nixpkgs={pinned}"]
+    cmd += [str(REPO_ROOT / "nix" / "guest.nix"), "-A", "guest"]
+    out = subprocess.run(
+        cmd, capture_output=True, text=True, timeout=600, check=True
+    ).stdout.strip()
+    manifest = json.loads((Path(out) / "guest-manifest.json").read_text())
+    return {
+        "kernel": str(Path(out) / "vmlinux"),
+        "initrd": str(Path(out) / "initrd"),
+        "rootfs": str(Path(out) / "rootfs.ext4"),
+        "cmdline": manifest["cmdline"],
+    }
+
+
+@needs_appliance
+async def test_appliance_boot_and_workspace() -> None:
+    app_dir = REPO_ROOT / ".appliance"
+    guest = _guest_asset_store_paths()
+    base = "https://192.168.77.2:8660/api/v1"
+    wid = f"appliance-{uuid.uuid4().hex[:8]}"
+
+    # Refuse to stomp a *running* appliance: the smoke run owns the VM.
+    # (A stale api.sock without a live VMM is fine — the scripts clean
+    # stale artifacts themselves.)
+    pid_file = app_dir / "vmm.pid"
+    if pid_file.is_file() and Path("/proc", pid_file.read_text().strip()).exists():
+        pytest.skip("an appliance VMM is already running on this host")
+
+    _run_task("appliance-up.sh")
+    # The up-task creates the token on first boot (od-based; survives
+    # pipefail) — it exists only after the task ran.
+    token = (app_dir / "bootstrap-token").read_text().strip()
+    headers = {"authorization": f"Bearer {token}"}
+
+    async def await_api(timeout_s: float = 120.0) -> None:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_s
+        last = ""
+        while loop.time() < deadline:
+            try:
+                response = await client.get(f"{base}/health")
+                last = f"{response.status_code} {response.text[:100]}"
+                if response.status_code == 200:
+                    return
+            except httpx.HTTPError as exc:
+                last = repr(exc)
+            await asyncio.sleep(1.0)
+        serial = (app_dir / "serial.log").read_text(errors="replace")[-2000:]
+        raise AssertionError(
+            f"appliance API never became healthy ({last}); serial tail:\n{serial}"
+        )
+
+    status = None
+    try:
+        await await_api()
+        response = await client.post(
+            f"{base}/workspaces",
+            json={
+                "id": wid,
+                "kernel": guest["kernel"],
+                "initrd": guest["initrd"],
+                "rootfs": guest["rootfs"],
+                "cmdline": guest["cmdline"],
+            },
+            headers=headers,
+        )
+        assert response.status_code == 201, response.text
+        response = await client.post(f"{base}/workspaces/{wid}/start", headers=headers)
+        assert response.status_code in (200, 202), response.text
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 120.0
+        while loop.time() < deadline:
+            response = await client.get(f"{base}/workspaces/{wid}", headers=headers)
+            status = response.json().get("status")
+            if status == "running":
+                break
+            await asyncio.sleep(1.0)
+        else:
+            raise AssertionError(f"workspace never reached running: {status}")
+        response = await client.post(f"{base}/workspaces/{wid}/stop", headers=headers)
+        assert response.status_code == 200, response.text
+        response = await client.delete(f"{base}/workspaces/{wid}", headers=headers)
+        assert response.status_code == 200, response.text
+        response = await client.get(f"{base}/workspaces/{wid}", headers=headers)
+        assert response.status_code == 404
+    finally:
+        with contextlib.suppress(Exception):
+            await client.delete(f"{base}/workspaces/{wid}", headers=headers)
+        with contextlib.suppress(Exception):
+            await client.post(f"{base}/workspaces/{wid}/stop", headers=headers)
+        _run_task("appliance-down.sh")
+    assert not (app_dir / "api.sock").exists()

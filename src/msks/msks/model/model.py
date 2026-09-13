@@ -7,6 +7,7 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config as AlembicConfig
 from sqlalchemy import select, update
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ..microvm.spec import VmSpec
@@ -64,7 +65,22 @@ class Model:
         """Run Alembic migrations to head for the live database path."""
         db_path = self._db_path()
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        command.upgrade(alembic_config(db_path), "head")
+        config = alembic_config(db_path)
+        try:
+            command.upgrade(config, "head")
+        except OperationalError as exc:
+            # A hard power cut can land between a migration's committed
+            # DDL and its alembic_version stamp (separate transactions):
+            # the next boot then fails with "table already exists" and,
+            # unfixed, wedges the appliance forever. Only our own DDL
+            # can produce that error text here, so it means exactly the
+            # torn state — stamp head and the upgrade becomes a no-op.
+            # Sound while migrations are additive from a single base;
+            # revisit when a migration ever splits DDL across versions.
+            if "already exists" not in str(exc):
+                raise
+            command.stamp(config, "head")
+            command.upgrade(config, "head")
 
     async def close(self) -> None:
         """Dispose the engine (tests swap database paths)."""

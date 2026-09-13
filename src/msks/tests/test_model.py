@@ -3,10 +3,11 @@
 from pathlib import Path
 
 import pytest
-from msks.app import build_app
+from msks.app import App, build_app
 from msks.microvm import VmSpec
 from msks.model import hash_token, new_token
 from msks.settings import ServerSettings, Settings
+from sqlalchemy.exc import OperationalError
 
 
 def app_for(tmp_path: Path, bootstrap: str | None = None):
@@ -125,3 +126,51 @@ async def test_close_without_engine(tmp_path: Path) -> None:
     app = app_for(tmp_path)
     await app.state.model.close()
     assert app.state.model._engine is None
+
+
+async def test_migrate_recovers_from_torn_migration(tmp_path: Path) -> None:
+    # A power cut between 0001's committed DDL and its version stamp
+    # leaves tables present with no alembic_version row; migrate()
+    # stamps head instead of wedging on "table already exists".
+    import sqlite3
+
+    from msks.model.db import Base, engine_for
+
+    settings = Settings(server=ServerSettings(db_path=tmp_path / "t.db"))
+    engine = engine_for(settings.server.db_path)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    await engine.dispose()
+    with sqlite3.connect(settings.server.db_path) as connection:
+        names = {
+            name
+            for (name,) in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+    assert "tokens" in names  # DDL present, no alembic_version row
+    app = app_for(tmp_path)  # Model takes the app (house rule)
+    app.state.settings = settings
+    app.state.model.migrate()  # must not raise
+    with sqlite3.connect(settings.server.db_path) as connection:
+        stamped = connection.execute(
+            "SELECT version_num FROM alembic_version"
+        ).fetchall()
+    assert stamped
+
+
+def test_migrate_reraises_unrelated_operational_errors(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # Only the torn-migration "already exists" heals; any other
+    # OperationalError (locked db, io error) surfaces unchanged.
+    from alembic import command as alembic_command
+    from msks.model import model as model_mod
+
+    def boom(config, revision):
+        raise OperationalError("statement", {}, Exception("database is locked"))
+
+    monkeypatch.setattr(alembic_command, "upgrade", boom)
+    settings = Settings(server=ServerSettings(db_path=tmp_path / "locked.db"))
+    with pytest.raises(OperationalError, match="locked"):
+        model_mod.Model(App(settings)).migrate()
