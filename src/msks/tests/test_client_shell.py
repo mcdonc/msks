@@ -268,14 +268,14 @@ async def test_run_shell_detaches_on_escape(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(sys, "stdout", stdout)
     loop = asyncio.get_running_loop()
     loop.run_in_executor(None, lambda: (pipe.feed(b"l"), pipe.feed(DETACH)))
-    result = await asyncio.wait_for(run_shell_via(shell, "wid", "u", "t"), 5)
+    result = await asyncio.wait_for(run_shell_via(shell), 5)
     assert result == 0
     assert ws.sent == [b"l"]
     assert stdout.buffer.getvalue() == b"hello\n"
 
 
-async def run_shell_via(shell, wid, url, token):
-    return await shell.run_shell(wid, url, token)
+async def run_shell_via(shell):
+    return await shell.run_shell("wid", "u", "t", None)
 
 
 async def test_run_shell_survives_server_close(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -300,7 +300,7 @@ async def test_run_shell_survives_server_close(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(sys, "stdin", pipe)
     monkeypatch.setattr(shell.websockets, "connect", ConnectStub(ClosingWs()))
     monkeypatch.setattr(sys, "stdout", FakeStdout())
-    assert await shell.run_shell("wid", "u", "t") == 0
+    assert await shell.run_shell("wid", "u", "t", None) == 0
 
 
 class FdOnly:
@@ -319,7 +319,7 @@ def test_main_raw_mode_cycle(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(shell, "require_tty", lambda: None)
     restored: list = []
 
-    async def fake_run(wid, url, token):
+    async def fake_run(wid, url, token, ssl_ctx):
         return 7
 
     monkeypatch.setattr(shell, "run_shell", fake_run)
@@ -342,7 +342,7 @@ def test_main_without_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
         shell.termios, "tcgetattr", lambda fd: (_ for _ in ()).throw(termios.error())
     )
 
-    async def fake_run(wid, url, token):
+    async def fake_run(wid, url, token, ssl_ctx):
         return 0
 
     monkeypatch.setattr(shell, "run_shell", fake_run)

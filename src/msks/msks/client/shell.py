@@ -106,10 +106,10 @@ async def _ws_step(message, ws, stdout):
     return asyncio.create_task(ws.recv())
 
 
-async def run_shell(workspace_id: str, url: str, token: str) -> int:
+async def run_shell(workspace_id: str, url: str, token: str, ssl_ctx) -> int:
     """One interactive session; 0 on clean detach or session end."""
     async with websockets.connect(
-        ws_url(url, workspace_id, token), ssl=ssl_context(), max_size=2**22
+        ws_url(url, workspace_id, token), ssl=ssl_ctx, max_size=2**22
     ) as ws:
         loop = asyncio.get_running_loop()
         stdin = asyncio.StreamReader()
@@ -183,10 +183,14 @@ def main(argv: list[str] | None = None) -> int:
         old = termios.tcgetattr(sys.stdin.fileno())
     except termios.error:
         old = None
+    # The TLS context (and its unverified-mode warning) is built
+    # BEFORE raw mode: setraw clears OPOST, so a plain \n printed
+    # mid-session would leave the cursor mid-column.
+    ssl_ctx = ssl_context()
     try:
         if old is not None:
             tty.setraw(sys.stdin.fileno())
-        return asyncio.run(run_shell(args.workspace_id, url, token))
+        return asyncio.run(run_shell(args.workspace_id, url, token, ssl_ctx))
     finally:
         restore(old, old is not None)
 
