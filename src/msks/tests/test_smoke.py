@@ -211,15 +211,15 @@ needs_appliance = pytest.mark.skipif(
 )
 
 
-def _run_task(script: str) -> None:
-    result = subprocess.run(
-        ["bash", str(REPO_ROOT / "scripts" / script)],
+def _devenv_processes(*args: str, timeout: int = 600) -> subprocess.CompletedProcess:
+    """Drive the devenv process manager from inside the shell."""
+    return subprocess.run(
+        ["bash", "-c", f"devenv processes {' '.join(args)}"],
         capture_output=True,
         text=True,
-        timeout=600,
-    )
-    assert result.returncode == 0, (
-        f"{script} failed ({result.returncode}):\n{result.stdout}\n{result.stderr}"
+        timeout=timeout,
+        cwd=REPO_ROOT,
+        env={**os.environ, "DEVENV_TUI": "false"},
     )
 
 
@@ -253,18 +253,41 @@ async def test_appliance_boot_and_workspace() -> None:
     base = "https://192.168.77.2:8660/api/v1"
     wid = f"appliance-{uuid.uuid4().hex[:8]}"
 
-    # Refuse to stomp a *running* appliance: the smoke run owns the VM.
-    # (A stale api.sock without a live VMM is fine — the scripts clean
-    # stale artifacts themselves.)
-    pid_file = app_dir / "vmm.pid"
-    if pid_file.is_file() and Path("/proc", pid_file.read_text().strip()).exists():
-        pytest.skip("an appliance VMM is already running on this host")
+    # Refuse to stomp a *running* appliance — including the README's
+    # documented orphan case (manager dead, VMM still answering on
+    # api.sock, unreachable by `devenv processes down`).
+    if (app_dir / "api.sock").is_socket():
+        probe = subprocess.run(
+            [
+                "curl",
+                "-sS",
+                "--unix-socket",
+                str(app_dir / "api.sock"),
+                "-X",
+                "PUT",
+                "http://localhost/api/v1/vm.info",
+            ],
+            capture_output=True,
+            timeout=30,
+        )
+        if probe.returncode == 0:
+            pytest.skip("an appliance VMM is already answering on this host")
 
-    _run_task("appliance-up.sh")
-    # The up-task creates the token on first boot (od-based; survives
-    # pipefail) — it exists only after the task ran.
-    token = (app_dir / "bootstrap-token").read_text().strip()
-    headers = {"authorization": f"Bearer {token}"}
+    up = _devenv_processes("up", "-d")
+    assert up.returncode == 0, f"devenv processes up failed:\n{up.stdout}\n{up.stderr}"
+
+    async def await_token(timeout_s: float = 120.0) -> str:
+        # `up -d` returns when the MANAGER starts; setup (state-disk
+        # copy, token generation) still runs asynchronously — poll for
+        # the token instead of assuming it exists.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_s
+        while loop.time() < deadline:
+            token_file = app_dir / "bootstrap-token"
+            if token_file.is_file() and token_file.read_text().strip():
+                return token_file.read_text().strip()
+            await asyncio.sleep(0.5)
+        raise AssertionError("appliance bootstrap token never appeared")
 
     async def await_api(timeout_s: float = 120.0) -> None:
         loop = asyncio.get_running_loop()
@@ -285,7 +308,10 @@ async def test_appliance_boot_and_workspace() -> None:
         )
 
     status = None
+    token = headers = None
     try:
+        token = await await_token()
+        headers = {"authorization": f"Bearer {token}"}
         await await_api()
         response = await client.post(
             f"{base}/workspaces",
@@ -319,9 +345,19 @@ async def test_appliance_boot_and_workspace() -> None:
         response = await client.get(f"{base}/workspaces/{wid}", headers=headers)
         assert response.status_code == 404
     finally:
-        with contextlib.suppress(Exception):
-            await client.delete(f"{base}/workspaces/{wid}", headers=headers)
+        if headers is not None:
+            with contextlib.suppress(Exception):
+                await client.delete(f"{base}/workspaces/{wid}", headers=headers)
         with contextlib.suppress(Exception):
             await client.post(f"{base}/workspaces/{wid}/stop", headers=headers)
-        _run_task("appliance-down.sh")
+        down = _devenv_processes("down", timeout=300)
+        assert down.returncode == 0, (
+            f"devenv processes down failed:\n{down.stdout}\n{down.stderr}"
+        )
     assert not (app_dir / "api.sock").exists()
+    # The supervisor is gone too: teardown is its view of "stopped",
+    # not just pidfile/socket absence.
+    listing = _devenv_processes("list", timeout=120)
+    assert "No process manager is running" in listing.stdout + listing.stderr, (
+        f"process manager still alive after down:\n{listing.stdout}"
+    )
