@@ -108,8 +108,12 @@ async def _ws_step(message, ws, stdout):
 
 async def run_shell(workspace_id: str, url: str, token: str, ssl_ctx) -> int:
     """One interactive session; 0 on clean detach or session end."""
+    address = ws_url(url, workspace_id, token)
     async with websockets.connect(
-        ws_url(url, workspace_id, token), ssl=ssl_ctx, max_size=2**22
+        # A plain-ws URL (http daemon) takes no ssl argument.
+        address,
+        ssl=None if address.startswith("ws://") else ssl_ctx,
+        max_size=2**22,
     ) as ws:
         loop = asyncio.get_running_loop()
         stdin = asyncio.StreamReader()
@@ -123,8 +127,8 @@ async def run_shell(workspace_id: str, url: str, token: str, ssl_ctx) -> int:
         )
         try:
             await pump(stdin, ws, sys.stdout)
-        except websockets.ConnectionClosed:
-            pass  # the daemon ended the session; a clean exit
+        except websockets.ConnectionClosed as closed:
+            _report_close(closed)
         finally:
             for task in asyncio.all_tasks(loop) - {asyncio.current_task()}:
                 task.cancel()
@@ -132,6 +136,26 @@ async def run_shell(workspace_id: str, url: str, token: str, ssl_ctx) -> int:
                     await task
             transport.close()
     return 0
+
+
+CLOSE_CODE_REASONS = {
+    4401: "authentication failed (bad token?)",
+    4404: "no such workspace",
+    4501: "console unavailable (is the workspace running?)",
+}
+
+
+def _report_close(closed: websockets.ConnectionClosed) -> None:
+    """Name the daemon's close codes; anything else is a clean end.
+
+    A clean detach or session end must stay exit 0 — only the named
+    refusals fail the client.
+    """
+    if closed.rcvd is None or closed.rcvd.code not in CLOSE_CODE_REASONS:
+        return
+    reason = closed.rcvd.reason.strip()
+    detail = f": {reason}" if reason else ""
+    raise SystemExit(f"msks: {CLOSE_CODE_REASONS[closed.rcvd.code]}{detail}")
 
 
 class _StdinPipe:

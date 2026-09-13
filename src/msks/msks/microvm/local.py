@@ -28,9 +28,10 @@ from .driver import MicrovmDriver
 from .errors import MicrovmError, MicrovmTimeoutError
 from .spec import VmInfo, VmSpec, VmStatus
 
-# How long console() waits for the guest to bring the vsock device and
-# its shell server up after boot.
-VSOCK_WAIT_S = 10.0
+# The default wait for the guest to bring the vsock device and its
+# shell server up after boot (overridable via VmmSettings, for
+# nested-virtualization hosts whose guests boot slower).
+VSOCK_WAIT_S = 15.0
 # Bound on the OK reply once the handshake bytes are sent.
 VSOCK_REPLY_S = 5.0
 
@@ -51,8 +52,11 @@ async def _vsock_handshake(socket_path: Path, port: int):
     """
     try:
         reader, writer = await asyncio.open_unix_connection(str(socket_path))
-    except (FileNotFoundError, ConnectionRefusedError) as exc:
-        raise _VsockRetry(f"no live vsock socket: {exc}") from exc
+    except OSError as exc:
+        # FileNotFoundError/ConnectionRefusedError while the guest
+        # brings the device up, PermissionError on a hostile path,
+        # and friends: all retryable-shaped, all carrying their errno.
+        raise _VsockRetry(f"vsock socket unreachable: {exc}") from exc
     try:
         writer.write(f"CONNECT {port}\n".encode())
         await writer.drain()
@@ -60,6 +64,11 @@ async def _vsock_handshake(socket_path: Path, port: int):
     except TimeoutError as exc:
         writer.close()
         raise _VsockRetry("handshake reply never arrived") from exc
+    except OSError as exc:
+        # A VMM dying mid-handshake resets the stream; that is the
+        # same boot-window flakiness the retry exists to absorb.
+        writer.close()
+        raise _VsockRetry(f"handshake stream died: {exc}") from exc
     if not reply.startswith(b"OK"):
         writer.close()
         raise _VsockRetry(f"handshake refused: {reply.strip()!r}")
@@ -240,8 +249,9 @@ class LocalCloudHypervisor(MicrovmDriver):
         fails fast instead of waiting it out.
         """
         socket_path = self._dir(workspace_id) / "vsock.sock"
-        port = self._settings().vmm.vsock_shell_port
-        deadline = asyncio.get_running_loop().time() + VSOCK_WAIT_S
+        settings = self._settings().vmm
+        port = settings.vsock_shell_port
+        deadline = asyncio.get_running_loop().time() + settings.vsock_wait_timeout_s
         while True:
             if not self._vmm_reachable(workspace_id):
                 raise MicrovmError(

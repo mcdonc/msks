@@ -180,10 +180,11 @@ let
       # minor and mknod it (major 10 = misc). Without the node,
       # socket(AF_VSOCK) fails with ENODEV (#21).
       # devtmpfs creates the node on some kernels; make it ourselves
-      # only when missing.
+      # only when missing. Word splitting picks the minor regardless
+      # of /proc/misc's right-alignment ($1, not cut fields).
       if [ ! -e /dev/vsock ]; then
-        vsock_minor=$(grep vsock /proc/misc | cut -d" " -f1)
-        [ -n "$vsock_minor" ] && /bin/busybox mknod /dev/vsock c 10 "$vsock_minor"
+        set -- $(grep vsock /proc/misc)
+        [ -n "$1" ] && /bin/busybox mknod /dev/vsock c 10 "$1"
       fi
       # Handle the host's ch-remote shutdown: cloud-hypervisor signals
       # the ACPI power button, acpid turns it into a guest poweroff.
@@ -198,7 +199,7 @@ let
       # userland. The serial console respawn loop below is untouched.
       if [ -e /dev/vsock ]; then
         /bin/socat VSOCK-LISTEN:${toString vsockShellPort},reuseaddr,fork \
-          EXEC:/bin/ash,pty,ctty,stderr,setsid </dev/null >/dev/console 2>&1 &
+          EXEC:/bin/ash,pty,ctty,raw,echo=0,stderr,setsid </dev/null >/dev/console 2>&1 &
         echo "msks guest: vsock shell listening on port ${toString vsockShellPort}"
       else
         echo "msks guest: no /dev/vsock; shell server not started"

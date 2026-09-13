@@ -476,18 +476,14 @@ async def test_console_handshake_and_stream(env, tmp_path: Path) -> None:
 
 async def test_console_without_vm_fails_fast(env, monkeypatch) -> None:
     app, _, _ = env
-    import msks.microvm.local as local
-
-    monkeypatch.setattr(local, "VSOCK_WAIT_S", 0.1)
+    app.state.settings.vmm.vsock_wait_timeout_s = 0.1
     with pytest.raises(MicrovmError, match="no live VMM"):
         await app.state.microvm.console(WID)
 
 
 async def test_console_refused_handshake(env, tmp_path, monkeypatch) -> None:
     app, state_dir, _ = env
-    import msks.microvm.local as local
-
-    monkeypatch.setattr(local, "VSOCK_WAIT_S", 0.1)
+    app.state.settings.vmm.vsock_wait_timeout_s = 0.1
     # A live-seeming VM: the pid check must not fail the retry early.
     (state_dir / "vms" / WID).mkdir(parents=True, exist_ok=True)
     (state_dir / "vms" / WID / "ch.pid").write_text(str(os.getpid()))
@@ -527,11 +523,8 @@ async def test_default_console_unsupported() -> None:
 async def test_console_silent_server_times_out(env, monkeypatch) -> None:
     """A wedged CH that never answers the handshake fails with the
     named cause instead of hanging."""
-    import msks.microvm.local as local
-
-    monkeypatch.setattr(local, "VSOCK_WAIT_S", 0.2)
-    monkeypatch.setattr(local, "VSOCK_REPLY_S", 0.1)
     app, state_dir, _ = env
+    app.state.settings.vmm.vsock_wait_timeout_s = 0.2
     vm_dir = state_dir / "vms" / WID
     vm_dir.mkdir(parents=True, exist_ok=True)
     vm_dir.joinpath("ch.pid").write_text(str(os.getpid()))
@@ -540,6 +533,9 @@ async def test_console_silent_server_times_out(env, monkeypatch) -> None:
         await reader.readline()
         await asyncio.sleep(60)
 
+    import msks.microvm.local as local
+
+    monkeypatch.setattr(local, "VSOCK_REPLY_S", 0.1)
     server = await asyncio.start_unix_server(silent, str(vm_dir / "vsock.sock"))
     try:
         with pytest.raises(MicrovmError, match="handshake reply never arrived"):
@@ -552,12 +548,32 @@ async def test_console_silent_server_times_out(env, monkeypatch) -> None:
 async def test_console_socket_never_appears(env, monkeypatch) -> None:
     """A live VMM whose vsock socket never appears fails at the
     deadline with the named cause."""
-    import msks.microvm.local as local
-
-    monkeypatch.setattr(local, "VSOCK_WAIT_S", 0.1)
     app, state_dir, _ = env
+    app.state.settings.vmm.vsock_wait_timeout_s = 0.1
     vm_dir = state_dir / "vms" / WID
     vm_dir.mkdir(parents=True, exist_ok=True)
     vm_dir.joinpath("ch.pid").write_text(str(os.getpid()))
-    with pytest.raises(MicrovmError, match="no live vsock socket"):
+    with pytest.raises(MicrovmError, match="vsock socket unreachable"):
         await app.state.microvm.console(WID)
+
+
+async def test_console_stream_dies_mid_handshake(env, monkeypatch) -> None:
+    """A VMM that resets the stream mid-handshake is retried, then
+    fails with the named cause (not a raw OSError)."""
+    app, state_dir, _ = env
+    app.state.settings.vmm.vsock_wait_timeout_s = 0.1
+    vm_dir = state_dir / "vms" / WID
+    vm_dir.mkdir(parents=True, exist_ok=True)
+    vm_dir.joinpath("ch.pid").write_text(str(os.getpid()))
+
+    async def resetter(reader, writer):
+        # Accept, then kill the stream before any reply.
+        writer.close()
+
+    server = await asyncio.start_unix_server(resetter, str(vm_dir / "vsock.sock"))
+    try:
+        with pytest.raises(MicrovmError, match="handshake"):
+            await app.state.microvm.console(WID)
+    finally:
+        server.close()
+        await server.wait_closed()

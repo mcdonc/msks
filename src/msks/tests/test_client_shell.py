@@ -359,3 +359,38 @@ def test_module_entry_runs(monkeypatch: pytest.MonkeyPatch) -> None:
     # entry block.
     with pytest.raises(SystemExit):
         exec(compile(source, shell.__file__, "exec"), {"__name__": "__main__"})
+
+
+def _closed(code: int, reason: str = ""):
+    from msks.client import shell
+
+    close = shell.websockets.Close(code, reason)
+    return shell.websockets.ConnectionClosed(close, None)
+
+
+def test_report_close_4401() -> None:
+    from msks.client import shell
+
+    with pytest.raises(SystemExit, match="authentication failed"):
+        shell._report_close(_closed(4401))
+
+
+def test_report_close_carries_reason() -> None:
+    from msks.client import shell
+
+    with pytest.raises(SystemExit, match="workspace stopped"):
+        shell._report_close(_closed(4501, "workspace stopped"))
+
+
+def test_report_close_clean_end_is_quiet() -> None:
+    from msks.client import shell
+
+    assert shell._report_close(_closed(1000)) is None
+
+
+def test_stdin_pipe_passthrough() -> None:
+    from msks.client import shell
+
+    pipe = shell._StdinPipe(sys.stdin)
+    assert pipe.close() is None
+    assert pipe.readable() is True

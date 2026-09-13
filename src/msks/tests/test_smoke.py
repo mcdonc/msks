@@ -353,10 +353,12 @@ async def test_appliance_boot_and_workspace() -> None:
             + f"/workspaces/{wid}/console?token={token}"
         )
         async with websockets.connect(ws_url, ssl=ws_ctx, open_timeout=30) as shell_ws:
-            await shell_ws.send(b"echo MSKS-SHELL-SMOKE\n")
+            # The marker's rendering differs from the sent bytes, so
+            # the step proves OUTPUT flowed — not merely the pty echo.
+            await shell_ws.send(b"echo MSKS-$((6*7))-SHELL-SMOKE\n")
             console_got = b""
             console_deadline = loop.time() + 60.0
-            while b"MSKS-SHELL-SMOKE" not in console_got:
+            while b"MSKS-42-SHELL-SMOKE" not in console_got:
                 if loop.time() >= console_deadline:
                     raise AssertionError(
                         f"console never echoed the marker; got: {console_got!r}"
