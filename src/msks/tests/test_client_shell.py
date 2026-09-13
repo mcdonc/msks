@@ -97,6 +97,13 @@ def test_ws_url_schemes() -> None:
     assert ws_url("h:1", "wid", "tok").startswith("wss://h:1/")
 
 
+def test_ws_url_quotes_query_unsafe_parts() -> None:
+    quoted = ws_url("https://h:1", "w id", "a+b&c=d%e")
+    assert quoted.endswith("?token=a%2Bb%26c%3Dd%25e")
+    # The token stays one query parameter, whatever it contains.
+    assert "&" not in quoted.split("?token=", 1)[1]
+
+
 def test_ssl_context_unverified_warns(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -164,6 +171,87 @@ async def test_pump_sends_input_and_detaches() -> None:
         await _cancel_orphans()
     assert ws.sent == [b"l"]
     assert stdout.buffer.getvalue() == b"prompt> "
+
+
+async def test_pump_coalesces_a_paste() -> None:
+    payload = bytes(range(65, 91)) * 400  # 10,400 bytes, no 0x1d inside
+    ws = FakeWs()
+    stdin = asyncio.StreamReader()
+    stdin.feed_data(payload)
+    stdin.feed_eof()
+    try:
+        await asyncio.wait_for(pump(stdin, ws, FakeStdout()), timeout=5)
+    finally:
+        await _cancel_orphans()
+    assert b"".join(ws.sent) == payload
+    # One frame per read chunk (4,096 B), not one per byte.
+    assert len(ws.sent) <= 4
+
+
+async def test_pump_doubled_escape_sends_literal() -> None:
+    ws = FakeWs()
+    try:
+        await asyncio.wait_for(
+            pump(feed_stdin(DETACH + DETACH + b"x"), ws, FakeStdout()), timeout=5
+        )
+    finally:
+        await _cancel_orphans()
+    assert ws.sent == [b"\x1dx"]
+
+
+async def test_pump_doubled_escape_across_window() -> None:
+    ws = FakeWs()
+    stdin = asyncio.StreamReader()
+    stdin.feed_data(DETACH)  # first press: held by the pending read
+
+    async def second_press() -> None:
+        await asyncio.sleep(0.01)  # inside ESCAPE_WINDOW (50 ms)
+        stdin.feed_data(DETACH)
+        stdin.feed_eof()
+
+    asyncio.create_task(second_press())
+    try:
+        await asyncio.wait_for(pump(stdin, ws, FakeStdout()), timeout=5)
+    finally:
+        await _cancel_orphans()
+    assert ws.sent == [b"\x1d"]
+
+
+async def test_pump_escape_then_other_byte_detaches() -> None:
+    ws = FakeWs()
+    try:
+        await asyncio.wait_for(
+            pump(feed_stdin(DETACH + b"z"), ws, FakeStdout()), timeout=5
+        )
+    finally:
+        await _cancel_orphans()
+    assert ws.sent == []
+
+
+async def test_pump_delivers_prefix_before_detach() -> None:
+    # Bytes that coalesce into the escape's chunk (fast typing, a
+    # paste ending in Ctrl-]) still belong to the guest — the detach
+    # sends them before it closes the session. The consumed
+    # escape-follower (here: "z") is not delivered.
+    ws = FakeWs()
+    try:
+        await asyncio.wait_for(
+            pump(feed_stdin(b"hi" + DETACH + b"z"), ws, FakeStdout()), timeout=5
+        )
+    finally:
+        await _cancel_orphans()
+    assert ws.sent == [b"hi"]
+
+
+async def test_pump_lone_escape_detaches_after_window() -> None:
+    ws = FakeWs()
+    stdin = asyncio.StreamReader()
+    stdin.feed_data(DETACH)  # no EOF: the window must expire
+    try:
+        await asyncio.wait_for(pump(stdin, ws, FakeStdout()), timeout=5)
+    finally:
+        await _cancel_orphans()
+    assert ws.sent == []
 
 
 async def test_pump_stdin_eof_detaches() -> None:

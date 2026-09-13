@@ -635,6 +635,38 @@ async def test_appliance_boot_and_workspace() -> None:
         response = await client.get(f"{base}/workspaces/{wid}", headers=headers)
         assert response.json().get("status") == "running", response.text
 
+        # #36: a killed vsock socat recovers without a workspace
+        # restart. The guest's msks-console.service respawns the
+        # listener (Restart=always); prove a fresh console connect
+        # works after the listener is SIGKILLed. The marker renders
+        # differently from the sent bytes, so it proves OUTPUT flowed
+        # — not merely the pty echo of the input.
+        async with websockets.connect(ws_url, ssl=ws_ctx, open_timeout=30) as kill_ws:
+            await kill_ws.send(
+                b"systemctl kill --kill-who=main -s SIGKILL msks-console.service\n"
+            )
+        recovered_at = None
+        for attempt in range(30):
+            await asyncio.sleep(1.0)
+            try:
+                async with websockets.connect(
+                    ws_url, ssl=ws_ctx, open_timeout=10
+                ) as recovery_ws:
+                    await recovery_ws.send(b"echo MSKS-$((23*2))-RECOVERED\n")
+                    recovered = b""
+                    while b"MSKS-46-RECOVERED" not in recovered:
+                        message = await asyncio.wait_for(recovery_ws.recv(), 30.0)
+                        recovered += (
+                            message if isinstance(message, bytes) else message.encode()
+                        )
+                    recovered_at = attempt
+                    break
+            except OSError, websockets.WebSocketException:
+                continue
+        assert recovered_at is not None, (
+            "console never recovered after the guest socat was killed"
+        )
+
         response = await client.post(f"{base}/workspaces/{wid}/stop", headers=headers)
         assert response.status_code == 200, response.text
         response = await client.delete(f"{base}/workspaces/{wid}", headers=headers)

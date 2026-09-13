@@ -5,7 +5,11 @@ same authentication as the REST surface) bridged to the local tty in
 raw mode. A workspace the daemon reports as not running is booted
 first. Ctrl-] detaches: it closes the client session — the workspace
 keeps running, and the shell process inside the guest ends when the
-stream closes.
+stream closes. Doubling the escape (Ctrl-] Ctrl-], the second press
+within a short window) sends one literal 0x1d to the guest instead.
+Input is read in chunks and sent one frame per chunk: interactive
+typing is unchanged, while a large paste becomes a few frames
+instead of one per byte.
 
 Window-size changes are not propagated v1: the guest's pty is fixed
 at its creation size, and applying a resize needs a guest-side
@@ -18,6 +22,7 @@ import ssl
 import sys
 import termios
 import tty
+from urllib.parse import quote_plus
 
 import websockets
 
@@ -33,8 +38,17 @@ from .rest import (  # noqa: F401
 # env/TLS helpers on the shell module (they moved to rest.py).
 
 # The detach escape (like telnet/ssh -e): Ctrl-], byte 0x1d. Ctrl-C
-# and Ctrl-D belong to the guest.
+# and Ctrl-D belong to the guest. A doubled escape — Ctrl-] Ctrl-],
+# the second press inside ESCAPE_WINDOW — sends one literal 0x1d
+# instead of detaching.
 DETACH = b"\x1d"
+
+#: Input is read up to this many bytes per websocket frame: typing
+#: still lands one byte per frame, a paste lands a bounded few.
+READ_CHUNK = 4096
+
+#: How long a lone escape waits for its doubling before detaching.
+ESCAPE_WINDOW = 0.05
 
 
 def ws_url(base_url: str, workspace_id: str, token: str) -> str:
@@ -43,32 +57,83 @@ def ws_url(base_url: str, workspace_id: str, token: str) -> str:
         scheme = "wss" if scheme == "https" else "ws"
     else:
         scheme, rest = "wss", base_url
-    return f"{scheme}://{rest}/api/v1/workspaces/{workspace_id}/console?token={token}"
+    # Minted tokens are urlsafe today; quoting keeps the query string
+    # well-formed for any charset a future minting scheme produces.
+    return (
+        f"{scheme}://{rest}/api/v1/workspaces/{quote_plus(workspace_id)}"
+        f"/console?token={quote_plus(token)}"
+    )
 
 
 async def pump(stdin: asyncio.StreamReader, ws, stdout) -> None:
     """Local tty to daemon to guest, until detach or session end."""
-    stdin_task = asyncio.create_task(stdin.read(1))
+    stdin_task = asyncio.create_task(stdin.read(READ_CHUNK))
     ws_task = asyncio.create_task(ws.recv())
     while True:
         done, _ = await asyncio.wait(
             {stdin_task, ws_task}, return_when=asyncio.FIRST_COMPLETED
         )
+        # Output first: a message that completed in the same round as
+        # a detach must still be written, and the stdin branch below
+        # returns from the whole loop on detach.
+        if ws_task in done:
+            ws_task = await _ws_step(ws_task.result(), ws, stdout)
         if stdin_task in done:
             stdin_task = await _stdin_step(stdin_task.result(), stdin, ws)
             if stdin_task is None:
                 return
-        if ws_task in done:
-            ws_task = await _ws_step(ws_task.result(), ws, stdout)
 
 
-async def _stdin_step(byte, stdin, ws):
-    """Send one input byte; the next read task, or None to detach."""
-    if not byte or byte == DETACH:
-        # stdin EOF or the escape: detach either way.
+async def _stdin_step(chunk, stdin, ws):
+    """Send one input chunk; the next read task, or None to detach.
+
+    The escape convention: a Ctrl-] whose next byte — in this chunk or
+    within ESCAPE_WINDOW — is another Ctrl-] sends one literal 0x1d;
+    a lone Ctrl-], or one followed by a different byte, detaches (the
+    following byte is consumed with it). Bytes read before the
+    escape still belong to the guest: they are sent before the
+    detach closes the session.
+    """
+    if not chunk:
+        # stdin EOF: detach.
         return None
-    await ws.send(byte)
-    return asyncio.create_task(stdin.read(1))
+    out, detach = await scan_chunk(chunk, stdin)
+    if out:
+        await ws.send(out)
+    if detach:
+        return None
+    return asyncio.create_task(stdin.read(READ_CHUNK))
+
+
+async def scan_chunk(chunk, stdin) -> tuple[bytes, bool]:
+    """Escape-scan one input chunk: (bytes to send, detach)."""
+    out = bytearray()
+    i = 0
+    while i < len(chunk):
+        byte = chunk[i : i + 1]
+        if byte != DETACH:
+            out += byte
+            i += 1
+            continue
+        nxt = chunk[i + 1 : i + 2]
+        if not nxt:
+            # The escape is the chunk's last byte: its doubling may
+            # still arrive within the window.
+            nxt = await doubling_byte(stdin)
+        if nxt != DETACH:
+            # EOF, window expiry, or escape-then-other-byte: detach.
+            return bytes(out), True
+        out += DETACH  # doubled: one literal escape to the guest
+        i += 2
+    return bytes(out), False
+
+
+async def doubling_byte(stdin) -> bytes | None:
+    """The byte after a chunk-final escape; None when the window expired."""
+    try:
+        return await asyncio.wait_for(stdin.read(1), ESCAPE_WINDOW)
+    except TimeoutError:
+        return None
 
 
 async def _ws_step(message, ws, stdout):
