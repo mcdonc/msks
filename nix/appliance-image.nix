@@ -43,6 +43,14 @@ let
   # share, and the manifest reference keeps it realized on the host.
   msks = pkgs.python314.pkgs.callPackage ./msks-pkg.nix { };
 
+  # The default workspace image (#40): the containerDisk archive from
+  # the guest build, GC-rooted by this manifest and imported into the
+  # appliance's catalog on first boot through the cmdline bridge
+  # (msksd.default_image=...). The appliance is self-contained: a
+  # bare workspace create works with nothing else built.
+  guest = pkgs.callPackage ./guest-assets.nix { };
+  defaultImage = "${guest.imageArchive}";
+
   # The VMM for workspace VMs booted INSIDE the appliance: same
   # cloud-hypervisor the devenv shell pins.
   vmm = pkgs.cloud-hypervisor;
@@ -323,7 +331,11 @@ let
   } ''
     set -eu
     mkdir -p "$out"
-    truncate -s 1G "$out/state.ext4"
+    # Sized for the image catalog (#40): one import holds its
+    # archive (~350M) plus the unpacked boot files (~1.7G); two
+    # images plus the database and workspace overlays fit, a third
+    # needs a bigger disk.
+    truncate -s 6G "$out/state.ext4"
     E2FSPROGS_FAKE_TIME="$fakeEpoch" mke2fs -q -F -t ext4 -b 4096 -I 256 \
       -L msks-state \
       -E hash_seed=00000000-0000-0000-0000-000000000003 \
@@ -340,6 +352,7 @@ let
     network = net;
     msksd = "${msks}";
     vmm = "${vmm}";
+    defaultImage = defaultImage;
     modules = "${rootModulesClosure}";
   });
 in

@@ -6,6 +6,12 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Added
+
+- **Workspace image guide (#38).** `docs/images.md` documents the image contract (container-image tar, containerDisk layout, `disk/image.json` schema 2), building an image (the shipped builder and a from-scratch outline), registering via `POST /api/v1/images` (default designation, storage cost, removal rules), and referencing images from workspace create (`name:version`, bare name, `name@hash`, bare hash).
+
+- **Workspace image catalog with containerDisk images (#40).** The canonical image is now a container-image tar (`podman load` compatible) in the containerDisk convention (`workspace-<name>-<version>.tar`: `boot/vmlinuz`, `boot/initrd.img`, `disk/rootfs.ext4`, `disk/image.json` schema 2) — importable with stock tools and consumable by the future k8s backend. `GET/POST /api/v1/images` list and import (per-hash boot-file cache; workspace launches never unpack); workspace create accepts `"image": "name:version"` (or bare name, or hash) and falls back to the designated default, so a bare create works on a fresh appliance — `MSKSD_DEFAULT_IMAGE` (set by the appliance's cmdline bridge) imports and designates at first boot. Explicit `kernel`/`rootfs` fields still win.
+
 ### Changed
 
 - **The workspace guest is Debian 13 trixie (#30).** The rootfs comes from Debian's official nocloud cloud image (pinned by dated URL + sha512): systemd as PID 1, apt (present but inert while the root is read-only), and Debian's own kernel direct-booted. `msks:build-guest`, the manifest contract, and the smoke path are unchanged; the busybox guest is gone. See the README for build details, timings, and the setuid/ownership notes.

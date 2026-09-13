@@ -1,0 +1,184 @@
+# Workspace images
+
+A workspace image is one file: a **container-image tar** — the layout
+`podman load` and `skopeo` already understand — carrying a kernel, an
+initrd, a rootfs disk, and a manifest that describes all three. This
+chapter covers the image contract, how to build one, how to register
+it with a running daemon, and how workspaces select an image.
+
+msksd boots the kernel directly and attaches the rootfs as a virtio
+disk. Nothing ever runs the image as a container; the container-image
+packaging exists so the file is inspectable and loadable by stock
+tooling (`tar tf`, `podman load`, `skopeo copy`) and can travel
+through container registries unchanged.
+
+## The image contract
+
+The tar follows the containerDisk convention: standard container
+bookkeeping (`manifest.json`, an image config, `repositories`)
+wrapped around a single **uncompressed layer** whose root carries the
+workspace boot files:
+
+```text
+workspace-<name>-<version>.tar
+├── manifest.json                     # container bookkeeping
+├── repositories
+└── <image-id>/
+    ├── VERSION, json                 # container bookkeeping
+    └── layer.tar                     # uncompressed; the containerDisk:
+        ├── boot/vmlinuz              #   bzImage kernel
+        ├── boot/initrd.img           #   initramfs
+        ├── disk/rootfs.ext4          #   raw ext4 root filesystem
+        └── disk/image.json           #   the manifest (below)
+```
+
+`disk/image.json` is what msksd reads; schema 2:
+
+| Field               | Meaning                                                        |
+| ------------------- | -------------------------------------------------------------- |
+| `schema`            | `2`                                                            |
+| `name`              | Catalog name, e.g. `debian`                                    |
+| `version`           | Catalog version, e.g. `13.6`; numeric segments sort correctly   |
+| `cmdline`           | Kernel command line for workspace boots                        |
+| `vsock_shell_port`  | AF_VSOCK port the guest's console service listens on           |
+| `kernel_version`    | e.g. `6.12.107+deb13-amd64` (informational)                     |
+| `kernel_format`     | `bzImage` (informational)                                       |
+
+The manifest is self-describing: importing the archive needs nothing
+beside the archive itself.
+
+### What a guest must provide
+
+The rootfs and kernel together decide whether a workspace actually
+boots. A guest image must:
+
+- **Boot a kernel with direct-kernel boot support.** cloud-hypervisor
+  loads the bzImage and initrd itself and passes `cmdline`; the guest
+  never runs its own bootloader. Stock Debian/Ubuntu kernels work.
+- **Ship a virtio console service.** `msks shell` connects over
+  AF_VSOCK, so the guest needs `vmw_vsock_virtio_transport` (module
+  or built-in) and a service that binds the vsock port and spawns a
+  login shell — the shipped image uses
+  `socat VSOCK-LISTEN:<port>,reuseaddr,fork EXEC:/bin/bash,...`
+  as `msks-console.service`, `Restart=always`.
+- **Tolerate a read-only-root mindset.** The current rootfs boots
+  with its own filesystem read-write but unmodified between boots
+  only by convention; per-workspace overlays arrive with #14.
+
+## Building an image
+
+### The shipped builder
+
+```bash
+devenv tasks run msks:build-guest
+```
+
+builds the default image (`workspace-debian-13.6.tar`) from a
+date-pinned, sha512-verified Debian trixie nocloud qcow2: the build
+converts the qcow2 to raw, extracts the root filesystem, repacks it
+as a deterministic ext4 (`mke2fs -d` under fakeroot), and wraps the
+kernel, initrd, rootfs, and a generated `image.json` into the
+container-image tar with byte-stable tar flags (`--sort=name
+--mtime=@1 --numeric-owner`). Identical rebuilds hash identically,
+so the same image deduplicates across hosts.
+
+The output lands under `.guest/`; `scripts/build-guest.sh` and
+`nix/guest-assets.nix` document every step and are the reference for
+what an image build does.
+
+### Building your own
+
+Any rootfs that satisfies the contract above can become a workspace
+image. The outline, using a distro's own cloud image as the source:
+
+1. Fetch the source image and verify it against its published
+   checksum.
+2. Produce a raw ext4 of the guest root filesystem
+   (`qemu-img convert` + partition extraction, or unpack the
+   cloud image's root archive directly).
+3. Install the console service and enable it; make sure the vsock
+   module is present and `/dev/vsock` is created at boot.
+4. Write `disk/image.json` describing your kernel, cmdline, and
+   vsock port.
+5. Lay out `boot/` and `disk/` as the layer tree and wrap it:
+
+```bash
+tar --sort=name --mtime='@1' --owner=0 --group=0 --numeric-owner \
+    -C layer-root -cf workspace-mine-1.0.layer.tar .
+# then wrap layer.tar in a container-image tar, or simply:
+podman import workspace-mine-1.0.layer.tar workspace-mine:1.0
+podman save -o workspace-mine-1.0.tar workspace-mine:1.0
+```
+
+`podman import`/`save` produce a valid outer layout; msksd accepts
+both compressed and uncompressed layers (uncompressed layers keep
+import and in-place inspection cheaper).
+
+## Registering an image
+
+Import makes the daemon unpack the boot files once into a per-hash
+cache and record the image in the catalog:
+
+```bash
+curl -X POST https://192.168.77.2:8660/api/v1/images \
+  -H "authorization: Bearer $TOKEN" \
+  -H "content-type: application/json" \
+  -d '{"source": "/path/on/the/daemon/workspace-mine-1.0.tar"}'
+```
+
+The `source` path is a path on the **daemon's** filesystem (the
+appliance reaches host files through its virtiofs share). The daemon
+copies it privately and hashes that copy, so a source file changing
+underneath the import cannot desync the recorded hash from the
+imported content, and importing the same content twice is idempotent.
+
+Rules worth knowing:
+
+- The **first image imported becomes the default** — the one a bare
+  workspace create uses — and keeps the designation while more
+  images arrive; re-designating the default is future API work.
+- `MSKSD_DEFAULT_IMAGE` (set by the appliance from its built-in
+  image) imports and designates at first boot; on later boots the
+  daemon only re-checks the hash, not a full re-import.
+- Listing shows every registered image with its hash, name, version,
+  kernel facts, and which one is default:
+
+```bash
+curl -H "authorization: Bearer $TOKEN" \
+  https://192.168.77.2:8660/api/v1/images
+```
+
+- Storage: one image costs roughly twice its rootfs size on the
+  state disk (the retained archive plus the unpacked boot cache).
+  The appliance's state disk is sized for two images.
+
+- An image with workspaces still booting it cannot be removed
+  (`DELETE /api/v1/images/{hash}` answers 409 naming the workspace);
+  once its workspaces are gone, deletion drops the cache and the
+  retained archive.
+
+## Using an image
+
+Workspace create selects an image by reference:
+
+```bash
+# name:version — exact
+curl -X POST .../api/v1/workspaces -d '{"id": "ws1", "image": "debian:13.6"}'
+
+# bare name — resolves to the newest registered version
+{"id": "ws1", "image": "debian"}
+
+# name@hash — pins identity AND content
+{"id": "ws1", "image": "debian@<sha256>"}
+
+# bare hash — content-addressed
+{"id": "ws1", "image": "<sha256>"}
+
+# no image at all — the designated default
+{"id": "ws1"}
+```
+
+Versions order numerically (`13.10` sorts after `13.9`). A malformed
+reference (`debian@not-a-hash`) is a named 400 rather than a
+miss. Explicit `kernel`/`rootfs` fields still win over the image —
+the image is the convenient path, not a mandate.

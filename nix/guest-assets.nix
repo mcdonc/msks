@@ -51,6 +51,11 @@ let
   # manifest, matched by the systemd unit below.
   vsockShellPort = 1023;
 
+  # The workspace image identity (#40): the catalog reference is
+  # <name>:<version>.
+  imageName = "debian";
+  imageVersion = "13.6";
+
   kernelCmdline = "console=ttyS0 root=/dev/vda rootfstype=ext4 ro";
 
   # The msks additions, staged as an overlay tree: the vsock console
@@ -226,10 +231,98 @@ let
       fakeroot -- /bin/sh -e "$packScript"
   '';
 
+  # The canonical image artifact (#40): a container-image tar
+  # (`podman load` compatible) in the containerDisk convention — one
+  # layer carrying boot/ (kernel, initrd) and disk/ (rootfs.ext4,
+  # image.json schema 2). Importable with podman/skopeo/plain tar,
+  # and consumable as a containerDisk by the k8s backend later
+  # (#15).
+  bootTree = pkgs.runCommand "msks-image-boot-tree"
+    {
+      inherit debianRoot rootfs;
+      inherit imageName imageVersion kernelCmdline vsockShellPort;
+    }
+    ''
+      set -eu
+      vmlinuz=$(ls "$debianRoot"/root/boot/vmlinuz-*)
+      initrd=$(ls "$debianRoot"/root/boot/initrd.img-*)
+      mkdir -p "$out"/boot "$out"/disk
+      cp "$vmlinuz" "$out"/boot/vmlinuz
+      cp "$initrd" "$out"/boot/initrd.img
+      cp "${rootfs}/rootfs.ext4" "$out"/disk/rootfs.ext4
+      kernel_version=$(basename "$vmlinuz" | sed 's/^vmlinuz-//')
+      # Guard against version drift: the catalog label must match the
+      # Debian tree this image actually wraps.
+      shipped=$(cat "$debianRoot"/root/etc/debian_version)
+      if [ "$shipped" != "${imageVersion}" ]; then
+        echo "imageVersion ${imageVersion} != /etc/debian_version $shipped" >&2
+        exit 1
+      fi
+      # Self-describing (#40 review): the archive alone builds a boot
+      # spec — no sidecar metadata for foreign imports to miss.
+      cat > "$out"/disk/image.json <<EOF
+      {
+        "schema": 2,
+        "name": "${imageName}",
+        "version": "${imageVersion}",
+        "cmdline": "${kernelCmdline}",
+        "vsock_shell_port": ${toString vsockShellPort},
+        "kernel_version": "$kernel_version",
+        "kernel_format": "bzImage"
+      }
+      EOF
+    '';
+
+  # The image archive: a container-image tar built with plain tar
+  # instead of dockerTools (#40 review). The layout is the one
+  # `podman save` writes (manifest.json +
+  # <id>/{layer.tar,json,VERSION} + repositories; the format
+  # originates with `docker save`, which is the last time docker is
+  # mentioned here). The layer is UNCOMPRESSED (members readable in
+  # place with `tar tf`, no decompression at import) and byte-stable
+  # (--sort=name --mtime=@1 --owner=0 --group=0 --numeric-owner), so
+  # identical rebuilds hash identically and the per-hash cache
+  # dedupes across hosts and CI.
+  imageArchive = pkgs.runCommand "msks-image-archive"
+    {
+      inherit bootTree imageName imageVersion;
+      nativeBuildInputs = [ pkgs.gnutar ];
+      imageId = "msks" + builtins.hashString "sha256" (imageName + ":" + imageVersion);
+    }
+    ''
+      set -eu
+      mkdir work
+      # The layer: the containerDisk tree, uncompressed, sorted,
+      # zeroed timestamps and ownership.
+      tar --sort=name --mtime='@1' --owner=0 --group=0 --numeric-owner \
+        -C "${bootTree}" -cf work/layer.tar .
+      # Container-image bookkeeping.
+      mkdir "work/$imageId"
+      mv work/layer.tar "work/$imageId/layer.tar"
+      printf '1.0' > "work/$imageId/VERSION"
+      # A minimally valid image config: podman requires the rootfs
+      # diff_ids (the uncompressed layer's digest).
+      layer_digest=$(sha256sum "work/$imageId/layer.tar" | cut -d' ' -f1)
+      printf '%s' \
+        '{"architecture":"amd64","os":"linux","config":{},' \
+        '"rootfs":{"type":"layers","diff_ids":["sha256:'"$layer_digest"'"]}}' \
+        > "work/$imageId/json"
+      # Unquoted heredocs: the env-provided name/version/imageId
+      # expand in the shell.
+      cat > work/manifest.json <<EOF
+      [{"Config":"$imageId/json","RepoTags":["workspace-''${imageName}:''${imageVersion}"],"Layers":["$imageId/layer.tar"]}]
+      EOF
+      cat > work/repositories <<EOF
+      {"workspace-''${imageName}":{"''${imageVersion}":"$imageId"}}
+      EOF
+      tar --sort=name --mtime='@1' --owner=0 --group=0 --numeric-owner \
+        -C work -cf "$out" manifest.json repositories "$imageId"
+    '';
+
 in
 pkgs.runCommand "msks-guest"
   {
-    inherit debianRoot rootfs;
+    inherit debianRoot rootfs imageArchive imageName imageVersion;
     passthru = {
       inherit
         kernelCmdline
@@ -248,6 +341,9 @@ pkgs.runCommand "msks-guest"
     cp "$vmlinuz" "$out/vmlinux"
     cp "$initrd" "$out/initrd"
     cp "${rootfs}/rootfs.ext4" "$out/rootfs.ext4"
+    # The canonical artifact: named by name-version, OCI layout inside.
+    cp "${imageArchive}" "$out/workspace-''${imageName}-''${imageVersion}.tar"
+    printf '%s' "workspace-''${imageName}-''${imageVersion}.tar" > "$out"/image-archive-name
     printf '%s' "$version" > "$out"/kernel-version
     # An unquoted heredoc: $version expands in the shell; the
     # cmdline and port were interpolated by nix at eval time.

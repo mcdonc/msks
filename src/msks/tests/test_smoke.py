@@ -18,7 +18,6 @@ covered by the faked-transport unit suites).
 
 import asyncio
 import contextlib
-import json
 import os
 import shutil
 import ssl
@@ -229,33 +228,9 @@ def _devenv_processes(*args: str, timeout: int = 600) -> subprocess.CompletedPro
     )
 
 
-def _guest_asset_store_paths() -> dict:
-    """Store paths of the workspace guest assets (nix-build, cached).
-
-    Inside the appliance /nix/store is the host's, so the store paths
-    this build prints are valid on both sides of the share.
-    """
-    cmd = ["nix-build", "--no-out-link"]
-    pinned = os.environ.get("MSKS_GUEST_NIXPKGS")
-    if pinned:  # the devenv task exports it; plain pytest falls back
-        cmd += ["-I", f"nixpkgs={pinned}"]
-    cmd += [str(REPO_ROOT / "nix" / "guest.nix"), "-A", "guest"]
-    out = subprocess.run(
-        cmd, capture_output=True, text=True, timeout=600, check=True
-    ).stdout.strip()
-    manifest = json.loads((Path(out) / "guest-manifest.json").read_text())
-    return {
-        "kernel": str(Path(out) / "vmlinux"),
-        "initrd": str(Path(out) / "initrd"),
-        "rootfs": str(Path(out) / "rootfs.ext4"),
-        "cmdline": manifest["cmdline"],
-    }
-
-
 @needs_appliance
 async def test_appliance_boot_and_workspace() -> None:
     app_dir = REPO_ROOT / ".appliance"
-    guest = _guest_asset_store_paths()
     base = "https://192.168.77.2:8660/api/v1"
     wid = f"appliance-{uuid.uuid4().hex[:8]}"
 
@@ -319,18 +294,21 @@ async def test_appliance_boot_and_workspace() -> None:
         token = await await_token()
         headers = {"authorization": f"Bearer {token}"}
         await await_api()
+        # A bare create (#40): the appliance imported its built-in
+        # default image at first boot; the catalog resolves the boot
+        # artifacts with nothing else specified.
         response = await client.post(
             f"{base}/workspaces",
-            json={
-                "id": wid,
-                "kernel": guest["kernel"],
-                "initrd": guest["initrd"],
-                "rootfs": guest["rootfs"],
-                "cmdline": guest["cmdline"],
-            },
+            json={"id": wid},
             headers=headers,
         )
         assert response.status_code == 201, response.text
+        row = response.json()
+        assert row["kernel"].endswith("/kernel"), row
+        images = await client.get(f"{base}/images", headers=headers)
+        assert images.status_code == 200
+        defaults = [i for i in images.json() if i["default"]]
+        assert [i["name"] for i in defaults] == ["debian"], images.text
         response = await client.post(f"{base}/workspaces/{wid}/start", headers=headers)
         assert response.status_code in (200, 202), response.text
 

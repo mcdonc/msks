@@ -29,6 +29,12 @@ for name in vmlinux initrd rootfs.ext4 guest-manifest.json; do
   cp -L "$out/$name" "$guest_dir/$name"
   chmod 0644 "$guest_dir/$name"
 done
+# The canonical containerDisk archive (#40); the build emits its
+# exact filename so name/version changes cannot drift.
+tar_name=$(cat "$out/image-archive-name")
+rm -f "$guest_dir"/workspace-*.tar
+cp -L "$out/$tar_name" "$guest_dir/$tar_name"
+chmod 0644 "$guest_dir/$tar_name"
 
 echo "msks: guest assets built into .guest/ (from $out)"
 echo "msks: boot one with: devenv tasks run msks:demo-vm"
