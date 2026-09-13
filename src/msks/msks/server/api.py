@@ -186,10 +186,12 @@ def build_api(app) -> FastAPI:
             return
         try:
             reader, writer = await app.state.microvm.console(workspace_id)
-        except MicrovmError:
-            # A missing or refused vsock socket is the common case
-            # (workspace stopped); 4501 carries it without detail.
-            await socket.close(code=4501)
+        except MicrovmError as exc:
+            # The client is token-authenticated by now: the cause is
+            # not a secret, and the close reason is the only channel
+            # an operator has for dead-VM vs refused vs deadline
+            # (websocket close reasons cap at 123 bytes).
+            await socket.close(code=4501, reason=str(exc)[:120])
             return
         try:
             await bridge_console(socket, reader, writer)

@@ -28,10 +28,6 @@ from .driver import MicrovmDriver
 from .errors import MicrovmError, MicrovmTimeoutError
 from .spec import VmInfo, VmSpec, VmStatus
 
-# The default wait for the guest to bring the vsock device and its
-# shell server up after boot (overridable via VmmSettings, for
-# nested-virtualization hosts whose guests boot slower).
-VSOCK_WAIT_S = 15.0
 # Bound on the OK reply once the handshake bytes are sent.
 VSOCK_REPLY_S = 5.0
 

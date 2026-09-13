@@ -25,6 +25,10 @@ bash "$root/scripts/appliance-setup.sh"
 
 state_disk="${MSKSD_APPLIANCE_STATE:-$app_dir/state.ext4}"
 bootstrap_token="$(cat "$app_dir/bootstrap-token")"
+# Optional msksd.<name>=<value> pairs the operator wants bridged into
+# the daemon's environment (e.g. msksd.vsock_wait_timeout_s=30 on
+# slow nested-virt hosts); each becomes MSKSD_<NAME> in the guest.
+: "''${MSKS_APPLIANCE_CMDLINE_EXTRA:=}"
 
 # --- the store share (virtiofsd, unprivileged) --------------------------
 rm -f "$app_dir/vmm-sock"
@@ -82,7 +86,7 @@ boot_vm() {
   "payload": {
     "kernel": "$app_dir/vmlinux",
     "initramfs": "$app_dir/initrd",
-    "cmdline": "console=ttyS0 root=/dev/vda rootfstype=ext4 ro msksd.bootstrap_token=$bootstrap_token"
+    "cmdline": "console=ttyS0 root=/dev/vda rootfstype=ext4 ro msksd.bootstrap_token=$bootstrap_token $MSKS_APPLIANCE_CMDLINE_EXTRA"
   },
   "disks": [
     {"path": "$app_dir/rootfs.ext4", "readonly": true, "image_type": "Raw"},

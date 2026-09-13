@@ -199,18 +199,28 @@ Transport (#21), in the preferred vsock-first shape:
 - The guest loads `vmw_vsock_virtio_transport`, creates `/dev/vsock`
   (a misc device devtmpfs does not create on its own), mounts devpts
   with a `/dev/ptmx` link, and runs a static socat listener
-  (`VSOCK-LISTEN:1023,reuseaddr,fork EXEC:/bin/ash,pty,ctty,stderr,setsid`)
-  — one busybox ash on a pty per connection. The shell is **root**
+  (`VSOCK-LISTEN:1023,reuseaddr,fork EXEC:/bin/ash,pty,ctty,echo=0,icanon=0,stderr,setsid`)
+  — one busybox ash on a pty per connection. The pty keeps ISIG and
+  ONLCR (no `raw`): Ctrl-C generates SIGINT in the guest and output
+  arrives CRLF-terminated, while `echo=0,icanon=0` leave echo and
+  line editing to the shell. The shell is **root**
   today: the guest userspace is busybox-as-root (#5); a non-root
   shell arrives with a real guest userland.
 - Window-size changes are not applied v1: the guest pty keeps its
   creation size; propagating a resize needs a guest-side helper that
   does not exist yet.
 - `MSKSC_CAFILE` pins the daemon certificate for verification when
-  you have it (a directly-run msksd's CA, or an appliance CA exported
-  from its state disk). Without it the client proceeds with
-  certificate verification off and says so on stderr — the serial
-  log's TOFU fingerprint is the cross-check.
+  you have it (a directly-run msksd's CA, or the appliance CA
+  exported from its state disk:
+  `debugfs -R "dump /msks-ca.pem msks-ca.pem" .appliance/state.ext4`).
+  Without it the client proceeds with certificate verification off
+  and says so on stderr — the serial log's TOFU fingerprint is the
+  cross-check.
+- The appliance bridges every `msksd.<name>=<value>` pair on its
+  kernel cmdline into the daemon's environment as
+  `MSKSD_<NAME>`; the run script appends pairs from
+  `MSKS_APPLIANCE_CMDLINE_EXTRA` (e.g.
+  `msksd.vsock_wait_timeout_s=30` on slow nested-virt hosts).
 
 ### k8s (k3s) smoke path
 

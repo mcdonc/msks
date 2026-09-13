@@ -199,7 +199,7 @@ let
       # userland. The serial console respawn loop below is untouched.
       if [ -e /dev/vsock ]; then
         /bin/socat VSOCK-LISTEN:${toString vsockShellPort},reuseaddr,fork \
-          EXEC:/bin/ash,pty,ctty,raw,echo=0,stderr,setsid </dev/null >/dev/console 2>&1 &
+          EXEC:/bin/ash,pty,ctty,echo=0,icanon=0,stderr,setsid </dev/null >/dev/console 2>&1 &
         echo "msks guest: vsock shell listening on port ${toString vsockShellPort}"
       else
         echo "msks guest: no /dev/vsock; shell server not started"

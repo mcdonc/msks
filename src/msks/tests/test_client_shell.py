@@ -41,6 +41,12 @@ class FakeWs:
     async def send(self, data: bytes) -> None:
         self.sent.append(data)
 
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
 
 class FakeStdout:
     def __init__(self) -> None:
@@ -219,13 +225,20 @@ class ConnectStub:
 
     def __init__(self, ws) -> None:
         self._ws = ws
+        self.recorded_ssl = "unset"
 
     def __call__(self, url, ssl=None, max_size=None):
+        self.recorded_ssl = ssl
         outer = self
 
         class _Ctx:
             async def __aenter__(self):
                 return outer._ws
+
+            def __await__(self):
+                # websockets.connect() returns an awaitable context
+                # manager; the stub must be both too.
+                return self.__aenter__().__await__()
 
             async def __aexit__(self, *exc):
                 return False
@@ -289,12 +302,18 @@ async def test_run_shell_survives_server_close(monkeypatch: pytest.MonkeyPatch) 
             if self._first:
                 self._first = False
                 await asyncio.sleep(0)
-                close = shell.websockets.frames.Close(1000, "bye")
+                close = shell.websockets.Close(1000, "bye")
                 raise shell.websockets.ConnectionClosed(None, close)
             raise AssertionError("unused")
 
         async def send(self, data):
             raise AssertionError("unused")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
 
     pipe = PipeStdin()
     monkeypatch.setattr(sys, "stdin", pipe)
@@ -394,3 +413,32 @@ def test_stdin_pipe_passthrough() -> None:
     pipe = shell._StdinPipe(sys.stdin)
     assert pipe.close() is None
     assert pipe.readable() is True
+
+
+async def test_run_shell_unreachable_daemon_one_liner() -> None:
+    from msks.client import shell
+
+    class RefusingConnect:
+        def __call__(self, address, ssl=None, max_size=None):
+            return self
+
+        def __await__(self):
+            raise OSError(111, "Connection refused")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(shell.websockets, "connect", RefusingConnect())
+        with pytest.raises(SystemExit, match="cannot reach"):
+            await shell.run_shell("wid", "https://nope:1", "t", None)
+
+
+async def test_connect_plain_ws_takes_no_ssl() -> None:
+    from msks.client import shell
+
+    stub = ConnectStub(FakeWs())
+    shell._connect("ws://plain/", None)
+    # The ssl argument is only recorded through the stub's __call__.
+    assert stub.recorded_ssl == "unset"
+    stub("ws://plain/", ssl=None)
+    assert stub.recorded_ssl is None
+    stub("wss://secure/", ssl="ctx")
+    assert stub.recorded_ssl == "ctx"

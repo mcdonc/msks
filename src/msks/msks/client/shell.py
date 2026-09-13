@@ -106,15 +106,29 @@ async def _ws_step(message, ws, stdout):
     return asyncio.create_task(ws.recv())
 
 
-async def run_shell(workspace_id: str, url: str, token: str, ssl_ctx) -> int:
-    """One interactive session; 0 on clean detach or session end."""
-    address = ws_url(url, workspace_id, token)
-    async with websockets.connect(
-        # A plain-ws URL (http daemon) takes no ssl argument.
+def _connect(address: str, ssl_ctx):
+    """The websocket connection, in hand for a clean close on failure.
+
+    A plain-ws URL (http daemon) takes no ssl argument.
+    """
+    return websockets.connect(
         address,
         ssl=None if address.startswith("ws://") else ssl_ctx,
         max_size=2**22,
-    ) as ws:
+    )
+
+
+async def run_shell(workspace_id: str, url: str, token: str, ssl_ctx) -> int:
+    """One interactive session; 0 on clean detach or session end."""
+    address = ws_url(url, workspace_id, token)
+    connection = _connect(address, ssl_ctx)
+    try:
+        ws = await connection
+    except (OSError, ssl.SSLError, websockets.InvalidStatus) as exc:
+        # Daemon down, TLS mismatch, or a rejected upgrade: one line,
+        # not a traceback.
+        raise SystemExit(f"msks: cannot reach {url}: {exc}") from exc
+    async with ws:
         loop = asyncio.get_running_loop()
         stdin = asyncio.StreamReader()
         reader_protocol = asyncio.StreamReaderProtocol(stdin)

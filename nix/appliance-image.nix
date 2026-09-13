@@ -208,17 +208,28 @@ let
       # React to the host's ch-remote shutdown (ACPI power button).
       acpid
 
-      # The bootstrap token rides the kernel cmdline (the up-task
-      # appends msksd.bootstrap_token=...): cmdline delivery survives
+      # Every msksd.<name>=<value> pair on the kernel cmdline
+      # becomes an MSKSD_<NAME> environment variable (upper-cased;
+      # dots map to underscores). Cmdline delivery survives
       # state-disk recreation and unclean shutdowns, unlike files
-      # seeded onto the journaled ext4 from outside.
-      # Busybox sed is BRE: the group is \(...\), not (...).
-      bootstrap_token="$(sed -n 's/.*[[:space:]]msksd.bootstrap_token=\([^ ]*\).*/\1/p' /proc/cmdline)"
-      # ''${...} escapes nix interpolation: this is shell length syntax.
-      echo "msks appliance: bootstrap token length: ''${#bootstrap_token}"
-      if [ -n "$bootstrap_token" ]; then
-        export MSKSD_BOOTSTRAP_TOKEN="$bootstrap_token"
-      fi
+      # seeded onto the journaled ext4 from outside — and the host
+      # controls daemon settings (the bootstrap token; the console
+      # bring-up wait on slow nested-virt hosts) without an image
+      # rebuild. Variable NAMES are echoed to the serial log, never
+      # values.
+      cmdline_names=""
+      for pair in $(cat /proc/cmdline); do
+        case "$pair" in
+          msksd.*=*)
+            key="''${pair#msksd.}"
+            key="''${key%%=*}"
+            var="$(printf '%s' "$key" | tr 'a-z.' 'A-Z_')"
+            export MSKSD_"$var"="''${pair#*=}"
+            cmdline_names="$cmdline_names $var"
+            ;;
+        esac
+      done
+      echo "msks appliance: cmdline env:$cmdline_names"
 
       echo
       echo "msks appliance: kernel $(uname -r) up; execing msksd"
