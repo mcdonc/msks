@@ -190,7 +190,7 @@ let
       fi
 
       # The NIC: static plan recorded in the manifest (the host bridge
-      # mirrors it; see scripts/appliance-up.sh).
+      # mirrors it; see scripts/appliance-setup.sh).
       /bin/busybox modprobe virtio_net
       ip link set lo up
       ip link set eth0 up

@@ -93,10 +93,12 @@
       description = "Boot one microvm from the built guest assets (serial console on this terminal)";
       exec = ''exec bash "$DEVENV_ROOT/scripts/demo-vm.sh"'';
     };
-    # The appliance host supervisor (#10): distro-agnostic by design —
-    # everything these invoke comes from this devenv shell, never from
-    # the host OS. The one privileged step (bridge/tap create) is a
-    # documented one-time sudo inside appliance-up.sh.
+    # The appliance host supervisor (#25): the long-running pieces are
+    # devenv PROCESSES, owned by the environment's own process manager
+    # (restart on crash, logs, clean teardown) — see `processes` below.
+    # The tasks are thin conveniences over the process manager. The one
+    # privileged step (bridge/tap create) is a documented one-time sudo
+    # inside appliance-setup.sh.
     "msks:appliance-build" = {
       description = "Build the msksd appliance image into .appliance/";
       exec = ''
@@ -104,12 +106,29 @@
       '';
     };
     "msks:appliance-up" = {
-      description = "Boot the msksd appliance (bridge+tap, virtiofsd, cloud-hypervisor)";
-      exec = ''exec bash "$DEVENV_ROOT/scripts/appliance-up.sh"'';
+      description = "Start the appliance processes (virtiofsd + the VM), detached";
+      exec = ''exec devenv processes up -d'';
     };
     "msks:appliance-down" = {
-      description = "Stop the running msksd appliance cleanly via the CH API";
-      exec = ''exec bash "$DEVENV_ROOT/scripts/appliance-down.sh"'';
+      description = "Stop the appliance processes (graceful ACPI via the run script's TERM trap)";
+      exec = ''exec devenv processes down'';
+    };
+  };
+
+  # The appliance as ONE supervised process (#25): `devenv processes
+  # up` (or the msks:appliance-up task) starts it; the process manager
+  # owns restart and teardown. The store-share daemon is a child of
+  # the run script, not its own process: virtiofsd is vhost-user 1:1
+  # with the VM — it exits when the client disconnects — so the pair
+  # shares one lifecycle, and a crash-restart brings both back.
+  processes = {
+    appliance = {
+      exec = ''bash "$DEVENV_ROOT/scripts/appliance-run.sh"'';
+      # The run script's stop choreography (ACPI, then a bounded
+      # SIGTERM wait) needs up to ~10s; the supervisor's default
+      # SIGKILL grace is 5 — a busy guest would be hard-killed
+      # mid-poweroff otherwise.
+      shutdown.grace = 15;
     };
   };
 
