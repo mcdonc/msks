@@ -86,6 +86,7 @@ def test_vm_config_matches_v52_schema(tmp_path: Path) -> None:
         "mode": "File",
         "file": str(tmp_path / "serial.log"),
     }
+    assert config["console"] == {"mode": "Off"}
     assert "initramfs" not in config["payload"]
 
 

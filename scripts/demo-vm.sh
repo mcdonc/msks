@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Boot one demo microvm from the built guest assets (#5).
 #
-# The guest's serial console is attached to this terminal — type at
-# the busybox shell, run 'poweroff -f' inside the guest to stop it,
-# or press Ctrl-C to stop it from the host. While it runs, ch-remote
+# The guest's serial console is attached to this terminal (Debian
+# with root autologin). Ctrl-C here stops the VM from the host; While it runs, ch-remote
 # in another terminal controls the VM through the API socket printed
 # below.
 set -euo pipefail

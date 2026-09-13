@@ -50,7 +50,9 @@ needs_k8s = pytest.mark.skipif(not KUBECONFIG, reason="set MSKSD_TEST_KUBECONFIG
 
 #: The guest init prints this on the serial console once userspace
 #: (and the acpid that answers host-side shutdowns) is up.
-GUEST_UP_MARKER = "msks guest: kernel"
+# Debian's systemd boot (#30): the serial autologin getty is the last
+# thing to come up, so it is the "guest is usable" marker.
+GUEST_UP_MARKER = "msks-guest login:"
 
 
 def serial_tail(serial_log: Path, limit: int = 2000) -> str:
@@ -104,7 +106,9 @@ async def await_pod_running(
 @needs_local
 async def test_local_vm_boot_and_shutdown() -> None:
     # A shallow base: deep pytest tmp dirs can push the API socket path
-    # past the AF_UNIX 108-byte limit under xdist workers.
+    # past the AF_UNIX 108-byte limit under xdist workers. Shutdown is
+    # the API's vm.shutdown (non-graceful in CH v52: the guest is not
+    # notified) — there is no guest-side power-button handler.
     state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
     settings = Settings(vmm=VmmSettings(state_dir=state_dir))
     app = build_app(settings)
@@ -357,13 +361,13 @@ async def test_appliance_boot_and_workspace() -> None:
             # the step proves OUTPUT flowed — not merely the pty echo.
             await shell_ws.send(b"echo MSKS-$((6*7))-SHELL-SMOKE\n")
             console_got = b""
-            console_deadline = loop.time() + 60.0
+            console_deadline = loop.time() + 180.0
             while b"MSKS-42-SHELL-SMOKE" not in console_got:
                 if loop.time() >= console_deadline:
                     raise AssertionError(
                         f"console never echoed the marker; got: {console_got!r}"
                     )
-                message = await asyncio.wait_for(shell_ws.recv(), 10.0)
+                message = await asyncio.wait_for(shell_ws.recv(), 30.0)
                 console_got += (
                     message if isinstance(message, bytes) else message.encode()
                 )

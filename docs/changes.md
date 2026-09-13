@@ -6,6 +6,10 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Changed
+
+- **The workspace guest is Debian 13 trixie (#30).** The rootfs comes from Debian's official nocloud cloud image (pinned by dated URL + sha512): systemd as PID 1, apt (present but inert while the root is read-only), and Debian's own kernel direct-booted. `msks:build-guest`, the manifest contract, and the smoke path are unchanged; the busybox guest is gone. See the README for build details, timings, and the setuid/ownership notes.
+
 ### Fixed
 
 - **`devenv shell` no longer runs the pre-commit suite at shell entry (#32).** A devenv 2.3.x scheduler regression pulled `devenv:git-hooks:run` into the shell's task graph, so a failing hook (e.g. the xenon complexity gate) aborted shell entry before it opened — with no way to use the shell to fix the failure. The suite still runs on `git commit` and as the `msks:xenon` task.
