@@ -273,14 +273,16 @@ let
       EOF
     '';
 
-  # The docker-save archive, built with plain tar instead of
-  # dockerTools (#40 review): an UNCOMPRESSED layer (members readable
-  # in place with `tar tf`, no decompression at import) and
-  # byte-stable flags (--sort=name --mtime=@1 --owner=0 --group=0
-  # --numeric-owner), so identical rebuilds hash identically and the
-  # per-hash cache dedupes across hosts and CI. The layout is the
-  # docker-archive one (manifest.json + <id>/{layer.tar,json,VERSION}
-  # + repositories), so podman/skopeo load it unchanged.
+  # The image archive — a docker-archive layout, the one
+  # `docker save`/`podman save` produce (manifest.json +
+  # <id>/{layer.tar,json,VERSION} + repositories) — built with
+  # plain tar instead of dockerTools (#40 review): an UNCOMPRESSED
+  # layer (members readable in place with `tar tf`, no
+  # decompression at import) and byte-stable flags (--sort=name
+  # --mtime=@1 --owner=0 --group=0 --numeric-owner), so identical
+  # rebuilds hash identically and the per-hash cache dedupes across
+  # hosts and CI. The layout stays loadable by stock tooling
+  # (podman/skopeo verified).
   imageArchive = pkgs.runCommand "msks-image-archive"
     {
       inherit bootTree imageName imageVersion;

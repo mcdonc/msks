@@ -34,7 +34,7 @@ WORKSPACE_ID_PATTERN = r"^[a-z0-9][a-z0-9-]*$"
 
 
 class ImageImport(BaseModel):
-    """An import request: a host-side path to a docker-save archive.
+    """An import request: a host-side path to a docker archive.
 
     The daemon's filesystem must reach it (a store path via the
     appliance's share, or a state-disk path) — the API deliberately
@@ -72,6 +72,7 @@ def bootstrap_default_image(app) -> None:
     if not source:
         return
     state_dir = app.state.settings.vmm.state_dir
+    imagestore.sweep_crash_leftovers(state_dir)
     try:
         warm = imagestore.warm_import(Path(source), state_dir)
         if warm is not None:

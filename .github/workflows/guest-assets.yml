@@ -72,3 +72,13 @@ jobs:
         run: >-
           devenv --quiet -O dotenv.enable:bool false shell --
           devenv tasks run msks:build-guest
+
+      # The real-artifact pinning test: the ''-escape RepoTag bug
+      # shipped precisely because this test skipped everywhere CI
+      # ran. The import costs ~8s against the built archive.
+      - name: Import the built image (pinning test)
+        run: >-
+          devenv --quiet -O dotenv.enable:bool false shell --
+          python -m pytest src/msks/tests/test_imagestore.py
+          -q -p no:cacheprovider --no-cov
+          -k real_built_image

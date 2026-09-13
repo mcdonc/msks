@@ -14,6 +14,7 @@ from msks.imagestore import (
     list_images,
     resolve,
     set_default,
+    sweep_crash_leftovers,
 )
 
 
@@ -827,3 +828,109 @@ async def test_concurrent_import_swap_paths(tmp_path, monkeypatch) -> None:
     first, second = await asyncio.gather(run(), run())
     assert first.hash == second.hash
     assert store.list_images(tmp_path)[0].ref == "ss:1"
+
+
+def test_malformed_manifest_shapes_are_400s(tmp_path: Path) -> None:
+    """Round-2 finding 1: non-dict manifest entries, non-dict image.json."""
+    # manifest.json whose first entry is a list, not an object.
+    archive = tmp_path / "bad-manifest.tar"
+    with tarfile.open(archive, "w") as outer:
+        info = tarfile.TarInfo("manifest.json")
+        blob = b'[["layer.tar"]]'
+        info.size = len(blob)
+        outer.addfile(info, BytesIO(blob))
+    with pytest.raises(ImageError, match="manifest carries no layers"):
+        import_archive(archive, tmp_path)
+
+    # image.json that is valid JSON but not an object.
+    layer = BytesIO()
+    with tarfile.open(fileobj=layer, mode="w") as disk:
+        image = b"[1, 2]"
+        info = tarfile.TarInfo("./disk/image.json")
+        info.size = len(image)
+        disk.addfile(info, BytesIO(image))
+        for member, content in {
+            "boot/vmlinuz": b"k",
+            "boot/initrd.img": b"i",
+            "disk/rootfs.ext4": b"r",
+        }.items():
+            info = tarfile.TarInfo(f"./{member}")
+            info.size = len(content)
+            disk.addfile(info, BytesIO(content))
+    archive = tmp_path / "bad-image-json.tar"
+    _wrap_layer(archive, layer)
+    with pytest.raises(ImageError, match="not a JSON object"):
+        import_archive(archive, tmp_path)
+
+
+def test_corrupt_cache_manifest_degrades(tmp_path: Path) -> None:
+    """Round-2 finding 2: a corrupt entry is invisible, not a crash."""
+    archive = tmp_path / "c.tar"
+    build_containerdisk(archive, name="cc", version="1")
+    record = import_archive(archive, tmp_path)
+    cache = tmp_path / "images" / record.hash
+    (cache / "image.json").write_text("[1, 2]")  # valid JSON, wrong shape
+    assert list_images(tmp_path) == []
+    # warm_import misses and re-import repairs.
+    repaired = import_archive(archive, tmp_path)
+    assert repaired.hash == record.hash
+    assert list_images(tmp_path)[0].ref == "cc:1"
+
+
+def test_version_key_never_compares_int_to_str(tmp_path: Path) -> None:
+    """Round-2 finding 3: 1.0 vs 1.rc must order, not TypeError."""
+    first = tmp_path / "v1.tar"
+    second = tmp_path / "v2.tar"
+    build_containerdisk(first, name="vv", version="1.0")
+    build_containerdisk(second, name="vv", version="1.rc")
+    import_archive(first, tmp_path)
+    import_archive(second, tmp_path)
+    newest = resolve("vv", tmp_path)
+    assert newest is not None
+    # "rc" outranks "0" lexically: (1,"rc") > (0,0).
+    assert newest.version == "1.rc"
+
+
+def test_sweep_crash_leftovers(tmp_path: Path) -> None:
+    """Startup sweep drops interrupted-import debris."""
+    root = tmp_path / "images"
+    root.mkdir(parents=True)
+    (root / ".src-1234-abcd.tar").write_bytes(b"partial")
+    (root / ".abc.1234.tmp").mkdir()
+    (root / "dd.5678.old").mkdir()
+    keep = root / ("a" * 64)
+    keep.mkdir()
+    (keep / "image.json").write_text("{}")
+    sweep_crash_leftovers(tmp_path)
+    assert list(root.iterdir()) == [keep]
+
+
+def test_foreign_archive_has_no_fabricated_kernel_format(tmp_path: Path) -> None:
+    """kernel_format is a declared fact, not a default."""
+    archive = tmp_path / "foreign.tar"
+    layer = BytesIO()
+    with tarfile.open(fileobj=layer, mode="w") as disk:
+        image = json.dumps(
+            {
+                "schema": 2,
+                "name": "foreign",
+                "version": "9",
+                "cmdline": "c",
+                "vsock_shell_port": 1023,
+            }
+        ).encode()
+        info = tarfile.TarInfo("./disk/image.json")
+        info.size = len(image)
+        disk.addfile(info, BytesIO(image))
+        for member, content in {
+            "boot/vmlinuz": b"k",
+            "boot/initrd.img": b"i",
+            "disk/rootfs.ext4": b"r",
+        }.items():
+            info = tarfile.TarInfo(f"./{member}")
+            info.size = len(content)
+            disk.addfile(info, BytesIO(content))
+    _wrap_layer(archive, layer)
+    record = import_archive(archive, tmp_path)
+    assert record.kernel_version == ""
+    assert record.kernel_format == ""

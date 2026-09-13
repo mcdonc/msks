@@ -1,6 +1,7 @@
 """The workspace image catalog (#40).
 
-Images are docker-save archives in the containerDisk convention: one layer
+Images are docker archives (the `docker save` layout) in the
+containerDisk convention: one layer
 whose root carries ``boot/vmlinuz``, ``boot/initrd.img``,
 ``disk/rootfs.ext4``, and ``disk/image.json`` (schema 2). The store
 lives under ``<state_dir>/images``:
@@ -85,11 +86,14 @@ def first_layer_name(archive: tarfile.TarFile) -> str:
 
 
 def layer_of(layers) -> str:
-    if isinstance(layers, list) and layers:
-        names = layers[0].get("Layers")
-        if names:
-            return names[0]
-    raise ImageError("OCI manifest carries no layers")
+    if (
+        isinstance(layers, list)
+        and layers
+        and isinstance(layers[0], dict)
+        and layers[0].get("Layers")
+    ):
+        return layers[0]["Layers"][0]
+    raise ImageError("docker manifest carries no layers")
 
 
 def read_archive(path: Path) -> tuple[dict, tarfile.TarFile]:
@@ -116,6 +120,8 @@ def validate_manifest(layer: tarfile.TarFile) -> dict:
         raw = json.load(member)
     except json.JSONDecodeError as exc:
         raise ImageError(f"image.json is not JSON: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise ImageError("image.json is not a JSON object")
     if raw.get("schema") != 2:
         raise ImageError(f"image.json schema {raw.get('schema')!r}, expected 2")
     require_fields(raw)
@@ -236,7 +242,7 @@ def record_from(cache: Path, digest: str, manifest: dict) -> ImageRecord:
         cmdline=manifest["cmdline"],
         vsock_shell_port=int(manifest["vsock_shell_port"]),
         kernel_version=str(manifest.get("kernel_version", "")),
-        kernel_format=str(manifest.get("kernel_format", "bzImage")),
+        kernel_format=str(manifest.get("kernel_format", "")),
         kernel=cache / "kernel",
         initrd=cache / "initrd",
         rootfs=cache / "rootfs.ext4",
@@ -249,12 +255,39 @@ def load_record(cache: Path) -> ImageRecord | None:
         return None
     try:
         manifest = json.loads(manifest_path.read_text())
-    except json.JSONDecodeError:
+        record = record_from(cache, cache.name, manifest)
+    except json.JSONDecodeError, TypeError, KeyError, ValueError:
+        # A corrupt entry is an invisible image, not a daemon crash;
+        # re-importing the archive repairs it.
         return None
     for member in ("kernel", "initrd", "rootfs.ext4"):
         if not (cache / member).is_file():
             return None
-    return record_from(cache, cache.name, manifest)
+    return record
+
+
+def sweep_crash_leftovers(state_dir: Path) -> None:
+    """Drop staging/temp files an interrupted import left behind.
+
+    Runs at daemon startup, before any import can be in flight, so
+    no live staging is ever removed.
+    """
+    root = images_dir(state_dir)
+    if not root.is_dir():
+        return
+
+    def is_debris(name: str) -> bool:
+        # Staging copies (.src-<pid>-<uuid>.tar), swap temporaries
+        # (.*.tmp), and rename-aside caches (.*.old).
+        return name.startswith(".") or name.endswith((".tmp", ".old"))
+
+    for entry in root.iterdir():
+        if not is_debris(entry.name):
+            continue
+        if entry.is_dir():
+            shutil.rmtree(entry, ignore_errors=True)
+        else:
+            entry.unlink(missing_ok=True)
 
 
 def cache_entries(root: Path) -> list[Path]:
@@ -296,7 +329,8 @@ def version_key(version: str) -> tuple:
     """Numeric version ordering: 13.10 sorts after 13.9."""
     parts = []
     for piece in version.replace("-", ".").split("."):
-        parts.append(int(piece) if piece.isdigit() else piece)
+        # Tagged so segments never compare int-to-str (13.9 vs 13.rc).
+        parts.append((0, int(piece)) if piece.isdigit() else (1, piece))
     return tuple(parts)
 
 
