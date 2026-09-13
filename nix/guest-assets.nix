@@ -51,6 +51,11 @@ let
   # manifest, matched by the systemd unit below.
   vsockShellPort = 1023;
 
+  # The workspace image identity (#40): the catalog reference is
+  # <name>:<version>.
+  imageName = "debian";
+  imageVersion = "13.6";
+
   kernelCmdline = "console=ttyS0 root=/dev/vda rootfstype=ext4 ro";
 
   # The msks additions, staged as an overlay tree: the vsock console
@@ -226,10 +231,52 @@ let
       fakeroot -- /bin/sh -e "$packScript"
   '';
 
+  # The canonical image artifact (#40): an OCI archive in the
+  # containerDisk convention — one layer carrying boot/ (kernel,
+  # initrd) and disk/ (rootfs.ext4, image.json schema 2). Built by
+  # nix-native dockerTools (no new build dependencies); importable
+  # with skopeo/podman/plain tar, and consumable as a containerDisk
+  # by the k8s backend later (#15).
+  bootTree = pkgs.runCommand "msks-image-boot-tree"
+    {
+      inherit debianRoot rootfs;
+      inherit imageName imageVersion kernelCmdline vsockShellPort;
+    }
+    ''
+      set -eu
+      vmlinuz=$(ls "$debianRoot"/root/boot/vmlinuz-*)
+      initrd=$(ls "$debianRoot"/root/boot/initrd.img-*)
+      mkdir -p "$out"/boot "$out"/disk
+      cp "$vmlinuz" "$out"/boot/vmlinuz
+      cp "$initrd" "$out"/boot/initrd.img
+      cp "${rootfs}/rootfs.ext4" "$out"/disk/rootfs.ext4
+      cat > "$out"/disk/image.json <<EOF
+      {
+        "schema": 2,
+        "name": "${imageName}",
+        "version": "${imageVersion}",
+        "cmdline": "${kernelCmdline}",
+        "vsock_shell_port": ${toString vsockShellPort}
+      }
+      EOF
+    '';
+
+  imageArchive = pkgs.dockerTools.buildImage {
+    name = "workspace-''${imageName}";
+    tag = imageVersion;
+    # buildImage requires a command; containerDisks never run it.
+    config.Cmd = [ "/bin/true" ];
+    # bootTree already carries the exact containerDisk layout at its
+    # root (a buildEnv here would nest members under /nix/store and
+    # leave symlinks a plain tar reader cannot follow).
+    copyToRoot = bootTree;
+    created = "1970-01-01T00:00:01Z";
+  };
+
 in
 pkgs.runCommand "msks-guest"
   {
-    inherit debianRoot rootfs;
+    inherit debianRoot rootfs imageArchive;
     passthru = {
       inherit
         kernelCmdline
@@ -248,6 +295,8 @@ pkgs.runCommand "msks-guest"
     cp "$vmlinuz" "$out/vmlinux"
     cp "$initrd" "$out/initrd"
     cp "${rootfs}/rootfs.ext4" "$out/rootfs.ext4"
+    # The canonical artifact: named by name-version, OCI layout inside.
+    cp "${imageArchive}" "$out/workspace-${imageName}-${imageVersion}.tar"
     printf '%s' "$version" > "$out"/kernel-version
     # An unquoted heredoc: $version expands in the shell; the
     # cmdline and port were interpolated by nix at eval time.

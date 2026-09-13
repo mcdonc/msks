@@ -17,7 +17,8 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
-from .. import __version__
+from .. import __version__, imagestore
+from ..imagestore import ImageError
 from ..microvm.errors import MicrovmError
 from ..microvm.spec import VmSpec
 from .auth import require_token
@@ -32,17 +33,122 @@ class TokenCreate(BaseModel):
 WORKSPACE_ID_PATTERN = r"^[a-z0-9][a-z0-9-]*$"
 
 
+class ImageImport(BaseModel):
+    """An import request: a host-side path to an OCI archive.
+
+    The daemon's filesystem must reach it (a store path via the
+    appliance's share, or a state-disk path) — the API deliberately
+    does not accept uploads yet.
+    """
+
+    source: str
+
+
 class WorkspaceCreate(BaseModel):
     # The id becomes a path component under state_dir/vms/ and a pod
     # name on k8s — the charset keeps both safe (no traversal, no
     # invalid names) and stays DNS-label-compatible.
     id: str = Field(min_length=1, max_length=64, pattern=WORKSPACE_ID_PATTERN)
-    kernel: str
+    # Either a catalog reference (image: "name:version", "name", or
+    # hash — the default image when omitted) or explicit boot
+    # artifacts (kernel/rootfs paths; the pre-catalog shape the
+    # tests and dev flows still use).
+    image: str | None = None
+    kernel: str | None = None
     initrd: str | None = None
-    rootfs: str
-    cmdline: str = "console=hvc0 root=/dev/vda rw"
+    rootfs: str | None = None
+    cmdline: str | None = None
     cpus: int = Field(default=2, ge=1, le=64)
     mem_mib: int = Field(default=1024, ge=64, le=1 << 15)
+
+
+def _bootstrap_default_image(app) -> None:
+    """Import MSKSD_DEFAULT_IMAGE once, as the catalog default.
+
+    Failure is loud but non-fatal: a bad pointer must not take the
+    daemon down with it (the operator can still import by API).
+    """
+    source = app.state.settings.vmm.default_image
+    if not source:
+        return
+    state_dir = app.state.settings.vmm.state_dir
+    try:
+        record = imagestore.import_archive(Path(source), state_dir)
+    except (ImageError, OSError) as exc:
+        # Genuinely non-fatal: a bad pointer or a full state disk must
+        # not take the daemon down with it (import remains available
+        # by API once the operator clears it).
+        print(f"msksd: default image import failed: {exc}")
+        return
+    # Empty-before-import is the first-boot case; the sole-entry
+    # fallback would resolve anyway, but the pointer makes the
+    # designation explicit and survives later imports.
+    if len(imagestore.list_images(state_dir)) == 1:
+        imagestore.set_default(record.hash, state_dir)
+        print(f"msksd: default image {record.ref} ({record.hash[:12]}) imported")
+
+
+def _image_record(app, body: WorkspaceCreate):
+    """The requested catalog record, or the default when omitted."""
+    state_dir = app.state.settings.vmm.state_dir
+    if body.image is not None:
+        record = imagestore.resolve(body.image, state_dir)
+        if record is None:
+            raise HTTPException(status_code=404, detail=f"no such image: {body.image}")
+        return record
+    return imagestore.default_image(state_dir)
+
+
+def _resolve_boot(app, body: WorkspaceCreate) -> dict:
+    """Fill kernel/initrd/rootfs/cmdline from the image catalog.
+
+    Explicit fields win over the image; the image wins over the
+    default; nothing resolves at all is a client error.
+    """
+    record = _image_record(app, body)
+    kernel, rootfs = _boot_pair(body, record)
+    return {
+        "id": body.id,
+        "kernel": kernel,
+        "initrd": _default_initrd(body, record),
+        "rootfs": rootfs,
+        "cmdline": _default_cmdline(body, record),
+        "cpus": body.cpus,
+        "mem_mib": body.mem_mib,
+    }
+
+
+def _boot_pair(body: WorkspaceCreate, record) -> tuple[str, str]:
+    """kernel/rootfs: explicit fields win, the record fills the rest."""
+    if body.kernel is not None and body.rootfs is not None:
+        return body.kernel, body.rootfs
+    if record is None:
+        raise HTTPException(
+            status_code=400,
+            detail="kernel/rootfs (or image, or a default image) required",
+        )
+    return _fill(body.kernel, record.kernel), _fill(body.rootfs, record.rootfs)
+
+
+def _fill(explicit: str | None, from_record: Path) -> str:
+    """One field: the explicit value, else the record's path."""
+    return explicit if explicit is not None else str(from_record)
+
+
+def _default_initrd(body: WorkspaceCreate, record) -> str | None:
+    """The image's initrd when booting wholly from the catalog."""
+    if body.initrd is None and record is not None and body.kernel is None:
+        return str(record.initrd)
+    return body.initrd
+
+
+def _default_cmdline(body: WorkspaceCreate, record) -> str:
+    """The image's cmdline, or the legacy default with no record."""
+    if body.cmdline is not None:
+        return body.cmdline
+    if record is not None:
+        return record.cmdline
+    return "console=hvc0 root=/dev/vda rw"
 
 
 def spec_for(row: dict) -> VmSpec:
@@ -74,6 +180,7 @@ def build_api(app) -> FastAPI:
     async def lifespan(api: FastAPI) -> AsyncIterator[None]:
         app.state.model.migrate()
         await app.state.model.bootstrap_token()
+        _bootstrap_default_image(app)
         watcher = asyncio.create_task(watch_loop(app, hub))
         api.state.watcher = watcher
         try:
@@ -114,12 +221,59 @@ def build_api(app) -> FastAPI:
         if await app.state.model.get_workspace(body.id) is not None:
             raise HTTPException(status_code=409, detail="workspace exists")
         try:
-            row = await app.state.model.create_workspace(spec_for(body.model_dump()))
+            row = await app.state.model.create_workspace(
+                spec_for(_resolve_boot(app, body))
+            )
         except IntegrityError:
             # The check-then-insert race lost; same answer for the client.
             raise HTTPException(status_code=409, detail="workspace exists") from None
         return Response(
             status_code=201, content=json.dumps(row), media_type="application/json"
+        )
+
+    @api.get("/api/v1/images", dependencies=[Depends(require_token)])
+    async def list_images() -> list[dict]:
+        state_dir = app.state.settings.vmm.state_dir
+        default = imagestore.default_image(state_dir)
+        default_hash = default.hash if default is not None else None
+        return [
+            {
+                "hash": image.hash,
+                "name": image.name,
+                "version": image.version,
+                "cmdline": image.cmdline,
+                "vsock_shell_port": image.vsock_shell_port,
+                "default": image.hash == default_hash,
+            }
+            for image in imagestore.list_images(state_dir)
+        ]
+
+    @api.post("/api/v1/images", dependencies=[Depends(require_token)])
+    async def import_image(body: ImageImport) -> Response:
+        state_dir = app.state.settings.vmm.state_dir
+        try:
+            record = await asyncio.to_thread(
+                imagestore.import_archive, Path(body.source), state_dir
+            )
+        except ImageError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        # The first imported image becomes the default: a fresh
+        # appliance answers a bare workspace create immediately (the
+        # sole-entry fallback would resolve it, but the pointer keeps
+        # the designation explicit and stable across later imports).
+        if len(imagestore.list_images(state_dir)) == 1:
+            imagestore.set_default(record.hash, state_dir)
+        return Response(
+            status_code=201,
+            content=json.dumps(
+                {
+                    "hash": record.hash,
+                    "name": record.name,
+                    "version": record.version,
+                    "ref": record.ref,
+                }
+            ),
+            media_type="application/json",
         )
 
     @api.get("/api/v1/workspaces", dependencies=[Depends(require_token)])

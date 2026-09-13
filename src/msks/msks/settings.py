@@ -53,6 +53,10 @@ class VmmSettings:
     # Console bring-up wait: generous by default — nested-virt guests
     # can take longer than bare metal to arm the vsock device.
     vsock_wait_timeout_s: float = 15.0
+    # A host-side OCI archive imported into the catalog on first boot
+    # and designated default (the appliance points this at the built
+    # image's store path through its cmdline bridge).
+    default_image: str = ""
 
     @classmethod
     def from_env(cls) -> VmmSettings:
@@ -72,6 +76,7 @@ class VmmSettings:
             vsock_wait_timeout_s=_env_float(
                 "MSKSD_VSOCK_WAIT_TIMEOUT_S", cls.vsock_wait_timeout_s
             ),
+            default_image=_env("MSKSD_DEFAULT_IMAGE", cls.default_image),
         )
 
 

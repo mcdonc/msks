@@ -8,7 +8,7 @@ from msks.app import build_app
 from msks.microvm.errors import MicrovmError, MicrovmTimeoutError
 from msks.microvm.spec import VmInfo, VmSpec, VmStatus
 from msks.server.api import build_api
-from msks.settings import ServerSettings, Settings
+from msks.settings import ServerSettings, Settings, VmmSettings
 
 TOKEN = "test-token"
 
@@ -47,11 +47,12 @@ class StubMicrovm:
 @pytest.fixture
 async def client(tmp_path: Path):
     settings = Settings(
+        vmm=VmmSettings(state_dir=tmp_path / "vms"),
         server=ServerSettings(
             db_path=tmp_path / "api.db",
             bootstrap_token=TOKEN,
             event_poll_s=10.0,
-        )
+        ),
     )
     app = build_app(settings)
     stub = StubMicrovm()
@@ -138,7 +139,11 @@ async def test_workspace_validation(client) -> None:
     bad = await http.post(
         "/api/v1/workspaces", json={"id": "x", "kernel": "/k"}, headers=auth()
     )
-    assert bad.status_code == 422
+    # No rootfs and no catalog to resolve from: a semantic 400, not a
+    # schema 422 (kernel/rootfs became optional with the image
+    # catalog, #40).
+    assert bad.status_code == 400
+    assert "required" in bad.json()["detail"]
 
 
 async def test_microvm_error_maps_to_503(client) -> None:

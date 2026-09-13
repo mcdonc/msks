@@ -25,6 +25,11 @@ bash "$root/scripts/appliance-setup.sh"
 
 state_disk="${MSKSD_APPLIANCE_STATE:-$app_dir/state.ext4}"
 bootstrap_token="$(cat "$app_dir/bootstrap-token")"
+# The self-contained default workspace image (#40): the containerDisk
+# archive this appliance build roots; the daemon imports it on first
+# boot. Optional — an appliance without one starts with an empty
+# catalog and images arrive by API.
+default_image="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("defaultImage", ""))' "$app_dir/appliance-manifest.json")"
 # Optional msksd.<name>=<value> pairs the operator wants bridged into
 # the daemon's environment (e.g. msksd.vsock_wait_timeout_s=30 on
 # slow nested-virt hosts); each becomes MSKSD_<NAME> in the guest.
@@ -86,7 +91,7 @@ boot_vm() {
   "payload": {
     "kernel": "$app_dir/vmlinux",
     "initramfs": "$app_dir/initrd",
-    "cmdline": "console=ttyS0 root=/dev/vda rootfstype=ext4 ro msksd.bootstrap_token=$bootstrap_token $MSKS_APPLIANCE_CMDLINE_EXTRA"
+    "cmdline": "console=ttyS0 root=/dev/vda rootfstype=ext4 ro msksd.bootstrap_token=$bootstrap_token msksd.default_image=$default_image $MSKS_APPLIANCE_CMDLINE_EXTRA"
   },
   "disks": [
     {"path": "$app_dir/rootfs.ext4", "readonly": true, "image_type": "Raw"},

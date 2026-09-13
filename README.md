@@ -186,6 +186,32 @@ misdetection guard), which breaks any guest writing an ext4
 superblock — every disk the appliance and the daemon create declares
 `image_type: Raw`.
 
+### The image catalog (#40)
+
+Images are plural: msksd holds a catalog under
+`<state_dir>/images/` — every registered archive keyed by content
+hash, with the boot files unpacked once per hash (workspace launches
+never unpack anything).
+
+```bash
+curl -sk -H "authorization: Bearer $MSKSC_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"source": "/nix/store/...-msks-guest/workspace-debian-13.6.tar"}' \
+  https://192.168.77.2:8660/api/v1/images        # import
+curl -sk -H "authorization: Bearer $MSKSC_TOKEN" \
+  https://192.168.77.2:8660/api/v1/images        # list (name/version/hash/default)
+```
+
+A workspace create selects an image by reference — `"image":
+"debian:13.6"` (or a bare `name` for its newest version, or a hash);
+with no image and no explicit artifacts the designated **default**
+resolves. The first import becomes the default; `MSKSD_DEFAULT_IMAGE`
+points the daemon at an archive to import on first boot, and the
+appliance sets it to its built-in image through the kernel-cmdline
+bridge — a bare `POST /workspaces` works on a fresh appliance with
+nothing else built. Explicit `kernel`/`rootfs` fields still win over
+the catalog (the shape the tests and dev flows use).
+
 ### The workspace shell (`msks shell`) (#21)
 
 From any host that can reach the appliance, an interactive shell in

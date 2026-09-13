@@ -255,7 +255,6 @@ def _guest_asset_store_paths() -> dict:
 @needs_appliance
 async def test_appliance_boot_and_workspace() -> None:
     app_dir = REPO_ROOT / ".appliance"
-    guest = _guest_asset_store_paths()
     base = "https://192.168.77.2:8660/api/v1"
     wid = f"appliance-{uuid.uuid4().hex[:8]}"
 
@@ -319,18 +318,20 @@ async def test_appliance_boot_and_workspace() -> None:
         token = await await_token()
         headers = {"authorization": f"Bearer {token}"}
         await await_api()
+        # A bare create (#40): the appliance imported its built-in
+        # default image at first boot; the catalog resolves the boot
+        # artifacts with nothing else specified.
         response = await client.post(
             f"{base}/workspaces",
-            json={
-                "id": wid,
-                "kernel": guest["kernel"],
-                "initrd": guest["initrd"],
-                "rootfs": guest["rootfs"],
-                "cmdline": guest["cmdline"],
-            },
+            json={"id": wid},
             headers=headers,
         )
         assert response.status_code == 201, response.text
+        row = response.json()
+        assert row["kernel"].endswith("/kernel"), row
+        images = await client.get(f"{base}/images", headers=headers)
+        assert images.status_code == 200
+        assert any(image["default"] for image in images.json()), images.text
         response = await client.post(f"{base}/workspaces/{wid}/start", headers=headers)
         assert response.status_code in (200, 202), response.text
 
