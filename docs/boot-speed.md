@@ -72,8 +72,8 @@ before systemd's first line.
 The msks-built initramfs (`minimalInitrd` in `nix/guest-assets.nix`)
 is a static busybox, the one module the kernel cannot mount root
 without (`virtio_blk.ko`), and an `/init` that mounts `/dev/vda`
-read-only and `switch_root`s into systemd — ~700 KiB, unpacked and
-done in tens of milliseconds.
+read-only and `switch_root`s into systemd — 811 KiB shipped, unpacked
+and done in tens of milliseconds.
 
 When swapping the kernel or module tree: the Debian deb ships its
 modules **without depmod metadata** (its package postinst generates

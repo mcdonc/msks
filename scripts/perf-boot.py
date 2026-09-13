@@ -30,6 +30,7 @@ import argparse
 import asyncio
 import contextlib
 import json
+import re
 import shutil
 import statistics
 import sys
@@ -177,7 +178,11 @@ async def collect_blame(microvm, wid: str) -> list[str]:
     reader, writer = await microvm.console(wid)
     blame = await run_shell_command(reader, writer, "systemd-analyze blame | head -12")
     writer.close()
-    return blame.strip().splitlines()[:14]
+    # Keep timing lines only; the first line is the echoed command
+    # prompt, not blame output.
+    return [
+        line for line in blame.splitlines() if re.match(r"\s*[0-9]+[a-z]+\s+", line)
+    ][:12]
 
 
 def record_memory(result: dict, microvm, wid: str, spec) -> None:
@@ -230,8 +235,8 @@ P50_KEYS = ("t_vmm", "t_kernel", "t_console", "t_prompt")
 def print_times(r: dict, keys: tuple) -> None:
     for key in keys:
         if r.get(key) is not None:
-            value = f"{r[key]:6.2f}s" if isinstance(r[key], float) else r[key]
-            print(f"  {key:<10} {value}")
+            unit = "s" if key.startswith("t_") else " MiB"
+            print(f"  {key:<10} {r[key]}{unit}")
 
 
 def print_extras(r: dict) -> None:

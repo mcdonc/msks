@@ -109,7 +109,7 @@ let
       #!/bin/busybox sh
       # Mount root and hand off to systemd (#37): keep this as small
       # as it looks — every millisecond here delays the console. On
-      # any failure, a shell beats a silent hang in a 700KB
+      # any failure, a shell beats a silent hang in an 811KB
       # initramfs (the serial console is reachable).
       /bin/busybox mount -t proc proc /proc \
         && /bin/busybox mount -t devtmpfs devtmpfs /dev \
