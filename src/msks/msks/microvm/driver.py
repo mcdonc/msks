@@ -8,6 +8,7 @@ lives below or above this line on the driver's side.
 
 import abc
 
+from .errors import MicrovmError
 from .spec import VmInfo, VmSpec
 
 
@@ -36,3 +37,13 @@ class MicrovmDriver(abc.ABC):
     @abc.abstractmethod
     async def cleanup(self, workspace_id: str) -> None:
         """Remove the workspace's artifacts (idempotent)."""
+
+    async def console(self, workspace_id: str):
+        """An interactive byte stream into a running workspace.
+
+        Returns an ``(reader, writer)`` pair carrying raw bytes both
+        ways. Backends without an interactive console raise
+        MicrovmError; the API layer maps that to a close code, never
+        a silent no-op.
+        """
+        raise MicrovmError(f"the {type(self).__name__} backend has no console support")

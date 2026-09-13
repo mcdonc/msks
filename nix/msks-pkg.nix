@@ -20,6 +20,7 @@
   uvicorn,
   cryptography,
   alembic,
+  websockets,
 }:
 
 let
@@ -61,6 +62,7 @@ buildPythonPackage {
     uvicorn
     cryptography
     alembic
+    websockets
   ];
 
   # No nix-side test run: the appliance smoke test exercises the real

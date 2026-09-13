@@ -49,6 +49,7 @@ class VmmSettings:
     socket_wait_timeout_s: float = 10.0
     request_timeout_s: float = 5.0
     shutdown_timeout_s: float = 20.0
+    vsock_shell_port: int = 1023
 
     @classmethod
     def from_env(cls) -> VmmSettings:
@@ -64,6 +65,7 @@ class VmmSettings:
             socket_wait_timeout_s=_env_float("MSKSD_SOCKET_WAIT_TIMEOUT_S", 10.0),
             request_timeout_s=_env_float("MSKSD_REQUEST_TIMEOUT_S", 5.0),
             shutdown_timeout_s=_env_float("MSKSD_SHUTDOWN_TIMEOUT_S", 20.0),
+            vsock_shell_port=_parse_int("MSKSD_VSOCK_SHELL_PORT", cls.vsock_shell_port),
         )
 
 

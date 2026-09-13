@@ -10,6 +10,10 @@ tagged `vX.Y.Z`.
 
 - **`devenv shell` no longer runs the pre-commit suite at shell entry (#32).** A devenv 2.3.x scheduler regression pulled `devenv:git-hooks:run` into the shell's task graph, so a failing hook (e.g. the xenon complexity gate) aborted shell entry before it opened — with no way to use the shell to fix the failure. The suite still runs on `git commit` and as the `msks:xenon` task.
 
+### Added
+
+- **Workspace shell (#21).** `msks shell <workspace-id>` gives an interactive shell inside a running workspace microvm, from any host that can reach the daemon: the client speaks the authenticated `/api/v1/workspaces/{id}/console` websocket (TLS + token, Ctrl-] detach, raw tty mode), and the daemon proxies it over virtio-vsock — the VM's vsock unix socket after a `CONNECT <port>` handshake — into a per-connection busybox ash on a pty served by static socat in the guest (root shell today, per #5's guest userland; `MSKSC_URL`/`MSKSC_TOKEN`/`MSKSC_CAFILE` configure the client). The guest assets gained the vsock module, `/dev/vsock` creation, devpts/ptmx setup, and socat; the daemon retries the console handshake across the guest's post-boot bring-up window.
+
 ### Changed
 
 - **The appliance runs under the devenv process manager (#25).** `processes.appliance` — one supervised process owning both the VM and its store-share daemon — replaces the daemonizing `msks:appliance-up` task: crash-restart, `devenv processes logs`, and clean graceful teardown (ACPI-first TERM trap) come from the supervisor. `devenv processes up -d` / `down` are the supported lifecycle (the `msks:appliance-up`/`-down` tasks remain as thin wrappers), `scripts/appliance-down.sh` is gone, and the smoke test drives and asserts the supervised lifecycle. Background semantics verified live: detached `up -d` survives shells, double-up and double-down are no-ops, a `kill -9` VMM restarts under the supervisor, and manager-daemon death (processes keep running unsupervised) has a documented manual recovery.

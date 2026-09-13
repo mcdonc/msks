@@ -169,6 +169,49 @@ misdetection guard), which breaks any guest writing an ext4
 superblock — every disk the appliance and the daemon create declares
 `image_type: Raw`.
 
+### The workspace shell (`msks shell`) (#21)
+
+From any host that can reach the appliance, an interactive shell in
+a running workspace:
+
+```bash
+export MSKSC_URL=https://192.168.77.2:8660
+export MSKSC_TOKEN=$(cat .appliance/bootstrap-token)
+devenv --quiet -O dotenv.enable:bool false shell -- msks shell my-workspace
+```
+
+The client speaks the daemon's console websocket
+(`/api/v1/workspaces/{id}/console`): TLS plus bearer token — the same
+authentication as the REST surface, with the token on the query
+string (like `/api/v1/events`). Ctrl-] detaches (Ctrl-C and Ctrl-D
+reach the guest); the session ends cleanly when either side closes.
+Detaching leaves the workspace running; the shell process inside the
+guest exits when the stream closes.
+
+Transport (#21), in the preferred vsock-first shape:
+
+- The workspace VM boots with a virtio-vsock device whose host side
+  is a unix socket cloud-hypervisor **listens** on
+  (`<state>/vms/<id>/vsock.sock`). The daemon's proxy connects, sends
+  `CONNECT 1023\n`, reads the `OK <port>\n` reply, then pumps raw
+  bytes both ways — no framing, backpressure is websocket/TCP flow
+  control.
+- The guest loads `vmw_vsock_virtio_transport`, creates `/dev/vsock`
+  (a misc device devtmpfs does not create on its own), mounts devpts
+  with a `/dev/ptmx` link, and runs a static socat listener
+  (`VSOCK-LISTEN:1023,reuseaddr,fork EXEC:/bin/ash,pty,ctty,stderr,setsid`)
+  — one busybox ash on a pty per connection. The shell is **root**
+  today: the guest userspace is busybox-as-root (#5); a non-root
+  shell arrives with a real guest userland.
+- Window-size changes are not applied v1: the guest pty keeps its
+  creation size; propagating a resize needs a guest-side helper that
+  does not exist yet.
+- `MSKSC_CAFILE` pins the daemon certificate for verification when
+  you have it (a directly-run msksd's CA, or an appliance CA exported
+  from its state disk). Without it the client proceeds with
+  certificate verification off and says so on stderr — the serial
+  log's TOFU fingerprint is the cross-check.
+
 ### k8s (k3s) smoke path
 
 The vm-runner container image comes from the same pinned nixpkgs as
