@@ -62,3 +62,7 @@ class Microvm:
     async def cleanup(self, workspace_id: str) -> None:
         """Remove one workspace's artifacts."""
         await self.driver.cleanup(workspace_id)
+
+    async def console(self, workspace_id: str):
+        """An interactive byte stream into a running workspace."""
+        return await self.driver.console(workspace_id)

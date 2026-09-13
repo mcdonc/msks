@@ -40,6 +40,17 @@ let
   # while staying inside the pinned nixpkgs.
   busybox = pkgs.pkgsStatic.busybox;
 
+  # Static socat: the vsock console server (#21). nixpkgs' 1.8.x
+  # builds it with WITH_VSOCK (verify with `socat -V`), so the guest
+  # can listen on AF_VSOCK and hand out one pty-backed shell per
+  # connection without any other guest userspace.
+  socat = pkgs.pkgsStatic.socat;
+
+  # The port the guest's vsock shell server listens on; the daemon's
+  # console proxy connects to it after the CONNECT handshake. Fixed
+  # and recorded in the manifest so both sides agree.
+  vsockShellPort = 1023;
+
   kernelCmdline = "console=ttyS0 root=/dev/vda rootfstype=ext4 ro";
 
   # --- initrd ------------------------------------------------------------
@@ -61,6 +72,10 @@ let
       "virtio_pci"
       "virtio_blk"
       "ext4"
+      # The vsock console transport (#21). The module name is
+      # vmw_vsock_virtio_transport; virtio_vsock has never existed as
+      # a module name.
+      "vmw_vsock_virtio_transport"
       # Power button + its input device: the host's graceful shutdown
       # (ch-remote shutdown) signals ACPI, and the guest's acpid turns
       # the button event into a poweroff.
@@ -86,6 +101,7 @@ let
       /bin/busybox modprobe virtio_pci
       /bin/busybox modprobe virtio_blk
       /bin/busybox modprobe ext4
+      /bin/busybox modprobe vmw_vsock_virtio_transport
 
       # No udev here: poll for the virtio root disk to appear.
       n=0
@@ -153,10 +169,41 @@ let
       # The initrd moves its devtmpfs onto /newroot/dev; only mount
       # our own when that did not happen.
       mount -t devtmpfs none /dev 2>/dev/null || true
+      # devtmpfs does not create /dev/ptmx on its own: mount devpts
+      # and link the master device, or no pty can be allocated — the
+      # vsock shell server needs one per connection (#21).
+      /bin/busybox mkdir -p /dev/pts
+      /bin/busybox mount -t devpts -o gid=5,mode=620 devpts /dev/pts
+      /bin/busybox ln -sf pts/ptmx /dev/ptmx
       hostname msks-guest
+      # devtmpfs does not create /dev/vsock either: read the misc
+      # minor and mknod it (major 10 = misc). Without the node,
+      # socket(AF_VSOCK) fails with ENODEV (#21).
+      # devtmpfs creates the node on some kernels; make it ourselves
+      # only when missing. Word splitting picks the minor regardless
+      # of /proc/misc's right-alignment ($1, not cut fields).
+      if [ ! -e /dev/vsock ]; then
+        set -- $(grep vsock /proc/misc)
+        [ -n "$1" ] && /bin/busybox mknod /dev/vsock c 10 "$1"
+      fi
       # Handle the host's ch-remote shutdown: cloud-hypervisor signals
       # the ACPI power button, acpid turns it into a guest poweroff.
       acpid
+
+      # The vsock shell server (#21): one interactive busybox ash on
+      # a pty per vsock connection. The daemon's /console proxy dials
+      # the VMM's unix socket, sends "CONNECT ${toString vsockShellPort}\n",
+      # and gets raw bidirectional bytes — socat here is the accept
+      # side. A root shell today: the guest userspace is
+      # busybox-as-root (#5); a non-root shell lands with a real guest
+      # userland. The serial console respawn loop below is untouched.
+      if [ -e /dev/vsock ]; then
+        /bin/socat VSOCK-LISTEN:${toString vsockShellPort},reuseaddr,fork \
+          EXEC:/bin/ash,pty,ctty,echo=0,icanon=0,stderr,setsid </dev/null >/dev/console 2>&1 &
+        echo "msks guest: vsock shell listening on port ${toString vsockShellPort}"
+      else
+        echo "msks guest: no /dev/vsock; shell server not started"
+      fi
 
       echo
       echo "msks guest: kernel $(uname -r) up; busybox shell on console"
@@ -172,7 +219,7 @@ let
   # an /init, and a minimal /bin + /etc.
   guestRoot = pkgs.runCommand "msks-guest-root" {
     inherit guestInit;
-    closureInfo = pkgs.closureInfo { rootPaths = [ busybox ]; };
+    closureInfo = pkgs.closureInfo { rootPaths = [ busybox socat ]; };
   } ''
     set -eu
     root="$out/root"
@@ -183,12 +230,13 @@ let
     done < "$closureInfo/store-paths"
     install -m 0755 "$guestInit" "$root/init"
     ln -s "${busybox}/bin/busybox" "$root/bin/busybox"
+    ln -s "${socat}/bin/socat" "$root/bin/socat"
     # The rootfs boots read-only, so busybox --install cannot run there;
     # pre-create the applet links the guest init and shell use.
     for applet in sh ash ls cat uname ps mount umount dmesg poweroff \
       reboot vi hostname mkdir rmdir rm cp mv grep head tail wc id whoami \
       env uptime free clear dd sync sleep setsid cttyhack mknod chmod \
-      chown date acpid; do
+      chown date acpid cut; do
       ln -s busybox "$root/bin/$applet"
     done
     printf 'msks-guest\n' > "$root/etc/hostname"
@@ -225,6 +273,7 @@ let
       vmlinux = "vmlinux";
       initrd = "initrd";
       rootfs = "rootfs.ext4";
+      vsock_shell_port = vsockShellPort;
     }
   );
 in
@@ -237,6 +286,7 @@ pkgs.runCommand "msks-guest"
         initrd
         rootfs
         kernelCmdline
+        vsockShellPort
         ;
     };
   }

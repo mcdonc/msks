@@ -21,12 +21,14 @@ import contextlib
 import json
 import os
 import shutil
+import ssl
 import subprocess
 import uuid
 from pathlib import Path
 
 import httpx
 import pytest
+import websockets
 from httpx import AsyncClient
 from msks.app import build_app
 from msks.microvm import VmSpec
@@ -338,6 +340,36 @@ async def test_appliance_boot_and_workspace() -> None:
             await asyncio.sleep(1.0)
         else:
             raise AssertionError(f"workspace never reached running: {status}")
+
+        # The workspace shell (#21): an authenticated byte stream into
+        # the VM over the daemon's websocket. Drive one command, read
+        # its output back, detach, and require the workspace to keep
+        # running afterwards.
+        ws_ctx = ssl.create_default_context()
+        ws_ctx.check_hostname = False
+        ws_ctx.verify_mode = ssl.CERT_NONE
+        ws_url = (
+            base.replace("https://", "wss://")
+            + f"/workspaces/{wid}/console?token={token}"
+        )
+        async with websockets.connect(ws_url, ssl=ws_ctx, open_timeout=30) as shell_ws:
+            # The marker's rendering differs from the sent bytes, so
+            # the step proves OUTPUT flowed — not merely the pty echo.
+            await shell_ws.send(b"echo MSKS-$((6*7))-SHELL-SMOKE\n")
+            console_got = b""
+            console_deadline = loop.time() + 60.0
+            while b"MSKS-42-SHELL-SMOKE" not in console_got:
+                if loop.time() >= console_deadline:
+                    raise AssertionError(
+                        f"console never echoed the marker; got: {console_got!r}"
+                    )
+                message = await asyncio.wait_for(shell_ws.recv(), 10.0)
+                console_got += (
+                    message if isinstance(message, bytes) else message.encode()
+                )
+        response = await client.get(f"{base}/workspaces/{wid}", headers=headers)
+        assert response.json().get("status") == "running", response.text
+
         response = await client.post(f"{base}/workspaces/{wid}/stop", headers=headers)
         assert response.status_code == 200, response.text
         response = await client.delete(f"{base}/workspaces/{wid}", headers=headers)

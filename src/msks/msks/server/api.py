@@ -167,6 +167,39 @@ def build_api(app) -> FastAPI:
         await app.state.model.delete_workspace(workspace_id)
         return {"deleted": workspace_id}
 
+    @api.websocket("/api/v1/workspaces/{workspace_id}/console")
+    async def console(socket: WebSocket, workspace_id: str) -> None:
+        # Byte-stream bridge into a running workspace (#21): the
+        # client gets an interactive shell over the same TLS + token
+        # as the REST surface. Closing the websocket closes exactly
+        # one guest shell session; the workspace keeps running.
+        # Accept first, then close with a code: the client sees a
+        # specific close reason (4401/4404/4501) instead of a generic
+        # HTTP 403 rejection.
+        await socket.accept()
+        token = socket.query_params.get("token", "")
+        if not await app.state.model.token_valid(token):
+            await socket.close(code=4401)
+            return
+        if await app.state.model.get_workspace(workspace_id) is None:
+            await socket.close(code=4404)
+            return
+        try:
+            reader, writer = await app.state.microvm.console(workspace_id)
+        except MicrovmError as exc:
+            # The client is token-authenticated by now: the cause is
+            # not a secret, and the close reason is the only channel
+            # an operator has for dead-VM vs refused vs deadline
+            # (websocket close reasons cap at 123 bytes).
+            await socket.close(code=4501, reason=str(exc)[:120])
+            return
+        try:
+            await bridge_console(socket, reader, writer)
+        finally:
+            writer.close()
+            with contextlib.suppress(Exception):
+                await writer.wait_closed()
+
     @api.websocket("/api/v1/events")
     async def events(socket: WebSocket) -> None:
         # Websockets cannot carry Authorization headers from browsers;
@@ -183,6 +216,52 @@ def build_api(app) -> FastAPI:
             hub.unsubscribe(queue)
 
     return api
+
+
+async def bridge_console(socket: WebSocket, reader, writer) -> None:
+    """Pump raw bytes between the websocket and the vsock stream.
+
+    Two tasks, no queue: backpressure is websocket/TCP flow control
+    (the byte stream must not lose or buffer unboundedly, #21).
+    Whichever side finishes first (client detach or guest EOF)
+    cancels the other.
+    """
+    to_guest = asyncio.create_task(_ws_to_stream(socket, writer))
+    to_client = asyncio.create_task(_stream_to_ws(reader, socket))
+    done, pending = await asyncio.wait(
+        {to_guest, to_client}, return_when=asyncio.FIRST_COMPLETED
+    )
+    for task in pending:
+        task.cancel()
+    for task in pending:
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await task
+    for task in done:
+        with contextlib.suppress(Exception):
+            task.result()
+
+
+async def _ws_to_stream(socket: WebSocket, writer) -> None:
+    """Client bytes to the guest; returns on disconnect."""
+    while True:
+        msg = await socket.receive()
+        if msg["type"] != "websocket.receive":
+            return
+        data = msg.get("bytes")
+        if data is None:
+            data = msg.get("text", "").encode()
+        if data:
+            writer.write(data)
+            await writer.drain()
+
+
+async def _stream_to_ws(reader, socket: WebSocket) -> None:
+    """Guest bytes to the client; returns on guest EOF."""
+    while True:
+        data = await reader.read(4096)
+        if not data:
+            return
+        await socket.send_bytes(data)
 
 
 async def pump_until_disconnect(socket: WebSocket, queue) -> None:

@@ -6,6 +6,8 @@ Per-workspace layout under ``<state_dir>/vms/<workspace_id>/``:
 - ``ch.pid``    — the CH process id (restart-surviving kill path)
 - ``ch.log``    — the VMM's own stderr
 - ``serial.log``— the guest serial console (file-backed serial device)
+- ``vsock.sock``— the vsock device's unix socket (the console proxy
+                 dials it with the CONNECT handshake, #21)
 
 Shutdown model, matching how the VMM really behaves: a bare
 ``cloud-hypervisor --api-socket`` is a daemon that keeps running after
@@ -26,6 +28,54 @@ from .driver import MicrovmDriver
 from .errors import MicrovmError, MicrovmTimeoutError
 from .spec import VmInfo, VmSpec, VmStatus
 
+# Bound on the OK reply once the handshake bytes are sent.
+VSOCK_REPLY_S = 5.0
+
+
+class _VsockRetry(Exception):
+    """A retryable console bring-up state, carrying its human cause."""
+
+
+async def _vsock_handshake(socket_path: Path, port: int):
+    """One connect+CONNECT attempt against the vsock unix socket.
+
+    The socket carries a small handshake before raw bytes: the dialer
+    sends ``CONNECT <port>\n``, cloud-hypervisor answers
+    ``OK <local_port>\n`` once the guest accepts. Raises _VsockRetry
+    for every state that a still-booting guest can present (missing
+    socket, refused or silent handshake); returns the established
+    stream otherwise.
+    """
+    try:
+        reader, writer = await asyncio.open_unix_connection(str(socket_path))
+    except OSError as exc:
+        # FileNotFoundError/ConnectionRefusedError while the guest
+        # brings the device up, PermissionError on a hostile path,
+        # and friends: all retryable-shaped, all carrying their errno.
+        raise _VsockRetry(f"vsock socket unreachable: {exc}") from exc
+    try:
+        writer.write(f"CONNECT {port}\n".encode())
+        await writer.drain()
+        reply = await asyncio.wait_for(reader.readline(), VSOCK_REPLY_S)
+    except TimeoutError as exc:
+        writer.close()
+        raise _VsockRetry("handshake reply never arrived") from exc
+    except OSError as exc:
+        # A VMM dying mid-handshake resets the stream; that is the
+        # same boot-window flakiness the retry exists to absorb.
+        writer.close()
+        raise _VsockRetry(f"handshake stream died: {exc}") from exc
+    if not reply.startswith(b"OK"):
+        writer.close()
+        raise _VsockRetry(f"handshake refused: {reply.strip()!r}")
+    return reader, writer
+
+
+# The guest-side CID cloud-hypervisor reports for the vsock device.
+# CIDs are per-VMM (each workspace has its own), so a constant is
+# unambiguous.
+VSOCK_CID = 3
+
 CH_STATE_TO_STATUS = {
     "Created": VmStatus.STARTING,
     "Running": VmStatus.RUNNING,
@@ -36,12 +86,18 @@ GUEST_DOWN_STATES = ("Created", "Shutdown")
 POLL_INTERVAL_S = 0.05
 
 
-def vm_config(spec: VmSpec, serial_log: Path) -> dict:
+def vm_config(spec: VmSpec, serial_log: Path, vsock_socket: Path | None = None) -> dict:
     """The ``PUT /api/v1/vm.create`` body for one spec (v52 schema).
 
     Memory is bytes (``mem_mib`` is converted), the payload nests
     kernel/cmdline/initramfs, the serial file is a plain path string,
     and the first disk is the root device by position.
+
+    ``vsock_socket`` adds the virtio-vsock device: cloud-hypervisor
+    LISTENS on that unix path, and each host-side connection maps to
+    one vsock connection into the guest after the ``CONNECT <port>``
+    handshake (#21). The CID is per-VMM — every workspace runs its
+    own cloud-hypervisor with its own socket, so a constant works.
     """
     payload: dict = {
         "kernel": str(spec.kernel),
@@ -49,7 +105,7 @@ def vm_config(spec: VmSpec, serial_log: Path) -> dict:
     }
     if spec.initrd is not None:
         payload["initramfs"] = str(spec.initrd)
-    return {
+    vm: dict = {
         "cpus": {"boot_vcpus": spec.cpus, "max_vcpus": spec.cpus},
         "memory": {"size": spec.mem_mib * 1024 * 1024},
         "payload": payload,
@@ -64,6 +120,9 @@ def vm_config(spec: VmSpec, serial_log: Path) -> dict:
         "disks": [{"path": str(spec.rootfs), "readonly": True, "image_type": "Raw"}],
         "serial": {"mode": "File", "file": str(serial_log)},
     }
+    if vsock_socket is not None:
+        vm["vsock"] = {"cid": VSOCK_CID, "socket": str(vsock_socket)}
+    return vm
 
 
 def _check_id(workspace_id: str) -> None:
@@ -118,7 +177,11 @@ class LocalCloudHypervisor(MicrovmDriver):
         try:
             await self._wait_ready(socket_path, proc, vmm.socket_wait_timeout_s)
             await self._configure_and_boot(
-                spec, socket_path, serial_log, vmm.request_timeout_s
+                spec,
+                socket_path,
+                serial_log,
+                vmm.request_timeout_s,
+                vsock_socket=vm_dir / "vsock.sock",
             )
         except BaseException:
             await self._reap(spec.workspace_id, proc)
@@ -160,14 +223,45 @@ class LocalCloudHypervisor(MicrovmDriver):
             log_file.close()
 
     async def _configure_and_boot(
-        self, spec, socket_path, serial_log, timeout_s
+        self, spec, socket_path, serial_log, timeout_s, vsock_socket=None
     ) -> None:
         api = CloudHypervisorApi(socket_path, timeout_s)
         try:
-            await api.create(vm_config(spec, serial_log))
+            await api.create(vm_config(spec, serial_log, vsock_socket))
             await api.boot()
         finally:
             await api.aclose()
+
+    async def console(self, workspace_id: str):
+        """(reader, writer): one interactive stream into the VM.
+
+        A freshly booted workspace refuses the console twice over, in
+        order: the unix socket appears only when the GUEST's driver
+        activates the device (seconds after vm.boot reported success),
+        and even then the first CONNECT can meet a guest kernel whose
+        shell server has not called listen() yet — the kernel answers
+        RST and cloud-hypervisor closes the unix stream. The whole
+        connect+handshake is retried under one deadline; a dead VMM
+        fails fast instead of waiting it out.
+        """
+        socket_path = self._dir(workspace_id) / "vsock.sock"
+        settings = self._settings().vmm
+        port = settings.vsock_shell_port
+        deadline = asyncio.get_running_loop().time() + settings.vsock_wait_timeout_s
+        while True:
+            if not self._vmm_reachable(workspace_id):
+                raise MicrovmError(
+                    f"workspace {workspace_id} has no live VMM for a console"
+                )
+            try:
+                return await _vsock_handshake(socket_path, port)
+            except _VsockRetry as retry:
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise MicrovmError(
+                        f"console unavailable for {workspace_id} "
+                        f"(is the VM running?): {retry}"
+                    ) from retry
+            await asyncio.sleep(POLL_INTERVAL_S)
 
     async def _wait_ready(self, socket_path: Path, proc, timeout_s: float) -> None:
         deadline = asyncio.get_running_loop().time() + timeout_s
