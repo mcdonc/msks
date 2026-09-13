@@ -73,6 +73,20 @@
     "msks:xenon" = {
       exec = ''exec bash "$DEVENV_ROOT/scripts/xenon-gate.sh" "$@"'';
     };
+    # WORKAROUND (#32, klangk #3444 pattern): devenv 2.3.x's RunMode::All
+    # scheduler adds the prerequisites of every visited task — including
+    # the skipped devenv:enterTest (it sits `after` enterShell), whose
+    # prerequisite devenv:git-hooks:run is the full pre-commit suite —
+    # so a failing hook aborts `devenv shell` before it opens. Clearing
+    # the `before` edge keeps that task out of the shell's task graph
+    # (mkForce replaces the upstream list; a plain `before = [ ]`
+    # concatenates with it and changes nothing). The commit-time hook
+    # keeps enforcing the suite on `git commit`. Remove this override
+    # once an upstream release stops scheduling prerequisites of
+    # skipped tasks.
+    "devenv:git-hooks:run" = lib.mkIf config.git-hooks.enable {
+      before = lib.mkForce [ ];
+    };
     # Guest VM assets out of the pinned nixpkgs, no manual downloads
     # (#5). ${pkgs.path} is the nixpkgs source the devenv lock itself
     # evaluated — the guest toolchain cannot drift from the dev shell,
