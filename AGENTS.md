@@ -32,28 +32,14 @@ not process-compose. Consequences when debugging a managed stack:
   process takes the unit down. Debug by running the suspect process directly
   under the devenv shell (bypassing the supervisor) to see its real stderr.
 
-## Coverage gates run against the pushed tree
+## Coverage gates
 
-The CI coverage gate (100% branch) is exact, and local `unit-tests`
-reproduces it exactly at the same tree — proven in #27 by replaying
-every historical "CI-only" failure locally at the identical
-percentage. Every past divergence was a dirty working tree: pinning
-tests present on disk but absent from the pushed commit.
-
-- Before pushing, run the gates (`ruff check`, `ruff format --check`,
-  `devenv tasks run msks:xenon`, `unit-tests`) on the tree being
-  pushed: commit first, then run them, or confirm
-  `git status --porcelain` is empty.
-- A green gate run refers to the tree it ran on, never to the branch.
-  The known trap (#27's three failures, all on the #24 appliance PR):
-  review fixes (or live-debug changes) amended into a commit that had
-  already passed, and the push went out without re-running the gate.
-  Any change after the last gate run — especially a post-review
-  `--amend` — restarts the gate obligation.
-- When CI reports a coverage gap local runs did not, assume the gap
-  is real. Check out the failing commit (or `git stash && unit-tests`)
-  and it will reproduce — write the pinning test; do not investigate
-  the toolchain (#27 closed this road).
+Local `unit-tests` reproduces the CI coverage gate exactly at the
+same tree (#27). Run it on the tree being pushed: commit first, or
+confirm `git status --porcelain` is empty. Any change after the last
+run — including a post-review `--amend` — requires re-running it. If
+CI reports a gap local runs missed, the gap is real: check out the
+failing commit and write the pinning test.
 
 ## TUI spatial navigation (no focus traps)
 
