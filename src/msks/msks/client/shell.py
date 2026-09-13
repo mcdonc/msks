@@ -118,7 +118,9 @@ async def run_shell(workspace_id: str, url: str, token: str) -> int:
         # the pipe is the file object itself, not a bare fd. The
         # transport is closed deterministically: leaving it to the
         # deallocator surfaces an unraisable double-close warning.
-        transport, _ = await loop.connect_read_pipe(lambda: reader_protocol, sys.stdin)
+        transport, _ = await loop.connect_read_pipe(
+            lambda: reader_protocol, _StdinPipe(sys.stdin)
+        )
         try:
             await pump(stdin, ws, sys.stdout)
         except websockets.ConnectionClosed:
@@ -130,6 +132,27 @@ async def run_shell(workspace_id: str, url: str, token: str) -> int:
                     await task
             transport.close()
     return 0
+
+
+class _StdinPipe:
+    """A connect_read_pipe target over stdin whose close() is a no-op.
+
+    The transport closes whatever file object it is handed — but the
+    client owns its tty: closing the real stdin would break the
+    termios restore that runs after the session ends (#21).
+    """
+
+    def __init__(self, stream) -> None:
+        self._stream = stream
+
+    def fileno(self) -> int:
+        return self._stream.fileno()
+
+    def readable(self) -> bool:
+        return True
+
+    def close(self) -> None:
+        pass
 
 
 def require_tty() -> None:
