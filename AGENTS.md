@@ -54,6 +54,15 @@ Background lifecycle semantics of the msks appliance (all verified live, #25):
   (plus the matching `virtiofsd --socket-path` pattern) and removing
   the stale sockets under `.appliance/`.
 
+## Naming: no leading underscores on helper functions
+
+Module-level helper functions are named without a leading underscore
+(`resolve_boot`, not `_resolve_boot`). The prefix buys nothing at
+module scope — there are no star imports and the modules are small —
+and the complexity-gate splits create many single-use helpers where
+it reads as ceremony. Underscores stay on names that genuinely
+shadow or collude with builtins.
+
 ## Coverage gates
 
 Local `unit-tests` reproduces the CI coverage gate exactly at the
