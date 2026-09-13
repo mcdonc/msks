@@ -52,6 +52,17 @@
 
   env.UV_PYTHON = config.languages.python.package;
 
+  # The msks client (#21) targets the local appliance by default, so
+  # `msks shell <id>` works from any devenv shell with no exports.
+  env.MSKSC_URL = "https://192.168.77.2:8660";
+  # The bootstrap token is composed in nix from the file
+  # appliance-setup.sh seeds: read at evaluation time, so each
+  # `devenv shell` picks up a rotated token. Before the first
+  # `devenv processes up` the file does not exist and the variable is
+  # empty — the client names the missing env. Explicit exports win.
+  env.MSKSC_TOKEN = lib.optionalString (builtins.pathExists ./.appliance/bootstrap-token)
+    (lib.removeSuffix "\n" (builtins.readFile ./.appliance/bootstrap-token));
+
   tasks = {
     # WORKAROUND (klangk pattern): devenv's uv sync gate only hashes the
     # root pyproject.toml, never uv.lock — lock-only changes skip sync and
