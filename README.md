@@ -120,30 +120,10 @@ devenv --quiet -O dotenv.enable:bool false shell -- devenv processes down     # 
 daemonizing task: `processes.appliance` (one supervised process that
 owns both the VM and its store-share daemon) gets crash-restart,
 logs, and clean teardown from the environment's own supervisor.
-
-Background lifecycle semantics (all verified live):
-
-- `devenv processes up -d` starts the manager detached — it survives
-  the shell that launched it, and a second `up -d` is a no-op.
-- `devenv processes down` (from any fresh shell) stops gracefully:
-  the supervisor TERMs the whole process session at once — the run
-  script's trap drives ACPI poweroff through the CH API (up to 10s,
-  within the configured 15s kill grace) while the VMM's own SIGTERM
-  handling shuts it down in parallel — both processes gone, sockets
-  and virtiofsd's pidfile cleaned. A second `down` is a clean no-op.
-- `devenv processes list` / `status` / `logs appliance` inspect the
-  supervised state; `restart` reboots it on demand.
-- A killed VMM (`kill -9`) crash-restarts under the supervisor; a
-  repeatedly-failing process reaches `gave_up` after five restarts
-  (`devenv processes logs` shows why).
-- `DEVENV_TUI=false devenv processes up` is the headless foreground
-  form — the shape a systemd unit would run.
-- If the manager daemon itself dies while processes run, they keep
-  running unsupervised; `devenv processes down` then reports "No
-  process manager is running". Recovery is manual:
-  `pkill -f 'cloud-hypervisor --api-socket <repo>/.appliance/api.sock'`
-  (plus the matching `virtiofsd --socket-path` pattern) and removing
-  the stale sockets under `.appliance/`.
+Background lifecycle semantics — detached `up -d`, graceful
+ACPI-first teardown, crash-restart and `gave_up`, and the manual
+recovery when the manager daemon dies — are documented in
+AGENTS.md ("Process manager").
 
 How it fits together (#10, #25):
 

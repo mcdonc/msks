@@ -32,6 +32,28 @@ not process-compose. Consequences when debugging a managed stack:
   process takes the unit down. Debug by running the suspect process directly
   under the devenv shell (bypassing the supervisor) to see its real stderr.
 
+Background lifecycle semantics of the msks appliance (all verified live, #25):
+
+- `devenv processes up -d` starts the manager detached — it survives
+  the shell that launched it, and a second `up -d` is a no-op.
+- `devenv processes down` (from any fresh shell) stops gracefully:
+  the supervisor TERMs the whole process session at once — the run
+  script's trap drives ACPI poweroff through the CH API (up to 10s,
+  within the configured 15s kill grace) while the VMM's own SIGTERM
+  handling shuts it down in parallel — both processes gone, sockets
+  and virtiofsd's pidfile cleaned. A second `down` is a clean no-op.
+- `devenv processes list` / `status` / `logs appliance` inspect the
+  supervised state; `restart` reboots it on demand.
+- A killed VMM (`kill -9`) crash-restarts under the supervisor; a
+  repeatedly-failing process reaches `gave_up` after five restarts
+  (`devenv processes logs` shows why).
+- If the manager daemon itself dies while processes run, they keep
+  running unsupervised; `devenv processes down` then reports "No
+  process manager is running". Recovery is manual:
+  `pkill -f 'cloud-hypervisor --api-socket <repo>/.appliance/api.sock'`
+  (plus the matching `virtiofsd --socket-path` pattern) and removing
+  the stale sockets under `.appliance/`.
+
 ## Coverage gates
 
 Local `unit-tests` reproduces the CI coverage gate exactly at the
