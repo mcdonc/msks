@@ -97,7 +97,8 @@ let
     }
     ''
       set -eu
-      mkdir -p "$out"/tree/bin "$out"/tree/modules
+      mkdir -p "$out"/tree/bin "$out"/tree/modules \
+        "$out"/tree/proc "$out"/tree/dev "$out"/tree/newroot
       cp "$busybox"/bin/busybox "$out"/tree/bin/busybox
       moddir="$cloudKernel/usr/lib/modules"
       moddir=$(echo "$moddir"/*)
@@ -107,12 +108,14 @@ let
       cat > "$out"/tree/init <<'INIT'
       #!/bin/busybox sh
       # Mount root and hand off to systemd (#37): keep this as small
-      # as it looks — every millisecond here delays the console.
-      /bin/busybox mount -t proc proc /proc
-      /bin/busybox mount -t devtmpfs devtmpfs /dev
-      /bin/busybox insmod /modules/virtio_blk.ko
-      /bin/busybox mkdir -p /newroot/dev
-      /bin/busybox mount -t ext4 -o ro /dev/vda /newroot
+      # as it looks — every millisecond here delays the console. On
+      # any failure, a shell beats a silent hang in a 700KB
+      # initramfs (the serial console is reachable).
+      /bin/busybox mount -t proc proc /proc \
+        && /bin/busybox mount -t devtmpfs devtmpfs /dev \
+        && /bin/busybox insmod /modules/virtio_blk.ko \
+        && /bin/busybox mount -t ext4 -o ro /dev/vda /newroot \
+        || exec /bin/busybox sh
       /bin/busybox mount --move /dev /newroot/dev
       exec /bin/busybox switch_root /newroot /sbin/init
       INIT
@@ -293,6 +296,13 @@ let
       rm -f "$wants"/sockets.target.wants/systemd-networkd.socket
       rm -f "$wants"/sysinit.target.wants/systemd-resolved.service
       rm -f "$wants"/sysinit.target.wants/systemd-timesyncd.service
+      rm -f "$wants"/network-online.target.wants/systemd-networkd-wait-online.service
+      # The netplan renderer config re-enables networkd through the
+      # systemd generator at every boot even with every wants
+      # symlink gone; a workspace has no NIC to configure.
+      chmod u+w "$root"/etc
+      chmod -R u+w "$root"/etc/netplan
+      rm -rf "$root"/etc/netplan
 
       # Sanity: this must be a bootable Debian.
       test -x "$root"/sbin/init

@@ -26,11 +26,11 @@ reports, per run and as a p50:
 | `t_login`   | the serial getty prompt (the last unit of the boot, diagnostic) |
 
 It also reports the host-side cost of the running workspace: the
-VMM's resident set right after first boot, next to the guest memory
-the workspace was configured with. A fresh Debian workspace measures
-**175–185 MiB of VMM RSS against a 1024 MiB guest**: cloud-hypervisor
-maps guest memory on demand, so an idle workspace costs the host
-only what the guest actually touched.
+VMM's *peak* resident set (`VmHWM`) after first boot, next to the
+guest memory the workspace was configured with. A fresh Debian
+workspace measures **165–185 MiB of VMM peak RSS against a 1024 MiB
+guest**: cloud-hypervisor maps guest memory on demand, so an idle
+workspace costs the host only what the guest actually touched.
 
 The console and the login prompt are measured concurrently on
 purpose: the vsock console is the readiness path and answers long

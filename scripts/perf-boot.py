@@ -107,8 +107,16 @@ def kernel_start_gap(serial_log: Path) -> str | None:
         text = serial_log.read_text(encoding="utf-8", errors="replace")
     except FileNotFoundError:
         return None
-    stamps = [ln[1 : ln.index("]")] for ln in text.splitlines() if ln.startswith("[")]
+    stamps = [ln[1 : ln.index("]")] for ln in text.splitlines() if is_stamp(ln)]
     return stamps[-1].strip() if stamps else None
+
+
+def is_stamp(line: str) -> bool:
+    """A kernel timestamp line: "[    1.234567] ..." (not systemd ANSI)."""
+    if not line.startswith("["):
+        return False
+    digits = line[1:].split("]", 1)[0].strip().replace(".", "")
+    return digits.isdigit()
 
 
 def vmm_rss(pid: int | None) -> int | None:
