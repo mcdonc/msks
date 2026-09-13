@@ -25,7 +25,7 @@ def build_containerdisk(
     schema: int | None = None,
     members: dict | None = None,
 ) -> None:
-    """Write a minimal-but-valid OCI archive in containerDisk layout."""
+    """Write a minimal-but-valid container-image tar in containerDisk layout."""
     layer = BytesIO()
     with tarfile.open(fileobj=layer, mode="w") as tar:
         payload = members or {
@@ -401,7 +401,7 @@ def test_import_rejects_missing_layer_member(tmp_path: Path) -> None:
         info.size = len(blob)
         outer.addfile(info, BytesIO(blob))
         # layer.tar deliberately absent
-    with pytest.raises(ImageError, match="malformed OCI archive"):
+    with pytest.raises(ImageError, match="malformed container image"):
         import_archive(archive, tmp_path)
 
 
@@ -601,7 +601,7 @@ def test_import_manifest_not_json(tmp_path: Path) -> None:
         info = tarfile.TarInfo("manifest.json")
         info.size = len(blob)
         outer.addfile(info, BytesIO(blob))
-    with pytest.raises(ImageError, match="malformed OCI archive"):
+    with pytest.raises(ImageError, match="malformed container image"):
         import_archive(archive, tmp_path)
 
 

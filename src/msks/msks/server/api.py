@@ -34,7 +34,7 @@ WORKSPACE_ID_PATTERN = r"^[a-z0-9][a-z0-9-]*$"
 
 
 class ImageImport(BaseModel):
-    """An import request: a host-side path to a docker archive.
+    """An import request: a host-side path to a container-image tar.
 
     The daemon's filesystem must reach it (a store path via the
     appliance's share, or a state-disk path) — the API deliberately

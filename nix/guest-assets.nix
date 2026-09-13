@@ -231,12 +231,12 @@ let
       fakeroot -- /bin/sh -e "$packScript"
   '';
 
-  # The canonical image artifact (#40): an OCI archive in the
-  # containerDisk convention — one layer carrying boot/ (kernel,
-  # initrd) and disk/ (rootfs.ext4, image.json schema 2). Built by
-  # nix-native dockerTools (no new build dependencies); importable
-  # with skopeo/podman/plain tar, and consumable as a containerDisk
-  # by the k8s backend later (#15).
+  # The canonical image artifact (#40): a container-image tar
+  # (`podman load` compatible) in the containerDisk convention — one
+  # layer carrying boot/ (kernel, initrd) and disk/ (rootfs.ext4,
+  # image.json schema 2). Importable with podman/skopeo/plain tar,
+  # and consumable as a containerDisk by the k8s backend later
+  # (#15).
   bootTree = pkgs.runCommand "msks-image-boot-tree"
     {
       inherit debianRoot rootfs;
@@ -273,16 +273,16 @@ let
       EOF
     '';
 
-  # The image archive — a docker-archive layout, the one
-  # `docker save`/`podman save` produce (manifest.json +
-  # <id>/{layer.tar,json,VERSION} + repositories) — built with
-  # plain tar instead of dockerTools (#40 review): an UNCOMPRESSED
-  # layer (members readable in place with `tar tf`, no
-  # decompression at import) and byte-stable flags (--sort=name
-  # --mtime=@1 --owner=0 --group=0 --numeric-owner), so identical
-  # rebuilds hash identically and the per-hash cache dedupes across
-  # hosts and CI. The layout stays loadable by stock tooling
-  # (podman/skopeo verified).
+  # The image archive: a container-image tar built with plain tar
+  # instead of dockerTools (#40 review). The layout is the one
+  # `podman save` writes (manifest.json +
+  # <id>/{layer.tar,json,VERSION} + repositories; the format
+  # originates with `docker save`, which is the last time docker is
+  # mentioned here). The layer is UNCOMPRESSED (members readable in
+  # place with `tar tf`, no decompression at import) and byte-stable
+  # (--sort=name --mtime=@1 --owner=0 --group=0 --numeric-owner), so
+  # identical rebuilds hash identically and the per-hash cache
+  # dedupes across hosts and CI.
   imageArchive = pkgs.runCommand "msks-image-archive"
     {
       inherit bootTree imageName imageVersion;
@@ -296,12 +296,12 @@ let
       # zeroed timestamps and ownership.
       tar --sort=name --mtime='@1' --owner=0 --group=0 --numeric-owner \
         -C "${bootTree}" -cf work/layer.tar .
-      # docker-archive bookkeeping.
+      # Container-image bookkeeping.
       mkdir "work/$imageId"
       mv work/layer.tar "work/$imageId/layer.tar"
       printf '1.0' > "work/$imageId/VERSION"
-      # A minimally valid image config: podman/docker require the
-      # rootfs diff_ids (the uncompressed layer's digest).
+      # A minimally valid image config: podman requires the rootfs
+      # diff_ids (the uncompressed layer's digest).
       layer_digest=$(sha256sum "work/$imageId/layer.tar" | cut -d' ' -f1)
       printf '%s' \
         '{"architecture":"amd64","os":"linux","config":{},' \

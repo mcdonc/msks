@@ -1,7 +1,7 @@
 """The workspace image catalog (#40).
 
-Images are docker archives (the `docker save` layout) in the
-containerDisk convention: one layer
+Images are container-image tars (`podman load` compatible) in
+the containerDisk convention: one layer
 whose root carries ``boot/vmlinuz``, ``boot/initrd.img``,
 ``disk/rootfs.ext4``, and ``disk/image.json`` (schema 2). The store
 lives under ``<state_dir>/images``:
@@ -74,14 +74,14 @@ def hash_file(path: Path) -> str:
 
 
 def first_layer_name(archive: tarfile.TarFile) -> str:
-    """The first layer path from an OCI archive's manifest."""
+    """The first layer path from a container image's manifest."""
     manifest_file = archive.extractfile("manifest.json")
     if manifest_file is None:
-        raise ImageError("no manifest.json: not a docker archive")
+        raise ImageError("no manifest.json: not a container image")
     try:
         layers = json.load(manifest_file)
     except json.JSONDecodeError as exc:
-        raise ImageError(f"malformed OCI archive: {exc}") from exc
+        raise ImageError(f"malformed container image: {exc}") from exc
     return layer_of(layers)
 
 
@@ -93,11 +93,11 @@ def layer_of(layers) -> str:
         and layers[0].get("Layers")
     ):
         return layers[0]["Layers"][0]
-    raise ImageError("docker manifest carries no layers")
+    raise ImageError("image manifest carries no layers")
 
 
 def read_archive(path: Path) -> tuple[dict, tarfile.TarFile]:
-    """Open the containerDisk layer of an OCI archive."""
+    """Open the containerDisk layer of a container-image tar."""
     try:
         archive = tarfile.open(path)
     except (tarfile.TarError, OSError) as exc:
@@ -109,7 +109,7 @@ def read_archive(path: Path) -> tuple[dict, tarfile.TarFile]:
             raise ImageError("layer member missing from archive")
         return {}, tarfile.open(fileobj=layer_file)
     except (KeyError, tarfile.TarError) as exc:
-        raise ImageError(f"malformed OCI archive: {exc}") from exc
+        raise ImageError(f"malformed container image: {exc}") from exc
 
 
 def validate_manifest(layer: tarfile.TarFile) -> dict:

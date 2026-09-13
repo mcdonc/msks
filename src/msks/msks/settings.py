@@ -53,7 +53,7 @@ class VmmSettings:
     # Console bring-up wait: generous by default — nested-virt guests
     # can take longer than bare metal to arm the vsock device.
     vsock_wait_timeout_s: float = 15.0
-    # A host-side OCI archive imported into the catalog on first boot
+    # A host-side container-image tar imported into the catalog on first boot
     # and designated default (the appliance points this at the built
     # image's store path through its cmdline bridge).
     default_image: str = ""
