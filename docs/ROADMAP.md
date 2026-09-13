@@ -50,6 +50,18 @@ a nix-built appliance VM (the "msks machine", podman-machine style);
   accepted (bare hosts): nested-virtualization overhead on workspace
   VMs, and a second image flavor (the appliance) in the nix-built
   artifact set (#10).
+  Decision (2026-09): the appliance is required for every local
+  deployment; there is no first-level local mode. The deciding fact is
+  the egress machinery (#52): per-VM taps, nftables/NFQUEUE consent
+  enforcement, DHCP, DNS, and NAT are appliance software — a
+  first-level mode would install that stack on the operator's host and
+  mutate the host firewall on every workspace lifecycle. macOS hosts
+  cannot run it host-side at all (the stack is Linux-specific), so the
+  appliance is also what makes egress consent uniform across both
+  operating systems. The two OS-specific launchers (a
+  Virtualization.framework supervisor on macOS 15+/M3+, cloud-
+  hypervisor + virtiofsd on Linux) implement one supervisor contract:
+  boot the appliance image with the recorded devices and sockets.
 - **VMM: cloud-hypervisor.** Chosen for its unix-socket REST API
   (no CLI scraping), first-class virtiofs (the podman-volume
   analogue), and snapshot/restore (pre-warmed instant-start
