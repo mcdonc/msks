@@ -99,7 +99,61 @@ MSKSD_STATE_DIR=/tmp/msksd MSKSD_BOOTSTRAP_TOKEN=dev-secret MSKSD_PORT=8660 msks
   new value *adds* a token; the previous bootstrap credential stays valid
   until revoked via the API.
 - **Schema**: the SQLite database is created and upgraded by Alembic at
-  startup (`migrations/`).
+  startup (inside the package: `msks/migrations`).
+
+### The msksd appliance (any Linux host)
+
+The daemon runs as an appliance microvm — no NixOS required on the
+host or in the guest. Requirements: any Linux with KVM + nested
+virtualization enabled, nix + devenv, and `sudo -n` for a one-time
+bridge/tap (the only privileged host step; everything else —
+cloud-hypervisor, ch-remote, virtiofsd — comes from the devenv shell).
+
+```bash
+devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:appliance-build
+devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:appliance-up
+curl -sk https://192.168.77.2:8660/api/v1/health   # TOFU fingerprint: .appliance/serial.log
+devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:appliance-down
+```
+
+How it fits together (#10):
+
+- The image is pure nixpkgs derivations built like the workspace
+  guest — kernel, initrd, busybox rootfs with kvm/virtiofs/virtio_net
+  modules — no NixOS, no module system.
+- The heavy runtime (the nix-built msksd closure, the VMM for
+  workspace VMs, and the workspace assets from `msks:build-guest`)
+  rides a **read-only virtiofs share of the host `/nix/store`** —
+  read-only enforced by `virtiofsd --readonly`, not just the guest's
+  mount: the appliance runs the same store paths the host built, and
+  nothing is copied into the image. Two GC roots keep them realized:
+  `msks:appliance-build` roots the appliance's own closure,
+  `msks:build-guest` roots the workspace guest assets (which the
+  appliance references only through the share).
+- Persistent state (SQLite, workspace overlays, logs) is a second
+  disk under `.appliance/state.ext4` (relocatable via
+  `MSKSD_APPLIANCE_STATE`); rebuilds never clobber it.
+- The bootstrap token is generated into `.appliance/bootstrap-token`
+  and seeded onto the state disk; `msks:appliance-up` prints where.
+- Networking: a private L2 bridge (`msksbr0`/`mskstap0`, static
+  192.168.77.0/24 plan) — the API is simply reachable at the guest
+  IP, no port forwarding.
+- Nested KVM: `kvm_intel`/`kvm_amd` load in the guest and workspace
+  VMs run on the appliance's `/dev/kvm` (verified: a workspace boots,
+  runs, and stops inside, driven through the API).
+- Debug hatch: seed a `debug-shell` marker onto the state disk
+  (`debugfs -w -R "write <file> debug-shell" .appliance/state.ext4`)
+  and the init backgrounds the daemon, prints a one-way diagnostics
+  dump (kvm modules, `/dev/kvm`, VMM binary, store visibility) to the
+  serial log, runs `/state/diag.sh` if present, and leaves a shell on
+  the console — readable interactively when the serial console is
+  attached to a terminal instead of the log file (see #25).
+
+Known quirk worth knowing: cloud-hypervisor v52 rejects writes to
+sector 0 on disks without an explicit `image_type` (a QCOW2
+misdetection guard), which breaks any guest writing an ext4
+superblock — every disk the appliance and the daemon create declares
+`image_type: Raw`.
 
 ### k8s (k3s) smoke path
 

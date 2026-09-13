@@ -1,0 +1,80 @@
+# The msks python package built by nixpkgs' python machinery, for the
+# appliance (#10): the daemon closure as store paths, resolved against
+# the same pinned nixpkgs that builds the guest assets.
+#
+# Version pinning is looser than uv.lock (nixpkgs carries its own
+# fastapi/uvicorn/sqlalchemy minor versions within the >= floors of
+# pyproject.toml); the appliance smoke test boots the real daemon
+# through the real API, so any drift that matters surfaces there.
+{
+  lib,
+  buildPythonPackage,
+  hatchling,
+  # Runtime dependencies, mirroring [project.dependencies]:
+  fastapi,
+  httpx,
+  pydantic,
+  pyyaml,
+  sqlalchemy,
+  aiosqlite,
+  uvicorn,
+  cryptography,
+  alembic,
+}:
+
+let
+  # Only what hatchling reads: pyproject context at the root plus the
+  # package tree. Keeps .devenv/.guest/worktree noise out of the hash
+  # so unrelated edits cannot rebuild the appliance closure.
+  src = lib.cleanSourceWith {
+    src = ./..;
+    filter =
+      path: type:
+      let
+        rel = lib.removePrefix (toString ./.. + "/") (toString path);
+      in
+      # Directories prune their whole subtree when filtered out, so
+      # every ancestor of the package tree must pass too.
+      rel == "pyproject.toml"
+      || rel == "README.md"
+      || (type == "directory" && (rel == "src" || rel == "src/msks"))
+      || (lib.hasPrefix "src/msks/msks" rel
+        && !lib.hasSuffix "__pycache__" rel
+        && !lib.hasSuffix ".pyc" rel);
+  };
+in
+buildPythonPackage {
+  pname = "msks";
+  version = "0.1.0";
+  pyproject = true;
+  inherit src;
+
+  build-system = [ hatchling ];
+
+  dependencies = [
+    fastapi
+    httpx
+    pydantic
+    pyyaml
+    sqlalchemy
+    aiosqlite
+    uvicorn
+    cryptography
+    alembic
+  ];
+
+  # No nix-side test run: the appliance smoke test exercises the real
+  # daemon; unit tests run in the devenv shell, not in this build.
+  doCheck = false;
+
+  pythonRemoveDeps = [
+    # uvicorn[standard] extra: the speedups resolve via the plain
+    # nixpkgs uvicorn package here.
+    "uvicorn[standard]"
+  ];
+
+  meta = {
+    description = "Microvm workspace daemon (klangkd analogue on cloud-hypervisor)";
+    mainProgram = "msksd";
+  };
+}

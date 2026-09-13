@@ -26,14 +26,21 @@ no web frontend yet.
   `MSKSC_*` namespace.
 - **msksd always runs in a microvm — except on Kubernetes, where the
   cluster is the machine.** On a bare host the daemon is deployed as
-  a nix-built appliance VM (the "msks machine", podman-machine style)
-  supervised by the host (the microvm.nix / systemd shape already
-  proven on keithmoon); workspace VMs run via nested KVM inside it
+a nix-built appliance VM (the "msks machine", podman-machine style);
+  workspace VMs run via nested KVM inside it
   (CPU host-passthrough, `/dev/kvm` in the guest). Rationale: an
   extra security layer — at least two VM boundaries between a
   workspace and the metal — and a pure client/host division: the
   physical host runs only the appliance's supervisor and exposes only
-  the appliance's HTTPS listener. The privileged helper (taps +
+  the appliance's HTTPS listener. The host OS is irrelevant (#10
+  revision): the supervisor is the repo's devenv tasks
+  (`msks:appliance-build`/`-up`/`-down` driving cloud-hypervisor and
+  virtiofsd from the pinned devenv shell) — no NixOS host requirement,
+  and no NixOS in the guest either: the appliance image is built like
+  the workspace guest (pure nixpkgs derivations, direct kernel boot),
+  with its heavy runtime (the msksd closure, the VMM, workspace
+  assets) arriving read-only over a virtiofs share of the host's
+  /nix/store. The privileged helper (taps +
   nftables for egress consent) lives inside the appliance VM, so no
   msks-owned privileged process ever runs on the host. On Kubernetes
   the appliance layer is redundant: msksd runs as a pod, workspace

@@ -79,7 +79,9 @@ def test_vm_config_matches_v52_schema(tmp_path: Path) -> None:
     assert config["memory"] == {"size": 2048 * 1024 * 1024}
     assert config["payload"]["kernel"] == str(tmp_path / "k")
     assert config["payload"]["cmdline"] == "console=hvc0 root=/dev/vda rw"
-    assert config["disks"] == [{"path": str(tmp_path / "r")}]
+    assert config["disks"] == [
+        {"path": str(tmp_path / "r"), "readonly": True, "image_type": "Raw"}
+    ]
     assert config["serial"] == {
         "mode": "File",
         "file": str(tmp_path / "serial.log"),
@@ -330,10 +332,27 @@ async def test_kill_via_pidfile(env, tmp_path: Path) -> None:
         os.kill(sleeper.pid, 0)
 
 
-async def test_kill_unknown_workspace_raises(env) -> None:
+async def test_kill_unknown_workspace_is_success(env) -> None:
+    # Killing an absent VM is success (the absent-VM contract): a
+    # never-started workspace must stay deletable, like the k8s
+    # backend guarantees since the round-2 review.
     app, _, _ = env
-    with pytest.raises(MicrovmError, match="no such VM"):
-        await app.state.microvm.kill("ghost")
+    await app.state.microvm.kill("ghost")
+
+
+async def test_shutdown_stale_socket_is_stopped(env, tmp_path: Path) -> None:
+    # A dead VMM leaves its api socket file behind: connect() then
+    # fails ECONNREFUSED (not ENOENT), which shutdown must treat as
+    # already-stopped instead of wedging the caller (found by the
+    # appliance e2e: delete-after-stop 500'd exactly this way).
+    app, state_dir, _ = env
+    vm_dir = state_dir / "vms" / WID
+    vm_dir.mkdir(parents=True)
+    (vm_dir / "api.sock").write_bytes(b"")  # stale: no VMM behind it
+    dead = await asyncio.create_subprocess_exec("sleep", "0.1")
+    (vm_dir / "ch.pid").write_text(str(dead.pid))
+    await dead.wait()
+    await app.state.microvm.shutdown(WID, timeout_s=1)  # must not raise
 
 
 async def test_cleanup_removes_dir(env, fake, tmp_path: Path) -> None:
@@ -351,3 +370,55 @@ async def test_driver_switch_and_validation(env) -> None:
     app.state.settings.vmm.driver = "bogus"
     with pytest.raises(MicrovmError, match="unknown vmm driver"):
         app.state.microvm.driver
+
+
+async def test_terminate_without_proc_or_pid(env, tmp_path: Path) -> None:
+    # _terminate with no tracked process and no pid file: a plain
+    # return, no error (pin the arc explicitly — xdist/sysmon arc
+    # capture is order-sensitive and CI missed this one once).
+    app, state_dir, _ = env
+    vm_dir = state_dir / "vms" / WID
+    vm_dir.mkdir(parents=True)  # dir exists, no ch.pid
+    await app.state.microvm.driver._terminate(
+        WID, asyncio.get_running_loop().time() + 1
+    )
+
+
+async def test_terminate_sigterms_pidfile_pid(env, tmp_path: Path) -> None:
+    # _terminate with no tracked process but a live pidfile pid: the
+    # pid gets SIGTERM (the orphaned-VMM path).
+    app, state_dir, _ = env
+    vm_dir = state_dir / "vms" / WID
+    vm_dir.mkdir(parents=True)
+    sleeper = await asyncio.create_subprocess_exec("sleep", "600")
+    (vm_dir / "ch.pid").write_text(str(sleeper.pid))
+    await app.state.microvm.driver._terminate(
+        WID, asyncio.get_running_loop().time() + 5
+    )
+    await sleeper.wait()  # reap the zombie; kill(pid,0) succeeds until then
+    with pytest.raises(ProcessLookupError):
+        os.kill(sleeper.pid, 0)
+
+
+async def test_shutdown_escalates_when_api_dies_midcall(env, monkeypatch) -> None:
+    # The VMM looked alive but its API died between the liveness check
+    # and the call: shutdown must fall through to SIGTERM (the
+    # _terminate path), not surface a 500.
+    app, state_dir, _ = env
+    vm_dir = state_dir / "vms" / WID
+    vm_dir.mkdir(parents=True)
+    (vm_dir / "api.sock").write_bytes(b"")
+    sleeper = await asyncio.create_subprocess_exec("sleep", "600")
+    (vm_dir / "ch.pid").write_text(str(sleeper.pid))
+
+    from msks.microvm import local as local_mod
+    from msks.microvm.errors import MicrovmError
+
+    async def die(self):
+        raise MicrovmError("connection refused mid-call")
+
+    monkeypatch.setattr(local_mod.CloudHypervisorApi, "shutdown", die)
+    await app.state.microvm.driver.shutdown(WID, timeout_s=2)
+    await sleeper.wait()  # reap the zombie; kill(pid,0) succeeds until then
+    with pytest.raises(ProcessLookupError):
+        os.kill(sleeper.pid, 0)

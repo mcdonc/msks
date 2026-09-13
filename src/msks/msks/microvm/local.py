@@ -53,7 +53,15 @@ def vm_config(spec: VmSpec, serial_log: Path) -> dict:
         "cpus": {"boot_vcpus": spec.cpus, "max_vcpus": spec.cpus},
         "memory": {"size": spec.mem_mib * 1024 * 1024},
         "payload": payload,
-        "disks": [{"path": str(spec.rootfs)}],
+        # The rootfs is an immutable artifact (a nix store path on the
+        # appliance's read-only /nix/store share; a build output on
+        # dev hosts) and the guest mounts it ro — declare it readonly
+        # so the VMM opens it O_RDONLY instead of failing EROFS, and
+        # declare image_type Raw: v52's autodetection otherwise
+        # disables sector-0 writes on disks without an explicit type
+        # (a QCOW2-misdetection guard that breaks writable overlay
+        # disks added later).
+        "disks": [{"path": str(spec.rootfs), "readonly": True, "image_type": "Raw"}],
         "serial": {"mode": "File", "file": str(serial_log)},
     }
 
@@ -208,20 +216,57 @@ class LocalCloudHypervisor(MicrovmDriver):
         return False
 
     async def shutdown(self, workspace_id: str, timeout_s: float | None = None) -> None:
+        """Stop one VM gracefully; an already-stopped VM is success.
+
+        The absent-VM contract every backend honors (see the k8s
+        driver): stopping a workspace whose VMM died — or that was
+        never started — must not wedge the caller. A stale api socket
+        (the file outlives a dead VMM) reports ECONNREFUSED rather
+        than ENOENT, so dead-behind-a-socket counts as stopped too.
+        """
         vmm = self._settings().vmm
         socket_path = self._dir(workspace_id) / "api.sock"
-        if not socket_path.exists():
+        if not socket_path.exists() or not self._vmm_reachable(workspace_id):
             self._procs.pop(workspace_id, None)
             return
         timeout = timeout_s if timeout_s is not None else vmm.shutdown_timeout_s
         deadline = asyncio.get_running_loop().time() + timeout
-        api = CloudHypervisorApi(socket_path, vmm.request_timeout_s)
+        await self._graceful_guest_down(workspace_id, deadline)
+        await self._terminate(workspace_id, deadline)
+
+    async def _graceful_guest_down(self, workspace_id: str, deadline: float) -> None:
+        """Request the ACPI poweroff and wait for the guest to land."""
+        vmm = self._settings().vmm
+        api = CloudHypervisorApi(
+            self._dir(workspace_id) / "api.sock", vmm.request_timeout_s
+        )
         try:
             await api.shutdown()
             await self._poll_guest_down(api, deadline)
+        except MicrovmTimeoutError:
+            # A live guest refusing to power off is a real result —
+            # surface it, exactly as before.
+            raise
+        except MicrovmError:
+            # The VMM died or hung between the liveness check and the
+            # call (narrowed race, never zero): escalate straight to
+            # SIGTERM rather than surfacing a 500.
+            pass
         finally:
             await api.aclose()
-        await self._terminate(workspace_id, deadline)
+
+    def _vmm_reachable(self, workspace_id: str) -> bool:
+        """Whether a VMM process for this workspace looks alive.
+
+        A pid-liveness heuristic, deliberately cheap: races it cannot
+        close are handled by the MicrovmError fallthrough in
+        ``shutdown`` escalating to SIGTERM.
+        """
+        pid = self._pid(workspace_id)
+        proc = self._procs.get(workspace_id)
+        if proc is not None:
+            return proc.returncode is None
+        return pid is not None and self._pid_alive(pid)
 
     async def _poll_guest_down(self, api: CloudHypervisorApi, deadline: float) -> None:
         while True:
@@ -266,8 +311,10 @@ class LocalCloudHypervisor(MicrovmDriver):
             await proc.wait()
             return
         pid = self._pid(workspace_id)
-        if pid is None:
-            raise MicrovmError(f"no such VM: {workspace_id}")
+        if pid is None or not self._pid_alive(pid):
+            # Already dead (or never started): killing an absent VM is
+            # success — the absent-VM contract shutdown honors too.
+            return
         os.kill(pid, signal.SIGKILL)
 
     async def cleanup(self, workspace_id: str) -> None:

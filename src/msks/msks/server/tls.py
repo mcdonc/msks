@@ -47,7 +47,16 @@ def _write(path: Path, data: bytes, mode: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
     try:
-        os.write(fd, data)
+        # os.write may write partially (e.g. through virtio-backed
+        # storage); loop like Path.write_bytes does.
+        view = memoryview(data)
+        while view:
+            written = os.write(fd, view)
+            view = view[written:]
+        # These files are load-bearing across hard power cuts (the
+        # appliance's VMM can die without guest notice): flush the
+        # data or the next boot reads a zero-length PEM and crash-loops.
+        os.fsync(fd)
     finally:
         os.close(fd)
 
@@ -145,7 +154,11 @@ def _self_signed(state_dir: Path, host: str) -> tuple[str, str, str]:
     """The CA + leaf pair under ``state_dir``, generated as needed."""
     ca_cert = state_dir / CA_CERT
     ca_key = state_dir / CA_KEY
-    if not ca_cert.is_file() or not ca_key.is_file():
+    if not _ca_usable(ca_cert, ca_key):
+        # Missing, or present but unreadable (a hard power cut between
+        # create and fsync leaves zero-length PEMs): regenerate rather
+        # than crash-loop. Clients pinned to the old fingerprint must
+        # re-pin — same procedure as any CA rotation.
         cert_pem, key_pem = generate_ca()
         _write(ca_cert, cert_pem, 0o644)
         _write(ca_key, key_pem, 0o600)
@@ -161,6 +174,19 @@ def _self_signed(state_dir: Path, host: str) -> tuple[str, str, str]:
         _write(leaf_key, key_pem, 0o600)
         _write(leaf_host, f"{host}\n{ca_fingerprint}\n".encode(), 0o644)
     return str(leaf_cert), str(leaf_key), ca_fingerprint
+
+
+def _ca_usable(ca_cert: Path, ca_key: Path) -> bool:
+    """Whether the CA pair exists and parses; False when regeneration
+    must run."""
+    if not ca_cert.is_file() or not ca_key.is_file():
+        return False
+    try:
+        x509.load_pem_x509_certificate(ca_cert.read_bytes())
+        serialization.load_pem_private_key(ca_key.read_bytes(), password=None)
+    except ValueError, IndexError:
+        return False
+    return True
 
 
 def leaf_stale(

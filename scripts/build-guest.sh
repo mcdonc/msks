@@ -16,6 +16,13 @@ out="$(
     "$root/nix/guest.nix" -A guest
 )"
 
+# A GC root: the appliance references these paths only through the
+# virtiofs store share (nothing in its closure depends on them), so
+# without a root a garbage collect would ENOENT every workspace boot.
+rm -f "$guest_dir/guest-root"
+nix-build -I nixpkgs="$nixpkgs" "$root/nix/guest.nix" -A guest \
+  -o "$guest_dir/guest-root"
+
 mkdir -p "$guest_dir"
 for name in vmlinux initrd rootfs.ext4 guest-manifest.json; do
   rm -f "$guest_dir/$name"

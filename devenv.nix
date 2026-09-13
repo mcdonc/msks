@@ -33,7 +33,10 @@
       bash # explicit bash for shell scripts (CI /bin/sh may be dash)
       cloud-hypervisor # VMM driven by the local backend (#1); ships ch-remote
       curl # unix-socket REST poking during CH debugging
+      e2fsprogs # debugfs: seed the bootstrap token onto the state disk
+      iproute2 # the appliance bridge/tap (supervisor scripts; host-agnostic)
       qemu # qemu-img for rootfs conversion during guest-image experiments
+      virtiofsd # the appliance's read-only /nix/store share (#10)
       ruff
       socat # AF_UNIX <-> pty/stdio plumbing for CH socket debugging
       # cyclomatic-complexity gate tool: built against python3.14 because
@@ -89,6 +92,24 @@
     "msks:demo-vm" = {
       description = "Boot one microvm from the built guest assets (serial console on this terminal)";
       exec = ''exec bash "$DEVENV_ROOT/scripts/demo-vm.sh"'';
+    };
+    # The appliance host supervisor (#10): distro-agnostic by design —
+    # everything these invoke comes from this devenv shell, never from
+    # the host OS. The one privileged step (bridge/tap create) is a
+    # documented one-time sudo inside appliance-up.sh.
+    "msks:appliance-build" = {
+      description = "Build the msksd appliance image into .appliance/";
+      exec = ''
+        exec env MSKS_GUEST_NIXPKGS=${pkgs.path} bash "$DEVENV_ROOT/scripts/build-appliance.sh"
+      '';
+    };
+    "msks:appliance-up" = {
+      description = "Boot the msksd appliance (bridge+tap, virtiofsd, cloud-hypervisor)";
+      exec = ''exec bash "$DEVENV_ROOT/scripts/appliance-up.sh"'';
+    };
+    "msks:appliance-down" = {
+      description = "Stop the running msksd appliance cleanly via the CH API";
+      exec = ''exec bash "$DEVENV_ROOT/scripts/appliance-down.sh"'';
     };
   };
 

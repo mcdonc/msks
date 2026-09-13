@@ -16,6 +16,7 @@ __pycache__/
 
 # nix-built guest VM assets (devenv tasks write here)
 .guest/
+.appliance/
 
 # nix build outputs
 result
