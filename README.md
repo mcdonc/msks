@@ -42,12 +42,21 @@ devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:xenon
 
 ### VM guest assets
 
-Everything needed to boot a microvm is built by nix from the nixpkgs
-revision devenv itself pins — kernel (bzImage with the PVH entry
-point), an initrd carrying the virtio/ext4 modules the stock kernel
-builds as modules, a read-only ext4 rootfs around a static busybox,
-and the k8s vm-runner container archive. Every step of the build runs
-inside the repo on any Linux host with nix:
+The workspace guest is **Debian 13 (trixie)**, straight from Debian's
+official nocloud cloud image (#30): systemd as PID 1, apt, and
+Debian's own kernel, initrd, and modules — booted directly (no
+BIOS/UEFI) by cloud-hypervisor. The image is pinned by its dated
+cloud.debian.org URL and sha512, and the build turns it into the
+msks boot contract — `vmlinux` (Debian's bzImage, `CONFIG_PVH=y`),
+`initrd`, a fresh read-only ext4 rootfs, and
+`guest-manifest.json` — with a small overlay of msks systemd units
+(vsock console, serial autologin). Extraction is fully unprivileged:
+qemu-img convert, partition slice, `debugfs rdump`, `mke2fs -d`.
+Measured boot on bare-metal KVM: kernel at 1.1s, the vsock console
+service at 7.4s, login prompt at 8.9s (#37 tracks the <5s goal).
+
+Every step of the build runs inside the repo on any Linux host with
+nix (the k8s vm-runner container archive comes from the same tree):
 
 ```bash
 devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:build-guest
@@ -128,8 +137,9 @@ AGENTS.md ("Process manager").
 How it fits together (#10, #25):
 
 - The image is pure nixpkgs derivations built like the workspace
-  guest — kernel, initrd, busybox rootfs with kvm/virtiofs/virtio_net
-  modules — no NixOS, no module system.
+  guest needs — the Debian image ships its own kernel, initramfs,
+  and virtio modules. (#30 has the full story; the busybox-rootfs
+  build it replaced carried them by hand.)
 - The heavy runtime (the nix-built msksd closure, the VMM for
   workspace VMs, and the workspace assets from `msks:build-guest`)
   rides a **read-only virtiofs share of the host `/nix/store`** —
@@ -196,16 +206,15 @@ Transport (#21), in the preferred vsock-first shape:
   `CONNECT 1023\n`, reads the `OK <port>\n` reply, then pumps raw
   bytes both ways — no framing, backpressure is websocket/TCP flow
   control.
-- The guest loads `vmw_vsock_virtio_transport`, creates `/dev/vsock`
-  (a misc device devtmpfs does not create on its own), mounts devpts
-  with a `/dev/ptmx` link, and runs a static socat listener
-  (`VSOCK-LISTEN:1023,reuseaddr,fork EXEC:/bin/ash,pty,ctty,echo=0,icanon=0,stderr,setsid`)
-  — one busybox ash on a pty per connection. The pty keeps ISIG and
-  ONLCR (no `raw`): Ctrl-C generates SIGINT in the guest and output
-  arrives CRLF-terminated, while `echo=0,icanon=0` leave echo and
-  line editing to the shell. The shell is **root**
-  today: the guest userspace is busybox-as-root (#5); a non-root
-  shell arrives with a real guest userland.
+- The guest loads `vmw_vsock_virtio_transport` (systemd-modules-load)
+  and runs `msks-console.service`: Debian's own socat (built
+  WITH_VSOCK) as `VSOCK-LISTEN:1023,reuseaddr,fork
+  EXEC:/bin/bash,pty,ctty,echo=0,icanon=0,stderr,setsid`, restarted
+  by systemd if it dies. One Debian bash on a pty per connection.
+  The pty keeps ISIG and ONLCR (no `raw`): Ctrl-C generates SIGINT in
+  the guest and output arrives CRLF-terminated, while
+  `echo=0,icanon=0` leave echo and line editing to the shell. The
+  shell is **root**; a non-root shell is follow-up work.
 - Window-size changes are not applied v1: the guest pty keeps its
   creation size; propagating a resize needs a guest-side helper that
   does not exist yet.

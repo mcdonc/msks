@@ -285,7 +285,7 @@ let
     for applet in sh ash ls cat uname ps mount umount dmesg poweroff \
       reboot vi hostname mkdir rmdir rm cp mv grep head tail wc id whoami \
       env uptime free clear dd sync sleep setsid cttyhack mknod chmod \
-      chown date acpid ip mke2fs modprobe sed; do
+      chown date acpid ip mke2fs modprobe sed tr; do
       ln -s busybox "$root/bin/$applet"
     done
     printf 'msksd-appliance\n' > "$root/etc/hostname"
