@@ -119,6 +119,9 @@ def vm_config(spec: VmSpec, serial_log: Path, vsock_socket: Path | None = None) 
         # disks added later).
         "disks": [{"path": str(spec.rootfs), "readonly": True, "image_type": "Raw"}],
         "serial": {"mode": "File", "file": str(serial_log)},
+        # No virtio-console device: the default leaves a second,
+        # non-autologin getty (hvc0) writing into the VMM log.
+        "console": {"mode": "Off"},
     }
     if vsock_socket is not None:
         vm["vsock"] = {"cid": VSOCK_CID, "socket": str(vsock_socket)}

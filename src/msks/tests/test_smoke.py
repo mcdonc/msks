@@ -106,7 +106,9 @@ async def await_pod_running(
 @needs_local
 async def test_local_vm_boot_and_shutdown() -> None:
     # A shallow base: deep pytest tmp dirs can push the API socket path
-    # past the AF_UNIX 108-byte limit under xdist workers.
+    # past the AF_UNIX 108-byte limit under xdist workers. Shutdown is
+    # the API's vm.shutdown (non-graceful in CH v52: the guest is not
+    # notified) — there is no guest-side power-button handler.
     state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
     settings = Settings(vmm=VmmSettings(state_dir=state_dir))
     app = build_app(settings)

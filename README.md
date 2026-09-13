@@ -54,6 +54,13 @@ msks boot contract — `vmlinux` (Debian's bzImage, `CONFIG_PVH=y`),
 qemu-img convert, partition slice, `debugfs rdump`, `mke2fs -d`.
 Measured boot on bare-metal KVM: kernel at 1.1s, the vsock console
 service at 7.4s, login prompt at 8.9s (#37 tracks the <5s goal).
+`apt` is present but inert while the root is read-only and the VM
+has no network — installs arrive with #26's writable volume. The
+extraction runs under fakeroot so the image is root-owned with sane
+password-file modes (setuid bits are lost; everything runs as root).
+Stopping a workspace is API-side (`vm.shutdown`, non-graceful in
+cloud-hypervisor v52 — the guest is not notified; there is no
+guest-side power-button handler).
 
 Every step of the build runs inside the repo on any Linux host with
 nix (the k8s vm-runner container archive comes from the same tree):

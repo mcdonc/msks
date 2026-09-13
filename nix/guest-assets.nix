@@ -58,6 +58,7 @@ let
   # module load, and a stable hostname. Debian's socat 1.8.x is
   # built WITH_VSOCK, so nothing is cross-compiled in.
   guestOverlay = pkgs.runCommand "msks-guest-overlay" { } ''
+    set -eu
     mkdir -p \
       $out/etc/systemd/system/serial-getty@ttyS0.service.d \
       $out/etc/systemd/system/multi-user.target.wants \
@@ -70,7 +71,10 @@ let
     # a bare ext4, so those device jobs can never start and systemd
     # stalls at boot. The kernel cmdline already names the root
     # device; systemd mounts the pseudo-filesystems itself.
-    printf '# msks: root comes from the kernel cmdline; no swap.\n' \
+    printf '%s\n' \
+      '# msks: root comes from the kernel cmdline; no swap.' \
+      '# /var is volatile: the root disk is read-only (#30).' \
+      'tmpfs /var tmpfs mode=0755,nosuid,nodev 0 0' \
       > $out/etc/fstab
 
     printf '%s\n' \
@@ -97,6 +101,10 @@ let
       > $out/etc/systemd/system/msks-console.service
     ln -s ../msks-console.service \
       $out/etc/systemd/system/multi-user.target.wants/msks-console.service
+
+    # grub-common records successful boots into /boot — read-only
+    # here, and a direct-boot VM has no grub to inform anyway.
+    ln -s /dev/null $out/etc/systemd/system/grub-common.service
 
     # The serial console is the guest's debug channel: autologin root
     # on ttyS0 (the vsock console is the supported interactive path).
@@ -157,6 +165,11 @@ let
       # setuid).
       debugfs -R "rdump / $root" root.part 2>/dev/null || true
       rm -rf "$root"/lost+found
+      # rdump's stderr mixes benign ownership noise with real errors,
+      # so the exit code is useless; assert the dump itself landed.
+      for top in bin usr etc var lib boot; do
+        test -d "$root/$top"
+      done
 
       # The msks overlay.
       cp -a --no-preserve=ownership ${guestOverlay}/. "$root"/
@@ -173,22 +186,44 @@ let
 
   # mke2fs -d packs a directory into an ext4 image without mounting
   # anything — the whole build stays unprivileged and host-independent.
+  # One fakeroot session owns the tree and builds the image: the
+  # extraction tree is owned by the build user (mke2fs -d bakes the
+  # builder's ownership view straight into the image — every inode
+  # would be nobody:nogroup). Under fakeroot the chown/chmod are
+  # recorded, not performed, and mke2fs -d's stat() reads the faked
+  # root ownership. This also restores sane permissions on the
+  # password files; setuid bits stay lost (rdump cannot preserve
+  # them, and everything runs as root today).
+  packScript = pkgs.writeText "msks-rootfs-pack.sh" ''
+    set -eu
+    tree="''${PACK_TREE:?}"
+    img="''${PACK_IMG:?}"
+    blocks="''${PACK_BLOCKS:?}"
+    fake_epoch="''${PACK_FAKE_EPOCH:?}"
+    chown -R 0:0 "$tree"
+    chmod 0640 "$tree"/etc/shadow "$tree"/etc/gshadow
+    chmod 0600 "$tree"/etc/ssh/ssh_host_*_key 2>/dev/null || true
+    E2FSPROGS_FAKE_TIME="$fake_epoch" mke2fs -q -t ext4 -b 4096 -I 256 \
+      -L msks-rootfs \
+      -E hash_seed=00000000-0000-0000-0000-000000000000 \
+      -d "$tree" "$img" "$blocks"
+    E2FSPROGS_FAKE_TIME="$fake_epoch" tune2fs -U clear "$img" >/dev/null
+  '';
+
   rootfs = pkgs.runCommand "msks-guest-rootfs" {
-    inherit debianRoot;
-    nativeBuildInputs = [ pkgs.e2fsprogs ];
+    inherit debianRoot packScript;
+    nativeBuildInputs = [ pkgs.e2fsprogs pkgs.fakeroot ];
     fakeEpoch = 1262304000;
   } ''
     set -eu
-    img="$out/rootfs.ext4"
     mkdir -p "$out"
     # Content plus 1G of slack (the root boots read-only; the slack
     # only cushions future overlay content, not guest writes).
-    blocks=$(( $(cat "$debianRoot"/tree-blocks) + 262144 ))
-    E2FSPROGS_FAKE_TIME="$fakeEpoch" mke2fs -q -t ext4 -b 4096 -I 256 \
-      -L msks-rootfs \
-      -E hash_seed=00000000-0000-0000-0000-000000000000 \
-      -d "$debianRoot/root" "$img" "$blocks"
-    E2FSPROGS_FAKE_TIME="$fakeEpoch" tune2fs -U clear "$img" >/dev/null
+    PACK_TREE="$debianRoot/root" \
+      PACK_IMG="$out/rootfs.ext4" \
+      PACK_BLOCKS=$(( $(cat "$debianRoot"/tree-blocks) + 262144 )) \
+      PACK_FAKE_EPOCH="$fakeEpoch" \
+      fakeroot -- /bin/sh -e "$packScript"
   '';
 
 in

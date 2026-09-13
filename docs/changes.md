@@ -8,7 +8,7 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
-- **The workspace guest is Debian 13 (trixie) (#30).** The rootfs comes from Debian's official nocloud cloud image (pinned by dated URL + sha512): systemd as PID 1, apt, and Debian's own kernel/initrd/modules direct-booted by cloud-hypervisor — no msks-built binary runs inside the guest; the only additions are systemd drop-in units (vsock console with restart, serial autologin, the vsock module load, a stable hostname). Extraction is unprivileged (qcow2 → raw → partition slice → `debugfs rdump` → overlay → `mke2fs -d`); boot measures 1.1s kernel / 7.4s console-ready / 8.9s login on bare-metal KVM (#37 tracks <5s). `msks:build-guest`, the manifest contract, and the smoke path are unchanged; known extraction limitation: setuid bits are lost (root-only workflows unaffected). The busybox guest rootfs is gone; the boot initrd that loads virtio/ext4 before switch_root is gone with it (Debian ships its own).
+- **The workspace guest is Debian 13 trixie (#30).** The rootfs comes from Debian's official nocloud cloud image (pinned by dated URL + sha512): systemd as PID 1, apt (present but inert while the root is read-only), and Debian's own kernel direct-booted. `msks:build-guest`, the manifest contract, and the smoke path are unchanged; the busybox guest is gone. See the README for build details, timings, and the setuid/ownership notes.
 
 ### Fixed
 
