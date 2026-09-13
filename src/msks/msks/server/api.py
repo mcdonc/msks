@@ -62,7 +62,7 @@ class WorkspaceCreate(BaseModel):
     mem_mib: int = Field(default=1024, ge=64, le=1 << 15)
 
 
-def _bootstrap_default_image(app) -> None:
+def bootstrap_default_image(app) -> None:
     """Import MSKSD_DEFAULT_IMAGE once, as the catalog default.
 
     Failure is loud but non-fatal: a bad pointer must not take the
@@ -88,7 +88,7 @@ def _bootstrap_default_image(app) -> None:
         print(f"msksd: default image {record.ref} ({record.hash[:12]}) imported")
 
 
-def _image_record(app, body: WorkspaceCreate):
+def image_record(app, body: WorkspaceCreate):
     """The requested catalog record, or the default when omitted."""
     state_dir = app.state.settings.vmm.state_dir
     if body.image is not None:
@@ -99,26 +99,26 @@ def _image_record(app, body: WorkspaceCreate):
     return imagestore.default_image(state_dir)
 
 
-def _resolve_boot(app, body: WorkspaceCreate) -> dict:
+def resolve_boot(app, body: WorkspaceCreate) -> dict:
     """Fill kernel/initrd/rootfs/cmdline from the image catalog.
 
     Explicit fields win over the image; the image wins over the
     default; nothing resolves at all is a client error.
     """
-    record = _image_record(app, body)
-    kernel, rootfs = _boot_pair(body, record)
+    record = image_record(app, body)
+    kernel, rootfs = boot_pair(body, record)
     return {
         "id": body.id,
         "kernel": kernel,
-        "initrd": _default_initrd(body, record),
+        "initrd": default_initrd(body, record),
         "rootfs": rootfs,
-        "cmdline": _default_cmdline(body, record),
+        "cmdline": default_cmdline(body, record),
         "cpus": body.cpus,
         "mem_mib": body.mem_mib,
     }
 
 
-def _boot_pair(body: WorkspaceCreate, record) -> tuple[str, str]:
+def boot_pair(body: WorkspaceCreate, record) -> tuple[str, str]:
     """kernel/rootfs: explicit fields win, the record fills the rest."""
     if body.kernel is not None and body.rootfs is not None:
         return body.kernel, body.rootfs
@@ -127,22 +127,22 @@ def _boot_pair(body: WorkspaceCreate, record) -> tuple[str, str]:
             status_code=400,
             detail="kernel/rootfs (or image, or a default image) required",
         )
-    return _fill(body.kernel, record.kernel), _fill(body.rootfs, record.rootfs)
+    return fill(body.kernel, record.kernel), fill(body.rootfs, record.rootfs)
 
 
-def _fill(explicit: str | None, from_record: Path) -> str:
+def fill(explicit: str | None, from_record: Path) -> str:
     """One field: the explicit value, else the record's path."""
     return explicit if explicit is not None else str(from_record)
 
 
-def _default_initrd(body: WorkspaceCreate, record) -> str | None:
+def default_initrd(body: WorkspaceCreate, record) -> str | None:
     """The image's initrd when booting wholly from the catalog."""
     if body.initrd is None and record is not None and body.kernel is None:
         return str(record.initrd)
     return body.initrd
 
 
-def _default_cmdline(body: WorkspaceCreate, record) -> str:
+def default_cmdline(body: WorkspaceCreate, record) -> str:
     """The image's cmdline, or the legacy default with no record."""
     if body.cmdline is not None:
         return body.cmdline
@@ -180,7 +180,7 @@ def build_api(app) -> FastAPI:
     async def lifespan(api: FastAPI) -> AsyncIterator[None]:
         app.state.model.migrate()
         await app.state.model.bootstrap_token()
-        _bootstrap_default_image(app)
+        bootstrap_default_image(app)
         watcher = asyncio.create_task(watch_loop(app, hub))
         api.state.watcher = watcher
         try:
@@ -222,7 +222,7 @@ def build_api(app) -> FastAPI:
             raise HTTPException(status_code=409, detail="workspace exists")
         try:
             row = await app.state.model.create_workspace(
-                spec_for(_resolve_boot(app, body))
+                spec_for(resolve_boot(app, body))
             )
         except IntegrityError:
             # The check-then-insert race lost; same answer for the client.
