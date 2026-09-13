@@ -250,33 +250,77 @@ let
       cp "$vmlinuz" "$out"/boot/vmlinuz
       cp "$initrd" "$out"/boot/initrd.img
       cp "${rootfs}/rootfs.ext4" "$out"/disk/rootfs.ext4
+      kernel_version=$(basename "$vmlinuz" | sed 's/^vmlinuz-//')
+      # Guard against version drift: the catalog label must match the
+      # Debian tree this image actually wraps.
+      shipped=$(cat "$debianRoot"/root/etc/debian_version)
+      if [ "$shipped" != "${imageVersion}" ]; then
+        echo "imageVersion ${imageVersion} != /etc/debian_version $shipped" >&2
+        exit 1
+      fi
+      # Self-describing (#40 review): the archive alone builds a boot
+      # spec — no sidecar metadata for foreign imports to miss.
       cat > "$out"/disk/image.json <<EOF
       {
         "schema": 2,
         "name": "${imageName}",
         "version": "${imageVersion}",
         "cmdline": "${kernelCmdline}",
-        "vsock_shell_port": ${toString vsockShellPort}
+        "vsock_shell_port": ${toString vsockShellPort},
+        "kernel_version": "$kernel_version",
+        "kernel_format": "bzImage"
       }
       EOF
     '';
 
-  imageArchive = pkgs.dockerTools.buildImage {
-    name = "workspace-''${imageName}";
-    tag = imageVersion;
-    # buildImage requires a command; containerDisks never run it.
-    config.Cmd = [ "/bin/true" ];
-    # bootTree already carries the exact containerDisk layout at its
-    # root (a buildEnv here would nest members under /nix/store and
-    # leave symlinks a plain tar reader cannot follow).
-    copyToRoot = bootTree;
-    created = "1970-01-01T00:00:01Z";
-  };
+  # The docker-save archive, built with plain tar instead of
+  # dockerTools (#40 review): an UNCOMPRESSED layer (members readable
+  # in place with `tar tf`, no decompression at import) and
+  # byte-stable flags (--sort=name --mtime=@1 --owner=0 --group=0
+  # --numeric-owner), so identical rebuilds hash identically and the
+  # per-hash cache dedupes across hosts and CI. The layout is the
+  # docker-archive one (manifest.json + <id>/{layer.tar,json,VERSION}
+  # + repositories), so podman/skopeo load it unchanged.
+  imageArchive = pkgs.runCommand "msks-image-archive"
+    {
+      inherit bootTree imageName imageVersion;
+      nativeBuildInputs = [ pkgs.gnutar ];
+      imageId = "msks" + builtins.hashString "sha256" (imageName + ":" + imageVersion);
+    }
+    ''
+      set -eu
+      mkdir work
+      # The layer: the containerDisk tree, uncompressed, sorted,
+      # zeroed timestamps and ownership.
+      tar --sort=name --mtime='@1' --owner=0 --group=0 --numeric-owner \
+        -C "${bootTree}" -cf work/layer.tar .
+      # docker-archive bookkeeping.
+      mkdir "work/$imageId"
+      mv work/layer.tar "work/$imageId/layer.tar"
+      printf '1.0' > "work/$imageId/VERSION"
+      # A minimally valid image config: podman/docker require the
+      # rootfs diff_ids (the uncompressed layer's digest).
+      layer_digest=$(sha256sum "work/$imageId/layer.tar" | cut -d' ' -f1)
+      printf '%s' \
+        '{"architecture":"amd64","os":"linux","config":{},' \
+        '"rootfs":{"type":"layers","diff_ids":["sha256:'"$layer_digest"'"]}}' \
+        > "work/$imageId/json"
+      # Unquoted heredocs: the env-provided name/version/imageId
+      # expand in the shell.
+      cat > work/manifest.json <<EOF
+      [{"Config":"$imageId/json","RepoTags":["workspace-''${imageName}:''${imageVersion}"],"Layers":["$imageId/layer.tar"]}]
+      EOF
+      cat > work/repositories <<EOF
+      {"workspace-''${imageName}":{"''${imageVersion}":"$imageId"}}
+      EOF
+      tar --sort=name --mtime='@1' --owner=0 --group=0 --numeric-owner \
+        -C work -cf "$out" manifest.json repositories "$imageId"
+    '';
 
 in
 pkgs.runCommand "msks-guest"
   {
-    inherit debianRoot rootfs imageArchive;
+    inherit debianRoot rootfs imageArchive imageName imageVersion;
     passthru = {
       inherit
         kernelCmdline
@@ -296,7 +340,8 @@ pkgs.runCommand "msks-guest"
     cp "$initrd" "$out/initrd"
     cp "${rootfs}/rootfs.ext4" "$out/rootfs.ext4"
     # The canonical artifact: named by name-version, OCI layout inside.
-    cp "${imageArchive}" "$out/workspace-${imageName}-${imageVersion}.tar"
+    cp "${imageArchive}" "$out/workspace-''${imageName}-''${imageVersion}.tar"
+    printf '%s' "workspace-''${imageName}-''${imageVersion}.tar" > "$out"/image-archive-name
     printf '%s' "$version" > "$out"/kernel-version
     # An unquoted heredoc: $version expands in the shell; the
     # cmdline and port were interpolated by nix at eval time.

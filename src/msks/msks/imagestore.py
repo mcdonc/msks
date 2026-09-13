@@ -1,6 +1,6 @@
 """The workspace image catalog (#40).
 
-Images are OCI archives in the containerDisk convention: one layer
+Images are docker-save archives in the containerDisk convention: one layer
 whose root carries ``boot/vmlinuz``, ``boot/initrd.img``,
 ``disk/rootfs.ext4``, and ``disk/image.json`` (schema 2). The store
 lives under ``<state_dir>/images``:
@@ -18,10 +18,13 @@ import leaves a cache dir without a complete file set, which
 ``list_images`` ignores until the import re-runs.
 """
 
+import contextlib
 import hashlib
 import json
+import os
 import shutil
 import tarfile
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -46,6 +49,8 @@ class ImageRecord:
     version: str
     cmdline: str
     vsock_shell_port: int
+    kernel_version: str
+    kernel_format: str
     kernel: Path
     initrd: Path
     rootfs: Path
@@ -71,7 +76,7 @@ def first_layer_name(archive: tarfile.TarFile) -> str:
     """The first layer path from an OCI archive's manifest."""
     manifest_file = archive.extractfile("manifest.json")
     if manifest_file is None:
-        raise ImageError("no manifest.json: not an OCI archive")
+        raise ImageError("no manifest.json: not a docker archive")
     try:
         layers = json.load(manifest_file)
     except json.JSONDecodeError as exc:
@@ -152,34 +157,75 @@ def member(layer: tarfile.TarFile, dest: Path, member_name: str) -> None:
 def import_archive(path: Path, state_dir: Path) -> ImageRecord:
     """Register one archive: hash it, unpack the boot files, index.
 
-    Idempotent: re-importing the same archive refreshes the cache in
-    place and returns the existing identity.
+    Idempotent in identity; re-importing the same archive refreshes
+    the cache in place and returns the existing identity. The work
+    happens on a private copy (hash-then-unpack TOCTOU: the digest
+    must key exactly the bytes that were hashed) under a per-attempt
+    staging name (concurrent imports cannot collide), and the swap
+    into place is rename-aside (an interrupted re-import can never
+    destroy the previously-good cache).
     """
     if not path.is_file():
         raise ImageError(f"no such image archive: {path}")
-    digest = hash_file(path)
-    cache = images_dir(state_dir) / digest
-    _, layer = read_archive(path)
+    root = images_dir(state_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    attempt = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    source_copy = root / f".src-{attempt}.tar"
     try:
-        manifest = validate_manifest(layer)
-        # Extract into a sibling and swap: an interrupted import must
-        # never leave a half-populated cache that looks complete.
-        staging = cache.with_name(f".{digest}.tmp")
+        shutil.copy2(path, source_copy)
+        digest = hash_file(source_copy)
+        cache = root / digest
+        staging = root / f".{digest}.{attempt}.tmp"
         shutil.rmtree(staging, ignore_errors=True)
-        staging.mkdir(parents=True)
-        member(layer, staging / "kernel", BOOT_MEMBERS["kernel"])
-        member(layer, staging / "initrd", BOOT_MEMBERS["initrd"])
-        member(layer, staging / "rootfs.ext4", BOOT_MEMBERS["rootfs"])
-        (staging / "image.json").write_text(json.dumps(manifest))
-        if cache.exists():
-            shutil.rmtree(cache)
-        staging.rename(cache)
+        _, layer = read_archive(source_copy)
+        try:
+            manifest = validate_manifest(layer)
+            staging.mkdir(parents=True)
+            member(layer, staging / "kernel", BOOT_MEMBERS["kernel"])
+            member(layer, staging / "initrd", BOOT_MEMBERS["initrd"])
+            member(layer, staging / "rootfs.ext4", BOOT_MEMBERS["rootfs"])
+            (staging / "image.json").write_text(json.dumps(manifest))
+            # Concurrent imports of the same archive race here; each
+            # swap is idempotent because every attempt's content is
+            # identical (same digest).
+            aside = root / f".{digest}.{attempt}.old"
+            try:
+                cache.rename(aside)
+            except FileNotFoundError:
+                pass  # a concurrent import already swapped it away
+            try:
+                staging.rename(cache)
+            except OSError:  # pragma: no cover
+                # A concurrent identical import won the swap; discard
+                # our duplicate. Only reachable under a tight race —
+                # test_concurrent_import_swap_paths walks it.
+                shutil.rmtree(staging, ignore_errors=True)  # pragma: no cover
+            shutil.rmtree(aside, ignore_errors=True)
+        finally:
+            layer.close()
+        # The private copy IS the retained archive; POSIX rename
+        # replaces a concurrent winner's identical file atomically.
+        source_copy.rename(root / f"archive-{digest}.tar")
+        return record_from(cache, digest, manifest)
     finally:
-        layer.close()
-    archive_dest = images_dir(state_dir) / f"archive-{digest}.tar"
-    if not archive_dest.exists():
-        shutil.copy2(path, archive_dest)
-    return record_from(cache, digest, manifest)
+        # The private copy is either renamed into place or discarded.
+        with contextlib.suppress(FileNotFoundError):
+            source_copy.unlink()
+
+
+def warm_import(path: Path, state_dir: Path) -> ImageRecord | None:
+    """The already-imported record when the archive is unchanged.
+
+    A cheap (hash-only) fast path for repeated daemon starts: the
+    350M hash replaces a multi-second re-extract of the 1.6G cache.
+    """
+    if not path.is_file():
+        return None
+    digest = hash_file(path)
+    record = load_record(images_dir(state_dir) / digest)
+    if record is not None and record.hash == digest:
+        return record
+    return None
 
 
 def record_from(cache: Path, digest: str, manifest: dict) -> ImageRecord:
@@ -189,6 +235,8 @@ def record_from(cache: Path, digest: str, manifest: dict) -> ImageRecord:
         version=str(manifest["version"]),
         cmdline=manifest["cmdline"],
         vsock_shell_port=int(manifest["vsock_shell_port"]),
+        kernel_version=str(manifest.get("kernel_version", "")),
+        kernel_format=str(manifest.get("kernel_format", "bzImage")),
         kernel=cache / "kernel",
         initrd=cache / "initrd",
         rootfs=cache / "rootfs.ext4",
@@ -244,23 +292,58 @@ def resolve_name_version(ref: str, images: list) -> ImageRecord | None:
     return None
 
 
+def version_key(version: str) -> tuple:
+    """Numeric version ordering: 13.10 sorts after 13.9."""
+    parts = []
+    for piece in version.replace("-", ".").split("."):
+        parts.append(int(piece) if piece.isdigit() else piece)
+    return tuple(parts)
+
+
 def resolve_newest(name: str, images: list) -> ImageRecord | None:
     candidates = [image for image in images if image.name == name]
-    return max(candidates, key=lambda i: i.version, default=None)
+    return max(candidates, key=lambda i: version_key(i.version), default=None)
+
+
+def is_hash_shape(ref: str) -> bool:
+    """64 lowercase hex characters."""
+    return len(ref) == 64 and all(c in "0123456789abcdef" for c in ref)
 
 
 def resolve(ref: str, state_dir: Path) -> ImageRecord | None:
-    """A catalog reference: hash, name, or name:version.
+    """A catalog reference: hash, name:version, name, or name@hash.
 
-    A bare name resolves to its newest version (versions sort
-    lexically; importers are expected to use sortable versions).
+    A bare name resolves to its newest version (numeric ordering);
+    name@hash pins both identity and content. A malformed hash in an
+    @-reference is a named error, not a silent miss.
     """
     images = list_images(state_dir)
-    if len(ref) == 64 and all(c in "0123456789abcdef" for c in ref):
+    if is_hash_shape(ref):
         return resolve_hash(ref, images)
+    if "@" in ref:
+        return resolve_pinned(ref, images)
     if ":" in ref:
         return resolve_name_version(ref, images)
     return resolve_newest(ref, images)
+
+
+def resolve_pinned(ref: str, images: list) -> ImageRecord | None:
+    """name@hash: pin both identity and content."""
+    name, _, digest = ref.partition("@")
+    if not is_hash_shape(digest):
+        raise ImageError(f"malformed image hash in {ref!r}")
+    record = resolve_hash(digest, images)
+    if record is not None and record.name != name:
+        return None  # the pin names a different image
+    return record
+
+
+def remove(digest: str, state_dir: Path) -> None:
+    """Drop a catalog entry: the cache and the retained archive."""
+    root = images_dir(state_dir)
+    shutil.rmtree(root / digest, ignore_errors=True)
+    with contextlib.suppress(FileNotFoundError):
+        (root / f"archive-{digest}.tar").unlink()
 
 
 def set_default(digest: str, state_dir: Path) -> None:

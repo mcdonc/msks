@@ -331,9 +331,10 @@ let
   } ''
     set -eu
     mkdir -p "$out"
-    # Sized for the image catalog (#40): one default import holds
-    # its archive (~350M) plus the unpacked boot files (~1.7G), and
-    # the disk also carries the database and workspace overlays.
+    # Sized for the image catalog (#40): one import holds its
+    # archive (~350M) plus the unpacked boot files (~1.7G); two
+    # images plus the database and workspace overlays fit, a third
+    # needs a bigger disk.
     truncate -s 6G "$out/state.ext4"
     E2FSPROGS_FAKE_TIME="$fakeEpoch" mke2fs -q -F -t ext4 -b 4096 -I 256 \
       -L msks-state \

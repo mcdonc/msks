@@ -34,7 +34,7 @@ WORKSPACE_ID_PATTERN = r"^[a-z0-9][a-z0-9-]*$"
 
 
 class ImageImport(BaseModel):
-    """An import request: a host-side path to an OCI archive.
+    """An import request: a host-side path to a docker-save archive.
 
     The daemon's filesystem must reach it (a store path via the
     appliance's share, or a state-disk path) — the API deliberately
@@ -73,6 +73,9 @@ def bootstrap_default_image(app) -> None:
         return
     state_dir = app.state.settings.vmm.state_dir
     try:
+        warm = imagestore.warm_import(Path(source), state_dir)
+        if warm is not None:
+            return
         record = imagestore.import_archive(Path(source), state_dir)
     except (ImageError, OSError) as exc:
         # Genuinely non-fatal: a bad pointer or a full state disk must
@@ -92,7 +95,10 @@ def image_record(app, body: WorkspaceCreate):
     """The requested catalog record, or the default when omitted."""
     state_dir = app.state.settings.vmm.state_dir
     if body.image is not None:
-        record = imagestore.resolve(body.image, state_dir)
+        try:
+            record = imagestore.resolve(body.image, state_dir)
+        except ImageError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
         if record is None:
             raise HTTPException(status_code=404, detail=f"no such image: {body.image}")
         return record
@@ -107,6 +113,8 @@ def resolve_boot(app, body: WorkspaceCreate) -> dict:
     """
     record = image_record(app, body)
     kernel, rootfs = boot_pair(body, record)
+    if (body.kernel is None) != (body.rootfs is None):
+        raise HTTPException(status_code=400, detail="kernel and rootfs come together")
     return {
         "id": body.id,
         "kernel": kernel,
@@ -243,6 +251,8 @@ def build_api(app) -> FastAPI:
                 "version": image.version,
                 "cmdline": image.cmdline,
                 "vsock_shell_port": image.vsock_shell_port,
+                "kernel_version": image.kernel_version,
+                "kernel_format": image.kernel_format,
                 "default": image.hash == default_hash,
             }
             for image in imagestore.list_images(state_dir)
@@ -255,7 +265,7 @@ def build_api(app) -> FastAPI:
             record = await asyncio.to_thread(
                 imagestore.import_archive, Path(body.source), state_dir
             )
-        except ImageError as exc:
+        except (ImageError, OSError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
         # The first imported image becomes the default: a fresh
         # appliance answers a bare workspace create immediately (the
@@ -275,6 +285,31 @@ def build_api(app) -> FastAPI:
             ),
             media_type="application/json",
         )
+
+    @api.delete("/api/v1/images/{digest}", dependencies=[Depends(require_token)])
+    async def delete_image(digest: str) -> dict:
+        state_dir = app.state.settings.vmm.state_dir
+        record = next(
+            (
+                image
+                for image in imagestore.list_images(state_dir)
+                if image.hash == digest
+            ),
+            None,
+        )
+        if record is None:
+            raise HTTPException(status_code=404, detail="no such image")
+        # An image a workspace still references cannot be removed:
+        # its boot paths dangle and the workspace becomes unrestorable.
+        cache_prefix = str(record.kernel.parent) + "/"
+        for row in await app.state.model.list_workspaces():
+            if str(row.get("kernel", "")).startswith(cache_prefix):
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"workspace {row['id']} boots this image",
+                )
+        imagestore.remove(digest, state_dir)
+        return {"removed": digest}
 
     @api.get("/api/v1/workspaces", dependencies=[Depends(require_token)])
     async def list_workspaces() -> list[dict]:

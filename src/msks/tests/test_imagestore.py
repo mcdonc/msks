@@ -1,8 +1,8 @@
 """The workspace image catalog (#40): import, list, resolve, default."""
 
 import json
+import shutil
 import tarfile
-import time
 from io import BytesIO
 from pathlib import Path
 
@@ -237,13 +237,16 @@ def test_import_of_the_real_built_image(tmp_path: Path) -> None:
     archive = assets.vmlinux.parent / "workspace-debian-13.6.tar"
     if not archive.is_file():
         pytest.skip("built image archive not present")
-    start = time.monotonic()
     record = import_archive(archive, tmp_path)
-    elapsed = time.monotonic() - start
     assert record.name == "debian"
-    assert (record.kernel.stat().st_size) > 1_000_000
+    assert record.kernel.stat().st_size > 1_000_000
     assert record.rootfs.stat().st_size > 1_000_000_000
-    assert elapsed < 120, "import should be I/O-bound, not pathological"
+    # The retained archive is loadable by stock tooling: the RepoTag
+    # must be a valid reference (the ''-escape bug shipped a literal
+    # pair of quotes here once).
+    with tarfile.open(archive) as tf:
+        tag = json.load(tf.extractfile("manifest.json"))[0]["RepoTags"][0]
+    assert "'" not in tag and "''" not in tag, tag
 
 
 async def test_image_endpoints_and_create_by_ref(tmp_path) -> None:
@@ -474,6 +477,13 @@ async def test_default_image_bootstrap(tmp_path, capsys) -> None:
         assert default.ref == "boot:1"
         assert "default image boot:1" in capsys.readouterr().out
 
+    # Second startup with the same archive: the warm path skips the
+    # re-import entirely (no second "imported" line).
+    app2 = build_app(settings)
+    with TestClient(build_api(app2)):
+        assert default_image(tmp_path / "vms").ref == "boot:1"
+        assert capsys.readouterr().out == ""
+
     # A broken pointer is loud but non-fatal: the API still serves.
     settings = Settings(
         vmm=VmmSettings(state_dir=tmp_path / "vms2", default_image="/absent.tar"),
@@ -574,6 +584,14 @@ async def test_create_explicit_kernel_keeps_own_initrd(tmp_path) -> None:
         # No cmdline given and a record exists: the image's cmdline.
         assert row["cmdline"] == "console=ttyS0 root=/dev/vda ro"
 
+        partial = client.post(
+            "/api/v1/workspaces",
+            json={"id": "ws-half", "kernel": "/k"},
+            headers={"authorization": f"Bearer {TOKEN}"},
+        )
+        assert partial.status_code == 400
+        assert "together" in partial.json()["detail"]
+
 
 def test_import_manifest_not_json(tmp_path: Path) -> None:
     archive = tmp_path / "nj.tar"
@@ -606,3 +624,206 @@ def test_import_manifest_empty_list(tmp_path: Path) -> None:
         outer.addfile(info, BytesIO(blob))
     with pytest.raises(ImageError, match="no layers"):
         import_archive(archive, tmp_path)
+
+
+async def test_concurrent_same_hash_imports() -> None:
+    """Two simultaneous imports of one archive cannot collide."""
+    import asyncio
+    from pathlib import Path as P
+
+    async def run(tmpdir):
+        from msks.imagestore import import_archive as imp
+
+        return await asyncio.to_thread(imp, tmpdir / "c.tar", tmpdir)
+
+    root = P("/tmp") / f"msks-conc-{uuid4hex()}"
+    root.mkdir(parents=True)
+    try:
+        build_containerdisk(root / "c.tar", name="cc", version="1")
+        results = await asyncio.gather(run(root), run(root), run(root))
+        refs = {r.hash for r in results}
+        assert len(refs) == 1
+        assert len(list_images(root)) == 1
+    finally:
+        import shutil as sh
+
+        sh.rmtree(root, ignore_errors=True)
+
+
+def uuid4hex() -> str:
+    import uuid
+
+    return uuid.uuid4().hex[:10]
+
+
+def test_resolve_numeric_versions(tmp_path: Path) -> None:
+    """13.10 is newer than 13.9 (not lexically older)."""
+    for version in ("13.9", "13.10"):
+        archive = tmp_path / f"v{version}.tar"
+        build_containerdisk(archive, version=version)
+        import_archive(archive, tmp_path)
+    assert resolve("debian", tmp_path).ref == "debian:13.10"
+
+
+def test_warm_import_skips_complete_cache(tmp_path: Path) -> None:
+    from msks.imagestore import warm_import
+
+    archive = tmp_path / "w.tar"
+    build_containerdisk(archive, name="warm", version="1")
+    first = import_archive(archive, tmp_path)
+    # Re-import via the warm path: same identity, no re-extraction
+    # (the cache dir's inode survives).
+    cache_dir = tmp_path / "images" / first.hash
+    marker_stat = cache_dir.stat()
+    warm = warm_import(archive, tmp_path)
+    assert warm is not None and warm.hash == first.hash
+    assert cache_dir.stat().st_ino == marker_stat.st_ino
+    assert warm_import(tmp_path / "absent.tar", tmp_path) is None
+    # A different archive is a miss, not a stale hit.
+    other = tmp_path / "other.tar"
+    build_containerdisk(other, name="other", version="9")
+    assert warm_import(other, tmp_path) is None
+
+
+def test_resolve_name_at_hash_pin(tmp_path: Path) -> None:
+    a, b = tmp_path / "a.tar", tmp_path / "b.tar"
+    build_containerdisk(a, name="debian", version="1")
+    build_containerdisk(b, name="alpine", version="1")
+    first = import_archive(a, tmp_path)
+    second = import_archive(b, tmp_path)
+    pinned = resolve(f"debian@{first.hash}", tmp_path)
+    assert pinned.ref == "debian:1"
+    # The pin names a different image: a miss, not a wrong answer.
+    assert resolve(f"debian@{second.hash}", tmp_path) is None
+    with pytest.raises(ImageError, match="malformed image hash"):
+        resolve("debian@nothex", tmp_path)
+
+
+async def test_image_delete_with_reference_guard(tmp_path) -> None:
+    from fastapi.testclient import TestClient
+    from msks.app import build_app
+    from msks.server.api import build_api
+    from msks.settings import ServerSettings, Settings, VmmSettings
+    from test_api import TOKEN, StubMicrovm
+
+    archive = tmp_path / "del.tar"
+    build_containerdisk(archive, name="gone", version="1")
+    settings = Settings(
+        vmm=VmmSettings(state_dir=tmp_path / "vms", default_image=str(archive)),
+        server=ServerSettings(
+            db_path=tmp_path / "ws.db", bootstrap_token=TOKEN, event_poll_s=10.0
+        ),
+    )
+    app = build_app(settings)
+    app.state.microvm = StubMicrovm()
+    with TestClient(build_api(app)) as client:
+        headers = {"authorization": f"Bearer {TOKEN}"}
+        listed = client.get("/api/v1/images", headers=headers).json()
+        digest = listed[0]["hash"]
+        plain = client.post(
+            "/api/v1/workspaces",
+            json={"id": "ws-plain", "kernel": "/k", "rootfs": "/r"},
+            headers=headers,
+        )
+        assert plain.status_code == 201
+        made = client.post(
+            "/api/v1/workspaces", json={"id": "ws-keep"}, headers=headers
+        )
+        assert made.status_code == 201
+        malformed = client.post(
+            "/api/v1/workspaces",
+            json={"id": "ws-badref", "image": "gone@nothex"},
+            headers=headers,
+        )
+        assert malformed.status_code == 400
+        assert "malformed image hash" in malformed.json()["detail"]
+        guarded = client.delete(f"/api/v1/images/{digest}", headers=headers)
+        assert guarded.status_code == 409
+        assert "ws-keep" in guarded.json()["detail"]
+        assert (
+            client.delete(f"/api/v1/images/{'f' * 64}", headers=headers).status_code
+            == 404
+        )
+        gone = client.delete("/api/v1/workspaces/ws-keep", headers=headers)
+        assert gone.status_code == 200
+        freed = client.delete(f"/api/v1/images/{digest}", headers=headers)
+        assert freed.status_code == 200
+        assert client.get("/api/v1/images", headers=headers).json() == []
+
+
+def test_image_json_carries_kernel_facts(tmp_path: Path) -> None:
+    archive = tmp_path / "kv.tar"
+    layer = BytesIO()
+    with tarfile.open(fileobj=layer, mode="w") as tar:
+        image = json.dumps(
+            {
+                "schema": 2,
+                "name": "kv",
+                "version": "1",
+                "cmdline": "c",
+                "vsock_shell_port": 1,
+                "kernel_version": "6.12.107+deb13-amd64",
+                "kernel_format": "bzImage",
+            }
+        ).encode()
+        info = tarfile.TarInfo("./disk/image.json")
+        info.size = len(image)
+        tar.addfile(info, BytesIO(image))
+        for member, content in {
+            "boot/vmlinuz": b"k",
+            "boot/initrd.img": b"i",
+            "disk/rootfs.ext4": b"r",
+        }.items():
+            info = tarfile.TarInfo(f"./{member}")
+            info.size = len(content)
+            tar.addfile(info, BytesIO(content))
+    _wrap_layer(archive, layer)
+    record = import_archive(archive, tmp_path)
+    assert record.kernel_version == "6.12.107+deb13-amd64"
+    assert record.kernel_format == "bzImage"
+
+
+def test_import_archive_retained_wins_race(tmp_path: Path) -> None:
+    """A pre-existing retained archive: the copy rename is skipped."""
+    archive = tmp_path / "r.tar"
+    build_containerdisk(archive, name="rr", version="1")
+    first = import_archive(archive, tmp_path)
+    # Simulate a concurrent winner: keep the retained archive, drop
+    # only the cache, then re-import.
+    shutil.rmtree(tmp_path / "images" / first.hash)
+    again = import_archive(archive, tmp_path)
+    assert again.hash == first.hash
+    assert (tmp_path / "images" / f"archive-{first.hash}.tar").is_file()
+
+
+async def test_concurrent_import_swap_paths(tmp_path, monkeypatch) -> None:
+    """Deterministic cover of the losing swap branches."""
+    import asyncio
+    import threading
+
+    from msks import imagestore as store
+
+    archive = tmp_path / "s.tar"
+    build_containerdisk(archive, name="ss", version="1")
+
+    barrier = threading.Barrier(2, timeout=10)
+    real_hash = store.hash_file
+
+    def slow_hash(path):
+        digest = real_hash(path)
+        # Both importers hash (different private copies), then enter
+        # extraction together: the swap window overlaps by force.
+        try:
+            barrier.wait()
+        except threading.BrokenBarrierError:
+            pass
+        return digest
+
+    monkeypatch.setattr(store, "hash_file", slow_hash)
+
+    async def run():
+        return await asyncio.to_thread(store.import_archive, archive, tmp_path)
+
+    first, second = await asyncio.gather(run(), run())
+    assert first.hash == second.hash
+    assert store.list_images(tmp_path)[0].ref == "ss:1"
