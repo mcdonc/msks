@@ -16,10 +16,18 @@
 # #9). No MSKSD_TEST_* wiring exists here by design.
 name: CI
 
+# Markdown-only changes cannot move the gates (ruff/xenon read src/,
+# the unit tests exercise code) — so an .md-only push skips both runs
+# instead of burning a runner. guest-assets.yml already path-filters
+# to its own inputs.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
   pull_request:
+    paths-ignore:
+      - '**.md'
 
 permissions:
   contents: read
