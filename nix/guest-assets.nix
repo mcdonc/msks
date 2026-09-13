@@ -7,19 +7,24 @@
 #
 # The root filesystem is Debian 13 (trixie), straight from Debian's
 # official nocloud cloud image (#30): real Debian with systemd as
-# PID 1, apt, Debian's own kernel/initrd/modules — and Debian's own
-# socat (built WITH_VSOCK) serving the vsock console. No msks-built
-# binary runs inside the guest; the only additions are systemd
-# drop-in units. The image is pinned by its dated cloud.debian.org
-# URL and sha512 ("latest" is a moving pointer; every dated build
-# stays published).
+# PID 1, apt, Debian's own modules — and Debian's own socat (built
+# WITH_VSOCK) serving the vsock console. The kernel is Debian's
+# *cloud* flavor of the same upstream version (#37): ext4 and
+# virtio-pci built in, so the initramfs msks builds carries a single
+# module (virtio_blk) and boots in tens of milliseconds where the
+# generic initrd cost ~2.5s. The image is pinned by its dated
+# cloud.debian.org URL and sha512; the cloud kernel by its
+# deb.debian.org pool URL and sha256 ("latest" is a moving pointer;
+# dated builds stay published).
 #
-#   $out/vmlinux            - Debian's kernel (bzImage, PVH entry
-#                             point; CONFIG_PVH=y). Named "vmlinux"
-#                             to match the MSKSD_TEST_VMLINUX
-#                             contract; guest-manifest.json records
-#                             the actual format.
-#   $out/initrd             - Debian's initramfs for that kernel.
+#   $out/vmlinux            - Debian's cloud kernel (bzImage, PVH
+#                             entry point; CONFIG_PVH=y). Named
+#                             "vmlinux" to match the
+#                             MSKSD_TEST_VMLINUX contract;
+#                             guest-manifest.json records the actual
+#                             format.
+#   $out/initrd             - msks-built minimal initramfs: busybox,
+#                             virtio_blk.ko, mount root, switch_root.
 #   $out/rootfs.ext4        - the extracted Debian tree as a fresh
 #                             read-only-boot ext4 image.
 #   $out/guest-manifest.json - artifact names + the boot cmdline.
@@ -58,6 +63,68 @@ let
 
   kernelCmdline = "console=ttyS0 root=/dev/vda rootfstype=ext4 ro";
 
+  # Debian's cloud kernel, same upstream version as the nocloud
+  # image's generic one (#37): CONFIG_EXT4_FS=y and
+  # CONFIG_VIRTIO_PCI=y built in — only virtio_blk stays a module,
+  # which the minimal initramfs below loads. Pinned by pool URL and
+  # sha256; the deb carries vmlinuz, its config, and the matching
+  # /usr/lib/modules tree.
+  cloudKernelDeb = pkgs.fetchurl {
+    url = "https://deb.debian.org/debian/pool/main/l/linux/"
+      + "linux-image-6.12.107+deb13-cloud-amd64-unsigned_6.12.107-1_amd64.deb";
+    hash = "sha256-5xJGCP1rv6GrcxSdxn7MgtCYWX11zx5UApHYynEUD+A=";
+  };
+
+  cloudKernel = pkgs.runCommand "msks-cloud-kernel"
+    { nativeBuildInputs = [ pkgs.dpkg ]; }
+    ''
+      set -eu
+      dpkg-deb -x ${cloudKernelDeb} "$out"
+    '';
+
+  # The minimal initramfs (#37): busybox, the one module the kernel
+  # cannot mount root without, and an init that mounts /dev/vda and
+  # switch_roots into systemd. The generic Debian initrd this
+  # replaces is a 34MB MODULES=most archive and sat ~2.5s deep in
+  # the boot critical path.
+  minimalInitrd = pkgs.runCommand "msks-minimal-initrd"
+    {
+      inherit cloudKernel;
+      # Static: the initramfs has no dynamic loader. nixpkgs'
+      # default busybox links against a store glibc.
+      busybox = pkgs.pkgsStatic.busybox;
+      nativeBuildInputs = [ pkgs.cpio pkgs.gzip pkgs.xz ];
+    }
+    ''
+      set -eu
+      mkdir -p "$out"/tree/bin "$out"/tree/modules \
+        "$out"/tree/proc "$out"/tree/dev "$out"/tree/newroot
+      cp "$busybox"/bin/busybox "$out"/tree/bin/busybox
+      moddir="$cloudKernel/usr/lib/modules"
+      moddir=$(echo "$moddir"/*)
+      # .ko.xz: busybox insmod reads plain modules only.
+      xz -dc "$moddir"/kernel/drivers/block/virtio_blk.ko.xz \
+        > "$out"/tree/modules/virtio_blk.ko
+      cat > "$out"/tree/init <<'INIT'
+      #!/bin/busybox sh
+      # Mount root and hand off to systemd (#37): keep this as small
+      # as it looks — every millisecond here delays the console. On
+      # any failure, a shell beats a silent hang in an 811KB
+      # initramfs (the serial console is reachable).
+      /bin/busybox mount -t proc proc /proc \
+        && /bin/busybox mount -t devtmpfs devtmpfs /dev \
+        && /bin/busybox insmod /modules/virtio_blk.ko \
+        && /bin/busybox mount -t ext4 -o ro /dev/vda /newroot \
+        || exec /bin/busybox sh
+      /bin/busybox mount --move /dev /newroot/dev
+      exec /bin/busybox switch_root /newroot /sbin/init
+      INIT
+      chmod +x "$out"/tree/init
+      (cd "$out"/tree && find . | cpio -o -H newc --quiet | gzip -9) \
+        > "$out"/initrd
+      rm -rf "$out"/tree
+    '';
+
   # The msks additions, staged as an overlay tree: the vsock console
   # service, serial-console autologin (the debug console), the vsock
   # module load, and a stable hostname. Debian's socat 1.8.x is
@@ -88,17 +155,24 @@ let
       'vmw_vsock_virtio_transport' \
       > $out/etc/modules-load.d/msks-vsock.conf
 
+    # Escape the default basic.target ordering (#37): the console
+    # starts as soon as the vsock module is loaded, not after the
+    # whole boot. A too-early start self-heals through Restart=
+    # always, and StartLimitIntervalSec=0 keeps systemd's default
+    # burst limit from ending those retries.
     printf '%s\n' \
       '[Unit]' \
       'Description=msks vsock console (one shell per connection)' \
       'Documentation=https://github.com/mcdonc/msks' \
       'ConditionPathExists=/dev/vsock' \
-      'After=systemd-modules-load.service' \
+      'After=systemd-modules-load.service dev-pts.mount' \
+      'DefaultDependencies=no' \
+      'StartLimitIntervalSec=0' \
       ''' \
       '[Service]' \
       'ExecStart=/usr/bin/socat VSOCK-LISTEN:${toString vsockShellPort},reuseaddr,fork EXEC:/bin/bash,pty,ctty,echo=0,icanon=0,stderr,setsid' \
       'Restart=always' \
-      'RestartSec=1' \
+      'RestartSec=0.1' \
       'StandardInput=null' \
       ''' \
       '[Install]' \
@@ -110,6 +184,10 @@ let
     # grub-common records successful boots into /boot — read-only
     # here, and a direct-boot VM has no grub to inform anyway.
     ln -s /dev/null $out/etc/systemd/system/grub-common.service
+
+    # AppArmor profile loading costs ~0.7s of every boot (#37) and
+    # confines nothing in a pristine workspace VM.
+    ln -s /dev/null $out/etc/systemd/system/apparmor.service
 
     # The serial console is the guest's debug channel: autologin root
     # on ttyS0 (the vsock console is the supported interactive path).
@@ -147,6 +225,7 @@ let
       nativeBuildInputs = [
         pkgs.qemu
         pkgs.e2fsprogs
+        pkgs.kmod
         pkgs.util-linux
         (pkgs.python3.withPackages (ps: [ ]))
       ];
@@ -179,10 +258,57 @@ let
       # The msks overlay.
       cp -a --no-preserve=ownership ${guestOverlay}/. "$root"/
 
+      # The cloud kernel's module tree replaces the generic one
+      # (#37): the running kernel is the cloud flavor, and a stale
+      # vermagic tree would make every module probe miss. The
+      # generic /boot payload (kernel, initrd) leaves with it — the
+      # VM direct-boots artifacts kept outside the image.
+      rm -rf "$root"/lib/modules/*
+      rm -rf "$root"/usr/lib/modules/* 2>/dev/null || true
+      rm -f "$root"/boot/vmlinuz-* "$root"/boot/initrd.img-* \
+        "$root"/boot/System.map-* "$root"/boot/config-*
+      mkdir -p "$root"/usr/lib/modules
+      cp -a --no-preserve=ownership \
+        "${cloudKernel}"/usr/lib/modules/. "$root"/usr/lib/modules/
+      cp "${cloudKernel}"/boot/config-* "$root"/boot/
+
+      # The deb ships no depmod metadata (its postinst generates it
+      # on the target); generate it here so modprobe — the vsock
+      # console's module load, udev alias lookups — can resolve
+      # anything at all. The deb's module dirs copy read-only.
+      find "$root"/usr/lib/modules -type d -exec chmod u+w {} +
+      kver=$(ls "$root"/usr/lib/modules | head -1)
+      depmod -b "$root" "$kver"
+      test -s "$root"/usr/lib/modules/"$kver"/modules.dep
+
+      # Boot diet (#37): drop the wants symlinks of units a
+      # workspace never uses. Removing the symlink (not masking)
+      # keeps the targets clean of failed jobs: networkd and
+      # timesyncd have no network to serve, unattended-upgrades no
+      # repo to reach, e2scrub_reap no LVM to reap.
+      wants="$root"/etc/systemd/system
+      # The image ships some wants directories read-only; the build
+      # owns them now.
+      chmod u+w "$wants"/*.target.wants "$wants"/*.target.requires 2>/dev/null || true
+      rm -f "$wants"/multi-user.target.wants/systemd-networkd.service
+      rm -f "$wants"/multi-user.target.wants/unattended-upgrades.service
+      rm -f "$wants"/multi-user.target.wants/e2scrub_reap.service
+      rm -f "$wants"/sockets.target.wants/systemd-networkd.socket
+      rm -f "$wants"/sysinit.target.wants/systemd-resolved.service
+      rm -f "$wants"/sysinit.target.wants/systemd-timesyncd.service
+      rm -f "$wants"/network-online.target.wants/systemd-networkd-wait-online.service
+      # The netplan renderer config re-enables networkd through the
+      # systemd generator at every boot even with every wants
+      # symlink gone; a workspace has no NIC to configure.
+      chmod u+w "$root"/etc
+      chmod -R u+w "$root"/etc/netplan
+      rm -rf "$root"/etc/netplan
+
       # Sanity: this must be a bootable Debian.
       test -x "$root"/sbin/init
       test -x "$root"/usr/bin/socat
-      test -d "$root"/lib/modules
+      test -n "$(ls "$root"/usr/lib/modules/*/kernel/drivers/block/virtio_blk.ko.xz)" \
+        || { echo "cloud module tree missing virtio_blk"; exit 1; }
 
       # Size the final image from the tree (content-derived, no
       # magic constant): Debian unpacks to ~600M plus headroom.
@@ -239,13 +365,13 @@ let
   # (#15).
   bootTree = pkgs.runCommand "msks-image-boot-tree"
     {
-      inherit debianRoot rootfs;
+      inherit debianRoot rootfs cloudKernel minimalInitrd;
       inherit imageName imageVersion kernelCmdline vsockShellPort;
     }
     ''
       set -eu
-      vmlinuz=$(ls "$debianRoot"/root/boot/vmlinuz-*)
-      initrd=$(ls "$debianRoot"/root/boot/initrd.img-*)
+      vmlinuz=$(ls "$cloudKernel"/boot/vmlinuz-*)
+      initrd="${minimalInitrd}/initrd"
       mkdir -p "$out"/boot "$out"/disk
       cp "$vmlinuz" "$out"/boot/vmlinuz
       cp "$initrd" "$out"/boot/initrd.img
@@ -333,13 +459,13 @@ pkgs.runCommand "msks-guest"
   ''
     set -eu
     mkdir -p "$out"
-    # Debian ships exactly one kernel per image; take it by glob and
-    # record its version for the manifest consumers that want it.
-    vmlinuz=$(ls "$debianRoot"/root/boot/vmlinuz-*)
-    initrd=$(ls "$debianRoot"/root/boot/initrd.img-*)
+    # The cloud kernel (#37) plus the minimal initramfs; the version
+    # string (flavor name included) distinguishes it from the
+    # generic kernel this image replaced.
+    vmlinuz=$(ls "${cloudKernel}"/boot/vmlinuz-*)
     version=$(basename "$vmlinuz" | sed 's/^vmlinuz-//')
     cp "$vmlinuz" "$out/vmlinux"
-    cp "$initrd" "$out/initrd"
+    cp "${minimalInitrd}/initrd" "$out/initrd"
     cp "${rootfs}/rootfs.ext4" "$out/rootfs.ext4"
     # The canonical artifact: named by name-version, OCI layout inside.
     cp "${imageArchive}" "$out/workspace-''${imageName}-''${imageVersion}.tar"
