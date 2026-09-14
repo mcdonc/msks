@@ -628,10 +628,23 @@ async def test_appliance_boot_and_workspace() -> None:
                     got += message if isinstance(message, bytes) else message.encode()
                 return got
 
-            await shell_ws.send(b"ip -4 addr | grep 172.31 && echo ADDR-$((6*7))\n")
-            await await_marker(b"ADDR-42")
-            await shell_ws.send(b"getent hosts deb.debian.org && echo DNS-$((6*7))\n")
-            await await_marker(b"DNS-42")
+            # The probes retry inside the guest: the command can run
+            # before DHCP lands (fast hosts boot the console session
+            # concurrent with networkd), and a one-shot ip/getent
+            # would snapshot the pre-lease state. The markers render
+            # differently from the sent bytes — the pty echoes input
+            # (echo=1), so a literal marker in the command line would
+            # satisfy the wait on echo alone.
+            await shell_ws.send(
+                b"for i in $(seq 1 60); do ip -4 addr | grep -q 172.31. "
+                b"&& echo NET-$((6*7))-UP && break; sleep 2; done\n"
+            )
+            await await_marker(b"NET-42-UP")
+            await shell_ws.send(
+                b"for i in $(seq 1 60); do getent hosts deb.debian.org "
+                b">/dev/null && echo DNS-$((6*7))-UP && break; sleep 2; done\n"
+            )
+            await await_marker(b"DNS-42-UP")
         response = await client.get(f"{base}/workspaces/{wid}", headers=headers)
         assert response.json().get("status") == "running", response.text
 
@@ -667,9 +680,17 @@ async def test_appliance_boot_and_workspace() -> None:
             "console never recovered after the guest socat was killed"
         )
 
-        response = await client.post(f"{base}/workspaces/{wid}/stop", headers=headers)
+        # Lifecycle calls may legally take the daemon's full graceful
+        # window (MSKSD_SHUTDOWN_TIMEOUT_S, 20s default, plus the
+        # terminate path): the module client's 10s default would cut a
+        # healthy-but-slow stop off mid-flight on a busy host.
+        response = await client.post(
+            f"{base}/workspaces/{wid}/stop", headers=headers, timeout=60.0
+        )
         assert response.status_code == 200, response.text
-        response = await client.delete(f"{base}/workspaces/{wid}", headers=headers)
+        response = await client.delete(
+            f"{base}/workspaces/{wid}", headers=headers, timeout=60.0
+        )
         assert response.status_code == 200, response.text
         response = await client.get(f"{base}/workspaces/{wid}", headers=headers)
         assert response.status_code == 404

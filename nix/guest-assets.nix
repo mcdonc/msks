@@ -81,12 +81,10 @@ let
     hash = "sha256-5xJGCP1rv6GrcxSdxn7MgtCYWX11zx5UApHYynEUD+A=";
   };
 
-  cloudKernel =
-    pkgs.runCommand "msks-cloud-kernel" { nativeBuildInputs = [ pkgs.dpkg ]; }
-      ''
-        set -eu
-        dpkg-deb -x ${cloudKernelDeb} "$out"
-      '';
+  cloudKernel = pkgs.runCommand "msks-cloud-kernel" { nativeBuildInputs = [ pkgs.dpkg ]; } ''
+    set -eu
+    dpkg-deb -x ${cloudKernelDeb} "$out"
+  '';
 
   # The minimal initramfs (#37): busybox, the one module the kernel
   # cannot mount root without, and an init that mounts /dev/vda and
@@ -201,6 +199,19 @@ let
       '[Network]' \
       'DHCP=yes' \
       > $out/etc/systemd/network/80-msks-egress.network
+
+    # networkd must not race udev's coldplug rename (eth0 to ens3):
+    # this boot reaches multi-user immediately after sysinit, and a
+    # networkd that enumerates while udevd is still renaming the NIC
+    # never manages the renamed link — DHCP never runs, and
+    # networkd sits in activating forever. Ordering after the
+    # coldplug makes the interface name final before the first
+    # enumeration; the .network above matches either name anyway.
+    mkdir -p $out/etc/systemd/system/systemd-networkd.service.d
+    printf '%s\n' \
+      '[Unit]' \
+      'After=systemd-udev-trigger.service systemd-udevd.service' \
+      > $out/etc/systemd/system/systemd-networkd.service.d/10-after-udev-coldplug.conf
 
     # networkd + resolved stay enabled for egress workspaces (#52):
     # DHCP configures the NIC and resolved serves the offered
@@ -512,8 +523,7 @@ let
       {
         inherit bootTree imageName imageVersion;
         nativeBuildInputs = [ pkgs.gnutar ];
-        imageId =
-          "msks" + builtins.hashString "sha256" (imageName + ":" + imageVersion);
+        imageId = "msks" + builtins.hashString "sha256" (imageName + ":" + imageVersion);
       }
       ''
         set -eu
