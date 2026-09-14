@@ -23,6 +23,17 @@ tagged `vX.Y.Z`.
 ### Fixed
 
 - **Workspace cleanup and image import release their resources (#56).** `cleanup` now stops the workspace's VMM before deleting its directory — tracked or pidfile, like `kill` — where it previously orphaned the process. Image import closes the container-image archive after unpacking; each import previously left the archive's file handle open until garbage collection.
+- **Workspace shell input now echoes (#61).** The vsock console's
+  guest pty ran with `echo=0,icanon=0` while the client keeps the
+  local tty raw, and the service environment's `TERM=dumb` left
+  bash's readline off — so typed characters reached nothing that
+  would show them. The pty is now a plain canonical terminal
+  (`echo=1,icanon=1`) and the unit sets `TERM=xterm`: line editing
+  and history work, and programs reading stdin directly get normal
+  tty echo. The console ships in the workspace image; a workspace
+  keeps the image it was created with, so rebuild the appliance,
+  then delete existing workspaces and the old image from the
+  catalog — new workspaces then bind the new image.
 - **`devenv shell` no longer runs the pre-commit suite at shell entry (#32).** A devenv 2.3.x scheduler regression pulled `devenv:git-hooks:run` into the shell's task graph, so a failing hook (e.g. the xenon complexity gate) aborted shell entry before it opened — with no way to use the shell to fix the failure. The suite still runs on `git commit` and as the `msks:xenon` task.
 
 ### Added

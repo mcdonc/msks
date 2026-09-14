@@ -244,12 +244,16 @@ Transport (#21), in the preferred vsock-first shape:
 - The guest loads `vmw_vsock_virtio_transport` (systemd-modules-load)
   and runs `msks-console.service`: Debian's own socat (built
   WITH_VSOCK) as `VSOCK-LISTEN:1023,reuseaddr,fork
-  EXEC:/bin/bash,pty,ctty,echo=0,icanon=0,stderr,setsid`, restarted
+  EXEC:/bin/bash,pty,ctty,echo=1,icanon=1,stderr,setsid`, restarted
   by systemd if it dies. One Debian bash on a pty per connection.
-  The pty keeps ISIG and ONLCR (no `raw`): Ctrl-C generates SIGINT in
-  the guest and output arrives CRLF-terminated, while
-  `echo=0,icanon=0` leave echo and line editing to the shell. The
-  shell is **root**; a non-root shell is follow-up work.
+  The pty is a plain canonical terminal — ISIG, ONLCR, ECHO, and
+  ICANON all on: Ctrl-C generates SIGINT in the guest, output
+  arrives CRLF-terminated, and the line discipline echoes and edits
+  input for programs that read stdin directly. The unit sets
+  `TERM=xterm` so bash's readline engages and provides line editing
+  and history while it is active (#61); a TERM=dumb service
+  environment leaves readline off. The shell is **root**; a non-root
+  shell is follow-up work.
 - Window-size changes are not applied v1: the guest pty keeps its
   creation size; propagating a resize needs a guest-side helper that
   does not exist yet.
