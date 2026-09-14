@@ -69,6 +69,55 @@ def serial_tail(serial_log: Path, limit: int = 2000) -> str:
     return serial_log.read_text(encoding="utf-8", errors="replace")[-limit:]
 
 
+def collect_failure_evidence(state_dir: Path, wid: str, serial_log: Path) -> None:
+    """On a smoke failure, print and keep the guest's own story.
+
+    The console service's state is on the serial log (systemd names
+    failed/restarting units there); a raw CONNECT probe tells whether
+    the guest's vsock listener is answering at all; and the vm dir is
+    copied out before the finally-clause cleanup deletes it, for the
+    CI artifact upload (``/tmp/msks-smoke-failed/``).
+    """
+    print(
+        f"smoke failure evidence — {wid} serial tail:\n{serial_tail(serial_log, 4000)}",
+        flush=True,
+    )
+    vm_dir = state_dir / "vms" / wid
+    vsock = vm_dir / "vsock.sock"
+    if vsock.exists():
+        import socket
+
+        try:
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.settimeout(5)
+            sock.connect(str(vsock))
+            sock.sendall(b"CONNECT 1023\n")
+            reply = sock.recv(100)
+            sock.settimeout(15)
+            sock.sendall(b"\n")
+            try:
+                data = sock.recv(4096)
+            except TimeoutError:
+                data = b"<no bytes within 15s>"
+            print(
+                f"smoke failure evidence — raw vsock probe: "
+                f"handshake={reply!r} after-newline={data!r}",
+                flush=True,
+            )
+        except OSError as exc:
+            print(f"smoke failure evidence — raw vsock probe: {exc}", flush=True)
+        finally:
+            with contextlib.suppress(OSError):
+                sock.close()
+    keep = Path("/tmp/msks-smoke-failed") / wid
+    keep.mkdir(parents=True, exist_ok=True)
+    for name in ("serial.log", "cloud-hypervisor.log", "vsock.sock"):
+        source = vm_dir / name
+        if source.is_file():
+            with contextlib.suppress(OSError):
+                shutil.copy2(source, keep / name)
+
+
 async def await_guest_up(serial_log: Path, timeout_s: float | None = None) -> None:
     """Block until the guest announces itself on the serial console."""
     timeout_s = timeout_s if timeout_s is not None else GUEST_UP_TIMEOUT_S
@@ -192,7 +241,9 @@ async def test_local_vm_boot_and_shutdown() -> None:
         final = await microvm.info(wid)
         assert final.status.value in ("stopped", "absent")
     except BaseException:
-        # Never leak a live VMM (and its /dev/kvm handle) on failure.
+        # Never leak a live VMM (and its /dev/kvm handle) on failure;
+        # print and keep the guest's evidence for the artifact upload.
+        collect_failure_evidence(state_dir, wid, serial_log)
         with contextlib.suppress(Exception):
             await microvm.kill(wid)
         raise
@@ -267,6 +318,7 @@ async def test_local_persistence_across_restart_and_reset() -> None:
             ]
         )
     except BaseException:
+        collect_failure_evidence(state_dir, wid, serial_log)
         with contextlib.suppress(Exception):
             await microvm.kill(wid)
         raise

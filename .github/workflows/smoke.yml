@@ -114,15 +114,15 @@ jobs:
           python -m pytest src/msks/tests/test_smoke.py
           -q -p no:cacheprovider --no-cov
 
-      # The failing boot's own evidence: serial.log carries the guest
-      # console (kernel, systemd, getty) and the failure message
-      # embeds only its tail. Without this the runner recycles and the
-      # only artifact of a failed boot is a TimeoutError.
+      # The failing boot's own evidence, kept by the tests' failure
+      # path (serial log, VMM log, raw vsock probe printed in the step
+      # log) — the runner recycles, so /tmp/msks-smoke-failed/ is the
+      # only place the guest's side of the story survives.
       - name: Collect smoke state on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: smoke-serial-logs
-          path: /tmp/msks-smoke-*/
+          name: smoke-failure-evidence
+          path: /tmp/msks-smoke-failed/
           if-no-files-found: ignore
           retention-days: 7
