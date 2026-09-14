@@ -120,13 +120,17 @@ devenv tasks run msks:build-guest
 ```
 
 builds the default image (`workspace-debian-13.6.tar`) from a
-date-pinned, sha512-verified Debian trixie nocloud qcow2: the build
-converts the qcow2 to raw, extracts the root filesystem, repacks it
-as a deterministic ext4 (`mke2fs -d` under fakeroot), and wraps the
-kernel, initrd, rootfs, and a generated `image.json` into the
-container-image tar with byte-stable tar flags (`--sort=name
---mtime=@1 --numeric-owner`). Identical rebuilds hash identically,
-so the same image deduplicates across hosts.
+date-pinned, sha512-verified Debian trixie **genericcloud** qcow2 —
+the cloud-init-bearing variant of Debian's cloud image family, so
+cloud-init and its python3 runtime arrive with the base. The build
+converts the qcow2 to raw, extracts the root filesystem, applies the
+msks overlay and boot diet, repacks it as a deterministic ext4
+(`mke2fs -d` under fakeroot; the intermediate rides the nix store as
+one opaque tarball, never as a tree), and wraps the kernel, initrd,
+rootfs, and a generated `image.json` into the container-image tar
+with byte-stable tar flags (`--sort=name --mtime=@1
+--numeric-owner`). Identical rebuilds hash identically, so the same
+image deduplicates across hosts.
 
 The output lands under `.guest/`; `scripts/build-guest.sh` and
 `nix/guest-assets.nix` document every step and are the reference for
@@ -162,9 +166,27 @@ image. The outline, using a distro's own cloud image as the source:
    The shipped image does this with systemd-networkd + resolved; any
    equivalent stack works.
 
-5. Write `disk/image.json` describing your kernel, cmdline, and
-   vsock port.
-6. Lay out `boot/` and `disk/` as the layer tree and wrap it:
+5. Ship cloud-init, configured for the cidata seed. Starting from
+   a distro cloud image (Debian `generic`/`genericcloud`, Ubuntu,
+   Fedora — they carry cloud-init and its python runtime) gives you
+   this for free; otherwise install the distro's cloud-init package.
+   Two dropins under `/etc/cloud/cloud.cfg.d/` pin the msks contract:
+   - `datasource_list: [ NoCloud, None ]` — the workspace's seed
+     disk answers immediately; nothing probes EC2 or OpenStack
+     sources or waits on the network;
+   - `network: {config: disabled}` — the network configuration from
+     step 4 owns the NIC; cloud-init's renderer would only fight it.
+
+   The guest kernel needs the `isofs` module present to mount the
+   seed (every stock distro kernel carries it). Declare the consumer
+   in the manifest (step 6) so listings show what eats the seed. An
+   image whose guest runs no cloud-init still accepts `user_data` at
+   create, but nothing executes it — the daemon cannot tell.
+
+6. Write `disk/image.json` describing your kernel, cmdline, and
+   vsock port, and declare `"capabilities": {"provisioner":
+"cloud-init"}`.
+7. Lay out `boot/` and `disk/` as the layer tree and wrap it:
 
 ```bash
 tar --sort=name --mtime='@1' --owner=0 --group=0 --numeric-owner \
