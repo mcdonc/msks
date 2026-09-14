@@ -56,11 +56,15 @@ needs_local = pytest.mark.skipif(
 )
 needs_k8s = pytest.mark.skipif(not KUBECONFIG, reason="set MSKSD_TEST_KUBECONFIG")
 
-#: The guest init prints this on the serial console once userspace
-#: (and the acpid that answers host-side shutdowns) is up.
-# Debian's systemd boot (#30): the serial autologin getty is the last
-# thing to come up, so it is the "guest is usable" marker.
-GUEST_UP_MARKER = "msks-guest login:"
+#: The serial autologin's root-shell prompt: the last thing to
+#: come up in the Debian boot (#30) and the "guest is usable"
+#: marker — the acpid that answers host-side shutdowns is up by
+#: then too. The prompt, not the getty's login banner above it
+#: (#75): a slow nested-KVM boot prints the banner while userspace
+#: still has minutes of churn ahead, so proof that a real shell
+#: started, read its rc files, and printed its prompt is the signal
+#: the console probes can build on.
+GUEST_UP_MARKER = "root@msks-guest:~#"
 
 #: Per-phase timeouts, env-tunable for slow hosts (#64): a runner's
 #: nested-KVM guest runs the same boot several times slower than a
@@ -69,6 +73,13 @@ GUEST_UP_MARKER = "msks-guest login:"
 GUEST_UP_TIMEOUT_S = float(os.environ.get("MSKSD_TEST_GUEST_UP_TIMEOUT_S", "60"))
 CONSOLE_TIMEOUT_S = float(os.environ.get("MSKSD_TEST_CONSOLE_TIMEOUT_S", "30"))
 SHUTDOWN_TIMEOUT_S = float(os.environ.get("MSKSD_TEST_SHUTDOWN_TIMEOUT_S", "60"))
+
+#: Fresh console sessions per command (#75): the vsock console can
+#: accept a connection and echo — the pty's line discipline answers
+#: while the shell behind it never reaches its first prompt on a
+#: slow nested-KVM boot. One wedged session must not fail the test;
+#: each retry opens a fresh shell on an already-further-along boot.
+CONSOLE_ATTEMPTS = int(os.environ.get("MSKSD_TEST_CONSOLE_ATTEMPTS", "3"))
 
 
 def serial_tail(serial_log: Path, limit: int = 2000) -> str:
@@ -150,11 +161,23 @@ async def read_until(reader, needle: bytes, timeout_s: float | None = None) -> b
     data = b""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_s
+
+    def stalled() -> AssertionError:
+        return AssertionError(
+            f"never saw {needle!r} within {timeout_s}s; got: {data[-400:]!r}"
+        )
+
     while needle not in data:
         remaining = deadline - loop.time()
         if remaining <= 0:
-            raise AssertionError(f"never saw {needle!r}; got: {data[-400:]!r}")
-        chunk = await asyncio.wait_for(reader.read(4096), remaining)
+            raise stalled()
+        try:
+            chunk = await asyncio.wait_for(reader.read(4096), remaining)
+        except TimeoutError:
+            # A stall, not a bare TimeoutError: name what was awaited,
+            # for how long, and what arrived (#75) — this message is
+            # the evidence the retry loop prints and CI reads.
+            raise stalled() from None
         if not chunk:
             raise AssertionError(
                 f"stream closed before {needle!r}; got: {data[-400:]!r}"
@@ -174,17 +197,42 @@ PROMPT_NEEDLE = b"root@msks-guest:/# "
 
 async def run_in_console(microvm, workspace_id: str, command: str, marker: str) -> None:
     """Run one shell command over the vsock console and wait for its
-    marker — one fresh guest shell session per call."""
-    reader, writer = await microvm.console(workspace_id)
-    try:
-        await read_until(reader, PROMPT_NEEDLE)
-        writer.write(command.encode() + b"\n")
-        await writer.drain()
-        await read_until(reader, marker.encode())
-    finally:
-        writer.close()
-        with contextlib.suppress(Exception):
-            await writer.wait_closed()
+    marker, in a fresh guest shell session per attempt (#75).
+
+    The prompt wait is where a slow boot bites: the console service
+    accepts the connection and the pty echoes, but the shell behind
+    it has not reached its first prompt. A stalled session is closed
+    and replaced instead of failing the test — and every command this
+    harness sends is idempotent, so re-running it in a new session
+    is safe.
+    """
+    for attempt in range(1, CONSOLE_ATTEMPTS + 1):
+        try:
+            reader, writer = await microvm.console(workspace_id)
+            try:
+                await read_until(reader, PROMPT_NEEDLE)
+                writer.write(command.encode() + b"\n")
+                await writer.drain()
+                await read_until(reader, marker.encode())
+                return
+            finally:
+                writer.close()
+                with contextlib.suppress(Exception):
+                    await writer.wait_closed()
+        # TimeoutError is an OSError subclass, so the stalled-session
+        # paths (read_until's AssertionError, a dead stream's OSError)
+        # all land here as retryable.
+        except (AssertionError, OSError) as exc:
+            if attempt == CONSOLE_ATTEMPTS:
+                raise AssertionError(
+                    f"{marker!r} never arrived within {CONSOLE_ATTEMPTS} "
+                    f"console sessions (last session: {exc})"
+                ) from exc
+            print(
+                f"console session {attempt}/{CONSOLE_ATTEMPTS} for {marker!r} "
+                f"stalled ({exc}); retrying in a fresh session",
+                flush=True,
+            )
 
 
 async def await_pod_running(
