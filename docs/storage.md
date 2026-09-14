@@ -1,0 +1,114 @@
+# Workspace storage
+
+Every workspace owns exactly two persistent artifacts, created with
+the workspace and kept for its whole life:
+
+- the **root overlay** — a qcow2 copy-on-write file over the
+  workspace's base image. Everything the guest writes to the root
+  filesystem (an `apt install`, an `/etc` edit) lands in the overlay;
+  the shared base stays pristine, so every workspace on that image
+  starts from an identical, unmodified root.
+- the **/home volume** — an ext4 filesystem attached as a second
+  virtio-blk disk the guest mounts at `/home`. User data lives here,
+  outside the root, so it survives even a full factory reset.
+
+Both artifacts have lifetimes separate from the VM's: `stop` powers
+the machine off and keeps the data; `start` boots the same overlay
+and volume again. Only `delete` (and factory reset, for the overlay
+alone) removes them.
+
+## Local backend layout
+
+```text
+<state_dir>/
+├── vms/<workspace_id>/
+│   └── root.qcow2        # the root overlay (plus the VM's runtime files)
+└── volumes/
+    └── <workspace_id>.ext4   # the /home volume (sparse ext4)
+```
+
+The overlay is created with `qemu-img create -f qcow2 -F raw -b
+<base rootfs>` — a one-level chain, never nested overlays. Its
+backing file is the rootfs recorded at workspace create, so a
+workspace always runs the image version it was created with:
+importing a newer image changes what *new* workspaces boot, never
+existing ones. (Rebasing an overlay onto a newer base exists as a
+`qemu-img` operation and may become an explicit "upgrade workspace
+image" action later; it never happens implicitly.)
+
+The home volume is a sparse ext4 file: an idle volume costs its
+metadata, not its nominal size, and grows as the guest writes.
+
+A start heals missing artifacts: if the overlay or the volume file
+is absent (a crash mid-create, or a workspace row created before
+this scheme existed), the daemon recreates it before the VM boots.
+Data that exists is never touched.
+
+## Sizing
+
+Both sizes are fixed at workspace create and configurable three
+ways: per request (`root_mib` / `home_mib` on workspace create),
+per daemon (`MSKSD_ROOT_MIB`, default 10240, and `MSKSD_HOME_MIB`,
+default 2048), and per image (the catalog's manifest carries the
+cmdline the guest boots, which pairs with the sizes). The overlay's
+virtual size never drops below its base image's size — a smaller
+disk would truncate the base filesystem.
+
+## Factory reset
+
+`POST /api/v1/workspaces/{id}/reset` deletes only the overlay. The
+next start boots the pristine base image again — installed packages
+and every other root change are gone — while `/home` keeps its data.
+The VM is stopped first (the overlay is the running root device);
+a wedged VM is killed, exactly as `delete` does.
+
+Because the overlay is the root filesystem, reset also clears any
+provisioned state the guest keeps there (cloud-init's run-once
+markers live under `/var/lib/cloud`), so future provisioning
+re-runs on the next boot.
+
+## Placement and single-attach
+
+The workspace row records the **host** that owns its artifacts. On
+the local backend that is always the msksd host that created the
+workspace; a start attempt through a daemon on another host fails
+with `409` naming where the artifacts live, instead of bootting a
+workspace with an empty `/home` and a pristine root. A workspace
+runs on at most one host at a time — the row's placement is the
+authority locally, and the volume's single-writer semantics make a
+double attach impossible.
+
+## Kubernetes backend
+
+On the k8s backend both artifacts live on one per-workspace
+`PersistentVolumeClaim`:
+
+- created at workspace create (name `msks-ws-<workspace_id>`,
+  access mode `ReadWriteOnce`, size from
+  `MSKSD_K8S_WORKSPACE_STORAGE_GIB`, default 2 Gi, storage class
+  from `MSKSD_K8S_STORAGE_CLASS` — unset asks the cluster's default
+  class);
+- mounted into the runner pod at
+  `/var/lib/msks/workspaces/<workspace_id>`, the container-side
+  analogue of the local backend's `<state_dir>/vms/<id>/`;
+- deleted with the workspace (the pod and the claim go together).
+
+`ReadWriteOnce` carries the placement rule on k8s: the volume
+attaches to one node, the pod schedules onto that node, and a second
+pod cannot attach the same volume — the cluster enforces what the
+local backend enforces with the row's host field. The PVC must hold
+both the overlay and the home volume, so size it for the sum; the
+qcow2 overlay and the sparse ext4 grow on demand.
+
+Factory reset on k8s needs the runner agent to delete the overlay
+file inside the PVC mount; until that lands, the API answers with
+a named error instead of dropping the whole claim (which would take
+`/home` with it).
+
+## Image pinning
+
+A catalog image with live workspaces cannot be removed
+(`DELETE /api/v1/images/{hash}` answers `409` naming the
+workspace): each workspace's overlay backs that exact image file,
+and its kernel and initrd are read from the image's cache on every
+boot. Deleting the workspace releases the pin.

@@ -48,19 +48,21 @@ Debian's own kernel, initrd, and modules — booted directly (no
 BIOS/UEFI) by cloud-hypervisor. The image is pinned by its dated
 cloud.debian.org URL and sha512, and the build turns it into the
 msks boot contract — `vmlinux` (Debian's bzImage, `CONFIG_PVH=y`),
-`initrd`, a fresh read-only ext4 rootfs, and
+`initrd`, a pristine ext4 base rootfs, and
 `guest-manifest.json` — with a small overlay of msks systemd units
-(vsock console, serial autologin). Extraction is fully unprivileged:
+(vsock console, serial autologin, the `/home` mount). Extraction is
+fully unprivileged:
 qemu-img convert, partition slice, `debugfs rdump`, `mke2fs -d`.
 Measured boot on bare-metal KVM: kernel at 1.1s, the vsock console
 service at 7.4s, login prompt at 8.9s (#37 tracks the <5s goal).
-`apt` is present but inert while the root is read-only and the VM
-has no network — installs arrive with #26's writable volume. The
+Root writes persist through the per-workspace overlay (#14), and
+`/home` is the workspace's own ext4 volume; `apt` still has no
+network to install from until networking lands. The
 extraction runs under fakeroot so the image is root-owned with sane
 password-file modes (setuid bits are lost; everything runs as root).
-Stopping a workspace is API-side (`vm.shutdown`, non-graceful in
-cloud-hypervisor v52 — the guest is not notified; there is no
-guest-side power-button handler).
+Stopping a workspace presses the ACPI power button
+(`vm.power-button`): the guest's systemd-logind runs the clean
+poweroff that flushes its persistent disks (#14).
 
 Every step of the build runs inside the repo on any Linux host with
 nix (the k8s vm-runner container archive comes from the same tree):

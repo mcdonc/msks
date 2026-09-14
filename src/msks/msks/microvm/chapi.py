@@ -44,9 +44,15 @@ class CloudHypervisorApi:
         result = await self._request("GET", f"{API_ROOT}/vm.info")
         return result if isinstance(result, dict) else {}
 
-    async def shutdown(self) -> None:
-        """PUT /api/v1/vm.shutdown — request a graceful power-off."""
-        await self._request("PUT", f"{API_ROOT}/vm.shutdown")
+    async def power_button(self) -> None:
+        """PUT /api/v1/vm.power-button — press the ACPI power button.
+
+        The guest's own handler (systemd-logind, or an acpid rule) runs
+        the clean shutdown — unmounts, syncs — which is what a workspace
+        with persistent disks needs. ``vm.shutdown`` is the *hard* stop
+        in v52: the guest is never notified, page-cache writes are lost.
+        """
+        await self._request("PUT", f"{API_ROOT}/vm.power-button")
 
     async def _request(
         self, method: str, path: str, json: dict | None = None

@@ -74,7 +74,7 @@ class FakeCH:
             )
         else:
             writer.write(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
-            if path == "/api/v1/vm.shutdown":
+            if path in ("/api/v1/vm.shutdown", "/api/v1/vm.power-button"):
                 for hook in self.on_shutdown:
                     hook()
         await writer.drain()

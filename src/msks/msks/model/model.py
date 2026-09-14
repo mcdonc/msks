@@ -159,11 +159,13 @@ class Model:
 
     # --- workspaces ---------------------------------------------------------
 
-    async def create_workspace(self, spec: VmSpec) -> dict:
-        """Insert a workspace row from its VM spec."""
+    async def create_workspace(
+        self, spec: VmSpec, image_hash: str | None = None, host: str | None = None
+    ) -> dict:
+        """Insert a workspace row from its VM spec and artifact facts."""
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
-            row = Workspace(**workspace_fields(spec))
+            row = Workspace(**workspace_fields(spec, image_hash, host))
             session.add(row)
             await session.commit()
             return workspace_dict(row)
@@ -208,7 +210,7 @@ class Model:
             return True
 
 
-def workspace_fields(spec: VmSpec) -> dict:
+def workspace_fields(spec: VmSpec, image_hash: str | None, host: str | None) -> dict:
     """The ORM column values a VmSpec maps to."""
     return {
         "id": spec.workspace_id,
@@ -218,6 +220,10 @@ def workspace_fields(spec: VmSpec) -> dict:
         "cmdline": spec.cmdline,
         "cpus": spec.cpus,
         "mem_mib": spec.mem_mib,
+        "image_hash": image_hash,
+        "host": host,
+        "root_mib": spec.root_mib,
+        "home_mib": spec.home_mib,
         "status": "created",
     }
 
@@ -232,6 +238,10 @@ def workspace_dict(row: Workspace) -> dict:
         "cmdline": row.cmdline,
         "cpus": row.cpus,
         "mem_mib": row.mem_mib,
+        "image_hash": row.image_hash,
+        "host": row.host,
+        "root_mib": row.root_mib,
+        "home_mib": row.home_mib,
         "status": row.status,
         "created_at": row.created_at.isoformat(),
     }

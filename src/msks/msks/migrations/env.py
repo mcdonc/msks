@@ -32,14 +32,19 @@ def run_migrations_online() -> None:
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
-    with connectable.connect() as connection:
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-            render_as_batch=True,
-        )
-        with context.begin_transaction():
-            context.run_migrations()
+    try:
+        with connectable.connect() as connection:
+            context.configure(
+                connection=connection,
+                target_metadata=target_metadata,
+                render_as_batch=True,
+            )
+            with context.begin_transaction():
+                context.run_migrations()
+    finally:
+        # The engine (and its sqlite handle) is per-run; leaving it to
+        # the garbage collector trips ResourceWarnings under pytest.
+        connectable.dispose()
 
 
 if context.is_offline_mode():

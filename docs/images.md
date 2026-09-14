@@ -61,9 +61,18 @@ boots. A guest image must:
   login shell — the shipped image uses
   `socat VSOCK-LISTEN:<port>,reuseaddr,fork EXEC:/bin/bash,...`
   as `msks-console.service`, `Restart=always`.
-- **Tolerate a read-only-root mindset.** The current rootfs boots
-  with its own filesystem read-write but unmodified between boots
-  only by convention; per-workspace overlays arrive with #14.
+- **Answer the ACPI power button.** `stop` presses the power button
+  (`vm.power-button`) and waits; the guest's own handler runs the
+  clean shutdown that flushes its disks — systemd-logind does this
+  by default, an acpid rule works too. A guest that ignores the
+  button is killed at the deadline, and whatever its page cache
+  still held is lost.
+- **Tolerate a read-write root.** The daemon boots each workspace's
+  root read-write through a per-workspace qcow2 overlay (#14) — the
+  base image stays pristine under copy-on-write — and attaches an
+  ext4 volume at `/home`. Ship an fstab entry for `/dev/vdb` (or let
+  the image's own mount logic handle it); `nofail` keeps boots
+  moving when the volume is absent.
 
 ## Building an image
 

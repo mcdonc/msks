@@ -127,9 +127,10 @@ trap cleanup EXIT
 graceful() {
   echo "msks: stopping the appliance (ACPI, then SIGTERM)"
   # The guest's acpid turns the ACPI power button into a clean
-  # shutdown; bounded wait, then the hard stop.
+  # shutdown; bounded wait, then the hard stop. vm.power-button is
+  # the ACPI press — vm.shutdown would be the hard stop itself.
   curl -sS --unix-socket "$app_dir/api.sock" -X PUT \
-    http://localhost/api/v1/vm.shutdown >/dev/null 2>&1 || true
+    http://localhost/api/v1/vm.power-button >/dev/null 2>&1 || true
   for _ in $(seq 1 50); do
     kill -0 "$chpid" 2>/dev/null || break
     sleep 0.2

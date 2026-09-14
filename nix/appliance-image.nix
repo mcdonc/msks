@@ -55,6 +55,12 @@ let
   # cloud-hypervisor the devenv shell pins.
   vmm = pkgs.cloud-hypervisor;
 
+  # Workspace-artifact tools (#14): msksd builds each workspace's
+  # qcow2 overlay (qemu-img) and formats its ext4 home volume
+  # (mkfs.ext4) inside the appliance.
+  qemuImg = pkgs.qemu-utils;
+  e2fsprogs = pkgs.e2fsprogs;
+
   # Network plan (the up-task mirrors it on the host bridge):
   net = {
     address = "192.168.77.2";
@@ -243,11 +249,13 @@ let
       echo "msks appliance: kernel $(uname -r) up; execing msksd"
       echo "msks appliance: serving https://${net.address}:8660 (TOFU fingerprint on the serial log)"
 
-      export PATH="${vmm}/bin:${msks}/bin:$PATH"
+      export PATH="${qemuImg}/bin:${e2fsprogs}/sbin:${vmm}/bin:${msks}/bin:$PATH"
       export MSKSD_STATE_DIR=/state
       export MSKSD_HOST=0.0.0.0
       export MSKSD_PORT=8660
       export MSKSD_CLOUD_HYPERVISOR="${vmm}/bin/cloud-hypervisor"
+      export MSKSD_QEMU_IMG="${qemuImg}/bin/qemu-img"
+      export MSKSD_MKFS_EXT4="${e2fsprogs}/sbin/mkfs.ext4"
       # Debug escape hatch: a /state/debug-shell marker (seeded onto
       # the state disk from the host) backgrounds the daemon and gives
       # the console an interactive shell instead of exec'ing PID 1.

@@ -43,6 +43,10 @@ class Microvm:
             return self.k8s
         raise MicrovmError(f"unknown vmm driver: {name!r}")
 
+    async def prepare(self, spec: VmSpec) -> None:
+        """Materialize one workspace's persistent artifacts (#14)."""
+        await self.driver.prepare(spec)
+
     async def launch(self, spec: VmSpec) -> None:
         """Create and start one workspace VM."""
         await self.driver.launch(spec)
@@ -62,6 +66,10 @@ class Microvm:
     async def cleanup(self, workspace_id: str) -> None:
         """Remove one workspace's artifacts."""
         await self.driver.cleanup(workspace_id)
+
+    async def reset(self, workspace_id: str) -> None:
+        """Factory-reset one workspace (drop the overlay, keep /home)."""
+        await self.driver.reset(workspace_id)
 
     async def console(self, workspace_id: str):
         """An interactive byte stream into a running workspace."""

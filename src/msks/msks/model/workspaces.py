@@ -24,7 +24,15 @@ WORKSPACE_STATUSES = (
 
 
 class Workspace(Base):
-    """One workspace: identity + VM spec + observed lifecycle state."""
+    """One workspace: identity + VM spec + observed lifecycle state.
+
+    Three #14 columns record the workspace's persistent half:
+    ``image_hash`` binds it to the catalog image its overlay backs
+    (an image with live workspaces cannot be removed), ``host`` is
+    the machine that owns the overlay and home volume (the placement
+    a start must honor), and ``root_mib``/``home_mib`` are the
+    artifacts' sizes, fixed at create.
+    """
 
     __tablename__ = "workspaces"
 
@@ -35,6 +43,10 @@ class Workspace(Base):
     cmdline: Mapped[str] = mapped_column(Text)
     cpus: Mapped[int] = mapped_column(Integer)
     mem_mib: Mapped[int] = mapped_column(Integer)
+    image_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    host: Mapped[str | None] = mapped_column(String, nullable=True)
+    root_mib: Mapped[int] = mapped_column(Integer, default=10240)
+    home_mib: Mapped[int] = mapped_column(Integer, default=2048)
     status: Mapped[str] = mapped_column(String, default="created")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(

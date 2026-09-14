@@ -1,6 +1,7 @@
 """Model-layer tests: CRUD, tokens, bootstrap, status validation."""
 
 from contextlib import closing
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -53,6 +54,66 @@ async def test_create_and_get_workspace(app_for) -> None:
     assert row["initrd"] == "/i"
     fetched = await app.state.model.get_workspace("ws1")
     assert fetched["cpus"] == 2
+
+
+async def test_workspace_carries_artifact_facts(app_for) -> None:
+    """The #14 columns round-trip: image binding, owning host, sizes."""
+    app = app_for()
+    await app.state.model.create_all()
+    row = await app.state.model.create_workspace(
+        spec(root_mib=512, home_mib=128),
+        image_hash="ab" * 32,
+        host="metal-2",
+    )
+    assert (row["image_hash"], row["host"]) == ("ab" * 32, "metal-2")
+    assert (row["root_mib"], row["home_mib"]) == (512, 128)
+    fetched = await app.state.model.get_workspace("ws1")
+    assert fetched["image_hash"] == "ab" * 32
+    assert fetched["root_mib"] == 512
+
+
+async def test_migration_backfills_pre14_rows(tmp_path: Path, app_for) -> None:
+    """A database stamped at 0001 upgrades in place: existing rows
+    gain the #14 columns with usable defaults, data intact."""
+    import sqlalchemy as sa
+    from alembic import command
+    from msks.model.model import alembic_config
+
+    app = app_for()
+    db_path = tmp_path / "t.db"
+    config = alembic_config(db_path)
+    command.upgrade(config, "0001")
+    engine = sa.create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as conn:
+            # Reflected off the migrated database, so the insert sees
+            # exactly the 0001 shape — a row written before #14.
+            workspaces = sa.Table("workspaces", sa.MetaData(), autoload_with=conn)
+            assert "image_hash" not in workspaces.columns
+            conn.execute(
+                workspaces.insert().values(
+                    id="old",
+                    kernel="/k",
+                    initrd=None,
+                    rootfs="/r",
+                    cmdline="c",
+                    cpus=1,
+                    mem_mib=256,
+                    status="stopped",
+                    created_at=datetime(2026, 1, 1),
+                    updated_at=datetime(2026, 1, 1),
+                )
+            )
+    finally:
+        engine.dispose()
+    app.state.model.migrate()
+    row = await app.state.model.get_workspace("old")
+    assert row is not None
+    assert row["image_hash"] is None  # explicit-boot rows bind no image
+    assert row["host"] is None  # pre-#14 rows adopt the starting host
+    assert row["root_mib"] == 10240
+    assert row["home_mib"] == 2048
+    assert row["status"] == "stopped"
 
 
 async def test_get_absent_workspace(app_for) -> None:
