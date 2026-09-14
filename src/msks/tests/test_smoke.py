@@ -628,16 +628,76 @@ async def test_appliance_boot_and_workspace() -> None:
                     got += message if isinstance(message, bytes) else message.encode()
                 return got
 
-            await shell_ws.send(b"ip -4 addr | grep 172.31 && echo ADDR-$((6*7))\n")
-            await await_marker(b"ADDR-42")
-            await shell_ws.send(b"getent hosts deb.debian.org && echo DNS-$((6*7))\n")
-            await await_marker(b"DNS-42")
+            # The probes retry inside the guest: the command can run
+            # before DHCP lands (fast hosts boot the console session
+            # concurrent with networkd), and a one-shot ip/getent
+            # would snapshot the pre-lease state. The markers render
+            # differently from the sent bytes — the pty echoes input
+            # (echo=1), so a literal marker in the command line would
+            # satisfy the wait on echo alone.
+            await shell_ws.send(
+                b"for i in $(seq 1 60); do ip -4 addr | grep -q 172.31. "
+                b"&& echo NET-$((6*7))-UP && break; sleep 2; done\n"
+            )
+            await await_marker(b"NET-42-UP")
+            await shell_ws.send(
+                b"for i in $(seq 1 60); do getent hosts deb.debian.org "
+                b">/dev/null && echo DNS-$((6*7))-UP && break; sleep 2; done\n"
+            )
+            await await_marker(b"DNS-42-UP")
         response = await client.get(f"{base}/workspaces/{wid}", headers=headers)
         assert response.json().get("status") == "running", response.text
 
-        response = await client.post(f"{base}/workspaces/{wid}/stop", headers=headers)
+        # #36: a killed vsock socat recovers without a workspace
+        # restart. The guest's msks-console.service respawns the
+        # listener (Restart=always); prove a fresh console connect
+        # works after the listener is SIGKILLed. The marker renders
+        # differently from the sent bytes, so it proves OUTPUT flowed
+        # — not merely the pty echo of the input.
+        async with websockets.connect(ws_url, ssl=ws_ctx, open_timeout=30) as kill_ws:
+            await kill_ws.send(
+                b"systemctl kill --kill-who=main -s SIGKILL msks-console.service\n"
+            )
+        recovered_at = None
+        for attempt in range(30):
+            await asyncio.sleep(1.0)
+            # Only the connect phase is retriable: a console that
+            # connects but never serves the marker fails fast below —
+            # TimeoutError is an OSError subclass, so a blanket
+            # except here would swallow the marker wait for ~15 min.
+            try:
+                recovery_ws = await websockets.connect(
+                    ws_url, ssl=ws_ctx, open_timeout=10
+                )
+            except OSError, websockets.WebSocketException:
+                continue
+            try:
+                await recovery_ws.send(b"echo MSKS-$((23*2))-RECOVERED\n")
+                recovered = b""
+                while b"MSKS-46-RECOVERED" not in recovered:
+                    message = await asyncio.wait_for(recovery_ws.recv(), 30.0)
+                    recovered += (
+                        message if isinstance(message, bytes) else message.encode()
+                    )
+            finally:
+                await recovery_ws.close()
+            recovered_at = attempt
+            break
+        assert recovered_at is not None, (
+            "console never recovered after the guest socat was killed"
+        )
+
+        # Lifecycle calls may legally take the daemon's full graceful
+        # window (MSKSD_SHUTDOWN_TIMEOUT_S, 20s default, plus the
+        # terminate path): the module client's 10s default would cut a
+        # healthy-but-slow stop off mid-flight on a busy host.
+        response = await client.post(
+            f"{base}/workspaces/{wid}/stop", headers=headers, timeout=60.0
+        )
         assert response.status_code == 200, response.text
-        response = await client.delete(f"{base}/workspaces/{wid}", headers=headers)
+        response = await client.delete(
+            f"{base}/workspaces/{wid}", headers=headers, timeout=60.0
+        )
         assert response.status_code == 200, response.text
         response = await client.get(f"{base}/workspaces/{wid}", headers=headers)
         assert response.status_code == 404

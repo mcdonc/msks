@@ -293,7 +293,9 @@ The client speaks the daemon's console websocket
 (`/api/v1/workspaces/{id}/console`): TLS plus bearer token — the same
 authentication as the REST surface, with the token on the query
 string (like `/api/v1/events`). Ctrl-] detaches (Ctrl-C and Ctrl-D
-reach the guest); the session ends cleanly when either side closes.
+reach the guest); pressing Ctrl-] twice quickly sends one literal
+Ctrl-] to the guest instead (see `docs/cli.md`). The session ends
+cleanly when either side closes.
 Detaching leaves the workspace running; the shell process inside the
 guest exits when the stream closes.
 

@@ -50,12 +50,17 @@ fi
 # Idempotent (check-then-add), same as the bridge above; the iptables
 # compatibility layer speaks for nftables-backed hosts too.
 sudo -n sysctl -qw net.ipv4.ip_forward=1
-ipt_rule() { # ipt_rule <rule args...>: -C if present, else -A
-  sudo -n iptables -C "$@" >/dev/null 2>&1 || sudo -n iptables -A "$@"
+# The table comes BEFORE -C/-A: iptables-nft (≥1.8.13) rejects a
+# table option after the command ("Bad argument `nat'").
+ipt_rule() { # ipt_rule <table> <chain> <rule args...>: -C if present, else -A
+  local table="$1"
+  shift
+  sudo -n iptables -t "$table" -C "$@" >/dev/null 2>&1 ||
+    sudo -n iptables -t "$table" -A "$@"
 }
-ipt_rule FORWARD -i "$bridge" -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j ACCEPT
-ipt_rule FORWARD -o "$bridge" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-ipt_rule -t nat POSTROUTING -s "${host_ip}/24" ! -o "$bridge" -j MASQUERADE
+ipt_rule filter FORWARD -i "$bridge" -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j ACCEPT
+ipt_rule filter FORWARD -o "$bridge" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+ipt_rule nat POSTROUTING -s "${host_ip}/24" ! -o "$bridge" -j MASQUERADE
 
 # --- persistent state ---------------------------------------------------
 # MSKSD_APPLIANCE_STATE can relocate the state disk (e.g. /run for

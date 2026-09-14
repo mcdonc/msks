@@ -202,6 +202,19 @@ let
       'DHCP=yes' \
       > $out/etc/systemd/network/80-msks-egress.network
 
+    # networkd must not race udev's coldplug rename (eth0 to ens3):
+    # this boot reaches multi-user immediately after sysinit, and a
+    # networkd that enumerates while udevd is still renaming the NIC
+    # never manages the renamed link — DHCP never runs, and
+    # networkd sits in activating forever. Ordering after the
+    # coldplug makes the interface name final before the first
+    # enumeration; the .network above matches either name anyway.
+    mkdir -p $out/etc/systemd/system/systemd-networkd.service.d
+    printf '%s\n' \
+      '[Unit]' \
+      'After=systemd-udev-trigger.service systemd-udevd.service' \
+      > $out/etc/systemd/system/systemd-networkd.service.d/10-after-udev-coldplug.conf
+
     # networkd + resolved stay enabled for egress workspaces (#52):
     # DHCP configures the NIC and resolved serves the offered
     # resolver at 127.0.0.53. The boot-diet lines that dropped these
