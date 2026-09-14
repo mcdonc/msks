@@ -81,10 +81,12 @@ let
     hash = "sha256-5xJGCP1rv6GrcxSdxn7MgtCYWX11zx5UApHYynEUD+A=";
   };
 
-  cloudKernel = pkgs.runCommand "msks-cloud-kernel" { nativeBuildInputs = [ pkgs.dpkg ]; } ''
-    set -eu
-    dpkg-deb -x ${cloudKernelDeb} "$out"
-  '';
+  cloudKernel =
+    pkgs.runCommand "msks-cloud-kernel" { nativeBuildInputs = [ pkgs.dpkg ]; }
+      ''
+        set -eu
+        dpkg-deb -x ${cloudKernelDeb} "$out"
+      '';
 
   # The minimal initramfs (#37): busybox, the one module the kernel
   # cannot mount root without, and an init that mounts /dev/vda and
@@ -523,7 +525,8 @@ let
       {
         inherit bootTree imageName imageVersion;
         nativeBuildInputs = [ pkgs.gnutar ];
-        imageId = "msks" + builtins.hashString "sha256" (imageName + ":" + imageVersion);
+        imageId =
+          "msks" + builtins.hashString "sha256" (imageName + ":" + imageVersion);
       }
       ''
         set -eu

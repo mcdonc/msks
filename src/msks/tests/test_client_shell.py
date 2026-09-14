@@ -257,6 +257,27 @@ async def test_pump_lone_escape_detaches_after_window() -> None:
     assert ws.sent == []
 
 
+async def test_pump_writes_messages_between_input_reads() -> None:
+    # Wait rounds where ONLY the daemon spoke must still write output:
+    # stdin stays pending until its late EOF, and both messages land
+    # in rounds of their own.
+    ws = FakeWs(incoming=[b"one", b"two"])
+    stdin = asyncio.StreamReader()
+
+    async def finish_stdin() -> None:
+        await asyncio.sleep(0.05)
+        stdin.feed_eof()
+
+    asyncio.create_task(finish_stdin())
+    stdout = FakeStdout()
+    try:
+        await asyncio.wait_for(pump(stdin, ws, stdout), timeout=5)
+    finally:
+        await _cancel_orphans()
+    assert stdout.buffer.getvalue() == b"onetwo"
+    assert ws.sent == []
+
+
 async def test_pump_stdin_eof_detaches() -> None:
     ws = FakeWs()
     try:
