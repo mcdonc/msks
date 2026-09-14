@@ -964,3 +964,69 @@ def test_image_rm_miss_caps_a_large_catalog(monkeypatch: pytest.MonkeyPatch) -> 
     assert "distro:0" in message and "distro:7" in message
     assert "distro:8" not in message
     assert "(+4 more)" in message
+
+
+def test_image_rm_hex_name_wins_over_hash_prefix(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A catalog name that looks like hex resolves by name — the
+    daemon's precedence — never as some other image's hash prefix."""
+    client_env(monkeypatch)
+    rows = [
+        image_row("cafe", "1", "9" * 64),
+        image_row("other", "9", "cafeaaa" + "0" * 57),
+    ]
+    deleted = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json=rows)
+        deleted.append(request.url.path)
+        return httpx.Response(200, json={"removed": "9" * 64})
+
+    rc = cli.cmd_image_rm("cafe", transport=mock(handler))
+    assert rc == 0
+    assert deleted == [f"/api/v1/images/{'9' * 64}"]
+    assert "cafe:1 deleted" in capsys.readouterr().out
+
+
+def test_image_rm_hash_shaped_miss_does_not_fall_through_to_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A full 64-hex ref is only ever a hash (the daemon's
+    is_hash_shape short-circuit): a miss is a miss even when an image
+    is named that same string."""
+    client_env(monkeypatch)
+    rows = [image_row("f" * 64, "1", "9" * 64)]
+    with pytest.raises(SystemExit, match="no image matches"):
+        cli.cmd_image_rm(
+            "f" * 63 + "e", transport=mock(lambda req: httpx.Response(200, json=rows))
+        )
+
+
+def test_image_rm_bare_name_with_duplicate_refs_is_ambiguous(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two imports of the same name:version: the bare name surfaces
+    the ambiguity (with hashes to tell them apart), not a silent
+    arbitrary pick."""
+    client_env(monkeypatch)
+    rows = [
+        image_row("debian", "13", "a" * 64),
+        image_row("debian", "13", "b" * 64),
+    ]
+    with pytest.raises(SystemExit) as excinfo:
+        cli.cmd_image_rm(
+            "debian", transport=mock(lambda req: httpx.Response(200, json=rows))
+        )
+    message = str(excinfo.value)
+    assert "matches 2 images" in message
+    assert f"debian:13 ({'a' * 12})" in message and f"debian:13 ({'b' * 12})" in message
+
+
+def test_image_rm_on_an_empty_catalog_names_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    client_env(monkeypatch)
+    with pytest.raises(SystemExit, match=r"\(the catalog is empty\)"):
+        cli.cmd_image_rm(
+            "debian", transport=mock(lambda req: httpx.Response(200, json=[]))
+        )

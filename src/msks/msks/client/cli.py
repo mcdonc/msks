@@ -12,7 +12,7 @@ import asyncio
 import json
 import sys
 
-from ..imagestore import version_key
+from ..imagestore import is_hash_shape, version_key
 from .rest import (
     api_call,
     api_client,
@@ -226,15 +226,37 @@ def resolve_image_ref(ref: str, rows: list[dict]) -> dict:
 
 
 def image_ref_matches(ref: str, rows: list[dict]) -> list[dict]:
-    """Dispatch on the reference's shape (hash, @, :, name)."""
+    """Dispatch on the reference's shape, mirroring the daemon's
+    precedence (:mod:`msks.imagestore` ``resolve``): @, :, full
+    hash, then bare token."""
     if "@" in ref:
         return pin_matches(ref, rows)
     if ":" in ref:
         return name_version_matches(ref, rows)
-    prefixed = hash_prefix_matches(rows, ref)
-    if prefixed:
-        return prefixed
-    return newest_version_rows(ref, rows)
+    if is_hash_shape(ref):
+        return hash_prefix_matches(rows, ref)
+    return bare_ref_matches(ref, rows)
+
+
+def bare_ref_matches(ref: str, rows: list[dict]) -> list[dict]:
+    """A bare token: a catalog name resolves by name (a hex-looking
+    name must not be captured as a hash prefix — the daemon resolves
+    it by name); anything else may be a unique hash prefix. All rows
+    tied at the newest version return together: two imports of the
+    same name:version (a rebuilt archive) surface as the ambiguity
+    they are, never a silent arbitrary pick."""
+    named = [row for row in rows if row["name"] == ref]
+    if named:
+        return top_version_rows(named)
+    return hash_prefix_matches(rows, ref)
+
+
+def top_version_rows(candidates: list[dict]) -> list[dict]:
+    """The candidates sitting at the newest version — the daemon's
+    ordering (``imagestore.version_key``), so client and daemon
+    agree on what "newest" means."""
+    top = max(version_key(row["version"]) for row in candidates)
+    return [row for row in candidates if version_key(row["version"]) == top]
 
 
 def pin_matches(ref: str, rows: list[dict]) -> list[dict]:
@@ -249,7 +271,7 @@ def pin_matches(ref: str, rows: list[dict]) -> list[dict]:
 def require_hash_digest(ref: str, digest: str) -> None:
     """A pin's hash part is a full 64-hex digest (the daemon's
     ``is_hash_shape``); anything else is a named error."""
-    if len(digest) != 64 or not set(digest) <= HEX_DIGITS:
+    if not is_hash_shape(digest):
         raise SystemExit(f"msks: malformed image hash in {ref!r}")
 
 
@@ -265,16 +287,6 @@ def hash_prefix_matches(rows: list[dict], prefix: str) -> list[dict]:
     if not prefix or not set(prefix) <= HEX_DIGITS:
         return []
     return [row for row in rows if row["hash"].startswith(prefix)]
-
-
-def newest_version_rows(name: str, rows: list[dict]) -> list[dict]:
-    """The newest version of ``name`` — the daemon's ordering
-    (``imagestore.version_key``), so client and daemon agree."""
-    candidates = [row for row in rows if row["name"] == name]
-    if not candidates:
-        return []
-    newest = max(candidates, key=lambda row: version_key(row["version"]))
-    return [newest]
 
 
 def catalog_refs(rows: list[dict]) -> str:
@@ -294,10 +306,19 @@ def no_image_message(ref: str, rows: list[dict]) -> str:
 def ambiguous_image_message(ref: str, matches: list[dict]) -> str:
     # name:version is deliberately absent from the advice: the usual
     # ambiguity is two imports of the same name:version (a rebuilt
-    # archive), where only the hash forms still identify one image.
+    # archive), where only the hash forms still identify one image;
+    # the matches therefore carry their short hashes.
     return (
         f"msks: {ref!r} matches {len(matches)} images "
-        f"({catalog_refs(matches)}); use the full hash or name@hash"
+        f"({match_refs(matches)}); use the full hash or name@hash"
+    )
+
+
+def match_refs(matches: list[dict]) -> str:
+    """The matched images with short hashes — when the refs read the
+    same (re-imported archive), the hashes are the discriminator."""
+    return ", ".join(
+        f"{row['name']}:{row['version']} ({row['hash'][:12]})" for row in matches
     )
 
 
@@ -407,7 +428,11 @@ def build_parser() -> argparse.ArgumentParser:
         "or hash (a unique hash prefix works too)",
     )
     image_info = image_sub.add_parser("info", help="show one image's full record")
-    image_info.add_argument("ref", help="name:version, bare name, name@hash, or hash")
+    image_info.add_argument(
+        "ref",
+        help="name:version, bare name, name@hash, or hash "
+        "(a unique hash prefix works too)",
+    )
     return parser
 
 
