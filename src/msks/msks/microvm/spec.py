@@ -27,6 +27,12 @@ class VmSpec:
     # size and the home volume's size, both fixed at create.
     root_mib: int = 10240
     home_mib: int = 2048
+    # Egress networking (#52): the workspace boots with a virtio-net
+    # NIC onto a per-VM tap inside the appliance — the default, so a
+    # plain create is networked. ``egress: false`` opts back into the
+    # no-NIC posture (the one every backend serves with zero net
+    # machinery).
+    egress: bool = True
 
 
 class VmStatus(StrEnum):

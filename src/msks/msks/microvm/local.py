@@ -92,7 +92,11 @@ POWER_REPRESS_S = 5.0
 
 
 def vm_config(
-    spec: VmSpec, disks: list[dict], serial_log: Path, vsock_socket: Path | None = None
+    spec: VmSpec,
+    disks: list[dict],
+    serial_log: Path,
+    vsock_socket: Path | None = None,
+    net: dict | None = None,
 ) -> dict:
     """The ``PUT /api/v1/vm.create`` body for one spec (v52 schema).
 
@@ -106,6 +110,12 @@ def vm_config(
     one vsock connection into the guest after the ``CONNECT <port>``
     handshake (#21). The CID is per-VMM — every workspace runs its
     own cloud-hypervisor with its own socket, so a constant works.
+
+    ``net`` adds the virtio-net device (#52): ``tap`` names the
+    per-VM interface the appliance already created and addressed (a
+    plain dict ``{"tap": ..., "mac": ...}`` from the net manager's
+    attachment; v52 takes a one-element sequence), and ``mac`` pins
+    the workspace's deterministic MAC.
     """
     payload: dict = {
         "kernel": str(spec.kernel),
@@ -125,7 +135,16 @@ def vm_config(
     }
     if vsock_socket is not None:
         vm["vsock"] = {"cid": VSOCK_CID, "socket": str(vsock_socket)}
+    if net is not None:
+        vm["net"] = [net]
     return vm
+
+
+def vm_net(attachment) -> dict | None:
+    """The v52 net device for an attachment, or None without egress."""
+    if attachment is None:
+        return None
+    return {"tap": attachment.tap, "mac": attachment.mac}
 
 
 def disk_entries(state_dir: Path, workspace_id: str) -> list[dict]:
@@ -184,6 +203,19 @@ class LocalCloudHypervisor(MicrovmDriver):
     def __init__(self, app) -> None:
         self.app = app
         self._procs: dict[str, asyncio.subprocess.Process] = {}
+        # One lock per workspace (#70 review): a stop/kill racing a
+        # start must not interleave — shutdown pops the VMM before it
+        # detaches the net plumbing, and a launch squeezing into that
+        # window would attach a tap the shutdown then deletes under
+        # the booting VM.
+        self._locks: dict[str, asyncio.Lock] = {}
+
+    @contextlib.asynccontextmanager
+    async def _guard(self, workspace_id: str):
+        """Serialize one workspace's lifecycle transitions."""
+        lock = self._locks.setdefault(workspace_id, asyncio.Lock())
+        async with lock:
+            yield
 
     def _settings(self):
         return self.app.state.settings
@@ -215,11 +247,27 @@ class LocalCloudHypervisor(MicrovmDriver):
         await persist.ensure_artifacts(spec, vmm)
 
     async def launch(self, spec: VmSpec) -> None:
+        async with self._guard(spec.workspace_id):
+            await self._launch_locked(spec)
+
+    async def _launch_locked(self, spec: VmSpec) -> None:
         vmm = self._settings().vmm
         vm_dir = self._dir(spec.workspace_id)
         self._ensure_launchable(spec.workspace_id, vm_dir)
         self._check_socket_path(vm_dir / "api.sock")
         vm_dir.mkdir(parents=True, exist_ok=True)
+        # Egress (#52): the tap must exist before the VMM opens it,
+        # so the attachment arms first — and unwinds on any failure
+        # below, leaving no half-open plumbing behind.
+        attachment = await self._net_attach(spec)
+        try:
+            await self._boot(spec, vmm, vm_dir, attachment)
+        except BaseException:
+            await self._net_detach(spec.workspace_id)
+            raise
+
+    async def _boot(self, spec: VmSpec, vmm, vm_dir: Path, attachment) -> None:
+        """Spawn the VMM and boot the VM (artifacts healed first, #14)."""
         # Boots heal their artifacts (#14): a workspace row whose
         # overlay or volume is missing (a crash mid-create, or a row
         # that predates #14) gets them back before the VM starts.
@@ -238,10 +286,19 @@ class LocalCloudHypervisor(MicrovmDriver):
                 serial_log,
                 vmm.request_timeout_s,
                 vsock_socket=vm_dir / "vsock.sock",
+                net=vm_net(attachment),
             )
         except BaseException:
             await self._reap(spec.workspace_id, proc)
             raise
+
+    async def _net_attach(self, spec: VmSpec):
+        """Arm the workspace's egress plumbing when it asked for it."""
+        return await self.app.state.net.attach(spec.workspace_id, want=spec.egress)
+
+    async def _net_detach(self, workspace_id: str) -> None:
+        """Tear the workspace's egress plumbing down (idempotent)."""
+        await self.app.state.net.detach(workspace_id)
 
     def _check_socket_path(self, socket_path: Path) -> None:
         """AF_UNIX sun_path caps at 108 bytes; fail with a named cause.
@@ -279,11 +336,18 @@ class LocalCloudHypervisor(MicrovmDriver):
             log_file.close()
 
     async def _configure_and_boot(
-        self, spec, disks, socket_path, serial_log, timeout_s, vsock_socket=None
+        self,
+        spec,
+        disks,
+        socket_path,
+        serial_log,
+        timeout_s,
+        vsock_socket=None,
+        net=None,
     ) -> None:
         api = CloudHypervisorApi(socket_path, timeout_s)
         try:
-            await api.create(vm_config(spec, disks, serial_log, vsock_socket))
+            await api.create(vm_config(spec, disks, serial_log, vsock_socket, net))
             await api.boot()
         finally:
             await api.aclose()
@@ -374,15 +438,23 @@ class LocalCloudHypervisor(MicrovmDriver):
         (the file outlives a dead VMM) reports ECONNREFUSED rather
         than ENOENT, so dead-behind-a-socket counts as stopped too.
         """
+        async with self._guard(workspace_id):
+            await self._shutdown_locked(workspace_id, timeout_s)
+
+    async def _shutdown_locked(
+        self, workspace_id: str, timeout_s: float | None
+    ) -> None:
         vmm = self._settings().vmm
         socket_path = self._dir(workspace_id) / "api.sock"
         if not socket_path.exists() or not self._vmm_reachable(workspace_id):
             self._procs.pop(workspace_id, None)
+            await self._net_detach(workspace_id)
             return
         timeout = timeout_s if timeout_s is not None else vmm.shutdown_timeout_s
         deadline = asyncio.get_running_loop().time() + timeout
         await self._graceful_guest_down(workspace_id, deadline)
         await self._terminate(workspace_id, deadline)
+        await self._net_detach(workspace_id)
 
     async def _graceful_guest_down(self, workspace_id: str, deadline: float) -> None:
         """Request the ACPI poweroff and wait for the guest to land.
@@ -469,17 +541,24 @@ class LocalCloudHypervisor(MicrovmDriver):
             await proc.wait()
 
     async def kill(self, workspace_id: str) -> None:
+        async with self._guard(workspace_id):
+            await self._kill_locked(workspace_id)
+
+    async def _kill_locked(self, workspace_id: str) -> None:
         proc = self._procs.pop(workspace_id, None)
         if proc is not None:
             proc.kill()
             await proc.wait()
+            await self._net_detach(workspace_id)
             return
         pid = self._pid(workspace_id)
         if pid is None or not self._pid_alive(pid):
             # Already dead (or never started): killing an absent VM is
             # success — the absent-VM contract shutdown honors too.
+            await self._net_detach(workspace_id)
             return
         os.kill(pid, signal.SIGKILL)
+        await self._net_detach(workspace_id)
 
     async def reset(self, workspace_id: str) -> None:
         """Factory reset: drop the root overlay, keep the home volume.
@@ -488,19 +567,25 @@ class LocalCloudHypervisor(MicrovmDriver):
         must be stopped first — deleting the file under it would
         leave the guest writing into an unlinked inode.
         """
+        async with self._guard(workspace_id):
+            await self._reset_locked(workspace_id)
+
+    async def _reset_locked(self, workspace_id: str) -> None:
         self._dir(workspace_id)
         if self._vmm_reachable(workspace_id):
             raise MicrovmError(
                 f"workspace {workspace_id} still runs; stop it before reset"
             )
+        await self._net_detach(workspace_id)
         persist.remove_overlay(self._settings().vmm.state_dir, workspace_id)
 
     async def cleanup(self, workspace_id: str) -> None:
-        # Deleting a workspace stops its VMM first: kill() takes the
-        # tracked process (kill+wait) and falls back to the pidfile
-        # for a VMM a restarted daemon no longer tracks (#56).
-        await self.kill(workspace_id)
-        shutil.rmtree(self._dir(workspace_id), ignore_errors=True)
+        # Deleting a workspace stops its VMM first: the unlocked kill
+        # takes the tracked process (kill+wait) and falls back to the
+        # pidfile for a VMM a restarted daemon no longer tracks (#56).
+        async with self._guard(workspace_id):
+            await self._kill_locked(workspace_id)
+            shutil.rmtree(self._dir(workspace_id), ignore_errors=True)
         # The home volume lives outside the vm dir so stop/start
         # cycles and resets cannot lose it; cleanup owns its removal.
         persist.remove_home_volume(self._settings().vmm.state_dir, workspace_id)
@@ -512,4 +597,5 @@ __all__ = [
     "disk_entries",
     "map_ch_state",
     "vm_config",
+    "vm_net",
 ]

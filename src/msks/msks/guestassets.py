@@ -120,13 +120,22 @@ def smoke_env_defaults(assets: GuestAssets | None) -> dict[str, str]:
     if assets is None or not kvm_available():
         return {}
     env = {
-        VMLINUX_ENV: str(assets.vmlinux),
-        ROOTFS_ENV: str(assets.rootfs),
+        # Absolute paths: a relative rootfs would resolve against the
+        # per-test state dir once qemu-img binds it as the overlay's
+        # backing file (backing paths are overlay-relative), so the
+        # smoke tests must hand the daemon the resolved location.
+        VMLINUX_ENV: str(_absolute(assets.vmlinux)),
+        ROOTFS_ENV: str(_absolute(assets.rootfs)),
         CMDLINE_ENV: assets.cmdline,
     }
     if assets.initrd is not None:
-        env[INITRD_ENV] = str(assets.initrd)
+        env[INITRD_ENV] = str(_absolute(assets.initrd))
     return env
+
+
+def _absolute(path: Path) -> Path:
+    """The manifest artifact as an absolute, symlink-free path."""
+    return path.resolve()
 
 
 def load_runner_image(root: Path | None = None) -> str | None:

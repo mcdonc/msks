@@ -9,6 +9,7 @@ propagates without per-subsystem reconfiguration.
 
 from .microvm import Microvm
 from .model import Model
+from .net import NetManager
 from .settings import Settings
 
 
@@ -19,6 +20,7 @@ class AppState:
         self.settings = settings
         self.microvm: Microvm | None = None
         self.model: Model | None = None
+        self.net: NetManager | None = None
 
 
 class App:
@@ -28,6 +30,7 @@ class App:
         self.state = AppState(settings)
         self.state.microvm = Microvm(self)
         self.state.model = Model(self)
+        self.state.net = NetManager(self)
 
 
 def build_app(settings: Settings | None = None) -> App:

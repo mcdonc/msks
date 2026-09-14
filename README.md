@@ -239,6 +239,42 @@ failures (unreachable daemon, timed-out request, bad token, API or
 validation errors) print one readable line instead of a traceback.
 See `docs/cli.md` for the full command and environment reference.
 
+### Workspace egress networking (#52)
+
+Workspaces are networked from creation — `msks create ws`, or a bare
+`"id"` on the API, boots with egress; `msks create ws --no-egress`
+(or `"egress": false`) boots NIC-less — and the whole path lives in
+the appliance:
+
+```
+workspace VM ──virtio-net──► per-VM tap ──► per-VM nftables chain
+                                                │  guest → uplink: accept
+                                                ▼
+                                     NAT (masquerade) → appliance uplink
+```
+
+The daemon is the guest's only DHCP server and resolver: each
+egress workspace gets a dedicated /30 from `MSKSD_EGRESS_SUBNET`, a
+DHCP offer naming the tap as gateway and resolver, a small DNS
+forwarder on that resolver, and NAT out the appliance uplink
+(`MSKSD_EGRESS_UPLINK`). Everything derives deterministically from
+the workspace id, so stop/start cycles rebuild the same network;
+stop and delete tear the tap, chain, and services down again. The
+guest side is just the image's DHCP client (systemd-networkd +
+resolved in the overlay); a workspace without egress presents no
+NIC, on every backend.
+
+Egress arms while `MSKSD_EGRESS_ENABLED=true` and the daemon holds
+`CAP_NET_ADMIN` — the appliance sets both, so workspaces are
+networked there once its setup script has wired the host side
+(forwarding + NAT for the appliance's bridge). A daemon that cannot
+arm the plumbing still serves everything else, and an egress
+workspace refuses to boot with the cause named (boot those with
+`--no-egress`). On k8s, create with `"egress": false` — the backend
+refuses egress creates until the NetworkPolicy parity lands (#69).
+Per-flow consent (allow/deny holds on each new connection) is #69.
+See `docs/networking.md` for the full reference.
+
 ### The workspace shell (`msks shell`) (#21)
 
 From any host that can reach the appliance, an interactive shell in

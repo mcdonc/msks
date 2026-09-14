@@ -7,7 +7,7 @@ or volumes — backend specifics live behind the microvm seam only.
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base, utcnow
@@ -47,6 +47,15 @@ class Workspace(Base):
     host: Mapped[str | None] = mapped_column(String, nullable=True)
     root_mib: Mapped[int] = mapped_column(Integer, default=10240)
     home_mib: Mapped[int] = mapped_column(Integer, default=2048)
+    # Egress networking (#52): boots the VM with a virtio-net NIC
+    # onto a per-VM tap in the appliance. The default keeps the
+    # no-NIC posture.
+    egress: Mapped[bool] = mapped_column(Boolean, default=True)
+    # The pool slice the workspace's /30 derives from (#70 review):
+    # recorded at first attach so stop/start cycles and daemon
+    # restarts keep the same address, even past digest collisions
+    # between workspace ids.
+    egress_slice: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String, default="created")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(

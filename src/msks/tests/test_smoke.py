@@ -226,6 +226,7 @@ async def test_local_vm_boot_and_shutdown() -> None:
         rootfs=Path(ROOTFS),
         initrd=Path(INITRD) if INITRD else None,
         cmdline=CMDLINE or "console=hvc0 root=/dev/vda rw",
+        egress=False,
     )
     try:
         await microvm.launch(spec)
@@ -278,6 +279,7 @@ async def test_local_persistence_across_restart_and_reset() -> None:
         cmdline=CMDLINE or "console=hvc0 root=/dev/vda rw",
         root_mib=2048,
         home_mib=256,
+        egress=False,
     )
     root_marker = f"ROOT-{uuid.uuid4().hex[:6]}"
     home_marker = f"HOME-{uuid.uuid4().hex[:6]}"
@@ -354,6 +356,7 @@ async def test_k8s_pod_lifecycle() -> None:
         workspace_id=wid,
         kernel=Path("/opt/msks/vmlinux"),
         rootfs=Path("/opt/msks/rootfs.ext4"),
+        egress=False,
     )
     try:
         await microvm.launch(spec)
@@ -532,6 +535,30 @@ async def test_appliance_boot_and_workspace() -> None:
                 console_got += (
                     message if isinstance(message, bytes) else message.encode()
                 )
+
+            # Guest networking, end to end through the appliance
+            # (#52, #70 review): the default (egress) workspace took a
+            # DHCP lease from the daemon's resolver path — the address
+            # on the NIC and a resolution through the forwarder. The
+            # host side must be wired (appliance-setup.sh: forwarding,
+            # NAT, and the appliance's upstream resolver) for these to
+            # pass, which is exactly the posture being pinned.
+            async def await_marker(needle: bytes, deadline_s: float = 180.0) -> bytes:
+                got = b""
+                end = loop.time() + deadline_s
+                while needle not in got:
+                    if loop.time() >= end:
+                        raise AssertionError(
+                            f"console never showed {needle!r}; got: {got[-400:]!r}"
+                        )
+                    message = await asyncio.wait_for(shell_ws.recv(), 30.0)
+                    got += message if isinstance(message, bytes) else message.encode()
+                return got
+
+            await shell_ws.send(b"ip -4 addr | grep 172.31\n")
+            await await_marker(b"172.31.")
+            await shell_ws.send(b"getent hosts deb.debian.org\n")
+            await await_marker(b"deb.debian")
         response = await client.get(f"{base}/workspaces/{wid}", headers=headers)
         assert response.json().get("status") == "running", response.text
 
@@ -558,3 +585,118 @@ async def test_appliance_boot_and_workspace() -> None:
     assert "No process manager is running" in listing.stdout + listing.stderr, (
         f"process manager still alive after down:\n{listing.stdout}"
     )
+
+
+# --- egress smoke (#52) ----------------------------------------------------
+#
+# Boots a workspace with egress on this host: real tap + nftables +
+# DHCP + DNS forwarder, then proves the guest took its address over
+# DHCP, resolves through the daemon's resolver, and reaches the
+# outside over the NAT'd uplink. Opt-in: it needs root (tap/nft/ports
+# 67+53), /dev/kvm, the built guest image (with the #52 DHCP overlay),
+# and an egress-capable default route.
+
+EGRESS = os.environ.get("MSKSD_TEST_EGRESS")
+
+
+def _default_route_iface() -> str:
+    """The uplink NAT hides guests behind (the default route's dev)."""
+    route = subprocess.run(
+        ["ip", "route", "show", "default"], capture_output=True, text=True
+    ).stdout
+    parts = route.split()
+    for i, part in enumerate(parts):
+        if part == "dev":
+            return parts[i + 1]
+    raise AssertionError(f"no default route to NAT behind: {route!r}")
+
+
+needs_egress = pytest.mark.skipif(
+    not EGRESS
+    or not VMLINUX
+    or not ROOTFS
+    or not os.access("/dev/kvm", os.W_OK)
+    or os.geteuid() != 0,
+    reason=(
+        "set MSKSD_TEST_EGRESS=1 as root with /dev/kvm, built guest "
+        "assets, and MSKSD_TEST_VMLINUX/MSKSD_TEST_ROOTFS"
+    ),
+)
+
+
+@needs_egress
+async def test_local_egress_boot() -> None:
+    """DHCP address, daemon resolver, NAT'd TCP — end to end (#52)."""
+    from msks.settings import NetSettings, ServerSettings
+
+    nft_tool = os.environ.get("MSKSD_TEST_NFT") or shutil.which("nft") or "nft"
+    ip_tool = os.environ.get("MSKSD_TEST_IP") or shutil.which("ip") or "ip"
+    state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
+    settings = Settings(
+        vmm=VmmSettings(state_dir=state_dir),
+        net=NetSettings(
+            enabled=True,
+            uplink=_default_route_iface(),
+            ip_tool=ip_tool,
+            nft_tool=nft_tool,
+        ),
+        server=ServerSettings(db_path=state_dir / "smoke.db"),
+    )
+    app = build_app(settings)
+    microvm = app.state.microvm
+    # The daemon's lifespan migrates and the API creates the row
+    # before any launch; this smoke drives the driver directly, so it
+    # performs the same setup (claim_slice records the pool slice on
+    # the workspace row, #70 review).
+    app.state.model.migrate()
+    wid = f"smoke-{uuid.uuid4().hex[:8]}"
+    serial_log = state_dir / "vms" / wid / "serial.log"
+    spec = VmSpec(
+        workspace_id=wid,
+        kernel=Path(VMLINUX),
+        rootfs=Path(ROOTFS),
+        initrd=Path(INITRD) if INITRD else None,
+        cmdline=CMDLINE or "console=hvc0 root=/dev/vda rw",
+        egress=True,
+    )
+    try:
+        await app.state.net.start()
+        await app.state.model.create_workspace(spec)
+        await microvm.launch(spec)
+        await await_guest_up(serial_log)
+        # DHCP: the /30's guest address and the tap as the gateway.
+        await run_in_console(microvm, wid, "ip -4 addr | grep 172.31", "172.31")
+        await run_in_console(
+            microvm, wid, "ip route | grep default", "default via 172.31"
+        )
+        # DNS: through the daemon's forwarder (the offered resolver).
+        await run_in_console(microvm, wid, "getent hosts deb.debian.org", "deb.debian")
+        # Egress: a TCP connection out through the NAT'd uplink.
+        await run_in_console(
+            microvm,
+            wid,
+            "timeout 5 bash -c '</dev/tcp/deb.debian.org/80' && echo TCP-OK",
+            "TCP-OK",
+        )
+        # Containment: the tap's input chain lets DHCP and DNS through
+        # and nothing else — the appliance's API (on the tap gateway)
+        # must refuse the guest root's connection attempt.
+        await run_in_console(
+            microvm,
+            wid,
+            "G=$(ip route | awk '/default/ {print $3}'); "
+            'timeout 3 bash -c "</dev/tcp/$G/8660" 2>/dev/null '
+            "&& echo API-REACHABLE || echo API-BLOCKED",
+            "API-BLOCKED",
+        )
+        await microvm.shutdown(wid, timeout_s=60)
+        final = await microvm.info(wid)
+        assert final.status.value in ("stopped", "absent")
+    except BaseException:
+        with contextlib.suppress(Exception):
+            await microvm.kill(wid)
+        raise
+    finally:
+        with contextlib.suppress(Exception):
+            await microvm.cleanup(wid)
+        shutil.rmtree(state_dir, ignore_errors=True)

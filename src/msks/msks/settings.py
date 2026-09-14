@@ -9,9 +9,11 @@ future runtime settings swap (SIGHUP) propagates without per-module
 ``reconfigure()`` calls.
 """
 
+import ipaddress
 import os
 import socket
 from dataclasses import dataclass, field
+from ipaddress import IPv4Network
 from pathlib import Path
 
 VALID_DRIVERS = ("local", "k8s")
@@ -169,12 +171,39 @@ class K8sSettings:
 
 
 @dataclass
+class NetSettings:
+    """Guest egress networking (#52).
+
+    Disabled by default: a daemon that never enabled egress presents
+    no net machinery at all, and workspaces without ``egress`` keep
+    the no-NIC posture on every backend. Enabled, the settings name
+    the per-workspace /30 pool, the appliance uplink the NAT
+    masquerade hides behind, and the upstream the DNS forwarder
+    relays to (unset reads the appliance's own /etc/resolv.conf).
+    """
+
+    enabled: bool = False
+    pool: IPv4Network = field(default_factory=lambda: IPv4Network("172.31.0.0/16"))
+    uplink: str = "eth0"
+    dns_upstream: str | None = None
+    ip_tool: str = "ip"
+    nft_tool: str = "nft"
+    lease_s: int = 3600
+    dns_timeout_s: float = 3.0
+
+    @classmethod
+    def from_env(cls) -> NetSettings:
+        return _net_settings_from_env(cls)
+
+
+@dataclass
 class Settings:
     """The live-swappable settings root msksd subsystems read."""
 
     vmm: VmmSettings = field(default_factory=VmmSettings)
     k8s: K8sSettings = field(default_factory=K8sSettings)
     server: ServerSettings = field(default_factory=ServerSettings)
+    net: NetSettings = field(default_factory=NetSettings)
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -182,7 +211,42 @@ class Settings:
             vmm=VmmSettings.from_env(),
             k8s=K8sSettings.from_env(),
             server=ServerSettings.from_env(),
+            net=NetSettings.from_env(),
         )
+
+
+def _parse_subnet(name: str, default: str) -> IPv4Network:
+    """The per-workspace /30 pool: an IPv4 network of at least a /30."""
+    value = _env(name, default)
+    try:
+        pool = ipaddress.IPv4Network(value)
+    except ValueError:
+        raise ValueError(f"{name} must be an IPv4 network, got {value!r}") from None
+    if pool.prefixlen > 30:
+        raise ValueError(f"{name} must hold at least one /30, got {value!r}")
+    return pool
+
+
+def _net_settings_from_env(cls: type[NetSettings]) -> NetSettings:
+    """Build NetSettings from the environment (helper: keeps the
+    class block itself at xenon rank A)."""
+    default = cls()
+    lease = _parse_int("MSKSD_EGRESS_LEASE_S", default.lease_s)
+    timeout = _env_float("MSKSD_EGRESS_DNS_TIMEOUT_S", default.dns_timeout_s)
+    if lease <= 0:
+        raise ValueError(f"MSKSD_EGRESS_LEASE_S must be positive, got {lease}")
+    if timeout <= 0:
+        raise ValueError(f"MSKSD_EGRESS_DNS_TIMEOUT_S must be positive, got {timeout}")
+    return cls(
+        enabled=_env("MSKSD_EGRESS_ENABLED", "false").lower() == "true",
+        pool=_parse_subnet("MSKSD_EGRESS_SUBNET", str(default.pool)),
+        uplink=_env("MSKSD_EGRESS_UPLINK", default.uplink),
+        dns_upstream=_env("MSKSD_EGRESS_DNS_UPSTREAM", "") or None,
+        ip_tool=_env("MSKSD_IP_TOOL", default.ip_tool),
+        nft_tool=_env("MSKSD_NFT_TOOL", default.nft_tool),
+        lease_s=lease,
+        dns_timeout_s=timeout,
+    )
 
 
 def _server_settings_from_env(cls: type[ServerSettings]) -> ServerSettings:

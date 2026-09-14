@@ -61,6 +61,11 @@ let
   qemuImg = pkgs.qemu-utils;
   e2fsprogs = pkgs.e2fsprogs;
 
+  # Egress plumbing (#52): the full `ip` (busybox's has no tuntap
+  # here) and nftables for the per-VM chains and NAT.
+  iproute2 = pkgs.iproute2;
+  nftables = pkgs.nftables;
+
   # Network plan (the up-task mirrors it on the host bridge):
   net = {
     address = "192.168.77.2";
@@ -164,6 +169,17 @@ let
       "kvm"
       "kvm_intel"
       "kvm_amd"
+      # Egress (#52): the tap device, the nftables core, and the
+      # NAT/conntrack machinery the rulesets need — masquerade is
+      # the nft_masq expression, which nothing else in the list
+      # pulls in. The init modprobes these by name (autoload does
+      # not serve an appliance without hotplug udev).
+      "tun"
+      "nf_tables"
+      "nft_chain_nat"
+      "nft_masq"
+      "nf_nat"
+      "nf_conntrack"
     ];
   };
 
@@ -219,6 +235,27 @@ let
         mknod /dev/kvm c 10 232
       fi
 
+      # Egress plumbing (#52): the tap device and the nftables/NAT
+      # modules the daemon's rulesets load. devtmpfs creates
+      # /dev/net/tun when the module registers; the mknod is the
+      # belt-and-braces fallback for a kernel with TUN built in but a
+      # cold /dev.
+      for module in tun nf_tables nft_chain_nat nft_masq nf_nat nf_conntrack; do
+        modprobe "$module" 2>/dev/null || true
+      done
+      if [ ! -e /dev/net/tun ]; then
+        mkdir -p /dev/net
+        mknod /dev/net/tun c 10 200
+      fi
+
+      # The resolver the egress forwarder relays to (#52): a public
+      # resolver by default — the host bridge gateway runs no
+      # listener. Point the kernel cmdline's msksd.egress_dns_upstream=
+      # at another resolver to override (the env bridge below turns
+      # it into MSKSD_EGRESS_DNS_UPSTREAM). /run is tmpfs: the root
+      # stays ro.
+      printf 'nameserver 9.9.9.9\n' > /run/resolv.conf
+
       # React to the host's ch-remote shutdown (ACPI power button).
       acpid
 
@@ -249,13 +286,18 @@ let
       echo "msks appliance: kernel $(uname -r) up; execing msksd"
       echo "msks appliance: serving https://${net.address}:8660 (TOFU fingerprint on the serial log)"
 
-      export PATH="${qemuImg}/bin:${e2fsprogs}/sbin:${vmm}/bin:${msks}/bin:$PATH"
+      export PATH="${iproute2}/sbin:${nftables}/sbin:${qemuImg}/bin:${e2fsprogs}/sbin:${vmm}/bin:${msks}/bin:$PATH"
       export MSKSD_STATE_DIR=/state
       export MSKSD_HOST=0.0.0.0
       export MSKSD_PORT=8660
       export MSKSD_CLOUD_HYPERVISOR="${vmm}/bin/cloud-hypervisor"
       export MSKSD_QEMU_IMG="${qemuImg}/bin/qemu-img"
       export MSKSD_MKFS_EXT4="${e2fsprogs}/sbin/mkfs.ext4"
+      # Egress (#52): the appliance runs as root, so the plumbing
+      # arms and workspaces get a NIC by default.
+      export MSKSD_EGRESS_ENABLED=true
+      export MSKSD_IP_TOOL="${iproute2}/sbin/ip"
+      export MSKSD_NFT_TOOL="${nftables}/sbin/nft"
       # Debug escape hatch: a /state/debug-shell marker (seeded onto
       # the state disk from the host) backgrounds the daemon and gives
       # the console an interactive shell instead of exec'ing PID 1.
@@ -305,6 +347,10 @@ let
       ln -s busybox "$root/bin/$applet"
     done
     printf 'msksd-appliance\n' > "$root/etc/hostname"
+    # resolv.conf lands on tmpfs at boot (#52): the egress forwarder
+    # relays to the bridge gateway, and a read-only root cannot host
+    # the write.
+    ln -s /run/resolv.conf "$root/etc/resolv.conf"
     # Power button (host-side graceful shutdown) powers the VM off.
     printf 'button/power.* /bin/poweroff -f\n' > "$root/etc/acpid.conf"
     # The module tree the init modprobes from (kvm, virtiofs, net).

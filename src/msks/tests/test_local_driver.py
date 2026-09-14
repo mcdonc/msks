@@ -89,14 +89,19 @@ async def fake(env):
         await server.stop()
 
 
-def spec(tmp_path: Path) -> VmSpec:
+def spec(tmp_path: Path, egress: bool = False) -> VmSpec:
     # The base rootfs must exist: launch reads its virtual size for
     # the overlay (#14).
     base = tmp_path / "rootfs.ext4"
     if not base.is_file():
         with base.open("wb") as handle:
             handle.truncate(8 * 1024 * 1024)
-    return VmSpec(workspace_id=WID, kernel=tmp_path / "vmlinux", rootfs=base)
+    return VmSpec(
+        workspace_id=WID,
+        kernel=tmp_path / "vmlinux",
+        rootfs=base,
+        egress=egress,
+    )
 
 
 def test_vm_config_matches_v52_schema(tmp_path: Path) -> None:
@@ -551,6 +556,7 @@ async def test_launch_missing_base_maps_to_error(env, tmp_path: Path) -> None:
         workspace_id=WID,
         kernel=tmp_path / "vmlinux",
         rootfs=tmp_path / "never-built.ext4",
+        egress=False,
     )
     with pytest.raises(MicrovmError, match="base image.*not found"):
         await app.state.microvm.launch(broken)
@@ -809,3 +815,107 @@ async def test_console_stream_dies_mid_handshake(env, monkeypatch) -> None:
     finally:
         server.close()
         await server.wait_closed()
+
+
+# --- egress networking (#52) ----------------------------------------------
+
+
+def test_vm_config_carries_the_net_device(tmp_path: Path) -> None:
+    config = vm_config(
+        VmSpec(workspace_id=WID, kernel=tmp_path / "k", rootfs=tmp_path / "r"),
+        disk_entries(tmp_path, WID),
+        tmp_path / "serial.log",
+        net={"tap": "msks-abc123", "mac": "02:11:22:33:44:55"},
+    )
+    assert config["net"] == [{"tap": "msks-abc123", "mac": "02:11:22:33:44:55"}]
+    # Without egress the VM presents no net device at all.
+    plain = vm_config(
+        VmSpec(workspace_id=WID, kernel=tmp_path / "k", rootfs=tmp_path / "r"),
+        disk_entries(tmp_path, WID),
+        tmp_path / "serial.log",
+    )
+    assert "net" not in plain
+
+
+def test_vm_net_maps_an_attachment() -> None:
+    from msks.net import alloc
+
+    class Attachment:
+        tap = alloc.tap_name(WID)
+        mac = alloc.guest_mac(WID)
+
+    assert local_mod.vm_net(Attachment()) == {
+        "tap": alloc.tap_name(WID),
+        "mac": alloc.guest_mac(WID),
+    }
+    assert local_mod.vm_net(None) is None
+
+
+@pytest.fixture
+async def egress_env(env, tmp_path: Path, monkeypatch):
+    """The env app with egress armed: stub tools, fake services."""
+    from msks.microvm import VmSpec as Spec
+    from msks.net import manager as manager_mod
+    from msks.net.manager import NetManager
+    from msks.settings import NetSettings
+    from netstubs import stub_ip, stub_nft
+    from test_net_manager import FakeService
+
+    app, _state_dir, _ = env
+    ip_log = tmp_path / "egress-ip.log"
+    app.state.settings.net = NetSettings(
+        enabled=True,
+        ip_tool=str(stub_ip(tmp_path, ip_log)),
+        nft_tool=str(stub_nft(tmp_path, tmp_path / "egress-nft.log")),
+        dns_upstream="10.9.9.9",
+    )
+    monkeypatch.setattr(manager_mod, "enable_forwarding", lambda path=None: None)
+    manager = NetManager(app, dhcp_factory=FakeService, dns_factory=FakeService)
+    app.state.net = manager
+    # claim_slice records slices on workspace rows (#70 review): the
+    # egress boots need a real model behind them.
+    app.state.settings.server.db_path = tmp_path / "egress.db"
+    app.state.model.migrate()
+    await app.state.model.create_workspace(
+        Spec(workspace_id=WID, kernel=Path("/k"), rootfs=Path("/r"), egress=True)
+    )
+    await manager.start()
+    return app, ip_log
+
+
+async def test_launch_attaches_egress_and_configures_the_nic(
+    egress_env, fake, tmp_path: Path
+) -> None:
+    app, ip_log = egress_env
+    await app.state.microvm.launch(spec(tmp_path, egress=True))
+    body = dict(fake.requests[0][2])
+    assert body["net"][0]["tap"].startswith("msks-")
+    assert body["net"][0]["mac"].startswith("02:")
+    assert app.state.net._attachments[WID] is not None
+    # The stub VMM powers off on the button press, like a real guest.
+    fake.on_shutdown.append(lambda: fake.state.update(state="Shutdown"))
+    await app.state.microvm.shutdown(WID)
+    assert WID not in app.state.net._attachments
+    assert any(
+        line.startswith("link del dev") for line in ip_log.read_text().splitlines()
+    )
+
+
+async def test_launch_failure_unwinds_egress(egress_env, fake, tmp_path: Path) -> None:
+    app, ip_log = egress_env
+    fake.responses[("PUT", "/api/v1/vm.create")] = (500, "boom")
+    with pytest.raises(MicrovmError):
+        await app.state.microvm.launch(spec(tmp_path, egress=True))
+    assert WID not in app.state.net._attachments
+    assert any(
+        line.startswith("link del dev") for line in ip_log.read_text().splitlines()
+    )
+
+
+async def test_launch_refuses_egress_without_the_plumbing(
+    env, fake, tmp_path: Path
+) -> None:
+    app, _state_dir, _ = env  # default settings: egress not enabled
+    await app.state.net.start()
+    with pytest.raises(MicrovmError, match="MSKSD_EGRESS_ENABLED"):
+        await app.state.microvm.launch(spec(tmp_path, egress=True))
