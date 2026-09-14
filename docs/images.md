@@ -160,7 +160,10 @@ import and in-place inspection cheaper).
 ## Registering an image
 
 Import makes the daemon unpack the boot files once into a per-hash
-cache and record the image in the catalog:
+cache and record the image in the catalog. The `msks image` commands
+drive this surface from the CLI — `msks image import <path>`, `msks
+image ls`, `msks image rm <ref>`, and `msks image info <ref>` (see
+`docs/cli.md`); the raw HTTP form:
 
 ```bash
 curl -X POST https://192.168.77.2:8660/api/v1/images \

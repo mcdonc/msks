@@ -186,6 +186,84 @@ workspace is recoverable by recreating it. A workspace recorded on
 another host answers 409 with the host mismatch named in the error,
 like every lifecycle command.
 
+## `msks image`
+
+Manages the daemon's image catalog — the surface `docs/images.md`
+documents over HTTP, as CLI subcommands. Every subcommand uses the
+same client environment as the workspace commands.
+
+### `msks image ls`
+
+One line per registered image — reference, hash (first 12 hex
+chars), the default designation, and the kernel facts:
+
+```text
+$ msks image ls
+debian:13                9f2c41ab77de  default  6.12.107+deb13 (raw)
+alpine:3.20              33aa9db1c4ef  -        6.12.7 (raw)
+```
+
+The image the daemon designates as default carries the `default`
+flag; a bare `msks create` resolves to it. `--json` prints the
+listing as the API returns it (`GET /api/v1/images`), stable for
+scripting.
+
+### `msks image import`
+
+Registers an archive in the catalog (`POST /api/v1/images`). The
+path is a **daemon-side** path: the daemon reads the file from its
+own filesystem (an appliance reaches host files through its
+virtiofs share) — the command does not upload anything:
+
+```text
+$ msks image import /srv/images/debian-13.tar
+imported debian:13 (9f2c41ab77de)
+```
+
+The first image imported into an empty catalog also becomes the
+daemon's default. An archive the daemon cannot read or parse
+answers 400 with the reason on one line.
+
+### `msks image rm`
+
+Removes an image from the catalog. The reference accepts every form
+the daemon resolves for workspace create — `name:version`, a bare
+name (its newest version), `name@hash` (the full 64-hex hash), a
+full hash — and a unique hash prefix (the 12 chars `image ls`
+prints):
+
+```text
+$ msks image rm debian:12
+debian:12 deleted
+```
+
+The removal is keyed by the image's hash after resolving the
+reference against the listing. An image a workspace still boots is
+refused — the API's 409 names the workspace — and a reference that
+matches nothing exits with the catalog spelled out so the next try
+can be copy-pasted. An ambiguous hash prefix names the images it
+matches; use the full hash or `name@hash`. (Two imports of the same
+`name:version` — a rebuilt archive — are the usual ambiguity, and
+only the hash forms still identify one of them.)
+
+### `msks image info`
+
+Prints one image's full record — reference, hash, kernel facts,
+cmdline, the console's vsock port, and the default designation —
+from the same listing data:
+
+```text
+$ msks image info debian:13
+ref      debian:13
+hash     9f2c41ab77de0000000000000000000000000000000000000000000000000000
+kernel   6.12.107+deb13 (raw)
+cmdline  console=hvc0 root=/dev/vda rw
+console  vsock port 1073741826
+default  yes
+```
+
+The reference forms are the same as `image rm`'s.
+
 ## `msks shell`
 
 An interactive shell inside a workspace, over the daemon's console

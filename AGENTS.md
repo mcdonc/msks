@@ -15,6 +15,26 @@ The flags: `--quiet` suppresses noisy devenv output; `-O dotenv.enable:bool fals
 
 A long-running interactive `devenv up` (backend + proxy + workspace image build) is a human-facing workflow; agents generally don't run it. If you need the backend up for something, ask.
 
+## Never run project Python on the ambient interpreter
+
+`python3` outside the devenv shell is whatever the host happens to
+provide — here 3.13 — while the project pins 3.14 (`devenv.nix`,
+`languages.python.package`). The gap is not cosmetic: 3.14 changed the
+grammar (PEP 758 permits `except A, B:` without parentheses), so code
+that imports and runs on the project interpreter is a `SyntaxError` on
+3.13. A bare `python3 -c` (or `python3 - <<EOF`) used to inspect,
+parse, or run anything from this repo — even a one-liner like
+`ast.parse(open(f).read())` — yields false failures or validates against
+the wrong semantics. Every Python invocation, however small, goes
+through the shell:
+
+```bash
+devenv --quiet -O dotenv.enable:bool false shell -- python -c "..."
+```
+
+Inside the shell, `python` and `python3` both resolve to the venv's
+3.14 with the project's dependencies installed.
+
 ## Process manager: devenv 2.x native (not process-compose)
 
 `devenv processes up` / `devenv up` use **devenv 2.x's built-in process manager**,
