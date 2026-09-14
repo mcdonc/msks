@@ -70,9 +70,8 @@ jobs:
       # definition, shared with the commit-time hook. Write-mode hooks
       # (prettier/nixfmt/shfmt/ruff format) only "fail" in CI when a
       # tracked file is not formatted; the runner tree is disposable.
-      # Note the suite's trufflehog hook scans commits newer than
-      # HEAD — on a clean checkout that set is empty, so secrets live
-      # in pushed history are not re-scanned by this step.
+      # trufflehog scans the file set itself (staged files at commit
+      # time, all tracked files here) for verifiable live credentials.
       - name: Pre-commit hook suite
         env:
           TMPDIR: /tmp

@@ -330,8 +330,23 @@ in
     };
     # GitHub Actions workflows (#72).
     actionlint.enable = true;
-    # Secrets: scan the commit range for leaked credentials (#72).
-    trufflehog.enable = true;
+    # Secrets (#72): trufflehog over the staged file contents. The
+    # pin's stock hook runs `git --since-commit HEAD`, which scans
+    # commits strictly newer than HEAD — the empty set at commit time
+    # and on any clean checkout, so it can never fail (verified with a
+    # canary commit this branch carried briefly). This entry scans the
+    # files pre-commit passes — staged files at commit time, all
+    # tracked files under --all-files (what CI runs). Only credentials
+    # that verify live fail the commit (--results=verified --fail),
+    # so key-shaped test fixtures stay green and offline runs degrade
+    # to a pass (verification errors land in `unknown`).
+    trufflehog = {
+      enable = true;
+      name = "trufflehog";
+      entry = "${pkgs.trufflehog}/bin/trufflehog filesystem --fail --results=verified";
+      language = "system";
+      pass_filenames = true;
+    };
     # Nix (#72, klangk width).
     nixfmt.enable = true;
     nixfmt.settings.width = 80;
