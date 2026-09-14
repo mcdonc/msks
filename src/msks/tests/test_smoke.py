@@ -107,11 +107,21 @@ async def read_until(reader, needle: bytes, timeout_s: float | None = None) -> b
     return data
 
 
+#: The root shell's PS1 tail (``root@msks-guest:/# ``): the guest's
+#: bash, with #62's real TERM, runs readline — and readline discards
+#: typeahead that arrived before it started. A client that writes
+#: the instant the vsock connects loses its first line to that
+#: flush; an interactive user never notices (the prompt is on screen
+#: before fingers move). The tests wait for the prompt first.
+PROMPT_NEEDLE = b"root@msks-guest:/# "
+
+
 async def run_in_console(microvm, workspace_id: str, command: str, marker: str) -> None:
     """Run one shell command over the vsock console and wait for its
     marker — one fresh guest shell session per call."""
     reader, writer = await microvm.console(workspace_id)
     try:
+        await read_until(reader, PROMPT_NEEDLE)
         writer.write(command.encode() + b"\n")
         await writer.drain()
         await read_until(reader, marker.encode())
