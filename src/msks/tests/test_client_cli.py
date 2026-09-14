@@ -1,8 +1,8 @@
-"""Client CLI tests: list/create against mocks and the real API.
+"""Client CLI tests: the command surface against mocks and the real API.
 
-The mock-transport tests pin the client contract (auth header, POST
-body, output shape, one-line errors); the ASGI tests run the same
-``api_call`` seam against the real daemon surface.
+The mock-transport tests pin the client contract (auth header, method,
+path, POST body, output shape, one-line errors); the ASGI tests run
+the same ``api_call`` seam against the real daemon surface.
 """
 
 import asyncio
@@ -32,11 +32,11 @@ def client_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MSKSC_TOKEN", "tok")
 
 
-def test_cmd_list_formats_rows(
+def test_cmd_ls_formats_rows(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     client_env(monkeypatch)
-    rc = cli.cmd_list(transport=mock(lambda req: httpx.Response(200, json=ROWS)))
+    rc = cli.cmd_ls(transport=mock(lambda req: httpx.Response(200, json=ROWS)))
     assert rc == 0
     out = capsys.readouterr().out
     assert "alpha" in out and "running" in out and "hv1" in out
@@ -44,21 +44,19 @@ def test_cmd_list_formats_rows(
     assert "beta" in out and "created" in out and "-" in out
 
 
-def test_cmd_list_json(
+def test_cmd_ls_json(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     client_env(monkeypatch)
-    cli.cmd_list(
-        as_json=True, transport=mock(lambda req: httpx.Response(200, json=ROWS))
-    )
+    cli.cmd_ls(as_json=True, transport=mock(lambda req: httpx.Response(200, json=ROWS)))
     assert json.loads(capsys.readouterr().out) == ROWS
 
 
-def test_cmd_list_empty_prints_nothing(
+def test_cmd_ls_empty_prints_nothing(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     client_env(monkeypatch)
-    rc = cli.cmd_list(transport=mock(lambda req: httpx.Response(200, json=[])))
+    rc = cli.cmd_ls(transport=mock(lambda req: httpx.Response(200, json=[])))
     assert rc == 0
     assert capsys.readouterr().out == ""
 
@@ -143,6 +141,130 @@ def test_cmd_start_boots_and_prints(
     assert "ws1 running" in capsys.readouterr().out
 
 
+def test_cmd_stop_posts_and_prints(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client_env(monkeypatch)
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        seen["auth"] = request.headers.get("authorization")
+        return httpx.Response(200, json={"id": "ws1", "status": "stopped"})
+
+    rc = cli.cmd_stop("ws1", transport=mock(handler))
+    assert rc == 0
+    assert seen["method"] == "POST"
+    assert seen["path"] == "/api/v1/workspaces/ws1/stop"
+    assert seen["auth"] == "Bearer tok"
+    assert "ws1 stopped" in capsys.readouterr().out
+
+
+def test_cmd_stop_missing_workspace_is_one_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client_env(monkeypatch)
+    transport = mock(
+        lambda req: httpx.Response(404, json={"detail": "no such workspace"})
+    )
+    with pytest.raises(SystemExit, match="msks: 404: no such workspace"):
+        cli.cmd_stop("ghost", transport=transport)
+
+
+def test_cmd_stop_shutdown_deadline_is_one_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A stop that misses the daemon's shutdown deadline answers
+    # 503 with the endpoint's detail; the client passes it through.
+    client_env(monkeypatch)
+    transport = mock(
+        lambda req: httpx.Response(503, json={"detail": "workspace ws1 wedged"})
+    )
+    with pytest.raises(SystemExit, match="msks: 503: workspace ws1 wedged"):
+        cli.cmd_stop("ws1", transport=transport)
+
+
+def test_cmd_rm_deletes_and_prints(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client_env(monkeypatch)
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        seen["auth"] = request.headers.get("authorization")
+        return httpx.Response(200, json={"deleted": "ws1"})
+
+    rc = cli.cmd_rm(["ws1"], transport=mock(handler))
+    assert rc == 0
+    assert seen["method"] == "DELETE"
+    assert seen["path"] == "/api/v1/workspaces/ws1"
+    assert seen["auth"] == "Bearer tok"
+    assert "ws1 deleted" in capsys.readouterr().out
+
+
+def test_cmd_rm_accepts_multiple_ids(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client_env(monkeypatch)
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        workspace_id = request.url.path.rsplit("/", 1)[1]
+        calls.append(f"{request.method} {workspace_id}")
+        return httpx.Response(200, json={"deleted": workspace_id})
+
+    rc = cli.cmd_rm(["a", "b", "c"], transport=mock(handler))
+    assert rc == 0
+    assert calls == ["DELETE a", "DELETE b", "DELETE c"]
+    assert capsys.readouterr().out == "a deleted\nb deleted\nc deleted\n"
+
+
+def test_cmd_rm_multiple_stops_at_first_failure(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Ids already removed stay removed and confirmed; the run
+    stops at the first refusal with the API's one line."""
+    client_env(monkeypatch)
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if request.url.path.endswith("/b"):
+            return httpx.Response(404, json={"detail": "no such workspace"})
+        return httpx.Response(200, json={"deleted": "x"})
+
+    with pytest.raises(SystemExit, match="msks: 404: no such workspace"):
+        cli.cmd_rm(["a", "b", "c"], transport=mock(handler))
+    assert paths == ["/api/v1/workspaces/a", "/api/v1/workspaces/b"]
+    out = capsys.readouterr().out
+    assert "a deleted" in out
+    assert "c deleted" not in out
+
+
+def test_cmd_rm_missing_workspace_is_one_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client_env(monkeypatch)
+    transport = mock(
+        lambda req: httpx.Response(404, json={"detail": "no such workspace"})
+    )
+    with pytest.raises(SystemExit, match="msks: 404: no such workspace"):
+        cli.cmd_rm(["ghost"], transport=transport)
+
+
+def test_cmd_rm_foreign_host_is_one_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The 409 host-mismatch detail surfaces verbatim, like shell's
+    # close codes — the operator learns where the artifacts live.
+    client_env(monkeypatch)
+    detail = "home volume for workspace ws1 lives on host hv1; this host is hv2"
+    transport = mock(lambda req: httpx.Response(409, json={"detail": detail}))
+    with pytest.raises(SystemExit, match="msks: 409: home volume.*lives on host hv1"):
+        cli.cmd_rm(["ws1"], transport=transport)
+
+
 def test_api_call_status_error_uses_detail() -> None:
     transport = mock(
         lambda req: httpx.Response(409, json={"detail": "workspace exists"})
@@ -208,23 +330,23 @@ def test_api_call_non_json_body_falls_back_to_text() -> None:
         asyncio.run(cli.api_call("GET", "https://d", "t", "/x", transport=transport))
 
 
-def test_cmd_list_unreachable_daemon(
+def test_cmd_ls_unreachable_daemon(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setenv("MSKSC_URL", "https://127.0.0.1:1")
     monkeypatch.setenv("MSKSC_TOKEN", "tok")
     monkeypatch.delenv("MSKSC_CAFILE", raising=False)
     with pytest.raises(SystemExit, match="cannot reach"):
-        cli.cmd_list()
+        cli.cmd_ls()
     capsys.readouterr()  # swallow the unverified-TLS warning
 
 
-def test_main_list_dispatch(
+def test_main_ls_dispatch(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     client_env(monkeypatch)
     rc = cli.main(
-        ["list", "--json"], transport=mock(lambda req: httpx.Response(200, json=ROWS))
+        ["ls", "--json"], transport=mock(lambda req: httpx.Response(200, json=ROWS))
     )
     assert rc == 0
     assert json.loads(capsys.readouterr().out) == ROWS
@@ -259,6 +381,30 @@ def test_main_start_dispatch(
     )
     assert rc == 0
     assert "ws1 running" in capsys.readouterr().out
+
+
+def test_main_stop_dispatch(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client_env(monkeypatch)
+    rc = cli.main(
+        ["stop", "ws1"],
+        transport=mock(lambda req: httpx.Response(200, json={"status": "stopped"})),
+    )
+    assert rc == 0
+    assert "ws1 stopped" in capsys.readouterr().out
+
+
+def test_main_rm_dispatch(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client_env(monkeypatch)
+    rc = cli.main(
+        ["rm", "ws1", "ws2"],
+        transport=mock(lambda req: httpx.Response(200, json={"deleted": "x"})),
+    )
+    assert rc == 0
+    assert capsys.readouterr().out == "ws1 deleted\nws2 deleted\n"
 
 
 @pytest.fixture
@@ -305,6 +451,95 @@ async def test_api_call_maps_bad_token(api_transport) -> None:
             "/api/v1/workspaces",
             transport=api_transport,
         )
+
+
+async def test_api_call_stops_and_deletes_a_workspace(api_transport) -> None:
+    """The ls/stop/rm endpoints through the client's own plumbing,
+    against the real daemon surface with the seam stubbed."""
+    transport = api_transport
+    await rest.api_call(
+        "POST",
+        "https://test",
+        TOKEN,
+        "/api/v1/workspaces",
+        json_body={"id": "cli-l", "kernel": "/k", "rootfs": "/r"},
+        transport=transport,
+    )
+    await rest.api_call(
+        "POST",
+        "https://test",
+        TOKEN,
+        "/api/v1/workspaces/cli-l/start",
+        transport=transport,
+    )
+    stopped = await rest.api_call(
+        "POST",
+        "https://test",
+        TOKEN,
+        "/api/v1/workspaces/cli-l/stop",
+        transport=transport,
+    )
+    assert stopped == {"id": "cli-l", "status": "stopped"}
+    rows = await rest.api_call(
+        "GET", "https://test", TOKEN, "/api/v1/workspaces", transport=transport
+    )
+    assert [row["status"] for row in rows] == ["stopped"]
+    deleted = await rest.api_call(
+        "DELETE", "https://test", TOKEN, "/api/v1/workspaces/cli-l", transport=transport
+    )
+    assert deleted == {"deleted": "cli-l"}
+    with pytest.raises(SystemExit, match="404: no such workspace"):
+        await rest.api_call(
+            "GET",
+            "https://test",
+            TOKEN,
+            "/api/v1/workspaces/cli-l",
+            transport=transport,
+        )
+
+
+async def test_api_call_rm_deletes_a_running_workspace(api_transport) -> None:
+    """rm on a running workspace: the daemon stops the VMM (kill as
+    the wedged fallback) before removing the artifacts."""
+    transport = api_transport
+    stub = transport.app.state.msks_app.state.microvm
+    await rest.api_call(
+        "POST",
+        "https://test",
+        TOKEN,
+        "/api/v1/workspaces",
+        json_body={"id": "cli-r", "kernel": "/k", "rootfs": "/r"},
+        transport=transport,
+    )
+    await rest.api_call(
+        "POST",
+        "https://test",
+        TOKEN,
+        "/api/v1/workspaces/cli-r/start",
+        transport=transport,
+    )
+    deleted = await rest.api_call(
+        "DELETE", "https://test", TOKEN, "/api/v1/workspaces/cli-r", transport=transport
+    )
+    assert deleted == {"deleted": "cli-r"}
+    assert stub.calls.index(("shutdown", "cli-r")) < stub.calls.index(
+        ("cleanup", "cli-r")
+    )
+
+
+async def test_api_call_stop_and_rm_missing_are_one_line(api_transport) -> None:
+    for path in (
+        "/api/v1/workspaces/ghost/stop",
+        "/api/v1/workspaces/ghost",
+    ):
+        with pytest.raises(SystemExit, match="msks: 404: no such workspace"):
+            await rest.api_call(
+                "POST" if path.endswith("/stop") else "DELETE",
+                "https://test",
+                TOKEN,
+                path,
+                transport=api_transport,
+            )
 
 
 async def test_ensure_running_boots_a_created_workspace(api_transport) -> None:
@@ -358,7 +593,9 @@ async def test_ensure_running_refuses_paused(
     transport = mock(
         lambda req: httpx.Response(200, json={"id": "ws1", "status": "paused"})
     )
-    with pytest.raises(SystemExit, match="paused.*no resume"):
+    with pytest.raises(
+        SystemExit, match=r"paused and the daemon has no resume.*msks stop ws1"
+    ):
         await rest.ensure_running("ws1", "https://d", "t", transport=transport)
 
 
@@ -437,9 +674,9 @@ def test_main_interrupt_is_one_line(
     def interrupted(*args, **kwargs) -> int:
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(cli, "cmd_list", interrupted)
+    monkeypatch.setattr(cli, "cmd_ls", interrupted)
     with pytest.raises(SystemExit) as excinfo:
-        cli.main(["list"])
+        cli.main(["ls"])
     assert excinfo.value.code == 130
     assert "interrupted" in capsys.readouterr().err
 

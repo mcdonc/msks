@@ -8,10 +8,12 @@ with the same bearer token the REST API uses.
 The command set covers the operator loop:
 
 ```bash
-msks list                     # what exists, and what state is it in
+msks ls                      # what exists, and what state is it in
 msks create ws                # make a workspace
 msks shell ws                 # boot it if needed, then work inside it
 msks start ws                 # boot it without attaching
+msks stop ws                  # power it off
+msks rm ws                    # delete it (and its data)
 ```
 
 ## Client environment
@@ -44,13 +46,13 @@ stderr on every invocation — the same trust-on-first-use posture as
 `msks shell` (#21), fine for a lab network and worth closing before
 anything real.
 
-## `msks list`
+## `msks ls`
 
 Prints one line per workspace the daemon knows, aligned in four
 columns: id, status, image hash (first 12 hex chars), and owning host.
 
 ```text
-$ msks list
+$ msks ls
 my-workspace             running   9f2c41ab77de   hv-1
 scratch                  created   -              hv-1
 ```
@@ -66,7 +68,7 @@ workspace rows verbatim (id, kernel, initrd, rootfs, cmdline, cpus,
 mem_mib, image_hash, host, root_mib, home_mib, status, created_at):
 
 ```bash
-msks list --json | jq -r '.[] | select(.status == "running") | .id'
+msks ls --json | jq -r '.[] | select(.status == "running") | .id'
 ```
 
 A daemon with zero workspaces prints nothing (an empty table) and an
@@ -136,6 +138,54 @@ seconds on an idle host, longer under load. The client waits up to
 two minutes before reporting a timeout, and a timeout message notes
 that the daemon may still finish the boot.
 
+## `msks stop`
+
+Powers one running workspace off (`POST /api/v1/workspaces/{id}/stop`)
+and prints the result, mirroring `msks start`:
+
+```bash
+$ msks stop my-workspace
+my-workspace stopped
+```
+
+The stop asks the guest for a graceful, deadline-bounded power-off —
+the daemon presses the ACPI power button and the guest's systemd runs
+a full shutdown — so the write-out can take a moment. The deadline is
+the daemon's (`MSKSD_SHUTDOWN_TIMEOUT_S`); there is no client-side
+timeout flag, and like `msks start` the client waits at most two
+minutes on the answer. A stop that misses the daemon's deadline
+answers 503 with the endpoint's detail on one line, exit non-zero.
+Stopping a workspace that is already stopped is a no-op success: the
+daemon reports it stopped either way, and the client asks without
+pre-filtering on local state — the same holds for a workspace that
+was never booted (the row records `stopped` without a launch ever
+happening). The data survives the stop — the root overlay and the
+`/home` volume come back on the next `msks start`.
+
+## `msks rm`
+
+Deletes workspaces (`DELETE /api/v1/workspaces/{id}`) — the row, the
+VMM (stopped first, killed if wedged), and the persistent artifacts:
+the root overlay and the `/home` volume. The data does not come back;
+recreating a workspace with the same id starts from the image's
+pristine root. One id or several:
+
+```bash
+$ msks rm my-workspace
+my-workspace deleted
+$ msks rm scratch-1 scratch-2
+scratch-1 deleted
+scratch-2 deleted
+```
+
+Ids are removed one at a time, in the order given; a failure stops
+the run there with the API's one-line error, and the ids already
+removed stay removed (each success printed its confirmation line).
+There is no confirmation prompt — deleting is what `rm` means, and a
+workspace is recoverable by recreating it. A workspace recorded on
+another host answers 409 with the host mismatch named in the error,
+like every lifecycle command.
+
 ## `msks shell`
 
 An interactive shell inside a workspace, over the daemon's console
@@ -158,8 +208,8 @@ states get special handling:
   lands, instead of racing a second boot into the daemon's
   double-launch guard.
 - **`paused`** — refused with the honest reason: the daemon has no
-  resume, so the message names the recovery (stop it via the API,
-  then `msks start` again).
+  resume, so the message names the recovery (`msks stop` it, then
+  `msks start` again).
 
 A start that loses a race — the daemon reports `stopped`, another
 client boots it in the gap — re-checks and attaches to the winner.
