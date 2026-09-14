@@ -173,6 +173,19 @@ def _pvc_url(settings: K8sSettings, workspace_id: str) -> str:
     )
 
 
+def claim_gib(manifest: dict) -> int | None:
+    """The claim's requested size in GiB (None when unparseable)."""
+    raw = (
+        manifest.get("spec", {})
+        .get("resources", {})
+        .get("requests", {})
+        .get("storage", "")
+    )
+    if raw.endswith("Gi") and raw[:-2].isdigit():
+        return int(raw[:-2])
+    return None
+
+
 class KubernetesRunner(MicrovmDriver):
     """Drives VMs as pods through the Kubernetes API."""
 
@@ -191,24 +204,41 @@ class KubernetesRunner(MicrovmDriver):
         Claim reuse is the same id's own persistence (the claim name
         is derived from the workspace id); the files inside it are the
         runner agent's domain, so a stale claim's contents are never
-        inspected or replaced here.
+        inspected or replaced here. A reused claim that is smaller
+        than this workspace's artifacts is refused by name — the
+        guest would hit late ENOSPC on its root otherwise.
         """
+        settings = self._settings().k8s
         client = await self._client()
         try:
             response = await client.post(
-                _pvcs_url(self._settings().k8s),
-                json=pvc_manifest(spec, self._settings().k8s),
+                _pvcs_url(settings), json=pvc_manifest(spec, settings)
             )
+            if response.status_code == 409:
+                await self._check_claim_size(spec, client)
+                return
         finally:
             await client.aclose()
-        if response.status_code in (200, 201, 409):
-            # 409: the claim from this workspace's earlier life is the
-            # persistence itself — reuse it, never replace it.
+        if response.status_code in (200, 201):
             return
         raise MicrovmError(
             f"k8s pvc create failed: {response.status_code} {response.text.strip()}",
             status=response.status_code,
         )
+
+    async def _check_claim_size(self, spec: VmSpec, client) -> None:
+        """Refuse a reused claim too small for the new workspace."""
+        response = await client.get(_pvc_url(self._settings().k8s, spec.workspace_id))
+        if response.status_code != 200:
+            return
+        existing = claim_gib(response.json())
+        wanted = storage_gib(spec, self._settings().k8s)
+        if existing is not None and existing < wanted:
+            raise MicrovmError(
+                f"claim {pvc_name(spec.workspace_id)} holds {existing}Gi; "
+                f"this workspace needs {wanted}Gi — delete the workspace "
+                f"(dropping the claim) and create it again"
+            )
 
     async def launch(self, spec: VmSpec) -> None:
         # Boots heal their claim, same as the local backend heals its

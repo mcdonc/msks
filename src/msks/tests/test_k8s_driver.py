@@ -8,6 +8,7 @@ from msks.microvm import MicrovmError, VmSpec
 from msks.microvm.k8s import (
     LABEL_WORKSPACE_ID,
     WORKSPACE_STATE_MOUNT,
+    claim_gib,
     map_phase,
     pod_manifest,
     pvc_manifest,
@@ -143,6 +144,13 @@ def test_pvc_size_derivation_rounds_up(tmp_path) -> None:
     assert storage_gib(spec(tmp_path), K8sSettings(workspace_storage_gib=3)) == 3
 
 
+def test_claim_gib_parses_k8s_quantities() -> None:
+    assert claim_gib({"spec": {"resources": {"requests": {"storage": "12Gi"}}}}) == 12
+    assert claim_gib({"spec": {"resources": {"requests": {"storage": "2Gi"}}}}) == 2
+    assert claim_gib({"spec": {"resources": {"requests": {"storage": "1Ti"}}}}) is None
+    assert claim_gib({}) is None
+
+
 def test_map_phase() -> None:
     assert map_phase("Running") == VmStatus.RUNNING
     assert map_phase("Pending") == VmStatus.STARTING
@@ -174,10 +182,30 @@ async def test_prepare_tolerates_existing_claim(tmp_path, monkeypatch) -> None:
     earlier life is reused, never replaced (#14)."""
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(
+                200, json={"spec": {"resources": {"requests": {"storage": "20Gi"}}}}
+            )
         return httpx.Response(409, text="already exists")
 
     app = app_with_k8s(tmp_path, monkeypatch, handler)
     await app.state.microvm.prepare(spec(tmp_path))
+
+
+async def test_prepare_refuses_a_too_small_reused_claim(tmp_path, monkeypatch) -> None:
+    """A claim smaller than the new workspace's artifacts is refused
+    by name — reusing it would fail the guest with late ENOSPC."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(
+                200, json={"spec": {"resources": {"requests": {"storage": "2Gi"}}}}
+            )
+        return httpx.Response(409, text="already exists")
+
+    app = app_with_k8s(tmp_path, monkeypatch, handler)
+    with pytest.raises(MicrovmError, match="holds 2Gi.*needs 12Gi"):
+        await app.state.microvm.prepare(spec(tmp_path))
 
 
 async def test_prepare_error_maps(tmp_path, monkeypatch) -> None:

@@ -249,3 +249,21 @@ def test_migrate_reraises_unrelated_operational_errors(
     settings = Settings(server=ServerSettings(db_path=tmp_path / "locked.db"))
     with pytest.raises(OperationalError, match="locked"):
         model_mod.Model(App(settings)).migrate()
+
+
+def test_migrate_refuses_to_stamp_past_an_older_gap(tmp_path, monkeypatch) -> None:
+    """A torn-shaped error on a database already at head must not be
+    stamped past: with a longer chain, that gap would skip pending
+    DDL — it needs an operator, not a guess (#14 round two)."""
+    from alembic import command as alembic_command
+    from msks.model import model as model_mod
+
+    settings = Settings(server=ServerSettings(db_path=tmp_path / "at-head.db"))
+    model_mod.Model(App(settings)).migrate()  # DB now stamped at head
+
+    def boom(config, revision):
+        raise OperationalError("statement", {}, Exception("duplicate column name"))
+
+    monkeypatch.setattr(alembic_command, "upgrade", boom)
+    with pytest.raises(OperationalError, match="duplicate column name"):
+        model_mod.Model(App(settings)).migrate()

@@ -66,6 +66,9 @@ def test_nonpositive_artifact_sizes_rejected(
     monkeypatch.setenv("MSKSD_K8S_WORKSPACE_STORAGE_GIB", "0")
     with pytest.raises(ValueError, match="MSKSD_K8S_WORKSPACE_STORAGE_GIB"):
         Settings.from_env()
+    monkeypatch.setenv("MSKSD_K8S_WORKSPACE_STORAGE_GIB", "soon")
+    with pytest.raises(ValueError, match="MSKSD_K8S_WORKSPACE_STORAGE_GIB"):
+        Settings.from_env()
     monkeypatch.setenv("MSKSD_K8S_WORKSPACE_STORAGE_GIB", "7")
     settings = Settings.from_env()
     assert settings.k8s.workspace_storage_gib == 7

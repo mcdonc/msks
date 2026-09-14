@@ -479,6 +479,50 @@ async def test_launch_heals_a_volume_only_leftover(env, fake, tmp_path: Path) ->
     await app.state.microvm.kill(WID)
 
 
+async def test_prepare_failure_rolls_back_the_pair(env, tmp_path: Path) -> None:
+    """The round-two wedge repro: a tool failure after the volume is
+    made must leave NO artifact, or the strict next create refuses
+    the id forever (the daemon's own leftover)."""
+    app, state_dir, _ = env
+    qemu = tmp_path / "qemu-img"
+    qemu.write_text(
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        "  info)\n"
+        '    printf \'{"format":"raw","virtual-size":8388608}\\n\'\n'
+        "    ;;\n"
+        "  create)\n"
+        "    exit 1\n"
+        "    ;;\n"
+        "esac\n"
+    )
+    qemu.chmod(0o755)
+    with pytest.raises(MicrovmError, match="qemu-img create.*failed"):
+        await app.state.microvm.prepare(spec(tmp_path))
+    assert not persist.overlay_path(state_dir, WID).exists()
+    assert not persist.home_volume_path(state_dir, WID).exists()
+    # Tool fixed: the retry creates the pair and succeeds — the id is
+    # not wedged.
+    qemu.write_text(
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        "  info)\n"
+        '    printf \'{"format":"raw","virtual-size":8388608}\\n\'\n'
+        "    ;;\n"
+        "  create)\n"
+        "    shift\n"
+        '    while [ "$#" -gt 1 ]; do\n'
+        '      case "$1" in -f|-F|-b) shift 2 ;; *) break ;; esac\n'
+        "    done\n"
+        '    : > "$1"\n'
+        "    ;;\n"
+        "esac\n"
+    )
+    await app.state.microvm.prepare(spec(tmp_path))
+    assert persist.overlay_path(state_dir, WID).is_file()
+    assert persist.home_volume_path(state_dir, WID).is_file()
+
+
 async def test_launch_heals_missing_artifacts(env, fake, tmp_path: Path) -> None:
     """A workspace row predating #14, or a crash mid-create, gets its
     artifacts back on the next start — data that exists is kept."""

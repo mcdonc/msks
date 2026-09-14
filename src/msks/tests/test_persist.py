@@ -156,7 +156,10 @@ async def test_failed_mkfs_leaves_no_volume_and_retry_succeeds(tools) -> None:
 
 
 async def test_failed_overlay_create_leaves_no_artifact(tools) -> None:
-    """A create that dies mid-write installs nothing at the final path."""
+    """A create that dies mid-write installs nothing at the final
+    path — and rolls back the volume it already made, so the retry
+    starts from a clean pair instead of wedging the id on a leftover
+    volume a strict create then refuses forever."""
     settings, record, base = tools
     qemu = Path(settings.qemu_img)
     qemu.write_text(
@@ -178,14 +181,29 @@ async def test_failed_overlay_create_leaves_no_artifact(tools) -> None:
         "esac\n"
     )
     overlay = persist.overlay_path(settings.state_dir, WID)
+    home = persist.home_volume_path(settings.state_dir, WID)
     with pytest.raises(MicrovmError, match="qemu-img create.*failed"):
         await persist.ensure_artifacts(spec(base), settings)
     assert not overlay.exists()
+    assert not home.exists()
     assert not tmp_debris(settings)
-    # A retry with the working stub creates a complete overlay.
+    # A retry with the working stub creates the complete pair.
     write_qemu_stub(qemu.parent, record)
     await persist.ensure_artifacts(spec(base), settings)
     assert overlay.is_file()
+    assert home.is_file()
+
+
+async def test_vanished_scratch_maps_to_named_error(tools) -> None:
+    """A scratch file eaten by a concurrent sweep during the tool
+    run becomes a named error, not a raw FileNotFoundError."""
+    settings, _record, base = tools
+    mkfs = Path(settings.mkfs_ext4)
+    mkfs.write_text('#!/bin/sh\nfor arg do :; done\nrm -f "$arg"\nexit 0\n')
+    with pytest.raises(MicrovmError, match="could not install"):
+        await persist.ensure_artifacts(spec(base), settings)
+    assert not persist.home_volume_path(settings.state_dir, WID).exists()
+    assert not tmp_debris(settings)
 
 
 async def test_overlay_size_never_shrinks_below_base(tools) -> None:

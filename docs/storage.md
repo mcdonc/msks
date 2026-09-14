@@ -44,11 +44,13 @@ is absent (a crash mid-create, or a workspace row created before
 this scheme existed), the daemon recreates it before the VM boots.
 Data that exists is never touched. Creation is atomic per
 artifact: each file is built under a private temporary name and
-installed with one rename, so a failed create (a missing tool,
-ENOSPC, a partial write) leaves nothing at the final path — the
-retry starts clean instead of booting a blank disk. A crash
-mid-create can leave a `*.tmp` sibling behind; the removal helpers
-sweep those, and they are harmless debris otherwise.
+installed with one rename, and a failed create rolls back what it
+made — a missing tool, ENOSPC, or a partial write leaves nothing
+at the final path, so the retry starts from a clean pair instead
+of booting a blank disk. A daemon crash mid-create can still leave
+a finished artifact (or its `*.tmp` scratch) behind; the removal
+helpers sweep the scratch files, and the next create names any
+leftover instead of adopting it.
 
 Workspace **create never reuses an existing artifact**: a file
 found where a new workspace's overlay or volume would live (a
@@ -83,17 +85,21 @@ re-runs on the next boot.
 
 The workspace row records the **host** that owns its artifacts. On
 the local backend that is always the msksd host that created the
-workspace; a start or reset attempt through a daemon on another
-host fails with `409` naming where the artifacts live, instead of
-bootting a workspace with an empty `/home` and a pristine root. The
-host name is the daemon's `MSKSD_HOST_NAME` (default: the host's
-hostname at daemon start) — pin it explicitly when the hostname is
-not stable (laptops, containers) so a rename does not strand every
-workspace. `delete` cleans up on the daemon's own host: removing a
-workspace whose artifacts live elsewhere requires clearing them on
-that host. A workspace runs on at most one host at a time — the
-row's placement is the authority locally, and the volume's
-single-writer semantics make a double attach impossible.
+workspace; a start, stop, reset, or delete through a daemon on
+another host fails with `409` naming where the artifacts live —
+booting a workspace with an empty `/home`, marking a running VM
+stopped, or dropping the row out from under a live VM are all
+worse than the refusal. The host name is the daemon's
+`MSKSD_HOST_NAME` (default: the host's hostname at daemon start) —
+pin it explicitly when the hostname is not stable (laptops,
+containers) so a rename does not strand every workspace. Deleting
+a workspace whose artifacts live elsewhere happens from that host:
+this one refuses rather than orphan the files. A workspace runs on
+at most one host at a time — the row's placement is the authority
+locally, and the volume's single-writer semantics make a double
+attach impossible. The k8s backend records no host: the artifacts
+live in a per-workspace claim the cluster places, so any daemon in
+the cluster may run the workspace.
 
 ## Kubernetes backend
 
@@ -105,7 +111,10 @@ On the k8s backend both artifacts live on one per-workspace
   `MSKSD_K8S_WORKSPACE_STORAGE_GIB` — unset derives the claim from
   the workspace's `root_mib` + `home_mib`, rounded up to GiB — and
   storage class from `MSKSD_K8S_STORAGE_CLASS`, unset asks the
-  cluster's default class);
+  cluster's default class). Recreating a workspace of the same id
+  keeps the existing claim: a claim smaller than the new sizes
+  fails the create with a named error instead of failing the guest
+  with late ENOSPC;
 - mounted into the runner pod at
   `/var/lib/msks/workspaces/<workspace_id>`, the container-side
   analogue of the local backend's `<state_dir>/vms/<id>/`;

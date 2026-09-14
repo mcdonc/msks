@@ -70,32 +70,60 @@ def sweep_tmp_siblings(target: Path) -> None:
 
 
 async def ensure_artifacts(spec: VmSpec, settings) -> None:
-    """Create the workspace's overlay and home volume when absent."""
+    """Create the workspace's overlay and home volume when absent.
+
+    Each artifact is installed atomically (private scratch file, one
+    rename), and a failure rolls back what *this call* installed: a
+    failed overlay create takes the freshly-made volume with it, so
+    the retry starts clean instead of meeting its own half-made pair
+    at the next create (a strict-refusal wedge). Only a daemon crash
+    mid-create can leave an orphan — the next create names it.
+    """
     state_dir = settings.state_dir
-    home = home_volume_path(state_dir, spec.workspace_id)
-    if not home.is_file():
-        home.parent.mkdir(parents=True, exist_ok=True)
-        scratch = tmp_sibling(home)
-        try:
-            with scratch.open("wb") as handle:
-                # Sparse: an idle volume costs its metadata, not its size.
-                handle.truncate(spec.home_mib * MIB)
-            await run_tool(
-                [settings.mkfs_ext4, "-q", "-F", "-L", HOME_VOLUME_LABEL, str(scratch)],
-                "mkfs on the home volume",
-            )
-            scratch.replace(home)
-        finally:
-            scratch.unlink(missing_ok=True)
-    overlay = overlay_path(state_dir, spec.workspace_id)
-    if not overlay.is_file():
-        overlay.parent.mkdir(parents=True, exist_ok=True)
-        scratch = tmp_sibling(overlay)
-        try:
-            await create_overlay(spec, settings, scratch)
-            scratch.replace(overlay)
-        finally:
-            scratch.unlink(missing_ok=True)
+    installed: list[Path] = []
+    try:
+        home = home_volume_path(state_dir, spec.workspace_id)
+        if not home.is_file():
+            await create_home_volume(home, spec, settings)
+            installed.append(home)
+        overlay = overlay_path(state_dir, spec.workspace_id)
+        if not overlay.is_file():
+            await create_overlay(spec, settings, overlay)
+            installed.append(overlay)
+    except BaseException:
+        for artifact in installed:
+            artifact.unlink(missing_ok=True)
+        raise
+
+
+async def create_home_volume(target: Path, spec: VmSpec, settings) -> None:
+    """Format one sparse, labeled ext4 volume and install it."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    scratch = tmp_sibling(target)
+    try:
+        with scratch.open("wb") as handle:
+            # Sparse: an idle volume costs its metadata, not its size.
+            handle.truncate(spec.home_mib * MIB)
+        await run_tool(
+            [settings.mkfs_ext4, "-q", "-F", "-L", HOME_VOLUME_LABEL, str(scratch)],
+            "mkfs on the home volume",
+        )
+        install(scratch, target)
+    finally:
+        scratch.unlink(missing_ok=True)
+
+
+def install(scratch: Path, target: Path) -> None:
+    """Move a finished artifact onto its final name.
+
+    Same-directory rename, atomic on Linux. An OSError here (a
+    concurrent removal sweeping the scratch file, a vanished
+    directory) becomes a named error instead of a raw 500.
+    """
+    try:
+        scratch.replace(target)
+    except OSError as exc:
+        raise MicrovmError(f"could not install {target}: {exc}") from exc
 
 
 async def create_overlay(spec: VmSpec, settings, overlay: Path) -> None:
@@ -109,21 +137,27 @@ async def create_overlay(spec: VmSpec, settings, overlay: Path) -> None:
     if not base.is_file():
         raise MicrovmError(f"base image for the overlay not found: {base}")
     size, base_format = await base_info(base, settings.qemu_img)
-    await run_tool(
-        [
-            settings.qemu_img,
-            "create",
-            "-f",
-            "qcow2",
-            "-F",
-            base_format,
-            "-b",
-            str(base),
-            str(overlay),
-            str(max(spec.root_mib * MIB, size)),
-        ],
-        "qemu-img create of the root overlay",
-    )
+    overlay.parent.mkdir(parents=True, exist_ok=True)
+    scratch = tmp_sibling(overlay)
+    try:
+        await run_tool(
+            [
+                settings.qemu_img,
+                "create",
+                "-f",
+                "qcow2",
+                "-F",
+                base_format,
+                "-b",
+                str(base),
+                str(scratch),
+                str(max(spec.root_mib * MIB, size)),
+            ],
+            "qemu-img create of the root overlay",
+        )
+        install(scratch, overlay)
+    finally:
+        scratch.unlink(missing_ok=True)
 
 
 async def base_info(base: Path, qemu_img: str) -> tuple[int, str]:
@@ -142,19 +176,24 @@ async def base_info(base: Path, qemu_img: str) -> tuple[int, str]:
 
 
 async def run_tool(argv: list[str], what: str) -> bytes:
-    """Run one host tool; a failure becomes a named operator error."""
+    """Run one host tool; a failure becomes a named operator error.
+
+    stderr stays out of the captured stdout: ``qemu-img info`` is
+    parsed as JSON, and a chatty warning line ahead of the document
+    must not turn into a spurious parse failure.
+    """
     try:
         proc = await asyncio.create_subprocess_exec(
             *argv,
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
+            stderr=asyncio.subprocess.PIPE,
         )
     except FileNotFoundError as exc:
         raise MicrovmError(f"{what}: tool not found: {argv[0]}") from exc
-    output, _ = await proc.communicate()
+    output, err = await proc.communicate()
     if proc.returncode != 0:
-        detail = output.decode(errors="replace").strip()[:400]
+        detail = (output + err).decode(errors="replace").strip()[:400]
         raise MicrovmError(f"{what} failed ({proc.returncode}): {detail}")
     return output
 

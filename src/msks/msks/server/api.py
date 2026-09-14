@@ -204,6 +204,19 @@ def spec_for(row: dict) -> VmSpec:
     )
 
 
+def owner_host(app) -> str | None:
+    """The host recorded as owning a new workspace's artifacts.
+
+    Placement is a local-backend fact: the artifacts are files on one
+    host. On k8s the artifacts live in a per-workspace claim the
+    cluster places, so no host is recorded and the placement check
+    stays out of the way ("None adopts this daemon", below).
+    """
+    if app.state.settings.vmm.driver == "local":
+        return app.state.settings.vmm.host_name
+    return None
+
+
 def host_mismatch(app, row: dict) -> str | None:
     """The named error when the artifacts live on another host.
 
@@ -292,18 +305,28 @@ def build_api(app) -> FastAPI:
         # create (a leftover artifact from a previous workspace of this
         # id) answers 503 with nothing written and nothing removed, and
         # a row in the table always has its artifacts underneath it.
-        await app.state.microvm.prepare(spec_for(boot))
+        try:
+            await app.state.microvm.prepare(spec_for(boot))
+        except MicrovmError:
+            # A racer may have won this id between the 404 check and
+            # the strict prepare — its artifacts are the "leftover",
+            # and the honest answer is the 409, not a removal plea.
+            if await app.state.model.get_workspace(body.id) is not None:
+                raise HTTPException(
+                    status_code=409, detail="workspace exists"
+                ) from None
+            raise
         try:
             row = await app.state.model.create_workspace(
                 spec_for(boot),
                 image_hash=boot["image_hash"],
-                host=app.state.settings.vmm.host_name,
+                host=owner_host(app),
             )
         except IntegrityError:
-            # The check-then-insert race lost: same answer for the
-            # client, and the artifacts this call just created go too.
-            with contextlib.suppress(Exception):
-                await app.state.microvm.cleanup(body.id)
+            # The insert lost the race. The winner's row owns whatever
+            # blank artifacts sit at this id's paths now (ours and its
+            # are indistinguishable), so nothing is cleaned up — the
+            # row-exists-⇒-artifacts-exist invariant must not break.
             raise HTTPException(status_code=409, detail="workspace exists") from None
         return Response(
             status_code=201, content=json.dumps(row), media_type="application/json"
@@ -415,7 +438,11 @@ def build_api(app) -> FastAPI:
         "/api/v1/workspaces/{workspace_id}/stop", dependencies=[Depends(require_token)]
     )
     async def stop_workspace(workspace_id: str) -> dict:
-        await _workspace_or_404(app, workspace_id)
+        row = await _workspace_or_404(app, workspace_id)
+        if mismatch := host_mismatch(app, row):
+            # A stop from a non-owning host cannot reach the VMM; a
+            # local no-op would mark a running VM stopped.
+            raise HTTPException(status_code=409, detail=mismatch)
         await app.state.microvm.shutdown(workspace_id)
         await app.state.model.set_status(workspace_id, "stopped")
         return {"id": workspace_id, "status": "stopped"}
@@ -446,7 +473,11 @@ def build_api(app) -> FastAPI:
         "/api/v1/workspaces/{workspace_id}", dependencies=[Depends(require_token)]
     )
     async def delete_workspace(workspace_id: str) -> dict:
-        await _workspace_or_404(app, workspace_id)
+        row = await _workspace_or_404(app, workspace_id)
+        if mismatch := host_mismatch(app, row):
+            # Deleting the row from a non-owning host would orphan a
+            # possibly-running VM: every route 404s without the row.
+            raise HTTPException(status_code=409, detail=mismatch)
         # A wedged VM must still be deletable: a failed graceful
         # shutdown falls back to kill before cleanup.
         try:

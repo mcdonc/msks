@@ -404,8 +404,9 @@ class LocalCloudHypervisor(MicrovmDriver):
             raise
         except MicrovmError:
             # The VMM died or hung between the liveness check and the
-            # call (narrowed race, never zero): escalate straight to
-            # SIGTERM rather than surfacing a 500.
+            # call (narrowed race, never zero) — including a press
+            # racing the guest's own transition to down: either way
+            # the right next step is SIGTERM, not a surfaced 500.
             pass
         finally:
             await api.aclose()

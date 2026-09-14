@@ -235,11 +235,41 @@ async def test_create_race_maps_to_409(client, monkeypatch) -> None:
         headers=auth(),
     )
     assert response.status_code == 409
-    # The artifacts this call created before losing the race go too.
-    assert ("cleanup", "ws-race") in stub.calls
+    # The winner's row now owns whatever blank artifacts sit at the
+    # id's paths — the loser cleans nothing (that would break the
+    # row-exists-⇒-artifacts-exist invariant).
+    assert ("cleanup", "ws-race") not in stub.calls
 
 
-async def test_create_prepare_failure_leaves_no_trace(client) -> None:
+async def test_create_race_after_prepare_answers_409(client, monkeypatch) -> None:
+    """A racer that won between the 404 check and a strict-prepare
+    refusal turns the 503 into the honest 409."""
+    http, app, _stub = client
+    real_get = app.state.model.get_workspace
+    checks = 0
+
+    async def first_look_then_real(workspace_id):
+        nonlocal checks
+        checks += 1
+        if checks == 1:
+            return None  # the 404 pre-check: no workspace yet
+        return await real_get(workspace_id)  # the racer has since won
+
+    monkeypatch.setattr(app.state.model, "get_workspace", first_look_then_real)
+    await app.state.model.create_workspace(
+        VmSpec(workspace_id="ws-lost", kernel=Path("/k"), rootfs=Path("/r"))
+    )
+    _stub.fail_prepare = True
+    response = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-lost", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"] == "workspace exists"
+
+
+async def test_prepare_failure_leaves_no_trace(client) -> None:
     """A refused create writes no row — and removes nothing (#14):
     a leftover artifact from a previous workspace of the id stays
     for the operator to clear by hand."""
@@ -362,6 +392,54 @@ async def test_reset_on_foreign_host_is_409(client) -> None:
     assert response.status_code == 409
     assert "lives on host" in response.json()["detail"]
     assert ("reset", "ws-foreign") not in stub.calls
+
+
+async def test_stop_on_foreign_host_is_409(client) -> None:
+    """A stop that cannot reach the VMM must not mark it stopped."""
+    http, app, stub = client
+    await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-s", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    app.state.settings.vmm.host_name = "elsewhere"
+    response = await http.post("/api/v1/workspaces/ws-s/stop", headers=auth())
+    assert response.status_code == 409
+    assert ("shutdown", "ws-s") not in stub.calls
+    status = await http.get("/api/v1/workspaces/ws-s", headers=auth())
+    assert status.json()["status"] != "stopped"
+
+
+async def test_delete_on_foreign_host_is_409(client) -> None:
+    """Deleting the row from a non-owning host would orphan a running
+    VM — every route 404s without the row."""
+    http, app, stub = client
+    await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-d", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    app.state.settings.vmm.host_name = "elsewhere"
+    response = await http.delete("/api/v1/workspaces/ws-d", headers=auth())
+    assert response.status_code == 409
+    assert ("cleanup", "ws-d") not in stub.calls
+    still = await http.get("/api/v1/workspaces/ws-d", headers=auth())
+    assert still.status_code == 200
+
+
+async def test_k8s_create_records_no_host(client, monkeypatch) -> None:
+    """Placement is a local-backend fact: on the k8s driver the row
+    records no host, so any daemon in the cluster may start it."""
+    http, app, _stub = client
+    app.state.settings.vmm.driver = "k8s"
+    response = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-k8s", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert response.status_code == 201
+    assert response.json()["host"] is None
+    app.state.settings.vmm.driver = "local"
 
 
 async def test_image_pinned_by_workspace_artifacts(client) -> None:
