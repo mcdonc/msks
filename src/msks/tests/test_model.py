@@ -293,8 +293,12 @@ async def test_workspace_carries_user_data(app_for) -> None:
 async def test_database_file_is_private(app_for, tmp_path: Path) -> None:
     """The database records user_data payloads (#41), which can embed
     tokens: the file is created 0600, whichever path makes it first
-    (migrate or the engine)."""
+    (migrate or the engine) — and a looser mode carried over from a
+    pre-#41 database is tightened, not just avoided."""
     db_path = tmp_path / "private" / "msks.db"
+    db_path.parent.mkdir(parents=True)
+    db_path.write_bytes(b"")  # a pre-#41 file at its old mode
+    db_path.chmod(0o644)
     app = app_for(db_path=db_path)
     app.state.model.migrate()
     assert db_path.stat().st_mode & 0o777 == 0o600

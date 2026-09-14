@@ -265,8 +265,9 @@ def import_archive(path: Path, state_dir: Path) -> ImageRecord:
 def warm_import(path: Path, state_dir: Path) -> ImageRecord | None:
     """The already-imported record when the archive is unchanged.
 
-    A cheap (hash-only) fast path for repeated daemon starts: the
-    350M hash replaces a multi-second re-extract of the 1.6G cache.
+    A cheap (hash-only) fast path for repeated daemon starts: one
+    pass over the ~1.5G archive replaces a multi-second re-extract
+    of the boot-file cache.
     """
     if not path.is_file():
         return None

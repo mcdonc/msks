@@ -293,11 +293,12 @@ curl -X POST .../api/v1/workspaces -d '{
 The rules worth knowing:
 
 - **Create-time and immutable.** The payload is part of the
-  workspace's identity; `user_data` is accepted only at create, any
-  mutation attempt answers a named 405 (delete and recreate to
-  change it). cloud-init keys its run-once semantics off the
-  workspace, so changing it after the fact would silently do
-  nothing anyway.
+  workspace's identity; `user_data` is accepted only at create
+  (capped at 64 Ki characters — pydantic's 422 names the bound; an
+  empty payload is a 400), and any mutation attempt answers a named
+  405 (delete and recreate to change it). cloud-init keys its
+  run-once semantics off the workspace, so changing it after the
+  fact would silently do nothing anyway.
 - **The seed is per-workspace state.** It is built at create (a
   few hundred KiB of iso9660 overhead regardless of payload size,
   `cidata`-labeled), attached read-only as the third disk, survives

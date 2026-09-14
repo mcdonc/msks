@@ -357,7 +357,7 @@ def read_user_data(path: str) -> str:
     try:
         if path == "-":
             return sys.stdin.read()
-        return Path(path).read_text()
+        return Path(path).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         raise SystemExit(f"msks: cannot read user-data file {path}: {exc}") from None
 

@@ -233,8 +233,10 @@ async def create_seed(spec: VmSpec, settings) -> None:
     stage = tmp_sibling(target)
     stage.mkdir(mode=0o700)
     try:
-        (stage / "user-data").write_text(spec.user_data)
-        (stage / "meta-data").write_text(seed_metadata(spec.workspace_id))
+        (stage / "user-data").write_text(spec.user_data, encoding="utf-8")
+        (stage / "meta-data").write_text(
+            seed_metadata(spec.workspace_id), encoding="utf-8"
+        )
         image = stage / "seed.img"
         await run_tool(
             [

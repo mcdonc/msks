@@ -6,7 +6,7 @@
 # repo.
 #
 # The root filesystem is Debian 13 (trixie), straight from Debian's
-# official nocloud cloud image (#30): real Debian with systemd as
+# official genericcloud cloud image (#30, #41): real Debian with
 # PID 1, apt, Debian's own modules — and Debian's own socat (built
 # WITH_VSOCK) serving the vsock console. The kernel is Debian's
 # *cloud* flavor of the same upstream version (#37): ext4 and
@@ -77,7 +77,7 @@ let
   # it, an ro mount would block apt and provisioning state.
   kernelCmdline = "console=ttyS0 root=/dev/vda rootfstype=ext4 rw";
 
-  # Debian's cloud kernel, same upstream version as the nocloud
+  # Debian's cloud kernel, same upstream version as the cloud
   # image's generic one (#37): CONFIG_EXT4_FS=y and
   # CONFIG_VIRTIO_PCI=y built in — only virtio_blk stays a module,
   # which the minimal initramfs below loads. Pinned by pool URL and
@@ -365,8 +365,9 @@ let
         qemu-img convert -O raw ${debianImage} debian.raw
 
         # Slice the root partition: the GPT partition labeled/type
-        # "Linux filesystem" (nocloud keeps EFI + BIOS grub partitions
-        # around it, which direct kernel boot does not need).
+        # "Linux filesystem" (the cloud image keeps EFI + BIOS grub
+        # partitions around it, which direct kernel boot does not
+        # need).
         offset=$(sfdisk --json debian.raw | python3 ${partitionOffset})
         dd if=debian.raw of=root.part bs=512 skip=$((offset / 512)) status=none
 
@@ -445,9 +446,12 @@ let
         # hardlink groups as one inode, which once made the guest's
         # utmp writes surface in cloud-init's empty __init__.py. A
         # tarball cannot be deduped from inside; rdump flattens all
-        # hardlinks anyway, so none are recorded. Deterministic
-        # member order keeps rebuilds byte-identical; mtimes are
-        # Debian's own (also deterministic), not normalized.
+        # hardlinks anyway, so none are recorded. Sorted member order
+        # keeps the tarball itself deterministic; the mtimes inside it
+        # are NOT (depmod's outputs are build-time), and need not be —
+        # byte-stability of the final image comes from
+        # E2FSPROGS_FAKE_TIME plus the archive tar's --mtime=@1, not
+        # from this hop.
         tar --sort=name --owner=0 --group=0 --numeric-owner \
           -C "$root" -cf "$out/root.tar" .
       '';
@@ -499,8 +503,10 @@ let
         # inode for the guest's runtime writes to collide in.
         mkdir work
         tar -C work -xf "$debianRoot/root.tar"
-        # Extraction restores the recorded (root-owned, r-x) modes;
-        # fakeroot's chmods below need the modes writable first.
+        # Extraction restores the recorded modes but cannot chown
+        # (unprivileged: files land build-user owned, which is why
+        # u+w works); fakeroot's faked chown/chmod below need the
+        # modes writable first.
         chmod -R u+w work
         # Content plus 1G of slack: the base keeps room for image
         # updates, and the per-workspace overlay (#14) carries whatever

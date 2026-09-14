@@ -13,7 +13,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ..microvm.spec import VmSpec
-from .db import Base, engine_for, sessionmaker_for
+from .db import Base, engine_for, sessionmaker_for, tighten_db_mode
 from .tokens import Token
 from .workspaces import WORKSPACE_STATUSES, Workspace
 
@@ -66,11 +66,10 @@ class Model:
     def migrate(self) -> None:
         """Run Alembic migrations to head for the live database path."""
         db_path = self._db_path()
-        db_path.parent.mkdir(parents=True, exist_ok=True)
         # Same 0600 rule as engine_for: this path often creates the
         # file first (lifespan migrates before anything opens the
         # engine), and the rows carry user_data payloads (#41).
-        db_path.touch(mode=0o600, exist_ok=True)
+        tighten_db_mode(db_path)
         config = alembic_config(db_path)
         try:
             command.upgrade(config, "head")
