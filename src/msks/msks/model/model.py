@@ -71,13 +71,16 @@ class Model:
         except OperationalError as exc:
             # A hard power cut can land between a migration's committed
             # DDL and its alembic_version stamp (separate transactions):
-            # the next boot then fails with "table already exists" and,
+            # the next boot then fails with "table already exists" (or,
+            # for an add_column re-run, "duplicate column name") and,
             # unfixed, wedges the appliance forever. Only our own DDL
-            # can produce that error text here, so it means exactly the
-            # torn state — stamp head and the upgrade becomes a no-op.
-            # Sound while migrations are additive from a single base;
-            # revisit when a migration ever splits DDL across versions.
-            if "already exists" not in str(exc):
+            # can produce those error texts here, so they mean exactly
+            # the torn state — stamp head and the upgrade becomes a
+            # no-op. Sound while migrations are additive from a single
+            # base; revisit when a migration ever splits DDL across
+            # versions.
+            torn = "already exists" in str(exc) or "duplicate column name" in str(exc)
+            if not torn:
                 raise
             command.stamp(config, "head")
             command.upgrade(config, "head")

@@ -113,6 +113,18 @@ def pod_manifest(spec: VmSpec, settings: K8sSettings) -> dict:
     }
 
 
+def storage_gib(spec: VmSpec, settings: K8sSettings) -> int:
+    """The claim size in GiB: room for both artifacts (#14).
+
+    The explicit setting wins; unset derives from the sizes create
+    actually requests, rounded up — a claim smaller than the overlay
+    plus the volume fails the guest with late ENOSPC on its root.
+    """
+    if settings.workspace_storage_gib is not None:
+        return settings.workspace_storage_gib
+    return -(-(spec.root_mib + spec.home_mib) // 1024)
+
+
 def pvc_manifest(spec: VmSpec, settings: K8sSettings) -> dict:
     """The per-workspace claim (#14): one RWO volume owning the
     workspace's persistent artifacts (root overlay + home volume).
@@ -123,7 +135,7 @@ def pvc_manifest(spec: VmSpec, settings: K8sSettings) -> dict:
     """
     claim: dict = {
         "accessModes": ["ReadWriteOnce"],
-        "resources": {"requests": {"storage": f"{settings.workspace_storage_gib}Gi"}},
+        "resources": {"requests": {"storage": f"{storage_gib(spec, settings)}Gi"}},
     }
     if settings.storage_class:
         claim["storageClassName"] = settings.storage_class
@@ -174,7 +186,13 @@ class KubernetesRunner(MicrovmDriver):
         return kube.kube_client(self._settings().k8s)
 
     async def prepare(self, spec: VmSpec) -> None:
-        """Create the workspace's PVC (#14); an existing claim is kept."""
+        """Create the workspace's PVC (#14); an existing claim is kept.
+
+        Claim reuse is the same id's own persistence (the claim name
+        is derived from the workspace id); the files inside it are the
+        runner agent's domain, so a stale claim's contents are never
+        inspected or replaced here.
+        """
         client = await self._client()
         try:
             response = await client.post(
@@ -193,6 +211,10 @@ class KubernetesRunner(MicrovmDriver):
         )
 
     async def launch(self, spec: VmSpec) -> None:
+        # Boots heal their claim, same as the local backend heals its
+        # artifact files: a pre-#14 row (or a manually deleted PVC)
+        # gets the claim back before the pod pends on a missing one.
+        await self.prepare(spec)
         client = await self._client()
         try:
             response = await client.post(

@@ -70,9 +70,10 @@ boots. A guest image must:
 - **Tolerate a read-write root.** The daemon boots each workspace's
   root read-write through a per-workspace qcow2 overlay (#14) — the
   base image stays pristine under copy-on-write — and attaches an
-  ext4 volume at `/home`. Ship an fstab entry for `/dev/vdb` (or let
-  the image's own mount logic handle it); `nofail` keeps boots
-  moving when the volume is absent.
+  ext4 volume at `/home`. Mount it by the volume label `msks-home`
+  (the daemon formats the volume with that label) so the mount
+  stays on the right device whatever the disk order is; `nofail`
+  keeps boots moving when the volume is absent.
 
 ## Building an image
 

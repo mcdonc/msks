@@ -12,6 +12,7 @@ from msks.microvm.k8s import (
     pod_manifest,
     pvc_manifest,
     pvc_name,
+    storage_gib,
 )
 from msks.microvm.kube import (
     auth_header,
@@ -123,7 +124,23 @@ def test_pvc_manifest_shape(tmp_path) -> None:
 def test_pvc_manifest_leaves_class_unset_when_unconfigured(tmp_path) -> None:
     manifest = pvc_manifest(spec(tmp_path), K8sSettings())
     assert "storageClassName" not in manifest["spec"]
-    assert manifest["spec"]["resources"]["requests"]["storage"] == "2Gi"
+    # Unset size derives from the artifacts: the spec defaults ask
+    # for 10240 + 2048 MiB → 12 Gi, room for both files.
+    assert manifest["spec"]["resources"]["requests"]["storage"] == "12Gi"
+
+
+def test_pvc_size_derivation_rounds_up(tmp_path) -> None:
+    """A derived claim always rounds up — a claim smaller than the
+    requested artifacts fails the guest with late ENOSPC on its root."""
+    odd = VmSpec(
+        workspace_id=WID,
+        kernel=tmp_path / "vmlinux",
+        rootfs=tmp_path / "rootfs.ext4",
+        root_mib=1000,
+        home_mib=25,
+    )
+    assert storage_gib(odd, K8sSettings()) == 2
+    assert storage_gib(spec(tmp_path), K8sSettings(workspace_storage_gib=3)) == 3
 
 
 def test_map_phase() -> None:
@@ -197,6 +214,24 @@ async def test_launch_conflict_maps_to_error(tmp_path, monkeypatch) -> None:
     with pytest.raises(MicrovmError) as excinfo:
         await app.state.microvm.launch(spec(tmp_path))
     assert excinfo.value.status == 409
+
+
+async def test_launch_ensures_the_claim(tmp_path, monkeypatch) -> None:
+    """A start heals a missing claim (a pre-#14 row, a manually
+    deleted PVC) instead of leaving the pod pending forever."""
+    posts = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return httpx.Response(201)
+
+    app = app_with_k8s(tmp_path, monkeypatch, handler)
+    await app.state.microvm.launch(spec(tmp_path))
+    claim = "/api/v1/namespaces/msks/persistentvolumeclaims"
+    pods = "/api/v1/namespaces/msks/pods"
+    assert claim in posts
+    # The claim is ensured before the pod exists to mount it.
+    assert posts.index(claim) < posts.index(pods)
 
 
 async def test_info_maps_phases(tmp_path, monkeypatch) -> None:

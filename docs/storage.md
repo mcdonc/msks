@@ -42,7 +42,19 @@ metadata, not its nominal size, and grows as the guest writes.
 A start heals missing artifacts: if the overlay or the volume file
 is absent (a crash mid-create, or a workspace row created before
 this scheme existed), the daemon recreates it before the VM boots.
-Data that exists is never touched.
+Data that exists is never touched. Creation is atomic per
+artifact: each file is built under a private temporary name and
+installed with one rename, so a failed create (a missing tool,
+ENOSPC, a partial write) leaves nothing at the final path — the
+retry starts clean instead of booting a blank disk. A crash
+mid-create can leave a `*.tmp` sibling behind; the removal helpers
+sweep those, and they are harmless debris otherwise.
+
+Workspace **create never reuses an existing artifact**: a file
+found where a new workspace's overlay or volume would live (a
+previous workspace of the same id whose cleanup could not remove
+its files) fails the create with a named error instead of silently
+adopting the predecessor's data. Clear the files and create again.
 
 ## Sizing
 
@@ -71,12 +83,17 @@ re-runs on the next boot.
 
 The workspace row records the **host** that owns its artifacts. On
 the local backend that is always the msksd host that created the
-workspace; a start attempt through a daemon on another host fails
-with `409` naming where the artifacts live, instead of bootting a
-workspace with an empty `/home` and a pristine root. A workspace
-runs on at most one host at a time — the row's placement is the
-authority locally, and the volume's single-writer semantics make a
-double attach impossible.
+workspace; a start or reset attempt through a daemon on another
+host fails with `409` naming where the artifacts live, instead of
+bootting a workspace with an empty `/home` and a pristine root. The
+host name is the daemon's `MSKSD_HOST_NAME` (default: the host's
+hostname at daemon start) — pin it explicitly when the hostname is
+not stable (laptops, containers) so a rename does not strand every
+workspace. `delete` cleans up on the daemon's own host: removing a
+workspace whose artifacts live elsewhere requires clearing them on
+that host. A workspace runs on at most one host at a time — the
+row's placement is the authority locally, and the volume's
+single-writer semantics make a double attach impossible.
 
 ## Kubernetes backend
 
@@ -85,9 +102,10 @@ On the k8s backend both artifacts live on one per-workspace
 
 - created at workspace create (name `msks-ws-<workspace_id>`,
   access mode `ReadWriteOnce`, size from
-  `MSKSD_K8S_WORKSPACE_STORAGE_GIB`, default 2 Gi, storage class
-  from `MSKSD_K8S_STORAGE_CLASS` — unset asks the cluster's default
-  class);
+  `MSKSD_K8S_WORKSPACE_STORAGE_GIB` — unset derives the claim from
+  the workspace's `root_mib` + `home_mib`, rounded up to GiB — and
+  storage class from `MSKSD_K8S_STORAGE_CLASS`, unset asks the
+  cluster's default class);
 - mounted into the runner pod at
   `/var/lib/msks/workspaces/<workspace_id>`, the container-side
   analogue of the local backend's `<state_dir>/vms/<id>/`;
@@ -97,8 +115,10 @@ On the k8s backend both artifacts live on one per-workspace
 attaches to one node, the pod schedules onto that node, and a second
 pod cannot attach the same volume — the cluster enforces what the
 local backend enforces with the row's host field. The PVC must hold
-both the overlay and the home volume, so size it for the sum; the
-qcow2 overlay and the sparse ext4 grow on demand.
+both the overlay and the home volume, so size it for the sum (the
+derived default does); the qcow2 overlay and the sparse ext4 grow
+on demand. A start recreates a missing claim the same way the local
+backend heals missing artifact files.
 
 Factory reset on k8s needs the runner agent to delete the overlay
 file inside the PVC mount; until that lands, the API answers with
@@ -112,3 +132,16 @@ A catalog image with live workspaces cannot be removed
 workspace): each workspace's overlay backs that exact image file,
 and its kernel and initrd are read from the image's cache on every
 boot. Deleting the workspace releases the pin.
+
+## Environment variables
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `MSKSD_ROOT_MIB` | `10240` | Default overlay (root) size for new workspaces, MiB. |
+| `MSKSD_HOME_MIB` | `2048` | Default `/home` volume size, MiB. |
+| `MSKSD_QEMU_IMG` | `qemu-img` | The `qemu-img` binary that creates overlays. |
+| `MSKSD_MKFS_EXT4` | `mkfs.ext4` | The mkfs that formats `/home` volumes. |
+| `MSKSD_HOST_NAME` | the hostname | The host recorded as owning locally-created artifacts. |
+| `MSKSD_SHUTDOWN_TIMEOUT_S` | `20` | How long `stop` waits for the guest's clean poweroff before the fallback kill; a stop answers within this bound. |
+| `MSKSD_K8S_STORAGE_CLASS` | unset | Storage class for per-workspace claims; unset asks the cluster's default. |
+| `MSKSD_K8S_WORKSPACE_STORAGE_GIB` | unset | Claim size in GiB; unset derives it from `root_mib` + `home_mib`. |

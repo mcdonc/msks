@@ -86,6 +86,9 @@ CH_STATE_TO_STATUS = {
 }
 GUEST_DOWN_STATES = ("Created", "Shutdown")
 POLL_INTERVAL_S = 0.05
+# How long to wait before pressing the ACPI button again: an early-boot
+# press lands before the guest's logind listens and is silently dropped.
+POWER_REPRESS_S = 5.0
 
 
 def vm_config(
@@ -190,9 +193,26 @@ class LocalCloudHypervisor(MicrovmDriver):
         return self._settings().vmm.state_dir / "vms" / workspace_id
 
     async def prepare(self, spec: VmSpec) -> None:
-        """Create the workspace's overlay and home volume (#14)."""
+        """Create the workspace's overlay and home volume (#14).
+
+        Strict on leftovers: artifacts present with no create in
+        flight means a previous workspace of the same id (a failed
+        create whose cleanup could not remove them). Launch heals
+        crashed creations; create never reuses a predecessor's data —
+        the operator clears the files and tries again.
+        """
+        vmm = self._settings().vmm
         self._dir(spec.workspace_id)
-        await persist.ensure_artifacts(spec, self._settings().vmm)
+        for artifact in (
+            persist.overlay_path(vmm.state_dir, spec.workspace_id),
+            persist.home_volume_path(vmm.state_dir, spec.workspace_id),
+        ):
+            if artifact.exists():
+                raise MicrovmError(
+                    f"artifact for workspace {spec.workspace_id} already exists: "
+                    f"{artifact}; remove it (or restore the workspace row) first"
+                )
+        await persist.ensure_artifacts(spec, vmm)
 
     async def launch(self, spec: VmSpec) -> None:
         vmm = self._settings().vmm
@@ -365,14 +385,19 @@ class LocalCloudHypervisor(MicrovmDriver):
         await self._terminate(workspace_id, deadline)
 
     async def _graceful_guest_down(self, workspace_id: str, deadline: float) -> None:
-        """Request the ACPI poweroff and wait for the guest to land."""
+        """Request the ACPI poweroff and wait for the guest to land.
+
+        The button is re-pressed every few seconds (_press_button_until_down):
+        an event pressed during early boot lands before logind listens
+        and is dropped, and one re-press closes that window without
+        extending the deadline for a guest that truly refuses to go.
+        """
         vmm = self._settings().vmm
         api = CloudHypervisorApi(
             self._dir(workspace_id) / "api.sock", vmm.request_timeout_s
         )
         try:
-            await api.power_button()
-            await self._poll_guest_down(api, deadline)
+            await self._press_button_until_down(api, deadline)
         except MicrovmTimeoutError:
             # A live guest refusing to power off is a real result —
             # surface it, exactly as before.
@@ -384,6 +409,25 @@ class LocalCloudHypervisor(MicrovmDriver):
             pass
         finally:
             await api.aclose()
+
+    async def _press_button_until_down(
+        self, api: CloudHypervisorApi, deadline: float
+    ) -> None:
+        now = asyncio.get_running_loop().time
+        next_press = 0.0
+        while True:
+            if now() >= next_press:
+                await api.power_button()
+                next_press = now() + POWER_REPRESS_S
+            state = (await api.info()).get("state")
+            if state in GUEST_DOWN_STATES:
+                return
+            if now() >= deadline:
+                raise MicrovmTimeoutError(
+                    f"guest did not power off within the shutdown "
+                    f"deadline (state={state!r})"
+                )
+            await asyncio.sleep(POLL_INTERVAL_S)
 
     def _vmm_reachable(self, workspace_id: str) -> bool:
         """Whether a VMM process for this workspace looks alive.
@@ -398,18 +442,6 @@ class LocalCloudHypervisor(MicrovmDriver):
             return proc.returncode is None
         return pid is not None and self._pid_alive(pid)
 
-    async def _poll_guest_down(self, api: CloudHypervisorApi, deadline: float) -> None:
-        while True:
-            state = (await api.info()).get("state")
-            if state in GUEST_DOWN_STATES:
-                return
-            if asyncio.get_running_loop().time() >= deadline:
-                raise MicrovmTimeoutError(
-                    f"guest did not power off within the shutdown "
-                    f"deadline (state={state!r})"
-                )
-            await asyncio.sleep(POLL_INTERVAL_S)
-
     async def _terminate(self, workspace_id: str, deadline: float) -> None:
         """SIGTERM the VMM daemon and wait for exit (guest already down)."""
         proc = self._procs.pop(workspace_id, None)
@@ -422,10 +454,11 @@ class LocalCloudHypervisor(MicrovmDriver):
             proc.terminate()
         remaining = deadline - asyncio.get_running_loop().time()
         try:
-            await asyncio.wait_for(proc.wait(), remaining)
+            await asyncio.wait_for(proc.wait(), max(remaining, POLL_INTERVAL_S))
         except TimeoutError:
             raise MicrovmTimeoutError(
-                f"cloud-hypervisor for {workspace_id} did not exit after SIGTERM"
+                f"cloud-hypervisor for {workspace_id} did not exit after "
+                f"SIGTERM (shutdown deadline exhausted)"
             ) from None
 
     async def _reap(self, workspace_id: str, proc) -> None:

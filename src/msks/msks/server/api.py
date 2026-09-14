@@ -288,6 +288,11 @@ def build_api(app) -> FastAPI:
         if await app.state.model.get_workspace(body.id) is not None:
             raise HTTPException(status_code=409, detail="workspace exists")
         boot = resolve_boot(app, body)
+        # The persistent artifacts (#14) come before the row: a refused
+        # create (a leftover artifact from a previous workspace of this
+        # id) answers 503 with nothing written and nothing removed, and
+        # a row in the table always has its artifacts underneath it.
+        await app.state.microvm.prepare(spec_for(boot))
         try:
             row = await app.state.model.create_workspace(
                 spec_for(boot),
@@ -295,19 +300,11 @@ def build_api(app) -> FastAPI:
                 host=app.state.settings.vmm.host_name,
             )
         except IntegrityError:
-            # The check-then-insert race lost; same answer for the client.
-            raise HTTPException(status_code=409, detail="workspace exists") from None
-        try:
-            # The persistent artifacts (#14) are created with the
-            # workspace: overlay + home volume locally, the PVC on k8s.
-            await app.state.microvm.prepare(spec_for(row))
-        except MicrovmError:
-            # A half-created workspace is no workspace: drop the row
-            # and whatever artifacts the failed prepare left.
+            # The check-then-insert race lost: same answer for the
+            # client, and the artifacts this call just created go too.
             with contextlib.suppress(Exception):
                 await app.state.microvm.cleanup(body.id)
-            await app.state.model.delete_workspace(body.id)
-            raise
+            raise HTTPException(status_code=409, detail="workspace exists") from None
         return Response(
             status_code=201, content=json.dumps(row), media_type="application/json"
         )
@@ -428,7 +425,12 @@ def build_api(app) -> FastAPI:
     )
     async def reset_workspace(workspace_id: str) -> dict:
         """Factory reset: a pristine root, the same /home (#14)."""
-        await _workspace_or_404(app, workspace_id)
+        row = await _workspace_or_404(app, workspace_id)
+        if mismatch := host_mismatch(app, row):
+            # The overlay lives on its owning host; resetting it from
+            # here would no-op on this host's (absent) file and lie
+            # about a pristine root.
+            raise HTTPException(status_code=409, detail=mismatch)
         # The overlay is the running root device — stop the VM first,
         # with kill as the fallback for a wedged one (same contract
         # as delete).

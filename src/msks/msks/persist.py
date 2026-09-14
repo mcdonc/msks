@@ -10,19 +10,27 @@ separate from the VM's:
   that image sees an unmodified copy of it.
 - the **home volume** — an ext4 image file under
   ``<state_dir>/volumes/<id>.ext4``, attached as a second virtio-blk
-  disk the guest mounts at ``/home``.
+  disk the guest mounts at /home (labeled ``msks-home``).
 
 Both are created at workspace create, survive ``stop``/``start``,
-and are removed with the workspace. Creation is idempotent and never
-destructive: an existing artifact is left alone, so ``launch`` can
-heal artifacts a crash (or a pre-#14 workspace row) lost without
+and are removed with the workspace. ``ensure_artifacts`` builds each
+artifact under a private temporary name and installs it with one
+atomic rename: a file at the final path is always complete, so a
+failed create (a missing tool, ENOSPC, a partial write) can never
+leave a blank or half-written artifact for a retry — or a boot — to
+mistake for valid. An existing artifact is left alone, so ``launch``
+can heal artifacts a crash (or a pre-#14 workspace row) lost without
 touching data that exists. ``remove_overlay`` is factory reset's
 half — the root returns to the pristine base, the home volume keeps
-its data.
+its data. A crash mid-create leaves only a ``*.tmp`` sibling behind
+(harmless debris; the removal helpers sweep them).
 """
 
 import asyncio
+import contextlib
+import itertools
 import json
+import os
 from pathlib import Path
 
 from .microvm.errors import MicrovmError
@@ -30,6 +38,8 @@ from .microvm.spec import VmSpec
 
 MIB = 1024 * 1024
 HOME_VOLUME_LABEL = "msks-home"
+
+_tmp_counter = itertools.count()
 
 
 def overlay_path(state_dir: Path, workspace_id: str) -> Path:
@@ -42,23 +52,50 @@ def home_volume_path(state_dir: Path, workspace_id: str) -> Path:
     return state_dir / "volumes" / f"{workspace_id}.ext4"
 
 
+def tmp_sibling(target: Path) -> Path:
+    """A private scratch name beside ``target``.
+
+    Unique per caller so concurrent ``ensure_artifacts`` for the same
+    workspace never share a scratch file; the pid makes debris from
+    a crashed creator identifiable on the host.
+    """
+    return target.with_name(f"{target.name}.{os.getpid()}-{next(_tmp_counter)}.tmp")
+
+
+def sweep_tmp_siblings(target: Path) -> None:
+    """Remove scratch files left beside ``target`` by failed creates."""
+    with contextlib.suppress(OSError):
+        for debris in target.parent.glob(f"{target.name}.*.tmp"):
+            debris.unlink(missing_ok=True)
+
+
 async def ensure_artifacts(spec: VmSpec, settings) -> None:
     """Create the workspace's overlay and home volume when absent."""
     state_dir = settings.state_dir
     home = home_volume_path(state_dir, spec.workspace_id)
     if not home.is_file():
         home.parent.mkdir(parents=True, exist_ok=True)
-        with home.open("wb") as handle:
-            # Sparse: an idle volume costs its metadata, not its size.
-            handle.truncate(spec.home_mib * MIB)
-        await run_tool(
-            [settings.mkfs_ext4, "-q", "-F", "-L", HOME_VOLUME_LABEL, str(home)],
-            "mkfs on the home volume",
-        )
+        scratch = tmp_sibling(home)
+        try:
+            with scratch.open("wb") as handle:
+                # Sparse: an idle volume costs its metadata, not its size.
+                handle.truncate(spec.home_mib * MIB)
+            await run_tool(
+                [settings.mkfs_ext4, "-q", "-F", "-L", HOME_VOLUME_LABEL, str(scratch)],
+                "mkfs on the home volume",
+            )
+            scratch.replace(home)
+        finally:
+            scratch.unlink(missing_ok=True)
     overlay = overlay_path(state_dir, spec.workspace_id)
     if not overlay.is_file():
         overlay.parent.mkdir(parents=True, exist_ok=True)
-        await create_overlay(spec, settings, overlay)
+        scratch = tmp_sibling(overlay)
+        try:
+            await create_overlay(spec, settings, scratch)
+            scratch.replace(overlay)
+        finally:
+            scratch.unlink(missing_ok=True)
 
 
 async def create_overlay(spec: VmSpec, settings, overlay: Path) -> None:
@@ -124,8 +161,10 @@ async def run_tool(argv: list[str], what: str) -> bytes:
 
 def remove_overlay(state_dir: Path, workspace_id: str) -> bool:
     """Delete the root overlay; False when there was none to delete."""
+    overlay = overlay_path(state_dir, workspace_id)
+    sweep_tmp_siblings(overlay)
     try:
-        overlay_path(state_dir, workspace_id).unlink()
+        overlay.unlink()
         return True
     except FileNotFoundError:
         return False
@@ -133,4 +172,6 @@ def remove_overlay(state_dir: Path, workspace_id: str) -> bool:
 
 def remove_home_volume(state_dir: Path, workspace_id: str) -> None:
     """Delete the home volume file (idempotent)."""
-    home_volume_path(state_dir, workspace_id).unlink(missing_ok=True)
+    home = home_volume_path(state_dir, workspace_id)
+    sweep_tmp_siblings(home)
+    home.unlink(missing_ok=True)

@@ -222,7 +222,7 @@ async def test_delete_falls_back_to_kill(client) -> None:
 
 
 async def test_create_race_maps_to_409(client, monkeypatch) -> None:
-    http, app, _stub = client
+    http, app, stub = client
     from sqlalchemy.exc import IntegrityError
 
     async def lose(spec, image_hash=None, host=None):
@@ -235,11 +235,14 @@ async def test_create_race_maps_to_409(client, monkeypatch) -> None:
         headers=auth(),
     )
     assert response.status_code == 409
+    # The artifacts this call created before losing the race go too.
+    assert ("cleanup", "ws-race") in stub.calls
 
 
-async def test_create_rolls_back_when_prepare_fails(client) -> None:
-    """A workspace whose artifacts could not be created leaves no row
-    and no half-made artifacts behind (#14)."""
+async def test_create_prepare_failure_leaves_no_trace(client) -> None:
+    """A refused create writes no row — and removes nothing (#14):
+    a leftover artifact from a previous workspace of the id stays
+    for the operator to clear by hand."""
     http, _app, stub = client
     stub.fail_prepare = True
     response = await http.post(
@@ -249,7 +252,7 @@ async def test_create_rolls_back_when_prepare_fails(client) -> None:
     )
     assert response.status_code == 503
     assert "prepare boom" in response.json()["detail"]
-    assert ("cleanup", "ws-f") in stub.calls
+    assert ("cleanup", "ws-f") not in stub.calls
     gone = await http.get("/api/v1/workspaces/ws-f", headers=auth())
     assert gone.status_code == 404
 
@@ -342,6 +345,23 @@ async def test_reset_missing_workspace_is_404(client) -> None:
     http, _app, _stub = client
     response = await http.post("/api/v1/workspaces/ghost/reset", headers=auth())
     assert response.status_code == 404
+
+
+async def test_reset_on_foreign_host_is_409(client) -> None:
+    """The overlay lives on its owning host; resetting from another
+    host must refuse instead of no-op'ing on this host's file and
+    reporting a pristine root (#14)."""
+    http, app, stub = client
+    await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-foreign", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    app.state.settings.vmm.host_name = "elsewhere"
+    response = await http.post("/api/v1/workspaces/ws-foreign/reset", headers=auth())
+    assert response.status_code == 409
+    assert "lives on host" in response.json()["detail"]
+    assert ("reset", "ws-foreign") not in stub.calls
 
 
 async def test_image_pinned_by_workspace_artifacts(client) -> None:

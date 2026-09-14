@@ -3,10 +3,11 @@
 The host tools are stub scripts under test — qemu-img answers
 ``info`` with the file's apparent size and touches the overlay on
 ``create``; mkfs records its argv — so the suite exercises the
-module's logic (layout, idempotence, clamping, error mapping)
-without the real binaries.
+module's logic (layout, idempotence, atomic install, clamping,
+error mapping) without the real binaries.
 """
 
+import re
 from pathlib import Path
 
 import pytest
@@ -20,7 +21,11 @@ WID = "ws-persist"
 
 
 def write_qemu_stub(directory: Path, record: Path) -> Path:
-    """A recording qemu-img stand-in; answers info, fakes create."""
+    """A recording qemu-img stand-in; answers info, fakes create.
+
+    The create branch finds its target by parsing the options (any
+    reorder of ``-f/-F/-b`` pairs), not by argument position.
+    """
     stub = directory / "qemu-img"
     stub.write_text(
         "#!/bin/sh\n"
@@ -33,8 +38,11 @@ def write_qemu_stub(directory: Path, record: Path) -> Path:
         '    printf \'{"format":"raw","virtual-size":%s}\\n\' "$size"\n'
         "    ;;\n"
         "  create)\n"
-        "    # create -f qcow2 -F raw -b BASE OVERLAY SIZE: arg 8\n"
-        '    : > "$8"\n'
+        "    shift\n"
+        '    while [ "$#" -gt 1 ]; do\n'
+        '      case "$1" in -f|-F|-b) shift 2 ;; *) break ;; esac\n'
+        "    done\n"
+        '    : > "$1"\n'
         "    ;;\n"
         "esac\n"
     )
@@ -45,7 +53,7 @@ def write_qemu_stub(directory: Path, record: Path) -> Path:
 def write_mkfs_stub(directory: Path, record: Path) -> Path:
     """A recording mkfs.ext4 stand-in."""
     stub = directory / "mkfs.ext4"
-    stub.write_text(f'#!/bin/sh\nprintf "%s\\n" "mkfs $*" >> {record}\n')
+    stub.write_text(f'#!/bin/sh\nprintf "%s\\n" "mkfs $*" >> {record}\nexit 0\n')
     stub.chmod(0o755)
     return stub
 
@@ -75,6 +83,21 @@ def spec(base: Path, root_mib: int = 10240, home_mib: int = 2048) -> VmSpec:
     )
 
 
+def recorded_sizes(record: Path, base: Path) -> list[str]:
+    """The overlay sizes asked of qemu-img create, in order."""
+    return re.findall(
+        rf"qemu-img create \S+(?: \S+)* -b {re.escape(str(base))} \S+ (\d+)",
+        record.read_text(),
+    )
+
+
+def tmp_debris(settings: VmmSettings) -> list[Path]:
+    """Scratch files left under the artifact directories."""
+    homes = list((settings.state_dir / "volumes").glob("*.tmp"))
+    overlays = list((settings.state_dir / "vms").rglob("*.tmp"))
+    return homes + overlays
+
+
 def test_paths_pin_the_layout(tmp_path: Path) -> None:
     assert persist.overlay_path(tmp_path, "ws1") == (
         tmp_path / "vms" / "ws1" / "root.qcow2"
@@ -91,13 +114,16 @@ async def test_ensure_creates_overlay_and_volume(tools) -> None:
     home = persist.home_volume_path(settings.state_dir, WID)
     assert overlay.is_file()
     assert home.is_file()
-    # The volume is sparse at its requested size; the overlay is
-    # created at the requested virtual size (bigger than the base).
+    # The volume is sparse at its requested size.
     assert home.stat().st_size == 2048 * 1024 * 1024
     assert home.stat().st_blocks * 512 < 1024 * 1024
+    # qemu-img create targeted a scratch sibling of the final overlay
+    # and asked for the requested virtual size (bigger than the base).
     argv = record.read_text()
-    assert f"qemu-img create -f qcow2 -F raw -b {base} {overlay} " in argv
-    assert f"mkfs -q -F -L msks-home {home}" in argv
+    assert f"qemu-img create -f qcow2 -F raw -b {base} " in argv
+    assert recorded_sizes(record, base) == [str(10240 * 1024 * 1024)]
+    assert "mkfs -q -F -L msks-home" in argv
+    assert not tmp_debris(settings)
 
 
 async def test_ensure_is_idempotent(tools) -> None:
@@ -109,16 +135,71 @@ async def test_ensure_is_idempotent(tools) -> None:
     assert record.read_text() == ""
 
 
+async def test_failed_mkfs_leaves_no_volume_and_retry_succeeds(tools) -> None:
+    """A failed format must not wedge the workspace on a blank file.
+
+    The old existence-equals-valid check made every later start skip
+    the mkfs and boot an unformatted disk.
+    """
+    settings, record, base = tools
+    (Path(settings.mkfs_ext4)).write_text("#!/bin/sh\nexit 1\n")
+    home = persist.home_volume_path(settings.state_dir, WID)
+    with pytest.raises(MicrovmError, match="mkfs on the home volume failed"):
+        await persist.ensure_artifacts(spec(base), settings)
+    assert not home.exists()
+    assert not tmp_debris(settings)
+    # The retry, with a working mkfs, formats and installs the volume.
+    write_mkfs_stub(Path(settings.mkfs_ext4).parent, record)
+    await persist.ensure_artifacts(spec(base), settings)
+    assert home.is_file()
+    assert "mkfs -q -F -L msks-home" in record.read_text()
+
+
+async def test_failed_overlay_create_leaves_no_artifact(tools) -> None:
+    """A create that dies mid-write installs nothing at the final path."""
+    settings, record, base = tools
+    qemu = Path(settings.qemu_img)
+    qemu.write_text(
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        "  info)\n"
+        "    for img do :; done\n"
+        '    size=$(stat -c %s "$img")\n'
+        '    printf \'{"format":"raw","virtual-size":%s}\\n\' "$size"\n'
+        "    ;;\n"
+        "  create)\n"
+        "    shift\n"
+        '    while [ "$#" -gt 1 ]; do\n'
+        '      case "$1" in -f|-F|-b) shift 2 ;; *) break ;; esac\n'
+        "    done\n"
+        '    printf partial > "$1"\n'
+        "    exit 1\n"
+        "    ;;\n"
+        "esac\n"
+    )
+    overlay = persist.overlay_path(settings.state_dir, WID)
+    with pytest.raises(MicrovmError, match="qemu-img create.*failed"):
+        await persist.ensure_artifacts(spec(base), settings)
+    assert not overlay.exists()
+    assert not tmp_debris(settings)
+    # A retry with the working stub creates a complete overlay.
+    write_qemu_stub(qemu.parent, record)
+    await persist.ensure_artifacts(spec(base), settings)
+    assert overlay.is_file()
+
+
 async def test_overlay_size_never_shrinks_below_base(tools) -> None:
     settings, record, base = tools
     await persist.ensure_artifacts(spec(base, root_mib=256), settings)
-    overlay = persist.overlay_path(settings.state_dir, WID)
-    # The base is 4 MiB; a 256 MiB request wins. A request below the
-    # base's size would truncate the base filesystem instead.
-    assert f"-b {base} {overlay} 268435456" in record.read_text()
+    assert recorded_sizes(record, base) == [str(256 * 1024 * 1024)]
     persist.remove_overlay(settings.state_dir, WID)
     await persist.ensure_artifacts(spec(base, root_mib=1), settings)
-    assert f"-b {base} {overlay} 4194304" in record.read_text()
+    # The base is 4 MiB; a request below the base's size would
+    # truncate the base filesystem instead.
+    assert recorded_sizes(record, base) == [
+        str(256 * 1024 * 1024),
+        str(4 * 1024 * 1024),
+    ]
 
 
 async def test_missing_base_names_the_path(tools) -> None:
@@ -169,3 +250,17 @@ def test_remove_overlay_and_volume(tmp_path: Path) -> None:
     home.write_bytes(b"volume")
     persist.remove_home_volume(tmp_path, WID)
     assert not home.exists()
+
+
+def test_remove_sweeps_crashed_scratch_files(tmp_path: Path) -> None:
+    """Debris from a creator that died mid-build goes with the artifact."""
+    overlay = persist.overlay_path(tmp_path, WID)
+    overlay.parent.mkdir(parents=True)
+    (overlay.parent / "root.qcow2.999-1.tmp").write_bytes(b"partial")
+    home = persist.home_volume_path(tmp_path, WID)
+    home.parent.mkdir(parents=True)
+    (home.parent / f"{WID}.ext4.999-2.tmp").write_bytes(b"partial")
+    persist.remove_overlay(tmp_path, WID)
+    persist.remove_home_volume(tmp_path, WID)
+    assert list(overlay.parent.glob("*.tmp")) == []
+    assert list(home.parent.glob("*.tmp")) == []

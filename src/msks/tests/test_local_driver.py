@@ -16,6 +16,7 @@ import pytest
 from fake_ch import FakeCH
 from msks.app import build_app
 from msks.microvm import MicrovmError, MicrovmTimeoutError, VmSpec
+from msks.microvm import local as local_mod
 from msks.microvm.local import disk_entries, map_ch_state, vm_config
 from msks.microvm.spec import VmStatus
 from msks.settings import Settings, VmmSettings
@@ -49,7 +50,11 @@ def env(tmp_path: Path):
         '    printf \'{"format":"raw","virtual-size":8388608}\\n\'\n'
         "    ;;\n"
         "  create)\n"
-        '    : > "$8"\n'
+        "    shift\n"
+        '    while [ "$#" -gt 1 ]; do\n'
+        '      case "$1" in -f|-F|-b) shift 2 ;; *) break ;; esac\n'
+        "    done\n"
+        '    : > "$1"\n'
         "    ;;\n"
         "esac\n"
     )
@@ -317,6 +322,30 @@ async def test_shutdown_graceful(env, fake, tmp_path: Path) -> None:
     assert ("PUT", "/api/v1/vm.power-button") in [(m, p) for m, p, _b in fake.requests]
 
 
+async def test_shutdown_represses_button_when_guest_ignores_it(
+    env, fake, tmp_path: Path, monkeypatch
+) -> None:
+    """A press during early boot lands before logind listens and is
+    dropped; the driver presses again instead of burning the whole
+    deadline on the one lost event (#14)."""
+    app, _, _ = env
+    await app.state.microvm.launch(spec(tmp_path))
+    proc = app.state.microvm.local._procs[WID]
+    monkeypatch.setattr(local_mod, "POWER_REPRESS_S", 0.05)
+    presses = 0
+
+    def stubborn_until_third_press() -> None:
+        nonlocal presses
+        presses += 1
+        if presses >= 3:
+            fake.state = {"state": "Shutdown"}
+            proc.terminate()
+
+    fake.on_shutdown.append(stubborn_until_third_press)
+    await app.state.microvm.shutdown(WID, timeout_s=5)
+    assert presses == 3
+
+
 async def test_shutdown_timeout_when_guest_never_powers_off(
     env, fake, tmp_path: Path
 ) -> None:
@@ -419,6 +448,35 @@ async def test_prepare_creates_artifacts(env, tmp_path: Path) -> None:
     await app.state.microvm.prepare(spec(tmp_path))
     assert persist.overlay_path(state_dir, WID).is_file()
     assert persist.home_volume_path(state_dir, WID).is_file()
+
+
+async def test_prepare_refuses_a_predecessors_artifacts(env, tmp_path: Path) -> None:
+    """Create never reuses another workspace-of-the-same-id's data.
+
+    The leftover is what a failed create whose cleanup could not
+    remove its files leaves behind; adopting it silently would hand
+    the new workspace the predecessor's root and /home.
+    """
+    app, state_dir, _ = env
+    home = persist.home_volume_path(state_dir, WID)
+    home.parent.mkdir(parents=True, exist_ok=True)
+    home.write_bytes(b"predecessor's data")
+    with pytest.raises(MicrovmError, match="already exists.*remove it"):
+        await app.state.microvm.prepare(spec(tmp_path))
+    assert not persist.overlay_path(state_dir, WID).exists()
+
+
+async def test_launch_heals_a_volume_only_leftover(env, fake, tmp_path: Path) -> None:
+    """Launch heals an artifact pair with only the volume present: the
+    overlay is recreated (data recovery), the volume is kept as data."""
+    app, state_dir, _ = env
+    home = persist.home_volume_path(state_dir, WID)
+    home.parent.mkdir(parents=True, exist_ok=True)
+    home.write_bytes(b"predecessor's data")
+    await app.state.microvm.launch(spec(tmp_path))
+    assert persist.overlay_path(state_dir, WID).is_file()
+    assert home.read_bytes() == b"predecessor's data"
+    await app.state.microvm.kill(WID)
 
 
 async def test_launch_heals_missing_artifacts(env, fake, tmp_path: Path) -> None:

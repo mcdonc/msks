@@ -30,6 +30,27 @@ def _parse_int(name: str, default: int) -> int:
         raise ValueError(f"{name} must be a number, got {raw!r}") from None
 
 
+def _parse_positive_int(name: str, default: int) -> int:
+    value = _parse_int(name, default)
+    if value <= 0:
+        raise ValueError(f"{name} must be positive, got {value}")
+    return value
+
+
+def _parse_optional_int(name: str, minimum: int) -> int | None:
+    """A positive-when-set integer: unset means "derive it"."""
+    raw = os.environ.get(name)
+    if raw in (None, ""):
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be a number, got {raw!r}") from None
+    if value < minimum:
+        raise ValueError(f"{name} must be at least {minimum}, got {value}")
+    return value
+
+
 def _env_float(name: str, default: float) -> float:
     raw = _env(name, str(default))
     try:
@@ -90,8 +111,8 @@ class VmmSettings:
             qemu_img=_env("MSKSD_QEMU_IMG", cls.qemu_img),
             mkfs_ext4=_env("MSKSD_MKFS_EXT4", cls.mkfs_ext4),
             host_name=_env("MSKSD_HOST_NAME", cls().host_name),
-            root_mib=_parse_int("MSKSD_ROOT_MIB", cls.root_mib),
-            home_mib=_parse_int("MSKSD_HOME_MIB", cls.home_mib),
+            root_mib=_parse_positive_int("MSKSD_ROOT_MIB", cls.root_mib),
+            home_mib=_parse_positive_int("MSKSD_HOME_MIB", cls.home_mib),
         )
 
 
@@ -128,9 +149,10 @@ class K8sSettings:
     # Per-workspace claims (#14): the storage class the admin's
     # cluster offers (unset asks the cluster's default) and each
     # claim's size — one PVC holds the workspace's overlay and home
-    # volume files, so it needs room for both.
+    # volume files, so it needs room for both. Unset derives the
+    # size from the workspace's root_mib + home_mib at create.
     storage_class: str | None = None
-    workspace_storage_gib: int = 2
+    workspace_storage_gib: int | None = None
 
     @classmethod
     def from_env(cls) -> K8sSettings:
@@ -140,8 +162,8 @@ class K8sSettings:
             kubeconfig=_env("MSKSD_KUBECONFIG", "") or None,
             api_timeout_s=_env_float("MSKSD_K8S_API_TIMEOUT_S", 30.0),
             storage_class=_env("MSKSD_K8S_STORAGE_CLASS", "") or None,
-            workspace_storage_gib=_parse_int(
-                "MSKSD_K8S_WORKSPACE_STORAGE_GIB", cls.workspace_storage_gib
+            workspace_storage_gib=_parse_optional_int(
+                "MSKSD_K8S_WORKSPACE_STORAGE_GIB", minimum=1
             ),
         )
 
