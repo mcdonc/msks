@@ -241,6 +241,16 @@ class KubernetesRunner(MicrovmDriver):
             )
 
     async def launch(self, spec: VmSpec) -> None:
+        # Egress stays local-only until the NetworkPolicy parity work
+        # (#69): the runner pod refuses the netns privilege NFQUEUE
+        # consent needs, and a pod without enforcement would present
+        # egress as unrestricted. Refuse by name instead.
+        if spec.egress:
+            raise MicrovmError(
+                f"workspace {spec.workspace_id} requests egress, which the "
+                "k8s backend does not serve yet (NetworkPolicy parity is "
+                "#69); create it without egress"
+            )
         # Boots heal their claim, same as the local backend heals its
         # artifact files: a pre-#14 row (or a manually deleted PVC)
         # gets the claim back before the pod pends on a missing one.

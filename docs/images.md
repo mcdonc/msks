@@ -66,6 +66,16 @@ boots. A guest image must:
   and the unit sets `TERM=xterm` so bash's readline engages (#61);
   a service without these settings serves a shell that cannot echo
   what the user types.
+- **Take an address over DHCP when a NIC is present.** Workspaces
+  are networked by default (#52): the VM boots with a virtio-net NIC
+  — Debian's kernel ships `virtio_net`, and the shipped overlay loads
+  it at boot — and the daemon's DHCP service offers the address,
+  gateway, and its own resolver. The overlay carries a
+  systemd-networkd `.network` unit (`Name=en* eth*`, `DHCP=yes`)
+  plus resolved's stub resolv.conf, so the guest configures whatever
+  NIC appears. A workspace created with `"egress": false` presents
+  no NIC: nothing matches the unit and networkd stays idle — the
+  same image serves both postures.
 - **Answer the ACPI power button.** `stop` presses the power button
   (`vm.power-button`) and waits; the guest's own handler runs the
   clean shutdown that flushes its disks — systemd-logind does this
@@ -112,7 +122,12 @@ image. The outline, using a distro's own cloud image as the source:
    (`qemu-img convert` + partition extraction, or unpack the
    cloud image's root archive directly).
 3. Install the console service and enable it; make sure the vsock
-   module is present and `/dev/vsock` is created at boot.
+   module is present and `/dev/vsock` is created at boot. For
+   egress-capable workspaces, also enable a DHCP client for whatever
+   NIC appears (a systemd-networkd `.network` unit matching `en*`/
+   `eth*`, or dhcpcd) — the daemon's DHCP service configures the NIC
+   when the workspace opts into egress, and a NIC-less boot must
+   still reach multi-user.target.
 4. Write `disk/image.json` describing your kernel, cmdline, and
    vsock port.
 5. Lay out `boot/` and `disk/` as the layer tree and wrap it:

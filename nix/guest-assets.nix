@@ -133,14 +133,18 @@ let
 
   # The msks additions, staged as an overlay tree: the vsock console
   # service, serial-console autologin (the debug console), the vsock
-  # module load, and a stable hostname. Debian's socat 1.8.x is
-  # built WITH_VSOCK, so nothing is cross-compiled in.
+  # and net module loads, a stable hostname, and the DHCP client an
+  # egress workspace (#52) brings up. Debian's socat 1.8.x is built
+  # WITH_VSOCK, so nothing is cross-compiled in.
   guestOverlay = pkgs.runCommand "msks-guest-overlay" { } ''
     set -eu
     mkdir -p \
       $out/home \
       $out/etc/systemd/system/serial-getty@ttyS0.service.d \
       $out/etc/systemd/system/multi-user.target.wants \
+      $out/etc/systemd/system/sockets.target.wants \
+      $out/etc/systemd/system/sysinit.target.wants \
+      $out/etc/systemd/network \
       $out/etc/modules-load.d
 
     printf 'msks-guest\n' > $out/etc/hostname
@@ -169,6 +173,45 @@ let
       '# is vmw_vsock_virtio_transport (#21).' \
       'vmw_vsock_virtio_transport' \
       > $out/etc/modules-load.d/msks-vsock.conf
+
+    # Egress networking (#52): a workspace created with egress boots
+    # with a virtio-net NIC; everything else presents none. The
+    # module loads at boot either way (udev would autoload it on
+    # device discovery too), so networkd never waits on a cold probe.
+    printf '%s\n' \
+      '# The virtio-net driver for egress NICs (#52).' \
+      'virtio_net' \
+      > $out/etc/modules-load.d/msks-net.conf
+
+    # The DHCP client for an egress NIC (#52): networkd takes an
+    # address and the daemon's resolver over DHCP on whatever NIC
+    # appears. With no NIC (a workspace without egress) nothing
+    # matches the unit and networkd stays idle — the same image
+    # serves both postures.
+    printf '%s\n' \
+      '[Match]' \
+      'Name=en* eth*' \
+      "" \
+      '[Network]' \
+      'DHCP=yes' \
+      > $out/etc/systemd/network/80-msks-egress.network
+
+    # networkd + resolved stay enabled for egress workspaces (#52):
+    # DHCP configures the NIC and resolved serves the offered
+    # resolver at 127.0.0.53. The boot-diet lines that dropped these
+    # wants symlinks are gone (they predate NICs); wait-online stays
+    # dropped — nothing orders on network-online.target.
+    ln -s /lib/systemd/system/systemd-networkd.service \
+      $out/etc/systemd/system/multi-user.target.wants/systemd-networkd.service
+    ln -s /lib/systemd/system/systemd-networkd.socket \
+      $out/etc/systemd/system/sockets.target.wants/systemd-networkd.socket
+    ln -s /lib/systemd/system/systemd-resolved.service \
+      $out/etc/systemd/system/sysinit.target.wants/systemd-resolved.service
+    # resolved's stub: the symlink may exist in the source image, but
+    # an image edited to a static resolv.conf would silently ignore
+    # the DHCP-offered resolver.
+    rm -f $out/etc/resolv.conf
+    ln -s /run/systemd/resolve/stub-resolv.conf $out/etc/resolv.conf
 
     # Escape the default basic.target ordering (#37): the console
     # starts as soon as the vsock module is loaded, not after the
@@ -315,24 +358,21 @@ let
       test -s "$root"/usr/lib/modules/"$kver"/modules.dep
 
       # Boot diet (#37): drop the wants symlinks of units a
-      # workspace never uses. Removing the symlink (not masking)
-      # keeps the targets clean of failed jobs: networkd and
-      # timesyncd have no network to serve, unattended-upgrades no
-      # repo to reach, e2scrub_reap no LVM to reap.
+      # workspace never uses. networkd and resolved stay (egress
+      # workspaces get a NIC, #52; the overlay enables both);
+      # timesyncd has no served clock until a resolver exists,
+      # unattended-upgrades no repo to reach, e2scrub_reap no LVM
+      # to reap.
       wants="$root"/etc/systemd/system
       # The image ships some wants directories read-only; the build
       # owns them now.
       chmod u+w "$wants"/*.target.wants "$wants"/*.target.requires 2>/dev/null || true
-      rm -f "$wants"/multi-user.target.wants/systemd-networkd.service
       rm -f "$wants"/multi-user.target.wants/unattended-upgrades.service
       rm -f "$wants"/multi-user.target.wants/e2scrub_reap.service
-      rm -f "$wants"/sockets.target.wants/systemd-networkd.socket
-      rm -f "$wants"/sysinit.target.wants/systemd-resolved.service
       rm -f "$wants"/sysinit.target.wants/systemd-timesyncd.service
       rm -f "$wants"/network-online.target.wants/systemd-networkd-wait-online.service
-      # The netplan renderer config re-enables networkd through the
-      # systemd generator at every boot even with every wants
-      # symlink gone; a workspace has no NIC to configure.
+      # The netplan renderer config is replaced by the overlay's own
+      # .network unit (#52); the generator would only shadow it.
       chmod u+w "$root"/etc
       chmod -R u+w "$root"/etc/netplan
       rm -rf "$root"/etc/netplan

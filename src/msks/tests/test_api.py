@@ -480,3 +480,30 @@ async def test_delete_never_started_workspace(client) -> None:
     )
     response = await http.delete("/api/v1/workspaces/never-started", headers=auth())
     assert response.status_code == 200
+
+
+async def test_create_records_egress(client) -> None:
+    """Workspaces get egress by default (#52); "egress": false opts
+    into the no-NIC posture."""
+    http, _app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-eg", "kernel": "/k", "rootfs": "/r", "egress": True},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    assert created.json()["egress"] is True
+    fetched = await http.get("/api/v1/workspaces/ws-eg", headers=auth())
+    assert fetched.json()["egress"] is True
+    plain = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-plain", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert plain.json()["egress"] is True  # the default
+    quiet = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-quiet", "kernel": "/k", "rootfs": "/r", "egress": False},
+        headers=auth(),
+    )
+    assert quiet.json()["egress"] is False

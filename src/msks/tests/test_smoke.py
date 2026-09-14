@@ -226,6 +226,7 @@ async def test_local_vm_boot_and_shutdown() -> None:
         rootfs=Path(ROOTFS),
         initrd=Path(INITRD) if INITRD else None,
         cmdline=CMDLINE or "console=hvc0 root=/dev/vda rw",
+        egress=False,
     )
     try:
         await microvm.launch(spec)
@@ -278,6 +279,7 @@ async def test_local_persistence_across_restart_and_reset() -> None:
         cmdline=CMDLINE or "console=hvc0 root=/dev/vda rw",
         root_mib=2048,
         home_mib=256,
+        egress=False,
     )
     root_marker = f"ROOT-{uuid.uuid4().hex[:6]}"
     home_marker = f"HOME-{uuid.uuid4().hex[:6]}"
@@ -354,6 +356,7 @@ async def test_k8s_pod_lifecycle() -> None:
         workspace_id=wid,
         kernel=Path("/opt/msks/vmlinux"),
         rootfs=Path("/opt/msks/rootfs.ext4"),
+        egress=False,
     )
     try:
         await microvm.launch(spec)
@@ -558,3 +561,100 @@ async def test_appliance_boot_and_workspace() -> None:
     assert "No process manager is running" in listing.stdout + listing.stderr, (
         f"process manager still alive after down:\n{listing.stdout}"
     )
+
+
+# --- egress smoke (#52) ----------------------------------------------------
+#
+# Boots a workspace with egress on this host: real tap + nftables +
+# DHCP + DNS forwarder, then proves the guest took its address over
+# DHCP, resolves through the daemon's resolver, and reaches the
+# outside over the NAT'd uplink. Opt-in: it needs root (tap/nft/ports
+# 67+53), /dev/kvm, the built guest image (with the #52 DHCP overlay),
+# and an egress-capable default route.
+
+EGRESS = os.environ.get("MSKSD_TEST_EGRESS")
+
+
+def _default_route_iface() -> str:
+    """The uplink NAT hides guests behind (the default route's dev)."""
+    route = subprocess.run(
+        ["ip", "route", "show", "default"], capture_output=True, text=True
+    ).stdout
+    parts = route.split()
+    for i, part in enumerate(parts):
+        if part == "dev":
+            return parts[i + 1]
+    raise AssertionError(f"no default route to NAT behind: {route!r}")
+
+
+needs_egress = pytest.mark.skipif(
+    not EGRESS
+    or not VMLINUX
+    or not ROOTFS
+    or not os.access("/dev/kvm", os.W_OK)
+    or os.geteuid() != 0,
+    reason=(
+        "set MSKSD_TEST_EGRESS=1 as root with /dev/kvm, built guest "
+        "assets, and MSKSD_TEST_VMLINUX/MSKSD_TEST_ROOTFS"
+    ),
+)
+
+
+@needs_egress
+async def test_local_egress_boot() -> None:
+    """DHCP address, daemon resolver, NAT'd TCP — end to end (#52)."""
+    from msks.settings import NetSettings
+
+    nft_tool = os.environ.get("MSKSD_TEST_NFT") or shutil.which("nft") or "nft"
+    ip_tool = os.environ.get("MSKSD_TEST_IP") or shutil.which("ip") or "ip"
+    state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
+    settings = Settings(
+        vmm=VmmSettings(state_dir=state_dir),
+        net=NetSettings(
+            enabled=True,
+            uplink=_default_route_iface(),
+            ip_tool=ip_tool,
+            nft_tool=nft_tool,
+        ),
+    )
+    app = build_app(settings)
+    microvm = app.state.microvm
+    wid = f"smoke-{uuid.uuid4().hex[:8]}"
+    serial_log = state_dir / "vms" / wid / "serial.log"
+    spec = VmSpec(
+        workspace_id=wid,
+        kernel=Path(VMLINUX),
+        rootfs=Path(ROOTFS),
+        initrd=Path(INITRD) if INITRD else None,
+        cmdline=CMDLINE or "console=hvc0 root=/dev/vda rw",
+        egress=True,
+    )
+    try:
+        await app.state.net.start()
+        await microvm.launch(spec)
+        await await_guest_up(serial_log)
+        # DHCP: the /30's guest address and the tap as the gateway.
+        await run_in_console(microvm, wid, "ip -4 addr | grep 172.31", "172.31")
+        await run_in_console(
+            microvm, wid, "ip route | grep default", "default via 172.31"
+        )
+        # DNS: through the daemon's forwarder (the offered resolver).
+        await run_in_console(microvm, wid, "getent hosts deb.debian.org", "deb.debian")
+        # Egress: a TCP connection out through the NAT'd uplink.
+        await run_in_console(
+            microvm,
+            wid,
+            "timeout 5 bash -c '</dev/tcp/deb.debian.org/80' && echo TCP-OK",
+            "TCP-OK",
+        )
+        await microvm.shutdown(wid, timeout_s=60)
+        final = await microvm.info(wid)
+        assert final.status.value in ("stopped", "absent")
+    except BaseException:
+        with contextlib.suppress(Exception):
+            await microvm.kill(wid)
+        raise
+    finally:
+        with contextlib.suppress(Exception):
+            await microvm.cleanup(wid)
+        shutil.rmtree(state_dir, ignore_errors=True)

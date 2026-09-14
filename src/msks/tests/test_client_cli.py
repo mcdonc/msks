@@ -442,3 +442,16 @@ def test_main_interrupt_is_one_line(
         cli.main(["list"])
     assert excinfo.value.code == 130
     assert "interrupted" in capsys.readouterr().err
+
+
+def test_create_body_egress_flags() -> None:
+    """--egress/--no-egress override the create body; unset sends the
+    daemon's default (egress on, #52)."""
+    parser = cli.build_parser()
+
+    def body(argv: list[str]) -> dict:
+        return cli.create_body(parser.parse_args(argv))
+
+    assert "egress" not in body(["create", "ws"])
+    assert body(["create", "ws", "--egress"])["egress"] is True
+    assert body(["create", "ws", "--no-egress"])["egress"] is False

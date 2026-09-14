@@ -61,6 +61,11 @@ let
   qemuImg = pkgs.qemu-utils;
   e2fsprogs = pkgs.e2fsprogs;
 
+  # Egress plumbing (#52): the full `ip` (busybox's has no tuntap
+  # here) and nftables for the per-VM chains and NAT.
+  iproute2 = pkgs.iproute2;
+  nftables = pkgs.nftables;
+
   # Network plan (the up-task mirrors it on the host bridge):
   net = {
     address = "192.168.77.2";
@@ -164,6 +169,13 @@ let
       "kvm"
       "kvm_intel"
       "kvm_amd"
+      # Egress (#52): the tap device, the nftables core, NAT, and
+      # conntrack (NAT's dependency).
+      "tun"
+      "nf_tables"
+      "nft_chain_nat"
+      "nf_nat"
+      "nf_conntrack"
     ];
   };
 
@@ -249,13 +261,18 @@ let
       echo "msks appliance: kernel $(uname -r) up; execing msksd"
       echo "msks appliance: serving https://${net.address}:8660 (TOFU fingerprint on the serial log)"
 
-      export PATH="${qemuImg}/bin:${e2fsprogs}/sbin:${vmm}/bin:${msks}/bin:$PATH"
+      export PATH="${iproute2}/sbin:${nftables}/sbin:${qemuImg}/bin:${e2fsprogs}/sbin:${vmm}/bin:${msks}/bin:$PATH"
       export MSKSD_STATE_DIR=/state
       export MSKSD_HOST=0.0.0.0
       export MSKSD_PORT=8660
       export MSKSD_CLOUD_HYPERVISOR="${vmm}/bin/cloud-hypervisor"
       export MSKSD_QEMU_IMG="${qemuImg}/bin/qemu-img"
       export MSKSD_MKFS_EXT4="${e2fsprogs}/sbin/mkfs.ext4"
+      # Egress (#52): the appliance runs as root, so the plumbing
+      # arms and workspaces get a NIC by default.
+      export MSKSD_EGRESS_ENABLED=true
+      export MSKSD_IP_TOOL="${iproute2}/sbin/ip"
+      export MSKSD_NFT_TOOL="${nftables}/sbin/nft"
       # Debug escape hatch: a /state/debug-shell marker (seeded onto
       # the state disk from the host) backgrounds the daemon and gives
       # the console an interactive shell instead of exec'ing PID 1.

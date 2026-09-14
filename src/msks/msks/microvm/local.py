@@ -92,7 +92,11 @@ POWER_REPRESS_S = 5.0
 
 
 def vm_config(
-    spec: VmSpec, disks: list[dict], serial_log: Path, vsock_socket: Path | None = None
+    spec: VmSpec,
+    disks: list[dict],
+    serial_log: Path,
+    vsock_socket: Path | None = None,
+    net: dict | None = None,
 ) -> dict:
     """The ``PUT /api/v1/vm.create`` body for one spec (v52 schema).
 
@@ -106,6 +110,12 @@ def vm_config(
     one vsock connection into the guest after the ``CONNECT <port>``
     handshake (#21). The CID is per-VMM — every workspace runs its
     own cloud-hypervisor with its own socket, so a constant works.
+
+    ``net`` adds the virtio-net device (#52): ``tap`` names the
+    per-VM interface the appliance already created and addressed (a
+    plain dict ``{"tap": ..., "mac": ...}`` from the net manager's
+    attachment; v52 takes a one-element sequence), and ``mac`` pins
+    the workspace's deterministic MAC.
     """
     payload: dict = {
         "kernel": str(spec.kernel),
@@ -125,7 +135,16 @@ def vm_config(
     }
     if vsock_socket is not None:
         vm["vsock"] = {"cid": VSOCK_CID, "socket": str(vsock_socket)}
+    if net is not None:
+        vm["net"] = [net]
     return vm
+
+
+def vm_net(attachment) -> dict | None:
+    """The v52 net device for an attachment, or None without egress."""
+    if attachment is None:
+        return None
+    return {"tap": attachment.tap, "mac": attachment.mac}
 
 
 def disk_entries(state_dir: Path, workspace_id: str) -> list[dict]:
@@ -220,6 +239,18 @@ class LocalCloudHypervisor(MicrovmDriver):
         self._ensure_launchable(spec.workspace_id, vm_dir)
         self._check_socket_path(vm_dir / "api.sock")
         vm_dir.mkdir(parents=True, exist_ok=True)
+        # Egress (#52): the tap must exist before the VMM opens it,
+        # so the attachment arms first — and unwinds on any failure
+        # below, leaving no half-open plumbing behind.
+        attachment = await self._net_attach(spec)
+        try:
+            await self._boot(spec, vmm, vm_dir, attachment)
+        except BaseException:
+            await self._net_detach(spec.workspace_id)
+            raise
+
+    async def _boot(self, spec: VmSpec, vmm, vm_dir: Path, attachment) -> None:
+        """Spawn the VMM and boot the VM (artifacts healed first, #14)."""
         # Boots heal their artifacts (#14): a workspace row whose
         # overlay or volume is missing (a crash mid-create, or a row
         # that predates #14) gets them back before the VM starts.
@@ -238,10 +269,19 @@ class LocalCloudHypervisor(MicrovmDriver):
                 serial_log,
                 vmm.request_timeout_s,
                 vsock_socket=vm_dir / "vsock.sock",
+                net=vm_net(attachment),
             )
         except BaseException:
             await self._reap(spec.workspace_id, proc)
             raise
+
+    async def _net_attach(self, spec: VmSpec):
+        """Arm the workspace's egress plumbing when it asked for it."""
+        return await self.app.state.net.attach(spec.workspace_id, want=spec.egress)
+
+    async def _net_detach(self, workspace_id: str) -> None:
+        """Tear the workspace's egress plumbing down (idempotent)."""
+        await self.app.state.net.detach(workspace_id)
 
     def _check_socket_path(self, socket_path: Path) -> None:
         """AF_UNIX sun_path caps at 108 bytes; fail with a named cause.
@@ -279,11 +319,18 @@ class LocalCloudHypervisor(MicrovmDriver):
             log_file.close()
 
     async def _configure_and_boot(
-        self, spec, disks, socket_path, serial_log, timeout_s, vsock_socket=None
+        self,
+        spec,
+        disks,
+        socket_path,
+        serial_log,
+        timeout_s,
+        vsock_socket=None,
+        net=None,
     ) -> None:
         api = CloudHypervisorApi(socket_path, timeout_s)
         try:
-            await api.create(vm_config(spec, disks, serial_log, vsock_socket))
+            await api.create(vm_config(spec, disks, serial_log, vsock_socket, net))
             await api.boot()
         finally:
             await api.aclose()
@@ -378,11 +425,13 @@ class LocalCloudHypervisor(MicrovmDriver):
         socket_path = self._dir(workspace_id) / "api.sock"
         if not socket_path.exists() or not self._vmm_reachable(workspace_id):
             self._procs.pop(workspace_id, None)
+            await self._net_detach(workspace_id)
             return
         timeout = timeout_s if timeout_s is not None else vmm.shutdown_timeout_s
         deadline = asyncio.get_running_loop().time() + timeout
         await self._graceful_guest_down(workspace_id, deadline)
         await self._terminate(workspace_id, deadline)
+        await self._net_detach(workspace_id)
 
     async def _graceful_guest_down(self, workspace_id: str, deadline: float) -> None:
         """Request the ACPI poweroff and wait for the guest to land.
@@ -473,13 +522,16 @@ class LocalCloudHypervisor(MicrovmDriver):
         if proc is not None:
             proc.kill()
             await proc.wait()
+            await self._net_detach(workspace_id)
             return
         pid = self._pid(workspace_id)
         if pid is None or not self._pid_alive(pid):
             # Already dead (or never started): killing an absent VM is
             # success — the absent-VM contract shutdown honors too.
+            await self._net_detach(workspace_id)
             return
         os.kill(pid, signal.SIGKILL)
+        await self._net_detach(workspace_id)
 
     async def reset(self, workspace_id: str) -> None:
         """Factory reset: drop the root overlay, keep the home volume.
@@ -493,6 +545,7 @@ class LocalCloudHypervisor(MicrovmDriver):
             raise MicrovmError(
                 f"workspace {workspace_id} still runs; stop it before reset"
             )
+        await self._net_detach(workspace_id)
         persist.remove_overlay(self._settings().vmm.state_dir, workspace_id)
 
     async def cleanup(self, workspace_id: str) -> None:
@@ -512,4 +565,5 @@ __all__ = [
     "disk_entries",
     "map_ch_state",
     "vm_config",
+    "vm_net",
 ]

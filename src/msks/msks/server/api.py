@@ -64,6 +64,10 @@ class WorkspaceCreate(BaseModel):
     # the MSKSD_ROOT_MIB / MSKSD_HOME_MIB defaults.
     root_mib: int | None = Field(default=None, ge=256, le=65536)
     home_mib: int | None = Field(default=None, ge=64, le=65536)
+    # Egress networking (#52): boots with a virtio-net NIC onto a
+    # per-VM tap in the appliance — the default. "egress": false opts
+    # into the no-NIC posture.
+    egress: bool = True
 
 
 def bootstrap_default_image(app) -> None:
@@ -132,6 +136,7 @@ def resolve_boot(app, body: WorkspaceCreate) -> dict:
         "cpus": body.cpus,
         "mem_mib": body.mem_mib,
         "image_hash": bound_image_hash(body, record),
+        "egress": body.egress,
         **artifact_sizes(app, body),
     }
 
@@ -201,6 +206,7 @@ def spec_for(row: dict) -> VmSpec:
         initrd=initrd,
         root_mib=row["root_mib"],
         home_mib=row["home_mib"],
+        egress=bool(row.get("egress", False)),
     )
 
 
@@ -253,6 +259,7 @@ def build_api(app) -> FastAPI:
             app.state.model.migrate()
             await app.state.model.bootstrap_token()
             bootstrap_default_image(app)
+            await app.state.net.start()
             watcher = asyncio.create_task(watch_loop(app, hub))
             api.state.watcher = watcher
             yield
@@ -268,6 +275,7 @@ def build_api(app) -> FastAPI:
                     with contextlib.suppress(asyncio.CancelledError):
                         await watcher
             finally:
+                await app.state.net.stop()
                 await app.state.model.close()
 
     api = FastAPI(title="msksd", version=__version__, lifespan=lifespan)

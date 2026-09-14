@@ -35,6 +35,7 @@
       curl # unix-socket REST poking during CH debugging
       e2fsprogs # debugfs: seed the bootstrap token onto the state disk
       iproute2 # the appliance bridge/tap (supervisor scripts; host-agnostic)
+      nftables # egress chains/NAT for the #52 smoke path
       qemu # qemu-img for rootfs conversion during guest-image experiments
       virtiofsd # the appliance's read-only /nix/store share (#10)
       ruff

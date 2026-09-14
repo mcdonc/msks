@@ -106,7 +106,10 @@ def create_body(args: argparse.Namespace) -> dict:
         "root_mib": args.root_mib,
         "home_mib": args.home_mib,
     }
-    return {name: value for name, value in fields.items() if value is not None}
+    body = {name: value for name, value in fields.items() if value is not None}
+    if args.egress is not None:
+        body["egress"] = args.egress
+    return body
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -128,6 +131,13 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--mem-mib", type=int, help="guest memory, MiB (default 1024)")
     create.add_argument("--root-mib", type=int, help="persistent root size, MiB")
     create.add_argument("--home-mib", type=int, help="persistent home size, MiB")
+    create.add_argument(
+        "--egress",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="boot with a virtio-net NIC onto a per-VM appliance tap "
+        "(#52; the default is yes — use --no-egress to boot NIC-less)",
+    )
     create.add_argument(
         "--start", action="store_true", help="boot the workspace immediately"
     )

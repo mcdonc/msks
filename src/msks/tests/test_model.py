@@ -113,6 +113,7 @@ async def test_migration_backfills_pre14_rows(tmp_path: Path, app_for) -> None:
     assert row["host"] is None  # pre-#14 rows adopt the starting host
     assert row["root_mib"] == 10240
     assert row["home_mib"] == 2048
+    assert row["egress"] is False  # pre-egress rows keep the no-NIC posture
     assert row["status"] == "stopped"
 
 
@@ -267,3 +268,15 @@ def test_migrate_refuses_to_stamp_past_an_older_gap(tmp_path, monkeypatch) -> No
     monkeypatch.setattr(alembic_command, "upgrade", boom)
     with pytest.raises(OperationalError, match="duplicate column name"):
         model_mod.Model(App(settings)).migrate()
+
+
+async def test_workspace_egress_default_and_opt_out(app_for) -> None:
+    """Egress is the workspace default (#52); egress=False opts out."""
+    app = app_for()
+    await app.state.model.create_all()
+    row = await app.state.model.create_workspace(spec())
+    assert row["egress"] is True
+    quiet = await app.state.model.create_workspace(spec("ws2", egress=False))
+    assert quiet["egress"] is False
+    fetched = await app.state.model.get_workspace("ws1")
+    assert fetched["egress"] is True

@@ -247,6 +247,7 @@ def workspace_fields(spec: VmSpec, image_hash: str | None, host: str | None) -> 
         "host": host,
         "root_mib": spec.root_mib,
         "home_mib": spec.home_mib,
+        "egress": spec.egress,
         "status": "created",
     }
 
@@ -265,6 +266,7 @@ def workspace_dict(row: Workspace) -> dict:
         "host": row.host,
         "root_mib": row.root_mib,
         "home_mib": row.home_mib,
+        "egress": row.egress,
         "status": row.status,
         "created_at": row.created_at.isoformat(),
     }

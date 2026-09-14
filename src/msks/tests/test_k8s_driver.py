@@ -64,8 +64,13 @@ def app_with_k8s(tmp_path, monkeypatch, handler) -> object:
 
 
 def spec(tmp_path) -> VmSpec:
+    # egress=False: the k8s backend refuses egress boots until #69,
+    # so the lifecycle tests opt out explicitly.
     return VmSpec(
-        workspace_id=WID, kernel=tmp_path / "vmlinux", rootfs=tmp_path / "rootfs.ext4"
+        workspace_id=WID,
+        kernel=tmp_path / "vmlinux",
+        rootfs=tmp_path / "rootfs.ext4",
+        egress=False,
     )
 
 
@@ -472,3 +477,17 @@ async def test_shutdown_and_kill_tolerate_absent_pod(tmp_path, monkeypatch) -> N
     app = app_with_k8s(tmp_path, monkeypatch, handler)
     await app.state.microvm.shutdown(WID)
     await app.state.microvm.kill(WID)
+
+
+async def test_launch_refuses_egress(tmp_path, monkeypatch) -> None:
+    """Egress boots refuse on k8s until NetworkPolicy parity (#69)."""
+    app = app_with_k8s(tmp_path, monkeypatch, lambda req: pod())
+    with pytest.raises(MicrovmError, match="does not serve yet"):
+        await app.state.microvm.launch(
+            VmSpec(
+                workspace_id=WID,
+                kernel=tmp_path / "vmlinux",
+                rootfs=tmp_path / "rootfs.ext4",
+                egress=True,
+            )
+        )
