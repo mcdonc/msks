@@ -135,6 +135,9 @@ def cmd_rm(workspace_ids: list[str], transport=None) -> int:
 
 HEX_DIGITS = set("0123456789abcdef")
 
+#: How many refs an error line spells out before "… (+N more)".
+CATALOG_REF_CAP = 8
+
 
 def format_image(row: dict) -> str:
     """One catalog line: ref, short hash, default flag, kernel."""
@@ -244,8 +247,9 @@ def pin_matches(ref: str, rows: list[dict]) -> list[dict]:
 
 
 def require_hash_digest(ref: str, digest: str) -> None:
-    """A pin's hash part is hex; anything else is a named error."""
-    if not digest or not set(digest) <= HEX_DIGITS:
+    """A pin's hash part is a full 64-hex digest (the daemon's
+    ``is_hash_shape``); anything else is a named error."""
+    if len(digest) != 64 or not set(digest) <= HEX_DIGITS:
         raise SystemExit(f"msks: malformed image hash in {ref!r}")
 
 
@@ -256,8 +260,9 @@ def name_version_matches(ref: str, rows: list[dict]) -> list[dict]:
 
 
 def hash_prefix_matches(rows: list[dict], prefix: str) -> list[dict]:
-    """Hashes the prefix selects; non-hex prefixes select nothing."""
-    if not set(prefix) <= HEX_DIGITS:
+    """Hashes the prefix selects; empty and non-hex select nothing
+    (an empty reference must not match every row)."""
+    if not prefix or not set(prefix) <= HEX_DIGITS:
         return []
     return [row for row in rows if row["hash"].startswith(prefix)]
 
@@ -273,9 +278,13 @@ def newest_version_rows(name: str, rows: list[dict]) -> list[dict]:
 
 
 def catalog_refs(rows: list[dict]) -> str:
-    """The catalog (or a match set) spelled out for an error."""
+    """The catalog (or a match set) spelled out for an error, capped
+    so a large catalog stays one readable line."""
     refs = [f"{row['name']}:{row['version']}" for row in rows]
-    return ", ".join(refs) or "(the catalog is empty)"
+    shown = ", ".join(refs[:CATALOG_REF_CAP])
+    if len(refs) <= CATALOG_REF_CAP:
+        return shown or "(the catalog is empty)"
+    return f"{shown}, … (+{len(refs) - CATALOG_REF_CAP} more)"
 
 
 def no_image_message(ref: str, rows: list[dict]) -> str:
@@ -283,9 +292,12 @@ def no_image_message(ref: str, rows: list[dict]) -> str:
 
 
 def ambiguous_image_message(ref: str, matches: list[dict]) -> str:
+    # name:version is deliberately absent from the advice: the usual
+    # ambiguity is two imports of the same name:version (a rebuilt
+    # archive), where only the hash forms still identify one image.
     return (
         f"msks: {ref!r} matches {len(matches)} images "
-        f"({catalog_refs(matches)}); use the full hash or name:version"
+        f"({catalog_refs(matches)}); use the full hash or name@hash"
     )
 
 
@@ -391,8 +403,8 @@ def build_parser() -> argparse.ArgumentParser:
     image_rm = image_sub.add_parser("rm", help="remove an image from the catalog")
     image_rm.add_argument(
         "ref",
-        help="name:version, bare name (newest), name@hash, or hash "
-        "(a unique hash prefix works too)",
+        help="name:version, bare name (newest), name@hash (full hash), "
+        "or hash (a unique hash prefix works too)",
     )
     image_info = image_sub.add_parser("info", help="show one image's full record")
     image_info.add_argument("ref", help="name:version, bare name, name@hash, or hash")

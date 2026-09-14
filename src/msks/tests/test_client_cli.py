@@ -796,13 +796,17 @@ def test_image_import_posts_source_and_prints_ref(
     assert "imported debian:13" in out and "a" * 12 in out
 
 
-def test_image_import_help_states_the_daemon_reads_the_path() -> None:
-    parser = cli.build_parser()
-    args = parser.parse_args(["image", "import", "/x.tar"])
-    assert args.command == "image" and args.image_command == "import"
-    assert args.source == "/x.tar"
-    help_text = cli.build_parser().format_help()
-    assert "image" in help_text
+def test_image_import_help_states_the_daemon_reads_the_path(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The daemon-side-path fact is pinned in the real --help text,
+    not just implied (an issue #65 acceptance criterion)."""
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(["image", "import", "--help"])
+    assert excinfo.value.code == 0
+    out = capsys.readouterr().out
+    assert "read by the daemon" in out
+    assert "not uploaded" in out
 
 
 @pytest.mark.parametrize(
@@ -868,14 +872,26 @@ def test_image_rm_ambiguous_prefix_is_named(monkeypatch: pytest.MonkeyPatch) -> 
 
     with pytest.raises(SystemExit) as excinfo:
         cli.cmd_image_rm("a" * 63, transport=mock(handler))
-    assert "matches 2 images" in str(excinfo.value)
-    assert "debian:13" in str(excinfo.value) and "debian:13.1" in str(excinfo.value)
+    message = str(excinfo.value)
+    assert "matches 2 images" in message
+    assert "debian:13" in message and "debian:13.1" in message
+    assert "use the full hash or name@hash" in message
 
 
 def test_image_rm_malformed_pin_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     client_env(monkeypatch)
-    with pytest.raises(SystemExit, match="malformed image hash in 'debian@zzz'"):
-        cli.cmd_image_rm("debian@zzz", transport=listing_transport())
+    for ref in ("debian@zzz", "debian@" + "a" * 12):
+        with pytest.raises(SystemExit, match=f"malformed image hash in '{ref}'"):
+            cli.cmd_image_rm(ref, transport=listing_transport())
+
+
+def test_image_rm_empty_ref_is_a_miss(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An empty reference (unset $REF) matches nothing — it must not
+    select every hash via the empty-prefix path."""
+    client_env(monkeypatch)
+    sole = mock(lambda req: httpx.Response(200, json=[IMAGES[0]]))
+    with pytest.raises(SystemExit, match="no image matches ''"):
+        cli.cmd_image_rm("", transport=sole)
 
 
 def test_image_info_prints_the_record(

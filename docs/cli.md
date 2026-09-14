@@ -199,8 +199,8 @@ chars), the default designation, and the kernel facts:
 
 ```text
 $ msks image ls
-debian:13                9f2c41ab77de   default   6.12.107+deb13 (raw)
-alpine:3.20              33aa9db1c4ef   -         6.12.7 (raw)
+debian:13                9f2c41ab77de  default  6.12.107+deb13 (raw)
+alpine:3.20              33aa9db1c4ef  -        6.12.7 (raw)
 ```
 
 The image the daemon designates as default carries the `default`
@@ -228,8 +228,9 @@ answers 400 with the reason on one line.
 
 Removes an image from the catalog. The reference accepts every form
 the daemon resolves for workspace create — `name:version`, a bare
-name (its newest version), `name@hash`, a full hash — and a unique
-hash prefix (the 12 chars `image ls` prints):
+name (its newest version), `name@hash` (the full 64-hex hash), a
+full hash — and a unique hash prefix (the 12 chars `image ls`
+prints):
 
 ```text
 $ msks image rm debian:12
@@ -241,7 +242,9 @@ reference against the listing. An image a workspace still boots is
 refused — the API's 409 names the workspace — and a reference that
 matches nothing exits with the catalog spelled out so the next try
 can be copy-pasted. An ambiguous hash prefix names the images it
-matches; use the full hash or `name:version`.
+matches; use the full hash or `name@hash`. (Two imports of the same
+`name:version` — a rebuilt archive — are the usual ambiguity, and
+only the hash forms still identify one of them.)
 
 ### `msks image info`
 
@@ -252,7 +255,7 @@ from the same listing data:
 ```text
 $ msks image info debian:13
 ref      debian:13
-hash     9f2c41ab77de…
+hash     9f2c41ab77de0000000000000000000000000000000000000000000000000000
 kernel   6.12.107+deb13 (raw)
 cmdline  console=hvc0 root=/dev/vda rw
 console  vsock port 1073741826
