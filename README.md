@@ -214,7 +214,7 @@ bridge — a bare `POST /workspaces` works on a fresh appliance with
 nothing else built. Explicit `kernel`/`rootfs` fields still win over
 the catalog (the shape the tests and dev flows use).
 
-### The client CLI (`msks list`, `msks create`) (#59)
+### The client CLI (`msks list`, `msks create`, `msks start`) (#59)
 
 The client also covers the non-interactive half of the operator flow:
 
@@ -230,10 +230,14 @@ reference, `--cpus`/`--mem-mib`/`--root-mib`/`--home-mib` size the VM,
 and explicit `--kernel`/`--rootfs` (with optional `--initrd`,
 `--cmdline`) bypass the catalog. `--start` boots the workspace right
 after creating it, so `msks create ws --start` then `msks shell ws`
-is the two-step path from nothing to a shell. Both commands use the
-same `MSKSC_URL`/`MSKSC_TOKEN`/`MSKSC_CAFILE` environment as
-`msks shell`, and failures (unreachable daemon, bad token, API
-errors) print one readable line instead of a traceback.
+is the two-step path from nothing to a shell; `msks start <id>` boots
+an existing workspace later, and `msks shell <id>` boots one itself
+when the daemon reports it as not running (a notice prints on
+stderr while the boot runs). All commands use the same
+`MSKSC_URL`/`MSKSC_TOKEN`/`MSKSC_CAFILE` environment as `msks shell`;
+failures (unreachable daemon, timed-out request, bad token, API or
+validation errors) print one readable line instead of a traceback.
+See `docs/cli.md` for the full command and environment reference.
 
 ### The workspace shell (`msks shell`) (#21)
 

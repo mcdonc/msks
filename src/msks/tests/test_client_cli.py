@@ -12,7 +12,7 @@ from pathlib import Path
 import httpx
 import pytest
 from msks.app import build_app
-from msks.client import cli
+from msks.client import cli, rest
 from msks.server.api import build_api
 from msks.settings import ServerSettings, Settings, VmmSettings
 from test_api import TOKEN, StubMicrovm
@@ -90,9 +90,11 @@ def test_cmd_create_start_boots_and_hints(
 ) -> None:
     client_env(monkeypatch)
     paths = []
+    auths = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         paths.append(request.url.path)
+        auths.append(request.headers.get("authorization"))
         if request.url.path.endswith("/start"):
             return httpx.Response(200, json={"id": "ws1", "status": "running"})
         return httpx.Response(201, json={"id": "ws1", "status": "created"})
@@ -100,9 +102,45 @@ def test_cmd_create_start_boots_and_hints(
     rc = cli.cmd_create({"id": "ws1"}, start=True, transport=mock(handler))
     assert rc == 0
     assert paths == ["/api/v1/workspaces", "/api/v1/workspaces/ws1/start"]
+    # The bearer token rides every request, the boot call included.
+    assert auths == ["Bearer tok", "Bearer tok"]
     out = capsys.readouterr().out
-    assert "created ws1 (running)" in out
+    assert "created ws1" in out
     assert "msks shell ws1" in out
+
+
+def test_cmd_create_start_failure_keeps_the_workspace(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client_env(monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/start"):
+            return httpx.Response(503, json={"detail": "vmm launch failed"})
+        return httpx.Response(201, json={"id": "ws1", "status": "created"})
+
+    with pytest.raises(SystemExit, match="msks start ws1"):
+        cli.cmd_create({"id": "ws1"}, start=True, transport=mock(handler))
+    # The id printed before the boot attempt: the workspace exists.
+    assert "created ws1" in capsys.readouterr().out
+
+
+def test_cmd_start_boots_and_prints(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client_env(monkeypatch)
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["auth"] = request.headers.get("authorization")
+        return httpx.Response(200, json={"id": "ws1", "status": "running"})
+
+    rc = cli.cmd_start("ws1", transport=mock(handler))
+    assert rc == 0
+    assert seen["path"] == "/api/v1/workspaces/ws1/start"
+    assert seen["auth"] == "Bearer tok"
+    assert "ws1 running" in capsys.readouterr().out
 
 
 def test_api_call_status_error_uses_detail() -> None:
@@ -110,7 +148,52 @@ def test_api_call_status_error_uses_detail() -> None:
         lambda req: httpx.Response(409, json={"detail": "workspace exists"})
     )
     with pytest.raises(SystemExit, match="409: workspace exists"):
-        asyncio.run(cli.api_call("POST", "https://d", "t", "/x", transport=transport))
+        asyncio.run(rest.api_call("POST", "https://d", "t", "/x", transport=transport))
+
+
+def test_api_call_validation_errors_join_to_one_line() -> None:
+    # FastAPI's 422 detail is a list of error objects, not a string;
+    # the CLI must not dump a Python repr at the operator.
+    detail = [
+        {"loc": ["body", "id"], "msg": "String should match pattern"},
+        {"msg": "Input should be greater than 0"},
+    ]
+    transport = mock(lambda req: httpx.Response(422, json={"detail": detail}))
+    with pytest.raises(
+        SystemExit,
+        match="body.id: String should match pattern; Input should be greater than 0",
+    ):
+        asyncio.run(rest.api_call("POST", "https://d", "t", "/x", transport=transport))
+
+
+def test_error_detail_empty_validation_list() -> None:
+    response = httpx.Response(422, json={"detail": []})
+    assert rest.error_detail(response) == "invalid request"
+
+
+def test_api_call_timeout_names_the_daemon() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("read timed out")
+
+    with pytest.raises(SystemExit, match="timed out talking to"):
+        asyncio.run(
+            rest.api_call("POST", "https://d", "t", "/x", transport=mock(handler))
+        )
+
+
+def test_api_client_reuses_a_passed_ssl_context() -> None:
+    # The shell passes its already-built context so the unverified
+    # TLS warning prints once per invocation, not once per REST call.
+    # Pinned against httpx internals: verify lands on the default
+    # transport's ssl context.
+    import ssl
+
+    ctx = ssl.create_default_context()
+    client = rest.api_client("https://d", "t", ssl=ctx)
+    try:
+        assert client._transport._pool._ssl_context is ctx  # type: ignore[attr-defined]
+    finally:
+        asyncio.run(client.aclose())
 
 
 def test_api_call_non_detail_json_falls_back_to_body() -> None:
@@ -125,12 +208,15 @@ def test_api_call_non_json_body_falls_back_to_text() -> None:
         asyncio.run(cli.api_call("GET", "https://d", "t", "/x", transport=transport))
 
 
-def test_cmd_list_unreachable_daemon(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cmd_list_unreachable_daemon(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     monkeypatch.setenv("MSKSC_URL", "https://127.0.0.1:1")
     monkeypatch.setenv("MSKSC_TOKEN", "tok")
     monkeypatch.delenv("MSKSC_CAFILE", raising=False)
     with pytest.raises(SystemExit, match="cannot reach"):
         cli.cmd_list()
+    capsys.readouterr()  # swallow the unverified-TLS warning
 
 
 def test_main_list_dispatch(
@@ -163,6 +249,18 @@ def test_main_create_dispatch(
     assert "created ws1" in capsys.readouterr().out
 
 
+def test_main_start_dispatch(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client_env(monkeypatch)
+    rc = cli.main(
+        ["start", "ws1"],
+        transport=mock(lambda req: httpx.Response(200, json={"status": "running"})),
+    )
+    assert rc == 0
+    assert "ws1 running" in capsys.readouterr().out
+
+
 @pytest.fixture
 async def api_transport(tmp_path: Path):
     """The real API surface, in-process, with the seam stubbed."""
@@ -182,7 +280,7 @@ async def api_transport(tmp_path: Path):
 
 
 async def test_api_call_creates_and_lists_workspaces(api_transport) -> None:
-    row = await cli.api_call(
+    row = await rest.api_call(
         "POST",
         "https://test",
         TOKEN,
@@ -192,7 +290,7 @@ async def test_api_call_creates_and_lists_workspaces(api_transport) -> None:
     )
     assert row["id"] == "cli-a"
     assert row["status"] == "created"
-    rows = await cli.api_call(
+    rows = await rest.api_call(
         "GET", "https://test", TOKEN, "/api/v1/workspaces", transport=api_transport
     )
     assert [item["id"] for item in rows] == ["cli-a"]
@@ -200,10 +298,55 @@ async def test_api_call_creates_and_lists_workspaces(api_transport) -> None:
 
 async def test_api_call_maps_bad_token(api_transport) -> None:
     with pytest.raises(SystemExit, match="invalid or revoked token"):
-        await cli.api_call(
+        await rest.api_call(
             "GET",
             "https://test",
             "wrong-token",
             "/api/v1/workspaces",
             transport=api_transport,
         )
+
+
+async def test_ensure_running_boots_a_created_workspace(api_transport) -> None:
+    transport = api_transport
+    await rest.api_call(
+        "POST",
+        "https://test",
+        TOKEN,
+        "/api/v1/workspaces",
+        json_body={"id": "cli-b", "kernel": "/k", "rootfs": "/r"},
+        transport=transport,
+    )
+    await rest.ensure_running("cli-b", "https://test", TOKEN, transport=transport)
+    row = await rest.api_call(
+        "GET", "https://test", TOKEN, "/api/v1/workspaces/cli-b", transport=transport
+    )
+    assert row["status"] == "running"
+
+
+async def test_ensure_running_skips_a_running_workspace(api_transport) -> None:
+    app_transport = api_transport
+    await rest.api_call(
+        "POST",
+        "https://test",
+        TOKEN,
+        "/api/v1/workspaces",
+        json_body={"id": "cli-c", "kernel": "/k", "rootfs": "/r"},
+        transport=app_transport,
+    )
+    await rest.api_call(
+        "POST",
+        "https://test",
+        TOKEN,
+        "/api/v1/workspaces/cli-c/start",
+        transport=app_transport,
+    )
+    await rest.ensure_running("cli-c", "https://test", TOKEN, transport=app_transport)
+    row = await rest.api_call(
+        "GET",
+        "https://test",
+        TOKEN,
+        "/api/v1/workspaces/cli-c",
+        transport=app_transport,
+    )
+    assert row["status"] == "running"

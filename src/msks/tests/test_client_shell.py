@@ -330,12 +330,17 @@ class FdOnly:
         return 0
 
 
+async def async_noop(*args, **kwargs) -> None:
+    """A stand-in for the shell's pre-flight REST call."""
+
+
 def test_main_raw_mode_cycle(monkeypatch: pytest.MonkeyPatch) -> None:
     from msks.client import shell
 
     monkeypatch.setattr(sys, "stdin", FdOnly())
     monkeypatch.setenv("MSKSC_TOKEN", "t")
     monkeypatch.setattr(shell, "require_tty", lambda: None)
+    monkeypatch.setattr(shell, "ensure_running", async_noop)
     restored: list = []
 
     async def fake_run(wid, url, token, ssl_ctx):
@@ -357,6 +362,7 @@ def test_main_without_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "stdin", FdOnly())
     monkeypatch.setenv("MSKSC_TOKEN", "t")
     monkeypatch.setattr(shell, "require_tty", lambda: None)
+    monkeypatch.setattr(shell, "ensure_running", async_noop)
     monkeypatch.setattr(
         shell.termios, "tcgetattr", lambda fd: (_ for _ in ()).throw(termios.error())
     )
@@ -445,3 +451,32 @@ async def test_connect_plain_ws_takes_no_ssl() -> None:
     assert stub.recorded_ssl is None
     stub("wss://secure/", ssl="ctx")
     assert stub.recorded_ssl == "ctx"
+
+
+def test_run_workspace_shell_preflights_boot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The shell boots a not-running workspace before going raw."""
+    from msks.client import shell
+
+    seen = {}
+
+    async def fake_ensure(workspace_id, url, token, ssl=None):
+        seen.update(workspace_id=workspace_id, url=url, token=token, ssl=ssl)
+
+    monkeypatch.setattr(sys, "stdin", FdOnly())
+    monkeypatch.setenv("MSKSC_TOKEN", "t")
+    monkeypatch.setenv("MSKSC_URL", "u")
+    monkeypatch.setattr(shell, "require_tty", lambda: None)
+    monkeypatch.setattr(shell, "ensure_running", fake_ensure)
+    monkeypatch.setattr(shell, "ssl_context", lambda: "ctx")
+    monkeypatch.setattr(
+        shell.termios, "tcgetattr", lambda fd: (_ for _ in ()).throw(termios.error())
+    )
+
+    async def fake_run(wid, url, token, ssl_ctx):
+        return 0
+
+    monkeypatch.setattr(shell, "run_shell", fake_run)
+    assert shell.run_workspace_shell("wid") == 0
+    assert seen == {"workspace_id": "wid", "url": "u", "token": "t", "ssl": "ctx"}

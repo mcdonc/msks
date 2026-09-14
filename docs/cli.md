@@ -1,0 +1,177 @@
+# The CLI client
+
+The `msks` command is a thin client for the daemon's `/api/v1` REST
+surface. It runs from any host that can reach the daemon — a dev box,
+a CI runner, the appliance itself — and every command authenticates
+with the same bearer token the REST API uses.
+
+The command set covers the operator loop:
+
+```bash
+msks list                     # what exists, and what state is it in
+msks create ws                # make a workspace
+msks shell ws                 # boot it if needed, then work inside it
+msks start ws                 # boot it without attaching
+```
+
+## Client environment
+
+The client reads three environment variables. They are prefixed
+`MSKSC_` (client) to stay apart from the daemon's `MSKSD_*` (server)
+namespace — a box that runs both can export each side independently.
+
+| Variable       | Meaning                                              | Default                   |
+| -------------- | ---------------------------------------------------- | ------------------------- |
+| `MSKSC_URL`    | The daemon's base URL                                | `https://127.0.0.1:8660` |
+| `MSKSC_TOKEN`  | A daemon bearer token (see tokens below)             | — (required)              |
+| `MSKSC_CAFILE` | A PEM file to verify the daemon's TLS certificate    | unverified with warning   |
+
+A missing `MSKSC_TOKEN` is an error before any network activity: the
+client names the variable and exits. Tokens come from the daemon:
+`POST /api/v1/tokens` mints one, and the appliance writes its
+bootstrap token to `.appliance/bootstrap-token` on first boot —
+
+```bash
+export MSKSC_URL=https://192.168.77.2:8660
+export MSKSC_TOKEN=$(cat .appliance/bootstrap-token)
+```
+
+The daemon serves TLS with a self-signed certificate. Point
+`MSKSC_CAFILE` at the daemon's CA (`msks-ca.pem` under its state
+directory) and the client verifies the certificate chain. Without
+`MSKSC_CAFILE` the client proceeds unverified and prints a warning to
+stderr on every invocation — the same trust-on-first-use posture as
+`msks shell` (#21), fine for a lab network and worth closing before
+anything real.
+
+## `msks list`
+
+Prints one line per workspace the daemon knows, aligned in four
+columns: id, status, image hash (first 12 hex chars), and owning host.
+
+```text
+$ msks list
+my-workspace             running   9f2c41ab77de   hv-1
+scratch                  created   -              hv-1
+```
+
+The status column speaks the daemon's lifecycle vocabulary —
+`created` (row exists, never booted), `starting`, `running`,
+`paused`, `stopped`, `unknown`. A `-` in the image column means the
+workspace boots explicit kernel/rootfs paths instead of a catalog
+image.
+
+`--json` replaces the table with one JSON document — the API's
+workspace rows verbatim (id, kernel, initrd, rootfs, cmdline, cpus,
+mem_mib, image_hash, host, root_mib, home_mib, status, created_at):
+
+```bash
+msks list --json | jq -r '.[] | select(.status == "running") | .id'
+```
+
+A daemon with zero workspaces prints nothing (an empty table) and an
+empty JSON array under `--json`.
+
+## `msks create`
+
+POSTs the API's create body. The positional id follows the daemon's
+workspace charset — lowercase letters, digits, and dashes, starting
+with a letter or digit, up to 64 chars (it becomes a directory name
+under the state dir and a pod name on k8s).
+
+Flags map one-to-one onto the create request's fields:
+
+| Flag          | API field  | Meaning                                            |
+| ------------- | ---------- | -------------------------------------------------- |
+| `--image`     | `image`    | Catalog ref: `name:version`, bare name, or hash    |
+| `--kernel`    | `kernel`   | Explicit kernel path (skips the catalog)           |
+| `--initrd`    | `initrd`   | Explicit initrd path                               |
+| `--rootfs`    | `rootfs`   | Explicit rootfs path (skips the catalog)           |
+| `--cmdline`   | `cmdline`  | Explicit kernel cmdline                            |
+| `--cpus`      | `cpus`     | vcpus, 1–64 (daemon default: 2)                    |
+| `--mem-mib`   | `mem_mib`  | Guest memory MiB, 64–32768 (daemon default: 1024)  |
+| `--root-mib`  | `root_mib` | Persistent root overlay size (daemon default)      |
+| `--home-mib`  | `home_mib` | Persistent /home volume size (daemon default)      |
+
+Only the flags you pass are sent — unset flags let the daemon apply
+its own defaults. An `--image` reference resolves against the
+daemon's image catalog (`docs/images.md`); explicit `--kernel` and
+`--rootfs` bypass it. Size ranges are enforced server-side; a value
+outside them comes back as a validation error (below).
+
+`--start` boots the workspace right after creating it:
+
+```bash
+$ msks create my-workspace --image debian:13 --start
+created my-workspace
+attach with: msks shell my-workspace
+```
+
+The id prints as soon as the create succeeds and before the boot is
+attempted. A failed boot still leaves the workspace created — the
+error message says so and names the recovery command:
+
+```text
+created my-workspace
+msks: 503: vmm launch failed
+msks: my-workspace is created; boot it later with: msks start my-workspace
+```
+
+Creating without `--start` prints the id and exits; boot it whenever
+with `msks start` — or just `msks shell` it: the shell command boots
+a not-running workspace on its own (below).
+
+## `msks start`
+
+Boots one created workspace (`POST /api/v1/workspaces/{id}/start`)
+and prints the result:
+
+```bash
+$ msks start my-workspace
+my-workspace running
+```
+
+The start request answers after the VMM finishes booting — a few
+seconds on an idle host, longer under load. The client waits up to
+two minutes before reporting a timeout, and a timeout message notes
+that the daemon may still finish the boot.
+
+## `msks shell`
+
+An interactive shell inside a workspace, over the daemon's console
+websocket. The command boots the workspace first when the daemon
+reports it as not running — the notices print on stderr while the
+boot runs, then the session attaches:
+
+```text
+$ msks shell my-workspace
+msks: my-workspace is stopped; starting it
+msks: my-workspace running
+(workspace prompt)
+```
+
+A workspace that is already running attaches with no preamble.
+Ctrl-] detaches and leaves the workspace running; Ctrl-C and Ctrl-D
+reach the guest. The session needs a tty on both stdin and stdout.
+See the README's workspace-shell section (#21) for the transport
+story.
+
+## Errors, exit codes, and timeouts
+
+Every command fails with one readable line on stderr and exit code 1
+— never a traceback:
+
+```text
+msks: set MSKSC_TOKEN to a daemon token (MSKSC_URL for a non-default daemon)
+msks: cannot reach https://192.168.77.2:8660: [Errno 113] ...
+msks: 401: invalid or revoked token
+msks: 409: workspace exists
+msks: 422: body.id: String should match pattern '^[a-z0-9][a-z0-9-]*$'
+```
+
+The status lines carry the daemon's `detail` field verbatim. A
+validation failure (422) reports each problem as `field: message`,
+joined on one line — the same facts the API returns, minus the JSON
+scaffolding. A timeout says so explicitly, because the daemon may
+still complete a request the client stopped waiting for. Argument
+errors exit with code 2 (argparse convention); success is 0.

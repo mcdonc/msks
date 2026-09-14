@@ -1,4 +1,4 @@
-"""The ``msks`` CLI: ``list``, ``create``, and ``shell`` subcommands.
+"""The ``msks`` CLI: ``list``, ``create``, ``start``, and ``shell`` subcommands.
 
 Every command speaks the daemon's REST surface with the same client
 conventions (#21): ``MSKSC_URL`` for the daemon, ``MSKSC_TOKEN`` for
@@ -10,48 +10,14 @@ import argparse
 import asyncio
 import json
 
-import httpx
-
-from .shell import env_token, env_url, run_workspace_shell, ssl_context
-
-
-async def api_call(
-    method: str,
-    url: str,
-    token: str,
-    path: str,
-    json_body: dict | None = None,
-    transport: httpx.AsyncBaseTransport | None = None,
-):
-    """One authenticated REST call; failures exit with one line.
-
-    ``transport`` is the seam the tests plug an in-process API (or a
-    mock) into; the real client dials ``url`` with the #21 TLS story.
-    """
-    async with httpx.AsyncClient(
-        base_url=url,
-        transport=transport,
-        headers={"Authorization": f"Bearer {token}"},
-        verify=None if transport is not None else ssl_context(),
-    ) as client:
-        try:
-            response = await client.request(method, path, json=json_body)
-            response.raise_for_status()
-        except httpx.TransportError as exc:
-            raise SystemExit(f"msks: cannot reach {url}: {exc}") from exc
-        except httpx.HTTPStatusError as exc:
-            raise SystemExit(
-                f"msks: {exc.response.status_code}: {error_detail(exc.response)}"
-            ) from exc
-        return response.json()
-
-
-def error_detail(response: httpx.Response) -> str:
-    """The API's ``detail`` field, or the raw body when it is absent."""
-    try:
-        return response.json()["detail"]
-    except ValueError, KeyError, TypeError:
-        return response.text.strip() or "no detail"
+from .rest import (
+    api_call,
+    api_client,
+    env_token,
+    env_url,
+    request,
+)
+from .shell import run_workspace_shell
 
 
 def format_workspace(row: dict) -> str:
@@ -83,28 +49,46 @@ def cmd_list(as_json: bool = False, transport=None) -> int:
 
 def cmd_create(body: dict, start: bool = False, transport=None) -> int:
     """``msks create``: one workspace, optionally booted."""
-    row = asyncio.run(create_workspace(env_url(), env_token(), body, start, transport))
-    print(f"created {row['id']}" + (" (running)" if start else ""))
-    if start:
-        print(f"attach with: msks shell {row['id']}")
+    asyncio.run(create_workspace(env_url(), env_token(), body, start, transport))
     return 0
 
 
 async def create_workspace(url, token, body, start, transport) -> dict:
-    """POST the workspace; with ``start``, boot it before returning."""
-    row = await api_call(
-        "POST", url, token, "/api/v1/workspaces", json_body=body, transport=transport
-    )
-    if start:
-        await api_call(
+    """POST the workspace, print its id, then boot it when asked.
+
+    The id prints before the boot attempt: a failed start must not
+    hide that the workspace exists — recover with ``msks start``.
+    """
+    async with api_client(url, token, transport) as client:
+        row = await request(client, "POST", "/api/v1/workspaces", json_body=body)
+        print(f"created {row['id']}")
+        if not start:
+            return row
+        try:
+            await request(client, "POST", f"/api/v1/workspaces/{row['id']}/start")
+        except SystemExit as exc:
+            raise SystemExit(
+                f"{exc}\nmsks: {row['id']} is created; "
+                f"boot it later with: msks start {row['id']}"
+            ) from exc
+        print(f"attach with: msks shell {row['id']}")
+        row["status"] = "running"
+        return row
+
+
+def cmd_start(workspace_id: str, transport=None) -> int:
+    """``msks start``: boot a created workspace."""
+    asyncio.run(
+        api_call(
             "POST",
-            url,
-            token,
-            f"/api/v1/workspaces/{row['id']}/start",
+            env_url(),
+            env_token(),
+            f"/api/v1/workspaces/{workspace_id}/start",
             transport=transport,
         )
-        row["status"] = "running"
-    return row
+    )
+    print(f"{workspace_id} running")
+    return 0
 
 
 def create_body(args: argparse.Namespace) -> dict:
@@ -146,6 +130,8 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument(
         "--start", action="store_true", help="boot the workspace immediately"
     )
+    starter = sub.add_parser("start", help="boot a created workspace")
+    starter.add_argument("workspace_id", help="the workspace to boot")
     shell = sub.add_parser("shell", help="interactive shell in a workspace")
     shell.add_argument("workspace_id", help="the workspace to attach to")
     return parser
@@ -157,6 +143,8 @@ def main(argv: list[str] | None = None, transport=None) -> int:
         return run_workspace_shell(args.workspace_id)
     if args.command == "list":
         return cmd_list(args.json, transport=transport)
+    if args.command == "start":
+        return cmd_start(args.workspace_id, transport=transport)
     return cmd_create(create_body(args), args.start, transport=transport)
 
 
