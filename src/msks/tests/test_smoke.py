@@ -56,14 +56,15 @@ needs_local = pytest.mark.skipif(
 )
 needs_k8s = pytest.mark.skipif(not KUBECONFIG, reason="set MSKSD_TEST_KUBECONFIG")
 
-#: The serial autologin's root-shell prompt: the last thing to
-#: come up in the Debian boot (#30) and the "guest is usable"
-#: marker — the acpid that answers host-side shutdowns is up by
-#: then too. The prompt, not the getty's login banner above it
-#: (#75): a slow nested-KVM boot prints the banner while userspace
-#: still has minutes of churn ahead, so proof that a real shell
-#: started, read its rc files, and printed its prompt is the signal
-#: the console probes can build on.
+#: The serial autologin's root-shell prompt: the last line the
+#: Debian boot produces (#30) and the "guest is usable" marker —
+#: the acpid that answers host-side shutdowns is up by then too.
+#: The prompt, not the getty's login banner above it (#75): the
+#: banner only says the getty started, while the prompt proves a
+#: whole shell started, ran its rc files, and answered — the
+#: strongest guest-side signal the console probes can build on
+#: (the vsock console's own shell can stall behind an echo-alive
+#: pty on a slow nested-KVM boot, long after its service started).
 GUEST_UP_MARKER = "root@msks-guest:~#"
 
 #: Per-phase timeouts, env-tunable for slow hosts (#64): a runner's
@@ -154,8 +155,10 @@ async def await_guest_up(serial_log: Path, timeout_s: float | None = None) -> No
 async def read_until(reader, needle: bytes, timeout_s: float | None = None) -> bytes:
     """Read the stream until it carries ``needle``; return the bytes.
 
-    The vsock console is an echoing pty: the sent command and its
-    output both flow back, so the marker proves the guest ran it.
+    The vsock console is an echoing pty: the sent command comes
+    back too, so ``needle`` must be guest-computed output — never a
+    substring of the sent bytes, which the pty echoes verbatim
+    (see run_in_console).
     """
     timeout_s = timeout_s if timeout_s is not None else CONSOLE_TIMEOUT_S
     data = b""
@@ -205,6 +208,11 @@ async def run_in_console(microvm, workspace_id: str, command: str, marker: str) 
     and replaced instead of failing the test — and every command this
     harness sends is idempotent, so re-running it in a new session
     is safe.
+
+    Markers are guest-computed sentinels (``echo X-$((6*7))`` /
+    ``X-42``): the pty echoes the sent bytes verbatim, so a marker
+    that appears in the command text would match the echo and pass
+    without the command's output ever arriving.
     """
     for attempt in range(1, CONSOLE_ATTEMPTS + 1):
         try:
@@ -350,8 +358,20 @@ async def test_local_persistence_across_restart_and_reset() -> None:
         assert persist.home_volume_path(state_dir, wid).is_file()
         await boot_and_probe(
             [
-                (f"echo {root_marker} > /root/probe && cat /root/probe", root_marker),
-                (f"echo {home_marker} > /home/probe && cat /home/probe", home_marker),
+                # The write sentinels are guest-computed ($((6*7)) → 42):
+                # the pty echoes the sent bytes, so a marker that
+                # appears in the command text would match the echo —
+                # the restart boot's `cat` (below) carries the actual
+                # content claim, with a per-run marker the sent bytes
+                # never contain.
+                (
+                    f"echo {root_marker} > /root/probe && echo WROTE-$((6*7))",
+                    "WROTE-42",
+                ),
+                (
+                    f"echo {home_marker} > /home/probe && echo WROTE-$((6*7))",
+                    "WROTE-42",
+                ),
             ]
         )
         serial_log.unlink(missing_ok=True)
@@ -369,7 +389,7 @@ async def test_local_persistence_across_restart_and_reset() -> None:
         await boot_and_probe(
             [
                 ("cat /home/probe", home_marker),
-                ("test ! -e /root/probe && echo GONE-OK", "GONE-OK"),
+                ("test ! -e /root/probe && echo GONE-$((6*7))", "GONE-42"),
             ]
         )
     except BaseException:
@@ -608,10 +628,10 @@ async def test_appliance_boot_and_workspace() -> None:
                     got += message if isinstance(message, bytes) else message.encode()
                 return got
 
-            await shell_ws.send(b"ip -4 addr | grep 172.31\n")
-            await await_marker(b"172.31.")
-            await shell_ws.send(b"getent hosts deb.debian.org\n")
-            await await_marker(b"deb.debian")
+            await shell_ws.send(b"ip -4 addr | grep 172.31 && echo ADDR-$((6*7))\n")
+            await await_marker(b"ADDR-42")
+            await shell_ws.send(b"getent hosts deb.debian.org && echo DNS-$((6*7))\n")
+            await await_marker(b"DNS-42")
         response = await client.get(f"{base}/workspaces/{wid}", headers=headers)
         assert response.json().get("status") == "running", response.text
 
@@ -716,18 +736,29 @@ async def test_local_egress_boot() -> None:
         await microvm.launch(spec)
         await await_guest_up(serial_log)
         # DHCP: the /30's guest address and the tap as the gateway.
-        await run_in_console(microvm, wid, "ip -4 addr | grep 172.31", "172.31")
+        # Every marker is guest-computed ($((6*7)) → 42, gated on the
+        # probe's exit status by &&): the pty echoes the sent bytes,
+        # so a marker inside the command text would match the echo
+        # and pass even when the probe found nothing.
+        await run_in_console(
+            microvm, wid, "ip -4 addr | grep 172.31 && echo ADDR-$((6*7))", "ADDR-42"
+        )
         await run_in_console(
             microvm, wid, "ip route | grep default", "default via 172.31"
         )
         # DNS: through the daemon's forwarder (the offered resolver).
-        await run_in_console(microvm, wid, "getent hosts deb.debian.org", "deb.debian")
+        await run_in_console(
+            microvm,
+            wid,
+            "getent hosts deb.debian.org && echo DNS-$((6*7))",
+            "DNS-42",
+        )
         # Egress: a TCP connection out through the NAT'd uplink.
         await run_in_console(
             microvm,
             wid,
-            "timeout 5 bash -c '</dev/tcp/deb.debian.org/80' && echo TCP-OK",
-            "TCP-OK",
+            "timeout 5 bash -c '</dev/tcp/deb.debian.org/80' && echo TCP-$((6*7))",
+            "TCP-42",
         )
         # Containment: the tap's input chain lets DHCP and DNS through
         # and nothing else — the appliance's API (on the tap gateway)
@@ -737,8 +768,8 @@ async def test_local_egress_boot() -> None:
             wid,
             "G=$(ip route | awk '/default/ {print $3}'); "
             'timeout 3 bash -c "</dev/tcp/$G/8660" 2>/dev/null '
-            "&& echo API-REACHABLE || echo API-BLOCKED",
-            "API-BLOCKED",
+            "&& echo API-$((2+2)) || echo API-$((6*7))",
+            "API-42",
         )
         await microvm.shutdown(wid, timeout_s=60)
         final = await microvm.info(wid)

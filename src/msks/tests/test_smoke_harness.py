@@ -37,15 +37,18 @@ def wedged_session() -> tuple:
     return asyncio.StreamReader(), FakeWriter()
 
 
-def live_session(prompt: bytes, reply: bytes) -> tuple:
-    """A session that prompts now and answers the command once it is
-    drained — the echoing-pty ordering run_in_console rides on."""
+def live_session(prompt: bytes, reply: bytes | None) -> tuple:
+    """A session that prompts now and — when ``reply`` is not None —
+    answers the command once it is drained: the echoing-pty ordering
+    run_in_console rides on. A None ``reply`` is the shell that took
+    the command and never answered (the marker-phase stall)."""
     reader = asyncio.StreamReader()
     reader.feed_data(prompt)
 
     class EchoWriter(FakeWriter):
         async def drain(self) -> None:
-            reader.feed_data(self.written + b"\r\n" + reply + prompt)
+            if reply is not None:
+                reader.feed_data(self.written + b"\r\n" + reply + prompt)
 
     return reader, EchoWriter()
 
@@ -62,9 +65,16 @@ class FakeMicrovm:
         return self.sessions.pop(0)
 
 
+def pin_attempts_and_timeout(monkeypatch) -> None:
+    """Run the retries against pinned values, not env-tunable ones —
+    a CI setting MSKSD_TEST_CONSOLE_ATTEMPTS must not break the pins."""
+    monkeypatch.setattr(test_smoke, "CONSOLE_TIMEOUT_S", 0.1)
+    monkeypatch.setattr(test_smoke, "CONSOLE_ATTEMPTS", 3)
+
+
 async def test_wedged_session_gets_a_fresh_one(monkeypatch, capsys) -> None:
     # The prompt stall must burn the (shortened) timeout, not skip it.
-    monkeypatch.setattr(test_smoke, "CONSOLE_TIMEOUT_S", 0.1)
+    pin_attempts_and_timeout(monkeypatch)
     live = live_session(test_smoke.PROMPT_NEEDLE, b"hi\r\n")
     microvm = FakeMicrovm([wedged_session(), live])
     await test_smoke.run_in_console(microvm, "wid", "echo hi", "hi")
@@ -74,8 +84,24 @@ async def test_wedged_session_gets_a_fresh_one(monkeypatch, capsys) -> None:
     assert "1/3" in capsys.readouterr().out
 
 
+async def test_marker_stall_also_gets_a_fresh_session(monkeypatch) -> None:
+    # The command stalls after the prompt (the shell took it and
+    # never answered): the retry re-runs it — idempotent by contract
+    # — in a new session, which is what the docstring promises.
+    pin_attempts_and_timeout(monkeypatch)
+    stalled = live_session(test_smoke.PROMPT_NEEDLE, reply=None)
+    live = live_session(test_smoke.PROMPT_NEEDLE, reply=b"hi\r\n")
+    microvm = FakeMicrovm([stalled, live])
+    await test_smoke.run_in_console(microvm, "wid", "echo hi", "hi")
+    assert microvm.opened == 2
+    # The command really ran twice: once into the stalled shell,
+    # once into the fresh one.
+    assert stalled[1].written == b"echo hi\n"
+    assert live[1].written == b"echo hi\n"
+
+
 async def test_all_sessions_wedged_names_the_count(monkeypatch) -> None:
-    monkeypatch.setattr(test_smoke, "CONSOLE_TIMEOUT_S", 0.1)
+    pin_attempts_and_timeout(monkeypatch)
     microvm = FakeMicrovm(
         [wedged_session() for _ in range(test_smoke.CONSOLE_ATTEMPTS)]
     )

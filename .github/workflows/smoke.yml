@@ -140,9 +140,13 @@ jobs:
       # The failing boot's own evidence, kept by the tests' failure
       # path (serial log, VMM log, raw vsock probe printed in the step
       # log) — the runner recycles, so /tmp/msks-smoke-failed/ is the
-      # only place the guest's side of the story survives.
+      # only place the guest's side of the story survives. Runs on
+      # cancellation too (#75 review): the console retries can now
+      # spend long enough on a wedged guest to hit the job wall, and
+      # `failure()` alone is false on a timeout cancel — losing the
+      # evidence exactly when it is most needed.
       - name: Collect smoke state on failure
-        if: failure()
+        if: failure() || cancelled()
         uses: actions/upload-artifact@v4
         with:
           name: smoke-failure-evidence
