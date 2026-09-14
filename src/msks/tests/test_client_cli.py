@@ -950,3 +950,17 @@ async def test_image_commands_against_the_real_api(api_transport) -> None:
     assert removed == {"removed": record["hash"]}
     with pytest.raises(SystemExit, match="no image matches"):
         await cli.remove_image("https://test", TOKEN, "debian:13.6", transport)
+
+
+def test_image_rm_miss_caps_a_large_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The miss line spells out at most CATALOG_REF_CAP refs."""
+    client_env(monkeypatch)
+    rows = [image_row("distro", str(n), f"{n:064x}") for n in range(12)]
+    with pytest.raises(SystemExit) as excinfo:
+        cli.cmd_image_rm(
+            "missing", transport=mock(lambda req: httpx.Response(200, json=rows))
+        )
+    message = str(excinfo.value)
+    assert "distro:0" in message and "distro:7" in message
+    assert "distro:8" not in message
+    assert "(+4 more)" in message
