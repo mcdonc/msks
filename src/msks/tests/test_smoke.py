@@ -53,6 +53,14 @@ needs_k8s = pytest.mark.skipif(not KUBECONFIG, reason="set MSKSD_TEST_KUBECONFIG
 # thing to come up, so it is the "guest is usable" marker.
 GUEST_UP_MARKER = "msks-guest login:"
 
+#: Per-phase timeouts, env-tunable for slow hosts (#64): a runner's
+#: nested-KVM guest runs the same boot several times slower than a
+#: dev host's KVM guest, and CI sets all three explicitly. Defaults
+#: keep the dev-host behavior unchanged.
+GUEST_UP_TIMEOUT_S = float(os.environ.get("MSKSD_TEST_GUEST_UP_TIMEOUT_S", "60"))
+CONSOLE_TIMEOUT_S = float(os.environ.get("MSKSD_TEST_CONSOLE_TIMEOUT_S", "30"))
+SHUTDOWN_TIMEOUT_S = float(os.environ.get("MSKSD_TEST_SHUTDOWN_TIMEOUT_S", "60"))
+
 
 def serial_tail(serial_log: Path, limit: int = 2000) -> str:
     """The end of the guest's serial log, for failure messages."""
@@ -61,8 +69,58 @@ def serial_tail(serial_log: Path, limit: int = 2000) -> str:
     return serial_log.read_text(encoding="utf-8", errors="replace")[-limit:]
 
 
-async def await_guest_up(serial_log: Path, timeout_s: float = 60.0) -> None:
+def collect_failure_evidence(state_dir: Path, wid: str, serial_log: Path) -> None:
+    """On a smoke failure, print and keep the guest's own story.
+
+    The console service's state is on the serial log (systemd names
+    failed/restarting units there); a raw CONNECT probe tells whether
+    the guest's vsock listener is answering at all; and the vm dir is
+    copied out before the finally-clause cleanup deletes it, for the
+    CI artifact upload (``/tmp/msks-smoke-failed/``).
+    """
+    print(
+        f"smoke failure evidence — {wid} serial tail:\n{serial_tail(serial_log, 4000)}",
+        flush=True,
+    )
+    vm_dir = state_dir / "vms" / wid
+    vsock = vm_dir / "vsock.sock"
+    if vsock.exists():
+        import socket
+
+        try:
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.settimeout(5)
+            sock.connect(str(vsock))
+            sock.sendall(b"CONNECT 1023\n")
+            reply = sock.recv(100)
+            sock.settimeout(15)
+            sock.sendall(b"\n")
+            try:
+                data = sock.recv(4096)
+            except TimeoutError:
+                data = b"<no bytes within 15s>"
+            print(
+                f"smoke failure evidence — raw vsock probe: "
+                f"handshake={reply!r} after-newline={data!r}",
+                flush=True,
+            )
+        except OSError as exc:
+            print(f"smoke failure evidence — raw vsock probe: {exc}", flush=True)
+        finally:
+            with contextlib.suppress(OSError):
+                sock.close()
+    keep = Path("/tmp/msks-smoke-failed") / wid
+    keep.mkdir(parents=True, exist_ok=True)
+    for name in ("serial.log", "cloud-hypervisor.log", "vsock.sock"):
+        source = vm_dir / name
+        if source.is_file():
+            with contextlib.suppress(OSError):
+                shutil.copy2(source, keep / name)
+
+
+async def await_guest_up(serial_log: Path, timeout_s: float | None = None) -> None:
     """Block until the guest announces itself on the serial console."""
+    timeout_s = timeout_s if timeout_s is not None else GUEST_UP_TIMEOUT_S
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_s
     while loop.time() < deadline:
@@ -75,12 +133,13 @@ async def await_guest_up(serial_log: Path, timeout_s: float = 60.0) -> None:
     )
 
 
-async def read_until(reader, needle: bytes, timeout_s: float = 30.0) -> bytes:
+async def read_until(reader, needle: bytes, timeout_s: float | None = None) -> bytes:
     """Read the stream until it carries ``needle``; return the bytes.
 
     The vsock console is an echoing pty: the sent command and its
     output both flow back, so the marker proves the guest ran it.
     """
+    timeout_s = timeout_s if timeout_s is not None else CONSOLE_TIMEOUT_S
     data = b""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_s
@@ -97,11 +156,21 @@ async def read_until(reader, needle: bytes, timeout_s: float = 30.0) -> bytes:
     return data
 
 
+#: The root shell's PS1 tail (``root@msks-guest:/# ``): the guest's
+#: bash, with #62's real TERM, runs readline — and readline discards
+#: typeahead that arrived before it started. A client that writes
+#: the instant the vsock connects loses its first line to that
+#: flush; an interactive user never notices (the prompt is on screen
+#: before fingers move). The tests wait for the prompt first.
+PROMPT_NEEDLE = b"root@msks-guest:/# "
+
+
 async def run_in_console(microvm, workspace_id: str, command: str, marker: str) -> None:
     """Run one shell command over the vsock console and wait for its
     marker — one fresh guest shell session per call."""
     reader, writer = await microvm.console(workspace_id)
     try:
+        await read_until(reader, PROMPT_NEEDLE)
         writer.write(command.encode() + b"\n")
         await writer.drain()
         await read_until(reader, marker.encode())
@@ -168,11 +237,13 @@ async def test_local_vm_boot_and_shutdown() -> None:
         # event and time out against a VM that is running but not yet
         # listening.
         await await_guest_up(serial_log)
-        await microvm.shutdown(wid, timeout_s=30)
+        await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
         final = await microvm.info(wid)
         assert final.status.value in ("stopped", "absent")
     except BaseException:
-        # Never leak a live VMM (and its /dev/kvm handle) on failure.
+        # Never leak a live VMM (and its /dev/kvm handle) on failure;
+        # print and keep the guest's evidence for the artifact upload.
+        collect_failure_evidence(state_dir, wid, serial_log)
         with contextlib.suppress(Exception):
             await microvm.kill(wid)
         raise
@@ -216,7 +287,7 @@ async def test_local_persistence_across_restart_and_reset() -> None:
         await await_guest_up(serial_log)
         for command, marker in probe_commands:
             await run_in_console(microvm, wid, command, marker)
-        await microvm.shutdown(wid, timeout_s=60)
+        await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
 
     try:
         await microvm.prepare(spec)
@@ -247,6 +318,7 @@ async def test_local_persistence_across_restart_and_reset() -> None:
             ]
         )
     except BaseException:
+        collect_failure_evidence(state_dir, wid, serial_log)
         with contextlib.suppress(Exception):
             await microvm.kill(wid)
         raise

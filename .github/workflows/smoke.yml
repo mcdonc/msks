@@ -1,0 +1,128 @@
+# Real-VM smoke tests on the hosted runner (#64).
+#
+# GitHub-hosted Linux runners expose /dev/kvm with hardware
+# acceleration (changelog 2024-04-02: available on the standard
+# 2-vCPU runners once the runner user gets access via a udev rule),
+# so the KVM-gated local smoke tests — boots a real workspace VM
+# through cloud-hypervisor — no longer need to skip in CI. The runner
+# VM itself is L1 on Azure metal; the workspace VM is L2, which is
+# exactly the one nesting level Azure's nested virt supports.
+#
+# What stays out: the appliance smoke test (MSKSD_TEST_APPLIANCE) —
+# its workspace boots inside the appliance VM, a third level (L3)
+# Azure does not accelerate — and the k8s smoke (needs a cluster).
+# Both remain dev-host-only, opt-in exactly as before.
+#
+# Path-filtered to its real inputs: the guest/toolchain files (a
+# nixpkgs pin move lands through devenv.lock), everything under the
+# server package the boots exercise, and the tests themselves. That
+# is most code PRs — deliberate: this is the only real-VM coverage
+# the repo has until #9's QEMU driver, and ~5 minutes of runner time
+# is cheaper than a green-but-cannot-boot merge.
+name: Smoke (KVM)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/smoke.yml
+      - devenv.nix
+      - devenv.yaml
+      - devenv.lock
+      - nix/guest.nix
+      - nix/guest-assets.nix
+      - scripts/build-guest.sh
+      - src/msks/msks/**
+      - src/msks/tests/conftest.py
+      - src/msks/tests/test_smoke.py
+  pull_request:
+    paths:
+      - .github/workflows/smoke.yml
+      - devenv.nix
+      - devenv.yaml
+      - devenv.lock
+      - nix/guest.nix
+      - nix/guest-assets.nix
+      - scripts/build-guest.sh
+      - src/msks/msks/**
+      - src/msks/tests/conftest.py
+      - src/msks/tests/test_smoke.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke-kvm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: cachix/cachix-action@v17
+        with:
+          name: devenv
+
+      # Pinned release, not the moving default registry: the devenv
+      # that evaluates the 2.x tasks syntax and parses -O is the one
+      # moving part otherwise — an upstream break would red CI with no
+      # repo change.
+      - name: Install devenv.sh
+        run: nix profile add github:cachix/devenv/v2.3.1
+
+      # The documented KVM permission rule (github.blog 2024-04-02):
+      # /dev/kvm exists on the hosted runner image but is restricted;
+      # this makes it 0666 for the runner user. kvm_available() then
+      # passes and the conftest points the smoke tests at the built
+      # .guest/ artifacts.
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Build guest assets
+        run: >-
+          devenv --quiet -O dotenv.enable:bool false shell --
+          devenv tasks run msks:build-guest
+
+      # The smoke suite never counts toward the coverage gate (the
+      # faked-transport unit suites own the 100%); serial (-n auto
+      # stays off) so the two real boots do not fight over the
+      # runner's 2 vCPUs. TMPDIR=/tmp for the same AF_UNIX path-depth
+      # reason as ci.yml; the tests keep their own shallow
+      # /tmp/msks-smoke-* state dirs.
+      # Nested-KVM guests run the same boots several times slower
+      # than a dev host's KVM guest (#64): give each phase of the
+      # persistence test's four boot cycles generous ceilings. The
+      # dev-host defaults live in the test module.
+      - name: Smoke tests
+        env:
+          TMPDIR: /tmp
+          MSKSD_TEST_GUEST_UP_TIMEOUT_S: "180"
+          MSKSD_TEST_CONSOLE_TIMEOUT_S: "120"
+          MSKSD_TEST_SHUTDOWN_TIMEOUT_S: "180"
+        run: >-
+          devenv --quiet -O dotenv.enable:bool false shell --
+          python -m pytest src/msks/tests/test_smoke.py
+          -q -p no:cacheprovider --no-cov
+
+      # The failing boot's own evidence, kept by the tests' failure
+      # path (serial log, VMM log, raw vsock probe printed in the step
+      # log) — the runner recycles, so /tmp/msks-smoke-failed/ is the
+      # only place the guest's side of the story survives.
+      - name: Collect smoke state on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-failure-evidence
+          path: /tmp/msks-smoke-failed/
+          if-no-files-found: ignore
+          retention-days: 7

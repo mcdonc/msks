@@ -25,6 +25,7 @@ on:
       - .github/workflows/guest-assets.yml
       - devenv.nix
       - devenv.yaml
+      - devenv.lock
       - nix/guest.nix
       - nix/guest-assets.nix
       - nix/runner-image.nix
@@ -34,6 +35,7 @@ on:
       - .github/workflows/guest-assets.yml
       - devenv.nix
       - devenv.yaml
+      - devenv.lock
       - nix/guest.nix
       - nix/guest-assets.nix
       - nix/runner-image.nix
