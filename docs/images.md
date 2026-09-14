@@ -34,15 +34,16 @@ workspace-<name>-<version>.tar
 
 `disk/image.json` is what msksd reads; schema 2:
 
-| Field              | Meaning                                                       |
-| ------------------ | ------------------------------------------------------------- |
-| `schema`           | `2`                                                           |
-| `name`             | Catalog name, e.g. `debian`                                   |
-| `version`          | Catalog version, e.g. `13.6`; numeric segments sort correctly |
-| `cmdline`          | Kernel command line for workspace boots                       |
-| `vsock_shell_port` | AF_VSOCK port the guest's console service listens on          |
-| `kernel_version`   | e.g. `6.12.107+deb13-amd64` (informational)                   |
-| `kernel_format`    | `bzImage` (informational)                                     |
+| Field              | Meaning                                                                   |
+| ------------------ | ------------------------------------------------------------------------- |
+| `schema`           | `2`                                                                       |
+| `name`             | Catalog name, e.g. `debian`                                               |
+| `version`          | Catalog version, e.g. `13.6`; numeric segments sort correctly             |
+| `cmdline`          | Kernel command line for workspace boots                                   |
+| `vsock_shell_port` | AF_VSOCK port the guest's console service listens on                      |
+| `kernel_version`   | e.g. `6.12.107+deb13-amd64` (informational)                               |
+| `kernel_format`    | `bzImage` (informational)                                                 |
+| `capabilities`     | Optional capability object; `provisioner` names the seed consumer (below) |
 
 The manifest is self-describing: importing the archive needs nothing
 beside the archive itself.
@@ -89,6 +90,37 @@ EXEC:/bin/bash,pty,ctty,echo=1,icanon=1,stderr,setsid`
   (the daemon formats the volume with that label) so the mount
   stays on the right device whatever the disk order is; `nofail`
   keeps boots moving when the volume is absent.
+- **Consume the cidata seed disk when the image declares a
+  provisioner.** A workspace created with `user_data` (#41) boots
+  with a third, read-only virtio disk: a small iso9660 filesystem
+  labeled `cidata` carrying `user-data` (the payload, verbatim) and
+  `meta-data` (`instance-id`/`local-hostname`, keyed off the
+  workspace id) at its root — exactly cloud-init's NoCloud seed
+  layout. `capabilities.provisioner` in `image.json` tells the
+  daemon (and the operator) which consumer the image ships:
+  - `cloud-init` — the image runs real cloud-init. The NoCloud
+    datasource finds the labeled disk with no network probing, and
+    both payload forms work: cloud-config YAML and scripts. Any
+    distro cloud image that ships cloud-init (Debian's `generic`
+    and `genericcloud`, Ubuntu, Fedora, ...) imports as-is with
+    `"capabilities": {"provisioner": "cloud-init"}` added to its
+    `image.json`.
+  - `msks-firstboot` — the image runs its own first-boot unit (the
+    shipped image's `/usr/lib/msks/msks-firstboot`): it mounts the
+    seed and executes the payload when it starts with `#!`.
+    Scripts only; the daemon refuses a cloud-config payload for
+    such an image at create time with a named error.
+
+  Both consumers run the payload once per boot cycle in exactly the
+  same way: their "already ran" state — cloud-init's
+  `/var/lib/cloud` cache, msks-firstboot's marker — lives on the
+  workspace's root overlay, so `stop`/`start` never re-provisions
+  and a factory reset does (the reset drops the overlay). An image
+  without a declared provisioner still accepts
+  `user_data` (the daemon cannot know what a foreign guest runs);
+  the seed is NoCloud-exact either way. Mounting iso9660 needs the
+  `isofs` kernel module present — the shipped image's module tree
+  carries it.
 
 ## Building an image
 
@@ -228,3 +260,59 @@ Versions order numerically (`13.10` sorts after `13.9`). A malformed
 reference (`debian@not-a-hash`) is a named 400 rather than a
 miss. Explicit `kernel`/`rootfs` fields still win over the image —
 the image is the convenient path, not a mandate.
+
+## First-boot provisioning (`user_data`)
+
+A workspace created with `user_data` gets a customization payload
+that runs on its first boot — EC2-style, delivered on the workspace's
+own seed disk:
+
+```bash
+# a script (any image with a provisioner; the leading #! is what
+# makes it one)
+msks create ws --user-data provision.sh --start
+
+# cloud-config (needs a cloud-init image)
+curl -X POST .../api/v1/workspaces -d '{
+  "id": "ws", "image": "mycloud:1.0",
+  "user_data": "#cloud-config\nusers:\n- name: alice\n..."
+}'
+```
+
+The rules worth knowing:
+
+- **Create-time and immutable.** The payload is part of the
+  workspace's identity; `user_data` is accepted only at create, any
+  mutation attempt answers a named 405 (delete and recreate to
+  change it). Both consumers key their run-once semantics off the
+  workspace, so changing it after the fact would silently do
+  nothing anyway.
+- **The seed is per-workspace state.** It is built at create (a
+  few hundred KiB of iso9660 overhead regardless of payload size,
+  `cidata`-labeled), attached read-only as the third disk, survives
+  `stop`/`start` and factory reset, and is deleted with the
+  workspace. It can embed tokens, so the daemon stores it mode 0600
+  under the workspace's own directory — and creates its database
+  file (which records the payload on the workspace's row) 0600 too.
+  Listing endpoints and `msks ls --json` echo the payload back over
+  the same TLS + token channel as the console.
+- **Payload form follows the image's provisioner.** An image
+  declared `msks-firstboot` runs scripts only — a cloud-config
+  document against it is a create-time 400 naming the image. An
+  image declared `cloud-init` (or one with no declared provisioner)
+  accepts both forms; cloud-init also runs `#!` scripts from
+  `user_data`.
+- **No `user_data`, no seed.** A workspace created without a payload
+  boots exactly as before: no third disk, no firstboot work (the
+  shipped image's unit writes its run-once marker and exits), no
+  measurable boot cost.
+- **Failure posture of the shipped consumer.** The firstboot unit
+  writes its run-once marker before the payload runs (cloud-init's
+  shape: once per boot cycle, success or not) and has no start
+  timeout — a hanging payload leaves the unit running, while the
+  console, the serial log, and the power button stay available. A
+  payload that failed (or a transient seed-mount failure) does not
+  retry on the next boot; a factory reset re-provisions.
+- **The k8s backend does not serve `user_data` yet** — the runner pod
+  does not build seed disks; create refuses the combination by name
+  (the same shape as its egress refusal).

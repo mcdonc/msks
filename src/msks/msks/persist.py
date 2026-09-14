@@ -1,7 +1,7 @@
 """Per-workspace persistent artifacts: root overlay + /home volume (#14).
 
-A workspace owns exactly two persistent artifacts, with lifetimes
-separate from the VM's:
+A workspace owns its persistent artifacts, with lifetimes separate
+from the VM's:
 
 - the **root overlay** — a qcow2 copy-on-write file backed by the
   workspace's base image, under ``<state_dir>/vms/<id>/root.qcow2``.
@@ -11,9 +11,22 @@ separate from the VM's:
 - the **home volume** — an ext4 image file under
   ``<state_dir>/volumes/<id>.ext4``, attached as a second virtio-blk
   disk the guest mounts at /home (labeled ``msks-home``).
+- the **seed disk** (#41) — present only when the workspace was
+  created with ``user_data``: a small iso9660 image under
+  ``<state_dir>/vms/<id>/seed.img`` labeled ``cidata``, attached
+  read-only as a third virtio-blk disk. It carries the payload
+  verbatim as ``user-data`` plus a NoCloud ``meta-data``
+  (instance-id/hostname), so both provisioners — cloud-init's
+  NoCloud datasource and the image's msks-firstboot — read the same
+  layout. It can embed tokens, so it is installed mode 0600 (the
+  row that records the payload makes the same promise: the daemon
+  creates its database file 0600).
 
-Both are created at workspace create, survive ``stop``/``start``,
-and are removed with the workspace. ``ensure_artifacts`` builds each
+The first two are created at workspace create; all three survive
+``stop``/``start`` and are removed with the workspace (the seed
+rides the same vm directory — a crash mid-seed-build leaves only
+its staging directory behind, which the same rmtree owns).
+``ensure_artifacts`` builds each
 artifact under a private temporary name and installs it with one
 atomic rename: a file at the final path is always complete, so a
 failed create (a missing tool, ENOSPC, a partial write) can never
@@ -22,8 +35,14 @@ mistake for valid. An existing artifact is left alone, so ``launch``
 can heal artifacts a crash (or a pre-#14 workspace row) lost without
 touching data that exists. ``remove_overlay`` is factory reset's
 half — the root returns to the pristine base, the home volume keeps
-its data. A crash mid-create leaves only a ``*.tmp`` sibling behind
-(harmless debris; the removal helpers sweep them).
+its data, and the seed stays: it is immutable create-time input, so
+a reset workspace re-provisions from it exactly as a fresh one
+would (both consumers' run-once state — cloud-init's /var/lib/cloud
+cache, msks-firstboot's marker — lives on the overlay a reset
+drops). A crash mid-create leaves only ``*.tmp`` scratch behind:
+harmless debris, swept by the removal helpers for the file-shaped
+artifacts and by the vm-dir rmtree for the seed's staging
+directory.
 """
 
 import asyncio
@@ -31,6 +50,7 @@ import contextlib
 import itertools
 import json
 import os
+import shutil
 from pathlib import Path
 
 from .microvm.errors import MicrovmError
@@ -38,6 +58,7 @@ from .microvm.spec import VmSpec
 
 MIB = 1024 * 1024
 HOME_VOLUME_LABEL = "msks-home"
+SEED_LABEL = "cidata"
 
 _tmp_counter = itertools.count()
 
@@ -50,6 +71,12 @@ def overlay_path(state_dir: Path, workspace_id: str) -> Path:
 def home_volume_path(state_dir: Path, workspace_id: str) -> Path:
     """The /home volume: the ext4 file the guest mounts at /home."""
     return state_dir / "volumes" / f"{workspace_id}.ext4"
+
+
+def seed_path(state_dir: Path, workspace_id: str) -> Path:
+    """The #41 seed disk: the cidata iso carrying the workspace's
+    user_data, attached read-only beside the root and home disks."""
+    return state_dir / "vms" / workspace_id / "seed.img"
 
 
 def tmp_sibling(target: Path) -> Path:
@@ -90,10 +117,23 @@ async def ensure_artifacts(spec: VmSpec, settings) -> None:
         if not overlay.is_file():
             await create_overlay(spec, settings, overlay)
             installed.append(overlay)
+        await ensure_seed(spec, settings, installed)
     except BaseException:
         for artifact in installed:
             artifact.unlink(missing_ok=True)
         raise
+
+
+async def ensure_seed(spec: VmSpec, settings, installed: list[Path]) -> None:
+    """Build the #41 seed when the workspace carries a payload and
+    the file is absent; a fresh build joins the rollback list."""
+    if spec.user_data is None:
+        return
+    seed = seed_path(settings.state_dir, spec.workspace_id)
+    if seed.is_file():
+        return
+    await create_seed(spec, settings)
+    installed.append(seed)
 
 
 async def create_home_volume(target: Path, spec: VmSpec, settings) -> None:
@@ -160,6 +200,64 @@ async def create_overlay(spec: VmSpec, settings, overlay: Path) -> None:
         scratch.unlink(missing_ok=True)
 
 
+def seed_metadata(workspace_id: str) -> str:
+    """The seed's ``meta-data``: cloud-init NoCloud keys.
+
+    ``instance-id`` is the workspace id, so cloud-init's run-once
+    semantics key off the workspace: a stop/start or a daemon restart
+    never re-provisions. A factory reset DOES re-provision — the
+    "already ran" state (/var/lib/cloud) lives on the overlay the
+    reset drops — which is exactly msks-firstboot's semantics too.
+    """
+    return f"instance-id: {workspace_id}\nlocal-hostname: {workspace_id}\n"
+
+
+async def create_seed(spec: VmSpec, settings) -> None:
+    """Build and install the workspace's #41 seed disk.
+
+    mkisofs packs the staged ``user-data``/``meta-data`` into a
+    scratch iso9660 volume labeled ``cidata`` — the exact layout
+    cloud-init's NoCloud datasource expects — and the finished image
+    is installed with the house atomic rename, mode 0600 (the payload
+    can embed tokens).
+    """
+    target = seed_path(settings.state_dir, spec.workspace_id)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    # The staging directory keeps the tmp_sibling shape, so a crash
+    # mid-build leaves visibly-temporary debris inside the vm dir
+    # (removed with the workspace by the vm-dir rmtree). 0700 beats
+    # the umask: the plaintext payload must not be readable by other
+    # local users for the duration of the build — or forever, if a
+    # crash leaves the staging directory behind (tls.py's no-window
+    # rule for private keys).
+    stage = tmp_sibling(target)
+    stage.mkdir(mode=0o700)
+    try:
+        (stage / "user-data").write_text(spec.user_data)
+        (stage / "meta-data").write_text(seed_metadata(spec.workspace_id))
+        image = stage / "seed.img"
+        await run_tool(
+            [
+                settings.mkisofs,
+                "-quiet",
+                "-output",
+                str(image),
+                "-volid",
+                SEED_LABEL,
+                "-joliet",
+                "-rock",
+                "user-data",
+                "meta-data",
+            ],
+            "mkisofs on the cidata seed",
+            cwd=stage,
+        )
+        image.chmod(0o600)
+        install(image, target)
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
+
+
 async def base_info(base: Path, qemu_img: str) -> tuple[int, str]:
     """The base image's ``(virtual size, format)`` from qemu-img info."""
     output = await run_tool(
@@ -175,12 +273,14 @@ async def base_info(base: Path, qemu_img: str) -> tuple[int, str]:
         ) from exc
 
 
-async def run_tool(argv: list[str], what: str) -> bytes:
+async def run_tool(argv: list[str], what: str, cwd: Path | None = None) -> bytes:
     """Run one host tool; a failure becomes a named operator error.
 
     stderr stays out of the captured stdout: ``qemu-img info`` is
     parsed as JSON, and a chatty warning line ahead of the document
-    must not turn into a spurious parse failure.
+    must not turn into a spurious parse failure. ``cwd`` serves the
+    seed build (mkisofs takes the payload paths relative to its
+    staging directory).
     """
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -188,6 +288,7 @@ async def run_tool(argv: list[str], what: str) -> bytes:
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            cwd=None if cwd is None else str(cwd),
         )
     except FileNotFoundError as exc:
         raise MicrovmError(f"{what}: tool not found: {argv[0]}") from exc

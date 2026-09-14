@@ -58,6 +58,73 @@ let
   # manifest, matched by the systemd unit below.
   vsockShellPort = 1023;
 
+  # First-boot provisioning (#41): the image's declared seed-disk
+  # consumer. This image runs script payloads with its own unit;
+  # cloud-config documents need a cloud-init image.
+  imageProvisioner = "msks-firstboot";
+
+  # The first-boot stanza (#41): find the cidata seed among the
+  # virtio disks, run a script user_data once per root overlay. A
+  # plain writeText (not writeShellScript) so the shebang points at
+  # the guest's own /bin/sh — the overlay installs it executable.
+  firstbootHelper = pkgs.writeText "msks-firstboot" ''
+    #!/bin/sh
+    # msks-firstboot: run the workspace's user_data script off the
+    # cidata seed disk, once per root overlay (#41).
+    #
+    # The seed is a read-only iso9660 disk labeled cidata carrying
+    # user-data and meta-data (cloud-init's NoCloud layout). This
+    # consumer runs script payloads only (a leading #!); a cloud-config
+    # document is cloud-init's, and the daemon refuses one for this
+    # image at create time. The unit never fails the boot: every path
+    # out is exit 0, and the payload's own exit status is only logged.
+    set -u
+
+    marker=/etc/msks/firstboot.done
+    mkdir -p /etc/msks
+    # Run-once keys off the overlay, not the seed: the marker lands on
+    # the workspace's root, so stop/start never re-provisions and a
+    # factory reset (the overlay's death) does. cloud-init's
+    # /var/lib/cloud cache lives on the same overlay, so its
+    # semantics are identical.
+    : > "$marker"
+
+    seed=
+    for disk in /dev/vd*; do
+      [ -b "$disk" ] || continue
+      if [ "$(blkid -o value -s LABEL "$disk" 2>/dev/null)" = cidata ]; then
+        seed=$disk
+        break
+      fi
+    done
+    if [ -z "$seed" ]; then
+      echo "msks-firstboot: no cidata seed disk; nothing to provision" >&2
+      exit 0
+    fi
+
+    modprobe isofs 2>/dev/null || true
+    mkdir -p /run/msks/seed
+    if ! mount -t iso9660 -o ro "$seed" /run/msks/seed; then
+      echo "msks-firstboot: cannot mount $seed; skipping provisioning" >&2
+      exit 0
+    fi
+    cp /run/msks/seed/user-data /run/msks/user-data
+    umount /run/msks/seed
+
+    # Scripts only: cloud-config documents (a leading #cloud-config)
+    # never carry the #! this consumer requires.
+    if [ "$(head -c 2 /run/msks/user-data)" != "#!" ]; then
+      echo "msks-firstboot: user-data is not a script (no leading #!); nothing to run" >&2
+      exit 0
+    fi
+
+    chmod 0700 /run/msks/user-data
+    echo "msks-firstboot: running user_data script" >&2
+    /run/msks/user-data
+    echo "msks-firstboot: user_data script exited $?" >&2
+    exit 0
+  '';
+
   # The workspace image identity (#40): the catalog reference is
   # <name>:<version>.
   imageName = "debian";
@@ -291,6 +358,35 @@ let
       'ExecStart=' \
       'ExecStart=-/sbin/agetty --autologin root --noclear %I $TERM' \
       > $out/etc/systemd/system/serial-getty@ttyS0.service.d/autologin.conf
+
+    # First-boot provisioning (#41): the daemon attaches a read-only
+    # iso9660 disk labeled cidata (cloud-init's NoCloud layout)
+    # carrying the workspace's user_data when it was created with
+    # one. The helper below runs a script payload exactly once per
+    # root overlay; cloud-config documents are cloud-init's, and an
+    # image that ships cloud-init skips this unit entirely (the
+    # ConditionPathExists below) so payloads never run twice.
+    install -Dm0755 ${firstbootHelper} $out/usr/lib/msks/msks-firstboot
+    printf '%s\n' \
+      '[Unit]' \
+      'Description=msks first-boot provisioning (user_data from the cidata seed)' \
+      'Documentation=https://github.com/mcdonc/msks' \
+      'ConditionPathExists=!/etc/msks/firstboot.done' \
+      'ConditionPathExists=!/usr/lib/systemd/system/cloud-init.service' \
+      'After=local-fs.target systemd-networkd.service' \
+      ''' \
+      '[Service]' \
+      'Type=oneshot' \
+      'TimeoutStartSec=0' \
+      'StandardOutput=journal+console' \
+      'StandardError=journal+console' \
+      'ExecStart=/usr/lib/msks/msks-firstboot' \
+      ''' \
+      '[Install]' \
+      'WantedBy=multi-user.target' \
+      > $out/etc/systemd/system/msks-firstboot.service
+    ln -s ../msks-firstboot.service \
+      $out/etc/systemd/system/multi-user.target.wants/msks-firstboot.service
   '';
 
   # Parse sfdisk --json: print the byte offset of the Linux root
@@ -505,7 +601,8 @@ let
           "cmdline": "${kernelCmdline}",
           "vsock_shell_port": ${toString vsockShellPort},
           "kernel_version": "$kernel_version",
-          "kernel_format": "bzImage"
+          "kernel_format": "bzImage",
+          "capabilities": {"provisioner": "${imageProvisioner}"}
         }
         EOF
       '';

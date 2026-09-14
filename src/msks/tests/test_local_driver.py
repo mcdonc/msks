@@ -10,6 +10,7 @@ import asyncio
 import os
 import shutil
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -68,6 +69,18 @@ def env(tmp_path: Path):
     mkfs_stub = tmp_path / "mkfs.ext4"
     mkfs_stub.write_text("#!/bin/sh\n: \n")
     mkfs_stub.chmod(0o755)
+    geniso_stub = tmp_path / "mkisofs"
+    geniso_stub.write_text(
+        "#!/bin/sh\n"
+        "prev=\n"
+        "out=\n"
+        "for arg do\n"
+        '  case "$prev" in -output) out=$arg ;; esac\n'
+        "  prev=$arg\n"
+        "done\n"
+        'printf iso > "$out"\n'
+    )
+    geniso_stub.chmod(0o755)
     state_dir = Path(tempfile.mkdtemp(prefix="msks-test-", dir="/tmp"))
     settings = Settings(
         vmm=VmmSettings(
@@ -75,6 +88,7 @@ def env(tmp_path: Path):
             state_dir=state_dir,
             qemu_img=str(qemu_stub),
             mkfs_ext4=str(mkfs_stub),
+            mkisofs=str(geniso_stub),
         )
     )
     yield build_app(settings), state_dir, None
@@ -909,3 +923,33 @@ async def test_launch_refuses_egress_without_the_plumbing(
     await app.state.net.start()
     with pytest.raises(MicrovmError, match="MSKSD_EGRESS_ENABLED"):
         await app.state.microvm.launch(spec(tmp_path, egress=True))
+
+
+def test_disk_entries_attach_the_seed_read_only(tmp_path: Path) -> None:
+    """A user_data workspace (#41) attaches its cidata seed as a
+    third, read-only raw disk; a plain workspace keeps two disks."""
+    overlay, home, seed = disk_entries(tmp_path, WID, user_data="#!/bin/sh\ntrue\n")
+    assert overlay["path"] == str(tmp_path / "vms" / WID / "root.qcow2")
+    assert home["path"] == str(tmp_path / "volumes" / f"{WID}.ext4")
+    assert seed == {
+        "path": str(tmp_path / "vms" / WID / "seed.img"),
+        "readonly": True,
+        "image_type": "Raw",
+    }
+    assert len(disk_entries(tmp_path, WID)) == 2
+
+
+async def test_launch_attaches_the_user_data_seed(env, fake, tmp_path: Path) -> None:
+    """A user_data workspace boots with three disks (#41): the seed
+    is healed by launch like the other artifacts and reaches the VMM
+    read-only."""
+    app, state_dir, _ = env
+    payload = "#!/bin/sh\necho seeded > /root/stamp\n"
+    boot_spec = replace(spec(tmp_path), user_data=payload)
+    await app.state.microvm.launch(boot_spec)
+    seed = persist.seed_path(state_dir, WID)
+    assert seed.is_file()
+    body = dict(fake.requests[0][2])
+    assert body["disks"] == disk_entries(state_dir, WID, user_data=payload)
+    assert body["disks"][2]["readonly"] is True
+    await app.state.microvm.kill(WID)

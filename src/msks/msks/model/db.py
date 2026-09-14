@@ -33,8 +33,15 @@ class Base(DeclarativeBase):
 
 
 def engine_for(db_path: Path) -> AsyncEngine:
-    """The async engine for one database file (parent dirs created)."""
+    """The async engine for one database file (parent dirs created).
+
+    The file is created mode 0600 when absent: the database records
+    workspace `user_data` (#41), which can embed tokens — the same
+    protection the seed disk itself gets. sqlite happily uses an
+    existing file, so the mode is fixed before the first connect.
+    """
     db_path.parent.mkdir(parents=True, exist_ok=True)
+    db_path.touch(mode=0o600, exist_ok=True)
     return create_async_engine(f"sqlite+aiosqlite:///{db_path}")
 
 

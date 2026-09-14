@@ -58,6 +58,38 @@ def write_mkfs_stub(directory: Path, record: Path) -> Path:
     return stub
 
 
+def write_mkisofs_stub(directory: Path, record: Path) -> Path:
+    """A recording mkisofs stand-in for the #41 seed build.
+
+    Parses ``-output`` out of the argv, appends the staged payload
+    files' contents to the record between markers (they are gone by
+    the time the caller can look), and writes a non-empty image so
+    install() has a file to rename.
+    """
+    stub = directory / "mkisofs"
+    stub.write_text(
+        "#!/bin/sh\n"
+        "prev=\n"
+        "out=\n"
+        "for arg do\n"
+        '  case "$prev" in -output) out=$arg ;; esac\n'
+        "  prev=$arg\n"
+        "done\n"
+        "{\n"
+        '  printf "mkisofs $*\\n"\n'
+        '  printf "staging-mode %s" "$(stat -c %a .)"\n'
+        '  printf -- "--- user-data ---\\n"\n'
+        "  cat user-data\n"
+        '  printf "\\n--- meta-data ---\\n"\n'
+        "  cat meta-data\n"
+        '  printf "\\n"\n'
+        f"}} >> {record}\n"
+        'printf iso-content > "$out"\n'
+    )
+    stub.chmod(0o755)
+    return stub
+
+
 @pytest.fixture
 def tools(tmp_path: Path):
     """Stubbed tool settings plus the argv record; a 4 MiB base image."""
@@ -69,17 +101,21 @@ def tools(tmp_path: Path):
         state_dir=tmp_path / "state",
         qemu_img=str(write_qemu_stub(tmp_path, record)),
         mkfs_ext4=str(write_mkfs_stub(tmp_path, record)),
+        mkisofs=str(write_mkisofs_stub(tmp_path, record)),
     )
     return settings, record, base
 
 
-def spec(base: Path, root_mib: int = 10240, home_mib: int = 2048) -> VmSpec:
+def spec(
+    base: Path, root_mib: int = 10240, home_mib: int = 2048, user_data=None
+) -> VmSpec:
     return VmSpec(
         workspace_id=WID,
         kernel=base.parent / "vmlinux",
         rootfs=base,
         root_mib=root_mib,
         home_mib=home_mib,
+        user_data=user_data,
     )
 
 
@@ -105,6 +141,7 @@ def test_paths_pin_the_layout(tmp_path: Path) -> None:
     assert persist.home_volume_path(tmp_path, "ws1") == (
         tmp_path / "volumes" / "ws1.ext4"
     )
+    assert persist.seed_path(tmp_path, "ws1") == (tmp_path / "vms" / "ws1" / "seed.img")
 
 
 async def test_ensure_creates_overlay_and_volume(tools) -> None:
@@ -282,3 +319,74 @@ def test_remove_sweeps_crashed_scratch_files(tmp_path: Path) -> None:
     persist.remove_home_volume(tmp_path, WID)
     assert list(overlay.parent.glob("*.tmp")) == []
     assert list(home.parent.glob("*.tmp")) == []
+
+
+def test_seed_metadata_keys_off_the_workspace() -> None:
+    """NoCloud meta-data: instance-id drives cloud-init's run-once
+    semantics, local-hostname gives each workspace its own name."""
+    assert persist.seed_metadata("ws-41") == (
+        "instance-id: ws-41\nlocal-hostname: ws-41\n"
+    )
+
+
+async def test_ensure_builds_seed_when_user_data_set(tools) -> None:
+    """A user_data workspace (#41) gets its cidata seed beside the
+    overlay and home volume: kilobytes, iso9660-labeled, 0600 (the
+    payload can embed tokens)."""
+    settings, record, base = tools
+    payload = "#!/bin/sh\necho provisioned > /root/stamp\n"
+    await persist.ensure_artifacts(spec(base, user_data=payload), settings)
+    seed = persist.seed_path(settings.state_dir, WID)
+    assert seed.is_file()
+    assert seed.read_bytes() == b"iso-content"
+    assert seed.stat().st_mode & 0o777 == 0o600
+    log = record.read_text()
+    assert "staging-mode 700" in log
+    assert "-volid cidata" in log
+    assert f"--- user-data ---\n{payload}" in log
+    assert "--- meta-data ---\ninstance-id: ws-persist" in log
+    assert "local-hostname: ws-persist" in log
+    assert persist.overlay_path(settings.state_dir, WID).is_file()
+    assert persist.home_volume_path(settings.state_dir, WID).is_file()
+    assert not tmp_debris(settings)
+
+
+async def test_ensure_skips_seed_without_user_data(tools) -> None:
+    """The seed exists exactly when user_data was given: a plain
+    workspace boots as before, no seed, no mkisofs run."""
+    settings, record, base = tools
+    await persist.ensure_artifacts(spec(base), settings)
+    assert not persist.seed_path(settings.state_dir, WID).exists()
+    assert "mkisofs" not in record.read_text()
+
+
+async def test_seed_is_idempotent(tools) -> None:
+    """An existing seed is data, not debris: ensure runs mkisofs
+    exactly once across heals."""
+    settings, record, base = tools
+    payload = "#!/bin/sh\ntrue\n"
+    await persist.ensure_artifacts(spec(base, user_data=payload), settings)
+    await persist.ensure_artifacts(spec(base, user_data=payload), settings)
+    assert record.read_text().count("mkisofs") == 1
+
+
+async def test_failed_seed_rolls_back_the_fresh_pair(tools) -> None:
+    """A create whose seed build fails installs nothing at any final
+    path — the retry starts from a clean triple, not a strict-refusal
+    wedge on the pair the failed run already made."""
+    settings, record, base = tools
+    mkisofs = Path(settings.mkisofs)
+    mkisofs.write_text("#!/bin/sh\nexit 1\n")
+    with pytest.raises(MicrovmError, match="mkisofs on the cidata seed failed"):
+        await persist.ensure_artifacts(
+            spec(base, user_data="#!/bin/sh\ntrue\n"), settings
+        )
+    assert not persist.seed_path(settings.state_dir, WID).exists()
+    assert not persist.overlay_path(settings.state_dir, WID).exists()
+    assert not persist.home_volume_path(settings.state_dir, WID).exists()
+    assert not tmp_debris(settings)
+    write_mkisofs_stub(mkisofs.parent, record)
+    await persist.ensure_artifacts(spec(base, user_data="#!/bin/sh\ntrue\n"), settings)
+    assert persist.seed_path(settings.state_dir, WID).is_file()
+    assert persist.overlay_path(settings.state_dir, WID).is_file()
+    assert persist.home_volume_path(settings.state_dir, WID).is_file()

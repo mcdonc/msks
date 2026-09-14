@@ -22,7 +22,8 @@ alone) removes them.
 ```text
 <state_dir>/
 ├── vms/<workspace_id>/
-│   └── root.qcow2        # the root overlay (plus the VM's runtime files)
+│   ├── root.qcow2        # the root overlay (plus the VM's runtime files)
+│   └── seed.img          # the #41 cidata seed (user_data workspaces only)
 └── volumes/
     └── <workspace_id>.ext4   # the /home volume (sparse ext4)
 ```
@@ -39,6 +40,17 @@ image" action later; it never happens implicitly.)
 
 The home volume is a sparse ext4 file: an idle volume costs its
 metadata, not its nominal size, and grows as the guest writes.
+
+The seed (#41) exists exactly when the workspace was created with
+`user_data`: a kilobytes-small iso9660 image labeled `cidata`, built
+with `mkisofs` (genisoimage), attached to the VM **read-only**, and
+installed mode 0600 because the payload can embed tokens (its
+staging directory is 0700, and the daemon creates its database
+file — which records the payload — 0600). It rides
+the workspace's vm directory, so it survives `stop`/`start` and
+dies with the workspace. Factory reset keeps it — it is immutable
+create-time input, so the reset workspace re-provisions from it —
+and `docs/images.md` describes what runs the payload.
 
 A start heals missing artifacts: if the overlay or the volume file
 is absent (a crash mid-create, or a workspace row created before
@@ -151,6 +163,7 @@ boot. Deleting the workspace releases the pin.
 | `MSKSD_HOME_MIB`                  | `2048`       | Default `/home` volume size, MiB.                                                                                |
 | `MSKSD_QEMU_IMG`                  | `qemu-img`   | The `qemu-img` binary that creates overlays.                                                                     |
 | `MSKSD_MKFS_EXT4`                 | `mkfs.ext4`  | The mkfs that formats `/home` volumes.                                                                           |
+| `MSKSD_MKISOFS`                   | `mkisofs`    | The mkisofs (genisoimage) that builds `cidata` seed disks (#41).                                                 |
 | `MSKSD_HOST_NAME`                 | the hostname | The host recorded as owning locally-created artifacts.                                                           |
 | `MSKSD_SHUTDOWN_TIMEOUT_S`        | `20`         | How long `stop` waits for the guest's clean poweroff before the fallback kill; a stop answers within this bound. |
 | `MSKSD_K8S_STORAGE_CLASS`         | unset        | Storage class for per-workspace claims; unset asks the cluster's default.                                        |

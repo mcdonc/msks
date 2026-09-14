@@ -170,6 +170,7 @@ def setup_run(assets) -> tuple:
         rootfs=assets.rootfs,
         initrd=assets.initrd,
         cmdline=assets.cmdline,
+        egress=False,
     )
     return app.state.microvm, spec, serial_log, state_dir
 

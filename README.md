@@ -227,7 +227,9 @@ devenv --quiet -O dotenv.enable:bool false shell -- msks create my-workspace --s
 host); `--json` prints one JSON document for scripting. `msks create`
 POSTs the same body the API accepts — `--image` picks a catalog
 reference, `--cpus`/`--mem-mib`/`--root-mib`/`--home-mib` size the VM,
-and explicit `--kernel`/`--rootfs` (with optional `--initrd`,
+`--user-data` attaches a first-boot provisioning script (#41, a
+cidata seed disk the guest's provisioner runs once), and explicit
+`--kernel`/`--rootfs` (with optional `--initrd`,
 `--cmdline`) bypass the catalog. `--start` boots the workspace right
 after creating it, so `msks create ws --start` then `msks shell ws`
 is the two-step path from nothing to a shell; `msks start <id>` boots

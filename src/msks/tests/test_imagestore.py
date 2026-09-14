@@ -901,3 +901,130 @@ def test_foreign_archive_has_no_fabricated_kernel_format(tmp_path: Path) -> None
     record = import_archive(archive, tmp_path)
     assert record.kernel_version == ""
     assert record.kernel_format == ""
+
+
+def test_provisioner_round_trip(tmp_path: Path) -> None:
+    """capabilities.provisioner (#41) parses, survives listing, and
+    absent stays None."""
+    archive = tmp_path / "a.tar"
+    build_containerdisk(
+        archive,
+        schema=False,
+        members={
+            "boot/vmlinuz": b"kernel-bytes",
+            "boot/initrd.img": b"initrd-bytes",
+            "disk/rootfs.ext4": b"rootfs-bytes",
+            "disk/image.json": json.dumps(
+                {
+                    "schema": 2,
+                    "name": "debian",
+                    "version": "13.6",
+                    "cmdline": "console=ttyS0 root=/dev/vda ro",
+                    "vsock_shell_port": 1023,
+                    "capabilities": {"provisioner": "cloud-init"},
+                }
+            ).encode(),
+        },
+    )
+    record = import_archive(archive, tmp_path)
+    assert record.provisioner == "cloud-init"
+    assert list_images(tmp_path)[0].provisioner == "cloud-init"
+    plain = tmp_path / "b.tar"
+    build_containerdisk(plain, name="plain")
+    assert import_archive(plain, tmp_path).provisioner is None
+
+
+def test_unknown_provisioner_is_a_named_import_error(tmp_path: Path) -> None:
+    """A typo'd provisioner fails the import with the value named —
+    it is the field create-time payload checks key off."""
+    archive = tmp_path / "a.tar"
+    build_containerdisk(
+        archive,
+        schema=False,
+        members={
+            "boot/vmlinuz": b"kernel-bytes",
+            "boot/initrd.img": b"initrd-bytes",
+            "disk/rootfs.ext4": b"rootfs-bytes",
+            "disk/image.json": json.dumps(
+                {
+                    "schema": 2,
+                    "name": "debian",
+                    "version": "13.6",
+                    "cmdline": "console=ttyS0 root=/dev/vda ro",
+                    "vsock_shell_port": 1023,
+                    "capabilities": {"provisioner": "cloudinit!"},
+                }
+            ).encode(),
+        },
+    )
+    with pytest.raises(ImageError, match="capabilities.provisioner"):
+        import_archive(archive, tmp_path)
+    # The refusal lands before anything installs: no cache, no
+    # retained archive, only the (swept) private copy's absence.
+    assert list((tmp_path / "images").iterdir()) == []
+
+
+def test_non_object_capabilities_is_a_named_import_error(tmp_path: Path) -> None:
+    archive = tmp_path / "a.tar"
+    build_containerdisk(
+        archive,
+        schema=False,
+        members={
+            "boot/vmlinuz": b"kernel-bytes",
+            "boot/initrd.img": b"initrd-bytes",
+            "disk/rootfs.ext4": b"rootfs-bytes",
+            "disk/image.json": json.dumps(
+                {
+                    "schema": 2,
+                    "name": "debian",
+                    "version": "13.6",
+                    "cmdline": "console=ttyS0 root=/dev/vda ro",
+                    "vsock_shell_port": 1023,
+                    "capabilities": ["cloud-init"],
+                }
+            ).encode(),
+        },
+    )
+    with pytest.raises(ImageError, match="capabilities must be an object"):
+        import_archive(archive, tmp_path)
+
+
+def test_cached_manifest_with_bad_provisioner_is_invisible(tmp_path: Path) -> None:
+    """A hand-edited cache entry with a bogus provisioner is an
+    invisible image, not a daemon crash; re-import repairs it."""
+    archive = tmp_path / "a.tar"
+    build_containerdisk(archive)
+    record = import_archive(archive, tmp_path)
+    manifest_path = tmp_path / "images" / record.hash / "image.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["capabilities"] = {"provisioner": "bogus"}
+    manifest_path.write_text(json.dumps(manifest))
+    assert list_images(tmp_path) == []
+    repaired = import_archive(archive, tmp_path)
+    assert repaired.provisioner is None
+
+
+def test_capabilities_without_provisioner_reads_as_none(tmp_path: Path) -> None:
+    """capabilities may exist without a provisioner (future keys):
+    the provisioner reads as absent, not as an error."""
+    archive = tmp_path / "a.tar"
+    build_containerdisk(
+        archive,
+        schema=False,
+        members={
+            "boot/vmlinuz": b"kernel-bytes",
+            "boot/initrd.img": b"initrd-bytes",
+            "disk/rootfs.ext4": b"rootfs-bytes",
+            "disk/image.json": json.dumps(
+                {
+                    "schema": 2,
+                    "name": "debian",
+                    "version": "13.6",
+                    "cmdline": "console=ttyS0 root=/dev/vda ro",
+                    "vsock_shell_port": 1023,
+                    "capabilities": {"future-key": True},
+                }
+            ).encode(),
+        },
+    )
+    assert import_archive(archive, tmp_path).provisioner is None

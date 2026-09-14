@@ -403,6 +403,77 @@ async def test_local_persistence_across_restart_and_reset() -> None:
         shutil.rmtree(state_dir, ignore_errors=True)
 
 
+@needs_local
+async def test_local_firstboot_user_data() -> None:
+    """The #41 seed end to end on real KVM: a user_data workspace
+    gets a cidata seed built at prepare, the guest's firstboot unit
+    runs the script payload on the first boot, a stop/start cycle
+    does not re-run it, and a factory reset (the overlay's death)
+    re-provisions from the same seed. A plain workspace boots with no
+    seed attached at all.
+    """
+    state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
+    settings = Settings(vmm=VmmSettings(state_dir=state_dir))
+    app = build_app(settings)
+    microvm = app.state.microvm
+    wid = f"smoke-{uuid.uuid4().hex[:8]}"
+    serial_log = state_dir / "vms" / wid / "serial.log"
+    payload = (
+        "#!/bin/sh\n"
+        "echo firstboot-ran > /root/firstboot-stamp\n"
+        "count=$(cat /root/firstboot-count 2>/dev/null || echo 0)\n"
+        "echo $((count + 1)) > /root/firstboot-count\n"
+    )
+    spec = VmSpec(
+        workspace_id=wid,
+        kernel=Path(VMLINUX),
+        rootfs=Path(ROOTFS),
+        initrd=Path(INITRD) if INITRD else None,
+        cmdline=CMDLINE or "console=hvc0 root=/dev/vda rw",
+        root_mib=2048,
+        home_mib=256,
+        egress=False,
+        user_data=payload,
+    )
+
+    async def boot_and_probe(expected_count: int) -> None:
+        await microvm.launch(spec)
+        await await_guest_up(serial_log)
+        await run_in_console(
+            microvm, wid, "cat /root/firstboot-count", str(expected_count)
+        )
+        await run_in_console(microvm, wid, "cat /root/firstboot-stamp", "firstboot-ran")
+        # The seed reaches the guest as a labeled, read-only disk.
+        await run_in_console(microvm, wid, "blkid -o value -s LABEL /dev/vdc", "cidata")
+        await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
+
+    try:
+        await microvm.prepare(spec)
+        seed = persist.seed_path(state_dir, wid)
+        assert seed.is_file()
+        await boot_and_probe(1)
+        # stop/start: the marker survives on the overlay, the script
+        # does not run again.
+        serial_log.unlink(missing_ok=True)
+        await boot_and_probe(1)
+        # Factory reset: the overlay (marker included) dies; the seed
+        # stays and provisions the pristine root again.
+        serial_log.unlink(missing_ok=True)
+        await microvm.reset(wid)
+        assert not persist.overlay_path(state_dir, wid).exists()
+        assert seed.is_file()
+        await boot_and_probe(1)
+    except BaseException:
+        collect_failure_evidence(state_dir, wid, serial_log)
+        with contextlib.suppress(Exception):
+            await microvm.kill(wid)
+        raise
+    finally:
+        with contextlib.suppress(Exception):
+            await microvm.cleanup(wid)
+        shutil.rmtree(state_dir, ignore_errors=True)
+
+
 @needs_k8s
 async def test_k8s_pod_lifecycle() -> None:
     settings = Settings(

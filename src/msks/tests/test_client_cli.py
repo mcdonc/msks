@@ -5,7 +5,9 @@ path, POST body, output shape, one-line errors); the ASGI tests run
 the same ``api_call`` seam against the real daemon surface.
 """
 
+import argparse
 import asyncio
+import io
 import json
 import ssl
 from pathlib import Path
@@ -906,6 +908,7 @@ def test_image_info_prints_the_record(
     assert "kernel   6.12.107+deb13 (raw)" in out
     assert "cmdline  console=hvc0 root=/dev/vda rw" in out
     assert "console  vsock port 1073741826" in out
+    assert "seed     provisioner - (none declared)" in out
     assert "default  no" in out
 
 
@@ -1030,3 +1033,84 @@ def test_image_rm_on_an_empty_catalog_names_it(monkeypatch: pytest.MonkeyPatch) 
         cli.cmd_image_rm(
             "debian", transport=mock(lambda req: httpx.Response(200, json=[]))
         )
+
+
+def test_create_user_data_reads_the_file(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """--user-data FILE (#41) carries the file's bytes verbatim as the
+    create body's user_data."""
+    client_env(monkeypatch)
+    payload = "#!/bin/sh\necho seeded > /root/stamp\n"
+    source = tmp_path / "seed.sh"
+    source.write_text(payload)
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(201, json={"id": "ws1", "status": "created"})
+
+    rc = cli.main(
+        ["create", "ws1", "--user-data", str(source)],
+        transport=mock(handler),
+    )
+    assert rc == 0
+    assert seen["body"] == {"id": "ws1", "user_data": payload}
+    assert "created ws1" in capsys.readouterr().out
+
+
+def test_create_user_data_reads_stdin(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """--user-data - reads the payload from stdin, script-style."""
+    client_env(monkeypatch)
+    payload = "#!/bin/sh\ntrue\n"
+    monkeypatch.setattr("sys.stdin", io.StringIO(payload))
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(201, json={"id": "ws1", "status": "created"})
+
+    rc = cli.main(["create", "ws1", "--user-data", "-"], transport=mock(handler))
+    assert rc == 0
+    assert seen["body"]["user_data"] == payload
+
+
+def test_create_user_data_missing_file_is_one_line(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """An unreadable payload file fails before any network activity,
+    one readable line."""
+    client_env(monkeypatch)
+    with pytest.raises(SystemExit, match="cannot read user-data"):
+        cli.create_body(
+            argparse.Namespace(
+                workspace_id="ws1",
+                image=None,
+                kernel=None,
+                initrd=None,
+                rootfs=None,
+                cmdline=None,
+                cpus=None,
+                mem_mib=None,
+                root_mib=None,
+                home_mib=None,
+                egress=None,
+                user_data="/nonexistent/seed.sh",
+                start=False,
+            )
+        )
+    assert capsys.readouterr().err == ""
+
+
+def test_create_user_data_non_utf8_is_one_line(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, tmp_path: Path
+) -> None:
+    """A binary payload file fails like an unreadable one: one line,
+    before any network activity."""
+    client_env(monkeypatch)
+    source = tmp_path / "seed.bin"
+    source.write_bytes(b"\xff\xfe#\x00")
+    with pytest.raises(SystemExit, match="cannot read user-data"):
+        cli.read_user_data(str(source))

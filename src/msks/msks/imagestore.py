@@ -56,6 +56,9 @@ class ImageRecord:
     kernel: Path
     initrd: Path
     rootfs: Path
+    # The image's declared first-boot provisioner (#41): None (the
+    # field is absent) or one of PROVISIONERS.
+    provisioner: str | None = None
 
     @property
     def ref(self) -> str:
@@ -136,6 +139,10 @@ def validate_manifest(layer: tarfile.TarFile) -> dict:
     if raw.get("schema") != 2:
         raise ImageError(f"image.json schema {raw.get('schema')!r}, expected 2")
     require_fields(raw)
+    # Before any staging/renaming: a bad provisioner must fail the
+    # import with nothing installed, not leave an invisible cache
+    # behind the 400.
+    provisioner_of(raw)
     return raw
 
 
@@ -148,6 +155,31 @@ def require_fields(raw: dict) -> None:
     ]
     if missing:
         raise ImageError(f"image.json missing {missing[0]!r}")
+
+
+#: The provisioners an image may declare (#41): which consumer eats
+#: the workspace's cidata seed disk.
+PROVISIONERS = ("cloud-init", "msks-firstboot")
+
+
+def provisioner_of(manifest: dict) -> str | None:
+    """The declared provisioner from ``capabilities`` (None when
+    absent). A present-but-unknown value is a named import error —
+    create-time payload checks key off this field."""
+    capabilities = manifest.get("capabilities")
+    if capabilities is None:
+        return None
+    if not isinstance(capabilities, dict):
+        raise ImageError("image.json capabilities must be an object")
+    provisioner = capabilities.get("provisioner")
+    if provisioner is None:
+        return None
+    if provisioner not in PROVISIONERS:
+        raise ImageError(
+            f"image.json capabilities.provisioner {provisioner!r} is unknown; "
+            f"expected one of {PROVISIONERS}"
+        )
+    return provisioner
 
 
 def extract(layer: tarfile.TarFile, member_name: str):
@@ -254,6 +286,7 @@ def record_from(cache: Path, digest: str, manifest: dict) -> ImageRecord:
         kernel=cache / "kernel",
         initrd=cache / "initrd",
         rootfs=cache / "rootfs.ext4",
+        provisioner=provisioner_of(manifest),
     )
 
 
@@ -264,7 +297,7 @@ def load_record(cache: Path) -> ImageRecord | None:
     try:
         manifest = json.loads(manifest_path.read_text())
         record = record_from(cache, cache.name, manifest)
-    except json.JSONDecodeError, TypeError, KeyError, ValueError:
+    except json.JSONDecodeError, TypeError, KeyError, ValueError, ImageError:
         # A corrupt entry is an invisible image, not a daemon crash;
         # re-importing the archive repairs it.
         return None

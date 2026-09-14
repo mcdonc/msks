@@ -11,6 +11,7 @@ import argparse
 import asyncio
 import json
 import sys
+from pathlib import Path
 
 from ..imagestore import is_hash_shape, version_key
 from .rest import (
@@ -199,12 +200,14 @@ def info_lines(row: dict) -> list[str]:
     """The full record: boot facts the listing carries."""
     default = "yes" if row["default"] else "no"
     kernel = f"{row['kernel_version'] or '-'} ({row['kernel_format'] or '-'})"
+    provisioner = row.get("provisioner") or "- (none declared)"
     return [
         f"ref      {row['name']}:{row['version']}",
         f"hash     {row['hash']}",
         f"kernel   {kernel}",
         f"cmdline  {row['cmdline']}",
         f"console  vsock port {row['vsock_shell_port']}",
+        f"seed     provisioner {provisioner}",
         f"default  {default}",
     ]
 
@@ -349,6 +352,16 @@ def cmd_image_info(ref: str, transport=None) -> int:
     return 0
 
 
+def read_user_data(path: str) -> str:
+    """The #41 payload: a file's contents, or stdin for ``-``."""
+    try:
+        if path == "-":
+            return sys.stdin.read()
+        return Path(path).read_text()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise SystemExit(f"msks: cannot read user-data file {path}: {exc}") from None
+
+
 def create_body(args: argparse.Namespace) -> dict:
     """The POST body: only the fields the operator set."""
     fields = {
@@ -366,6 +379,8 @@ def create_body(args: argparse.Namespace) -> dict:
     body = {name: value for name, value in fields.items() if value is not None}
     if args.egress is not None:
         body["egress"] = args.egress
+    if args.user_data is not None:
+        body["user_data"] = read_user_data(args.user_data)
     return body
 
 
@@ -394,6 +409,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="boot with a virtio-net NIC onto a per-VM appliance tap "
         "(#52; the default is yes — use --no-egress to boot NIC-less)",
+    )
+    create.add_argument(
+        "--user-data",
+        metavar="FILE",
+        help="first-boot provisioning payload (a shell script or "
+        "cloud-config) delivered on the workspace's cidata seed disk "
+        "(#41); - reads stdin. Create-time only",
     )
     create.add_argument(
         "--start", action="store_true", help="boot the workspace immediately"
