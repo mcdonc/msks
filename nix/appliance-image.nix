@@ -171,13 +171,15 @@ let
       "kvm_amd"
       # Egress (#52): the tap device, the nftables core, and the
       # NAT/conntrack machinery the rulesets need — masquerade is
-      # the nft_masq expression, which nothing else in the list
-      # pulls in. The init modprobes these by name (autoload does
-      # not serve an appliance without hotplug udev).
+      # the nft_masq expression and "ct state" the nft_ct one;
+      # neither is pulled in by anything else in the list. The init
+      # modprobes these by name (autoload does not serve an
+      # appliance without hotplug udev).
       "tun"
       "nf_tables"
       "nft_chain_nat"
       "nft_masq"
+      "nft_ct"
       "nf_nat"
       "nf_conntrack"
     ];
@@ -240,7 +242,7 @@ let
       # /dev/net/tun when the module registers; the mknod is the
       # belt-and-braces fallback for a kernel with TUN built in but a
       # cold /dev.
-      for module in tun nf_tables nft_chain_nat nft_masq nf_nat nf_conntrack; do
+      for module in tun nf_tables nft_chain_nat nft_masq nft_ct nf_nat nf_conntrack; do
         modprobe "$module" 2>/dev/null || true
       done
       if [ ! -e /dev/net/tun ]; then
