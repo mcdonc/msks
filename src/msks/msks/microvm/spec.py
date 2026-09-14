@@ -33,6 +33,11 @@ class VmSpec:
     # no-NIC posture (the one every backend serves with zero net
     # machinery).
     egress: bool = True
+    # First-boot provisioning payload (#41): a shell script (leading
+    # ``#!``) or cloud-config YAML, delivered verbatim on a per-
+    # workspace seed disk labeled ``cidata``. Create-time only; None
+    # boots the workspace without a seed at all.
+    user_data: str | None = None
 
 
 class VmStatus(StrEnum):

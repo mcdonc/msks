@@ -34,15 +34,16 @@ workspace-<name>-<version>.tar
 
 `disk/image.json` is what msksd reads; schema 2:
 
-| Field              | Meaning                                                       |
-| ------------------ | ------------------------------------------------------------- |
-| `schema`           | `2`                                                           |
-| `name`             | Catalog name, e.g. `debian`                                   |
-| `version`          | Catalog version, e.g. `13.6`; numeric segments sort correctly |
-| `cmdline`          | Kernel command line for workspace boots                       |
-| `vsock_shell_port` | AF_VSOCK port the guest's console service listens on          |
-| `kernel_version`   | e.g. `6.12.107+deb13-amd64` (informational)                   |
-| `kernel_format`    | `bzImage` (informational)                                     |
+| Field              | Meaning                                                                   |
+| ------------------ | ------------------------------------------------------------------------- |
+| `schema`           | `2`                                                                       |
+| `name`             | Catalog name, e.g. `debian`                                               |
+| `version`          | Catalog version, e.g. `13.6`; numeric segments sort correctly             |
+| `cmdline`          | Kernel command line for workspace boots                                   |
+| `vsock_shell_port` | AF_VSOCK port the guest's console service listens on                      |
+| `kernel_version`   | e.g. `6.12.107+deb13-amd64` (informational)                               |
+| `kernel_format`    | `bzImage` (informational)                                                 |
+| `capabilities`     | Optional capability object; `provisioner` names the seed consumer (below) |
 
 The manifest is self-describing: importing the archive needs nothing
 beside the archive itself.
@@ -89,6 +90,26 @@ EXEC:/bin/bash,pty,ctty,echo=1,icanon=1,stderr,setsid`
   (the daemon formats the volume with that label) so the mount
   stays on the right device whatever the disk order is; `nofail`
   keeps boots moving when the volume is absent.
+- **Run cloud-init against the cidata seed disk.** A workspace
+  created with `user_data` (#41) boots with a third, read-only
+  virtio disk: a small iso9660 filesystem labeled `cidata` carrying
+  `user-data` (the payload, verbatim) and `meta-data`
+  (`instance-id`, keyed off the workspace id) at its root — exactly
+  cloud-init's NoCloud seed layout. The image ships cloud-init (the
+  Debian `genericcloud` base does), and two dropins pin the
+  behavior the msks contract needs: `datasource_list: [ NoCloud,
+None ]` (the seed disk answers immediately — no EC2 or OpenStack
+  probing, no network timeouts) and `network: {config: disabled}`
+  (the image's own networkd unit owns whatever NIC appears;
+  cloud-init's netplan rendering stays out of the way). Both
+  payload forms run: cloud-config YAML and `#!` scripts.
+
+  cloud-init's run-once state (the `/var/lib/cloud` cache) lives on
+  the workspace's root overlay, so `stop`/`start` never
+  re-provisions and a factory reset does (the reset drops the
+  overlay). Any distro cloud image that ships cloud-init (Debian's
+  `generic` and `genericcloud`, Ubuntu, Fedora, ...) imports as-is
+  and declares `"capabilities": {"provisioner": "cloud-init"}`.
 
 ## Building an image
 
@@ -99,13 +120,17 @@ devenv tasks run msks:build-guest
 ```
 
 builds the default image (`workspace-debian-13.6.tar`) from a
-date-pinned, sha512-verified Debian trixie nocloud qcow2: the build
-converts the qcow2 to raw, extracts the root filesystem, repacks it
-as a deterministic ext4 (`mke2fs -d` under fakeroot), and wraps the
-kernel, initrd, rootfs, and a generated `image.json` into the
-container-image tar with byte-stable tar flags (`--sort=name
---mtime=@1 --numeric-owner`). Identical rebuilds hash identically,
-so the same image deduplicates across hosts.
+date-pinned, sha512-verified Debian trixie **genericcloud** qcow2 —
+the cloud-init-bearing variant of Debian's cloud image family, so
+cloud-init and its python3 runtime arrive with the base. The build
+converts the qcow2 to raw, extracts the root filesystem, applies the
+msks overlay and boot diet, repacks it as a deterministic ext4
+(`mke2fs -d` under fakeroot; the intermediate rides the nix store as
+one opaque tarball, never as a tree), and wraps the kernel, initrd,
+rootfs, and a generated `image.json` into the container-image tar
+with byte-stable tar flags (`--sort=name --mtime=@1
+--numeric-owner`). Identical rebuilds hash identically, so the same
+image deduplicates across hosts.
 
 The output lands under `.guest/`; `scripts/build-guest.sh` and
 `nix/guest-assets.nix` document every step and are the reference for
@@ -141,9 +166,27 @@ image. The outline, using a distro's own cloud image as the source:
    The shipped image does this with systemd-networkd + resolved; any
    equivalent stack works.
 
-5. Write `disk/image.json` describing your kernel, cmdline, and
-   vsock port.
-6. Lay out `boot/` and `disk/` as the layer tree and wrap it:
+5. Ship cloud-init, configured for the cidata seed. Starting from
+   a distro cloud image (Debian `generic`/`genericcloud`, Ubuntu,
+   Fedora — they carry cloud-init and its python runtime) gives you
+   this for free; otherwise install the distro's cloud-init package.
+   Two dropins under `/etc/cloud/cloud.cfg.d/` pin the msks contract:
+   - `datasource_list: [ NoCloud, None ]` — the workspace's seed
+     disk answers immediately; nothing probes EC2 or OpenStack
+     sources or waits on the network;
+   - `network: {config: disabled}` — the network configuration from
+     step 4 owns the NIC; cloud-init's renderer would only fight it.
+
+   The guest kernel needs the `isofs` module present to mount the
+   seed (every stock distro kernel carries it). Declare the consumer
+   in the manifest (step 6) so listings show what eats the seed. An
+   image whose guest runs no cloud-init still accepts `user_data` at
+   create, but nothing executes it — the daemon cannot tell.
+
+6. Write `disk/image.json` describing your kernel, cmdline, and
+   vsock port, and declare `"capabilities": {"provisioner":
+"cloud-init"}`.
+7. Lay out `boot/` and `disk/` as the layer tree and wrap it:
 
 ```bash
 tar --sort=name --mtime='@1' --owner=0 --group=0 --numeric-owner \
@@ -228,3 +271,58 @@ Versions order numerically (`13.10` sorts after `13.9`). A malformed
 reference (`debian@not-a-hash`) is a named 400 rather than a
 miss. Explicit `kernel`/`rootfs` fields still win over the image —
 the image is the convenient path, not a mandate.
+
+## First-boot provisioning (`user_data`)
+
+A workspace created with `user_data` gets a customization payload
+that runs on its first boot — EC2-style, delivered on the workspace's
+own seed disk:
+
+```bash
+# a script (any image with a provisioner; the leading #! is what
+# makes it one)
+msks create ws --user-data provision.sh --start
+
+# cloud-config (needs a cloud-init image)
+curl -X POST .../api/v1/workspaces -d '{
+  "id": "ws", "image": "mycloud:1.0",
+  "user_data": "#cloud-config\nusers:\n- name: alice\n..."
+}'
+```
+
+The rules worth knowing:
+
+- **Create-time and immutable.** The payload is part of the
+  workspace's identity; `user_data` is accepted only at create
+  (capped at 64 Ki characters — pydantic's 422 names the bound; an
+  empty payload is a 400), and any mutation attempt answers a named
+  405 (delete and recreate to change it). cloud-init keys its
+  run-once semantics off the workspace, so changing it after the
+  fact would silently do nothing anyway.
+- **The seed is per-workspace state.** It is built at create (a
+  few hundred KiB of iso9660 overhead regardless of payload size,
+  `cidata`-labeled), attached read-only as the third disk, survives
+  `stop`/`start` and factory reset, and is deleted with the
+  workspace. It can embed tokens, so the daemon stores it mode 0600
+  under the workspace's own directory — and creates its database
+  file (which records the payload on the workspace's row) 0600 too.
+  Listing endpoints and `msks ls --json` echo the payload back over
+  the same TLS + token channel as the console.
+- **Both payload forms run.** cloud-init executes `#!` scripts from
+  `user_data` and applies cloud-config documents alike; declare the
+  image's `capabilities.provisioner: cloud-init` so operators and
+  tooling can see what consumes the seed.
+- **No `user_data`, no seed.** A workspace created without a payload
+  boots with two disks and no added cost: cloud-init finds no seed,
+  applies nothing, and the interactive budget is unchanged (~3.0s
+  start→shell).
+- **Failure posture is cloud-init's.** The vsock console starts
+  before cloud-init runs (the interactive budget is unaffected —
+  the shipped image measures ~3.0s start→shell), and payloads run
+  in cloud-init's final stage: a slow or hanging payload delays
+  boot-complete, not the shell. `cloud-init status --wait` (or the
+  serial log) says when provisioning finished; a factory reset
+  re-runs the payload from the same seed.
+- **The k8s backend does not serve `user_data` yet** — the runner pod
+  does not build seed disks; create refuses the combination by name
+  (the same shape as its egress refusal).

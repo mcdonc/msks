@@ -25,9 +25,11 @@ async def app_for(tmp_path: Path):
     (no unclosed-database ResourceWarnings from the GC)."""
     made: list[App] = []
 
-    def factory(bootstrap: str | None = None) -> App:
+    def factory(bootstrap: str | None = None, db_path: Path | None = None) -> App:
         settings = Settings(
-            server=ServerSettings(db_path=tmp_path / "t.db", bootstrap_token=bootstrap)
+            server=ServerSettings(
+                db_path=db_path or tmp_path / "t.db", bootstrap_token=bootstrap
+            )
         )
         app = build_app(settings)
         made.append(app)
@@ -272,3 +274,31 @@ async def test_workspace_egress_default_and_opt_out(app_for) -> None:
     assert quiet["egress"] is False
     fetched = await app.state.model.get_workspace("ws1")
     assert fetched["egress"] is True
+
+
+async def test_workspace_carries_user_data(app_for) -> None:
+    """The #41 payload round-trips through the row (None when the
+    workspace was created without one)."""
+    app = app_for()
+    await app.state.model.create_all()
+    payload = "#!/bin/sh\necho first boot > /root/stamp\n"
+    row = await app.state.model.create_workspace(spec(user_data=payload))
+    assert row["user_data"] == payload
+    fetched = await app.state.model.get_workspace("ws1")
+    assert fetched["user_data"] == payload
+    plain = await app.state.model.create_workspace(spec("ws2"))
+    assert plain["user_data"] is None
+
+
+async def test_database_file_is_private(app_for, tmp_path: Path) -> None:
+    """The database records user_data payloads (#41), which can embed
+    tokens: the file is created 0600, whichever path makes it first
+    (migrate or the engine) — and a looser mode carried over from a
+    pre-#41 database is tightened, not just avoided."""
+    db_path = tmp_path / "private" / "msks.db"
+    db_path.parent.mkdir(parents=True)
+    db_path.write_bytes(b"")  # a pre-#41 file at its old mode
+    db_path.chmod(0o644)
+    app = app_for(db_path=db_path)
+    app.state.model.migrate()
+    assert db_path.stat().st_mode & 0o777 == 0o600

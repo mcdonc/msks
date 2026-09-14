@@ -51,6 +51,10 @@ class Workspace(Base):
     # onto a per-VM tap in the appliance. The default keeps the
     # no-NIC posture.
     egress: Mapped[bool] = mapped_column(Boolean, default=True)
+    # First-boot provisioning payload (#41): verbatim user_data,
+    # delivered on the workspace's cidata seed disk. Create-time and
+    # immutable — NULL boots without a seed.
+    user_data: Mapped[str | None] = mapped_column(Text, nullable=True)
     # The pool slice the workspace's /30 derives from (#70 review):
     # recorded at first attach so stop/start cycles and daemon
     # restarts keep the same address, even past digest collisions

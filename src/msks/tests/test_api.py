@@ -25,14 +25,17 @@ class StubMicrovm:
         self.calls: list[tuple[str, str]] = []
         self.statuses: dict[str, VmStatus] = {}
         self.fail_prepare = False
+        self.seen_specs: dict[str, VmSpec] = {}
 
     async def prepare(self, spec: VmSpec) -> None:
         if self.fail_prepare:
             raise MicrovmError("prepare boom")
         self.calls.append(("prepare", spec.workspace_id))
+        self.seen_specs[spec.workspace_id] = spec
 
     async def launch(self, spec: VmSpec) -> None:
         self.calls.append(("launch", spec.workspace_id))
+        self.seen_specs[spec.workspace_id] = spec
         self.statuses[spec.workspace_id] = VmStatus.RUNNING
 
     async def info(self, workspace_id: str) -> VmInfo:
@@ -529,3 +532,140 @@ async def test_create_refuses_egress_on_k8s(client, monkeypatch) -> None:
         headers=auth(),
     )
     assert quiet.status_code == 201
+
+
+async def test_create_with_user_data_reaches_the_row(client) -> None:
+    """user_data (#41) rides the create into the row and the seam's
+    spec: the payload is echoed verbatim and prepared for boot."""
+    http, _app, stub = client
+    payload = "#!/bin/sh\necho seeded > /root/stamp\n"
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-ud", "kernel": "/k", "rootfs": "/r", "user_data": payload},
+        headers=auth(),
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["user_data"] == payload
+    assert stub.seen_specs["ws-ud"].user_data == payload
+    fetched = await http.get("/api/v1/workspaces/ws-ud", headers=auth())
+    assert fetched.json()["user_data"] == payload
+
+
+async def test_create_rejects_empty_user_data(client) -> None:
+    http, _app, _stub = client
+    empty = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-ud", "kernel": "/k", "rootfs": "/r", "user_data": "  \n"},
+        headers=auth(),
+    )
+    assert empty.status_code == 400
+    assert "user_data is empty" in empty.json()["detail"]
+    oversized = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-ud",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "user_data": "x" * 65537,
+        },
+        headers=auth(),
+    )
+    assert oversized.status_code == 422
+
+
+async def test_create_accepts_both_payload_forms(client) -> None:
+    """cloud-init runs #! scripts and cloud-config documents alike
+    (#41); an image declares its provisioner for the operator, and
+    create accepts both forms for a declared image and an undeclared
+    one alike (explicit-artifact boots have no manifest at all)."""
+    # allow-deferred-import: module-scope would be circular
+    # (test_imagestore imports TOKEN/StubMicrovm/auth from here).
+    import json
+
+    from test_imagestore import build_containerdisk
+
+    http, app, _stub = client
+    state_dir = app.state.settings.vmm.state_dir
+    state_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "schema": 2,
+        "name": "img-cloud",
+        "version": "1.0",
+        "cmdline": "console=ttyS0 root=/dev/vda ro",
+        "vsock_shell_port": 1023,
+        "capabilities": {"provisioner": "cloud-init"},
+    }
+    archive = state_dir / "img-cloud.tar"
+    build_containerdisk(
+        archive,
+        schema=False,
+        members={
+            "boot/vmlinuz": b"kernel-bytes",
+            "boot/initrd.img": b"initrd-bytes",
+            "disk/rootfs.ext4": b"rootfs-bytes",
+            "disk/image.json": json.dumps(manifest).encode(),
+        },
+    )
+    imported = await http.post(
+        "/api/v1/images", json={"source": str(archive)}, headers=auth()
+    )
+    assert imported.status_code == 201, imported.text
+    listed = await http.get("/api/v1/images", headers=auth())
+    assert listed.json()[0]["provisioner"] == "cloud-init"
+
+    cloud_config = "#cloud-config\npackages: []\n"
+    for wid, body_extra in (
+        ("ws-cc", {"image": "img-cloud", "user_data": cloud_config}),
+        ("ws-sh", {"image": "img-cloud", "user_data": "#!/bin/sh\n"}),
+        # No manifest, no declaration: the same acceptance (msksd
+        # cannot police a foreign guest's consumer).
+        ("ws-bare", {"kernel": "/k", "rootfs": "/r", "user_data": cloud_config}),
+    ):
+        created = await http.post(
+            "/api/v1/workspaces", json={"id": wid, **body_extra}, headers=auth()
+        )
+        assert created.status_code == 201, created.text
+        assert created.json()["user_data"] == body_extra["user_data"]
+
+
+async def test_workspace_mutation_is_refused_with_a_named_error(client) -> None:
+    """user_data is create-time (#41): PUT/PATCH answer a 405 that
+    says what to do instead, and an unknown id still 404s."""
+    http, _app, _stub = client
+    await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-fix", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    for method in ("put", "patch"):
+        response = await getattr(http, method)(
+            "/api/v1/workspaces/ws-fix",
+            json={"user_data": "#!/bin/sh\ntrue\n"},
+            headers=auth(),
+        )
+        assert response.status_code == 405
+        assert "delete the workspace and recreate" in response.json()["detail"]
+    missing = await http.patch(
+        "/api/v1/workspaces/ghost", json={"cpus": 4}, headers=auth()
+    )
+    assert missing.status_code == 404
+
+
+async def test_create_refuses_user_data_on_k8s(client, monkeypatch) -> None:
+    """The k8s runner does not build seed disks yet: refuse at create
+    (the egress shape) instead of storing a payload nothing runs."""
+    http, app, _stub = client
+    monkeypatch.setattr(app.state.settings.vmm, "driver", "k8s")
+    refused = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-k8s-ud",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "egress": False,
+            "user_data": "#!/bin/sh\ntrue\n",
+        },
+        headers=auth(),
+    )
+    assert refused.status_code == 400
+    assert "without user_data" in refused.json()["detail"]

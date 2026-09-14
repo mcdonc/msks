@@ -147,8 +147,10 @@ def vm_net(attachment) -> dict | None:
     return {"tap": attachment.tap, "mac": attachment.mac}
 
 
-def disk_entries(state_dir: Path, workspace_id: str) -> list[dict]:
-    """The VM's two persistent disks (#14): root overlay, home volume.
+def disk_entries(
+    state_dir: Path, workspace_id: str, user_data: str | None = None
+) -> list[dict]:
+    """The VM's persistent disks (#14): root overlay, home volume.
 
     Both are writable — the overlay absorbs root writes over the
     pristine base (copy-on-write protects it; ``readonly`` on the old
@@ -157,8 +159,13 @@ def disk_entries(state_dir: Path, workspace_id: str) -> list[dict]:
     writes on untyped disks. The overlay additionally opts into
     ``backing_files``: v51 loads a qcow2 backing file only when the
     disk says so (landlock hardening, GHSA advisory follow-up).
+
+    A workspace created with ``user_data`` (#41) adds a third disk:
+    its ``cidata`` seed, read-only raw. The caller has run
+    ``ensure_artifacts`` first, so the file exists by the time the
+    VMM opens it.
     """
-    return [
+    disks = [
         {
             "path": str(persist.overlay_path(state_dir, workspace_id)),
             "readonly": False,
@@ -171,6 +178,15 @@ def disk_entries(state_dir: Path, workspace_id: str) -> list[dict]:
             "image_type": "Raw",
         },
     ]
+    if user_data is not None:
+        disks.append(
+            {
+                "path": str(persist.seed_path(state_dir, workspace_id)),
+                "readonly": True,
+                "image_type": "Raw",
+            }
+        )
+    return disks
 
 
 def _check_id(workspace_id: str) -> None:
@@ -238,6 +254,7 @@ class LocalCloudHypervisor(MicrovmDriver):
         for artifact in (
             persist.overlay_path(vmm.state_dir, spec.workspace_id),
             persist.home_volume_path(vmm.state_dir, spec.workspace_id),
+            persist.seed_path(vmm.state_dir, spec.workspace_id),
         ):
             if artifact.exists():
                 raise MicrovmError(
@@ -281,7 +298,11 @@ class LocalCloudHypervisor(MicrovmDriver):
             await self._wait_ready(socket_path, proc, vmm.socket_wait_timeout_s)
             await self._configure_and_boot(
                 spec,
-                disk_entries(self._settings().vmm.state_dir, spec.workspace_id),
+                disk_entries(
+                    self._settings().vmm.state_dir,
+                    spec.workspace_id,
+                    user_data=spec.user_data,
+                ),
                 socket_path,
                 serial_log,
                 vmm.request_timeout_s,

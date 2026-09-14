@@ -142,3 +142,9 @@ def test_net_dns_timeout_must_be_positive(
     monkeypatch.setenv("MSKSD_EGRESS_DNS_TIMEOUT_S", "0")
     with pytest.raises(ValueError, match="MSKSD_EGRESS_DNS_TIMEOUT_S"):
         Settings.from_env()
+
+
+def test_mkisofs_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MSKSD_MKISOFS", "/opt/tools/mkisofs")
+    settings = Settings.from_env()
+    assert settings.vmm.mkisofs == "/opt/tools/mkisofs"

@@ -6,7 +6,7 @@
 # repo.
 #
 # The root filesystem is Debian 13 (trixie), straight from Debian's
-# official nocloud cloud image (#30): real Debian with systemd as
+# official genericcloud cloud image (#30, #41): real Debian with
 # PID 1, apt, Debian's own modules — and Debian's own socat (built
 # WITH_VSOCK) serving the vsock console. The kernel is Debian's
 # *cloud* flavor of the same upstream version (#37): ext4 and
@@ -45,18 +45,27 @@
 }:
 
 let
-  # The official Debian 13 nocloud image: systemd, no cloud-init.
+  # The official Debian 13 genericcloud image (#41): systemd plus
+  # cloud-init and its python3 runtime — the workspace's cidata seed
+  # is NoCloud's own format, so first-boot provisioning needs no
+  # msks-side consumer. Roughly 130M heavier than the nocloud variant
+  # the build used before; the boot diet below keeps the console fast.
   debianImage = pkgs.fetchurl {
     urls = [
-      "https://cloud.debian.org/images/cloud/trixie/20260831-2587/debian-13-nocloud-amd64-20260831-2587.qcow2"
+      "https://cloud.debian.org/images/cloud/trixie/20260831-2587/debian-13-genericcloud-amd64-20260831-2587.qcow2"
     ];
-    hash = "sha512:e4f716b1fb48be24085c0907bd1a0a31f03b7bf2adfbd46d9f39595a225dc38741a4b5d79910e61fa1d885ac043e5ea0663fe805f26944e1dc1211a3206022c2";
+    hash = "sha512:8ea9faae810043a0b35b0149f05014f26705c2339ffb11ead308f33e844a87cc3ef46ec81d5262b38817b6a88af404874d48a5857ebe072ef6a31dfb6e371f50";
   };
 
   # The port the guest's vsock console listens on; the daemon dials
   # it after the CONNECT handshake (#21). Fixed, recorded in the
   # manifest, matched by the systemd unit below.
   vsockShellPort = 1023;
+
+  # First-boot provisioning (#41): the image's declared seed-disk
+  # consumer — cloud-init, shipped by the genericcloud source. Both
+  # payload forms work: cloud-config YAML and #! scripts.
+  imageProvisioner = "cloud-init";
 
   # The workspace image identity (#40): the catalog reference is
   # <name>:<version>.
@@ -68,7 +77,7 @@ let
   # it, an ro mount would block apt and provisioning state.
   kernelCmdline = "console=ttyS0 root=/dev/vda rootfstype=ext4 rw";
 
-  # Debian's cloud kernel, same upstream version as the nocloud
+  # Debian's cloud kernel, same upstream version as the cloud
   # image's generic one (#37): CONFIG_EXT4_FS=y and
   # CONFIG_VIRTIO_PCI=y built in — only virtio_blk stays a module,
   # which the minimal initramfs below loads. Pinned by pool URL and
@@ -146,6 +155,7 @@ let
     set -eu
     mkdir -p \
       $out/home \
+      $out/etc/cloud/cloud.cfg.d \
       $out/etc/systemd/system/serial-getty@ttyS0.service.d \
       $out/etc/systemd/system/multi-user.target.wants \
       $out/etc/systemd/system/sockets.target.wants \
@@ -154,6 +164,22 @@ let
       $out/etc/modules-load.d
 
     printf 'msks-guest\n' > $out/etc/hostname
+
+    # cloud-init (#41): the workspace's cidata seed is NoCloud's own
+    # format. Two dropins pin the behavior the msks contract needs:
+    # the datasource list stops cloud-init probing EC2/OpenStack/
+    # network sources (the seed disk answers immediately), and
+    # network rendering stays off — the overlay's networkd unit owns
+    # whatever NIC appears, taking its address from the daemon's own
+    # DHCP (#52), so cloud-init must not fight it with netplan.
+    printf '%s\n' \
+      '# msks: the cidata seed disk is the only datasource.' \
+      'datasource_list: [ NoCloud, None ]' \
+      > $out/etc/cloud/cloud.cfg.d/99-msks-datasources.cfg
+    printf '%s\n' \
+      '# msks: networkd (see 80-msks-egress.network) owns the NIC.' \
+      'network: {config: disabled}' \
+      > $out/etc/cloud/cloud.cfg.d/99-msks-network.cfg
 
     # The image's fstab mounts the root filesystem by the PARTUUID of
     # the cloud image's partition table; direct kernel boot presents
@@ -291,6 +317,7 @@ let
       'ExecStart=' \
       'ExecStart=-/sbin/agetty --autologin root --noclear %I $TERM' \
       > $out/etc/systemd/system/serial-getty@ttyS0.service.d/autologin.conf
+
   '';
 
   # Parse sfdisk --json: print the byte offset of the Linux root
@@ -319,6 +346,7 @@ let
     pkgs.runCommand "msks-debian-root"
       {
         nativeBuildInputs = [
+          pkgs.gnutar
           pkgs.qemu
           pkgs.e2fsprogs
           pkgs.kmod
@@ -328,15 +356,18 @@ let
       }
       ''
         set -eu
-        root="$out/root"
+        # The tree builds in the derivation's scratch cwd (discarded
+        # with it); the retained output is a single opaque root.tar.
+        root=root-tree
         mkdir -p "$root"
 
         # qcow2 -> raw
         qemu-img convert -O raw ${debianImage} debian.raw
 
         # Slice the root partition: the GPT partition labeled/type
-        # "Linux filesystem" (nocloud keeps EFI + BIOS grub partitions
-        # around it, which direct kernel boot does not need).
+        # "Linux filesystem" (the cloud image keeps EFI + BIOS grub
+        # partitions around it, which direct kernel boot does not
+        # need).
         offset=$(sfdisk --json debian.raw | python3 ${partitionOffset})
         dd if=debian.raw of=root.part bs=512 skip=$((offset / 512)) status=none
 
@@ -405,7 +436,24 @@ let
 
         # Size the final image from the tree (content-derived, no
         # magic constant): Debian unpacks to ~600M plus headroom.
+        mkdir -p "$out"
         du -s --apparent-size --block-size=4096 "$root" | cut -f1 > "$out"/tree-blocks
+        # The intermediate rides the store as ONE opaque blob, never
+        # as a tree: the store's auto-optimise hardlinks identical
+        # files inside tree-shaped paths (the empty files form one
+        # group of tens of thousands), a store path's contract covers
+        # readable bytes, not inode identity — and mke2fs -d packs
+        # hardlink groups as one inode, which once made the guest's
+        # utmp writes surface in cloud-init's empty __init__.py. A
+        # tarball cannot be deduped from inside; rdump flattens all
+        # hardlinks anyway, so none are recorded. Sorted member order
+        # keeps the tarball itself deterministic; the mtimes inside it
+        # are NOT (depmod's outputs are build-time), and need not be —
+        # byte-stability of the final image comes from
+        # E2FSPROGS_FAKE_TIME plus the archive tar's --mtime=@1, not
+        # from this hop.
+        tar --sort=name --owner=0 --group=0 --numeric-owner \
+          -C "$root" -cf "$out/root.tar" .
       '';
 
   # mke2fs -d packs a directory into an ext4 image without mounting
@@ -441,16 +489,29 @@ let
         nativeBuildInputs = [
           pkgs.e2fsprogs
           pkgs.fakeroot
+          pkgs.gnutar
         ];
         fakeEpoch = 1262304000;
       }
       ''
         set -eu
         mkdir -p "$out"
+        # The tree arrives as one opaque tarball (see debianRoot):
+        # every path untars to its own inode — rdump flattened all
+        # hardlinks at extraction, and the store cannot dedup inside
+        # a blob — so mke2fs -d can never pack a fabricated shared
+        # inode for the guest's runtime writes to collide in.
+        mkdir work
+        tar -C work -xf "$debianRoot/root.tar"
+        # Extraction restores the recorded modes but cannot chown
+        # (unprivileged: files land build-user owned, which is why
+        # u+w works); fakeroot's faked chown/chmod below need the
+        # modes writable first.
+        chmod -R u+w work
         # Content plus 1G of slack: the base keeps room for image
         # updates, and the per-workspace overlay (#14) carries whatever
         # the guest writes beyond it.
-        PACK_TREE="$debianRoot/root" \
+        PACK_TREE=work \
           PACK_IMG="$out/rootfs.ext4" \
           PACK_BLOCKS=$(( $(cat "$debianRoot"/tree-blocks) + 262144 )) \
           PACK_FAKE_EPOCH="$fakeEpoch" \
@@ -490,7 +551,7 @@ let
         kernel_version=$(basename "$vmlinuz" | sed 's/^vmlinuz-//')
         # Guard against version drift: the catalog label must match the
         # Debian tree this image actually wraps.
-        shipped=$(cat "$debianRoot"/root/etc/debian_version)
+        shipped=$(tar -xOf "$debianRoot/root.tar" ./etc/debian_version)
         if [ "$shipped" != "${imageVersion}" ]; then
           echo "imageVersion ${imageVersion} != /etc/debian_version $shipped" >&2
           exit 1
@@ -505,7 +566,8 @@ let
           "cmdline": "${kernelCmdline}",
           "vsock_shell_port": ${toString vsockShellPort},
           "kernel_version": "$kernel_version",
-          "kernel_format": "bzImage"
+          "kernel_format": "bzImage",
+          "capabilities": {"provisioner": "${imageProvisioner}"}
         }
         EOF
       '';

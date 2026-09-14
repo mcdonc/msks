@@ -43,18 +43,20 @@ devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:xenon
 ### VM guest assets
 
 The workspace guest is **Debian 13 (trixie)**, straight from Debian's
-official nocloud cloud image (#30): systemd as PID 1, apt, and
-Debian's own kernel, initrd, and modules — booted directly (no
-BIOS/UEFI) by cloud-hypervisor. The image is pinned by its dated
-cloud.debian.org URL and sha512, and the build turns it into the
-msks boot contract — `vmlinux` (Debian's bzImage, `CONFIG_PVH=y`),
-`initrd`, a pristine ext4 base rootfs, and
+official genericcloud cloud image (#30, #41): systemd as PID 1, apt,
+cloud-init, and Debian's own kernel, initrd, and modules — booted
+directly (no BIOS/UEFI) by cloud-hypervisor. The image is pinned by
+its dated cloud.debian.org URL and sha512, and the build turns it
+into the msks boot contract — `vmlinux` (Debian's bzImage,
+`CONFIG_PVH=y`), `initrd`, a pristine ext4 base rootfs, and
 `guest-manifest.json` — with a small overlay of msks systemd units
-(vsock console, serial autologin, the `/home` mount). Extraction is
-fully unprivileged:
+(vsock console, serial autologin, the `/home` mount, the cloud-init
+dropins that pin NoCloud and keep cloud-init off the guest's
+networking). Extraction is fully unprivileged:
 qemu-img convert, partition slice, `debugfs rdump`, `mke2fs -d`.
-Measured boot on bare-metal KVM: kernel at 1.1s, the vsock console
-service at 7.4s, login prompt at 8.9s (#37 tracks the <5s goal).
+Measured boot on bare-metal KVM: the vsock shell prompt at ~2.8s,
+the serial login prompt at ~7.5-8.6s (#37 tracks the <5s interactive
+goal).
 Root writes persist through the per-workspace overlay (#14), and
 `/home` is the workspace's own ext4 volume; `apt` still has no
 network to install from until networking lands. The
@@ -227,7 +229,9 @@ devenv --quiet -O dotenv.enable:bool false shell -- msks create my-workspace --s
 host); `--json` prints one JSON document for scripting. `msks create`
 POSTs the same body the API accepts — `--image` picks a catalog
 reference, `--cpus`/`--mem-mib`/`--root-mib`/`--home-mib` size the VM,
-and explicit `--kernel`/`--rootfs` (with optional `--initrd`,
+`--user-data` attaches a first-boot provisioning script (#41, a
+cidata seed disk the guest's provisioner runs once), and explicit
+`--kernel`/`--rootfs` (with optional `--initrd`,
 `--cmdline`) bypass the catalog. `--start` boots the workspace right
 after creating it, so `msks create ws --start` then `msks shell ws`
 is the two-step path from nothing to a shell; `msks start <id>` boots

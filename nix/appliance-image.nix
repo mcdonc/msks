@@ -60,6 +60,9 @@ let
   # (mkfs.ext4) inside the appliance.
   qemuImg = pkgs.qemu-utils;
   e2fsprogs = pkgs.e2fsprogs;
+  # The #41 seed disk builder (iso9660, unprivileged). cdrtools'
+  # mkisofs is genisoimage.
+  mkisofs = pkgs.cdrtools;
 
   # Egress plumbing (#52): the full `ip` (busybox's has no tuntap
   # here) and nftables for the per-VM chains and NAT.
@@ -295,6 +298,7 @@ let
       export MSKSD_CLOUD_HYPERVISOR="${vmm}/bin/cloud-hypervisor"
       export MSKSD_QEMU_IMG="${qemuImg}/bin/qemu-img"
       export MSKSD_MKFS_EXT4="${e2fsprogs}/sbin/mkfs.ext4"
+      export MSKSD_MKISOFS="${mkisofs}/bin/mkisofs"
       # Egress (#52): the appliance runs as root, so the plumbing
       # arms and workspaces get a NIC by default.
       export MSKSD_EGRESS_ENABLED=true
@@ -400,7 +404,11 @@ let
         # archive (~350M) plus the unpacked boot files (~1.7G); two
         # images plus the database and workspace overlays fit, a third
         # needs a bigger disk.
-        truncate -s 6G "$out/state.ext4"
+        # Room for two images (the cloud-init-bearing genericcloud
+        # base lands at ~1.5G rootfs plus ~1.5G retained archive
+        # each, #41) with the database, tokens, and workspace
+        # overlays/volumes under it.
+        truncate -s 8G "$out/state.ext4"
         E2FSPROGS_FAKE_TIME="$fakeEpoch" mke2fs -q -F -t ext4 -b 4096 -I 256 \
           -L msks-state \
           -E hash_seed=00000000-0000-0000-0000-000000000003 \

@@ -83,17 +83,18 @@ under the state dir and a pod name on k8s).
 
 Flags map one-to-one onto the create request's fields:
 
-| Flag         | API field  | Meaning                                           |
-| ------------ | ---------- | ------------------------------------------------- |
-| `--image`    | `image`    | Catalog ref: `name:version`, bare name, or hash   |
-| `--kernel`   | `kernel`   | Explicit kernel path (skips the catalog)          |
-| `--initrd`   | `initrd`   | Explicit initrd path                              |
-| `--rootfs`   | `rootfs`   | Explicit rootfs path (skips the catalog)          |
-| `--cmdline`  | `cmdline`  | Explicit kernel cmdline                           |
-| `--cpus`     | `cpus`     | vcpus, 1–64 (daemon default: 2)                   |
-| `--mem-mib`  | `mem_mib`  | Guest memory MiB, 64–32768 (daemon default: 1024) |
-| `--root-mib` | `root_mib` | Persistent root overlay size (daemon default)     |
-| `--home-mib` | `home_mib` | Persistent /home volume size (daemon default)     |
+| Flag          | API field   | Meaning                                                     |
+| ------------- | ----------- | ----------------------------------------------------------- |
+| `--image`     | `image`     | Catalog ref: `name:version`, bare name, or hash             |
+| `--kernel`    | `kernel`    | Explicit kernel path (skips the catalog)                    |
+| `--initrd`    | `initrd`    | Explicit initrd path                                        |
+| `--rootfs`    | `rootfs`    | Explicit rootfs path (skips the catalog)                    |
+| `--cmdline`   | `cmdline`   | Explicit kernel cmdline                                     |
+| `--cpus`      | `cpus`      | vcpus, 1–64 (daemon default: 2)                             |
+| `--mem-mib`   | `mem_mib`   | Guest memory MiB, 64–32768 (daemon default: 1024)           |
+| `--root-mib`  | `root_mib`  | Persistent root overlay size (daemon default)               |
+| `--home-mib`  | `home_mib`  | Persistent /home volume size (daemon default)               |
+| `--user-data` | `user_data` | First-boot provisioning payload file; `-` reads stdin (#41) |
 
 Only the flags you pass are sent — unset flags let the daemon apply
 its own defaults. An `--image` reference resolves against the
@@ -122,6 +123,18 @@ msks: my-workspace is created; boot it later with: msks start my-workspace
 Creating without `--start` prints the id and exits; boot it whenever
 with `msks start` — or just `msks shell` it: the shell command boots
 a not-running workspace on its own (below).
+
+`--user-data` is the first-boot provisioning hook (#41): the file's
+contents travel to the daemon verbatim and run once on the
+workspace's first boot (see `docs/images.md` for the seed-disk
+mechanism, the payload forms each image provisioner accepts, and
+the create-time immutability). It composes with `--start`:
+
+```bash
+$ printf '#!/bin/sh\napt-get update\n' | msks create ws --user-data - --start
+created ws
+attach with: msks shell ws
+```
 
 ## `msks start`
 

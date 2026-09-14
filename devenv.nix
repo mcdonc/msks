@@ -81,6 +81,7 @@ in
     cloud-hypervisor # VMM driven by the local backend (#1); ships ch-remote
     curl # unix-socket REST poking during CH debugging
     e2fsprogs # debugfs: seed the bootstrap token onto the state disk
+    cdrtools # genisoimage: the #41 cidata seed disks (iso9660)
     iproute2 # the appliance bridge/tap (supervisor scripts; host-agnostic)
     iptables # diagnose foreign FORWARD drops (docker's policy on CI runners)
     # that block the egress forward path the nft rules accept (#75/#52)

@@ -85,6 +85,11 @@ class VmmSettings:
     # them, the host that owns them, and their default sizes.
     qemu_img: str = "qemu-img"
     mkfs_ext4: str = "mkfs.ext4"
+    # The tool that builds the #41 seed disk: a small iso9660 image
+    # labeled ``cidata`` carrying the workspace's user_data. mkisofs
+    # is genisoimage (same tool): cdrtools and every distro's
+    # alternatives system serve the name.
+    mkisofs: str = "mkisofs"
     # The host that owns locally-created artifacts; every instance
     # knows its name (direct constructions skip from_env).
     host_name: str = field(default_factory=socket.gethostname)
@@ -112,6 +117,7 @@ class VmmSettings:
             default_image=_env("MSKSD_DEFAULT_IMAGE", cls.default_image),
             qemu_img=_env("MSKSD_QEMU_IMG", cls.qemu_img),
             mkfs_ext4=_env("MSKSD_MKFS_EXT4", cls.mkfs_ext4),
+            mkisofs=_env("MSKSD_MKISOFS", cls.mkisofs),
             host_name=_env("MSKSD_HOST_NAME", cls().host_name),
             root_mib=_parse_positive_int("MSKSD_ROOT_MIB", cls.root_mib),
             home_mib=_parse_positive_int("MSKSD_HOME_MIB", cls.home_mib),

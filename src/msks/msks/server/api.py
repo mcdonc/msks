@@ -32,6 +32,11 @@ class TokenCreate(BaseModel):
 
 WORKSPACE_ID_PATTERN = r"^[a-z0-9][a-z0-9-]*$"
 
+#: The #41 payload cap, in characters (pydantic max_length): far more
+#: script or cloud-config than any first boot needs, while keeping the
+#: seed disk's staging small.
+USER_DATA_MAX = 65536
+
 
 class ImageImport(BaseModel):
     """An import request: a host-side path to a container-image tar.
@@ -68,6 +73,12 @@ class WorkspaceCreate(BaseModel):
     # per-VM tap in the appliance — the default. "egress": false opts
     # into the no-NIC posture.
     egress: bool = True
+    # First-boot provisioning (#41): a shell script (leading "#!") or
+    # cloud-config YAML — cloud-init runs both — delivered verbatim on
+    # the workspace's read-only cidata seed disk. Create-time and
+    # immutable: a workspace keeps its payload until it is deleted and
+    # recreated.
+    user_data: str | None = Field(default=None, max_length=USER_DATA_MAX)
 
 
 def bootstrap_default_image(app) -> None:
@@ -114,6 +125,22 @@ def image_record(app, body: WorkspaceCreate):
     return imagestore.default_image(state_dir)
 
 
+def validated_user_data(body: WorkspaceCreate) -> str | None:
+    """The #41 payload: present-and-nonempty.
+
+    cloud-init runs both payload forms (#! scripts and cloud-config
+    YAML), so the daemon accepts both; an image declares its
+    provisioner in ``image.json`` for the operator and the docs, not
+    for create-time policing. Explicit boot artifacts have no
+    manifest at all — the same acceptance applies.
+    """
+    if body.user_data is None:
+        return None
+    if not body.user_data.strip():
+        raise HTTPException(status_code=400, detail="user_data is empty")
+    return body.user_data
+
+
 def resolve_boot(app, body: WorkspaceCreate) -> dict:
     """Fill kernel/initrd/rootfs/cmdline from the image catalog.
 
@@ -137,6 +164,7 @@ def resolve_boot(app, body: WorkspaceCreate) -> dict:
         "mem_mib": body.mem_mib,
         "image_hash": bound_image_hash(body, record),
         "egress": body.egress,
+        "user_data": validated_user_data(body),
         **artifact_sizes(app, body),
     }
 
@@ -207,6 +235,7 @@ def spec_for(row: dict) -> VmSpec:
         root_mib=row["root_mib"],
         home_mib=row["home_mib"],
         egress=bool(row.get("egress", False)),
+        user_data=row.get("user_data"),
     )
 
 
@@ -320,6 +349,19 @@ def build_api(app) -> FastAPI:
                     '"egress": false'
                 ),
             )
+        if body.user_data is not None and app.state.settings.vmm.driver == "k8s":
+            # Same shape as the egress refusal: the runner pod does not
+            # build seed disks yet (it ignores even the overlay/home
+            # env vars, #14), so a user_data workspace would store a
+            # payload nothing ever runs.
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "user_data is not served by the k8s backend yet (the "
+                    "runner pod does not build seed disks); create the "
+                    "workspace without user_data"
+                ),
+            )
         boot = resolve_boot(app, body)
         # The persistent artifacts (#14) come before the row: a refused
         # create (a leftover artifact from a previous workspace of this
@@ -366,6 +408,7 @@ def build_api(app) -> FastAPI:
                 "vsock_shell_port": image.vsock_shell_port,
                 "kernel_version": image.kernel_version,
                 "kernel_format": image.kernel_format,
+                "provisioner": image.provisioner,
                 "default": image.hash == default_hash,
             }
             for image in imagestore.list_images(state_dir)
@@ -434,6 +477,25 @@ def build_api(app) -> FastAPI:
     @api.get("/api/v1/workspaces/{workspace_id}", dependencies=[Depends(require_token)])
     async def get_workspace(workspace_id: str) -> dict:
         return await _workspace_or_404(app, workspace_id)
+
+    # The #41 immutability contract, said out loud: workspaces are
+    # create-time objects (user_data above all), and a mutation
+    # attempt gets a named error instead of a bare 405 from the
+    # router's method table.
+    @api.put("/api/v1/workspaces/{workspace_id}", dependencies=[Depends(require_token)])
+    @api.patch(
+        "/api/v1/workspaces/{workspace_id}", dependencies=[Depends(require_token)]
+    )
+    async def mutate_workspace(workspace_id: str) -> dict:
+        await _workspace_or_404(app, workspace_id)
+        raise HTTPException(
+            status_code=405,
+            detail=(
+                "workspaces cannot be modified after create (user_data is "
+                "create-time); delete the workspace and recreate it to change "
+                "anything"
+            ),
+        )
 
     @api.post(
         "/api/v1/workspaces/{workspace_id}/start", dependencies=[Depends(require_token)]

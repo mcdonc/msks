@@ -13,7 +13,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ..microvm.spec import VmSpec
-from .db import Base, engine_for, sessionmaker_for
+from .db import Base, engine_for, sessionmaker_for, tighten_db_mode
 from .tokens import Token
 from .workspaces import WORKSPACE_STATUSES, Workspace
 
@@ -66,7 +66,10 @@ class Model:
     def migrate(self) -> None:
         """Run Alembic migrations to head for the live database path."""
         db_path = self._db_path()
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        # Same 0600 rule as engine_for: this path often creates the
+        # file first (lifespan migrates before anything opens the
+        # engine), and the rows carry user_data payloads (#41).
+        tighten_db_mode(db_path)
         config = alembic_config(db_path)
         try:
             command.upgrade(config, "head")
@@ -267,6 +270,7 @@ def workspace_fields(spec: VmSpec, image_hash: str | None, host: str | None) -> 
         "root_mib": spec.root_mib,
         "home_mib": spec.home_mib,
         "egress": spec.egress,
+        "user_data": spec.user_data,
         "status": "created",
     }
 
@@ -287,6 +291,7 @@ def workspace_dict(row: Workspace) -> dict:
         "home_mib": row.home_mib,
         "egress": row.egress,
         "egress_slice": row.egress_slice,
+        "user_data": row.user_data,
         "status": row.status,
         "created_at": row.created_at.isoformat(),
     }
