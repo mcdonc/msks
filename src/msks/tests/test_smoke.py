@@ -53,6 +53,14 @@ needs_k8s = pytest.mark.skipif(not KUBECONFIG, reason="set MSKSD_TEST_KUBECONFIG
 # thing to come up, so it is the "guest is usable" marker.
 GUEST_UP_MARKER = "msks-guest login:"
 
+#: Per-phase timeouts, env-tunable for slow hosts (#64): a runner's
+#: nested-KVM guest runs the same boot several times slower than a
+#: dev host's KVM guest, and CI sets all three explicitly. Defaults
+#: keep the dev-host behavior unchanged.
+GUEST_UP_TIMEOUT_S = float(os.environ.get("MSKSD_TEST_GUEST_UP_TIMEOUT_S", "60"))
+CONSOLE_TIMEOUT_S = float(os.environ.get("MSKSD_TEST_CONSOLE_TIMEOUT_S", "30"))
+SHUTDOWN_TIMEOUT_S = float(os.environ.get("MSKSD_TEST_SHUTDOWN_TIMEOUT_S", "60"))
+
 
 def serial_tail(serial_log: Path, limit: int = 2000) -> str:
     """The end of the guest's serial log, for failure messages."""
@@ -61,8 +69,9 @@ def serial_tail(serial_log: Path, limit: int = 2000) -> str:
     return serial_log.read_text(encoding="utf-8", errors="replace")[-limit:]
 
 
-async def await_guest_up(serial_log: Path, timeout_s: float = 60.0) -> None:
+async def await_guest_up(serial_log: Path, timeout_s: float | None = None) -> None:
     """Block until the guest announces itself on the serial console."""
+    timeout_s = timeout_s if timeout_s is not None else GUEST_UP_TIMEOUT_S
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_s
     while loop.time() < deadline:
@@ -75,12 +84,13 @@ async def await_guest_up(serial_log: Path, timeout_s: float = 60.0) -> None:
     )
 
 
-async def read_until(reader, needle: bytes, timeout_s: float = 30.0) -> bytes:
+async def read_until(reader, needle: bytes, timeout_s: float | None = None) -> bytes:
     """Read the stream until it carries ``needle``; return the bytes.
 
     The vsock console is an echoing pty: the sent command and its
     output both flow back, so the marker proves the guest ran it.
     """
+    timeout_s = timeout_s if timeout_s is not None else CONSOLE_TIMEOUT_S
     data = b""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_s
@@ -216,7 +226,7 @@ async def test_local_persistence_across_restart_and_reset() -> None:
         await await_guest_up(serial_log)
         for command, marker in probe_commands:
             await run_in_console(microvm, wid, command, marker)
-        await microvm.shutdown(wid, timeout_s=60)
+        await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
 
     try:
         await microvm.prepare(spec)
