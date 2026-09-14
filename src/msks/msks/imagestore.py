@@ -26,6 +26,7 @@ import os
 import shutil
 import tarfile
 import uuid
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -96,20 +97,30 @@ def layer_of(layers) -> str:
     raise ImageError("image manifest carries no layers")
 
 
-def read_archive(path: Path) -> tuple[dict, tarfile.TarFile]:
-    """Open the containerDisk layer of a container-image tar."""
+@contextlib.contextmanager
+def open_layer(path: Path) -> Iterator[tarfile.TarFile]:
+    """Open the containerDisk layer of a container-image tar.
+
+    The layer tar lives *inside* the outer archive, so both must stay
+    open while reading; the outer archive (and with it the file
+    handle on the staged source) closes deterministically on exit.
+    """
     try:
         archive = tarfile.open(path)
     except (tarfile.TarError, OSError) as exc:
         raise ImageError(f"not a tar archive: {path} ({exc})") from exc
     try:
-        layer_name = first_layer_name(archive)
-        layer_file = archive.extractfile(layer_name)
-        if layer_file is None:
-            raise ImageError("layer member missing from archive")
-        return {}, tarfile.open(fileobj=layer_file)
-    except (KeyError, tarfile.TarError) as exc:
-        raise ImageError(f"malformed container image: {exc}") from exc
+        try:
+            layer_name = first_layer_name(archive)
+            layer_file = archive.extractfile(layer_name)
+            if layer_file is None:
+                raise ImageError("layer member missing from archive")
+            layer = tarfile.open(fileobj=layer_file)
+        except (KeyError, tarfile.TarError) as exc:
+            raise ImageError(f"malformed container image: {exc}") from exc
+        yield layer
+    finally:
+        archive.close()
 
 
 def validate_manifest(layer: tarfile.TarFile) -> dict:
@@ -183,8 +194,7 @@ def import_archive(path: Path, state_dir: Path) -> ImageRecord:
         cache = root / digest
         staging = root / f".{digest}.{attempt}.tmp"
         shutil.rmtree(staging, ignore_errors=True)
-        _, layer = read_archive(source_copy)
-        try:
+        with open_layer(source_copy) as layer:
             manifest = validate_manifest(layer)
             staging.mkdir(parents=True)
             member(layer, staging / "kernel", BOOT_MEMBERS["kernel"])
@@ -207,8 +217,6 @@ def import_archive(path: Path, state_dir: Path) -> ImageRecord:
                 # test_concurrent_import_swap_paths walks it.
                 shutil.rmtree(staging, ignore_errors=True)  # pragma: no cover
             shutil.rmtree(aside, ignore_errors=True)
-        finally:
-            layer.close()
         # The private copy IS the retained archive; POSIX rename
         # replaces a concurrent winner's identical file atomically.
         source_copy.rename(root / f"archive-{digest}.tar")

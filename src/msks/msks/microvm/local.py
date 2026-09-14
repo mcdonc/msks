@@ -496,7 +496,10 @@ class LocalCloudHypervisor(MicrovmDriver):
         persist.remove_overlay(self._settings().vmm.state_dir, workspace_id)
 
     async def cleanup(self, workspace_id: str) -> None:
-        self._procs.pop(workspace_id, None)
+        # Deleting a workspace stops its VMM first: kill() takes the
+        # tracked process (kill+wait) and falls back to the pidfile
+        # for a VMM a restarted daemon no longer tracks (#56).
+        await self.kill(workspace_id)
         shutil.rmtree(self._dir(workspace_id), ignore_errors=True)
         # The home volume lives outside the vm dir so stop/start
         # cycles and resets cannot lose it; cleanup owns its removal.
