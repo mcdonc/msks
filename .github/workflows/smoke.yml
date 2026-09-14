@@ -13,10 +13,12 @@
 # Azure does not accelerate — and the k8s smoke (needs a cluster).
 # Both remain dev-host-only, opt-in exactly as before.
 #
-# Path-filtered like guest-assets.yml: the run costs a guest-asset
-# build (~3 min) plus real boots, so it fires when the guest inputs,
-# the driver the smoke tests exercise, or the tests themselves move —
-# not on every PR.
+# Path-filtered to its real inputs: the guest/toolchain files (a
+# nixpkgs pin move lands through devenv.lock), everything under the
+# server package the boots exercise, and the tests themselves. That
+# is most code PRs — deliberate: this is the only real-VM coverage
+# the repo has until #9's QEMU driver, and ~5 minutes of runner time
+# is cheaper than a green-but-cannot-boot merge.
 name: Smoke (KVM)
 
 on:
@@ -26,11 +28,11 @@ on:
       - .github/workflows/smoke.yml
       - devenv.nix
       - devenv.yaml
+      - devenv.lock
       - nix/guest.nix
       - nix/guest-assets.nix
       - scripts/build-guest.sh
-      - src/msks/msks/guestassets.py
-      - src/msks/msks/microvm/**
+      - src/msks/msks/**
       - src/msks/tests/conftest.py
       - src/msks/tests/test_smoke.py
   pull_request:
@@ -38,11 +40,11 @@ on:
       - .github/workflows/smoke.yml
       - devenv.nix
       - devenv.yaml
+      - devenv.lock
       - nix/guest.nix
       - nix/guest-assets.nix
       - scripts/build-guest.sh
-      - src/msks/msks/guestassets.py
-      - src/msks/msks/microvm/**
+      - src/msks/msks/**
       - src/msks/tests/conftest.py
       - src/msks/tests/test_smoke.py
 

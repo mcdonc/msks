@@ -178,7 +178,7 @@ async def test_local_vm_boot_and_shutdown() -> None:
         # event and time out against a VM that is running but not yet
         # listening.
         await await_guest_up(serial_log)
-        await microvm.shutdown(wid, timeout_s=30)
+        await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
         final = await microvm.info(wid)
         assert final.status.value in ("stopped", "absent")
     except BaseException:
