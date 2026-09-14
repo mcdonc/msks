@@ -82,12 +82,15 @@ in
     curl # unix-socket REST poking during CH debugging
     e2fsprogs # debugfs: seed the bootstrap token onto the state disk
     iproute2 # the appliance bridge/tap (supervisor scripts; host-agnostic)
+    iptables # diagnose foreign FORWARD drops (docker's policy on CI runners)
+    # that block the egress forward path the nft rules accept (#75/#52)
     jscpd # token-clone scanner (#71), pinned rust binary (see above)
     nftables # egress chains/NAT for the #52 smoke path
     qemu # qemu-img for rootfs conversion during guest-image experiments
     virtiofsd # the appliance's read-only /nix/store share (#10)
     ruff
     socat # AF_UNIX <-> pty/stdio plumbing for CH socket debugging
+    tcpdump # packet-level debugging of the egress path (tap vs uplink)
     # cyclomatic-complexity gate tool: built against python3.14 because
     # nixpkgs' top-level xenon runs on an older python whose parser can
     # reject syntax ruff format writes for a 3.14 codebase, silently

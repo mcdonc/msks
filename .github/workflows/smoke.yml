@@ -120,6 +120,30 @@ jobs:
       # the ip/nft tools through it), serial and after the unprivileged
       # smokes so a failure there is not mistaken for this one. Nested
       # KVM boots are slow; the phase timeouts apply here too.
+      # The egress smoke's forward path must survive the runner
+      # image's docker: it owns the iptables FORWARD chain and leaves
+      # non-docker forwarded traffic dropped (policy DROP) — an nft
+      # accept in the daemon's own tables cannot override a foreign
+      # base chain's drop, so guest TCP out (the TCP-42 probe) would
+      # blackhole while DHCP/DNS (host-terminated, input chain) pass.
+      # Print the pre-state for the log, then accept msks tap traffic
+      # above the drop — scoped to the daemon's own interface names
+      # and egress pool, the same exception an operator on a docker
+      # host grants (validated against a faithful FORWARD policy-drop
+      # simulation during #75).
+      - name: Egress smoke forwarding precondition
+        run: |
+          echo "::group::forward/firewall state before"
+          sysctl net.ipv4.ip_forward
+          sudo iptables -S FORWARD || true
+          sudo nft list tables || true
+          echo "::endgroup::"
+          sudo iptables -C FORWARD -i msks-+ -j ACCEPT 2>/dev/null || \
+            sudo iptables -I FORWARD 1 -i msks-+ -j ACCEPT
+          sudo iptables -C FORWARD -o msks-+ -d 172.31.0.0/16 -j ACCEPT 2>/dev/null || \
+            sudo iptables -I FORWARD 1 -o msks-+ -d 172.31.0.0/16 -j ACCEPT
+          sudo iptables -S FORWARD
+
       - name: Egress smoke (root)
         env:
           TMPDIR: /tmp
