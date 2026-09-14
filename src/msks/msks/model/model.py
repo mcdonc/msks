@@ -83,7 +83,8 @@ class Model:
             command.upgrade(config, "head")
 
     async def close(self) -> None:
-        """Dispose the engine (tests swap database paths)."""
+        """Dispose the engine (daemon shutdown; tests swap database
+        paths). Idempotent; the engine recreates lazily on next use."""
         if self._engine is not None:
             await self._engine.dispose()
             self._engine = None

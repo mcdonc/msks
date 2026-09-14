@@ -9,6 +9,7 @@ from msks.microvm.errors import MicrovmError, MicrovmTimeoutError
 from msks.microvm.spec import VmInfo, VmSpec, VmStatus
 from msks.server.api import build_api
 from msks.settings import ServerSettings, Settings, VmmSettings
+from sqlalchemy.exc import OperationalError
 
 TOKEN = "test-token"
 
@@ -64,6 +65,29 @@ async def client(tmp_path: Path):
             transport=transport, base_url="https://test"
         ) as http:
             yield http, app, stub
+
+
+async def test_lifespan_startup_failure_closes_engine(tmp_path: Path) -> None:
+    # A startup step can raise after the engine exists (locked db,
+    # full disk): the lifespan must still dispose it, or the GC emits
+    # the unclosed-database warning this suite keeps at zero.
+    settings = Settings(
+        vmm=VmmSettings(state_dir=tmp_path / "vms"),
+        server=ServerSettings(db_path=tmp_path / "f.db", bootstrap_token=TOKEN),
+    )
+    app = build_app(settings)
+    model = app.state.model
+
+    async def bootstrap_boom() -> None:
+        model.engine()  # the real bootstrap creates the engine first
+        raise OperationalError("statement", {}, Exception("database is locked"))
+
+    model.bootstrap_token = bootstrap_boom
+    api = build_api(app)
+    with pytest.raises(OperationalError, match="locked"):
+        async with api.router.lifespan_context(api):
+            pass  # pragma: no cover - startup fails before the yield
+    assert model._engine is None
 
 
 async def test_health_is_public(client) -> None:
