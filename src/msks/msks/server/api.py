@@ -74,9 +74,10 @@ class WorkspaceCreate(BaseModel):
     # into the no-NIC posture.
     egress: bool = True
     # First-boot provisioning (#41): a shell script (leading "#!") or
-    # cloud-config YAML, delivered verbatim on the workspace's
-    # read-only cidata seed disk. Create-time and immutable — a
-    # workspace keeps its payload until it is deleted and recreated.
+    # cloud-config YAML — cloud-init runs both — delivered verbatim on
+    # the workspace's read-only cidata seed disk. Create-time and
+    # immutable: a workspace keeps its payload until it is deleted and
+    # recreated.
     user_data: str | None = Field(default=None, max_length=USER_DATA_MAX)
 
 
@@ -124,38 +125,20 @@ def image_record(app, body: WorkspaceCreate):
     return imagestore.default_image(state_dir)
 
 
-def validated_user_data(body: WorkspaceCreate, record) -> str | None:
-    """The #41 payload: present-and-nonempty, and a form the image's
-    provisioner can consume (below)."""
+def validated_user_data(body: WorkspaceCreate) -> str | None:
+    """The #41 payload: present-and-nonempty.
+
+    cloud-init runs both payload forms (#! scripts and cloud-config
+    YAML), so the daemon accepts both; an image declares its
+    provisioner in ``image.json`` for the operator and the docs, not
+    for create-time policing. Explicit boot artifacts have no
+    manifest at all — the same acceptance applies.
+    """
     if body.user_data is None:
         return None
     if not body.user_data.strip():
         raise HTTPException(status_code=400, detail="user_data is empty")
-    refuse_cloud_config_without_cloud_init(body.user_data, record)
     return body.user_data
-
-
-def refuse_cloud_config_without_cloud_init(user_data: str, record) -> None:
-    """A cloud-init image runs both payload forms; an image declaring
-    msks-firstboot runs scripts only, and create is the cheap moment
-    to say so. An image without a declared provisioner accepts either
-    (msksd cannot know what a foreign image's guest actually runs;
-    the seed is NoCloud-exact either way), and explicit boot
-    artifacts have no manifest at all — the same acceptance applies.
-    """
-    if (
-        record is not None
-        and record.provisioner == "msks-firstboot"
-        and not user_data.startswith("#!")
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"user_data is not a script, and image {record.ref} declares "
-                "provisioner msks-firstboot, which runs scripts only (leading "
-                "#!); cloud-config needs a cloud-init image"
-            ),
-        )
 
 
 def resolve_boot(app, body: WorkspaceCreate) -> dict:
@@ -181,7 +164,7 @@ def resolve_boot(app, body: WorkspaceCreate) -> dict:
         "mem_mib": body.mem_mib,
         "image_hash": bound_image_hash(body, record),
         "egress": body.egress,
-        "user_data": validated_user_data(body, record),
+        "user_data": validated_user_data(body),
         **artifact_sizes(app, body),
     }
 

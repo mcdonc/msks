@@ -45,12 +45,16 @@
 }:
 
 let
-  # The official Debian 13 nocloud image: systemd, no cloud-init.
+  # The official Debian 13 genericcloud image (#41): systemd plus
+  # cloud-init and its python3 runtime — the workspace's cidata seed
+  # is NoCloud's own format, so first-boot provisioning needs no
+  # msks-side consumer. Roughly 130M heavier than the nocloud variant
+  # the build used before; the boot diet below keeps the console fast.
   debianImage = pkgs.fetchurl {
     urls = [
-      "https://cloud.debian.org/images/cloud/trixie/20260831-2587/debian-13-nocloud-amd64-20260831-2587.qcow2"
+      "https://cloud.debian.org/images/cloud/trixie/20260831-2587/debian-13-genericcloud-amd64-20260831-2587.qcow2"
     ];
-    hash = "sha512:e4f716b1fb48be24085c0907bd1a0a31f03b7bf2adfbd46d9f39595a225dc38741a4b5d79910e61fa1d885ac043e5ea0663fe805f26944e1dc1211a3206022c2";
+    hash = "sha512:8ea9faae810043a0b35b0149f05014f26705c2339ffb11ead308f33e844a87cc3ef46ec81d5262b38817b6a88af404874d48a5857ebe072ef6a31dfb6e371f50";
   };
 
   # The port the guest's vsock console listens on; the daemon dials
@@ -59,71 +63,9 @@ let
   vsockShellPort = 1023;
 
   # First-boot provisioning (#41): the image's declared seed-disk
-  # consumer. This image runs script payloads with its own unit;
-  # cloud-config documents need a cloud-init image.
-  imageProvisioner = "msks-firstboot";
-
-  # The first-boot stanza (#41): find the cidata seed among the
-  # virtio disks, run a script user_data once per root overlay. A
-  # plain writeText (not writeShellScript) so the shebang points at
-  # the guest's own /bin/sh — the overlay installs it executable.
-  firstbootHelper = pkgs.writeText "msks-firstboot" ''
-    #!/bin/sh
-    # msks-firstboot: run the workspace's user_data script off the
-    # cidata seed disk, once per root overlay (#41).
-    #
-    # The seed is a read-only iso9660 disk labeled cidata carrying
-    # user-data and meta-data (cloud-init's NoCloud layout). This
-    # consumer runs script payloads only (a leading #!); a cloud-config
-    # document is cloud-init's, and the daemon refuses one for this
-    # image at create time. The unit never fails the boot: every path
-    # out is exit 0, and the payload's own exit status is only logged.
-    set -u
-
-    marker=/etc/msks/firstboot.done
-    mkdir -p /etc/msks
-    # Run-once keys off the overlay, not the seed: the marker lands on
-    # the workspace's root, so stop/start never re-provisions and a
-    # factory reset (the overlay's death) does. cloud-init's
-    # /var/lib/cloud cache lives on the same overlay, so its
-    # semantics are identical.
-    : > "$marker"
-
-    seed=
-    for disk in /dev/vd*; do
-      [ -b "$disk" ] || continue
-      if [ "$(blkid -o value -s LABEL "$disk" 2>/dev/null)" = cidata ]; then
-        seed=$disk
-        break
-      fi
-    done
-    if [ -z "$seed" ]; then
-      echo "msks-firstboot: no cidata seed disk; nothing to provision" >&2
-      exit 0
-    fi
-
-    modprobe isofs 2>/dev/null || true
-    mkdir -p /run/msks/seed
-    if ! mount -t iso9660 -o ro "$seed" /run/msks/seed; then
-      echo "msks-firstboot: cannot mount $seed; skipping provisioning" >&2
-      exit 0
-    fi
-    cp /run/msks/seed/user-data /run/msks/user-data
-    umount /run/msks/seed
-
-    # Scripts only: cloud-config documents (a leading #cloud-config)
-    # never carry the #! this consumer requires.
-    if [ "$(head -c 2 /run/msks/user-data)" != "#!" ]; then
-      echo "msks-firstboot: user-data is not a script (no leading #!); nothing to run" >&2
-      exit 0
-    fi
-
-    chmod 0700 /run/msks/user-data
-    echo "msks-firstboot: running user_data script" >&2
-    /run/msks/user-data
-    echo "msks-firstboot: user_data script exited $?" >&2
-    exit 0
-  '';
+  # consumer — cloud-init, shipped by the genericcloud source. Both
+  # payload forms work: cloud-config YAML and #! scripts.
+  imageProvisioner = "cloud-init";
 
   # The workspace image identity (#40): the catalog reference is
   # <name>:<version>.
@@ -213,6 +155,7 @@ let
     set -eu
     mkdir -p \
       $out/home \
+      $out/etc/cloud/cloud.cfg.d \
       $out/etc/systemd/system/serial-getty@ttyS0.service.d \
       $out/etc/systemd/system/multi-user.target.wants \
       $out/etc/systemd/system/sockets.target.wants \
@@ -221,6 +164,22 @@ let
       $out/etc/modules-load.d
 
     printf 'msks-guest\n' > $out/etc/hostname
+
+    # cloud-init (#41): the workspace's cidata seed is NoCloud's own
+    # format. Two dropins pin the behavior the msks contract needs:
+    # the datasource list stops cloud-init probing EC2/OpenStack/
+    # network sources (the seed disk answers immediately), and
+    # network rendering stays off — the overlay's networkd unit owns
+    # whatever NIC appears, taking its address from the daemon's own
+    # DHCP (#52), so cloud-init must not fight it with netplan.
+    printf '%s\n' \
+      '# msks: the cidata seed disk is the only datasource.' \
+      'datasource_list: [ NoCloud, None ]' \
+      > $out/etc/cloud/cloud.cfg.d/99-msks-datasources.cfg
+    printf '%s\n' \
+      '# msks: networkd (see 80-msks-egress.network) owns the NIC.' \
+      'network: {config: disabled}' \
+      > $out/etc/cloud/cloud.cfg.d/99-msks-network.cfg
 
     # The image's fstab mounts the root filesystem by the PARTUUID of
     # the cloud image's partition table; direct kernel boot presents
@@ -359,34 +318,6 @@ let
       'ExecStart=-/sbin/agetty --autologin root --noclear %I $TERM' \
       > $out/etc/systemd/system/serial-getty@ttyS0.service.d/autologin.conf
 
-    # First-boot provisioning (#41): the daemon attaches a read-only
-    # iso9660 disk labeled cidata (cloud-init's NoCloud layout)
-    # carrying the workspace's user_data when it was created with
-    # one. The helper below runs a script payload exactly once per
-    # root overlay; cloud-config documents are cloud-init's, and an
-    # image that ships cloud-init skips this unit entirely (the
-    # ConditionPathExists below) so payloads never run twice.
-    install -Dm0755 ${firstbootHelper} $out/usr/lib/msks/msks-firstboot
-    printf '%s\n' \
-      '[Unit]' \
-      'Description=msks first-boot provisioning (user_data from the cidata seed)' \
-      'Documentation=https://github.com/mcdonc/msks' \
-      'ConditionPathExists=!/etc/msks/firstboot.done' \
-      'ConditionPathExists=!/usr/lib/systemd/system/cloud-init.service' \
-      'After=local-fs.target systemd-networkd.service' \
-      ''' \
-      '[Service]' \
-      'Type=oneshot' \
-      'TimeoutStartSec=0' \
-      'StandardOutput=journal+console' \
-      'StandardError=journal+console' \
-      'ExecStart=/usr/lib/msks/msks-firstboot' \
-      ''' \
-      '[Install]' \
-      'WantedBy=multi-user.target' \
-      > $out/etc/systemd/system/msks-firstboot.service
-    ln -s ../msks-firstboot.service \
-      $out/etc/systemd/system/multi-user.target.wants/msks-firstboot.service
   '';
 
   # Parse sfdisk --json: print the byte offset of the Linux root
@@ -543,10 +474,32 @@ let
       ''
         set -eu
         mkdir -p "$out"
+        # The store's auto-optimise hardlinks identical files (the
+        # tree's empty files form one group of tens of thousands),
+        # and mke2fs -d packs each hardlink group as ONE inode with
+        # many directory entries. At runtime the guest's first write
+        # to one member (utmp, wtmp — empty files) then surfaced in
+        # every other member: cloud-init's empty __init__.py once
+        # parsed as binary utmp records. Copy the read-only store
+        # tree to writable scratch and give every linked path its
+        # own inode before packing.
+        rm -rf work
+        cp -a --reflink=auto "$debianRoot/root" work
+        # The store tree is read-only; the scratch copy must be
+        # writable for the de-link pass (and fakeroot's chmods).
+        chmod -R u+w work
+        find work -type f -links +1 -exec sh -c '
+          for f do
+            tmp=$(mktemp "$(dirname "$f")/.hl.XXXXXX")
+            cat "$f" > "$tmp" || exit 1
+            chmod --reference="$f" "$tmp" || exit 1
+            mv "$tmp" "$f"
+          done
+        ' sh {} +
         # Content plus 1G of slack: the base keeps room for image
         # updates, and the per-workspace overlay (#14) carries whatever
         # the guest writes beyond it.
-        PACK_TREE="$debianRoot/root" \
+        PACK_TREE=work \
           PACK_IMG="$out/rootfs.ext4" \
           PACK_BLOCKS=$(( $(cat "$debianRoot"/tree-blocks) + 262144 )) \
           PACK_FAKE_EPOCH="$fakeEpoch" \

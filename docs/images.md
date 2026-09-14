@@ -90,37 +90,26 @@ EXEC:/bin/bash,pty,ctty,echo=1,icanon=1,stderr,setsid`
   (the daemon formats the volume with that label) so the mount
   stays on the right device whatever the disk order is; `nofail`
   keeps boots moving when the volume is absent.
-- **Consume the cidata seed disk when the image declares a
-  provisioner.** A workspace created with `user_data` (#41) boots
-  with a third, read-only virtio disk: a small iso9660 filesystem
-  labeled `cidata` carrying `user-data` (the payload, verbatim) and
-  `meta-data` (`instance-id`/`local-hostname`, keyed off the
-  workspace id) at its root — exactly cloud-init's NoCloud seed
-  layout. `capabilities.provisioner` in `image.json` tells the
-  daemon (and the operator) which consumer the image ships:
-  - `cloud-init` — the image runs real cloud-init. The NoCloud
-    datasource finds the labeled disk with no network probing, and
-    both payload forms work: cloud-config YAML and scripts. Any
-    distro cloud image that ships cloud-init (Debian's `generic`
-    and `genericcloud`, Ubuntu, Fedora, ...) imports as-is with
-    `"capabilities": {"provisioner": "cloud-init"}` added to its
-    `image.json`.
-  - `msks-firstboot` — the image runs its own first-boot unit (the
-    shipped image's `/usr/lib/msks/msks-firstboot`): it mounts the
-    seed and executes the payload when it starts with `#!`.
-    Scripts only; the daemon refuses a cloud-config payload for
-    such an image at create time with a named error.
+- **Run cloud-init against the cidata seed disk.** A workspace
+  created with `user_data` (#41) boots with a third, read-only
+  virtio disk: a small iso9660 filesystem labeled `cidata` carrying
+  `user-data` (the payload, verbatim) and `meta-data`
+  (`instance-id`, keyed off the workspace id) at its root — exactly
+  cloud-init's NoCloud seed layout. The image ships cloud-init (the
+  Debian `genericcloud` base does), and two dropins pin the
+  behavior the msks contract needs: `datasource_list: [ NoCloud,
+None ]` (the seed disk answers immediately — no EC2 or OpenStack
+  probing, no network timeouts) and `network: {config: disabled}`
+  (the image's own networkd unit owns whatever NIC appears;
+  cloud-init's netplan rendering stays out of the way). Both
+  payload forms run: cloud-config YAML and `#!` scripts.
 
-  Both consumers run the payload once per boot cycle in exactly the
-  same way: their "already ran" state — cloud-init's
-  `/var/lib/cloud` cache, msks-firstboot's marker — lives on the
-  workspace's root overlay, so `stop`/`start` never re-provisions
-  and a factory reset does (the reset drops the overlay). An image
-  without a declared provisioner still accepts
-  `user_data` (the daemon cannot know what a foreign guest runs);
-  the seed is NoCloud-exact either way. Mounting iso9660 needs the
-  `isofs` kernel module present — the shipped image's module tree
-  carries it.
+  cloud-init's run-once state (the `/var/lib/cloud` cache) lives on
+  the workspace's root overlay, so `stop`/`start` never
+  re-provisions and a factory reset does (the reset drops the
+  overlay). Any distro cloud image that ships cloud-init (Debian's
+  `generic` and `genericcloud`, Ubuntu, Fedora, ...) imports as-is
+  and declares `"capabilities": {"provisioner": "cloud-init"}`.
 
 ## Building an image
 
@@ -284,7 +273,7 @@ The rules worth knowing:
 - **Create-time and immutable.** The payload is part of the
   workspace's identity; `user_data` is accepted only at create, any
   mutation attempt answers a named 405 (delete and recreate to
-  change it). Both consumers key their run-once semantics off the
+  change it). cloud-init keys its run-once semantics off the
   workspace, so changing it after the fact would silently do
   nothing anyway.
 - **The seed is per-workspace state.** It is built at create (a
@@ -296,23 +285,21 @@ The rules worth knowing:
   file (which records the payload on the workspace's row) 0600 too.
   Listing endpoints and `msks ls --json` echo the payload back over
   the same TLS + token channel as the console.
-- **Payload form follows the image's provisioner.** An image
-  declared `msks-firstboot` runs scripts only — a cloud-config
-  document against it is a create-time 400 naming the image. An
-  image declared `cloud-init` (or one with no declared provisioner)
-  accepts both forms; cloud-init also runs `#!` scripts from
-  `user_data`.
+- **Both payload forms run.** cloud-init executes `#!` scripts from
+  `user_data` and applies cloud-config documents alike; declare the
+  image's `capabilities.provisioner: cloud-init` so operators and
+  tooling can see what consumes the seed.
 - **No `user_data`, no seed.** A workspace created without a payload
-  boots exactly as before: no third disk, no firstboot work (the
-  shipped image's unit writes its run-once marker and exits), no
-  measurable boot cost.
-- **Failure posture of the shipped consumer.** The firstboot unit
-  writes its run-once marker before the payload runs (cloud-init's
-  shape: once per boot cycle, success or not) and has no start
-  timeout — a hanging payload leaves the unit running, while the
-  console, the serial log, and the power button stay available. A
-  payload that failed (or a transient seed-mount failure) does not
-  retry on the next boot; a factory reset re-provisions.
+  boots with two disks and no added cost: cloud-init finds no seed,
+  applies nothing, and the interactive budget is unchanged (~3.0s
+  start→shell).
+- **Failure posture is cloud-init's.** The vsock console starts
+  before cloud-init runs (the interactive budget is unaffected —
+  the shipped image measures ~3.0s start→shell), and payloads run
+  in cloud-init's final stage: a slow or hanging payload delays
+  boot-complete, not the shell. `cloud-init status --wait` (or the
+  serial log) says when provisioning finished; a factory reset
+  re-runs the payload from the same seed.
 - **The k8s backend does not serve `user_data` yet** — the runner pod
   does not build seed disks; create refuses the combination by name
   (the same shape as its egress refusal).

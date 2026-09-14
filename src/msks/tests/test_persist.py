@@ -323,10 +323,9 @@ def test_remove_sweeps_crashed_scratch_files(tmp_path: Path) -> None:
 
 def test_seed_metadata_keys_off_the_workspace() -> None:
     """NoCloud meta-data: instance-id drives cloud-init's run-once
-    semantics, local-hostname gives each workspace its own name."""
-    assert persist.seed_metadata("ws-41") == (
-        "instance-id: ws-41\nlocal-hostname: ws-41\n"
-    )
+    semantics. No local-hostname — the image's hostname stays stable
+    across workspaces."""
+    assert persist.seed_metadata("ws-41") == "instance-id: ws-41\n"
 
 
 async def test_ensure_builds_seed_when_user_data_set(tools) -> None:
@@ -344,8 +343,8 @@ async def test_ensure_builds_seed_when_user_data_set(tools) -> None:
     assert "staging-mode 700" in log
     assert "-volid cidata" in log
     assert f"--- user-data ---\n{payload}" in log
-    assert "--- meta-data ---\ninstance-id: ws-persist" in log
-    assert "local-hostname: ws-persist" in log
+    assert "--- meta-data ---\ninstance-id: ws-persist\n" in log
+    assert "local-hostname" not in log
     assert persist.overlay_path(settings.state_dir, WID).is_file()
     assert persist.home_volume_path(settings.state_dir, WID).is_file()
     assert not tmp_debris(settings)

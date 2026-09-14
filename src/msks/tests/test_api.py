@@ -573,11 +573,11 @@ async def test_create_rejects_empty_user_data(client) -> None:
     assert oversized.status_code == 422
 
 
-async def test_create_rejects_cloud_config_on_firstboot_only_image(client) -> None:
-    """The msks-firstboot consumer runs scripts; a cloud-config
-    document against such an image is a create-time 400 naming the
-    image, while a script passes and an undeclared image accepts
-    either (msksd cannot know a foreign guest's consumer)."""
+async def test_create_accepts_both_payload_forms(client) -> None:
+    """cloud-init runs #! scripts and cloud-config documents alike
+    (#41); an image declares its provisioner for the operator, and
+    create accepts both forms for a declared image and an undeclared
+    one alike (explicit-artifact boots have no manifest at all)."""
     # allow-deferred-import: module-scope would be circular
     # (test_imagestore imports TOKEN/StubMicrovm/auth from here).
     import json
@@ -587,69 +587,45 @@ async def test_create_rejects_cloud_config_on_firstboot_only_image(client) -> No
     http, app, _stub = client
     state_dir = app.state.settings.vmm.state_dir
     state_dir.mkdir(parents=True, exist_ok=True)
-
-    def archive_with(name: str, capabilities: dict | None) -> Path:
-        archive = state_dir / f"{name}.tar"
-        manifest = {
-            "schema": 2,
-            "name": name,
-            "version": "1.0",
-            "cmdline": "console=ttyS0 root=/dev/vda ro",
-            "vsock_shell_port": 1023,
-        }
-        if capabilities is not None:
-            manifest["capabilities"] = capabilities
-        build_containerdisk(
-            archive,
-            schema=False,
-            members={
-                "boot/vmlinuz": b"kernel-bytes",
-                "boot/initrd.img": b"initrd-bytes",
-                "disk/rootfs.ext4": b"rootfs-bytes",
-                "disk/image.json": json.dumps(manifest).encode(),
-            },
-        )
-        return archive
-
-    firstboot = archive_with("img-firstboot", {"provisioner": "msks-firstboot"})
+    manifest = {
+        "schema": 2,
+        "name": "img-cloud",
+        "version": "1.0",
+        "cmdline": "console=ttyS0 root=/dev/vda ro",
+        "vsock_shell_port": 1023,
+        "capabilities": {"provisioner": "cloud-init"},
+    }
+    archive = state_dir / "img-cloud.tar"
+    build_containerdisk(
+        archive,
+        schema=False,
+        members={
+            "boot/vmlinuz": b"kernel-bytes",
+            "boot/initrd.img": b"initrd-bytes",
+            "disk/rootfs.ext4": b"rootfs-bytes",
+            "disk/image.json": json.dumps(manifest).encode(),
+        },
+    )
     imported = await http.post(
-        "/api/v1/images", json={"source": str(firstboot)}, headers=auth()
+        "/api/v1/images", json={"source": str(archive)}, headers=auth()
     )
     assert imported.status_code == 201, imported.text
     listed = await http.get("/api/v1/images", headers=auth())
-    assert listed.json()[0]["provisioner"] == "msks-firstboot"
+    assert listed.json()[0]["provisioner"] == "cloud-init"
 
     cloud_config = "#cloud-config\npackages: []\n"
-    refused = await http.post(
-        "/api/v1/workspaces",
-        json={"id": "ws-cc", "image": "img-firstboot", "user_data": cloud_config},
-        headers=auth(),
-    )
-    assert refused.status_code == 400
-    assert "cloud-init image" in refused.json()["detail"]
-    assert "img-firstboot" in refused.json()["detail"]
-
-    script_ok = await http.post(
-        "/api/v1/workspaces",
-        json={"id": "ws-cc", "image": "img-firstboot", "user_data": "#!/bin/sh\n"},
-        headers=auth(),
-    )
-    assert script_ok.status_code == 201, script_ok.text
-
-    # An image without the declared capability accepts cloud-config:
-    # the guest may still run cloud-init (imported distro cloud
-    # images do), and the seed is NoCloud-exact either way.
-    plain = archive_with("img-plain", None)
-    imported_plain = await http.post(
-        "/api/v1/images", json={"source": str(plain)}, headers=auth()
-    )
-    assert imported_plain.status_code == 201, imported_plain.text
-    accepted = await http.post(
-        "/api/v1/workspaces",
-        json={"id": "ws-any", "image": "img-plain", "user_data": cloud_config},
-        headers=auth(),
-    )
-    assert accepted.status_code == 201, accepted.text
+    for wid, body_extra in (
+        ("ws-cc", {"image": "img-cloud", "user_data": cloud_config}),
+        ("ws-sh", {"image": "img-cloud", "user_data": "#!/bin/sh\n"}),
+        # No manifest, no declaration: the same acceptance (msksd
+        # cannot police a foreign guest's consumer).
+        ("ws-bare", {"kernel": "/k", "rootfs": "/r", "user_data": cloud_config}),
+    ):
+        created = await http.post(
+            "/api/v1/workspaces", json={"id": wid, **body_extra}, headers=auth()
+        )
+        assert created.status_code == 201, created.text
+        assert created.json()["user_data"] == body_extra["user_data"]
 
 
 async def test_workspace_mutation_is_refused_with_a_named_error(client) -> None:

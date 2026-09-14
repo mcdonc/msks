@@ -158,8 +158,11 @@ def require_fields(raw: dict) -> None:
 
 
 #: The provisioners an image may declare (#41): which consumer eats
-#: the workspace's cidata seed disk.
-PROVISIONERS = ("cloud-init", "msks-firstboot")
+#: the workspace's cidata seed disk. cloud-init is the one consumer
+#: the contract supports; the shipped image and any distro cloud
+#: image ship it, so a #! script and a cloud-config document both
+#: run.
+PROVISIONERS = ("cloud-init",)
 
 
 def provisioner_of(manifest: dict) -> str | None:

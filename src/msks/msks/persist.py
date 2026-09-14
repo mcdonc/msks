@@ -16,11 +16,10 @@ from the VM's:
   ``<state_dir>/vms/<id>/seed.img`` labeled ``cidata``, attached
   read-only as a third virtio-blk disk. It carries the payload
   verbatim as ``user-data`` plus a NoCloud ``meta-data``
-  (instance-id/hostname), so both provisioners — cloud-init's
-  NoCloud datasource and the image's msks-firstboot — read the same
-  layout. It can embed tokens, so it is installed mode 0600 (the
-  row that records the payload makes the same promise: the daemon
-  creates its database file 0600).
+  (instance-id) — exactly what cloud-init's datasource reads. It can
+  embed tokens, so it is installed mode 0600 (the row that records
+  the payload makes the same promise: the daemon creates its
+  database file 0600).
 
 The first two are created at workspace create; all three survive
 ``stop``/``start`` and are removed with the workspace (the seed
@@ -37,9 +36,8 @@ touching data that exists. ``remove_overlay`` is factory reset's
 half — the root returns to the pristine base, the home volume keeps
 its data, and the seed stays: it is immutable create-time input, so
 a reset workspace re-provisions from it exactly as a fresh one
-would (both consumers' run-once state — cloud-init's /var/lib/cloud
-cache, msks-firstboot's marker — lives on the overlay a reset
-drops). A crash mid-create leaves only ``*.tmp`` scratch behind:
+would (cloud-init's run-once state, the /var/lib/cloud cache, lives
+on the overlay a reset drops). A crash mid-create leaves only ``*.tmp`` scratch behind:
 harmless debris, swept by the removal helpers for the file-shaped
 artifacts and by the vm-dir rmtree for the seed's staging
 directory.
@@ -207,9 +205,11 @@ def seed_metadata(workspace_id: str) -> str:
     semantics key off the workspace: a stop/start or a daemon restart
     never re-provisions. A factory reset DOES re-provision — the
     "already ran" state (/var/lib/cloud) lives on the overlay the
-    reset drops — which is exactly msks-firstboot's semantics too.
+    reset drops. No ``local-hostname``: the image's own hostname
+    (msks-guest) stays stable across workspaces, and per-workspace
+    identity is what the id column is for.
     """
-    return f"instance-id: {workspace_id}\nlocal-hostname: {workspace_id}\n"
+    return f"instance-id: {workspace_id}\n"
 
 
 async def create_seed(spec: VmSpec, settings) -> None:

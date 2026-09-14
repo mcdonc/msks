@@ -404,7 +404,11 @@ let
         # archive (~350M) plus the unpacked boot files (~1.7G); two
         # images plus the database and workspace overlays fit, a third
         # needs a bigger disk.
-        truncate -s 6G "$out/state.ext4"
+        # Room for two images (the cloud-init-bearing genericcloud
+        # base lands at ~1.5G rootfs plus ~1.5G retained archive
+        # each, #41) with the database, tokens, and workspace
+        # overlays/volumes under it.
+        truncate -s 8G "$out/state.ext4"
         E2FSPROGS_FAKE_TIME="$fakeEpoch" mke2fs -q -F -t ext4 -b 4096 -I 256 \
           -L msks-state \
           -E hash_seed=00000000-0000-0000-0000-000000000003 \
