@@ -9,6 +9,7 @@ interactive shell command lives in :mod:`msks.client.shell`.
 import argparse
 import asyncio
 import json
+import sys
 
 from .rest import (
     api_call,
@@ -78,7 +79,7 @@ async def create_workspace(url, token, body, start, transport) -> dict:
 
 def cmd_start(workspace_id: str, transport=None) -> int:
     """``msks start``: boot a created workspace."""
-    asyncio.run(
+    row = asyncio.run(
         api_call(
             "POST",
             env_url(),
@@ -87,7 +88,7 @@ def cmd_start(workspace_id: str, transport=None) -> int:
             transport=transport,
         )
     )
-    print(f"{workspace_id} running")
+    print(f"{workspace_id} {row['status']}")
     return 0
 
 
@@ -139,6 +140,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None, transport=None) -> int:
     args = build_parser().parse_args(argv)
+    try:
+        return dispatch(args, transport)
+    except KeyboardInterrupt:
+        # A Ctrl-C during a long boot: one line, not a traceback (a
+        # raw-mode session never gets here — Ctrl-C reaches the guest).
+        print("msks: interrupted", file=sys.stderr)
+        raise SystemExit(130) from None
+
+
+def dispatch(args: argparse.Namespace, transport=None) -> int:
+    """Run one parsed command."""
     if args.command == "shell":
         return run_workspace_shell(args.workspace_id)
     if args.command == "list":

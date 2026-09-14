@@ -197,7 +197,7 @@ def run_workspace_shell(workspace_id: str) -> int:
     # Same reason for the pre-flight REST call: a not-running
     # workspace is booted here, with its notices on stderr, before
     # the tty goes raw.
-    asyncio.run(ensure_running(workspace_id, url, token, ssl=ssl_ctx))
+    asyncio.run(ensure_running(workspace_id, url, token, ssl_ctx=ssl_ctx))
     try:
         if old is not None:
             tty.setraw(sys.stdin.fileno())

@@ -337,10 +337,15 @@ async def async_noop(*args, **kwargs) -> None:
 def test_main_raw_mode_cycle(monkeypatch: pytest.MonkeyPatch) -> None:
     from msks.client import shell
 
+    order: list[str] = []
+
+    async def preflight(*args, **kwargs) -> None:
+        order.append("preflight")
+
     monkeypatch.setattr(sys, "stdin", FdOnly())
     monkeypatch.setenv("MSKSC_TOKEN", "t")
     monkeypatch.setattr(shell, "require_tty", lambda: None)
-    monkeypatch.setattr(shell, "ensure_running", async_noop)
+    monkeypatch.setattr(shell, "ensure_running", preflight)
     restored: list = []
 
     async def fake_run(wid, url, token, ssl_ctx):
@@ -351,9 +356,13 @@ def test_main_raw_mode_cycle(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         shell.termios, "tcsetattr", lambda fd, when, attrs: restored.append(attrs)
     )
-    monkeypatch.setattr(shell.tty, "setraw", lambda fd: None)
+    monkeypatch.setattr(shell.tty, "setraw", lambda fd: order.append("raw"))
     assert cli.main(["shell", "wid"]) == 7
     assert restored == [["old"]]
+    # The pre-flight boot and its notices must land BEFORE raw mode:
+    # setraw clears OPOST, so a mid-session newline would leave the
+    # cursor mid-column.
+    assert order == ["preflight", "raw"]
 
 
 def test_main_without_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -461,8 +470,8 @@ def test_run_workspace_shell_preflights_boot(
 
     seen = {}
 
-    async def fake_ensure(workspace_id, url, token, ssl=None):
-        seen.update(workspace_id=workspace_id, url=url, token=token, ssl=ssl)
+    async def fake_ensure(workspace_id, url, token, ssl_ctx=None):
+        seen.update(workspace_id=workspace_id, url=url, token=token, ssl=ssl_ctx)
 
     monkeypatch.setattr(sys, "stdin", FdOnly())
     monkeypatch.setenv("MSKSC_TOKEN", "t")

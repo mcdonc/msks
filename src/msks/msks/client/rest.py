@@ -7,9 +7,11 @@ through this module, so the #21 client conventions live here once:
 ``MSKSC_CAFILE`` to pin the certificate.
 """
 
+import asyncio
 import os
 import ssl
 import sys
+import time
 
 import httpx
 
@@ -19,6 +21,11 @@ DEFAULT_URL = "https://127.0.0.1:8660"
 # VMM boot completes (~3s p50, slower on a loaded host), and the
 # default 5s would cut a healthy launch off mid-flight.
 TIMEOUT = httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0)
+
+# Waiting out another client's in-flight boot: the same budget the
+# start call itself gets.
+BOOT_WAIT_S = 120.0
+BOOT_POLL_S = 1.0
 
 
 def env_url() -> str:
@@ -59,14 +66,15 @@ def api_client(
     url: str,
     token: str,
     transport: httpx.AsyncBaseTransport | None = None,
-    ssl: ssl.SSLContext | None = None,
+    ssl_ctx: ssl.SSLContext | None = None,
 ) -> httpx.AsyncClient:
     """The authenticated client for one command.
 
     ``transport`` is the seam the tests plug an in-process API (or a
-    mock) into; the real client dials ``url`` with the #21 TLS story
-    (``ssl`` lets a caller reuse an already-built context, so the
-    unverified-mode warning prints once per invocation).
+    mock) into (an ``ssl_ctx`` is unused alongside one); the real
+    client dials ``url`` with the #21 TLS story (``ssl_ctx`` lets a
+    caller reuse an already-built context, so the unverified-mode
+    warning prints once per invocation).
     """
     if transport is not None:
         return httpx.AsyncClient(
@@ -79,7 +87,7 @@ def api_client(
         base_url=url,
         headers={"Authorization": f"Bearer {token}"},
         timeout=TIMEOUT,
-        verify=ssl if ssl is not None else ssl_context(),
+        verify=ssl_ctx if ssl_ctx is not None else ssl_context(),
     )
 
 
@@ -111,10 +119,10 @@ async def api_call(
     path: str,
     json_body: dict | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
-    ssl: ssl.SSLContext | None = None,
+    ssl_ctx: ssl.SSLContext | None = None,
 ):
     """One authenticated REST call on a fresh client."""
-    async with api_client(url, token, transport, ssl) as client:
+    async with api_client(url, token, transport, ssl_ctx) as client:
         return await request(client, method, path, json_body)
 
 
@@ -145,31 +153,99 @@ async def ensure_running(
     workspace_id: str,
     url: str,
     token: str,
-    ssl: ssl.SSLContext | None = None,
+    ssl_ctx: ssl.SSLContext | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> None:
     """Boot ``workspace_id`` when the daemon reports it not running.
 
-    The notices print to stderr before the caller enters raw tty
-    mode, where a plain newline would leave the cursor mid-column.
+    A concurrent boot is waited out; a paused workspace is refused
+    (the daemon has no resume); a start that loses a race to another
+    boot attaches to the winner instead of failing. The notices
+    print to stderr before the caller enters raw tty mode, where a
+    plain newline would leave the cursor mid-column.
     """
-    row = await api_call(
+    row = await workspace_row(workspace_id, url, token, ssl_ctx, transport)
+    if row["status"] == "starting":
+        print(
+            f"msks: {workspace_id} is starting; waiting for the boot", file=sys.stderr
+        )
+        row = await wait_boot(workspace_id, url, token, ssl_ctx, transport)
+    if row["status"] == "running":
+        return
+    if row["status"] == "paused":
+        raise SystemExit(paused_advice(workspace_id))
+    print(f"msks: {workspace_id} is {row['status']}; starting it", file=sys.stderr)
+    await boot_workspace(workspace_id, url, token, ssl_ctx, transport)
+    print(f"msks: {workspace_id} running", file=sys.stderr)
+
+
+async def workspace_row(
+    workspace_id: str,
+    url: str,
+    token: str,
+    ssl_ctx: ssl.SSLContext | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> dict:
+    """The workspace row; a missing id exits with the API's 404 line."""
+    return await api_call(
         "GET",
         url,
         token,
         f"/api/v1/workspaces/{workspace_id}",
-        ssl=ssl,
+        ssl_ctx=ssl_ctx,
         transport=transport,
     )
-    if row["status"] == "running":
-        return
-    print(f"msks: {workspace_id} is {row['status']}; starting it", file=sys.stderr)
-    await api_call(
-        "POST",
-        url,
-        token,
-        f"/api/v1/workspaces/{workspace_id}/start",
-        ssl=ssl,
-        transport=transport,
+
+
+async def wait_boot(
+    workspace_id: str,
+    url: str,
+    token: str,
+    ssl_ctx: ssl.SSLContext | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> dict:
+    """Poll another client's in-flight boot until it settles."""
+    deadline = time.monotonic() + BOOT_WAIT_S
+    while time.monotonic() < deadline:
+        row = await workspace_row(workspace_id, url, token, ssl_ctx, transport)
+        if row["status"] != "starting":
+            return row
+        await asyncio.sleep(BOOT_POLL_S)
+    raise SystemExit(f"msks: {workspace_id} still starting after {BOOT_WAIT_S}s")
+
+
+async def boot_workspace(
+    workspace_id: str,
+    url: str,
+    token: str,
+    ssl_ctx: ssl.SSLContext | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> None:
+    """POST start; a start that lost a race attaches to the winner.
+
+    A 503 from a double launch can mean another client booted it
+    between our GET and our POST — re-check and swallow the error
+    only when the workspace is in fact running now.
+    """
+    try:
+        await api_call(
+            "POST",
+            url,
+            token,
+            f"/api/v1/workspaces/{workspace_id}/start",
+            ssl_ctx=ssl_ctx,
+            transport=transport,
+        )
+    except SystemExit as exc:
+        row = await workspace_row(workspace_id, url, token, ssl_ctx, transport)
+        if row["status"] != "running":
+            raise SystemExit(f"{exc}\nmsks: {workspace_id} is {row['status']}") from exc
+
+
+def paused_advice(workspace_id: str) -> str:
+    """The honest refusal for a paused workspace."""
+    return (
+        f"msks: {workspace_id} is paused and the daemon has no resume; "
+        f"stop it (POST /api/v1/workspaces/{workspace_id}/stop), "
+        "then msks start again"
     )
-    print(f"msks: {workspace_id} running", file=sys.stderr)

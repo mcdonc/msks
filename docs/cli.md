@@ -57,9 +57,9 @@ scratch                  created   -              hv-1
 
 The status column speaks the daemon's lifecycle vocabulary —
 `created` (row exists, never booted), `starting`, `running`,
-`paused`, `stopped`, `unknown`. A `-` in the image column means the
-workspace boots explicit kernel/rootfs paths instead of a catalog
-image.
+`paused`, `stopped`, `unknown`, `absent`. A `-` in the image column
+means the workspace boots explicit kernel/rootfs paths instead of
+a catalog image.
 
 `--json` replaces the table with one JSON document — the API's
 workspace rows verbatim (id, kernel, initrd, rootfs, cmdline, cpus,
@@ -150,7 +150,20 @@ msks: my-workspace running
 (workspace prompt)
 ```
 
-A workspace that is already running attaches with no preamble.
+A workspace that is already running attaches with no preamble. Two
+states get special handling:
+
+- **`starting`** — another client's boot is in flight. The shell
+  waits for it (polling up to two minutes) and attaches when it
+  lands, instead of racing a second boot into the daemon's
+  double-launch guard.
+- **`paused`** — refused with the honest reason: the daemon has no
+  resume, so the message names the recovery (stop it via the API,
+  then `msks start` again).
+
+A start that loses a race — the daemon reports `stopped`, another
+client boots it in the gap — re-checks and attaches to the winner.
+
 Ctrl-] detaches and leaves the workspace running; Ctrl-C and Ctrl-D
 reach the guest. The session needs a tty on both stdin and stdout.
 See the README's workspace-shell section (#21) for the transport
@@ -174,4 +187,6 @@ validation failure (422) reports each problem as `field: message`,
 joined on one line — the same facts the API returns, minus the JSON
 scaffolding. A timeout says so explicitly, because the daemon may
 still complete a request the client stopped waiting for. Argument
-errors exit with code 2 (argparse convention); success is 0.
+errors exit with code 2 (argparse convention); success is 0; a
+Ctrl-C during a long boot prints `msks: interrupted` and exits
+130.

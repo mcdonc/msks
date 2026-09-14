@@ -189,7 +189,7 @@ def test_api_client_reuses_a_passed_ssl_context() -> None:
     import ssl
 
     ctx = ssl.create_default_context()
-    client = rest.api_client("https://d", "t", ssl=ctx)
+    client = rest.api_client("https://d", "t", ssl_ctx=ctx)
     try:
         assert client._transport._pool._ssl_context is ctx  # type: ignore[attr-defined]
     finally:
@@ -350,3 +350,95 @@ async def test_ensure_running_skips_a_running_workspace(api_transport) -> None:
         transport=app_transport,
     )
     assert row["status"] == "running"
+
+
+async def test_ensure_running_refuses_paused(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    transport = mock(
+        lambda req: httpx.Response(200, json={"id": "ws1", "status": "paused"})
+    )
+    with pytest.raises(SystemExit, match="paused.*no resume"):
+        await rest.ensure_running("ws1", "https://d", "t", transport=transport)
+
+
+async def test_ensure_running_waits_out_a_concurrent_boot(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    statuses = ["starting", "starting", "running"]
+    posts: list[str] = []
+
+    async def fast_sleep(seconds: float) -> None:
+        pass
+
+    monkeypatch.setattr(rest.asyncio, "sleep", fast_sleep)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            posts.append(request.url.path)
+            raise AssertionError("no start while another boot runs")
+        return httpx.Response(200, json={"id": "ws1", "status": statuses.pop(0)})
+
+    await rest.ensure_running("ws1", "https://d", "t", transport=mock(handler))
+    assert posts == []
+    assert "waiting for the boot" in capsys.readouterr().err
+
+
+async def test_ensure_running_boot_wait_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fast_sleep(seconds: float) -> None:
+        pass
+
+    monkeypatch.setattr(rest.asyncio, "sleep", fast_sleep)
+    monkeypatch.setattr(rest, "BOOT_WAIT_S", 0.0)
+    transport = mock(
+        lambda req: httpx.Response(200, json={"id": "ws1", "status": "starting"})
+    )
+    with pytest.raises(SystemExit, match="still starting"):
+        await rest.ensure_running("ws1", "https://d", "t", transport=transport)
+
+
+async def test_ensure_running_attaches_to_a_won_race() -> None:
+    # GET says stopped, another client's start wins the race: the
+    # 503 is swallowed because the re-check says running.
+    calls: list[str] = []
+    statuses = iter(["stopped", "running"])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(f"{request.method} {request.url.path}")
+        if request.method == "POST":
+            return httpx.Response(503, json={"detail": "VM ws1 already exists"})
+        return httpx.Response(200, json={"id": "ws1", "status": next(statuses)})
+
+    await rest.ensure_running("ws1", "https://d", "t", transport=mock(handler))
+    assert calls == [
+        "GET /api/v1/workspaces/ws1",
+        "POST /api/v1/workspaces/ws1/start",
+        "GET /api/v1/workspaces/ws1",
+    ]
+
+
+async def test_ensure_running_lost_race_reports_the_state() -> None:
+    statuses = iter(["stopped", "stopped"])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(503, json={"detail": "VM ws1 already exists"})
+        return httpx.Response(200, json={"id": "ws1", "status": next(statuses)})
+
+    with pytest.raises(SystemExit, match="ws1 is stopped"):
+        await rest.ensure_running("ws1", "https://d", "t", transport=mock(handler))
+
+
+def test_main_interrupt_is_one_line(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def interrupted(*args, **kwargs) -> int:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "cmd_list", interrupted)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(["list"])
+    assert excinfo.value.code == 130
+    assert "interrupted" in capsys.readouterr().err
