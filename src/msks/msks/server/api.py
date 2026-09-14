@@ -198,6 +198,10 @@ def build_api(app) -> FastAPI:
             watcher.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await watcher
+            # Close the model's engine so pooled sqlite connections
+            # close deterministically — the daemon's shutdown path and
+            # every lifespan-using test both land here.
+            await app.state.model.close()
 
     api = FastAPI(title="msksd", version=__version__, lifespan=lifespan)
     api.state.msks_app = app
