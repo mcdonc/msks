@@ -447,6 +447,9 @@ async def test_cleanup_removes_dir_and_reaps_running_vmm(
     assert not (state_dir / "vms" / WID).exists()
     # The home volume dies with the workspace (#14), never with a stop.
     assert not persist.home_volume_path(state_dir, WID).exists()
+    with pytest.raises(ProcessLookupError):
+        os.kill(proc.pid, 0)  # killed and reaped, not orphaned
+    await app.state.microvm.cleanup("ghost")  # absent VM: plain success
 
 
 async def test_prepare_creates_artifacts(env, tmp_path: Path) -> None:
@@ -568,9 +571,6 @@ async def test_reset_refuses_a_running_vm(env, fake, tmp_path: Path) -> None:
     with pytest.raises(MicrovmError, match="stop it before reset"):
         await app.state.microvm.reset(WID)
     await app.state.microvm.kill(WID)
-    with pytest.raises(ProcessLookupError):
-        os.kill(proc.pid, 0)  # killed and reaped, not orphaned
-    await app.state.microvm.cleanup("ghost")  # absent VM: plain success
 
 
 async def test_driver_switch_and_validation(env) -> None:
