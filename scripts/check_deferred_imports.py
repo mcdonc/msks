@@ -13,8 +13,35 @@ Usage:
 """
 
 import ast
+import os
 import sys
 from pathlib import Path
+
+# Trees never scanned, in any discovery mode: the virtualenv (its
+# site-packages are full of packages whose internals are not ours to
+# gate), hidden/build trees, and foreign dependency trees.
+SKIP_DIRS = frozenset({"node_modules", "__pycache__"})
+
+
+def dir_is_skipped(name: str) -> bool:
+    """A directory pruned from every walk (hidden, build, vendored)."""
+    return name.startswith(".") or name in SKIP_DIRS
+
+
+def iter_pyfiles(root: Path):
+    """Every .py under root, pruned trees excluded (os.walk with
+    in-place dir pruning — rglob cannot prune, and would pay for
+    walking the venv to throw it away)."""
+    for dirpath, dirnames, filenames in os.walk(root):
+        prune_dirs(dirnames)
+        for filename in filenames:
+            if filename.endswith(".py"):
+                yield Path(dirpath) / filename
+
+
+def prune_dirs(dirnames: list[str]) -> None:
+    """Drop pruned trees from an os.walk dir list, in place."""
+    dirnames[:] = [d for d in dirnames if not dir_is_skipped(d)]
 
 
 def is_top_level(node: ast.AST) -> bool:
@@ -23,26 +50,45 @@ def is_top_level(node: ast.AST) -> bool:
 
 
 def is_type_checking(node: ast.AST) -> bool:
-    """Check if a node sits directly inside ``if TYPE_CHECKING:``.
+    """Check if a node sits directly inside a module-scope
+    ``if TYPE_CHECKING:`` block.
 
     That block is the canonical module-scope pattern for annotation-only
     imports (erased at runtime), so its imports are exempt without a marker.
+    Only at module scope: a function-local ``if TYPE_CHECKING:`` still has a
+    runtime ``else`` half whose imports execute per call, so those stay
+    gated.
     """
     parent = getattr(node, "_parent", None)
-    if not isinstance(parent, ast.If):
+    if not (isinstance(parent, ast.If) and is_top_level(parent)):
         return False
-    test = parent.test
+    return is_type_checking_test(parent.test)
+
+
+def is_type_checking_test(test: ast.AST) -> bool:
+    """Is an ``if`` test the ``TYPE_CHECKING`` name (bare or imported)?"""
     return (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
         isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
     )
 
 
 def catches_import_error(handler: ast.ExceptHandler) -> bool:
-    """Does an except clause catch ImportError/ModuleNotFoundError?"""
-    return isinstance(handler.type, ast.Name) and handler.type.id in (
-        "ImportError",
-        "ModuleNotFoundError",
+    """Does an except clause catch ImportError/ModuleNotFoundError?
+    Handles both bare names and tuple handlers."""
+    return any(
+        name in ("ImportError", "ModuleNotFoundError")
+        for name in handled_names(handler)
     )
+
+
+def handled_names(handler: ast.ExceptHandler) -> list[str]:
+    """The exception names a handler lists (bare or tuple)."""
+    names = handler.type
+    if isinstance(names, ast.Tuple):
+        return [e.id for e in names.elts if isinstance(e, ast.Name)]
+    if isinstance(names, ast.Name):
+        return [names.id]
+    return []
 
 
 def is_guarded_optional(node: ast.AST) -> bool:
@@ -50,24 +96,43 @@ def is_guarded_optional(node: ast.AST) -> bool:
 
     The guarded-optional-dependency pattern (import at module scope inside
     ``try/except ImportError``) is also module-scope in spirit — the import
-    executes once at load, with a fallback for absent extras.
+    executes once at load, with a fallback for absent extras. Both halves
+    count: the ``try`` body and the fallback imports inside the matching
+    ``except ImportError`` handlers.
     """
-    parent = getattr(node, "_parent", None)
-    if not (isinstance(parent, ast.Try) and is_top_level(parent)):
+    trial = enclosing_try(node)
+    if trial is None or not is_top_level(trial):
         return False
     return any(
         isinstance(h, ast.ExceptHandler) and catches_import_error(h)
-        for h in parent.handlers
+        for h in trial.handlers
     )
 
 
+def enclosing_try(node: ast.AST) -> ast.Try | None:
+    """The ``try`` a guarded-optional import sits in — directly (try
+    body) or one hop up (a fallback import inside an except handler)
+    — or None (annotation set in parse_file)."""
+    parent = getattr(node, "_parent", None)
+    if isinstance(parent, ast.Try):
+        return parent
+    handler_parent = getattr(parent, "_parent", None)
+    if isinstance(parent, ast.ExceptHandler) and isinstance(handler_parent, ast.Try):
+        return handler_parent
+    return None
+
+
 def parse_file(filepath: Path):
-    """Parse a file and annotate parent nodes. Returns (tree, lines) or None."""
+    """Parse a file and annotate parent nodes. Returns (tree, lines),
+    or an error string the caller reports loudly — a file the gate's
+    own interpreter cannot parse is never silently skipped (the
+    xenon-gate rule, #3415: a silent skip turns the gate off for that
+    file while everything stays green)."""
     try:
         source_text = filepath.read_text()
         tree = ast.parse(source_text)
-    except SyntaxError:
-        return None
+    except (OSError, UnicodeDecodeError, SyntaxError, ValueError) as exc:
+        return f"{filepath}: cannot parse ({exc.__class__.__name__}: {exc})"
     for node in ast.walk(tree):
         for child in ast.iter_child_nodes(node):
             child._parent = node
@@ -124,17 +189,18 @@ def deferred_import_error(root: Path, pyfile: Path, node) -> str:
 
 
 def file_deferred_errors(root: Path, pyfile: Path) -> list[str]:
-    """The flagged deferred imports in one file (parse failures are
-    skipped)."""
+    """The flagged deferred imports in one file, in source order
+    (ast.walk is breadth-first; sort the nodes back to line order).
+    A parse failure is a loud error, not a skip."""
     parsed = parse_file(pyfile)
-    if parsed is None:
-        return []
+    if isinstance(parsed, str):
+        return [parsed]
     tree, source_lines = parsed
-    return [
-        deferred_import_error(root, pyfile, node)
-        for node in ast.walk(tree)
-        if is_flagged_import(node, source_lines)
-    ]
+    flagged = sorted(
+        (node for node in ast.walk(tree) if is_flagged_import(node, source_lines)),
+        key=lambda node: node.lineno,
+    )
+    return [deferred_import_error(root, pyfile, node) for node in flagged]
 
 
 def check_deferred_imports(package_dir: str) -> list[str]:
@@ -148,7 +214,7 @@ def check_deferred_imports(package_dir: str) -> list[str]:
     if not root.is_dir():
         return [f"ERROR: {package_dir} is not a directory"]
     errors: list[str] = []
-    for pyfile in sorted(root.rglob("*.py")):
+    for pyfile in sorted(iter_pyfiles(root)):
         errors.extend(file_deferred_errors(root, pyfile))
     return errors
 
@@ -182,9 +248,12 @@ def packages_from_files(files: list[str]) -> list[str]:
 
 
 def find_packages_in_dir(directory: Path) -> list[str]:
-    """Find all Python packages (dirs with __init__.py) under *directory*."""
+    """Find all Python packages (dirs with __init__.py) under
+    *directory*, pruned trees excluded."""
     roots: set[Path] = set()
-    for init in sorted(directory.rglob("__init__.py")):
+    for init in sorted(iter_pyfiles(directory)):
+        if init.name != "__init__.py":
+            continue
         pkg = find_package_root(init)
         if pkg is not None:
             roots.add(pkg)
@@ -192,15 +261,20 @@ def find_packages_in_dir(directory: Path) -> list[str]:
 
 
 def resolve_package_dirs(args: list[str]) -> list[str]:
-    """The package dirs to scan: discovered under cwd when no args, derived
-    from .py file paths when given files, else the args themselves."""
+    """The package dirs to scan: discovered under cwd when no args,
+    derived from .py file paths, else the args themselves. Mixed args
+    are partitioned — a directory arg is never dropped because a file
+    arg also appeared."""
     if not args:
         # No arguments: discover packages under cwd
         return find_packages_in_dir(Path.cwd())
-    if any(a.endswith(".py") for a in args):
-        # File paths: discover packages from them
-        return packages_from_files(args)
-    return args
+    roots: set[str] = set()
+    for arg in args:
+        if arg.endswith(".py"):
+            roots.update(packages_from_files([arg]))
+        else:
+            roots.add(arg)
+    return sorted(roots)
 
 
 def report_errors(all_errors: list[str]) -> int:

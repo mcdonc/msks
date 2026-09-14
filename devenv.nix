@@ -292,14 +292,24 @@ in
     # and module-scope ``try/except ImportError`` guards are exempt;
     # ``# allow-deferred-import`` suppresses an individual import (on
     # the line or the comment line above). Staged files are mapped to
-    # their package roots, so the hook scans whole packages.
+    # their package roots, so the hook scans whole packages. The
+    # interpreter is the pinned python from `languages.python` by
+    # store path, NOT a bare `python3`: pre-commit prepends its own
+    # interpreter's bin to hook PATHs (the system 3.13 here), which
+    # cannot parse the project's PEP 758 ``except X, Y:`` syntax —
+    # under a bare `python3` the checker silently skipped the whole
+    # backend and passed vacuously (found via the review of #84).
+    # require_serial: one invocation with all files — pass_filenames
+    # maps them to package roots, and chunked invocations would
+    # rescan (and re-print) the same packages once per chunk.
     deferred-imports = {
       enable = true;
       name = "deferred-imports";
-      entry = "python3 scripts/check_deferred_imports.py";
+      entry = "${config.languages.python.package}/bin/python scripts/check_deferred_imports.py";
       files = "\\.py$";
       language = "system";
       pass_filenames = true;
+      require_serial = true;
     };
     # Shell (#72, klangk settings): format + static analysis + the
     # shebang guard on executable text files.
@@ -371,10 +381,12 @@ in
     # are skipped (--ignore-unknown is this pin's default); the
     # excludes keep lock files out of the file set regardless. Hook
     # ids sort lexicographically in the generated manifest, so this
-    # runs after markdownlint/nixfmt and after ruff: a run that
-    # rewrites fails once with "files were modified", the re-staged
-    # run validates the final bytes (see the markdownlint comment for
-    # why those bytes always pass).
+    # runs after markdownlint/nixfmt but before the ruff hooks — the
+    # one-run rewrite dance is harmless either way, because prettier
+    # (--ignore-unknown) and ruff touch disjoint file sets. A run
+    # that rewrites fails once with "files were modified"; the
+    # re-staged run validates the final bytes (see the markdownlint
+    # comment for why those bytes always pass).
     prettier = {
       enable = true;
       settings.write = true;

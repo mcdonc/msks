@@ -20,6 +20,7 @@ import asyncio
 import contextlib
 import os
 import shutil
+import socket
 import ssl
 import subprocess
 import uuid
@@ -31,7 +32,15 @@ import websockets
 from httpx import AsyncClient
 from msks.app import build_app
 from msks.microvm import VmSpec
-from msks.settings import K8sSettings, Settings, VmmSettings
+from msks.settings import (
+    K8sSettings,
+    NetSettings,
+    ServerSettings,
+    Settings,
+    VmmSettings,
+)
+
+from msks import persist
 
 VMLINUX = os.environ.get("MSKSD_TEST_VMLINUX")
 INITRD = os.environ.get("MSKSD_TEST_INITRD")
@@ -85,8 +94,6 @@ def collect_failure_evidence(state_dir: Path, wid: str, serial_log: Path) -> Non
     vm_dir = state_dir / "vms" / wid
     vsock = vm_dir / "vsock.sock"
     if vsock.exists():
-        import socket
-
         try:
             sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             sock.settimeout(5)
@@ -263,8 +270,6 @@ async def test_local_persistence_across_restart_and_reset() -> None:
     - a /home write survives the same cycle — the home volume;
     - factory reset drops the root write and keeps the /home write.
     """
-    from msks import persist
-
     state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
     settings = Settings(vmm=VmmSettings(state_dir=state_dir))
     app = build_app(settings)
@@ -627,8 +632,6 @@ needs_egress = pytest.mark.skipif(
 @needs_egress
 async def test_local_egress_boot() -> None:
     """DHCP address, daemon resolver, NAT'd TCP — end to end (#52)."""
-    from msks.settings import NetSettings, ServerSettings
-
     nft_tool = os.environ.get("MSKSD_TEST_NFT") or shutil.which("nft") or "nft"
     ip_tool = os.environ.get("MSKSD_TEST_IP") or shutil.which("ip") or "ip"
     state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
