@@ -169,11 +169,15 @@ let
       "kvm"
       "kvm_intel"
       "kvm_amd"
-      # Egress (#52): the tap device, the nftables core, NAT, and
-      # conntrack (NAT's dependency).
+      # Egress (#52): the tap device, the nftables core, and the
+      # NAT/conntrack machinery the rulesets need — masquerade is
+      # the nft_masq expression, which nothing else in the list
+      # pulls in. The init modprobes these by name (autoload does
+      # not serve an appliance without hotplug udev).
       "tun"
       "nf_tables"
       "nft_chain_nat"
+      "nft_masq"
       "nf_nat"
       "nf_conntrack"
     ];
@@ -230,6 +234,26 @@ let
       if [ ! -e /dev/kvm ]; then
         mknod /dev/kvm c 10 232
       fi
+
+      # Egress plumbing (#52): the tap device and the nftables/NAT
+      # modules the daemon's rulesets load. devtmpfs creates
+      # /dev/net/tun when the module registers; the mknod is the
+      # belt-and-braces fallback for a kernel with TUN built in but a
+      # cold /dev.
+      for module in tun nf_tables nft_chain_nat nft_masq nf_nat nf_conntrack; do
+        modprobe "$module" 2>/dev/null || true
+      done
+      if [ ! -e /dev/net/tun ]; then
+        mkdir -p /dev/net
+        mknod /dev/net/tun c 10 200
+      fi
+
+      # The resolver the egress forwarder relays to (#52): the
+      # bridge gateway — the host — by default. Point the kernel
+      # cmdline's msksd.egress_dns_upstream= at another resolver to
+      # override (the env bridge below turns it into
+      # MSKSD_EGRESS_DNS_UPSTREAM). /run is tmpfs: the root stays ro.
+      printf 'nameserver %s\n' "${net.gateway}" > /run/resolv.conf
 
       # React to the host's ch-remote shutdown (ACPI power button).
       acpid
@@ -322,6 +346,10 @@ let
       ln -s busybox "$root/bin/$applet"
     done
     printf 'msksd-appliance\n' > "$root/etc/hostname"
+    # resolv.conf lands on tmpfs at boot (#52): the egress forwarder
+    # relays to the bridge gateway, and a read-only root cannot host
+    # the write.
+    ln -s /run/resolv.conf "$root/etc/resolv.conf"
     # Power button (host-side graceful shutdown) powers the VM off.
     printf 'button/power.* /bin/poweroff -f\n' > "$root/etc/acpid.conf"
     # The module tree the init modprobes from (kvm, virtiofs, net).

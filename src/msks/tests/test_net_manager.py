@@ -130,6 +130,8 @@ async def test_attach_arms_the_whole_path(net_app) -> None:
     # The DHCP service gets the tap device; the forwarder the tap IP.
     assert services.dhcp.kwargs["device"] == attachment.tap
     assert services.dns.kwargs["bind"] == (attachment.tap_ip, 53)
+    # The forwarder answers this tap's guest only (#70 review).
+    assert services.dns.kwargs["client_ip"] == attachment.guest_ip
     assert services.dns.args[0] == ("10.9.9.9", 53)
     # The attachment persists for the idempotent second boot.
     again = await manager.attach("ws-a", want=True)
@@ -277,3 +279,17 @@ async def test_a_panicked_service_start_stops_its_sibling(net_app) -> None:
         await manager.attach("ws-a", want=True)
     assert made and made[0].stopped
     assert "ws-a" not in manager._attachments
+
+
+async def test_detach_releases_the_slice_for_the_next_boot(net_app) -> None:
+    """A stop/start cycle reassembles the SAME /30 (#52): the slice is
+    released on detach and re-derived (not walked past) on attach."""
+    app, _ip, _nft = net_app
+    manager = await ready(app)
+    first = await manager.attach("ws-a", want=True)
+    await manager.detach("ws-a")
+    second = await manager.attach("ws-a", want=True)
+    assert second.guest_ip == first.guest_ip
+    assert second.tap_ip == first.tap_ip
+    assert second.slice == first.slice
+    await manager.detach("ws-a")

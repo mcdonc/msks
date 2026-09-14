@@ -38,7 +38,9 @@ async def pair(tmp_path: Path):
     # Non-blocking: the test's answerer awaits it on the event loop,
     # and a blocking socket handed to sock_recvfrom wedges the loop.
     upstream.setblocking(False)
-    forwarder = dns.DnsForwarder(upstream.getsockname(), 1.0, bind=("127.0.0.1", 0))
+    forwarder = dns.DnsForwarder(
+        upstream.getsockname(), 1.0, bind=("127.0.0.1", 0), client_ip="127.0.0.1"
+    )
     await forwarder.start()
     client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     client.bind(("127.0.0.1", 0))
@@ -86,7 +88,9 @@ async def test_serve_stops_when_the_socket_closes() -> None:
 
 
 async def test_stop_cancels_in_flight_relays() -> None:
-    forwarder = dns.DnsForwarder(("127.0.0.1", 1), 30.0, bind=("127.0.0.1", 0))
+    forwarder = dns.DnsForwarder(
+        ("127.0.0.1", 1), 30.0, bind=("127.0.0.1", 0), client_ip="127.0.0.1"
+    )
     await forwarder.start()
     client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     client.bind(("127.0.0.1", 0))
@@ -103,3 +107,33 @@ async def test_stop_is_idempotent_and_serve_ends_without_a_socket() -> None:
     forwarder = dns.DnsForwarder(("127.0.0.1", 1), 1.0)
     forwarder.stop()  # never started: a no-op, not an error
     await asyncio.wait_for(forwarder.serve(), 2.0)  # no socket: returns
+
+
+async def test_serve_drops_queries_from_other_sources(tmp_path: Path) -> None:
+    """The reflection guard (#70 review): only the tap's own guest is
+    answered — a spoofed-source datagram is never relayed upstream."""
+    upstream = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    upstream.bind(("127.0.0.1", 0))
+    upstream.setblocking(False)
+    forwarder = dns.DnsForwarder(
+        upstream.getsockname(), 0.5, bind=("127.0.0.1", 0), client_ip="172.31.0.1"
+    )
+    await forwarder.start()
+    client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    client.bind(("127.0.0.1", 0))
+    client.settimeout(0.5)
+    serve = asyncio.create_task(forwarder.serve())
+    try:
+        # This client's source is 127.0.0.1, not the pinned guest IP.
+        await asyncio.to_thread(client.sendto, QUERY, forwarder._sock.getsockname())
+        with pytest.raises(TimeoutError):
+            await asyncio.to_thread(client.recvfrom, 4096)
+        # And nothing reached the upstream either.
+        loop = asyncio.get_running_loop()
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(loop.sock_recvfrom(upstream, 4096), 0.5)
+    finally:
+        serve.cancel()
+        forwarder.stop()
+        client.close()
+        upstream.close()

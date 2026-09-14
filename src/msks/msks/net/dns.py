@@ -37,7 +37,14 @@ def upstream_from_resolv(
 
 
 class DnsForwarder:
-    """One workspace's resolver on its tap address."""
+    """One workspace's resolver on its tap address.
+
+    ``client_ip`` is the one address queries may come from: the
+    workspace's guest. A datagram from anything else — a spoofed
+    source naming an off-tap victim, say — is dropped unread, which
+    is what keeps the forwarder from serving as a reflection
+    amplifier.
+    """
 
     def __init__(
         self,
@@ -45,10 +52,12 @@ class DnsForwarder:
         timeout_s: float = 3.0,
         *,
         bind: tuple[str, int] | None = None,
+        client_ip: str = "",
     ) -> None:
         self._upstream = upstream
         self._timeout_s = timeout_s
         self._bind = bind or ("0.0.0.0", DNS_PORT)
+        self._client_ip = client_ip
         self._sock: socket.socket | None = None
         self._tasks: set[asyncio.Task] = set()
 
@@ -92,6 +101,8 @@ class DnsForwarder:
                 data, client = await loop.sock_recvfrom(sock, 4096)
             except OSError:
                 return  # the socket closed underneath the loop
+            if client[0] != self._client_ip:
+                continue  # not this tap's guest: dropped unread
             task = asyncio.create_task(self._relay(data, client))
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)

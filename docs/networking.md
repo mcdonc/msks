@@ -18,8 +18,9 @@ arrives with #69 and tightens the same per-VM chain.
 
 ```
 workspace VM ──virtio-net──► per-VM tap ──► per-VM nftables chain (appliance kernel)
-                                              │  guest source → uplink: accept
-                                              │  everything else on the tap: drop
+                                              │  forward: guest source → uplink: accept;
+                                              │  established replies back; all else drops
+                                              │  input: only DHCP (67) and DNS (53) in
                                               ▼
                                      NAT (masquerade) → appliance uplink
 ```
@@ -35,10 +36,37 @@ msksd is the only DHCP server and the only resolver the guest ever
 sees: the DHCP offer names the tap as gateway and as DNS server, and
 a small forwarder on the tap answers port 53 by relaying to the
 appliance's own upstream (`MSKSD_EGRESS_DNS_UPSTREAM`, or the first
-nameserver in the appliance's `/etc/resolv.conf`). #69 grows the
-naming layer — query cache, name learning for prompts, and the
-lockout that keeps DNS from being routed around — behind that same
-offered resolver.
+nameserver in the appliance's `/etc/resolv.conf` — the appliance
+writes its bridge gateway there at boot). The forwarder answers
+queries from its own guest only; anything else arriving on the tap
+is dropped unread, so a spoofed-source datagram cannot turn the
+appliance into a reflection amplifier. #69 grows the naming layer
+— query cache, name learning for prompts, and the lockout that
+keeps DNS from being routed around — behind that same offered
+resolver.
+
+## What the chain enforces
+
+The per-VM table hooks two places, both scoped to the workspace's
+tap:
+
+- **Forward.** The guest's own source address may leave via the
+  uplink, and the replies to connections the guest established may
+  come back. Everything else across the tap drops: traffic from a
+  spoofed source, traffic headed anywhere but the uplink (which is
+  what blocks one workspace from reaching another's tap), and
+  inbound the guest never asked for — nothing outside initiates a
+  connection into a workspace.
+- **Input.** The guest may reach exactly two ports in the appliance
+  through its tap: DHCP (67) and the resolver (53). Everything else
+  from the tap drops before the appliance's own services — the API
+  listener among them — so guest root cannot port-scan the
+  appliance.
+
+What the chain deliberately permits today: the *destination* of a
+guest-initiated connection is unconstrained — any host reachable
+through the appliance uplink is reachable, until the per-flow
+consent gates of #69 decide each new connection.
 
 ## What runs where
 
@@ -54,9 +82,9 @@ kernel's `virtio_net` driver configures the NIC, DHCP configures the
 address and resolver, and that is the whole of it. No sidecar, no
 agent, no firewall.
 
-**A workspace without egress** presents no NIC at all: no tap, no
-chains, no services — the default posture on every backend, and the
-one that needs zero enforcement machinery.
+**A workspace created with `"egress": false`** presents no NIC
+at all: no tap, no chains, no services — the posture available on
+every backend, and the one that needs zero enforcement machinery.
 
 ## Configuration
 

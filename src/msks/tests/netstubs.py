@@ -23,8 +23,11 @@ exit 0
 """
 
 NFT_STUB = """#!/bin/sh
-cat >/dev/null
+# Args and the ruleset text both land in the log (stdin appended
+# after a marker line), so tests can pin which ruleset reached nft.
 printf '%s\n' "$*" >> {log}
+printf '%s\n' "--- $*" >> {log}.stdin
+cat >> {log}.stdin
 if [ -n "${{MSKS_TEST_NFT_FAIL_AT:-}}" ] && [ "$1 $2" = "$MSKS_TEST_NFT_FAIL_AT" ]; then
   printf '%s' "${{MSKS_TEST_NFT_STDERR:-boom}}" >&2
   exit 1

@@ -26,7 +26,8 @@ CLIENT_PORT = 68
 MAGIC = b"\x63\x82\x53\x63"
 BOOTREQUEST = 1
 BOOTREPLY = 2
-HTYPE_ETHERNET = 6  # hlen: one MAC's worth of chaddr
+HTYPE_ETHERNET = 1  # the chaddr address type
+HLEN_ETHERNET = 6  # one MAC's worth of chaddr
 
 OPT_SUBNET = 1
 OPT_ROUTER = 3
@@ -127,8 +128,8 @@ def build_reply(
     head = struct.pack(
         "!BBBBIHH",
         BOOTREPLY,
-        1,
         HTYPE_ETHERNET,
+        HLEN_ETHERNET,
         0,
         int.from_bytes(request.xid, "big"),
         0,
@@ -280,7 +281,9 @@ class DhcpServer:
 
         SELECTING (server-id present) must name us; INIT-REBOOT /
         RENEWING (no server-id) is honored when it asks for this
-        guest address — the one address this server ever offers.
+        guest address — the one address this server ever offers, so
+        ciaddr is not cross-checked: a RENEWING client's ciaddr is
+        the same /30 host or the request is foreign to this tap.
         """
         server_id = request.options.get(OPT_SERVER_ID)
         if server_id is not None:

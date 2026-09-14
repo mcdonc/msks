@@ -647,6 +647,17 @@ async def test_local_egress_boot() -> None:
             "timeout 5 bash -c '</dev/tcp/deb.debian.org/80' && echo TCP-OK",
             "TCP-OK",
         )
+        # Containment: the tap's input chain lets DHCP and DNS through
+        # and nothing else — the appliance's API (on the tap gateway)
+        # must refuse the guest root's connection attempt.
+        await run_in_console(
+            microvm,
+            wid,
+            "G=$(ip route | awk '/default/ {print $3}'); "
+            'timeout 3 bash -c "</dev/tcp/$G/8660" 2>/dev/null '
+            "&& echo API-REACHABLE || echo API-BLOCKED",
+            "API-BLOCKED",
+        )
         await microvm.shutdown(wid, timeout_s=60)
         final = await microvm.info(wid)
         assert final.status.value in ("stopped", "absent")

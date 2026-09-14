@@ -40,13 +40,46 @@ def base_ruleset(uplink: str) -> str:
     )
 
 
-def vm_ruleset(workspace_id: str, tap: str, guest_ip: str, uplink: str) -> str:
-    """One workspace's forward table: its tap, its source address."""
+def vm_ruleset(
+    workspace_id: str, tap: str, guest_ip: str, tap_ip: str, uplink: str
+) -> str:
+    """One workspace's enforcement tables.
+
+    Two hooked chains, scoped to this workspace's tap:
+
+    - ``egress`` (forward): the guest's source address may leave via
+      the uplink; the replies to connections the guest established
+      may come back; everything else toward the tap (inbound that
+      nothing inside asked for) drops, and everything else from the
+      tap (traffic not sourced as this guest, or headed anywhere but
+      the uplink — which is what blocks guest-to-guest hops across
+      taps) drops.
+    - ``ingress`` (input): the guest may reach exactly two ports on
+      the appliance through this tap — DHCP (67) and the resolver
+      (53). Everything else from the tap drops before the
+      appliance's own wildcard-bound services (the API among them).
+
+    The destination of guest-initiated egress is unconstrained in
+    this issue's scope — any host reachable through the uplink is
+    reachable; the per-flow consent gates of #69 tighten that.
+    """
     return (
         f"table inet {table_name(workspace_id)} {{\n"
         "  chain egress {\n"
         "    type filter hook forward priority filter; policy accept;\n"
         f'    iifname "{tap}" ip saddr {guest_ip} oifname "{uplink}" accept\n'
+        f'    oifname "{tap}" ct state established,related accept\n'
+        f'    oifname "{tap}" drop\n'
+        f'    iifname "{tap}" drop\n'
+        "  }\n"
+        "  chain ingress {\n"
+        "    type filter hook input priority filter; policy accept;\n"
+        # DHCP speaks broadcast (discover to 255.255.255.255), so
+        # port 67 from the tap is accepted without a daddr match;
+        # the resolver rules stay unicast to the tap address.
+        f'    iifname "{tap}" udp dport 67 accept\n'
+        f'    iifname "{tap}" ip daddr {tap_ip} udp dport 53 accept\n'
+        f'    iifname "{tap}" ip daddr {tap_ip} tcp dport 53 accept\n'
         f'    iifname "{tap}" drop\n'
         "  }\n"
         "}\n"
@@ -63,11 +96,13 @@ async def apply_base(settings) -> None:
     )
 
 
-async def install_vm(settings, workspace_id: str, tap: str, guest_ip: str) -> None:
-    """Install one workspace's forward table, converging on any
-    previous table of the same name first."""
+async def install_vm(
+    settings, workspace_id: str, tap: str, guest_ip: str, tap_ip: str
+) -> None:
+    """Install one workspace's tables, converging on any previous
+    table of the same name first."""
     await delete_vm_table(settings, workspace_id)
-    ruleset = vm_ruleset(workspace_id, tap, guest_ip, settings.net.uplink)
+    ruleset = vm_ruleset(workspace_id, tap, guest_ip, tap_ip, settings.net.uplink)
     await nft_run(
         settings,
         ["-f", "-"],

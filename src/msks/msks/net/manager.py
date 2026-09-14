@@ -43,6 +43,7 @@ class NetAttachment:
     mac: str
     guest_ip: str
     tap_ip: str
+    slice: int
 
 
 @dataclass
@@ -118,9 +119,12 @@ class NetManager:
     async def detach(self, workspace_id: str) -> None:
         """Tear one workspace's egress down (idempotent).
 
-        The plumbing subprocesses run before the service sockets
-        close, so a closed-socket fd number is never reused by a
-        fresh subprocess pipe underneath a stale selector entry.
+        Releasing the slice keeps the workspace on its own /30 across
+        stop/start cycles — the address derives from it, and nothing
+        else remembers the pairing. The plumbing subprocesses run
+        before the service sockets close, so a closed-socket fd number
+        is never reused by a fresh subprocess pipe underneath a stale
+        selector entry.
         """
         attachment = self._attachments.pop(workspace_id, None)
         services = self._services.pop(workspace_id, None)
@@ -130,7 +134,8 @@ class NetManager:
         await nft.delete_vm_table(settings, workspace_id)
         await taps.remove_tap(attachment.tap, settings)
         if services is not None:
-            stop_services(services)
+            await stop_services(services)
+        self._used_slices.discard(attachment.slice)
 
     def require_ready(self, workspace_id: str) -> None:
         """Refuse an egress boot unless the plumbing is armed."""
@@ -167,12 +172,17 @@ class NetManager:
                 mac=alloc.guest_mac(workspace_id),
                 guest_ip=str(alloc.guest_addr(net)),
                 tap_ip=str(alloc.tap_addr(net)),
+                slice=slice_,
             )
             await taps.create_tap(
                 attachment.tap, f"{attachment.tap_ip}/{alloc.SLICE_PREFIX}", settings
             )
             await nft.install_vm(
-                settings, workspace_id, attachment.tap, attachment.guest_ip
+                settings,
+                workspace_id,
+                attachment.tap,
+                attachment.guest_ip,
+                attachment.tap_ip,
             )
             await self._start_services(attachment)
             self._attachments[workspace_id] = attachment
@@ -201,6 +211,7 @@ class NetManager:
             self.dns_upstream(),
             settings.dns_timeout_s,
             bind=(attachment.tap_ip, dns.DNS_PORT),
+            client_ip=attachment.guest_ip,
         )
         services = NetServices(dhcp=dhcp_server, dns=forwarder, tasks=[])
         self._services[attachment.workspace_id] = services
@@ -210,12 +221,12 @@ class NetManager:
         except OSError as exc:
             # A refused bind (ports are the appliance's) is an
             # operator-shaped failure, not a raw 500.
-            dhcp_server.stop()
+            self._stop_started(services)
             raise MicrovmError(
                 f"egress services for {attachment.workspace_id} failed to start: {exc}"
             ) from exc
         except BaseException:
-            dhcp_server.stop()
+            self._stop_started(services)
             raise
         services.tasks = [
             asyncio.create_task(dhcp_server.serve()),
@@ -232,19 +243,30 @@ class NetManager:
             raise MicrovmError("no upstream resolver: set MSKSD_EGRESS_DNS_UPSTREAM")
         return upstream
 
+    def _stop_started(self, services: NetServices) -> None:
+        """Stop both services symmetrically after a failed start."""
+        services.dhcp.stop()
+        services.dns.stop()
+
     async def _unwind(self, workspace_id: str) -> None:
         """Roll back a half-built attachment (best effort)."""
         services = self._services.pop(workspace_id, None)
         if services is not None:
-            stop_services(services)
+            await stop_services(services)
         settings = self.app.state.settings
         await nft.delete_vm_table(settings, workspace_id)
         await taps.remove_tap(alloc.tap_name(workspace_id), settings)
 
 
-def stop_services(services: NetServices) -> None:
-    """Stop one workspace's service tasks and sockets."""
+async def stop_services(services: NetServices) -> None:
+    """Stop one workspace's service tasks and sockets.
+
+    The cancelled tasks are gathered so their cleanup (including
+    pending reader removal) lands before the caller moves on.
+    """
     for task in services.tasks:
         task.cancel()
+    if services.tasks:
+        await asyncio.gather(*services.tasks, return_exceptions=True)
     services.dhcp.stop()
     services.dns.stop()
