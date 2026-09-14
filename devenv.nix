@@ -10,7 +10,10 @@ let
   # (esbuild-style), so it is not in nixpkgs; pin the binary per platform
   # with fixed hashes (the fmtk pattern). One pinned version keeps clone
   # reports reproducible across contributors and CI. The `msks:jscpd`
-  # task and the pre-commit gate hook run it over the backend.
+  # task and the pre-commit gate hook run it over the backend. The
+  # linux branches go beyond klangk verbatim: the arm64-gnu tarball is
+  # pinned too (same package family), and any other platform fails at
+  # eval time instead of silently installing a foreign-arch binary.
   jscpdBinaryVersion = "5.0.16";
   jscpd = pkgs.stdenv.mkDerivation {
     pname = "jscpd";
@@ -23,8 +26,12 @@ let
           + "/-/jscpd-darwin-"
           + (if pkgs.stdenv.hostPlatform.darwinArch == "arm64" then "arm64" else "x64")
           + "-${jscpdBinaryVersion}.tgz"
+        else if pkgs.stdenv.hostPlatform.isx86_64 then
+          "https://registry.npmjs.org/jscpd-linux-x64-gnu/-/jscpd-linux-x64-gnu-${jscpdBinaryVersion}.tgz"
+        else if pkgs.stdenv.hostPlatform.isAarch64 then
+          "https://registry.npmjs.org/jscpd-linux-arm64-gnu/-/jscpd-linux-arm64-gnu-${jscpdBinaryVersion}.tgz"
         else
-          "https://registry.npmjs.org/jscpd-linux-x64-gnu/-/jscpd-linux-x64-gnu-${jscpdBinaryVersion}.tgz";
+          throw "jscpd: no prebuilt binary for ${pkgs.stdenv.hostPlatform.system}";
       hash =
         if pkgs.stdenv.isDarwin then
           (
@@ -33,8 +40,10 @@ let
             else
               "sha256-X2hK+EAgrXGRLUymdo5qgTuWoFQ3U0cz9J064UFQppM="
           )
+        else if pkgs.stdenv.hostPlatform.isx86_64 then
+          "sha256-+6PhbDzUn0e4sQgsUs/kF0C5HlMOixZvlNolO9a4VdI="
         else
-          "sha256-+6PhbDzUn0e4sQgsUs/kF0C5HlMOixZvlNolO9a4VdI=";
+          "sha256-hTlIJMcf3vi8qbJLKR0Txc1a5BOYYjkPc6YWTwCiEEc=";
     };
     sourceRoot = ".";
     dontConfigure = true;
@@ -130,7 +139,7 @@ in
     # advisory scan; promoted to a gate from day one — the msks backend
     # baselines clean, 0 clones at --min-tokens 70). Delegates to
     # scripts/jscpd-gate.sh, the single definition of the invocation
-    # (threshold + scanned tree) that the pre-commit hook also runs —
+    # (threshold + scanned file set) that the pre-commit hook also runs —
     # the msks:xenon pattern.
     "msks:jscpd" = {
       exec = ''exec bash "$DEVENV_ROOT/scripts/jscpd-gate.sh" "$@"'';
