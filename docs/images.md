@@ -122,15 +122,27 @@ image. The outline, using a distro's own cloud image as the source:
    (`qemu-img convert` + partition extraction, or unpack the
    cloud image's root archive directly).
 3. Install the console service and enable it; make sure the vsock
-   module is present and `/dev/vsock` is created at boot. For
-   egress-capable workspaces, also enable a DHCP client for whatever
-   NIC appears (a systemd-networkd `.network` unit matching `en*`/
-   `eth*`, or dhcpcd) — the daemon's DHCP service configures the NIC
-   when the workspace opts into egress, and a NIC-less boot must
-   still reach multi-user.target.
-4. Write `disk/image.json` describing your kernel, cmdline, and
+   module is present and `/dev/vsock` is created at boot.
+4. Bring up networking. Workspaces boot with a virtio-net NIC by
+   default (#52), so the image must be able to configure one — how is
+   the distro's choice:
+   - a kernel with the `virtio_net` driver present (module or
+     built-in; on most distros udev autoloads the module when the
+     device appears);
+   - a DHCP client that configures whatever NIC appears and honors
+     the offered address, gateway, and resolver — networkd,
+     dhcpcd, or anything else that speaks DHCP;
+   - name resolution must follow the resolver DHCP names (however
+     the distro wires `/etc/resolv.conf`);
+   - a boot with no NIC (a workspace created with `"egress": false`
+    ) must still reach a usable login — the same image serves both
+     postures.
+
+   The shipped image does this with systemd-networkd + resolved; any
+   equivalent stack works.
+5. Write `disk/image.json` describing your kernel, cmdline, and
    vsock port.
-5. Lay out `boot/` and `disk/` as the layer tree and wrap it:
+6. Lay out `boot/` and `disk/` as the layer tree and wrap it:
 
 ```bash
 tar --sort=name --mtime='@1' --owner=0 --group=0 --numeric-owner \
