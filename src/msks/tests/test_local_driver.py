@@ -747,24 +747,32 @@ async def test_console_silent_server_times_out(env, monkeypatch) -> None:
     vm_dir.mkdir(parents=True, exist_ok=True)
     vm_dir.joinpath("ch.pid").write_text(str(os.getpid()))
 
+    handlers: list[asyncio.Task] = []
+
     async def silent(reader, writer):
         try:
             await reader.readline()
             await asyncio.sleep(60)
         finally:
-            # A wedged peer still gets its stream closed when the
-            # test tears the loop down — no unclosed-writer warning.
+            # Cancelled at teardown below: the writer closes then,
+            # not at loop teardown — wait_closed() returns at once.
             writer.close()
             await writer.wait_closed()
+
+    def accept(reader, writer):
+        handlers.append(asyncio.create_task(silent(reader, writer)))
 
     import msks.microvm.local as local
 
     monkeypatch.setattr(local, "VSOCK_REPLY_S", 0.1)
-    server = await asyncio.start_unix_server(silent, str(vm_dir / "vsock.sock"))
+    server = await asyncio.start_unix_server(accept, str(vm_dir / "vsock.sock"))
     try:
         with pytest.raises(MicrovmError, match="handshake reply never arrived"):
             await app.state.microvm.console(WID)
     finally:
+        for task in handlers:
+            task.cancel()
+        await asyncio.gather(*handlers, return_exceptions=True)
         server.close()
         await server.wait_closed()
 
