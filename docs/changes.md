@@ -51,7 +51,7 @@ tagged `vX.Y.Z`.
 
 - **Egress workspaces never took a DHCP lease on fast hosts (#36).** The guest reaches multi-user immediately after sysinit, and a networkd that enumerates its NIC while udev is still renaming it (eth0 to ens3) never manages the renamed link — DHCP never runs. The guest image orders networkd after `systemd-udev-trigger.service` and `systemd-udevd.service`, so the interface name is final before the first enumeration.
 
-- **`ws_url` quotes the token and workspace id (#36).** The console URL interpolates `MSKSC_TOKEN` raw into the query string; minted tokens are urlsafe today, so this was theoretical, but any future charset with `+`, `&`, `=`, or `%` would have mangled it. Both parts now pass through `urllib.parse.quote_plus`.
+- **`ws_url` quotes the token and workspace id (#36).** The console URL interpolates `MSKSC_TOKEN` raw into the query string; minted tokens are urlsafe today, so this was theoretical, but any future charset with `+`, `&`, `=`, or `%` would have mangled it. The token now passes through `urllib.parse.quote_plus` (a query value), and the workspace id through `urllib.parse.quote` with no safe characters (a path segment, where `+` would reach the server literally).
 
 - **Workspace cleanup and image import release their resources (#56).** `cleanup` now stops the workspace's VMM before deleting its directory — tracked or pidfile, like `kill` — where it previously orphaned the process. Image import closes the container-image archive after unpacking; each import previously left the archive's file handle open until garbage collection.
 - **Workspace shell input now echoes (#61).** The vsock console's

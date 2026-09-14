@@ -303,15 +303,6 @@ async def test_pump_decodes_text_messages() -> None:
     ws = FakeWs(incoming=["text-frame"])
     stdout = FakeStdout()
 
-    async def detach_later() -> None:
-        await asyncio.sleep(0.05)
-        ws._incoming = None
-        # Feed the escape through a fresh read cycle.
-        ws.recv = _recv_raise  # type: ignore[method-assign]
-
-    def _recv_raise():
-        raise AssertionError("unused")
-
     # Simpler deterministic shape: text arrives, THEN stdin EOF ends
     # the session (EOF is the other detach path).
     stdin = asyncio.StreamReader()
