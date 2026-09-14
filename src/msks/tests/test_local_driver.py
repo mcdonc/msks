@@ -174,6 +174,7 @@ async def test_launch_puts_create_then_boot(env, fake, tmp_path: Path) -> None:
     assert body["memory"]["size"] == 1024 * 1024 * 1024
     # The VM boots its persistent artifacts (#14), never the base.
     assert body["disks"] == disk_entries(state_dir, WID)
+    await app.state.microvm.kill(WID)  # reap the stub VMM
 
 
 async def test_launch_error_maps_and_reaps_process(env, tmp_path: Path) -> None:
@@ -385,11 +386,13 @@ async def test_shutdown_timeout_when_vmm_ignores_sigterm(env, tmp_path: Path) ->
     await server.start()
     try:
         await app.state.microvm.launch(spec(tmp_path))
+        proc = app.state.microvm.local._procs[WID]
         with pytest.raises(MicrovmTimeoutError, match="did not exit after SIGTERM"):
             await app.state.microvm.shutdown(WID, timeout_s=0.5)
     finally:
         await server.stop()
     await app.state.microvm.kill(WID)
+    await proc.wait()  # reap: no orphaned-Process GC warning
 
 
 async def test_shutdown_without_pidfile_returns_after_guest_down(env, fake) -> None:
@@ -434,9 +437,12 @@ async def test_shutdown_stale_socket_is_stopped(env, tmp_path: Path) -> None:
     await app.state.microvm.shutdown(WID, timeout_s=1)  # must not raise
 
 
-async def test_cleanup_removes_dir(env, fake, tmp_path: Path) -> None:
+async def test_cleanup_removes_dir_and_reaps_running_vmm(
+    env, fake, tmp_path: Path
+) -> None:
     app, state_dir, _ = env
     await app.state.microvm.launch(spec(tmp_path))
+    proc = app.state.microvm.local._procs[WID]
     await app.state.microvm.cleanup(WID)
     assert not (state_dir / "vms" / WID).exists()
     # The home volume dies with the workspace (#14), never with a stop.
@@ -562,6 +568,9 @@ async def test_reset_refuses_a_running_vm(env, fake, tmp_path: Path) -> None:
     with pytest.raises(MicrovmError, match="stop it before reset"):
         await app.state.microvm.reset(WID)
     await app.state.microvm.kill(WID)
+    with pytest.raises(ProcessLookupError):
+        os.kill(proc.pid, 0)  # killed and reaped, not orphaned
+    await app.state.microvm.cleanup("ghost")  # absent VM: plain success
 
 
 async def test_driver_switch_and_validation(env) -> None:
@@ -739,8 +748,14 @@ async def test_console_silent_server_times_out(env, monkeypatch) -> None:
     vm_dir.joinpath("ch.pid").write_text(str(os.getpid()))
 
     async def silent(reader, writer):
-        await reader.readline()
-        await asyncio.sleep(60)
+        try:
+            await reader.readline()
+            await asyncio.sleep(60)
+        finally:
+            # A wedged peer still gets its stream closed when the
+            # test tears the loop down — no unclosed-writer warning.
+            writer.close()
+            await writer.wait_closed()
 
     import msks.microvm.local as local
 

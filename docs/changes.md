@@ -22,6 +22,7 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **Workspace cleanup and image import release their resources (#56).** `cleanup` now kills and reaps a still-running VMM when a workspace's directory is deleted, where it previously orphaned the process. Image import closes the container-image archive after unpacking; each import previously left the archive's file handle open until garbage collection.
 - **`devenv shell` no longer runs the pre-commit suite at shell entry (#32).** A devenv 2.3.x scheduler regression pulled `devenv:git-hooks:run` into the shell's task graph, so a failing hook (e.g. the xenon complexity gate) aborted shell entry before it opened — with no way to use the shell to fix the failure. The suite still runs on `git commit` and as the `msks:xenon` task.
 
 ### Added
