@@ -99,6 +99,9 @@ def test_ws_url_schemes() -> None:
 
 def test_ws_url_quotes_query_unsafe_parts() -> None:
     quoted = ws_url("https://h:1", "w id", "a+b&c=d%e")
+    # The id is a PATH segment: a space must encode as %20 (a + would
+    # reach the server literally, since paths percent-decode only).
+    assert quoted.startswith("wss://h:1/api/v1/workspaces/w%20id/")
     assert quoted.endswith("?token=a%2Bb%26c%3Dd%25e")
     # The token stays one query parameter, whatever it contains.
     assert "&" not in quoted.split("?token=", 1)[1]

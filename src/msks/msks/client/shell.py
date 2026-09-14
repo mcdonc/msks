@@ -22,7 +22,7 @@ import ssl
 import sys
 import termios
 import tty
-from urllib.parse import quote_plus
+from urllib.parse import quote, quote_plus
 
 import websockets
 
@@ -59,8 +59,11 @@ def ws_url(base_url: str, workspace_id: str, token: str) -> str:
         scheme, rest = "wss", base_url
     # Minted tokens are urlsafe today; quoting keeps the query string
     # well-formed for any charset a future minting scheme produces.
+    # The id is a path segment: quote with no safe chars (a space must
+    # become %20, not + — the server percent-decodes paths only),
+    # while the token is a query value where + means space.
     return (
-        f"{scheme}://{rest}/api/v1/workspaces/{quote_plus(workspace_id)}"
+        f"{scheme}://{rest}/api/v1/workspaces/{quote(workspace_id, safe='')}"
         f"/console?token={quote_plus(token)}"
     )
 

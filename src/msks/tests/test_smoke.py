@@ -661,21 +661,28 @@ async def test_appliance_boot_and_workspace() -> None:
         recovered_at = None
         for attempt in range(30):
             await asyncio.sleep(1.0)
+            # Only the connect phase is retriable: a console that
+            # connects but never serves the marker fails fast below —
+            # TimeoutError is an OSError subclass, so a blanket
+            # except here would swallow the marker wait for ~15 min.
             try:
-                async with websockets.connect(
+                recovery_ws = await websockets.connect(
                     ws_url, ssl=ws_ctx, open_timeout=10
-                ) as recovery_ws:
-                    await recovery_ws.send(b"echo MSKS-$((23*2))-RECOVERED\n")
-                    recovered = b""
-                    while b"MSKS-46-RECOVERED" not in recovered:
-                        message = await asyncio.wait_for(recovery_ws.recv(), 30.0)
-                        recovered += (
-                            message if isinstance(message, bytes) else message.encode()
-                        )
-                    recovered_at = attempt
-                    break
+                )
             except OSError, websockets.WebSocketException:
                 continue
+            try:
+                await recovery_ws.send(b"echo MSKS-$((23*2))-RECOVERED\n")
+                recovered = b""
+                while b"MSKS-46-RECOVERED" not in recovered:
+                    message = await asyncio.wait_for(recovery_ws.recv(), 30.0)
+                    recovered += (
+                        message if isinstance(message, bytes) else message.encode()
+                    )
+            finally:
+                await recovery_ws.close()
+            recovered_at = attempt
+            break
         assert recovered_at is not None, (
             "console never recovered after the guest socat was killed"
         )

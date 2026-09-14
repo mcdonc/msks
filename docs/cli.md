@@ -293,7 +293,13 @@ A start that loses a race — the daemon reports `stopped`, another
 client boots it in the gap — re-checks and attaches to the winner.
 
 Ctrl-] detaches and leaves the workspace running; Ctrl-C and Ctrl-D
-reach the guest. The session needs a tty on both stdin and stdout.
+reach the guest. To type a literal Ctrl-] into the guest, press it
+twice quickly (the second press within 50 ms): the pair delivers one
+Ctrl-] byte. A single Ctrl-] — or one followed by any other byte —
+detaches, and the byte that followed the escape is consumed with it,
+so a paste that happens to contain a lone Ctrl-] detaches the session.
+Large pastes travel as a few websocket frames (4,096-byte chunks), not
+one frame per byte. The session needs a tty on both stdin and stdout.
 See the README's workspace-shell section (#21) for the transport
 story.
 
