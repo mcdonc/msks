@@ -14,12 +14,12 @@ import termios
 from pathlib import Path
 
 import pytest
+from msks.client import cli
 from msks.client.shell import (
     DEFAULT_URL,
     DETACH,
     env_token,
     env_url,
-    main,
     pump,
     require_tty,
     ws_url,
@@ -134,7 +134,7 @@ def test_require_tty_rejects_pipes(
 
 def test_main_requires_subcommand() -> None:
     with pytest.raises(SystemExit):
-        main([])
+        cli.main([])
 
 
 def test_main_shell_needs_tty(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -146,7 +146,7 @@ def test_main_shell_needs_tty(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "stdout", NotATty())
     monkeypatch.setattr(sys, "stderr", io.StringIO())
     with pytest.raises(SystemExit, match="interactive tty"):
-        main(["shell", "wid"])
+        cli.main(["shell", "wid"])
 
 
 async def _cancel_orphans() -> None:
@@ -330,12 +330,22 @@ class FdOnly:
         return 0
 
 
+async def async_noop(*args, **kwargs) -> None:
+    """A stand-in for the shell's pre-flight REST call."""
+
+
 def test_main_raw_mode_cycle(monkeypatch: pytest.MonkeyPatch) -> None:
     from msks.client import shell
+
+    order: list[str] = []
+
+    async def preflight(*args, **kwargs) -> None:
+        order.append("preflight")
 
     monkeypatch.setattr(sys, "stdin", FdOnly())
     monkeypatch.setenv("MSKSC_TOKEN", "t")
     monkeypatch.setattr(shell, "require_tty", lambda: None)
+    monkeypatch.setattr(shell, "ensure_running", preflight)
     restored: list = []
 
     async def fake_run(wid, url, token, ssl_ctx):
@@ -346,9 +356,13 @@ def test_main_raw_mode_cycle(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         shell.termios, "tcsetattr", lambda fd, when, attrs: restored.append(attrs)
     )
-    monkeypatch.setattr(shell.tty, "setraw", lambda fd: None)
-    assert main(["shell", "wid"]) == 7
+    monkeypatch.setattr(shell.tty, "setraw", lambda fd: order.append("raw"))
+    assert cli.main(["shell", "wid"]) == 7
     assert restored == [["old"]]
+    # The pre-flight boot and its notices must land BEFORE raw mode:
+    # setraw clears OPOST, so a mid-session newline would leave the
+    # cursor mid-column.
+    assert order == ["preflight", "raw"]
 
 
 def test_main_without_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -357,6 +371,7 @@ def test_main_without_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "stdin", FdOnly())
     monkeypatch.setenv("MSKSC_TOKEN", "t")
     monkeypatch.setattr(shell, "require_tty", lambda: None)
+    monkeypatch.setattr(shell, "ensure_running", async_noop)
     monkeypatch.setattr(
         shell.termios, "tcgetattr", lambda fd: (_ for _ in ()).throw(termios.error())
     )
@@ -365,19 +380,22 @@ def test_main_without_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
         return 0
 
     monkeypatch.setattr(shell, "run_shell", fake_run)
-    assert main(["shell", "wid"]) == 0
+    assert cli.main(["shell", "wid"]) == 0
 
 
 def test_module_entry_runs(monkeypatch: pytest.MonkeyPatch) -> None:
-    from msks.client import shell
+    from msks.client import cli
 
     monkeypatch.setattr(sys, "argv", ["msks"])
-    source = Path(shell.__file__).read_text()
+    source = Path(cli.__file__).read_text()
     # Executing the source in a fresh namespace avoids runpy's
     # already-imported RuntimeWarning while still running the module
-    # entry block.
+    # entry block. __package__ lets the exec'd relative import resolve.
     with pytest.raises(SystemExit):
-        exec(compile(source, shell.__file__, "exec"), {"__name__": "__main__"})
+        exec(
+            compile(source, cli.__file__, "exec"),
+            {"__name__": "__main__", "__package__": "msks.client"},
+        )
 
 
 def _closed(code: int, reason: str = ""):
@@ -442,3 +460,32 @@ async def test_connect_plain_ws_takes_no_ssl() -> None:
     assert stub.recorded_ssl is None
     stub("wss://secure/", ssl="ctx")
     assert stub.recorded_ssl == "ctx"
+
+
+def test_run_workspace_shell_preflights_boot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The shell boots a not-running workspace before going raw."""
+    from msks.client import shell
+
+    seen = {}
+
+    async def fake_ensure(workspace_id, url, token, ssl_ctx=None):
+        seen.update(workspace_id=workspace_id, url=url, token=token, ssl=ssl_ctx)
+
+    monkeypatch.setattr(sys, "stdin", FdOnly())
+    monkeypatch.setenv("MSKSC_TOKEN", "t")
+    monkeypatch.setenv("MSKSC_URL", "u")
+    monkeypatch.setattr(shell, "require_tty", lambda: None)
+    monkeypatch.setattr(shell, "ensure_running", fake_ensure)
+    monkeypatch.setattr(shell, "ssl_context", lambda: "ctx")
+    monkeypatch.setattr(
+        shell.termios, "tcgetattr", lambda fd: (_ for _ in ()).throw(termios.error())
+    )
+
+    async def fake_run(wid, url, token, ssl_ctx):
+        return 0
+
+    monkeypatch.setattr(shell, "run_shell", fake_run)
+    assert shell.run_workspace_shell("wid") == 0
+    assert seen == {"workspace_id": "wid", "url": "u", "token": "t", "ssl": "ctx"}

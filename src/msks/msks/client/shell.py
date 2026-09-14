@@ -2,19 +2,18 @@
 
 The connection is the daemon's console websocket (TLS + token, the
 same authentication as the REST surface) bridged to the local tty in
-raw mode. Ctrl-] detaches: it closes the client session — the
-workspace keeps running, and the shell process inside the guest ends
-when the stream closes.
+raw mode. A workspace the daemon reports as not running is booted
+first. Ctrl-] detaches: it closes the client session — the workspace
+keeps running, and the shell process inside the guest ends when the
+stream closes.
 
 Window-size changes are not propagated v1: the guest's pty is fixed
 at its creation size, and applying a resize needs a guest-side
 helper that does not exist yet.
 """
 
-import argparse
 import asyncio
 import contextlib
-import os
 import ssl
 import sys
 import termios
@@ -22,45 +21,20 @@ import tty
 
 import websockets
 
-DEFAULT_URL = "https://127.0.0.1:8660"
+from .rest import (  # noqa: F401
+    DEFAULT_URL,
+    ensure_running,
+    env_token,
+    env_url,
+    ssl_context,
+)
+
+# Re-exported for the tests and for callers that expect the client's
+# env/TLS helpers on the shell module (they moved to rest.py).
 
 # The detach escape (like telnet/ssh -e): Ctrl-], byte 0x1d. Ctrl-C
 # and Ctrl-D belong to the guest.
 DETACH = b"\x1d"
-
-
-def env_url() -> str:
-    return os.environ.get("MSKSC_URL", DEFAULT_URL).rstrip("/")
-
-
-def env_token() -> str:
-    token = os.environ.get("MSKSC_TOKEN", "")
-    if not token:
-        raise SystemExit(
-            "msks: set MSKSC_TOKEN to a daemon token "
-            "(MSKSC_URL for a non-default daemon)"
-        )
-    return token
-
-
-def ssl_context() -> ssl.SSLContext:
-    """Verify against MSKSC_CAFILE when set; otherwise TOFU-blind v1.
-
-    The daemon's certificate is self-signed; pinning it with
-    MSKSC_CAFILE gives verification, and without it the client
-    proceeds unverified with a warning to stderr.
-    """
-    cafile = os.environ.get("MSKSC_CAFILE", "")
-    if cafile:
-        return ssl.create_default_context(cafile=cafile)
-    print(
-        "msks: MSKSC_CAFILE not set; the daemon certificate is NOT verified",
-        file=sys.stderr,
-    )
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    return ctx
 
 
 def ws_url(base_url: str, workspace_id: str, token: str) -> str:
@@ -203,17 +177,12 @@ def restore(old, had: bool) -> None:
         termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old)
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="msks", description="msks client: workspace microvms over the daemon API"
-    )
-    sub = parser.add_subparsers(dest="command", required=True)
-    shell = sub.add_parser("shell", help="interactive shell in a workspace")
-    shell.add_argument("workspace_id", help="the workspace to attach to")
-    # With one subcommand, parse_args guarantees command == "shell"
-    # and workspace_id is present.
-    args = parser.parse_args(argv)
+def run_workspace_shell(workspace_id: str) -> int:
+    """One interactive shell session, from tty setup to restore.
 
+    Argument dispatch (``msks shell`` vs the other subcommands) lives
+    in :mod:`msks.client.cli`; this is the shell command's body.
+    """
     require_tty()
     token = env_token()
     url = env_url()
@@ -225,13 +194,13 @@ def main(argv: list[str] | None = None) -> int:
     # BEFORE raw mode: setraw clears OPOST, so a plain \n printed
     # mid-session would leave the cursor mid-column.
     ssl_ctx = ssl_context()
+    # Same reason for the pre-flight REST call: a not-running
+    # workspace is booted here, with its notices on stderr, before
+    # the tty goes raw.
+    asyncio.run(ensure_running(workspace_id, url, token, ssl_ctx=ssl_ctx))
     try:
         if old is not None:
             tty.setraw(sys.stdin.fileno())
-        return asyncio.run(run_shell(args.workspace_id, url, token, ssl_ctx))
+        return asyncio.run(run_shell(workspace_id, url, token, ssl_ctx))
     finally:
         restore(old, old is not None)
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
