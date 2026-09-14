@@ -691,3 +691,243 @@ def test_create_body_egress_flags() -> None:
     assert "egress" not in body(["create", "ws"])
     assert body(["create", "ws", "--egress"])["egress"] is True
     assert body(["create", "ws", "--no-egress"])["egress"] is False
+
+
+# --- The image catalog commands (#65) ---
+
+
+def image_row(name: str, version: str, digest: str, default: bool = False) -> dict:
+    return {
+        "hash": digest,
+        "name": name,
+        "version": version,
+        "cmdline": "console=hvc0 root=/dev/vda rw",
+        "vsock_shell_port": 1073741826,
+        "kernel_version": "6.12.107+deb13",
+        "kernel_format": "raw",
+        "default": default,
+    }
+
+
+IMAGES = [
+    image_row("debian", "13", "a" * 64, default=True),
+    image_row("debian", "12", "b" * 64),
+    image_row("alpine", "3.20", "c" * 64),
+]
+
+
+def listing_transport(handler=None) -> httpx.MockTransport:
+    """A GET /api/v1/images catalog plus per-request extras."""
+
+    def default(request: httpx.Request) -> httpx.Response:
+        if handler is not None and request.method != "GET":
+            return handler(request)
+        return httpx.Response(200, json=IMAGES)
+
+    return mock(default)
+
+
+def test_image_ls_formats_rows(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client_env(monkeypatch)
+    rc = cli.cmd_image_ls(transport=listing_transport())
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "debian:13" in out and "a" * 12 in out and "default" in out
+    assert "debian:12" in out and "alpine:3.20" in out
+    # The non-default rows carry the dash flag, and kernel facts show.
+    assert "6.12.107+deb13 (raw)" in out
+
+
+def test_image_ls_marks_only_the_default(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client_env(monkeypatch)
+    cli.cmd_image_ls(transport=listing_transport())
+    lines = capsys.readouterr().out.splitlines()
+    flags = [line.split()[2] for line in lines]
+    assert flags == ["default", "-", "-"]
+
+
+def test_image_ls_json_is_the_api_document(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client_env(monkeypatch)
+    cli.cmd_image_ls(as_json=True, transport=listing_transport())
+    assert json.loads(capsys.readouterr().out) == IMAGES
+
+
+def test_image_ls_empty_prints_nothing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client_env(monkeypatch)
+    rc = cli.cmd_image_ls(transport=mock(lambda req: httpx.Response(200, json=[])))
+    assert rc == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_image_import_posts_source_and_prints_ref(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client_env(monkeypatch)
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["auth"] = request.headers.get("authorization")
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(
+            201,
+            json={
+                "hash": "a" * 64,
+                "name": "debian",
+                "version": "13",
+                "ref": "debian:13",
+            },
+        )
+
+    rc = cli.cmd_image_import("/srv/images/debian.tar", transport=mock(handler))
+    assert rc == 0
+    assert seen["path"] == "/api/v1/images"
+    assert seen["auth"] == "Bearer tok"
+    assert seen["body"] == {"source": "/srv/images/debian.tar"}
+    out = capsys.readouterr().out
+    assert "imported debian:13" in out and "a" * 12 in out
+
+
+def test_image_import_help_states_the_daemon_reads_the_path() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(["image", "import", "/x.tar"])
+    assert args.command == "image" and args.image_command == "import"
+    assert args.source == "/x.tar"
+    help_text = cli.build_parser().format_help()
+    assert "image" in help_text
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        "debian:13",
+        "debian",
+        "debian@" + "a" * 64,
+        "a" * 64,
+        "a" * 12,  # a unique hash prefix, as ls prints it
+    ],
+)
+def test_image_rm_resolves_every_reference_form(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    ref: str,
+) -> None:
+    """All four daemon-side forms (plus a unique prefix) DELETE the
+    same digest; bare name picks the newest version (13 over 12)."""
+    client_env(monkeypatch)
+    deleted = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        deleted.append(request.url.path)
+        return httpx.Response(200, json={"removed": "a" * 64})
+
+    rc = cli.cmd_image_rm(ref, transport=listing_transport(handler))
+    assert rc == 0
+    assert deleted == [f"/api/v1/images/{'a' * 64}"]
+    assert "debian:13 deleted" in capsys.readouterr().out
+
+
+def test_image_rm_refusal_names_the_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client_env(monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, json={"detail": "workspace ws1 boots this image"})
+
+    with pytest.raises(SystemExit, match=r"msks: 409: workspace ws1 boots this image"):
+        cli.cmd_image_rm("debian:13", transport=listing_transport(handler))
+
+
+def test_image_rm_miss_lists_the_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    client_env(monkeypatch)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.cmd_image_rm("fedora:40", transport=listing_transport())
+    message = str(excinfo.value)
+    assert "no image matches 'fedora:40'" in message
+    assert "debian:13" in message and "alpine:3.20" in message
+
+
+def test_image_rm_ambiguous_prefix_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
+    client_env(monkeypatch)
+    rows = IMAGES + [image_row("debian", "13.1", "a" * 63 + "e")]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=rows)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.cmd_image_rm("a" * 63, transport=mock(handler))
+    assert "matches 2 images" in str(excinfo.value)
+    assert "debian:13" in str(excinfo.value) and "debian:13.1" in str(excinfo.value)
+
+
+def test_image_rm_malformed_pin_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    client_env(monkeypatch)
+    with pytest.raises(SystemExit, match="malformed image hash in 'debian@zzz'"):
+        cli.cmd_image_rm("debian@zzz", transport=listing_transport())
+
+
+def test_image_info_prints_the_record(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client_env(monkeypatch)
+    rc = cli.cmd_image_info("alpine", transport=listing_transport())
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "ref      alpine:3.20" in out
+    assert "hash     " + "c" * 64 in out
+    assert "kernel   6.12.107+deb13 (raw)" in out
+    assert "cmdline  console=hvc0 root=/dev/vda rw" in out
+    assert "console  vsock port 1073741826" in out
+    assert "default  no" in out
+
+
+def test_main_dispatches_image_subcommands(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client_env(monkeypatch)
+    rc = cli.main(
+        ["image", "ls"],
+        transport=listing_transport(),
+    )
+    assert rc == 0
+    assert "debian:13" in capsys.readouterr().out
+
+
+async def test_image_commands_against_the_real_api(api_transport) -> None:
+    """The image command cores against the real daemon surface: a
+    real containerDisk import, the listing (first import becomes the
+    default), ref-form removal, and the 404 after it is gone."""
+    from test_imagestore import build_containerdisk
+
+    transport = api_transport
+    app = transport.app.state.msks_app
+    archive = app.state.settings.vmm.state_dir / "debian-13.tar"
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    build_containerdisk(archive)
+
+    record = await cli.import_image("https://test", TOKEN, str(archive), transport)
+    assert record["ref"] == "debian:13.6"
+
+    rows = await cli.fetch_images("https://test", TOKEN, transport)
+    assert len(rows) == 1
+    assert rows[0]["hash"] == record["hash"]
+    assert rows[0]["default"] is True  # the sole import is designated
+
+    described = await cli.describe_image(
+        "https://test", TOKEN, record["hash"], transport
+    )
+    assert described["hash"] == record["hash"]
+
+    removed = await cli.remove_image("https://test", TOKEN, "debian:13.6", transport)
+    assert removed == {"removed": record["hash"]}
+    with pytest.raises(SystemExit, match="no image matches"):
+        await cli.remove_image("https://test", TOKEN, "debian:13.6", transport)

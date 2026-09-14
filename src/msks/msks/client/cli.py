@@ -1,5 +1,5 @@
-"""The ``msks`` CLI: ``ls``, ``create``, ``start``, ``stop``, ``rm``, and
-``shell`` subcommands.
+"""The ``msks`` CLI: ``ls``, ``create``, ``start``, ``stop``, ``rm``,
+``shell``, and the ``image`` catalog subcommands.
 
 Every command speaks the daemon's REST surface with the same client
 conventions (#21): ``MSKSC_URL`` for the daemon, ``MSKSC_TOKEN`` for
@@ -12,6 +12,7 @@ import asyncio
 import json
 import sys
 
+from ..imagestore import version_key
 from .rest import (
     api_call,
     api_client,
@@ -130,6 +131,191 @@ def cmd_rm(workspace_ids: list[str], transport=None) -> int:
     return 0
 
 
+# --- The image catalog (#65) ---
+
+HEX_DIGITS = set("0123456789abcdef")
+
+
+def format_image(row: dict) -> str:
+    """One catalog line: ref, short hash, default flag, kernel."""
+    flag = "default" if row["default"] else "-"
+    kernel = f"{row['kernel_version'] or '-'} ({row['kernel_format'] or '-'})"
+    ref = f"{row['name']}:{row['version']}"
+    return f"{ref:<24} {row['hash'][:12]:<13} {flag:<8} {kernel}"
+
+
+def render_image_ls(rows: list[dict], as_json: bool) -> str:
+    """The whole catalog: aligned lines, or one JSON document."""
+    if as_json:
+        return json.dumps(rows, indent=2)
+    return "\n".join(format_image(row) for row in rows)
+
+
+async def fetch_images(url, token, transport) -> list[dict]:
+    """The catalog listing (GET /api/v1/images)."""
+    return await api_call("GET", url, token, "/api/v1/images", transport=transport)
+
+
+async def import_image(url, token, source, transport) -> dict:
+    """POST the import; print the registered reference and hash."""
+    record = await api_call(
+        "POST",
+        url,
+        token,
+        "/api/v1/images",
+        json_body={"source": source},
+        transport=transport,
+    )
+    print(f"imported {record['ref']} ({record['hash'][:12]})")
+    return record
+
+
+async def remove_image(url, token, ref, transport) -> dict:
+    """Resolve ``ref`` against the listing, DELETE by hash.
+
+    Resolution and delete share one client so a refusal (409 names
+    the workspace that boots the image) reads as one exchange.
+    """
+    async with api_client(url, token, transport) as client:
+        rows = await request(client, "GET", "/api/v1/images")
+        row = resolve_image_ref(ref, rows)
+        result = await request(client, "DELETE", f"/api/v1/images/{row['hash']}")
+    print(f"{row['name']}:{row['version']} deleted")
+    return result
+
+
+async def describe_image(url, token, ref, transport) -> dict:
+    """Print one image's full record from the listing data."""
+    rows = await fetch_images(url, token, transport)
+    row = resolve_image_ref(ref, rows)
+    print("\n".join(info_lines(row)))
+    return row
+
+
+def info_lines(row: dict) -> list[str]:
+    """The full record: boot facts the listing carries."""
+    default = "yes" if row["default"] else "no"
+    kernel = f"{row['kernel_version'] or '-'} ({row['kernel_format'] or '-'})"
+    return [
+        f"ref      {row['name']}:{row['version']}",
+        f"hash     {row['hash']}",
+        f"kernel   {kernel}",
+        f"cmdline  {row['cmdline']}",
+        f"console  vsock port {row['vsock_shell_port']}",
+        f"default  {default}",
+    ]
+
+
+def resolve_image_ref(ref: str, rows: list[dict]) -> dict:
+    """The one listing row a catalog reference points at.
+
+    Accepts the daemon's forms — hash, ``name@hash``,
+    ``name:version``, bare ``name`` (newest version) — plus a unique
+    hash prefix (``ls`` prints 12 chars). A miss or an ambiguous
+    prefix exits with the catalog spelled out.
+    """
+    matches = image_ref_matches(ref, rows)
+    if not matches:
+        raise SystemExit(no_image_message(ref, rows))
+    if len(matches) > 1:
+        raise SystemExit(ambiguous_image_message(ref, matches))
+    return matches[0]
+
+
+def image_ref_matches(ref: str, rows: list[dict]) -> list[dict]:
+    """Dispatch on the reference's shape (hash, @, :, name)."""
+    if "@" in ref:
+        return pin_matches(ref, rows)
+    if ":" in ref:
+        return name_version_matches(ref, rows)
+    prefixed = hash_prefix_matches(rows, ref)
+    if prefixed:
+        return prefixed
+    return newest_version_rows(ref, rows)
+
+
+def pin_matches(ref: str, rows: list[dict]) -> list[dict]:
+    """``name@hash``: identity and content both pinned."""
+    name, _, digest = ref.partition("@")
+    require_hash_digest(ref, digest)
+    return [
+        row for row in rows if row["name"] == name and row["hash"].startswith(digest)
+    ]
+
+
+def require_hash_digest(ref: str, digest: str) -> None:
+    """A pin's hash part is hex; anything else is a named error."""
+    if not digest or not set(digest) <= HEX_DIGITS:
+        raise SystemExit(f"msks: malformed image hash in {ref!r}")
+
+
+def name_version_matches(ref: str, rows: list[dict]) -> list[dict]:
+    """``name:version``: the exact pair."""
+    name, _, version = ref.partition(":")
+    return [row for row in rows if row["name"] == name and row["version"] == version]
+
+
+def hash_prefix_matches(rows: list[dict], prefix: str) -> list[dict]:
+    """Hashes the prefix selects; non-hex prefixes select nothing."""
+    if not set(prefix) <= HEX_DIGITS:
+        return []
+    return [row for row in rows if row["hash"].startswith(prefix)]
+
+
+def newest_version_rows(name: str, rows: list[dict]) -> list[dict]:
+    """The newest version of ``name`` — the daemon's ordering
+    (``imagestore.version_key``), so client and daemon agree."""
+    candidates = [row for row in rows if row["name"] == name]
+    if not candidates:
+        return []
+    newest = max(candidates, key=lambda row: version_key(row["version"]))
+    return [newest]
+
+
+def catalog_refs(rows: list[dict]) -> str:
+    """The catalog (or a match set) spelled out for an error."""
+    refs = [f"{row['name']}:{row['version']}" for row in rows]
+    return ", ".join(refs) or "(the catalog is empty)"
+
+
+def no_image_message(ref: str, rows: list[dict]) -> str:
+    return f"msks: no image matches {ref!r} — catalog: {catalog_refs(rows)}"
+
+
+def ambiguous_image_message(ref: str, matches: list[dict]) -> str:
+    return (
+        f"msks: {ref!r} matches {len(matches)} images "
+        f"({catalog_refs(matches)}); use the full hash or name:version"
+    )
+
+
+def cmd_image_ls(as_json: bool = False, transport=None) -> int:
+    """``msks image ls``: the whole catalog, default marked."""
+    rows = asyncio.run(fetch_images(env_url(), env_token(), transport))
+    text = render_image_ls(rows, as_json)
+    if text:
+        print(text)
+    return 0
+
+
+def cmd_image_import(source: str, transport=None) -> int:
+    """``msks image import``: register a daemon-side archive."""
+    asyncio.run(import_image(env_url(), env_token(), source, transport))
+    return 0
+
+
+def cmd_image_rm(ref: str, transport=None) -> int:
+    """``msks image rm``: drop one image, by any reference form."""
+    asyncio.run(remove_image(env_url(), env_token(), ref, transport))
+    return 0
+
+
+def cmd_image_info(ref: str, transport=None) -> int:
+    """``msks image info``: one image's full record."""
+    asyncio.run(describe_image(env_url(), env_token(), ref, transport))
+    return 0
+
+
 def create_body(args: argparse.Namespace) -> dict:
     """The POST body: only the fields the operator set."""
     fields = {
@@ -189,6 +375,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     shell = sub.add_parser("shell", help="interactive shell in a workspace")
     shell.add_argument("workspace_id", help="the workspace to attach to")
+    image = sub.add_parser("image", help="manage the daemon's image catalog (#65)")
+    image_sub = image.add_subparsers(dest="image_command", required=True)
+    image_ls = image_sub.add_parser("ls", help="list catalog images")
+    image_ls.add_argument("--json", action="store_true", help="one JSON document")
+    image_import = image_sub.add_parser(
+        "import",
+        help="register an image archive from a daemon-side path",
+    )
+    image_import.add_argument(
+        "source",
+        help="archive path as the daemon sees it (its own filesystem; "
+        "the file is read by the daemon, not uploaded by this command)",
+    )
+    image_rm = image_sub.add_parser("rm", help="remove an image from the catalog")
+    image_rm.add_argument(
+        "ref",
+        help="name:version, bare name (newest), name@hash, or hash "
+        "(a unique hash prefix works too)",
+    )
+    image_info = image_sub.add_parser("info", help="show one image's full record")
+    image_info.add_argument("ref", help="name:version, bare name, name@hash, or hash")
     return parser
 
 
@@ -214,6 +421,17 @@ def command_table(args: argparse.Namespace, transport) -> dict:
         "stop": lambda: cmd_stop(args.workspace_id, transport=transport),
         "rm": lambda: cmd_rm(args.workspace_ids, transport=transport),
         "shell": lambda: run_workspace_shell(args.workspace_id),
+        "image": lambda: image_command_table(args, transport)[args.image_command](),
+    }
+
+
+def image_command_table(args: argparse.Namespace, transport) -> dict:
+    """One entry per ``image`` subcommand."""
+    return {
+        "ls": lambda: cmd_image_ls(args.json, transport=transport),
+        "import": lambda: cmd_image_import(args.source, transport=transport),
+        "rm": lambda: cmd_image_rm(args.ref, transport=transport),
+        "info": lambda: cmd_image_info(args.ref, transport=transport),
     }
 
 
