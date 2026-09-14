@@ -187,21 +187,27 @@ def build_api(app) -> FastAPI:
 
     @contextlib.asynccontextmanager
     async def lifespan(api: FastAPI) -> AsyncIterator[None]:
-        app.state.model.migrate()
-        await app.state.model.bootstrap_token()
-        bootstrap_default_image(app)
-        watcher = asyncio.create_task(watch_loop(app, hub))
-        api.state.watcher = watcher
+        watcher: asyncio.Task | None = None
         try:
+            app.state.model.migrate()
+            await app.state.model.bootstrap_token()
+            bootstrap_default_image(app)
+            watcher = asyncio.create_task(watch_loop(app, hub))
+            api.state.watcher = watcher
             yield
         finally:
-            watcher.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await watcher
             # Close the model's engine so pooled sqlite connections
-            # close deterministically — the daemon's shutdown path and
-            # every lifespan-using test both land here.
-            await app.state.model.close()
+            # close deterministically — on shutdown and on a failed
+            # startup step (migrate/bootstrap can have created the
+            # engine before raising). The watcher teardown is its own
+            # try so an unexpected watcher error cannot skip the close.
+            try:
+                if watcher is not None:
+                    watcher.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await watcher
+            finally:
+                await app.state.model.close()
 
     api = FastAPI(title="msksd", version=__version__, lifespan=lifespan)
     api.state.msks_app = app
