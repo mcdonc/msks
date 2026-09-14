@@ -4,7 +4,47 @@
   lib,
   ...
 }:
-
+let
+  # jscpd token-clone scanner (#71, ported from klangk #2904): 5.x ships
+  # a prebuilt Rust binary via platform-specific npm packages
+  # (esbuild-style), so it is not in nixpkgs; pin the binary per platform
+  # with fixed hashes (the fmtk pattern). One pinned version keeps clone
+  # reports reproducible across contributors and CI. The `msks:jscpd`
+  # task and the pre-commit gate hook run it over the backend.
+  jscpdBinaryVersion = "5.0.16";
+  jscpd = pkgs.stdenv.mkDerivation {
+    pname = "jscpd";
+    version = jscpdBinaryVersion;
+    src = pkgs.fetchurl {
+      url =
+        if pkgs.stdenv.isDarwin then
+          "https://registry.npmjs.org/jscpd-darwin-"
+          + (if pkgs.stdenv.hostPlatform.darwinArch == "arm64" then "arm64" else "x64")
+          + "/-/jscpd-darwin-"
+          + (if pkgs.stdenv.hostPlatform.darwinArch == "arm64" then "arm64" else "x64")
+          + "-${jscpdBinaryVersion}.tgz"
+        else
+          "https://registry.npmjs.org/jscpd-linux-x64-gnu/-/jscpd-linux-x64-gnu-${jscpdBinaryVersion}.tgz";
+      hash =
+        if pkgs.stdenv.isDarwin then
+          (
+            if pkgs.stdenv.hostPlatform.darwinArch == "arm64" then
+              "sha256-vntXwMkns8HqtHwVzxthzun0tpRAe755YKB5k4c3Wqg="
+            else
+              "sha256-X2hK+EAgrXGRLUymdo5qgTuWoFQ3U0cz9J064UFQppM="
+          )
+        else
+          "sha256-+6PhbDzUn0e4sQgsUs/kF0C5HlMOixZvlNolO9a4VdI=";
+    };
+    sourceRoot = ".";
+    dontConfigure = true;
+    dontBuild = true;
+    dontStrip = true;
+    installPhase = ''
+      install -Dm555 -t $out/bin package/bin/jscpd
+    '';
+  };
+in
 {
   # msks dev environment: Python 3.14 + cloud-hypervisor toolchain (#2).
   # Mirrors the klangk conventions (AGENTS.md): CI-identical test task,
@@ -35,6 +75,7 @@
       curl # unix-socket REST poking during CH debugging
       e2fsprogs # debugfs: seed the bootstrap token onto the state disk
       iproute2 # the appliance bridge/tap (supervisor scripts; host-agnostic)
+      jscpd # token-clone scanner (#71), pinned rust binary (see above)
       nftables # egress chains/NAT for the #52 smoke path
       qemu # qemu-img for rootfs conversion during guest-image experiments
       virtiofsd # the appliance's read-only /nix/store share (#10)
@@ -84,6 +125,16 @@
     # (thresholds + graded file set) that the pre-commit hook also runs.
     "msks:xenon" = {
       exec = ''exec bash "$DEVENV_ROOT/scripts/xenon-gate.sh" "$@"'';
+    };
+    # Token-clone gate over the backend (#71, ported from klangk #2904's
+    # advisory scan; promoted to a gate from day one — the msks backend
+    # baselines clean, 0 clones at --min-tokens 70). Delegates to
+    # scripts/jscpd-gate.sh, the single definition of the invocation
+    # (threshold + scanned tree) that the pre-commit hook also runs —
+    # the msks:xenon pattern.
+    "msks:jscpd" = {
+      exec = ''exec bash "$DEVENV_ROOT/scripts/jscpd-gate.sh" "$@"'';
+      showOutput = true;
     };
     # WORKAROUND (#32, klangk #3444 pattern): devenv 2.3.x's RunMode::All
     # scheduler adds the prerequisites of every visited task — including
@@ -212,6 +263,18 @@
       name = "xenon";
       entry = "scripts/xenon-gate.sh";
       files = "^src/msks/msks/.*\\.py$|^scripts/.*\\.py$";
+      language = "system";
+      pass_filenames = false;
+    };
+    # Token-clone gate: no exact clone of >= 70 tokens in the backend.
+    # pass_filenames = false — cross-file clones only show when the whole
+    # tree is scanned (a staged subset can hide them); `files` stays as the
+    # run trigger.
+    jscpd = {
+      enable = true;
+      name = "jscpd";
+      entry = "scripts/jscpd-gate.sh";
+      files = "^src/msks/msks/.*\\.py$";
       language = "system";
       pass_filenames = false;
     };
