@@ -14,12 +14,12 @@ import termios
 from pathlib import Path
 
 import pytest
+from msks.client import cli
 from msks.client.shell import (
     DEFAULT_URL,
     DETACH,
     env_token,
     env_url,
-    main,
     pump,
     require_tty,
     ws_url,
@@ -134,7 +134,7 @@ def test_require_tty_rejects_pipes(
 
 def test_main_requires_subcommand() -> None:
     with pytest.raises(SystemExit):
-        main([])
+        cli.main([])
 
 
 def test_main_shell_needs_tty(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -146,7 +146,7 @@ def test_main_shell_needs_tty(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "stdout", NotATty())
     monkeypatch.setattr(sys, "stderr", io.StringIO())
     with pytest.raises(SystemExit, match="interactive tty"):
-        main(["shell", "wid"])
+        cli.main(["shell", "wid"])
 
 
 async def _cancel_orphans() -> None:
@@ -347,7 +347,7 @@ def test_main_raw_mode_cycle(monkeypatch: pytest.MonkeyPatch) -> None:
         shell.termios, "tcsetattr", lambda fd, when, attrs: restored.append(attrs)
     )
     monkeypatch.setattr(shell.tty, "setraw", lambda fd: None)
-    assert main(["shell", "wid"]) == 7
+    assert cli.main(["shell", "wid"]) == 7
     assert restored == [["old"]]
 
 
@@ -365,19 +365,22 @@ def test_main_without_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
         return 0
 
     monkeypatch.setattr(shell, "run_shell", fake_run)
-    assert main(["shell", "wid"]) == 0
+    assert cli.main(["shell", "wid"]) == 0
 
 
 def test_module_entry_runs(monkeypatch: pytest.MonkeyPatch) -> None:
-    from msks.client import shell
+    from msks.client import cli
 
     monkeypatch.setattr(sys, "argv", ["msks"])
-    source = Path(shell.__file__).read_text()
+    source = Path(cli.__file__).read_text()
     # Executing the source in a fresh namespace avoids runpy's
     # already-imported RuntimeWarning while still running the module
-    # entry block.
+    # entry block. __package__ lets the exec'd relative import resolve.
     with pytest.raises(SystemExit):
-        exec(compile(source, shell.__file__, "exec"), {"__name__": "__main__"})
+        exec(
+            compile(source, cli.__file__, "exec"),
+            {"__name__": "__main__", "__package__": "msks.client"},
+        )
 
 
 def _closed(code: int, reason: str = ""):

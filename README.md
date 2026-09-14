@@ -214,6 +214,27 @@ bridge — a bare `POST /workspaces` works on a fresh appliance with
 nothing else built. Explicit `kernel`/`rootfs` fields still win over
 the catalog (the shape the tests and dev flows use).
 
+### The client CLI (`msks list`, `msks create`) (#59)
+
+The client also covers the non-interactive half of the operator flow:
+
+```bash
+devenv --quiet -O dotenv.enable:bool false shell -- msks list
+devenv --quiet -O dotenv.enable:bool false shell -- msks create my-workspace --start
+```
+
+`msks list` prints one line per workspace (id, status, image hash,
+host); `--json` prints one JSON document for scripting. `msks create`
+POSTs the same body the API accepts — `--image` picks a catalog
+reference, `--cpus`/`--mem-mib`/`--root-mib`/`--home-mib` size the VM,
+and explicit `--kernel`/`--rootfs` (with optional `--initrd`,
+`--cmdline`) bypass the catalog. `--start` boots the workspace right
+after creating it, so `msks create ws --start` then `msks shell ws`
+is the two-step path from nothing to a shell. Both commands use the
+same `MSKSC_URL`/`MSKSC_TOKEN`/`MSKSC_CAFILE` environment as
+`msks shell`, and failures (unreachable daemon, bad token, API
+errors) print one readable line instead of a traceback.
+
 ### The workspace shell (`msks shell`) (#21)
 
 From any host that can reach the appliance, an interactive shell in

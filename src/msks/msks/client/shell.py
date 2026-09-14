@@ -11,7 +11,6 @@ at its creation size, and applying a resize needs a guest-side
 helper that does not exist yet.
 """
 
-import argparse
 import asyncio
 import contextlib
 import os
@@ -203,17 +202,12 @@ def restore(old, had: bool) -> None:
         termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old)
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="msks", description="msks client: workspace microvms over the daemon API"
-    )
-    sub = parser.add_subparsers(dest="command", required=True)
-    shell = sub.add_parser("shell", help="interactive shell in a workspace")
-    shell.add_argument("workspace_id", help="the workspace to attach to")
-    # With one subcommand, parse_args guarantees command == "shell"
-    # and workspace_id is present.
-    args = parser.parse_args(argv)
+def run_workspace_shell(workspace_id: str) -> int:
+    """One interactive shell session, from tty setup to restore.
 
+    Argument dispatch (``msks shell`` vs the other subcommands) lives
+    in :mod:`msks.client.cli`; this is the shell command's body.
+    """
     require_tty()
     token = env_token()
     url = env_url()
@@ -228,10 +222,6 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if old is not None:
             tty.setraw(sys.stdin.fileno())
-        return asyncio.run(run_shell(args.workspace_id, url, token, ssl_ctx))
+        return asyncio.run(run_shell(workspace_id, url, token, ssl_ctx))
     finally:
         restore(old, old is not None)
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

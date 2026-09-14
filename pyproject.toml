@@ -32,7 +32,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project.scripts]
-msks = "msks.client.shell:main"
+msks = "msks.client.cli:main"
 msksd = "msks.server.main:main"
 
 [tool.hatch.build.targets.wheel]
