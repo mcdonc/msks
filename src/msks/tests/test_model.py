@@ -1,13 +1,19 @@
 """Model-layer tests: CRUD, tokens, bootstrap, status validation."""
 
+import sqlite3
 from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 
 import pytest
+import sqlalchemy as sa
+from alembic import command
 from msks.app import App, build_app
 from msks.microvm import VmSpec
 from msks.model import hash_token, new_token
+from msks.model import model as model_mod
+from msks.model.db import Base, engine_for
+from msks.model.model import alembic_config
 from msks.settings import ServerSettings, Settings
 from sqlalchemy.exc import OperationalError
 
@@ -75,10 +81,6 @@ async def test_workspace_carries_artifact_facts(app_for) -> None:
 async def test_migration_backfills_pre14_rows(tmp_path: Path, app_for) -> None:
     """A database stamped at 0001 upgrades in place: existing rows
     gain the #14 columns with usable defaults, data intact."""
-    import sqlalchemy as sa
-    from alembic import command
-    from msks.model.model import alembic_config
-
     app = app_for()
     db_path = tmp_path / "t.db"
     config = alembic_config(db_path)
@@ -208,10 +210,6 @@ async def test_migrate_recovers_from_torn_migration(tmp_path: Path, app_for) -> 
     # A power cut between 0001's committed DDL and its version stamp
     # leaves tables present with no alembic_version row; migrate()
     # stamps head instead of wedging on "table already exists".
-    import sqlite3
-
-    from msks.model.db import Base, engine_for
-
     settings = Settings(server=ServerSettings(db_path=tmp_path / "t.db"))
     engine = engine_for(settings.server.db_path)
     async with engine.begin() as connection:
@@ -240,13 +238,10 @@ def test_migrate_reraises_unrelated_operational_errors(
 ) -> None:
     # Only the torn-migration "already exists" heals; any other
     # OperationalError (locked db, io error) surfaces unchanged.
-    from alembic import command as alembic_command
-    from msks.model import model as model_mod
-
     def boom(config, revision):
         raise OperationalError("statement", {}, Exception("database is locked"))
 
-    monkeypatch.setattr(alembic_command, "upgrade", boom)
+    monkeypatch.setattr(command, "upgrade", boom)
     settings = Settings(server=ServerSettings(db_path=tmp_path / "locked.db"))
     with pytest.raises(OperationalError, match="locked"):
         model_mod.Model(App(settings)).migrate()
@@ -256,16 +251,13 @@ def test_migrate_refuses_to_stamp_past_an_older_gap(tmp_path, monkeypatch) -> No
     """A torn-shaped error on a database already at head must not be
     stamped past: with a longer chain, that gap would skip pending
     DDL — it needs an operator, not a guess (#14 round two)."""
-    from alembic import command as alembic_command
-    from msks.model import model as model_mod
-
     settings = Settings(server=ServerSettings(db_path=tmp_path / "at-head.db"))
     model_mod.Model(App(settings)).migrate()  # DB now stamped at head
 
     def boom(config, revision):
         raise OperationalError("statement", {}, Exception("duplicate column name"))
 
-    monkeypatch.setattr(alembic_command, "upgrade", boom)
+    monkeypatch.setattr(command, "upgrade", boom)
     with pytest.raises(OperationalError, match="duplicate column name"):
         model_mod.Model(App(settings)).migrate()
 

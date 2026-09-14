@@ -17,16 +17,16 @@ python scripts/perf-boot.py --runs 5
 The harness boots real workspaces through the local backend and
 reports, per run and as a p50:
 
-| Metric      | Meaning                                                        |
-| ----------- | -------------------------------------------------------------- |
-| `t_vmm`     | VMM spawn + VM create + boot accepted                          |
-| `t_kernel`  | first serial output — the kernel is decompressed and printing  |
-| `t_console` | the vsock console handshake completes (the service answers)   |
-| `t_prompt`  | the shell rendered its first prompt — **the readiness number** |
+| Metric      | Meaning                                                         |
+| ----------- | --------------------------------------------------------------- |
+| `t_vmm`     | VMM spawn + VM create + boot accepted                           |
+| `t_kernel`  | first serial output — the kernel is decompressed and printing   |
+| `t_console` | the vsock console handshake completes (the service answers)     |
+| `t_prompt`  | the shell rendered its first prompt — **the readiness number**  |
 | `t_login`   | the serial getty prompt (the last unit of the boot, diagnostic) |
 
 It also reports the host-side cost of the running workspace: the
-VMM's *peak* resident set (`VmHWM`) after first boot, next to the
+VMM's _peak_ resident set (`VmHWM`) after first boot, next to the
 guest memory the workspace was configured with. A fresh Debian
 workspace measures **165–185 MiB of VMM peak RSS against a 1024 MiB
 guest**: cloud-hypervisor maps guest memory on demand, so an idle
@@ -40,12 +40,12 @@ before the boot's last unit renders the serial prompt.
 
 The shipped image, measured start→prompt:
 
-| Stage                              | t      |
-| ---------------------------------- | ------ |
-| VMM spawn + boot accepted          | ~0.15s |
-| Kernel decompress + first output   | ~0.3s  |
-| Minimal initramfs (module + mount) | ~0.05s |
-| systemd to the console service     | ~2.5s  |
+| Stage                              | t             |
+| ---------------------------------- | ------------- |
+| VMM spawn + boot accepted          | ~0.15s        |
+| Kernel decompress + first output   | ~0.3s         |
+| Minimal initramfs (module + mount) | ~0.05s        |
+| systemd to the console service     | ~2.5s         |
 | **Start → interactive shell**      | **~3.1s p50** |
 
 The dominant remaining cost is systemd bring-up — device manager

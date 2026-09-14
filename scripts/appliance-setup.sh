@@ -20,7 +20,7 @@ done
 # vm.info even before vm.create — including our own, so this check
 # must run ahead of the launch, not after it.
 if [ -S "$app_dir/api.sock" ] && curl -sS --unix-socket "$app_dir/api.sock" \
-    -X PUT http://localhost/api/v1/vm.info >/dev/null 2>&1; then
+  -X PUT http://localhost/api/v1/vm.info >/dev/null 2>&1; then
   echo "msks: an appliance is already running (api socket answers)" >&2
   exit 1
 fi
@@ -73,7 +73,7 @@ if [ ! -f "$app_dir/bootstrap-token" ]; then
   # od, not `tr | head`: under pipefail the classic pipeline dies on
   # SIGPIPE when head closes early (tr gets 141, errexit kills the
   # script mid-first-boot).
-  od -An -N16 -tx1 /dev/urandom | tr -d ' \n' > "$app_dir/bootstrap-token"
+  od -An -N16 -tx1 /dev/urandom | tr -d ' \n' >"$app_dir/bootstrap-token"
   chmod 0600 "$app_dir/bootstrap-token"
   umask 022
 fi

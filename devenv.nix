@@ -76,30 +76,28 @@ in
     directory = ".";
   };
 
-  packages =
-    with pkgs;
-    [
-      bash # explicit bash for shell scripts (CI /bin/sh may be dash)
-      cloud-hypervisor # VMM driven by the local backend (#1); ships ch-remote
-      curl # unix-socket REST poking during CH debugging
-      e2fsprogs # debugfs: seed the bootstrap token onto the state disk
-      iproute2 # the appliance bridge/tap (supervisor scripts; host-agnostic)
-      jscpd # token-clone scanner (#71), pinned rust binary (see above)
-      nftables # egress chains/NAT for the #52 smoke path
-      qemu # qemu-img for rootfs conversion during guest-image experiments
-      virtiofsd # the appliance's read-only /nix/store share (#10)
-      ruff
-      socat # AF_UNIX <-> pty/stdio plumbing for CH socket debugging
-      # cyclomatic-complexity gate tool: built against python3.14 because
-      # nixpkgs' top-level xenon runs on an older python whose parser can
-      # reject syntax ruff format writes for a 3.14 codebase, silently
-      # skipping files (klangk #3411/#3415 precedent). scripts/xenon-gate.sh
-      # turns any such skip into a hard failure.
-      (pkgs.callPackage (pkgs.path + "/pkgs/by-name/xe/xenon/package.nix") {
-        python3 = pkgs.python314;
-      })
-      (python314Packages.radon) # complexity introspection (radon cc)
-    ];
+  packages = with pkgs; [
+    bash # explicit bash for shell scripts (CI /bin/sh may be dash)
+    cloud-hypervisor # VMM driven by the local backend (#1); ships ch-remote
+    curl # unix-socket REST poking during CH debugging
+    e2fsprogs # debugfs: seed the bootstrap token onto the state disk
+    iproute2 # the appliance bridge/tap (supervisor scripts; host-agnostic)
+    jscpd # token-clone scanner (#71), pinned rust binary (see above)
+    nftables # egress chains/NAT for the #52 smoke path
+    qemu # qemu-img for rootfs conversion during guest-image experiments
+    virtiofsd # the appliance's read-only /nix/store share (#10)
+    ruff
+    socat # AF_UNIX <-> pty/stdio plumbing for CH socket debugging
+    # cyclomatic-complexity gate tool: built against python3.14 because
+    # nixpkgs' top-level xenon runs on an older python whose parser can
+    # reject syntax ruff format writes for a 3.14 codebase, silently
+    # skipping files (klangk #3411/#3415 precedent). scripts/xenon-gate.sh
+    # turns any such skip into a hard failure.
+    (pkgs.callPackage (pkgs.path + "/pkgs/by-name/xe/xenon/package.nix") {
+      python3 = pkgs.python314;
+    })
+    (python314Packages.radon) # complexity introspection (radon cc)
+  ];
 
   env.UV_PYTHON = config.languages.python.package;
 
@@ -111,8 +109,9 @@ in
   # `devenv shell` picks up a rotated token. Before the first
   # `devenv processes up` the file does not exist and the variable is
   # empty — the client names the missing env. Explicit exports win.
-  env.MSKSC_TOKEN = lib.optionalString (builtins.pathExists ./.appliance/bootstrap-token)
-    (lib.removeSuffix "\n" (builtins.readFile ./.appliance/bootstrap-token));
+  env.MSKSC_TOKEN = lib.optionalString (builtins.pathExists ./.appliance/bootstrap-token) (
+    lib.removeSuffix "\n" (builtins.readFile ./.appliance/bootstrap-token)
+  );
 
   tasks = {
     # WORKAROUND (klangk pattern): devenv's uv sync gate only hashes the
@@ -193,11 +192,11 @@ in
     };
     "msks:appliance-up" = {
       description = "Start the appliance processes (virtiofsd + the VM), detached";
-      exec = ''exec devenv processes up -d'';
+      exec = "exec devenv processes up -d";
     };
     "msks:appliance-down" = {
       description = "Stop the appliance processes (graceful ACPI via the run script's TERM trap)";
-      exec = ''exec devenv processes down'';
+      exec = "exec devenv processes down";
     };
   };
 
@@ -247,6 +246,7 @@ in
 
   # --- Pre-commit hooks ---
   git-hooks.hooks = {
+    # Python: ruff lint + format
     ruff-lint = {
       enable = true;
       name = "ruff check";
@@ -287,5 +287,99 @@ in
       language = "system";
       pass_filenames = false;
     };
+    # Deferred-imports gate (#72, klangk's AST checker): imports live
+    # at module scope. Plain top-level, ``if TYPE_CHECKING:`` blocks,
+    # and module-scope ``try/except ImportError`` guards are exempt;
+    # ``# allow-deferred-import`` suppresses an individual import (on
+    # the line or the comment line above). Staged files are mapped to
+    # their package roots, so the hook scans whole packages.
+    deferred-imports = {
+      enable = true;
+      name = "deferred-imports";
+      entry = "python3 scripts/check_deferred_imports.py";
+      files = "\\.py$";
+      language = "system";
+      pass_filenames = true;
+    };
+    # Shell (#72, klangk settings): format + static analysis + the
+    # shebang guard on executable text files.
+    shfmt.enable = true;
+    shfmt.settings.indent = 2;
+    check-executables-have-shebangs.enable = true;
+    shellcheck.enable = true;
+    # Markdown lint (#72, klangk rules). Division of labor with the
+    # prettier hook: prettier owns formatting, markdownlint stays a
+    # lint-only gate (no --fix) over rules prettier either enforces
+    # itself (blank lines around headings/lists, single blank runs,
+    # final newline) or never touches (code-fence languages, heading
+    # text, duplicate siblings). The three disabled rules are the
+    # prettier-owned ones — MD013 line length (prettier preserves
+    # prose wrapping and pads table rows past 80), MD034 bare URLs
+    # (prettier wraps them in <>), MD060 table-pipe alignment
+    # (prettier realigns pipes) — so a prettier-formatted file always
+    # passes markdownlint and the two hooks cannot ping-pong. Keep
+    # new rules inside that invariant. Passed inline as JSON config;
+    # this git-hooks pin takes a structured settings attrset, so no
+    # generated .markdownlint.yaml is needed.
+    markdownlint.enable = true;
+    markdownlint.settings.configuration = {
+      MD013 = false;
+      MD024.siblings_only = true;
+      MD034 = false;
+      MD060 = false;
+    };
+    # GitHub Actions workflows (#72).
+    actionlint.enable = true;
+    # Secrets: scan the commit range for leaked credentials (#72).
+    trufflehog.enable = true;
+    # Nix (#72, klangk width).
+    nixfmt.enable = true;
+    nixfmt.settings.width = 80;
+    # TOML (#72): every staged TOML file must parse.
+    check-toml.enable = true;
+    # YAML (#72, klangk rules): relaxed preset, lines up to 200
+    # columns. Warnings stay non-fatal (strict = false) — klangk's
+    # generated-config hook ran plain yamllint, failing on errors
+    # only; this pin's structured settings replace that file.
+    yamllint.enable = true;
+    yamllint.settings = {
+      configuration = ''
+        extends: relaxed
+        rules:
+          line-length:
+            max: 200
+      '';
+      strict = false;
+    };
+    # JS/TS/JSON/YAML/Markdown formatting (#72, klangk settings):
+    # rewrite in place. Unknown file types (.py, .nix, .sh, .lock)
+    # are skipped (--ignore-unknown is this pin's default); the
+    # excludes keep lock files out of the file set regardless. Hook
+    # ids sort lexicographically in the generated manifest, so this
+    # runs after markdownlint/nixfmt and after ruff: a run that
+    # rewrites fails once with "files were modified", the re-staged
+    # run validates the final bytes (see the markdownlint comment for
+    # why those bytes always pass).
+    prettier = {
+      enable = true;
+      settings.write = true;
+      excludes = [ "\\.lock$" ];
+    };
   };
+
+  # Generated (not committed) formatter configs (#72, klangk
+  # pattern): enterShell writes .prettierignore so hand-run prettier
+  # invocations skip the same trees the hook excludes. The lint
+  # configs that klangk generated here (.markdownlint.yaml,
+  # .yamllint.yml) are expressed natively in git-hooks settings with
+  # this (newer) pin — no files needed.
+  enterShell = ''
+    cat > "$DEVENV_ROOT/.prettierignore" <<'PRETTIER'
+    # Lock files are machine-managed (devenv/uv regenerate them);
+    # prettier's --ignore-unknown also skips them, this keeps direct
+    # prettier runs quiet too.
+    *.lock
+    .devenv/
+    PRETTIER
+  '';
 }

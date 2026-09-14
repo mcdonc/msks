@@ -34,15 +34,15 @@ workspace-<name>-<version>.tar
 
 `disk/image.json` is what msksd reads; schema 2:
 
-| Field               | Meaning                                                        |
-| ------------------- | -------------------------------------------------------------- |
-| `schema`            | `2`                                                            |
-| `name`              | Catalog name, e.g. `debian`                                    |
-| `version`           | Catalog version, e.g. `13.6`; numeric segments sort correctly   |
-| `cmdline`           | Kernel command line for workspace boots                        |
-| `vsock_shell_port`  | AF_VSOCK port the guest's console service listens on           |
-| `kernel_version`    | e.g. `6.12.107+deb13-amd64` (informational)                     |
-| `kernel_format`     | `bzImage` (informational)                                       |
+| Field              | Meaning                                                       |
+| ------------------ | ------------------------------------------------------------- |
+| `schema`           | `2`                                                           |
+| `name`             | Catalog name, e.g. `debian`                                   |
+| `version`          | Catalog version, e.g. `13.6`; numeric segments sort correctly |
+| `cmdline`          | Kernel command line for workspace boots                       |
+| `vsock_shell_port` | AF_VSOCK port the guest's console service listens on          |
+| `kernel_version`   | e.g. `6.12.107+deb13-amd64` (informational)                   |
+| `kernel_format`    | `bzImage` (informational)                                     |
 
 The manifest is self-describing: importing the archive needs nothing
 beside the archive itself.
@@ -60,7 +60,7 @@ boots. A guest image must:
   or built-in) and a service that binds the vsock port and spawns a
   login shell — the shipped image uses
   `socat VSOCK-LISTEN:<port>,reuseaddr,fork
-  EXEC:/bin/bash,pty,ctty,echo=1,icanon=1,stderr,setsid`
+EXEC:/bin/bash,pty,ctty,echo=1,icanon=1,stderr,setsid`
   as `msks-console.service`, `Restart=always`. The pty is a plain
   canonical terminal — the line discipline echoes and edits input —
   and the unit sets `TERM=xterm` so bash's readline engages (#61);
@@ -135,11 +135,12 @@ image. The outline, using a distro's own cloud image as the source:
    - name resolution must follow the resolver DHCP names (however
      the distro wires `/etc/resolv.conf`);
    - a boot with no NIC (a workspace created with `"egress": false`
-    ) must still reach a usable login — the same image serves both
+     ) must still reach a usable login — the same image serves both
      postures.
 
    The shipped image does this with systemd-networkd + resolved; any
    equivalent stack works.
+
 5. Write `disk/image.json` describing your kernel, cmdline, and
    vsock port.
 6. Lay out `boot/` and `disk/` as the layer tree and wrap it:

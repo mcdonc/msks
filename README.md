@@ -114,7 +114,7 @@ MSKSD_STATE_DIR=/tmp/msksd MSKSD_BOOTSTRAP_TOKEN=dev-secret MSKSD_PORT=8660 msks
   `MSKSD_ACCESS_LOG=true` only if you accept credentials in logs. A bad
   token rejects the websocket handshake with HTTP 403.
 - **Rotating the bootstrap token**: setting `MSKSD_BOOTSTRAP_TOKEN` to a
-  new value *adds* a token; the previous bootstrap credential stays valid
+  new value _adds_ a token; the previous bootstrap credential stays valid
   until revoked via the API.
 - **Schema**: the SQLite database is created and upgraded by Alembic at
   startup (inside the package: `msks/migrations`).
@@ -249,7 +249,7 @@ Workspaces are networked from creation — `msks create ws`, or a bare
 (or `"egress": false`) boots NIC-less — and the whole path lives in
 the appliance:
 
-```
+```text
 workspace VM ──virtio-net──► per-VM tap ──► per-VM nftables chain
                                                 │  guest → uplink: accept
                                                 ▼
@@ -308,7 +308,7 @@ Transport (#21), in the preferred vsock-first shape:
 - The guest loads `vmw_vsock_virtio_transport` (systemd-modules-load)
   and runs `msks-console.service`: Debian's own socat (built
   WITH_VSOCK) as `VSOCK-LISTEN:1023,reuseaddr,fork
-  EXEC:/bin/bash,pty,ctty,echo=1,icanon=1,stderr,setsid`, restarted
+EXEC:/bin/bash,pty,ctty,echo=1,icanon=1,stderr,setsid`, restarted
   by systemd if it dies. One Debian bash on a pty per connection.
   The pty is a plain canonical terminal — ISIG, ONLCR, ECHO, and
   ICANON all on: Ctrl-C generates SIGINT in the guest, output

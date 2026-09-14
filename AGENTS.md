@@ -232,4 +232,3 @@ entries under it.
 - Put the phrase in its own sentence in the Summary (e.g. "Closes #2055."),
   and check the issue state after merging; if it is still open, close it
   with a comment recording the landing commits.
-

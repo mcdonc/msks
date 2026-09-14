@@ -39,9 +39,11 @@ let
       rel == "pyproject.toml"
       || rel == "README.md"
       || (type == "directory" && (rel == "src" || rel == "src/msks"))
-      || (lib.hasPrefix "src/msks/msks" rel
+      || (
+        lib.hasPrefix "src/msks/msks" rel
         && !lib.hasSuffix "__pycache__" rel
-        && !lib.hasSuffix ".pyc" rel);
+        && !lib.hasSuffix ".pyc" rel
+      );
   };
 in
 buildPythonPackage {

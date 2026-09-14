@@ -1,5 +1,6 @@
 """Entry point and server-config wiring."""
 
+import msks.server.main as main_mod
 import pytest
 from msks.app import build_app
 from msks.server.main import main, server_config, ssl_paths
@@ -40,8 +41,6 @@ def test_main_version(capsys: pytest.CaptureFixture) -> None:
 
 
 def test_serve_resolves_tls(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    import msks.server.main as main_mod
-
     monkeypatch.setattr(main_mod, "run_forever", lambda app: None)
     app = app_with(ServerSettings(db_path=tmp_path / "x.db"))
     main_mod.serve(app, no_tls=False)
@@ -50,8 +49,6 @@ def test_serve_resolves_tls(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
 
 
 def test_serve_no_tls(monkeypatch: pytest.MonkeyPatch) -> None:
-    import msks.server.main as main_mod
-
     monkeypatch.setattr(main_mod, "run_forever", lambda app: None)
     app = app_with(ServerSettings())
     main_mod.serve(app, no_tls=True)
@@ -59,8 +56,6 @@ def test_serve_no_tls(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_main_runs_serve(monkeypatch: pytest.MonkeyPatch) -> None:
-    import msks.server.main as main_mod
-
     seen = {}
     monkeypatch.setattr(
         main_mod, "serve", lambda app, no_tls: seen.update(no_tls=no_tls)
@@ -72,8 +67,6 @@ def test_main_runs_serve(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_serve_operator_certs_skip_fingerprint(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
-    import msks.server.main as main_mod
-
     monkeypatch.setattr(main_mod, "run_forever", lambda app: None)
     app = app_with(
         ServerSettings(
