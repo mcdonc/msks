@@ -175,6 +175,14 @@ let
     # whole boot. A too-early start self-heals through Restart=
     # always, and StartLimitIntervalSec=0 keeps systemd's default
     # burst limit from ending those retries.
+    #
+    # The pty is a plain canonical terminal: ISIG, ONLCR, ECHO, and
+    # ICANON all on. The line discipline echoes and edits input for
+    # programs that read stdin directly, and TERM=xterm lets bash's
+    # readline take over editing while it is active (#61). systemd
+    # hands services TERM=dumb; bash answers a dumb terminal by
+    # turning readline off, and with the pty also at echo=0 the
+    # typed input reached nothing that would show it.
     printf '%s\n' \
       '[Unit]' \
       'Description=msks vsock console (one shell per connection)' \
@@ -185,7 +193,8 @@ let
       'StartLimitIntervalSec=0' \
       ''' \
       '[Service]' \
-      'ExecStart=/usr/bin/socat VSOCK-LISTEN:${toString vsockShellPort},reuseaddr,fork EXEC:/bin/bash,pty,ctty,echo=0,icanon=0,stderr,setsid' \
+      'Environment=TERM=xterm' \
+      'ExecStart=/usr/bin/socat VSOCK-LISTEN:${toString vsockShellPort},reuseaddr,fork EXEC:/bin/bash,pty,ctty,echo=1,icanon=1,stderr,setsid' \
       'Restart=always' \
       'RestartSec=0.1' \
       'StandardInput=null' \

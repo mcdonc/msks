@@ -59,8 +59,13 @@ boots. A guest image must:
   AF_VSOCK, so the guest needs `vmw_vsock_virtio_transport` (module
   or built-in) and a service that binds the vsock port and spawns a
   login shell — the shipped image uses
-  `socat VSOCK-LISTEN:<port>,reuseaddr,fork EXEC:/bin/bash,...`
-  as `msks-console.service`, `Restart=always`.
+  `socat VSOCK-LISTEN:<port>,reuseaddr,fork
+  EXEC:/bin/bash,pty,ctty,echo=1,icanon=1,stderr,setsid`
+  as `msks-console.service`, `Restart=always`. The pty is a plain
+  canonical terminal — the line discipline echoes and edits input —
+  and the unit sets `TERM=xterm` so bash's readline engages (#61);
+  a service without these settings serves a shell that cannot echo
+  what the user types.
 - **Answer the ACPI power button.** `stop` presses the power button
   (`vm.power-button`) and waits; the guest's own handler runs the
   clean shutdown that flushes its disks — systemd-logind does this
