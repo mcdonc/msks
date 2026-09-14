@@ -483,6 +483,15 @@ let
         # parsed as binary utmp records. Copy the read-only store
         # tree to writable scratch and give every linked path its
         # own inode before packing.
+        #
+        # If this defense is ever not enough — another consumer of
+        # the tree-shaped debianRoot tripping on fabricated links —
+        # the structural fix is to stop carrying a filesystem through
+        # the store as a tree: have the extraction derivation emit an
+        # opaque root.tar instead (tar records hardlinks explicitly,
+        # and the store cannot dedup inside a single blob), and
+        # untar it here. That also preserves the source image's
+        # legitimate hardlinks, which this pass breaks.
         rm -rf work
         cp -a --reflink=auto "$debianRoot/root" work
         # The store tree is read-only; the scratch copy must be
