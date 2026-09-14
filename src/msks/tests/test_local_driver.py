@@ -854,6 +854,7 @@ def test_vm_net_maps_an_attachment() -> None:
 @pytest.fixture
 async def egress_env(env, tmp_path: Path, monkeypatch):
     """The env app with egress armed: stub tools, fake services."""
+    from msks.microvm import VmSpec as Spec
     from msks.net import manager as manager_mod
     from msks.net.manager import NetManager
     from msks.settings import NetSettings
@@ -871,6 +872,13 @@ async def egress_env(env, tmp_path: Path, monkeypatch):
     monkeypatch.setattr(manager_mod, "enable_forwarding", lambda path=None: None)
     manager = NetManager(app, dhcp_factory=FakeService, dns_factory=FakeService)
     app.state.net = manager
+    # claim_slice records slices on workspace rows (#70 review): the
+    # egress boots need a real model behind them.
+    app.state.settings.server.db_path = tmp_path / "egress.db"
+    app.state.model.migrate()
+    await app.state.model.create_workspace(
+        Spec(workspace_id=WID, kernel=Path("/k"), rootfs=Path("/r"), egress=True)
+    )
     await manager.start()
     return app, ip_log
 

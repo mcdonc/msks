@@ -43,6 +43,20 @@ if ! ip link show dev "$tap" >/dev/null 2>&1; then
   sudo -n ip link set "$tap" up
 fi
 
+# Egress uplink for the appliance's own subnet (#52): workspace
+# traffic leaves the appliance masqueraded as 192.168.77.2, and the
+# host routes it the rest of the way — forwarding on, plus NAT and
+# forward rules for the bridge subnet out the host's default route.
+# Idempotent (check-then-add), same as the bridge above; the iptables
+# compatibility layer speaks for nftables-backed hosts too.
+sudo -n sysctl -qw net.ipv4.ip_forward=1
+ipt_rule() { # ipt_rule <rule args...>: -C if present, else -A
+  sudo -n iptables -C "$@" >/dev/null 2>&1 || sudo -n iptables -A "$@"
+}
+ipt_rule FORWARD -i "$bridge" -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j ACCEPT
+ipt_rule FORWARD -o "$bridge" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+ipt_rule -t nat POSTROUTING -s "${host_ip}/24" ! -o "$bridge" -j MASQUERADE
+
 # --- persistent state ---------------------------------------------------
 # MSKSD_APPLIANCE_STATE can relocate the state disk (e.g. /run for
 # ephemeral dev state); the template seeds it once per install.

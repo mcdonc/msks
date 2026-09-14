@@ -434,7 +434,7 @@ async def test_k8s_create_records_no_host(client, monkeypatch) -> None:
     app.state.settings.vmm.driver = "k8s"
     response = await http.post(
         "/api/v1/workspaces",
-        json={"id": "ws-k8s", "kernel": "/k", "rootfs": "/r"},
+        json={"id": "ws-k8s", "kernel": "/k", "rootfs": "/r", "egress": False},
         headers=auth(),
     )
     assert response.status_code == 201
@@ -507,3 +507,24 @@ async def test_create_records_egress(client) -> None:
         headers=auth(),
     )
     assert quiet.json()["egress"] is False
+
+
+async def test_create_refuses_egress_on_k8s(client, monkeypatch) -> None:
+    """Egress is the create default, so the k8s backend refuses at
+    CREATE (#70 review) — not at first boot, which would trap the id
+    until delete+recreate."""
+    http, app, _stub = client
+    monkeypatch.setattr(app.state.settings.vmm, "driver", "k8s")
+    refused = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-k8s", "kernel": "/k", "rootfs": "/r", "egress": True},
+        headers=auth(),
+    )
+    assert refused.status_code == 400
+    assert 'egress": false' in refused.json()["detail"]
+    quiet = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-k8s", "kernel": "/k", "rootfs": "/r", "egress": False},
+        headers=auth(),
+    )
+    assert quiet.status_code == 201

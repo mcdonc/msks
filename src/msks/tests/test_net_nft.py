@@ -40,8 +40,10 @@ def test_vm_ruleset_scopes_the_tap() -> None:
     # nothing else in the appliance.
     assert "type filter hook input priority filter" in ruleset
     assert 'iifname "msks-tap" udp dport 67 accept' in ruleset
-    assert 'iifname "msks-tap" ip daddr 172.31.0.2 udp dport 53 accept' in ruleset
-    assert 'iifname "msks-tap" ip daddr 172.31.0.2 tcp dport 53 accept' in ruleset
+    assert (
+        'iifname "msks-tap" ip saddr 172.31.0.1 ip daddr 172.31.0.2 udp dport 53 accept'
+    ) in ruleset
+    assert "tcp dport 53" not in ruleset  # UDP-only resolver (#70 review)
 
 
 async def test_apply_base_and_install_vm(tools) -> None:

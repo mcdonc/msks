@@ -248,12 +248,13 @@ let
         mknod /dev/net/tun c 10 200
       fi
 
-      # The resolver the egress forwarder relays to (#52): the
-      # bridge gateway — the host — by default. Point the kernel
-      # cmdline's msksd.egress_dns_upstream= at another resolver to
-      # override (the env bridge below turns it into
-      # MSKSD_EGRESS_DNS_UPSTREAM). /run is tmpfs: the root stays ro.
-      printf 'nameserver %s\n' "${net.gateway}" > /run/resolv.conf
+      # The resolver the egress forwarder relays to (#52): a public
+      # resolver by default — the host bridge gateway runs no
+      # listener. Point the kernel cmdline's msksd.egress_dns_upstream=
+      # at another resolver to override (the env bridge below turns
+      # it into MSKSD_EGRESS_DNS_UPSTREAM). /run is tmpfs: the root
+      # stays ro.
+      printf 'nameserver 9.9.9.9\n' > /run/resolv.conf
 
       # React to the host's ch-remote shutdown (ACPI power button).
       acpid

@@ -535,6 +535,30 @@ async def test_appliance_boot_and_workspace() -> None:
                 console_got += (
                     message if isinstance(message, bytes) else message.encode()
                 )
+
+            # Guest networking, end to end through the appliance
+            # (#52, #70 review): the default (egress) workspace took a
+            # DHCP lease from the daemon's resolver path — the address
+            # on the NIC and a resolution through the forwarder. The
+            # host side must be wired (appliance-setup.sh: forwarding,
+            # NAT, and the appliance's upstream resolver) for these to
+            # pass, which is exactly the posture being pinned.
+            async def await_marker(needle: bytes, deadline_s: float = 180.0) -> bytes:
+                got = b""
+                end = loop.time() + deadline_s
+                while needle not in got:
+                    if loop.time() >= end:
+                        raise AssertionError(
+                            f"console never showed {needle!r}; got: {got[-400:]!r}"
+                        )
+                    message = await asyncio.wait_for(shell_ws.recv(), 30.0)
+                    got += message if isinstance(message, bytes) else message.encode()
+                return got
+
+            await shell_ws.send(b"ip -4 addr | grep 172.31\n")
+            await await_marker(b"172.31.")
+            await shell_ws.send(b"getent hosts deb.debian.org\n")
+            await await_marker(b"deb.debian")
         response = await client.get(f"{base}/workspaces/{wid}", headers=headers)
         assert response.json().get("status") == "running", response.text
 
@@ -603,7 +627,7 @@ needs_egress = pytest.mark.skipif(
 @needs_egress
 async def test_local_egress_boot() -> None:
     """DHCP address, daemon resolver, NAT'd TCP — end to end (#52)."""
-    from msks.settings import NetSettings
+    from msks.settings import NetSettings, ServerSettings
 
     nft_tool = os.environ.get("MSKSD_TEST_NFT") or shutil.which("nft") or "nft"
     ip_tool = os.environ.get("MSKSD_TEST_IP") or shutil.which("ip") or "ip"
@@ -616,9 +640,15 @@ async def test_local_egress_boot() -> None:
             ip_tool=ip_tool,
             nft_tool=nft_tool,
         ),
+        server=ServerSettings(db_path=state_dir / "smoke.db"),
     )
     app = build_app(settings)
     microvm = app.state.microvm
+    # The daemon's lifespan migrates and the API creates the row
+    # before any launch; this smoke drives the driver directly, so it
+    # performs the same setup (claim_slice records the pool slice on
+    # the workspace row, #70 review).
+    app.state.model.migrate()
     wid = f"smoke-{uuid.uuid4().hex[:8]}"
     serial_log = state_dir / "vms" / wid / "serial.log"
     spec = VmSpec(
@@ -631,6 +661,7 @@ async def test_local_egress_boot() -> None:
     )
     try:
         await app.state.net.start()
+        await app.state.model.create_workspace(spec)
         await microvm.launch(spec)
         await await_guest_up(serial_log)
         # DHCP: the /30's guest address and the tap as the gateway.

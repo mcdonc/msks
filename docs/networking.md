@@ -28,20 +28,23 @@ workspace VM ──virtio-net──► per-VM tap ──► per-VM nftables chai
 Each egress workspace owns a dedicated /30 carved from the
 configured pool (`MSKSD_EGRESS_SUBNET`, default `172.31.0.0/16`):
 the guest holds the first host address, the appliance-side tap the
-second. The workspace's address, tap name, nftables table, and NIC
-MAC all derive deterministically from the workspace id, so a
-stop/start cycle reassembles the same network without state.
+second. The workspace's tap name, nftables table, and NIC MAC derive
+deterministically from the workspace id, and the pool slice is
+recorded on the workspace row at first attach — so stop/start cycles,
+daemon restarts, and even digest collisions between workspace ids
+keep the same address.
 
 msksd is the only DHCP server and the only resolver the guest ever
 sees: the DHCP offer names the tap as gateway and as DNS server, and
 a small forwarder on the tap answers port 53 by relaying to the
 appliance's own upstream (`MSKSD_EGRESS_DNS_UPSTREAM`, or the first
-nameserver in the appliance's `/etc/resolv.conf` — the appliance
-writes its bridge gateway there at boot). The forwarder answers
-queries from its own guest only; anything else arriving on the tap
-is dropped unread, so a spoofed-source datagram cannot turn the
-appliance into a reflection amplifier. #69 grows the naming layer
-— query cache, name learning for prompts, and the lockout that
+nameserver in the appliance's `/etc/resolv.conf`). The resolver
+speaks UDP; TCP/53 has no listener, so a query needing TCP fallback
+(DNSSEC validation, very large RRsets) fails fast. The forwarder
+answers queries from its own guest only; anything else arriving on
+the tap is dropped unread, so a spoofed-source datagram cannot turn
+the appliance into a reflection amplifier. #69 grows the naming
+layer — query cache, name learning for prompts, and the lockout that
 keeps DNS from being routed around — behind that same offered
 resolver.
 
@@ -98,13 +101,17 @@ every backend, and the one that needs zero enforcement machinery.
 | `MSKSD_EGRESS_DNS_TIMEOUT_S` | `3.0`              | How long the forwarder waits on the upstream   |
 | `MSKSD_IP_TOOL` / `MSKSD_NFT_TOOL` | `ip` / `nft` | The plumbing tools' paths                |
 
-Egress needs the daemon to hold `CAP_NET_ADMIN`. The appliance sets
-`MSKSD_EGRESS_ENABLED=true` and runs as root, so workspaces are
-networked out of the box there. When msksd cannot arm the plumbing
-(a dev-shell daemon, say), it stays up for everything else and every
-egress workspace **refuses to boot** with a named cause, rather than
-running with a half-open path — create those with `"egress": false`
-instead.
+Egress needs the daemon to hold `CAP_NET_ADMIN`, and the appliance's
+own uplink needs the host side wired — `scripts/appliance-setup.sh`
+performs both classes of setup as its documented privileged step:
+host forwarding + NAT for the appliance's bridge subnet, so traffic
+masqueraded out of the appliance reaches the internet. The appliance
+sets `MSKSD_EGRESS_ENABLED=true` and runs as root, so workspaces are
+networked there once the setup script has run. When msksd cannot arm
+the plumbing (a dev-shell daemon, say), it stays up for everything
+else and every egress workspace **refuses to boot** with a named
+cause, rather than running with a half-open path — create those with
+`"egress": false` instead.
 
 ## Backend support
 

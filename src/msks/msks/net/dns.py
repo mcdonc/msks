@@ -20,6 +20,9 @@ from pathlib import Path
 
 DNS_PORT = 53
 
+# A full-size DNS datagram: the biggest answer UDP carries.
+MAX_DATAGRAM = 65535
+
 
 def upstream_from_resolv(
     path: Path = Path("/etc/resolv.conf"),
@@ -98,25 +101,30 @@ class DnsForwarder:
             if sock is None:
                 return
             try:
-                data, client = await loop.sock_recvfrom(sock, 4096)
+                data, client = await loop.sock_recvfrom(sock, MAX_DATAGRAM)
             except OSError:
                 return  # the socket closed underneath the loop
             if client[0] != self._client_ip:
                 continue  # not this tap's guest: dropped unread
-            task = asyncio.create_task(self._relay(data, client))
+            task = asyncio.create_task(self._relay(sock, data, client))
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)
 
-    async def _relay(self, query: bytes, client: tuple[str, int]) -> None:
+    async def _relay(
+        self, sock: socket.socket, query: bytes, client: tuple[str, int]
+    ) -> None:
         upstream = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         upstream.setblocking(False)
         loop = asyncio.get_running_loop()
         try:
             await loop.sock_sendto(upstream, query, self._upstream)
             answer = await asyncio.wait_for(
-                loop.sock_recvfrom(upstream, 4096), self._timeout_s
+                loop.sock_recvfrom(upstream, MAX_DATAGRAM), self._timeout_s
             )
-            await loop.sock_sendto(self._sock, answer[0], client)
+            # The captured reference, not self._sock: a stop() between
+            # dispatch and reply would otherwise race the reply onto a
+            # closed socket (an AttributeError past the OSError guard).
+            await loop.sock_sendto(sock, answer[0], client)
         except TimeoutError, OSError:
             # No upstream answer inside the window: silence. The
             # client's own resolver timeout retries or fails; an

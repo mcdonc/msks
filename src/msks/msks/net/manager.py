@@ -56,7 +56,13 @@ class NetServices:
 
 
 def enable_forwarding(path: Path = FORWARDING) -> None:
-    """Turn the appliance into a router (root in the appliance)."""
+    """Turn the appliance into a router (root in the appliance).
+
+    Deliberately one-way: ``stop()`` never flips it back. Inside the
+    appliance the setting is part of the machine's identity; on a dev
+    host, whatever enabled it (the root smoke, say) owns restoring
+    it.
+    """
     try:
         path.write_text("1")
     except OSError as exc:
@@ -148,9 +154,35 @@ class NetManager:
         """The dotted-quad mask every /30 slice carries."""
         return str(IPv4Network((0, alloc.SLICE_PREFIX)).netmask)
 
+    async def claim_slice(self, workspace_id: str) -> int:
+        """The workspace's slice: the recorded one, or a fresh claim
+        recorded on the row (#70 review).
+
+        Recording is what makes the /30 stable — across stop/start,
+        daemon restarts, and digest collisions between workspace ids
+        (the fresh-claim walk only sees live attachments; the row
+        remembers forever).
+        """
+        recorded = await self.app.state.model.egress_slice(workspace_id)
+        if recorded is not None:
+            self._claim_live(recorded, workspace_id)
+            return recorded
+        slice_ = self.free_slice(workspace_id)
+        await self.app.state.model.set_egress_slice(workspace_id, slice_)
+        return slice_
+
+    def _claim_live(self, slice_: int, workspace_id: str) -> None:
+        """Mark a recorded slice live, refusing a conflicting holder."""
+        if slice_ in self._used_slices:
+            raise MicrovmError(
+                f"egress slice {slice_} recorded for {workspace_id} is "
+                "held by another live workspace; delete one of them"
+            )
+        self._used_slices.add(slice_)
+
     def free_slice(self, workspace_id: str) -> int:
-        """Pick and claim this workspace's slice (stable start,
-        walked forward past collisions)."""
+        """Pick and claim a fresh slice (stable start, walked forward
+        past live collisions)."""
         count = alloc.slice_count(self.app.state.settings.net.pool)
         start = alloc.slice_index(workspace_id, count)
         for step in range(count):
@@ -163,7 +195,7 @@ class NetManager:
     async def _build(self, workspace_id: str) -> NetAttachment:
         """Create tap + chain + services for one workspace."""
         settings = self.app.state.settings
-        slice_ = self.free_slice(workspace_id)
+        slice_ = await self.claim_slice(workspace_id)
         try:
             net = alloc.slice_net(settings.net.pool, slice_)
             attachment = NetAttachment(

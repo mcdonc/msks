@@ -20,6 +20,9 @@ async def test_create_tap_runs_the_three_commands(tools) -> None:
     settings, log = tools
     await taps.create_tap("msks-abc", "172.31.0.2/30", settings)
     assert log_lines(log) == [
+        # The sweep first (#70 review): a tap left by an unclean death
+        # converges instead of wedging the recovery boot.
+        "link del dev msks-abc",
         "tuntap add dev msks-abc mode tap",
         "addr add 172.31.0.2/30 dev msks-abc",
         "link set dev msks-abc up",

@@ -75,11 +75,15 @@ def vm_ruleset(
         "  chain ingress {\n"
         "    type filter hook input priority filter; policy accept;\n"
         # DHCP speaks broadcast (discover to 255.255.255.255), so
-        # port 67 from the tap is accepted without a daddr match;
-        # the resolver rules stay unicast to the tap address.
+        # port 67 from the tap is accepted without a daddr match; the
+        # resolver rule stays unicast to the tap address and pinned to
+        # the guest's source (the forwarder checks per datagram, the
+        # kernel rule is free defense-in-depth). The resolver speaks
+        # UDP only — TCP/53 has no listener, so the chain does not
+        # accept it.
         f'    iifname "{tap}" udp dport 67 accept\n'
-        f'    iifname "{tap}" ip daddr {tap_ip} udp dport 53 accept\n'
-        f'    iifname "{tap}" ip daddr {tap_ip} tcp dport 53 accept\n'
+        f'    iifname "{tap}" ip saddr {guest_ip} ip daddr {tap_ip} '
+        f"udp dport 53 accept\n"
         f'    iifname "{tap}" drop\n'
         "  }\n"
         "}\n"

@@ -163,7 +163,7 @@ def reply_dest(addr: tuple[str, int], flags: bytes) -> tuple[str, int]:
     yet (source 0.0.0.0) cannot receive unicast; the broadcast flag
     says the same for configured clients.
     """
-    broadcast = addr[0] == "0.0.0.0" or bool(flags[0] & 0x80)
+    broadcast = addr[0] == "0.0.0.0" or bool(flags[0] & (BROADCAST_FLAG >> 8))
     if broadcast:
         return ("255.255.255.255", CLIENT_PORT)
     return (addr[0], addr[1])

@@ -308,6 +308,18 @@ def build_api(app) -> FastAPI:
     async def create_workspace(body: WorkspaceCreate) -> Response:
         if await app.state.model.get_workspace(body.id) is not None:
             raise HTTPException(status_code=409, detail="workspace exists")
+        if body.egress and app.state.settings.vmm.driver == "k8s":
+            # Refuse at create, not first boot: a workspace that can
+            # never start (egress is the create default) traps the id
+            # until delete+recreate (#70 review).
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "egress is not served by the k8s backend yet "
+                    "(NetworkPolicy parity is #69); create with "
+                    '"egress": false'
+                ),
+            )
         boot = resolve_boot(app, body)
         # The persistent artifacts (#14) come before the row: a refused
         # create (a leftover artifact from a previous workspace of this

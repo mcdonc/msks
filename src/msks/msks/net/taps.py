@@ -18,7 +18,14 @@ ABSENT_DEVICE = b"Cannot find device"
 
 
 async def create_tap(name: str, address: str, settings) -> None:
-    """Create the tap, give it the appliance-side address, raise it."""
+    """Create the tap, give it the appliance-side address, raise it.
+
+    A tap left behind by an unclean daemon death is swept first
+    (absence tolerated): the crash-recovery boot converges silently
+    instead of failing once on "File exists" and succeeding on the
+    retry.
+    """
+    await remove_tap(name, settings)
     await ip_cmd(
         settings, ["tuntap", "add", "dev", name, "mode", "tap"], f"tap create {name}"
     )

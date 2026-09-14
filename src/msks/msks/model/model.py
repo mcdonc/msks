@@ -221,6 +221,25 @@ class Model:
             await session.commit()
             return result.rowcount > 0
 
+    async def egress_slice(self, workspace_id: str) -> int | None:
+        """The workspace's recorded egress pool slice, None when never
+        attached (#70 review)."""
+        row = await self.get_workspace(workspace_id)
+        return None if row is None else row.get("egress_slice")
+
+    async def set_egress_slice(self, workspace_id: str, slice_: int) -> bool:
+        """Record the workspace's pool slice; False when the row is
+        absent."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            result = await session.execute(
+                update(Workspace)
+                .where(Workspace.id == workspace_id)
+                .values(egress_slice=slice_)
+            )
+            await session.commit()
+            return result.rowcount > 0
+
     async def delete_workspace(self, workspace_id: str) -> bool:
         """Remove a workspace row; False when absent."""
         maker = sessionmaker_for(self.engine())
@@ -267,6 +286,7 @@ def workspace_dict(row: Workspace) -> dict:
         "root_mib": row.root_mib,
         "home_mib": row.home_mib,
         "egress": row.egress,
+        "egress_slice": row.egress_slice,
         "status": row.status,
         "created_at": row.created_at.isoformat(),
     }

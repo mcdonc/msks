@@ -266,13 +266,14 @@ NIC, on every backend.
 
 Egress arms while `MSKSD_EGRESS_ENABLED=true` and the daemon holds
 `CAP_NET_ADMIN` — the appliance sets both, so workspaces are
-networked out of the box. A daemon that cannot arm the plumbing
-still serves everything else, and an egress workspace refuses to
-boot with the cause named (boot those with `--no-egress`). On k8s,
-egress workspaces refuse to boot until the NetworkPolicy parity
-lands (#69). Per-flow consent (allow/deny holds on each new
-connection) is #69. See `docs/networking.md` for the full
-reference.
+networked there once its setup script has wired the host side
+(forwarding + NAT for the appliance's bridge). A daemon that cannot
+arm the plumbing still serves everything else, and an egress
+workspace refuses to boot with the cause named (boot those with
+`--no-egress`). On k8s, create with `"egress": false` — the backend
+refuses egress creates until the NetworkPolicy parity lands (#69).
+Per-flow consent (allow/deny holds on each new connection) is #69.
+See `docs/networking.md` for the full reference.
 
 ### The workspace shell (`msks shell`) (#21)
 

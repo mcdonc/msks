@@ -35,13 +35,18 @@ class FakeService:
 
 
 @pytest.fixture
-def net_app(tmp_path: Path, monkeypatch):
+async def net_app(tmp_path: Path, monkeypatch):
     """An app whose egress is enabled and armed with stub tools.
 
     Real /proc writes and real service sockets stay out: forwarding
     is patched, and the manager runs the fake services. The DHCP and
     DNS constructors' arguments are still asserted through the fakes.
+    The model is a real one on a scratch database: claim_slice
+    records pool slices on workspace rows (#70 review).
     """
+    from msks.microvm import VmSpec
+    from msks.settings import ServerSettings
+
     ip_log = tmp_path / "ip.log"
     nft_log = tmp_path / "nft.log"
     settings = Settings(
@@ -50,12 +55,18 @@ def net_app(tmp_path: Path, monkeypatch):
             ip_tool=str(stub_ip(tmp_path, ip_log)),
             nft_tool=str(stub_nft(tmp_path, nft_log)),
             dns_upstream="10.9.9.9",
-        )
+        ),
+        server=ServerSettings(db_path=tmp_path / "net.db"),
     )
     app = build_app(settings)
     monkeypatch.setattr(manager_mod, "enable_forwarding", lambda path=None: None)
     manager = NetManager(app, dhcp_factory=FakeService, dns_factory=FakeService)
     app.state.net = manager
+    app.state.model.migrate()
+    for wid in ("ws-a", "ws-b", "ws-c"):
+        await app.state.model.create_workspace(
+            VmSpec(workspace_id=wid, kernel=Path("/k"), rootfs=Path("/r"), egress=True)
+        )
     return app, ip_log, nft_log
 
 
@@ -191,8 +202,13 @@ async def test_stop_detaches_every_workspace(net_app) -> None:
     await manager.attach("ws-a", want=True)
     await manager.attach("ws-b", want=True)
     await manager.stop()
-    deletions = [line for line in log_lines(ip_log) if line.startswith("link del dev")]
-    assert len(deletions) == 2
+    # Two distinct taps torn down (the create-time sweeps appear too).
+    taps = {
+        line.split()[-1]
+        for line in log_lines(ip_log)
+        if line.startswith("link del dev")
+    }
+    assert taps == {alloc.tap_name("ws-a"), alloc.tap_name("ws-b")}
     assert not manager._attachments
 
 
@@ -293,3 +309,28 @@ async def test_detach_releases_the_slice_for_the_next_boot(net_app) -> None:
     assert second.tap_ip == first.tap_ip
     assert second.slice == first.slice
     await manager.detach("ws-a")
+
+
+async def test_recorded_slice_survives_a_daemon_restart(net_app) -> None:
+    """The slice is recorded on the row (#70 review): a fresh manager
+    on the same database reassembles the same /30 — no walk, no
+    swap."""
+    app, _ip, _nft = net_app
+    first = await (await ready(app)).attach("ws-a", want=True)
+    await app.state.net.detach("ws-a")
+    restarted = NetManager(app, dhcp_factory=FakeService, dns_factory=FakeService)
+    await restarted.start()
+    again = await restarted.attach("ws-a", want=True)
+    assert again.slice == first.slice
+    assert again.guest_ip == first.guest_ip
+
+
+async def test_recorded_slice_conflict_fails_closed(net_app) -> None:
+    """A recorded slice another live workspace holds is a named
+    refusal, not a silent address share."""
+    app, _ip, _nft = net_app
+    manager = await ready(app)
+    await app.state.model.set_egress_slice("ws-b", 1234)
+    manager._used_slices.add(1234)  # some live workspace holds it
+    with pytest.raises(MicrovmError, match="held by another live workspace"):
+        await manager.attach("ws-b", want=True)
