@@ -346,6 +346,7 @@ let
     pkgs.runCommand "msks-debian-root"
       {
         nativeBuildInputs = [
+          pkgs.gnutar
           pkgs.qemu
           pkgs.e2fsprogs
           pkgs.kmod
@@ -355,7 +356,9 @@ let
       }
       ''
         set -eu
-        root="$out/root"
+        # The tree builds in the derivation's scratch cwd (discarded
+        # with it); the retained output is a single opaque root.tar.
+        root=root-tree
         mkdir -p "$root"
 
         # qcow2 -> raw
@@ -432,7 +435,21 @@ let
 
         # Size the final image from the tree (content-derived, no
         # magic constant): Debian unpacks to ~600M plus headroom.
+        mkdir -p "$out"
         du -s --apparent-size --block-size=4096 "$root" | cut -f1 > "$out"/tree-blocks
+        # The intermediate rides the store as ONE opaque blob, never
+        # as a tree: the store's auto-optimise hardlinks identical
+        # files inside tree-shaped paths (the empty files form one
+        # group of tens of thousands), a store path's contract covers
+        # readable bytes, not inode identity — and mke2fs -d packs
+        # hardlink groups as one inode, which once made the guest's
+        # utmp writes surface in cloud-init's empty __init__.py. A
+        # tarball cannot be deduped from inside; rdump flattens all
+        # hardlinks anyway, so none are recorded. Deterministic
+        # member order keeps rebuilds byte-identical; mtimes are
+        # Debian's own (also deterministic), not normalized.
+        tar --sort=name --owner=0 --group=0 --numeric-owner \
+          -C "$root" -cf "$out/root.tar" .
       '';
 
   # mke2fs -d packs a directory into an ext4 image without mounting
@@ -468,43 +485,23 @@ let
         nativeBuildInputs = [
           pkgs.e2fsprogs
           pkgs.fakeroot
+          pkgs.gnutar
         ];
         fakeEpoch = 1262304000;
       }
       ''
         set -eu
         mkdir -p "$out"
-        # The store's auto-optimise hardlinks identical files (the
-        # tree's empty files form one group of tens of thousands),
-        # and mke2fs -d packs each hardlink group as ONE inode with
-        # many directory entries. At runtime the guest's first write
-        # to one member (utmp, wtmp — empty files) then surfaced in
-        # every other member: cloud-init's empty __init__.py once
-        # parsed as binary utmp records. Copy the read-only store
-        # tree to writable scratch and give every linked path its
-        # own inode before packing.
-        #
-        # If this defense is ever not enough — another consumer of
-        # the tree-shaped debianRoot tripping on fabricated links —
-        # the structural fix is to stop carrying a filesystem through
-        # the store as a tree: have the extraction derivation emit an
-        # opaque root.tar instead (tar records hardlinks explicitly,
-        # and the store cannot dedup inside a single blob), and
-        # untar it here. That also preserves the source image's
-        # legitimate hardlinks, which this pass breaks.
-        rm -rf work
-        cp -a --reflink=auto "$debianRoot/root" work
-        # The store tree is read-only; the scratch copy must be
-        # writable for the de-link pass (and fakeroot's chmods).
+        # The tree arrives as one opaque tarball (see debianRoot):
+        # every path untars to its own inode — rdump flattened all
+        # hardlinks at extraction, and the store cannot dedup inside
+        # a blob — so mke2fs -d can never pack a fabricated shared
+        # inode for the guest's runtime writes to collide in.
+        mkdir work
+        tar -C work -xf "$debianRoot/root.tar"
+        # Extraction restores the recorded (root-owned, r-x) modes;
+        # fakeroot's chmods below need the modes writable first.
         chmod -R u+w work
-        find work -type f -links +1 -exec sh -c '
-          for f do
-            tmp=$(mktemp "$(dirname "$f")/.hl.XXXXXX")
-            cat "$f" > "$tmp" || exit 1
-            chmod --reference="$f" "$tmp" || exit 1
-            mv "$tmp" "$f"
-          done
-        ' sh {} +
         # Content plus 1G of slack: the base keeps room for image
         # updates, and the per-workspace overlay (#14) carries whatever
         # the guest writes beyond it.
@@ -548,7 +545,7 @@ let
         kernel_version=$(basename "$vmlinuz" | sed 's/^vmlinuz-//')
         # Guard against version drift: the catalog label must match the
         # Debian tree this image actually wraps.
-        shipped=$(cat "$debianRoot"/root/etc/debian_version)
+        shipped=$(tar -xOf "$debianRoot/root.tar" ./etc/debian_version)
         if [ "$shipped" != "${imageVersion}" ]; then
           echo "imageVersion ${imageVersion} != /etc/debian_version $shipped" >&2
           exit 1
