@@ -11,7 +11,9 @@ class VmSpec:
 
     Kernel/initrd/rootfs are host paths today (local backend) and are
     passed through to the runner pod verbatim tomorrow (k8s backend),
-    so the spec carries no placement knowledge.
+    so the spec carries no placement knowledge. ``rootfs`` names the
+    *base* image: the VM boots the per-workspace overlay backed by it
+    (#14), and the overlay path is derived from the workspace id.
     """
 
     workspace_id: str
@@ -21,6 +23,10 @@ class VmSpec:
     cpus: int = 2
     mem_mib: int = 1024
     initrd: Path | None = None
+    # Persistent-artifact sizes (#14): the root overlay's virtual
+    # size and the home volume's size, both fixed at create.
+    root_mib: int = 10240
+    home_mib: int = 2048
 
 
 class VmStatus(StrEnum):

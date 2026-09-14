@@ -6,7 +6,9 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config as AlembicConfig
-from sqlalchemy import select, update
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
+from sqlalchemy import create_engine, select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -69,18 +71,39 @@ class Model:
         try:
             command.upgrade(config, "head")
         except OperationalError as exc:
-            # A hard power cut can land between a migration's committed
-            # DDL and its alembic_version stamp (separate transactions):
-            # the next boot then fails with "table already exists" and,
-            # unfixed, wedges the appliance forever. Only our own DDL
-            # can produce that error text here, so it means exactly the
-            # torn state — stamp head and the upgrade becomes a no-op.
-            # Sound while migrations are additive from a single base;
-            # revisit when a migration ever splits DDL across versions.
-            if "already exists" not in str(exc):
-                raise
-            command.stamp(config, "head")
-            command.upgrade(config, "head")
+            self.heal_torn_migration(config, exc)
+
+    def heal_torn_migration(self, config, exc: OperationalError) -> None:
+        """Recover a migration torn by a hard power cut.
+
+        The cut can land between a migration's committed DDL and its
+        alembic_version stamp (separate transactions): the next boot
+        fails with "table already exists" (or, for an add_column
+        re-run, "duplicate column name") and, unfixed, wedges the
+        appliance forever. Only a torn *head* is stamped past: the
+        version row must be absent (the observed #10 shape: DDL done,
+        stamp lost) or sit at head's parent, meaning the torn step is
+        the last pending one. Any earlier gap — or a legitimate
+        future failure worded the same — needs an operator, not a
+        guess, and is re-raised.
+        """
+        torn = "already exists" in str(exc) or "duplicate column name" in str(exc)
+        if not torn or not self.torn_head_is_next(config):
+            raise
+        command.stamp(config, "head")
+        command.upgrade(config, "head")
+
+    def torn_head_is_next(self, config) -> bool:
+        """Whether head is the next step for the stamped version."""
+        script = ScriptDirectory.from_config(config)
+        revisions = [rev.revision for rev in script.walk_revisions()]
+        engine = create_engine(f"sqlite:///{self._db_path()}")
+        try:
+            with engine.connect() as connection:
+                current = MigrationContext.configure(connection).get_current_revision()
+        finally:
+            engine.dispose()
+        return current is None or current == revisions[1]
 
     async def close(self) -> None:
         """Dispose the engine (daemon shutdown; tests swap database
@@ -159,11 +182,13 @@ class Model:
 
     # --- workspaces ---------------------------------------------------------
 
-    async def create_workspace(self, spec: VmSpec) -> dict:
-        """Insert a workspace row from its VM spec."""
+    async def create_workspace(
+        self, spec: VmSpec, image_hash: str | None = None, host: str | None = None
+    ) -> dict:
+        """Insert a workspace row from its VM spec and artifact facts."""
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
-            row = Workspace(**workspace_fields(spec))
+            row = Workspace(**workspace_fields(spec, image_hash, host))
             session.add(row)
             await session.commit()
             return workspace_dict(row)
@@ -208,7 +233,7 @@ class Model:
             return True
 
 
-def workspace_fields(spec: VmSpec) -> dict:
+def workspace_fields(spec: VmSpec, image_hash: str | None, host: str | None) -> dict:
     """The ORM column values a VmSpec maps to."""
     return {
         "id": spec.workspace_id,
@@ -218,6 +243,10 @@ def workspace_fields(spec: VmSpec) -> dict:
         "cmdline": spec.cmdline,
         "cpus": spec.cpus,
         "mem_mib": spec.mem_mib,
+        "image_hash": image_hash,
+        "host": host,
+        "root_mib": spec.root_mib,
+        "home_mib": spec.home_mib,
         "status": "created",
     }
 
@@ -232,6 +261,10 @@ def workspace_dict(row: Workspace) -> dict:
         "cmdline": row.cmdline,
         "cpus": row.cpus,
         "mem_mib": row.mem_mib,
+        "image_hash": row.image_hash,
+        "host": row.host,
+        "root_mib": row.root_mib,
+        "home_mib": row.home_mib,
         "status": row.status,
         "created_at": row.created_at.isoformat(),
     }

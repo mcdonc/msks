@@ -75,6 +75,42 @@ async def await_guest_up(serial_log: Path, timeout_s: float = 60.0) -> None:
     )
 
 
+async def read_until(reader, needle: bytes, timeout_s: float = 30.0) -> bytes:
+    """Read the stream until it carries ``needle``; return the bytes.
+
+    The vsock console is an echoing pty: the sent command and its
+    output both flow back, so the marker proves the guest ran it.
+    """
+    data = b""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_s
+    while needle not in data:
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            raise AssertionError(f"never saw {needle!r}; got: {data[-400:]!r}")
+        chunk = await asyncio.wait_for(reader.read(4096), remaining)
+        if not chunk:
+            raise AssertionError(
+                f"stream closed before {needle!r}; got: {data[-400:]!r}"
+            )
+        data += chunk
+    return data
+
+
+async def run_in_console(microvm, workspace_id: str, command: str, marker: str) -> None:
+    """Run one shell command over the vsock console and wait for its
+    marker — one fresh guest shell session per call."""
+    reader, writer = await microvm.console(workspace_id)
+    try:
+        writer.write(command.encode() + b"\n")
+        await writer.drain()
+        await read_until(reader, marker.encode())
+    finally:
+        writer.close()
+        with contextlib.suppress(Exception):
+            await writer.wait_closed()
+
+
 async def await_pod_running(
     microvm, workspace_id: str, timeout_s: float = 120.0
 ) -> None:
@@ -106,8 +142,9 @@ async def await_pod_running(
 async def test_local_vm_boot_and_shutdown() -> None:
     # A shallow base: deep pytest tmp dirs can push the API socket path
     # past the AF_UNIX 108-byte limit under xdist workers. Shutdown is
-    # the API's vm.shutdown (non-graceful in CH v52: the guest is not
-    # notified) — there is no guest-side power-button handler.
+    # the power-button press — the guest's logind runs the clean
+    # poweroff, which matters with persistent disks (#14: a hard stop
+    # would drop page-cache writes).
     state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
     settings = Settings(vmm=VmmSettings(state_dir=state_dir))
     app = build_app(settings)
@@ -136,6 +173,80 @@ async def test_local_vm_boot_and_shutdown() -> None:
         assert final.status.value in ("stopped", "absent")
     except BaseException:
         # Never leak a live VMM (and its /dev/kvm handle) on failure.
+        with contextlib.suppress(Exception):
+            await microvm.kill(wid)
+        raise
+    finally:
+        with contextlib.suppress(Exception):
+            await microvm.cleanup(wid)
+        shutil.rmtree(state_dir, ignore_errors=True)
+
+
+@needs_local
+async def test_local_persistence_across_restart_and_reset() -> None:
+    """The two persistent artifacts (#14), end to end on real KVM:
+
+    - a root write (what an ``apt install`` does) survives a full
+      stop/start cycle — the overlay, not the base, carries it;
+    - a /home write survives the same cycle — the home volume;
+    - factory reset drops the root write and keeps the /home write.
+    """
+    from msks import persist
+
+    state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
+    settings = Settings(vmm=VmmSettings(state_dir=state_dir))
+    app = build_app(settings)
+    microvm = app.state.microvm
+    wid = f"smoke-{uuid.uuid4().hex[:8]}"
+    serial_log = state_dir / "vms" / wid / "serial.log"
+    spec = VmSpec(
+        workspace_id=wid,
+        kernel=Path(VMLINUX),
+        rootfs=Path(ROOTFS),
+        initrd=Path(INITRD) if INITRD else None,
+        cmdline=CMDLINE or "console=hvc0 root=/dev/vda rw",
+        root_mib=2048,
+        home_mib=256,
+    )
+    root_marker = f"ROOT-{uuid.uuid4().hex[:6]}"
+    home_marker = f"HOME-{uuid.uuid4().hex[:6]}"
+
+    async def boot_and_probe(probe_commands: list[tuple[str, str]]) -> None:
+        await microvm.launch(spec)
+        await await_guest_up(serial_log)
+        for command, marker in probe_commands:
+            await run_in_console(microvm, wid, command, marker)
+        await microvm.shutdown(wid, timeout_s=60)
+
+    try:
+        await microvm.prepare(spec)
+        assert persist.overlay_path(state_dir, wid).is_file()
+        assert persist.home_volume_path(state_dir, wid).is_file()
+        await boot_and_probe(
+            [
+                (f"echo {root_marker} > /root/probe && cat /root/probe", root_marker),
+                (f"echo {home_marker} > /home/probe && cat /home/probe", home_marker),
+            ]
+        )
+        serial_log.unlink(missing_ok=True)
+        await boot_and_probe(
+            [
+                ("cat /root/probe", root_marker),
+                ("cat /home/probe", home_marker),
+            ]
+        )
+        # Factory reset: pristine root, same /home.
+        serial_log.unlink(missing_ok=True)
+        await microvm.reset(wid)
+        assert not persist.overlay_path(state_dir, wid).exists()
+        assert persist.home_volume_path(state_dir, wid).is_file()
+        await boot_and_probe(
+            [
+                ("cat /home/probe", home_marker),
+                ("test ! -e /root/probe && echo GONE-OK", "GONE-OK"),
+            ]
+        )
+    except BaseException:
         with contextlib.suppress(Exception):
             await microvm.kill(wid)
         raise

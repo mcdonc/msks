@@ -50,6 +50,32 @@ def test_nonpositive_poll_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
         Settings.from_env()
 
 
+def test_nonpositive_artifact_sizes_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Artifact sizes are positive integers (#14); the claim size is
+    at least 1 GiB and unset (None) by default — derived at create."""
+    monkeypatch.setenv("MSKSD_ROOT_MIB", "0")
+    with pytest.raises(ValueError, match="MSKSD_ROOT_MIB"):
+        Settings.from_env()
+    monkeypatch.delenv("MSKSD_ROOT_MIB")
+    monkeypatch.setenv("MSKSD_HOME_MIB", "-5")
+    with pytest.raises(ValueError, match="MSKSD_HOME_MIB"):
+        Settings.from_env()
+    monkeypatch.delenv("MSKSD_HOME_MIB")
+    monkeypatch.setenv("MSKSD_K8S_WORKSPACE_STORAGE_GIB", "0")
+    with pytest.raises(ValueError, match="MSKSD_K8S_WORKSPACE_STORAGE_GIB"):
+        Settings.from_env()
+    monkeypatch.setenv("MSKSD_K8S_WORKSPACE_STORAGE_GIB", "soon")
+    with pytest.raises(ValueError, match="MSKSD_K8S_WORKSPACE_STORAGE_GIB"):
+        Settings.from_env()
+    monkeypatch.setenv("MSKSD_K8S_WORKSPACE_STORAGE_GIB", "7")
+    settings = Settings.from_env()
+    assert settings.k8s.workspace_storage_gib == 7
+    monkeypatch.delenv("MSKSD_K8S_WORKSPACE_STORAGE_GIB")
+    assert Settings.from_env().k8s.workspace_storage_gib is None
+
+
 def test_access_log_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MSKSD_ACCESS_LOG", "true")
     assert Settings.from_env().server.access_log is True

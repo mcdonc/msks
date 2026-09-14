@@ -16,9 +16,12 @@ import pytest
 from fake_ch import FakeCH
 from msks.app import build_app
 from msks.microvm import MicrovmError, MicrovmTimeoutError, VmSpec
-from msks.microvm.local import map_ch_state, vm_config
+from msks.microvm import local as local_mod
+from msks.microvm.local import disk_entries, map_ch_state, vm_config
 from msks.microvm.spec import VmStatus
 from msks.settings import Settings, VmmSettings
+
+from msks import persist
 
 WID = "ws-test"
 
@@ -31,14 +34,42 @@ def env(tmp_path: Path):
     per-test tmp trees (GitHub runners nest far deeper than dev
     boxes) can push the API socket path past the AF_UNIX 108-byte
     limit, which _check_socket_path rejects before the test's own
-    subject gets exercised.
+    subject gets exercised. The artifact tools (qemu-img, mkfs.ext4)
+    are stubs too (#14): a recording no-op pair, so launch's heal
+    step creates files without the real binaries.
     """
     stub = tmp_path / "ch-stub"
     stub.write_text("#!/bin/sh\nexec sleep 600\n")
     stub.chmod(0o755)
+    qemu_stub = tmp_path / "qemu-img"
+    qemu_stub.write_text(
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        "  info)\n"
+        "    for img do :; done\n"
+        '    printf \'{"format":"raw","virtual-size":8388608}\\n\'\n'
+        "    ;;\n"
+        "  create)\n"
+        "    shift\n"
+        '    while [ "$#" -gt 1 ]; do\n'
+        '      case "$1" in -f|-F|-b) shift 2 ;; *) break ;; esac\n'
+        "    done\n"
+        '    : > "$1"\n'
+        "    ;;\n"
+        "esac\n"
+    )
+    qemu_stub.chmod(0o755)
+    mkfs_stub = tmp_path / "mkfs.ext4"
+    mkfs_stub.write_text("#!/bin/sh\n: \n")
+    mkfs_stub.chmod(0o755)
     state_dir = Path(tempfile.mkdtemp(prefix="msks-test-", dir="/tmp"))
     settings = Settings(
-        vmm=VmmSettings(cloud_hypervisor=str(stub), state_dir=state_dir)
+        vmm=VmmSettings(
+            cloud_hypervisor=str(stub),
+            state_dir=state_dir,
+            qemu_img=str(qemu_stub),
+            mkfs_ext4=str(mkfs_stub),
+        )
     )
     yield build_app(settings), state_dir, None
     shutil.rmtree(state_dir, ignore_errors=True)
@@ -59,9 +90,13 @@ async def fake(env):
 
 
 def spec(tmp_path: Path) -> VmSpec:
-    return VmSpec(
-        workspace_id=WID, kernel=tmp_path / "vmlinux", rootfs=tmp_path / "rootfs.ext4"
-    )
+    # The base rootfs must exist: launch reads its virtual size for
+    # the overlay (#14).
+    base = tmp_path / "rootfs.ext4"
+    if not base.is_file():
+        with base.open("wb") as handle:
+            handle.truncate(8 * 1024 * 1024)
+    return VmSpec(workspace_id=WID, kernel=tmp_path / "vmlinux", rootfs=base)
 
 
 def test_vm_config_matches_v52_schema(tmp_path: Path) -> None:
@@ -73,21 +108,37 @@ def test_vm_config_matches_v52_schema(tmp_path: Path) -> None:
             cpus=4,
             mem_mib=2048,
         ),
+        disk_entries(tmp_path, WID),
         tmp_path / "serial.log",
     )
     assert config["cpus"] == {"boot_vcpus": 4, "max_vcpus": 4}
     assert config["memory"] == {"size": 2048 * 1024 * 1024}
     assert config["payload"]["kernel"] == str(tmp_path / "k")
     assert config["payload"]["cmdline"] == "console=hvc0 root=/dev/vda rw"
-    assert config["disks"] == [
-        {"path": str(tmp_path / "r"), "readonly": True, "image_type": "Raw"}
-    ]
+    assert config["disks"] == disk_entries(tmp_path, WID)
     assert config["serial"] == {
         "mode": "File",
         "file": str(tmp_path / "serial.log"),
     }
     assert config["console"] == {"mode": "Off"}
     assert "initramfs" not in config["payload"]
+
+
+def test_disk_entries_carry_overlay_and_home(tmp_path: Path) -> None:
+    """The VM's disks (#14): writable overlay over the base first,
+    home volume second — position makes the root device."""
+    overlay, home = disk_entries(tmp_path, WID)
+    assert overlay == {
+        "path": str(tmp_path / "vms" / WID / "root.qcow2"),
+        "readonly": False,
+        "image_type": "Qcow2",
+        "backing_files": True,
+    }
+    assert home == {
+        "path": str(tmp_path / "volumes" / f"{WID}.ext4"),
+        "readonly": False,
+        "image_type": "Raw",
+    }
 
 
 def test_vm_config_with_initrd(tmp_path: Path) -> None:
@@ -98,6 +149,7 @@ def test_vm_config_with_initrd(tmp_path: Path) -> None:
             rootfs=tmp_path / "r",
             initrd=tmp_path / "i",
         ),
+        disk_entries(tmp_path, WID),
         tmp_path / "serial.log",
     )
     assert config["payload"]["initramfs"] == str(tmp_path / "i")
@@ -113,13 +165,15 @@ def test_map_ch_state_covers_v52_states() -> None:
 
 
 async def test_launch_puts_create_then_boot(env, fake, tmp_path: Path) -> None:
-    app, _, _ = env
+    app, state_dir, _ = env
     await app.state.microvm.launch(spec(tmp_path))
     methods = [(m, p) for m, p, _b in fake.requests]
     assert methods == [("PUT", "/api/v1/vm.create"), ("PUT", "/api/v1/vm.boot")]
     body = dict(fake.requests[0][2])
     assert body["payload"]["kernel"] == str(tmp_path / "vmlinux")
     assert body["memory"]["size"] == 1024 * 1024 * 1024
+    # The VM boots its persistent artifacts (#14), never the base.
+    assert body["disks"] == disk_entries(state_dir, WID)
 
 
 async def test_launch_error_maps_and_reaps_process(env, tmp_path: Path) -> None:
@@ -265,7 +319,31 @@ async def test_shutdown_graceful(env, fake, tmp_path: Path) -> None:
 
     fake.on_shutdown.append(guest_powers_off)
     await app.state.microvm.shutdown(WID, timeout_s=5)
-    assert ("PUT", "/api/v1/vm.shutdown") in [(m, p) for m, p, _b in fake.requests]
+    assert ("PUT", "/api/v1/vm.power-button") in [(m, p) for m, p, _b in fake.requests]
+
+
+async def test_shutdown_represses_button_when_guest_ignores_it(
+    env, fake, tmp_path: Path, monkeypatch
+) -> None:
+    """A press during early boot lands before logind listens and is
+    dropped; the driver presses again instead of burning the whole
+    deadline on the one lost event (#14)."""
+    app, _, _ = env
+    await app.state.microvm.launch(spec(tmp_path))
+    proc = app.state.microvm.local._procs[WID]
+    monkeypatch.setattr(local_mod, "POWER_REPRESS_S", 0.05)
+    presses = 0
+
+    def stubborn_until_third_press() -> None:
+        nonlocal presses
+        presses += 1
+        if presses >= 3:
+            fake.state = {"state": "Shutdown"}
+            proc.terminate()
+
+    fake.on_shutdown.append(stubborn_until_third_press)
+    await app.state.microvm.shutdown(WID, timeout_s=5)
+    assert presses == 3
 
 
 async def test_shutdown_timeout_when_guest_never_powers_off(
@@ -361,6 +439,129 @@ async def test_cleanup_removes_dir(env, fake, tmp_path: Path) -> None:
     await app.state.microvm.launch(spec(tmp_path))
     await app.state.microvm.cleanup(WID)
     assert not (state_dir / "vms" / WID).exists()
+    # The home volume dies with the workspace (#14), never with a stop.
+    assert not persist.home_volume_path(state_dir, WID).exists()
+
+
+async def test_prepare_creates_artifacts(env, tmp_path: Path) -> None:
+    app, state_dir, _ = env
+    await app.state.microvm.prepare(spec(tmp_path))
+    assert persist.overlay_path(state_dir, WID).is_file()
+    assert persist.home_volume_path(state_dir, WID).is_file()
+
+
+async def test_prepare_refuses_a_predecessors_artifacts(env, tmp_path: Path) -> None:
+    """Create never reuses another workspace-of-the-same-id's data.
+
+    The leftover is what a failed create whose cleanup could not
+    remove its files leaves behind; adopting it silently would hand
+    the new workspace the predecessor's root and /home.
+    """
+    app, state_dir, _ = env
+    home = persist.home_volume_path(state_dir, WID)
+    home.parent.mkdir(parents=True, exist_ok=True)
+    home.write_bytes(b"predecessor's data")
+    with pytest.raises(MicrovmError, match="already exists.*remove it"):
+        await app.state.microvm.prepare(spec(tmp_path))
+    assert not persist.overlay_path(state_dir, WID).exists()
+
+
+async def test_launch_heals_a_volume_only_leftover(env, fake, tmp_path: Path) -> None:
+    """Launch heals an artifact pair with only the volume present: the
+    overlay is recreated (data recovery), the volume is kept as data."""
+    app, state_dir, _ = env
+    home = persist.home_volume_path(state_dir, WID)
+    home.parent.mkdir(parents=True, exist_ok=True)
+    home.write_bytes(b"predecessor's data")
+    await app.state.microvm.launch(spec(tmp_path))
+    assert persist.overlay_path(state_dir, WID).is_file()
+    assert home.read_bytes() == b"predecessor's data"
+    await app.state.microvm.kill(WID)
+
+
+async def test_prepare_failure_rolls_back_the_pair(env, tmp_path: Path) -> None:
+    """The round-two wedge repro: a tool failure after the volume is
+    made must leave NO artifact, or the strict next create refuses
+    the id forever (the daemon's own leftover)."""
+    app, state_dir, _ = env
+    qemu = tmp_path / "qemu-img"
+    qemu.write_text(
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        "  info)\n"
+        '    printf \'{"format":"raw","virtual-size":8388608}\\n\'\n'
+        "    ;;\n"
+        "  create)\n"
+        "    exit 1\n"
+        "    ;;\n"
+        "esac\n"
+    )
+    qemu.chmod(0o755)
+    with pytest.raises(MicrovmError, match="qemu-img create.*failed"):
+        await app.state.microvm.prepare(spec(tmp_path))
+    assert not persist.overlay_path(state_dir, WID).exists()
+    assert not persist.home_volume_path(state_dir, WID).exists()
+    # Tool fixed: the retry creates the pair and succeeds — the id is
+    # not wedged.
+    qemu.write_text(
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        "  info)\n"
+        '    printf \'{"format":"raw","virtual-size":8388608}\\n\'\n'
+        "    ;;\n"
+        "  create)\n"
+        "    shift\n"
+        '    while [ "$#" -gt 1 ]; do\n'
+        '      case "$1" in -f|-F|-b) shift 2 ;; *) break ;; esac\n'
+        "    done\n"
+        '    : > "$1"\n'
+        "    ;;\n"
+        "esac\n"
+    )
+    await app.state.microvm.prepare(spec(tmp_path))
+    assert persist.overlay_path(state_dir, WID).is_file()
+    assert persist.home_volume_path(state_dir, WID).is_file()
+
+
+async def test_launch_heals_missing_artifacts(env, fake, tmp_path: Path) -> None:
+    """A workspace row predating #14, or a crash mid-create, gets its
+    artifacts back on the next start — data that exists is kept."""
+    app, state_dir, _ = env
+    overlay = persist.overlay_path(state_dir, WID)
+    overlay.parent.mkdir(parents=True, exist_ok=True)
+    overlay.write_bytes(b"precious root writes")
+    await app.state.microvm.launch(spec(tmp_path))
+    assert overlay.read_bytes() == b"precious root writes"
+    assert persist.home_volume_path(state_dir, WID).is_file()
+    await app.state.microvm.kill(WID)
+
+
+async def test_launch_missing_base_maps_to_error(env, tmp_path: Path) -> None:
+    app, _state_dir, _ = env
+    broken = VmSpec(
+        workspace_id=WID,
+        kernel=tmp_path / "vmlinux",
+        rootfs=tmp_path / "never-built.ext4",
+    )
+    with pytest.raises(MicrovmError, match="base image.*not found"):
+        await app.state.microvm.launch(broken)
+
+
+async def test_reset_drops_overlay_keeps_home(env, fake, tmp_path: Path) -> None:
+    app, state_dir, _ = env
+    await app.state.microvm.launch(spec(tmp_path))
+    await app.state.microvm.kill(WID)
+    await app.state.microvm.reset(WID)
+    assert not persist.overlay_path(state_dir, WID).exists()
+    assert persist.home_volume_path(state_dir, WID).is_file()
+
+
+async def test_reset_refuses_a_running_vm(env, fake, tmp_path: Path) -> None:
+    app, _state_dir, _ = env
+    await app.state.microvm.launch(spec(tmp_path))
+    with pytest.raises(MicrovmError, match="stop it before reset"):
+        await app.state.microvm.reset(WID)
+    await app.state.microvm.kill(WID)
 
 
 async def test_driver_switch_and_validation(env) -> None:
@@ -418,7 +619,7 @@ async def test_shutdown_escalates_when_api_dies_midcall(env, monkeypatch) -> Non
     async def die(self):
         raise MicrovmError("connection refused mid-call")
 
-    monkeypatch.setattr(local_mod.CloudHypervisorApi, "shutdown", die)
+    monkeypatch.setattr(local_mod.CloudHypervisorApi, "power_button", die)
     await app.state.microvm.driver.shutdown(WID, timeout_s=2)
     await sleeper.wait()  # reap the zombie; kill(pid,0) succeeds until then
     with pytest.raises(ProcessLookupError):
@@ -428,6 +629,7 @@ async def test_shutdown_escalates_when_api_dies_midcall(env, monkeypatch) -> Non
 def test_vm_config_with_vsock(tmp_path: Path) -> None:
     config = vm_config(
         VmSpec(workspace_id=WID, kernel=tmp_path / "k", rootfs=tmp_path / "r"),
+        disk_entries(tmp_path, WID),
         tmp_path / "serial.log",
         vsock_socket=tmp_path / "vms" / WID / "vsock.sock",
     )
@@ -502,6 +704,9 @@ async def test_default_console_unsupported() -> None:
     from msks.microvm.driver import MicrovmDriver
 
     class Minimal(MicrovmDriver):
+        async def prepare(self, spec):
+            return None
+
         async def launch(self, spec):
             return None
 
@@ -515,6 +720,9 @@ async def test_default_console_unsupported() -> None:
             return None
 
         async def cleanup(self, workspace_id):
+            return None
+
+        async def reset(self, workspace_id):
             return None
 
     with pytest.raises(MicrovmError, match="no console support"):

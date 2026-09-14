@@ -12,8 +12,9 @@ Per-workspace layout under ``<state_dir>/vms/<workspace_id>/``:
 Shutdown model, matching how the VMM really behaves: a bare
 ``cloud-hypervisor --api-socket`` is a daemon that keeps running after
 the guest powers off (``vm.info`` returns to a non-running state), so
-graceful shutdown is PUT /vm.shutdown -> poll the guest down -> SIGTERM
-the VMM -> wait for process exit, all under one deadline.
+graceful shutdown is PUT /vm.power-button (the guest's handler runs
+the clean poweroff) -> poll the guest down -> SIGTERM the VMM -> wait
+for process exit, all under one deadline.
 """
 
 import asyncio
@@ -23,6 +24,7 @@ import shutil
 import signal
 from pathlib import Path
 
+from .. import persist
 from .chapi import API_ROOT, CloudHypervisorApi
 from .driver import MicrovmDriver
 from .errors import MicrovmError, MicrovmTimeoutError
@@ -84,14 +86,20 @@ CH_STATE_TO_STATUS = {
 }
 GUEST_DOWN_STATES = ("Created", "Shutdown")
 POLL_INTERVAL_S = 0.05
+# How long to wait before pressing the ACPI button again: an early-boot
+# press lands before the guest's logind listens and is silently dropped.
+POWER_REPRESS_S = 5.0
 
 
-def vm_config(spec: VmSpec, serial_log: Path, vsock_socket: Path | None = None) -> dict:
+def vm_config(
+    spec: VmSpec, disks: list[dict], serial_log: Path, vsock_socket: Path | None = None
+) -> dict:
     """The ``PUT /api/v1/vm.create`` body for one spec (v52 schema).
 
     Memory is bytes (``mem_mib`` is converted), the payload nests
     kernel/cmdline/initramfs, the serial file is a plain path string,
-    and the first disk is the root device by position.
+    and the disks arrive as their own entries (#14): the root overlay
+    first, the home volume second — position makes the root device.
 
     ``vsock_socket`` adds the virtio-vsock device: cloud-hypervisor
     LISTENS on that unix path, and each host-side connection maps to
@@ -109,15 +117,7 @@ def vm_config(spec: VmSpec, serial_log: Path, vsock_socket: Path | None = None) 
         "cpus": {"boot_vcpus": spec.cpus, "max_vcpus": spec.cpus},
         "memory": {"size": spec.mem_mib * 1024 * 1024},
         "payload": payload,
-        # The rootfs is an immutable artifact (a nix store path on the
-        # appliance's read-only /nix/store share; a build output on
-        # dev hosts) and the guest mounts it ro — declare it readonly
-        # so the VMM opens it O_RDONLY instead of failing EROFS, and
-        # declare image_type Raw: v52's autodetection otherwise
-        # disables sector-0 writes on disks without an explicit type
-        # (a QCOW2-misdetection guard that breaks writable overlay
-        # disks added later).
-        "disks": [{"path": str(spec.rootfs), "readonly": True, "image_type": "Raw"}],
+        "disks": disks,
         "serial": {"mode": "File", "file": str(serial_log)},
         # No virtio-console device: the default leaves a second,
         # non-autologin getty (hvc0) writing into the VMM log.
@@ -126,6 +126,32 @@ def vm_config(spec: VmSpec, serial_log: Path, vsock_socket: Path | None = None) 
     if vsock_socket is not None:
         vm["vsock"] = {"cid": VSOCK_CID, "socket": str(vsock_socket)}
     return vm
+
+
+def disk_entries(state_dir: Path, workspace_id: str) -> list[dict]:
+    """The VM's two persistent disks (#14): root overlay, home volume.
+
+    Both are writable — the overlay absorbs root writes over the
+    pristine base (copy-on-write protects it; ``readonly`` on the old
+    single raw disk is obsolete) — and carry an explicit
+    ``image_type``: v52's autodetection otherwise disables sector-0
+    writes on untyped disks. The overlay additionally opts into
+    ``backing_files``: v51 loads a qcow2 backing file only when the
+    disk says so (landlock hardening, GHSA advisory follow-up).
+    """
+    return [
+        {
+            "path": str(persist.overlay_path(state_dir, workspace_id)),
+            "readonly": False,
+            "image_type": "Qcow2",
+            "backing_files": True,
+        },
+        {
+            "path": str(persist.home_volume_path(state_dir, workspace_id)),
+            "readonly": False,
+            "image_type": "Raw",
+        },
+    ]
 
 
 def _check_id(workspace_id: str) -> None:
@@ -166,12 +192,38 @@ class LocalCloudHypervisor(MicrovmDriver):
         _check_id(workspace_id)
         return self._settings().vmm.state_dir / "vms" / workspace_id
 
+    async def prepare(self, spec: VmSpec) -> None:
+        """Create the workspace's overlay and home volume (#14).
+
+        Strict on leftovers: artifacts present with no create in
+        flight means a previous workspace of the same id (a failed
+        create whose cleanup could not remove them). Launch heals
+        crashed creations; create never reuses a predecessor's data —
+        the operator clears the files and tries again.
+        """
+        vmm = self._settings().vmm
+        self._dir(spec.workspace_id)
+        for artifact in (
+            persist.overlay_path(vmm.state_dir, spec.workspace_id),
+            persist.home_volume_path(vmm.state_dir, spec.workspace_id),
+        ):
+            if artifact.exists():
+                raise MicrovmError(
+                    f"artifact for workspace {spec.workspace_id} already exists: "
+                    f"{artifact}; remove it (or restore the workspace row) first"
+                )
+        await persist.ensure_artifacts(spec, vmm)
+
     async def launch(self, spec: VmSpec) -> None:
         vmm = self._settings().vmm
         vm_dir = self._dir(spec.workspace_id)
         self._ensure_launchable(spec.workspace_id, vm_dir)
         self._check_socket_path(vm_dir / "api.sock")
         vm_dir.mkdir(parents=True, exist_ok=True)
+        # Boots heal their artifacts (#14): a workspace row whose
+        # overlay or volume is missing (a crash mid-create, or a row
+        # that predates #14) gets them back before the VM starts.
+        await persist.ensure_artifacts(spec, vmm)
         socket_path = vm_dir / "api.sock"
         serial_log = vm_dir / "serial.log"
         proc = await self._spawn(vmm.cloud_hypervisor, socket_path, vm_dir / "ch.log")
@@ -181,6 +233,7 @@ class LocalCloudHypervisor(MicrovmDriver):
             await self._wait_ready(socket_path, proc, vmm.socket_wait_timeout_s)
             await self._configure_and_boot(
                 spec,
+                disk_entries(self._settings().vmm.state_dir, spec.workspace_id),
                 socket_path,
                 serial_log,
                 vmm.request_timeout_s,
@@ -226,11 +279,11 @@ class LocalCloudHypervisor(MicrovmDriver):
             log_file.close()
 
     async def _configure_and_boot(
-        self, spec, socket_path, serial_log, timeout_s, vsock_socket=None
+        self, spec, disks, socket_path, serial_log, timeout_s, vsock_socket=None
     ) -> None:
         api = CloudHypervisorApi(socket_path, timeout_s)
         try:
-            await api.create(vm_config(spec, serial_log, vsock_socket))
+            await api.create(vm_config(spec, disks, serial_log, vsock_socket))
             await api.boot()
         finally:
             await api.aclose()
@@ -332,25 +385,50 @@ class LocalCloudHypervisor(MicrovmDriver):
         await self._terminate(workspace_id, deadline)
 
     async def _graceful_guest_down(self, workspace_id: str, deadline: float) -> None:
-        """Request the ACPI poweroff and wait for the guest to land."""
+        """Request the ACPI poweroff and wait for the guest to land.
+
+        The button is re-pressed every few seconds (_press_button_until_down):
+        an event pressed during early boot lands before logind listens
+        and is dropped, and one re-press closes that window without
+        extending the deadline for a guest that truly refuses to go.
+        """
         vmm = self._settings().vmm
         api = CloudHypervisorApi(
             self._dir(workspace_id) / "api.sock", vmm.request_timeout_s
         )
         try:
-            await api.shutdown()
-            await self._poll_guest_down(api, deadline)
+            await self._press_button_until_down(api, deadline)
         except MicrovmTimeoutError:
             # A live guest refusing to power off is a real result —
             # surface it, exactly as before.
             raise
         except MicrovmError:
             # The VMM died or hung between the liveness check and the
-            # call (narrowed race, never zero): escalate straight to
-            # SIGTERM rather than surfacing a 500.
+            # call (narrowed race, never zero) — including a press
+            # racing the guest's own transition to down: either way
+            # the right next step is SIGTERM, not a surfaced 500.
             pass
         finally:
             await api.aclose()
+
+    async def _press_button_until_down(
+        self, api: CloudHypervisorApi, deadline: float
+    ) -> None:
+        now = asyncio.get_running_loop().time
+        next_press = 0.0
+        while True:
+            if now() >= next_press:
+                await api.power_button()
+                next_press = now() + POWER_REPRESS_S
+            state = (await api.info()).get("state")
+            if state in GUEST_DOWN_STATES:
+                return
+            if now() >= deadline:
+                raise MicrovmTimeoutError(
+                    f"guest did not power off within the shutdown "
+                    f"deadline (state={state!r})"
+                )
+            await asyncio.sleep(POLL_INTERVAL_S)
 
     def _vmm_reachable(self, workspace_id: str) -> bool:
         """Whether a VMM process for this workspace looks alive.
@@ -365,18 +443,6 @@ class LocalCloudHypervisor(MicrovmDriver):
             return proc.returncode is None
         return pid is not None and self._pid_alive(pid)
 
-    async def _poll_guest_down(self, api: CloudHypervisorApi, deadline: float) -> None:
-        while True:
-            state = (await api.info()).get("state")
-            if state in GUEST_DOWN_STATES:
-                return
-            if asyncio.get_running_loop().time() >= deadline:
-                raise MicrovmTimeoutError(
-                    f"guest did not power off within the shutdown "
-                    f"deadline (state={state!r})"
-                )
-            await asyncio.sleep(POLL_INTERVAL_S)
-
     async def _terminate(self, workspace_id: str, deadline: float) -> None:
         """SIGTERM the VMM daemon and wait for exit (guest already down)."""
         proc = self._procs.pop(workspace_id, None)
@@ -389,10 +455,11 @@ class LocalCloudHypervisor(MicrovmDriver):
             proc.terminate()
         remaining = deadline - asyncio.get_running_loop().time()
         try:
-            await asyncio.wait_for(proc.wait(), remaining)
+            await asyncio.wait_for(proc.wait(), max(remaining, POLL_INTERVAL_S))
         except TimeoutError:
             raise MicrovmTimeoutError(
-                f"cloud-hypervisor for {workspace_id} did not exit after SIGTERM"
+                f"cloud-hypervisor for {workspace_id} did not exit after "
+                f"SIGTERM (shutdown deadline exhausted)"
             ) from None
 
     async def _reap(self, workspace_id: str, proc) -> None:
@@ -414,9 +481,32 @@ class LocalCloudHypervisor(MicrovmDriver):
             return
         os.kill(pid, signal.SIGKILL)
 
+    async def reset(self, workspace_id: str) -> None:
+        """Factory reset: drop the root overlay, keep the home volume.
+
+        The overlay is the running VM's root device, so a live VMM
+        must be stopped first — deleting the file under it would
+        leave the guest writing into an unlinked inode.
+        """
+        self._dir(workspace_id)
+        if self._vmm_reachable(workspace_id):
+            raise MicrovmError(
+                f"workspace {workspace_id} still runs; stop it before reset"
+            )
+        persist.remove_overlay(self._settings().vmm.state_dir, workspace_id)
+
     async def cleanup(self, workspace_id: str) -> None:
         self._procs.pop(workspace_id, None)
         shutil.rmtree(self._dir(workspace_id), ignore_errors=True)
+        # The home volume lives outside the vm dir so stop/start
+        # cycles and resets cannot lose it; cleanup owns its removal.
+        persist.remove_home_volume(self._settings().vmm.state_dir, workspace_id)
 
 
-__all__ = ["API_ROOT", "LocalCloudHypervisor", "map_ch_state", "vm_config"]
+__all__ = [
+    "API_ROOT",
+    "LocalCloudHypervisor",
+    "disk_entries",
+    "map_ch_state",
+    "vm_config",
+]

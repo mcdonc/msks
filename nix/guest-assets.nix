@@ -26,7 +26,9 @@
 #   $out/initrd             - msks-built minimal initramfs: busybox,
 #                             virtio_blk.ko, mount root, switch_root.
 #   $out/rootfs.ext4        - the extracted Debian tree as a fresh
-#                             read-only-boot ext4 image.
+#                             ext4 image: the pristine base each
+#                             workspace's overlay copies on write
+#                             from (#14); guests mount it rw.
 #   $out/guest-manifest.json - artifact names + the boot cmdline.
 #
 # Known extraction limitation: unprivileged debugfs rdump cannot
@@ -61,7 +63,10 @@ let
   imageName = "debian";
   imageVersion = "13.6";
 
-  kernelCmdline = "console=ttyS0 root=/dev/vda rootfstype=ext4 ro";
+  # Root boots read-write (#14): the per-workspace qcow2 overlay
+  # absorbs writes over this pristine base — copy-on-write protects
+  # it, an ro mount would block apt and provisioning state.
+  kernelCmdline = "console=ttyS0 root=/dev/vda rootfstype=ext4 rw";
 
   # Debian's cloud kernel, same upstream version as the nocloud
   # image's generic one (#37): CONFIG_EXT4_FS=y and
@@ -110,11 +115,12 @@ let
       # Mount root and hand off to systemd (#37): keep this as small
       # as it looks — every millisecond here delays the console. On
       # any failure, a shell beats a silent hang in an 811KB
-      # initramfs (the serial console is reachable).
+      # initramfs (the serial console is reachable). rw matches the
+      # image cmdline (#14): the overlay carries the writes.
       /bin/busybox mount -t proc proc /proc \
         && /bin/busybox mount -t devtmpfs devtmpfs /dev \
         && /bin/busybox insmod /modules/virtio_blk.ko \
-        && /bin/busybox mount -t ext4 -o ro /dev/vda /newroot \
+        && /bin/busybox mount -t ext4 -o rw /dev/vda /newroot \
         || exec /bin/busybox sh
       /bin/busybox mount --move /dev /newroot/dev
       exec /bin/busybox switch_root /newroot /sbin/init
@@ -132,6 +138,7 @@ let
   guestOverlay = pkgs.runCommand "msks-guest-overlay" { } ''
     set -eu
     mkdir -p \
+      $out/home \
       $out/etc/systemd/system/serial-getty@ttyS0.service.d \
       $out/etc/systemd/system/multi-user.target.wants \
       $out/etc/modules-load.d
@@ -143,10 +150,18 @@ let
     # a bare ext4, so those device jobs can never start and systemd
     # stalls at boot. The kernel cmdline already names the root
     # device; systemd mounts the pseudo-filesystems itself.
+    #
+    # /home is the workspace's second persistent disk (#14): the
+    # host-side ext4 volume, labeled msks-home at mkfs time and
+    # attached as a second virtio-blk disk. Mounting by label (not
+    # /dev/vdb) keeps /home on the right device even if the disk
+    # order ever shifts. nofail plus a short device timeout keeps a
+    # boot without the volume (a demo VM, a pre-#14 image) moving
+    # instead of stalling 90s.
     printf '%s\n' \
       '# msks: root comes from the kernel cmdline; no swap.' \
-      '# /var is volatile: the root disk is read-only (#30).' \
-      'tmpfs /var tmpfs mode=0755,nosuid,nodev 0 0' \
+      '# /home is the second persistent disk (#14), labeled msks-home.' \
+      'LABEL=msks-home /home ext4 defaults,nofail,x-systemd.device-timeout=2s 0 2' \
       > $out/etc/fstab
 
     printf '%s\n' \
@@ -181,9 +196,18 @@ let
     ln -s ../msks-console.service \
       $out/etc/systemd/system/multi-user.target.wants/msks-console.service
 
-    # grub-common records successful boots into /boot — read-only
-    # here, and a direct-boot VM has no grub to inform anyway.
+    # grub-common records successful boots into /boot — harmless
+    # under the #14 overlay, but a direct-boot VM has no grub to
+    # inform anyway.
     ln -s /dev/null $out/etc/systemd/system/grub-common.service
+
+    # The first-boot wizard (locale/timezone prompts) has nothing to
+    # ask: the image is already provisioned, and with the root
+    # writable (#14) an empty machine-id flips ConditionFirstBoot on
+    # and the wizard stalls sysinit.target — no getty ever starts.
+    # Masked, systemd generates each workspace's machine-id on its
+    # own overlay instead.
+    ln -s /dev/null $out/etc/systemd/system/systemd-firstboot.service
 
     # AppArmor profile loading costs ~0.7s of every boot (#37) and
     # confines nothing in a pristine workspace VM.
@@ -348,8 +372,9 @@ let
   } ''
     set -eu
     mkdir -p "$out"
-    # Content plus 1G of slack (the root boots read-only; the slack
-    # only cushions future overlay content, not guest writes).
+    # Content plus 1G of slack: the base keeps room for image
+    # updates, and the per-workspace overlay (#14) carries whatever
+    # the guest writes beyond it.
     PACK_TREE="$debianRoot/root" \
       PACK_IMG="$out/rootfs.ext4" \
       PACK_BLOCKS=$(( $(cat "$debianRoot"/tree-blocks) + 262144 )) \

@@ -8,6 +8,8 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **Per-workspace persistent state (#14).** Every workspace owns two persistent artifacts created with it: a root overlay (qcow2, copy-on-write over its image — package installs and root edits persist across `stop`/`start`) and a `/home` volume (ext4, labeled `msks-home`, mounted at `/home`). Both survive stop/start and are removed with `delete`; the new `POST /api/v1/workspaces/{id}/reset` drops only the overlay; sizes come from the create request (`root_mib`/`home_mib`) with `MSKSD_ROOT_MIB`/`MSKSD_HOME_MIB` defaults, and the workspace row records the owning host, so a start/stop/reset/delete from another host answers a named 409. The k8s backend maps both artifacts onto a per-workspace RWO PVC whose size derives from the requested artifacts (`MSKSD_K8S_STORAGE_CLASS`/`MSKSD_K8S_WORKSPACE_STORAGE_GIB` override), and the shipped image boots its root read-write through the overlay. See `docs/storage.md` for the layout, lifecycle, and env-var reference.
+
 - **Workspace boot performance (#37).** Start → interactive shell is now ~3.1s p50 on the reference host (was 6.7s; goal < 5s), measured by the new `scripts/perf-boot.py` harness, which also reports the VMM's peak resident set (165–185 MiB for a 1024 MiB guest). The shipped image boots Debian's cloud kernel (ext4/virtio-pci built in) with a msks-built minimal initramfs (one module, ~0.05s) and starts the vsock console before the boot completes; AppArmor, networkd, timesyncd, resolved, unattended-upgrades, and e2scrub units are off the boot. `docs/boot-speed.md` documents the breakdown and the measurement.
 - **Workspace image guide (#38).** `docs/images.md` documents the image contract (container-image tar, containerDisk layout, `disk/image.json` schema 2), building an image (the shipped builder and a from-scratch outline), registering via `POST /api/v1/images` (default designation, storage cost, removal rules), and referencing images from workspace create (`name:version`, bare name, `name@hash`, bare hash).
 
@@ -15,6 +17,7 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **Workspace stop is now a clean poweroff (#14).** The local backend's stop presses the ACPI power button (`vm.power-button`) and the guest's systemd-logind runs a full shutdown before the VMM exits. The endpoint stop used before was cloud-hypervisor v52's hard stop: the guest was never notified, and with persistent disks every stop dropped the writes still sitting in the guest's page cache.
 - **The workspace guest is Debian 13 trixie (#30).** The rootfs comes from Debian's official nocloud cloud image (pinned by dated URL + sha512): systemd as PID 1, apt (present but inert while the root is read-only), and Debian's own kernel direct-booted. `msks:build-guest`, the manifest contract, and the smoke path are unchanged; the busybox guest is gone. See the README for build details, timings, and the setuid/ownership notes.
 
 ### Fixed

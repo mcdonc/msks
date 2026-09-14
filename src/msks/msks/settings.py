@@ -10,6 +10,7 @@ future runtime settings swap (SIGHUP) propagates without per-module
 """
 
 import os
+import socket
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -27,6 +28,27 @@ def _parse_int(name: str, default: int) -> int:
         return int(raw)
     except ValueError:
         raise ValueError(f"{name} must be a number, got {raw!r}") from None
+
+
+def _parse_positive_int(name: str, default: int) -> int:
+    value = _parse_int(name, default)
+    if value <= 0:
+        raise ValueError(f"{name} must be positive, got {value}")
+    return value
+
+
+def _parse_optional_int(name: str, minimum: int) -> int | None:
+    """A positive-when-set integer: unset means "derive it"."""
+    raw = os.environ.get(name)
+    if raw in (None, ""):
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be a number, got {raw!r}") from None
+    if value < minimum:
+        raise ValueError(f"{name} must be at least {minimum}, got {value}")
+    return value
 
 
 def _env_float(name: str, default: float) -> float:
@@ -57,6 +79,15 @@ class VmmSettings:
     # and designated default (the appliance points this at the built
     # image's store path through its cmdline bridge).
     default_image: str = ""
+    # Per-workspace persistent artifacts (#14): the tools that make
+    # them, the host that owns them, and their default sizes.
+    qemu_img: str = "qemu-img"
+    mkfs_ext4: str = "mkfs.ext4"
+    # The host that owns locally-created artifacts; every instance
+    # knows its name (direct constructions skip from_env).
+    host_name: str = field(default_factory=socket.gethostname)
+    root_mib: int = 10240
+    home_mib: int = 2048
 
     @classmethod
     def from_env(cls) -> VmmSettings:
@@ -77,6 +108,11 @@ class VmmSettings:
                 "MSKSD_VSOCK_WAIT_TIMEOUT_S", cls.vsock_wait_timeout_s
             ),
             default_image=_env("MSKSD_DEFAULT_IMAGE", cls.default_image),
+            qemu_img=_env("MSKSD_QEMU_IMG", cls.qemu_img),
+            mkfs_ext4=_env("MSKSD_MKFS_EXT4", cls.mkfs_ext4),
+            host_name=_env("MSKSD_HOST_NAME", cls().host_name),
+            root_mib=_parse_positive_int("MSKSD_ROOT_MIB", cls.root_mib),
+            home_mib=_parse_positive_int("MSKSD_HOME_MIB", cls.home_mib),
         )
 
 
@@ -110,6 +146,13 @@ class K8sSettings:
     runner_image: str = "registry.k8s.io/pause:3.10"
     kubeconfig: str | None = None
     api_timeout_s: float = 30.0
+    # Per-workspace claims (#14): the storage class the admin's
+    # cluster offers (unset asks the cluster's default) and each
+    # claim's size — one PVC holds the workspace's overlay and home
+    # volume files, so it needs room for both. Unset derives the
+    # size from the workspace's root_mib + home_mib at create.
+    storage_class: str | None = None
+    workspace_storage_gib: int | None = None
 
     @classmethod
     def from_env(cls) -> K8sSettings:
@@ -118,6 +161,10 @@ class K8sSettings:
             runner_image=_env("MSKSD_K8S_RUNNER_IMAGE", cls.runner_image),
             kubeconfig=_env("MSKSD_KUBECONFIG", "") or None,
             api_timeout_s=_env_float("MSKSD_K8S_API_TIMEOUT_S", 30.0),
+            storage_class=_env("MSKSD_K8S_STORAGE_CLASS", "") or None,
+            workspace_storage_gib=_parse_optional_int(
+                "MSKSD_K8S_WORKSPACE_STORAGE_GIB", minimum=1
+            ),
         )
 
 

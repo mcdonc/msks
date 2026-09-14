@@ -60,6 +60,10 @@ class WorkspaceCreate(BaseModel):
     cmdline: str | None = None
     cpus: int = Field(default=2, ge=1, le=64)
     mem_mib: int = Field(default=1024, ge=64, le=1 << 15)
+    # Persistent-artifact sizes (#14), fixed at create; unset takes
+    # the MSKSD_ROOT_MIB / MSKSD_HOME_MIB defaults.
+    root_mib: int | None = Field(default=None, ge=256, le=65536)
+    home_mib: int | None = Field(default=None, ge=64, le=65536)
 
 
 def bootstrap_default_image(app) -> None:
@@ -110,7 +114,10 @@ def resolve_boot(app, body: WorkspaceCreate) -> dict:
     """Fill kernel/initrd/rootfs/cmdline from the image catalog.
 
     Explicit fields win over the image; the image wins over the
-    default; nothing resolves at all is a client error.
+    default; nothing resolves at all is a client error. The result
+    also carries the #14 facts: the catalog hash the overlay will
+    bind to (None for explicit boot artifacts) and the artifact
+    sizes.
     """
     record = image_record(app, body)
     kernel, rootfs = boot_pair(body, record)
@@ -124,6 +131,27 @@ def resolve_boot(app, body: WorkspaceCreate) -> dict:
         "cmdline": default_cmdline(body, record),
         "cpus": body.cpus,
         "mem_mib": body.mem_mib,
+        "image_hash": bound_image_hash(body, record),
+        **artifact_sizes(app, body),
+    }
+
+
+def bound_image_hash(body: WorkspaceCreate, record) -> str | None:
+    """The catalog hash the workspace's overlay binds to, if any.
+
+    Binding follows the root disk: the image's rootfs only carries a
+    workspace that did not override it with an explicit path."""
+    if body.rootfs is None and record is not None:
+        return record.hash
+    return None
+
+
+def artifact_sizes(app, body: WorkspaceCreate) -> dict:
+    """root/home sizes: the request's, else the settings defaults."""
+    vmm = app.state.settings.vmm
+    return {
+        "root_mib": body.root_mib if body.root_mib is not None else vmm.root_mib,
+        "home_mib": body.home_mib if body.home_mib is not None else vmm.home_mib,
     }
 
 
@@ -171,6 +199,39 @@ def spec_for(row: dict) -> VmSpec:
         cpus=row["cpus"],
         mem_mib=row["mem_mib"],
         initrd=initrd,
+        root_mib=row["root_mib"],
+        home_mib=row["home_mib"],
+    )
+
+
+def owner_host(app) -> str | None:
+    """The host recorded as owning a new workspace's artifacts.
+
+    Placement is a local-backend fact: the artifacts are files on one
+    host. On k8s the artifacts live in a per-workspace claim the
+    cluster places, so no host is recorded and the placement check
+    stays out of the way ("None adopts this daemon", below).
+    """
+    if app.state.settings.vmm.driver == "local":
+        return app.state.settings.vmm.host_name
+    return None
+
+
+def host_mismatch(app, row: dict) -> str | None:
+    """The named error when the artifacts live on another host.
+
+    Placement is recorded at create (#14): a workspace's overlay and
+    home volume live on one host, and only that host may boot it. A
+    row without a host predates #14 — the artifacts are wherever
+    this daemon finds them, so this host adopts the start.
+    """
+    recorded = row.get("host")
+    local = app.state.settings.vmm.host_name
+    if recorded is None or recorded == local:
+        return None
+    return (
+        f"home volume for workspace {row['id']} lives on host {recorded}; "
+        f"this host is {local}"
     )
 
 
@@ -239,12 +300,33 @@ def build_api(app) -> FastAPI:
     async def create_workspace(body: WorkspaceCreate) -> Response:
         if await app.state.model.get_workspace(body.id) is not None:
             raise HTTPException(status_code=409, detail="workspace exists")
+        boot = resolve_boot(app, body)
+        # The persistent artifacts (#14) come before the row: a refused
+        # create (a leftover artifact from a previous workspace of this
+        # id) answers 503 with nothing written and nothing removed, and
+        # a row in the table always has its artifacts underneath it.
+        try:
+            await app.state.microvm.prepare(spec_for(boot))
+        except MicrovmError:
+            # A racer may have won this id between the 404 check and
+            # the strict prepare — its artifacts are the "leftover",
+            # and the honest answer is the 409, not a removal plea.
+            if await app.state.model.get_workspace(body.id) is not None:
+                raise HTTPException(
+                    status_code=409, detail="workspace exists"
+                ) from None
+            raise
         try:
             row = await app.state.model.create_workspace(
-                spec_for(resolve_boot(app, body))
+                spec_for(boot),
+                image_hash=boot["image_hash"],
+                host=owner_host(app),
             )
         except IntegrityError:
-            # The check-then-insert race lost; same answer for the client.
+            # The insert lost the race. The winner's row owns whatever
+            # blank artifacts sit at this id's paths now (ours and its
+            # are indistinguishable), so nothing is cleaned up — the
+            # row-exists-⇒-artifacts-exist invariant must not break.
             raise HTTPException(status_code=409, detail="workspace exists") from None
         return Response(
             status_code=201, content=json.dumps(row), media_type="application/json"
@@ -311,10 +393,13 @@ def build_api(app) -> FastAPI:
         if record is None:
             raise HTTPException(status_code=404, detail="no such image")
         # An image a workspace still references cannot be removed:
-        # its boot paths dangle and the workspace becomes unrestorable.
+        # its boot paths dangle, the workspace becomes unrestorable,
+        # and its overlay would lose its backing file (#14).
         cache_prefix = str(record.kernel.parent) + "/"
         for row in await app.state.model.list_workspaces():
-            if str(row.get("kernel", "")).startswith(cache_prefix):
+            if row.get("image_hash") == digest or str(row.get("kernel", "")).startswith(
+                cache_prefix
+            ):
                 raise HTTPException(
                     status_code=409,
                     detail=f"workspace {row['id']} boots this image",
@@ -335,6 +420,12 @@ def build_api(app) -> FastAPI:
     )
     async def start_workspace(workspace_id: str) -> dict:
         row = await _workspace_or_404(app, workspace_id)
+        mismatch = host_mismatch(app, row)
+        if mismatch is not None:
+            # Placement is a fact about the artifacts, not a
+            # preference: booting elsewhere would present an empty
+            # /home and a pristine root as if they were the data.
+            raise HTTPException(status_code=409, detail=mismatch)
         await app.state.microvm.launch(spec_for(row))
         await app.state.model.set_status(workspace_id, "running")
         return {"id": workspace_id, "status": "running"}
@@ -347,16 +438,46 @@ def build_api(app) -> FastAPI:
         "/api/v1/workspaces/{workspace_id}/stop", dependencies=[Depends(require_token)]
     )
     async def stop_workspace(workspace_id: str) -> dict:
-        await _workspace_or_404(app, workspace_id)
+        row = await _workspace_or_404(app, workspace_id)
+        if mismatch := host_mismatch(app, row):
+            # A stop from a non-owning host cannot reach the VMM; a
+            # local no-op would mark a running VM stopped.
+            raise HTTPException(status_code=409, detail=mismatch)
         await app.state.microvm.shutdown(workspace_id)
         await app.state.model.set_status(workspace_id, "stopped")
         return {"id": workspace_id, "status": "stopped"}
+
+    @api.post(
+        "/api/v1/workspaces/{workspace_id}/reset", dependencies=[Depends(require_token)]
+    )
+    async def reset_workspace(workspace_id: str) -> dict:
+        """Factory reset: a pristine root, the same /home (#14)."""
+        row = await _workspace_or_404(app, workspace_id)
+        if mismatch := host_mismatch(app, row):
+            # The overlay lives on its owning host; resetting it from
+            # here would no-op on this host's (absent) file and lie
+            # about a pristine root.
+            raise HTTPException(status_code=409, detail=mismatch)
+        # The overlay is the running root device — stop the VM first,
+        # with kill as the fallback for a wedged one (same contract
+        # as delete).
+        try:
+            await app.state.microvm.shutdown(workspace_id)
+        except MicrovmError:
+            await app.state.microvm.kill(workspace_id)
+        await app.state.microvm.reset(workspace_id)
+        await app.state.model.set_status(workspace_id, "created")
+        return {"id": workspace_id, "status": "created"}
 
     @api.delete(
         "/api/v1/workspaces/{workspace_id}", dependencies=[Depends(require_token)]
     )
     async def delete_workspace(workspace_id: str) -> dict:
-        await _workspace_or_404(app, workspace_id)
+        row = await _workspace_or_404(app, workspace_id)
+        if mismatch := host_mismatch(app, row):
+            # Deleting the row from a non-owning host would orphan a
+            # possibly-running VM: every route 404s without the row.
+            raise HTTPException(status_code=409, detail=mismatch)
         # A wedged VM must still be deletable: a failed graceful
         # shutdown falls back to kill before cleanup.
         try:

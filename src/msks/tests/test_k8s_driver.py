@@ -5,7 +5,16 @@ import pytest
 import yaml
 from msks.app import build_app
 from msks.microvm import MicrovmError, VmSpec
-from msks.microvm.k8s import LABEL_WORKSPACE_ID, map_phase, pod_manifest
+from msks.microvm.k8s import (
+    LABEL_WORKSPACE_ID,
+    WORKSPACE_STATE_MOUNT,
+    claim_gib,
+    map_phase,
+    pod_manifest,
+    pvc_manifest,
+    pvc_name,
+    storage_gib,
+)
 from msks.microvm.kube import (
     auth_header,
     kube_client,
@@ -75,17 +84,71 @@ def test_pod_manifest_shape(tmp_path) -> None:
     container = manifest["spec"]["containers"][0]
     assert container["image"] == "example/runner:1"
     env = {e["name"]: e["value"] for e in container["env"]}
-    # Sizing rides env vars; the runner image owns the guest artifacts
-    # and the cmdline that matches them (host paths would not exist in
-    # the container), so none of the artifact variables appear here.
+    state_dir = f"{WORKSPACE_STATE_MOUNT}/{WID}"
+    # Sizing and artifact locations ride env vars (#14): the runner
+    # owns the guest kernel/cmdline, the PVC owns the artifacts, and
+    # these name where the container finds (or creates) them.
     assert env == {
         "MSKSD_CPUS": "2",
         "MSKSD_MEM_MIB": "1024",
+        "MSKSD_ROOT_OVERLAY": f"{state_dir}/root.qcow2",
+        "MSKSD_HOME_VOLUME": f"{state_dir}/home.ext4",
+        "MSKSD_ROOT_MIB": "10240",
+        "MSKSD_HOME_MIB": "2048",
     }
-    assert container["volumeMounts"] == [{"name": "kvm", "mountPath": "/dev/kvm"}]
-    assert manifest["spec"]["volumes"] == [
-        {"name": "kvm", "hostPath": {"path": "/dev/kvm", "type": "CharDevice"}}
-    ]
+    volumes = {v["name"]: v for v in manifest["spec"]["volumes"]}
+    assert volumes["kvm"]["hostPath"] == {"path": "/dev/kvm", "type": "CharDevice"}
+    assert volumes["workspace-state"]["persistentVolumeClaim"] == {
+        "claimName": pvc_name(WID)
+    }
+    mounts = {m["name"]: m["mountPath"] for m in container["volumeMounts"]}
+    assert mounts == {
+        "kvm": "/dev/kvm",
+        "workspace-state": state_dir,
+    }
+
+
+def test_pvc_manifest_shape(tmp_path) -> None:
+    settings = K8sSettings(
+        namespace="ns1", storage_class="fast-local", workspace_storage_gib=5
+    )
+    manifest = pvc_manifest(spec(tmp_path), settings)
+    assert manifest["kind"] == "PersistentVolumeClaim"
+    assert manifest["metadata"]["name"] == f"msks-ws-{WID}"
+    assert manifest["metadata"]["namespace"] == "ns1"
+    assert manifest["metadata"]["labels"][LABEL_WORKSPACE_ID] == WID
+    assert manifest["spec"]["accessModes"] == ["ReadWriteOnce"]
+    assert manifest["spec"]["resources"]["requests"]["storage"] == "5Gi"
+    assert manifest["spec"]["storageClassName"] == "fast-local"
+
+
+def test_pvc_manifest_leaves_class_unset_when_unconfigured(tmp_path) -> None:
+    manifest = pvc_manifest(spec(tmp_path), K8sSettings())
+    assert "storageClassName" not in manifest["spec"]
+    # Unset size derives from the artifacts: the spec defaults ask
+    # for 10240 + 2048 MiB → 12 Gi, room for both files.
+    assert manifest["spec"]["resources"]["requests"]["storage"] == "12Gi"
+
+
+def test_pvc_size_derivation_rounds_up(tmp_path) -> None:
+    """A derived claim always rounds up — a claim smaller than the
+    requested artifacts fails the guest with late ENOSPC on its root."""
+    odd = VmSpec(
+        workspace_id=WID,
+        kernel=tmp_path / "vmlinux",
+        rootfs=tmp_path / "rootfs.ext4",
+        root_mib=1000,
+        home_mib=25,
+    )
+    assert storage_gib(odd, K8sSettings()) == 2
+    assert storage_gib(spec(tmp_path), K8sSettings(workspace_storage_gib=3)) == 3
+
+
+def test_claim_gib_parses_k8s_quantities() -> None:
+    assert claim_gib({"spec": {"resources": {"requests": {"storage": "12Gi"}}}}) == 12
+    assert claim_gib({"spec": {"resources": {"requests": {"storage": "2Gi"}}}}) == 2
+    assert claim_gib({"spec": {"resources": {"requests": {"storage": "1Ti"}}}}) is None
+    assert claim_gib({}) is None
 
 
 def test_map_phase() -> None:
@@ -95,6 +158,63 @@ def test_map_phase() -> None:
     assert map_phase("Failed") == VmStatus.STOPPED
     assert map_phase("WeirdPhase") == VmStatus.UNKNOWN
     assert map_phase(None) == VmStatus.UNKNOWN
+
+
+async def test_prepare_posts_pvc(tmp_path, monkeypatch) -> None:
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(201)
+
+    app = app_with_k8s(tmp_path, monkeypatch, handler)
+    await app.state.microvm.prepare(spec(tmp_path))
+    assert seen["path"] == "/api/v1/namespaces/msks/persistentvolumeclaims"
+    assert seen["body"]["metadata"]["name"] == f"msks-ws-{WID}"
+    assert seen["body"]["spec"]["accessModes"] == ["ReadWriteOnce"]
+
+
+async def test_prepare_tolerates_existing_claim(tmp_path, monkeypatch) -> None:
+    """409 is the persistence itself: the claim from the workspace's
+    earlier life is reused, never replaced (#14)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(
+                200, json={"spec": {"resources": {"requests": {"storage": "20Gi"}}}}
+            )
+        return httpx.Response(409, text="already exists")
+
+    app = app_with_k8s(tmp_path, monkeypatch, handler)
+    await app.state.microvm.prepare(spec(tmp_path))
+
+
+async def test_prepare_refuses_a_too_small_reused_claim(tmp_path, monkeypatch) -> None:
+    """A claim smaller than the new workspace's artifacts is refused
+    by name — reusing it would fail the guest with late ENOSPC."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(
+                200, json={"spec": {"resources": {"requests": {"storage": "2Gi"}}}}
+            )
+        return httpx.Response(409, text="already exists")
+
+    app = app_with_k8s(tmp_path, monkeypatch, handler)
+    with pytest.raises(MicrovmError, match="holds 2Gi.*needs 12Gi"):
+        await app.state.microvm.prepare(spec(tmp_path))
+
+
+async def test_prepare_error_maps(tmp_path, monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, text="forbidden")
+
+    app = app_with_k8s(tmp_path, monkeypatch, handler)
+    with pytest.raises(MicrovmError, match="pvc create failed"):
+        await app.state.microvm.prepare(spec(tmp_path))
 
 
 async def test_launch_posts_pod(tmp_path, monkeypatch) -> None:
@@ -122,6 +242,24 @@ async def test_launch_conflict_maps_to_error(tmp_path, monkeypatch) -> None:
     with pytest.raises(MicrovmError) as excinfo:
         await app.state.microvm.launch(spec(tmp_path))
     assert excinfo.value.status == 409
+
+
+async def test_launch_ensures_the_claim(tmp_path, monkeypatch) -> None:
+    """A start heals a missing claim (a pre-#14 row, a manually
+    deleted PVC) instead of leaving the pod pending forever."""
+    posts = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return httpx.Response(201)
+
+    app = app_with_k8s(tmp_path, monkeypatch, handler)
+    await app.state.microvm.launch(spec(tmp_path))
+    claim = "/api/v1/namespaces/msks/persistentvolumeclaims"
+    pods = "/api/v1/namespaces/msks/pods"
+    assert claim in posts
+    # The claim is ensured before the pod exists to mount it.
+    assert posts.index(claim) < posts.index(pods)
 
 
 async def test_info_maps_phases(tmp_path, monkeypatch) -> None:
@@ -184,11 +322,39 @@ async def test_kill_uses_zero_grace(tmp_path, monkeypatch) -> None:
 
 
 async def test_cleanup_tolerates_404(tmp_path, monkeypatch) -> None:
+    deleted = []
+
     def handler(request: httpx.Request) -> httpx.Response:
+        deleted.append(request.url.path)
         return httpx.Response(404)
 
     app = app_with_k8s(tmp_path, monkeypatch, handler)
     await app.state.microvm.cleanup(WID)
+    # Pod first, then the claim (#14): the artifacts die together.
+    assert deleted == [
+        f"/api/v1/namespaces/msks/pods/msks-vm-{WID}",
+        f"/api/v1/namespaces/msks/persistentvolumeclaims/msks-ws-{WID}",
+    ]
+
+
+async def test_cleanup_pvc_error_maps(tmp_path, monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "persistentvolumeclaims" in request.url.path:
+            return httpx.Response(500, text="api down")
+        return httpx.Response(404)
+
+    app = app_with_k8s(tmp_path, monkeypatch, handler)
+    with pytest.raises(MicrovmError, match="pvc delete failed"):
+        await app.state.microvm.cleanup(WID)
+
+
+async def test_reset_names_the_limitation(tmp_path, monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200)
+
+    app = app_with_k8s(tmp_path, monkeypatch, handler)
+    with pytest.raises(MicrovmError, match="runner agent"):
+        await app.state.microvm.reset(WID)
 
 
 async def test_delete_error_maps(tmp_path, monkeypatch) -> None:

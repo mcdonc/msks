@@ -24,6 +24,12 @@ class StubMicrovm:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
         self.statuses: dict[str, VmStatus] = {}
+        self.fail_prepare = False
+
+    async def prepare(self, spec: VmSpec) -> None:
+        if self.fail_prepare:
+            raise MicrovmError("prepare boom")
+        self.calls.append(("prepare", spec.workspace_id))
 
     async def launch(self, spec: VmSpec) -> None:
         self.calls.append(("launch", spec.workspace_id))
@@ -43,6 +49,9 @@ class StubMicrovm:
 
     async def cleanup(self, workspace_id: str) -> None:
         self.calls.append(("cleanup", workspace_id))
+
+    async def reset(self, workspace_id: str) -> None:
+        self.calls.append(("reset", workspace_id))
 
 
 @pytest.fixture
@@ -135,6 +144,12 @@ async def test_workspace_lifecycle(client) -> None:
     )
     assert created.status_code == 201
     assert created.json()["status"] == "created"
+    # Created with the workspace (#14): the artifacts are prepared at
+    # create, and the row records its host and artifact sizes.
+    assert ("prepare", "ws-a") in stub.calls
+    assert created.json()["host"]
+    assert created.json()["root_mib"] == 10240
+    assert created.json()["home_mib"] == 2048
     dup = await http.post(
         "/api/v1/workspaces",
         json={"id": "ws-a", "kernel": "/k", "rootfs": "/r"},
@@ -150,6 +165,8 @@ async def test_workspace_lifecycle(client) -> None:
     assert one.json()["cpus"] == 2
     stopped = await http.post("/api/v1/workspaces/ws-a/stop", headers=auth())
     assert stopped.json()["status"] == "stopped"
+    # Stop keeps the data (#14): no cleanup, no reset.
+    assert ("cleanup", "ws-a") not in stub.calls
     deleted = await http.delete("/api/v1/workspaces/ws-a", headers=auth())
     assert deleted.status_code == 200
     missing = await http.get("/api/v1/workspaces/ws-a", headers=auth())
@@ -205,10 +222,10 @@ async def test_delete_falls_back_to_kill(client) -> None:
 
 
 async def test_create_race_maps_to_409(client, monkeypatch) -> None:
-    http, app, _stub = client
+    http, app, stub = client
     from sqlalchemy.exc import IntegrityError
 
-    async def lose(spec):
+    async def lose(spec, image_hash=None, host=None):
         raise IntegrityError("stmt", {}, Exception("unique"))
 
     monkeypatch.setattr(app.state.model, "create_workspace", lose)
@@ -218,6 +235,240 @@ async def test_create_race_maps_to_409(client, monkeypatch) -> None:
         headers=auth(),
     )
     assert response.status_code == 409
+    # The winner's row now owns whatever blank artifacts sit at the
+    # id's paths — the loser cleans nothing (that would break the
+    # row-exists-⇒-artifacts-exist invariant).
+    assert ("cleanup", "ws-race") not in stub.calls
+
+
+async def test_create_race_after_prepare_answers_409(client, monkeypatch) -> None:
+    """A racer that won between the 404 check and a strict-prepare
+    refusal turns the 503 into the honest 409."""
+    http, app, _stub = client
+    real_get = app.state.model.get_workspace
+    checks = 0
+
+    async def first_look_then_real(workspace_id):
+        nonlocal checks
+        checks += 1
+        if checks == 1:
+            return None  # the 404 pre-check: no workspace yet
+        return await real_get(workspace_id)  # the racer has since won
+
+    monkeypatch.setattr(app.state.model, "get_workspace", first_look_then_real)
+    await app.state.model.create_workspace(
+        VmSpec(workspace_id="ws-lost", kernel=Path("/k"), rootfs=Path("/r"))
+    )
+    _stub.fail_prepare = True
+    response = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-lost", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"] == "workspace exists"
+
+
+async def test_prepare_failure_leaves_no_trace(client) -> None:
+    """A refused create writes no row — and removes nothing (#14):
+    a leftover artifact from a previous workspace of the id stays
+    for the operator to clear by hand."""
+    http, _app, stub = client
+    stub.fail_prepare = True
+    response = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-f", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert response.status_code == 503
+    assert "prepare boom" in response.json()["detail"]
+    assert ("cleanup", "ws-f") not in stub.calls
+    gone = await http.get("/api/v1/workspaces/ws-f", headers=auth())
+    assert gone.status_code == 404
+
+
+async def test_create_records_requested_sizes(client) -> None:
+    http, _app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-s",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "root_mib": 512,
+            "home_mib": 128,
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    row = created.json()
+    assert (row["root_mib"], row["home_mib"]) == (512, 128)
+
+
+async def test_start_on_foreign_host_is_rejected(client) -> None:
+    """Placement is a fact about the artifacts (#14): a start on the
+    wrong host names where they live instead of booting empties."""
+    http, app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-x", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    recorded_host = created.json()["host"]
+    app.state.settings.vmm.host_name = "some-other-host"
+    response = await http.post("/api/v1/workspaces/ws-x/start", headers=auth())
+    assert response.status_code == 409
+    assert (
+        f"home volume for workspace ws-x lives on host {recorded_host}"
+        in response.json()["detail"]
+    )
+    # A pre-#14 row without a host is adopted: the artifacts are
+    # wherever this daemon finds them.
+    await app.state.model.delete_workspace("ws-x")
+    await app.state.model.create_workspace(
+        VmSpec(workspace_id="ws-x", kernel=Path("/k"), rootfs=Path("/r")),
+        image_hash=None,
+        host=None,
+    )
+    response = await http.post("/api/v1/workspaces/ws-x/start", headers=auth())
+    assert response.status_code == 200
+
+
+async def test_reset_stops_then_drops_overlay_only(client) -> None:
+    http, _app, stub = client
+    await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-r", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    await http.post("/api/v1/workspaces/ws-r/start", headers=auth())
+    response = await http.post("/api/v1/workspaces/ws-r/reset", headers=auth())
+    assert response.status_code == 200
+    assert response.json() == {"id": "ws-r", "status": "created"}
+    calls = stub.calls
+    assert ("reset", "ws-r") in calls
+    # Reset stops the VM (the overlay is the running root device) and
+    # removes none of the persistent data itself.
+    assert calls.index(("shutdown", "ws-r")) < calls.index(("reset", "ws-r"))
+    assert ("cleanup", "ws-r") not in calls
+
+
+async def test_reset_falls_back_to_kill(client) -> None:
+    http, _app, stub = client
+    await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-w", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+
+    async def wedged(workspace_id, timeout_s=None):
+        raise MicrovmTimeoutError("wedged")
+
+    stub.shutdown = wedged
+    response = await http.post("/api/v1/workspaces/ws-w/reset", headers=auth())
+    assert response.status_code == 200
+    assert ("kill", "ws-w") in stub.calls
+
+
+async def test_reset_missing_workspace_is_404(client) -> None:
+    http, _app, _stub = client
+    response = await http.post("/api/v1/workspaces/ghost/reset", headers=auth())
+    assert response.status_code == 404
+
+
+async def test_reset_on_foreign_host_is_409(client) -> None:
+    """The overlay lives on its owning host; resetting from another
+    host must refuse instead of no-op'ing on this host's file and
+    reporting a pristine root (#14)."""
+    http, app, stub = client
+    await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-foreign", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    app.state.settings.vmm.host_name = "elsewhere"
+    response = await http.post("/api/v1/workspaces/ws-foreign/reset", headers=auth())
+    assert response.status_code == 409
+    assert "lives on host" in response.json()["detail"]
+    assert ("reset", "ws-foreign") not in stub.calls
+
+
+async def test_stop_on_foreign_host_is_409(client) -> None:
+    """A stop that cannot reach the VMM must not mark it stopped."""
+    http, app, stub = client
+    await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-s", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    app.state.settings.vmm.host_name = "elsewhere"
+    response = await http.post("/api/v1/workspaces/ws-s/stop", headers=auth())
+    assert response.status_code == 409
+    assert ("shutdown", "ws-s") not in stub.calls
+    status = await http.get("/api/v1/workspaces/ws-s", headers=auth())
+    assert status.json()["status"] != "stopped"
+
+
+async def test_delete_on_foreign_host_is_409(client) -> None:
+    """Deleting the row from a non-owning host would orphan a running
+    VM — every route 404s without the row."""
+    http, app, stub = client
+    await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-d", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    app.state.settings.vmm.host_name = "elsewhere"
+    response = await http.delete("/api/v1/workspaces/ws-d", headers=auth())
+    assert response.status_code == 409
+    assert ("cleanup", "ws-d") not in stub.calls
+    still = await http.get("/api/v1/workspaces/ws-d", headers=auth())
+    assert still.status_code == 200
+
+
+async def test_k8s_create_records_no_host(client, monkeypatch) -> None:
+    """Placement is a local-backend fact: on the k8s driver the row
+    records no host, so any daemon in the cluster may start it."""
+    http, app, _stub = client
+    app.state.settings.vmm.driver = "k8s"
+    response = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-k8s", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert response.status_code == 201
+    assert response.json()["host"] is None
+    app.state.settings.vmm.driver = "local"
+
+
+async def test_image_pinned_by_workspace_artifacts(client) -> None:
+    """An image with live workspaces cannot be removed (#14): the
+    overlay backs it; deleting the workspace releases the pin."""
+    from test_imagestore import build_containerdisk
+
+    http, app, _stub = client
+    state_dir = app.state.settings.vmm.state_dir
+    state_dir.mkdir(parents=True, exist_ok=True)
+    archive = state_dir / "ws-image.tar"
+    build_containerdisk(archive)
+    imported = await http.post(
+        "/api/v1/images", json={"source": str(archive)}, headers=auth()
+    )
+    assert imported.status_code == 201, imported.text
+    digest = imported.json()["hash"]
+    created = await http.post(
+        "/api/v1/workspaces", json={"id": "ws-img"}, headers=auth()
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["image_hash"] == digest
+    blocked = await http.delete(f"/api/v1/images/{digest}", headers=auth())
+    assert blocked.status_code == 409
+    assert "ws-img" in blocked.json()["detail"]
+    deleted = await http.delete("/api/v1/workspaces/ws-img", headers=auth())
+    assert deleted.status_code == 200
+    released = await http.delete(f"/api/v1/images/{digest}", headers=auth())
+    assert released.status_code == 200
 
 
 async def test_delete_never_started_workspace(client) -> None:
