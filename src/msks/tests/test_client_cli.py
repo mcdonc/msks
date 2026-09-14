@@ -854,6 +854,9 @@ def test_image_rm_miss_lists_the_catalog(monkeypatch: pytest.MonkeyPatch) -> Non
     message = str(excinfo.value)
     assert "no image matches 'fedora:40'" in message
     assert "debian:13" in message and "alpine:3.20" in message
+    # A bare name that matches nothing takes the same exit line.
+    with pytest.raises(SystemExit, match="no image matches 'fedora'"):
+        cli.cmd_image_rm("fedora", transport=listing_transport())
 
 
 def test_image_rm_ambiguous_prefix_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
