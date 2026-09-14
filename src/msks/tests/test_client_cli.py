@@ -7,6 +7,7 @@ the same ``api_call`` seam against the real daemon surface.
 
 import asyncio
 import json
+import ssl
 from pathlib import Path
 
 import httpx
@@ -308,8 +309,6 @@ def test_api_client_reuses_a_passed_ssl_context() -> None:
     # TLS warning prints once per invocation, not once per REST call.
     # Pinned against httpx internals: verify lands on the default
     # transport's ssl context.
-    import ssl
-
     ctx = ssl.create_default_context()
     client = rest.api_client("https://d", "t", ssl_ctx=ctx)
     try:

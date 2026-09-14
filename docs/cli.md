@@ -22,11 +22,11 @@ The client reads three environment variables. They are prefixed
 `MSKSC_` (client) to stay apart from the daemon's `MSKSD_*` (server)
 namespace — a box that runs both can export each side independently.
 
-| Variable       | Meaning                                              | Default                   |
-| -------------- | ---------------------------------------------------- | ------------------------- |
-| `MSKSC_URL`    | The daemon's base URL                                | `https://127.0.0.1:8660` |
-| `MSKSC_TOKEN`  | A daemon bearer token (see tokens below)             | — (required)              |
-| `MSKSC_CAFILE` | A PEM file to verify the daemon's TLS certificate    | unverified with warning   |
+| Variable       | Meaning                                           | Default                  |
+| -------------- | ------------------------------------------------- | ------------------------ |
+| `MSKSC_URL`    | The daemon's base URL                             | `https://127.0.0.1:8660` |
+| `MSKSC_TOKEN`  | A daemon bearer token (see tokens below)          | — (required)             |
+| `MSKSC_CAFILE` | A PEM file to verify the daemon's TLS certificate | unverified with warning  |
 
 A missing `MSKSC_TOKEN` is an error before any network activity: the
 client names the variable and exits. Tokens come from the daemon:
@@ -83,17 +83,17 @@ under the state dir and a pod name on k8s).
 
 Flags map one-to-one onto the create request's fields:
 
-| Flag          | API field  | Meaning                                            |
-| ------------- | ---------- | -------------------------------------------------- |
-| `--image`     | `image`    | Catalog ref: `name:version`, bare name, or hash    |
-| `--kernel`    | `kernel`   | Explicit kernel path (skips the catalog)           |
-| `--initrd`    | `initrd`   | Explicit initrd path                               |
-| `--rootfs`    | `rootfs`   | Explicit rootfs path (skips the catalog)           |
-| `--cmdline`   | `cmdline`  | Explicit kernel cmdline                            |
-| `--cpus`      | `cpus`     | vcpus, 1–64 (daemon default: 2)                    |
-| `--mem-mib`   | `mem_mib`  | Guest memory MiB, 64–32768 (daemon default: 1024)  |
-| `--root-mib`  | `root_mib` | Persistent root overlay size (daemon default)      |
-| `--home-mib`  | `home_mib` | Persistent /home volume size (daemon default)      |
+| Flag         | API field  | Meaning                                           |
+| ------------ | ---------- | ------------------------------------------------- |
+| `--image`    | `image`    | Catalog ref: `name:version`, bare name, or hash   |
+| `--kernel`   | `kernel`   | Explicit kernel path (skips the catalog)          |
+| `--initrd`   | `initrd`   | Explicit initrd path                              |
+| `--rootfs`   | `rootfs`   | Explicit rootfs path (skips the catalog)          |
+| `--cmdline`  | `cmdline`  | Explicit kernel cmdline                           |
+| `--cpus`     | `cpus`     | vcpus, 1–64 (daemon default: 2)                   |
+| `--mem-mib`  | `mem_mib`  | Guest memory MiB, 64–32768 (daemon default: 1024) |
+| `--root-mib` | `root_mib` | Persistent root overlay size (daemon default)     |
+| `--home-mib` | `home_mib` | Persistent /home volume size (daemon default)     |
 
 Only the flags you pass are sent — unset flags let the daemon apply
 its own defaults. An `--image` reference resolves against the
@@ -238,5 +238,4 @@ joined on one line — the same facts the API returns, minus the JSON
 scaffolding. A timeout says so explicitly, because the daemon may
 still complete a request the client stopped waiting for. Argument
 errors exit with code 2 (argparse convention); success is 0; a
-Ctrl-C during a long boot prints `msks: interrupted` and exits
-130.
+Ctrl-C during a long boot prints `msks: interrupted` and exits 130.

@@ -27,11 +27,12 @@ alone) removes them.
     └── <workspace_id>.ext4   # the /home volume (sparse ext4)
 ```
 
-The overlay is created with `qemu-img create -f qcow2 -F raw -b
-<base rootfs>` — a one-level chain, never nested overlays. Its
+The overlay is created with
+`qemu-img create -f qcow2 -F raw -b <base rootfs>` — a one-level
+chain, never nested overlays. Its
 backing file is the rootfs recorded at workspace create, so a
 workspace always runs the image version it was created with:
-importing a newer image changes what *new* workspaces boot, never
+importing a newer image changes what _new_ workspaces boot, never
 existing ones. (Rebasing an overlay onto a newer base exists as a
 `qemu-img` operation and may become an explicit "upgrade workspace
 image" action later; it never happens implicitly.)
@@ -144,13 +145,13 @@ boot. Deleting the workspace releases the pin.
 
 ## Environment variables
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `MSKSD_ROOT_MIB` | `10240` | Default overlay (root) size for new workspaces, MiB. |
-| `MSKSD_HOME_MIB` | `2048` | Default `/home` volume size, MiB. |
-| `MSKSD_QEMU_IMG` | `qemu-img` | The `qemu-img` binary that creates overlays. |
-| `MSKSD_MKFS_EXT4` | `mkfs.ext4` | The mkfs that formats `/home` volumes. |
-| `MSKSD_HOST_NAME` | the hostname | The host recorded as owning locally-created artifacts. |
-| `MSKSD_SHUTDOWN_TIMEOUT_S` | `20` | How long `stop` waits for the guest's clean poweroff before the fallback kill; a stop answers within this bound. |
-| `MSKSD_K8S_STORAGE_CLASS` | unset | Storage class for per-workspace claims; unset asks the cluster's default. |
-| `MSKSD_K8S_WORKSPACE_STORAGE_GIB` | unset | Claim size in GiB; unset derives it from `root_mib` + `home_mib`. |
+| Variable                          | Default      | Meaning                                                                                                          |
+| --------------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `MSKSD_ROOT_MIB`                  | `10240`      | Default overlay (root) size for new workspaces, MiB.                                                             |
+| `MSKSD_HOME_MIB`                  | `2048`       | Default `/home` volume size, MiB.                                                                                |
+| `MSKSD_QEMU_IMG`                  | `qemu-img`   | The `qemu-img` binary that creates overlays.                                                                     |
+| `MSKSD_MKFS_EXT4`                 | `mkfs.ext4`  | The mkfs that formats `/home` volumes.                                                                           |
+| `MSKSD_HOST_NAME`                 | the hostname | The host recorded as owning locally-created artifacts.                                                           |
+| `MSKSD_SHUTDOWN_TIMEOUT_S`        | `20`         | How long `stop` waits for the guest's clean poweroff before the fallback kill; a stop answers within this bound. |
+| `MSKSD_K8S_STORAGE_CLASS`         | unset        | Storage class for per-workspace claims; unset asks the cluster's default.                                        |
+| `MSKSD_K8S_WORKSPACE_STORAGE_GIB` | unset        | Claim size in GiB; unset derives it from `root_mib` + `home_mib`.                                                |

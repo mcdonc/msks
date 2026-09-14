@@ -7,7 +7,7 @@ from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 from msks.app import build_app
 from msks.microvm import MicrovmError
-from msks.server.api import build_api
+from msks.server.api import bridge_console, build_api
 from msks.settings import ServerSettings, Settings
 from test_api import TOKEN, StubMicrovm, auth
 
@@ -123,8 +123,6 @@ def test_console_bridges_bytes_both_ways(console_api) -> None:
 
 
 async def test_bridge_ends_when_guest_eof(tmp_path) -> None:
-    from msks.server.api import bridge_console
-
     class Socket:
         sent: list[bytes] = []
 

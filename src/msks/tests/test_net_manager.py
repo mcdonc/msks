@@ -7,11 +7,12 @@ from pathlib import Path
 
 import pytest
 from msks.app import build_app
+from msks.microvm import VmSpec
 from msks.microvm.errors import MicrovmError
 from msks.net import alloc
 from msks.net import manager as manager_mod
 from msks.net.manager import NetManager
-from msks.settings import NetSettings, Settings
+from msks.settings import NetSettings, ServerSettings, Settings
 from netstubs import NFT_FAIL_AT, NFT_STDERR, log_lines, stub_ip, stub_nft
 
 
@@ -44,9 +45,6 @@ async def net_app(tmp_path: Path, monkeypatch):
     The model is a real one on a scratch database: claim_slice
     records pool slices on workspace rows (#70 review).
     """
-    from msks.microvm import VmSpec
-    from msks.settings import ServerSettings
-
     ip_log = tmp_path / "ip.log"
     nft_log = tmp_path / "nft.log"
     settings = Settings(

@@ -17,9 +17,15 @@ from fake_ch import FakeCH
 from msks.app import build_app
 from msks.microvm import MicrovmError, MicrovmTimeoutError, VmSpec
 from msks.microvm import local as local_mod
+from msks.microvm.driver import MicrovmDriver
 from msks.microvm.local import disk_entries, map_ch_state, vm_config
 from msks.microvm.spec import VmStatus
-from msks.settings import Settings, VmmSettings
+from msks.net import alloc
+from msks.net import manager as manager_mod
+from msks.net.manager import NetManager
+from msks.settings import NetSettings, Settings, VmmSettings
+from netstubs import stub_ip, stub_nft
+from test_net_manager import FakeService
 
 from msks import persist
 
@@ -628,9 +634,6 @@ async def test_shutdown_escalates_when_api_dies_midcall(env, monkeypatch) -> Non
     sleeper = await asyncio.create_subprocess_exec("sleep", "600")
     (vm_dir / "ch.pid").write_text(str(sleeper.pid))
 
-    from msks.microvm import local as local_mod
-    from msks.microvm.errors import MicrovmError
-
     async def die(self):
         raise MicrovmError("connection refused mid-call")
 
@@ -716,8 +719,6 @@ async def test_console_refused_handshake(env, tmp_path, monkeypatch) -> None:
 
 
 async def test_default_console_unsupported() -> None:
-    from msks.microvm.driver import MicrovmDriver
-
     class Minimal(MicrovmDriver):
         async def prepare(self, spec):
             return None
@@ -768,9 +769,7 @@ async def test_console_silent_server_times_out(env, monkeypatch) -> None:
     def accept(reader, writer):
         handlers.append(asyncio.create_task(silent(reader, writer)))
 
-    import msks.microvm.local as local
-
-    monkeypatch.setattr(local, "VSOCK_REPLY_S", 0.1)
+    monkeypatch.setattr(local_mod, "VSOCK_REPLY_S", 0.1)
     server = await asyncio.start_unix_server(accept, str(vm_dir / "vsock.sock"))
     try:
         with pytest.raises(MicrovmError, match="handshake reply never arrived"):
@@ -838,8 +837,6 @@ def test_vm_config_carries_the_net_device(tmp_path: Path) -> None:
 
 
 def test_vm_net_maps_an_attachment() -> None:
-    from msks.net import alloc
-
     class Attachment:
         tap = alloc.tap_name(WID)
         mac = alloc.guest_mac(WID)
@@ -854,13 +851,6 @@ def test_vm_net_maps_an_attachment() -> None:
 @pytest.fixture
 async def egress_env(env, tmp_path: Path, monkeypatch):
     """The env app with egress armed: stub tools, fake services."""
-    from msks.microvm import VmSpec as Spec
-    from msks.net import manager as manager_mod
-    from msks.net.manager import NetManager
-    from msks.settings import NetSettings
-    from netstubs import stub_ip, stub_nft
-    from test_net_manager import FakeService
-
     app, _state_dir, _ = env
     ip_log = tmp_path / "egress-ip.log"
     app.state.settings.net = NetSettings(
@@ -877,7 +867,7 @@ async def egress_env(env, tmp_path: Path, monkeypatch):
     app.state.settings.server.db_path = tmp_path / "egress.db"
     app.state.model.migrate()
     await app.state.model.create_workspace(
-        Spec(workspace_id=WID, kernel=Path("/k"), rootfs=Path("/r"), egress=True)
+        VmSpec(workspace_id=WID, kernel=Path("/k"), rootfs=Path("/r"), egress=True)
     )
     await manager.start()
     return app, ip_log

@@ -33,7 +33,7 @@ default_image="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))
 # Optional msksd.<name>=<value> pairs the operator wants bridged into
 # the daemon's environment (e.g. msksd.vsock_wait_timeout_s=30 on
 # slow nested-virt hosts); each becomes MSKSD_<NAME> in the guest.
-: "''${MSKS_APPLIANCE_CMDLINE_EXTRA:=}"
+: "${MSKS_APPLIANCE_CMDLINE_EXTRA:=}"
 
 # --- the store share (virtiofsd, unprivileged) --------------------------
 rm -f "$app_dir/vmm-sock"
@@ -116,6 +116,9 @@ JSON
 boot_vm &
 booter=$!
 
+# Invoked by the EXIT trap below; shellcheck 0.11 misses that
+# under a later explicit `exit` (SC2329 false positive).
+# shellcheck disable=SC2329
 cleanup() {
   kill "$booter" 2>/dev/null || true
   kill "$vfpid" 2>/dev/null || true
@@ -124,6 +127,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Invoked by the TERM/INT trap below; same SC2329 false positive
+# as cleanup() above.
+# shellcheck disable=SC2329
 graceful() {
   echo "msks: stopping the appliance (ACPI, then SIGTERM)"
   # The guest's acpid turns the ACPI power button into a clean

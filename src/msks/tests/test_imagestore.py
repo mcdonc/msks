@@ -1,12 +1,19 @@
 """The workspace image catalog (#40): import, list, resolve, default."""
 
+import asyncio
+import gzip
 import json
 import shutil
 import tarfile
+import threading
+import uuid
 from io import BytesIO
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
+from msks.app import build_app
 from msks.imagestore import (
     ImageError,
     default_image,
@@ -15,7 +22,13 @@ from msks.imagestore import (
     resolve,
     set_default,
     sweep_crash_leftovers,
+    warm_import,
 )
+from msks.server.api import build_api
+from msks.settings import ServerSettings, Settings, VmmSettings
+from test_api import TOKEN, StubMicrovm, auth
+
+from msks import guestassets, imagestore
 
 
 def build_containerdisk(
@@ -192,7 +205,6 @@ def test_import_missing_file(tmp_path: Path) -> None:
 
 def test_gzip_layer_supported(tmp_path: Path) -> None:
     """dockerTools may emit compressed layers; the reader copes."""
-    import gzip
 
     layer = BytesIO()
     with tarfile.open(fileobj=layer, mode="w") as tar:
@@ -230,7 +242,6 @@ def test_gzip_layer_supported(tmp_path: Path) -> None:
 
 def test_import_of_the_real_built_image(tmp_path: Path) -> None:
     """The .guest-built containerDisk, when present, imports as-is."""
-    from msks import guestassets
 
     assets = guestassets.load_guest_assets()
     if assets is None:
@@ -253,12 +264,6 @@ def test_import_of_the_real_built_image(tmp_path: Path) -> None:
 async def test_image_endpoints_and_create_by_ref(tmp_path) -> None:
     """The catalog surfaces over the API and fills workspace boots."""
 
-    from httpx import ASGITransport, AsyncClient
-    from msks.app import build_app
-    from msks.server.api import build_api
-    from msks.settings import ServerSettings, Settings, VmmSettings
-    from test_api import TOKEN, StubMicrovm
-
     settings = Settings(
         vmm=VmmSettings(state_dir=tmp_path / "vms"),
         server=ServerSettings(
@@ -280,7 +285,6 @@ async def test_image_endpoints_and_create_by_ref(tmp_path) -> None:
 
 
 async def _drive_image_flow(http, archive) -> None:
-    from test_api import auth
 
     listed = await http.get("/api/v1/images", headers=auth())
     assert listed.status_code == 200
@@ -337,11 +341,6 @@ async def _drive_image_flow(http, archive) -> None:
 
 async def test_create_explicit_artifacts_without_catalog(tmp_path) -> None:
     """Explicit kernel/rootfs with no catalog at all: the old shape."""
-    from fastapi.testclient import TestClient
-    from msks.app import build_app
-    from msks.server.api import build_api
-    from msks.settings import ServerSettings, Settings, VmmSettings
-    from test_api import TOKEN, StubMicrovm
 
     settings = Settings(
         vmm=VmmSettings(state_dir=tmp_path / "vms"),
@@ -456,10 +455,6 @@ def test_resolve_well_formed_unknown_hash(tmp_path: Path) -> None:
 
 async def test_default_image_bootstrap(tmp_path, capsys) -> None:
     """MSKSD_DEFAULT_IMAGE imports once at startup, as the default."""
-    from fastapi.testclient import TestClient
-    from msks.app import build_app
-    from msks.server.api import build_api
-    from msks.settings import ServerSettings, Settings, VmmSettings
 
     archive = tmp_path / "boot.tar"
     build_containerdisk(archive, name="boot", version="1")
@@ -527,10 +522,6 @@ def test_import_image_json_is_directory(tmp_path: Path) -> None:
 
 async def test_bootstrap_second_image_no_default_steal(tmp_path) -> None:
     """A later bootstrap import must not steal the designation."""
-    from fastapi.testclient import TestClient
-    from msks.app import build_app
-    from msks.server.api import build_api
-    from msks.settings import ServerSettings, Settings, VmmSettings
 
     first, second = tmp_path / "a.tar", tmp_path / "b.tar"
     build_containerdisk(first, name="first", version="1")
@@ -546,7 +537,6 @@ async def test_bootstrap_second_image_no_default_steal(tmp_path) -> None:
         app = build_app(settings)
         with TestClient(build_api(app)):
             pass
-    from msks.imagestore import default_image
 
     default = default_image(state)
     assert default.ref == "first:1"
@@ -554,11 +544,6 @@ async def test_bootstrap_second_image_no_default_steal(tmp_path) -> None:
 
 async def test_create_explicit_kernel_keeps_own_initrd(tmp_path) -> None:
     """Explicit artifacts win; the default image fills only cmdline."""
-    from fastapi.testclient import TestClient
-    from msks.app import build_app
-    from msks.server.api import build_api
-    from msks.settings import ServerSettings, Settings, VmmSettings
-    from test_api import TOKEN
 
     archive = tmp_path / "d.tar"
     build_containerdisk(archive)
@@ -569,7 +554,6 @@ async def test_create_explicit_kernel_keeps_own_initrd(tmp_path) -> None:
         ),
     )
     app = build_app(settings)
-    from test_api import TOKEN, StubMicrovm
 
     app.state.microvm = StubMicrovm()
     with TestClient(build_api(app)) as client:
@@ -629,15 +613,11 @@ def test_import_manifest_empty_list(tmp_path: Path) -> None:
 
 async def test_concurrent_same_hash_imports() -> None:
     """Two simultaneous imports of one archive cannot collide."""
-    import asyncio
-    from pathlib import Path as P
 
     async def run(tmpdir):
-        from msks.imagestore import import_archive as imp
+        return await asyncio.to_thread(import_archive, tmpdir / "c.tar", tmpdir)
 
-        return await asyncio.to_thread(imp, tmpdir / "c.tar", tmpdir)
-
-    root = P("/tmp") / f"msks-conc-{uuid4hex()}"
+    root = Path("/tmp") / f"msks-conc-{uuid4hex()}"
     root.mkdir(parents=True)
     try:
         build_containerdisk(root / "c.tar", name="cc", version="1")
@@ -646,13 +626,10 @@ async def test_concurrent_same_hash_imports() -> None:
         assert len(refs) == 1
         assert len(list_images(root)) == 1
     finally:
-        import shutil as sh
-
-        sh.rmtree(root, ignore_errors=True)
+        shutil.rmtree(root, ignore_errors=True)
 
 
 def uuid4hex() -> str:
-    import uuid
 
     return uuid.uuid4().hex[:10]
 
@@ -667,7 +644,6 @@ def test_resolve_numeric_versions(tmp_path: Path) -> None:
 
 
 def test_warm_import_skips_complete_cache(tmp_path: Path) -> None:
-    from msks.imagestore import warm_import
 
     archive = tmp_path / "w.tar"
     build_containerdisk(archive, name="warm", version="1")
@@ -701,11 +677,6 @@ def test_resolve_name_at_hash_pin(tmp_path: Path) -> None:
 
 
 async def test_image_delete_with_reference_guard(tmp_path) -> None:
-    from fastapi.testclient import TestClient
-    from msks.app import build_app
-    from msks.server.api import build_api
-    from msks.settings import ServerSettings, Settings, VmmSettings
-    from test_api import TOKEN, StubMicrovm
 
     archive = tmp_path / "del.tar"
     build_containerdisk(archive, name="gone", version="1")
@@ -799,16 +770,12 @@ def test_import_archive_retained_wins_race(tmp_path: Path) -> None:
 
 async def test_concurrent_import_swap_paths(tmp_path, monkeypatch) -> None:
     """Deterministic cover of the losing swap branches."""
-    import asyncio
-    import threading
-
-    from msks import imagestore as store
 
     archive = tmp_path / "s.tar"
     build_containerdisk(archive, name="ss", version="1")
 
     barrier = threading.Barrier(2, timeout=10)
-    real_hash = store.hash_file
+    real_hash = imagestore.hash_file
 
     def slow_hash(path):
         digest = real_hash(path)
@@ -820,14 +787,14 @@ async def test_concurrent_import_swap_paths(tmp_path, monkeypatch) -> None:
             pass
         return digest
 
-    monkeypatch.setattr(store, "hash_file", slow_hash)
+    monkeypatch.setattr(imagestore, "hash_file", slow_hash)
 
     async def run():
-        return await asyncio.to_thread(store.import_archive, archive, tmp_path)
+        return await asyncio.to_thread(imagestore.import_archive, archive, tmp_path)
 
     first, second = await asyncio.gather(run(), run())
     assert first.hash == second.hash
-    assert store.list_images(tmp_path)[0].ref == "ss:1"
+    assert imagestore.list_images(tmp_path)[0].ref == "ss:1"
 
 
 def test_malformed_manifest_shapes_are_400s(tmp_path: Path) -> None:

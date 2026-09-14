@@ -128,14 +128,14 @@ jobs:
           MSKSD_TEST_SHUTDOWN_TIMEOUT_S: "180"
         run: >-
           sudo apt-get update -qq && sudo apt-get install -y -qq nftables &&
-          devenv --quiet -O dotenv.enable:bool false shell -- bash -c '
+          devenv --quiet -O dotenv.enable:bool false shell -- bash -c "
           sudo -n env MSKSD_TEST_EGRESS=1 TMPDIR=/tmp
           MSKSD_TEST_GUEST_UP_TIMEOUT_S=180
           MSKSD_TEST_CONSOLE_TIMEOUT_S=120
           MSKSD_TEST_SHUTDOWN_TIMEOUT_S=180
-          PATH="$PATH" HOME=/root
+          PATH=\"\$PATH\" HOME=/root
           python -m pytest src/msks/tests/test_smoke.py::test_local_egress_boot
-          -q -p no:cacheprovider --no-cov'
+          -q -p no:cacheprovider --no-cov"
 
       # The failing boot's own evidence, kept by the tests' failure
       # path (serial log, VMM log, raw vsock probe printed in the step

@@ -10,7 +10,10 @@
 # nixpkgs, direct kernel boot, an ext4 rootfs whose init is a shell
 # script. The host OS is irrelevant beyond having nix + KVM.
 {
-  pkgs ? import <nixpkgs> { config = { }; overlays = [ ]; },
+  pkgs ? import <nixpkgs> {
+    config = { };
+    overlays = [ ];
+  },
 }:
 
 let

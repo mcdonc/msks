@@ -14,7 +14,7 @@ import termios
 from pathlib import Path
 
 import pytest
-from msks.client import cli
+from msks.client import cli, shell
 from msks.client.shell import (
     DEFAULT_URL,
     DETACH,
@@ -100,7 +100,6 @@ def test_ws_url_schemes() -> None:
 def test_ssl_context_unverified_warns(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from msks.client import shell
 
     monkeypatch.delenv("MSKSC_CAFILE", raising=False)
     ctx = shell.ssl_context()
@@ -109,7 +108,6 @@ def test_ssl_context_unverified_warns(
 
 
 def test_ssl_context_cafile(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    from msks.client import shell
 
     cafile = tmp_path / "ca.pem"
     cafile.write_bytes(b"")
@@ -269,7 +267,6 @@ class PipeStdin:
 
 
 async def test_run_shell_detaches_on_escape(monkeypatch: pytest.MonkeyPatch) -> None:
-    from msks.client import shell
 
     ws = FakeWs(incoming=[b"hello\n"])
     pipe = PipeStdin()
@@ -292,7 +289,6 @@ async def run_shell_via(shell):
 
 
 async def test_run_shell_survives_server_close(monkeypatch: pytest.MonkeyPatch) -> None:
-    from msks.client import shell
 
     class ClosingWs:
         def __init__(self) -> None:
@@ -335,7 +331,6 @@ async def async_noop(*args, **kwargs) -> None:
 
 
 def test_main_raw_mode_cycle(monkeypatch: pytest.MonkeyPatch) -> None:
-    from msks.client import shell
 
     order: list[str] = []
 
@@ -366,7 +361,6 @@ def test_main_raw_mode_cycle(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_main_without_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
-    from msks.client import shell
 
     monkeypatch.setattr(sys, "stdin", FdOnly())
     monkeypatch.setenv("MSKSC_TOKEN", "t")
@@ -384,7 +378,6 @@ def test_main_without_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_module_entry_runs(monkeypatch: pytest.MonkeyPatch) -> None:
-    from msks.client import cli
 
     monkeypatch.setattr(sys, "argv", ["msks"])
     source = Path(cli.__file__).read_text()
@@ -399,34 +392,29 @@ def test_module_entry_runs(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _closed(code: int, reason: str = ""):
-    from msks.client import shell
 
     close = shell.websockets.Close(code, reason)
     return shell.websockets.ConnectionClosed(close, None)
 
 
 def test_report_close_4401() -> None:
-    from msks.client import shell
 
     with pytest.raises(SystemExit, match="authentication failed"):
         shell._report_close(_closed(4401))
 
 
 def test_report_close_carries_reason() -> None:
-    from msks.client import shell
 
     with pytest.raises(SystemExit, match="workspace stopped"):
         shell._report_close(_closed(4501, "workspace stopped"))
 
 
 def test_report_close_clean_end_is_quiet() -> None:
-    from msks.client import shell
 
     assert shell._report_close(_closed(1000)) is None
 
 
 def test_stdin_pipe_passthrough() -> None:
-    from msks.client import shell
 
     pipe = shell._StdinPipe(sys.stdin)
     assert pipe.close() is None
@@ -434,7 +422,6 @@ def test_stdin_pipe_passthrough() -> None:
 
 
 async def test_run_shell_unreachable_daemon_one_liner() -> None:
-    from msks.client import shell
 
     class RefusingConnect:
         def __call__(self, address, ssl=None, max_size=None):
@@ -450,7 +437,6 @@ async def test_run_shell_unreachable_daemon_one_liner() -> None:
 
 
 async def test_connect_plain_ws_takes_no_ssl() -> None:
-    from msks.client import shell
 
     stub = ConnectStub(FakeWs())
     shell._connect("ws://plain/", None)
@@ -466,7 +452,6 @@ def test_run_workspace_shell_preflights_boot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The shell boots a not-running workspace before going raw."""
-    from msks.client import shell
 
     seen = {}
 

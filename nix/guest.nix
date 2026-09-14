@@ -9,7 +9,10 @@
 # Overlays and config are pinned explicitly so a host's channels or
 # nixpkgs-config.nix cannot leak into the guest build.
 {
-  pkgs ? import <nixpkgs> { config = { }; overlays = [ ]; },
+  pkgs ? import <nixpkgs> {
+    config = { };
+    overlays = [ ];
+  },
 }:
 
 let

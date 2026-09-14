@@ -9,7 +9,7 @@ from msks.microvm.errors import MicrovmError, MicrovmTimeoutError
 from msks.microvm.spec import VmInfo, VmSpec, VmStatus
 from msks.server.api import build_api
 from msks.settings import ServerSettings, Settings, VmmSettings
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 TOKEN = "test-token"
 
@@ -223,7 +223,6 @@ async def test_delete_falls_back_to_kill(client) -> None:
 
 async def test_create_race_maps_to_409(client, monkeypatch) -> None:
     http, app, stub = client
-    from sqlalchemy.exc import IntegrityError
 
     async def lose(spec, image_hash=None, host=None):
         raise IntegrityError("stmt", {}, Exception("unique"))
@@ -445,6 +444,8 @@ async def test_k8s_create_records_no_host(client, monkeypatch) -> None:
 async def test_image_pinned_by_workspace_artifacts(client) -> None:
     """An image with live workspaces cannot be removed (#14): the
     overlay backs it; deleting the workspace releases the pin."""
+    # allow-deferred-import: module-scope would be circular
+    # (test_imagestore imports TOKEN/StubMicrovm/auth from here).
     from test_imagestore import build_containerdisk
 
     http, app, _stub = client

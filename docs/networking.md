@@ -16,7 +16,7 @@ arrives with #69 and tightens the same per-VM chain.
 
 ## The path
 
-```
+```text
 workspace VM ──virtio-net──► per-VM tap ──► per-VM nftables chain (appliance kernel)
                                               │  forward: guest source → uplink: accept;
                                               │  established replies back; all else drops
@@ -66,7 +66,7 @@ tap:
   listener among them — so guest root cannot port-scan the
   appliance.
 
-What the chain deliberately permits today: the *destination* of a
+What the chain deliberately permits today: the _destination_ of a
 guest-initiated connection is unconstrained — any host reachable
 through the appliance uplink is reachable, until the per-flow
 consent gates of #69 decide each new connection.
@@ -91,15 +91,15 @@ every backend, and the one that needs zero enforcement machinery.
 
 ## Configuration
 
-| Variable                     | Default            | Meaning                                        |
-| ---------------------------- | ------------------ | ---------------------------------------------- |
-| `MSKSD_EGRESS_ENABLED`       | `false`            | Arm the egress plumbing at daemon start (the appliance sets it) |
-| `MSKSD_EGRESS_SUBNET`        | `172.31.0.0/16`    | The pool per-workspace /30s are carved from    |
-| `MSKSD_EGRESS_UPLINK`        | `eth0`             | The appliance uplink NAT hides guests behind   |
-| `MSKSD_EGRESS_DNS_UPSTREAM`  | resolv.conf        | Where the forwarder relays queries             |
-| `MSKSD_EGRESS_LEASE_S`       | `3600`             | DHCP lease lifetime                            |
-| `MSKSD_EGRESS_DNS_TIMEOUT_S` | `3.0`              | How long the forwarder waits on the upstream   |
-| `MSKSD_IP_TOOL` / `MSKSD_NFT_TOOL` | `ip` / `nft` | The plumbing tools' paths                |
+| Variable                           | Default         | Meaning                                                         |
+| ---------------------------------- | --------------- | --------------------------------------------------------------- |
+| `MSKSD_EGRESS_ENABLED`             | `false`         | Arm the egress plumbing at daemon start (the appliance sets it) |
+| `MSKSD_EGRESS_SUBNET`              | `172.31.0.0/16` | The pool per-workspace /30s are carved from                     |
+| `MSKSD_EGRESS_UPLINK`              | `eth0`          | The appliance uplink NAT hides guests behind                    |
+| `MSKSD_EGRESS_DNS_UPSTREAM`        | resolv.conf     | Where the forwarder relays queries                              |
+| `MSKSD_EGRESS_LEASE_S`             | `3600`          | DHCP lease lifetime                                             |
+| `MSKSD_EGRESS_DNS_TIMEOUT_S`       | `3.0`           | How long the forwarder waits on the upstream                    |
+| `MSKSD_IP_TOOL` / `MSKSD_NFT_TOOL` | `ip` / `nft`    | The plumbing tools' paths                                       |
 
 Egress needs the daemon to hold `CAP_NET_ADMIN`, and the appliance's
 own uplink needs the host side wired — `scripts/appliance-setup.sh`
@@ -119,7 +119,7 @@ Egress is a local-backend feature today. On k8s the runner pod
 refuses the netns privilege the enforcement needs, so an egress
 workspace fails its boot with the cause named — k8s workspaces boot
 with `"egress": false` until then; the NetworkPolicy parity work is
-#69. The no-NIC posture works everywhere.
+tracked in #69. The no-NIC posture works everywhere.
 
 ## Lifecycle
 

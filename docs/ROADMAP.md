@@ -26,7 +26,7 @@ no web frontend yet.
   `MSKSC_*` namespace.
 - **msksd always runs in a microvm — except on Kubernetes, where the
   cluster is the machine.** On a bare host the daemon is deployed as
-a nix-built appliance VM (the "msks machine", podman-machine style);
+  a nix-built appliance VM (the "msks machine", podman-machine style);
   workspace VMs run via nested KVM inside it
   (CPU host-passthrough, `/dev/kvm` in the guest). Rationale: an
   extra security layer — at least two VM boundaries between a

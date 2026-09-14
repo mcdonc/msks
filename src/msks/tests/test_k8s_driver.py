@@ -1,5 +1,7 @@
 """K8s backend unit tests against a mocked Kubernetes API transport."""
 
+import json
+
 import httpx
 import pytest
 import yaml
@@ -169,7 +171,6 @@ async def test_prepare_posts_pvc(tmp_path, monkeypatch) -> None:
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        import json
 
         seen["path"] = request.url.path
         seen["body"] = json.loads(request.content)
@@ -228,7 +229,6 @@ async def test_launch_posts_pod(tmp_path, monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         seen["path"] = request.url.path
         seen["body"] = httpx.Response(200).json() if False else None
-        import json
 
         seen["body"] = json.loads(request.content)
         return httpx.Response(201)
@@ -302,7 +302,6 @@ async def test_shutdown_uses_grace_period(tmp_path, monkeypatch) -> None:
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        import json
 
         seen["grace"] = json.loads(request.content)["gracePeriodSeconds"]
         return httpx.Response(200)
@@ -316,7 +315,6 @@ async def test_kill_uses_zero_grace(tmp_path, monkeypatch) -> None:
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        import json
 
         seen["grace"] = json.loads(request.content)["gracePeriodSeconds"]
         return httpx.Response(200)

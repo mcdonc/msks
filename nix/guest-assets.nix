@@ -75,61 +75,67 @@ let
   # sha256; the deb carries vmlinuz, its config, and the matching
   # /usr/lib/modules tree.
   cloudKernelDeb = pkgs.fetchurl {
-    url = "https://deb.debian.org/debian/pool/main/l/linux/"
+    url =
+      "https://deb.debian.org/debian/pool/main/l/linux/"
       + "linux-image-6.12.107+deb13-cloud-amd64-unsigned_6.12.107-1_amd64.deb";
     hash = "sha256-5xJGCP1rv6GrcxSdxn7MgtCYWX11zx5UApHYynEUD+A=";
   };
 
-  cloudKernel = pkgs.runCommand "msks-cloud-kernel"
-    { nativeBuildInputs = [ pkgs.dpkg ]; }
-    ''
-      set -eu
-      dpkg-deb -x ${cloudKernelDeb} "$out"
-    '';
+  cloudKernel =
+    pkgs.runCommand "msks-cloud-kernel" { nativeBuildInputs = [ pkgs.dpkg ]; }
+      ''
+        set -eu
+        dpkg-deb -x ${cloudKernelDeb} "$out"
+      '';
 
   # The minimal initramfs (#37): busybox, the one module the kernel
   # cannot mount root without, and an init that mounts /dev/vda and
   # switch_roots into systemd. The generic Debian initrd this
   # replaces is a 34MB MODULES=most archive and sat ~2.5s deep in
   # the boot critical path.
-  minimalInitrd = pkgs.runCommand "msks-minimal-initrd"
-    {
-      inherit cloudKernel;
-      # Static: the initramfs has no dynamic loader. nixpkgs'
-      # default busybox links against a store glibc.
-      busybox = pkgs.pkgsStatic.busybox;
-      nativeBuildInputs = [ pkgs.cpio pkgs.gzip pkgs.xz ];
-    }
-    ''
-      set -eu
-      mkdir -p "$out"/tree/bin "$out"/tree/modules \
-        "$out"/tree/proc "$out"/tree/dev "$out"/tree/newroot
-      cp "$busybox"/bin/busybox "$out"/tree/bin/busybox
-      moddir="$cloudKernel/usr/lib/modules"
-      moddir=$(echo "$moddir"/*)
-      # .ko.xz: busybox insmod reads plain modules only.
-      xz -dc "$moddir"/kernel/drivers/block/virtio_blk.ko.xz \
-        > "$out"/tree/modules/virtio_blk.ko
-      cat > "$out"/tree/init <<'INIT'
-      #!/bin/busybox sh
-      # Mount root and hand off to systemd (#37): keep this as small
-      # as it looks — every millisecond here delays the console. On
-      # any failure, a shell beats a silent hang in an 811KB
-      # initramfs (the serial console is reachable). rw matches the
-      # image cmdline (#14): the overlay carries the writes.
-      /bin/busybox mount -t proc proc /proc \
-        && /bin/busybox mount -t devtmpfs devtmpfs /dev \
-        && /bin/busybox insmod /modules/virtio_blk.ko \
-        && /bin/busybox mount -t ext4 -o rw /dev/vda /newroot \
-        || exec /bin/busybox sh
-      /bin/busybox mount --move /dev /newroot/dev
-      exec /bin/busybox switch_root /newroot /sbin/init
-      INIT
-      chmod +x "$out"/tree/init
-      (cd "$out"/tree && find . | cpio -o -H newc --quiet | gzip -9) \
-        > "$out"/initrd
-      rm -rf "$out"/tree
-    '';
+  minimalInitrd =
+    pkgs.runCommand "msks-minimal-initrd"
+      {
+        inherit cloudKernel;
+        # Static: the initramfs has no dynamic loader. nixpkgs'
+        # default busybox links against a store glibc.
+        busybox = pkgs.pkgsStatic.busybox;
+        nativeBuildInputs = [
+          pkgs.cpio
+          pkgs.gzip
+          pkgs.xz
+        ];
+      }
+      ''
+        set -eu
+        mkdir -p "$out"/tree/bin "$out"/tree/modules \
+          "$out"/tree/proc "$out"/tree/dev "$out"/tree/newroot
+        cp "$busybox"/bin/busybox "$out"/tree/bin/busybox
+        moddir="$cloudKernel/usr/lib/modules"
+        moddir=$(echo "$moddir"/*)
+        # .ko.xz: busybox insmod reads plain modules only.
+        xz -dc "$moddir"/kernel/drivers/block/virtio_blk.ko.xz \
+          > "$out"/tree/modules/virtio_blk.ko
+        cat > "$out"/tree/init <<'INIT'
+        #!/bin/busybox sh
+        # Mount root and hand off to systemd (#37): keep this as small
+        # as it looks — every millisecond here delays the console. On
+        # any failure, a shell beats a silent hang in an 811KB
+        # initramfs (the serial console is reachable). rw matches the
+        # image cmdline (#14): the overlay carries the writes.
+        /bin/busybox mount -t proc proc /proc \
+          && /bin/busybox mount -t devtmpfs devtmpfs /dev \
+          && /bin/busybox insmod /modules/virtio_blk.ko \
+          && /bin/busybox mount -t ext4 -o rw /dev/vda /newroot \
+          || exec /bin/busybox sh
+        /bin/busybox mount --move /dev /newroot/dev
+        exec /bin/busybox switch_root /newroot /sbin/init
+        INIT
+        chmod +x "$out"/tree/init
+        (cd "$out"/tree && find . | cpio -o -H newc --quiet | gzip -9) \
+          > "$out"/initrd
+        rm -rf "$out"/tree
+      '';
 
   # The msks additions, staged as an overlay tree: the vsock console
   # service, serial-console autologin (the debug console), the vsock
@@ -296,97 +302,98 @@ let
   # dump the ext4 contents with debugfs (unprivileged — no mount),
   # and lay the overlay on top. A fresh ext4 is built from the tree
   # later, so this stays a plain directory.
-  debianRoot = pkgs.runCommand "msks-debian-root"
-    {
-      nativeBuildInputs = [
-        pkgs.qemu
-        pkgs.e2fsprogs
-        pkgs.kmod
-        pkgs.util-linux
-        (pkgs.python3.withPackages (ps: [ ]))
-      ];
-    }
-    ''
-      set -eu
-      root="$out/root"
-      mkdir -p "$root"
+  debianRoot =
+    pkgs.runCommand "msks-debian-root"
+      {
+        nativeBuildInputs = [
+          pkgs.qemu
+          pkgs.e2fsprogs
+          pkgs.kmod
+          pkgs.util-linux
+          (pkgs.python3.withPackages (ps: [ ]))
+        ];
+      }
+      ''
+        set -eu
+        root="$out/root"
+        mkdir -p "$root"
 
-      # qcow2 -> raw
-      qemu-img convert -O raw ${debianImage} debian.raw
+        # qcow2 -> raw
+        qemu-img convert -O raw ${debianImage} debian.raw
 
-      # Slice the root partition: the GPT partition labeled/type
-      # "Linux filesystem" (nocloud keeps EFI + BIOS grub partitions
-      # around it, which direct kernel boot does not need).
-      offset=$(sfdisk --json debian.raw | python3 ${partitionOffset})
-      dd if=debian.raw of=root.part bs=512 skip=$((offset / 512)) status=none
+        # Slice the root partition: the GPT partition labeled/type
+        # "Linux filesystem" (nocloud keeps EFI + BIOS grub partitions
+        # around it, which direct kernel boot does not need).
+        offset=$(sfdisk --json debian.raw | python3 ${partitionOffset})
+        dd if=debian.raw of=root.part bs=512 skip=$((offset / 512)) status=none
 
-      # ext4 -> tree (ownership errors are expected unprivileged: the
-      # files land owned by the build user; see the header note about
-      # setuid).
-      debugfs -R "rdump / $root" root.part 2>/dev/null || true
-      rm -rf "$root"/lost+found
-      # rdump's stderr mixes benign ownership noise with real errors,
-      # so the exit code is useless; assert the dump itself landed.
-      for top in bin usr etc var lib boot; do
-        test -d "$root/$top"
-      done
+        # ext4 -> tree (ownership errors are expected unprivileged: the
+        # files land owned by the build user; see the header note about
+        # setuid).
+        debugfs -R "rdump / $root" root.part 2>/dev/null || true
+        rm -rf "$root"/lost+found
+        # rdump's stderr mixes benign ownership noise with real errors,
+        # so the exit code is useless; assert the dump itself landed.
+        for top in bin usr etc var lib boot; do
+          test -d "$root/$top"
+        done
 
-      # The msks overlay.
-      cp -a --no-preserve=ownership ${guestOverlay}/. "$root"/
+        # The msks overlay.
+        cp -a --no-preserve=ownership ${guestOverlay}/. "$root"/
 
-      # The cloud kernel's module tree replaces the generic one
-      # (#37): the running kernel is the cloud flavor, and a stale
-      # vermagic tree would make every module probe miss. The
-      # generic /boot payload (kernel, initrd) leaves with it — the
-      # VM direct-boots artifacts kept outside the image.
-      rm -rf "$root"/lib/modules/*
-      rm -rf "$root"/usr/lib/modules/* 2>/dev/null || true
-      rm -f "$root"/boot/vmlinuz-* "$root"/boot/initrd.img-* \
-        "$root"/boot/System.map-* "$root"/boot/config-*
-      mkdir -p "$root"/usr/lib/modules
-      cp -a --no-preserve=ownership \
-        "${cloudKernel}"/usr/lib/modules/. "$root"/usr/lib/modules/
-      cp "${cloudKernel}"/boot/config-* "$root"/boot/
+        # The cloud kernel's module tree replaces the generic one
+        # (#37): the running kernel is the cloud flavor, and a stale
+        # vermagic tree would make every module probe miss. The
+        # generic /boot payload (kernel, initrd) leaves with it — the
+        # VM direct-boots artifacts kept outside the image.
+        rm -rf "$root"/lib/modules/*
+        rm -rf "$root"/usr/lib/modules/* 2>/dev/null || true
+        rm -f "$root"/boot/vmlinuz-* "$root"/boot/initrd.img-* \
+          "$root"/boot/System.map-* "$root"/boot/config-*
+        mkdir -p "$root"/usr/lib/modules
+        cp -a --no-preserve=ownership \
+          "${cloudKernel}"/usr/lib/modules/. "$root"/usr/lib/modules/
+        cp "${cloudKernel}"/boot/config-* "$root"/boot/
 
-      # The deb ships no depmod metadata (its postinst generates it
-      # on the target); generate it here so modprobe — the vsock
-      # console's module load, udev alias lookups — can resolve
-      # anything at all. The deb's module dirs copy read-only.
-      find "$root"/usr/lib/modules -type d -exec chmod u+w {} +
-      kver=$(ls "$root"/usr/lib/modules | head -1)
-      depmod -b "$root" "$kver"
-      test -s "$root"/usr/lib/modules/"$kver"/modules.dep
+        # The deb ships no depmod metadata (its postinst generates it
+        # on the target); generate it here so modprobe — the vsock
+        # console's module load, udev alias lookups — can resolve
+        # anything at all. The deb's module dirs copy read-only.
+        find "$root"/usr/lib/modules -type d -exec chmod u+w {} +
+        kver=$(ls "$root"/usr/lib/modules | head -1)
+        depmod -b "$root" "$kver"
+        test -s "$root"/usr/lib/modules/"$kver"/modules.dep
 
-      # Boot diet (#37): drop the wants symlinks of units a
-      # workspace never uses. networkd and resolved stay (egress
-      # workspaces get a NIC, #52; the overlay enables both);
-      # timesyncd has no served clock until a resolver exists,
-      # unattended-upgrades no repo to reach, e2scrub_reap no LVM
-      # to reap.
-      wants="$root"/etc/systemd/system
-      # The image ships some wants directories read-only; the build
-      # owns them now.
-      chmod u+w "$wants"/*.target.wants "$wants"/*.target.requires 2>/dev/null || true
-      rm -f "$wants"/multi-user.target.wants/unattended-upgrades.service
-      rm -f "$wants"/multi-user.target.wants/e2scrub_reap.service
-      rm -f "$wants"/sysinit.target.wants/systemd-timesyncd.service
-      rm -f "$wants"/network-online.target.wants/systemd-networkd-wait-online.service
-      # The netplan renderer config is replaced by the overlay's own
-      # .network unit (#52); the generator would only shadow it.
-      chmod u+w "$root"/etc
-      chmod -R u+w "$root"/etc/netplan
-      rm -rf "$root"/etc/netplan
+        # Boot diet (#37): drop the wants symlinks of units a
+        # workspace never uses. networkd and resolved stay (egress
+        # workspaces get a NIC, #52; the overlay enables both);
+        # timesyncd has no served clock until a resolver exists,
+        # unattended-upgrades no repo to reach, e2scrub_reap no LVM
+        # to reap.
+        wants="$root"/etc/systemd/system
+        # The image ships some wants directories read-only; the build
+        # owns them now.
+        chmod u+w "$wants"/*.target.wants "$wants"/*.target.requires 2>/dev/null || true
+        rm -f "$wants"/multi-user.target.wants/unattended-upgrades.service
+        rm -f "$wants"/multi-user.target.wants/e2scrub_reap.service
+        rm -f "$wants"/sysinit.target.wants/systemd-timesyncd.service
+        rm -f "$wants"/network-online.target.wants/systemd-networkd-wait-online.service
+        # The netplan renderer config is replaced by the overlay's own
+        # .network unit (#52); the generator would only shadow it.
+        chmod u+w "$root"/etc
+        chmod -R u+w "$root"/etc/netplan
+        rm -rf "$root"/etc/netplan
 
-      # Sanity: this must be a bootable Debian.
-      test -x "$root"/sbin/init
-      test -x "$root"/usr/bin/socat
-      test -n "$(ls "$root"/usr/lib/modules/*/kernel/drivers/block/virtio_blk.ko.xz)" \
-        || { echo "cloud module tree missing virtio_blk"; exit 1; }
+        # Sanity: this must be a bootable Debian.
+        test -x "$root"/sbin/init
+        test -x "$root"/usr/bin/socat
+        test -n "$(ls "$root"/usr/lib/modules/*/kernel/drivers/block/virtio_blk.ko.xz)" \
+          || { echo "cloud module tree missing virtio_blk"; exit 1; }
 
-      # Size the final image from the tree (content-derived, no
-      # magic constant): Debian unpacks to ~600M plus headroom.
-      du -s --apparent-size --block-size=4096 "$root" | cut -f1 > "$out"/tree-blocks
-    '';
+        # Size the final image from the tree (content-derived, no
+        # magic constant): Debian unpacks to ~600M plus headroom.
+        du -s --apparent-size --block-size=4096 "$root" | cut -f1 > "$out"/tree-blocks
+      '';
 
   # mke2fs -d packs a directory into an ext4 image without mounting
   # anything — the whole build stays unprivileged and host-independent.
@@ -414,22 +421,28 @@ let
     E2FSPROGS_FAKE_TIME="$fake_epoch" tune2fs -U clear "$img" >/dev/null
   '';
 
-  rootfs = pkgs.runCommand "msks-guest-rootfs" {
-    inherit debianRoot packScript;
-    nativeBuildInputs = [ pkgs.e2fsprogs pkgs.fakeroot ];
-    fakeEpoch = 1262304000;
-  } ''
-    set -eu
-    mkdir -p "$out"
-    # Content plus 1G of slack: the base keeps room for image
-    # updates, and the per-workspace overlay (#14) carries whatever
-    # the guest writes beyond it.
-    PACK_TREE="$debianRoot/root" \
-      PACK_IMG="$out/rootfs.ext4" \
-      PACK_BLOCKS=$(( $(cat "$debianRoot"/tree-blocks) + 262144 )) \
-      PACK_FAKE_EPOCH="$fakeEpoch" \
-      fakeroot -- /bin/sh -e "$packScript"
-  '';
+  rootfs =
+    pkgs.runCommand "msks-guest-rootfs"
+      {
+        inherit debianRoot packScript;
+        nativeBuildInputs = [
+          pkgs.e2fsprogs
+          pkgs.fakeroot
+        ];
+        fakeEpoch = 1262304000;
+      }
+      ''
+        set -eu
+        mkdir -p "$out"
+        # Content plus 1G of slack: the base keeps room for image
+        # updates, and the per-workspace overlay (#14) carries whatever
+        # the guest writes beyond it.
+        PACK_TREE="$debianRoot/root" \
+          PACK_IMG="$out/rootfs.ext4" \
+          PACK_BLOCKS=$(( $(cat "$debianRoot"/tree-blocks) + 262144 )) \
+          PACK_FAKE_EPOCH="$fakeEpoch" \
+          fakeroot -- /bin/sh -e "$packScript"
+      '';
 
   # The canonical image artifact (#40): a container-image tar
   # (`podman load` compatible) in the containerDisk convention — one
@@ -437,41 +450,52 @@ let
   # image.json schema 2). Importable with podman/skopeo/plain tar,
   # and consumable as a containerDisk by the k8s backend later
   # (#15).
-  bootTree = pkgs.runCommand "msks-image-boot-tree"
-    {
-      inherit debianRoot rootfs cloudKernel minimalInitrd;
-      inherit imageName imageVersion kernelCmdline vsockShellPort;
-    }
-    ''
-      set -eu
-      vmlinuz=$(ls "$cloudKernel"/boot/vmlinuz-*)
-      initrd="${minimalInitrd}/initrd"
-      mkdir -p "$out"/boot "$out"/disk
-      cp "$vmlinuz" "$out"/boot/vmlinuz
-      cp "$initrd" "$out"/boot/initrd.img
-      cp "${rootfs}/rootfs.ext4" "$out"/disk/rootfs.ext4
-      kernel_version=$(basename "$vmlinuz" | sed 's/^vmlinuz-//')
-      # Guard against version drift: the catalog label must match the
-      # Debian tree this image actually wraps.
-      shipped=$(cat "$debianRoot"/root/etc/debian_version)
-      if [ "$shipped" != "${imageVersion}" ]; then
-        echo "imageVersion ${imageVersion} != /etc/debian_version $shipped" >&2
-        exit 1
-      fi
-      # Self-describing (#40 review): the archive alone builds a boot
-      # spec — no sidecar metadata for foreign imports to miss.
-      cat > "$out"/disk/image.json <<EOF
+  bootTree =
+    pkgs.runCommand "msks-image-boot-tree"
       {
-        "schema": 2,
-        "name": "${imageName}",
-        "version": "${imageVersion}",
-        "cmdline": "${kernelCmdline}",
-        "vsock_shell_port": ${toString vsockShellPort},
-        "kernel_version": "$kernel_version",
-        "kernel_format": "bzImage"
+        inherit
+          debianRoot
+          rootfs
+          cloudKernel
+          minimalInitrd
+          ;
+        inherit
+          imageName
+          imageVersion
+          kernelCmdline
+          vsockShellPort
+          ;
       }
-      EOF
-    '';
+      ''
+        set -eu
+        vmlinuz=$(ls "$cloudKernel"/boot/vmlinuz-*)
+        initrd="${minimalInitrd}/initrd"
+        mkdir -p "$out"/boot "$out"/disk
+        cp "$vmlinuz" "$out"/boot/vmlinuz
+        cp "$initrd" "$out"/boot/initrd.img
+        cp "${rootfs}/rootfs.ext4" "$out"/disk/rootfs.ext4
+        kernel_version=$(basename "$vmlinuz" | sed 's/^vmlinuz-//')
+        # Guard against version drift: the catalog label must match the
+        # Debian tree this image actually wraps.
+        shipped=$(cat "$debianRoot"/root/etc/debian_version)
+        if [ "$shipped" != "${imageVersion}" ]; then
+          echo "imageVersion ${imageVersion} != /etc/debian_version $shipped" >&2
+          exit 1
+        fi
+        # Self-describing (#40 review): the archive alone builds a boot
+        # spec — no sidecar metadata for foreign imports to miss.
+        cat > "$out"/disk/image.json <<EOF
+        {
+          "schema": 2,
+          "name": "${imageName}",
+          "version": "${imageVersion}",
+          "cmdline": "${kernelCmdline}",
+          "vsock_shell_port": ${toString vsockShellPort},
+          "kernel_version": "$kernel_version",
+          "kernel_format": "bzImage"
+        }
+        EOF
+      '';
 
   # The image archive: a container-image tar built with plain tar
   # instead of dockerTools (#40 review). The layout is the one
@@ -483,46 +507,54 @@ let
   # (--sort=name --mtime=@1 --owner=0 --group=0 --numeric-owner), so
   # identical rebuilds hash identically and the per-hash cache
   # dedupes across hosts and CI.
-  imageArchive = pkgs.runCommand "msks-image-archive"
-    {
-      inherit bootTree imageName imageVersion;
-      nativeBuildInputs = [ pkgs.gnutar ];
-      imageId = "msks" + builtins.hashString "sha256" (imageName + ":" + imageVersion);
-    }
-    ''
-      set -eu
-      mkdir work
-      # The layer: the containerDisk tree, uncompressed, sorted,
-      # zeroed timestamps and ownership.
-      tar --sort=name --mtime='@1' --owner=0 --group=0 --numeric-owner \
-        -C "${bootTree}" -cf work/layer.tar .
-      # Container-image bookkeeping.
-      mkdir "work/$imageId"
-      mv work/layer.tar "work/$imageId/layer.tar"
-      printf '1.0' > "work/$imageId/VERSION"
-      # A minimally valid image config: podman requires the rootfs
-      # diff_ids (the uncompressed layer's digest).
-      layer_digest=$(sha256sum "work/$imageId/layer.tar" | cut -d' ' -f1)
-      printf '%s' \
-        '{"architecture":"amd64","os":"linux","config":{},' \
-        '"rootfs":{"type":"layers","diff_ids":["sha256:'"$layer_digest"'"]}}' \
-        > "work/$imageId/json"
-      # Unquoted heredocs: the env-provided name/version/imageId
-      # expand in the shell.
-      cat > work/manifest.json <<EOF
-      [{"Config":"$imageId/json","RepoTags":["workspace-''${imageName}:''${imageVersion}"],"Layers":["$imageId/layer.tar"]}]
-      EOF
-      cat > work/repositories <<EOF
-      {"workspace-''${imageName}":{"''${imageVersion}":"$imageId"}}
-      EOF
-      tar --sort=name --mtime='@1' --owner=0 --group=0 --numeric-owner \
-        -C work -cf "$out" manifest.json repositories "$imageId"
-    '';
+  imageArchive =
+    pkgs.runCommand "msks-image-archive"
+      {
+        inherit bootTree imageName imageVersion;
+        nativeBuildInputs = [ pkgs.gnutar ];
+        imageId =
+          "msks" + builtins.hashString "sha256" (imageName + ":" + imageVersion);
+      }
+      ''
+        set -eu
+        mkdir work
+        # The layer: the containerDisk tree, uncompressed, sorted,
+        # zeroed timestamps and ownership.
+        tar --sort=name --mtime='@1' --owner=0 --group=0 --numeric-owner \
+          -C "${bootTree}" -cf work/layer.tar .
+        # Container-image bookkeeping.
+        mkdir "work/$imageId"
+        mv work/layer.tar "work/$imageId/layer.tar"
+        printf '1.0' > "work/$imageId/VERSION"
+        # A minimally valid image config: podman requires the rootfs
+        # diff_ids (the uncompressed layer's digest).
+        layer_digest=$(sha256sum "work/$imageId/layer.tar" | cut -d' ' -f1)
+        printf '%s' \
+          '{"architecture":"amd64","os":"linux","config":{},' \
+          '"rootfs":{"type":"layers","diff_ids":["sha256:'"$layer_digest"'"]}}' \
+          > "work/$imageId/json"
+        # Unquoted heredocs: the env-provided name/version/imageId
+        # expand in the shell.
+        cat > work/manifest.json <<EOF
+        [{"Config":"$imageId/json","RepoTags":["workspace-''${imageName}:''${imageVersion}"],"Layers":["$imageId/layer.tar"]}]
+        EOF
+        cat > work/repositories <<EOF
+        {"workspace-''${imageName}":{"''${imageVersion}":"$imageId"}}
+        EOF
+        tar --sort=name --mtime='@1' --owner=0 --group=0 --numeric-owner \
+          -C work -cf "$out" manifest.json repositories "$imageId"
+      '';
 
 in
 pkgs.runCommand "msks-guest"
   {
-    inherit debianRoot rootfs imageArchive imageName imageVersion;
+    inherit
+      debianRoot
+      rootfs
+      imageArchive
+      imageName
+      imageVersion
+      ;
     passthru = {
       inherit
         kernelCmdline

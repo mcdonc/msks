@@ -2,6 +2,7 @@
 .devenv
 .direnv
 .pre-commit-config.yaml
+.prettierignore
 
 # python
 __pycache__/

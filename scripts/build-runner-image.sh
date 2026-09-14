@@ -27,8 +27,8 @@ if [ -z "$archive" ]; then
   exit 1
 fi
 case "$archive" in
-  *.tar.gz) archive_name=msks-vm-runner.docker.tar.gz ;;
-  *) archive_name=msks-vm-runner.docker.tar ;;
+*.tar.gz) archive_name=msks-vm-runner.docker.tar.gz ;;
+*) archive_name=msks-vm-runner.docker.tar ;;
 esac
 
 mkdir -p "$guest_dir"
@@ -36,7 +36,7 @@ rm -f "$guest_dir/msks-vm-runner.docker.tar" "$guest_dir/msks-vm-runner.docker.t
 cp "$archive" "$guest_dir/$archive_name"
 chmod 0644 "$guest_dir/$archive_name"
 printf '{"image": "%s", "archive": "%s"}\n' "$image" "$archive_name" \
-  > "$guest_dir/runner-image.json"
+  >"$guest_dir/runner-image.json"
 
 echo "msks: runner image archive built into .guest/ (from $out)"
 echo "msks: import on the k3s node with:"

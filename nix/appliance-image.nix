@@ -325,94 +325,111 @@ let
     '';
   };
 
-  applianceRoot = pkgs.runCommand "msks-appliance-root" {
-    inherit applianceInit;
-  } ''
-    set -eu
-    root="$out/root"
-    mkdir -p "$root"/bin "$root"/dev "$root"/etc "$root"/mnt "$root"/proc \
-      "$root"/run "$root"/sys "$root"/tmp "$root"/state "$root"/nix/store \
-      "$root"/lib/modules
-    install -m 0755 "$applianceInit" "$root/init"
-    # busybox as a REAL file, not a store symlink: /init needs /bin/sh
-    # before the virtiofs store share mounts, so the appliance rootfs
-    # cannot resolve absolute /nix/store paths yet (unlike the workspace
-    # guest, which embeds its whole closure instead).
-    cp -L "${busybox}/bin/busybox" "$root/bin/busybox"
-    chmod 0755 "$root/bin/busybox"
-    for applet in sh ash ls cat uname ps mount umount dmesg poweroff \
-      reboot vi hostname mkdir rmdir rm cp mv grep head tail wc id whoami \
-      env uptime free clear dd sync sleep setsid cttyhack mknod chmod \
-      chown date acpid ip mke2fs modprobe sed tr; do
-      ln -s busybox "$root/bin/$applet"
-    done
-    printf 'msksd-appliance\n' > "$root/etc/hostname"
-    # resolv.conf lands on tmpfs at boot (#52): the egress forwarder
-    # relays to the bridge gateway, and a read-only root cannot host
-    # the write.
-    ln -s /run/resolv.conf "$root/etc/resolv.conf"
-    # Power button (host-side graceful shutdown) powers the VM off.
-    printf 'button/power.* /bin/poweroff -f\n' > "$root/etc/acpid.conf"
-    # The module tree the init modprobes from (kvm, virtiofs, net).
-    cp -a -- "${rootModulesClosure}/lib/modules"/* "$root/lib/modules/"
-  '';
+  applianceRoot =
+    pkgs.runCommand "msks-appliance-root"
+      {
+        inherit applianceInit;
+      }
+      ''
+        set -eu
+        root="$out/root"
+        mkdir -p "$root"/bin "$root"/dev "$root"/etc "$root"/mnt "$root"/proc \
+          "$root"/run "$root"/sys "$root"/tmp "$root"/state "$root"/nix/store \
+          "$root"/lib/modules
+        install -m 0755 "$applianceInit" "$root/init"
+        # busybox as a REAL file, not a store symlink: /init needs /bin/sh
+        # before the virtiofs store share mounts, so the appliance rootfs
+        # cannot resolve absolute /nix/store paths yet (unlike the workspace
+        # guest, which embeds its whole closure instead).
+        cp -L "${busybox}/bin/busybox" "$root/bin/busybox"
+        chmod 0755 "$root/bin/busybox"
+        for applet in sh ash ls cat uname ps mount umount dmesg poweroff \
+          reboot vi hostname mkdir rmdir rm cp mv grep head tail wc id whoami \
+          env uptime free clear dd sync sleep setsid cttyhack mknod chmod \
+          chown date acpid ip mke2fs modprobe sed tr; do
+          ln -s busybox "$root/bin/$applet"
+        done
+        printf 'msksd-appliance\n' > "$root/etc/hostname"
+        # resolv.conf lands on tmpfs at boot (#52): the egress forwarder
+        # relays to the bridge gateway, and a read-only root cannot host
+        # the write.
+        ln -s /run/resolv.conf "$root/etc/resolv.conf"
+        # Power button (host-side graceful shutdown) powers the VM off.
+        printf 'button/power.* /bin/poweroff -f\n' > "$root/etc/acpid.conf"
+        # The module tree the init modprobes from (kvm, virtiofs, net).
+        cp -a -- "${rootModulesClosure}/lib/modules"/* "$root/lib/modules/"
+      '';
 
-  rootfs = pkgs.runCommand "msks-appliance-rootfs" {
-    inherit applianceRoot;
-    nativeBuildInputs = [ pkgs.e2fsprogs ];
-    fakeEpoch = 1262304000;
-  } ''
-    set -eu
-    mkdir -p "$out"
-    img="$out/rootfs.ext4"
-    # Size from the staging tree (x2 slack + fixed headroom), the same
-    # recipe as the workspace guest's rootfs: deterministic and never
-    # rounded by mke2fs' own minimum.
-    blocks=$(( $(du -s --apparent-size --block-size=4096 "$applianceRoot/root" | cut -f1) * 2 + 8192 ))
-    E2FSPROGS_FAKE_TIME="$fakeEpoch" mke2fs -q -t ext4 -b 4096 -I 256 \
-      -L msks-rootfs \
-      -E hash_seed=00000000-0000-0000-0000-000000000001 \
-      -d "$applianceRoot/root" "$img" "$blocks"
-    E2FSPROGS_FAKE_TIME="$fakeEpoch" tune2fs -U 00000000-0000-0000-0000-000000000002 "$img" >/dev/null
-  '';
+  rootfs =
+    pkgs.runCommand "msks-appliance-rootfs"
+      {
+        inherit applianceRoot;
+        nativeBuildInputs = [ pkgs.e2fsprogs ];
+        fakeEpoch = 1262304000;
+      }
+      ''
+        set -eu
+        mkdir -p "$out"
+        img="$out/rootfs.ext4"
+        # Size from the staging tree (x2 slack + fixed headroom), the same
+        # recipe as the workspace guest's rootfs: deterministic and never
+        # rounded by mke2fs' own minimum.
+        blocks=$(( $(du -s --apparent-size --block-size=4096 "$applianceRoot/root" | cut -f1) * 2 + 8192 ))
+        E2FSPROGS_FAKE_TIME="$fakeEpoch" mke2fs -q -t ext4 -b 4096 -I 256 \
+          -L msks-rootfs \
+          -E hash_seed=00000000-0000-0000-0000-000000000001 \
+          -d "$applianceRoot/root" "$img" "$blocks"
+        E2FSPROGS_FAKE_TIME="$fakeEpoch" tune2fs -U 00000000-0000-0000-0000-000000000002 "$img" >/dev/null
+      '';
 
   # Persistent-state template: blank ext4. The up-task copies it once
   # per install; the appliance's init formats-and-retries if handed a
   # blank/foreign disk, so either path converges.
-  stateDisk = pkgs.runCommand "msks-appliance-state" {
-    nativeBuildInputs = [ pkgs.e2fsprogs ];
-    fakeEpoch = 1262304000;
-  } ''
-    set -eu
-    mkdir -p "$out"
-    # Sized for the image catalog (#40): one import holds its
-    # archive (~350M) plus the unpacked boot files (~1.7G); two
-    # images plus the database and workspace overlays fit, a third
-    # needs a bigger disk.
-    truncate -s 6G "$out/state.ext4"
-    E2FSPROGS_FAKE_TIME="$fakeEpoch" mke2fs -q -F -t ext4 -b 4096 -I 256 \
-      -L msks-state \
-      -E hash_seed=00000000-0000-0000-0000-000000000003 \
-      "$out/state.ext4"
-    E2FSPROGS_FAKE_TIME="$fakeEpoch" tune2fs -U 00000000-0000-0000-0000-000000000004 "$out/state.ext4" >/dev/null
-  '';
+  stateDisk =
+    pkgs.runCommand "msks-appliance-state"
+      {
+        nativeBuildInputs = [ pkgs.e2fsprogs ];
+        fakeEpoch = 1262304000;
+      }
+      ''
+        set -eu
+        mkdir -p "$out"
+        # Sized for the image catalog (#40): one import holds its
+        # archive (~350M) plus the unpacked boot files (~1.7G); two
+        # images plus the database and workspace overlays fit, a third
+        # needs a bigger disk.
+        truncate -s 6G "$out/state.ext4"
+        E2FSPROGS_FAKE_TIME="$fakeEpoch" mke2fs -q -F -t ext4 -b 4096 -I 256 \
+          -L msks-state \
+          -E hash_seed=00000000-0000-0000-0000-000000000003 \
+          "$out/state.ext4"
+        E2FSPROGS_FAKE_TIME="$fakeEpoch" tune2fs -U 00000000-0000-0000-0000-000000000004 "$out/state.ext4" >/dev/null
+      '';
 
-  manifest = pkgs.writeText "appliance-manifest.json" (builtins.toJSON {
-    kernel = "${kernel}";
-    initrd = "${initrd}";
-    rootfs = "${rootfs}/rootfs.ext4";
-    stateDisk = "${stateDisk}/state.ext4";
-    cmdline = kernelCmdline;
-    network = net;
-    msksd = "${msks}";
-    vmm = "${vmm}";
-    defaultImage = defaultImage;
-    modules = "${rootModulesClosure}";
-  });
+  manifest = pkgs.writeText "appliance-manifest.json" (
+    builtins.toJSON {
+      kernel = "${kernel}";
+      initrd = "${initrd}";
+      rootfs = "${rootfs}/rootfs.ext4";
+      stateDisk = "${stateDisk}/state.ext4";
+      cmdline = kernelCmdline;
+      network = net;
+      msksd = "${msks}";
+      vmm = "${vmm}";
+      defaultImage = defaultImage;
+      modules = "${rootModulesClosure}";
+    }
+  );
 in
 pkgs.runCommand "msks-appliance"
   {
-    inherit rootfs stateDisk manifest kernel initrd;
+    inherit
+      rootfs
+      stateDisk
+      manifest
+      kernel
+      initrd
+      ;
     # The outputs referenced only by the manifest text: making them
     # build-input-style deps of this derivation keeps them realized on
     # the host (the guest sees them through the virtiofs share).
