@@ -246,6 +246,6 @@ def paused_advice(workspace_id: str) -> str:
     """The honest refusal for a paused workspace."""
     return (
         f"msks: {workspace_id} is paused and the daemon has no resume; "
-        f"stop it (POST /api/v1/workspaces/{workspace_id}/stop), "
+        f"stop it with: msks stop {workspace_id}, "
         "then msks start again"
     )

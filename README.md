@@ -214,16 +214,16 @@ bridge — a bare `POST /workspaces` works on a fresh appliance with
 nothing else built. Explicit `kernel`/`rootfs` fields still win over
 the catalog (the shape the tests and dev flows use).
 
-### The client CLI (`msks list`, `msks create`, `msks start`) (#59)
+### The client CLI (`msks ls`, `msks create`, `msks start`, `msks stop`, `msks rm`) (#59, #66)
 
 The client also covers the non-interactive half of the operator flow:
 
 ```bash
-devenv --quiet -O dotenv.enable:bool false shell -- msks list
+devenv --quiet -O dotenv.enable:bool false shell -- msks ls
 devenv --quiet -O dotenv.enable:bool false shell -- msks create my-workspace --start
 ```
 
-`msks list` prints one line per workspace (id, status, image hash,
+`msks ls` prints one line per workspace (id, status, image hash,
 host); `--json` prints one JSON document for scripting. `msks create`
 POSTs the same body the API accepts — `--image` picks a catalog
 reference, `--cpus`/`--mem-mib`/`--root-mib`/`--home-mib` size the VM,
@@ -231,7 +231,10 @@ and explicit `--kernel`/`--rootfs` (with optional `--initrd`,
 `--cmdline`) bypass the catalog. `--start` boots the workspace right
 after creating it, so `msks create ws --start` then `msks shell ws`
 is the two-step path from nothing to a shell; `msks start <id>` boots
-an existing workspace later, and `msks shell <id>` boots one itself
+an existing workspace later, `msks stop <id>` powers one off (a
+graceful, deadline-bounded shutdown; the data survives), `msks rm
+<id>…` deletes one or more workspaces together with their persistent
+root overlay and `/home` volume, and `msks shell <id>` boots one itself
 when the daemon reports it as not running (a notice prints on
 stderr while the boot runs). All commands use the same
 `MSKSC_URL`/`MSKSC_TOKEN`/`MSKSC_CAFILE` environment as `msks shell`;
