@@ -1,27 +1,23 @@
-# Lint + complexity gates (#17).
+# Lint + complexity + format gates (#17, #72).
 #
-# Split out of ci.yml so a lint or xenon failure reports as its own
-# check: it can neither mask the unit-test result nor be masked by it,
-# and both run in parallel. Invocations are byte-identical to the
-# pre-split steps — ruff check + ruff format --check over src/, then
-# the msks:xenon rank-A gate — everything inside the repo's own devenv.
-#
-# The `if: !cancelled()` chaining the old single job needed is gone
-# with the single job.
+# Split out of ci.yml so a lint failure reports as its own check: it
+# can neither mask the unit-test result nor be masked by it, and both
+# run in parallel. The ruff and xenon steps keep their pre-split
+# invocations (targeted failure names); the hook-suite step runs the
+# full pre-commit suite — the same .pre-commit-config.yaml devenv.nix
+# generates and `git commit` enforces — so a push whose commits
+# bypassed the hooks (or landed before a new one) still meets every
+# gate in CI.
 name: Lint
 
-# Markdown-only changes cannot move the gates (ruff/xenon read src/,
-# the unit tests exercise code) — so an .md-only push skips both runs
-# instead of burning a runner. guest-assets.yml already path-filters
-# to its own inputs.
+# Every file type is gated by some hook (markdownlint and prettier
+# read docs/*.md, nixfmt reads nix/, shfmt/shellcheck read scripts/),
+# so no path filters here: every push runs. ci.yml keeps its .md
+# ignore — the unit tests do not read Markdown.
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - "**.md"
   pull_request:
-    paths-ignore:
-      - "**.md"
 
 permissions:
   contents: read
@@ -65,3 +61,21 @@ jobs:
         run: >-
           devenv --quiet -O dotenv.enable:bool false shell --
           devenv tasks run msks:xenon
+
+      # The full pre-commit suite (#72): deferred-imports, shfmt,
+      # shellcheck, markdownlint, actionlint, trufflehog, nixfmt,
+      # check-toml, yamllint, prettier, jscpd (ruff and xenon run in
+      # their own steps above and again here). devenv:git-hooks:run is
+      # pre-commit run --all-files over the generated config — the one
+      # definition, shared with the commit-time hook. Write-mode hooks
+      # (prettier/nixfmt/shfmt/ruff format) only "fail" in CI when a
+      # tracked file is not formatted; the runner tree is disposable.
+      # Note the suite's trufflehog hook scans commits newer than
+      # HEAD — on a clean checkout that set is empty, so secrets live
+      # in pushed history are not re-scanned by this step.
+      - name: Pre-commit hook suite
+        env:
+          TMPDIR: /tmp
+        run: >-
+          devenv --quiet -O dotenv.enable:bool false shell --
+          devenv tasks run devenv:git-hooks:run
