@@ -10,10 +10,11 @@
 # can mask the others, which is what the old `if: !cancelled()`
 # chaining approximated inside a single job.
 #
-# The opt-in smoke tests skip themselves on the runner: kvm_available()
-# gates the .guest/ self-provisioning, and GitHub-hosted runners have
-# no nested KVM (real-VM CI coverage arrives with the QEMU/TCG driver,
-# #9). No MSKSD_TEST_* wiring exists here by design.
+# The real-VM smoke tests run in smoke.yml — the hosted runner's
+# /dev/kvm (changelog 2024-04-02) plus the built .guest/ artifacts
+# satisfy the local suite's gate (#64); the appliance and k8s smokes
+# stay dev-host opt-in. This workflow stays MSKSD_TEST_*-free by
+# design: coverage-gated units only.
 name: CI
 
 # Markdown-only changes cannot move the gates (ruff/xenon read src/,
