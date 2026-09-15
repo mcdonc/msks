@@ -26,76 +26,102 @@ empty string is the unset form: the file value applies.
 | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `msksd`                              | Reads `$MSKSD_CONFIG_DIR/msksd.yaml` (default `~/.config/msksd/msksd.yaml`, honoring `$XDG_CONFIG_HOME`). A missing file is **generated** as a commented template pointing at this chapter — the first run writes the file so its location is discoverable, and the daemon then runs on environment variables and defaults. |
 | `msksd --config /path/to/msksd.yaml` | Reads exactly that file. A missing file is a startup error naming the path. Explicit paths are never auto-generated.                                                                                                                                                                                                        |
-| `msksd --config=none`                | Reads environment variables and built-in defaults only — the deployment shape for appliance and container runs that manage config out-of-band.                                                                                                                                                                              |
+| `msksd --config=none`                | Reads environment variables and built-in defaults only — the deployment shape for the appliance (its root filesystem is read-only, and its config channel is the kernel-cmdline env bridge) and container runs that manage config out-of-band.                                                                              |
 
-`MSKSD_CONFIG_DIR` is read before anything else: the config file
-cannot relocate the directory it lives in, so the tree root must be
-resolvable before the file is located.
+`MSKSD_CONFIG_DIR` is read before anything else and exists only as
+an environment variable: the config file cannot relocate the
+directory it lives in, so the tree root must be resolvable before
+the file is located.
 
 ## Key mapping
 
-The file mirrors the settings tree: four sections, one per settings
-group, and keys named after the settings fields in `snake_case`.
-Every key has a matching `MSKSD_*` environment variable (the tables
-below give both). For example:
+A config-file key is its `MSKSD_*` variable with the prefix stripped
+and lowercased — one rule, no lookup table:
+
+| Environment variable     | Config-file key    |
+| ------------------------ | ------------------ |
+| `MSKSD_PORT`             | `port`             |
+| `MSKSD_VSOCK_SHELL_PORT` | `vsock_shell_port` |
+| `MSKSD_K8S_NAMESPACE`    | `k8s_namespace`    |
+| `MSKSD_EGRESS_SUBNET`    | `egress_subnet`    |
+| `MSKSD_STATE_DIR`        | `state_dir`        |
+
+The file is flat — one key per setting, no sections. For example:
 
 ```yaml
-server:
-  host: 0.0.0.0
-  port: 8660
-vmm:
-  vsock_shell_port: 1023
+host: 0.0.0.0
+port: 8660
+vsock_shell_port: 1023
 ```
 
 sets the same settings `MSKSD_HOST`, `MSKSD_PORT`, and
-`MSKSD_VSOCK_SHELL_PORT` would.
+`MSKSD_VSOCK_SHELL_PORT` would. Either spelling is recoverable from
+the other by the rule, and the daemon enforces it in code: the
+key↔variable table is derived mechanically, so the two forms cannot
+drift apart.
 
-Two mapping details worth knowing:
-
-- **`vmm.state_dir` places the database too.** `MSKSD_STATE_DIR`
-  feeds both the local driver's workspace artifacts and the server's
-  sqlite database (`<state_dir>/msks.db`). The key lives under `vmm:`
-  and there is no separate `db_path` key — matching the environment
-  variable, which also drives both.
-- **`net:` keys use the field names.** The egress variables carry an
-  `EGRESS_` prefix (`MSKSD_EGRESS_SUBNET`), but the file keys are the
-  field names: `pool`, `uplink`, `enabled`.
+One mapping detail worth knowing: **`state_dir` places the database
+too.** `MSKSD_STATE_DIR` feeds both the local driver's workspace
+artifacts and the server's sqlite database (`<state_dir>/msks.db`);
+there is no separate `db_path` key, matching the environment
+variable, which also drives both.
 
 ### Native scalar types
 
 Numeric, boolean, and string fields accept their natural YAML
 scalars: `port: 8660`, `access_log: true`,
 `socket_wait_timeout_s: 12.5`. Quoted strings (`port: "8660"`) work
-everywhere and parse identically. Booleans are `true` and `false` —
-write them that way: a bare `1` parses as the integer `1` and then
-reads as false, the same string rule the environment variable
-follows. A key with no value (`bootstrap_token:`) is the unset form —
-the environment (for its variable) and then the default apply.
-Values must be scalars: a list or mapping where a number, boolean, or
-string belongs is a startup error, and so is a duplicate section or
-key (the second `vmm:` block does not silently win).
+everywhere and parse identically. A key with no value
+(`bootstrap_token:`) is the unset form — the environment (for its
+variable) and then the default apply. Values must be scalars: a list
+or mapping where a number, boolean, or string belongs is a startup
+error, and so is a duplicate key — a second `port:` does not silently win.
+
+Booleans deserve care. `true` and `false` are the spellings to use;
+PyYAML also parses the YAML 1.1 forms `yes`/`no`/`on`/`off` as
+booleans, so those work too. The single letters `y` and `n` are
+plain strings to YAML 1.1 — a boolean key set to either reads as
+**false**, the same string rule the environment variable follows —
+and a bare `1` or `0` is an integer, which also reads as false.
+Write `true` or `false`.
 
 ### Unknown keys fail fast
 
-A section or key the daemon does not know is a startup error naming
-the key and the valid ones — a typo'd `server.prot` fails at boot
-instead of being silently ignored. (The environment has no such
-guard: a typo'd variable name is simply never read.)
+A key the daemon does not know is a startup error naming the key and
+the valid ones — a typo'd `prot` fails at boot instead of being
+silently ignored. (The environment has no such guard: a typo'd
+variable name is simply never read.)
 
 Invalid values fail the same way whichever source they came from,
-and the error message names the `MSKSD_*` variable — `vmm.driver:
-firecracker` reports `MSKSD_VMM_DRIVER must be one of ('local',
-'k8s')`.
+and the error message names the `MSKSD_*` variable —
+`vmm_driver: firecracker` reports `MSKSD_VMM_DRIVER must be one of
+('local', 'k8s')`. Non-finite numbers (`.nan`, `.inf`) are rejected
+from either source.
 
 ## Key reference
 
-### `vmm:` — the local cloud-hypervisor driver
+The tables below group the keys by the subsystem that reads them;
+the file itself carries them all at one level.
+
+### The API listener
+
+| Key               | Environment variable    | Type   | Default     | What it does                                                                                                                                                                   |
+| ----------------- | ----------------------- | ------ | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `host`            | `MSKSD_HOST`            | string | `127.0.0.1` | The HTTPS + WSS listener's bind address.                                                                                                                                       |
+| `port`            | `MSKSD_PORT`            | int    | `8660`      | The listener's port.                                                                                                                                                           |
+| `tls_cert`        | `MSKSD_TLS_CERT`        | string | _(unset)_   | Path to the operator-provided TLS certificate. Both cert and key unset: a self-signed CA is generated on first run and its fingerprint printed for trust-on-first-use pinning. |
+| `tls_key`         | `MSKSD_TLS_KEY`         | string | _(unset)_   | Path to the operator-provided TLS key.                                                                                                                                         |
+| `event_poll_s`    | `MSKSD_EVENT_POLL_S`    | float  | `1.0`       | Seconds between workspace status scans (read at loop start; a running daemon applies a change at restart).                                                                     |
+| `bootstrap_token` | `MSKSD_BOOTSTRAP_TOKEN` | string | _(unset)_   | Seeds the first bearer token at first boot.                                                                                                                                    |
+| `access_log`      | `MSKSD_ACCESS_LOG`      | bool   | `false`     | Writes uvicorn's access log. Off by default: the events websocket carries its token in the query string, which the access log would persist.                                   |
+
+### The local cloud-hypervisor driver
 
 | Key                     | Environment variable          | Type   | Default                | What it does                                                                                                        |
 | ----------------------- | ----------------------------- | ------ | ---------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `driver`                | `MSKSD_VMM_DRIVER`            | string | `local`                | The backend that runs workspaces: `local` (cloud-hypervisor) or `k8s`.                                              |
-| `cloud_hypervisor`      | `MSKSD_CLOUD_HYPERVISOR`      | string | `cloud-hypervisor`     | Path to the cloud-hypervisor binary the local driver execs.                                                         |
+| `vmm_driver`            | `MSKSD_VMM_DRIVER`            | string | `local`                | The backend that runs workspaces: `local` (cloud-hypervisor) or `k8s`.                                              |
 | `state_dir`             | `MSKSD_STATE_DIR`             | string | `~/.local/state/msksd` | The daemon's state directory: the sqlite database (`<state_dir>/msks.db`) and per-workspace artifacts. `~` expands. |
+| `cloud_hypervisor`      | `MSKSD_CLOUD_HYPERVISOR`      | string | `cloud-hypervisor`     | Path to the cloud-hypervisor binary the local driver execs.                                                         |
 | `socket_wait_timeout_s` | `MSKSD_SOCKET_WAIT_TIMEOUT_S` | float  | `10.0`                 | Seconds the driver waits for the VMM's API socket at workspace start.                                               |
 | `request_timeout_s`     | `MSKSD_REQUEST_TIMEOUT_S`     | float  | `5.0`                  | Seconds per cloud-hypervisor API request.                                                                           |
 | `shutdown_timeout_s`    | `MSKSD_SHUTDOWN_TIMEOUT_S`    | float  | `20.0`                 | Seconds a workspace stop waits for the guest to power off.                                                          |
@@ -109,62 +135,51 @@ firecracker` reports `MSKSD_VMM_DRIVER must be one of ('local',
 | `root_mib`              | `MSKSD_ROOT_MIB`              | int    | `10240`                | Default workspace root overlay size, MiB (a per-create request overrides).                                          |
 | `home_mib`              | `MSKSD_HOME_MIB`              | int    | `2048`                 | Default workspace `/home` volume size, MiB (a per-create request overrides).                                        |
 
-### `server:` — the API listener
+### The Kubernetes runner driver
 
-| Key               | Environment variable    | Type   | Default     | What it does                                                                                                                                                                   |
-| ----------------- | ----------------------- | ------ | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `host`            | `MSKSD_HOST`            | string | `127.0.0.1` | The HTTPS + WSS listener's bind address.                                                                                                                                       |
-| `port`            | `MSKSD_PORT`            | int    | `8660`      | The listener's port.                                                                                                                                                           |
-| `tls_cert`        | `MSKSD_TLS_CERT`        | string | _(unset)_   | Path to the operator-provided TLS certificate. Both cert and key unset: a self-signed CA is generated on first run and its fingerprint printed for trust-on-first-use pinning. |
-| `tls_key`         | `MSKSD_TLS_KEY`         | string | _(unset)_   | Path to the operator-provided TLS key.                                                                                                                                         |
-| `event_poll_s`    | `MSKSD_EVENT_POLL_S`    | float  | `1.0`       | Seconds between workspace status scans (read at loop start; a running daemon applies a change at restart).                                                                     |
-| `bootstrap_token` | `MSKSD_BOOTSTRAP_TOKEN` | string | _(unset)_   | Seeds the first bearer token at first boot.                                                                                                                                    |
-| `access_log`      | `MSKSD_ACCESS_LOG`      | bool   | `false`     | Writes uvicorn's access log. Off by default: the events websocket carries its token in the query string, which the access log would persist.                                   |
+| Key                         | Environment variable              | Type   | Default                      | What it does                                                                                        |
+| --------------------------- | --------------------------------- | ------ | ---------------------------- | --------------------------------------------------------------------------------------------------- |
+| `k8s_namespace`             | `MSKSD_K8S_NAMESPACE`             | string | `msks`                       | The namespace workspace pods and claims live in.                                                    |
+| `k8s_runner_image`          | `MSKSD_K8S_RUNNER_IMAGE`          | string | `registry.k8s.io/pause:3.10` | The pause image workspace pods carry.                                                               |
+| `kubeconfig`                | `MSKSD_KUBECONFIG`                | string | _(unset)_                    | A kubeconfig path for the cluster; unset uses the ambient cluster configuration.                    |
+| `k8s_api_timeout_s`         | `MSKSD_K8S_API_TIMEOUT_S`         | float  | `30.0`                       | Seconds per Kubernetes API request.                                                                 |
+| `k8s_storage_class`         | `MSKSD_K8S_STORAGE_CLASS`         | string | _(unset)_                    | The storage class for per-workspace PVCs; unset asks the cluster's default.                         |
+| `k8s_workspace_storage_gib` | `MSKSD_K8S_WORKSPACE_STORAGE_GIB` | int    | _(unset)_                    | A fixed per-workspace PVC size, GiB; unset derives the size from the workspace's root + home disks. |
 
-### `k8s:` — the Kubernetes runner driver
+### Per-workspace egress networking
 
-| Key                     | Environment variable              | Type   | Default                      | What it does                                                                                        |
-| ----------------------- | --------------------------------- | ------ | ---------------------------- | --------------------------------------------------------------------------------------------------- |
-| `namespace`             | `MSKSD_K8S_NAMESPACE`             | string | `msks`                       | The namespace workspace pods and claims live in.                                                    |
-| `runner_image`          | `MSKSD_K8S_RUNNER_IMAGE`          | string | `registry.k8s.io/pause:3.10` | The pause image workspace pods carry.                                                               |
-| `kubeconfig`            | `MSKSD_KUBECONFIG`                | string | _(unset)_                    | A kubeconfig path for the cluster; unset uses the ambient cluster configuration.                    |
-| `api_timeout_s`         | `MSKSD_K8S_API_TIMEOUT_S`         | float  | `30.0`                       | Seconds per Kubernetes API request.                                                                 |
-| `storage_class`         | `MSKSD_K8S_STORAGE_CLASS`         | string | _(unset)_                    | The storage class for per-workspace PVCs; unset asks the cluster's default.                         |
-| `workspace_storage_gib` | `MSKSD_K8S_WORKSPACE_STORAGE_GIB` | int    | _(unset)_                    | A fixed per-workspace PVC size, GiB; unset derives the size from the workspace's root + home disks. |
-
-### `net:` — per-workspace egress networking
-
-| Key             | Environment variable         | Type   | Default         | What it does                                                                                           |
-| --------------- | ---------------------------- | ------ | --------------- | ------------------------------------------------------------------------------------------------------ |
-| `enabled`       | `MSKSD_EGRESS_ENABLED`       | bool   | `false`         | Arms per-workspace NICs, DHCP, NAT egress, and the DNS forwarder; needs `CAP_NET_ADMIN`.               |
-| `pool`          | `MSKSD_EGRESS_SUBNET`        | string | `172.31.0.0/16` | The IPv4 pool per-workspace /30 slices are carved from.                                                |
-| `uplink`        | `MSKSD_EGRESS_UPLINK`        | string | `eth0`          | The appliance interface egress is NAT-masqueraded out of.                                              |
-| `dns_upstream`  | `MSKSD_EGRESS_DNS_UPSTREAM`  | string | _(unset)_       | The resolver the daemon's DNS forwarder relays to; unset reads the appliance's own `/etc/resolv.conf`. |
-| `ip_tool`       | `MSKSD_IP_TOOL`              | string | `ip`            | Path to the `ip` binary (taps and addresses).                                                          |
-| `nft_tool`      | `MSKSD_NFT_TOOL`             | string | `nft`           | Path to the `nft` binary (per-VM firewall tables).                                                     |
-| `lease_s`       | `MSKSD_EGRESS_LEASE_S`       | int    | `3600`          | DHCP lease seconds offered to guests.                                                                  |
-| `dns_timeout_s` | `MSKSD_EGRESS_DNS_TIMEOUT_S` | float  | `3.0`           | Seconds the forwarder waits on the upstream resolver.                                                  |
+| Key                    | Environment variable         | Type   | Default         | What it does                                                                                                                                       |
+| ---------------------- | ---------------------------- | ------ | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `egress_enabled`       | `MSKSD_EGRESS_ENABLED`       | bool   | `false`         | Arms per-workspace NICs, DHCP, NAT egress, and the DNS forwarder at startup (needs `CAP_NET_ADMIN`); a running daemon applies a change at restart. |
+| `egress_subnet`        | `MSKSD_EGRESS_SUBNET`        | string | `172.31.0.0/16` | The IPv4 pool per-workspace /30 slices are carved from.                                                                                            |
+| `egress_uplink`        | `MSKSD_EGRESS_UPLINK`        | string | `eth0`          | The appliance interface egress is NAT-masqueraded out of (the base NAT table applies at startup; per-workspace rules read the live value).         |
+| `egress_dns_upstream`  | `MSKSD_EGRESS_DNS_UPSTREAM`  | string | _(unset)_       | The resolver the daemon's DNS forwarder relays to; unset reads the appliance's own `/etc/resolv.conf`.                                             |
+| `ip_tool`              | `MSKSD_IP_TOOL`              | string | `ip`            | Path to the `ip` binary (taps and addresses).                                                                                                      |
+| `nft_tool`             | `MSKSD_NFT_TOOL`             | string | `nft`           | Path to the `nft` binary (per-VM firewall tables).                                                                                                 |
+| `egress_lease_s`       | `MSKSD_EGRESS_LEASE_S`       | int    | `3600`          | DHCP lease seconds offered to guests.                                                                                                              |
+| `egress_dns_timeout_s` | `MSKSD_EGRESS_DNS_TIMEOUT_S` | float  | `3.0`           | Seconds the forwarder waits on the upstream resolver.                                                                                              |
 
 ## SIGHUP reload
 
 Send `SIGHUP` to a running `msksd` and it re-reads the config file
 (and the environment) into its live settings. Subsystems read
 settings off the app's state at call time, so the swap propagates
-with no per-module reconfiguration — a changed `net.pool` or
-`k8s.namespace` applies to the next request that reads it.
+with no per-module reconfiguration — a changed `egress_subnet` or
+`k8s_namespace` applies to the next request that reads it.
 
-Three things keep their startup values until a restart:
+Several things keep their startup values until a restart:
 
 - the listener's address, port, TLS material, and access logging
   (bound — and, for the access log, snapshotted into the listener's
   config — at startup)
 - the database path (the engine is open)
-- long-lived loops and rulesets that sampled their inputs at start:
-  the workspace status scan's `event_poll_s`, and the base NAT
-  masquerade's `net.uplink` (per-workspace firewall rules read the
-  live setting, but the base table that actually masquerades out the
-  uplink keeps its startup value — change `uplink` only with a
-  restart scheduled)
+- the workspace status scan's `event_poll_s` (sampled at loop start)
+- the egress machinery's startup inputs: `egress_enabled` (the
+  subsystem latches its state when the daemon boots) and the base
+  NAT masquerade's `egress_uplink` (per-workspace firewall rules
+  read the live setting, but the base table that actually
+  masquerades out the uplink keeps its startup value — change
+  `egress_uplink` only with a restart scheduled)
 
 A config that fails to load or validate is refused: the daemon
 reports the error on stderr and keeps the previous settings. A

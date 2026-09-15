@@ -5,14 +5,20 @@ settings; ``MSKSD_*`` environment variables override file values,
 and the settings dataclass defaults are the floor — precedence
 **env > config file > built-in defaults**.
 
+Key mapping (klangkd's convention): a config key is its ``MSKSD_*``
+variable with the prefix stripped and lowercased — ``MSKSD_PORT`` →
+``port``, ``MSKSD_EGRESS_SUBNET`` → ``egress_subnet``. The mapping
+is derived from :data:`SETTING_ENV_VARS` by that one rule, so the
+file spelling and the variable spelling cannot drift apart, and
+either is recoverable from the other without a lookup table.
+
 Mechanics: the file is parsed into a flat ``MSKSD_*`` variable layer
-(:data:`CONFIG_ENV_VARS` is the single key↔variable table) and folded
-under the live environment as :class:`LayeredEnv`, which the settings
-parsers read like any env mapping. Native YAML scalars keep their
-meaning — ``port: 8660`` and ``access_log: true`` arrive at the
-parsers as ``"8660"`` and ``"true"`` — so both sources share one
-validation path and an invalid value fails identically wherever it
-came from, with the error naming the ``MSKSD_*`` variable.
+and folded under the live environment as :class:`LayeredEnv`, which
+the settings parsers read like any env mapping. Native YAML scalars
+keep their meaning — ``port: 8660`` and ``access_log: true`` arrive
+at the parsers as ``"8660"`` and ``"true"`` — so both sources share
+one validation path and an invalid value fails identically wherever
+it came from, with the error naming the ``MSKSD_*`` variable.
 
 The file is located through three ``--config`` modes (klangkd's):
 
@@ -24,6 +30,11 @@ The file is located through three ``--config`` modes (klangkd's):
   auto-generated.
 - ``msksd --config=none`` → environment variables and built-in
   defaults only.
+
+``MSKSD_CONFIG_DIR`` is deliberately not a config key: the file
+cannot relocate the config tree it lives in, so the tree root must
+be resolvable from the environment before the file is located
+(klangkd's bootstrap rule).
 """
 
 from __future__ import annotations
@@ -43,58 +54,60 @@ NO_CONFIG = "none"
 # The filename inside the config directory.
 CONFIG_FILENAME = "msksd.yaml"
 
-# The single key↔variable table (#46): each config-file key is a
-# settings dataclass field name (snake_case), nested under its
-# section, and each maps to the ``MSKSD_*`` variable that overrides
-# it. ``state_dir`` lives under ``vmm:`` and feeds both consumers of
-# ``MSKSD_STATE_DIR``: the VMM driver's artifacts and the server's
-# sqlite database path (``<state_dir>/msks.db`` — there is no
-# separate ``db_path`` key, matching the env var).
-CONFIG_ENV_VARS: dict[str, dict[str, str]] = {
-    "vmm": {
-        "driver": "MSKSD_VMM_DRIVER",
-        "cloud_hypervisor": "MSKSD_CLOUD_HYPERVISOR",
-        "state_dir": "MSKSD_STATE_DIR",
-        "socket_wait_timeout_s": "MSKSD_SOCKET_WAIT_TIMEOUT_S",
-        "request_timeout_s": "MSKSD_REQUEST_TIMEOUT_S",
-        "shutdown_timeout_s": "MSKSD_SHUTDOWN_TIMEOUT_S",
-        "vsock_shell_port": "MSKSD_VSOCK_SHELL_PORT",
-        "vsock_wait_timeout_s": "MSKSD_VSOCK_WAIT_TIMEOUT_S",
-        "default_image": "MSKSD_DEFAULT_IMAGE",
-        "qemu_img": "MSKSD_QEMU_IMG",
-        "mkfs_ext4": "MSKSD_MKFS_EXT4",
-        "mkisofs": "MSKSD_MKISOFS",
-        "host_name": "MSKSD_HOST_NAME",
-        "root_mib": "MSKSD_ROOT_MIB",
-        "home_mib": "MSKSD_HOME_MIB",
-    },
-    "server": {
-        "host": "MSKSD_HOST",
-        "port": "MSKSD_PORT",
-        "tls_cert": "MSKSD_TLS_CERT",
-        "tls_key": "MSKSD_TLS_KEY",
-        "event_poll_s": "MSKSD_EVENT_POLL_S",
-        "bootstrap_token": "MSKSD_BOOTSTRAP_TOKEN",
-        "access_log": "MSKSD_ACCESS_LOG",
-    },
-    "k8s": {
-        "namespace": "MSKSD_K8S_NAMESPACE",
-        "runner_image": "MSKSD_K8S_RUNNER_IMAGE",
-        "kubeconfig": "MSKSD_KUBECONFIG",
-        "api_timeout_s": "MSKSD_K8S_API_TIMEOUT_S",
-        "storage_class": "MSKSD_K8S_STORAGE_CLASS",
-        "workspace_storage_gib": "MSKSD_K8S_WORKSPACE_STORAGE_GIB",
-    },
-    "net": {
-        "enabled": "MSKSD_EGRESS_ENABLED",
-        "pool": "MSKSD_EGRESS_SUBNET",
-        "uplink": "MSKSD_EGRESS_UPLINK",
-        "dns_upstream": "MSKSD_EGRESS_DNS_UPSTREAM",
-        "ip_tool": "MSKSD_IP_TOOL",
-        "nft_tool": "MSKSD_NFT_TOOL",
-        "lease_s": "MSKSD_EGRESS_LEASE_S",
-        "dns_timeout_s": "MSKSD_EGRESS_DNS_TIMEOUT_S",
-    },
+# Every settings variable (#46), grouped by the settings class that
+# reads it. The config-key form is derived by the one rule — strip
+# ``MSKSD_``, lowercase — so each group here reads as the file's
+# documentation order, not a separate naming scheme.
+SETTING_ENV_VARS: tuple[str, ...] = (
+    # VmmSettings — the local cloud-hypervisor driver.
+    "MSKSD_VMM_DRIVER",
+    "MSKSD_CLOUD_HYPERVISOR",
+    "MSKSD_STATE_DIR",
+    "MSKSD_SOCKET_WAIT_TIMEOUT_S",
+    "MSKSD_REQUEST_TIMEOUT_S",
+    "MSKSD_SHUTDOWN_TIMEOUT_S",
+    "MSKSD_VSOCK_SHELL_PORT",
+    "MSKSD_VSOCK_WAIT_TIMEOUT_S",
+    "MSKSD_DEFAULT_IMAGE",
+    "MSKSD_QEMU_IMG",
+    "MSKSD_MKFS_EXT4",
+    "MSKSD_MKISOFS",
+    "MSKSD_HOST_NAME",
+    "MSKSD_ROOT_MIB",
+    "MSKSD_HOME_MIB",
+    # ServerSettings — the API listener.
+    "MSKSD_HOST",
+    "MSKSD_PORT",
+    "MSKSD_TLS_CERT",
+    "MSKSD_TLS_KEY",
+    "MSKSD_EVENT_POLL_S",
+    "MSKSD_BOOTSTRAP_TOKEN",
+    "MSKSD_ACCESS_LOG",
+    # K8sSettings — the Kubernetes runner driver.
+    "MSKSD_K8S_NAMESPACE",
+    "MSKSD_K8S_RUNNER_IMAGE",
+    "MSKSD_KUBECONFIG",
+    "MSKSD_K8S_API_TIMEOUT_S",
+    "MSKSD_K8S_STORAGE_CLASS",
+    "MSKSD_K8S_WORKSPACE_STORAGE_GIB",
+    # NetSettings — per-workspace egress networking.
+    "MSKSD_EGRESS_ENABLED",
+    "MSKSD_EGRESS_SUBNET",
+    "MSKSD_EGRESS_UPLINK",
+    "MSKSD_EGRESS_DNS_UPSTREAM",
+    "MSKSD_IP_TOOL",
+    "MSKSD_NFT_TOOL",
+    "MSKSD_EGRESS_LEASE_S",
+    "MSKSD_EGRESS_DNS_TIMEOUT_S",
+)
+
+# The key↔variable mapping, derived by the one rule. ``state_dir``
+# (``MSKSD_STATE_DIR``) feeds both consumers of the variable: the
+# VMM driver's artifacts and the server's sqlite database path
+# (``<state_dir>/msks.db`` — there is no separate ``db_path`` key,
+# matching the environment variable).
+CONFIG_ENV_VARS: dict[str, str] = {
+    var.removeprefix("MSKSD_").lower(): var for var in SETTING_ENV_VARS
 }
 
 
@@ -141,16 +154,25 @@ class UniqueKeyLoader(yaml.SafeLoader):
     """A safe loader that refuses duplicate mapping keys.
 
     PyYAML keeps the last of duplicate keys silently; the config file
-    fails fast instead — an operator appending a second ``vmm:``
-    block to a long file gets an error naming the key, not a silent
-    override of everything above it.
+    fails fast instead — an operator appending a second block to a
+    long file gets an error naming the key, not a silent override of
+    everything above it. Merge keys (``<<: *anchor``) are flattened
+    first, so an anchored base with overrides is legal and its
+    duplicates are still caught.
     """
 
     def construct_mapping(self, node, deep=False):
+        self.flatten_mapping(node)
         seen = set()
         for key_node, _ in node.value:
             key = self.construct_object(key_node, deep=deep)
-            if key in seen:
+            try:
+                duplicate = key in seen
+            except TypeError:
+                raise ValueError(
+                    "config keys must be scalars, not lists or mappings"
+                ) from None
+            if duplicate:
                 raise ValueError(f"duplicate config key {key!r}")
             seen.add(key)
         return super().construct_mapping(node, deep)
@@ -159,9 +181,9 @@ class UniqueKeyLoader(yaml.SafeLoader):
 def parse_config_doc(text: str, path: str) -> dict[str, str]:
     """Parse config-file text into an ``MSKSD_*`` env-var layer.
 
-    Unknown sections and keys are errors — a typo'd key fails fast at
-    startup naming the key and the valid ones. A null value (``key:``
-    with nothing after it) is the unset form: the default (or the
+    Unknown keys are errors — a typo'd key fails fast at startup
+    naming the key and the valid ones. A null value (``key:`` with
+    nothing after it) is the unset form: the default (or the
     environment) applies, exactly as an unset variable would.
     """
     try:
@@ -173,55 +195,35 @@ def parse_config_doc(text: str, path: str) -> dict[str, str]:
     if not isinstance(doc, dict):
         kind = type(doc).__name__
         raise ValueError(
-            f"{path}: the config file must be a mapping of sections, got {kind}"
+            f"{path}: the config file must be a mapping of keys, got {kind}"
         )
-    return section_layer(doc, path)
+    return key_layer(doc, path)
 
 
-def section_layer(doc: dict, path: str) -> dict[str, str]:
-    """The validated section→key walk of a parsed config document."""
+def key_layer(doc: dict, path: str) -> dict[str, str]:
+    """The validated key walk of a parsed config document."""
     layer: dict[str, str] = {}
-    for section, keys in doc.items():
-        table = CONFIG_ENV_VARS.get(section)
-        if table is None:
+    for key, value in doc.items():
+        if not isinstance(key, str):
+            raise ValueError(f"{path}: config keys must be strings, got {key!r}")
+        var = CONFIG_ENV_VARS.get(key)
+        if var is None:
             valid = ", ".join(sorted(CONFIG_ENV_VARS))
             raise ValueError(
-                f"{path}: unknown config section {section!r} (valid sections: {valid})"
-            )
-        if not isinstance(keys, dict):
-            kind = type(keys).__name__
-            raise ValueError(
-                f"{path}: section {section!r} must be a mapping of keys, got {kind}"
-            )
-        key_layer(layer, section, keys, table, path)
-    return layer
-
-
-def key_layer(
-    layer: dict[str, str],
-    section: str,
-    keys: dict,
-    table: dict[str, str],
-    path: str,
-) -> None:
-    """Fold one section's keys into the env-var layer in place."""
-    for key, value in keys.items():
-        if key not in table:
-            valid = ", ".join(sorted(table))
-            raise ValueError(
-                f"{path}: unknown config key {section}.{key} (valid keys: {valid})"
+                f"{path}: unknown config key {key!r} (valid keys: {valid})"
             )
         if value is None:
             continue
-        layer[table[key]] = scalar_to_str(f"{section}.{key}", value)
+        layer[var] = scalar_to_str(key, value)
+    return layer
 
 
 def file_env_overrides(path: str) -> dict[str, str]:
     """Read the config file at *path* into an ``MSKSD_*`` env-var layer.
 
     An unreadable file raises ``OSError``; a malformed document or an
-    unknown section/key raises ``ValueError`` — both are startup
-    errors the caller reports.
+    unknown key raises ``ValueError`` — both are startup errors the
+    caller reports.
     """
     return parse_config_doc(Path(path).read_text(encoding="utf-8"), path)
 
@@ -233,10 +235,17 @@ class LayeredEnv(Mapping):
     set in the process overrides the same key in the file. A variable
     set to an empty string is the unset form and falls through to the
     file, matching the settings parsers' empty-means-default rule.
+    Iteration applies the same rule: an empty-string environment
+    entry does not shadow the file's value.
     """
 
     def __init__(self, overrides: Mapping[str, str]) -> None:
         self._overrides = dict(overrides)
+
+    def _merged(self) -> dict[str, str]:
+        merged = dict(self._overrides)
+        merged.update({name: value for name, value in os.environ.items() if value})
+        return merged
 
     def __getitem__(self, name: str) -> str:
         value = os.environ.get(name)
@@ -245,14 +254,10 @@ class LayeredEnv(Mapping):
         return self._overrides[name]
 
     def __iter__(self):
-        merged = dict(self._overrides)
-        merged.update(os.environ)
-        return iter(merged)
+        return iter(self._merged())
 
     def __len__(self) -> int:
-        merged = dict(self._overrides)
-        merged.update(os.environ)
-        return len(merged)
+        return len(self._merged())
 
 
 def load_settings(config: str | None, *, generate: bool = True) -> Settings:
@@ -331,8 +336,8 @@ def render_template() -> str:
     """The generated ``msksd.yaml`` body: a commented near-empty file.
 
     The template's purpose is discoverability — this is where the
-    daemon's config lives — plus a commented example of every section
-    carrying its defaults. The settings themselves come from the
+    daemon's config lives — plus a commented example of every key
+    carrying its default. The settings themselves come from the
     built-in defaults until the operator edits the file.
     """
     timestamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
@@ -344,29 +349,26 @@ def render_template() -> str:
 # ${{MSKSD_CONFIG_DIR:-$XDG_CONFIG_HOME/msksd}}/msksd.yaml.
 #
 # This file is the durable home for msksd's settings. Every key here
-# also exists as an MSKSD_* environment variable; a variable set in
-# the process overrides the same key in this file, and a key set
-# nowhere uses the built-in default. Precedence:
+# also exists as an MSKSD_* environment variable, spelled the same
+# with the prefix stripped and lowercased (MSKSD_PORT -> port,
+# MSKSD_EGRESS_SUBNET -> egress_subnet). A variable set in the
+# process overrides the same key in this file, and a key set nowhere
+# uses the built-in default. Precedence:
 #   environment > this file > built-in defaults
 #
-# The four sections mirror the settings tree, and keys are the
-# settings field names in snake_case:
-#   vmm:    the local cloud-hypervisor driver (paths, timeouts,
-#           artifact sizes)
-#   server: the HTTPS + WSS API listener (bind address, TLS,
-#           database, tokens)
-#   k8s:    the Kubernetes runner driver (namespace, images,
-#           storage)
-#   net:    per-workspace egress networking (pool, uplink, tools)
+# The file is flat — one key per setting, no sections. The comments
+# below group the keys by the subsystem that reads them.
 #
 # Values may be written as native YAML scalars — port: 8660,
 # access_log: true, socket_wait_timeout_s: 12.5 — or as quoted
 # strings; both parse identically.
 #
 # SIGHUP re-reads this file: changed values apply to everything that
-# reads settings live (the API listener's address, port, and TLS
-# material are bound at startup and keep their startup values until
-# a restart).
+# reads settings live. The API listener's address, port, TLS
+# material, and access logging are bound at startup and keep their
+# startup values until a restart; so are the database path, the
+# workspace status scan's interval, the egress pool's NAT base
+# table, and the egress-enabled switch itself.
 #
 # The full key-by-key reference — each key with its environment
 # variable, type, default, and meaning — is docs/config.md in the
@@ -375,67 +377,72 @@ def render_template() -> str:
 # --- Example (every line commented; the values shown are the
 # --- built-in defaults) ---
 #
-# server:
-#   host: 127.0.0.1          # the API listener's bind address
-#   port: 8660               # the API listener's port
-#   tls_cert: /etc/msksd/tls.crt   # operator-provided TLS material;
-#   tls_key: /etc/msksd/tls.key    # both unset -> a self-signed CA is
-#                            # generated on first run and its
-#                            # fingerprint printed for pinning
-#   event_poll_s: 1.0        # seconds between workspace status scans
-#   bootstrap_token: secret  # seeds the first bearer token at first
-#                            # boot
-#   access_log: false        # uvicorn access logging; the events
-#                            # websocket carries its token in the
-#                            # query string, which the access log
-#                            # would persist
-# vmm:
-#   driver: local            # local | k8s
-#   state_dir: ~/.local/state/msksd  # the daemon's state: the sqlite
-#                            # database (<state_dir>/msks.db) and
-#                            # per-workspace artifacts
-#   cloud_hypervisor: cloud-hypervisor  # the VMM binary the local
-#                            # driver execs
-#   vsock_shell_port: 1023   # the vsock port the guest console
-#                            # listens on
-#   vsock_wait_timeout_s: 15.0   # seconds to wait for the console at
-#                            # boot
-#   socket_wait_timeout_s: 10.0   # seconds to wait for the VMM API
-#                            # socket at start
-#   request_timeout_s: 5.0   # seconds per VMM API request
-#   shutdown_timeout_s: 20.0 # seconds a stop waits for guest poweroff
-#   default_image: ""        # a container-image tar imported and
-#                            # designated default on first boot
-#   qemu_img: qemu-img       # builds the root overlay
-#   mkfs_ext4: mkfs.ext4     # builds the /home volume
-#   mkisofs: mkisofs         # builds the user_data seed disk
-#   host_name: ""            # the host recorded as owning created
-#                            # workspaces; empty -> the hostname
-#   root_mib: 10240          # default root overlay size (MiB)
-#   home_mib: 2048           # default /home volume size (MiB)
-# k8s:
-#   namespace: msks          # the namespace workspaces run in
-#   runner_image: registry.k8s.io/pause:3.10
-#   kubeconfig: ""           # a kubeconfig path; empty -> the
-#                            # cluster's ambient configuration
-#   api_timeout_s: 30.0      # seconds per Kubernetes API request
-#   storage_class: ""        # the PVC storage class; empty -> the
-#                            # cluster's default
-#   workspace_storage_gib: "" # fixed PVC size (GiB); empty ->
-#                            # derived from the workspace's disks
-# net:
-#   enabled: false           # arm per-workspace NICs, DHCP, NAT, and
-#                            # the DNS forwarder
-#   pool: 172.31.0.0/16      # the IPv4 pool per-workspace /30s are
-#                            # carved from
-#   uplink: eth0             # the interface egress is NATed out of
-#   dns_upstream: ""         # the resolver to relay DNS to; empty ->
-#                            # the appliance's /etc/resolv.conf
-#   ip_tool: ip              # the ip binary
-#   nft_tool: nft            # the nft binary
-#   lease_s: 3600            # DHCP lease seconds
-#   dns_timeout_s: 3.0       # seconds waiting on the upstream
-#                            # resolver
+# --- The API listener ---
+# host: 127.0.0.1           # the listener's bind address
+# port: 8660                # the listener's port
+# tls_cert: /etc/msksd/tls.crt  # operator-provided TLS material;
+# tls_key: /etc/msksd/tls.key   # both unset -> a self-signed CA is
+#                           # generated on first run and its
+#                           # fingerprint printed for pinning
+# event_poll_s: 1.0         # seconds between workspace status
+#                           # scans (applies at startup)
+# bootstrap_token: secret   # seeds the first bearer token at first
+#                           # boot
+# access_log: false         # uvicorn access logging; the events
+#                           # websocket carries its token in the
+#                           # query string, which the access log
+#                           # would persist
+#
+# --- The local cloud-hypervisor driver ---
+# vmm_driver: local         # local | k8s
+# state_dir: ~/.local/state/msksd  # the daemon's state: the sqlite
+#                           # database (<state_dir>/msks.db) and
+#                           # per-workspace artifacts
+# cloud_hypervisor: cloud-hypervisor  # the VMM binary the local
+#                           # driver execs
+# vsock_shell_port: 1023    # the vsock port the guest console
+#                           # listens on
+# vsock_wait_timeout_s: 15.0    # seconds to wait for the console at
+#                           # boot
+# socket_wait_timeout_s: 10.0   # seconds to wait for the VMM API
+#                           # socket at start
+# request_timeout_s: 5.0    # seconds per VMM API request
+# shutdown_timeout_s: 20.0  # seconds a stop waits for guest poweroff
+# default_image: ""         # a container-image tar imported and
+#                           # designated default on first boot
+# qemu_img: qemu-img        # builds the root overlay
+# mkfs_ext4: mkfs.ext4      # builds the /home volume
+# mkisofs: mkisofs          # builds the user_data seed disk
+# host_name: ""             # the host recorded as owning created
+#                           # workspaces; empty -> the hostname
+# root_mib: 10240           # default root overlay size (MiB)
+# home_mib: 2048            # default /home volume size (MiB)
+#
+# --- The Kubernetes runner driver ---
+# k8s_namespace: msks       # the namespace workspaces run in
+# k8s_runner_image: registry.k8s.io/pause:3.10
+# kubeconfig: ""            # a kubeconfig path; empty -> the
+#                           # cluster's ambient configuration
+# k8s_api_timeout_s: 30.0   # seconds per Kubernetes API request
+# k8s_storage_class: ""     # the PVC storage class; empty -> the
+#                           # cluster's default
+# k8s_workspace_storage_gib: ""  # fixed PVC size (GiB); empty ->
+#                           # derived from the workspace's disks
+#
+# --- Per-workspace egress networking ---
+# egress_enabled: false     # arm per-workspace NICs, DHCP, NAT, and
+#                           # the DNS forwarder (applies at startup)
+# egress_subnet: 172.31.0.0/16  # the IPv4 pool per-workspace /30s
+#                           # are carved from
+# egress_uplink: eth0       # the interface egress is NATed out of
+#                           # (the base NAT table applies at startup)
+# egress_dns_upstream: ""   # the resolver to relay DNS to; empty ->
+#                           # the appliance's /etc/resolv.conf
+# ip_tool: ip               # the ip binary
+# nft_tool: nft             # the nft binary
+# egress_lease_s: 3600      # DHCP lease seconds
+# egress_dns_timeout_s: 3.0 # seconds waiting on the upstream
+#                           # resolver
 """
 
 

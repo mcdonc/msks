@@ -92,7 +92,7 @@ def reload_settings(app, config: str | None) -> None:
     """
     try:
         settings = load_settings(config, generate=False)
-    except (OSError, ValueError) as exc:
+    except Exception as exc:  # any operator config mistake, foreseen or not
         print(
             f"msksd: SIGHUP reload refused, keeping current settings: {exc}",
             file=sys.stderr,
@@ -146,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
         app = build_app(settings)
         install_sighup_reload(app, args.config)
         arm_tls(app, args.no_tls)
-    except (OSError, ValueError) as exc:
+    except Exception as exc:  # config + TLS errors read as one line
         print(f"msksd: {exc}", file=sys.stderr)
         return 2
     serve(app, args.no_tls)

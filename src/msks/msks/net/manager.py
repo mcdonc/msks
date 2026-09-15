@@ -26,7 +26,10 @@ FORWARDING = Path("/proc/sys/net/ipv4/ip_forward")
 
 NOT_READY_CAUSES = {
     "init": "the egress subsystem never started",
-    "disabled": "egress is not enabled (MSKSD_EGRESS_ENABLED)",
+    "disabled": (
+        "egress is not enabled (MSKSD_EGRESS_ENABLED, read at startup "
+        "— set it and restart)"
+    ),
     "unavailable": (
         "the daemon could not arm egress (needs CAP_NET_ADMIN: "
         "run msksd inside the appliance)"
