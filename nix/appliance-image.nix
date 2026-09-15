@@ -60,32 +60,15 @@ let
   # hash in guest-assets.nix (#30, #41).
   inherit (guest) debianImage;
 
-  # Debian's GENERIC kernel flavor, pinned by its own pool URL and
-  # sha256. The appliance boots it for the tree: the generic flavor
-  # ships the modules the appliance probes — kvm-intel/kvm-amd for
-  # nested KVM (workspace VMs), the nftables/egress stack, the NIC
-  # driver — with virtio-pci, virtiofs, and fuse BUILT IN and ext4
-  # as a module, so the initramfs below carries six modules. (The
-  # cloud flavor the guest boots builds virtiofs in as well and
-  # ships the kvm modules; what distinguishes the flavors is the
-  # generic tree's completeness — the distro owns module
-  # wrangling.)
-  genericKernelDeb = pkgs.fetchurl {
-    url =
-      "https://deb.debian.org/debian/pool/main/l/linux/"
-      + "linux-image-6.12.107+deb13-amd64-unsigned_6.12.107-1_amd64.deb";
-    hash = "sha256-fRPNgqHTd+QIJsMT9du9su3xtIxxOjdeTP5eIHdJy04=";
-  };
-
-  genericKernel =
-    pkgs.runCommand "msks-generic-kernel"
-      {
-        nativeBuildInputs = [ pkgs.dpkg ];
-      }
-      ''
-        set -eu
-        dpkg-deb -x ${genericKernelDeb} "$out"
-      '';
+  # Debian's GENERIC kernel flavor, the same pin the workspace guest
+  # boots (#96 — the pin and its comments live in guest-assets.nix,
+  # one deb fetch serves both images). The generic flavor carries
+  # what the appliance probes — kvm-intel/kvm-amd for nested KVM,
+  # the nftables/egress stack, the NIC driver — with virtio-pci,
+  # virtiofs, and fuse BUILT IN and ext4 as a module, so the
+  # initramfs below carries six modules, and the kernel is pinned
+  # by its own pool URL and sha256.
+  inherit (guest) genericKernel;
 
   # The default workspace image (#40): the containerDisk archive from
   # the guest build, GC-rooted by this manifest and imported into the
@@ -122,8 +105,8 @@ let
 
   kernelCmdline = "console=ttyS0 root=/dev/vda rootfstype=ext4 ro";
 
-  # The minimal initramfs, the guest's recipe (#37) with the root
-  # mounted READ-ONLY and the GENERIC flavor's module set: virtio-pci
+  # The minimal initramfs, the guest's recipe (#37, #96: one recipe,
+  # one pin) with the root mounted READ-ONLY: virtio-pci
   # is built in, but ext4 and virtio_blk are modules here, ext4 pulls
   # in crc16, crc32c (a mount-time crypto request, not a modules.dep
   # edge), jbd2 and mbcache — and busybox insmod resolves no
@@ -154,7 +137,8 @@ let
         # not a modules.dep edge but a mount-time crypto request —
         # the generic kernel ships it as a module (the cloud flavor
         # builds it in) and a metadata_csum rootfs cannot mount
-        # without it.
+        # without it; the guest's initrd has loaded the same set
+        # since the flavor unification (#96).
         for ko in \
           kernel/lib/crc16.ko.xz \
           kernel/crypto/crc32c_generic.ko.xz \

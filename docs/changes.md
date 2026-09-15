@@ -49,6 +49,19 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **The workspace guest boots Debian's generic kernel (#96).** One
+  kernel pin now serves both the guest and the appliance (#92): a
+  host fetches a single kernel deb instead of two, and the workspace
+  image archive shrinks ~19 MiB compressed (147.8 → 128.7 MiB xz)
+  as Debian's full cloud module tree leaves in favor of the
+  twelve-file runtime closure the build derives from `modprobe`
+  metadata (and pins by comparing the full tree's closure against
+  the shipped tree's at build time). Boot
+  speed holds (p50 start→prompt 3.24 s against the cloud flavor's
+  2.95–3.26 s host spread; goal < 5 s), and guest memory at first
+  prompt is unchanged (~140 MiB); numbers recorded in
+  `docs/boot-speed.md`.
+
 - **The appliance runs Debian 13 trixie with systemd (#92).** The
   hand-rolled busybox-init image is replaced by the same genericcloud
   base the workspace guest builds from, booted with Debian's generic
