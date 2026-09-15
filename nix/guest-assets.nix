@@ -151,20 +151,19 @@ let
   # the identity prelude, applies the window size, and drops to the
   # requested user before exec'ing that user's shell.
   #
-  # Static via the host gnu target's +crt-static rather than a musl
-  # cross-toolchain: the native rustPlatform is exactly what devenv
-  # and CI already pull from the binary caches, while pkgsMusl would
-  # rebuild a second rustc from source. Static glibc's one caveat —
-  # NSS lookups dlopen at runtime — does not apply: the helper
+  # pkgsStatic (musl) makes the static link the default, so nothing
+  # depends on glibc's layout; the guest rootfs (Debian) and the host
+  # nixpkgs pin ship different glibcs, and a dynamically linked helper
+  # would only run on one of them. NSS never matters — the helper
   # parses /etc/passwd and /etc/group itself. Sources and lockfile
   # live in src/console-helper/; the devenv shell (languages.rust)
   # carries the toolchain for local builds and the coverage gate.
-  consoleHelper = pkgs.rustPlatform.buildRustPackage {
+  consoleHelper = pkgs.pkgsStatic.rustPlatform.buildRustPackage {
     pname = "msks-console-helper";
     version = "0.1.0";
     src = ../src/console-helper;
     cargoLock.lockFile = ../src/console-helper/Cargo.lock;
-    env.CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-C target-feature=+crt-static";
+    doCheck = false;
   };
 
   # The msks additions, staged as an overlay tree: the vsock console
