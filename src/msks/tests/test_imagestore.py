@@ -26,7 +26,7 @@ from msks.imagestore import (
     warm_import,
 )
 from msks.server.api import build_api
-from msks.settings import ServerSettings, Settings, VmmSettings
+from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
 from test_api import TOKEN, StubMicrovm, auth
 
 from msks import guestassets, imagestore
@@ -462,6 +462,7 @@ async def test_default_image_bootstrap(tmp_path, capsys) -> None:
 
     settings = Settings(
         vmm=VmmSettings(state_dir=tmp_path / "vms", default_image=str(archive)),
+        net=NetSettings(enabled=False),
         server=ServerSettings(
             db_path=tmp_path / "ws.db", bootstrap_token="t", event_poll_s=10.0
         ),

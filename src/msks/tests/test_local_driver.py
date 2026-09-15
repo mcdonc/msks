@@ -919,7 +919,8 @@ async def test_launch_failure_unwinds_egress(egress_env, fake, tmp_path: Path) -
 async def test_launch_refuses_egress_without_the_plumbing(
     env, fake, tmp_path: Path
 ) -> None:
-    app, _state_dir, _ = env  # default settings: egress not enabled
+    app, _state_dir, _ = env  # machinery off: the disabled refusal
+    app.state.settings.net = NetSettings(enabled=False)
     await app.state.net.start()
     with pytest.raises(MicrovmError, match="MSKSD_EGRESS_ENABLED"):
         await app.state.microvm.launch(spec(tmp_path, egress=True))

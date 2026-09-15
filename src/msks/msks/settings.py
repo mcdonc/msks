@@ -201,17 +201,21 @@ class K8sSettings:
 
 @dataclass
 class NetSettings:
-    """Guest egress networking (#52).
+    """Guest egress networking (#52, on by default since #99).
 
-    Disabled by default: a daemon that never enabled egress presents
-    no net machinery at all, and workspaces without ``egress`` keep
-    the no-NIC posture on every backend. Enabled, the settings name
-    the per-workspace /30 pool, the appliance uplink the NAT
-    masquerade hides behind, and the upstream the DNS forwarder
-    relays to (unset reads the appliance's own /etc/resolv.conf).
+    Enabled, the daemon arms the shared plumbing at startup —
+    ip_forward and the NAT base table — and every egress workspace
+    boots networked wherever the daemon holds ``CAP_NET_ADMIN``; a
+    daemon that cannot arm records itself unavailable and each
+    egress boot refuses with the cause named. An operator who sets
+    ``enabled`` false keeps the zero-machinery posture: no taps, no
+    chains, no services, on every backend. The settings name the
+    per-workspace /30 pool, the uplink the NAT masquerade hides
+    behind, and the upstream the DNS forwarder relays to (unset
+    reads the appliance's own /etc/resolv.conf).
     """
 
-    enabled: bool = False
+    enabled: bool = True
     pool: IPv4Network = field(default_factory=lambda: IPv4Network("172.31.0.0/16"))
     uplink: str = "eth0"
     dns_upstream: str | None = None
@@ -269,7 +273,8 @@ def _net_settings_from_env(
     if timeout <= 0:
         raise ValueError(f"MSKSD_EGRESS_DNS_TIMEOUT_S must be positive, got {timeout}")
     return cls(
-        enabled=_env(env, "MSKSD_EGRESS_ENABLED", "false").lower() == "true",
+        enabled=_env(env, "MSKSD_EGRESS_ENABLED", str(default.enabled)).lower()
+        == "true",
         pool=_parse_subnet(env, "MSKSD_EGRESS_SUBNET", str(default.pool)),
         uplink=_env(env, "MSKSD_EGRESS_UPLINK", default.uplink),
         dns_upstream=_env(env, "MSKSD_EGRESS_DNS_UPSTREAM", "") or None,
