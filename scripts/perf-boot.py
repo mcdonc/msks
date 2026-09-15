@@ -190,6 +190,8 @@ async def measure_boot(microvm, spec, serial_log, result: dict) -> tuple:
     result["t_prompt"] = (await read_until_prompt(reader)) - t0
     await collect_guest_memory(reader, writer, result)
     writer.close()
+    with contextlib.suppress(Exception):
+        await writer.wait_closed()
     try:
         result["t_login"] = (
             await asyncio.wait_for(asyncio.shield(login_task), timeout=30.0)
@@ -272,7 +274,6 @@ RUN_KEYS = (
     "t_login",
     "vmm_rss_mib",
     "guest_mem_mib",
-    "guest_used_mib",
 )
 P50_KEYS = ("t_vmm", "t_kernel", "t_console", "t_prompt")
 

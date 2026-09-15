@@ -62,13 +62,12 @@ let
 
   # Debian's GENERIC kernel flavor, the same pin the workspace guest
   # boots (#96 — the pin and its comments live in guest-assets.nix,
-  # one deb fetch serves both images). The cloud flavor the guest
-  # used to boot ships neither virtiofs nor the kvm-intel/kvm-amd
-  # modules — and the appliance needs both (the store share; nested
-  # KVM for workspace VMs). The generic flavor carries them:
-  # virtio-pci, virtiofs, and fuse are BUILT IN, kvm-intel/kvm-amd
-  # and ext4 are modules — so the initramfs below carries six
-  # modules, pinned by its own pool URL and sha256.
+  # one deb fetch serves both images). The generic flavor carries
+  # what the appliance probes — kvm-intel/kvm-amd for nested KVM,
+  # the nftables/egress stack, the NIC driver — with virtio-pci,
+  # virtiofs, and fuse BUILT IN and ext4 as a module, so the
+  # initramfs below carries six modules, and the kernel is pinned
+  # by its own pool URL and sha256.
   inherit (guest) genericKernel;
 
   # The default workspace image (#40): the containerDisk archive from
@@ -138,7 +137,8 @@ let
         # not a modules.dep edge but a mount-time crypto request —
         # the generic kernel ships it as a module (the cloud flavor
         # builds it in) and a metadata_csum rootfs cannot mount
-        # without it.
+        # without it; the guest's initrd has loaded the same set
+        # since the flavor unification (#96).
         for ko in \
           kernel/lib/crc16.ko.xz \
           kernel/crypto/crc32c_generic.ko.xz \

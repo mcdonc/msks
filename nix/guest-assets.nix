@@ -84,13 +84,12 @@ let
 
   # Debian's GENERIC kernel flavor (#96), the same pin the
   # appliance image boots — one deb fetch and one version pin serve
-  # both images. The cloud flavor this replaces built ext4 and
-  # virtio-pci in but shipped neither virtiofs nor kvm-intel/
-  # kvm-amd (the appliance's needs); in the generic flavor virtio-
-  # pci and virtiofs are BUILT IN, ext4 and virtio_blk are modules —
+  # both images; that sharing is the whole motivation (the flavor
+  # difference itself costs the guest little: virtio-pci and
+  # virtiofs are BUILT IN here, ext4 and virtio_blk are modules —
   # so the initramfs below loads six modules in dependency order,
   # and the guest's runtime module tree is the modprobe closure of
-  # the modules it actually loads (see debianRoot). Pinned by pool
+  # the modules it actually loads, see debianRoot). Pinned by pool
   # URL and sha256; the deb carries vmlinuz, its config, and the
   # matching /usr/lib/modules tree.
   genericKernelDeb = pkgs.fetchurl {
@@ -470,20 +469,27 @@ let
         # virtio_net (egress NICs, #52), virtio_blk (udev alias
         # probing; the initrd loads it before root anyway), the
         # ACPI power-button pair (button + evdev: logind answers the
-        # host-side graceful shutdown with a clean poweroff, #25 —
-        # the cloud kernel built these in, the generic flavor
-        # modules them), and isofs (the #41 NoCloud seed disk is
-        # iso9660 — the cloud flavor shipped this as a module too,
-        # found only because that image carried Debian's whole
-        # tree) — resolved mechanically with modprobe
-        # --show-depends over depmod metadata generated from the
-        # pinned deb, so the set cannot drift from the kernel's own
-        # dependency facts (the #36 bug class). The appliance ships
-        # the whole tree (it probes KVM, nftables, the egress
-        # stack); a workspace's ~25MB of cloud modules becomes ten
-        # files. The generic
-        # /boot payload (kernel, initrd) leaves too — the VM
-        # direct-boots artifacts kept outside the image.
+        # host-side graceful shutdown with a clean poweroff, #25),
+        # isofs (the #41 NoCloud seed disk is iso9660), and
+        # crc32c-intel (the hardware crc32c ext4's metadata_csum
+        # asks the crypto API for; udev autoloads it via its
+        # x86cpu modalias). button, evdev, and isofs are modules in
+        # BOTH Debian flavors — the old cloud image found them only
+        # because it shipped Debian's whole tree, and the smoke
+        # tests caught button and isofs missing when this closure
+        # first shipped without them. The rest of the x86cpu set
+        # (aesni_intel and friends) stays out by design: userspace
+        # crypto uses its own CPU-feature code, and only kernel-
+        # side consumers miss the modules. The closure is resolved
+        # mechanically with modprobe --show-depends over depmod
+        # metadata generated from the pinned deb and pinned at
+        # build time by comparing the full tree's closure against
+        # the shipped tree's (the assert below) — the set cannot
+        # drift from the kernel's own dependency facts (the #36
+        # bug class). The appliance ships the whole tree; a
+        # workspace's ~25MB of cloud modules becomes twelve files.
+        # The generic /boot payload (kernel, initrd) leaves too —
+        # the VM direct-boots artifacts kept outside the image.
         rm -rf "$root"/lib/modules/*
         rm -rf "$root"/usr/lib/modules/* 2>/dev/null || true
         rm -f "$root"/boot/vmlinuz-* "$root"/boot/initrd.img-* \
@@ -507,7 +513,8 @@ let
           virtio_blk \
           button \
           evdev \
-          isofs; do
+          isofs \
+          crc32c-intel; do
           modprobe -d "$modsrc" -S "$kver" --show-depends "$mod" \
             | awk '/^insmod /{print $2}'
         done | sort -u | while read -r ko; do
@@ -521,6 +528,7 @@ let
         # the file, every builtin alias resolves to a missing module.
         cp "$modsrc"/usr/lib/modules/"$kver"/modules.builtin \
           "$modsrc"/usr/lib/modules/"$kver"/modules.builtin.modinfo \
+          "$modsrc"/usr/lib/modules/"$kver"/modules.order \
           "$root"/usr/lib/modules/"$kver"/
         cp "${genericKernel}"/boot/config-* "$root"/boot/
 
@@ -530,16 +538,40 @@ let
         find "$root"/usr/lib/modules -type d -exec chmod u+w {} +
         depmod -b "$root" "$kver"
         test -s "$root"/usr/lib/modules/"$kver"/modules.dep
-        for mod in \
+        # modprobe --show-depends exits 0 even when a dependency is
+        # missing (it prints only what it found), so per-module
+        # probes prove little: the guard compares the module-name
+        # set the FULL tree resolves against the set the SHIPPED
+        # tree resolves — a closure member lost from the image
+        # fails the build, not the boot.
+        full_closure=$(for mod in \
           vmw_vsock_virtio_transport \
           virtio_net \
           virtio_blk \
           button \
           evdev \
-          isofs; do
-          modprobe -d "$root" -S "$kver" --show-depends "$mod" >/dev/null \
-            || { echo "guest module tree cannot resolve $mod"; exit 1; }
-        done
+          isofs \
+          crc32c-intel; do
+          modprobe -d "$modsrc" -S "$kver" --show-depends "$mod" \
+            | awk '/^insmod /{print $2}'
+        done | xargs -n1 basename | sort -u)
+        tree_closure=$(for mod in \
+          vmw_vsock_virtio_transport \
+          virtio_net \
+          virtio_blk \
+          button \
+          evdev \
+          isofs \
+          crc32c-intel; do
+          modprobe -d "$root" -S "$kver" --show-depends "$mod" \
+            | awk '/^insmod /{print $2}'
+        done | xargs -n1 basename | sort -u)
+        if [ "$full_closure" != "$tree_closure" ]; then
+          echo "guest module tree closure mismatch:" >&2
+          echo "full tree resolves: $full_closure" >&2
+          echo "shipped tree resolves: $tree_closure" >&2
+          exit 1
+        fi
 
         # Boot diet (#37): drop the wants symlinks of units a
         # workspace never uses. networkd and resolved stay (egress

@@ -40,13 +40,13 @@ before the boot's last unit renders the serial prompt.
 
 The shipped image, measured start→prompt:
 
-| Stage                              | t             |
-| ---------------------------------- | ------------- |
-| VMM spawn + boot accepted          | ~0.15s        |
-| Kernel decompress + first output   | ~0.3s         |
-| Minimal initramfs (module + mount) | ~0.05s        |
-| systemd to the console service     | ~2.5s         |
-| **Start → interactive shell**      | **~3.1s p50** |
+| Stage                                   | t             |
+| --------------------------------------- | ------------- |
+| VMM spawn + boot accepted               | ~0.15s        |
+| Kernel decompress + first output        | ~0.3s         |
+| Minimal initramfs (six modules + mount) | ~0.05s        |
+| systemd to the console service          | ~2.5s         |
+| **Start → interactive shell**           | **~3.1s p50** |
 
 The dominant remaining cost is systemd bring-up — device manager
 coldplug (`dev-vda.device` is the slowest single unit at ~0.8s) and
@@ -125,13 +125,13 @@ host with `scripts/perf-boot.py --runs 5` (boot to first prompt,
 p50) and its guest-memory probe (MemTotal − MemAvailable at the
 first interactive prompt):
 
-| metric                          | cloud flavor              | generic flavor |
-| ------------------------------- | ------------------------- | -------------- |
-| boot p50 (start→prompt)         | 2.95–3.26 s¹              | 3.24 s         |
-| t_kernel (to first serial byte) | 0.44 s                    | 0.48 s         |
-| guest memory at first prompt    | 143.1 MiB                 | 134–142 MiB    |
-| workspace archive (xz -6)       | 147.8 MiB                 | 128.7 MiB      |
-| host nix fetches                | two kernel debs (137 MiB) | one (103 MiB)  |
+| metric                          | cloud flavor                | generic flavor  |
+| ------------------------------- | --------------------------- | --------------- |
+| boot p50 (start→prompt)         | 2.95–3.26 s¹                | 3.24 s          |
+| t_kernel (to first serial byte) | 0.44 s                      | 0.48 s          |
+| guest memory at first prompt    | 143.1 MiB                   | 134–142 MiB     |
+| workspace archive (`xz -6 -T0`) | 147.8 MiB                   | 128.7 MiB       |
+| host nix fetches                | two kernel debs (135.8 MiB) | one (102.9 MiB) |
 
 ¹ two sessions on the same host; the spread is host noise, not
 kernel — the six-module initrd's own cost sits inside it. The
@@ -167,8 +167,8 @@ at ~29s against the old image's ~47s (the default-image import into
 the fresh state disk dominates that path; the old number was
 measured against fully cold host caches).
 
-What keeps the appliance boot honest: the same kernel-with-root-
-built-in rule as the workspace (the generic kernel builds
+What keeps the appliance boot honest: the same minimal-path-to-root
+rule as the workspace (the generic kernel builds
 virtio-pci and virtiofs in; the initramfs carries the six modules
 it lacks), cloud-init disabled (the kernel cmdline is the config
 channel), and the diet masks in `nix/appliance-image.nix` keeping

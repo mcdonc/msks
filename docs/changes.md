@@ -53,8 +53,10 @@ tagged `vX.Y.Z`.
   kernel pin now serves both the guest and the appliance (#92): a
   host fetches a single kernel deb instead of two, and the workspace
   image archive shrinks ~19 MiB compressed (147.8 → 128.7 MiB xz)
-  as Debian's full cloud module tree leaves in favor of the ten-file
-  runtime closure the build derives from `modprobe` metadata. Boot
+  as Debian's full cloud module tree leaves in favor of the
+  twelve-file runtime closure the build derives from `modprobe`
+  metadata (and pins by comparing the full tree's closure against
+  the shipped tree's at build time). Boot
   speed holds (p50 start→prompt 3.24 s against the cloud flavor's
   2.95–3.26 s host spread; goal < 5 s), and guest memory at first
   prompt is unchanged (~140 MiB); numbers recorded in

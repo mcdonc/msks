@@ -59,7 +59,7 @@ needs_k8s = pytest.mark.skipif(not KUBECONFIG, reason="set MSKSD_TEST_KUBECONFIG
 
 #: The serial autologin's root-shell prompt: the last line the
 #: Debian boot produces (#30) and the "guest is usable" marker —
-#: the acpid that answers host-side shutdowns is up by then too.
+#: the logind that answers host-side shutdowns is up by then too.
 #: The prompt, not the getty's login banner above it (#75): the
 #: banner only says the getty started, while the prompt proves a
 #: whole shell started, ran its rc files, and answered — the
@@ -319,7 +319,7 @@ async def test_local_vm_boot_and_shutdown() -> None:
         assert info.status.value == "running"
         # Wait for userspace before shutting down: the graceful shutdown
         # is an ACPI power-button press, and the guest only answers it
-        # once its acpid is running — pressing earlier would drop the
+        # once its logind is running — pressing earlier would drop the
         # event and time out against a VM that is running but not yet
         # listening.
         await await_guest_up(serial_log)
