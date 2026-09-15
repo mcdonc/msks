@@ -8,13 +8,16 @@
 # klangk's consolidation issues used, so clone reports are comparable
 # across both repos.
 #
-# The scanned set is the tracked backend sources only —
-# git ls-files 'src/msks/msks/*.py', the same scoping xenon-gate.sh
-# uses, so the two gates grade the same files and a scratch file under
-# the tree never fails a commit. Tests are not part of the set (#71
-# decision). A deliberate in-tree clone gets recorded in a tracking
-# issue and committed with ``git commit --no-verify`` — the escape
-# hatch is recording, never suppression flags.
+# The scanned set is the backend sources — tracked OR
+# untracked-but-present (a new file that escapes scanning makes the
+# task run pass vacuously while the commit hook, over the staged
+# tree, fails it): git ls-files --cached --others --exclude-standard,
+# the same scoping xenon-gate.sh uses, so the two gates grade the
+# same files and a scratch file under the tree never fails a commit.
+# Tests are not part of the set (#71 decision). A deliberate in-tree
+# clone gets recorded in a tracking issue and committed with
+# ``git commit --no-verify`` — the escape hatch is recording, never
+# suppression flags.
 #
 # Usage: jscpd-gate.sh [jscpd flags...]
 #   Extra flags append to the fixed gate invocation.
@@ -25,7 +28,7 @@ cd "$(dirname "$0")/.."
 files=()
 while IFS= read -r f; do
   files+=("$f")
-done < <(git ls-files 'src/msks/msks/*.py')
+done < <(git ls-files --cached --others --exclude-standard 'src/msks/msks/*.py')
 if [ "${#files[@]}" -eq 0 ]; then
   echo "jscpd-gate: no tracked backend .py files found — run from the repo root" >&2
   exit 1

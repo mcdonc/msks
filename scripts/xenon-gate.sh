@@ -18,12 +18,14 @@ thresholds=(--max-absolute A --max-modules A --max-average A)
 if [ "$#" -gt 0 ]; then
   set -- "${thresholds[@]}" "$@"
 else
-  # Graded set: the msks package and the repo scripts. bash 3.2
-  # compatible (no mapfile).
+  # Graded set: the msks package and the repo scripts, tracked OR
+  # untracked-but-present — a new file that escapes grading makes the
+  # task run pass vacuously while the commit hook (staged tree)
+  # fails it. bash 3.2 compatible (no mapfile).
   files=()
   while IFS= read -r f; do
     files+=("$f")
-  done < <(git ls-files 'src/msks/msks/*.py' 'scripts/*.py')
+  done < <(git ls-files --cached --others --exclude-standard 'src/msks/msks/*.py' 'scripts/*.py')
   if [ "${#files[@]}" -eq 0 ]; then
     echo "xenon-gate: no graded .py files found — run from the repo root" >&2
     exit 1

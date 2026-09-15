@@ -92,6 +92,42 @@ run — including a post-review `--amend` — requires re-running it. If
 CI reports a gap local runs missed, the gap is real: check out the
 failing commit and write the pinning test.
 
+## Pre-flight the commit gates before the first commit attempt
+
+The pre-commit hooks run their gates over the staged tree at commit
+time; each rejection costs a full edit → test → commit round, and
+reading one gate's failure at a time grows a one-offender-per-round
+loop. `msks:preflight` delivers the same feedback before the first
+commit attempt, all offenders at once:
+
+```bash
+devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:preflight
+```
+
+It prints every ruff violation, every deferred import, every xenon
+block above rank A, and the jscpd clone report over the full tree.
+When anything under `src/msks/` differs from the fork point on
+`origin/main` (committed or working tree), it then runs the gated
+suite — the same invocation `unit-tests` uses, so a green coverage
+section satisfies the rule above — and prints every missing line and
+branch arc for the changed sources (`scripts/covgaps.py` reads the
+`.coverage` the suite leaves; `bash scripts/preflight.sh --fast`
+skips the suite for an instant lint/complexity pass).
+
+The working rule: run the pre-flight after writing code, fix
+EVERYTHING it names in one editing pass, re-run, then commit. A green
+pre-flight passes the hooks on the first attempt — they run these
+same gates over the same files.
+
+Triage a coverage gap at write time, not after a red gate:
+
+- Reach for deterministic cover first: a barrier/threading fixture
+  for concurrency-order branches, rigged filesystem state for error
+  paths (the suite has precedent for both).
+- A branch the test host cannot reach (platform-specific, or only
+  schedulable through a race the suite cannot arrange) takes
+  `# pragma: no cover` with a comment naming the reason.
+
 ## TUI spatial navigation (no focus traps)
 
 The textual TUI must use **spatial navigation** — arrow keys move focus
