@@ -442,10 +442,9 @@ def render_template() -> str:
 #                           # derived from the workspace's disks
 #
 # --- Per-workspace egress networking ---
-# egress_enabled: true      # serve per-workspace NICs, DHCP, NAT,
-#                           # and the DNS forwarder (applies at
-#                           # startup); false arms nothing and every
-#                           # egress workspace refuses to boot
+# egress_enabled: false     # arm per-workspace NICs, DHCP, NAT, and
+#                           # the DNS forwarder (applies at startup;
+#                           # the appliance turns this on)
 # egress_subnet: 172.31.0.0/16  # the IPv4 pool per-workspace /30s
 #                           # are carved from
 # egress_uplink: eth0       # the interface egress is NATed out of

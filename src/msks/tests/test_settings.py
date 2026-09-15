@@ -92,7 +92,7 @@ def test_net_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     ):
         monkeypatch.delenv(name, raising=False)
     settings = Settings.from_env()
-    assert settings.net.enabled is True
+    assert settings.net.enabled is False
     assert str(settings.net.pool) == "172.31.0.0/16"
     assert settings.net.uplink == "eth0"
     assert settings.net.dns_upstream is None
@@ -101,14 +101,14 @@ def test_net_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_net_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("MSKSD_EGRESS_ENABLED", "false")
+    monkeypatch.setenv("MSKSD_EGRESS_ENABLED", "true")
     monkeypatch.setenv("MSKSD_EGRESS_SUBNET", "10.200.0.0/24")
     monkeypatch.setenv("MSKSD_EGRESS_UPLINK", "enp3s0")
     monkeypatch.setenv("MSKSD_EGRESS_DNS_UPSTREAM", "192.168.4.1")
     monkeypatch.setenv("MSKSD_EGRESS_LEASE_S", "600")
     monkeypatch.setenv("MSKSD_EGRESS_DNS_TIMEOUT_S", "1.5")
     settings = Settings.from_env()
-    assert settings.net.enabled is False
+    assert settings.net.enabled is True
     assert str(settings.net.pool) == "10.200.0.0/24"
     assert settings.net.uplink == "enp3s0"
     assert settings.net.dns_upstream == "192.168.4.1"

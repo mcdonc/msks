@@ -201,21 +201,17 @@ class K8sSettings:
 
 @dataclass
 class NetSettings:
-    """Guest egress networking (#52, on by default since #99).
+    """Guest egress networking (#52).
 
-    Enabled, the daemon arms the shared plumbing at startup —
-    ip_forward and the NAT base table — and every egress workspace
-    boots networked wherever the daemon holds ``CAP_NET_ADMIN``; a
-    daemon that cannot arm records itself unavailable and each
-    egress boot refuses with the cause named. An operator who sets
-    ``enabled`` false keeps the zero-machinery posture: no taps, no
-    chains, no services, on every backend. The settings name the
-    per-workspace /30 pool, the uplink the NAT masquerade hides
+    Disabled by default: a daemon that never enabled egress presents
+    no net machinery at all, and workspaces without ``egress`` keep
+    the no-NIC posture on every backend. Enabled, the settings name
+    the per-workspace /30 pool, the uplink the NAT masquerade hides
     behind, and the upstream the DNS forwarder relays to (unset
     reads the appliance's own /etc/resolv.conf).
     """
 
-    enabled: bool = True
+    enabled: bool = False
     pool: IPv4Network = field(default_factory=lambda: IPv4Network("172.31.0.0/16"))
     uplink: str = "eth0"
     dns_upstream: str | None = None

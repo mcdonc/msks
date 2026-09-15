@@ -49,19 +49,6 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
-- **`egress_enabled` defaults to true (#99).** The egress
-  machinery — per-workspace NICs, DHCP, NAT, and the DNS forwarder
-  — arms at daemon startup on a fresh deployment, so a plain
-  workspace create boots networked wherever msksd holds
-  `CAP_NET_ADMIN`, not just in the appliance. An upgrade of a
-  root-run msksd outside the appliance therefore enables ip_forward
-  and installs the NAT base table at startup. An operator who sets
-  `egress_enabled: false` (or `MSKSD_EGRESS_ENABLED=false`) keeps
-  the prior posture: egress workspaces refuse to boot with the
-  cause named, and `"egress": false` workspaces boot NIC-less.
-  Deployments that already set the key keep their value. See
-  `docs/networking.md`.
-
 - **The workspace guest boots Debian's generic kernel (#96).** One
   kernel pin now serves both the guest and the appliance (#92): a
   host fetches a single kernel deb instead of two, and the workspace

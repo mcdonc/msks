@@ -165,7 +165,7 @@ the file itself carries them all at one level.
 
 | Key                    | Environment variable         | Type   | Default         | What it does                                                                                                                                       |
 | ---------------------- | ---------------------------- | ------ | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `egress_enabled`       | `MSKSD_EGRESS_ENABLED`       | bool   | `true`          | Arms per-workspace NICs, DHCP, NAT egress, and the DNS forwarder at startup (needs `CAP_NET_ADMIN`); a running daemon applies a change at restart. |
+| `egress_enabled`       | `MSKSD_EGRESS_ENABLED`       | bool   | `false`         | Arms per-workspace NICs, DHCP, NAT egress, and the DNS forwarder at startup (needs `CAP_NET_ADMIN`); a running daemon applies a change at restart. |
 | `egress_subnet`        | `MSKSD_EGRESS_SUBNET`        | string | `172.31.0.0/16` | The IPv4 pool per-workspace /30 slices are carved from.                                                                                            |
 | `egress_uplink`        | `MSKSD_EGRESS_UPLINK`        | string | `eth0`          | The appliance interface egress is NAT-masqueraded out of (the base NAT table applies at startup; per-workspace rules read the live value).         |
 | `egress_dns_upstream`  | `MSKSD_EGRESS_DNS_UPSTREAM`  | string | _(unset)_       | The resolver the daemon's DNS forwarder relays to; unset reads the appliance's own `/etc/resolv.conf`.                                             |
