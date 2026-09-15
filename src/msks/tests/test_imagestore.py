@@ -1030,6 +1030,7 @@ def test_capabilities_without_provisioner_reads_as_none(tmp_path: Path) -> None:
     )
     assert import_archive(archive, tmp_path).provisioner is None
 
+
 # --- console identity markers (#63) -----------------------------------
 
 

@@ -954,6 +954,7 @@ async def test_launch_attaches_the_user_data_seed(env, fake, tmp_path: Path) -> 
     assert body["disks"][2]["readonly"] is True
     await app.state.microvm.kill(WID)
 
+
 # --- console identity prelude (#63) -----------------------------------
 
 

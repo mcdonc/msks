@@ -11,6 +11,15 @@ const PRELUDE_LINE_MAX: usize = 128;
 const DEFAULT_ROWS: u16 = 24;
 const DEFAULT_COLS: u16 = 80;
 
+/// Why a prelude read stopped early: every shape fails closed, but
+/// the refusal names what actually happened.
+#[derive(Debug, PartialEq, Clone, Copy)]
+enum ReadFail {
+    Deadline,
+    Closed,
+    Oversize,
+}
+
 #[derive(Debug, PartialEq)]
 pub struct Prelude {
     pub user: String,
@@ -18,12 +27,14 @@ pub struct Prelude {
     pub cols: u16,
 }
 
-/// One prelude line under the shared deadline, byte at a time. `None`
-/// on timeout, EOF, or oversize — all fail closed.
-fn read_prelude_line(fd: RawFd, deadline: Instant) -> Option<String> {
+/// One prelude line under the shared deadline, byte at a time; `Err`
+/// names the failure shape (all fail closed), `Ok` is the line.
+fn read_prelude_line(fd: RawFd, deadline: Instant) -> Result<String, ReadFail> {
     let mut line = Vec::new();
     loop {
-        let wait = deadline.checked_duration_since(Instant::now())?;
+        let Some(wait) = deadline.checked_duration_since(Instant::now()) else {
+            return Err(ReadFail::Deadline);
+        };
         let mut pfd = libc::pollfd {
             fd,
             events: libc::POLLIN,
@@ -33,20 +44,20 @@ fn read_prelude_line(fd: RawFd, deadline: Instant) -> Option<String> {
         let ready =
             unsafe { libc::poll(&mut pfd, 1, wait.as_millis().min(i32::MAX as u128) as i32) };
         if ready <= 0 {
-            return None;
+            return Err(ReadFail::Deadline);
         }
         let mut byte = [0u8; 1];
         // SAFETY: a one-byte recv into a valid buffer.
         let n = unsafe { libc::recv(fd, byte.as_mut_ptr().cast::<libc::c_void>(), 1, 0) };
         if n <= 0 {
-            return None;
+            return Err(ReadFail::Closed);
         }
         match byte[0] {
             b'\r' => continue,
-            b'\n' => return Some(String::from_utf8_lossy(&line).into_owned()),
+            b'\n' => return Ok(String::from_utf8_lossy(&line).into_owned()),
             c => {
                 if line.len() + 1 >= PRELUDE_LINE_MAX {
-                    return None;
+                    return Err(ReadFail::Oversize);
                 }
                 line.push(c);
             }
@@ -61,9 +72,20 @@ pub fn read_prelude(fd: RawFd, deadline: Instant) -> Option<Prelude> {
     let mut winsz: Option<(u16, u16)> = None;
     let mut first = true;
     loop {
-        let Some(line) = read_prelude_line(fd, deadline) else {
-            refuse(fd, "timeout");
-            return None;
+        let line = match read_prelude_line(fd, deadline) {
+            Ok(line) => line,
+            Err(ReadFail::Deadline) => {
+                refuse(fd, "timeout");
+                return None;
+            }
+            Err(ReadFail::Closed) => {
+                refuse(fd, "closed");
+                return None;
+            }
+            Err(ReadFail::Oversize) => {
+                refuse(fd, "syntax");
+                return None;
+            }
         };
         if first {
             first = false;

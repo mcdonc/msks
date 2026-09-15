@@ -512,12 +512,12 @@ mod prelude {
         let mut input = b"HELLO 1\n".to_vec();
         input.extend(std::iter::repeat_n(b'a', 200));
         input.push(b'\n');
-        refused(&input, "timeout");
+        refused(&input, "syntax");
     }
 
     #[test]
     fn eof_mid_prelude_fails_closed() {
-        refused(b"HELLO 1\nUSER ro", "timeout");
+        refused(b"HELLO 1\nUSER ro", "closed");
     }
 
     #[test]
@@ -1230,6 +1230,24 @@ mod session {
         ] {
             assert_eq!(run_shell_child(7, &pty(), &user(), &sys), Err(126));
         }
+    }
+
+    #[test]
+    fn unprivileged_helper_refuses_uid0_requests() {
+        // USER root from a non-root helper would exec root's shell
+        // under the helper's uid: refused like any other mismatch.
+        let root = UserEntry {
+            name: "root".into(),
+            uid: 0,
+            gid: 0,
+            home: "/root".into(),
+            shell: "/bin/bash".into(),
+        };
+        let sys = FakeChildSys {
+            ids: Some((1000, 1000)),
+            ..FakeChildSys::default()
+        };
+        assert_eq!(run_shell_child(7, &pty(), &root, &sys), Err(126));
     }
 
     #[test]

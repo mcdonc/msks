@@ -32,26 +32,26 @@ pub fn vsock_peer_allowed(family: u16, cid: u32) -> bool {
 /// the test mode) reads as family-with-cid-zero — never a vsock host
 /// peer, which is why the test mode passes its own allow-all filter.
 fn accept_peer(listener: RawFd) -> io::Result<(RawFd, u16, u32)> {
-    let mut addr = [0u8; 128];
-    let mut len = addr.len() as libc::socklen_t;
-    // SAFETY: accept(2) into the sockaddr buffer above.
+    // libc's sockaddr_vm is the kernel layout: family@0 (u16),
+    // reserved@2 (u16), port@4, cid@8. Reading the cid from any other
+    // offset inspects padding — always zero — and refuses every peer
+    // including the host.
+    let mut addr: libc::sockaddr_vm = unsafe { std::mem::zeroed() };
+    let mut len = std::mem::size_of::<libc::sockaddr_vm>() as libc::socklen_t;
+    // SAFETY: accept(2) into the sockaddr above.
     let fd = unsafe {
         libc::accept(
             listener,
-            addr.as_mut_ptr().cast::<libc::sockaddr>(),
+            &mut addr as *mut libc::sockaddr_vm as *mut libc::sockaddr,
             &mut len,
         )
     };
     if fd < 0 {
         return Err(io::Error::last_os_error());
     }
-    // The buffer is zero-filled, so a short sockaddr (a unix one,
-    // whose cid bytes the kernel never wrote) reads as cid 0 — never
-    // a vsock host peer.
-    let family = u16::from_ne_bytes([addr[0], addr[1]]);
-    let cid = u32::from_ne_bytes([addr[12], addr[13], addr[14], addr[15]]);
-    let _ = len;
-    Ok((fd, family, cid))
+    // A short sockaddr (a unix listener in the test mode) keeps the
+    // zeroed cid — never a vsock host peer.
+    Ok((fd, addr.svm_family, addr.svm_cid))
 }
 
 /// The listener loop: accept forever, filtering peers through

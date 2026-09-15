@@ -216,7 +216,7 @@ async def run_in_console(microvm, workspace_id: str, command: str, marker: str) 
     """
     for attempt in range(1, CONSOLE_ATTEMPTS + 1):
         try:
-            reader, writer = await microvm.console(workspace_id)
+            reader, writer = await microvm.console(workspace_id, user="root")
             try:
                 await read_until(reader, PROMPT_NEEDLE)
                 writer.write(command.encode() + b"\n")

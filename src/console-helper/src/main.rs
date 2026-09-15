@@ -5,7 +5,6 @@
 //! calls is gate-covered, and the integration tests drive this exact
 //! binary end-to-end through `--test-listen-fd`.
 
-use std::os::fd::AsRawFd;
 use std::path::Path;
 use std::process::exit;
 use std::time::{Duration, Instant};
@@ -73,9 +72,11 @@ fn vsock_listen(port: u32) -> std::io::Result<i32> {
 }
 
 fn run(listener: i32, allowed: impl Fn(u16, u32) -> bool, passwd: &Path, deadline: Duration) -> ! {
-    let started = Instant::now();
+    // The deadline belongs to each connection: one measured at process
+    // start would expire every shell opened more than `deadline`
+    // after guest boot.
     match serve(listener, allowed, &|conn| {
-        fork_session(conn, passwd, started + deadline)
+        fork_session(conn, passwd, Instant::now() + deadline)
     }) {
         Ok(()) => exit(0),
         Err(error) => die("listener", error),
@@ -105,9 +106,7 @@ fn main() {
             deadline,
         }) => {
             install_signals();
-            let listener = fd;
-            let _ = listener.as_raw_fd();
-            run(listener, |_, _| true, &passwd, deadline);
+            run(fd, |_, _| true, &passwd, deadline);
         }
     }
 }

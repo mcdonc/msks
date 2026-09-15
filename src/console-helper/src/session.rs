@@ -250,13 +250,20 @@ pub fn run_shell_child(
     sys.close(pty.master);
     sys.close(conn);
 
+    // An unprivileged helper (dev and test runs, where the binary
+    // already runs as a regular user) can serve only its own user:
+    // serving root would exec root's shell under the helper's uid.
+    let (helper_uid, helper_gid) = sys.current_ids();
+    if helper_uid != 0 && (user.uid == 0 || user.uid != helper_uid || user.gid != helper_gid) {
+        return Err(126);
+    }
+
     if user.uid != 0 {
         // The home lands on the persistent /home volume (#14); it is
         // created here, owned by the target user, before the drop.
         sys.create_dir(&user.home);
         sys.chown(&user.home, user.uid, user.gid);
-        let (uid, gid) = sys.current_ids();
-        let dropped = if uid == 0 {
+        let dropped = if helper_uid == 0 {
             // The privileged helper (the guest's systemd unit): an
             // exact, verified drop through the full sequence.
             let gids = lookup_groups_at(&user.name, user.gid, Path::new("/etc/group"));
@@ -265,11 +272,9 @@ pub fn run_shell_child(
                 uid != user.uid || gid != user.gid
             }
         } else {
-            // An unprivileged helper (dev and test runs, where the
-            // binary already runs as the target user) serves only
-            // its own user: there is no privilege to drop, and
-            // serving anyone else is refused.
-            uid != user.uid || gid != user.gid
+            // The unprivileged-helper case was handled above; the
+            // identity already matches.
+            false
         };
         if dropped {
             return Err(126);

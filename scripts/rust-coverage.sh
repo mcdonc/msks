@@ -131,6 +131,14 @@ for object in "${objects[@]}"; do
   done
 done
 
+# Vacuous-pass guards: every export failure above is swallowed so one
+# bad object cannot sink the union — which means a drift that empties
+# the evidence entirely would otherwise "pass" at 0/0.
+if [ ! -s "$out/reports.txt" ]; then
+  echo "coverage gate: no lcov reports were produced (binary discovery or export failure)" >&2
+  exit 1
+fi
+
 python3 - "$out/reports.txt" <<'PY'
 import sys
 
@@ -169,13 +177,17 @@ branch_covered = sum(branches.values())
 print(f"lines:    {line_covered}/{line_total}")
 print(f"branches: {branch_covered}/{branch_total}")
 missing = []
-if line_total and line_covered < line_total:
+if line_total == 0 or branch_total == 0:
+    sys.exit("coverage gate: counted nothing (lines or branches total is zero)")
+if line_covered < line_total:
     uncovered = sorted(k for k, v in lines.items() if not v)
     detail = ", ".join(f"{k[0].split('/')[-1]}:{k[1]}" for k in uncovered[:20])
     missing.append(f"lines {line_covered}/{line_total} ({len(uncovered)} uncovered: {detail})")
-if branch_total and branch_covered < branch_total:
+if branch_covered < branch_total:
+    missed = sorted(k for k, v in branches.items() if not v)
+    detail = ", ".join(f"{k[0].split('/')[-1]}:{k[1]}" for k in missed[:20])
     missing.append(f"branches {branch_covered}/{branch_total} "
-                   f"({branch_total - branch_covered} uncovered)")
+                   f"({len(missed)} uncovered: {detail})")
 if missing:
     sys.exit("; ".join(missing))
 print("coverage gate: 100% lines and branches")
