@@ -197,6 +197,12 @@ async def read_until(reader, needle: bytes, timeout_s: float | None = None) -> b
 #: before fingers move). The tests wait for the prompt first.
 PROMPT_NEEDLE = b"root@msks-guest:/# "
 
+#: The vsock console's first prompt (#63): the prelude helper execs a
+#: login shell with cwd=$HOME, so a fresh session's prompt reads ~,
+#: not / — and bash's interactive rc files may emit terminal control
+#: sequences around it, which read_until's contains-scan tolerates.
+CONSOLE_PROMPT_NEEDLE = b"root@msks-guest:~# "
+
 
 async def run_in_console(microvm, workspace_id: str, command: str, marker: str) -> None:
     """Run one shell command over the vsock console and wait for its
@@ -218,7 +224,7 @@ async def run_in_console(microvm, workspace_id: str, command: str, marker: str) 
         try:
             reader, writer = await microvm.console(workspace_id, user="root")
             try:
-                await read_until(reader, PROMPT_NEEDLE)
+                await read_until(reader, CONSOLE_PROMPT_NEEDLE)
                 writer.write(command.encode() + b"\n")
                 await writer.drain()
                 await read_until(reader, marker.encode())

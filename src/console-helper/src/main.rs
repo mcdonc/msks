@@ -17,20 +17,18 @@ use msks_console_helper::{PASSWD_PATH, PRELUDE_DEADLINE};
 
 fn die(what: &str, error: std::io::Error) -> ! {
     eprintln!("msks-console-helper: {what}: {error}");
+    use std::io::Write;
+    if let Ok(mut console) = std::fs::OpenOptions::new().write(true).open("/dev/console") {
+        let _ = writeln!(console, "msks-console-helper: {what}: {error}");
+    }
     exit(1);
 }
 
-/// sockaddr_vm, laid out by hand: family, 2 bytes of alignment
-/// padding, reserved, port, cid — 16 bytes total.
-#[repr(C)]
-struct SockaddrVm {
-    svm_family: u16,
-    svm_reserved1: u32,
-    svm_port: u32,
-    svm_cid: u32,
-}
-
 fn vsock_listen(port: u32) -> std::io::Result<i32> {
+    // libc's sockaddr_vm matches the kernel layout exactly:
+    // family@0 (u16), reserved@2 (u16), port@4, cid@8. A hand-rolled
+    // struct with a wider reserved field shifts port and cid past
+    // their kernel offsets and bind(2) answers EINVAL.
     // SAFETY: socket(2) and the bind/listen pair with the sockaddr
     // above.
     unsafe {
@@ -46,16 +44,14 @@ fn vsock_listen(port: u32) -> std::io::Result<i32> {
             &one as *const libc::c_int as *const libc::c_void,
             std::mem::size_of::<libc::c_int>() as libc::socklen_t,
         );
-        let addr = SockaddrVm {
-            svm_family: AF_VSOCK,
-            svm_reserved1: 0,
-            svm_port: port,
-            svm_cid: VMADDR_CID_ANY,
-        };
+        let mut addr: libc::sockaddr_vm = std::mem::zeroed();
+        addr.svm_family = AF_VSOCK;
+        addr.svm_port = port;
+        addr.svm_cid = VMADDR_CID_ANY;
         if libc::bind(
             fd,
-            &addr as *const SockaddrVm as *const libc::sockaddr,
-            std::mem::size_of::<SockaddrVm>() as libc::socklen_t,
+            &addr as *const libc::sockaddr_vm as *const libc::sockaddr,
+            std::mem::size_of::<libc::sockaddr_vm>() as libc::socklen_t,
         ) != 0
         {
             let error = std::io::Error::last_os_error();

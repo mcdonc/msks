@@ -77,7 +77,7 @@ def pin_attempts_and_timeout(monkeypatch) -> None:
 async def test_wedged_session_gets_a_fresh_one(monkeypatch, capsys) -> None:
     # The prompt stall must burn the (shortened) timeout, not skip it.
     pin_attempts_and_timeout(monkeypatch)
-    live = live_session(test_smoke.PROMPT_NEEDLE, b"hi\r\n")
+    live = live_session(test_smoke.CONSOLE_PROMPT_NEEDLE, b"hi\r\n")
     microvm = FakeMicrovm([wedged_session(), live])
     await test_smoke.run_in_console(microvm, "wid", "echo hi", "hi")
     assert microvm.opened == 2
@@ -91,8 +91,8 @@ async def test_marker_stall_also_gets_a_fresh_session(monkeypatch) -> None:
     # never answered): the retry re-runs it — idempotent by contract
     # — in a new session, which is what the docstring promises.
     pin_attempts_and_timeout(monkeypatch)
-    stalled = live_session(test_smoke.PROMPT_NEEDLE, reply=None)
-    live = live_session(test_smoke.PROMPT_NEEDLE, reply=b"hi\r\n")
+    stalled = live_session(test_smoke.CONSOLE_PROMPT_NEEDLE, reply=None)
+    live = live_session(test_smoke.CONSOLE_PROMPT_NEEDLE, reply=b"hi\r\n")
     microvm = FakeMicrovm([stalled, live])
     await test_smoke.run_in_console(microvm, "wid", "echo hi", "hi")
     assert microvm.opened == 2
