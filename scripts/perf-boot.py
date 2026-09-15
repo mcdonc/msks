@@ -97,7 +97,13 @@ async def run_shell_command(reader, writer, command: str, timeout_s: float = 20.
             out += await asyncio.wait_for(reader.read(4096), timeout=1.0)
         except TimeoutError:
             pass
-        if sentinel.encode() in out:
+        # The terminal echo of the typed command contains the
+        # sentinel text too; only the executed ``echo`` prints it
+        # alone on a line, after the command's own output.
+        if any(
+            line.strip() == sentinel
+            for line in out.decode("utf-8", "replace").splitlines()
+        ):
             return out.decode("utf-8", "replace")
     return out.decode("utf-8", "replace") + "\n(timeout)"
 
@@ -134,6 +140,41 @@ def vmm_rss(pid: int | None) -> int | None:
     return None
 
 
+def parse_meminfo(out: str) -> dict:
+    """The named /proc/meminfo fields, in KiB, from shell output."""
+    kib = {}
+    for line in out.splitlines():
+        match = re.match(r"^(MemTotal|MemAvailable|AnonPages|Cached):\s+(\d+)", line)
+        if match:
+            kib[match.group(1)] = int(match.group(2))
+    return kib
+
+
+def record_guest_memory(result: dict, kib: dict) -> None:
+    """Fold the KiB fields into the run record, in MiB."""
+    if "MemTotal" in kib and "MemAvailable" in kib:
+        result["guest_mem_total_mib"] = round(kib["MemTotal"] / 1024)
+        result["guest_used_mib"] = round(
+            (kib["MemTotal"] - kib["MemAvailable"]) / 1024, 1
+        )
+    for field in ("AnonPages", "Cached"):
+        if field in kib:
+            result[f"guest_{field.lower()}_mib"] = round(kib[field] / 1024, 1)
+
+
+async def collect_guest_memory(reader, writer, result: dict) -> None:
+    """Guest-side cost at first boot: what the fresh image's userspace
+    holds when the first interactive prompt answers. MemTotal minus
+    MemAvailable is the consumption number (available folds in
+    reclaimable cache); AnonPages is the anonymous private set."""
+    out = await run_shell_command(
+        reader,
+        writer,
+        "grep -E '^(MemTotal|MemAvailable|AnonPages|Cached):' /proc/meminfo",
+    )
+    record_guest_memory(result, parse_meminfo(out))
+
+
 async def measure_boot(microvm, spec, serial_log, result: dict) -> tuple:
     """Fill the timing dict; return it with the launch timestamp."""
     t0 = time.perf_counter()
@@ -147,6 +188,10 @@ async def measure_boot(microvm, spec, serial_log, result: dict) -> tuple:
     reader, writer = await microvm.console(spec.workspace_id, user="root")
     result["t_console"] = time.perf_counter() - t0
     result["t_prompt"] = (await read_until_prompt(reader)) - t0
+    await collect_guest_memory(reader, writer, result)
+    writer.close()
+    with contextlib.suppress(Exception):
+        await writer.wait_closed()
     try:
         result["t_login"] = (
             await asyncio.wait_for(asyncio.shield(login_task), timeout=30.0)
@@ -247,6 +292,13 @@ def print_extras(r: dict) -> None:
         print(
             f"  memory      vmm rss {r['vmm_rss_mib']} MiB "
             f"(guest configured {r.get('guest_mem_mib')} MiB)"
+        )
+    if "guest_used_mib" in r:
+        print(
+            f"  guest mem   {r['guest_used_mib']} MiB used of "
+            f"{r.get('guest_mem_total_mib')} MiB "
+            f"(anon {r.get('guest_anonpages_mib')}, "
+            f"cached {r.get('guest_cached_mib')})"
         )
     for line in r.get("blame", []):
         print(f"  blame| {line}")

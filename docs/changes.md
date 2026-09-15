@@ -49,6 +49,35 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **The workspace guest boots Debian's generic kernel (#96).** One
+  kernel pin now serves both the guest and the appliance (#92): a
+  host fetches a single kernel deb instead of two, and the workspace
+  image archive shrinks ~19 MiB compressed (147.8 → 128.7 MiB xz)
+  as Debian's full cloud module tree leaves in favor of the
+  twelve-file runtime closure the build derives from `modprobe`
+  metadata (and pins by comparing the full tree's closure against
+  the shipped tree's at build time). Boot
+  speed holds (p50 start→prompt 3.24 s against the cloud flavor's
+  2.95–3.26 s host spread; goal < 5 s), and guest memory at first
+  prompt is unchanged (~140 MiB); numbers recorded in
+  `docs/boot-speed.md`.
+
+- **The appliance runs Debian 13 trixie with systemd (#92).** The
+  hand-rolled busybox-init image is replaced by the same genericcloud
+  base the workspace guest builds from, booted with Debian's generic
+  kernel and systemd units instead of a shell-script init: msksd is a
+  supervised service that restarts in place on a crash, journald
+  persists to the state disk (readable from the host after teardown),
+  and logind answers the ACPI power button. The read-only `/nix/store`
+  virtiofs share, the state-disk layout (an existing disk upgrades in
+  place), the `msksd.<name>=<value>` kernel-cmdline bridge, and the
+  boot-generated `/run/msksd.yaml` are unchanged; warm boot-to-API
+  measures ~27.5s p50 against the old image's ~25.2s
+  (`scripts/perf-appliance.py`, see `docs/boot-speed.md`). An
+  appliance built from current `main` cannot boot at all — #46's init
+  change broke the image's `/init` shebang — so rebuild with
+  `msks:appliance-build` when updating.
+
 - **The workspace image ships cloud-init (#41).** The image is built from Debian's `genericcloud` cloud image instead of the cloud-init-free `nocloud` variant: cloud-init and its python3 runtime arrive with the base (~130M larger; the appliance state disk grows to 8G to keep fitting two images), and two dropins pin NoCloud as the only datasource and keep cloud-init off the guest's networking. The interactive boot budget is unchanged (vsock shell ~3.0s p50); existing workspaces keep the images they were created with — rebuild the appliance and recreate workspaces to move them onto the new image.
 
 - **Workspace stop is now a clean poweroff (#14).** The local backend's stop presses the ACPI power button (`vm.power-button`) and the guest's systemd-logind runs a full shutdown before the VMM exits. The endpoint stop used before was cloud-hypervisor v52's hard stop: the guest was never notified, and with persistent disks every stop dropped the writes still sitting in the guest's page cache.

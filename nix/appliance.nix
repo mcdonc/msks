@@ -7,8 +7,9 @@
 #
 # No NixOS anywhere (issue #10, revised scope): the appliance is built
 # exactly like the workspace guest — pure derivations from the pinned
-# nixpkgs, direct kernel boot, an ext4 rootfs whose init is a shell
-# script. The host OS is irrelevant beyond having nix + KVM.
+# nixpkgs, direct kernel boot, an ext4 rootfs booted by systemd (the
+# units live in nix/appliance-image.nix). The host OS is irrelevant
+# beyond having nix + KVM.
 {
   pkgs ? import <nixpkgs> {
     config = { };
