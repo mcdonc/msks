@@ -291,6 +291,18 @@ msks: my-workspace running
 (workspace prompt)
 ```
 
+The session runs as **root** by default. `--user` requests another
+identity — the image's workspace user — and the guest helper
+negotiates it in-band (#63): a user the image does not serve is
+refused by name before any shell starts, and the session's terminal
+geometry rides the same request (the guest pty matches the client's
+size at attach):
+
+```text
+$ msks shell my-workspace --user msks
+(workspace prompt, as the workspace user)
+```
+
 A workspace that is already running attaches with no preamble. Two
 states get special handling:
 

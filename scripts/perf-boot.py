@@ -144,7 +144,7 @@ async def measure_boot(microvm, spec, serial_log, result: dict) -> tuple:
     # CONCURRENTLY with the serial getty: the vsock console answers
     # long before the login prompt renders.
     login_task = asyncio.create_task(wait_marker(serial_log, LOGIN_MARKER))
-    reader, writer = await microvm.console(spec.workspace_id)
+    reader, writer = await microvm.console(spec.workspace_id, user="root")
     result["t_console"] = time.perf_counter() - t0
     result["t_prompt"] = (await read_until_prompt(reader)) - t0
     try:
@@ -176,7 +176,7 @@ def setup_run(assets) -> tuple:
 
 
 async def collect_blame(microvm, wid: str) -> list[str]:
-    reader, writer = await microvm.console(wid)
+    reader, writer = await microvm.console(wid, user="root")
     blame = await run_shell_command(reader, writer, "systemd-analyze blame | head -12")
     writer.close()
     # Keep timing lines only; the first line is the echoed command

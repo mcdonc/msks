@@ -38,7 +38,7 @@ class _VsockRetry(Exception):
     """A retryable console bring-up state, carrying its human cause."""
 
 
-async def _vsock_handshake(socket_path: Path, port: int):
+async def vsock_attempt(socket_path: Path, port: int):
     """One connect+CONNECT attempt against the vsock unix socket.
 
     The socket carries a small handshake before raw bytes: the dialer
@@ -71,6 +71,64 @@ async def _vsock_handshake(socket_path: Path, port: int):
         writer.close()
         raise _VsockRetry(f"handshake refused: {reply.strip()!r}")
     return reader, writer
+
+
+async def _vsock_handshake(
+    socket_path: Path,
+    port: int,
+    user: str | None = None,
+    rows: int = 0,
+    cols: int = 0,
+    term: str = "xterm",
+):
+    """One established console stream, with the identity prelude
+    (#63) negotiated in-band when ``user`` is given."""
+    reader, writer = await vsock_attempt(socket_path, port)
+    if user is not None:
+        await negotiate_prelude(reader, writer, user, rows or 24, cols or 80, term)
+    return reader, writer
+
+
+#: The console identity prelude's protocol version (#63).
+PRELUDE_VERSION = 1
+
+#: The deadline for the helper's prelude reply once GO is sent: it
+#: answers one line immediately, so anything slower is a dead or
+#: legacy guest.
+PRELUDE_REPLY_S = 5.0
+
+
+async def negotiate_prelude(
+    reader, writer, user: str, rows: int, cols: int, term: str = "xterm"
+) -> None:
+    """Send the identity prelude and require its OK (#63).
+
+    Prelude images answer ``MSKS OK <user>`` and then speak raw
+    bytes. Every other reply — a named refusal (``MSKS ERR
+    <reason>``), silence, or garbage — raises: the daemon never falls
+    back to a root shell on an image that negotiated. The client's
+    TERM rides the same prelude so the login shell's environment
+    matches the client's terminal type.
+    """
+    prelude = (
+        f"HELLO {PRELUDE_VERSION}\nUSER {user}\nTERM {term}\nWINSZ {rows} {cols}\nGO\n"
+    )
+    try:
+        writer.write(prelude.encode())
+        await writer.drain()
+        reply = await asyncio.wait_for(reader.readline(), PRELUDE_REPLY_S)
+    except (TimeoutError, OSError) as exc:
+        writer.close()
+        raise MicrovmError(f"console prelude to {user!r} failed: {exc}") from exc
+    line = reply.strip()
+    if line == f"MSKS OK {user}".encode():
+        return
+    if line.startswith(b"MSKS ERR "):
+        reason = line[len(b"MSKS ERR ") :].decode(errors="replace")
+        writer.close()
+        raise MicrovmError(f"console refused user {user!r}: {reason}")
+    writer.close()
+    raise MicrovmError(f"console prelude reply unrecognized: {line[:80]!r}")
 
 
 # The guest-side CID cloud-hypervisor reports for the vsock device.
@@ -373,7 +431,14 @@ class LocalCloudHypervisor(MicrovmDriver):
         finally:
             await api.aclose()
 
-    async def console(self, workspace_id: str):
+    async def console(
+        self,
+        workspace_id: str,
+        user: str | None = None,
+        rows: int = 0,
+        cols: int = 0,
+        term: str = "xterm",
+    ):
         """(reader, writer): one interactive stream into the VM.
 
         A freshly booted workspace refuses the console twice over, in
@@ -395,7 +460,7 @@ class LocalCloudHypervisor(MicrovmDriver):
                     f"workspace {workspace_id} has no live VMM for a console"
                 )
             try:
-                return await _vsock_handshake(socket_path, port)
+                return await _vsock_handshake(socket_path, port, user, rows, cols, term)
             except _VsockRetry as retry:
                 if asyncio.get_running_loop().time() >= deadline:
                     raise MicrovmError(

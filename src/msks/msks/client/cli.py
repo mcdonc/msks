@@ -430,6 +430,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     shell = sub.add_parser("shell", help="interactive shell in a workspace")
     shell.add_argument("workspace_id", help="the workspace to attach to")
+    shell.add_argument(
+        "--user",
+        default="root",
+        help="shell user: root or the image's workspace user (default: root)",
+    )
     image = sub.add_parser("image", help="manage the daemon's image catalog (#65)")
     image_sub = image.add_subparsers(dest="image_command", required=True)
     image_ls = image_sub.add_parser("ls", help="list catalog images")
@@ -479,7 +484,7 @@ def command_table(args: argparse.Namespace, transport) -> dict:
         "start": lambda: cmd_start(args.workspace_id, transport=transport),
         "stop": lambda: cmd_stop(args.workspace_id, transport=transport),
         "rm": lambda: cmd_rm(args.workspace_ids, transport=transport),
-        "shell": lambda: run_workspace_shell(args.workspace_id),
+        "shell": lambda: run_workspace_shell(args.workspace_id, args.user),
         "image": lambda: image_command_table(args, transport)[args.image_command](),
     }
 

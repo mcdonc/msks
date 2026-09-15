@@ -328,21 +328,27 @@ Transport (#21), in the preferred vsock-first shape:
   bytes both ways — no framing, backpressure is websocket/TCP flow
   control.
 - The guest loads `vmw_vsock_virtio_transport` (systemd-modules-load)
-  and runs `msks-console.service`: Debian's own socat (built
-  WITH_VSOCK) as `VSOCK-LISTEN:1023,reuseaddr,fork
-EXEC:/bin/bash,pty,ctty,echo=1,icanon=1,stderr,setsid`, restarted
-  by systemd if it dies. One Debian bash on a pty per connection.
+  and runs `msks-console.service`: the msks console helper
+  (`/usr/bin/msks-console-helper`, a static binary the image builds
+  from `src/console-helper`), restarted by systemd if it dies. The
+  helper owns the vsock listener, accepts host-originated connections
+  only, and each connection negotiates the identity prelude (#63):
+  the daemon sends the requested user, the client terminal's size
+  and TERM, and the helper answers `MSKS OK <user>` (or a named
+  refusal) before exec'ing that user's login shell on a fresh pty.
   The pty is a plain canonical terminal — ISIG, ONLCR, ECHO, and
   ICANON all on: Ctrl-C generates SIGINT in the guest, output
   arrives CRLF-terminated, and the line discipline echoes and edits
-  input for programs that read stdin directly. The unit sets
-  `TERM=xterm` so bash's readline engages and provides line editing
-  and history while it is active (#61); a TERM=dumb service
-  environment leaves readline off. The shell is **root**; a non-root
-  shell is follow-up work.
-- Window-size changes are not applied v1: the guest pty keeps its
-  creation size; propagating a resize needs a guest-side helper that
-  does not exist yet.
+  input for programs that read stdin directly. The shell's TERM
+  comes from the client's terminal, so readline engages and provides
+  line editing and history while it is active (#61); a TERM=dumb
+  client gets readline off. The session's user is **root** by
+  default; `msks shell --user <name>` requests the image's workspace
+  user (users the image does not serve are refused by name).
+- The guest pty is created at the client terminal's size (#61's
+  0x0 fixed): the console request carries the geometry at connect.
+  Live resizes during a session are not propagated yet — the same
+  in-band negotiation can carry them later.
 - `MSKSC_CAFILE` pins the daemon certificate for verification when
   you have it (a directly-run msksd's CA, or the appliance CA
   exported from its state disk:

@@ -1,0 +1,75 @@
+# Rust gate for the console helper (#63).
+#
+# The crate (src/console-helper) is held at 100% line and branch
+# coverage, on top of rustfmt and clippy -D warnings — the same
+# commands the pre-commit hooks run locally. Path-filtered to the
+# crate and its toolchain, matching guest-assets.yml's philosophy:
+# unrelated PRs skip the job (and show it skipped) instead of paying
+# for it.
+name: Rust
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/rust.yml
+      - src/console-helper/**
+      - scripts/rust-coverage.sh
+      - devenv.nix
+      - devenv.yaml
+      - devenv.lock
+  pull_request:
+    paths:
+      - .github/workflows/rust.yml
+      - src/console-helper/**
+      - scripts/rust-coverage.sh
+      - devenv.nix
+      - devenv.yaml
+      - devenv.lock
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: cachix/cachix-action@v17
+        with:
+          name: devenv
+
+      # Pinned release, matching ci.yml: the devenv that evaluates the
+      # 2.x tasks syntax and parses -O.
+      - name: Install devenv.sh
+        run: nix profile add github:cachix/devenv/v2.3.1
+
+      # Same three gates as the pre-commit hooks, in the same order:
+      # formatting, linting, then the coverage run (which also runs
+      # the full test suite — unit plus integration, the latter
+      # driving the real binary through its --test-listen-fd mode).
+      - name: rustfmt
+        run: >-
+          devenv --quiet -O dotenv.enable:bool false shell --
+          cargo fmt --manifest-path src/console-helper/Cargo.toml --check
+
+      - name: clippy
+        run: >-
+          devenv --quiet -O dotenv.enable:bool false shell --
+          cargo clippy --manifest-path src/console-helper/Cargo.toml
+          --all-targets -- -D warnings
+
+      - name: Coverage gate (100% lines and branches)
+        run: >-
+          devenv --quiet -O dotenv.enable:bool false shell --
+          env "DEVENV_ROOT=$PWD" scripts/rust-coverage.sh

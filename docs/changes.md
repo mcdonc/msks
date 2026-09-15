@@ -8,6 +8,19 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **`msks shell --user` and the console identity prelude (#63).** The
+  vsock console now serves shells as root or the image's workspace
+  user: a guest-side helper negotiates the identity, the client
+  terminal's size, and its TERM value in-band on each connection, and
+  the listener accepts host-originated connections only (guest-local
+  peers are refused). A workspace bound to an image whose record
+  cannot be read is refused with close code 4501 — the console never
+  silently downgrades to a raw root shell. Images declare
+  `console_protocol: prelude-v1` and
+  `console_users` in their manifest; older images keep today's raw
+  root shell through the daemon's legacy path. The helper is a Rust
+  crate under `src/console-helper`, gated at 100% line and branch
+  coverage (`.github/workflows/rust.yml`).
 - **YAML config file for msksd (#46).** `msksd` reads `msksd.yaml` — `--config <path>` for an explicit file, `--config=none` for env-vars-only, and a bare `msksd` resolves `$MSKSD_CONFIG_DIR/msksd.yaml` (default `~/.config/msksd/msksd.yaml`), generating a commented template on first run. Precedence is `MSKSD_*` env vars > file > defaults; a config key is its variable minus the prefix, lowercased (`MSKSD_PORT` → `port`, `MSKSD_EGRESS_SUBNET` → `egress_subnet` — flat, klangkd's convention, derived by one rule so the spellings cannot drift), keys take native YAML scalars, and unknown keys, duplicate keys, or invalid values fail at startup. SIGHUP re-reads the file into the live settings without a restart. The appliance configures itself through the file — `/run/msksd.yaml`, generated at each boot with the build's store paths, with the kernel-cmdline `msksd.<name>=<value>` bridge remaining the variable-override channel — and a bare `alembic` run resolves the database URL from the default file when present. See `docs/config.md` for the key-by-key reference.
 - **`msks:preflight` (#43).** One command delivers the Python-side pre-commit gates' complete feedback before the first commit attempt: every ruff and deferred-import finding, every xenon offender, the jscpd report, and — when sources under `src/msks/` changed — the gated suite run followed by every missing coverage line and branch arc for the changed files (`scripts/covgaps.py`). AGENTS.md makes it part of the loop: fix everything it names in one editing pass, re-run, then commit. The xenon and jscpd gates now also grade untracked-but-present files, so a new file grades from the moment it exists.
 

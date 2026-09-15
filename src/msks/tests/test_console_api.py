@@ -1,6 +1,7 @@
 """The console websocket: auth, lookup, and the byte bridge (#21)."""
 
 import asyncio
+import json
 
 import pytest
 from fastapi import WebSocketDisconnect
@@ -11,6 +12,8 @@ from msks.server.api import bridge_console, build_api
 from msks.settings import ServerSettings, Settings
 from test_api import TOKEN, StubMicrovm, auth
 
+from msks import imagestore
+
 
 class ConsoleStub(StubMicrovm):
     """A seam whose console() opens a real unix socket pair backend."""
@@ -19,8 +22,17 @@ class ConsoleStub(StubMicrovm):
         super().__init__()
         self._tmp_path = tmp_path
         self.refusals: set[str] = set()
+        self.console_calls: list[tuple[str, str | None, int, int]] = []
 
-    async def console(self, workspace_id: str):
+    async def console(
+        self,
+        workspace_id: str,
+        user: str | None = None,
+        rows: int = 0,
+        cols: int = 0,
+        term: str = "xterm",
+    ):
+        self.console_calls.append((workspace_id, user, rows, cols, term))
         if workspace_id in self.refusals:
             raise MicrovmError("no live vsock socket")
         path = self._tmp_path / f"{workspace_id}.sock"
@@ -154,3 +166,183 @@ async def test_bridge_ends_when_guest_eof(tmp_path) -> None:
             return
 
     await asyncio.wait_for(bridge_console(Socket(), reader, Writer()), 5)
+
+
+def _make_prelude_image(tmp_path, hash_name: str = "a" * 64) -> str:
+    """A catalog image with console markers; returns its hash."""
+    from msks import imagestore
+
+    cache = imagestore.images_dir(tmp_path) / hash_name
+    cache.mkdir(parents=True)
+    for member in ("kernel", "initrd", "rootfs.ext4"):
+        (cache / member).write_bytes(b"artifact")
+    (cache / "image.json").write_text(
+        json.dumps(
+            {
+                "schema": 2,
+                "name": "debian",
+                "version": "13.6",
+                "cmdline": "console=ttyS0",
+                "vsock_shell_port": 1023,
+                "console_protocol": "prelude-v1",
+                "console_users": ["root", "msks"],
+            }
+        )
+    )
+    return hash_name
+
+
+def _make_prelude_workspace(client, tmp_path, workspace_id: str = "ws-p") -> None:
+    digest = _make_prelude_image(tmp_path)
+    response = client.post(
+        "/api/v1/workspaces",
+        json={"id": workspace_id, "image": "debian:13.6"},
+        headers=auth(),
+    )
+    assert response.status_code == 201, response.text
+    _ = digest
+
+
+def test_console_default_user_root_legacy(console_api, tmp_path) -> None:
+    api, app, stub = console_api
+    with TestClient(api) as client:
+        _make_workspace(client)
+        with client.websocket_connect(
+            f"/api/v1/workspaces/ws-c/console?token={TOKEN}"
+        ) as socket:
+            socket.send_bytes(b"hello")
+            got = b""
+            while b"HELLO" not in got:
+                got += socket.receive_bytes()
+    assert stub.console_calls == [("ws-c", None, 0, 0, "xterm")]
+
+
+def test_console_unknown_user_closes_4400(console_api) -> None:
+    api, app, stub = console_api
+    with TestClient(api) as client:
+        _make_workspace(client)
+        with client.websocket_connect(
+            f"/api/v1/workspaces/ws-c/console?token={TOKEN}&user=nobody"
+        ) as s:
+            with pytest.raises(WebSocketDisconnect) as caught:
+                s.receive_text()
+        assert caught.value.code == 4400
+        assert "not served" in (caught.value.reason or "")
+
+
+def test_console_bad_rows_closes_4400(console_api) -> None:
+    api, app, stub = console_api
+    with TestClient(api) as client:
+        _make_workspace(client)
+        for query in ("rows=abc", "rows=0", "cols=99999", "user=Bad.Name"):
+            with client.websocket_connect(
+                f"/api/v1/workspaces/ws-c/console?token={TOKEN}&{query}"
+            ) as s:
+                with pytest.raises(WebSocketDisconnect) as caught:
+                    s.receive_text()
+                assert caught.value.code == 4400, query
+    assert stub.console_calls == []
+
+
+def test_console_prelude_image_passes_user_and_size(console_api, tmp_path) -> None:
+    api, app, stub = console_api
+    app.state.settings.vmm.state_dir = tmp_path
+    with TestClient(api) as client:
+        _make_prelude_workspace(client, tmp_path)
+        with client.websocket_connect(
+            f"/api/v1/workspaces/ws-p/console?token={TOKEN}&user=msks&rows=34&cols=120"
+        ) as socket:
+            socket.send_bytes(b"hello")
+            got = b""
+            while b"HELLO" not in got:
+                got += socket.receive_bytes()
+    assert stub.console_calls == [("ws-p", "msks", 34, 120, "xterm")]
+
+
+def test_console_bad_term_closes_4400(console_api) -> None:
+    api, app, stub = console_api
+    with TestClient(api) as client:
+        _make_workspace(client)
+        for query in ("term=bad%20term", "term=" + "x" * 33):
+            with client.websocket_connect(
+                f"/api/v1/workspaces/ws-c/console?token={TOKEN}&{query}"
+            ) as s:
+                with pytest.raises(WebSocketDisconnect) as caught:
+                    s.receive_text()
+                assert caught.value.code == 4400, query
+    assert stub.console_calls == []
+
+
+def test_console_prelude_image_carries_term(console_api, tmp_path) -> None:
+    api, app, stub = console_api
+    app.state.settings.vmm.state_dir = tmp_path
+    with TestClient(api) as client:
+        _make_prelude_workspace(client, tmp_path)
+        with client.websocket_connect(
+            f"/api/v1/workspaces/ws-p/console?token={TOKEN}"
+            f"&user=msks&term=tmux-256color"
+        ) as socket:
+            socket.send_bytes(b"hello")
+            got = b""
+            while b"HELLO" not in got:
+                got += socket.receive_bytes()
+    assert stub.console_calls == [("ws-p", "msks", 24, 80, "tmux-256color")]
+
+
+def test_console_unreadable_image_record_closes_4501(console_api, tmp_path) -> None:
+    api, app, stub = console_api
+    app.state.settings.vmm.state_dir = tmp_path
+    with TestClient(api) as client:
+        _make_prelude_workspace(client, tmp_path)
+    # Corrupt the bound image's record out-of-band: the console must
+    # refuse loudly, not silently downgrade to a legacy raw stream.
+    digest = next(
+        p.name for p in imagestore.images_dir(tmp_path).iterdir() if p.is_dir()
+    )
+    (imagestore.images_dir(tmp_path) / digest / "image.json").write_text("{corrupt")
+    with TestClient(api) as client:
+        with client.websocket_connect(
+            f"/api/v1/workspaces/ws-p/console?token={TOKEN}"
+        ) as s:
+            with pytest.raises(WebSocketDisconnect) as caught:
+                s.receive_text()
+        assert caught.value.code == 4501
+        assert "unreadable" in (caught.value.reason or "")
+    assert stub.console_calls == []
+
+
+def test_console_missing_image_record_closes_4501(console_api, tmp_path) -> None:
+    api, app, stub = console_api
+    app.state.settings.vmm.state_dir = tmp_path
+    with TestClient(api) as client:
+        _make_prelude_workspace(client, tmp_path)
+    # The bound image's record vanished (out-of-band deletion): the
+    # console refuses loudly instead of silently downgrading.
+    digest = next(
+        p.name for p in imagestore.images_dir(tmp_path).iterdir() if p.is_dir()
+    )
+    (imagestore.images_dir(tmp_path) / digest / "image.json").unlink()
+    with TestClient(api) as client:
+        with client.websocket_connect(
+            f"/api/v1/workspaces/ws-p/console?token={TOKEN}"
+        ) as s:
+            with pytest.raises(WebSocketDisconnect) as caught:
+                s.receive_text()
+        assert caught.value.code == 4501
+        assert "unreadable" in (caught.value.reason or "")
+    assert stub.console_calls == []
+
+
+def test_console_prelude_image_default_size(console_api, tmp_path) -> None:
+    api, app, stub = console_api
+    app.state.settings.vmm.state_dir = tmp_path
+    with TestClient(api) as client:
+        _make_prelude_workspace(client, tmp_path)
+        with client.websocket_connect(
+            f"/api/v1/workspaces/ws-p/console?token={TOKEN}&user=root"
+        ) as socket:
+            socket.send_bytes(b"x")
+            got = b""
+            while b"X" not in got:
+                got += socket.receive_bytes()
+    assert stub.console_calls == [("ws-p", "root", 24, 80, "xterm")]
