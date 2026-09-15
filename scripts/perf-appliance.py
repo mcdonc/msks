@@ -157,11 +157,15 @@ def assets_present() -> bool:
     return True
 
 
+def state_disk_path() -> Path:
+    """The state disk the run script boots against."""
+    return Path(os.environ.get("MSKSD_APPLIANCE_STATE", APP_DIR / "state.ext4"))
+
+
 def fresh_state_disk() -> None:
     """Delete the state disk so run 1 is a cold boot."""
-    state = Path(os.environ.get("MSKSD_APPLIANCE_STATE", APP_DIR / "state.ext4"))
     with contextlib.suppress(FileNotFoundError):
-        state.unlink()
+        state_disk_path().unlink()
 
 
 def all_healthy(runs: list[dict]) -> bool:
@@ -194,7 +198,20 @@ def main() -> int:
         return 2
     if args.fresh:
         fresh_state_disk()
-    runs = collect_runs(args.runs, "cold" if args.fresh else "warm-1")
+        first = "cold"
+    elif not state_disk_path().exists():
+        # Without a state disk run 1 pays the cold costs (image import,
+        # token generation, staging merge) however it is labeled — say
+        # so and keep it out of the warm p50 instead of silently
+        # counting a cold run as warm.
+        print(
+            f"perf-appliance: no state disk at {state_disk_path()}; "
+            "run 1 will be a cold boot"
+        )
+        first = "cold"
+    else:
+        first = "warm-1"
+    runs = collect_runs(args.runs, first)
     report(runs)
     return 0 if all_healthy(runs) else 1
 

@@ -23,8 +23,9 @@ for name in vmlinux initrd rootfs.ext4 appliance-manifest.json; do
   chmod 0644 "$app_dir/$name"
 done
 # The state disk is NOT an artifact: a rebuild must never clobber live
-# appliance state. Seed it once from the template; the up-task (and the
-# guest init's mkfs fallback) handle the rest.
+# appliance state. Seed it once from the template; the up-task and the
+# appliance's msks-state-format.service (blank, foreign, and existing
+# disks all converge) handle the rest.
 if [ ! -f "$app_dir/state.ext4" ]; then
   cp -L "$out/state.ext4" "$app_dir/state.ext4"
   chmod 0644 "$app_dir/state.ext4"

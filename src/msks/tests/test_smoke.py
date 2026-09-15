@@ -611,16 +611,21 @@ def read_appliance_journal(state_disk: Path) -> list[str] | None:
     journal files" assertion. Archived-and-corrupted files
     (``*.journal~``) are deliberately not counted: journalctl cannot
     read them, and an empty intact set must fail, not pass vacuously.
+    A failed copy/extract/read raises instead: an extraction problem
+    must not masquerade as "no journal on the disk".
     """
     tools = ("journalctl", "debugfs", "e2fsck", "cp")
     if any(shutil.which(t) is None for t in tools):
         return None
     with tempfile.TemporaryDirectory(prefix="msks-appliance-journal") as tmp:
         repair = Path(tmp) / "state.ext4"
-        subprocess.run(
+        copy = subprocess.run(
             ["cp", "--sparse=always", str(state_disk), str(repair)],
             capture_output=True,
             timeout=300,
+        )
+        assert copy.returncode == 0, (
+            f"sparse copy of the state disk failed:\n{copy.stderr}"
         )
         fsck = subprocess.run(
             ["e2fsck", "-fy", str(repair)],
@@ -634,7 +639,7 @@ def read_appliance_journal(state_disk: Path) -> list[str] | None:
         )
         extract = Path(tmp) / "extract"
         extract.mkdir()
-        subprocess.run(
+        dump = subprocess.run(
             [
                 "debugfs",
                 "-R",
@@ -643,6 +648,11 @@ def read_appliance_journal(state_disk: Path) -> list[str] | None:
             ],
             capture_output=True,
             timeout=120,
+        )
+        # rdump's stderr mixes benign unprivileged-ownership noise
+        # with real errors; the exit code separates them.
+        assert dump.returncode == 0, (
+            f"debugfs rdump of the journal directory failed:\n{dump.stderr}"
         )
         journal_dir = extract / "journal"
         if not any(journal_dir.rglob("*.journal")):
@@ -659,6 +669,9 @@ def read_appliance_journal(state_disk: Path) -> list[str] | None:
             capture_output=True,
             text=True,
             timeout=60,
+        )
+        assert text.returncode == 0, (
+            f"journalctl could not read the extracted journal:\n{text.stderr}"
         )
         return text.stdout.splitlines()
 

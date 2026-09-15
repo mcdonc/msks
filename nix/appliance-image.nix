@@ -10,7 +10,7 @@
 #
 #   $out/vmlinux            - Debian's generic kernel (bzImage; the
 #                             kernel carries CONFIG_PVH=y)
-#   $out/initrd             - busybox + the five modules the generic
+#   $out/initrd             - busybox + the six modules the generic
 #                             kernel needs to mount the ext4 root
 #                             read-only; switch_root to systemd
 #   $out/rootfs.ext4        - the appliance OS: Debian trixie + the
@@ -66,7 +66,7 @@ let
   # appliance needs both (the store share; nested KVM for workspace
   # VMs). The generic flavor carries them: virtio-pci, virtiofs, and
   # fuse are BUILT IN, kvm-intel/kvm-amd and ext4 are modules — so the
-  # initramfs below carries four modules where the guest's carries
+  # initramfs below carries six modules where the guest's carries
   # one, and this kernel is pinned by its own pool URL and sha256
   # (#92's answer to "does the cloud tree cover it": no).
   genericKernelDeb = pkgs.fetchurl {
@@ -446,7 +446,7 @@ let
           ''' \
           '[Service]' \
           'Type=oneshot' \
-          'ExecStart=/bin/sh -c "set -e; i=0; while [ $i -lt 50 ] && [ ! -b /dev/vdb ]; do sleep 0.2; i=$((i+1)); done; mkdir -p /run/msks-blank/var/log/journal; ln -sfn /run /run/msks-blank/var/run; ln -sfn /run/lock /run/msks-blank/var/lock; blkid -t LABEL=msks-state -o device /dev/vdb >/dev/null 2>&1 || e2label /dev/vdb msks-state 2>/dev/null || mkfs.ext4 -q -L msks-state -d /run/msks-blank /dev/vdb; mkdir -p /run/msks-mnt; mount /dev/vdb /run/msks-mnt; mkdir -p /run/msks-mnt/var/log/journal; ln -sfn /run /run/msks-mnt/var/run; ln -sfn /run/lock /run/msks-mnt/var/lock; umount /run/msks-mnt; rmdir /run/msks-mnt /run/msks-blank/var/log/journal /run/msks-blank/var/log /run/msks-blank/var /run/msks-blank 2>/dev/null || true"' \
+          'ExecStart=/bin/sh -c "set -e; i=0; while [ $i -lt 50 ] && [ ! -b /dev/vdb ]; do sleep 0.2; i=$((i+1)); done; mkdir -p /run/msks-blank/var/log/journal; ln -sfn /run /run/msks-blank/var/run; ln -sfn /run/lock /run/msks-blank/var/lock; blkid -t LABEL=msks-state -o device /dev/vdb >/dev/null 2>&1 || e2label /dev/vdb msks-state 2>/dev/null || mkfs.ext4 -q -L msks-state -d /run/msks-blank /dev/vdb; mkdir -p /run/msks-mnt; mount /dev/vdb /run/msks-mnt; mkdir -p /run/msks-mnt/var/log/journal; ln -sfn /run /run/msks-mnt/var/run; ln -sfn /run/lock /run/msks-mnt/var/lock; umount /run/msks-mnt; rm -rf /run/msks-mnt /run/msks-blank 2>/dev/null || true"' \
           'StandardOutput=journal+console' \
           'StandardError=journal+console' \
           ''' \
