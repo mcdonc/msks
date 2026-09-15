@@ -1,6 +1,7 @@
 """Alembic environment: derives the URL from msks settings."""
 
 from alembic import context
+from msks.config import load_settings
 from msks.model import Base
 from msks.settings import Settings
 from sqlalchemy import engine_from_config, pool
@@ -8,10 +9,18 @@ from sqlalchemy import engine_from_config, pool
 config = context.config
 if not config.get_main_option("sqlalchemy.url"):
     # Bare `alembic` CLI use only; the daemon always passes the
-    # programmatic URL for the live database path.
+    # programmatic URL for the live database path. Resolve settings
+    # the way a bare `msksd` would — the default config file when
+    # one is present (never generated here), else env vars and
+    # defaults — so a file-configured daemon and a hand-run
+    # migration agree on the database (#46).
+    try:
+        settings = load_settings(None, generate=False)
+    except OSError, ValueError:
+        settings = Settings.from_env()
     config.set_main_option(
         "sqlalchemy.url",
-        f"sqlite:///{Settings.from_env().server.db_path}",
+        f"sqlite:///{settings.server.db_path}",
     )
 target_metadata = Base.metadata
 
