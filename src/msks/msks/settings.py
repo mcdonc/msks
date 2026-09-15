@@ -17,6 +17,7 @@ error names the ``MSKSD_*`` variable either way.
 """
 
 import ipaddress
+import math
 import os
 import socket
 from collections.abc import Mapping
@@ -69,9 +70,12 @@ def _parse_optional_int(env: Mapping[str, str], name: str, minimum: int) -> int 
 def _env_float(env: Mapping[str, str], name: str, default: float) -> float:
     raw = _env(env, name, str(default))
     try:
-        return float(raw)
+        value = float(raw)
     except ValueError:
         raise ValueError(f"{name} must be a number, got {raw!r}") from None
+    if not math.isfinite(value):
+        raise ValueError(f"{name} must be a finite number, got {raw!r}")
+    return value
 
 
 @dataclass
@@ -281,7 +285,7 @@ def _server_settings_from_env(
 ) -> ServerSettings:
     """Build ServerSettings from the environment (helper: keeps the
     class block itself at xenon rank A)."""
-    state = Path(_env(env, "MSKSD_STATE_DIR", "~/.local/state/msksd")).expanduser()
+    state = Path(_env(env, "MSKSD_STATE_DIR", str(cls().db_path.parent))).expanduser()
     poll = _env_float(env, "MSKSD_EVENT_POLL_S", cls.event_poll_s)
     if poll <= 0:
         raise ValueError(f"MSKSD_EVENT_POLL_S must be positive, got {poll}")

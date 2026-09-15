@@ -137,6 +137,25 @@ def scalar_to_str(key: str, value: object) -> str:
     )
 
 
+class UniqueKeyLoader(yaml.SafeLoader):
+    """A safe loader that refuses duplicate mapping keys.
+
+    PyYAML keeps the last of duplicate keys silently; the config file
+    fails fast instead — an operator appending a second ``vmm:``
+    block to a long file gets an error naming the key, not a silent
+    override of everything above it.
+    """
+
+    def construct_mapping(self, node, deep=False):
+        seen = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if key in seen:
+                raise ValueError(f"duplicate config key {key!r}")
+            seen.add(key)
+        return super().construct_mapping(node, deep)
+
+
 def parse_config_doc(text: str, path: str) -> dict[str, str]:
     """Parse config-file text into an ``MSKSD_*`` env-var layer.
 
@@ -146,7 +165,7 @@ def parse_config_doc(text: str, path: str) -> dict[str, str]:
     environment) applies, exactly as an unset variable would.
     """
     try:
-        doc = yaml.safe_load(text)
+        doc = yaml.load(text, Loader=UniqueKeyLoader)
     except yaml.YAMLError as exc:
         raise ValueError(f"{path}: invalid YAML: {exc}") from None
     if doc is None:
@@ -236,15 +255,17 @@ class LayeredEnv(Mapping):
         return len(merged)
 
 
-def load_settings(config: str | None) -> Settings:
+def load_settings(config: str | None, *, generate: bool = True) -> Settings:
     """Settings from the resolved config file + environment (#46).
 
     *config* is the ``--config`` argument: ``None`` resolves the
     default path (generating the template on first run), ``"none"``
     reads env vars and defaults only, and a path reads exactly that
     file. Precedence env > file > defaults holds for every key.
+    *generate* is ``False`` on the SIGHUP reload path: a missing
+    default file is refused there instead of regenerated.
     """
-    path = resolve_config_path(config)
+    path = resolve_config_path(config, generate=generate)
     if path == NO_CONFIG:
         return Settings.from_env()
     overrides = file_env_overrides(path)
@@ -253,7 +274,7 @@ def load_settings(config: str | None) -> Settings:
     return Settings.from_env(LayeredEnv(overrides))
 
 
-def resolve_config_path(config: str | None) -> str:
+def resolve_config_path(config: str | None, *, generate: bool = True) -> str:
     """Resolve the ``--config`` value into a path or the "none" sentinel.
 
     Three modes (klangkd's, #46):
@@ -265,14 +286,30 @@ def resolve_config_path(config: str | None) -> str:
     - ``"none"`` → the explicit env-only opt-out (no config file).
     - a path → that path, required to exist; missing raises
       ``ValueError``. Explicit paths are never auto-generated.
+
+    *generate* arms first-run generation for the default path only;
+    the SIGHUP reload passes ``generate=False`` so a deleted default
+    file is refused ("config file not found") instead of silently
+    regenerating the template and reverting every file-set value —
+    a reload is not a first run.
     """
     if config is None:
-        return ensure_default_config()
+        return default_path_or_error(generate)
     if config == NO_CONFIG:
         return NO_CONFIG
     if not Path(config).is_file():
         raise ValueError(f"config file not found: {config}")
     return config
+
+
+def default_path_or_error(generate: bool) -> str:
+    """The default path: generated on first run, or required to exist."""
+    if generate:
+        return ensure_default_config()
+    path = default_config_path()
+    if not os.path.isfile(path):
+        raise ValueError(f"config file not found: {path}")
+    return path
 
 
 def ensure_default_config() -> str:

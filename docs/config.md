@@ -66,11 +66,14 @@ Two mapping details worth knowing:
 Numeric, boolean, and string fields accept their natural YAML
 scalars: `port: 8660`, `access_log: true`,
 `socket_wait_timeout_s: 12.5`. Quoted strings (`port: "8660"`) work
-everywhere and parse identically. A key with no value
-(`bootstrap_token:`) is the unset form — the environment (for its
-variable) and then the default apply. Values must be scalars: a list
-or mapping where a number, boolean, or string belongs is a startup
-error.
+everywhere and parse identically. Booleans are `true` and `false` —
+write them that way: a bare `1` parses as the integer `1` and then
+reads as false, the same string rule the environment variable
+follows. A key with no value (`bootstrap_token:`) is the unset form —
+the environment (for its variable) and then the default apply.
+Values must be scalars: a list or mapping where a number, boolean, or
+string belongs is a startup error, and so is a duplicate section or
+key (the second `vmm:` block does not silently win).
 
 ### Unknown keys fail fast
 
@@ -152,13 +155,22 @@ with no per-module reconfiguration — a changed `net.pool` or
 
 Three things keep their startup values until a restart:
 
-- the listener's address, port, and TLS material (bound at startup)
+- the listener's address, port, TLS material, and access logging
+  (bound — and, for the access log, snapshotted into the listener's
+  config — at startup)
 - the database path (the engine is open)
-- long-lived loops that sampled their interval at start (the
-  workspace status scan's `event_poll_s`)
+- long-lived loops and rulesets that sampled their inputs at start:
+  the workspace status scan's `event_poll_s`, and the base NAT
+  masquerade's `net.uplink` (per-workspace firewall rules read the
+  live setting, but the base table that actually masquerades out the
+  uplink keeps its startup value — change `uplink` only with a
+  restart scheduled)
 
 A config that fails to load or validate is refused: the daemon
-reports the error on stderr and keeps the previous settings.
+reports the error on stderr and keeps the previous settings. A
+default-path file deleted since startup is likewise refused rather
+than regenerated — a reload is not a first run, and regenerating the
+template would silently revert every file-set value to its default.
 
 ## Notes for tooling
 

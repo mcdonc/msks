@@ -38,28 +38,36 @@ def server_config(app) -> uvicorn.Config:
     )
 
 
-def serve(app, no_tls: bool) -> None:
-    """Resolve listener TLS material, then run the server forever.
+def arm_tls(app, no_tls: bool) -> None:
+    """Resolve listener TLS material into the live settings.
 
     ``--no-tls`` wins over configured cert paths: an operator asking
     for plain HTTP in development must not get TLS because the
-    environment still carries stale variables.
+    environment still carries stale variables. Split out of
+    :func:`serve` so ``main`` can fail fast on unusable material —
+    a half-configured operator pair raises here with the clean
+    one-line error instead of a traceback from inside uvicorn.
     """
     server = app.state.settings.server
     if no_tls:
         server.tls_cert = None
         server.tls_key = None
-    else:
-        state_dir = Path(server.db_path).parent
-        cert, key, ca_fp = load_or_generate(
-            state_dir, server.host, server.tls_cert, server.tls_key
+        return
+    state_dir = Path(server.db_path).parent
+    cert, key, ca_fp = load_or_generate(
+        state_dir, server.host, server.tls_cert, server.tls_key
+    )
+    server.tls_cert, server.tls_key = cert, key
+    if ca_fp:
+        print(
+            f"msksd: CA fingerprint (pin on first connect): {ca_fp}",
+            file=sys.stderr,
         )
-        server.tls_cert, server.tls_key = cert, key
-        if ca_fp:
-            print(
-                f"msksd: CA fingerprint (pin on first connect): {ca_fp}",
-                file=sys.stderr,
-            )
+
+
+def serve(app, no_tls: bool) -> None:
+    """Resolve listener TLS material, then run the server forever."""
+    arm_tls(app, no_tls)
     run_forever(app)
 
 
@@ -75,11 +83,15 @@ def reload_settings(app, config: str | None) -> None:
     so the swap propagates without per-module ``reconfigure()``
     calls. The listener (host, port, TLS material) and the database
     path are bound at startup and keep their startup values until a
-    restart. A config that fails to load or validate is refused: the
-    error is reported and the previous settings stay in force.
+    restart. A config that fails to load or validate — including a
+    default-path file deleted since startup, which is refused rather
+    than regenerated (a reload is not a first run) — leaves the
+    previous settings in force. A second SIGHUP arriving mid-reload
+    re-enters and finishes too; each swap is one attribute
+    assignment, so the last writer wins with no torn state.
     """
     try:
-        settings = load_settings(config)
+        settings = load_settings(config, generate=False)
     except (OSError, ValueError) as exc:
         print(
             f"msksd: SIGHUP reload refused, keeping current settings: {exc}",
@@ -131,11 +143,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         settings = load_settings(args.config)
+        app = build_app(settings)
+        install_sighup_reload(app, args.config)
+        arm_tls(app, args.no_tls)
     except (OSError, ValueError) as exc:
         print(f"msksd: {exc}", file=sys.stderr)
         return 2
-    app = build_app(settings)
-    install_sighup_reload(app, args.config)
     serve(app, args.no_tls)
     return 0
 

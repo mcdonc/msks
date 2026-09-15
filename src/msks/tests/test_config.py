@@ -174,6 +174,32 @@ def test_invalid_yaml_rejected(tmp_path) -> None:
         file_env_overrides(path)
 
 
+def test_duplicate_section_rejected(tmp_path) -> None:
+    path = write_config(tmp_path, "server:\n  port: 9001\nserver:\n  port: 9002\n")
+    with pytest.raises(ValueError, match="duplicate config key 'server'"):
+        file_env_overrides(path)
+
+
+def test_duplicate_key_within_a_section_rejected(tmp_path) -> None:
+    path = write_config(tmp_path, "vmm:\n  driver: local\n  driver: k8s\n")
+    with pytest.raises(ValueError, match="duplicate config key 'driver'"):
+        file_env_overrides(path)
+
+
+def test_nonfinite_float_rejected_from_file(tmp_path) -> None:
+    path = write_config(tmp_path, "server:\n  event_poll_s: .nan\n")
+    with pytest.raises(ValueError, match="MSKSD_EVENT_POLL_S"):
+        load_settings(path)
+
+
+def test_nonfinite_float_rejected_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MSKSD_EGRESS_DNS_TIMEOUT_S", "inf")
+    with pytest.raises(ValueError, match="MSKSD_EGRESS_DNS_TIMEOUT_S"):
+        Settings.from_env()
+
+
 def test_missing_file_raises_oserror(tmp_path) -> None:
     with pytest.raises(OSError):
         file_env_overrides(str(tmp_path / "nope.yaml"))
@@ -363,6 +389,39 @@ def test_reload_refuses_invalid_config(tmp_path, capsys) -> None:
     assert "reload refused" in capsys.readouterr().err
 
 
+def test_reload_refuses_deleted_default_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys
+) -> None:
+    """A deleted default-path file is refused, not regenerated (#46
+    review): a reload is not a first run, and regenerating would
+    silently revert every file-set value."""
+    cfg = tmp_path / "cfg"
+    monkeypatch.setenv("MSKSD_CONFIG_DIR", str(cfg))
+    cfg.mkdir()
+    (cfg / "msksd.yaml").write_text("server:\n  port: 9021\n")
+    app = app_with_file(tmp_path, {"server": {"port": 9001}})
+    (cfg / "msksd.yaml").unlink()
+    main_mod.reload_settings(app, None)
+    assert app.state.settings.server.port == 9001
+    assert not (cfg / "msksd.yaml").exists()  # not regenerated
+    assert "config file not found" in capsys.readouterr().err
+
+
+def test_reload_reads_present_default_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """SIGHUP with the default-path file present re-reads it (no
+    generation involved on the reload path)."""
+    cfg = tmp_path / "cfg"
+    monkeypatch.setenv("MSKSD_CONFIG_DIR", str(cfg))
+    cfg.mkdir()
+    (cfg / "msksd.yaml").write_text("server:\n  port: 9021\n")
+    app = app_with_file(tmp_path, {"server": {"port": 9001}})
+    (cfg / "msksd.yaml").write_text("server:\n  port: 9022\n")
+    main_mod.reload_settings(app, None)
+    assert app.state.settings.server.port == 9022
+
+
 def test_reload_keeps_generated_tls(tmp_path) -> None:
     app = app_with_file(tmp_path, {"server": {"port": 9001}})
     app.state.settings.server.tls_cert = "/generated/c.pem"
@@ -419,6 +478,7 @@ def test_install_sighup_reload_wires_the_handler(tmp_path) -> None:
 
 
 def test_main_reads_config_file(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    monkeypatch.setenv("MSKSD_STATE_DIR", str(tmp_path / "state"))
     seen = {}
     monkeypatch.setattr(
         main_mod,
@@ -431,6 +491,19 @@ def test_main_reads_config_file(monkeypatch: pytest.MonkeyPatch, tmp_path) -> No
     )
     assert seen == {"port": 9010}
     signal.signal(signal.SIGHUP, signal.SIG_DFL)
+
+
+def test_main_half_configured_tls_fails_clean(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys
+) -> None:
+    """A file naming only one side of the TLS pair exits 2 with the
+    one-line pair error, not a traceback from inside serve."""
+    served = []
+    monkeypatch.setattr(main_mod, "serve", lambda app, no_tls: served.append(1))
+    config = dump_config(tmp_path, {"server": {"tls_cert": "/c.pem"}})
+    assert main_mod.main(["--config", config]) == 2
+    assert served == []
+    assert "must be set together" in capsys.readouterr().err
 
 
 def test_main_missing_config_fails_fast(
