@@ -10,7 +10,7 @@
 # together, and neither outlives the other.
 #
 # Graceful stop is a TERM/INT trap: ACPI poweroff through the CH API
-# socket first (the guest's acpid turns the button event into a clean
+# socket first (the guest's logind turns the button event into a clean
 # shutdown), then SIGTERM to the VMM after a bounded wait.
 set -euo pipefail
 
@@ -132,7 +132,7 @@ trap cleanup EXIT
 # shellcheck disable=SC2329
 graceful() {
   echo "msks: stopping the appliance (ACPI, then SIGTERM)"
-  # The guest's acpid turns the ACPI power button into a clean
+  # The guest's logind turns the ACPI power button into a clean
   # shutdown; bounded wait, then the hard stop. vm.power-button is
   # the ACPI press — vm.shutdown would be the hard stop itself.
   curl -sS --unix-socket "$app_dir/api.sock" -X PUT \

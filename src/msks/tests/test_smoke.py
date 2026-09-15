@@ -601,17 +601,27 @@ def read_appliance_journal(state_disk: Path) -> list[str] | None:
     host-readable evidence. A hard-stopped VM (a crash, or the
     supervisor's grace expiring) leaves the ext4 mid-transaction —
     debugfs refuses such a filesystem — so the read runs on a SPARSE
-    COPY repaired by e2fsck (the journal replays; unprivileged, no
-    loop mount), then debugfs rdump + journalctl --directory.
+    copy (`cp --sparse=always`: the state disk is an 8 GiB file with
+    large holes, and a dense copy would ENOSPC a tmpfs-backed
+    TMPDIR) repaired by e2fsck (the journal replays; unprivileged,
+    no loop mount), then debugfs rdump + journalctl --directory.
     Returns None when the host lacks the tools (the assertions that
-    need it then soften to a printed note instead of failing).
+    need it then soften to a printed note instead of failing) and
+    [] when no intact journal file survived — the caller's "no
+    journal files" assertion. Archived-and-corrupted files
+    (``*.journal~``) are deliberately not counted: journalctl cannot
+    read them, and an empty intact set must fail, not pass vacuously.
     """
-    tools = ("journalctl", "debugfs", "e2fsck")
+    tools = ("journalctl", "debugfs", "e2fsck", "cp")
     if any(shutil.which(t) is None for t in tools):
         return None
     with tempfile.TemporaryDirectory(prefix="msks-appliance-journal") as tmp:
         repair = Path(tmp) / "state.ext4"
-        shutil.copy(state_disk, repair)
+        subprocess.run(
+            ["cp", "--sparse=always", str(state_disk), str(repair)],
+            capture_output=True,
+            timeout=300,
+        )
         fsck = subprocess.run(
             ["e2fsck", "-fy", str(repair)],
             capture_output=True,

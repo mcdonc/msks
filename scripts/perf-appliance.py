@@ -172,7 +172,7 @@ def collect_runs(count: int, first: str) -> list[dict]:
     """Boot-and-measure ``count`` times; run 1 carries ``first``."""
     runs = []
     for i in range(count):
-        label = first if first.startswith("cold") else f"warm-{i + 1}"
+        label = first if i == 0 else f"warm-{i + 1}"
         runs.append(asyncio.run(one_run(label)))
     return runs
 

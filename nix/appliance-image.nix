@@ -246,8 +246,12 @@ let
       echo "msks appliance: serving https://${net.address}:8660 (TOFU fingerprint on the serial log)"
 
       # Debug escape hatch: a /state/debug-shell marker (seeded onto
-      # the state disk from the host) backgrounds the daemon and puts
-      # the diagnostics on the serial log, then a console shell.
+      # the state disk from the host) backgrounds the daemon, puts the
+      # diagnostics on the serial log, and HOLDS the unit open — the
+      # console is file-mode serial (an interactive shell needs the
+      # serial switched to Pty mode in scripts/appliance-run.sh), and
+      # an exiting msks-boot would just restart-loop under
+      # Restart=always.
       if [ -e /state/debug-shell ]; then
         ( sleep 2; exec "${msks}/bin/msksd" --config /run/msksd.yaml ) &
         echo "msks appliance: DEBUG SHELL on console"
@@ -266,7 +270,7 @@ let
           echo "--- diag.sh end ---"
         fi
         echo "=== DIAG-END ==="
-        exec setsid -c /bin/sh
+        exec sleep infinity
       fi
       exec "${msks}/bin/msksd" --config /run/msksd.yaml
     '';
@@ -319,12 +323,14 @@ let
         printf '4d536b734170706c69616e6365496432\n' > $out/etc/machine-id
 
         # The journal persists THROUGH /var: the fstab below binds
-        # the state disk's var/ over /var, journald starts volatile
-        # (the read-only root has no /var/log/journal), and the flush
+        # the state disk's var/ over /var. The image itself carries
+        # no /var/log/journal (the root build removes it), so journald
+        # starts volatile against the read-only root and the flush
         # step — pulled by the wants symlink, because Debian images
-        # ship a real /var/log/journal at install time and never need
-        # it — creates the directory on the mounted disk and moves
-        # the boot's records off the tmpfs.
+        # keep a real /var/log/journal from install time and never
+        # need it — creates the directory on the mounted disk (the
+        # state template stages it) and moves the boot's records off
+        # the tmpfs.
         ln -s /lib/systemd/system/systemd-journald-flush.service \
           $out/etc/systemd/system/sysinit.target.wants/systemd-journald-flush.service
         printf '%s\n' \
@@ -338,8 +344,9 @@ let
         # Mounts: the read-only root comes from the kernel cmdline
         # (no fstab root entry); the store share, the state disk, and
         # the state disk's var/ over /var are the appliance's own.
-        # /tmp is tmpfs — the root is read-only, scratch must not be
-        # (nothing survives a reboot there, which is /tmp's contract).
+        # /tmp is tmpfs via the image's own enablement (Debian ships
+        # tmp.mount wanted by local-fs.target in trixie) — the root
+        # is read-only, scratch must not be.
         printf '%s\n' \
           '# msks: root comes from the kernel cmdline; no swap.' \
           '# The host /nix/store, read-only over virtiofs (tag store):' \
@@ -347,9 +354,9 @@ let
           'store /nix/store virtiofs ro 0 0' \
           '# The persistent state disk (#10), labeled at mkfs time.' \
           'LABEL=msks-state /state ext4 defaults,x-systemd.device-timeout=10s 0 2' \
-          '# A writable /var from the same disk: the journal, logind\x27s' \
+          '# A writable /var from the same disk: the journal, the logind' \
           '# state directory, and /var/tmp live on state, not root.' \
-          '/state/var /var none bind,x-systemd.device-timeout=10s 0 0' \
+          '/state/var /var none bind 0 0' \
           > $out/etc/fstab
 
         # The NIC: the static plan the manifest records (the host
@@ -415,19 +422,23 @@ let
         ln -s ../msks-kvm.service \
           $out/etc/systemd/system/multi-user.target.wants/msks-kvm.service
 
-        # A blank or foreign state disk becomes a labeled ext4 one
-        # carrying the var/ staging tree (the bind source for /var:
-        # the run/lock symlinks must predate the bind; tmpfiles and
-        # journald create the rest on the mounted disk). An existing
-        # disk gets the staging tree merged in through a temporary
-        # mount, so disks from older appliances converge too. Ordered
-        # before the mount units BY NAME — fstab's generated
-        # state.mount — with DefaultDependencies=no, because a unit
-        # with default dependencies is After=basic.target and cannot
-        # run this early without an ordering cycle.
+        # A disk with the label mounts; an ext4 one WITHOUT it (the
+        # old busybox init formatted fallback disks unlabeled) gets
+        # e2label'd; anything else becomes a labeled ext4 carrying
+        # the var/ staging tree (the bind source for /var: the
+        # run/lock symlinks must predate the bind; tmpfiles and
+        # journald create the rest on the mounted disk). Every path
+        # then merges the staging tree in through a temporary mount,
+        # so existing disks converge too. set -e: a failed step must
+        # fail the unit — swallowing it would leave state.mount
+        # timing out with this unit looking innocent. Ordered before
+        # the mount units BY NAME — fstab's generated state.mount —
+        # with DefaultDependencies=no, because a unit with default
+        # dependencies is After=basic.target and cannot run this
+        # early without an ordering cycle.
         printf '%s\n' \
           '[Unit]' \
-          'Description=msks state disk preparation (blank disks become ext4 with var staging)' \
+          'Description=msks state disk preparation (blank or foreign disks become ext4 with var staging)' \
           'DefaultDependencies=no' \
           'After=dev-vdb.device' \
           'Before=local-fs.target state.mount var.mount shutdown.target' \
@@ -435,7 +446,7 @@ let
           ''' \
           '[Service]' \
           'Type=oneshot' \
-          'ExecStart=/bin/sh -c "i=0; while [ $i -lt 50 ] && [ ! -b /dev/vdb ]; do sleep 0.2; i=$((i+1)); done; mkdir -p /run/msks-blank/var/log/journal; ln -sfn /run /run/msks-blank/var/run; ln -sfn /run/lock /run/msks-blank/var/lock; blkid -t TYPE=ext4 -o device /dev/vdb >/dev/null 2>&1 || mkfs.ext4 -q -L msks-state -d /run/msks-blank /dev/vdb; mkdir -p /run/msks-mnt; mount /dev/vdb /run/msks-mnt; mkdir -p /run/msks-mnt/var/log/journal; ln -sfn /run /run/msks-mnt/var/run; ln -sfn /run/lock /run/msks-mnt/var/lock; umount /run/msks-mnt; rmdir /run/msks-mnt /run/msks-blank/var/log/journal /run/msks-blank/var/log /run/msks-blank/var /run/msks-blank 2>/dev/null || true"' \
+          'ExecStart=/bin/sh -c "set -e; i=0; while [ $i -lt 50 ] && [ ! -b /dev/vdb ]; do sleep 0.2; i=$((i+1)); done; mkdir -p /run/msks-blank/var/log/journal; ln -sfn /run /run/msks-blank/var/run; ln -sfn /run/lock /run/msks-blank/var/lock; blkid -t LABEL=msks-state -o device /dev/vdb >/dev/null 2>&1 || e2label /dev/vdb msks-state 2>/dev/null || mkfs.ext4 -q -L msks-state -d /run/msks-blank /dev/vdb; mkdir -p /run/msks-mnt; mount /dev/vdb /run/msks-mnt; mkdir -p /run/msks-mnt/var/log/journal; ln -sfn /run /run/msks-mnt/var/run; ln -sfn /run/lock /run/msks-mnt/var/lock; umount /run/msks-mnt; rmdir /run/msks-mnt /run/msks-blank/var/log/journal /run/msks-blank/var/log /run/msks-blank/var /run/msks-blank 2>/dev/null || true"' \
           'StandardOutput=journal+console' \
           'StandardError=journal+console' \
           ''' \
@@ -444,20 +455,6 @@ let
           > $out/etc/systemd/system/msks-state-format.service
         ln -s ../msks-state-format.service \
           $out/etc/systemd/system/local-fs.target.wants/msks-state-format.service
-
-        # /var/tmp as tmpfs (the root is read-only); /tmp likewise.
-        printf '%s\n' \
-          '[Unit]' \
-          'Description=msks /var/tmp tmpfs (the root filesystem is read-only)' \
-          ''' \
-          '[Mount]' \
-          'What=tmpfs' \
-          'Where=/var/tmp' \
-          'Type=tmpfs' \
-          'Options=mode=1777,nosuid,nodev' \
-          > $out/etc/systemd/system/var-tmp.mount
-        ln -s /lib/systemd/system/tmp.mount \
-          $out/etc/systemd/system/tmp.mount
 
         # The daemon: ordered after the store share and state disk it
         # lives on (Requires: without them it cannot run at all) and
@@ -511,12 +508,14 @@ let
         # graceful teardown presses) runs unmasked.
         for unit in apparmor.service systemd-firstboot.service \
           grub-common.service unattended-upgrades.service \
-          e2scrub_reap.service systemd-timesyncd.service \
+          e2scrub_reap.service e2scrub_all.timer \
+          systemd-timesyncd.service \
           systemd-resolved.service systemd-networkd-wait-online.service \
           apt-daily.timer apt-daily.service apt-daily-upgrade.timer \
-          apt-daily-upgrade.service dpkg-db-backup.timer \
+          apt-daily-upgrade.service apt-listchanges.timer \
+          dpkg-db-backup.timer man-db.timer \
           motd-news.timer motd-news.service fstrim.timer \
-          ssh.service ssh.socket; do
+          ssh.service ssh.socket sshd-unix-local.socket; do
           ln -s /dev/null $out/etc/systemd/system/$unit
         done
       '';
@@ -586,6 +585,10 @@ let
         # The image's read-only regular files the overlay replaces
         # (machine-id is 0444 in the base) must go first: cp cannot
         # open them for writing, but rm needs only the directory.
+        # /var/log/journal leaves too: against the read-only root it
+        # would only trick journald into a persistent start it cannot
+        # write — the state disk's staged directory is the real one.
+        rm -rf "$root"/var/log/journal
         rm -f "$root"/etc/machine-id
         cp -a --no-preserve=ownership ${applianceOverlay}/. "$root"/
         # Store outputs are read-only, and cp -a copies those modes onto
@@ -645,6 +648,7 @@ let
         # Sanity: this must be a bootable Debian with the msks layer.
         test -x "$root"/sbin/init
         test -x "$root"/sbin/mkfs.ext4
+        test -x "$root"/sbin/e2label
         test -x "$root"/usr/local/sbin/msks-boot
         test -d "$root"/var/lib/systemd
         test -f "$root"/etc/systemd/system/msksd.service
