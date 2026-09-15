@@ -74,7 +74,7 @@ async def ready(app) -> NetManager:
 
 
 async def test_start_disabled_leaves_everything_off(tmp_path: Path) -> None:
-    app = build_app(Settings())
+    app = build_app(Settings(net=NetSettings(enabled=False)))
     await app.state.net.start()
     assert app.state.net._state == "disabled"
     assert await app.state.net.attach("ws-a", want=False) is None
@@ -91,7 +91,7 @@ async def test_attach_when_disabled_names_the_setting(net_app) -> None:
     await ready(app)
     # A fresh, disabled manager on the same app: the armed one proves
     # the tools work; the disabled one names the honest cause.
-    disabled = NetManager(build_app(Settings()))
+    disabled = NetManager(build_app(Settings(net=NetSettings(enabled=False))))
     await disabled.start()
     with pytest.raises(MicrovmError, match="MSKSD_EGRESS_ENABLED"):
         await disabled.attach("ws-a", want=True)

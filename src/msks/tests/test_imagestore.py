@@ -26,7 +26,7 @@ from msks.imagestore import (
     warm_import,
 )
 from msks.server.api import build_api
-from msks.settings import ServerSettings, Settings, VmmSettings
+from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
 from test_api import TOKEN, StubMicrovm, auth
 
 from msks import guestassets, imagestore
@@ -345,6 +345,7 @@ async def test_create_explicit_artifacts_without_catalog(tmp_path) -> None:
 
     settings = Settings(
         vmm=VmmSettings(state_dir=tmp_path / "vms"),
+        net=NetSettings(enabled=False),
         server=ServerSettings(
             db_path=tmp_path / "ws.db", bootstrap_token=TOKEN, event_poll_s=10.0
         ),
@@ -462,6 +463,7 @@ async def test_default_image_bootstrap(tmp_path, capsys) -> None:
 
     settings = Settings(
         vmm=VmmSettings(state_dir=tmp_path / "vms", default_image=str(archive)),
+        net=NetSettings(enabled=False),
         server=ServerSettings(
             db_path=tmp_path / "ws.db", bootstrap_token="t", event_poll_s=10.0
         ),
@@ -484,6 +486,7 @@ async def test_default_image_bootstrap(tmp_path, capsys) -> None:
     # A broken pointer is loud but non-fatal: the API still serves.
     settings = Settings(
         vmm=VmmSettings(state_dir=tmp_path / "vms2", default_image="/absent.tar"),
+        net=NetSettings(enabled=False),
         server=ServerSettings(
             db_path=tmp_path / "ws2.db", bootstrap_token="t", event_poll_s=10.0
         ),
@@ -531,6 +534,7 @@ async def test_bootstrap_second_image_no_default_steal(tmp_path) -> None:
     for archive in (first, second):
         settings = Settings(
             vmm=VmmSettings(state_dir=state, default_image=str(archive)),
+            net=NetSettings(enabled=False),
             server=ServerSettings(
                 db_path=tmp_path / "ws.db", bootstrap_token="t", event_poll_s=10.0
             ),
@@ -550,6 +554,7 @@ async def test_create_explicit_kernel_keeps_own_initrd(tmp_path) -> None:
     build_containerdisk(archive)
     settings = Settings(
         vmm=VmmSettings(state_dir=tmp_path / "vms", default_image=str(archive)),
+        net=NetSettings(enabled=False),
         server=ServerSettings(
             db_path=tmp_path / "ws.db", bootstrap_token=TOKEN, event_poll_s=10.0
         ),
@@ -683,6 +688,7 @@ async def test_image_delete_with_reference_guard(tmp_path) -> None:
     build_containerdisk(archive, name="gone", version="1")
     settings = Settings(
         vmm=VmmSettings(state_dir=tmp_path / "vms", default_image=str(archive)),
+        net=NetSettings(enabled=False),
         server=ServerSettings(
             db_path=tmp_path / "ws.db", bootstrap_token=TOKEN, event_poll_s=10.0
         ),

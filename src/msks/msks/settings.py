@@ -206,9 +206,9 @@ class NetSettings:
     Disabled by default: a daemon that never enabled egress presents
     no net machinery at all, and workspaces without ``egress`` keep
     the no-NIC posture on every backend. Enabled, the settings name
-    the per-workspace /30 pool, the appliance uplink the NAT
-    masquerade hides behind, and the upstream the DNS forwarder
-    relays to (unset reads the appliance's own /etc/resolv.conf).
+    the per-workspace /30 pool, the uplink the NAT masquerade hides
+    behind, and the upstream the DNS forwarder relays to (unset
+    reads the appliance's own /etc/resolv.conf).
     """
 
     enabled: bool = False
@@ -269,7 +269,8 @@ def _net_settings_from_env(
     if timeout <= 0:
         raise ValueError(f"MSKSD_EGRESS_DNS_TIMEOUT_S must be positive, got {timeout}")
     return cls(
-        enabled=_env(env, "MSKSD_EGRESS_ENABLED", "false").lower() == "true",
+        enabled=_env(env, "MSKSD_EGRESS_ENABLED", str(default.enabled)).lower()
+        == "true",
         pool=_parse_subnet(env, "MSKSD_EGRESS_SUBNET", str(default.pool)),
         uplink=_env(env, "MSKSD_EGRESS_UPLINK", default.uplink),
         dns_upstream=_env(env, "MSKSD_EGRESS_DNS_UPSTREAM", "") or None,
@@ -297,5 +298,5 @@ def _server_settings_from_env(
         db_path=state / "msks.db",
         event_poll_s=poll,
         bootstrap_token=_env(env, "MSKSD_BOOTSTRAP_TOKEN", "") or None,
-        access_log=_env(env, "MSKSD_ACCESS_LOG", "false").lower() == "true",
+        access_log=_env(env, "MSKSD_ACCESS_LOG", str(cls.access_log)).lower() == "true",
     )

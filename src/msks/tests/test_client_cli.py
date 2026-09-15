@@ -17,7 +17,7 @@ import pytest
 from msks.app import build_app
 from msks.client import cli, rest
 from msks.server.api import build_api
-from msks.settings import ServerSettings, Settings, VmmSettings
+from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
 from test_api import TOKEN, StubMicrovm
 
 ROWS = [
@@ -413,6 +413,7 @@ async def api_transport(tmp_path: Path):
     """The real API surface, in-process, with the seam stubbed."""
     settings = Settings(
         vmm=VmmSettings(state_dir=tmp_path / "vms"),
+        net=NetSettings(enabled=False),
         server=ServerSettings(
             db_path=tmp_path / "cli.db",
             bootstrap_token=TOKEN,

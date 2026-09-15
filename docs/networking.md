@@ -2,7 +2,7 @@
 
 A workspace talks to the network only when it was created with
 `egress: true` — and when it does, every piece of the path lives in
-the appliance, where the guest cannot reach it.
+the daemon, where the guest cannot reach it.
 
 ```bash
 curl -X POST .../api/v1/workspaces \
@@ -27,7 +27,7 @@ workspace VM ──virtio-net──► per-VM tap ──► per-VM nftables chai
 
 Each egress workspace owns a dedicated /30 carved from the
 configured pool (`MSKSD_EGRESS_SUBNET`, default `172.31.0.0/16`):
-the guest holds the first host address, the appliance-side tap the
+the guest holds the first host address, the daemon-side tap the
 second. The workspace's tap name, nftables table, and NIC MAC derive
 deterministically from the workspace id, and the pool slice is
 recorded on the workspace row at first attach — so stop/start cycles,
@@ -107,11 +107,12 @@ performs both classes of setup as its documented privileged step:
 host forwarding + NAT for the appliance's bridge subnet, so traffic
 masqueraded out of the appliance reaches the internet. The appliance
 sets `MSKSD_EGRESS_ENABLED=true` and runs as root, so workspaces are
-networked there once the setup script has run. When msksd cannot arm
-the plumbing (a dev-shell daemon, say), it stays up for everything
-else and every egress workspace **refuses to boot** with a named
-cause, rather than running with a half-open path — create those with
-`"egress": false` instead.
+networked there once the setup script has run. An operator who sets `MSKSD_EGRESS_ENABLED=false` arms nothing, and
+every egress workspace then refuses to boot with the cause named.
+When msksd cannot arm the plumbing (a dev-shell daemon, say), it
+stays up for everything else and every egress workspace **refuses
+to boot** with a named cause, rather than running with a half-open
+path — create those with `"egress": false` instead.
 
 ## Backend support
 

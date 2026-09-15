@@ -68,8 +68,9 @@ Measured boot on bare-metal KVM: the vsock shell prompt at ~2.8s,
 the serial login prompt at ~7.5-8.6s (#37 tracks the <5s interactive
 goal).
 Root writes persist through the per-workspace overlay (#14), and
-`/home` is the workspace's own ext4 volume; `apt` still has no
-network to install from until networking lands. The
+`/home` is the workspace's own ext4 volume; `apt` reaches the
+upstream through the workspace's egress NIC — the appliance serves
+egress (#52), a host-run dev daemon does not. The
 extraction runs under fakeroot so the image is root-owned with sane
 password-file modes (setuid bits are lost; everything runs as root).
 Stopping a workspace presses the ACPI power button
