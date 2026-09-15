@@ -117,8 +117,9 @@ skips the suite for an instant lint/complexity pass).
 
 The working rule: run the pre-flight after writing code, fix
 EVERYTHING it names in one editing pass, re-run, then commit. A green
-pre-flight passes the hooks on the first attempt — they run these
-same gates over the same files.
+pre-flight means the Python gates hold at commit time; the doc, nix,
+shell, and yaml hooks still run there, and their failures name one
+file and one rule apiece — a single extra round settles them.
 
 Triage a coverage gap at write time, not after a red gate:
 

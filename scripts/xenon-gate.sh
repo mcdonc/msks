@@ -9,8 +9,9 @@
 # have exactly one definition and cannot drift apart.
 #
 # Usage: xenon-gate.sh [FILE...]
-#   No arguments: grade the full gate file set (git ls-files, run from
-#   the repo root). With arguments: grade exactly those files.
+#   No arguments: grade the full gate file set (tracked + untracked
+#   .py files, run from the repo root). With arguments: grade exactly
+#   those files.
 set -euo pipefail
 
 thresholds=(--max-absolute A --max-modules A --max-average A)

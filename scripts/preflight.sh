@@ -9,7 +9,7 @@
 # script prints, in a single output:
 #
 #   - every ruff check violation and every file ruff format would
-#     rewrite, over all tracked Python files
+#     rewrite, over every Python file in the tree, tracked or untracked
 #   - every deferred import scripts/check_deferred_imports.py finds
 #   - every xenon offender in the graded set (scripts/xenon-gate.sh)
 #   - the jscpd clone report (scripts/jscpd-gate.sh)
@@ -24,7 +24,9 @@
 #
 # The intended loop: run this before the FIRST commit attempt, fix
 # everything it names in one editing pass, re-run, then commit. A
-# green preflight passes the hooks on the first attempt.
+# green pre-flight means the Python gates hold at commit time; the
+# doc, nix, shell, and yaml hooks still run there, and their failures
+# name one file and one rule apiece.
 set -uo pipefail
 
 cd "$(dirname "$0")/.." || exit 1
@@ -37,6 +39,8 @@ fi
 
 fail=0
 summary=()
+gaps_out=""
+trap '[ -z "$gaps_out" ] || rm -f "$gaps_out"' EXIT
 
 note() { printf '\n== %s ==\n' "$1"; }
 
@@ -77,21 +81,33 @@ if [ ! -x "$venv_python" ]; then
   venv_python=python
 fi
 
-run_section "ruff check" ruff check "${pyfiles[@]}"
-run_section "ruff format" ruff format --check "${pyfiles[@]}"
-run_section "deferred-imports" python scripts/check_deferred_imports.py "${pyfiles[@]}"
+run_section "ruff check" ruff check ${pyfiles[@]+"${pyfiles[@]}"}
+run_section "ruff format" ruff format --check ${pyfiles[@]+"${pyfiles[@]}"}
+run_section "deferred-imports" "$venv_python" scripts/check_deferred_imports.py ${pyfiles[@]+"${pyfiles[@]}"}
 run_section "xenon" bash scripts/xenon-gate.sh
 run_section "jscpd" bash scripts/jscpd-gate.sh
 
 # Everything under src/msks/ that differs from the fork point on
 # origin/main, plus staged, unstaged, and untracked files (new files
-# count: an unmeasured module fails the coverage gate). Falls back to
-# HEAD when origin/main is absent (a clone without the remote).
-base=$(git merge-base HEAD origin/main 2>/dev/null || git rev-parse HEAD)
+# count: an unmeasured module fails the coverage gate). Without
+# origin/main the base is HEAD: the diff side then sees only
+# working-tree changes, so committed changes escape detection (the
+# warning below says so). Deletions drop out on both sides — a file
+# that no longer exists has no gaps to fix. -uall lists untracked
+# files individually instead of collapsed directories.
+if base=$(git merge-base HEAD origin/main 2>/dev/null); then
+  :
+else
+  base=$(git rev-parse HEAD)
+  echo "preflight: origin/main not found — comparing against HEAD;" \
+    "committed changes escape the coverage trigger" >&2
+fi
 changed_all=$(
   {
     git diff --name-only --diff-filter=ACMR "$base" -- src/msks
-    git status --porcelain -- src/msks | sed -e 's/^...//' -e 's/.* -> //'
+    git status --porcelain -uall -- src/msks |
+      grep -Ev '^(D|.D)' |
+      sed -e 's/^...//' -e 's/.* -> //'
   } | sort -u
 )
 
@@ -122,14 +138,20 @@ else
   else
     suite=FAIL
   fi
-  gaps_out=$(mktemp)
-  if "$venv_python" scripts/covgaps.py ${backend[@]+"${backend[@]}"} >"$gaps_out" 2>&1; then
-    gaps=PASS
+  if [ -f .coverage ]; then
+    gaps_out=$(mktemp)
+    if "$venv_python" scripts/covgaps.py ${backend[@]+"${backend[@]}"} >"$gaps_out" 2>&1; then
+      gaps=PASS
+    else
+      gaps=FAIL
+    fi
+    cat "$gaps_out"
+    rm -f "$gaps_out"
+    gaps_out=""
   else
+    echo "no coverage data written — the suite run above failed before measuring"
     gaps=FAIL
   fi
-  cat "$gaps_out"
-  rm -f "$gaps_out"
   if [ "$suite" = PASS ] && [ "$gaps" = PASS ]; then
     record "coverage" PASS
   else
@@ -142,7 +164,7 @@ for item in "${summary[@]}"; do
   printf '  %-16s %s\n' "${item%%|*}" "${item##*|}"
 done
 if [ "$fail" -eq 0 ]; then
-  echo "preflight: green — the hooks run these same gates; ready to commit."
+  echo "preflight: green — the Python gates hold; ready to commit."
   exit 0
 fi
 echo "preflight: fix every item above in one editing pass, then re-run."

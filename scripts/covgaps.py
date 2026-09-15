@@ -17,6 +17,11 @@ test imported it (or the path is a typo). Exit status is 0 when
 clean, 1 when any gap is reported, 2 when the coverage data cannot
 be read — run ``unit-tests`` first; ``scripts/preflight.sh`` runs it
 for you.
+
+Run from the repo root: the default data file and coverage's config
+discovery are both cwd-relative. The gap list describes the suite
+run that wrote the data — edits made while that run was in flight
+drift the line numbers.
 """
 
 import argparse
