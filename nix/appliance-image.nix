@@ -307,8 +307,12 @@ let
       # Debug escape hatch: a /state/debug-shell marker (seeded onto
       # the state disk from the host) backgrounds the daemon and gives
       # the console an interactive shell instead of exec'ing PID 1.
+      # Both msksd execs carry --config=none: the root filesystem is
+      # read-only (a bare msksd would fail generating its first-run
+      # config template under ~/.config), and the appliance's config
+      # channel is the cmdline env bridge above.
       if [ -e /state/debug-shell ]; then
-        ( sleep 2; "${msks}/bin/msksd" ) &
+        ( sleep 2; "${msks}/bin/msksd" --config=none ) &
         echo "msks appliance: DEBUG SHELL on console"
         echo "=== DIAG ==="
         ls -l /dev/kvm 2>&1 || echo "NO /dev/kvm node"
@@ -327,7 +331,7 @@ let
         echo "=== DIAG-END ==="
         exec setsid cttyhack /bin/busybox sh
       fi
-      exec "${msks}/bin/msksd"
+      exec "${msks}/bin/msksd" --config=none
     '';
   };
 
