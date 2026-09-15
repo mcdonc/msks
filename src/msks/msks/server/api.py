@@ -177,9 +177,25 @@ CONSOLE_PROTOCOL_PRELUDE = "prelude-v1"
 #: helper's prelude accepts, checked before anything is forwarded.
 USER_NAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 
+#: The wire charset for a TERM value: printable ASCII minus space
+#: (every terminfo name fits), matching the guest helper's check.
+TERM_RE = re.compile(r"^[!-~]{1,32}$")
 
-def console_request(params) -> tuple[str, int, int, str | None]:
-    """The console websocket's user/rows/cols, or the refusal reason.
+
+def close_reason(text: str, limit: int = 120) -> str:
+    """A websocket close reason that fits its wire budget in bytes.
+
+    Close reasons carry at most 123 bytes; a multibyte character at
+    the cut makes a non-conformant frame, so the truncation happens
+    on the UTF-8 bytes.
+    """
+    encoded = text.encode()[:limit]
+    return encoded.decode(errors="ignore")
+
+
+def console_request(params) -> tuple[str, int, int, str, str | None]:
+    """The console websocket's user/rows/cols/term, or the refusal
+    reason.
 
     The daemon validates what it can before opening the vsock stream:
     free-form strings never reach the guest-side parser, and the
@@ -187,9 +203,12 @@ def console_request(params) -> tuple[str, int, int, str | None]:
     """
     user = params.get("user", "root")
     if not USER_NAME_RE.fullmatch(user):
-        return user, 24, 80, f"invalid console user {user!r}"
+        return user, 24, 80, "xterm", f"invalid console user {user!r}"
+    term = params.get("term", "xterm")
+    if not TERM_RE.fullmatch(term):
+        return user, 24, 80, "xterm", f"invalid console term {term!r}"
     rows, cols, problem = console_dimensions(params)
-    return user, rows, cols, problem
+    return user, rows, cols, term, problem
 
 
 def console_dimensions(params) -> tuple[int, int, str | None]:
@@ -216,23 +235,29 @@ def console_dimension(name: str, raw: str | None, default: int) -> int | str:
     return value
 
 
-def console_image_policy(app, row: dict) -> tuple[str, tuple[str, ...]]:
-    """The workspace image's console protocol and served users.
+def console_image_policy(app, row: dict) -> tuple[str, tuple[str, ...], str | None]:
+    """The workspace image's console protocol, served users, and the
+    refusal reason when the record cannot be read.
 
     A workspace bound to a catalog image gets that image's markers;
     anything booted from explicit artifacts is legacy (root only) —
-    the raw root shell those images serve is exactly today's behavior.
+    the raw root shell those images serve is exactly today's
+    behavior. A bound image whose record is unreadable (corrupt
+    image.json, out-of-band deletion) is refused loudly: piping a raw
+    stream at a prelude guest yields an opaque refusal, and silently
+    treating it as legacy would mask the corruption.
     """
     state_dir = app.state.settings.vmm.state_dir
     image_hash = row.get("image_hash")
-    record = (
-        imagestore.load_record(imagestore.images_dir(state_dir) / image_hash)
-        if image_hash
-        else None
-    )
+    if not image_hash:
+        return "legacy", ("root",), None
+    cache = imagestore.images_dir(state_dir) / image_hash
+    if not (cache / "image.json").is_file():
+        return "legacy", ("root",), f"image record unreadable: {image_hash[:12]}"
+    record = imagestore.load_record(cache)
     if record is None:
-        return "legacy", ("root",)
-    return record.console_protocol, record.console_users
+        return "legacy", ("root",), f"image record unreadable: {image_hash[:12]}"
+    return record.console_protocol, record.console_users, None
 
 
 def bound_image_hash(body: WorkspaceCreate, record) -> str | None:
@@ -660,20 +685,22 @@ def build_api(app) -> FastAPI:
         # against the image's served users before anything reaches the
         # guest, and only prelude images carry the user and window
         # size across the vsock link.
-        user, rows, cols, problem = console_request(socket.query_params)
+        user, rows, cols, term, problem = console_request(socket.query_params)
         if problem is not None:
-            await socket.close(code=4400, reason=problem[:120])
+            await socket.close(code=4400, reason=close_reason(problem))
             return
-        protocol, served = console_image_policy(app, row)
+        protocol, served, unreadable = console_image_policy(app, row)
+        if unreadable is not None:
+            await socket.close(code=4501, reason=close_reason(unreadable))
+            return
         if user not in served:
-            await socket.close(
-                code=4400, reason=f"console user {user!r} is not served"[:120]
-            )
+            refusal = f"console user {user!r} is not served"
+            await socket.close(code=4400, reason=close_reason(refusal))
             return
         try:
             if protocol == CONSOLE_PROTOCOL_PRELUDE:
                 reader, writer = await app.state.microvm.console(
-                    workspace_id, user=user, rows=rows, cols=cols
+                    workspace_id, user=user, rows=rows, cols=cols, term=term
                 )
             else:
                 reader, writer = await app.state.microvm.console(workspace_id)
@@ -682,7 +709,7 @@ def build_api(app) -> FastAPI:
             # not a secret, and the close reason is the only channel
             # an operator has for dead-VM vs refused vs deadline
             # (websocket close reasons cap at 123 bytes).
-            await socket.close(code=4501, reason=str(exc)[:120])
+            await socket.close(code=4501, reason=close_reason(str(exc)))
             return
         try:
             await bridge_console(socket, reader, writer)

@@ -32,7 +32,12 @@ fn vsock_listen(port: u32) -> std::io::Result<i32> {
     // SAFETY: socket(2) and the bind/listen pair with the sockaddr
     // above.
     unsafe {
-        let fd = libc::socket(AF_VSOCK as i32, libc::SOCK_STREAM, 0);
+        // SOCK_CLOEXEC: the listener must not survive into the exec'd
+        // login shell — an inherited listener fd would let a guest
+        // process race accept() and impersonate the console (verified
+        // live: bash happens to mark inherited fds close-on-exec, but
+        // that hygiene is the shell's, not ours).
+        let fd = libc::socket(AF_VSOCK as i32, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0);
         if fd < 0 {
             return Err(std::io::Error::last_os_error());
         }

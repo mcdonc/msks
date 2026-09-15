@@ -36,7 +36,13 @@ pub trait SessionSys {
     fn set_winsize(&self, master: RawFd, rows: u16, cols: u16) -> bool;
     /// Fork the shell child (which never returns in the child); `Err`
     /// means the fork itself failed.
-    fn spawn_shell(&self, conn: RawFd, pty: &PtyPair, user: &UserEntry) -> Result<(), SpawnFail>;
+    fn spawn_shell(
+        &self,
+        conn: RawFd,
+        pty: &PtyPair,
+        user: &UserEntry,
+        term: &str,
+    ) -> Result<(), SpawnFail>;
     fn close(&self, fd: RawFd);
 }
 
@@ -74,7 +80,13 @@ impl SessionSys for RealSessionSys {
         unsafe { libc::ioctl(master, libc::TIOCSWINSZ, &ws as *const libc::winsize) == 0 }
     }
 
-    fn spawn_shell(&self, conn: RawFd, pty: &PtyPair, user: &UserEntry) -> Result<(), SpawnFail> {
+    fn spawn_shell(
+        &self,
+        conn: RawFd,
+        pty: &PtyPair,
+        user: &UserEntry,
+        term: &str,
+    ) -> Result<(), SpawnFail> {
         // SAFETY: fork(2); the child only runs run_shell_child and
         // exits.
         let pid = unsafe { libc::fork() };
@@ -82,7 +94,7 @@ impl SessionSys for RealSessionSys {
             return Err(SpawnFail);
         }
         if pid == 0 {
-            let code = match run_shell_child(conn, pty, user, &RealChildSys) {
+            let code = match run_shell_child(conn, pty, user, &RealChildSys, term) {
                 Ok(never) => match never {},
                 Err(code) => code,
             };
@@ -211,11 +223,11 @@ pub fn build_shell_command(shell: &str, argv0: &str, env: &[(&str, String)]) -> 
     command
 }
 
-/// The shell environment, built from passwd plus TERM — nothing from
-/// the listener's root environment.
-fn shell_env(user: &UserEntry) -> Vec<(&'static str, String)> {
+/// The shell environment, built from passwd plus the client's TERM —
+/// nothing from the listener's root environment.
+fn shell_env(user: &UserEntry, term: &str) -> Vec<(&'static str, String)> {
     vec![
-        ("TERM", "xterm".to_string()),
+        ("TERM", term.to_string()),
         ("HOME", user.home.clone()),
         ("USER", user.name.clone()),
         ("LOGNAME", user.name.clone()),
@@ -233,6 +245,7 @@ pub fn run_shell_child(
     pty: &PtyPair,
     user: &UserEntry,
     sys: &dyn ChildSys,
+    term: &str,
 ) -> Result<std::convert::Infallible, i32> {
     sys.setsid();
     let slave = sys.open_slave(&pty.slave);
@@ -291,7 +304,7 @@ pub fn run_shell_child(
     // A login shell: the leading dash makes bash read .bash_profile.
     let base = user.shell.rsplit('/').next().unwrap_or("sh");
     let argv0 = format!("-{base}");
-    let env = shell_env(user);
+    let env = shell_env(user, term);
     sys.exec(&user.shell, &argv0, &env);
     Err(127)
 }
@@ -401,7 +414,7 @@ pub fn handle_session(conn: RawFd, sys: &dyn SessionSys, passwd: &Path, deadline
         sys.close(conn);
         return;
     }
-    if sys.spawn_shell(conn, &pty, &user).is_err() {
+    if sys.spawn_shell(conn, &pty, &user, &pre.term).is_err() {
         sys.close(pty.master);
         sys.close(conn);
         return;

@@ -203,8 +203,18 @@ PROMPT_NEEDLE = b"root@msks-guest:/# "
 #: sequences around it, which read_until's contains-scan tolerates.
 CONSOLE_PROMPT_NEEDLE = b"root@msks-guest:~# "
 
+#: The same prompt for the image's workspace user (#63): a login
+#: shell as uid 1000 whose HOME is /home/msks.
+USER_CONSOLE_PROMPT_NEEDLE = b"msks@msks-guest:~$ "
 
-async def run_in_console(microvm, workspace_id: str, command: str, marker: str) -> None:
+
+async def run_in_console(
+    microvm,
+    workspace_id: str,
+    command: str,
+    marker: str,
+    user: str = "root",
+) -> None:
     """Run one shell command over the vsock console and wait for its
     marker, in a fresh guest shell session per attempt (#75).
 
@@ -222,9 +232,14 @@ async def run_in_console(microvm, workspace_id: str, command: str, marker: str) 
     """
     for attempt in range(1, CONSOLE_ATTEMPTS + 1):
         try:
-            reader, writer = await microvm.console(workspace_id, user="root")
+            reader, writer = await microvm.console(workspace_id, user=user)
             try:
-                await read_until(reader, CONSOLE_PROMPT_NEEDLE)
+                needle = (
+                    CONSOLE_PROMPT_NEEDLE
+                    if user == "root"
+                    else USER_CONSOLE_PROMPT_NEEDLE
+                )
+                await read_until(reader, needle)
                 writer.write(command.encode() + b"\n")
                 await writer.drain()
                 await read_until(reader, marker.encode())
@@ -883,7 +898,61 @@ needs_egress = pytest.mark.skipif(
 )
 
 
+@needs_local
+async def test_local_console_identity_drop() -> None:
+    """A shell as the image's workspace user (#63): the helper drops
+    from root to uid 1000, creates the home on the persistent volume,
+    and execs a login shell whose identity the command output proves
+    (id -u is guest-computed, so the marker cannot come from the
+    echo). Root sessions keep working alongside it."""
+    state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
+    settings = Settings(vmm=VmmSettings(state_dir=state_dir))
+    app = build_app(settings)
+    microvm = app.state.microvm
+    wid = f"smoke-{uuid.uuid4().hex[:8]}"
+    serial_log = state_dir / "vms" / wid / "serial.log"
+    try:
+        await microvm.launch(
+            VmSpec(
+                workspace_id=wid,
+                kernel=Path(VMLINUX),
+                rootfs=Path(ROOTFS),
+                initrd=Path(INITRD) if INITRD else None,
+                cmdline=CMDLINE or "console=hvc0 root=/dev/vda rw",
+                root_mib=2048,
+                home_mib=256,
+                egress=False,
+            )
+        )
+        await await_guest_up(serial_log)
+        # Seed the workspace user's dotfiles from skel as root: the
+        # helper creates a bare home, and bash without rc files
+        # prints no recognizable prompt.
+        await run_in_console(
+            microvm, wid, "cp -r /etc/skel/. /home/msks/ && echo S-$((6*7))", "S-42"
+        )
+        await run_in_console(
+            microvm, wid, "chown -R msks:msks /home/msks && echo O-$((6*7))", "O-42"
+        )
+        # The real drop: uid 1000, the persistent home, and root
+        # alongside.
+        await run_in_console(microvm, wid, "echo I-$(id -u)", "I-1000", user="msks")
+        await run_in_console(microvm, wid, "echo H-$(pwd)", "H-/home/msks", user="msks")
+        await run_in_console(microvm, wid, "echo R-$(id -u)", "R-0")
+        await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
+    except BaseException:
+        collect_failure_evidence(state_dir, wid, serial_log)
+        with contextlib.suppress(Exception):
+            await microvm.kill(wid)
+        raise
+    finally:
+        with contextlib.suppress(Exception):
+            await microvm.cleanup(wid)
+        shutil.rmtree(state_dir, ignore_errors=True)
+
+
 @needs_egress
+@needs_local
 async def test_local_egress_boot() -> None:
     """DHCP address, daemon resolver, NAT'd TCP — end to end (#52)."""
     nft_tool = os.environ.get("MSKSD_TEST_NFT") or shutil.which("nft") or "nft"

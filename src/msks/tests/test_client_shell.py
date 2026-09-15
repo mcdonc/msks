@@ -143,6 +143,15 @@ def test_ws_url_carries_user_and_size() -> None:
     assert "cols=120" in url
 
 
+def test_ws_url_carries_term() -> None:
+    url = ws_url("https://d", "ws-1", "t", term="tmux-256color")
+    assert "term=tmux-256color" in url
+
+
+def test_ws_url_omits_term_when_absent() -> None:
+    assert "term=" not in ws_url("https://d", "ws-1", "t")
+
+
 def test_ws_url_default_user_root_without_size() -> None:
     url = ws_url("https://d", "ws-1", "t")
     assert "user=root" in url
@@ -505,7 +514,7 @@ def test_main_raw_mode_cycle(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(shell, "ensure_running", preflight)
     restored: list = []
 
-    async def fake_run(wid, url, token, ssl_ctx, user="root", size=None):
+    async def fake_run(wid, url, token, ssl_ctx, user="root", size=None, term=None):
         return 7
 
     monkeypatch.setattr(shell, "run_shell", fake_run)
@@ -532,7 +541,7 @@ def test_main_without_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
         shell.termios, "tcgetattr", lambda fd: (_ for _ in ()).throw(termios.error())
     )
 
-    async def fake_run(wid, url, token, ssl_ctx, user="root", size=None):
+    async def fake_run(wid, url, token, ssl_ctx, user="root", size=None, term=None):
         return 0
 
     monkeypatch.setattr(shell, "run_shell", fake_run)
@@ -638,7 +647,7 @@ def test_run_workspace_shell_preflights_boot(
         shell.termios, "tcgetattr", lambda fd: (_ for _ in ()).throw(termios.error())
     )
 
-    async def fake_run(wid, url, token, ssl_ctx, user="root", size=None):
+    async def fake_run(wid, url, token, ssl_ctx, user="root", size=None, term=None):
         return 0
 
     monkeypatch.setattr(shell, "run_shell", fake_run)

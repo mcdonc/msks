@@ -61,7 +61,12 @@ class FakeMicrovm:
         self.opened = 0
 
     async def console(
-        self, workspace_id: str, user: str | None = None, rows: int = 0, cols: int = 0
+        self,
+        workspace_id: str,
+        user: str | None = None,
+        rows: int = 0,
+        cols: int = 0,
+        term: str = "xterm",
     ):
         self.opened += 1
         return self.sessions.pop(0)

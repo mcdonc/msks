@@ -74,13 +74,18 @@ async def vsock_attempt(socket_path: Path, port: int):
 
 
 async def _vsock_handshake(
-    socket_path: Path, port: int, user: str | None = None, rows: int = 0, cols: int = 0
+    socket_path: Path,
+    port: int,
+    user: str | None = None,
+    rows: int = 0,
+    cols: int = 0,
+    term: str = "xterm",
 ):
     """One established console stream, with the identity prelude
     (#63) negotiated in-band when ``user`` is given."""
     reader, writer = await vsock_attempt(socket_path, port)
     if user is not None:
-        await negotiate_prelude(reader, writer, user, rows or 24, cols or 80)
+        await negotiate_prelude(reader, writer, user, rows or 24, cols or 80, term)
     return reader, writer
 
 
@@ -93,15 +98,21 @@ PRELUDE_VERSION = 1
 PRELUDE_REPLY_S = 5.0
 
 
-async def negotiate_prelude(reader, writer, user: str, rows: int, cols: int) -> None:
+async def negotiate_prelude(
+    reader, writer, user: str, rows: int, cols: int, term: str = "xterm"
+) -> None:
     """Send the identity prelude and require its OK (#63).
 
     Prelude images answer ``MSKS OK <user>`` and then speak raw
     bytes. Every other reply — a named refusal (``MSKS ERR
     <reason>``), silence, or garbage — raises: the daemon never falls
-    back to a root shell on an image that negotiated.
+    back to a root shell on an image that negotiated. The client's
+    TERM rides the same prelude so the login shell's environment
+    matches the client's terminal type.
     """
-    prelude = f"HELLO {PRELUDE_VERSION}\nUSER {user}\nWINSZ {rows} {cols}\nGO\n"
+    prelude = (
+        f"HELLO {PRELUDE_VERSION}\nUSER {user}\nTERM {term}\nWINSZ {rows} {cols}\nGO\n"
+    )
     try:
         writer.write(prelude.encode())
         await writer.drain()
@@ -421,7 +432,12 @@ class LocalCloudHypervisor(MicrovmDriver):
             await api.aclose()
 
     async def console(
-        self, workspace_id: str, user: str | None = None, rows: int = 0, cols: int = 0
+        self,
+        workspace_id: str,
+        user: str | None = None,
+        rows: int = 0,
+        cols: int = 0,
+        term: str = "xterm",
     ):
         """(reader, writer): one interactive stream into the VM.
 
@@ -444,7 +460,7 @@ class LocalCloudHypervisor(MicrovmDriver):
                     f"workspace {workspace_id} has no live VMM for a console"
                 )
             try:
-                return await _vsock_handshake(socket_path, port, user, rows, cols)
+                return await _vsock_handshake(socket_path, port, user, rows, cols, term)
             except _VsockRetry as retry:
                 if asyncio.get_running_loop().time() >= deadline:
                     raise MicrovmError(

@@ -21,6 +21,7 @@ reuse the same negotiation later.
 import asyncio
 import contextlib
 import fcntl
+import os
 import ssl
 import struct
 import sys
@@ -79,6 +80,7 @@ def ws_url(
     token: str,
     user: str = "root",
     size: tuple[int, int] | None = None,
+    term: str | None = None,
 ) -> str:
     scheme, sep, rest = base_url.partition("://")
     if sep:
@@ -93,6 +95,8 @@ def ws_url(
     query = f"token={quote_plus(token)}&user={quote_plus(user)}"
     if size is not None:
         query += f"&rows={size[0]}&cols={size[1]}"
+    if term is not None:
+        query += f"&term={quote_plus(term)}"
     return (
         f"{scheme}://{rest}/api/v1/workspaces/{quote(workspace_id, safe='')}"
         f"/console?{query}"
@@ -198,9 +202,10 @@ async def run_shell(
     ssl_ctx,
     user: str = "root",
     size: tuple[int, int] | None = None,
+    term: str | None = None,
 ) -> int:
     """One interactive session; 0 on clean detach or session end."""
-    address = ws_url(url, workspace_id, token, user=user, size=size)
+    address = ws_url(url, workspace_id, token, user=user, size=size, term=term)
     connection = _connect(address, ssl_ctx)
     try:
         ws = await connection
@@ -306,11 +311,17 @@ def run_workspace_shell(workspace_id: str, user: str = "root") -> int:
     # the tty goes raw.
     asyncio.run(ensure_running(workspace_id, url, token, ssl_ctx=ssl_ctx))
     size = tty_size(sys.stdin.fileno())
+    # The client's terminal type rides the request (#63): the login
+    # shell's environment matches the client's terminfo instead of a
+    # hardcoded xterm.
+    term = os.environ.get("TERM")
     try:
         if old is not None:
             tty.setraw(sys.stdin.fileno())
         return asyncio.run(
-            run_shell(workspace_id, url, token, ssl_ctx, user=user, size=size)
+            run_shell(
+                workspace_id, url, token, ssl_ctx, user=user, size=size, term=term
+            )
         )
     finally:
         restore(old, old is not None)

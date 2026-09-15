@@ -10,10 +10,13 @@ tagged `vX.Y.Z`.
 
 - **`msks shell --user` and the console identity prelude (#63).** The
   vsock console now serves shells as root or the image's workspace
-  user: a guest-side helper negotiates the identity and the client
-  terminal's size in-band on each connection, and the listener
-  accepts host-originated connections only (guest-local peers are
-  refused). Images declare `console_protocol: prelude-v1` and
+  user: a guest-side helper negotiates the identity, the client
+  terminal's size, and its TERM value in-band on each connection, and
+  the listener accepts host-originated connections only (guest-local
+  peers are refused). A workspace bound to an image whose record
+  cannot be read is refused with close code 4501 — the console never
+  silently downgrades to a raw root shell. Images declare
+  `console_protocol: prelude-v1` and
   `console_users` in their manifest; older images keep today's raw
   root shell through the daemon's legacy path. The helper is a Rust
   crate under `src/console-helper`, gated at 100% line and branch

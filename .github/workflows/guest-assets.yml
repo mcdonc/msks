@@ -29,7 +29,6 @@ on:
       - nix/guest.nix
       - nix/guest-assets.nix
       - src/console-helper/**
-      - src/console-helper/**
       - nix/runner-image.nix
       - scripts/build-guest.sh
   pull_request:

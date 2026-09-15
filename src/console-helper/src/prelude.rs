@@ -10,6 +10,7 @@ use crate::refuse;
 const PRELUDE_LINE_MAX: usize = 128;
 const DEFAULT_ROWS: u16 = 24;
 const DEFAULT_COLS: u16 = 80;
+const DEFAULT_TERM: &str = "xterm";
 
 /// Why a prelude read stopped early: every shape fails closed, but
 /// the refusal names what actually happened.
@@ -25,6 +26,9 @@ pub struct Prelude {
     pub user: String,
     pub rows: u16,
     pub cols: u16,
+    /// The client's terminal type (a "TERM" line); a sane default
+    /// when the client sent none.
+    pub term: String,
 }
 
 /// One prelude line under the shared deadline, byte at a time; `Err`
@@ -65,11 +69,21 @@ fn read_prelude_line(fd: RawFd, deadline: Instant) -> Result<String, ReadFail> {
     }
 }
 
+/// The wire charset for a TERM value: printable ASCII minus space —
+/// every name terminfo uses (xterm-256color, tmux-256color, …) fits.
+fn term_valid(value: &str) -> bool {
+    match value.len() {
+        1..=32 => value.bytes().all(|b| b.is_ascii_graphic()),
+        _ => false,
+    }
+}
+
 /// Parse and consume the whole prelude. `None` after refusing — the
 /// caller closes; no shell is ever exec'd on `None`.
 pub fn read_prelude(fd: RawFd, deadline: Instant) -> Option<Prelude> {
     let mut user: Option<String> = None;
     let mut winsz: Option<(u16, u16)> = None;
+    let mut term: Option<String> = None;
     let mut first = true;
     loop {
         let line = match read_prelude_line(fd, deadline) {
@@ -99,7 +113,13 @@ pub fn read_prelude(fd: RawFd, deadline: Instant) -> Option<Prelude> {
             return match user {
                 Some(user) => {
                     let (rows, cols) = winsz.unwrap_or((DEFAULT_ROWS, DEFAULT_COLS));
-                    Some(Prelude { user, rows, cols })
+                    let term = term.unwrap_or_else(|| DEFAULT_TERM.to_string());
+                    Some(Prelude {
+                        user,
+                        rows,
+                        cols,
+                        term,
+                    })
                 }
                 None => {
                     refuse(fd, "user");
@@ -119,6 +139,14 @@ pub fn read_prelude(fd: RawFd, deadline: Instant) -> Option<Prelude> {
                     return None;
                 }
             }
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("TERM ") {
+            if term.is_some() || !term_valid(value) {
+                refuse(fd, "syntax");
+                return None;
+            }
+            term = Some(value.to_string());
             continue;
         }
         if let Some(rest) = line.strip_prefix("WINSZ ") {

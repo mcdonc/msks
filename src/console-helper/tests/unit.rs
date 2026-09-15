@@ -427,7 +427,8 @@ mod prelude {
             Prelude {
                 user: "msks".into(),
                 rows: 34,
-                cols: 120
+                cols: 120,
+                term: "xterm".into()
             }
         );
     }
@@ -439,9 +440,47 @@ mod prelude {
             Prelude {
                 user: "root".into(),
                 rows: 24,
-                cols: 80
+                cols: 80,
+                term: "xterm".into()
             }
         );
+    }
+
+    #[test]
+    fn happy_path_with_term() {
+        assert_eq!(
+            accepted(b"HELLO 1\nUSER msks\nTERM tmux-256color\nWINSZ 34 120\nGO\n"),
+            Prelude {
+                user: "msks".into(),
+                rows: 34,
+                cols: 120,
+                term: "tmux-256color".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn term_defaults_to_xterm_when_absent() {
+        assert_eq!(accepted(b"HELLO 1\nUSER root\nGO\n").term, "xterm");
+    }
+
+    #[test]
+    fn second_term_line_is_syntax() {
+        refused(
+            b"HELLO 1\nUSER root\nTERM xterm\nTERM xterm\nGO\n",
+            "syntax",
+        );
+    }
+
+    #[test]
+    fn term_charset_is_validated() {
+        refused(b"HELLO 1\nUSER root\nTERM bad term\nGO\n", "syntax");
+        refused(b"HELLO 1\nUSER root\nTERM \nGO\n", "syntax");
+        refused(
+            b"HELLO 1\nUSER root\nTERM 0123456789012345678901234567890123\nGO\n",
+            "syntax",
+        );
+        refused(b"HELLO 1\nUSER root\nTERM \x80bc\nGO\n", "syntax");
     }
 
     #[test]
@@ -769,6 +808,7 @@ mod session {
             _conn: RawFd,
             _pty: &PtyPair,
             user: &UserEntry,
+            _term: &str,
         ) -> Result<(), SpawnFail> {
             self.spawned.lock().unwrap().push(user.name.clone());
             if self.spawn_ok {
@@ -1189,7 +1229,7 @@ mod session {
             fail_open_slave: true,
             ..FakeChildSys::default()
         };
-        assert_eq!(run_shell_child(7, &pty(), &user(), &sys), Err(125));
+        assert_eq!(run_shell_child(7, &pty(), &user(), &sys, "xterm"), Err(125));
     }
 
     #[test]
@@ -1198,7 +1238,7 @@ mod session {
             fail_dup2_at: Some(1),
             ..FakeChildSys::default()
         };
-        assert_eq!(run_shell_child(7, &pty(), &user(), &sys), Err(125));
+        assert_eq!(run_shell_child(7, &pty(), &user(), &sys, "xterm"), Err(125));
     }
 
     #[test]
@@ -1228,7 +1268,7 @@ mod session {
                 ..FakeChildSys::default()
             },
         ] {
-            assert_eq!(run_shell_child(7, &pty(), &user(), &sys), Err(126));
+            assert_eq!(run_shell_child(7, &pty(), &user(), &sys, "xterm"), Err(126));
         }
     }
 
@@ -1247,7 +1287,7 @@ mod session {
             ids: Some((1000, 1000)),
             ..FakeChildSys::default()
         };
-        assert_eq!(run_shell_child(7, &pty(), &root, &sys), Err(126));
+        assert_eq!(run_shell_child(7, &pty(), &root, &sys, "xterm"), Err(126));
     }
 
     #[test]
@@ -1257,7 +1297,7 @@ mod session {
             ids: Some((1000, 1000)),
             ..FakeChildSys::default()
         };
-        assert_eq!(run_shell_child(7, &pty(), &user(), &sys), Err(127));
+        assert_eq!(run_shell_child(7, &pty(), &user(), &sys, "xterm"), Err(127));
         let saw = sys.saw.lock().unwrap().join(" ");
         assert!(!saw.contains("setuid"), "{saw}");
 
@@ -1266,7 +1306,7 @@ mod session {
             ids: Some((1001, 1001)),
             ..FakeChildSys::default()
         };
-        assert_eq!(run_shell_child(7, &pty(), &user(), &sys), Err(126));
+        assert_eq!(run_shell_child(7, &pty(), &user(), &sys, "xterm"), Err(126));
 
         // Matching uid but a foreign gid is still someone else's
         // identity.
@@ -1274,7 +1314,7 @@ mod session {
             ids: Some((1000, 1001)),
             ..FakeChildSys::default()
         };
-        assert_eq!(run_shell_child(7, &pty(), &user(), &sys), Err(126));
+        assert_eq!(run_shell_child(7, &pty(), &user(), &sys, "xterm"), Err(126));
     }
 
     #[test]
@@ -1287,7 +1327,7 @@ mod session {
             shell: "/bin/bash".into(),
         };
         let sys = FakeChildSys::default();
-        assert_eq!(run_shell_child(7, &pty(), &root, &sys), Err(127));
+        assert_eq!(run_shell_child(7, &pty(), &root, &sys, "xterm"), Err(127));
         let saw = sys.saw.lock().unwrap().join(" ");
         assert!(!saw.contains("setuid"), "{saw}");
         assert!(saw.contains("exec /bin/bash -bash"), "{saw}");
@@ -1298,7 +1338,7 @@ mod session {
     #[test]
     fn non_root_drops_then_execs() {
         let sys = FakeChildSys::default();
-        assert_eq!(run_shell_child(7, &pty(), &user(), &sys), Err(127));
+        assert_eq!(run_shell_child(7, &pty(), &user(), &sys, "xterm"), Err(127));
         let saw = sys.saw.lock().unwrap().join(" ");
         assert!(saw.contains("setuid 1000"), "{saw}");
         assert!(saw.contains("mkdir /home/msks"), "{saw}");
@@ -1311,7 +1351,7 @@ mod session {
             fail_chdir: true,
             ..FakeChildSys::default()
         };
-        assert_eq!(run_shell_child(7, &pty(), &user(), &sys), Err(127));
+        assert_eq!(run_shell_child(7, &pty(), &user(), &sys, "xterm"), Err(127));
         let saw = sys.saw.lock().unwrap().join(" ");
         assert!(saw.contains("chdir /home/msks chdir /"), "{saw}");
     }
@@ -1322,13 +1362,13 @@ mod session {
             exec_error: Some(2),
             ..FakeChildSys::default()
         };
-        assert_eq!(run_shell_child(7, &pty(), &user(), &sys), Err(127));
+        assert_eq!(run_shell_child(7, &pty(), &user(), &sys, "xterm"), Err(127));
     }
 
     #[test]
     fn login_shell_argv0_and_env_come_from_passwd() {
         let sys = FakeChildSys::default();
-        let _ = run_shell_child(7, &pty(), &user(), &sys);
+        let _ = run_shell_child(7, &pty(), &user(), &sys, "xterm");
         let saw = sys.saw.lock().unwrap().join(" ");
         assert!(saw.contains("-bash"), "{saw}");
         assert!(saw.contains("USER=msks"), "{saw}");
@@ -1534,7 +1574,7 @@ mod real_impls {
         let limit = rlimit(libc::RLIMIT_NPROC);
         set_rlimit(libc::RLIMIT_NPROC, 0);
         let pty = RealSessionSys.open_pty().unwrap();
-        let result = RealSessionSys.spawn_shell(0, &pty, &current_user());
+        let result = RealSessionSys.spawn_shell(0, &pty, &current_user(), "xterm");
         close_fd(pty.master);
         set_rlimit(libc::RLIMIT_NPROC, limit);
         assert_eq!(result, Err(SpawnFail));
@@ -1549,7 +1589,7 @@ mod real_impls {
         // (nonexistent shell): it exits 127, writing its profile on
         // the way out; the parent returns Ok.
         let pty = RealSessionSys.open_pty().unwrap();
-        let result = RealSessionSys.spawn_shell(1, &pty, &current_user());
+        let result = RealSessionSys.spawn_shell(1, &pty, &current_user(), "xterm");
         close_fd(pty.master);
         assert_eq!(result, Ok(()));
         // Reap nothing: SIGCHLD is ignored or the child already exited.

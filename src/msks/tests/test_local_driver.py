@@ -981,7 +981,33 @@ async def test_handshake_sends_prelude(tmp_path: Path) -> None:
         server.close()
         await server.wait_closed()
     assert seen["connect"] == b"CONNECT 1023\n"
-    assert seen["prelude"] == b"HELLO 1\nUSER msks\nWINSZ 34 120\nGO\n"
+    assert seen["prelude"] == (b"HELLO 1\nUSER msks\nTERM xterm\nWINSZ 34 120\nGO\n")
+    writer.close()
+
+
+@pytest.mark.asyncio
+async def test_prelude_carries_term(tmp_path: Path) -> None:
+    path = tmp_path / "guest.sock"
+    seen = {}
+
+    async def session(reader, writer):
+        await reader.readline()
+        writer.write(b"OK 5\n")
+        await writer.drain()
+        seen["prelude"] = await reader.readuntil(b"GO\n")
+        writer.write(b"MSKS OK msks\n")
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_unix_server(session, str(path))
+    try:
+        reader, writer = await local_mod._vsock_handshake(
+            path, 1023, user="msks", term="tmux-256color"
+        )
+    finally:
+        server.close()
+        await server.wait_closed()
+    assert b"TERM tmux-256color\n" in seen["prelude"]
     writer.close()
 
 

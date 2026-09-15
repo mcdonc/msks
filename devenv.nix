@@ -112,9 +112,10 @@ in
 
   packages = with pkgs; [
     bash # explicit bash for shell scripts (CI /bin/sh may be dash)
-    # The Rust coverage gate's tool (#63): cargo llvm-cov
-    # instruments, runs, and reports line+branch coverage; the
-    # wrapper carries its own llvm-cov/llvm-profdata.
+    # Cargo plugin kept for ad-hoc local coverage reports
+    # (`cargo llvm-cov --branch`); the gate itself drives the LLVM
+    # tools directly (scripts/rust-coverage.sh) because nightly
+    # cargo's build layout breaks this tool's object discovery.
     cargo-llvm-cov
     cloud-hypervisor # VMM driven by the local backend (#1); ships ch-remote
     curl # unix-socket REST poking during CH debugging

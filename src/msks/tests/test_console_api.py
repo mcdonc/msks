@@ -12,6 +12,8 @@ from msks.server.api import bridge_console, build_api
 from msks.settings import ServerSettings, Settings
 from test_api import TOKEN, StubMicrovm, auth
 
+from msks import imagestore
+
 
 class ConsoleStub(StubMicrovm):
     """A seam whose console() opens a real unix socket pair backend."""
@@ -23,9 +25,14 @@ class ConsoleStub(StubMicrovm):
         self.console_calls: list[tuple[str, str | None, int, int]] = []
 
     async def console(
-        self, workspace_id: str, user: str | None = None, rows: int = 0, cols: int = 0
+        self,
+        workspace_id: str,
+        user: str | None = None,
+        rows: int = 0,
+        cols: int = 0,
+        term: str = "xterm",
     ):
-        self.console_calls.append((workspace_id, user, rows, cols))
+        self.console_calls.append((workspace_id, user, rows, cols, term))
         if workspace_id in self.refusals:
             raise MicrovmError("no live vsock socket")
         path = self._tmp_path / f"{workspace_id}.sock"
@@ -207,7 +214,7 @@ def test_console_default_user_root_legacy(console_api, tmp_path) -> None:
             got = b""
             while b"HELLO" not in got:
                 got += socket.receive_bytes()
-    assert stub.console_calls == [("ws-c", None, 0, 0)]
+    assert stub.console_calls == [("ws-c", None, 0, 0, "xterm")]
 
 
 def test_console_unknown_user_closes_4400(console_api) -> None:
@@ -249,7 +256,81 @@ def test_console_prelude_image_passes_user_and_size(console_api, tmp_path) -> No
             got = b""
             while b"HELLO" not in got:
                 got += socket.receive_bytes()
-    assert stub.console_calls == [("ws-p", "msks", 34, 120)]
+    assert stub.console_calls == [("ws-p", "msks", 34, 120, "xterm")]
+
+
+def test_console_bad_term_closes_4400(console_api) -> None:
+    api, app, stub = console_api
+    with TestClient(api) as client:
+        _make_workspace(client)
+        for query in ("term=bad%20term", "term=" + "x" * 33):
+            with client.websocket_connect(
+                f"/api/v1/workspaces/ws-c/console?token={TOKEN}&{query}"
+            ) as s:
+                with pytest.raises(WebSocketDisconnect) as caught:
+                    s.receive_text()
+                assert caught.value.code == 4400, query
+    assert stub.console_calls == []
+
+
+def test_console_prelude_image_carries_term(console_api, tmp_path) -> None:
+    api, app, stub = console_api
+    app.state.settings.vmm.state_dir = tmp_path
+    with TestClient(api) as client:
+        _make_prelude_workspace(client, tmp_path)
+        with client.websocket_connect(
+            f"/api/v1/workspaces/ws-p/console?token={TOKEN}"
+            f"&user=msks&term=tmux-256color"
+        ) as socket:
+            socket.send_bytes(b"hello")
+            got = b""
+            while b"HELLO" not in got:
+                got += socket.receive_bytes()
+    assert stub.console_calls == [("ws-p", "msks", 24, 80, "tmux-256color")]
+
+
+def test_console_unreadable_image_record_closes_4501(console_api, tmp_path) -> None:
+    api, app, stub = console_api
+    app.state.settings.vmm.state_dir = tmp_path
+    with TestClient(api) as client:
+        _make_prelude_workspace(client, tmp_path)
+    # Corrupt the bound image's record out-of-band: the console must
+    # refuse loudly, not silently downgrade to a legacy raw stream.
+    digest = next(
+        p.name for p in imagestore.images_dir(tmp_path).iterdir() if p.is_dir()
+    )
+    (imagestore.images_dir(tmp_path) / digest / "image.json").write_text("{corrupt")
+    with TestClient(api) as client:
+        with client.websocket_connect(
+            f"/api/v1/workspaces/ws-p/console?token={TOKEN}"
+        ) as s:
+            with pytest.raises(WebSocketDisconnect) as caught:
+                s.receive_text()
+        assert caught.value.code == 4501
+        assert "unreadable" in (caught.value.reason or "")
+    assert stub.console_calls == []
+
+
+def test_console_missing_image_record_closes_4501(console_api, tmp_path) -> None:
+    api, app, stub = console_api
+    app.state.settings.vmm.state_dir = tmp_path
+    with TestClient(api) as client:
+        _make_prelude_workspace(client, tmp_path)
+    # The bound image's record vanished (out-of-band deletion): the
+    # console refuses loudly instead of silently downgrading.
+    digest = next(
+        p.name for p in imagestore.images_dir(tmp_path).iterdir() if p.is_dir()
+    )
+    (imagestore.images_dir(tmp_path) / digest / "image.json").unlink()
+    with TestClient(api) as client:
+        with client.websocket_connect(
+            f"/api/v1/workspaces/ws-p/console?token={TOKEN}"
+        ) as s:
+            with pytest.raises(WebSocketDisconnect) as caught:
+                s.receive_text()
+        assert caught.value.code == 4501
+        assert "unreadable" in (caught.value.reason or "")
+    assert stub.console_calls == []
 
 
 def test_console_prelude_image_default_size(console_api, tmp_path) -> None:
@@ -264,4 +345,4 @@ def test_console_prelude_image_default_size(console_api, tmp_path) -> None:
             got = b""
             while b"X" not in got:
                 got += socket.receive_bytes()
-    assert stub.console_calls == [("ws-p", "root", 24, 80)]
+    assert stub.console_calls == [("ws-p", "root", 24, 80, "xterm")]

@@ -58,16 +58,21 @@ class MicrovmDriver(abc.ABC):
         MicrovmError naming the limitation."""
 
     async def console(
-        self, workspace_id: str, user: str | None = None, rows: int = 0, cols: int = 0
+        self,
+        workspace_id: str,
+        user: str | None = None,
+        rows: int = 0,
+        cols: int = 0,
+        term: str = "xterm",
     ):
         """An interactive byte stream into a running workspace.
 
         Returns an ``(reader, writer)`` pair carrying raw bytes both
         ways. Prelude images (#63) negotiate the identity in-band when
-        ``user`` is given (with the client terminal's size in
-        ``rows``/``cols``); legacy images ignore the parameters and
-        serve the raw root shell. Backends without an interactive
-        console raise MicrovmError; the API layer maps that to a close
-        code, never a silent no-op.
+        ``user`` is given (with the client terminal's size and type in
+        ``rows``/``cols``/``term``); legacy images ignore the
+        parameters and serve the raw root shell. Backends without an
+        interactive console raise MicrovmError; the API layer maps
+        that to a close code, never a silent no-op.
         """
         raise MicrovmError(f"the {type(self).__name__} backend has no console support")
