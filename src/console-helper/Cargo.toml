@@ -1,0 +1,22 @@
+[package]
+name = "msks-console-helper"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# One libc dependency: raw syscalls (vsock, pty, privilege drop) with
+# no runtime and no dlopen'd NSS — /etc/passwd is parsed in-process.
+[dependencies]
+libc = "0.2"
+
+[lints.rust]
+# The coverage gate builds with --cfg coverage (scripts/rust-coverage.sh)
+# to key the one excluded, diverging exec line.
+unexpected_cfgs = { level = "deny", check-cfg = ['cfg(coverage)'] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

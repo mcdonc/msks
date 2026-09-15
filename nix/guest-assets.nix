@@ -146,6 +146,27 @@ let
         rm -rf "$out"/tree
       '';
 
+  # The console identity helper (#63): one static binary that owns
+  # the vsock listener (replacing the socat EXEC line), negotiates
+  # the identity prelude, applies the window size, and drops to the
+  # requested user before exec'ing that user's shell.
+  #
+  # Static via the host gnu target's +crt-static rather than a musl
+  # cross-toolchain: the native rustPlatform is exactly what devenv
+  # and CI already pull from the binary caches, while pkgsMusl would
+  # rebuild a second rustc from source. Static glibc's one caveat —
+  # NSS lookups dlopen at runtime — does not apply: the helper
+  # parses /etc/passwd and /etc/group itself. Sources and lockfile
+  # live in src/console-helper/; the devenv shell (languages.rust)
+  # carries the toolchain for local builds and the coverage gate.
+  consoleHelper = pkgs.rustPlatform.buildRustPackage {
+    pname = "msks-console-helper";
+    version = "0.1.0";
+    src = ../src/console-helper;
+    cargoLock.lockFile = ../src/console-helper/Cargo.lock;
+    env.CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-C target-feature=+crt-static";
+  };
+
   # The msks additions, staged as an overlay tree: the vsock console
   # service, serial-console autologin (the debug console), the vsock
   # and net module loads, a stable hostname, and the DHCP client an
@@ -155,6 +176,7 @@ let
     set -eu
     mkdir -p \
       $out/home \
+      $out/usr/bin \
       $out/etc/cloud/cloud.cfg.d \
       $out/etc/systemd/system/serial-getty@ttyS0.service.d \
       $out/etc/systemd/system/multi-user.target.wants \
@@ -164,6 +186,13 @@ let
       $out/etc/modules-load.d
 
     printf 'msks-guest\n' > $out/etc/hostname
+
+    # The console helper (#63): the only privileged listener in the
+    # image. Mode 0755 — it drops privileges itself; it is never
+    # setuid.
+    cp "${consoleHelper}/bin/msks-console-helper" \
+      $out/usr/bin/msks-console-helper
+    chmod 0755 $out/usr/bin/msks-console-helper
 
     # cloud-init (#41): the workspace's cidata seed is NoCloud's own
     # format. Two dropins pin the behavior the msks contract needs:
@@ -264,16 +293,18 @@ let
     # always, and StartLimitIntervalSec=0 keeps systemd's default
     # burst limit from ending those retries.
     #
-    # The pty is a plain canonical terminal: ISIG, ONLCR, ECHO, and
-    # ICANON all on. The line discipline echoes and edits input for
-    # programs that read stdin directly, and TERM=xterm lets bash's
-    # readline take over editing while it is active (#61). systemd
-    # hands services TERM=dumb; bash answers a dumb terminal by
-    # turning readline off, and with the pty also at echo=0 the
-    # typed input reached nothing that would show it.
+    # The helper (#63) owns the listener the socat line used to: it
+    # accepts host-originated connections only, reads the identity
+    # prelude (user, window size), and execs the requested user's
+    # login shell on a fresh pty sized to the client's tty (#61's
+    # 0x0 fix). A fresh pty slave's default termios — ECHO, ICANON,
+    # ISIG, OPOST/ONLCR — is what programs that read stdin directly
+    # get, and bash's readline takes over editing while it is active;
+    # the helper sends TERM=xterm because systemd hands services
+    # TERM=dumb, which turns readline off (#61).
     printf '%s\n' \
       '[Unit]' \
-      'Description=msks vsock console (one shell per connection)' \
+      'Description=msks vsock console (one negotiated shell per connection)' \
       'Documentation=https://github.com/mcdonc/msks' \
       'ConditionPathExists=/dev/vsock' \
       'After=systemd-modules-load.service dev-pts.mount' \
@@ -281,8 +312,7 @@ let
       'StartLimitIntervalSec=0' \
       ''' \
       '[Service]' \
-      'Environment=TERM=xterm' \
-      'ExecStart=/usr/bin/socat VSOCK-LISTEN:${toString vsockShellPort},reuseaddr,fork EXEC:/bin/bash,pty,ctty,echo=1,icanon=1,stderr,setsid' \
+      'ExecStart=/usr/bin/msks-console-helper ${toString vsockShellPort}' \
       'Restart=always' \
       'RestartSec=0.1' \
       'StandardInput=null' \
@@ -385,6 +415,23 @@ let
         # The msks overlay.
         cp -a --no-preserve=ownership ${guestOverlay}/. "$root"/
 
+        # The console workspace user (#63): uid/gid 1000, locked
+        # password (no sign-in — the console helper is the only way
+        # in), home on the persistent /home volume (#14) — the helper
+        # creates it on first connect — and bash as the shell.
+        grep -q '^msks:' "$root"/etc/passwd || printf '%s\n' \
+          'msks:x:1000:1000:msks workspace user:/home/msks:/bin/bash' \
+          >> "$root"/etc/passwd
+        grep -q '^msks:' "$root"/etc/shadow || printf '%s\n' \
+          'msks:!:19700:0:99999:7:::' \
+          >> "$root"/etc/shadow
+        grep -q '^msks:' "$root"/etc/group || printf '%s\n' \
+          'msks:x:1000:' \
+          >> "$root"/etc/group
+        grep -q '^msks:' "$root"/etc/gshadow || printf '%s\n' \
+          'msks:!::' \
+          >> "$root"/etc/gshadow
+
         # The cloud kernel's module tree replaces the generic one
         # (#37): the running kernel is the cloud flavor, and a stale
         # vermagic tree would make every module probe miss. The
@@ -431,6 +478,7 @@ let
         # Sanity: this must be a bootable Debian.
         test -x "$root"/sbin/init
         test -x "$root"/usr/bin/socat
+        test -x "$root"/usr/bin/msks-console-helper
         test -n "$(ls "$root"/usr/lib/modules/*/kernel/drivers/block/virtio_blk.ko.xz)" \
           || { echo "cloud module tree missing virtio_blk"; exit 1; }
 
@@ -565,6 +613,8 @@ let
           "version": "${imageVersion}",
           "cmdline": "${kernelCmdline}",
           "vsock_shell_port": ${toString vsockShellPort},
+          "console_protocol": "prelude-v1",
+          "console_users": ["root", "msks"],
           "kernel_version": "$kernel_version",
           "kernel_format": "bzImage",
           "capabilities": {"provisioner": "${imageProvisioner}"}
@@ -663,7 +713,9 @@ pkgs.runCommand "msks-guest"
       "vmlinux": "vmlinux",
       "initrd": "initrd",
       "rootfs": "rootfs.ext4",
-      "vsock_shell_port": ${toString vsockShellPort}
+      "vsock_shell_port": ${toString vsockShellPort},
+      "console_protocol": "prelude-v1",
+      "console_users": ["root", "msks"]
     }
     EOF
   ''

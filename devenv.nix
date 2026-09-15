@@ -5,6 +5,18 @@
   ...
 }:
 let
+  # The LLVM tools for the Rust coverage gate (#63), taken from the
+  # SAME rust-overlay nightly the toolchain pins: the compiler's
+  # llvm-profdata/llvm-cov understand its instrumented profile format
+  # exactly (an nixpkgs LLVM of the "same" major can be an -rc with a
+  # different raw-profile revision, which merges into garbage).
+  rustOverlay = config.lib.getInput { name = "rust-overlay"; };
+  rustPkgs = import pkgs.path {
+    overlays = [ rustOverlay.overlays.default ];
+    config = { };
+  };
+  rustLlvmTools = rustPkgs.rust-bin.nightly.latest.llvm-tools;
+
   # jscpd token-clone scanner (#71, ported from klangk #2904): 5.x ships
   # a prebuilt Rust binary via platform-specific npm packages
   # (esbuild-style), so it is not in nixpkgs; pin the binary per platform
@@ -59,6 +71,28 @@ in
   # Mirrors the klangk conventions (AGENTS.md): CI-identical test task,
   # testmon for scoped iteration, xenon rank-A gate via a single script
   # shared with the pre-commit hook.
+  # Rust for the guest-side console helper (#63): src/console-helper
+  # builds locally with this toolchain (cargo test, the coverage
+  # gate) and in the guest image via rustPlatform + static glibc
+  # (nix/guest-assets.nix). Nightly because branch coverage
+  # (-Z coverage-options=branch) is nightly-only; the pin comes from
+  # the rust-overlay input in devenv.lock. The LLVM 23 tools pair
+  # with the pinned rustc's LLVM for the coverage gate's
+  # llvm-profdata/llvm-cov.
+  env.MSKS_RUST_LLVM_TOOLS = "${rustLlvmTools}/lib/rustlib/x86_64-unknown-linux-gnu/bin";
+
+  languages.rust = {
+    enable = true;
+    channel = "nightly";
+    components = [
+      "rustc"
+      "cargo"
+      "clippy"
+      "rustfmt"
+      "llvm-tools"
+    ];
+  };
+
   languages.python = {
     enable = true;
     # Pinned to the channel's python314 rather than the `python3` alias —
@@ -78,6 +112,10 @@ in
 
   packages = with pkgs; [
     bash # explicit bash for shell scripts (CI /bin/sh may be dash)
+    # The Rust coverage gate's tool (#63): cargo llvm-cov
+    # instruments, runs, and reports line+branch coverage; the
+    # wrapper carries its own llvm-cov/llvm-profdata.
+    cargo-llvm-cov
     cloud-hypervisor # VMM driven by the local backend (#1); ships ch-remote
     curl # unix-socket REST poking during CH debugging
     e2fsprogs # debugfs: seed the bootstrap token onto the state disk
@@ -280,6 +318,34 @@ in
       files = "\\.py$";
       language = "system";
       pass_filenames = true;
+    };
+    # Rust (console-helper, #63): formatting, linting, and the 100%
+    # line+branch coverage gate. Each hook fires only when the crate
+    # (or the gate itself) is part of the commit; pass_filenames is
+    # off because each command grades the whole crate.
+    rustfmt = {
+      enable = true;
+      name = "cargo fmt (console-helper)";
+      entry = "cargo fmt --manifest-path src/console-helper/Cargo.toml --check";
+      files = "^src/console-helper/.*\\.rs$";
+      language = "system";
+      pass_filenames = false;
+    };
+    rust-clippy = {
+      enable = true;
+      name = "cargo clippy (console-helper)";
+      entry = "cargo clippy --manifest-path src/console-helper/Cargo.toml --all-targets -- -D warnings";
+      files = "^src/console-helper/.*\\.(rs|toml|lock)$";
+      language = "system";
+      pass_filenames = false;
+    };
+    rust-coverage = {
+      enable = true;
+      name = "rust coverage gate (console-helper)";
+      entry = "scripts/rust-coverage.sh";
+      files = "^src/console-helper/|^scripts/rust-coverage\\.sh$";
+      language = "system";
+      pass_filenames = false;
     };
     # Complexity gate: rank A everywhere. pass_filenames = false — the
     # hook grades the full tree via scripts/xenon-gate.sh (a staged
