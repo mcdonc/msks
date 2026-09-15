@@ -97,6 +97,45 @@ def test_ws_url_schemes() -> None:
     assert ws_url("h:1", "wid", "tok").startswith("wss://h:1/")
 
 
+def test_tty_size_reads_ioctl(monkeypatch: pytest.MonkeyPatch) -> None:
+    import fcntl as fcntl_mod
+    import struct as struct_mod
+
+    from msks.client import shell as shell_mod
+
+    def fake_ioctl(fd, request, packed):
+        return struct_mod.pack("HHHH", 34, 120, 0, 0)
+
+    monkeypatch.setattr(fcntl_mod, "ioctl", fake_ioctl)
+    assert shell_mod.tty_size(0) == (34, 120)
+
+
+def test_tty_size_zero_geometry_is_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    import fcntl as fcntl_mod
+    import struct as struct_mod
+
+    from msks.client import shell as shell_mod
+
+    def fake_ioctl(fd, request, packed):
+        return struct_mod.pack("HHHH", 0, 0, 0, 0)
+
+    monkeypatch.setattr(fcntl_mod, "ioctl", fake_ioctl)
+    assert shell_mod.tty_size(0) is None
+
+
+def test_tty_size_without_a_terminal_is_none() -> None:
+    import os
+
+    from msks.client.shell import tty_size
+
+    r, w = os.pipe()
+    try:
+        assert tty_size(r) is None
+    finally:
+        os.close(r)
+        os.close(w)
+
+
 def test_ws_url_carries_user_and_size() -> None:
     url = ws_url("https://d", "ws 1", "tok/en", user="msks", size=(34, 120))
     assert "user=msks" in url

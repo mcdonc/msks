@@ -1051,6 +1051,30 @@ async def test_prelude_silence_fails_closed(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_prelude_timeout_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "guest.sock"
+
+    async def session(reader, writer):
+        await reader.readline()
+        writer.write(b"OK 5\n")
+        await writer.drain()
+        assert await reader.readuntil(b"GO\n")
+        # Reads the prelude, then goes silent forever.
+        await asyncio.sleep(10)
+
+    monkeypatch.setattr(local_mod, "PRELUDE_REPLY_S", 0.2)
+    server = await asyncio.start_unix_server(session, str(path))
+    try:
+        with pytest.raises(MicrovmError, match="prelude"):
+            await local_mod._vsock_handshake(path, 1023, user="root")
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+@pytest.mark.asyncio
 async def test_handshake_without_user_sends_no_prelude(tmp_path: Path) -> None:
     path = tmp_path / "guest.sock"
     seen = {}
