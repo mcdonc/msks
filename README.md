@@ -40,6 +40,16 @@ Complexity gate (also runs as a pre-commit hook):
 devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:xenon
 ```
 
+The Python-side pre-commit gates' full offender list in one pass —
+all ruff and deferred-import findings, every xenon offender, and the
+jscpd report at once, plus, when sources under `src/msks/` changed,
+every missing coverage line and branch arc for the changed files
+after one gated suite run:
+
+```bash
+devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:preflight
+```
+
 ### VM guest assets
 
 The workspace guest is **Debian 13 (trixie)**, straight from Debian's

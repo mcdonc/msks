@@ -148,6 +148,20 @@ in
       exec = ''exec bash "$DEVENV_ROOT/scripts/jscpd-gate.sh" "$@"'';
       showOutput = true;
     };
+    # All-offender pre-flight (#43): the feedback the pre-commit
+    # suite delivers, printed in one pass BEFORE the first commit
+    # attempt — ruff and deferred-imports over every tracked Python
+    # file, the xenon and jscpd gates over their full sets, and, when
+    # anything under src/msks/ changed, the gated suite run followed
+    # by the complete missing-line/arc list for the changed sources
+    # (scripts/covgaps.py). Delegates to scripts/preflight.sh, the
+    # single orchestration; `devenv tasks run` passes no arguments, so
+    # the --fast instant variant is the direct script invocation.
+    "msks:preflight" = {
+      description = "All pre-commit offenders in one pass, before the commit attempt";
+      exec = ''exec bash "$DEVENV_ROOT/scripts/preflight.sh" "$@"'';
+      showOutput = true;
+    };
     # WORKAROUND (#32, klangk #3444 pattern): devenv 2.3.x's RunMode::All
     # scheduler adds the prerequisites of every visited task — including
     # the skipped devenv:enterTest (it sits `after` enterShell), whose
