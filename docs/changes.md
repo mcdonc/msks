@@ -8,6 +8,17 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The dev-workspace bootstrap seed (#77).**
+  `scripts/dev-workspace.sh`, passed to `msks create --user-data`,
+  bootstraps an msks development environment inside a workspace over
+  its own egress NIC at first boot: uv (with its own Python 3.14),
+  the repo checkout, and `uv sync` — the venv the `unit-tests`
+  invocation runs from — all on the persistent root overlay; stop/
+  start keeps it, a factory reset re-provisions, re-running is a
+  no-op. Serves deployments where egress arms (the appliance);
+  proved end to end by the `MSKSD_TEST_EGRESS=1` and appliance
+  root smokes.
+
 - **`msks shell --user` and the console identity prelude (#63).** The
   vsock console now serves shells as root or the image's workspace
   user: a guest-side helper negotiates the identity, the client
@@ -48,6 +59,11 @@ tagged `vX.Y.Z`.
 - **Workspace shell (#21).** `msks shell <workspace-id>` gives an interactive shell inside a running workspace microvm, from any host that can reach the daemon: the client speaks the authenticated `/api/v1/workspaces/{id}/console` websocket (TLS + token, Ctrl-] detach, raw tty mode), and the daemon proxies it over virtio-vsock — the VM's vsock unix socket after a `CONNECT <port>` handshake — into a per-connection busybox ash on a pty served by static socat in the guest (root shell today, per #5's guest userland; `MSKSC_URL`/`MSKSC_TOKEN`/`MSKSC_CAFILE` configure the client). The guest assets gained the vsock module, `/dev/vsock` creation, devpts/ptmx setup, and socat; the daemon retries the console handshake across the guest's post-boot bring-up window.
 
 ### Changed
+
+- **The appliance boots with 6 GiB of memory (#77).** Nested
+  workspace VMs ride the appliance's own RAM, and inside 2 GiB a
+  1 GiB guest beside the daemon OOM-killed the VMM mid-run.
+  `MSKS_APPLIANCE_MEM_MIB` overrides for smaller hosts.
 
 - **The appliance starts without sudo (#101).** The host-side network
   (bridge, tap, host forwarding, NAT) moves from per-start `sudo -n`

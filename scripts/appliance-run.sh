@@ -47,6 +47,11 @@ base_cmdline="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).
 # the daemon's environment (e.g. msksd.vsock_wait_timeout_s=30 on
 # slow nested-virt hosts); each becomes MSKSD_<NAME> in the guest.
 : "${MSKS_APPLIANCE_CMDLINE_EXTRA:=}"
+# The appliance VM's memory, MiB. Nested workspace VMs ride the same
+# RAM: inside a 2 GiB appliance a 1 GiB guest beside the daemon and
+# the OS OOM-kills the VMM (seen live, #77) — 6 GiB carries a
+# workspace with headroom. An operator can shrink it back.
+: "${MSKS_APPLIANCE_MEM_MIB:=6144}"
 
 # --- the store share (virtiofsd, unprivileged) --------------------------
 rm -f "$app_dir/vmm-sock"
@@ -104,7 +109,7 @@ boot_vm() {
   cat <<JSON | api vm.create
 {
   "cpus": {"boot_vcpus": 2, "max_vcpus": 2},
-  "memory": {"size": 2147483648, "shared": true},
+  "memory": {"size": $((MSKS_APPLIANCE_MEM_MIB * 1024 * 1024)), "shared": true},
   "payload": {
     "kernel": "$app_dir/vmlinux",
     "initramfs": "$app_dir/initrd",

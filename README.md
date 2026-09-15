@@ -315,6 +315,49 @@ refuses egress creates until the NetworkPolicy parity lands (#69).
 Per-flow consent (allow/deny holds on each new connection) is #69.
 See `docs/networking.md` for the full reference.
 
+### Developing msks inside a workspace (#77)
+
+The dev-workspace bootstrap seed turns a pristine Debian workspace
+into an msks development environment over the workspace's own
+egress NIC. One create with the seed and egress is the whole of
+the setup — the image catalog serves the pristine Debian base
+unchanged:
+
+```bash
+msks create dev --egress --user-data scripts/dev-workspace.sh \
+  --mem-mib 8192 --root-mib 20480   # the in-guest suite's budget
+msks start dev   # first boot provisions; later boots resume
+```
+
+Cloud-init runs the seed once per overlay lifetime: it installs
+uv (which fetches its own Python 3.14), clones the repo, and runs
+`uv sync` — all into the persistent root overlay, so stop/start
+cycles keep it and a factory reset re-provisions from the same
+seed. Every step checks before doing, so re-running the script is
+a no-op. Progress is guest-observable in
+`/root/.msks-bootstrap/state` (the running step name, then `done`),
+so `msks shell` into a booting workspace shows where setup stands.
+The suite runs inside the guest the way the `unit-tests` task runs
+it — the task's exec line, from the venv uv built:
+
+```bash
+msks shell dev
+uv run python -m pytest src/msks/tests -v -n auto
+```
+
+devenv and nix remain an optional developer comfort inside the
+guest, off the seed's critical path: building them there exercises
+upstream toolchains for tens of minutes and gigabytes and tests
+nothing msks owns.
+
+The egress requirement is the appliance's: the seed's downloads
+(PyPI, uv's Python builds, the git remote) all ride the NIC the
+appliance serves. The end-to-end proof is the opt-in root smoke
+`test_local_dev_workspace_bootstrap` (`MSKSD_TEST_EGRESS=1`). A
+baked dev image — same substrate the guest and appliance build
+from — remains an optional cold-start accelerator on top of the
+seed, not a prerequisite.
+
 ### The workspace shell (`msks shell`) (#21)
 
 From any host that can reach the appliance, an interactive shell in

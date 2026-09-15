@@ -236,6 +236,11 @@ async def run_in_console(
     ``X-42``): the pty echoes the sent bytes verbatim, so a marker
     that appears in the command text would match the echo and pass
     without the command's output ever arriving.
+
+    The fresh-session-per-attempt shape is also the workaround for
+    #103's mid-session console stalls (input echoed, never
+    executed): a stalled session times out, and its replacement is
+    a new connection — exactly what a human reconnecting does.
     """
     for attempt in range(1, CONSOLE_ATTEMPTS + 1):
         try:
@@ -860,6 +865,7 @@ async def test_appliance_boot_and_workspace() -> None:
     status = None
     token = headers = None
     up = None
+    dev_wid = None
     try:
         # Inside the guarded region: a failed start still tears the
         # detached manager down below instead of leaving it running
@@ -1037,6 +1043,96 @@ async def test_appliance_boot_and_workspace() -> None:
             "console never recovered after the guest socat was killed"
         )
 
+        # The dev-workspace bootstrap seed (#77) in the product shape:
+        # a second workspace created with egress and the seed
+        # provisions the dev toolchain over its own NIC — the
+        # TCP-42-UP probe above proved the forwarded path its
+        # downloads ride. The seed's state trail (the running step
+        # name, then done) is polled to completion; nested KVM makes
+        # the downloads minutes-slow, and the resend loop rides out
+        # #103's mid-session console corruption (a fresh send
+        # supersedes a corrupted round).
+        dev_wid = f"appliance-dev-{uuid.uuid4().hex[:8]}"
+        response = await client.post(
+            f"{base}/workspaces",
+            json={"id": dev_wid, "user_data": dev_workspace_seed()},
+            headers=headers,
+        )
+        assert response.status_code == 201, response.text
+        response = await client.post(
+            f"{base}/workspaces/{dev_wid}/start", headers=headers
+        )
+        assert response.status_code in (200, 202), response.text
+        deadline = loop.time() + 120.0
+        while loop.time() < deadline:
+            response = await client.get(f"{base}/workspaces/{dev_wid}", headers=headers)
+            if response.json().get("status") == "running":
+                break
+            await asyncio.sleep(1.0)
+        else:
+            raise AssertionError(
+                f"dev workspace never reached running: {response.text}"
+            )
+        dev_ws_url = (
+            base.replace("https://", "wss://")
+            + f"/workspaces/{dev_wid}/console?token={token}"
+        )
+        dev_cmd = b"cat /root/.msks-bootstrap/state 2>/dev/null; echo E-$?\n"
+        async with websockets.connect(
+            dev_ws_url, ssl=ws_ctx, open_timeout=30
+        ) as dev_ws:
+            dev_buf = b""
+
+            async def dev_collect(marker: bytes, window: float) -> None:
+                nonlocal dev_buf
+                end = loop.time() + window
+                while marker not in dev_buf and loop.time() < end:
+                    try:
+                        message = await asyncio.wait_for(dev_ws.recv(), window)
+                    except TimeoutError:
+                        return
+                    dev_buf += (
+                        message if isinstance(message, bytes) else message.encode()
+                    )
+
+            # The sent line carries no "done" literal, so the marker
+            # can only come from the state file's contents. A gap in
+            # the trail (console corruption, #103) heals on resend.
+            dev_end = loop.time() + DEV_BOOTSTRAP_TIMEOUT_S
+            await dev_ws.send(dev_cmd)
+            while b"done" not in dev_buf:
+                if loop.time() >= dev_end:
+                    raise AssertionError(
+                        "seed state never reached done inside the "
+                        f"appliance; last console bytes: {dev_buf[-300:]!r}"
+                    )
+                await dev_collect(b"done", 15.0)
+                if b"done" not in dev_buf:
+                    await dev_ws.send(dev_cmd)
+            # Send-then-collect with resend — the same #103 ride-out
+            # as the state loop: a corrupted round is superseded by a
+            # fresh send, so the probe measures the venv, not the
+            # console's byte fidelity.
+            venv_cmd = b"test -x /root/msks/.venv/bin/pytest && echo VENV-$((6*7))\n"
+            await dev_ws.send(venv_cmd)
+            venv_end = loop.time() + 180.0
+            while b"VENV-42" not in dev_buf:
+                if loop.time() >= venv_end:
+                    raise AssertionError(
+                        f"dev venv never materialized; got: {dev_buf[-300:]!r}"
+                    )
+                await dev_collect(b"VENV-42", 15.0)
+                if b"VENV-42" not in dev_buf:
+                    await dev_ws.send(venv_cmd)
+        response = await client.post(
+            f"{base}/workspaces/{dev_wid}/stop", headers=headers, timeout=60.0
+        )
+        assert response.status_code == 200, response.text
+        response = await client.delete(
+            f"{base}/workspaces/{dev_wid}", headers=headers, timeout=60.0
+        )
+        assert response.status_code == 200, response.text
+
         # Lifecycle calls may legally take the daemon's full graceful
         # window (MSKSD_SHUTDOWN_TIMEOUT_S, 20s default, plus the
         # terminate path): the module client's 10s default would cut a
@@ -1055,6 +1151,18 @@ async def test_appliance_boot_and_workspace() -> None:
         if headers is not None:
             with contextlib.suppress(Exception):
                 await client.delete(f"{base}/workspaces/{wid}", headers=headers)
+            if dev_wid is not None:
+                with contextlib.suppress(Exception):
+                    await client.post(
+                        f"{base}/workspaces/{dev_wid}/stop",
+                        headers=headers,
+                        timeout=60.0,
+                    )
+                    await client.delete(
+                        f"{base}/workspaces/{dev_wid}",
+                        headers=headers,
+                        timeout=60.0,
+                    )
         with contextlib.suppress(Exception):
             await client.post(f"{base}/workspaces/{wid}/stop", headers=headers)
         # The env restore comes first: a failed teardown assert below
@@ -1350,6 +1458,228 @@ async def test_local_egress_boot() -> None:
         final = await microvm.info(wid)
         assert final.status.value in ("stopped", "absent")
     except BaseException:
+        with contextlib.suppress(Exception):
+            await microvm.kill(wid)
+        raise
+    finally:
+        with contextlib.suppress(Exception):
+            await microvm.cleanup(wid)
+        with contextlib.suppress(OSError):
+            forwarding.write_text(forwarding_was)
+        shutil.rmtree(state_dir, ignore_errors=True)
+
+
+#: The dev-workspace bootstrap (#77) is minutes of downloads on a
+#: slow path, not seconds — far past CONSOLE_TIMEOUT_S. The polls
+#: below drive their own deadline; this bounds the whole sequence
+#: (bootstrap downloads + the in-guest suite).
+DEV_BOOTSTRAP_TIMEOUT_S = float(
+    os.environ.get("MSKSD_TEST_DEV_BOOTSTRAP_TIMEOUT_S", "3600")
+)
+
+
+def dev_workspace_seed() -> str:
+    """The bootstrap payload from the repo's scripts/ tree (#77)."""
+    path = Path(__file__).resolve().parents[3] / "scripts" / "dev-workspace.sh"
+    return path.read_text()
+
+
+async def await_dev_state(microvm, workspace_id: str, needle: bytes) -> bytes:
+    """Poll the guest's bootstrap state trail until it says ``needle``.
+
+    Each probe is a fresh console session well inside
+    CONSOLE_TIMEOUT_S: the file's contents (the running step name)
+    arrive ahead of the E-42 sentinel, so a stall fails with the last
+    observed step named in the assertion — the bootstrap's own
+    /root/.msks-bootstrap/ trail, no log scraping. The fresh
+    session per probe is also the #103 workaround (a stalled
+    session's replacement is a new connection).
+
+    The probe reads both the bootstrap state file and the
+    unit-tests rc file (whichever exists — the sentinel is its own
+    echo's computation, not ``cat``'s exit status, so one missing
+    file still answers): both live under /root/.msks-bootstrap/ and
+    carry short sentinel values. A trail already showing the suite
+    finished nonzero (``done-N``, N≠0) fails immediately instead of
+    spinning to the deadline.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + DEV_BOOTSTRAP_TIMEOUT_S
+    last = b""
+    while loop.time() < deadline:
+        try:
+            # user="root": the prelude-v1 helper refuses prelude-less
+            # connections (MSKS ERR timeout after its read deadline),
+            # so the raw console() default cannot speak to it.
+            reader, writer = await microvm.console(workspace_id, user="root")
+            try:
+                await read_until(reader, CONSOLE_PROMPT_NEEDLE)
+                writer.write(
+                    b"cat /root/.msks-bootstrap/state "
+                    b"/root/.msks-bootstrap/unit-tests.rc 2>/dev/null; "
+                    b"echo E-$((21*2))\n"
+                )
+                await writer.drain()
+                data = await read_until(reader, b"E-42", timeout_s=CONSOLE_TIMEOUT_S)
+            finally:
+                writer.close()
+                with contextlib.suppress(Exception):
+                    await writer.wait_closed()
+        except (AssertionError, OSError) as exc:
+            last = f"<console probe failed: {exc}>".encode()
+        else:
+            # Strip the echoed command (it carries E-$((21*2)), never
+            # the computed E-42) and the sentinel line; what is left
+            # is the state trail (plus prompt noise).
+            body = data.split(b"E-$((21*2))", 1)[-1]
+            body = body.split(b"E-42", 1)[0]
+            last = body.strip()
+            if needle in body:
+                return data
+            for line in body.splitlines():
+                if line.startswith(b"done-") and line != b"done-0":
+                    raise AssertionError(
+                        "the in-guest suite exited nonzero "
+                        f"({line!r}); see /root/.msks-bootstrap/unit-tests.log"
+                    )
+        await asyncio.sleep(15)
+    raise AssertionError(
+        f"bootstrap state never reached {needle!r} within "
+        f"{DEV_BOOTSTRAP_TIMEOUT_S}s; last observed state: {last[-200:]!r}"
+    )
+
+
+@needs_egress
+@needs_local
+async def test_local_dev_workspace_bootstrap() -> None:
+    """The dev-workspace loop end to end (#77): a workspace created
+    with egress and the scripts/dev-workspace.sh seed bootstraps the
+    toolchain over its own NIC at first boot (uv with its own
+    Python, the checkout, uv sync), the result survives stop/start
+    without re-provisioning, and the `unit-tests` invocation runs
+    to completion inside the guest.
+    """
+    nft_tool = os.environ.get("MSKSD_TEST_NFT") or shutil.which("nft") or "nft"
+    ip_tool = os.environ.get("MSKSD_TEST_IP") or shutil.which("ip") or "ip"
+    state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
+    settings = Settings(
+        vmm=VmmSettings(state_dir=state_dir),
+        net=NetSettings(
+            enabled=True,
+            uplink=_default_route_iface(),
+            ip_tool=ip_tool,
+            nft_tool=nft_tool,
+        ),
+        server=ServerSettings(db_path=state_dir / "smoke.db"),
+    )
+    app = build_app(settings)
+    microvm = app.state.microvm
+    app.state.model.migrate()
+    wid = f"smoke-{uuid.uuid4().hex[:8]}"
+    serial_log = state_dir / "vms" / wid / "serial.log"
+    spec = VmSpec(
+        workspace_id=wid,
+        kernel=Path(VMLINUX),
+        rootfs=Path(ROOTFS),
+        initrd=Path(INITRD) if INITRD else None,
+        cmdline=CMDLINE or "console=hvc0 root=/dev/vda rw",
+        # 8 GiB covers the in-guest suite (pytest -n auto across the
+        # guest's cores); the bootstrap itself is downloads, not
+        # builds. The overlay holds the venv and uv's Python.
+        root_mib=20480,
+        mem_mib=8192,
+        egress=True,
+        user_data=dev_workspace_seed(),
+    )
+    # The daemon verifies, never writes, ip_forward (#101 — the
+    # appliance ships it as a sysctl); the root harness owns the dev
+    # host's setting for the run and restores what it found.
+    forwarding = Path("/proc/sys/net/ipv4/ip_forward")
+    forwarding_was = forwarding.read_text()
+    forwarding.write_text("1")
+
+    async def probe(marker_prefix: str, probe_cmd: str) -> None:
+        # Each marker is gated on the probe's exit status so the
+        # echoed command text cannot satisfy it (see run_in_console).
+        await run_in_console(
+            microvm,
+            wid,
+            f"{probe_cmd} && echo {marker_prefix}-$((6*7))",
+            f"{marker_prefix}-42",
+        )
+
+    try:
+        await app.state.net.start()
+        await app.state.model.create_workspace(spec)
+        await microvm.launch(spec)
+        await await_guest_up(serial_log)
+        # First boot: the seed runs in cloud-final; poll its state
+        # trail to "done" (each tool's marker gated on its presence).
+        await await_dev_state(microvm, wid, b"done")
+        await probe("UV", "command -v uv")
+        await probe("CLONE", "git -C /root/msks rev-parse --is-inside-work-tree")
+        await probe("SYNC", "test -x /root/msks/.venv/bin/pytest")
+
+        # Persistence: stop/start keeps the toolchain and the
+        # checkout on the overlay; cloud-init does not re-run the
+        # seed (the state trail still says the one first-boot run).
+        await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
+        serial_log.unlink(missing_ok=True)
+        await microvm.launch(spec)
+        await await_guest_up(serial_log)
+        await await_dev_state(microvm, wid, b"done")
+        # Console-readiness after the reboot plus the persistence
+        # proof: the venv survives, and the rerun log does not exist
+        # — the seed executed exactly once (cloud-init state rode the
+        # overlay), which the vacuous state poll alone cannot show.
+        await probe("AGAIN", "test -x /root/msks/.venv/bin/pytest")
+        await probe("NORERUN", "test ! -e /root/.msks-bootstrap/rerun.log")
+
+        # Idempotence, the direct way: re-execute the seed verbatim
+        # off the read-only cidata disk — every step's guard holds,
+        # uv sync re-runs as a fast no-op, and the state trail ends
+        # at done again with a zero exit status.
+        await run_in_console(
+            microvm,
+            wid,
+            "mkdir -p /mnt/cidata && mount -r /dev/vdc /mnt/cidata 2>/dev/null; "
+            "sh /mnt/cidata/user-data >/root/.msks-bootstrap/rerun.log 2>&1; "
+            "echo R-$?",
+            "R-0",
+        )
+        await await_dev_state(microvm, wid, b"done")
+
+        # The suite, inside the guest, the way the `unit-tests` task
+        # runs it (the task's exec line, from the venv uv built) —
+        # note this is the coverage-gated CI invocation itself
+        # (addopts), so a future coverage edge on main reddens this
+        # smoke for a reason unrelated to the bootstrap: recognizable,
+        # not a bootstrap bug. Launched in the background, then the
+        # rc trail polled to done-0. The launch is guarded — a
+        # retried round (#103 corruption ate the BG marker while the
+        # input still executed) finds rc at running-or-done and
+        # reuses the live/finished run instead of relaunching pytest
+        # beside it.
+        await run_in_console(
+            microvm,
+            wid,
+            "if grep -qE '^(done-|running)' "
+            "/root/.msks-bootstrap/unit-tests.rc 2>/dev/null; "
+            "then echo BG-$((6*7)); "
+            "else echo running >/root/.msks-bootstrap/unit-tests.rc; "
+            "nohup sh -c 'cd /root/msks && uv run python -m pytest "
+            "src/msks/tests -v -n auto "
+            ">/root/.msks-bootstrap/unit-tests.log 2>&1; "
+            "echo done-$? >/root/.msks-bootstrap/unit-tests.rc' "
+            ">/dev/null 2>&1 & echo BG-$((6*7)); fi",
+            "BG-42",
+        )
+        await await_dev_state(microvm, wid, b"done-0")
+        await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
+        final = await microvm.info(wid)
+        assert final.status.value in ("stopped", "absent")
+    except BaseException:
+        collect_failure_evidence(state_dir, wid, serial_log)
         with contextlib.suppress(Exception):
             await microvm.kill(wid)
         raise
