@@ -1,5 +1,7 @@
 """Entry point and server-config wiring."""
 
+import signal
+
 import msks.server.main as main_mod
 import pytest
 from msks.app import build_app
@@ -55,13 +57,19 @@ def test_serve_no_tls(monkeypatch: pytest.MonkeyPatch) -> None:
     assert app.state.settings.server.tls_cert is None
 
 
-def test_main_runs_serve(monkeypatch: pytest.MonkeyPatch) -> None:
-    seen = {}
-    monkeypatch.setattr(
-        main_mod, "serve", lambda app, no_tls: seen.update(no_tls=no_tls)
-    )
-    assert main([]) == 0
-    assert seen == {"no_tls": False}
+def test_main_runs_serve(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    monkeypatch.setenv("MSKSD_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setenv("MSKSD_STATE_DIR", str(tmp_path / "state"))
+    previous = signal.getsignal(signal.SIGHUP)
+    try:
+        seen = {}
+        monkeypatch.setattr(
+            main_mod, "serve", lambda app, no_tls: seen.update(no_tls=no_tls)
+        )
+        assert main([]) == 0
+        assert seen == {"no_tls": False}
+    finally:
+        signal.signal(signal.SIGHUP, previous)
 
 
 def test_serve_operator_certs_skip_fingerprint(

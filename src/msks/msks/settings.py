@@ -5,13 +5,22 @@ Env naming follows the house rule: the category word ``MSKSD``
 then a single underscore before the field (``MSKSD_STATE_DIR``,
 ``MSKSD_K8S_NAMESPACE``). All values are read live off
 ``app.state.settings`` — never materialized onto subsystems — so a
-future runtime settings swap (SIGHUP) propagates without per-module
+runtime settings swap (SIGHUP) propagates without per-module
 ``reconfigure()`` calls.
+
+The parsers read through a mapping that defaults to the live
+``os.environ``. :mod:`msks.config` layers a parsed YAML config file
+under the environment — precedence **env > config file > built-in
+defaults** (#46) — so both sources share one validation path: an
+invalid value fails the same way wherever it came from, and the
+error names the ``MSKSD_*`` variable either way.
 """
 
 import ipaddress
+import math
 import os
 import socket
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from ipaddress import IPv4Network
 from pathlib import Path
@@ -19,29 +28,34 @@ from pathlib import Path
 VALID_DRIVERS = ("local", "k8s")
 
 
-def _env(name: str, default: str) -> str:
-    value = os.environ.get(name)
+def live_env(env: Mapping[str, str] | None) -> Mapping[str, str]:
+    """The env to read: an explicit mapping, or the live environment."""
+    return os.environ if env is None else env
+
+
+def _env(env: Mapping[str, str], name: str, default: str) -> str:
+    value = env.get(name)
     return default if value in (None, "") else value
 
 
-def _parse_int(name: str, default: int) -> int:
-    raw = _env(name, str(default))
+def _parse_int(env: Mapping[str, str], name: str, default: int) -> int:
+    raw = _env(env, name, str(default))
     try:
         return int(raw)
     except ValueError:
         raise ValueError(f"{name} must be a number, got {raw!r}") from None
 
 
-def _parse_positive_int(name: str, default: int) -> int:
-    value = _parse_int(name, default)
+def _parse_positive_int(env: Mapping[str, str], name: str, default: int) -> int:
+    value = _parse_int(env, name, default)
     if value <= 0:
         raise ValueError(f"{name} must be positive, got {value}")
     return value
 
 
-def _parse_optional_int(name: str, minimum: int) -> int | None:
+def _parse_optional_int(env: Mapping[str, str], name: str, minimum: int) -> int | None:
     """A positive-when-set integer: unset means "derive it"."""
-    raw = os.environ.get(name)
+    raw = env.get(name)
     if raw in (None, ""):
         return None
     try:
@@ -53,12 +67,15 @@ def _parse_optional_int(name: str, minimum: int) -> int | None:
     return value
 
 
-def _env_float(name: str, default: float) -> float:
-    raw = _env(name, str(default))
+def _env_float(env: Mapping[str, str], name: str, default: float) -> float:
+    raw = _env(env, name, str(default))
     try:
-        return float(raw)
+        value = float(raw)
     except ValueError:
         raise ValueError(f"{name} must be a number, got {raw!r}") from None
+    if not math.isfinite(value):
+        raise ValueError(f"{name} must be a finite number, got {raw!r}")
+    return value
 
 
 @dataclass
@@ -97,30 +114,35 @@ class VmmSettings:
     home_mib: int = 2048
 
     @classmethod
-    def from_env(cls) -> VmmSettings:
-        driver = _env("MSKSD_VMM_DRIVER", cls.driver)
+    def from_env(cls, env: Mapping[str, str] | None = None) -> VmmSettings:
+        env = live_env(env)
+        driver = _env(env, "MSKSD_VMM_DRIVER", cls.driver)
         if driver not in VALID_DRIVERS:
             raise ValueError(
                 f"MSKSD_VMM_DRIVER must be one of {VALID_DRIVERS}, got {driver!r}"
             )
         return cls(
             driver=driver,
-            cloud_hypervisor=_env("MSKSD_CLOUD_HYPERVISOR", cls.cloud_hypervisor),
-            state_dir=Path(_env("MSKSD_STATE_DIR", str(cls().state_dir))).expanduser(),
-            socket_wait_timeout_s=_env_float("MSKSD_SOCKET_WAIT_TIMEOUT_S", 10.0),
-            request_timeout_s=_env_float("MSKSD_REQUEST_TIMEOUT_S", 5.0),
-            shutdown_timeout_s=_env_float("MSKSD_SHUTDOWN_TIMEOUT_S", 20.0),
-            vsock_shell_port=_parse_int("MSKSD_VSOCK_SHELL_PORT", cls.vsock_shell_port),
-            vsock_wait_timeout_s=_env_float(
-                "MSKSD_VSOCK_WAIT_TIMEOUT_S", cls.vsock_wait_timeout_s
+            cloud_hypervisor=_env(env, "MSKSD_CLOUD_HYPERVISOR", cls.cloud_hypervisor),
+            state_dir=Path(
+                _env(env, "MSKSD_STATE_DIR", str(cls().state_dir))
+            ).expanduser(),
+            socket_wait_timeout_s=_env_float(env, "MSKSD_SOCKET_WAIT_TIMEOUT_S", 10.0),
+            request_timeout_s=_env_float(env, "MSKSD_REQUEST_TIMEOUT_S", 5.0),
+            shutdown_timeout_s=_env_float(env, "MSKSD_SHUTDOWN_TIMEOUT_S", 20.0),
+            vsock_shell_port=_parse_int(
+                env, "MSKSD_VSOCK_SHELL_PORT", cls.vsock_shell_port
             ),
-            default_image=_env("MSKSD_DEFAULT_IMAGE", cls.default_image),
-            qemu_img=_env("MSKSD_QEMU_IMG", cls.qemu_img),
-            mkfs_ext4=_env("MSKSD_MKFS_EXT4", cls.mkfs_ext4),
-            mkisofs=_env("MSKSD_MKISOFS", cls.mkisofs),
-            host_name=_env("MSKSD_HOST_NAME", cls().host_name),
-            root_mib=_parse_positive_int("MSKSD_ROOT_MIB", cls.root_mib),
-            home_mib=_parse_positive_int("MSKSD_HOME_MIB", cls.home_mib),
+            vsock_wait_timeout_s=_env_float(
+                env, "MSKSD_VSOCK_WAIT_TIMEOUT_S", cls.vsock_wait_timeout_s
+            ),
+            default_image=_env(env, "MSKSD_DEFAULT_IMAGE", cls.default_image),
+            qemu_img=_env(env, "MSKSD_QEMU_IMG", cls.qemu_img),
+            mkfs_ext4=_env(env, "MSKSD_MKFS_EXT4", cls.mkfs_ext4),
+            mkisofs=_env(env, "MSKSD_MKISOFS", cls.mkisofs),
+            host_name=_env(env, "MSKSD_HOST_NAME", cls().host_name),
+            root_mib=_parse_positive_int(env, "MSKSD_ROOT_MIB", cls.root_mib),
+            home_mib=_parse_positive_int(env, "MSKSD_HOME_MIB", cls.home_mib),
         )
 
 
@@ -142,8 +164,8 @@ class ServerSettings:
     access_log: bool = False
 
     @classmethod
-    def from_env(cls) -> ServerSettings:
-        return _server_settings_from_env(cls)
+    def from_env(cls, env: Mapping[str, str] | None = None) -> ServerSettings:
+        return _server_settings_from_env(cls, live_env(env))
 
 
 @dataclass
@@ -163,15 +185,16 @@ class K8sSettings:
     workspace_storage_gib: int | None = None
 
     @classmethod
-    def from_env(cls) -> K8sSettings:
+    def from_env(cls, env: Mapping[str, str] | None = None) -> K8sSettings:
+        env = live_env(env)
         return cls(
-            namespace=_env("MSKSD_K8S_NAMESPACE", cls.namespace),
-            runner_image=_env("MSKSD_K8S_RUNNER_IMAGE", cls.runner_image),
-            kubeconfig=_env("MSKSD_KUBECONFIG", "") or None,
-            api_timeout_s=_env_float("MSKSD_K8S_API_TIMEOUT_S", 30.0),
-            storage_class=_env("MSKSD_K8S_STORAGE_CLASS", "") or None,
+            namespace=_env(env, "MSKSD_K8S_NAMESPACE", cls.namespace),
+            runner_image=_env(env, "MSKSD_K8S_RUNNER_IMAGE", cls.runner_image),
+            kubeconfig=_env(env, "MSKSD_KUBECONFIG", "") or None,
+            api_timeout_s=_env_float(env, "MSKSD_K8S_API_TIMEOUT_S", 30.0),
+            storage_class=_env(env, "MSKSD_K8S_STORAGE_CLASS", "") or None,
             workspace_storage_gib=_parse_optional_int(
-                "MSKSD_K8S_WORKSPACE_STORAGE_GIB", minimum=1
+                env, "MSKSD_K8S_WORKSPACE_STORAGE_GIB", minimum=1
             ),
         )
 
@@ -198,8 +221,8 @@ class NetSettings:
     dns_timeout_s: float = 3.0
 
     @classmethod
-    def from_env(cls) -> NetSettings:
-        return _net_settings_from_env(cls)
+    def from_env(cls, env: Mapping[str, str] | None = None) -> NetSettings:
+        return _net_settings_from_env(cls, live_env(env))
 
 
 @dataclass
@@ -212,18 +235,18 @@ class Settings:
     net: NetSettings = field(default_factory=NetSettings)
 
     @classmethod
-    def from_env(cls) -> Settings:
+    def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
         return cls(
-            vmm=VmmSettings.from_env(),
-            k8s=K8sSettings.from_env(),
-            server=ServerSettings.from_env(),
-            net=NetSettings.from_env(),
+            vmm=VmmSettings.from_env(env),
+            k8s=K8sSettings.from_env(env),
+            server=ServerSettings.from_env(env),
+            net=NetSettings.from_env(env),
         )
 
 
-def _parse_subnet(name: str, default: str) -> IPv4Network:
+def _parse_subnet(env: Mapping[str, str], name: str, default: str) -> IPv4Network:
     """The per-workspace /30 pool: an IPv4 network of at least a /30."""
-    value = _env(name, default)
+    value = _env(env, name, default)
     try:
         pool = ipaddress.IPv4Network(value)
     except ValueError:
@@ -233,42 +256,46 @@ def _parse_subnet(name: str, default: str) -> IPv4Network:
     return pool
 
 
-def _net_settings_from_env(cls: type[NetSettings]) -> NetSettings:
+def _net_settings_from_env(
+    cls: type[NetSettings], env: Mapping[str, str]
+) -> NetSettings:
     """Build NetSettings from the environment (helper: keeps the
     class block itself at xenon rank A)."""
     default = cls()
-    lease = _parse_int("MSKSD_EGRESS_LEASE_S", default.lease_s)
-    timeout = _env_float("MSKSD_EGRESS_DNS_TIMEOUT_S", default.dns_timeout_s)
+    lease = _parse_int(env, "MSKSD_EGRESS_LEASE_S", default.lease_s)
+    timeout = _env_float(env, "MSKSD_EGRESS_DNS_TIMEOUT_S", default.dns_timeout_s)
     if lease <= 0:
         raise ValueError(f"MSKSD_EGRESS_LEASE_S must be positive, got {lease}")
     if timeout <= 0:
         raise ValueError(f"MSKSD_EGRESS_DNS_TIMEOUT_S must be positive, got {timeout}")
     return cls(
-        enabled=_env("MSKSD_EGRESS_ENABLED", "false").lower() == "true",
-        pool=_parse_subnet("MSKSD_EGRESS_SUBNET", str(default.pool)),
-        uplink=_env("MSKSD_EGRESS_UPLINK", default.uplink),
-        dns_upstream=_env("MSKSD_EGRESS_DNS_UPSTREAM", "") or None,
-        ip_tool=_env("MSKSD_IP_TOOL", default.ip_tool),
-        nft_tool=_env("MSKSD_NFT_TOOL", default.nft_tool),
+        enabled=_env(env, "MSKSD_EGRESS_ENABLED", "false").lower() == "true",
+        pool=_parse_subnet(env, "MSKSD_EGRESS_SUBNET", str(default.pool)),
+        uplink=_env(env, "MSKSD_EGRESS_UPLINK", default.uplink),
+        dns_upstream=_env(env, "MSKSD_EGRESS_DNS_UPSTREAM", "") or None,
+        ip_tool=_env(env, "MSKSD_IP_TOOL", default.ip_tool),
+        nft_tool=_env(env, "MSKSD_NFT_TOOL", default.nft_tool),
         lease_s=lease,
         dns_timeout_s=timeout,
     )
 
 
-def _server_settings_from_env(cls: type[ServerSettings]) -> ServerSettings:
+def _server_settings_from_env(
+    cls: type[ServerSettings], env: Mapping[str, str]
+) -> ServerSettings:
     """Build ServerSettings from the environment (helper: keeps the
     class block itself at xenon rank A)."""
-    state = Path(_env("MSKSD_STATE_DIR", "~/.local/state/msksd")).expanduser()
-    poll = _env_float("MSKSD_EVENT_POLL_S", cls.event_poll_s)
+    state = Path(_env(env, "MSKSD_STATE_DIR", str(cls().db_path.parent))).expanduser()
+    poll = _env_float(env, "MSKSD_EVENT_POLL_S", cls.event_poll_s)
     if poll <= 0:
         raise ValueError(f"MSKSD_EVENT_POLL_S must be positive, got {poll}")
     return cls(
-        host=_env("MSKSD_HOST", cls.host),
-        port=_parse_int("MSKSD_PORT", cls.port),
-        tls_cert=_env("MSKSD_TLS_CERT", "") or None,
-        tls_key=_env("MSKSD_TLS_KEY", "") or None,
+        host=_env(env, "MSKSD_HOST", cls.host),
+        port=_parse_int(env, "MSKSD_PORT", cls.port),
+        tls_cert=_env(env, "MSKSD_TLS_CERT", "") or None,
+        tls_key=_env(env, "MSKSD_TLS_KEY", "") or None,
         db_path=state / "msks.db",
         event_poll_s=poll,
-        bootstrap_token=_env("MSKSD_BOOTSTRAP_TOKEN", "") or None,
-        access_log=_env("MSKSD_ACCESS_LOG", "false").lower() == "true",
+        bootstrap_token=_env(env, "MSKSD_BOOTSTRAP_TOKEN", "") or None,
+        access_log=_env(env, "MSKSD_ACCESS_LOG", "false").lower() == "true",
     )

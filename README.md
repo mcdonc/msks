@@ -128,6 +128,12 @@ MSKSD_STATE_DIR=/tmp/msksd MSKSD_BOOTSTRAP_TOKEN=dev-secret MSKSD_PORT=8660 msks
 - **Rotating the bootstrap token**: setting `MSKSD_BOOTSTRAP_TOKEN` to a
   new value _adds_ a token; the previous bootstrap credential stays valid
   until revoked via the API.
+- **Config file**: settings also live in a YAML file — `msksd --config
+/path/to/msksd.yaml` reads exactly that file, `--config=none` reads env
+  vars only, and a bare `msksd` resolves `$MSKSD_CONFIG_DIR/msksd.yaml`
+  (default `~/.config/msksd/msksd.yaml`), generating a commented template
+  on first run. Env vars override the file; see `docs/config.md` for the
+  key-by-key reference.
 - **Schema**: the SQLite database is created and upgraded by Alembic at
   startup (inside the package: `msks/migrations`).
 
