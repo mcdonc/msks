@@ -60,15 +60,16 @@ let
   # hash in guest-assets.nix (#30, #41).
   inherit (guest) debianImage;
 
-  # Debian's GENERIC kernel flavor, the same upstream version the
-  # guest's cloud flavor pins (#37): the cloud flavor the guest boots
-  # ships neither virtiofs nor the kvm-intel/kvm-amd modules — and the
-  # appliance needs both (the store share; nested KVM for workspace
-  # VMs). The generic flavor carries them: virtio-pci, virtiofs, and
-  # fuse are BUILT IN, kvm-intel/kvm-amd and ext4 are modules — so the
-  # initramfs below carries six modules where the guest's carries
-  # one, and this kernel is pinned by its own pool URL and sha256
-  # (#92's answer to "does the cloud tree cover it": no).
+  # Debian's GENERIC kernel flavor, pinned by its own pool URL and
+  # sha256. The appliance boots it for the tree: the generic flavor
+  # ships the modules the appliance probes — kvm-intel/kvm-amd for
+  # nested KVM (workspace VMs), the nftables/egress stack, the NIC
+  # driver — with virtio-pci, virtiofs, and fuse BUILT IN and ext4
+  # as a module, so the initramfs below carries six modules. (The
+  # cloud flavor the guest boots builds virtiofs in as well and
+  # ships the kvm modules; what distinguishes the flavors is the
+  # generic tree's completeness — the distro owns module
+  # wrangling.)
   genericKernelDeb = pkgs.fetchurl {
     url =
       "https://deb.debian.org/debian/pool/main/l/linux/"
@@ -151,9 +152,9 @@ let
         # dependency order: ext4's direct deps (crc16, mbcache, jbd2),
         # then ext4 itself, then virtio_blk (independent). crc32c is
         # not a modules.dep edge but a mount-time crypto request —
-        # the generic kernel ships it as a module (the cloud kernel
-        # builds it in, which is why the guest's initrd never loads
-        # it) and a metadata_csum rootfs cannot mount without it.
+        # the generic kernel ships it as a module (the cloud flavor
+        # builds it in) and a metadata_csum rootfs cannot mount
+        # without it.
         for ko in \
           kernel/lib/crc16.ko.xz \
           kernel/crypto/crc32c_generic.ko.xz \
