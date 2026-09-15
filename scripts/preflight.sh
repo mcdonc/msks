@@ -15,9 +15,9 @@
 #   - the jscpd clone report (scripts/jscpd-gate.sh)
 #   - when anything under src/msks/ differs from the fork point on
 #     origin/main (committed or working tree): the gated suite run —
-#     the same invocation `unit-tests` uses — then every missing
-#     coverage line and branch arc for the changed backend sources
-#     (scripts/covgaps.py)
+#     `unit-tests` under the same coverage gate, -q output — then
+#     every missing coverage line and branch arc for the changed
+#     backend sources (scripts/covgaps.py)
 #
 # Usage: preflight.sh [--fast]
 #   --fast skips the suite run: an instant lint/complexity pass.

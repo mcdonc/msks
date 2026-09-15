@@ -108,8 +108,9 @@ It prints every ruff violation, every deferred import, every xenon
 block above rank A, and the jscpd clone report over the full tree.
 When anything under `src/msks/` differs from the fork point on
 `origin/main` (committed or working tree), it then runs the gated
-suite — the same invocation `unit-tests` uses, so a green coverage
-section satisfies the rule above — and prints every missing line and
+suite — the `unit-tests` suite under the same coverage gate, with
+quiet output — so a green coverage section satisfies the rule above
+— and prints every missing line and
 branch arc for the changed sources (`scripts/covgaps.py` reads the
 `.coverage` the suite leaves; `bash scripts/preflight.sh --fast`
 skips the suite for an instant lint/complexity pass).
