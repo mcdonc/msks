@@ -1,6 +1,7 @@
 """The msksd entry point: run the API server over TLS (#8)."""
 
 import argparse
+import signal
 import sys
 from pathlib import Path
 
@@ -8,6 +9,8 @@ import uvicorn
 
 from .. import __version__
 from ..app import build_app
+from ..config import load_settings
+from ..settings import Settings
 from .api import build_api
 from .tls import load_or_generate
 
@@ -65,6 +68,48 @@ def run_forever(app) -> None:
     uvicorn.Server(server_config(app)).run()  # pragma: no cover
 
 
+def reload_settings(app, config: str | None) -> None:
+    """SIGHUP action: re-read the config file into the live settings.
+
+    Subsystems read settings off ``app.state.settings`` at call time,
+    so the swap propagates without per-module ``reconfigure()``
+    calls. The listener (host, port, TLS material) and the database
+    path are bound at startup and keep their startup values until a
+    restart. A config that fails to load or validate is refused: the
+    error is reported and the previous settings stay in force.
+    """
+    try:
+        settings = load_settings(config)
+    except (OSError, ValueError) as exc:
+        print(
+            f"msksd: SIGHUP reload refused, keeping current settings: {exc}",
+            file=sys.stderr,
+        )
+        return
+    keep_generated_tls(app.state.settings, settings)
+    app.state.settings = settings
+
+
+def keep_generated_tls(old: Settings, new: Settings) -> None:
+    """Carry startup TLS material across a SIGHUP reload.
+
+    ``serve`` resolves unset cert/key paths to the generated CA pair
+    and writes them back into settings; a reload re-derives from the
+    file + environment, so each side the reload leaves unset keeps
+    its startup value — the listener runs on the pair it booted with,
+    generated material included.
+    """
+    if new.server.tls_cert is None:
+        new.server.tls_cert = old.server.tls_cert
+    if new.server.tls_key is None:
+        new.server.tls_key = old.server.tls_key
+
+
+def install_sighup_reload(app, config: str | None) -> None:
+    """Wire SIGHUP to :func:`reload_settings` (main thread only)."""
+    signal.signal(signal.SIGHUP, lambda signum, frame: reload_settings(app, config))
+
+
 def main(argv: list[str] | None = None) -> int:
     """Console-script entry: parse args, run the server."""
     parser = argparse.ArgumentParser(prog="msksd")
@@ -74,8 +119,24 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="serve plain HTTP (development only)",
     )
+    parser.add_argument(
+        "--config",
+        metavar="PATH",
+        help=(
+            "YAML config file to read (env vars still override it); "
+            "'none' reads env vars and defaults only; default: "
+            "$MSKSD_CONFIG_DIR/msksd.yaml, generated on first run"
+        ),
+    )
     args = parser.parse_args(argv)
-    serve(build_app(), args.no_tls)
+    try:
+        settings = load_settings(args.config)
+    except (OSError, ValueError) as exc:
+        print(f"msksd: {exc}", file=sys.stderr)
+        return 2
+    app = build_app(settings)
+    install_sighup_reload(app, args.config)
+    serve(app, args.no_tls)
     return 0
 
 
