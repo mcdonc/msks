@@ -121,7 +121,11 @@ fn test_passwd() -> (PathBuf, String) {
     std::fs::create_dir_all(&dir).unwrap();
     let home = dir.join(format!("home-{uid}"));
     std::fs::create_dir_all(&home).unwrap();
-    let passwd = dir.join("passwd");
+    // One passwd per test thread: the shared path races a concurrent
+    // test's truncate-and-write rewrite (the helper reads the file at
+    // lookup time, and a mid-rewrite read looks up an empty file).
+    let thread = format!("{:?}", std::thread::current().id());
+    let passwd = dir.join(format!("passwd-{thread}"));
     std::fs::write(
         &passwd,
         format!("{user}:x:{uid}:{gid}::{}:/bin/sh\n", home.display()),
