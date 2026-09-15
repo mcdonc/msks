@@ -302,5 +302,5 @@ def _server_settings_from_env(
         db_path=state / "msks.db",
         event_poll_s=poll,
         bootstrap_token=_env(env, "MSKSD_BOOTSTRAP_TOKEN", "") or None,
-        access_log=_env(env, "MSKSD_ACCESS_LOG", "false").lower() == "true",
+        access_log=_env(env, "MSKSD_ACCESS_LOG", str(cls.access_log)).lower() == "true",
     )

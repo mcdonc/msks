@@ -53,7 +53,9 @@ tagged `vX.Y.Z`.
   machinery — per-workspace NICs, DHCP, NAT, and the DNS forwarder
   — arms at daemon startup on a fresh deployment, so a plain
   workspace create boots networked wherever msksd holds
-  `CAP_NET_ADMIN`, not just in the appliance. An operator who sets
+  `CAP_NET_ADMIN`, not just in the appliance. An upgrade of a
+  root-run msksd outside the appliance therefore enables ip_forward
+  and installs the NAT base table at startup. An operator who sets
   `egress_enabled: false` (or `MSKSD_EGRESS_ENABLED=false`) keeps
   the prior posture: egress workspaces refuse to boot with the
   cause named, and `"egress": false` workspaces boot NIC-less.

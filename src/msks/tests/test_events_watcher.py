@@ -15,7 +15,7 @@ from msks.server import watcher as watcher_mod
 from msks.server.api import build_api, wait_for_disconnect
 from msks.server.events import EventHub, close_all, relay
 from msks.server.watcher import scan_once, scan_workspace, watch_loop
-from msks.settings import ServerSettings, Settings
+from msks.settings import NetSettings, ServerSettings, Settings
 from test_api import TOKEN, StubMicrovm, auth
 
 
@@ -52,9 +52,10 @@ async def test_relay_and_close_all() -> None:
 
 def api_with_stub(tmp_path: Path):
     settings = Settings(
+        net=NetSettings(enabled=False),
         server=ServerSettings(
             db_path=tmp_path / "ws.db", bootstrap_token=TOKEN, event_poll_s=0.05
-        )
+        ),
     )
     app = build_app(settings)
     stub = StubMicrovm()

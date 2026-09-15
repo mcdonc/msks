@@ -31,8 +31,9 @@ NOT_READY_CAUSES = {
         "— set it and restart)"
     ),
     "unavailable": (
-        "the daemon could not arm egress (needs CAP_NET_ADMIN: "
-        "run msksd inside the appliance)"
+        "the daemon could not arm egress (needs CAP_NET_ADMIN and the "
+        "ip/nft tools — root in the appliance has both; a dev-shell "
+        "daemon has neither)"
     ),
 }
 

@@ -8,7 +8,7 @@ from msks.app import build_app
 from msks.microvm.errors import MicrovmError, MicrovmTimeoutError
 from msks.microvm.spec import VmInfo, VmSpec, VmStatus
 from msks.server.api import build_api
-from msks.settings import ServerSettings, Settings, VmmSettings
+from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 TOKEN = "test-token"
@@ -61,6 +61,7 @@ class StubMicrovm:
 async def client(tmp_path: Path):
     settings = Settings(
         vmm=VmmSettings(state_dir=tmp_path / "vms"),
+        net=NetSettings(enabled=False),
         server=ServerSettings(
             db_path=tmp_path / "api.db",
             bootstrap_token=TOKEN,
@@ -85,6 +86,7 @@ async def test_lifespan_startup_failure_closes_engine(tmp_path: Path) -> None:
     # the unclosed-database warning this suite keeps at zero.
     settings = Settings(
         vmm=VmmSettings(state_dir=tmp_path / "vms"),
+        net=NetSettings(enabled=False),
         server=ServerSettings(db_path=tmp_path / "f.db", bootstrap_token=TOKEN),
     )
     app = build_app(settings)

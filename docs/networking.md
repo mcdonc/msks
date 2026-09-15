@@ -2,7 +2,7 @@
 
 A workspace talks to the network only when it was created with
 `egress: true` — and when it does, every piece of the path lives in
-the appliance, where the guest cannot reach it.
+the daemon, where the guest cannot reach it.
 
 ```bash
 curl -X POST .../api/v1/workspaces \
@@ -27,7 +27,7 @@ workspace VM ──virtio-net──► per-VM tap ──► per-VM nftables chai
 
 Each egress workspace owns a dedicated /30 carved from the
 configured pool (`MSKSD_EGRESS_SUBNET`, default `172.31.0.0/16`):
-the guest holds the first host address, the appliance-side tap the
+the guest holds the first host address, the daemon-side tap the
 second. The workspace's tap name, nftables table, and NIC MAC derive
 deterministically from the workspace id, and the pool slice is
 recorded on the workspace row at first attach — so stop/start cycles,

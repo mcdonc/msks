@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from msks.app import build_app
 from msks.microvm import MicrovmError
 from msks.server.api import bridge_console, build_api
-from msks.settings import ServerSettings, Settings
+from msks.settings import NetSettings, ServerSettings, Settings
 from test_api import TOKEN, StubMicrovm, auth
 
 from msks import imagestore
@@ -61,9 +61,10 @@ class ConsoleStub(StubMicrovm):
 @pytest.fixture
 def console_api(tmp_path):
     settings = Settings(
+        net=NetSettings(enabled=False),
         server=ServerSettings(
             db_path=tmp_path / "ws.db", bootstrap_token=TOKEN, event_poll_s=0.05
-        )
+        ),
     )
     app = build_app(settings)
     stub = ConsoleStub(tmp_path)
