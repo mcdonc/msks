@@ -9,22 +9,27 @@
 # official genericcloud cloud image (#30, #41): real Debian with
 # PID 1, apt, Debian's own modules — and Debian's own socat (built
 # WITH_VSOCK) serving the vsock console. The kernel is Debian's
-# *cloud* flavor of the same upstream version (#37): ext4 and
-# virtio-pci built in, so the initramfs msks builds carries a single
-# module (virtio_blk) and boots in tens of milliseconds where the
-# generic initrd cost ~2.5s. The image is pinned by its dated
-# cloud.debian.org URL and sha512; the cloud kernel by its
-# deb.debian.org pool URL and sha256 ("latest" is a moving pointer;
-# dated builds stay published).
+# *generic* flavor of the same upstream version (#96) — the SAME
+# pin the appliance image boots, so one deb serves both and the
+# appliance's virtiofs/KVM needs drove the choice. The minimal
+# initramfs msks builds carries the six modules the generic flavor
+# needs to mount the ext4 root (the cloud flavor #37 chose built
+# ext4 in; the ~2.5s it dodged was Debian's stock 34MB MODULES=most
+# archive, not the flavor — the six-module initrd costs tens of
+# milliseconds). The image is pinned by its dated cloud.debian.org
+# URL and sha512; the kernel by its deb.debian.org pool URL and
+# sha256 ("latest" is a moving pointer; dated builds stay
+# published).
 #
-#   $out/vmlinux            - Debian's cloud kernel (bzImage, PVH
+#   $out/vmlinux            - Debian's generic kernel (bzImage, PVH
 #                             entry point; CONFIG_PVH=y). Named
 #                             "vmlinux" to match the
 #                             MSKSD_TEST_VMLINUX contract;
 #                             guest-manifest.json records the actual
 #                             format.
 #   $out/initrd             - msks-built minimal initramfs: busybox,
-#                             virtio_blk.ko, mount root, switch_root.
+#                             the six root-mount modules, mount
+#                             root, switch_root.
 #   $out/rootfs.ext4        - the extracted Debian tree as a fresh
 #                             ext4 image: the pristine base each
 #                             workspace's overlay copies on write
@@ -77,35 +82,44 @@ let
   # it, an ro mount would block apt and provisioning state.
   kernelCmdline = "console=ttyS0 root=/dev/vda rootfstype=ext4 rw";
 
-  # Debian's cloud kernel, same upstream version as the cloud
-  # image's generic one (#37): CONFIG_EXT4_FS=y and
-  # CONFIG_VIRTIO_PCI=y built in — only virtio_blk stays a module,
-  # which the minimal initramfs below loads. Pinned by pool URL and
-  # sha256; the deb carries vmlinuz, its config, and the matching
-  # /usr/lib/modules tree.
-  cloudKernelDeb = pkgs.fetchurl {
+  # Debian's GENERIC kernel flavor (#96), the same pin the
+  # appliance image boots — one deb fetch and one version pin serve
+  # both images. The cloud flavor this replaces built ext4 and
+  # virtio-pci in but shipped neither virtiofs nor kvm-intel/
+  # kvm-amd (the appliance's needs); in the generic flavor virtio-
+  # pci and virtiofs are BUILT IN, ext4 and virtio_blk are modules —
+  # so the initramfs below loads six modules in dependency order,
+  # and the guest's runtime module tree is the modprobe closure of
+  # the modules it actually loads (see debianRoot). Pinned by pool
+  # URL and sha256; the deb carries vmlinuz, its config, and the
+  # matching /usr/lib/modules tree.
+  genericKernelDeb = pkgs.fetchurl {
     url =
       "https://deb.debian.org/debian/pool/main/l/linux/"
-      + "linux-image-6.12.107+deb13-cloud-amd64-unsigned_6.12.107-1_amd64.deb";
-    hash = "sha256-5xJGCP1rv6GrcxSdxn7MgtCYWX11zx5UApHYynEUD+A=";
+      + "linux-image-6.12.107+deb13-amd64-unsigned_6.12.107-1_amd64.deb";
+    hash = "sha256-fRPNgqHTd+QIJsMT9du9su3xtIxxOjdeTP5eIHdJy04=";
   };
 
-  cloudKernel =
-    pkgs.runCommand "msks-cloud-kernel" { nativeBuildInputs = [ pkgs.dpkg ]; }
+  genericKernel =
+    pkgs.runCommand "msks-generic-kernel"
+      {
+        nativeBuildInputs = [ pkgs.dpkg ];
+      }
       ''
         set -eu
-        dpkg-deb -x ${cloudKernelDeb} "$out"
+        dpkg-deb -x ${genericKernelDeb} "$out"
       '';
 
-  # The minimal initramfs (#37): busybox, the one module the kernel
-  # cannot mount root without, and an init that mounts /dev/vda and
-  # switch_roots into systemd. The generic Debian initrd this
-  # replaces is a 34MB MODULES=most archive and sat ~2.5s deep in
-  # the boot critical path.
+  # The minimal initramfs (#37's shape, #96's module set): busybox,
+  # the six modules the generic kernel needs to mount the ext4
+  # root, and an init that mounts /dev/vda rw and switch_roots into
+  # systemd. The stock generic Debian initrd this replaces is a 34MB
+  # MODULES=most archive and sat ~2.5s deep in the boot critical
+  # path; the six hand-ordered insmods cost tens of milliseconds.
   minimalInitrd =
     pkgs.runCommand "msks-minimal-initrd"
       {
-        inherit cloudKernel;
+        inherit genericKernel;
         # Static: the initramfs has no dynamic loader. nixpkgs'
         # default busybox links against a store glibc.
         busybox = pkgs.pkgsStatic.busybox;
@@ -120,20 +134,39 @@ let
         mkdir -p "$out"/tree/bin "$out"/tree/modules \
           "$out"/tree/proc "$out"/tree/dev "$out"/tree/newroot
         cp "$busybox"/bin/busybox "$out"/tree/bin/busybox
-        moddir="$cloudKernel/usr/lib/modules"
+        moddir="$genericKernel/usr/lib/modules"
         moddir=$(echo "$moddir"/*)
-        # .ko.xz: busybox insmod reads plain modules only.
-        xz -dc "$moddir"/kernel/drivers/block/virtio_blk.ko.xz \
-          > "$out"/tree/modules/virtio_blk.ko
+        # .ko.xz: busybox insmod reads plain modules only. The list
+        # is dependency order: ext4's direct deps (crc16, mbcache,
+        # jbd2), then ext4 itself, then virtio_blk (independent).
+        # crc32c is not a modules.dep edge but a mount-time crypto
+        # request — the generic kernel ships it as a module (the
+        # cloud kernel built it in) and a metadata_csum rootfs
+        # cannot mount without it.
+        for ko in \
+          kernel/lib/crc16.ko.xz \
+          kernel/crypto/crc32c_generic.ko.xz \
+          kernel/fs/mbcache.ko.xz \
+          kernel/fs/jbd2/jbd2.ko.xz \
+          kernel/fs/ext4/ext4.ko.xz \
+          kernel/drivers/block/virtio_blk.ko.xz; do
+          name=$(basename "$ko" .ko.xz)
+          xz -dc "$moddir"/"$ko" > "$out"/tree/modules/"$name".ko
+        done
         cat > "$out"/tree/init <<'INIT'
         #!/bin/busybox sh
         # Mount root and hand off to systemd (#37): keep this as small
         # as it looks — every millisecond here delays the console. On
-        # any failure, a shell beats a silent hang in an 811KB
+        # any failure, a shell beats a silent hang in the ~1.4MB
         # initramfs (the serial console is reachable). rw matches the
         # image cmdline (#14): the overlay carries the writes.
         /bin/busybox mount -t proc proc /proc \
           && /bin/busybox mount -t devtmpfs devtmpfs /dev \
+          && /bin/busybox insmod /modules/crc16.ko \
+          && /bin/busybox insmod /modules/crc32c_generic.ko \
+          && /bin/busybox insmod /modules/mbcache.ko \
+          && /bin/busybox insmod /modules/jbd2.ko \
+          && /bin/busybox insmod /modules/ext4.ko \
           && /bin/busybox insmod /modules/virtio_blk.ko \
           && /bin/busybox mount -t ext4 -o rw /dev/vda /newroot \
           || exec /bin/busybox sh
@@ -431,28 +464,82 @@ let
           'msks:!::' \
           >> "$root"/etc/gshadow
 
-        # The cloud kernel's module tree replaces the generic one
-        # (#37): the running kernel is the cloud flavor, and a stale
-        # vermagic tree would make every module probe miss. The
-        # generic /boot payload (kernel, initrd) leaves with it — the
-        # VM direct-boots artifacts kept outside the image.
+        # The generic kernel's module tree (#96): the guest's runtime
+        # needs are the modprobe closure of the modules it loads —
+        # vmw_vsock_virtio_transport (the vsock console, #21),
+        # virtio_net (egress NICs, #52), virtio_blk (udev alias
+        # probing; the initrd loads it before root anyway), the
+        # ACPI power-button pair (button + evdev: logind answers the
+        # host-side graceful shutdown with a clean poweroff, #25 —
+        # the cloud kernel built these in, the generic flavor
+        # modules them), and isofs (the #41 NoCloud seed disk is
+        # iso9660 — the cloud flavor shipped this as a module too,
+        # found only because that image carried Debian's whole
+        # tree) — resolved mechanically with modprobe
+        # --show-depends over depmod metadata generated from the
+        # pinned deb, so the set cannot drift from the kernel's own
+        # dependency facts (the #36 bug class). The appliance ships
+        # the whole tree (it probes KVM, nftables, the egress
+        # stack); a workspace's ~25MB of cloud modules becomes ten
+        # files. The generic
+        # /boot payload (kernel, initrd) leaves too — the VM
+        # direct-boots artifacts kept outside the image.
         rm -rf "$root"/lib/modules/*
         rm -rf "$root"/usr/lib/modules/* 2>/dev/null || true
         rm -f "$root"/boot/vmlinuz-* "$root"/boot/initrd.img-* \
           "$root"/boot/System.map-* "$root"/boot/config-*
-        mkdir -p "$root"/usr/lib/modules
+        modsrc=modprobe-base
+        mkdir -p "$modsrc"/usr/lib/modules
         cp -a --no-preserve=ownership \
-          "${cloudKernel}"/usr/lib/modules/. "$root"/usr/lib/modules/
-        cp "${cloudKernel}"/boot/config-* "$root"/boot/
-
+          "${genericKernel}"/usr/lib/modules/. "$modsrc"/usr/lib/modules/
+        # kmod looks under <root>/lib/modules; the deb's own usrmerge
+        # layout carries lib -> usr/lib as a symlink.
+        ln -s usr/lib "$modsrc"/lib
+        kver=$(ls "$modsrc"/usr/lib/modules | head -1)
         # The deb ships no depmod metadata (its postinst generates it
-        # on the target); generate it here so modprobe — the vsock
-        # console's module load, udev alias lookups — can resolve
-        # anything at all. The deb's module dirs copy read-only.
+        # on the target); --show-depends needs it.
+        find "$modsrc"/usr/lib/modules -type d -exec chmod u+w {} +
+        depmod -b "$modsrc" "$kver"
+        mkdir -p "$root"/usr/lib/modules/"$kver"
+        for mod in \
+          vmw_vsock_virtio_transport \
+          virtio_net \
+          virtio_blk \
+          button \
+          evdev \
+          isofs; do
+          modprobe -d "$modsrc" -S "$kver" --show-depends "$mod" \
+            | awk '/^insmod /{print $2}'
+        done | sort -u | while read -r ko; do
+          rel=''${ko#*modules/"$kver"/}
+          mkdir -p "$root"/usr/lib/modules/"$kver"/"$(dirname "$rel")"
+          cp "$modsrc"/usr/lib/modules/"$kver"/"$rel" \
+            "$root"/usr/lib/modules/"$kver"/"$rel"
+        done
+        # modprobe reads modules.builtin to skip built-ins (virtio-pci
+        # and virtiofs are built into the generic kernel): without
+        # the file, every builtin alias resolves to a missing module.
+        cp "$modsrc"/usr/lib/modules/"$kver"/modules.builtin \
+          "$modsrc"/usr/lib/modules/"$kver"/modules.builtin.modinfo \
+          "$root"/usr/lib/modules/"$kver"/
+        cp "${genericKernel}"/boot/config-* "$root"/boot/
+
+        # Runtime depmod over the shipped subset: modprobe — the
+        # vsock console's module load, udev alias lookups — must
+        # resolve within the tree the image actually carries.
         find "$root"/usr/lib/modules -type d -exec chmod u+w {} +
-        kver=$(ls "$root"/usr/lib/modules | head -1)
         depmod -b "$root" "$kver"
         test -s "$root"/usr/lib/modules/"$kver"/modules.dep
+        for mod in \
+          vmw_vsock_virtio_transport \
+          virtio_net \
+          virtio_blk \
+          button \
+          evdev \
+          isofs; do
+          modprobe -d "$root" -S "$kver" --show-depends "$mod" >/dev/null \
+            || { echo "guest module tree cannot resolve $mod"; exit 1; }
+        done
 
         # Boot diet (#37): drop the wants symlinks of units a
         # workspace never uses. networkd and resolved stay (egress
@@ -478,8 +565,6 @@ let
         test -x "$root"/sbin/init
         test -x "$root"/usr/bin/socat
         test -x "$root"/usr/bin/msks-console-helper
-        test -n "$(ls "$root"/usr/lib/modules/*/kernel/drivers/block/virtio_blk.ko.xz)" \
-          || { echo "cloud module tree missing virtio_blk"; exit 1; }
 
         # Size the final image from the tree (content-derived, no
         # magic constant): Debian unpacks to ~600M plus headroom.
@@ -577,7 +662,7 @@ let
         inherit
           debianRoot
           rootfs
-          cloudKernel
+          genericKernel
           minimalInitrd
           ;
         inherit
@@ -589,7 +674,7 @@ let
       }
       ''
         set -eu
-        vmlinuz=$(ls "$cloudKernel"/boot/vmlinuz-*)
+        vmlinuz=$(ls "$genericKernel"/boot/vmlinuz-*)
         initrd="${minimalInitrd}/initrd"
         mkdir -p "$out"/boot "$out"/disk
         cp "$vmlinuz" "$out"/boot/vmlinuz
@@ -682,7 +767,7 @@ pkgs.runCommand "msks-guest"
     passthru = {
       inherit
         debianImage
-        cloudKernel
+        genericKernel
         ;
       inherit
         kernelCmdline
@@ -693,10 +778,10 @@ pkgs.runCommand "msks-guest"
   ''
     set -eu
     mkdir -p "$out"
-    # The cloud kernel (#37) plus the minimal initramfs; the version
-    # string (flavor name included) distinguishes it from the
-    # generic kernel this image replaced.
-    vmlinuz=$(ls "${cloudKernel}"/boot/vmlinuz-*)
+    # The generic kernel (#96 — the appliance's pin) plus the
+    # minimal initramfs; the version string names the flavor the
+    # guest actually boots.
+    vmlinuz=$(ls "${genericKernel}"/boot/vmlinuz-*)
     version=$(basename "$vmlinuz" | sed 's/^vmlinuz-//')
     cp "$vmlinuz" "$out/vmlinux"
     cp "${minimalInitrd}/initrd" "$out/initrd"

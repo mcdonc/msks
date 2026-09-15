@@ -58,23 +58,35 @@ milliseconds; it used to be the single largest lever (see below).
 Three properties of the shipped image carry most of the win. An
 image that regresses any of them pays for it at every boot.
 
-### A kernel with the root disk built in
+### A pinned kernel with a minimal path to root
 
-Debian's **cloud kernel** flavor (`linux-image-*-cloud-amd64`,
-pinned by pool URL and hash in `nix/guest-assets.nix`) builds ext4
-and virtio-pci into the kernel. The generic flavor ships both as
-modules, which chains the boot to a general-purpose initramfs — a
-34 MiB `MODULES=most` archive that cost ~2.5s to unpack and probe
-before systemd's first line.
+Debian's **generic kernel** flavor (`linux-image-*-amd64`, pinned
+by pool URL and hash in `nix/guest-assets.nix`) serves both the
+workspace guest and the appliance (#96 — one pin, one fetch). The
+property that matters is not built-ins but this: nothing sits
+between the kernel and the root mount. Debian's stock initramfs
+for the flavor is a 34 MiB `MODULES=most` archive that cost ~2.5s
+to unpack and probe before systemd's first line; msks replaces it
+with its own six-module initramfs and mounts root directly (the
+cloud flavor #37 chose dodged the same archive by building ext4
+in — the flavor was never the cost, the general-purpose initramfs
+was). The measured cost of the swap is in the #96 section below.
 
 ### A minimal initramfs
 
 The msks-built initramfs (`minimalInitrd` in `nix/guest-assets.nix`)
-is a static busybox, the one module the kernel cannot mount root
-without (`virtio_blk.ko`), and an `/init` that mounts `/dev/vda`
+is a static busybox, the six modules the generic kernel needs to
+mount the ext4 root (crc16, crc32c_generic, mbcache, jbd2, ext4,
+virtio_blk — dependency order, because busybox `insmod` resolves
+no dependencies), and an `/init` that mounts `/dev/vda`
 read-write (#14: the per-workspace overlay carries the writes) and
-`switch_root`s into systemd — 811 KiB shipped, unpacked
+`switch_root`s into systemd — ~1.4 MiB shipped, unpacked
 and done in tens of milliseconds.
+
+The runtime module tree is equally closed over: the guest's tree
+is the `modprobe --show-depends` closure of the modules its
+runtime loads (vsock console, virtio_net, virtio_blk, the ACPI
+button pair, isofs for the seed disk), asserted at build time.
 
 When swapping the kernel or module tree: the Debian deb ships its
 modules **without depmod metadata** (its package postinst generates
@@ -99,11 +111,35 @@ the boot.
 ### The unit diet
 
 Units a workspace never uses are absent from the boot: AppArmor
-profile loading (~0.7s), `systemd-networkd` and its socket,
-`systemd-timesyncd`, `systemd-resolved`, `unattended-upgrades`,
-`e2scrub_reap`. The wants symlinks are removed at image build time
-in `nix/guest-assets.nix`, with the reason each removal is safe
-recorded there.
+profile loading (~0.7s), `systemd-timesyncd`, `grub-common`,
+`unattended-upgrades`, `e2scrub_reap`. (networkd and resolved run —
+egress workspaces (#52) need the NIC configured; see
+`nix/guest-assets.nix`.) The wants symlinks are removed at image
+build time, with the reason each removal is safe recorded there.
+
+## The generic-kernel unification (#96)
+
+The workspace guest moved from Debian's cloud flavor to the
+**generic** flavor the appliance boots, measured on the reference
+host with `scripts/perf-boot.py --runs 5` (boot to first prompt,
+p50) and its guest-memory probe (MemTotal − MemAvailable at the
+first interactive prompt):
+
+| metric                          | cloud flavor              | generic flavor |
+| ------------------------------- | ------------------------- | -------------- |
+| boot p50 (start→prompt)         | 2.95–3.26 s¹              | 3.24 s         |
+| t_kernel (to first serial byte) | 0.44 s                    | 0.48 s         |
+| guest memory at first prompt    | 143.1 MiB                 | 134–142 MiB    |
+| workspace archive (xz -6)       | 147.8 MiB                 | 128.7 MiB      |
+| host nix fetches                | two kernel debs (137 MiB) | one (103 MiB)  |
+
+¹ two sessions on the same host; the spread is host noise, not
+kernel — the six-module initrd's own cost sits inside it. The
+kernel-side delta is decompressing a 0.4 MiB-bigger vmlinuz
+(t_kernel +40 ms). The appliance artifact set is untouched
+(206 MiB rootfs.xz + 11.6 MiB vmlinux + 1.4 MiB initrd), and a
+bundle shipping both images shrinks by the archive delta
+(~19 MiB compressed).
 
 ## The appliance
 
