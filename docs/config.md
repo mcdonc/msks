@@ -26,12 +26,25 @@ empty string is the unset form: the file value applies.
 | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `msksd`                              | Reads `$MSKSD_CONFIG_DIR/msksd.yaml` (default `~/.config/msksd/msksd.yaml`, honoring `$XDG_CONFIG_HOME`). A missing file is **generated** as a commented template pointing at this chapter — the first run writes the file so its location is discoverable, and the daemon then runs on environment variables and defaults. |
 | `msksd --config /path/to/msksd.yaml` | Reads exactly that file. A missing file is a startup error naming the path. Explicit paths are never auto-generated.                                                                                                                                                                                                        |
-| `msksd --config=none`                | Reads environment variables and built-in defaults only — the deployment shape for the appliance (its root filesystem is read-only, and its config channel is the kernel-cmdline env bridge) and container runs that manage config out-of-band.                                                                              |
+| `msksd --config=none`                | Reads environment variables and built-in defaults only — the deployment shape for container runs that manage config out-of-band. The appliance generates its file instead (below).                                                                                                                                          |
 
 `MSKSD_CONFIG_DIR` is read before anything else and exists only as
 an environment variable: the config file cannot relocate the
 directory it lives in, so the tree root must be resolvable before
 the file is located.
+
+### The appliance
+
+The appliance writes `/run/msksd.yaml` (on the tmpfs) at every boot
+carrying the build's settings — the state dir, the listener's bind,
+and the store paths of the tools the daemon execs — and starts the
+daemon with `--config /run/msksd.yaml`. The file is regenerated at
+each boot because the tool paths it names belong to that build; a
+file that survived an appliance rebuild would point at dead store
+paths. Operator overrides keep riding the kernel cmdline bridge:
+every `msksd.<name>=<value>` pair on the appliance's cmdline becomes
+an `MSKSD_<NAME>` variable in the daemon's environment, which
+outranks the same key in the generated file.
 
 ## Key mapping
 
@@ -75,7 +88,9 @@ everywhere and parse identically. A key with no value
 (`bootstrap_token:`) is the unset form — the environment (for its
 variable) and then the default apply. Values must be scalars: a list
 or mapping where a number, boolean, or string belongs is a startup
-error, and so is a duplicate key — a second `port:` does not silently win.
+error, and so is a duplicate key — a second `port:` does not silently
+win. Merge keys (`<<: *anchor`) are refused with their own message: the
+file is flat and every key is spelled out.
 
 Booleans deserve care. `true` and `false` are the spellings to use;
 PyYAML also parses the YAML 1.1 forms `yes`/`no`/`on`/`off` as
@@ -167,12 +182,17 @@ settings off the app's state at call time, so the swap propagates
 with no per-module reconfiguration — a changed `egress_subnet` or
 `k8s_namespace` applies to the next request that reads it.
 
-Several things keep their startup values until a restart:
+Several things keep their startup values until a restart — a
+reload naming a new one changes nothing:
 
 - the listener's address, port, TLS material, and access logging
   (bound — and, for the access log, snapshotted into the listener's
   config — at startup)
-- the database path (the engine is open)
+- `state_dir` and the database path it places (the engine is open,
+  and the local driver resolves every workspace's artifacts from the
+  state dir live — moving it mid-run would orphan running
+  workspaces, so the daemon latches the startup value)
+- `default_image` (imported into the catalog once, at first boot)
 - the workspace status scan's `event_poll_s` (sampled at loop start)
 - the egress machinery's startup inputs: `egress_enabled` (the
   subsystem latches its state when the daemon boots) and the base
@@ -189,10 +209,12 @@ template would silently revert every file-set value to its default.
 
 ## Notes for tooling
 
-- A bare `alembic` CLI run derives its database URL from environment
-  variables only (the daemon always passes its own live path
-  programmatically). Point `MSKSD_STATE_DIR` at the same tree the
-  config file names when running migrations by hand.
+- A bare `alembic` CLI run derives its database URL the way a bare
+  `msksd` would: the default config file when one is present (never
+  generated by `alembic`), else environment variables and defaults.
+  The daemon always passes its own live path programmatically. Use
+  `MSKSD_CONFIG_DIR`/`MSKSD_STATE_DIR` when the hand-run migration
+  must reach a database not at the default location.
 - The generated template is written once, with `0700` on its
   directory, and never overwrites an existing file — a concurrent
   `msksd` that wins the race is treated as "the file is there now".

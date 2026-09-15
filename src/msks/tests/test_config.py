@@ -1,10 +1,12 @@
 """The msksd YAML config file: modes, precedence, reload (#46)."""
 
 import os
+import re
 import signal
 from pathlib import Path
 
 import msks.server.main as main_mod
+import msks.settings as msks_settings
 import pytest
 import yaml
 from msks.app import build_app
@@ -48,6 +50,15 @@ def test_keys_derive_from_variables_by_one_rule() -> None:
         var.removeprefix("MSKSD_").lower() for var in SETTING_ENV_VARS
     }
     assert len(CONFIG_ENV_VARS) == len(SETTING_ENV_VARS)  # no collision
+
+
+def test_setting_vars_match_the_settings_source() -> None:
+    """SETTING_ENV_VARS is exactly the set of ``MSKSD_*`` variables
+    settings.py reads — a variable added there without a tuple entry
+    fails here (its config key would die as unknown)."""
+    text = Path(msks_settings.__file__).read_text()
+    read_vars = set(re.findall(r'"(MSKSD_[A-Z0-9_]+)"', text))
+    assert read_vars == set(SETTING_ENV_VARS)
 
 
 def test_config_dir_var_is_not_a_config_key() -> None:
@@ -107,6 +118,19 @@ def test_explicit_path_missing_is_an_error(tmp_path) -> None:
 
 def test_explicit_none_disables_the_file() -> None:
     assert resolve_config_path("none") == "none"
+
+
+def test_explicit_directory_gets_its_own_error(tmp_path) -> None:
+    with pytest.raises(ValueError, match="config path is a directory"):
+        resolve_config_path(str(tmp_path))
+
+
+def test_generated_template_is_owner_only(tmp_path) -> None:
+    """The template names credentials in its examples, so the file
+    is 0600 like every other secret-bearing artifact."""
+    path = tmp_path / "msksd.yaml"
+    generate_template(str(path))
+    assert path.stat().st_mode & 0o777 == 0o600
 
 
 def test_generate_template_refuses_to_overwrite(tmp_path) -> None:
@@ -223,13 +247,13 @@ def test_duplicate_key_rejected(tmp_path) -> None:
         file_env_overrides(path)
 
 
-def test_merge_key_error_names_the_real_problem(tmp_path) -> None:
-    """``<<: *anchor`` is flattened before the key walk (fresh-eyes
-    review), so a merge-bearing file reports its actual unknown key —
-    the anchor carrier — instead of PyYAML's opaque "could not
-    determine a constructor for the tag ...merge"."""
+def test_merge_keys_refused_with_their_own_message(tmp_path) -> None:
+    """The file is flat and every key is spelled out, so ``<<:
+    *anchor`` is refused by name (fresh-eyes review) — not by
+    PyYAML's opaque tag error, and not as the anchor carrier's
+    unknown-key error."""
     path = write_config(tmp_path, "base: &b\n  port: 9001\nhost: 0.0.0.0\n<<: *b\n")
-    with pytest.raises(ValueError, match="unknown config key 'base'"):
+    with pytest.raises(ValueError, match=r"merge keys .<<. are not supported"):
         file_env_overrides(path)
 
 
@@ -478,6 +502,20 @@ def test_reload_keeps_generated_tls(tmp_path) -> None:
     main_mod.reload_settings(app, str(tmp_path / "msksd.yaml"))
     assert app.state.settings.server.tls_cert == "/generated/c.pem"
     assert app.state.settings.server.tls_key == "/generated/k.pem"
+
+
+def test_reload_latches_the_state_dir(tmp_path) -> None:
+    """A reload that moves state_dir changes nothing: the engine is
+    open on the old path and the local driver resolves workspace
+    artifacts from it live — moving it mid-run would orphan running
+    workspaces (fresh-eyes review, third pass)."""
+    app = app_with_file(tmp_path, {"port": 9001})
+    startup_dir = app.state.settings.vmm.state_dir
+    write_config(tmp_path, "port: 9004\nstate_dir: /moved\n")
+    main_mod.reload_settings(app, str(tmp_path / "msksd.yaml"))
+    assert app.state.settings.server.port == 9004  # the live swap held
+    assert app.state.settings.vmm.state_dir == startup_dir
+    assert app.state.settings.server.db_path.parent == startup_dir
 
 
 def test_reload_keeps_operator_tls(tmp_path) -> None:

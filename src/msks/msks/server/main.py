@@ -98,23 +98,28 @@ def reload_settings(app, config: str | None) -> None:
             file=sys.stderr,
         )
         return
-    keep_generated_tls(app.state.settings, settings)
+    keep_startup_bound(app.state.settings, settings)
     app.state.settings = settings
 
 
-def keep_generated_tls(old: Settings, new: Settings) -> None:
-    """Carry startup TLS material across a SIGHUP reload.
+def keep_startup_bound(old: Settings, new: Settings) -> None:
+    """Latch startup-bound settings across a SIGHUP reload.
 
-    ``serve`` resolves unset cert/key paths to the generated CA pair
-    and writes them back into settings; a reload re-derives from the
-    file + environment, so each side the reload leaves unset keeps
-    its startup value — the listener runs on the pair it booted with,
-    generated material included.
+    The listener runs on the TLS pair it booted with (``serve``
+    resolves unset paths to the generated CA pair and writes them
+    back). The database engine is open on its path. The local driver
+    resolves every workspace's artifact directory live from
+    ``vmm.state_dir`` — a reload that moved it would report each
+    running workspace absent, orphan its VMM, and point deletes at
+    the new tree. Each of these keeps its startup value until a
+    restart; a reload naming a new one changes nothing.
     """
     if new.server.tls_cert is None:
         new.server.tls_cert = old.server.tls_cert
     if new.server.tls_key is None:
         new.server.tls_key = old.server.tls_key
+    new.vmm.state_dir = old.vmm.state_dir
+    new.server.db_path = old.server.db_path
 
 
 def install_sighup_reload(app, config: str | None) -> None:

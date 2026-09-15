@@ -194,144 +194,154 @@ let
     name = "msks-appliance-init";
     executable = true;
     text = ''
-      #!/bin/sh
-      export PATH=/bin
+            #!/bin/sh
+            export PATH=/bin
 
-      /bin/busybox mkdir -p /proc /sys /dev /tmp /run /nix/store /state
-      /bin/busybox mount -t proc none /proc
-      /bin/busybox mount -t sysfs none /sys
-      mount -t devtmpfs none /dev 2>/dev/null || true
-      # The rootfs is read-only: scratch space must be tmpfs, or any
-      # tempfile/mktemp use EROFSes.
-      mount -t tmpfs none /tmp
-      mount -t tmpfs none /run
+            /bin/busybox mkdir -p /proc /sys /dev /tmp /run /nix/store /state
+            /bin/busybox mount -t proc none /proc
+            /bin/busybox mount -t sysfs none /sys
+            mount -t devtmpfs none /dev 2>/dev/null || true
+            # The rootfs is read-only: scratch space must be tmpfs, or any
+            # tempfile/mktemp use EROFSes.
+            mount -t tmpfs none /tmp
+            mount -t tmpfs none /run
 
-      # The host's /nix/store, read-only: everything heavy — msksd's
-      # closure, the workspace VMM, guest assets — resolves through it.
-      /bin/busybox modprobe virtio_pci
-      /bin/busybox modprobe virtiofs
-      if ! mount -t virtiofs -o ro store /nix/store; then
-        echo "msks appliance: mounting the store share failed; dropping to a shell"
-        exec setsid cttyhack /bin/busybox sh
-      fi
+            # The host's /nix/store, read-only: everything heavy — msksd's
+            # closure, the workspace VMM, guest assets — resolves through it.
+            /bin/busybox modprobe virtio_pci
+            /bin/busybox modprobe virtiofs
+            if ! mount -t virtiofs -o ro store /nix/store; then
+              echo "msks appliance: mounting the store share failed; dropping to a shell"
+              exec setsid cttyhack /bin/busybox sh
+            fi
 
-      # Persistent state (sqlite, workspace overlays, logs): the second
-      # disk. A fresh one fails to mount ext4; mkfs it once and retry.
-      /bin/busybox modprobe virtio_blk
-      if ! mount -t ext4 /dev/vdb /state; then
-        echo "msks appliance: fresh state disk; formatting"
-        /bin/busybox mke2fs -F /dev/vdb
-        mount -t ext4 /dev/vdb /state
-      fi
+            # Persistent state (sqlite, workspace overlays, logs): the second
+            # disk. A fresh one fails to mount ext4; mkfs it once and retry.
+            /bin/busybox modprobe virtio_blk
+            if ! mount -t ext4 /dev/vdb /state; then
+              echo "msks appliance: fresh state disk; formatting"
+              /bin/busybox mke2fs -F /dev/vdb
+              mount -t ext4 /dev/vdb /state
+            fi
 
-      # The NIC: static plan recorded in the manifest (the host bridge
-      # mirrors it; see scripts/appliance-setup.sh).
-      /bin/busybox modprobe virtio_net
-      ip link set lo up
-      ip link set eth0 up
-      ip addr add ${net.address}/${toString net.prefixLength} dev eth0
-      ip route add default via ${net.gateway}
-      hostname msksd-appliance
+            # The NIC: static plan recorded in the manifest (the host bridge
+            # mirrors it; see scripts/appliance-setup.sh).
+            /bin/busybox modprobe virtio_net
+            ip link set lo up
+            ip link set eth0 up
+            ip addr add ${net.address}/${toString net.prefixLength} dev eth0
+            ip route add default via ${net.gateway}
+            hostname msksd-appliance
 
-      # Nested KVM for workspace VMs: host-passthrough CPUs expose the
-      # virtualization extensions; /dev/kvm appearing is the contract.
-      modprobe kvm_intel 2>/dev/null || modprobe kvm_amd 2>/dev/null || true
-      if [ ! -e /dev/kvm ]; then
-        mknod /dev/kvm c 10 232
-      fi
+            # Nested KVM for workspace VMs: host-passthrough CPUs expose the
+            # virtualization extensions; /dev/kvm appearing is the contract.
+            modprobe kvm_intel 2>/dev/null || modprobe kvm_amd 2>/dev/null || true
+            if [ ! -e /dev/kvm ]; then
+              mknod /dev/kvm c 10 232
+            fi
 
-      # Egress plumbing (#52): the tap device and the nftables/NAT
-      # modules the daemon's rulesets load. devtmpfs creates
-      # /dev/net/tun when the module registers; the mknod is the
-      # belt-and-braces fallback for a kernel with TUN built in but a
-      # cold /dev.
-      for module in tun nf_tables nft_chain_nat nft_masq nft_ct nf_nat nf_conntrack; do
-        modprobe "$module" 2>/dev/null || true
-      done
-      if [ ! -e /dev/net/tun ]; then
-        mkdir -p /dev/net
-        mknod /dev/net/tun c 10 200
-      fi
+            # Egress plumbing (#52): the tap device and the nftables/NAT
+            # modules the daemon's rulesets load. devtmpfs creates
+            # /dev/net/tun when the module registers; the mknod is the
+            # belt-and-braces fallback for a kernel with TUN built in but a
+            # cold /dev.
+            for module in tun nf_tables nft_chain_nat nft_masq nft_ct nf_nat nf_conntrack; do
+              modprobe "$module" 2>/dev/null || true
+            done
+            if [ ! -e /dev/net/tun ]; then
+              mkdir -p /dev/net
+              mknod /dev/net/tun c 10 200
+            fi
 
-      # The resolver the egress forwarder relays to (#52): a public
-      # resolver by default — the host bridge gateway runs no
-      # listener. Point the kernel cmdline's msksd.egress_dns_upstream=
-      # at another resolver to override (the env bridge below turns
-      # it into MSKSD_EGRESS_DNS_UPSTREAM). /run is tmpfs: the root
-      # stays ro.
-      printf 'nameserver 9.9.9.9\n' > /run/resolv.conf
+            # The resolver the egress forwarder relays to (#52): a public
+            # resolver by default — the host bridge gateway runs no
+            # listener. Point the kernel cmdline's msksd.egress_dns_upstream=
+            # at another resolver to override (the env bridge below turns
+            # it into MSKSD_EGRESS_DNS_UPSTREAM). /run is tmpfs: the root
+            # stays ro.
+            printf 'nameserver 9.9.9.9\n' > /run/resolv.conf
 
-      # React to the host's ch-remote shutdown (ACPI power button).
-      acpid
+            # React to the host's ch-remote shutdown (ACPI power button).
+            acpid
 
-      # Every msksd.<name>=<value> pair on the kernel cmdline
-      # becomes an MSKSD_<NAME> environment variable (upper-cased;
-      # dots map to underscores). Cmdline delivery survives
-      # state-disk recreation and unclean shutdowns, unlike files
-      # seeded onto the journaled ext4 from outside — and the host
-      # controls daemon settings (the bootstrap token; the console
-      # bring-up wait on slow nested-virt hosts) without an image
-      # rebuild. Variable NAMES are echoed to the serial log, never
-      # values.
-      cmdline_names=""
-      for pair in $(cat /proc/cmdline); do
-        case "$pair" in
-          msksd.*=*)
-            key="''${pair#msksd.}"
-            key="''${key%%=*}"
-            var="$(printf '%s' "$key" | tr 'a-z.' 'A-Z_')"
-            export MSKSD_"$var"="''${pair#*=}"
-            cmdline_names="$cmdline_names $var"
-            ;;
-        esac
-      done
-      echo "msks appliance: cmdline env:$cmdline_names"
+            # Every msksd.<name>=<value> pair on the kernel cmdline
+            # becomes an MSKSD_<NAME> environment variable (upper-cased;
+            # dots map to underscores). Cmdline delivery survives
+            # state-disk recreation and unclean shutdowns, unlike files
+            # seeded onto the journaled ext4 from outside — and the host
+            # controls daemon overrides (the bootstrap token; the console
+            # bring-up wait on slow nested-virt hosts) without an image
+            # rebuild. A variable overrides the same key in the generated
+            # config file below (#46 precedence: env > file > defaults).
+            # Variable NAMES are echoed to the serial log, never values.
+            cmdline_names=""
+            for pair in $(cat /proc/cmdline); do
+              case "$pair" in
+                msksd.*=*)
+                  key="''${pair#msksd.}"
+                  key="''${key%%=*}"
+                  var="$(printf '%s' "$key" | tr 'a-z.' 'A-Z_')"
+                  export MSKSD_"$var"="''${pair#*=}"
+                  cmdline_names="$cmdline_names $var"
+                  ;;
+              esac
+            done
+            echo "msks appliance: cmdline env:$cmdline_names"
 
-      echo
-      echo "msks appliance: kernel $(uname -r) up; execing msksd"
-      echo "msks appliance: serving https://${net.address}:8660 (TOFU fingerprint on the serial log)"
+            # The daemon's settings file (#46), generated on the tmpfs at
+            # every boot: the tool paths it names are this build's store
+            # paths, so a file that survived a rebuild would point at dead
+            # paths — and a file on tmpfs is never mistaken for operator
+            # config. Keys are the MSKSD_* variables lowercased (the #46
+            # convention); operator overrides ride the cmdline bridge
+            # above as variables, which outrank the file. The heredoc body
+            # sits at column zero: an unquoted delimiter expands nothing
+            # (the store paths are already literal text) and the closing
+            # EOF must start a line.
+            cat >/run/msksd.yaml <<EOF
+      state_dir: /state
+      host: 0.0.0.0
+      port: 8660
+      cloud_hypervisor: ${vmm}/bin/cloud-hypervisor
+      qemu_img: ${qemuImg}/bin/qemu-img
+      mkfs_ext4: ${e2fsprogs}/sbin/mkfs.ext4
+      mkisofs: ${mkisofs}/bin/mkisofs
+      egress_enabled: true
+      ip_tool: ${iproute2}/sbin/ip
+      nft_tool: ${nftables}/sbin/nft
+      EOF
 
-      export PATH="${iproute2}/sbin:${nftables}/sbin:${qemuImg}/bin:${e2fsprogs}/sbin:${vmm}/bin:${msks}/bin:$PATH"
-      export MSKSD_STATE_DIR=/state
-      export MSKSD_HOST=0.0.0.0
-      export MSKSD_PORT=8660
-      export MSKSD_CLOUD_HYPERVISOR="${vmm}/bin/cloud-hypervisor"
-      export MSKSD_QEMU_IMG="${qemuImg}/bin/qemu-img"
-      export MSKSD_MKFS_EXT4="${e2fsprogs}/sbin/mkfs.ext4"
-      export MSKSD_MKISOFS="${mkisofs}/bin/mkisofs"
-      # Egress (#52): the appliance runs as root, so the plumbing
-      # arms and workspaces get a NIC by default.
-      export MSKSD_EGRESS_ENABLED=true
-      export MSKSD_IP_TOOL="${iproute2}/sbin/ip"
-      export MSKSD_NFT_TOOL="${nftables}/sbin/nft"
-      # Debug escape hatch: a /state/debug-shell marker (seeded onto
-      # the state disk from the host) backgrounds the daemon and gives
-      # the console an interactive shell instead of exec'ing PID 1.
-      # Both msksd execs carry --config=none: the root filesystem is
-      # read-only (a bare msksd would fail generating its first-run
-      # config template under ~/.config), and the appliance's config
-      # channel is the cmdline env bridge above.
-      if [ -e /state/debug-shell ]; then
-        ( sleep 2; "${msks}/bin/msksd" --config=none ) &
-        echo "msks appliance: DEBUG SHELL on console"
-        echo "=== DIAG ==="
-        ls -l /dev/kvm 2>&1 || echo "NO /dev/kvm node"
-        modprobe kvm_intel 2>&1; echo "modprobe kvm_intel rc=$?"
-        modprobe kvm_amd 2>&1; echo "modprobe kvm_amd rc=$?"
-        ls -l /dev/kvm 2>&1 || echo "still NO /dev/kvm"
-        grep -mcE "vmx|svm" /proc/cpuinfo
-        "${vmm}/bin/cloud-hypervisor" --version 2>&1 || echo "CH EXEC FAIL rc=$?"
-        ls /nix/store | head -3
-        # Host-editable diagnostics: seed /state/diag.sh from outside.
-        if [ -f /state/diag.sh ]; then
-          echo "--- diag.sh ---"
-          sh /state/diag.sh 2>&1
-          echo "--- diag.sh end ---"
-        fi
-        echo "=== DIAG-END ==="
-        exec setsid cttyhack /bin/busybox sh
-      fi
-      exec "${msks}/bin/msksd" --config=none
+            echo
+            echo "msks appliance: kernel $(uname -r) up; execing msksd"
+            echo "msks appliance: serving https://${net.address}:8660 (TOFU fingerprint on the serial log)"
+
+            export PATH="${iproute2}/sbin:${nftables}/sbin:${qemuImg}/bin:${e2fsprogs}/sbin:${vmm}/bin:${msks}/bin:$PATH"
+            # Debug escape hatch: a /state/debug-shell marker (seeded onto
+            # the state disk from the host) backgrounds the daemon and gives
+            # the console an interactive shell instead of exec'ing PID 1.
+            # Both msksd execs carry the generated config file: the root
+            # filesystem is read-only, so the file lives on the tmpfs.
+            if [ -e /state/debug-shell ]; then
+              ( sleep 2; "${msks}/bin/msksd" --config /run/msksd.yaml ) &
+              echo "msks appliance: DEBUG SHELL on console"
+              echo "=== DIAG ==="
+              ls -l /dev/kvm 2>&1 || echo "NO /dev/kvm node"
+              modprobe kvm_intel 2>&1; echo "modprobe kvm_intel rc=$?"
+              modprobe kvm_amd 2>&1; echo "modprobe kvm_amd rc=$?"
+              ls -l /dev/kvm 2>&1 || echo "still NO /dev/kvm"
+              grep -mcE "vmx|svm" /proc/cpuinfo
+              "${vmm}/bin/cloud-hypervisor" --version 2>&1 || echo "CH EXEC FAIL rc=$?"
+              ls /nix/store | head -3
+              # Host-editable diagnostics: seed /state/diag.sh from outside.
+              if [ -f /state/diag.sh ]; then
+                echo "--- diag.sh ---"
+                sh /state/diag.sh 2>&1
+                echo "--- diag.sh end ---"
+              fi
+              echo "=== DIAG-END ==="
+              exec setsid cttyhack /bin/busybox sh
+            fi
+            exec "${msks}/bin/msksd" --config /run/msksd.yaml
     '';
   };
 

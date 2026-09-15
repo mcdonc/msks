@@ -151,31 +151,41 @@ def scalar_to_str(key: str, value: object) -> str:
 
 
 class UniqueKeyLoader(yaml.SafeLoader):
-    """A safe loader that refuses duplicate mapping keys.
+    """A safe loader that refuses duplicate mapping keys and merge keys.
 
     PyYAML keeps the last of duplicate keys silently; the config file
     fails fast instead — an operator appending a second block to a
     long file gets an error naming the key, not a silent override of
-    everything above it. Merge keys (``<<: *anchor``) are flattened
-    first, so an anchored base with overrides is legal and its
-    duplicates are still caught.
+    everything above it. Merge keys (``<<: *anchor``) are refused
+    with their own message: the file is flat and every key is spelled
+    out, so an anchored base has nothing to merge into — and every
+    practical merge carries a mapping-valued anchor carrier, which
+    is itself not a config key.
     """
 
     def construct_mapping(self, node, deep=False):
-        self.flatten_mapping(node)
         seen = set()
         for key_node, _ in node.value:
-            key = self.construct_object(key_node, deep=deep)
-            try:
-                duplicate = key in seen
-            except TypeError:
-                raise ValueError(
-                    "config keys must be scalars, not lists or mappings"
-                ) from None
-            if duplicate:
-                raise ValueError(f"duplicate config key {key!r}")
-            seen.add(key)
+            note_key(self, key_node, seen, deep)
         return super().construct_mapping(node, deep)
+
+
+def note_key(loader, key_node, seen: set, deep: bool) -> None:
+    """Validate one mapping key in place: refuse merge keys and
+    complex (non-scalar) keys, and duplicate keys."""
+    if key_node.tag == "tag:yaml.org,2002:merge":
+        raise ValueError(
+            "merge keys (<<) are not supported by the msksd "
+            "config file; write each key out"
+        )
+    key = loader.construct_object(key_node, deep=deep)
+    try:
+        duplicate = key in seen
+    except TypeError:
+        raise ValueError("config keys must be scalars, not lists or mappings") from None
+    if duplicate:
+        raise ValueError(f"duplicate config key {key!r}")
+    seen.add(key)
 
 
 def parse_config_doc(text: str, path: str) -> dict[str, str]:
@@ -221,9 +231,9 @@ def key_layer(doc: dict, path: str) -> dict[str, str]:
 def file_env_overrides(path: str) -> dict[str, str]:
     """Read the config file at *path* into an ``MSKSD_*`` env-var layer.
 
-    An unreadable file raises ``OSError``; a malformed document or an
-    unknown key raises ``ValueError`` — both are startup errors the
-    caller reports.
+    Raises on anything the operator should see at startup: an
+    unreadable file, a malformed document, an unknown key — the
+    callers' guards report all of them as one clean line.
     """
     return parse_config_doc(Path(path).read_text(encoding="utf-8"), path)
 
@@ -302,6 +312,8 @@ def resolve_config_path(config: str | None, *, generate: bool = True) -> str:
         return default_path_or_error(generate)
     if config == NO_CONFIG:
         return NO_CONFIG
+    if Path(config).is_dir():
+        raise ValueError(f"config path is a directory: {config}")
     if not Path(config).is_file():
         raise ValueError(f"config file not found: {config}")
     return config
@@ -449,12 +461,17 @@ def render_template() -> str:
 def generate_template(path: str) -> None:
     """Write the first-run ``msksd.yaml`` template at *path*.
 
-    The parent directory is created (0700) when missing. An existing
-    file is the operator's config: ``open("x")`` refuses to overwrite
-    it, failing loudly if the file appeared between the caller's
-    existence check and now (a concurrent ``msksd``).
+    The parent directory is created (0700) when missing, and the
+    file is written 0600 — the template's examples name credentials
+    (``bootstrap_token``), so the file joins the house pattern of
+    secret-bearing artifacts readable only by the daemon's user. An
+    existing file is the operator's config: the exclusive create
+    refuses to overwrite it, failing loudly if the file appeared
+    between the caller's existence check and now (a concurrent
+    ``msksd``).
     """
     body = render_template()
     Path(path).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    with open(path, "x", encoding="utf-8") as f:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(body)
