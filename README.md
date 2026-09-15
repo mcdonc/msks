@@ -338,11 +338,14 @@ EXEC:/bin/bash,pty,ctty,echo=1,icanon=1,stderr,setsid`, restarted
   input for programs that read stdin directly. The unit sets
   `TERM=xterm` so bash's readline engages and provides line editing
   and history while it is active (#61); a TERM=dumb service
-  environment leaves readline off. The shell is **root**; a non-root
-  shell is follow-up work.
-- Window-size changes are not applied v1: the guest pty keeps its
-  creation size; propagating a resize needs a guest-side helper that
-  does not exist yet.
+  environment leaves readline off. The session's user is **root** by
+  default; `msks shell --user <name>` requests the image's workspace
+  user (the guest helper negotiates the identity in-band and refuses
+  users the image does not serve, #63).
+- The guest pty is created at the client terminal's size (#61's
+  0x0 fixed): the console request carries the geometry at connect.
+  Live resizes during a session are not propagated yet — the same
+  in-band negotiation can carry them later.
 - `MSKSC_CAFILE` pins the daemon certificate for verification when
   you have it (a directly-run msksd's CA, or the appliance CA
   exported from its state disk:

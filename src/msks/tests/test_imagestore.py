@@ -19,6 +19,7 @@ from msks.imagestore import (
     default_image,
     import_archive,
     list_images,
+    record_from,
     resolve,
     set_default,
     sweep_crash_leftovers,
@@ -1028,3 +1029,29 @@ def test_capabilities_without_provisioner_reads_as_none(tmp_path: Path) -> None:
         },
     )
     assert import_archive(archive, tmp_path).provisioner is None
+
+# --- console identity markers (#63) -----------------------------------
+
+
+def test_record_defaults_to_legacy_console(tmp_path: Path) -> None:
+    record = record_from(tmp_path, "h", minimal_manifest())
+    assert record.console_protocol == "legacy"
+    assert record.console_users == ("root",)
+
+
+def test_record_reads_console_markers(tmp_path: Path) -> None:
+    manifest = minimal_manifest()
+    manifest["console_protocol"] = "prelude-v1"
+    manifest["console_users"] = ["root", "msks"]
+    record = record_from(tmp_path, "h", manifest)
+    assert record.console_protocol == "prelude-v1"
+    assert record.console_users == ("root", "msks")
+
+
+def minimal_manifest() -> dict:
+    return {
+        "name": "debian",
+        "version": "13.6",
+        "cmdline": "console=ttyS0 root=/dev/vda rw",
+        "vsock_shell_port": 1023,
+    }

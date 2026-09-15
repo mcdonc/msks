@@ -87,14 +87,32 @@ def test_env_token_present(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_ws_url_schemes() -> None:
     assert (
         ws_url("https://h:1", "wid", "tok")
-        == "wss://h:1/api/v1/workspaces/wid/console?token=tok"
+        == "wss://h:1/api/v1/workspaces/wid/console?token=tok&user=root"
     )
     assert (
         ws_url("http://h:1", "wid", "tok")
-        == "ws://h:1/api/v1/workspaces/wid/console?token=tok"
+        == "ws://h:1/api/v1/workspaces/wid/console?token=tok&user=root"
     )
     # A bare host:port (no scheme) means the TLS shape.
     assert ws_url("h:1", "wid", "tok").startswith("wss://h:1/")
+
+
+def test_ws_url_carries_user_and_size() -> None:
+    url = ws_url("https://d", "ws 1", "tok/en", user="msks", size=(34, 120))
+    assert "user=msks" in url
+    assert "rows=34" in url
+    assert "cols=120" in url
+
+
+def test_ws_url_default_user_root_without_size() -> None:
+    url = ws_url("https://d", "ws-1", "t")
+    assert "user=root" in url
+    assert "rows=" not in url
+
+
+def test_ws_url_quotes_user() -> None:
+    url = ws_url("https://d", "ws-1", "t", user="a b")
+    assert "user=a+b" in url
 
 
 def test_ws_url_quotes_query_unsafe_parts() -> None:
@@ -102,9 +120,11 @@ def test_ws_url_quotes_query_unsafe_parts() -> None:
     # The id is a PATH segment: a space must encode as %20 (a + would
     # reach the server literally, since paths percent-decode only).
     assert quoted.startswith("wss://h:1/api/v1/workspaces/w%20id/")
-    assert quoted.endswith("?token=a%2Bb%26c%3Dd%25e")
-    # The token stays one query parameter, whatever it contains.
-    assert "&" not in quoted.split("?token=", 1)[1]
+    assert quoted.endswith("?token=a%2Bb%26c%3Dd%25e&user=root")
+    # The token stays one query parameter, whatever it contains; the
+    # user follows it as the next one.
+    tail = quoted.split("?token=", 1)[1]
+    assert tail.count("&") == 1 and tail.endswith("&user=root")
 
 
 def test_ssl_context_unverified_warns(
@@ -446,7 +466,7 @@ def test_main_raw_mode_cycle(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(shell, "ensure_running", preflight)
     restored: list = []
 
-    async def fake_run(wid, url, token, ssl_ctx):
+    async def fake_run(wid, url, token, ssl_ctx, user="root", size=None):
         return 7
 
     monkeypatch.setattr(shell, "run_shell", fake_run)
@@ -473,7 +493,7 @@ def test_main_without_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
         shell.termios, "tcgetattr", lambda fd: (_ for _ in ()).throw(termios.error())
     )
 
-    async def fake_run(wid, url, token, ssl_ctx):
+    async def fake_run(wid, url, token, ssl_ctx, user="root", size=None):
         return 0
 
     monkeypatch.setattr(shell, "run_shell", fake_run)
@@ -498,6 +518,14 @@ def _closed(code: int, reason: str = ""):
 
     close = shell.websockets.Close(code, reason)
     return shell.websockets.ConnectionClosed(close, None)
+
+
+def test_report_close_4400() -> None:
+    closed = _closed(4400, "console user 'x' is not served")
+    with pytest.raises(SystemExit) as caught:
+        shell._report_close(closed)
+    assert "console refused" in str(caught.value)
+    assert "'x'" in str(caught.value)
 
 
 def test_report_close_4401() -> None:
@@ -571,7 +599,7 @@ def test_run_workspace_shell_preflights_boot(
         shell.termios, "tcgetattr", lambda fd: (_ for _ in ()).throw(termios.error())
     )
 
-    async def fake_run(wid, url, token, ssl_ctx):
+    async def fake_run(wid, url, token, ssl_ctx, user="root", size=None):
         return 0
 
     monkeypatch.setattr(shell, "run_shell", fake_run)

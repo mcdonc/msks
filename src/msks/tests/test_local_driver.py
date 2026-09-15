@@ -953,3 +953,126 @@ async def test_launch_attaches_the_user_data_seed(env, fake, tmp_path: Path) -> 
     assert body["disks"] == disk_entries(state_dir, WID, user_data=payload)
     assert body["disks"][2]["readonly"] is True
     await app.state.microvm.kill(WID)
+
+# --- console identity prelude (#63) -----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_handshake_sends_prelude(tmp_path: Path) -> None:
+    path = tmp_path / "guest.sock"
+    seen = {}
+
+    async def session(reader, writer):
+        seen["connect"] = await reader.readline()
+        writer.write(b"OK 5\n")
+        await writer.drain()
+        seen["prelude"] = await reader.readuntil(b"GO\n")
+        writer.write(b"MSKS OK msks\n")
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_unix_server(session, str(path))
+    try:
+        reader, writer = await local_mod._vsock_handshake(
+            path, 1023, user="msks", rows=34, cols=120
+        )
+    finally:
+        server.close()
+        await server.wait_closed()
+    assert seen["connect"] == b"CONNECT 1023\n"
+    assert seen["prelude"] == b"HELLO 1\nUSER msks\nWINSZ 34 120\nGO\n"
+    writer.close()
+
+
+@pytest.mark.asyncio
+async def test_prelude_refusal_raises(tmp_path: Path) -> None:
+    path = tmp_path / "guest.sock"
+
+    async def session(reader, writer):
+        await reader.readline()
+        writer.write(b"OK 5\n")
+        await writer.drain()
+        assert await reader.readuntil(b"GO\n")
+        writer.write(b"MSKS ERR user\n")
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_unix_server(session, str(path))
+    try:
+        with pytest.raises(MicrovmError) as caught:
+            await local_mod._vsock_handshake(path, 1023, user="msks")
+    finally:
+        server.close()
+        await server.wait_closed()
+    assert "refused user 'msks': user" in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_prelude_garbage_fails_closed(tmp_path: Path) -> None:
+    path = tmp_path / "guest.sock"
+
+    async def session(reader, writer):
+        await reader.readline()
+        writer.write(b"OK 5\n")
+        await writer.drain()
+        assert await reader.readuntil(b"GO\n")
+        writer.write(b"welcome to debian\n")
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_unix_server(session, str(path))
+    try:
+        with pytest.raises(MicrovmError, match="unrecognized"):
+            await local_mod._vsock_handshake(path, 1023, user="root")
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_prelude_silence_fails_closed(tmp_path: Path) -> None:
+    path = tmp_path / "guest.sock"
+
+    async def session(reader, writer):
+        await reader.readline()
+        writer.write(b"OK 5\n")
+        await writer.drain()
+        assert await reader.readuntil(b"GO\n")
+        # No reply at all: the guest went away mid-negotiation.
+        writer.close()
+
+    server = await asyncio.start_unix_server(session, str(path))
+    try:
+        with pytest.raises(MicrovmError, match="prelude"):
+            await local_mod._vsock_handshake(path, 1023, user="root")
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_handshake_without_user_sends_no_prelude(tmp_path: Path) -> None:
+    path = tmp_path / "guest.sock"
+    seen = {}
+
+    async def session(reader, writer):
+        seen["connect"] = await reader.readline()
+        writer.write(b"OK 5\n")
+        await writer.drain()
+        # A bounded peek: the legacy path sends no prelude, so nothing
+        # arrives before the client hangs up.
+        try:
+            data = await asyncio.wait_for(reader.read(64), 1.0)
+        except TimeoutError:
+            data = b"<timeout>"
+        seen["rest"] = data
+        writer.close()
+
+    server = await asyncio.start_unix_server(session, str(path))
+    try:
+        reader, writer = await local_mod._vsock_handshake(path, 1023)
+    finally:
+        server.close()
+        await server.wait_closed()
+    assert seen["rest"] in (b"", None) or not seen["rest"].startswith(b"HELLO")
+    writer.close()

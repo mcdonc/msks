@@ -59,6 +59,13 @@ class ImageRecord:
     # The image's declared first-boot provisioner (#41): None (the
     # field is absent) or one of PROVISIONERS.
     provisioner: str | None = None
+    #: The guest console protocol (#63): "prelude-v1" images negotiate
+    #: the user and window size in-band; "legacy" images (and every
+    #: image whose manifest predates the field) speak raw bytes.
+    console_protocol: str = "legacy"
+    #: The users the image's console will serve; the daemon validates
+    #: --user against this list before anything reaches the guest.
+    console_users: tuple[str, ...] = ("root",)
 
     @property
     def ref(self) -> str:
@@ -287,6 +294,10 @@ def record_from(cache: Path, digest: str, manifest: dict) -> ImageRecord:
         vsock_shell_port=int(manifest["vsock_shell_port"]),
         kernel_version=str(manifest.get("kernel_version", "")),
         kernel_format=str(manifest.get("kernel_format", "")),
+        console_protocol=str(manifest.get("console_protocol", "legacy")),
+        console_users=tuple(
+            str(user) for user in manifest.get("console_users", ("root",))
+        ),
         kernel=cache / "kernel",
         initrd=cache / "initrd",
         rootfs=cache / "rootfs.ext4",

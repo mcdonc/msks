@@ -11,14 +11,18 @@ Input is read in chunks and sent one frame per chunk: interactive
 typing is unchanged, while a large paste becomes a few frames
 instead of one per byte.
 
-Window-size changes are not propagated v1: the guest's pty is fixed
-at its creation size, and applying a resize needs a guest-side
-helper that does not exist yet.
+The client's terminal geometry rides the console request (#63): the
+guest pty is created at the client's size (the #61 "0x0" evidence).
+Live resizes during a session are not propagated yet — the prelude
+carries the size at connect, and an out-of-band resize channel can
+reuse the same negotiation later.
 """
 
 import asyncio
 import contextlib
+import fcntl
 import ssl
+import struct
 import sys
 import termios
 import tty
@@ -51,7 +55,31 @@ READ_CHUNK = 4096
 ESCAPE_WINDOW = 0.05
 
 
-def ws_url(base_url: str, workspace_id: str, token: str) -> str:
+def tty_size(fd: int) -> tuple[int, int] | None:
+    """(rows, cols) of the terminal on fd, None when it has none.
+
+    The console request carries the size so the guest pty starts at
+    the client's geometry instead of 0x0 (#61's evidence); a client
+    without a measurable terminal omits it and the guest defaults.
+    """
+    packed = struct.pack("HHHH", 0, 0, 0, 0)
+    try:
+        packed = fcntl.ioctl(fd, termios.TIOCGWINSZ, packed)
+    except OSError:
+        return None
+    rows, cols = struct.unpack("HHHH", packed)[:2]
+    if rows < 1 or cols < 1:
+        return None
+    return rows, cols
+
+
+def ws_url(
+    base_url: str,
+    workspace_id: str,
+    token: str,
+    user: str = "root",
+    size: tuple[int, int] | None = None,
+) -> str:
     scheme, sep, rest = base_url.partition("://")
     if sep:
         scheme = "wss" if scheme == "https" else "ws"
@@ -62,9 +90,12 @@ def ws_url(base_url: str, workspace_id: str, token: str) -> str:
     # The id is a path segment: quote with no safe chars (a space must
     # become %20, not + — the server percent-decodes paths only),
     # while the token is a query value where + means space.
+    query = f"token={quote_plus(token)}&user={quote_plus(user)}"
+    if size is not None:
+        query += f"&rows={size[0]}&cols={size[1]}"
     return (
         f"{scheme}://{rest}/api/v1/workspaces/{quote(workspace_id, safe='')}"
-        f"/console?token={quote_plus(token)}"
+        f"/console?{query}"
     )
 
 
@@ -160,9 +191,16 @@ def _connect(address: str, ssl_ctx):
     )
 
 
-async def run_shell(workspace_id: str, url: str, token: str, ssl_ctx) -> int:
+async def run_shell(
+    workspace_id: str,
+    url: str,
+    token: str,
+    ssl_ctx,
+    user: str = "root",
+    size: tuple[int, int] | None = None,
+) -> int:
     """One interactive session; 0 on clean detach or session end."""
-    address = ws_url(url, workspace_id, token)
+    address = ws_url(url, workspace_id, token, user=user, size=size)
     connection = _connect(address, ssl_ctx)
     try:
         ws = await connection
@@ -195,6 +233,7 @@ async def run_shell(workspace_id: str, url: str, token: str, ssl_ctx) -> int:
 
 
 CLOSE_CODE_REASONS = {
+    4400: "console refused (unknown user or bad request)",
     4401: "authentication failed (bad token?)",
     4404: "no such workspace",
     4501: "console unavailable (is the workspace running?)",
@@ -245,7 +284,7 @@ def restore(old, had: bool) -> None:
         termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old)
 
 
-def run_workspace_shell(workspace_id: str) -> int:
+def run_workspace_shell(workspace_id: str, user: str = "root") -> int:
     """One interactive shell session, from tty setup to restore.
 
     Argument dispatch (``msks shell`` vs the other subcommands) lives
@@ -266,9 +305,12 @@ def run_workspace_shell(workspace_id: str) -> int:
     # workspace is booted here, with its notices on stderr, before
     # the tty goes raw.
     asyncio.run(ensure_running(workspace_id, url, token, ssl_ctx=ssl_ctx))
+    size = tty_size(sys.stdin.fileno())
     try:
         if old is not None:
             tty.setraw(sys.stdin.fileno())
-        return asyncio.run(run_shell(workspace_id, url, token, ssl_ctx))
+        return asyncio.run(
+            run_shell(workspace_id, url, token, ssl_ctx, user=user, size=size)
+        )
     finally:
         restore(old, old is not None)

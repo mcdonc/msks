@@ -8,6 +8,7 @@ query is built outside ``msks.model``.
 import asyncio
 import contextlib
 import json
+import re
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -167,6 +168,71 @@ def resolve_boot(app, body: WorkspaceCreate) -> dict:
         "user_data": validated_user_data(body),
         **artifact_sizes(app, body),
     }
+
+
+#: The console protocol the daemon negotiates (#63); manifest-keyed.
+CONSOLE_PROTOCOL_PRELUDE = "prelude-v1"
+
+#: The wire charset for a console user name — the same shape the guest
+#: helper's prelude accepts, checked before anything is forwarded.
+USER_NAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+
+
+def console_request(params) -> tuple[str, int, int, str | None]:
+    """The console websocket's user/rows/cols, or the refusal reason.
+
+    The daemon validates what it can before opening the vsock stream:
+    free-form strings never reach the guest-side parser, and the
+    window size is bounded to what a pty can carry.
+    """
+    user = params.get("user", "root")
+    if not USER_NAME_RE.fullmatch(user):
+        return user, 24, 80, f"invalid console user {user!r}"
+    rows, cols, problem = console_dimensions(params)
+    return user, rows, cols, problem
+
+
+def console_dimensions(params) -> tuple[int, int, str | None]:
+    """rows/cols from the query string, or the refusal reason."""
+    rows = console_dimension("rows", params.get("rows"), 24)
+    cols = console_dimension("cols", params.get("cols"), 80)
+    for value in (rows, cols):
+        if isinstance(value, str):
+            return 24, 80, value
+    return rows, cols, None
+
+
+def console_dimension(name: str, raw: str | None, default: int) -> int | str:
+    """One window dimension: absent means the default, anything else
+    must be an integer within a pty's range."""
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return f"{name} must be an integer, got {raw!r}"
+    if not 1 <= value <= 65535:
+        return f"{name}={value} out of range"
+    return value
+
+
+def console_image_policy(app, row: dict) -> tuple[str, tuple[str, ...]]:
+    """The workspace image's console protocol and served users.
+
+    A workspace bound to a catalog image gets that image's markers;
+    anything booted from explicit artifacts is legacy (root only) —
+    the raw root shell those images serve is exactly today's behavior.
+    """
+    state_dir = app.state.settings.vmm.state_dir
+    image_hash = row.get("image_hash")
+    record = (
+        imagestore.load_record(imagestore.images_dir(state_dir) / image_hash)
+        if image_hash
+        else None
+    )
+    if record is None:
+        return "legacy", ("root",)
+    return record.console_protocol, record.console_users
 
 
 def bound_image_hash(body: WorkspaceCreate, record) -> str | None:
@@ -406,6 +472,8 @@ def build_api(app) -> FastAPI:
                 "version": image.version,
                 "cmdline": image.cmdline,
                 "vsock_shell_port": image.vsock_shell_port,
+                "console_protocol": image.console_protocol,
+                "console_users": list(image.console_users),
                 "kernel_version": image.kernel_version,
                 "kernel_format": image.kernel_format,
                 "provisioner": image.provisioner,
@@ -584,11 +652,31 @@ def build_api(app) -> FastAPI:
         if not await app.state.model.token_valid(token):
             await socket.close(code=4401)
             return
-        if await app.state.model.get_workspace(workspace_id) is None:
+        row = await app.state.model.get_workspace(workspace_id)
+        if row is None:
             await socket.close(code=4404)
             return
+        # Identity negotiation (#63): the daemon validates the request
+        # against the image's served users before anything reaches the
+        # guest, and only prelude images carry the user and window
+        # size across the vsock link.
+        user, rows, cols, problem = console_request(socket.query_params)
+        if problem is not None:
+            await socket.close(code=4400, reason=problem[:120])
+            return
+        protocol, served = console_image_policy(app, row)
+        if user not in served:
+            await socket.close(
+                code=4400, reason=f"console user {user!r} is not served"[:120]
+            )
+            return
         try:
-            reader, writer = await app.state.microvm.console(workspace_id)
+            if protocol == CONSOLE_PROTOCOL_PRELUDE:
+                reader, writer = await app.state.microvm.console(
+                    workspace_id, user=user, rows=rows, cols=cols
+                )
+            else:
+                reader, writer = await app.state.microvm.console(workspace_id)
         except MicrovmError as exc:
             # The client is token-authenticated by now: the cause is
             # not a secret, and the close reason is the only channel
