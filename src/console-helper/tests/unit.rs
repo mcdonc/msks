@@ -1267,6 +1267,14 @@ mod session {
             ..FakeChildSys::default()
         };
         assert_eq!(run_shell_child(7, &pty(), &user(), &sys), Err(126));
+
+        // Matching uid but a foreign gid is still someone else's
+        // identity.
+        let sys = FakeChildSys {
+            ids: Some((1000, 1001)),
+            ..FakeChildSys::default()
+        };
+        assert_eq!(run_shell_child(7, &pty(), &user(), &sys), Err(126));
     }
 
     #[test]

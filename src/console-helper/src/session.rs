@@ -252,10 +252,14 @@ pub fn run_shell_child(
 
     // An unprivileged helper (dev and test runs, where the binary
     // already runs as a regular user) can serve only its own user:
-    // serving root would exec root's shell under the helper's uid.
+    // serving root would exec root's shell under the helper's uid,
+    // and any other identity is someone else's.
     let (helper_uid, helper_gid) = sys.current_ids();
-    if helper_uid != 0 && (user.uid == 0 || user.uid != helper_uid || user.gid != helper_gid) {
-        return Err(126);
+    if helper_uid != 0 {
+        let own_identity = user.uid == helper_uid && user.gid == helper_gid;
+        if !own_identity {
+            return Err(126);
+        }
     }
 
     if user.uid != 0 {
