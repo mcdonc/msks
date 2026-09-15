@@ -161,12 +161,16 @@ ACPI-first teardown, crash-restart and `gave_up`, and the manual
 recovery when the manager daemon dies — are documented in
 AGENTS.md ("Process manager").
 
-How it fits together (#10, #25):
+How it fits together (#10, #25, #92):
 
-- The image is pure nixpkgs derivations built like the workspace
-  guest needs — the Debian image ships its own kernel, initramfs,
-  and virtio modules. (#30 has the full story; the busybox-rootfs
-  build it replaced carried them by hand.)
+- The image is Debian 13 (trixie) — the same genericcloud base the
+  workspace guest builds from, with Debian's **generic** kernel
+  (the cloud flavor the guest boots lacks virtiofs and the KVM
+  modules the appliance needs) and systemd units replacing the
+  shell-script init: journald persists to the state disk, logind
+  owns the ACPI power button, and msksd runs as a supervised unit
+  that restarts in place on a crash. (#30 has the guest's story;
+  #92 the appliance's.)
 - The heavy runtime (the nix-built msksd closure, the VMM for
   workspace VMs, and the workspace assets from `msks:build-guest`)
   rides a **read-only virtiofs share of the host `/nix/store`** —

@@ -104,3 +104,40 @@ profile loading (~0.7s), `systemd-networkd` and its socket,
 `e2scrub_reap`. The wants symlinks are removed at image build time
 in `nix/guest-assets.nix`, with the reason each removal is safe
 recorded there.
+
+## The appliance
+
+The appliance's readiness number is boot-to-API: from
+`devenv processes up -d` to the first 200 from `GET /api/v1/health`
+on `https://192.168.77.2:8660` — measured with
+`scripts/perf-appliance.py` (`--runs 4 --fresh`), which also
+separates the first boot against a fresh state disk (image import,
+token generation) from the warm boots an operator's restart pays.
+
+```bash
+devenv tasks run msks:appliance-build
+python scripts/perf-appliance.py --runs 4 --fresh
+```
+
+On the reference host, the trixie-based appliance (#92) measures a
+**warm p50 of ~27.5s** against the busybox-init image's ~25.2s: the
+~2.3s delta is systemd's bring-up (device coldplug, journald, the
+unit graph) plus the generic kernel's module set, and it buys
+service supervision, journald on the state disk, and the ACPI power
+button — while the dominant ~25s (msksd's Python closure resolving
+over the virtiofs store share, cold in the guest's page cache every
+boot) is unchanged between the two images. A cold first boot lands
+at ~29s against the old image's ~47s (the default-image import into
+the fresh state disk dominates that path; the old number was
+measured against fully cold host caches).
+
+What keeps the appliance boot honest: the same kernel-with-root-
+built-in rule as the workspace (the generic kernel builds
+virtio-pci and virtiofs in; the initramfs carries the six modules
+it lacks), cloud-init disabled (the kernel cmdline is the config
+channel), and the diet masks in `nix/appliance-image.nix` keeping
+AppArmor, unattended-upgrades, and the rest out of the critical
+path. The numbers above were measured against freshly built
+artifacts; a fully warm host page cache drops the warm boot to
+~15s — the dominant ~25s is msksd's closure reading cold off the
+virtiofs share on the first boots after a build.

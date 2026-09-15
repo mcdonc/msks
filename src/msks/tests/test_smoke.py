@@ -23,6 +23,7 @@ import shutil
 import socket
 import ssl
 import subprocess
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -592,6 +593,66 @@ async def test_k8s_pod_lifecycle() -> None:
 APPLIANCE = os.environ.get("MSKSD_TEST_APPLIANCE")
 
 
+def read_appliance_journal(state_disk: Path) -> list[str] | None:
+    """The appliance's persistent journal, read from the state disk.
+
+    The trixie appliance (#92) persists journald to the state disk
+    (/var is a bind mount from it); after teardown, the journal is
+    host-readable evidence. A hard-stopped VM (a crash, or the
+    supervisor's grace expiring) leaves the ext4 mid-transaction —
+    debugfs refuses such a filesystem — so the read runs on a SPARSE
+    COPY repaired by e2fsck (the journal replays; unprivileged, no
+    loop mount), then debugfs rdump + journalctl --directory.
+    Returns None when the host lacks the tools (the assertions that
+    need it then soften to a printed note instead of failing).
+    """
+    tools = ("journalctl", "debugfs", "e2fsck")
+    if any(shutil.which(t) is None for t in tools):
+        return None
+    with tempfile.TemporaryDirectory(prefix="msks-appliance-journal") as tmp:
+        repair = Path(tmp) / "state.ext4"
+        shutil.copy(state_disk, repair)
+        fsck = subprocess.run(
+            ["e2fsck", "-fy", str(repair)],
+            capture_output=True,
+            timeout=300,
+        )
+        # e2fsck's exit code is a bitmask (1 = errors corrected);
+        # anything above 2 means the copy could not be repaired.
+        assert fsck.returncode <= 2, (
+            f"e2fsck could not repair the state disk copy:\n{fsck.stdout}"
+        )
+        extract = Path(tmp) / "extract"
+        extract.mkdir()
+        subprocess.run(
+            [
+                "debugfs",
+                "-R",
+                f"rdump /var/log/journal {extract}",
+                str(repair),
+            ],
+            capture_output=True,
+            timeout=120,
+        )
+        journal_dir = extract / "journal"
+        if not any(journal_dir.rglob("*.journal")):
+            return []
+        text = subprocess.run(
+            [
+                "journalctl",
+                "--directory",
+                str(journal_dir),
+                "--no-pager",
+                "-o",
+                "cat",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        return text.stdout.splitlines()
+
+
 def _sudo_available() -> bool:
     try:
         return (
@@ -859,6 +920,25 @@ async def test_appliance_boot_and_workspace() -> None:
     assert "No process manager is running" in listing.stdout + listing.stderr, (
         f"process manager still alive after down:\n{listing.stdout}"
     )
+    # The journal is the appliance's own story, persisted to the state
+    # disk by journald (#92): read it back from the host and require
+    # the boot's records to have survived the teardown. Softens to a
+    # printed note on hosts without journalctl/debugfs.
+    journal = read_appliance_journal(
+        Path(os.environ.get("MSKSD_APPLIANCE_STATE", app_dir / "state.ext4"))
+    )
+    if journal is None:
+        print("journalctl/debugfs not on PATH; skipping journal assertions")
+    else:
+        assert journal, "state disk carries no journal files"
+        joined = "\n".join(journal)
+        assert "Started msksd.service" in joined, (
+            "journal never recorded the daemon start; "
+            f"last 20 lines:\n{chr(10).join(journal[-20:])}"
+        )
+        assert "msks appliance: cmdline env:" in joined, (
+            "journal never recorded the cmdline bridge"
+        )
 
 
 # --- egress smoke (#52) ----------------------------------------------------

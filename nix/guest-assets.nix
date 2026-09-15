@@ -681,6 +681,10 @@ pkgs.runCommand "msks-guest"
       ;
     passthru = {
       inherit
+        debianImage
+        cloudKernel
+        ;
+      inherit
         kernelCmdline
         vsockShellPort
         ;

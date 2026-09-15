@@ -49,6 +49,25 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **The appliance runs Debian 13 trixie with systemd (#92).** The
+  hand-rolled busybox-init image is replaced by the same genericcloud
+  base the workspace guest builds from, booted with Debian's generic
+  kernel (virtiofs and the KVM modules are built in or in its tree;
+  the cloud flavor the guest boots carries neither) and systemd
+  units instead of a shell-script init: msksd is a supervised service
+  that restarts in place on a crash, journald persists to the state
+  disk (readable from the host after teardown — the smoke harness
+  asserts it), and logind answers the ACPI power button. Everything
+  else is unchanged: the read-only `/nix/store` virtiofs share, the
+  state disk and its layout (an existing disk upgrades in place —
+  the same database, overlays, and TLS keys serve on the new image),
+  the `msksd.<name>=<value>` kernel-cmdline bridge, and the
+  boot-generated `/run/msksd.yaml`. Warm boot-to-API measures ~27.5s
+  p50 against the old image's ~25.2s (`scripts/perf-appliance.py`,
+  see `docs/boot-speed.md`). An appliance built from current `main`
+  cannot boot at all — #46's init change broke the image's `/init`
+  shebang — so rebuild with `msks:appliance-build` when updating.
+
 - **The workspace image ships cloud-init (#41).** The image is built from Debian's `genericcloud` cloud image instead of the cloud-init-free `nocloud` variant: cloud-init and its python3 runtime arrive with the base (~130M larger; the appliance state disk grows to 8G to keep fitting two images), and two dropins pin NoCloud as the only datasource and keep cloud-init off the guest's networking. The interactive boot budget is unchanged (vsock shell ~3.0s p50); existing workspaces keep the images they were created with — rebuild the appliance and recreate workspaces to move them onto the new image.
 
 - **Workspace stop is now a clean poweroff (#14).** The local backend's stop presses the ACPI power button (`vm.power-button`) and the guest's systemd-logind runs a full shutdown before the VMM exits. The endpoint stop used before was cloud-hypervisor v52's hard stop: the guest was never notified, and with persistent disks every stop dropped the writes still sitting in the guest's page cache.
