@@ -122,6 +122,8 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **`/home` could fail to mount on slow boots (#14).** The guest fstab mounted the home volume by label under `x-systemd.device-timeout=2s`; that clock starts at sysinit job enqueue, before udevd runs, and on a first boot from a fresh overlay (every root read a copy-on-write miss) the udev label probe can exceed what is left of the budget — `home.mount` then fails for the whole boot (`nofail` keeps the boot moving and never retries). The device timeout is now 30s, so the mount rides out a slow coldplug; a boot with no volume at all waits the same 30s once and continues.
+
 - **`scripts/appliance-setup.sh` on iptables-nft hosts (#36).** The NAT rule was invoked as `iptables -C -t nat …`, and iptables-nft 1.8.13 rejects a table option after the command, so setup died before seeding the state disk. The rule helper now takes the table explicitly and places it before `-C`/`-A`, which legacy and nf_tables variants both accept.
 
 - **Egress workspaces failed to start on the appliance: missing `nft_ct` module (#36).** The egress ruleset's `ct state` expression needs the `nft_ct` kernel module; the appliance image's module list loaded `nft_masq` but never `nft_ct`, and the appliance has no udev autoload, so a workspace with a NIC failed at start with "Could not process rule: No such file or directory". The module now loads with the rest of the nftables set.

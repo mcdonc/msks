@@ -132,7 +132,12 @@ def collect_failure_evidence(state_dir: Path, wid: str, serial_log: Path) -> Non
                 sock.close()
     keep = Path("/tmp/msks-smoke-failed") / wid
     keep.mkdir(parents=True, exist_ok=True)
-    for name in ("serial.log", "cloud-hypervisor.log", "vsock.sock"):
+    # The driver's own filenames (local.py: ch.log, ch.pid): the
+    # vsock socket is a socket, never a file, so it stays out — the
+    # copy list once carried names nothing writes, and the VMM's own
+    # log (the one line that names device and config errors) never
+    # reached the CI artifact.
+    for name in ("serial.log", "ch.log", "ch.pid"):
         source = vm_dir / name
         if source.is_file():
             with contextlib.suppress(OSError):
