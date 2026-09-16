@@ -165,8 +165,10 @@ jobs:
           MSKSD_TEST_GUEST_UP_TIMEOUT_S=180
           MSKSD_TEST_CONSOLE_TIMEOUT_S=120
           MSKSD_TEST_SHUTDOWN_TIMEOUT_S=180
+          MSKSD_TEST_SSH_TIMEOUT_S=120
           PATH=\"\$PATH\" HOME=/root
           python -m pytest src/msks/tests/test_smoke.py::test_local_egress_boot
+          src/msks/tests/test_smoke.py::test_local_sshd_and_rsync
           -q -p no:cacheprovider --no-cov"
 
       # The failing boot's own evidence, kept by the tests' failure
