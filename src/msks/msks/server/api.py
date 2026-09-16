@@ -12,13 +12,21 @@ import re
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import (
+    Depends,
+    FastAPI,
+    HTTPException,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi import __version__ as fastapi_version
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
+from starlette.requests import ClientDisconnect
 
-from .. import __version__, imagestore
+from .. import __version__, imagestore, persist
 from ..identity import mint
 from ..imagestore import ImageError
 from ..microvm.errors import MicrovmError
@@ -403,6 +411,39 @@ def host_mismatch(app, row: dict) -> str | None:
     )
 
 
+#: The lifecycle statuses a home-volume move refuses (#80): the
+#: volume is a live block device in each of them, so an export
+#: reads a guest mid-write (a torn image) and an import lands under
+#: a mounted device the guest overwrites or ignores.
+HOME_BUSY_STATUSES = ("starting", "running", "paused")
+
+
+def home_volume_guard(app, row: dict) -> tuple[int, str] | None:
+    """(status, refusal) when this daemon cannot move the volume.
+
+    The k8s backend answers a named refusal — the volume lives
+    inside the runner pod's PVC, which only the pod's container
+    reaches, so the byte streams this endpoint serves have nothing
+    to read or write (#80 is the local appliance's mechanism). On
+    the local backend, placement (the artifacts live on one host)
+    and a live attachment are the two facts that block a move.
+    """
+    if app.state.settings.vmm.driver == "k8s":
+        return 400, (
+            "home volume export/import is not served by the k8s backend "
+            "(the volume lives inside the runner pod's PVC)"
+        )
+    mismatch = host_mismatch(app, row)
+    if mismatch is not None:
+        return 409, mismatch
+    if row["status"] in HOME_BUSY_STATUSES:
+        return 409, (
+            f"workspace {row['id']} is {row['status']}; "
+            f"stop it before moving its home volume"
+        )
+    return None
+
+
 async def serialize_create(app, workspace_id: str):
     """Serialize same-id creates end to end (#111).
 
@@ -751,6 +792,69 @@ def build_api(app) -> FastAPI:
         await app.state.microvm.reset(workspace_id)
         await app.state.model.set_status(workspace_id, "created")
         return {"id": workspace_id, "status": "created"}
+
+    # The home-volume byte streams (#80): export for backup and
+    # migration, import to restore or seed. Both refuse a workspace
+    # whose VM is attached to the volume — the guard's statuses name
+    # the stops-everything rule.
+    @api.get(
+        "/api/v1/workspaces/{workspace_id}/home", dependencies=[Depends(require_token)]
+    )
+    async def export_home_volume(workspace_id: str) -> Response:
+        row = await _workspace_or_404(app, workspace_id)
+        guard = home_volume_guard(app, row)
+        if guard is not None:
+            raise HTTPException(*guard)
+        state_dir = app.state.settings.vmm.state_dir
+        home = persist.home_volume_path(state_dir, workspace_id)
+        if not home.is_file():
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"home volume file for workspace {workspace_id} does not "
+                    f"exist under the state dir; a start would rebuild it blank"
+                ),
+            )
+        size = home.stat().st_size
+        await hub.publish("home.exported", {"id": workspace_id, "bytes": size})
+        return StreamingResponse(
+            persist.read_volume(home),
+            media_type="application/octet-stream",
+            headers={
+                "content-length": str(size),
+                "content-disposition": f'attachment; filename="{workspace_id}.ext4"',
+            },
+        )
+
+    @api.put(
+        "/api/v1/workspaces/{workspace_id}/home", dependencies=[Depends(require_token)]
+    )
+    async def import_home_volume(workspace_id: str, request: Request) -> Response:
+        row = await _workspace_or_404(app, workspace_id)
+        guard = home_volume_guard(app, row)
+        if guard is not None:
+            raise HTTPException(*guard)
+        state_dir = app.state.settings.vmm.state_dir
+        try:
+            total = await persist.import_home_volume(
+                state_dir, workspace_id, request.stream()
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        except (MicrovmError, OSError) as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from None
+        except ClientDisconnect as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="the upload ended before its body completed; "
+                "the workspace kept its existing volume",
+            ) from exc
+        await hub.publish("home.imported", {"id": workspace_id, "bytes": total})
+        return Response(
+            status_code=200,
+            content=json.dumps({"id": workspace_id, "bytes": total}),
+            media_type="application/json",
+        )
 
     @api.delete(
         "/api/v1/workspaces/{workspace_id}", dependencies=[Depends(require_token)]

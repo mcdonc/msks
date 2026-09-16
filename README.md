@@ -271,9 +271,11 @@ is the two-step path from nothing to a shell; `msks start <id>` boots
 an existing workspace later, `msks stop <id>` powers one off (a
 graceful, deadline-bounded shutdown; the data survives), `msks rm
 <id>…` deletes one or more workspaces together with their persistent
-root overlay and `/home` volume, and `msks console <id>` boots one itself
+root overlay and `/home` volume, `msks console <id>` boots one itself
 when the daemon reports it as not running (a notice prints on
-stderr while the boot runs). All commands use the same
+stderr while the boot runs), and `msks home export/import <id>`
+moves the whole `/home` volume through the daemon for backup,
+migration, and seeding (#80). All commands use the same
 `MSKSC_URL`/`MSKSC_TOKEN`/`MSKSC_CAFILE` environment as `msks console`;
 failures (unreachable daemon, timed-out request, bad token, API or
 validation errors) print one readable line instead of a traceback.
@@ -357,6 +359,21 @@ appliance serves. The end-to-end proof is the opt-in root smoke
 baked dev image — same substrate the guest and appliance build
 from — remains an optional cold-start accelerator on top of the
 seed, not a prerequisite.
+
+The workspace's whole `/home` also moves through the daemon (#80):
+`msks home export dev` streams the volume to the client's machine
+(backup, or migration to another daemon), and `msks home import`
+restores or seeds one from an exported image —
+
+```bash
+msks stop dev
+msks home export dev - | gzip > dev-home.ext4.gz   # whole-home backup
+```
+
+— while day-to-day code in and out rides the workspace's own egress
+(git remotes, substitutes) and the forward seam (rsync, ssh).
+See `docs/storage.md` for the byte-stream endpoints and their
+contract.
 
 ### The workspace console (`msks console`) (#21)
 

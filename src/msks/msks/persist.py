@@ -50,6 +50,7 @@ import itertools
 import json
 import os
 import shutil
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 from .identity import compose_user_data
@@ -59,6 +60,19 @@ from .microvm.spec import VmSpec
 MIB = 1024 * 1024
 HOME_VOLUME_LABEL = "msks-home"
 SEED_LABEL = "cidata"
+
+#: The byte window home-volume export/import moves in (#80): 1 MiB —
+#: per-window overhead is noise at this size, and the window is the
+#: import's sparseness granularity (an all-zero window becomes a
+#: hole, so smaller windows trade holes for many more seeks).
+HOME_WINDOW_B = MIB
+
+#: Where the ext4 magic sits in a volume file: the superblock starts
+#: at byte 1024 and its magic (0xEF53, little-endian) is 56 bytes in.
+#: A body without it is refused before it can replace a workspace's
+#: /home and brick its next boot.
+EXT4_MAGIC_OFFSET = 1080
+EXT4_MAGIC = b"\x53\xef"
 
 _tmp_counter = itertools.count()
 
@@ -325,3 +339,86 @@ def remove_home_volume(state_dir: Path, workspace_id: str) -> None:
     home = home_volume_path(state_dir, workspace_id)
     sweep_tmp_siblings(home)
     home.unlink(missing_ok=True)
+
+
+async def read_volume(path: Path) -> AsyncIterator[bytes]:
+    """Yield a volume file's bytes in export windows (#80).
+
+    Each window's read runs off the event loop (streaming a 2 GiB
+    volume must not stall the daemon), and a client disconnect
+    mid-stream cancels the loop and closes the file through the
+    context manager.
+    """
+    with path.open("rb") as handle:
+        while window := await asyncio.to_thread(handle.read, HOME_WINDOW_B):
+            yield window
+
+
+async def import_home_volume(
+    state_dir: Path, workspace_id: str, chunks: AsyncIterator[bytes]
+) -> int:
+    """Install an uploaded ext4 image as the workspace's volume (#80).
+
+    The body streams into a private scratch sibling in aligned
+    windows; an all-zero window writes nothing (the seek past it and
+    the final truncate re-create it as a sparse hole), so a blank
+    volume round-trips at its data's cost, not its nominal size. The
+    ext4 magic is checked before the atomic install: a refused body
+    leaves the old volume in place, and the ``finally`` sweeps the
+    scratch either way.
+    """
+    home = home_volume_path(state_dir, workspace_id)
+    home.parent.mkdir(parents=True, exist_ok=True)
+    scratch = tmp_sibling(home)
+    pending = bytearray()
+    total = 0
+    try:
+        with scratch.open("wb") as handle:
+            async for chunk in chunks:
+                pending += chunk
+                while len(pending) >= HOME_WINDOW_B:
+                    window = bytes(pending[:HOME_WINDOW_B])
+                    del pending[:HOME_WINDOW_B]
+                    await settle_window(handle, window, total)
+                    total += len(window)
+            if pending:
+                await settle_window(handle, bytes(pending), total)
+                total += len(pending)
+            await asyncio.to_thread(handle.truncate, total)
+        validate_ext4(scratch, total)
+        install(scratch, home)
+        return total
+    finally:
+        scratch.unlink(missing_ok=True)
+
+
+async def settle_window(handle, window: bytes, position: int) -> None:
+    """One window at its stream position: zeros leave a hole, data
+    is written (off the event loop)."""
+    if window.count(0) == len(window):
+        return
+    await asyncio.to_thread(place_window, handle, window, position)
+
+
+def place_window(handle, window: bytes, position: int) -> None:
+    """Write one window at its stream position (a threadpool body)."""
+    handle.seek(position)
+    handle.write(window)
+
+
+def validate_ext4(scratch: Path, total: int) -> None:
+    """Refuse a body that is not an ext4 image (#80).
+
+    The magic check catches garbage uploads (a wrong file, a
+    truncated transfer) before they replace a workspace's /home.
+    """
+    if total == 0:
+        raise ValueError("the request body is empty; a home volume is an ext4 image")
+    with scratch.open("rb") as handle:
+        handle.seek(EXT4_MAGIC_OFFSET)
+        magic = handle.read(len(EXT4_MAGIC))
+    if magic != EXT4_MAGIC:
+        raise ValueError(
+            f"the request body is not an ext4 image ({total} bytes received; "
+            f"the ext4 magic at byte {EXT4_MAGIC_OFFSET} is missing)"
+        )

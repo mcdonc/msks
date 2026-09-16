@@ -13,6 +13,7 @@ msks create ws                # make a workspace
 msks console ws               # boot it if needed, then work inside it
 msks forward ws 22            # bridge a guest TCP port to stdio
 msks key ws                   # fetch the workspace's minted ssh identity
+msks home export ws           # download its /home volume (backup, seed)
 msks start ws                 # boot it without attaching
 msks stop ws                  # power it off
 msks rm ws                    # delete it (and its data)
@@ -278,6 +279,45 @@ default  yes
 ```
 
 The reference forms are the same as `image rm`'s.
+
+## `msks home`
+
+Moves a workspace's `/home` volume through the daemon (#80) —
+backup, migration to another daemon, seeding a fresh workspace with
+data — as the two byte-stream endpoints `docs/storage.md` documents:
+
+```bash
+msks home export my-workspace              # writes my-workspace.ext4
+msks home export my-workspace other.ext4   # names the output file
+msks home export my-workspace - | gzip > backup.ext4.gz
+msks home import fresh-ws my-workspace.ext4
+msks home import fresh-ws - < backup.ext4
+```
+
+The workspace must be stopped (a volume under a running VM answers
+`409` — stop it first; `msks stop` is enough). Export streams the
+volume file's bytes verbatim and prints one confirmation line
+(`exported my-workspace (2097152 bytes) to my-workspace.ext4`);
+`-` writes the bytes to stdout and moves the note to stderr, so a
+pipe stays clean for gzip or ssh. Import uploads the named ext4
+image (or stdin, for `-`), the daemon replaces the volume with it,
+and the reply is the byte count: `imported 2097152 bytes into
+fresh-ws`.
+
+The daemon refuses — one line, exit 1 — a file that is not an ext4
+image (`msks: 400: the request body is not an ext4 image ...`), a
+workspace in the wrong state, and everything the API's refusals
+name (a foreign host, the k8s backend). An import keeps the
+workspace's existing volume until the upload completes and passes
+the ext4 check; a cut-off upload changes nothing.
+
+The typical pairings: backup (`export`, later `import` back into
+the same workspace after a `rm` + `create`), migration (`export` on
+one daemon, `create` + `import` on another), and seeding (build an
+ext4 image with the data a fleet of workspaces starts from, import
+it into each fresh one). Inside a workspace with egress, git and
+rsync over the forward (`docs/networking.md`) carry day-to-day
+code; the volume moves are for the whole `/home` at once.
 
 ## `msks console`
 

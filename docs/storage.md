@@ -94,6 +94,56 @@ provisioned state the guest keeps there (cloud-init's run-once
 markers live under `/var/lib/cloud`), so future provisioning
 re-runs on the next boot.
 
+## Home volume export and import
+
+The home volume travels through the daemon's authenticated
+listener as byte streams (#80) — the interim mechanism for backup,
+migration to another daemon, and seeding a fresh workspace with
+data:
+
+```text
+GET /api/v1/workspaces/{id}/home    → the volume file's bytes, streamed
+PUT /api/v1/workspaces/{id}/home    → replaces the volume from the body
+```
+
+`msks home export` / `msks home import` drive both endpoints from
+the CLI (`docs/cli.md`); a token holder may also call them with any
+HTTP client.
+
+The body is the volume file's bytes **verbatim** — an ext4 image,
+labeled `msks-home` when msksd made it. An import installs what it
+receives: a hand-made ext4 image (or one exported from another
+workspace) lands exactly as uploaded, and an upload that fails the
+ext4 magic check is refused with `400` before anything is written,
+so a wrong file or a truncated transfer cannot brick the next
+boot's `/home`.
+
+Sparseness survives the round trip: the import writes in 1 MiB
+windows and turns every all-zero window back into a sparse hole, so
+a blank 2 GiB volume re-imports at its data's cost, not its
+nominal size. A volume exported over a slow link composes with any
+compressor (`msks home export ws - | gzip > ws.ext4.gz`) because
+`-` streams the bytes to stdout.
+
+Both endpoints answer `409` while the workspace's VM is attached to
+the volume (`starting`, `running`, `paused`): an export under a
+guest mid-write is a torn image, and an import into a mounted
+device would be overwritten or lost. Stop the workspace first
+(`msks stop`); `created`, `stopped`, and `absent` workspaces move
+freely. A foreign host answers the placement `409` every artifact
+route shares, and the k8s backend answers `400` — its volume lives
+inside the runner pod's PVC, which only the pod's container
+reaches.
+
+An import whose filesystem size differs from the workspace's
+recorded `home_mib` mounts fine either way (an ext4 filesystem
+smaller than its device is legal); `home_mib` stays the size a
+blank rebuilt volume gets, and growing an imported filesystem is a
+guest-side `resize2fs`. The install is atomic — a failed or cut-off
+upload leaves the existing volume in place — and every move is
+announced on the events channel (`home.exported` /
+`home.imported`, with the byte count).
+
 ## Placement and single-attach
 
 The workspace row records the **host** that owns its artifacts. On

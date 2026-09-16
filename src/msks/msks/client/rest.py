@@ -22,6 +22,11 @@ DEFAULT_URL = "https://127.0.0.1:8660"
 # default 5s would cut a healthy launch off mid-flight.
 TIMEOUT = httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0)
 
+# The byte window streamed bodies move in (#80): matches the
+# daemon's import window, and a megabyte is small enough that flow
+# control stays responsive on slow links.
+STREAM_WINDOW_B = 1024 * 1024
+
 # Waiting out another client's in-flight boot: the same budget the
 # start call itself gets.
 BOOT_WAIT_S = 120.0
@@ -91,25 +96,53 @@ def api_client(
     )
 
 
+def timeout_message(client: httpx.AsyncClient, exc: Exception) -> str:
+    """The timeout line: the daemon may still finish the request."""
+    return (
+        f"msks: timed out talking to {client.base_url} "
+        f"(the daemon may still finish the request): {exc}"
+    )
+
+
+def reach_message(client: httpx.AsyncClient, exc: Exception) -> str:
+    """The dial-failure line."""
+    return f"msks: cannot reach {client.base_url}: {exc}"
+
+
+def status_message(exc: httpx.HTTPStatusError) -> str:
+    """The API-status line: the daemon's detail, verbatim."""
+    return f"msks: {exc.response.status_code}: {error_detail(exc.response)}"
+
+
+async def guarded(client: httpx.AsyncClient, exchange):
+    """Await one exchange with :func:`request`'s error contract.
+
+    The JSON calls and the #80 byte streams share this map: a
+    timeout names the daemon and the possibility it still finishes,
+    a dead dial names the daemon, and an HTTP status carries the
+    daemon's detail verbatim.
+    """
+    try:
+        return await exchange()
+    except httpx.TimeoutException as exc:
+        raise SystemExit(timeout_message(client, exc)) from exc
+    except httpx.TransportError as exc:
+        raise SystemExit(reach_message(client, exc)) from exc
+    except httpx.HTTPStatusError as exc:
+        raise SystemExit(status_message(exc)) from exc
+
+
 async def request(
     client: httpx.AsyncClient, method: str, path: str, json_body: dict | None = None
 ):
     """One request on ``client``; failures exit with one readable line."""
-    try:
+
+    async def exchange():
         response = await client.request(method, path, json=json_body)
         response.raise_for_status()
-    except httpx.TimeoutException as exc:
-        raise SystemExit(
-            f"msks: timed out talking to {client.base_url} "
-            f"(the daemon may still finish the request): {exc}"
-        ) from exc
-    except httpx.TransportError as exc:
-        raise SystemExit(f"msks: cannot reach {client.base_url}: {exc}") from exc
-    except httpx.HTTPStatusError as exc:
-        raise SystemExit(
-            f"msks: {exc.response.status_code}: {error_detail(exc.response)}"
-        ) from exc
-    return response.json()
+        return response
+
+    return (await guarded(client, exchange)).json()
 
 
 async def api_call(
@@ -124,6 +157,47 @@ async def api_call(
     """One authenticated REST call on a fresh client."""
     async with api_client(url, token, transport, ssl_ctx) as client:
         return await request(client, method, path, json_body)
+
+
+async def download(client: httpx.AsyncClient, path: str, sink) -> int:
+    """Stream one GET body to ``sink.write``; returns the byte count.
+
+    The body never buffers whole — a home volume runs to gigabytes
+    (#80).
+    """
+    total = 0
+
+    async def exchange():
+        nonlocal total
+        async with client.stream("GET", path) as response:
+            if response.is_error:
+                # The body holds the error detail; read it before the
+                # raise so the one-line message can quote it.
+                await response.aread()
+                response.raise_for_status()
+            async for chunk in response.aiter_bytes():
+                total += len(chunk)
+                sink.write(chunk)
+        return total
+
+    return await guarded(client, exchange)
+
+
+async def upload(client: httpx.AsyncClient, path: str, content) -> dict:
+    """Stream one request body (an async byte iterator) with the
+    octet-stream type; the parsed JSON reply."""
+
+    async def exchange():
+        response = await client.request(
+            "PUT",
+            path,
+            content=content,
+            headers={"content-type": "application/octet-stream"},
+        )
+        response.raise_for_status()
+        return response
+
+    return (await guarded(client, exchange)).json()
 
 
 def error_detail(response: httpx.Response) -> str:
