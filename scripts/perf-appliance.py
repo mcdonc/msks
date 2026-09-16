@@ -22,7 +22,9 @@ Usage (from the repo root, inside the devenv shell):
     python scripts/perf-appliance.py [--runs 3] [--fresh]
 
 Needs the built appliance (``devenv tasks run msks:appliance-build``),
-/dev/kvm, and sudo -n for the one-time bridge/tap. Exits nonzero if
+/dev/kvm, and the one-time host network (sudo bash
+scripts/appliance-host-setup.sh — the appliance itself starts without
+sudo). Exits nonzero if
 any run fails to reach a healthy API.
 """
 

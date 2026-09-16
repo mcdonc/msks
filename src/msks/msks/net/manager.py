@@ -1,8 +1,10 @@
 """The egress attachment lifecycle: one tap + services per workspace (#52).
 
 NetManager is the state object on ``app.state.net``. Enabled and
-privileged, ``start()`` arms the shared plumbing once (ip_forward,
-the NAT base table); every egress workspace boot then ``attach()``s
+privileged, ``start()`` arms the shared plumbing once (the NAT
+base table, after verifying the kernel's ip_forward sysctl — the
+appliance ships it as a boot-time setting, and the daemon never
+writes it); every egress workspace boot then ``attach()``s
 — tap, per-VM chain, DHCP service, DNS forwarder — and every stop,
 kill, or delete ``detach()``es all of it.
 
@@ -23,6 +25,7 @@ from .dhcp import DhcpServer
 from .dns import DnsForwarder
 
 FORWARDING = Path("/proc/sys/net/ipv4/ip_forward")
+SYSCTL_KEY = "net.ipv4.ip_forward"
 
 NOT_READY_CAUSES = {
     "init": "the egress subsystem never started",
@@ -31,9 +34,10 @@ NOT_READY_CAUSES = {
         "— set it and restart)"
     ),
     "unavailable": (
-        "the daemon could not arm egress (needs CAP_NET_ADMIN and the "
-        "ip/nft tools — root in the appliance has both; a dev-shell "
-        "daemon has neither)"
+        "the daemon could not arm egress (it needs CAP_NET_ADMIN and "
+        "CAP_NET_BIND_SERVICE — the appliance grants both, and only "
+        "those, to its service user — plus " + SYSCTL_KEY + "=1 from "
+        "sysctl.d; a dev-shell daemon has none of them)"
     ),
 }
 
@@ -59,18 +63,25 @@ class NetServices:
     tasks: list[asyncio.Task]
 
 
-def enable_forwarding(path: Path = FORWARDING) -> None:
-    """Turn the appliance into a router (root in the appliance).
+def verify_forwarding(path: Path = FORWARDING) -> None:
+    """Refuse egress unless the kernel already routes packets (#101).
 
-    Deliberately one-way: ``stop()`` never flips it back. Inside the
-    appliance the setting is part of the machine's identity; on a dev
-    host, whatever enabled it (the root smoke, say) owns restoring
-    it.
+    ``ip_forward`` is part of the machine's identity: the appliance
+    ships ``net.ipv4.ip_forward=1`` as a boot-time sysctl.d setting,
+    and the daemon — a service user without write access to
+    /proc/sys — verifies it and fails closed. A daemon that finds
+    ``0`` records itself unavailable, and every egress workspace
+    boot refuses with a cause naming the sysctl key.
     """
     try:
-        path.write_text("1")
+        value = path.read_text().strip()
     except OSError as exc:
-        raise MicrovmError(f"could not enable ip_forward: {exc}") from exc
+        raise MicrovmError(f"could not read {SYSCTL_KEY} ({path}): {exc}") from exc
+    if value != "1":
+        raise MicrovmError(
+            f"{SYSCTL_KEY} is not enabled (reads {value!r}); enable it "
+            "at boot with sysctl.d and restart the daemon"
+        )
 
 
 class NetManager:
@@ -94,7 +105,7 @@ class NetManager:
             self._state = "disabled"
             return
         try:
-            enable_forwarding()
+            verify_forwarding()
             await nft.apply_base(settings)
         except (MicrovmError, OSError) as exc:
             # Loud, not fatal: workspaces without egress are unaffected;

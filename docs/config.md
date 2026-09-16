@@ -35,10 +35,12 @@ the file is located.
 
 ### The appliance
 
-The appliance writes `/run/msksd.yaml` (on the tmpfs) at every boot
+The appliance writes `/run/msksd/msksd.yaml` — a
+service-user-owned `RuntimeDirectory` on the `/run` tmpfs — at
+every boot
 carrying the build's settings — the state dir, the listener's bind,
 and the store paths of the tools the daemon execs — and starts the
-daemon with `--config /run/msksd.yaml`. The file is regenerated at
+daemon with `--config /run/msksd/msksd.yaml`. The file is regenerated at
 each boot because the tool paths it names belong to that build; a
 file that survived an appliance rebuild would point at dead store
 paths. Operator overrides keep riding the kernel cmdline bridge:

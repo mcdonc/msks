@@ -18,9 +18,11 @@ root="${DEVENV_ROOT:?not running inside the devenv shell}"
 app_dir="$root/.appliance"
 guest_ip="192.168.77.2"
 
-# Idempotent prerequisites (artifacts, bridge/tap, state, token) —
-# MUST run before the token read below: on a fresh checkout the token
-# does not exist until setup creates it.
+# Idempotent prerequisites (artifacts, state, token) — MUST run
+# before the token read below: on a fresh checkout the token does not
+# exist until setup creates it. The HOST network is verified, not
+# ensured: appliance-setup.sh names the one-time root installer when
+# anything is missing.
 bash "$root/scripts/appliance-setup.sh"
 
 state_disk="${MSKSD_APPLIANCE_STATE:-$app_dir/state.ext4}"
@@ -30,6 +32,17 @@ bootstrap_token="$(cat "$app_dir/bootstrap-token")"
 # boot. Optional — an appliance without one starts with an empty
 # catalog and images arrive by API.
 default_image="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("defaultImage", ""))' "$app_dir/appliance-manifest.json")"
+# The base cmdline comes from the manifest (nix/appliance-image.nix's
+# kernelCmdline) — one source of truth: the appliance's own flags ride
+# with the image that needs them. net.ifnames=0 lives there because the
+# egress nftables rules name the uplink eth0; a locally-hardcoded base
+# here drifted from it once and silently broke forwarded egress (#101).
+base_cmdline="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("cmdline", ""))' "$app_dir/appliance-manifest.json")"
+# The fallback serves only a stale pre-#101 manifest (no cmdline
+# key), and mirrors the manifest's CURRENT value — net.ifnames=0
+# included — so the drift this indirection exists to prevent cannot
+# sneak back in through the fallback.
+: "${base_cmdline:=console=ttyS0 root=/dev/vda rootfstype=ext4 ro net.ifnames=0}"
 # Optional msksd.<name>=<value> pairs the operator wants bridged into
 # the daemon's environment (e.g. msksd.vsock_wait_timeout_s=30 on
 # slow nested-virt hosts); each becomes MSKSD_<NAME> in the guest.
@@ -84,6 +97,10 @@ boot_vm() {
       -H 'content-type: application/json' \
       -d "@-" "http://localhost/api/v1/$1"
   }
+  # The payload is heredoc-interpolated JSON: a double quote in the
+  # bootstrap token or MSKS_APPLIANCE_CMDLINE_EXTRA fails the request
+  # loudly (curl --fail-with-body) — acceptable for values this
+  # host's own files and environment supply.
   cat <<JSON | api vm.create
 {
   "cpus": {"boot_vcpus": 2, "max_vcpus": 2},
@@ -91,7 +108,7 @@ boot_vm() {
   "payload": {
     "kernel": "$app_dir/vmlinux",
     "initramfs": "$app_dir/initrd",
-    "cmdline": "console=ttyS0 root=/dev/vda rootfstype=ext4 ro msksd.bootstrap_token=$bootstrap_token msksd.default_image=$default_image $MSKS_APPLIANCE_CMDLINE_EXTRA"
+    "cmdline": "$base_cmdline msksd.bootstrap_token=$bootstrap_token msksd.default_image=$default_image $MSKS_APPLIANCE_CMDLINE_EXTRA"
   },
   "disks": [
     {"path": "$app_dir/rootfs.ext4", "readonly": true, "image_type": "Raw"},

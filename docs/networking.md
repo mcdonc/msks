@@ -75,9 +75,15 @@ consent gates of #69 decide each new connection.
 
 **Inside the appliance:** the tap, its address, the per-VM
 nftables table, the NAT masquerade on the uplink, the DHCP service,
-and the DNS forwarder — all owned by msksd, which runs as root
-inside the appliance VM. The host's firewall is never touched;
-containment stays inside the appliance by design.
+and the DNS forwarder — all owned by msksd, which runs as a
+dedicated service user holding exactly two ambient capabilities:
+`CAP_NET_ADMIN` (taps and their addresses, the nftables tables,
+and — because ambient capabilities survive `exec` — the workspace
+VMM opening its tap) and `CAP_NET_BIND_SERVICE` (the DHCP and DNS
+listeners, UDP 67 and 53). Nothing in the daemon's process tree
+runs as uid 0; `/dev/kvm` reaches the VMM through the `kvm` group.
+The host's firewall is never touched; containment stays inside the
+appliance by design.
 
 **Inside the guest:** nothing msks-specific. The image overlay ships
 a systemd-networkd DHCP unit (see [images.md](images.md)); the
@@ -101,18 +107,186 @@ every backend, and the one that needs zero enforcement machinery.
 | `MSKSD_EGRESS_DNS_TIMEOUT_S`       | `3.0`           | How long the forwarder waits on the upstream                    |
 | `MSKSD_IP_TOOL` / `MSKSD_NFT_TOOL` | `ip` / `nft`    | The plumbing tools' paths                                       |
 
-Egress needs the daemon to hold `CAP_NET_ADMIN`, and the appliance's
-own uplink needs the host side wired — `scripts/appliance-setup.sh`
-performs both classes of setup as its documented privileged step:
-host forwarding + NAT for the appliance's bridge subnet, so traffic
-masqueraded out of the appliance reaches the internet. The appliance
-sets `MSKSD_EGRESS_ENABLED=true` and runs as root, so workspaces are
-networked there once the setup script has run. An operator who sets `MSKSD_EGRESS_ENABLED=false` arms nothing, and
+Egress needs the daemon to hold `CAP_NET_ADMIN` and
+`CAP_NET_BIND_SERVICE` — the appliance grants exactly those two to
+its service user — and a kernel that routes: the appliance ships
+`net.ipv4.ip_forward=1` as a boot-time `sysctl.d` setting, the
+daemon verifies it at startup, and a daemon that reads `0` refuses
+every egress workspace with a cause naming the sysctl key. The
+appliance's own uplink needs the host side wired —
+`sudo bash scripts/appliance-host-setup.sh` performs that setup
+once, as root: a `sysctl.d` forwarding drop-in plus a systemd unit
+that re-arms the bridge, tap, and NAT rules at every host reboot,
+so starting the appliance needs no sudo (the per-start
+`appliance-setup.sh` verifies the install and names it when
+something is missing; re-run the installer if egress ever stops
+working — a firewall reload can drop its rules). The
+appliance pins its NIC to the kernel name `eth0`
+(its kernel cmdline carries `net.ifnames=0`), which is the default
+`MSKSD_EGRESS_UPLINK`, and sets `MSKSD_EGRESS_ENABLED=true`, so
+workspaces are networked there once the installer has run. An
+operator who sets `MSKSD_EGRESS_ENABLED=false` arms nothing, and
 every egress workspace then refuses to boot with the cause named.
 When msksd cannot arm the plumbing (a dev-shell daemon, say), it
 stays up for everything else and every egress workspace **refuses
 to boot** with a named cause, rather than running with a half-open
 path — create those with `"egress": false` instead.
+
+The dev-host egress smoke (`MSKSD_TEST_EGRESS=1`) runs as root:
+ambient capabilities cannot be granted to an arbitrary shell, so
+the harness — which creates real taps, loads nftables rules, and
+binds ports 67 and 53 — runs as full root and sets `ip_forward`
+itself for the duration of the run. That is the test's constraint,
+not the server's: the daemon needs only the two capabilities and an
+already-routing kernel.
+
+### The host-side network: portable installer or static config
+
+`sudo bash scripts/appliance-host-setup.sh` is the portable path:
+one run as root arms the bridge, tap, forwarding, and NAT rules, and
+installs the persistence — a `sysctl.d` drop-in plus
+`/etc/msks/host-net.sh` behind `msks-host-net.service`, which
+re-arms the state at every host boot. It works on any systemd host
+regardless of which network manager or firewall owns the rest of
+the stack. The appliance's per-start check (`appliance-setup.sh`)
+verifies the resulting state — bridge, tap, `ip_forward` — not the
+mechanism that produced it, so the static forms below satisfy it
+too.
+
+On a host where systemd-networkd manages the network and
+`nftables.service` owns the firewall, the same state is entirely
+declarative: files the OS itself applies, no boot script. The
+bridge and its address:
+
+```ini
+# /etc/systemd/network/90-msksbr0.netdev
+[NetDev]
+Name=msksbr0
+Kind=bridge
+
+# /etc/systemd/network/90-msksbr0.network
+[Match]
+Name=msksbr0
+[Network]
+Address=192.168.77.1/24
+```
+
+The tap — `Owner=` names the user who runs the appliance, which is
+what lets the unprivileged cloud-hypervisor open it (changing that
+user means editing the file; the installer refuses when the existing
+tap's owner differs and names the manual step, `ip link del
+mskstap0` followed by a re-run):
+
+```ini
+# /etc/systemd/network/90-mskstap0.netdev
+[NetDev]
+Name=mskstap0
+Kind=tap
+
+[Tap]
+Owner=chrism
+```
+
+Forwarding keeps the `sysctl.d` form — machine identity, the same
+contract as inside the appliance — rather than a per-link toggle:
+
+```ini
+# /etc/sysctl.d/90-msks-appliance.conf
+net.ipv4.ip_forward = 1
+```
+
+And the firewall/NAT table, loaded by the distro's
+`nftables.service` (add the table to the file that service reads,
+typically `/etc/nftables.conf`):
+
+```nft
+table ip msks-host {
+  chain forward_msks {
+    type filter hook forward priority filter; policy accept;
+    iifname "msksbr0" ct state new,established,related accept
+    oifname "msksbr0" ct state established,related accept
+  }
+  chain nat_msks {
+    type nat hook postrouting priority srcnat; policy accept;
+    ip saddr 192.168.77.0/24 oifname != "msksbr0" masquerade
+  }
+}
+```
+
+On NixOS, paste this into `configuration.nix` (or a module) — it is the
+installer, shape for shape: the same bridge, the same owner-held tap,
+the same forwarding sysctl, the same three firewall rules. Substitute
+the user who runs the appliance:
+
+```nix
+{ pkgs, ... }:
+
+let
+  # The user who runs the appliance; the tap is owned by it, which is
+  # what lets the unprivileged cloud-hypervisor open it.
+  applianceUser = "chrism";
+in
+{
+  # Host forwarding — the same machine-identity setting the appliance
+  # ships internally.
+  boot.kernel.sysctl."net.ipv4.ip_forward" = "1";
+
+  # Keep NetworkManager's hands off the appliance's devices (inert
+  # where NetworkManager is not enabled).
+  networking.networkmanager.unmanaged = [ "msksbr0" "mskstap0" ];
+
+  systemd.services.msks-host-net = {
+    description = "msks appliance host network (bridge, tap, NAT)";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "systemd-modules-load.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    path = with pkgs; [ iproute2 iptables ];
+    script = ''
+      set -e
+      if ! ip link show dev msksbr0 >/dev/null 2>&1; then
+        ip link add name msksbr0 type bridge
+        ip addr add 192.168.77.1/24 dev msksbr0
+        ip link set msksbr0 up
+      fi
+      if ! ip link show dev mskstap0 >/dev/null 2>&1; then
+        ip tuntap add mode tap user ${applianceUser} mskstap0
+        ip link set mskstap0 master msksbr0
+        ip link set mskstap0 up
+      fi
+      ipt_rule() { # ipt_rule <table> <chain> <rule args...>: add if absent
+        table="$1"
+        shift
+        iptables -t "$table" -C "$@" >/dev/null 2>&1 ||
+          iptables -t "$table" -A "$@"
+      }
+      ipt_rule filter FORWARD -i msksbr0 -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j ACCEPT
+      ipt_rule filter FORWARD -o msksbr0 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+      ipt_rule nat POSTROUTING -s 192.168.77.0/24 ! -o msksbr0 -j MASQUERADE
+    '';
+  };
+}
+```
+
+The MASQUERADE rule matches any outbound interface (`! -o msksbr0`),
+so it follows the default route across wifi↔eth switches; the whole
+unit is idempotent, so a rebuild or a `systemctl restart
+msks-host-net` re-arms anything a firewall reload dropped. Hosts that
+prefer the blessed NAT module can replace the three `ipt_rule` calls
+with `networking.nat.enable = true; networking.nat.internalInterfaces
+= [ "msksbr0" ]; networking.nat.externalInterface = "<default-route
+iface>";` (that module also sets `ip_forward` itself).
+
+Non-NixOS hosts whose firewall is firewalld, or whose network
+NetworkManager manages, keep the installer path: NetworkManager does
+not consume networkd's `.netdev` files, and a firewalld complete
+reload replaces the whole ruleset — foreign rules added once, by
+script or by file, do not survive it. Re-running the installer
+re-arms the state after such a reload (the NixOS unit above is
+immune on both counts: `networkmanager.unmanaged` claims the devices,
+and a rebuild re-runs the idempotent unit).
 
 ## Backend support
 

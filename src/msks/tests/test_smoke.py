@@ -19,6 +19,7 @@ covered by the faked-transport unit suites).
 import asyncio
 import contextlib
 import os
+import re
 import shutil
 import socket
 import ssl
@@ -131,7 +132,12 @@ def collect_failure_evidence(state_dir: Path, wid: str, serial_log: Path) -> Non
                 sock.close()
     keep = Path("/tmp/msks-smoke-failed") / wid
     keep.mkdir(parents=True, exist_ok=True)
-    for name in ("serial.log", "cloud-hypervisor.log", "vsock.sock"):
+    # The driver's own filenames (local.py: ch.log, ch.pid): the
+    # vsock socket is a socket, never a file, so it stays out — the
+    # copy list once carried names nothing writes, and the VMM's own
+    # log (the one line that names device and config errors) never
+    # reached the CI artifact.
+    for name in ("serial.log", "ch.log", "ch.pid"):
         source = vm_dir / name
         if source.is_file():
             with contextlib.suppress(OSError):
@@ -588,8 +594,9 @@ async def test_k8s_pod_lifecycle() -> None:
 # Boots the real appliance through the devenv supervisor scripts — the
 # same path an operator uses — then drives one workspace VM through
 # the API served from inside it. Opt-in: it needs /dev/kvm (nested
-# virt: the workspace boots inside the appliance VM), sudo -n for the
-# one-time bridge/tap, and built appliance + guest assets.
+# virt: the workspace boots inside the appliance VM), the one-time
+# host network install (scripts/appliance-host-setup.sh, run once
+# as root), and built appliance + guest assets.
 APPLIANCE = os.environ.get("MSKSD_TEST_APPLIANCE")
 
 
@@ -676,11 +683,20 @@ def read_appliance_journal(state_disk: Path) -> list[str] | None:
         return text.stdout.splitlines()
 
 
-def _sudo_available() -> bool:
+def _host_net_installed() -> bool:
+    """The one-time installer's footprint: the appliance's bridge.
+
+    The host network (bridge, tap, forwarding, NAT) is installed
+    once as root by scripts/appliance-host-setup.sh (#101); the
+    appliance itself starts unprivileged, so the gate is the
+    install's presence, not sudo.
+    """
     try:
         return (
             subprocess.run(
-                ["sudo", "-n", "true"], capture_output=True, timeout=10
+                ["ip", "link", "show", "dev", "msksbr0"],
+                capture_output=True,
+                timeout=10,
             ).returncode
             == 0
         )
@@ -692,12 +708,44 @@ needs_appliance = pytest.mark.skipif(
     not APPLIANCE
     or not os.access("/dev/kvm", os.W_OK)
     or not (REPO_ROOT / ".appliance" / "vmlinux").is_file()
-    or not _sudo_available(),
+    or not _host_net_installed(),
     reason=(
-        "set MSKSD_TEST_APPLIANCE=1 with /dev/kvm, sudo -n (bridge/tap), "
-        "and devenv tasks run msks:appliance-build + msks:build-guest"
+        "set MSKSD_TEST_APPLIANCE=1 with /dev/kvm, the one-time host "
+        "network (sudo bash scripts/appliance-host-setup.sh), and "
+        "devenv tasks run msks:appliance-build + msks:build-guest"
     ),
 )
+
+
+def seed_legacy_state_disk(state_disk: Path, marker_text: str) -> bool:
+    """Seed a pre-#101 (root-daemon) state disk shape (#101 review).
+
+    A legacy disk carries the daemon's entries at the /state TOP
+    level; first boot with the service-user daemon must converge
+    them into /state/msksd with service-user ownership — a missed
+    move silently rotates the TLS CA, so the convergence gets an
+    end-to-end check. debugfs writes root-owned inodes, exactly the
+    legacy ownership. Returns False when the host lacks debugfs
+    (the assertions then soften to a printed note, like the journal
+    read). The seeded entries are ones the running daemon tolerates:
+    volumes/ it never scans, msks-cert.host it rewrites.
+    """
+    if shutil.which("debugfs") is None:
+        return False
+    marker = state_disk.parent / "legacy-marker"
+    marker.write_text(marker_text)
+    for op in (
+        "mkdir /volumes",
+        f"write {marker} /volumes/legacy-marker",
+        f"write {marker} /msks-cert.host",
+    ):
+        seed = subprocess.run(
+            ["debugfs", "-w", "-R", op, str(state_disk)],
+            capture_output=True,
+            timeout=120,
+        )
+        assert seed.returncode == 0, f"seeding {op!r} failed: {seed.stderr}"
+    return True
 
 
 def _devenv_processes(*args: str, timeout: int = 600) -> subprocess.CompletedProcess:
@@ -738,8 +786,45 @@ async def test_appliance_boot_and_workspace() -> None:
         if probe.returncode == 0:
             pytest.skip("an appliance VMM is already answering on this host")
 
-    up = _devenv_processes("up", "-d")
-    assert up.returncode == 0, f"devenv processes up failed:\n{up.stdout}\n{up.stderr}"
+    # The upgrade-path pin (#101 review): this run boots a FRESH
+    # state disk seeded with the pre-#101 legacy layout, so the
+    # migration runs for real every time — and the dev host's own
+    # state disk stays untouched.
+    marker_text = f"pre-101 daemon state {uuid.uuid4().hex[:8]}\n"
+    legacy_dir = tempfile.TemporaryDirectory(prefix="msks-legacy-state")
+    state_disk = Path(legacy_dir.name) / "state.ext4"
+    # Sparse copy: the template is an 8 GiB image with large holes,
+    # and a dense copy would ENOSPC a tmpfs-backed TMPDIR (the same
+    # care read_appliance_journal takes).
+    copy = subprocess.run(
+        [
+            "cp",
+            "--sparse=always",
+            str(app_dir / "image" / "state.ext4"),
+            str(state_disk),
+        ],
+        capture_output=True,
+        timeout=300,
+    )
+    assert copy.returncode == 0, (
+        f"sparse copy of the state template failed: {copy.stderr}"
+    )
+    # The template is 0444 in the store; the writable disk the VMM
+    # opens O_RDWR needs the write bit (appliance-setup.sh chmods its
+    # own copy — this pre-made one must match).
+    state_disk.chmod(0o644)
+    seeded = seed_legacy_state_disk(state_disk, marker_text)
+    if not seeded:
+        print("debugfs not on PATH; skipping the legacy-state assertions")
+    prior_state_env = os.environ.get("MSKSD_APPLIANCE_STATE")
+    os.environ["MSKSD_APPLIANCE_STATE"] = str(state_disk)
+    # The console bring-up knob's documented slow-host use: the
+    # workspace guest boots under nested KVM, and the default 15s
+    # vsock window is short there (the run script's own comment).
+    # An operator's value wins.
+    prior_cmdline_extra = os.environ.get("MSKS_APPLIANCE_CMDLINE_EXTRA")
+    if not prior_cmdline_extra:
+        os.environ["MSKS_APPLIANCE_CMDLINE_EXTRA"] = "msksd.vsock_wait_timeout_s=120"
 
     async def await_token(timeout_s: float = 120.0) -> str:
         # `up -d` returns when the MANAGER starts; setup (state-disk
@@ -774,7 +859,15 @@ async def test_appliance_boot_and_workspace() -> None:
 
     status = None
     token = headers = None
+    up = None
     try:
+        # Inside the guarded region: a failed start still tears the
+        # detached manager down below instead of leaving it running
+        # against the temp state disk with mutated env.
+        up = _devenv_processes("up", "-d")
+        assert up.returncode == 0, (
+            f"devenv processes up failed:\n{up.stdout}\n{up.stderr}"
+        )
         token = await await_token()
         headers = {"authorization": f"Bearer {token}"}
         await await_api()
@@ -829,7 +922,14 @@ async def test_appliance_boot_and_workspace() -> None:
                     raise AssertionError(
                         f"console never echoed the marker; got: {console_got!r}"
                     )
-                message = await asyncio.wait_for(shell_ws.recv(), 30.0)
+                # A silent gap is normal, not failure: a nested-virt
+                # guest can take a minute or more past "running" to
+                # arm its vsock console, and the per-recv wait must
+                # not cut the marker's own deadline short.
+                try:
+                    message = await asyncio.wait_for(shell_ws.recv(), 30.0)
+                except TimeoutError:
+                    continue
                 console_got += (
                     message if isinstance(message, bytes) else message.encode()
                 )
@@ -841,35 +941,60 @@ async def test_appliance_boot_and_workspace() -> None:
             # host side must be wired (appliance-setup.sh: forwarding,
             # NAT, and the appliance's upstream resolver) for these to
             # pass, which is exactly the posture being pinned.
-            async def await_marker(needle: bytes, deadline_s: float = 180.0) -> bytes:
-                got = b""
-                end = loop.time() + deadline_s
-                while needle not in got:
-                    if loop.time() >= end:
-                        raise AssertionError(
-                            f"console never showed {needle!r}; got: {got[-400:]!r}"
-                        )
-                    message = await asyncio.wait_for(shell_ws.recv(), 30.0)
-                    got += message if isinstance(message, bytes) else message.encode()
-                return got
+            #
+            # A one-shot probe the SENDER retries: the guest may not
+            # have its lease yet (the console session can open while
+            # networkd is still configuring), and the console
+            # transport can corrupt a sent line (#103: mangled pty
+            # echo artifacts) — a fresh resend supersedes the corrupted
+            # round, so each probe measures the network path, not the
+            # console's byte fidelity. The markers render differently
+            # from the sent bytes, so the pty echo of the command
+            # cannot satisfy the wait.
+            probe_buf = b""
 
-            # The probes retry inside the guest: the command can run
-            # before DHCP lands (fast hosts boot the console session
-            # concurrent with networkd), and a one-shot ip/getent
-            # would snapshot the pre-lease state. The markers render
-            # differently from the sent bytes — the pty echoes input
-            # (echo=1), so a literal marker in the command line would
-            # satisfy the wait on echo alone.
-            await shell_ws.send(
-                b"for i in $(seq 1 60); do ip -4 addr | grep -q 172.31. "
-                b"&& echo NET-$((6*7))-UP && break; sleep 2; done\n"
+            async def probe_collect(marker: bytes) -> bytes:
+                nonlocal probe_buf
+                end = loop.time() + 7.0
+                while marker not in probe_buf and loop.time() < end:
+                    try:
+                        message = await asyncio.wait_for(shell_ws.recv(), 1.0)
+                    except TimeoutError:
+                        continue
+                    probe_buf += (
+                        message if isinstance(message, bytes) else message.encode()
+                    )
+                return probe_buf
+
+            async def probe(marker: bytes, command: bytes) -> None:
+                # Send first, then collect: the first collect window is
+                # not free time to skip.
+                end = loop.time() + 180.0
+                await shell_ws.send(command)
+                while marker not in (await probe_collect(marker)):
+                    if loop.time() >= end:
+                        raise AssertionError(f"console never showed {marker!r}")
+                    await shell_ws.send(command)
+                    await asyncio.sleep(7.0)
+
+            await probe(
+                b"NET-42-UP",
+                b"ip -4 addr | grep -q 172.31. && echo NET-$((6*7))-UP\n",
             )
-            await await_marker(b"NET-42-UP")
-            await shell_ws.send(
-                b"for i in $(seq 1 60); do getent hosts deb.debian.org "
-                b">/dev/null && echo DNS-$((6*7))-UP && break; sleep 2; done\n"
+            await probe(
+                b"DNS-42-UP",
+                b"getent hosts deb.debian.org >/dev/null && echo DNS-$((6*7))-UP\n",
             )
-            await await_marker(b"DNS-42-UP")
+            # Forwarded egress through the NAT'd uplink (#101): a TCP
+            # connection the guest initiates must traverse the forward
+            # chain and the masquerade — the DHCP and DNS markers above
+            # both work without them (DNS relays through the daemon's
+            # own socket), so this is the probe that proves the path.
+            await probe(
+                b"TCP-42-UP",
+                b"timeout 5 bash -c '</dev/tcp/deb.debian.org/80' "
+                b"&& echo TCP-$((6*7))-UP\n",
+            )
         response = await client.get(f"{base}/workspaces/{wid}", headers=headers)
         assert response.json().get("status") == "running", response.text
 
@@ -932,10 +1057,23 @@ async def test_appliance_boot_and_workspace() -> None:
                 await client.delete(f"{base}/workspaces/{wid}", headers=headers)
         with contextlib.suppress(Exception):
             await client.post(f"{base}/workspaces/{wid}/stop", headers=headers)
+        # The env restore comes first: a failed teardown assert below
+        # must not leak process-global env into other tests.
+        if prior_state_env is None:
+            del os.environ["MSKSD_APPLIANCE_STATE"]
+        else:
+            os.environ["MSKSD_APPLIANCE_STATE"] = prior_state_env
+        if prior_cmdline_extra is None:
+            del os.environ["MSKS_APPLIANCE_CMDLINE_EXTRA"]
+        elif prior_cmdline_extra != os.environ.get("MSKS_APPLIANCE_CMDLINE_EXTRA"):
+            os.environ["MSKS_APPLIANCE_CMDLINE_EXTRA"] = prior_cmdline_extra
         down = _devenv_processes("down", timeout=300)
         assert down.returncode == 0, (
             f"devenv processes down failed:\n{down.stdout}\n{down.stderr}"
         )
+        # The state disk itself lives until the post-teardown reads
+        # below are done: the journal and the migration asserts read
+        # it after the appliance is down.
     assert not (app_dir / "api.sock").exists()
     # The supervisor is gone too: teardown is its view of "stopped",
     # not just pidfile/socket absence.
@@ -947,9 +1085,7 @@ async def test_appliance_boot_and_workspace() -> None:
     # disk by journald (#92): read it back from the host and require
     # the boot's records to have survived the teardown. Softens to a
     # printed note on hosts without journalctl/debugfs.
-    journal = read_appliance_journal(
-        Path(os.environ.get("MSKSD_APPLIANCE_STATE", app_dir / "state.ext4"))
-    )
+    journal = read_appliance_journal(state_disk)
     if journal is None:
         print("journalctl/debugfs not on PATH; skipping journal assertions")
     else:
@@ -962,6 +1098,78 @@ async def test_appliance_boot_and_workspace() -> None:
         assert "msks appliance: cmdline env:" in joined, (
             "journal never recorded the cmdline bridge"
         )
+        # The privilege contract (#101): the daemon — and, through
+        # ambient inheritance, every tool and VMM it execs — runs as
+        # the service user, in the kvm group, holding exactly
+        # CAP_NET_BIND_SERVICE (10) + CAP_NET_ADMIN (12) = 0x1400.
+        # The boot script prints `id` and the /proc capability sets
+        # before execing msksd; the journal carries them.
+        identity = [ln for ln in journal if "daemon identity:" in ln]
+        assert identity, "journal never recorded the daemon identity"
+        match = re.search(r"uid=(\d+)\(msksd\)", identity[-1])
+        assert match, f"daemon identity is not the msksd user: {identity[-1]!r}"
+        service_uid = int(match.group(1))
+        assert service_uid != 0, identity[-1]
+        # uid and gid are allocated independently at build time; the
+        # ownership assert below must use each, not assume they match.
+        gid_match = re.search(r"gid=(\d+)\(msksd\)", identity[-1])
+        assert gid_match, f"daemon identity carries no gid: {identity[-1]!r}"
+        service_gid = int(gid_match.group(1))
+        assert "(kvm)" in identity[-1], f"daemon missed the kvm group: {identity[-1]!r}"
+        for field in ("CapEff", "CapAmb"):
+            lines = [ln for ln in journal if f"daemon {field}:" in ln]
+            assert lines, f"journal never recorded the daemon {field}"
+            assert "0000000000001400" in lines[-1], (
+                f"daemon {field} is not the two-capability set: {lines[-1]!r}"
+            )
+        # The legacy state converged into the service user's home
+        # (#101 review): the seeded pre-#101 entries moved (not were
+        # recreated — content survives) and carry the service user's
+        # ownership, and nothing daemon-shaped stays at the top level
+        # (the host-seeded debug-shell/diag.sh markers are not the
+        # daemon's and are not touched).
+        if seeded and journal is not None:
+            # The teardown can leave the ext4 mid-transaction (a
+            # hard-stopped guest — the same case read_appliance_journal
+            # repairs its own copy for); repair the throwaway disk in
+            # place so debugfs opens it.
+            fsck = subprocess.run(
+                ["e2fsck", "-fy", str(state_disk)],
+                capture_output=True,
+                timeout=300,
+            )
+            assert fsck.returncode <= 2, (
+                f"e2fsck could not repair the state disk:\n{fsck.stdout}"
+            )
+
+            def debugfs_read(op: str) -> subprocess.CompletedProcess:
+                return subprocess.run(
+                    ["debugfs", "-R", op, str(state_disk)],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+
+            stat = debugfs_read("stat /msksd/volumes/legacy-marker")
+            assert stat.returncode == 0, stat.stderr
+            assert re.search(
+                rf"User:\s+{service_uid}\s+Group:\s+{service_gid}", stat.stdout
+            ), f"legacy marker not service-user-owned:\n{stat.stdout}"
+            readback = debugfs_read("cat /msksd/volumes/legacy-marker")
+            assert readback.stdout == marker_text, (
+                "the legacy marker was recreated, not moved"
+            )
+            top = debugfs_read("ls -l /")
+            assert top.returncode == 0, top.stderr
+            # debugfs pads with blank lines; only real rows carry a name.
+            names = {
+                line.split()[-1] for line in top.stdout.splitlines() if line.split()
+            }
+            assert "msksd" in names, f"no service-user home on the disk:\n{top.stdout}"
+            assert "volumes" not in names and "msks-cert.host" not in names, (
+                f"daemon entries still at the state-disk top level:\n{top.stdout}"
+            )
+    legacy_dir.cleanup()
 
 
 # --- egress smoke (#52) ----------------------------------------------------
@@ -971,7 +1179,10 @@ async def test_appliance_boot_and_workspace() -> None:
 # DHCP, resolves through the daemon's resolver, and reaches the
 # outside over the NAT'd uplink. Opt-in: it needs root (tap/nft/ports
 # 67+53), /dev/kvm, the built guest image (with the #52 DHCP overlay),
-# and an egress-capable default route.
+# and an egress-capable default route. Root is the TEST's constraint,
+# not the server's (#101): ambient capabilities cannot be handed to
+# an arbitrary shell, so the harness runs as full root — and owns
+# ip_forward itself, since the daemon only verifies it.
 
 EGRESS = os.environ.get("MSKSD_TEST_EGRESS")
 
@@ -1088,6 +1299,12 @@ async def test_local_egress_boot() -> None:
         cmdline=CMDLINE or "console=hvc0 root=/dev/vda rw",
         egress=True,
     )
+    # The daemon verifies, never writes, ip_forward (#101 — the
+    # appliance ships it as a sysctl); the root harness owns the dev
+    # host's setting for the run and restores what it found.
+    forwarding = Path("/proc/sys/net/ipv4/ip_forward")
+    forwarding_was = forwarding.read_text()
+    forwarding.write_text("1")
     try:
         await app.state.net.start()
         await app.state.model.create_workspace(spec)
@@ -1139,4 +1356,6 @@ async def test_local_egress_boot() -> None:
     finally:
         with contextlib.suppress(Exception):
             await microvm.cleanup(wid)
+        with contextlib.suppress(OSError):
+            forwarding.write_text(forwarding_was)
         shutil.rmtree(state_dir, ignore_errors=True)

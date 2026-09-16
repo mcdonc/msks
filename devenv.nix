@@ -238,9 +238,11 @@ in
     # The appliance host supervisor (#25): the long-running pieces are
     # devenv PROCESSES, owned by the environment's own process manager
     # (restart on crash, logs, clean teardown) — see `processes` below.
-    # The tasks are thin conveniences over the process manager. The one
-    # privileged step (bridge/tap create) is a documented one-time sudo
-    # inside appliance-setup.sh.
+    # The tasks are thin conveniences over the process manager. The
+    # host network (bridge, tap, forwarding, NAT) is installed once as
+    # root by scripts/appliance-host-setup.sh and re-armed at every
+    # host boot by its systemd unit; appliance-setup.sh only verifies
+    # it, so starting the appliance needs no sudo.
     "msks:appliance-build" = {
       description = "Build the msksd appliance image into .appliance/";
       exec = ''

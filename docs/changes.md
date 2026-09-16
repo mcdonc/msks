@@ -49,6 +49,35 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **The appliance starts without sudo (#101).** The host-side network
+  (bridge, tap, host forwarding, NAT) moves from per-start `sudo -n`
+  calls in `scripts/appliance-setup.sh` to a one-time root install:
+  `sudo bash scripts/appliance-host-setup.sh` writes a `sysctl.d`
+  forwarding drop-in and a systemd unit that re-arms the bridge, tap,
+  and firewall rules at every host reboot. `appliance-setup.sh` now
+  verifies the install and names it when something is missing, so
+  `devenv processes up` runs entirely unprivileged after the one-time
+  install; re-run the installer to re-arm after a firewall reload or
+  to change the tap's owning user. `docs/networking.md` documents the
+  fully static forms — networkd + nftables files, and a
+  copy-pasteable NixOS configuration equivalent to the installer.
+
+- **The appliance runs msksd as a non-root service user (#101).**
+  The daemon executes as a dedicated `msksd` user holding exactly two
+  ambient capabilities — `CAP_NET_ADMIN` (taps, nftables, and the
+  VMM's tap opens) and `CAP_NET_BIND_SERVICE` (DHCP 67, DNS 53) —
+  and nothing in its process tree runs as uid 0; `/dev/kvm` reaches
+  it through the `kvm` group. `net.ipv4.ip_forward=1` moves from a
+  daemon-time write to a boot-time `sysctl.d` setting: msksd verifies
+  it and refuses egress with the cause naming `net.ipv4.ip_forward`
+  when it reads `0`. The appliance pins its NIC to `eth0`
+  (`net.ifnames=0` on its kernel cmdline) so the default
+  `MSKSD_EGRESS_UPLINK` matches — full udev in the trixie base would
+  otherwise rename the NIC and silently break forwarded egress — and
+  the daemon's state moves to the service-user-owned `/state/msksd`
+  (an existing state disk migrates its daemon files on first boot).
+  See `docs/networking.md`.
+
 - **The workspace guest boots Debian's generic kernel (#96).** One
   kernel pin now serves both the guest and the appliance (#92): a
   host fetches a single kernel deb instead of two, and the workspace
@@ -92,6 +121,8 @@ tagged `vX.Y.Z`.
 - **Nix-built guest assets (`msks:build-guest`, `msks:demo-vm`, `msks:build-runner-image`).** The devenv now produces everything needed to boot a microvm — kernel, initrd, read-only ext4 rootfs into `.guest/`, plus the k8s vm-runner container archive — from the nixpkgs revision devenv itself pins, on any Linux host with nix; the manual-download flow is gone. Boot tests pick the built artifacts up automatically (explicit `MSKSD_TEST_VMLINUX`/`MSKSD_TEST_ROOTFS`/`MSKSD_TEST_INITRD` variables keep precedence) and skip themselves when the guest was never built or `/dev/kvm` is unusable. `msks:demo-vm` boots one interactive VM from the artifacts with `ch-remote` ready (#5).
 
 ### Fixed
+
+- **`/home` could fail to mount on slow boots (#14).** The guest fstab mounted the home volume by label under `x-systemd.device-timeout=2s`; that clock starts at sysinit job enqueue, before udevd runs, and on a first boot from a fresh overlay (every root read a copy-on-write miss) the udev label probe can exceed what is left of the budget — `home.mount` then fails for the whole boot (`nofail` keeps the boot moving and never retries). The device timeout is now 30s, so the mount rides out a slow coldplug; a boot with no volume at all waits the same 30s once and continues.
 
 - **`scripts/appliance-setup.sh` on iptables-nft hosts (#36).** The NAT rule was invoked as `iptables -C -t nat …`, and iptables-nft 1.8.13 rejects a table option after the command, so setup died before seeding the state disk. The rule helper now takes the table explicitly and places it before `-C`/`-A`, which legacy and nf_tables variants both accept.
 

@@ -251,13 +251,25 @@ let
     # host-side ext4 volume, labeled msks-home at mkfs time and
     # attached as a second virtio-blk disk. Mounting by label (not
     # /dev/vdb) keeps /home on the right device even if the disk
-    # order ever shifts. nofail plus a short device timeout keeps a
-    # boot without the volume (a demo VM, a pre-#14 image) moving
-    # instead of stalling 90s.
+    # order ever shifts. nofail plus a device timeout keeps a boot
+    # without the volume (a demo VM, a pre-#14 image) moving instead
+    # of stalling the default 90s.
+    #
+    # The timeout must survive a slow udev coldplug: the device job
+    # for /dev/disk/by-label/msks-home is enqueued at sysinit start,
+    # before udevd itself runs, and udevd must probe the volume for
+    # its label before the clock expires — else home.mount fails for
+    # the whole boot (nofail keeps the boot moving; it never retries
+    # the mount). A first boot from a fresh overlay is the slow
+    # case: every root read is a copy-on-write miss against the
+    # backing image, and module loading and journal writes compete
+    # with the coldplug for the same I/O. 30s covers it; a boot
+    # without the volume pays the same 30s once, in parallel with
+    # the rest of boot, and continues.
     printf '%s\n' \
       '# msks: root comes from the kernel cmdline; no swap.' \
       '# /home is the second persistent disk (#14), labeled msks-home.' \
-      'LABEL=msks-home /home ext4 defaults,nofail,x-systemd.device-timeout=2s 0 2' \
+      'LABEL=msks-home /home ext4 defaults,nofail,x-systemd.device-timeout=30s 0 2' \
       > $out/etc/fstab
 
     printf '%s\n' \

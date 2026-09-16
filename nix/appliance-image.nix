@@ -103,7 +103,14 @@ let
     gateway = "192.168.77.1";
   };
 
-  kernelCmdline = "console=ttyS0 root=/dev/vda rootfstype=ext4 ro";
+  # net.ifnames=0 keeps the NIC on its kernel name (eth0): the
+  # daemon's default uplink (MSKSD_EGRESS_UPLINK) and the networkd
+  # match below both speak eth0, and full udev in the trixie base
+  # would otherwise rename it to an ens3-style name the nftables
+  # rules never see — silently breaking forwarded egress (the DHCP
+  # and DNS markers still pass without the forward chain; the guest
+  # hits exactly this rename — #36).
+  kernelCmdline = "console=ttyS0 root=/dev/vda rootfstype=ext4 ro net.ifnames=0";
 
   # The minimal initramfs, the guest's recipe (#37, #96: one recipe,
   # one pin) with the root mounted READ-ONLY: virtio-pci
@@ -211,11 +218,14 @@ let
       # The daemon's settings file (#46), generated at every boot:
       # keys are the MSKSD_* variables lowercased; operator overrides
       # ride the cmdline bridge above as variables, which outrank the
-      # file. The heredoc body sits at column zero: an unquoted
+      # file. The state dir is the service user's /state/msksd home
+      # (created and chowned by msks-state-format.service — the
+      # daemon is not root and cannot mkdir under /state; #101). The
+      # heredoc body sits at column zero: an unquoted
       # delimiter expands nothing (the store paths are already
       # literal text) and the closing EOF must start a line.
-      cat >/run/msksd.yaml <<EOF
-      state_dir: /state
+      cat >/run/msksd/msksd.yaml <<EOF
+      state_dir: /state/msksd
       host: 0.0.0.0
       port: 8660
       cloud_hypervisor: ${vmm}/bin/cloud-hypervisor
@@ -230,6 +240,15 @@ let
       echo "msks appliance: kernel $(uname -r) up; execing msksd"
       echo "msks appliance: serving https://${net.address}:8660 (TOFU fingerprint on the serial log)"
 
+      # The identity evidence (#101): the serial log and the journal
+      # record which uid — and which capability sets — the daemon,
+      # and through ambient inheritance every tool and workspace VMM
+      # it execs, runs with. 0x1400 is exactly CAP_NET_BIND_SERVICE
+      # (10) + CAP_NET_ADMIN (12).
+      echo "msks appliance: daemon identity: $(id)"
+      grep -E '^Cap(Prm|Eff|Amb):' /proc/self/status \
+        | sed 's/^/msks appliance: daemon /'
+
       # Debug escape hatch: a /state/debug-shell marker (seeded onto
       # the state disk from the host) backgrounds the daemon, puts the
       # diagnostics on the serial log, and HOLDS the unit open — the
@@ -238,13 +257,15 @@ let
       # an exiting msks-boot would just restart-loop under
       # Restart=always.
       if [ -e /state/debug-shell ]; then
-        ( sleep 2; exec "${msks}/bin/msksd" --config /run/msksd.yaml ) &
+        ( sleep 2; exec "${msks}/bin/msksd" --config /run/msksd/msksd.yaml ) &
         echo "msks appliance: DEBUG SHELL on console"
         echo "=== DIAG ==="
+        id
         ls -l /dev/kvm 2>&1 || echo "NO /dev/kvm node"
-        modprobe kvm-intel 2>&1; echo "modprobe kvm-intel rc=$?"
-        modprobe kvm-amd 2>&1; echo "modprobe kvm-amd rc=$?"
-        ls -l /dev/kvm 2>&1 || echo "still NO /dev/kvm"
+        # The module load is msks-kvm.service's job now (the service
+        # user cannot modprobe); the hatch reports the unit's state
+        # and the evidence that KVM is usable.
+        systemctl is-active msks-kvm.service 2>&1
         grep -cE "vmx|svm" /proc/cpuinfo
         "${vmm}/bin/cloud-hypervisor" --version 2>&1 || echo "CH EXEC FAIL rc=$?"
         ls /nix/store | head -3
@@ -257,7 +278,90 @@ let
         echo "=== DIAG-END ==="
         exec sleep infinity
       fi
-      exec "${msks}/bin/msksd" --config /run/msksd.yaml
+      exec "${msks}/bin/msksd" --config /run/msksd/msksd.yaml
+    '';
+  };
+
+  # The state disk preparation script — what msks-state-format.service
+  # ExecStarts (#101 pulled the shell out of the unit's ExecStart:
+  # one readable script instead of a quoted one-liner). Runs as root,
+  # before the fstab-generated state.mount (see the unit below for
+  # the ordering). Every boot converges the disk, whatever it holds.
+  msksStatePrepare = pkgs.writeTextFile {
+    name = "msks-state-prepare";
+    executable = true;
+    destination = "/usr/local/sbin/msks-state-prepare";
+    text = ''
+      #!/bin/sh
+      # Blank or foreign disks become labeled ext4 carrying the var/
+      # staging tree (the bind source for /var); existing disks
+      # converge to the same tree. #101 adds the daemon's
+      # /state/msksd home to the converge set.
+      set -eu
+
+      # The disk must appear before anything can converge on it.
+      i=0
+      while [ $i -lt 50 ] && [ ! -b /dev/vdb ]; do
+        sleep 0.2
+        i=$((i + 1))
+      done
+
+      # Staging tree for a BLANK disk: the run/lock symlinks must
+      # predate the /var bind mount, and the journal directory must
+      # exist before journald's flush step looks for it (Debian
+      # creates it at package install time; a blank disk has no
+      # install). tmpfiles and journald create the rest on the
+      # mounted disk.
+      mkdir -p /run/msks-blank/var/log/journal
+      ln -sfn /run /run/msks-blank/var/run
+      ln -sfn /run/lock /run/msks-blank/var/lock
+
+      # A disk with the label mounts as-is; an ext4 one WITHOUT it
+      # (the old busybox init formatted fallback disks unlabeled)
+      # gets e2label'd; anything else becomes a labeled ext4
+      # carrying the staging tree.
+      blkid -t LABEL=msks-state -o device /dev/vdb >/dev/null 2>&1 \
+        || e2label /dev/vdb msks-state 2>/dev/null \
+        || mkfs.ext4 -q -L msks-state -d /run/msks-blank /dev/vdb
+
+      # Converge the mounted disk. The var/ staging merge (the same
+      # steps as the blank staging above, applied in place).
+      mkdir -p /run/msks-mnt
+      mount /dev/vdb /run/msks-mnt
+      mkdir -p /run/msks-mnt/var/log/journal
+      ln -sfn /run /run/msks-mnt/var/run
+      ln -sfn /run/lock /run/msks-mnt/var/lock
+
+      # The daemon's /state/msksd home (#101): the state dir,
+      # database, and TLS keys are service-user-owned; the daemon is
+      # not root and cannot mkdir under /state. The top-level entries
+      # a pre-#101 (root-daemon) disk carries move into the new home,
+      # so an upgrade keeps its workspaces AND its pinned TLS CA —
+      # the certificate material lives at the state-dir top level
+      # (msks-ca*.pem, msks-cert*, msks-key*; see tls.py), and a
+      # missed move would silently mint a fresh CA on first boot.
+      # /state/debug-shell and /state/diag.sh are host-seeded markers
+      # and stay at the top level.
+      mkdir -p /run/msks-mnt/msksd
+      moved=0
+      for name in msks.db msks.db-wal msks.db-shm \
+        msks-ca.pem msks-ca-key.pem msks-cert.pem msks-key.pem msks-cert.host \
+        vms volumes images; do
+        if [ -e /run/msks-mnt/$name ]; then
+          mv /run/msks-mnt/$name /run/msks-mnt/msksd/
+          moved=1
+        fi
+      done
+      # The directory itself converges every boot; the recursive
+      # chown runs only when something moved (a converged boot pays
+      # one chown, not a walk over every workspace artifact).
+      chown msksd:msksd /run/msks-mnt/msksd
+      if [ "$moved" -eq 1 ]; then
+        chown -R msksd:msksd /run/msks-mnt/msksd
+      fi
+
+      umount /run/msks-mnt
+      rm -rf /run/msks-mnt /run/msks-blank 2>/dev/null || true
     '';
   };
 
@@ -270,7 +374,7 @@ let
   applianceOverlay =
     pkgs.runCommand "msks-appliance-overlay"
       {
-        inherit msksBoot;
+        inherit msksBoot msksStatePrepare;
       }
       ''
         set -eu
@@ -281,6 +385,7 @@ let
           $out/etc/systemd/system/sysinit.target.wants \
           $out/etc/systemd/journald.conf.d \
           $out/etc/systemd/network \
+          $out/etc/sysctl.d \
           $out/etc/modules-load.d \
           $out/etc/cloud \
           $out/nix/store \
@@ -292,9 +397,13 @@ let
         # created these at boot; fstab mounts cannot).
         chmod 0755 $out/nix $out/nix/store $out/state
 
-        # The boot script (see msksBoot).
+        # The boot script (see msksBoot) and the state-disk converge
+        # script (see msksStatePrepare).
         cp "${msksBoot}/usr/local/sbin/msks-boot" $out/usr/local/sbin/msks-boot
         chmod 0755 $out/usr/local/sbin/msks-boot
+        cp "${msksStatePrepare}/usr/local/sbin/msks-state-prepare" \
+          $out/usr/local/sbin/msks-state-prepare
+        chmod 0755 $out/usr/local/sbin/msks-state-prepare
 
         # Identity: hostname, hosts, and a stable machine-id (the
         # root is read-only, so systemd cannot write one at boot —
@@ -355,6 +464,17 @@ let
           'Gateway=${net.gateway}' \
           > $out/etc/systemd/network/80-msks-appliance.network
 
+        # Routing is machine identity (#101): the appliance forwards
+        # between its uplink and the workspace taps, so the setting
+        # ships as a boot-time sysctl — systemd-sysctl applies it in
+        # sysinit, before the daemon starts — and msksd (a service
+        # user with no write access to /proc/sys) verifies it and
+        # refuses egress naming the key when it reads 0.
+        printf '%s\n' \
+          '# msks: the appliance routes for its egress workspaces (#52, #101).' \
+          'net.ipv4.ip_forward = 1' \
+          > $out/etc/sysctl.d/90-msks-ip-forward.conf
+
         # Kernel modules the appliance loads at boot: the egress
         # plumbing (#52 — the tap device and the nftables/NAT
         # machinery the daemon's rulesets need, including nft_ct of
@@ -407,23 +527,21 @@ let
         ln -s ../msks-kvm.service \
           $out/etc/systemd/system/multi-user.target.wants/msks-kvm.service
 
-        # A disk with the label mounts; an ext4 one WITHOUT it (the
-        # old busybox init formatted fallback disks unlabeled) gets
-        # e2label'd; anything else becomes a labeled ext4 carrying
-        # the var/ staging tree (the bind source for /var: the
-        # run/lock symlinks must predate the bind; tmpfiles and
-        # journald create the rest on the mounted disk). Every path
-        # then merges the staging tree in through a temporary mount,
-        # so existing disks converge too. set -e: a failed step must
-        # fail the unit — swallowing it would leave state.mount
-        # timing out with this unit looking innocent. Ordered before
-        # the mount units BY NAME — fstab's generated state.mount —
-        # with DefaultDependencies=no, because a unit with default
+        # The state disk converges before it mounts: the preparation
+        # script (see msksStatePrepare) waits for the disk, labels or
+        # formats it, and on every boot merges the var/ staging tree
+        # and prepares the daemon's /state/msksd home into the mounted
+        # disk — so blank, foreign, and existing (including pre-#101
+        # root-daemon) disks all converge. Ordered before the mount
+        # units BY NAME — fstab's generated state.mount — with
+        # DefaultDependencies=no, because a unit with default
         # dependencies is After=basic.target and cannot run this
-        # early without an ordering cycle.
+        # early without an ordering cycle. set -e inside the script:
+        # a failed step fails the unit — swallowing it would leave
+        # state.mount timing out with this unit looking innocent.
         printf '%s\n' \
           '[Unit]' \
-          'Description=msks state disk preparation (blank or foreign disks become ext4 with var staging)' \
+          'Description=msks state disk preparation (blank or foreign disks become ext4; var staging and the service user home converge)' \
           'DefaultDependencies=no' \
           'After=dev-vdb.device' \
           'Before=local-fs.target state.mount var.mount shutdown.target' \
@@ -431,7 +549,7 @@ let
           ''' \
           '[Service]' \
           'Type=oneshot' \
-          'ExecStart=/bin/sh -c "set -e; i=0; while [ $i -lt 50 ] && [ ! -b /dev/vdb ]; do sleep 0.2; i=$((i+1)); done; mkdir -p /run/msks-blank/var/log/journal; ln -sfn /run /run/msks-blank/var/run; ln -sfn /run/lock /run/msks-blank/var/lock; blkid -t LABEL=msks-state -o device /dev/vdb >/dev/null 2>&1 || e2label /dev/vdb msks-state 2>/dev/null || mkfs.ext4 -q -L msks-state -d /run/msks-blank /dev/vdb; mkdir -p /run/msks-mnt; mount /dev/vdb /run/msks-mnt; mkdir -p /run/msks-mnt/var/log/journal; ln -sfn /run /run/msks-mnt/var/run; ln -sfn /run/lock /run/msks-mnt/var/lock; umount /run/msks-mnt; rm -rf /run/msks-mnt /run/msks-blank 2>/dev/null || true"' \
+          'ExecStart=/usr/local/sbin/msks-state-prepare' \
           'StandardOutput=journal+console' \
           'StandardError=journal+console' \
           ''' \
@@ -442,22 +560,50 @@ let
           $out/etc/systemd/system/local-fs.target.wants/msks-state-format.service
 
         # The daemon: ordered after the store share and state disk it
-        # lives on (Requires: without them it cannot run at all) and
-        # the KVM module its workspaces need. Output goes to the
-        # journal AND the console (the serial log carries the TOFU
-        # fingerprint and the boot markers, as before). A crash
-        # restarts the daemon in place — the supervisor used to need
-        # a whole-VM restart for that.
+        # lives on (Requires: without them it cannot run at all), the
+        # state-disk preparation (Requires: a half-migrated disk —
+        # the format script died mid-move — must not get a daemon
+        # crash-looping against still-root-owned files; the next
+        # boot's converge finishes the migration), and the KVM module
+        # its workspaces need. The format unit's RemainAfterExit
+        # keeps that Requires from re-running it on every daemon
+        # restart — a crash loop would otherwise remount the live
+        # state disk once per second. Output goes to the journal AND
+        # the console (the serial log carries the TOFU fingerprint
+        # and the boot markers, as before). A crash restarts the
+        # daemon in place — the supervisor used to need a whole-VM
+        # restart for that.
+        #
+        # The privilege contract (#101): a dedicated service user
+        # holds exactly two ambient capabilities — CAP_NET_ADMIN
+        # (taps and addresses, the nftables tables, and through exec
+        # inheritance the workspace VMM opening its tap) and
+        # CAP_NET_BIND_SERVICE (the DHCP 67 and DNS 53 listeners) —
+        # and nothing in the unit's tree runs as uid 0. Ambient, not
+        # merely bounding, so the tools and the VMM the daemon
+        # execs keep them; /dev/kvm arrives through the kvm
+        # supplementary group (udev's default rule: mode 0660,
+        # group kvm). The accounts are baked into the image (see
+        # applianceRoot) because the read-only root cannot take
+        # sysusers writes. RuntimeDirectory hands the boot script a
+        # service-user-owned /run/msksd for the generated settings
+        # file.
         printf '%s\n' \
           '[Unit]' \
           'Description=msksd appliance daemon' \
           'Documentation=https://github.com/mcdonc/msks' \
-          'Requires=nix-store.mount state.mount' \
-          'After=nix-store.mount state.mount msks-kvm.service systemd-networkd.service' \
+          'Requires=nix-store.mount state.mount msks-state-format.service' \
+          'After=nix-store.mount state.mount msks-state-format.service msks-kvm.service systemd-networkd.service' \
           'StartLimitIntervalSec=0' \
           ''' \
           '[Service]' \
           'ExecStart=/usr/local/sbin/msks-boot' \
+          'User=msksd' \
+          'Group=msksd' \
+          'SupplementaryGroups=kvm' \
+          'AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE' \
+          'CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE' \
+          'RuntimeDirectory=msksd' \
           'Restart=always' \
           'RestartSec=1' \
           'StandardInput=null' \
@@ -582,6 +728,40 @@ let
         # write bits back.
         chmod -R u+w "$root"
 
+        # The service identity (#101): msksd runs as its own system
+        # user, and /dev/kvm reaches it through the kvm group. The
+        # root is READ-ONLY, so systemd-sysusers cannot write /etc at
+        # boot — the accounts bake here, at build time, into the
+        # base's account files. Ids are the first free slot in
+        # [200,249] of the system range: deterministic for the fixed
+        # pin, and a future base that fills a slot shifts to the
+        # next one instead of colliding. The unit's
+        # SupplementaryGroups=kvm names the group, so no /etc/group
+        # membership entry is needed.
+        free_id() {
+          for id in $(seq 200 249); do
+            cut -d: -f3 "$1" | grep -qx "$id" || { echo "$id"; return 0; }
+          done
+          return 1
+        }
+        msksd_uid=$(free_id "$root/etc/passwd") \
+          || { echo "no free system uid in 200-249"; exit 1; }
+        msksd_gid=$(free_id "$root/etc/group") \
+          || { echo "no free system gid in 200-249"; exit 1; }
+        grep -q '^msksd:' "$root/etc/passwd" || {
+          printf 'msksd:x:%s:%s:msksd appliance daemon:/state/msksd:/usr/sbin/nologin\n' \
+            "$msksd_uid" "$msksd_gid" >> "$root/etc/passwd"
+          printf 'msksd:!:19000:0:99999:7:::\n' >> "$root/etc/shadow"
+          printf 'msksd:x:%s:\n' "$msksd_gid" >> "$root/etc/group"
+          printf 'msksd:!::\n' >> "$root/etc/gshadow"
+        }
+        grep -q '^kvm:' "$root/etc/group" || {
+          kvm_gid=$(free_id "$root/etc/group") \
+            || { echo "no free system gid in 200-249"; exit 1; }
+          printf 'kvm:x:%s:\n' "$kvm_gid" >> "$root/etc/group"
+          printf 'kvm:!::\n' >> "$root/etc/gshadow"
+        }
+
         # The resolver the egress forwarder relays to (#52): a public
         # resolver by default — the host bridge gateway runs no
         # listener. Point the kernel cmdline's
@@ -630,14 +810,28 @@ let
         grep -q virtiofs "$root"/usr/lib/modules/"$kver"/modules.builtin \
           || { echo "generic kernel does not build virtiofs in"; exit 1; }
 
+        # The /dev/kvm contract (#101): udev's default rule hands the
+        # node to the kvm group (mode 0660), which the service user
+        # opens it through. Fail the build at pin-drift time, not at
+        # boot, if the base stops shipping the rule.
+        udev_rules="$root/usr/lib/udev/rules.d"
+        [ -d "$udev_rules" ] || udev_rules="$root/lib/udev/rules.d"
+        grep -h 'KERNEL=="kvm"' "$udev_rules"/*.rules 2>/dev/null \
+          | grep -q 'GROUP="kvm"' \
+          || { echo "udev does not assign /dev/kvm to the kvm group"; exit 1; }
+
         # Sanity: this must be a bootable Debian with the msks layer.
         test -x "$root"/sbin/init
         test -x "$root"/sbin/mkfs.ext4
         test -x "$root"/sbin/e2label
         test -x "$root"/usr/local/sbin/msks-boot
+        test -x "$root"/usr/local/sbin/msks-state-prepare
         test -d "$root"/var/lib/systemd
         test -f "$root"/etc/systemd/system/msksd.service
         test -f "$root"/usr/lib/modules/"$kver"/modules.dep
+        grep -q '^msksd:.*:.*:/state/msksd:' "$root"/etc/passwd
+        grep -q '^kvm:' "$root"/etc/group
+        grep -q '^net.ipv4.ip_forward = 1$' "$root"/etc/sysctl.d/90-msks-ip-forward.conf
 
         # Size the final image from the tree (content-derived).
         mkdir -p "$out"

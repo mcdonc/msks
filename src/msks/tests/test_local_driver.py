@@ -873,7 +873,7 @@ async def egress_env(env, tmp_path: Path, monkeypatch):
         nft_tool=str(stub_nft(tmp_path, tmp_path / "egress-nft.log")),
         dns_upstream="10.9.9.9",
     )
-    monkeypatch.setattr(manager_mod, "enable_forwarding", lambda path=None: None)
+    monkeypatch.setattr(manager_mod, "verify_forwarding", lambda path=None: None)
     manager = NetManager(app, dhcp_factory=FakeService, dns_factory=FakeService)
     app.state.net = manager
     # claim_slice records slices on workspace rows (#70 review): the
