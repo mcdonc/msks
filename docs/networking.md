@@ -353,8 +353,47 @@ rsync -e 'ssh -i ~/.cache/msks/myws.key -p 2201' \
 
 The same login works as the workspace user —
 `ssh -i ... -p 2201 msks@127.0.0.1` — whose home rides the
-persistent `/home` volume. Issue #112 documents the `Host msks-*`
-ssh-config alias that hides the forward and the port entirely.
+persistent `/home` volume.
+
+`msks ssh` (#112) is the zero-step form of the same login: it boots
+the workspace if needed, stages the minted identity in a sealed
+in-memory file (never a path on disk), and runs ssh with the
+forward as its ProxyCommand — as the `msks` workspace user by
+default, with `-l root` as the recovery login and `-A` forwarding
+the operator's own agent for `git push` from inside (see the CLI
+chapter's `msks ssh` section).
+
+The user's own ssh config carries the same workflow for plain `ssh`
+invocations — one wildcard block serves every workspace:
+
+```text
+Host msks-*
+    User msks
+    ProxyCommand sh -c 'exec msks forward "${1#msks-}" 22' _ %h
+    UserKnownHostsFile ~/.cache/msks/%h/known_hosts
+    StrictHostKeyChecking accept-new
+    IdentityFile ~/.cache/msks/%h.key
+    IdentitiesOnly yes
+    ControlMaster auto
+    ControlPath ~/.cache/msks/%h.ctl
+    ControlPersist 10m
+```
+
+`ssh msks-devbox`, `rsync -aP src/ msks-devbox:/src/`, `git clone
+msks-devbox:srv/proj.git`, and VS Code Remote-SSH work against the
+alias; ControlMaster shares one forward connection across
+concurrent invocations. The alias block names its identity with
+`IdentityFile` — create it once with `msks key devbox --out
+~/.cache/msks/msks-devbox.key` (mode 0600, the private half fetched
+over the authenticated API), or drop the two identity lines and let
+`msks ssh` carry the identity per-session from memory. When
+client-held keys land (#121, #123), the alias points at the
+operator's own key instead and the minted identity retires to a
+first-boot enrollment credential. The ProxyCommand runs `msks` in
+the user's environment, so `MSKSC_URL`, `MSKSC_TOKEN`, and
+`MSKSC_CAFILE` must be set there; `ssh -l root msks-devbox` is the
+recovery login, and `-A` forwards the operator's own agent into
+the workspace.
 
 ### Cryptographic agility (a future FIPS posture)
 

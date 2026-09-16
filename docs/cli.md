@@ -411,6 +411,45 @@ predates #111 answers 404 with "no minted identity"; the key type is
 the daemon's `MSKSD_SSH_KEY_TYPE` setting (ECDSA P-256 by default).
 Both halves persist across daemon restarts and workspace stop/start.
 
+## `msks ssh`
+
+Stock ssh into a workspace over the forward, with the minted
+identity staged in memory (#112) — one command, no key steps:
+
+```bash
+msks ssh my-workspace              # as the msks workspace user
+msks ssh my-workspace -- -l root   # the recovery login
+msks ssh my-workspace -- -A        # forward your own agent (git push)
+msks ssh my-workspace -- -L 8080:localhost:80
+```
+
+The command boots the workspace first when the daemon reports it as
+not running (the same notices as `msks console`), fetches the
+identity over the authenticated API, and runs `ssh` with the
+forward websocket as its ProxyCommand (`msks forward <ws> 22`). The
+private half never becomes a file: it lives in a sealed memfd (mode 0600) handed to ssh as `-i /proc/self/fd/<n>`, and the memory goes
+away with the process — a crash leaves nothing behind. Host keys
+land in a per-workspace `~/.cache/msks/<ws>/known_hosts` under
+`accept-new`; they persist across stop/start on the workspace's
+overlay, so the first-connection entry keeps matching.
+
+Everything after the workspace id (the `--` is optional — any
+argument ssh would take works verbatim) is passed to ssh unchanged:
+`-A` forwards the operator's own ssh-agent, so `git push` from
+inside the workspace uses the operator's credentials; port forwards,
+`rsync -e`, and multiplexing ride the same session. A remote
+command rides ssh's own separator — `msks ssh my-workspace -- -A --
+uname -a` — options before it, command after, exactly where ssh
+parses them. The login user
+is the image's `msks` workspace user by default; ssh arguments that
+name a user (`-l root`, `-o User=root`) override it. The host
+argument ssh sees is the workspace id itself — the transport is the
+proxy, so the name never resolves. The ProxyCommand runs `msks`
+from your environment: `MSKSC_URL`, `MSKSC_TOKEN`, and
+`MSKSC_CAFILE` must be set where ssh runs (see the
+networking chapter's alias workflow for the `Host msks-*`
+configuration that hides all of this).
+
 ## Errors, exit codes, and timeouts
 
 Every command fails with one readable line on stderr and exit code 1

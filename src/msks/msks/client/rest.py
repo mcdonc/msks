@@ -249,3 +249,21 @@ def paused_advice(workspace_id: str) -> str:
         f"stop it with: msks stop {workspace_id}, "
         "then msks start again"
     )
+
+
+async def fetch_ssh_key(
+    url: str, token: str, workspace_id: str, transport=None
+) -> dict:
+    """GET the workspace's minted identity (#111): type, both halves.
+
+    ``msks key`` prints it; ``msks ssh`` (#112) stages the private
+    half in memory for the duration of a connection through this
+    same call.
+    """
+    return await api_call(
+        "GET",
+        url,
+        token,
+        f"/api/v1/workspaces/{workspace_id}/ssh-key",
+        transport=transport,
+    )

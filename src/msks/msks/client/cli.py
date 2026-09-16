@@ -1,5 +1,6 @@
 """The ``msks`` CLI: ``ls``, ``create``, ``start``, ``stop``, ``rm``,
-``console``, ``forward``, ``key``, and the ``image`` catalog subcommands.
+``console``, ``forward``, ``ssh``, ``key``, and the ``image`` catalog
+subcommands.
 
 Every command speaks the daemon's REST surface with the same client
 conventions (#21): ``MSKSC_URL`` for the daemon, ``MSKSC_TOKEN`` for
@@ -24,6 +25,10 @@ from .rest import (
     env_url,
     request,
 )
+from .rest import (
+    fetch_ssh_key as rest_fetch_ssh_key,
+)
+from .ssh import run_workspace_ssh
 
 
 def format_workspace(row: dict) -> str:
@@ -137,17 +142,12 @@ def cmd_rm(workspace_ids: list[str], transport=None) -> int:
 async def fetch_ssh_key(url, token, workspace_id, transport) -> dict:
     """GET the workspace's minted identity (#111): type, both halves.
 
-    ``msks key`` prints it; ``msks ssh`` (#112) materializes the
-    private half for the duration of a connection through this same
-    call.
+    A re-export of :func:`msks.client.rest.fetch_ssh_key` (the call
+    moved to rest.py when ``msks ssh`` (#112) began sharing it);
+    ``msks key`` prints it, ``msks ssh`` stages the private half in
+    memory for the duration of a connection.
     """
-    return await api_call(
-        "GET",
-        url,
-        token,
-        f"/api/v1/workspaces/{workspace_id}/ssh-key",
-        transport=transport,
-    )
+    return await rest_fetch_ssh_key(url, token, workspace_id, transport)
 
 
 def write_private_key(key: dict, out: str) -> None:
@@ -517,6 +517,17 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="FILE",
         help="write the private half to FILE (mode 0600) instead of printing",
     )
+    ssh = sub.add_parser(
+        "ssh", help="ssh into a workspace over the forward, identity staged in memory"
+    )
+    ssh.add_argument("workspace_id", help="the workspace to log into")
+    ssh.add_argument(
+        "passthrough",
+        nargs=argparse.REMAINDER,
+        metavar="ARGS",
+        help="arguments passed to ssh verbatim ('-l root' is the recovery "
+        "login; '-A' forwards your own agent)",
+    )
     image = sub.add_parser("image", help="manage the daemon's image catalog (#65)")
     image_sub = image.add_subparsers(dest="image_command", required=True)
     image_ls = image_sub.add_parser("ls", help="list catalog images")
@@ -572,6 +583,9 @@ def command_table(args: argparse.Namespace, transport) -> dict:
         ),
         "key": lambda: cmd_key(
             args.workspace_id, args.private, args.out, transport=transport
+        ),
+        "ssh": lambda: run_workspace_ssh(
+            args.workspace_id, args.passthrough, transport=transport
         ),
         "image": lambda: image_command_table(args, transport)[args.image_command](),
     }
