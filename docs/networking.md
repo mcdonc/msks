@@ -228,7 +228,7 @@ in
 {
   # Host forwarding — the same machine-identity setting the appliance
   # ships internally.
-  boot.kernelSysctl."net.ipv4.ip_forward" = "1";
+  boot.kernel.sysctl."net.ipv4.ip_forward" = "1";
 
   # Keep NetworkManager's hands off the appliance's devices (inert
   # where NetworkManager is not enabled).
