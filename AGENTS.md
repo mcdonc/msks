@@ -147,6 +147,40 @@ Tab). Specifically:
 - When implementing a new screen or widget, add the key bridges that let
   arrows cross its boundaries.
 
+## FIPS readiness: crypto choices are settings and platform defaults (#115)
+
+FIPS certification is a future requirement for some deployments. Msks
+compiles stock components, and every crypto choice ships as a setting
+or a platform default — a later certification effort then changes
+configuration and defaults, not architecture. Work that touches
+crypto keeps these rules:
+
+- **Algorithm selection belongs to the platform's crypto library**
+  (the OpenSSL 3 line Debian ships). msks pins nothing: configs,
+  dropins, shipped docs, and product tests stay free of
+  `Ciphers`, `KexAlgorithms`, `MACs`, `HostKeyAlgorithms`, and
+  `PubkeyAcceptedAlgorithms` lists. Policy config — authentication,
+  addresses, timeouts — is the kind that ships.
+- **Key types are `MSKSD_*` settings, and defaults may change.**
+  #111's minted identity defaults to ECDSA P-256 so day-one choices
+  are FIPS-approvable, with RSA as the fallback. Filenames, storage
+  paths, and wire formats treat the key type as opaque — changing
+  the setting is the whole of a key-type change.
+- **The guest's crypto libraries are Debian's own.** The rsync deb,
+  not a statically linked third-party build, is the pattern: a static
+  crypto build inside the image would step outside the platform's
+  certification path.
+- **Docs describe behavior, not algorithms.** Where an example names
+  a key type, it names the current default and presents it as the
+  default, not a requirement.
+
+Token hashing is sha256 today — FIPS-approved, no action. The
+daemon's TLS (#8) uses Python's `ssl` defaults; a pinned suite list
+would undo the same posture. The acceptance check is a tree-wide
+grep for the five ssh directives above: every match is a violation
+except this section itself, which names them to make the check
+copy-pasteable.
+
 ## Prose writing: state what the feature does
 
 In docs, docstrings, config comments, GitHub issue and PR bodies, and
