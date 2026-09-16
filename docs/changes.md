@@ -49,6 +49,17 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **The appliance starts without sudo (#101).** The host-side network
+  (bridge, tap, host forwarding, NAT) moves from per-start `sudo -n`
+  calls in `scripts/appliance-setup.sh` to a one-time root install:
+  `sudo bash scripts/appliance-host-setup.sh` writes a `sysctl.d`
+  forwarding drop-in and a systemd unit that re-arms the bridge, tap,
+  and firewall rules at every host reboot. `appliance-setup.sh` now
+  verifies the install and names it when something is missing, so
+  `devenv processes up` runs entirely unprivileged after the one-time
+  install; re-run the installer to re-arm after a firewall reload or
+  to change the tap's owning user.
+
 - **The appliance runs msksd as a non-root service user (#101).**
   The daemon executes as a dedicated `msksd` user holding exactly two
   ambient capabilities — `CAP_NET_ADMIN` (taps, nftables, and the

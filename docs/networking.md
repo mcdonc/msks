@@ -114,13 +114,17 @@ its service user — and a kernel that routes: the appliance ships
 daemon verifies it at startup, and a daemon that reads `0` refuses
 every egress workspace with a cause naming the sysctl key. The
 appliance's own uplink needs the host side wired —
-`scripts/appliance-setup.sh` performs that setup as its documented
-privileged step: host forwarding + NAT for the appliance's bridge
-subnet, so traffic masqueraded out of the appliance reaches the
-internet. The appliance pins its NIC to the kernel name `eth0`
+`sudo bash scripts/appliance-host-setup.sh` performs that setup
+once, as root: a `sysctl.d` forwarding drop-in plus a systemd unit
+that re-arms the bridge, tap, and NAT rules at every host reboot,
+so starting the appliance needs no sudo (the per-start
+`appliance-setup.sh` verifies the install and names it when
+something is missing; re-run the installer if egress ever stops
+working — a firewall reload can drop its rules). The
+appliance pins its NIC to the kernel name `eth0`
 (its kernel cmdline carries `net.ifnames=0`), which is the default
 `MSKSD_EGRESS_UPLINK`, and sets `MSKSD_EGRESS_ENABLED=true`, so
-workspaces are networked there once the setup script has run. An
+workspaces are networked there once the installer has run. An
 operator who sets `MSKSD_EGRESS_ENABLED=false` arms nothing, and
 every egress workspace then refuses to boot with the cause named.
 When msksd cannot arm the plumbing (a dev-shell daemon, say), it

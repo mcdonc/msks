@@ -142,9 +142,19 @@ MSKSD_STATE_DIR=/tmp/msksd MSKSD_BOOTSTRAP_TOKEN=dev-secret MSKSD_PORT=8660 msks
 
 The daemon runs as an appliance microvm — no NixOS required on the
 host or in the guest. Requirements: any Linux with KVM + nested
-virtualization enabled, nix + devenv, and `sudo -n` for a one-time
-bridge/tap (the only privileged host step; everything else —
-cloud-hypervisor, ch-remote, virtiofsd — comes from the devenv shell).
+virtualization enabled, nix + devenv, and a one-time root setup of
+the host network:
+
+```bash
+sudo bash scripts/appliance-host-setup.sh
+```
+
+That installs the bridge, tap, host forwarding (`sysctl.d`), and NAT
+rules — with a systemd unit that re-arms them on every host reboot —
+and nothing needs sudo afterwards: `devenv processes up` starts the
+appliance as your own user (cloud-hypervisor, ch-remote, and
+virtiofsd all come from the devenv shell). Re-run the installer to
+re-arm after a firewall reload, or to change the tap's owning user.
 
 ```bash
 devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:appliance-build

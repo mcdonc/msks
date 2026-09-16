@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
-# Idempotent host setup for the msksd appliance (#25).
+# Idempotent prerequisites for the msksd appliance (#25).
 #
 # Everything the appliance needs before its VM can boot: artifacts,
-# bridge/tap, state disk, bootstrap token. Safe to run on every
-# start; appliance-run.sh calls it under the devenv process manager.
+# state disk, bootstrap token — and the host network, which this
+# script only VERIFIES (#101): the one-time privileged setup lives
+# in appliance-host-setup.sh (bridge, tap, forwarding via sysctl.d,
+# NAT rules, all persistent — installed once as root, re-armed at
+# every host boot by a systemd unit), so starting the appliance
+# needs no sudo. Safe to run on every start; appliance-run.sh calls
+# it under the devenv process manager.
 set -euo pipefail
 
 root="${DEVENV_ROOT:?not running inside the devenv shell}"
@@ -27,40 +32,26 @@ fi
 
 bridge="msksbr0"
 tap="mskstap0"
-host_ip="192.168.77.1"
 
-# --- host networking (the one privileged step) -------------------------
-# The appliance sits L2-adjacent on a private bridge: no port
-# forwarding, the API is simply reachable at the guest IP.
-if ! ip link show dev "$bridge" >/dev/null 2>&1; then
-  sudo -n ip link add name "$bridge" type bridge
-  sudo -n ip addr add "$host_ip/24" dev "$bridge"
-  sudo -n ip link set "$bridge" up
+# --- host network (verified, never mutated — #101) ---------------------
+# The appliance sits L2-adjacent on a private bridge; its guests'
+# egress rides the host's forwarding and NAT. Installing those is
+# the one-time root step (appliance-host-setup.sh); here we check
+# what an unprivileged process can check and name the fix when it
+# is missing. The firewall rules themselves need CAP_NET_ADMIN even
+# to list — the installer owns them, and guest connectivity is the
+# end-to-end proof (re-run the installer if egress ever fails).
+missing=""
+ip link show dev "$bridge" >/dev/null 2>&1 || missing="$missing $bridge"
+ip link show dev "$tap" >/dev/null 2>&1 || missing="$missing $tap"
+if [ "$(cat /proc/sys/net/ipv4/ip_forward)" != 1 ]; then
+  missing="$missing net.ipv4.ip_forward"
 fi
-if ! ip link show dev "$tap" >/dev/null 2>&1; then
-  sudo -n ip tuntap add mode tap user "$USER" "$tap"
-  sudo -n ip link set "$tap" master "$bridge"
-  sudo -n ip link set "$tap" up
+if [ -n "$missing" ]; then
+  echo "msks: host network missing:$missing — run once as root:" >&2
+  echo "  sudo bash $root/scripts/appliance-host-setup.sh" >&2
+  exit 1
 fi
-
-# Egress uplink for the appliance's own subnet (#52): workspace
-# traffic leaves the appliance masqueraded as 192.168.77.2, and the
-# host routes it the rest of the way — forwarding on, plus NAT and
-# forward rules for the bridge subnet out the host's default route.
-# Idempotent (check-then-add), same as the bridge above; the iptables
-# compatibility layer speaks for nftables-backed hosts too.
-sudo -n sysctl -qw net.ipv4.ip_forward=1
-# The table comes BEFORE -C/-A: iptables-nft (≥1.8.13) rejects a
-# table option after the command ("Bad argument `nat'").
-ipt_rule() { # ipt_rule <table> <chain> <rule args...>: -C if present, else -A
-  local table="$1"
-  shift
-  sudo -n iptables -t "$table" -C "$@" >/dev/null 2>&1 ||
-    sudo -n iptables -t "$table" -A "$@"
-}
-ipt_rule filter FORWARD -i "$bridge" -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j ACCEPT
-ipt_rule filter FORWARD -o "$bridge" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-ipt_rule nat POSTROUTING -s "${host_ip}/24" ! -o "$bridge" -j MASQUERADE
 
 # --- persistent state ---------------------------------------------------
 # MSKSD_APPLIANCE_STATE can relocate the state disk (e.g. /run for

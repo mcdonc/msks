@@ -589,8 +589,9 @@ async def test_k8s_pod_lifecycle() -> None:
 # Boots the real appliance through the devenv supervisor scripts — the
 # same path an operator uses — then drives one workspace VM through
 # the API served from inside it. Opt-in: it needs /dev/kvm (nested
-# virt: the workspace boots inside the appliance VM), sudo -n for the
-# one-time bridge/tap, and built appliance + guest assets.
+# virt: the workspace boots inside the appliance VM), the one-time
+# host network install (scripts/appliance-host-setup.sh, run once
+# as root), and built appliance + guest assets.
 APPLIANCE = os.environ.get("MSKSD_TEST_APPLIANCE")
 
 
@@ -677,11 +678,20 @@ def read_appliance_journal(state_disk: Path) -> list[str] | None:
         return text.stdout.splitlines()
 
 
-def _sudo_available() -> bool:
+def _host_net_installed() -> bool:
+    """The one-time installer's footprint: the appliance's bridge.
+
+    The host network (bridge, tap, forwarding, NAT) is installed
+    once as root by scripts/appliance-host-setup.sh (#101); the
+    appliance itself starts unprivileged, so the gate is the
+    install's presence, not sudo.
+    """
     try:
         return (
             subprocess.run(
-                ["sudo", "-n", "true"], capture_output=True, timeout=10
+                ["ip", "link", "show", "dev", "msksbr0"],
+                capture_output=True,
+                timeout=10,
             ).returncode
             == 0
         )
@@ -693,10 +703,11 @@ needs_appliance = pytest.mark.skipif(
     not APPLIANCE
     or not os.access("/dev/kvm", os.W_OK)
     or not (REPO_ROOT / ".appliance" / "vmlinux").is_file()
-    or not _sudo_available(),
+    or not _host_net_installed(),
     reason=(
-        "set MSKSD_TEST_APPLIANCE=1 with /dev/kvm, sudo -n (bridge/tap), "
-        "and devenv tasks run msks:appliance-build + msks:build-guest"
+        "set MSKSD_TEST_APPLIANCE=1 with /dev/kvm, the one-time host "
+        "network (sudo bash scripts/appliance-host-setup.sh), and "
+        "devenv tasks run msks:appliance-build + msks:build-guest"
     ),
 )
 
