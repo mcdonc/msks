@@ -140,6 +140,91 @@ itself for the duration of the run. That is the test's constraint,
 not the server's: the daemon needs only the two capabilities and an
 already-routing kernel.
 
+### The host-side network: portable installer or static config
+
+`sudo bash scripts/appliance-host-setup.sh` is the portable path:
+one run as root arms the bridge, tap, forwarding, and NAT rules, and
+installs the persistence — a `sysctl.d` drop-in plus
+`/etc/msks/host-net.sh` behind `msks-host-net.service`, which
+re-arms the state at every host boot. It works on any systemd host
+regardless of which network manager or firewall owns the rest of
+the stack. The appliance's per-start check (`appliance-setup.sh`)
+verifies the resulting state — bridge, tap, `ip_forward` — not the
+mechanism that produced it, so the static forms below satisfy it
+too.
+
+On a host where systemd-networkd manages the network and
+`nftables.service` owns the firewall, the same state is entirely
+declarative: files the OS itself applies, no boot script. The
+bridge and its address:
+
+```ini
+# /etc/systemd/network/90-msksbr0.netdev
+[NetDev]
+Name=msksbr0
+Kind=bridge
+
+# /etc/systemd/network/90-msksbr0.network
+[Match]
+Name=msksbr0
+[Network]
+Address=192.168.77.1/24
+```
+
+The tap — `Owner=` names the user who runs the appliance, which is
+what lets the unprivileged cloud-hypervisor open it (changing that
+user means editing the file; the installer equivalent is re-running
+it as the new user):
+
+```ini
+# /etc/systemd/network/90-mskstap0.netdev
+[NetDev]
+Name=mskstap0
+Kind=tap
+
+[Tap]
+Owner=chrism
+```
+
+Forwarding keeps the `sysctl.d` form — machine identity, the same
+contract as inside the appliance — rather than a per-link toggle:
+
+```ini
+# /etc/sysctl.d/90-msks-appliance.conf
+net.ipv4.ip_forward = 1
+```
+
+And the firewall/NAT table, loaded by the distro's
+`nftables.service` (add the table to the file that service reads,
+typically `/etc/nftables.conf`):
+
+```nft
+table ip msks-host {
+  chain forward_msks {
+    type filter hook forward priority filter; policy accept;
+    iifname "msksbr0" ct state new,established,related accept
+    oifname "msksbr0" ct state established,related accept
+  }
+  chain nat_msks {
+    type nat hook postrouting priority srcnat; policy accept;
+    ip saddr 192.168.77.0/24 oifname != "msksbr0" masquerade
+  }
+}
+```
+
+On NixOS the same shapes are native configuration: the netdev and
+network content through the `systemd.network` module options, the
+masquerade through `networking.nat` (`internalInterfaces =
+[ "msksbr0" ]`, `externalInterface` = the default route's
+interface).
+
+Hosts whose firewall is firewalld, or whose network NetworkManager
+manages, keep the installer path: NetworkManager does not consume
+networkd's `.netdev` files, and a firewalld complete reload replaces
+the whole ruleset — foreign rules added once, by script or by file,
+do not survive it. Re-running the installer re-arms the state after
+such a reload.
+
 ## Backend support
 
 Egress is a local-backend feature today. On k8s the runner pod
