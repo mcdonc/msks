@@ -427,17 +427,22 @@ The command boots the workspace first when the daemon reports it as
 not running (the same notices as `msks console`), fetches the
 identity over the authenticated API, and runs `ssh` with the
 forward websocket as its ProxyCommand (`msks forward <ws> 22`). The
-private half never becomes a file: it lives in a sealed memfd (mode 0600) handed to ssh as `-i /proc/self/fd/<n>`, and the memory goes
-away with the process — a crash leaves nothing behind. Host keys
-land in a per-workspace `~/.cache/msks/<ws>/known_hosts` under
+private half never becomes a file: a transient in-process ssh-agent
+holds it in memory for the session, ssh names the identity by its
+public half (`-i`, public material only) and signs through the
+agent socket — the key material goes away with the process, and a
+crash leaves nothing behind. Host keys land in a per-workspace
+`~/.cache/msks/<ws>/known_hosts` under
 `accept-new`; they persist across stop/start on the workspace's
 overlay, so the first-connection entry keeps matching.
 
 Everything after the workspace id (the `--` is optional — any
-argument ssh would take works verbatim) is passed to ssh unchanged:
-`-A` forwards the operator's own ssh-agent, so `git push` from
-inside the workspace uses the operator's credentials; port forwards,
-`rsync -e`, and multiplexing ride the same session. A remote
+argument ssh would take works verbatim) is passed to ssh unchanged.
+`-A` forwards the session agent — the guest can sign as the
+workspace identity (useful for nested logins to the same
+workspace); forwarding your own agent — git credentials for `git
+push` from inside — is the alias path's job, where your real
+`SSH_AUTH_SOCK` rides untouched. A remote
 command rides ssh's own separator — `msks ssh my-workspace -- -A --
 uname -a` — options before it, command after, exactly where ssh
 parses them. The login user

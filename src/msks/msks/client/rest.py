@@ -252,13 +252,18 @@ def paused_advice(workspace_id: str) -> str:
 
 
 async def fetch_ssh_key(
-    url: str, token: str, workspace_id: str, transport=None
+    url: str,
+    token: str,
+    workspace_id: str,
+    transport=None,
+    ssl_ctx=None,
 ) -> dict:
     """GET the workspace's minted identity (#111): type, both halves.
 
-    ``msks key`` prints it; ``msks ssh`` (#112) stages the private
-    half in memory for the duration of a connection through this
-    same call.
+    ``msks key`` prints it; ``msks ssh`` (#112) serves the private
+    half from a transient in-process agent through this same call.
+    An already-built ``ssl_ctx`` avoids a second unverified-mode
+    warning in one command.
     """
     return await api_call(
         "GET",
@@ -266,4 +271,5 @@ async def fetch_ssh_key(
         token,
         f"/api/v1/workspaces/{workspace_id}/ssh-key",
         transport=transport,
+        ssl_ctx=ssl_ctx,
     )

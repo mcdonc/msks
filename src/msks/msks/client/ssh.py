@@ -4,16 +4,20 @@ One-off sugar over the pieces that already exist: the workspace is
 booted when the daemon reports it as not running (the same pre-flight
 as ``msks console``), the minted identity (#111) is fetched over the
 authenticated API, and ``ssh`` runs with the forward websocket
-(#109) as its ProxyCommand. The private half never becomes a file on
-disk: it is written to a sealed memfd (mode 0600) and handed to ssh
-as ``-i /proc/self/fd/<n>``, an fd passed to the child — the key
-material exists only in process memory and disappears with it.
+(#109) as its ProxyCommand. The private half never becomes a file:
+a transient in-process ssh-agent (:mod:`msks.client.agent`) holds it
+in memory and ssh authenticates through the agent socket
+(``-o IdentityAgent=...``) — ssh closes inherited descriptors at
+startup, so the socket is the one channel that survives to
+authentication.
 
 The session logs in as the image's workspace user by default;
 ``-l root`` in the passthrough args is the recovery login. Agent
-forwarding (``msks ssh <ws> -- -A``) forwards the operator's own
-ssh-agent, so ``git push`` from inside the workspace uses the
-operator's credentials (#81's credential half). Everything after the
+forwarding (``msks ssh <ws> -- -A``) forwards the session agent —
+the guest can sign as the workspace identity; forwarding the
+operator's own agent (git credentials for ``git push`` from inside)
+is the alias path's job, where the operator's real ``SSH_AUTH_SOCK``
+rides untouched (see ``docs/networking.md``). Everything after the
 workspace id (or after ``--``) is passed to ssh verbatim; ssh's own
 ``--`` inside it separates options from a remote command
 (``msks ssh <ws> -- -A -- uname -a``).
@@ -25,6 +29,7 @@ import shlex
 import subprocess
 from pathlib import Path
 
+from . import agent
 from .rest import ensure_running, env_token, env_url, fetch_ssh_key, ssl_context
 
 #: The guest port sshd listens on (#110).
@@ -44,37 +49,9 @@ async def prepare(
 ) -> dict:
     """Boot the workspace if needed, then fetch its minted identity."""
     await ensure_running(workspace_id, url, token, ssl_ctx=ssl_ctx, transport=transport)
-    return await fetch_ssh_key(url, token, workspace_id, transport=transport)
-
-
-def memfd_key(private_pem: str) -> int:
-    """The private half in a sealed memfd, mode 0600; its fd.
-
-    The fd is what ssh receives (``-i /proc/self/fd/<fd>`` via
-    ``pass_fds``): the key is never a path on any filesystem, and a
-    crash leaves nothing behind — the memory goes with the process.
-    ssh refuses a group- or world-readable identity file, and a
-    fresh memfd carries mode 0777, so the 0600 fchmod is load-bearing.
-    """
-    create = getattr(os, "memfd_create", None)
-    if create is None:
-        raise SystemExit(
-            "msks ssh: this host has no memfd_create (Linux 3.17+); "
-            "materialize the key with 'msks key --out' and run ssh yourself"
-        )
-    try:
-        fd = create("msks-ssh-key", flags=0)
-        os.write(fd, private_pem.encode())
-        os.fchmod(fd, 0o600)
-        os.lseek(fd, 0, os.SEEK_SET)
-    except OSError as exc:
-        raise SystemExit(f"msks ssh: cannot stage the identity: {exc}") from exc
-    return fd
-
-
-def identity_path(fd: int) -> str:
-    """The ``-i`` argument that reads the sealed memfd in the child."""
-    return f"/proc/self/fd/{fd}"
+    return await fetch_ssh_key(
+        url, token, workspace_id, transport=transport, ssl_ctx=ssl_ctx
+    )
 
 
 def cache_dir() -> Path:
@@ -152,14 +129,21 @@ def names_user(value: str) -> bool:
 
 def build_args(
     workspace_id: str,
-    identity: str,
+    agent_socket: str,
+    identity_pub: str,
     known_hosts: str,
     passthrough: list[str],
 ) -> list[str]:
-    """ssh's argv: transport, host-key, identity — the workspace id
-    as the destination between the passthrough's options and its
-    remote command — so both ``-A`` (an option) and a command land
-    where ssh parses them."""
+    """ssh's argv: transport, host-key, agent identity — the
+    workspace id as the destination between the passthrough's
+    options and its remote command — so both ``-A`` (an option) and
+    a command land where ssh parses them.
+
+    ``-i identity.pub`` names the identity (public material only);
+    ``IdentityAgent`` points ssh at the transient agent that holds
+    the private half, and under ``IdentitiesOnly`` ssh offers that
+    one key and nothing else.
+    """
     proxy = f"ProxyCommand=msks forward {shlex.quote(workspace_id)} {SSH_PORT}"
     options, command = split_command(passthrough)
     argv = [
@@ -172,12 +156,20 @@ def build_args(
         "StrictHostKeyChecking=accept-new",
         "-o",
         "IdentitiesOnly=yes",
+        "-o",
+        f"IdentityAgent={shlex.quote(agent_socket)}",
         "-i",
-        identity,
+        identity_pub,
     ]
     if not wants_user(options):
         argv += ["-l", DEFAULT_USER]
     return argv + options + [workspace_id] + command
+
+
+def identity_comment(key: dict) -> str:
+    """The comment on the identity listing, from the public line."""
+    fields = key["public_key"].split()
+    return fields[2] if len(fields) > 2 else ""
 
 
 def run_workspace_ssh(workspace_id: str, passthrough: list[str], transport=None) -> int:
@@ -187,17 +179,17 @@ def run_workspace_ssh(workspace_id: str, passthrough: list[str], transport=None)
     url = env_url()
     ssl_ctx = ssl_context()
     key = asyncio.run(prepare(workspace_id, url, token, ssl_ctx, transport))
-    fd = memfd_key(key["private_key"])
-    try:
+    private = agent.load_private(key["private_key"])
+    with agent.serve(private, identity_comment(key)) as served:
         argv = build_args(
             workspace_id,
-            identity_path(fd),
+            served.server_address,
+            served.identity_path,
             known_hosts_path(workspace_id),
             passthrough,
         )
-        completed = subprocess.run(argv, pass_fds=(fd,))
-    except FileNotFoundError:
-        raise SystemExit("msks ssh: ssh not found on PATH") from None
-    finally:
-        os.close(fd)
+        try:
+            completed = subprocess.run(argv)
+        except FileNotFoundError:
+            raise SystemExit("msks ssh: ssh not found on PATH") from None
     return completed.returncode

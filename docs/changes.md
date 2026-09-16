@@ -10,12 +10,13 @@ tagged `vX.Y.Z`.
 
 - **`msks ssh` (#112).** One command logs into a workspace with stock
   ssh over the forward websocket: it boots the workspace if needed,
-  fetches the minted identity over the authenticated API, and stages
-  the private half in a sealed memfd passed to ssh — the key never
-  becomes a file on the client. Logs in as the `msks` workspace user
-  by default (`-l root` for recovery, `-A` forwards your own agent
-  for git push); per-workspace `known_hosts` under `accept-new`. See
-  `docs/cli.md` and the alias workflow in `docs/networking.md`.
+  fetches the minted identity over the authenticated API, and serves
+  the private half from a transient in-process ssh-agent — ssh names
+  the identity by its public half and signs through the socket, so
+  the key never becomes a file on the client. Logs in as the `msks`
+  workspace user by default (`-l root` for recovery); per-workspace
+  `known_hosts` under `accept-new`. See `docs/cli.md` and the alias
+  workflow in `docs/networking.md`.
 - **Minted workspace identity and `msks key` (#111).** msksd mints a
   per-workspace ssh keypair at create — ECDSA P-256 by default, the
   FIPS-approvable choice (#115), with the type configurable via

@@ -356,12 +356,11 @@ The same login works as the workspace user —
 persistent `/home` volume.
 
 `msks ssh` (#112) is the zero-step form of the same login: it boots
-the workspace if needed, stages the minted identity in a sealed
-in-memory file (never a path on disk), and runs ssh with the
-forward as its ProxyCommand — as the `msks` workspace user by
-default, with `-l root` as the recovery login and `-A` forwarding
-the operator's own agent for `git push` from inside (see the CLI
-chapter's `msks ssh` section).
+the workspace if needed, serves the minted identity from a
+transient in-process ssh-agent (the private half never becomes a
+file), and runs ssh with the forward as its ProxyCommand — as the
+`msks` workspace user by default, with `-l root` as the recovery
+login (see the CLI chapter's `msks ssh` section).
 
 The user's own ssh config carries the same workflow for plain `ssh`
 invocations — one wildcard block serves every workspace:
