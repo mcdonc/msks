@@ -211,6 +211,45 @@ def console_request(params) -> tuple[str, int, int, str, str | None]:
     return user, rows, cols, term, problem
 
 
+def bearer_token(socket: WebSocket) -> str | None:
+    """The Authorization header's Bearer token, or None.
+
+    The forward websocket (#109) authenticates with the same header
+    form as the REST surface. The console and events websockets carry
+    their token in the query string because a browser cannot attach
+    headers to a websocket; the forward is a CLI/tool endpoint with
+    no browser caller, and a query string would land the token in
+    proxy and process logs.
+    """
+    authorization = socket.headers.get("authorization", "")
+    scheme, _, plaintext = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not plaintext:
+        return None
+    return plaintext
+
+
+def forward_port(raw: str) -> tuple[int, str | None]:
+    """The forward's TCP port from the path, or the refusal reason."""
+    try:
+        port = int(raw)
+    except ValueError:
+        return 0, f"port must be an integer, got {raw!r}"
+    if not 1 <= port <= 65535:
+        return 0, f"port={port} out of range"
+    return port, None
+
+
+def forward_allowed(app, row: dict, port: int) -> str | None:
+    """The policy seam between auth and dial (#108).
+
+    Every forward passes today: a token that reached this far already
+    owns the workspace's root console, so no guest port is a privilege
+    escalation. When port-scoped tokens arrive, the refusal reason
+    this returns is the whole mechanism.
+    """
+    return None
+
+
 def console_dimensions(params) -> tuple[int, int, str | None]:
     """rows/cols from the query string, or the refusal reason."""
     rows = console_dimension("rows", params.get("rows"), 24)
@@ -720,6 +759,69 @@ def build_api(app) -> FastAPI:
             with contextlib.suppress(Exception):
                 await writer.wait_closed()
 
+    @api.websocket("/api/v1/workspaces/{workspace_id}/forward/{port}")
+    async def forward(socket: WebSocket, workspace_id: str, port: str) -> None:
+        # Service-plane bridge (#109): raw bytes between the client
+        # and a guest TCP port the caller names — the pipe ssh's
+        # ProxyCommand rides. The token authenticates through the
+        # Authorization header (REST's Bearer form): this endpoint's
+        # callers are CLIs and tools, and a query string would put the
+        # token in logs. Each websocket is one guest TCP connection.
+        await socket.accept()
+        token = bearer_token(socket)
+        if token is None or not await app.state.model.token_valid(token):
+            await socket.close(code=4401)
+            return
+        row = await app.state.model.get_workspace(workspace_id)
+        if row is None:
+            await socket.close(code=4404)
+            return
+        target_port, problem = forward_port(port)
+        if problem is not None:
+            await socket.close(code=4400, reason=close_reason(problem))
+            return
+        refusal = forward_allowed(app, row, target_port)
+        if refusal is not None:
+            await socket.close(code=4403, reason=close_reason(refusal))
+            return
+        if not row.get("egress"):
+            await socket.close(
+                code=4501,
+                reason=close_reason(
+                    f"workspace {workspace_id} has no NIC (created without egress)"
+                ),
+            )
+            return
+        try:
+            reader, writer = await app.state.net.forward_stream(
+                workspace_id, target_port
+            )
+        except MicrovmError as exc:
+            await socket.close(code=4501, reason=close_reason(str(exc)))
+            return
+        try:
+            # The opened publish lives inside the try so a cancellation
+            # between dial and pump cannot skip the writer's cleanup.
+            await hub.publish(
+                "forward.opened", {"id": workspace_id, "port": target_port}
+            )
+            app.state.net.track_forward(workspace_id, writer)
+            try:
+                await pump_streams(socket, reader, writer)
+            finally:
+                app.state.net.untrack_forward(workspace_id, writer)
+        finally:
+            writer.close()
+            with contextlib.suppress(Exception):
+                await writer.wait_closed()
+            # A detached task, not an await: teardown can cancel this
+            # coroutine mid-finally (an await would raise CancelledError
+            # and skip the event), and publish never blocks — it fans
+            # out to subscriber queues synchronously.
+            asyncio.create_task(
+                hub.publish("forward.closed", {"id": workspace_id, "port": target_port})
+            )
+
     @api.websocket("/api/v1/events")
     async def events(socket: WebSocket) -> None:
         # Websockets cannot carry Authorization headers from browsers;
@@ -738,31 +840,85 @@ def build_api(app) -> FastAPI:
     return api
 
 
-async def bridge_console(
-    socket: WebSocket, reader, writer, stall_timeout_s: float = 60.0
+def noop() -> None:
+    """The observer a plain forward passes: nothing to observe."""
+    return None
+
+
+async def pump_streams(
+    socket: WebSocket, reader, writer, *, on_input=None, on_output=None
 ) -> None:
-    """Pump raw bytes between the websocket and the vsock stream.
+    """Pump raw bytes between a websocket and a byte stream.
 
     Two tasks, no queue: backpressure is websocket/TCP flow control
     (the byte stream must not lose or buffer unboundedly, #21).
-    Whichever side finishes first (client detach or guest EOF)
-    cancels the other.
+    Whichever side finishes first (client disconnect or stream EOF)
+    cancels the other — and an outer cancellation (the console's
+    watchdog closing first, #103) cancels both inner tasks here, so
+    nothing outlives the bridge writing into a closed stream.
+    ``on_input`` and ``on_output`` observe the traffic in flight —
+    the console's echo watchdog (#103) arms and disarms its deadline
+    through them; a plain forward passes none.
+    """
+    to_guest = asyncio.create_task(_ws_to_stream(socket, writer, on_input or noop))
+    to_client = asyncio.create_task(_stream_to_ws(reader, socket, on_output))
+    try:
+        done, pending = await asyncio.wait(
+            {to_guest, to_client}, return_when=asyncio.FIRST_COMPLETED
+        )
+    except asyncio.CancelledError:
+        await cancel_tasks((to_guest, to_client))
+        raise
+    await settle(done, pending)
 
-    A third task watches the echo deadline (#103): the guest pty
-    echoes every input byte, so client input that draws zero guest
-    bytes for ``stall_timeout_s`` names a wedged stream — the bridge
-    closes the websocket with 4502 instead of hanging open and
-    silent. An idle session (no input in flight) never trips it,
+
+async def cancel_tasks(tasks) -> None:
+    """Cancel and drain the tasks, retrieving their outcomes — the
+    outer-cancellation exit leaves no task and no unretrieved
+    exception behind."""
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def settle(done, pending) -> None:
+    """End the two-way race: cancel the loser, then read both
+    outcomes quietly (the survivor's ending is the session's)."""
+    for task in pending:
+        task.cancel()
+    for task in pending:
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await task
+    for task in done:
+        with contextlib.suppress(Exception):
+            task.result()
+
+
+async def bridge_console(
+    socket: WebSocket, reader, writer, stall_timeout_s: float = 60.0
+) -> None:
+    """The console's pump: :func:`pump_streams` plus the echo
+    watchdog.
+
+    The guest pty echoes every input byte, so client input that draws
+    zero guest bytes for ``stall_timeout_s`` names a wedged stream —
+    the bridge closes the websocket with 4502 instead of hanging open
+    and silent. An idle session (no input in flight) never trips it,
     and ``stall_timeout_s <= 0`` switches the watchdog off.
     """
     clock = _StallClock()
-    to_guest = asyncio.create_task(
-        _ws_to_stream(socket, writer, clock, stall_timeout_s)
-    )
-    to_client = asyncio.create_task(_stream_to_ws(reader, socket, clock))
     watchdog = asyncio.create_task(_echo_watchdog(socket, clock))
+    pump = asyncio.create_task(
+        pump_streams(
+            socket,
+            reader,
+            writer,
+            on_input=lambda: clock.arm(stall_timeout_s),
+            on_output=clock.disarm,
+        )
+    )
     done, pending = await asyncio.wait(
-        {to_guest, to_client, watchdog}, return_when=asyncio.FIRST_COMPLETED
+        {pump, watchdog}, return_when=asyncio.FIRST_COMPLETED
     )
     for task in pending:
         task.cancel()
@@ -847,10 +1003,8 @@ async def _echo_watchdog(socket: WebSocket, clock: _StallClock) -> None:
             continue
 
 
-async def _ws_to_stream(
-    socket: WebSocket, writer, clock: _StallClock, stall_timeout_s: float
-) -> None:
-    """Client bytes to the guest; returns on disconnect."""
+async def _ws_to_stream(socket: WebSocket, writer, on_input=noop) -> None:
+    """Client bytes to the stream; returns on disconnect."""
     while True:
         msg = await socket.receive()
         if msg["type"] != "websocket.receive":
@@ -860,22 +1014,23 @@ async def _ws_to_stream(
             data = msg.get("text", "").encode()
         if data:
             writer.write(data)
-            # Input is now in flight: the echo deadline starts if
-            # none is pending — one deadline per quiet window, from
-            # the first unanswered input (#103).
-            clock.arm(stall_timeout_s)
+            # Input is now in flight: the console's echo deadline
+            # starts if none is pending — one deadline per quiet
+            # window, from the first unanswered input (#103).
+            on_input()
             await writer.drain()
 
 
-async def _stream_to_ws(reader, socket: WebSocket, clock: _StallClock) -> None:
-    """Guest bytes to the client; returns on guest EOF."""
+async def _stream_to_ws(reader, socket: WebSocket, on_output=None) -> None:
+    """Stream bytes to the client; returns on stream EOF."""
     while True:
         data = await reader.read(4096)
         if not data:
             return
-        # Any guest byte proves the stream alive, answering whatever
-        # input is in flight.
-        clock.disarm()
+        # Any stream byte proves the stream alive (the console's
+        # watchdog disarm, #103).
+        if on_output is not None:
+            on_output()
         await socket.send_bytes(data)
 
 

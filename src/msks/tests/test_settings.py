@@ -29,6 +29,16 @@ def test_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.vmm.console_stall_timeout_s == 0
 
 
+def test_negative_forward_wait_timeout_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A negative dial deadline is a configuration error, not a
+    fail-fast zero (#109)."""
+    monkeypatch.setenv("MSKSD_FORWARD_WAIT_TIMEOUT_S", "-1")
+    with pytest.raises(ValueError, match="MSKSD_FORWARD_WAIT_TIMEOUT_S"):
+        Settings.from_env()
+
+
 def test_negative_stall_timeout_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     """A negative stall window would close healthy sessions (#103)."""
     monkeypatch.setenv("MSKSD_CONSOLE_STALL_TIMEOUT_S", "-1")

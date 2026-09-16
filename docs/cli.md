@@ -11,6 +11,7 @@ The command set covers the operator loop:
 msks ls                      # what exists, and what state is it in
 msks create ws                # make a workspace
 msks shell ws                 # boot it if needed, then work inside it
+msks forward ws 22            # bridge a guest TCP port to stdio
 msks start ws                 # boot it without attaching
 msks stop ws                  # power it off
 msks rm ws                    # delete it (and its data)
@@ -346,6 +347,35 @@ undelivered output is closed by the helper's own teardown after
 300 s (without the 4502 name); a stream that wedges fully idle stays
 open — nothing is in flight to time — until the next input arms the
 daemon's clock.
+
+## `msks forward`
+
+A guest TCP port on this command's stdio — the pipe ssh's
+ProxyCommand expects — over the daemon's forward websocket. The
+command boots the workspace first when the daemon reports it as not
+running (the same notices as `msks shell`), then bridges bytes
+unexamined in both directions: a tty is not required, and binary
+protocols (ssh, rsync) ride it cleanly:
+
+```bash
+msks forward my-workspace 22                 # stdio: ProxyCommand shape
+msks forward my-workspace 8080 --local 8080   # loopback listener
+```
+
+`--local PORT` binds `127.0.0.1:PORT` instead of stdio; every
+accepted connection opens its own forward websocket, so parallel
+clients (a browser and a curl, two ssh sessions) are independent
+sessions. Refusals print one line — the daemon's close codes name the
+cause (no NIC, not running, service not listening, still booting) —
+while a clean end of stream (the guest service closed, stdin EOF)
+leaves exit code 0.
+
+The forward authenticates with the `Authorization` header (the same
+Bearer form as the REST surface), not the query string: URLs land in
+proxy and process logs, headers do not. Only egress workspaces have
+a NIC to forward to — a workspace created `--no-egress` is refused
+with the reason naming it. `forward.opened` and `forward.closed`
+events appear on the daemon's events channel for every session.
 
 ## Errors, exit codes, and timeouts
 

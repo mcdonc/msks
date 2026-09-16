@@ -1,5 +1,5 @@
 """The ``msks`` CLI: ``ls``, ``create``, ``start``, ``stop``, ``rm``,
-``shell``, and the ``image`` catalog subcommands.
+``shell``, ``forward``, and the ``image`` catalog subcommands.
 
 Every command speaks the daemon's REST surface with the same client
 conventions (#21): ``MSKSC_URL`` for the daemon, ``MSKSC_TOKEN`` for
@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 from ..imagestore import is_hash_shape, version_key
+from .forward import run_workspace_forward
 from .rest import (
     api_call,
     api_client,
@@ -435,6 +436,18 @@ def build_parser() -> argparse.ArgumentParser:
         default="root",
         help="shell user: root or the image's workspace user (default: root)",
     )
+    forward = sub.add_parser(
+        "forward", help="bridge a workspace TCP port to stdio or a local port"
+    )
+    forward.add_argument("workspace_id", help="the workspace to reach")
+    forward.add_argument("port", type=int, help="the guest TCP port to reach")
+    forward.add_argument(
+        "--local",
+        type=int,
+        metavar="PORT",
+        help="bind 127.0.0.1:PORT instead of stdio; every accepted "
+        "connection gets its own forward",
+    )
     image = sub.add_parser("image", help="manage the daemon's image catalog (#65)")
     image_sub = image.add_subparsers(dest="image_command", required=True)
     image_ls = image_sub.add_parser("ls", help="list catalog images")
@@ -485,6 +498,9 @@ def command_table(args: argparse.Namespace, transport) -> dict:
         "stop": lambda: cmd_stop(args.workspace_id, transport=transport),
         "rm": lambda: cmd_rm(args.workspace_ids, transport=transport),
         "shell": lambda: run_workspace_shell(args.workspace_id, args.user),
+        "forward": lambda: run_workspace_forward(
+            args.workspace_id, args.port, args.local
+        ),
         "image": lambda: image_command_table(args, transport)[args.image_command](),
     }
 

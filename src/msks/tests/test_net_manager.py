@@ -350,3 +350,127 @@ async def test_recorded_slice_conflict_fails_closed(net_app) -> None:
     manager._used_slices.add(1234)  # some live workspace holds it
     with pytest.raises(MicrovmError, match="held by another live workspace"):
         await manager.attach("ws-b", want=True)
+
+
+# --- The forward dial (#109) ---
+
+
+class RecorderDialer:
+    """A dialer the tests aim: dial attempts recorded, outcomes fed."""
+
+    def __init__(self, outcomes: list) -> None:
+        self.outcomes = list(outcomes)
+        self.calls: list[tuple[str, int]] = []
+
+    async def __call__(self, host: str, port: int):
+        self.calls.append((host, port))
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
+def stream_pair() -> tuple:
+    """A stand-in (reader, writer) the dialer hands back."""
+    return (object(), object())
+
+
+async def test_forward_stream_without_an_attachment_names_it(net_app) -> None:
+    app, _ip, _nft = net_app
+    await ready(app)
+    with pytest.raises(MicrovmError, match="no live network attachment"):
+        await app.state.net.forward_stream("ws-a", 22)
+
+
+async def test_forward_stream_dials_the_guest_address(net_app) -> None:
+    app, _ip, _nft = net_app
+    manager = await ready(app)
+    attachment = await manager.attach("ws-a", want=True)
+    pair = stream_pair()
+    manager.dialer = RecorderDialer([pair])
+    assert await manager.forward_stream("ws-a", 22) == pair
+    assert manager.dialer.calls == [(attachment.guest_ip, 22)]
+
+
+async def test_forward_stream_retries_a_refused_dial(net_app) -> None:
+    app, _ip, _nft = net_app
+    manager = await ready(app)
+    await manager.attach("ws-a", want=True)
+    pair = stream_pair()
+    # First refusal is the bring-up state (DHCP/service race); the
+    # second dial wins — the retry must keep going under the deadline.
+    manager.dialer = RecorderDialer([ConnectionRefusedError(), pair])
+    assert await manager.forward_stream("ws-a", 22) == pair
+    assert len(manager.dialer.calls) == 2
+
+
+async def test_forward_stream_names_the_deadline(net_app) -> None:
+    app, _ip, _nft = net_app
+    manager = await ready(app)
+    await manager.attach("ws-a", want=True)
+    app.state.settings.vmm.forward_wait_timeout_s = 0.05
+    manager.dialer = RecorderDialer([OSError("refused"), OSError("refused")])
+    with pytest.raises(MicrovmError, match=r"unavailable.*refused"):
+        await manager.forward_stream("ws-a", 22)
+
+
+async def test_detach_ends_live_forwards(net_app) -> None:
+    app, _ip, _nft = net_app
+    manager = await ready(app)
+    await manager.attach("ws-a", want=True)
+    pair = stream_pair()
+    manager.dialer = RecorderDialer([pair])
+    assert await manager.forward_stream("ws-a", 22) == pair
+
+    class ClosedWriter:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    live = ClosedWriter()
+    manager.track_forward("ws-a", live)
+    await manager.detach("ws-a")
+    assert live.closed is True
+
+
+async def test_untrack_forgets_a_released_stream(net_app) -> None:
+    app, _ip, _nft = net_app
+    manager = await ready(app)
+    await manager.attach("ws-a", want=True)
+    pair = stream_pair()
+    manager.dialer = RecorderDialer([pair])
+    await manager.forward_stream("ws-a", 22)
+    manager.track_forward("ws-a", pair[1])
+    other = stream_pair()
+    manager.track_forward("ws-a", other[1])  # two live forwards
+    manager.untrack_forward("ws-a", pair[1])
+    assert manager._forwards == {"ws-a": [other[1]]}  # one still live
+    manager.untrack_forward("ws-a", other[1])
+    manager.untrack_forward("ws-b", other[1])  # an unknown workspace: quiet
+    await manager.detach("ws-a")  # nothing tracked: no error, no work
+    assert manager._forwards == {}
+
+
+async def test_forward_stream_bounds_each_attempt_by_the_deadline(
+    net_app,
+) -> None:
+    app, _ip, _nft = net_app
+    manager = await ready(app)
+    await manager.attach("ws-a", want=True)
+    app.state.settings.vmm.forward_wait_timeout_s = 0.05
+
+    class SilentDialer:
+        """A dial that never answers — a dropped SYN in dialer shape."""
+
+        calls = 0
+
+        async def __call__(self, host, port):
+            type(self).calls += 1
+            await asyncio.sleep(30)
+            raise AssertionError("the deadline must end the attempt first")
+
+    manager.dialer = SilentDialer()
+    with pytest.raises(MicrovmError, match="unavailable"):
+        await manager.forward_stream("ws-a", 22)
+    assert SilentDialer.calls == 1
