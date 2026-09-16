@@ -413,7 +413,7 @@ async def test_stdio_session_treats_an_unusable_pipe_as_no_input(
 async def test_stdio_session_exits_nonzero_on_a_named_refusal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Parity with the shell command and the CLI contract: a named
+    # Parity with the console command and the CLI contract: a named
     # refusal is one line and a nonzero exit, not a quiet zero.
     class RefusedWs(FakeWs):
         async def recv(self):

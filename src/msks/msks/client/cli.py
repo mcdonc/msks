@@ -1,10 +1,10 @@
 """The ``msks`` CLI: ``ls``, ``create``, ``start``, ``stop``, ``rm``,
-``shell``, ``forward``, and the ``image`` catalog subcommands.
+``console``, ``forward``, and the ``image`` catalog subcommands.
 
 Every command speaks the daemon's REST surface with the same client
 conventions (#21): ``MSKSC_URL`` for the daemon, ``MSKSC_TOKEN`` for
 a bearer token, ``MSKSC_CAFILE`` to pin the certificate. The
-interactive shell command lives in :mod:`msks.client.shell`.
+interactive console command lives in :mod:`msks.client.console`.
 """
 
 import argparse
@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 from ..imagestore import is_hash_shape, version_key
+from .console import run_workspace_shell
 from .forward import run_workspace_forward
 from .rest import (
     api_call,
@@ -22,7 +23,6 @@ from .rest import (
     env_url,
     request,
 )
-from .shell import run_workspace_shell
 
 
 def format_workspace(row: dict) -> str:
@@ -76,7 +76,7 @@ async def create_workspace(url, token, body, start, transport) -> dict:
                 f"{exc}\nmsks: {row['id']} is created; "
                 f"boot it later with: msks start {row['id']}"
             ) from exc
-        print(f"attach with: msks shell {row['id']}")
+        print(f"attach with: msks console {row['id']}")
         row["status"] = "running"
         return row
 
@@ -429,9 +429,9 @@ def build_parser() -> argparse.ArgumentParser:
     remover.add_argument(
         "workspace_ids", nargs="+", help="the workspaces to delete, in order"
     )
-    shell = sub.add_parser("shell", help="interactive shell in a workspace")
-    shell.add_argument("workspace_id", help="the workspace to attach to")
-    shell.add_argument(
+    console = sub.add_parser("console", help="interactive shell in a workspace")
+    console.add_argument("workspace_id", help="the workspace to attach to")
+    console.add_argument(
         "--user",
         default="root",
         help="shell user: root or the image's workspace user (default: root)",
@@ -497,7 +497,7 @@ def command_table(args: argparse.Namespace, transport) -> dict:
         "start": lambda: cmd_start(args.workspace_id, transport=transport),
         "stop": lambda: cmd_stop(args.workspace_id, transport=transport),
         "rm": lambda: cmd_rm(args.workspace_ids, transport=transport),
-        "shell": lambda: run_workspace_shell(args.workspace_id, args.user),
+        "console": lambda: run_workspace_shell(args.workspace_id, args.user),
         "forward": lambda: run_workspace_forward(
             args.workspace_id, args.port, args.local
         ),

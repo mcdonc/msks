@@ -1,7 +1,7 @@
 """Client unit tests: env/URL handling, tty guards, pump semantics.
 
 The interactive loop runs against fakes; the live path is the
-appliance smoke test's shell drive.
+appliance smoke test's console drive.
 """
 
 import asyncio
@@ -14,8 +14,8 @@ import termios
 from pathlib import Path
 
 import pytest
-from msks.client import cli, shell
-from msks.client.shell import (
+from msks.client import cli, console
+from msks.client.console import (
     DEFAULT_URL,
     DETACH,
     env_token,
@@ -101,32 +101,32 @@ def test_tty_size_reads_ioctl(monkeypatch: pytest.MonkeyPatch) -> None:
     import fcntl as fcntl_mod
     import struct as struct_mod
 
-    from msks.client import shell as shell_mod
+    from msks.client import console as console_mod
 
     def fake_ioctl(fd, request, packed):
         return struct_mod.pack("HHHH", 34, 120, 0, 0)
 
     monkeypatch.setattr(fcntl_mod, "ioctl", fake_ioctl)
-    assert shell_mod.tty_size(0) == (34, 120)
+    assert console_mod.tty_size(0) == (34, 120)
 
 
 def test_tty_size_zero_geometry_is_none(monkeypatch: pytest.MonkeyPatch) -> None:
     import fcntl as fcntl_mod
     import struct as struct_mod
 
-    from msks.client import shell as shell_mod
+    from msks.client import console as console_mod
 
     def fake_ioctl(fd, request, packed):
         return struct_mod.pack("HHHH", 0, 0, 0, 0)
 
     monkeypatch.setattr(fcntl_mod, "ioctl", fake_ioctl)
-    assert shell_mod.tty_size(0) is None
+    assert console_mod.tty_size(0) is None
 
 
 def test_tty_size_without_a_terminal_is_none() -> None:
     import os
 
-    from msks.client.shell import tty_size
+    from msks.client.console import tty_size
 
     r, w = os.pipe()
     try:
@@ -180,7 +180,7 @@ def test_ssl_context_unverified_warns(
 ) -> None:
 
     monkeypatch.delenv("MSKSC_CAFILE", raising=False)
-    ctx = shell.ssl_context()
+    ctx = console.ssl_context()
     assert ctx.verify_mode == ssl.CERT_NONE
     assert "NOT verified" in capsys.readouterr().err
 
@@ -192,7 +192,7 @@ def test_ssl_context_cafile(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     monkeypatch.setenv("MSKSC_CAFILE", str(cafile))
     with pytest.raises(ssl.SSLError):
         # An empty pem fails to load: proof the file was used.
-        shell.ssl_context()
+        console.ssl_context()
 
 
 def test_require_tty_rejects_pipes(
@@ -213,7 +213,7 @@ def test_main_requires_subcommand() -> None:
         cli.main([])
 
 
-def test_main_shell_needs_tty(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_main_console_needs_tty(monkeypatch: pytest.MonkeyPatch) -> None:
     class NotATty(io.StringIO):
         def isatty(self) -> bool:
             return False
@@ -222,7 +222,7 @@ def test_main_shell_needs_tty(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "stdout", NotATty())
     monkeypatch.setattr(sys, "stderr", io.StringIO())
     with pytest.raises(SystemExit, match="interactive tty"):
-        cli.main(["shell", "wid"])
+        cli.main(["console", "wid"])
 
 
 async def _cancel_orphans() -> None:
@@ -442,21 +442,21 @@ async def test_run_shell_detaches_on_escape(monkeypatch: pytest.MonkeyPatch) -> 
     ws = FakeWs(incoming=[b"hello\n"])
     pipe = PipeStdin()
     monkeypatch.setattr(sys, "stdin", pipe)
-    monkeypatch.setattr(shell.websockets, "connect", ConnectStub(ws))
+    monkeypatch.setattr(console.websockets, "connect", ConnectStub(ws))
     monkeypatch.setenv("MSKSC_CAFILE", "")
     monkeypatch.delenv("MSKSC_CAFILE", raising=False)
     stdout = FakeStdout()
     monkeypatch.setattr(sys, "stdout", stdout)
     loop = asyncio.get_running_loop()
     loop.run_in_executor(None, lambda: (pipe.feed(b"l"), pipe.feed(DETACH)))
-    result = await asyncio.wait_for(run_shell_via(shell), 5)
+    result = await asyncio.wait_for(run_shell_via(console), 5)
     assert result == 0
     assert ws.sent == [b"l"]
     assert stdout.buffer.getvalue() == b"hello\n"
 
 
-async def run_shell_via(shell):
-    return await shell.run_shell("wid", "u", "t", None)
+async def run_shell_via(mod):
+    return await mod.run_shell("wid", "u", "t", None)
 
 
 async def test_run_shell_survives_server_close(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -469,8 +469,8 @@ async def test_run_shell_survives_server_close(monkeypatch: pytest.MonkeyPatch) 
             if self._first:
                 self._first = False
                 await asyncio.sleep(0)
-                close = shell.websockets.Close(1000, "bye")
-                raise shell.websockets.ConnectionClosed(None, close)
+                close = console.websockets.Close(1000, "bye")
+                raise console.websockets.ConnectionClosed(None, close)
             raise AssertionError("unused")
 
         async def send(self, data):
@@ -484,9 +484,9 @@ async def test_run_shell_survives_server_close(monkeypatch: pytest.MonkeyPatch) 
 
     pipe = PipeStdin()
     monkeypatch.setattr(sys, "stdin", pipe)
-    monkeypatch.setattr(shell.websockets, "connect", ConnectStub(ClosingWs()))
+    monkeypatch.setattr(console.websockets, "connect", ConnectStub(ClosingWs()))
     monkeypatch.setattr(sys, "stdout", FakeStdout())
-    assert await shell.run_shell("wid", "u", "t", None) == 0
+    assert await console.run_shell("wid", "u", "t", None) == 0
 
 
 class FdOnly:
@@ -498,7 +498,7 @@ class FdOnly:
 
 
 async def async_noop(*args, **kwargs) -> None:
-    """A stand-in for the shell's pre-flight REST call."""
+    """A stand-in for the console's pre-flight REST call."""
 
 
 def test_main_raw_mode_cycle(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -510,20 +510,20 @@ def test_main_raw_mode_cycle(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(sys, "stdin", FdOnly())
     monkeypatch.setenv("MSKSC_TOKEN", "t")
-    monkeypatch.setattr(shell, "require_tty", lambda: None)
-    monkeypatch.setattr(shell, "ensure_running", preflight)
+    monkeypatch.setattr(console, "require_tty", lambda: None)
+    monkeypatch.setattr(console, "ensure_running", preflight)
     restored: list = []
 
     async def fake_run(wid, url, token, ssl_ctx, user="root", size=None, term=None):
         return 7
 
-    monkeypatch.setattr(shell, "run_shell", fake_run)
-    monkeypatch.setattr(shell.termios, "tcgetattr", lambda fd: ["old"], raising=True)
+    monkeypatch.setattr(console, "run_shell", fake_run)
+    monkeypatch.setattr(console.termios, "tcgetattr", lambda fd: ["old"], raising=True)
     monkeypatch.setattr(
-        shell.termios, "tcsetattr", lambda fd, when, attrs: restored.append(attrs)
+        console.termios, "tcsetattr", lambda fd, when, attrs: restored.append(attrs)
     )
-    monkeypatch.setattr(shell.tty, "setraw", lambda fd: order.append("raw"))
-    assert cli.main(["shell", "wid"]) == 7
+    monkeypatch.setattr(console.tty, "setraw", lambda fd: order.append("raw"))
+    assert cli.main(["console", "wid"]) == 7
     assert restored == [["old"]]
     # The pre-flight boot and its notices must land BEFORE raw mode:
     # setraw clears OPOST, so a mid-session newline would leave the
@@ -535,17 +535,17 @@ def test_main_without_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(sys, "stdin", FdOnly())
     monkeypatch.setenv("MSKSC_TOKEN", "t")
-    monkeypatch.setattr(shell, "require_tty", lambda: None)
-    monkeypatch.setattr(shell, "ensure_running", async_noop)
+    monkeypatch.setattr(console, "require_tty", lambda: None)
+    monkeypatch.setattr(console, "ensure_running", async_noop)
     monkeypatch.setattr(
-        shell.termios, "tcgetattr", lambda fd: (_ for _ in ()).throw(termios.error())
+        console.termios, "tcgetattr", lambda fd: (_ for _ in ()).throw(termios.error())
     )
 
     async def fake_run(wid, url, token, ssl_ctx, user="root", size=None, term=None):
         return 0
 
-    monkeypatch.setattr(shell, "run_shell", fake_run)
-    assert cli.main(["shell", "wid"]) == 0
+    monkeypatch.setattr(console, "run_shell", fake_run)
+    assert cli.main(["console", "wid"]) == 0
 
 
 def test_module_entry_runs(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -564,14 +564,14 @@ def test_module_entry_runs(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _closed(code: int, reason: str = ""):
 
-    close = shell.websockets.Close(code, reason)
-    return shell.websockets.ConnectionClosed(close, None)
+    close = console.websockets.Close(code, reason)
+    return console.websockets.ConnectionClosed(close, None)
 
 
 def test_report_close_4400() -> None:
     closed = _closed(4400, "console user 'x' is not served")
     with pytest.raises(SystemExit) as caught:
-        shell._report_close(closed)
+        console._report_close(closed)
     assert "console refused" in str(caught.value)
     assert "'x'" in str(caught.value)
 
@@ -579,29 +579,29 @@ def test_report_close_4400() -> None:
 def test_report_close_4401() -> None:
 
     with pytest.raises(SystemExit, match="authentication failed"):
-        shell._report_close(_closed(4401))
+        console._report_close(_closed(4401))
 
 
 def test_report_close_carries_reason() -> None:
 
     with pytest.raises(SystemExit, match="workspace stopped"):
-        shell._report_close(_closed(4501, "workspace stopped"))
+        console._report_close(_closed(4501, "workspace stopped"))
 
 
 def test_report_close_4502_names_the_stall() -> None:
 
     with pytest.raises(SystemExit, match="console stalled"):
-        shell._report_close(_closed(4502))
+        console._report_close(_closed(4502))
 
 
 def test_report_close_clean_end_is_quiet() -> None:
 
-    assert shell._report_close(_closed(1000)) is None
+    assert console._report_close(_closed(1000)) is None
 
 
 def test_stdin_pipe_passthrough() -> None:
 
-    pipe = shell._StdinPipe(sys.stdin)
+    pipe = console._StdinPipe(sys.stdin)
     assert pipe.close() is None
     assert pipe.readable() is True
 
@@ -616,15 +616,15 @@ async def test_run_shell_unreachable_daemon_one_liner() -> None:
             raise OSError(111, "Connection refused")
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(shell.websockets, "connect", RefusingConnect())
+        mp.setattr(console.websockets, "connect", RefusingConnect())
         with pytest.raises(SystemExit, match="cannot reach"):
-            await shell.run_shell("wid", "https://nope:1", "t", None)
+            await console.run_shell("wid", "https://nope:1", "t", None)
 
 
 async def test_connect_plain_ws_takes_no_ssl() -> None:
 
     stub = ConnectStub(FakeWs())
-    shell._connect("ws://plain/", None)
+    console._connect("ws://plain/", None)
     # The ssl argument is only recorded through the stub's __call__.
     assert stub.recorded_ssl == "unset"
     stub("ws://plain/", ssl=None)
@@ -636,7 +636,7 @@ async def test_connect_plain_ws_takes_no_ssl() -> None:
 def test_run_workspace_shell_preflights_boot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The shell boots a not-running workspace before going raw."""
+    """The console command boots a not-running workspace before going raw."""
 
     seen = {}
 
@@ -646,16 +646,16 @@ def test_run_workspace_shell_preflights_boot(
     monkeypatch.setattr(sys, "stdin", FdOnly())
     monkeypatch.setenv("MSKSC_TOKEN", "t")
     monkeypatch.setenv("MSKSC_URL", "u")
-    monkeypatch.setattr(shell, "require_tty", lambda: None)
-    monkeypatch.setattr(shell, "ensure_running", fake_ensure)
-    monkeypatch.setattr(shell, "ssl_context", lambda: "ctx")
+    monkeypatch.setattr(console, "require_tty", lambda: None)
+    monkeypatch.setattr(console, "ensure_running", fake_ensure)
+    monkeypatch.setattr(console, "ssl_context", lambda: "ctx")
     monkeypatch.setattr(
-        shell.termios, "tcgetattr", lambda fd: (_ for _ in ()).throw(termios.error())
+        console.termios, "tcgetattr", lambda fd: (_ for _ in ()).throw(termios.error())
     )
 
     async def fake_run(wid, url, token, ssl_ctx, user="root", size=None, term=None):
         return 0
 
-    monkeypatch.setattr(shell, "run_shell", fake_run)
-    assert shell.run_workspace_shell("wid") == 0
+    monkeypatch.setattr(console, "run_shell", fake_run)
+    assert console.run_workspace_shell("wid") == 0
     assert seen == {"workspace_id": "wid", "url": "u", "token": "t", "ssl": "ctx"}

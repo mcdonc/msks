@@ -1,7 +1,7 @@
 """Shared client-side plumbing: env, TLS, and the REST calls.
 
 Both the CLI subcommands (:mod:`msks.client.cli`) and the interactive
-shell (:mod:`msks.client.shell`) speak the daemon's REST surface
+console (:mod:`msks.client.console`) speak the daemon's REST surface
 through this module, so the #21 client conventions live here once:
 ``MSKSC_URL`` for the daemon, ``MSKSC_TOKEN`` for a bearer token,
 ``MSKSC_CAFILE`` to pin the certificate.
