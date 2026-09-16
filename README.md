@@ -406,9 +406,15 @@ Transport (#21), in the preferred vsock-first shape:
   default; `msks console --user <name>` requests the image's workspace
   user (users the image does not serve are refused by name).
 - The guest pty is created at the client terminal's size (#61's
-  0x0 fixed): the console request carries the geometry at connect.
-  Live resizes during a session are not propagated yet — the same
-  in-band negotiation can carry them later.
+  0x0 fixed): the console request carries the geometry at connect,
+  and the pty keeps that size for the session's life. The console
+  stream is a raw byte pipe by design (#108's terminal-layer
+  decision), so a window resized mid-session does not reach it:
+  reconnect for a new size, or use an ssh session through the
+  forward, where ssh's window-change channel resizes the pty live
+  (#108–#112). If console resize ever returns to the queue, it
+  starts with a control-channel decision — a dedicated vsock
+  control port, or another design that keeps the stream raw (#78).
 - `MSKSC_CAFILE` pins the daemon certificate for verification when
   you have it (a directly-run msksd's CA, or the appliance CA
   exported from its state disk:
