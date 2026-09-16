@@ -2472,7 +2472,8 @@ async def test_local_minted_identity() -> None:
         assert "msks-42" in user_login.stdout, user_login.stdout
 
         # msks ssh (#112): the same login as one command — identity
-        # fetched and staged in a memfd, the forward as ProxyCommand,
+        # fetched and served from the transient agent, the forward as
+        # ProxyCommand,
         # the msks user by default and root via -l. -F /dev/null in
         # the passthrough keeps the harness hermetic (the #110
         # lesson: a host ssh_config can carry options this build

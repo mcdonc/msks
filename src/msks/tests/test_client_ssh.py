@@ -114,8 +114,23 @@ def agent_public_line(pem: str) -> str:
 def test_sign_answers_with_a_verifiable_signature(pem: str) -> None:
     private = agent.load_private(pem)
     challenge = b"prove it"
-    blob = agent.sign(private, challenge, rsa_sha512=False)
+    # RSA needs a sha2 bit named; the other types ignore the flags.
+    blob = agent.sign(private, challenge, agent.RSA_SHA2_256)
     verify(blob, private, challenge)
+
+
+def test_rsa_sign_refuses_an_unpinned_digest() -> None:
+    """flags=0 asks for SHA-1 (ssh-rsa) and flags=6 is no valid
+    request (RFC 9987): both are refused, never mis-answered — a
+    wrong-tagged signature would fail server-side with no clue.
+    ed25519 and ECDSA ignore the flag bits entirely."""
+    rsa_private = agent.load_private(RSA_PEM)
+    assert agent.sign(rsa_private, b"x", 0) is None
+    assert (
+        agent.sign(rsa_private, b"x", agent.RSA_SHA2_256 | agent.RSA_SHA2_512) is None
+    )
+    assert agent.sign(agent.load_private(PEM), b"x", 0) is not None
+    assert agent.sign(agent.load_private(ECDSA_PEM), b"x", 0) is not None
 
 
 def test_sign_refuses_an_unserved_curve() -> None:
@@ -123,13 +138,13 @@ def test_sign_refuses_an_unserved_curve() -> None:
 
     odd = ec_curves.generate_private_key(ec_curves.SECP384R1())
     with pytest.raises(ValueError, match="unsupported ECDSA curve"):
-        agent.sign(odd, b"x", rsa_sha512=False)
+        agent.sign(odd, b"x", 0)
 
 
 def test_rsa_honors_the_sha512_flag() -> None:
     private = agent.load_private(RSA_PEM)
     challenge = b"larger digest"
-    blob = agent.sign(private, challenge, rsa_sha512=True)
+    blob = agent.sign(private, challenge, agent.RSA_SHA2_512)
     assert blob.startswith(b"\x00\x00\x00\x0crsa-sha2-512")
     verify(blob, private, challenge, sha512=True)
 
@@ -238,6 +253,48 @@ def test_agent_refuses_other_keys_and_unknown_requests() -> None:
             assert sock.recv(16) == b""
 
 
+def test_agent_refuses_an_unpinned_rsa_digest_over_the_socket() -> None:
+    """The server-side face of the flags rule: an RSA sign request
+    with no sha2 bit (SHA-1) answers FAILURE, not a mis-tagged
+    signature the server would reject with no clue."""
+    with agent.serve(agent.load_private(RSA_PEM), "") as served:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.connect(served.server_address)
+            refused = call_agent(
+                sock,
+                struct.pack("B", agent.SIGN_REQUEST)
+                + agent.wire_string(served.blob)
+                + agent.wire_string(b"x")
+                + struct.pack(">I", 0),
+            )
+            assert refused == struct.pack("B", agent.FAILURE)
+
+
+def test_serve_cleans_up_when_staging_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A failure between the bind and the yield (here: the pubkey
+    file's write) takes the socket and tempdir with it."""
+    home = tmp_path / "agent-home"
+
+    def fake_mkdtemp(**kwargs) -> str:
+        home.mkdir(parents=True, exist_ok=True)
+        return str(home)
+
+    real_path = agent.Path
+
+    class exploding_path(real_path):
+        def write_text(self, *args, **kwargs) -> int:
+            raise OSError("no space")
+
+    monkeypatch.setattr(agent.tempfile, "mkdtemp", fake_mkdtemp)
+    monkeypatch.setattr(agent, "Path", exploding_path)
+    with pytest.raises(OSError, match="no space"):
+        with agent.serve(agent.load_private(PEM), ""):
+            pass
+    assert not home.exists()
+
+
 def test_agent_ends_the_connection_on_truncation() -> None:
     with agent.serve(agent.load_private(PEM), "") as served:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
@@ -253,11 +310,15 @@ def test_agent_ends_the_connection_on_truncation() -> None:
 
 
 @needs_sshd
-def test_ssh_logs_in_through_the_agent(tmp_path: Path) -> None:
+@pytest.mark.parametrize("pem", [PEM, ECDSA_PEM], ids=["ed25519", "ecdsa"])
+def test_ssh_logs_in_through_the_agent(pem: str, tmp_path: Path) -> None:
     """The semantics ``msks ssh`` depends on, proven against the
     real client: ssh authenticates from an IdentityAgent listing
     alone (no identity file), under IdentitiesOnly, and ``-A``
-    forwards that same agent into the session."""
+    forwards that same agent into the session. Parametrized over
+    the default minted type (ECDSA P-256) and ed25519 — with -F
+    /dev/null, whose absence lets a host ssh_config drop ECDSA from
+    PubkeyAcceptedAlgorithms (the #110 lesson applied here too)."""
     user = os.environ.get("USER") or "nobody"
     hostkey = tmp_path / "host_ed25519"
     keygen = subprocess.run(
@@ -266,7 +327,7 @@ def test_ssh_logs_in_through_the_agent(tmp_path: Path) -> None:
     )
     assert keygen.returncode == 0, keygen.stderr
     authorized = tmp_path / "authorized_keys"
-    authorized.write_text(agent_public_line(PEM) + "\n")
+    authorized.write_text(agent_public_line(pem) + "\n")
     config = tmp_path / "sshd_config"
     port = free_port()
     config.write_text(
@@ -289,28 +350,30 @@ def test_ssh_logs_in_through_the_agent(tmp_path: Path) -> None:
     )
     try:
         wait_listening(port)
-        with agent.serve(agent.load_private(PEM), "msksd:alpha") as served:
+        with agent.serve(agent.load_private(pem), "msksd:alpha") as served:
+            common = [
+                SSH_BIN,
+                "-F",
+                os.devnull,
+                "-o",
+                f"IdentityAgent={served.server_address}",
+                "-i",
+                served.identity_path,
+                "-o",
+                "IdentitiesOnly=yes",
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "UserKnownHostsFile=/dev/null",
+                "-o",
+                "BatchMode=yes",
+                "-A",
+                "-p",
+                str(port),
+                f"{user}@127.0.0.1",
+            ]
             login = subprocess.run(
-                [
-                    SSH_BIN,
-                    "-o",
-                    f"IdentityAgent={served.server_address}",
-                    "-i",
-                    served.identity_path,
-                    "-o",
-                    "IdentitiesOnly=yes",
-                    "-o",
-                    "StrictHostKeyChecking=no",
-                    "-o",
-                    "UserKnownHostsFile=/dev/null",
-                    "-o",
-                    "BatchMode=yes",
-                    "-A",
-                    "-p",
-                    str(port),
-                    f"{user}@127.0.0.1",
-                    "whoami",
-                ],
+                [*common, "whoami"],
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -320,26 +383,7 @@ def test_ssh_logs_in_through_the_agent(tmp_path: Path) -> None:
             # -A forwarded the session agent: ssh-add inside lists
             # the identity it serves.
             listed = subprocess.run(
-                [
-                    SSH_BIN,
-                    "-o",
-                    f"IdentityAgent={served.server_address}",
-                    "-i",
-                    served.identity_path,
-                    "-o",
-                    "IdentitiesOnly=yes",
-                    "-o",
-                    "StrictHostKeyChecking=no",
-                    "-o",
-                    "UserKnownHostsFile=/dev/null",
-                    "-o",
-                    "BatchMode=yes",
-                    "-A",
-                    "-p",
-                    str(port),
-                    f"{user}@127.0.0.1",
-                    "ssh-add -l",
-                ],
+                [*common, "ssh-add -l"],
                 capture_output=True,
                 text=True,
                 timeout=30,

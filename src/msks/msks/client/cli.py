@@ -526,7 +526,7 @@ def build_parser() -> argparse.ArgumentParser:
         nargs=argparse.REMAINDER,
         metavar="ARGS",
         help="arguments passed to ssh verbatim ('-l root' is the recovery "
-        "login; '-A' forwards your own agent)",
+        "login; '-A' forwards the session agent)",
     )
     image = sub.add_parser("image", help="manage the daemon's image catalog (#65)")
     image_sub = image.add_subparsers(dest="image_command", required=True)

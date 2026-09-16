@@ -41,13 +41,8 @@ FAILURE = 5
 RSA_SHA2_256 = 2
 RSA_SHA2_512 = 4
 
-#: One protocol frame is at most this long; a bigger length field is
+#: One protocol message is at most this long; a bigger length field is
 #: a broken peer, and the connection closes instead of allocating.
-MAX_FRAME = 1 << 20
-
-#: The largest accepted message: identity listings are bounded by
-#: the one key this agent serves, sign payloads by ssh's own
-#: challenge sizes.
 MAX_MESSAGE = 1 << 16
 
 CURVE_NAMES = {ec.SECP256R1: "ecdsa-sha2-nistp256"}
@@ -126,13 +121,18 @@ def signature(algo: str, sig: bytes) -> bytes:
     return wire_string(algo.encode()) + wire_string(sig)
 
 
-def sign(private, challenge: bytes, rsa_sha512: bool) -> bytes:
-    """Sign ``challenge`` and return the algorithm-tagged blob."""
+def sign(private, challenge: bytes, flags: int) -> bytes | None:
+    """Sign ``challenge`` and return the algorithm-tagged blob, or
+    None when the request's flag bits ask for a signature this
+    agent refuses to make (an unpinned RSA digest — SHA-1, or an
+    invalid combination — cuts against the FIPS posture, and
+    answering it wrong would send the client a signature its server
+    rejects with no agent-side clue)."""
     if isinstance(private, ed25519.Ed25519PrivateKey):
         return signature("ssh-ed25519", private.sign(challenge))
     if isinstance(private, ec.EllipticCurvePrivateKey):
         return ecdsa_signature(private, challenge)
-    return rsa_signature(private, challenge, rsa_sha512)
+    return rsa_signature(private, challenge, flags)
 
 
 def ecdsa_signature(private, challenge: bytes) -> bytes:
@@ -146,11 +146,17 @@ def ecdsa_signature(private, challenge: bytes) -> bytes:
     return signature(algo, mpint(r) + mpint(s))
 
 
-def rsa_signature(private, challenge: bytes, sha512: bool) -> bytes:
-    """The RSA signature blob: PKCS#1 v1.5 under the digest ssh
-    negotiated (the sign request's flag bits)."""
-    digest = hashes.SHA512() if sha512 else hashes.SHA256()
-    algo = "rsa-sha2-512" if sha512 else "rsa-sha2-256"
+def rsa_signature(private, challenge: bytes, flags: int) -> bytes | None:
+    """The RSA signature blob: PKCS#1 v1.5 under the digest the
+    flag bits name. RFC 9987: no sha2 bit asks for SHA-1 (ssh-rsa)
+    and both bits at once is no valid request — refused rather than
+    mis-answered."""
+    if flags == RSA_SHA2_256:
+        digest, algo = hashes.SHA256(), "rsa-sha2-256"
+    elif flags == RSA_SHA2_512:
+        digest, algo = hashes.SHA512(), "rsa-sha2-512"
+    else:
+        return None
     sig = private.sign(challenge, padding.PKCS1v15(), digest)
     return signature(algo, sig)
 
@@ -197,7 +203,9 @@ class AgentServer(socketserver.ThreadingUnixStreamServer):
         flags = reader.uint32()
         if blob != self.blob:
             return struct.pack("B", FAILURE)
-        sig = sign(self.private, challenge, bool(flags & RSA_SHA2_512))
+        sig = sign(self.private, challenge, flags)
+        if sig is None:
+            return struct.pack("B", FAILURE)
         return struct.pack("B", SIGN_RESPONSE) + wire_string(sig)
 
 
@@ -241,24 +249,28 @@ def serve(private, comment: str):
     mode-0700 temporary directory that goes away with the socket.
     """
     directory = tempfile.mkdtemp(prefix="msks-agent-")
-    socket_path = str(Path(directory) / "agent.sock")
-    server = AgentServer(socket_path, private, comment)
-    os.chmod(socket_path, 0o600)
-    # The public half as a file, so ssh can NAME the identity (-i
-    # identity.pub) under IdentitiesOnly: ssh matches the agent's
-    # listed key against this pubkey and signs through the socket —
-    # the private half stays agent-resident. Public material is all
-    # this file holds.
-    server.identity_path = str(Path(directory) / "identity.pub")
-    Path(server.identity_path).write_text(
-        private.public_key()
-        .public_bytes(
-            encoding=serialization.Encoding.OpenSSH,
-            format=serialization.PublicFormat.OpenSSH,
+    try:
+        socket_path = str(Path(directory) / "agent.sock")
+        server = AgentServer(socket_path, private, comment)
+        os.chmod(socket_path, 0o600)
+        # The public half as a file, so ssh can NAME the identity (-i
+        # identity.pub) under IdentitiesOnly: ssh matches the agent's
+        # listed key against this pubkey and signs through the socket —
+        # the private half stays agent-resident. Public material is all
+        # this file holds.
+        server.identity_path = str(Path(directory) / "identity.pub")
+        Path(server.identity_path).write_text(
+            private.public_key()
+            .public_bytes(
+                encoding=serialization.Encoding.OpenSSH,
+                format=serialization.PublicFormat.OpenSSH,
+            )
+            .decode()
+            + "\n"
         )
-        .decode()
-        + "\n"
-    )
+    except BaseException:
+        shutil.rmtree(directory, ignore_errors=True)
+        raise
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
