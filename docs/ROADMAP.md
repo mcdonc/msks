@@ -76,6 +76,37 @@ no web frontend yet.
 - **Guests have no NIC at first.** The guest agent talks over
   **virtio-vsock**; a VM with no network device is also the strongest
   default egress posture. Taps arrive with the consent work.
+- **Interactive access rides stock SSH over the forward seam
+  (#108–#112); the vsock console stays the failsafe.** Each workspace
+  runs an sshd in the guest image (#110: `PasswordAuthentication no`,
+  key-only logins, rsync shipped, host keys in the persistent overlay)
+  and msksd mints a per-workspace identity at create time (#111:
+  ECDSA P-256 — the FIPS-approvable curve from day one, #115 — public
+  half seeded through `user_data`, private half served over the
+  authenticated API and materialized by the client only for the
+  connection's duration). The service plane is the TCP forward
+  websocket (#109, landed): the caller names a guest port, the daemon
+  dials it on the workspace's tap, and pumps raw bytes. Stock ssh then
+  provides the shell, pty resize, flow control, agent forwarding,
+  rsync/sftp, and `-L`/`-R`; msks stays a byte pipe. `msks ssh`
+  (#112) wraps this with the ssh-config alias + ProxyCommand, so ssh
+  rides the daemon's single authenticated listener and the daemon
+  stays the only inbound path to a workspace. The vsock console
+  (#21) settles into the serial-console role: present on every
+  workspace, the path an operator uses when sshd is dead or the image
+  needs boot-level debugging.
+  In the klangk integration (#50's link-don't-dial direction), ssh is
+  server-side plumbing, not the client protocol. klangkd hosts the
+  forward seam and the workspace keys, and bridges its existing
+  authenticated websocket to `ssh <workspace> tmux attach -t <target>`.
+  tmux stays inside the guest, so shared/joined sessions and
+  `window_watcher` (reading the tmux control socket through the same
+  channel) keep working; the TUI's pick-a-terminal flow, the web SPA,
+  and agent delivery (an agent proxy fed over the websocket — the
+  pattern #108's conversation worked out when it superseded #106)
+  all ride the unchanged endpoint contract. The alias is the
+  power-user path, serving the CLI/TUI with the user's own ssh
+  config while the browser keeps the websocket.
 - **Guest images are built by nix** (kernel/initrd/rootfs as store
   paths, direct kernel boot), read-only base plus a per-VM writable
   overlay — no OCI images, no manual downloads (#5 makes this
