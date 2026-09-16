@@ -56,8 +56,15 @@ def vm_ruleset(
       taps) drops.
     - ``ingress`` (input): the guest may reach exactly two ports on
       the appliance through this tap — DHCP (67) and the resolver
-      (53). Everything else from the tap drops before the
-      appliance's own wildcard-bound services (the API among them).
+      (53) — and the replies to connections the appliance itself
+      opened into the guest (the forward endpoint's dial, #109)
+      return on their conntrack state. Everything else from the tap
+      drops before the appliance's own wildcard-bound services (the
+      API among them): a guest-initiated connection arrives state
+      NEW and does not match the established rule — and the rare
+      loose-conntrack mid-stream pickup (nf_conntrack_tcp_loose=1)
+      still dies on the iifname/saddr pins when the local stack RSTs
+      it.
 
     The destination of guest-initiated egress is unconstrained in
     this issue's scope — any host reachable through the uplink is
@@ -84,6 +91,10 @@ def vm_ruleset(
         f'    iifname "{tap}" udp dport 67 accept\n'
         f'    iifname "{tap}" ip saddr {guest_ip} ip daddr {tap_ip} '
         f"udp dport 53 accept\n"
+        # The forward's dial is appliance-originated: its replies —
+        # and only those, per conntrack — come home here (#109).
+        f'    iifname "{tap}" ip saddr {guest_ip} '
+        f"ct state established,related accept\n"
         f'    iifname "{tap}" drop\n'
         "  }\n"
         "}\n"

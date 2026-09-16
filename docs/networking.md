@@ -298,6 +298,52 @@ port the caller names and bridges raw bytes over its authenticated
 websocket API — see the CLI chapter's `msks forward` section for the
 stdio and `--local` shapes and the close-code contract.
 
+The workspace image meets the forward with a TCP service plane of
+its own (#110): sshd — the image's Debian package, enabled — and
+rsync. sshd listens on all interfaces once the guest's NIC has its
+address (a boot-time unit holds the port behind DHCP, with a 15s
+ceiling so a slow lease never blocks it for long), and every login
+is a key login: `PasswordAuthentication no`, and root may log in
+with a key only (`PermitRootLogin prohibit-password`). Host keys are
+generated on the workspace's first boot into its persistent root
+overlay, so a stop/start cycle presents the same host key — the
+`known_hosts` entry you recorded on first login keeps matching.
+A workspace without egress carries the same image unchanged: its
+forward is refused at the API with close code 4501 before any dial,
+and its console is the vsock one.
+
+With a key planted in the guest (issue #111 automates this), the
+usual client shapes work over the forward:
+
+```console
+$ msks forward myws 22 --local 2201 &
+$ ssh -i ~/.cache/msks/myws.key -p 2201 root@127.0.0.1
+$ rsync -e 'ssh -i ~/.cache/msks/myws.key -p 2201' \
+    -av ./site/ root@127.0.0.1:/root/site/
+```
+
+Issue #112 documents the `Host msks-*` ssh-config alias that hides
+the forward and the port entirely.
+
+### Cryptographic agility (a future FIPS posture)
+
+The image pins login policy — who may authenticate, and how — and
+leaves algorithm selection to the platform. No cipher, MAC,
+key-exchange, or host-key algorithm lists appear in the guest's sshd
+configuration or the daemon's own settings, so an OpenSSH build whose
+crypto library enforces a FIPS module applies its restrictions by
+itself, without msks-side config surgery. The guest's libraries are
+Debian's own (OpenSSL 3), the line that carries a certified provider
+when one exists. The algorithm choices in play are FIPS-approvable
+from the start: identities are ECDSA P-256 (#111's mint, and the
+example above takes whatever key the mint hands it), and first boot
+generates the full `ssh-keygen -A` host-key set, whose RSA and ECDSA
+members are the keys a FIPS-mode sshd serves — all persisting across
+stop/start on the overlay.
+Issue #115 records the constraint that keeps it that way: every
+crypto choice stays a setting or a platform default, never a pinned
+list.
+
 ## Backend support
 
 Egress is a local-backend feature today. On k8s the runner pod

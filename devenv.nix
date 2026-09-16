@@ -126,7 +126,10 @@ in
     # that block the egress forward path the nft rules accept (#75/#52)
     jscpd # token-clone scanner (#71), pinned rust binary (see above)
     nftables # egress chains/NAT for the #52 smoke path
+    openssh # host-side ssh client: the forward-path smoke (#110) and
+    # the documented ssh workflow (#112) run over `msks forward`
     qemu # qemu-img for rootfs conversion during guest-image experiments
+    rsync # host-side rsync over the forward (#110's sync path)
     virtiofsd # the appliance's read-only /nix/store share (#10)
     ruff
     socat # AF_UNIX <-> pty/stdio plumbing for CH socket debugging

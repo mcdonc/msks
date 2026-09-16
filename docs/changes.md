@@ -8,6 +8,18 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **Guest sshd and rsync (#110).** The workspace image serves TCP on
+  its forward path: sshd (Debian's own package, enabled) listens on
+  all interfaces behind a boot-time unit that waits for the NIC's
+  address (15s ceiling), with key-only login (`PasswordAuthentication
+no`, `PermitRootLogin prohibit-password`) pinned by a config dropin,
+  and rsync ships in the image. Host keys are generated on first boot
+  into the persistent root overlay, so they survive stop/start — the
+  recorded `known_hosts` entry keeps matching. The egress input
+  rules admit the conntrack-established replies to the
+  appliance-originated forward dial; guest-initiated connections
+  arrive state NEW and still drop. See
+  [networking](/networking/#reaching-guest-services-the-forward).
 - **`msks forward` and the forward websocket (#109).** A workspace's
   guest TCP ports reach the client through a new authenticated
   endpoint, `WS /api/v1/workspaces/{id}/forward/{port}`: the daemon

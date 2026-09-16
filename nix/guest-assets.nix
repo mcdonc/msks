@@ -109,6 +109,20 @@ let
         dpkg-deb -x ${genericKernelDeb} "$out"
       '';
 
+  # Debian's own rsync (#110), pinned by pool URL and sha256 like the
+  # kernel deb above: the binary is dynamically linked against
+  # exactly the libraries the Debian tree ships (glibc 2.41 covers
+  # the deb's libc6 >= 2.38), so the guest's rsync is the distro's —
+  # same build, same flags, same protocol behavior an operator
+  # expects from `rsync -e ssh` on any Debian box. The build asserts
+  # every NEEDED soname resolves inside the tree (the #36 bug class).
+  rsyncDeb = pkgs.fetchurl {
+    url =
+      "https://deb.debian.org/debian/pool/main/r/rsync/"
+      + "rsync_3.4.1+ds1-5+deb13u4_amd64.deb";
+    hash = "sha256-iqEi9rqNL/ESxyu5gU7glu5RbwITs2uYu+ecg8kvsiY=";
+  };
+
   # The minimal initramfs (#37's shape, #96's module set): busybox,
   # the six modules the generic kernel needs to mount the ext4
   # root, and an init that mounts /dev/vda rw and switch_roots into
@@ -200,16 +214,20 @@ let
 
   # The msks additions, staged as an overlay tree: the vsock console
   # service, serial-console autologin (the debug console), the vsock
-  # and net module loads, a stable hostname, and the DHCP client an
-  # egress workspace (#52) brings up. Debian's socat 1.8.x is built
-  # WITH_VSOCK, so nothing is cross-compiled in.
+  # and net module loads, a stable hostname, the DHCP client an
+  # egress workspace (#52) brings up, the sshd posture + rsync the
+  # TCP service plane rides (#110), and the console helper binary.
+  # Debian's socat 1.8.x is built WITH_VSOCK, so nothing is
+  # cross-compiled in.
   guestOverlay = pkgs.runCommand "msks-guest-overlay" { } ''
     set -eu
     mkdir -p \
       $out/home \
       $out/usr/bin \
       $out/etc/cloud/cloud.cfg.d \
+      $out/etc/ssh/sshd_config.d \
       $out/etc/systemd/system/serial-getty@ttyS0.service.d \
+      $out/etc/systemd/system/ssh.service.d \
       $out/etc/systemd/system/multi-user.target.wants \
       $out/etc/systemd/system/sockets.target.wants \
       $out/etc/systemd/system/sysinit.target.wants \
@@ -224,6 +242,65 @@ let
     cp "${consoleHelper}/bin/msks-console-helper" \
       $out/usr/bin/msks-console-helper
     chmod 0755 $out/usr/bin/msks-console-helper
+
+    # rsync (#110): the sync half of the TCP service plane — Debian's
+    # own binary from the pinned deb (see rsyncDeb), staged into the
+    # tree below with its NEEDED libraries asserted.
+
+    # The sshd posture (#110): every login is a key login. The
+    # genericcloud image ships sshd enabled with its own
+    # PasswordAuthentication no; the dropin states the full contract
+    # where sshd reads it first (Include is the config's opening
+    # line, and first match wins). Root may log in with a key —
+    # the console-planted identity of #110's tests, the msksd-minted
+    # key of #111 — and never with a password.
+    #
+    # Authentication policy only, never algorithm policy: no cipher,
+    # MAC, key-exchange, or host-key lists here, so a FIPS-restricted
+    # OpenSSH (a distro crypto provider) narrows itself without
+    # config surgery (#115 — identities ride ECDSA P-256, and
+    # ssh-keygen -A's rsa/ecdsa host keys are FIPS-approvable).
+    printf '%s\n' \
+      '# msks (#110): key-only login; the forward is the road in.' \
+      'PasswordAuthentication no' \
+      'KbdInteractiveAuthentication no' \
+      'PermitRootLogin prohibit-password' \
+      > $out/etc/ssh/sshd_config.d/00-msks.conf
+
+    # Host keys come from the image's own sshd-keygen.service (wanted
+    # by ssh.service, ConditionFirstBoot): ssh-keygen -A writes them
+    # into /etc/ssh on the root overlay, so they survive stop/start
+    # with the overlay (#14) and each workspace owns its own keys —
+    # nothing here to stage.
+
+    # sshd waits for the interface to have its address (#110): the
+    # forward path dials the guest's tap address, and the ordering
+    # puts listening behind DHCP instead of ahead of it. A scoped
+    # oneshot, NOT systemd's wait-online: this guest boots with no
+    # NIC at all in the no-egress posture, and a link-less networkd
+    # never reaches "online" — wait-online would stall those boots
+    # at network-online.target. The NIC check lives in ExecCondition
+    # (systemd path conditions do not glob — a literal e* path never
+    # exists): with no NIC beyond lo the unit is skipped and sshd
+    # listens immediately (nothing can reach it anyway); the 15s
+    # ceiling never blocks the port beyond a slow DHCP.
+    cat > $out/etc/systemd/system/msks-wait-address.service <<'WAITUNIT'
+    [Unit]
+    Description=msks: sshd listens once the NIC has its address
+    After=systemd-networkd.service
+    Before=ssh.service ssh.socket
+
+    [Service]
+    Type=oneshot
+    RemainAfterExit=yes
+    ExecCondition=/bin/sh -c 'ip -o link show 2>/dev/null | grep -qv "lo:"'
+    ExecStart=/bin/sh -c 'for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do ip -4 -o addr show scope global 2>/dev/null | grep -q . && exit 0; sleep 1; done'
+    WAITUNIT
+    printf '%s\n' \
+      '[Unit]' \
+      'Wants=msks-wait-address.service' \
+      'After=msks-wait-address.service' \
+      > $out/etc/systemd/system/ssh.service.d/10-after-address.conf
 
     # cloud-init (#41): the workspace's cidata seed is NoCloud's own
     # format. Two dropins pin the behavior the msks contract needs:
@@ -419,6 +496,8 @@ let
     pkgs.runCommand "msks-debian-root"
       {
         nativeBuildInputs = [
+          pkgs.binutils # readelf: the rsync NEEDED-soname guard below
+          pkgs.dpkg # dpkg-deb: unpack the pinned rsync deb
           pkgs.gnutar
           pkgs.qemu
           pkgs.e2fsprogs
@@ -590,7 +669,10 @@ let
         # workspaces get a NIC, #52; the overlay enables both);
         # timesyncd has no served clock until a resolver exists,
         # unattended-upgrades no repo to reach, e2scrub_reap no LVM
-        # to reap.
+        # to reap. wait-online stays dropped: a link-less networkd
+        # (the no-egress posture) never reaches "online", so sshd's
+        # address ordering (#110) rides its own scoped oneshot
+        # (msks-wait-address.service) instead of this target.
         wants="$root"/etc/systemd/system
         # The image ships some wants directories read-only; the build
         # owns them now.
@@ -605,10 +687,53 @@ let
         chmod -R u+w "$root"/etc/netplan
         rm -rf "$root"/etc/netplan
 
+        # rsync (#110): Debian's own binary from the pinned deb —
+        # the tree's libraries are its build-time world, and the
+        # guards below fail the build the day that stops being true:
+        # every NEEDED soname present, the ELF interpreter resolvable,
+        # and every version symbol the binary requires (GLIBC_*,
+        # OPENSSL_*) defined by the tree's copy of that library — a
+        # deb rebuilt against newer symbols than the image ships is
+        # the #36 bug class. (u+w: the overlay cp carries the store's
+        # read-only dir modes.) Only usr/bin/rsync is staged: nothing
+        # in the runtime needs the deb's rrsync/rsync-ssl or its
+        # /usr/share scripts — an operator wanting rrsync's scoped
+        # syncs installs it in the workspace itself.
+        chmod u+w "$root"/usr/bin
+        mkdir -p rsync-deb
+        dpkg-deb -x ${rsyncDeb} rsync-deb
+        cp --no-preserve=ownership rsync-deb/usr/bin/rsync \
+          "$root"/usr/bin/rsync
+        for so in $(readelf -d "$root"/usr/bin/rsync \
+          | awk '/NEEDED/{gsub(/\[\]/,"",$NF); print $NF}'); do
+          test -e "$root"/usr/lib/x86_64-linux-gnu/"$so" \
+            || { echo "rsync needs $so, absent from the tree" >&2; exit 1; }
+        done
+        interp=$(readelf -l "$root"/usr/bin/rsync \
+          | awk '/interpreter/{gsub(/[\[\]]/,"",$NF); print $NF}')
+        test -e "$root""$interp" \
+          || { echo "rsync loader $interp absent from the tree" >&2; exit 1; }
+        reqs=$(readelf --version-info "$root"/usr/bin/rsync \
+          | awk '/File: /{f=$5} /Name: /{print f, $3}')
+        while read -r so ver; do
+          [ -n "$so" ] || continue
+          lib="$root"/usr/lib/x86_64-linux-gnu/"$so"
+          readelf --version-info "$lib" | grep -q "Name: $ver" \
+            || { echo "rsync needs $ver from $so; the tree's copy is older" \
+                 >&2; exit 1; }
+        done <<<"$reqs"
+
+        # No baked host keys — ever (#110): each workspace generates
+        # its own on first boot; an upstream image that started
+        # shipping some would give every workspace the same keys.
+        ! ls "$root"/etc/ssh/ssh_host_* >/dev/null 2>&1
+
         # Sanity: this must be a bootable Debian.
         test -x "$root"/sbin/init
         test -x "$root"/usr/bin/socat
         test -x "$root"/usr/bin/msks-console-helper
+        test -x "$root"/usr/bin/rsync
+        test -x "$root"/usr/sbin/sshd
 
         # Size the final image from the tree (content-derived, no
         # magic constant): Debian unpacks to ~600M plus headroom.
@@ -650,7 +775,6 @@ let
     fake_epoch="''${PACK_FAKE_EPOCH:?}"
     chown -R 0:0 "$tree"
     chmod 0640 "$tree"/etc/shadow "$tree"/etc/gshadow
-    chmod 0600 "$tree"/etc/ssh/ssh_host_*_key 2>/dev/null || true
     E2FSPROGS_FAKE_TIME="$fake_epoch" mke2fs -q -t ext4 -b 4096 -I 256 \
       -L msks-rootfs \
       -E hash_seed=00000000-0000-0000-0000-000000000000 \
