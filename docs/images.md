@@ -56,7 +56,7 @@ boots. A guest image must:
 - **Boot a kernel with direct-kernel boot support.** cloud-hypervisor
   loads the bzImage and initrd itself and passes `cmdline`; the guest
   never runs its own bootloader. Stock Debian/Ubuntu kernels work.
-- **Ship a virtio console service.** `msks shell` connects over
+- **Ship a virtio console service.** `msks console` connects over
   AF_VSOCK, so the guest needs `vmw_vsock_virtio_transport` (module
   or built-in) and a service that binds the vsock port and spawns a
   login shell — the shipped image uses

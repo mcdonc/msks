@@ -266,15 +266,15 @@ reference, `--cpus`/`--mem-mib`/`--root-mib`/`--home-mib` size the VM,
 cidata seed disk the guest's provisioner runs once), and explicit
 `--kernel`/`--rootfs` (with optional `--initrd`,
 `--cmdline`) bypass the catalog. `--start` boots the workspace right
-after creating it, so `msks create ws --start` then `msks shell ws`
+after creating it, so `msks create ws --start` then `msks console ws`
 is the two-step path from nothing to a shell; `msks start <id>` boots
 an existing workspace later, `msks stop <id>` powers one off (a
 graceful, deadline-bounded shutdown; the data survives), `msks rm
 <id>…` deletes one or more workspaces together with their persistent
-root overlay and `/home` volume, and `msks shell <id>` boots one itself
+root overlay and `/home` volume, and `msks console <id>` boots one itself
 when the daemon reports it as not running (a notice prints on
 stderr while the boot runs). All commands use the same
-`MSKSC_URL`/`MSKSC_TOKEN`/`MSKSC_CAFILE` environment as `msks shell`;
+`MSKSC_URL`/`MSKSC_TOKEN`/`MSKSC_CAFILE` environment as `msks console`;
 failures (unreachable daemon, timed-out request, bad token, API or
 validation errors) print one readable line instead of a traceback.
 See `docs/cli.md` for the full command and environment reference.
@@ -336,12 +336,12 @@ cycles keep it and a factory reset re-provisions from the same
 seed. Every step checks before doing, so re-running the script is
 a no-op. Progress is guest-observable in
 `/root/.msks-bootstrap/state` (the running step name, then `done`),
-so `msks shell` into a booting workspace shows where setup stands.
+so `msks console` into a booting workspace shows where setup stands.
 The suite runs inside the guest the way the `unit-tests` task runs
 it — the task's exec line, from the venv uv built:
 
 ```bash
-msks shell dev
+msks console dev
 uv run python -m pytest src/msks/tests -v -n auto
 ```
 
@@ -358,7 +358,7 @@ baked dev image — same substrate the guest and appliance build
 from — remains an optional cold-start accelerator on top of the
 seed, not a prerequisite.
 
-### The workspace shell (`msks shell`) (#21)
+### The workspace console (`msks console`) (#21)
 
 From any host that can reach the appliance, an interactive shell in
 a running workspace:
@@ -366,7 +366,7 @@ a running workspace:
 ```bash
 export MSKSC_URL=https://192.168.77.2:8660
 export MSKSC_TOKEN=$(cat .appliance/bootstrap-token)
-devenv --quiet -O dotenv.enable:bool false shell -- msks shell my-workspace
+devenv --quiet -O dotenv.enable:bool false shell -- msks console my-workspace
 ```
 
 The client speaks the daemon's console websocket
@@ -403,7 +403,7 @@ Transport (#21), in the preferred vsock-first shape:
   comes from the client's terminal, so readline engages and provides
   line editing and history while it is active (#61); a TERM=dumb
   client gets readline off. The session's user is **root** by
-  default; `msks shell --user <name>` requests the image's workspace
+  default; `msks console --user <name>` requests the image's workspace
   user (users the image does not serve are refused by name).
 - The guest pty is created at the client terminal's size (#61's
   0x0 fixed): the console request carries the geometry at connect.

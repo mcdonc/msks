@@ -10,7 +10,7 @@ The command set covers the operator loop:
 ```bash
 msks ls                      # what exists, and what state is it in
 msks create ws                # make a workspace
-msks shell ws                 # boot it if needed, then work inside it
+msks console ws                 # boot it if needed, then work inside it
 msks forward ws 22            # bridge a guest TCP port to stdio
 msks start ws                 # boot it without attaching
 msks stop ws                  # power it off
@@ -44,7 +44,7 @@ The daemon serves TLS with a self-signed certificate. Point
 directory) and the client verifies the certificate chain. Without
 `MSKSC_CAFILE` the client proceeds unverified and prints a warning to
 stderr on every invocation — the same trust-on-first-use posture as
-`msks shell` (#21), fine for a lab network and worth closing before
+`msks console` (#21), fine for a lab network and worth closing before
 anything real.
 
 ## `msks ls`
@@ -108,7 +108,7 @@ outside them comes back as a validation error (below).
 ```bash
 $ msks create my-workspace --image debian:13 --start
 created my-workspace
-attach with: msks shell my-workspace
+attach with: msks console my-workspace
 ```
 
 The id prints as soon as the create succeeds and before the boot is
@@ -122,7 +122,7 @@ msks: my-workspace is created; boot it later with: msks start my-workspace
 ```
 
 Creating without `--start` prints the id and exits; boot it whenever
-with `msks start` — or just `msks shell` it: the shell command boots
+with `msks start` — or just `msks console` it: the console command boots
 a not-running workspace on its own (below).
 
 `--user-data` is the first-boot provisioning hook (#41): the file's
@@ -134,7 +134,7 @@ the create-time immutability). It composes with `--start`:
 ```bash
 $ printf '#!/bin/sh\napt-get update\n' | msks create ws --user-data - --start
 created ws
-attach with: msks shell ws
+attach with: msks console ws
 ```
 
 ## `msks start`
@@ -278,7 +278,7 @@ default  yes
 
 The reference forms are the same as `image rm`'s.
 
-## `msks shell`
+## `msks console`
 
 An interactive shell inside a workspace, over the daemon's console
 websocket. The command boots the workspace first when the daemon
@@ -286,7 +286,7 @@ reports it as not running — the notices print on stderr while the
 boot runs, then the session attaches:
 
 ```text
-$ msks shell my-workspace
+$ msks console my-workspace
 msks: my-workspace is stopped; starting it
 msks: my-workspace running
 (workspace prompt)
@@ -300,14 +300,14 @@ geometry rides the same request (the guest pty matches the client's
 size at attach):
 
 ```text
-$ msks shell my-workspace --user msks
+$ msks console my-workspace --user msks
 (workspace prompt, as the workspace user)
 ```
 
 A workspace that is already running attaches with no preamble. Two
 states get special handling:
 
-- **`starting`** — another client's boot is in flight. The shell
+- **`starting`** — another client's boot is in flight. The console
   waits for it (polling up to two minutes) and attaches when it
   lands, instead of racing a second boot into the daemon's
   double-launch guard.
@@ -326,7 +326,7 @@ detaches, and the byte that followed the escape is consumed with it,
 so a paste that happens to contain a lone Ctrl-] detaches the session.
 Large pastes travel as a few websocket frames (4,096-byte chunks), not
 one frame per byte. The session needs a tty on both stdin and stdout.
-See the README's workspace-shell section (#21) for the transport
+See the README's workspace-console section (#21) for the transport
 story.
 
 A session whose guest stream stops carrying bytes while input keeps
@@ -353,7 +353,7 @@ daemon's clock.
 A guest TCP port on this command's stdio — the pipe ssh's
 ProxyCommand expects — over the daemon's forward websocket. The
 command boots the workspace first when the daemon reports it as not
-running (the same notices as `msks shell`), then bridges bytes
+running (the same notices as `msks console`), then bridges bytes
 unexamined in both directions: a tty is not required, and binary
 protocols (ssh, rsync) ride it cleanly:
 

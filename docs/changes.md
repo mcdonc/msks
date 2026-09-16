@@ -74,6 +74,12 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **`msks console` (#117).** The interactive workspace command is
+  renamed from `msks shell` to `msks console`, matching the
+  `/api/v1/workspaces/{id}/console` websocket it speaks. A hard
+  rename: `msks shell` now exits with the standard unknown-command
+  error. See `docs/cli.md`.
+
 - **The appliance boots with 6 GiB of memory (#77).** Nested
   workspace VMs ride the appliance's own RAM, and inside 2 GiB a
   1 GiB guest beside the daemon OOM-killed the VMM mid-run.

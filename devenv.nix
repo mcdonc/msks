@@ -145,7 +145,7 @@ in
   env.UV_PYTHON = config.languages.python.package;
 
   # The msks client (#21) targets the local appliance by default, so
-  # `msks shell <id>` works from any devenv shell with no exports.
+  # `msks console <id>` works from any devenv shell with no exports.
   env.MSKSC_URL = "https://192.168.77.2:8660";
   # The bootstrap token is composed in nix from the file
   # appliance-setup.sh seeds: read at evaluation time, so each

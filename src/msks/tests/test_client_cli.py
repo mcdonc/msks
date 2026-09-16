@@ -83,7 +83,7 @@ def test_cmd_create_posts_body_and_prints(
     assert seen["body"] == {"id": "ws1", "cpus": 4}
     out = capsys.readouterr().out
     assert "created ws1" in out
-    assert "shell" not in out  # no attach hint without --start
+    assert "attach with" not in out  # no attach hint without --start
 
 
 def test_cmd_create_start_boots_and_hints(
@@ -107,7 +107,7 @@ def test_cmd_create_start_boots_and_hints(
     assert auths == ["Bearer tok", "Bearer tok"]
     out = capsys.readouterr().out
     assert "created ws1" in out
-    assert "msks shell ws1" in out
+    assert "msks console ws1" in out
 
 
 def test_cmd_create_start_failure_keeps_the_workspace(

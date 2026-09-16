@@ -1,4 +1,4 @@
-"""``msks shell <workspace-id>``: an interactive shell in a workspace.
+"""``msks console <workspace-id>``: an interactive shell in a workspace.
 
 The connection is the daemon's console websocket (TLS + token, the
 same authentication as the REST surface) bridged to the local tty in
@@ -40,7 +40,7 @@ from .rest import (  # noqa: F401
 )
 
 # Re-exported for the tests and for callers that expect the client's
-# env/TLS helpers on the shell module (they moved to rest.py).
+# env/TLS helpers on the console module (they moved to rest.py).
 
 # The detach escape (like telnet/ssh -e): Ctrl-], byte 0x1d. Ctrl-C
 # and Ctrl-D belong to the guest. A doubled escape — Ctrl-] Ctrl-],
@@ -282,7 +282,7 @@ class _StdinPipe:
 
 def require_tty() -> None:
     if not sys.stdin.isatty() or not sys.stdout.isatty():
-        raise SystemExit("msks shell: needs an interactive tty on stdin and stdout")
+        raise SystemExit("msks console: needs an interactive tty on stdin and stdout")
 
 
 def restore(old, had: bool) -> None:
@@ -293,8 +293,8 @@ def restore(old, had: bool) -> None:
 def run_workspace_shell(workspace_id: str, user: str = "root") -> int:
     """One interactive shell session, from tty setup to restore.
 
-    Argument dispatch (``msks shell`` vs the other subcommands) lives
-    in :mod:`msks.client.cli`; this is the shell command's body.
+    Argument dispatch (``msks console`` vs the other subcommands) lives
+    in :mod:`msks.client.cli`; this is the console command's body.
     """
     require_tty()
     token = env_token()
