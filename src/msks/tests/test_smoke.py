@@ -821,9 +821,6 @@ async def test_appliance_boot_and_workspace() -> None:
     if not prior_cmdline_extra:
         os.environ["MSKS_APPLIANCE_CMDLINE_EXTRA"] = "msksd.vsock_wait_timeout_s=120"
 
-    up = _devenv_processes("up", "-d")
-    assert up.returncode == 0, f"devenv processes up failed:\n{up.stdout}\n{up.stderr}"
-
     async def await_token(timeout_s: float = 120.0) -> str:
         # `up -d` returns when the MANAGER starts; setup (state-disk
         # copy, token generation) still runs asynchronously — poll for
@@ -857,7 +854,15 @@ async def test_appliance_boot_and_workspace() -> None:
 
     status = None
     token = headers = None
+    up = None
     try:
+        # Inside the guarded region: a failed start still tears the
+        # detached manager down below instead of leaving it running
+        # against the temp state disk with mutated env.
+        up = _devenv_processes("up", "-d")
+        assert up.returncode == 0, (
+            f"devenv processes up failed:\n{up.stdout}\n{up.stderr}"
+        )
         token = await await_token()
         headers = {"authorization": f"Bearer {token}"}
         await await_api()
@@ -957,7 +962,10 @@ async def test_appliance_boot_and_workspace() -> None:
                 return probe_buf
 
             async def probe(marker: bytes, command: bytes) -> None:
+                # Send first, then collect: the first collect window is
+                # not free time to skip.
                 end = loop.time() + 180.0
+                await shell_ws.send(command)
                 while marker not in (await probe_collect(marker)):
                     if loop.time() >= end:
                         raise AssertionError(f"console never showed {marker!r}")
@@ -1044,10 +1052,8 @@ async def test_appliance_boot_and_workspace() -> None:
                 await client.delete(f"{base}/workspaces/{wid}", headers=headers)
         with contextlib.suppress(Exception):
             await client.post(f"{base}/workspaces/{wid}/stop", headers=headers)
-        down = _devenv_processes("down", timeout=300)
-        assert down.returncode == 0, (
-            f"devenv processes down failed:\n{down.stdout}\n{down.stderr}"
-        )
+        # The env restore comes first: a failed teardown assert below
+        # must not leak process-global env into other tests.
         if prior_state_env is None:
             del os.environ["MSKSD_APPLIANCE_STATE"]
         else:
@@ -1056,6 +1062,10 @@ async def test_appliance_boot_and_workspace() -> None:
             del os.environ["MSKS_APPLIANCE_CMDLINE_EXTRA"]
         elif prior_cmdline_extra != os.environ.get("MSKS_APPLIANCE_CMDLINE_EXTRA"):
             os.environ["MSKS_APPLIANCE_CMDLINE_EXTRA"] = prior_cmdline_extra
+        down = _devenv_processes("down", timeout=300)
+        assert down.returncode == 0, (
+            f"devenv processes down failed:\n{down.stdout}\n{down.stderr}"
+        )
         # The state disk itself lives until the post-teardown reads
         # below are done: the journal and the migration asserts read
         # it after the appliance is down.
@@ -1095,6 +1105,11 @@ async def test_appliance_boot_and_workspace() -> None:
         assert match, f"daemon identity is not the msksd user: {identity[-1]!r}"
         service_uid = int(match.group(1))
         assert service_uid != 0, identity[-1]
+        # uid and gid are allocated independently at build time; the
+        # ownership assert below must use each, not assume they match.
+        gid_match = re.search(r"gid=(\d+)\(msksd\)", identity[-1])
+        assert gid_match, f"daemon identity carries no gid: {identity[-1]!r}"
+        service_gid = int(gid_match.group(1))
         assert "(kvm)" in identity[-1], f"daemon missed the kvm group: {identity[-1]!r}"
         for field in ("CapEff", "CapAmb"):
             lines = [ln for ln in journal if f"daemon {field}:" in ln]
@@ -1133,7 +1148,7 @@ async def test_appliance_boot_and_workspace() -> None:
             stat = debugfs_read("stat /msksd/volumes/legacy-marker")
             assert stat.returncode == 0, stat.stderr
             assert re.search(
-                rf"User:\s+{service_uid}\s+Group:\s+{service_uid}", stat.stdout
+                rf"User:\s+{service_uid}\s+Group:\s+{service_gid}", stat.stdout
             ), f"legacy marker not service-user-owned:\n{stat.stdout}"
             readback = debugfs_read("cat /msksd/volumes/legacy-marker")
             assert readback.stdout == marker_text, (

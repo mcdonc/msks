@@ -19,7 +19,8 @@
 # The tap is owned by the invoking user (SUDO_USER), so the
 # unprivileged cloud-hypervisor opens it without CAP_NET_ADMIN.
 # Run this as the user who runs the appliance; re-run it after a
-# firewall reload or to change the owner.
+# firewall reload. Changing the owner of an existing tap is a manual
+# step (the installer refuses and names it).
 set -euo pipefail
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -32,12 +33,25 @@ tap="mskstap0"
 host_ip="192.168.77.1"
 owner="${SUDO_USER:?run me under sudo, as the user who runs the appliance}"
 
-for tool in ip iptables systemctl install; do
+for tool in ip iptables sysctl systemctl; do
   command -v "$tool" >/dev/null 2>&1 || {
     echo "msks: '$tool' not found on this host" >&2
     exit 1
   }
 done
+
+# An existing tap keeps its owner — `ip tuntap` cannot re-owner a
+# device — so a re-run under a different user verifies the ownership
+# instead of silently leaving the tap openable only by the old one.
+if [ -e "/sys/class/net/$tap/tun_owner" ]; then
+  current_owner=$(cat "/sys/class/net/$tap/tun_owner")
+  wanted_uid=$(id -u "$owner")
+  if [ "$current_owner" != "$wanted_uid" ]; then
+    echo "msks: $tap exists but is owned by uid $current_owner, not $owner ($wanted_uid)" >&2
+    echo "msks: to change the owner, remove it and re-run: ip link del $tap" >&2
+    exit 1
+  fi
+fi
 
 # The bring-up script the boot unit runs — the same check-then-add
 # logic this installer applies immediately below, so a host boot and
@@ -71,12 +85,20 @@ ipt_rule nat POSTROUTING -s $host_ip/24 ! -o $bridge -j MASQUERADE
 EOF
 chmod 0755 /etc/msks/host-net.sh
 
-# Forwarding persists through sysctl.d — never a runtime write.
+# Forwarding persists through sysctl.d — never a daemon- or
+# appliance-time write — and the drop-in is applied to the RUNNING
+# kernel too, so the install needs no reboot.
 printf '%s\n' \
   '# msks: the appliance VM forwards its workspace traffic out through' \
   '# this host (installed by scripts/appliance-host-setup.sh).' \
   'net.ipv4.ip_forward = 1' \
   >/etc/sysctl.d/90-msks-appliance.conf
+sysctl -w net.ipv4.ip_forward=1
+
+# Arm the live state FIRST, so the network works even where the
+# boot persistence below cannot be installed (a host without
+# systemd still gets a working setup for this boot).
+/etc/msks/host-net.sh
 
 # The boot unit: re-arms bridge/tap/rules after a host reboot.
 cat >/etc/systemd/system/msks-host-net.service <<'EOF'
@@ -91,11 +113,9 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 EOF
-systemctl daemon-reload
-systemctl enable msks-host-net.service
-
-# Arm the live state now, so no reboot is needed.
-/etc/msks/host-net.sh
-
-echo "msks: host network installed and armed"
+if systemctl daemon-reload && systemctl enable msks-host-net.service; then
+  echo "msks: host network installed and armed"
+else
+  echo "msks: host network armed for THIS boot; boot persistence unavailable (systemd not managing the host)" >&2
+fi
 echo "msks: the appliance now starts without sudo (devenv processes up)"

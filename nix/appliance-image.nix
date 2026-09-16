@@ -565,11 +565,14 @@ let
         # the format script died mid-move — must not get a daemon
         # crash-looping against still-root-owned files; the next
         # boot's converge finishes the migration), and the KVM module
-        # its workspaces need. Output goes to the journal AND the
-        # console (the serial log carries the TOFU fingerprint and
-        # the boot markers, as before). A crash restarts the daemon
-        # in place — the supervisor used to need a whole-VM restart
-        # for that.
+        # its workspaces need. The format unit's RemainAfterExit
+        # keeps that Requires from re-running it on every daemon
+        # restart — a crash loop would otherwise remount the live
+        # state disk once per second. Output goes to the journal AND
+        # the console (the serial log carries the TOFU fingerprint
+        # and the boot markers, as before). A crash restarts the
+        # daemon in place — the supervisor used to need a whole-VM
+        # restart for that.
         #
         # The privilege contract (#101): a dedicated service user
         # holds exactly two ambient capabilities — CAP_NET_ADMIN

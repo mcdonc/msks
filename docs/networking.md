@@ -173,8 +173,9 @@ Address=192.168.77.1/24
 
 The tap — `Owner=` names the user who runs the appliance, which is
 what lets the unprivileged cloud-hypervisor open it (changing that
-user means editing the file; the installer equivalent is re-running
-it as the new user):
+user means editing the file; the installer refuses when the existing
+tap's owner differs and names the manual step, `ip link del
+mskstap0` followed by a re-run):
 
 ```ini
 # /etc/systemd/network/90-mskstap0.netdev

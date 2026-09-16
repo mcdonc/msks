@@ -154,7 +154,9 @@ rules — with a systemd unit that re-arms them on every host reboot —
 and nothing needs sudo afterwards: `devenv processes up` starts the
 appliance as your own user (cloud-hypervisor, ch-remote, and
 virtiofsd all come from the devenv shell). Re-run the installer to
-re-arm after a firewall reload, or to change the tap's owning user.
+re-arm after a firewall reload; an existing tap keeps its owner, and
+the installer names the one-step fix (`ip link del mskstap0`, then
+re-run) when the appliance moves to another user.
 
 ```bash
 devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:appliance-build
