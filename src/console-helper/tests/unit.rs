@@ -727,8 +727,9 @@ mod session {
 
     use msks_console_helper::passwd::UserEntry;
     use msks_console_helper::session::{
-        handle_session, pump, pump_with_timeout, run_shell_child, ChildSys, PtyPair, SessionSys,
-        SpawnFail,
+        classify_read, classify_write, handle_session, poll_events, pump, pump_bounded, pump_sys,
+        pump_with_timeout, run_shell_child, write_step, ChildSys, PtyPair, PumpSys, ReadOutcome,
+        SessionSys, SpawnFail, WriteOutcome,
     };
     use msks_console_helper::write_all;
     use std::io;
@@ -1064,10 +1065,492 @@ mod session {
     }
 
     #[test]
+    fn pump_flushes_master_tail_before_eof() {
+        // The review's tail-drop find: the shell's final output,
+        // read in the same round that ends the stream (or the one
+        // before its EOF), must still reach the client — the old
+        // blocking pump wrote each chunk in the step that read it.
+        let (conn, mut conn_peer) = socketpair();
+        let (master, mut master_peer) = socketpair();
+        let pump_fd_conn = conn.as_raw_fd();
+        let pump_fd_master = master.as_raw_fd();
+        let handle = std::thread::spawn(move || pump(pump_fd_conn, pump_fd_master));
+        master_peer.write_all(b"FINAL-TAIL").unwrap();
+        drop(master_peer);
+        conn_peer
+            .set_read_timeout(Some(Duration::from_millis(500)))
+            .unwrap();
+        let mut seen = Vec::new();
+        let mut buf = [0u8; 64];
+        while !seen.windows(10).any(|w| w == b"FINAL-TAIL") {
+            match conn_peer.read(&mut buf) {
+                Ok(0) => panic!("session ended before the tail; got {seen:?}"),
+                Ok(n) => seen.extend_from_slice(&buf[..n]),
+                Err(_) => continue,
+            }
+        }
+        drop(conn_peer);
+        drop(master);
+        drop(conn);
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn pump_flushes_pending_input_after_client_eof() {
+        // The mirror: input read from a client that then half-closes
+        // still reaches the shell before the session ends.
+        let (conn, mut conn_peer) = socketpair();
+        let (master, mut master_peer) = socketpair();
+        let pump_fd_conn = conn.as_raw_fd();
+        let pump_fd_master = master.as_raw_fd();
+        let handle = std::thread::spawn(move || pump(pump_fd_conn, pump_fd_master));
+        conn_peer.write_all(b"LAST-INPUT\n").unwrap();
+        conn_peer.shutdown(std::net::Shutdown::Write).unwrap();
+        master_peer
+            .set_read_timeout(Some(Duration::from_millis(500)))
+            .unwrap();
+        let mut seen = Vec::new();
+        let mut buf = [0u8; 64];
+        while !seen.windows(10).any(|w| w == b"LAST-INPUT") {
+            match master_peer.read(&mut buf) {
+                Ok(0) => panic!("session ended before the input; got {seen:?}"),
+                Ok(n) => seen.extend_from_slice(&buf[..n]),
+                Err(_) => continue,
+            }
+        }
+        drop(master_peer);
+        drop(conn_peer);
+        drop(master);
+        drop(conn);
+        handle.join().unwrap();
+    }
+
+    #[test]
     fn pump_nothing_to_watch_ends() {
         // Zero timeout with both fds ignored (negative fds are
         // skipped by poll): ready == 0, loop exits.
         pump_with_timeout(-1, -1, 0);
+    }
+
+    #[test]
+    fn pump_input_flows_while_output_is_jammed() {
+        // #103's wedge, reproduced at the pump level: the host side
+        // (conn's peer) stops reading while the shell side (master's
+        // peer) keeps producing. The old blocking pump froze inside
+        // its master->conn write and never read conn again, so input
+        // sent during the jam never reached the shell. The event-
+        // driven pump must keep the conn->master direction alive.
+        let _spawns = SPAWN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let (conn, mut conn_peer) = socketpair();
+        let (master, mut master_peer) = socketpair();
+        let pump_fd_conn = conn.as_raw_fd();
+        let pump_fd_master = master.as_raw_fd();
+        let pump_handle = std::thread::spawn(move || pump(pump_fd_conn, pump_fd_master));
+
+        // The output burst: more than the socket buffer between the
+        // pump and the stalled host, so the master->conn direction
+        // genuinely jams with bytes still pending. The burst runs on
+        // a clone so the assertion below can still read this side.
+        let burst_peer = master_peer.try_clone().unwrap();
+        // The burst writer ends mid-buffer once the session tears
+        // down (EPIPE on the hung-up stream) — that is the point of
+        // the test, so its write result is ignored and the peer is
+        // returned for a clean drop.
+        let burst_handle = std::thread::spawn(move || {
+            let mut peer = burst_peer;
+            let _ = peer.write_all(&vec![b'o'; 600 * 1024]);
+            peer
+        });
+        std::thread::sleep(Duration::from_millis(500));
+
+        // Input arrives while the output path is jammed. The host
+        // side never reads a byte.
+        conn_peer.write_all(b"WEDGE-INPUT\n").unwrap();
+
+        // The shell side must receive the input despite the jam.
+        master_peer
+            .set_read_timeout(Some(Duration::from_millis(200)))
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let mut seen = Vec::new();
+        let mut buf = [0u8; 4096];
+        while !seen.windows(11).any(|w| w == b"WEDGE-INPUT") {
+            assert!(
+                Instant::now() < deadline,
+                "input never reached the shell side during the output jam; got {} bytes",
+                seen.len()
+            );
+            match master_peer.read(&mut buf) {
+                Ok(n) => seen.extend_from_slice(&buf[..n]),
+                Err(_) => continue, // timeout: keep waiting
+            }
+        }
+
+        // Teardown: the host hangs up, the pump ends, the burst
+        // writer drains once the pump side's fd closes.
+        drop(conn_peer);
+        pump_handle.join().unwrap();
+        drop(master);
+        drop(conn);
+        drop(master_peer);
+        drop(burst_handle.join().unwrap());
+    }
+
+    #[test]
+    fn pump_stalled_output_tears_down_the_session() {
+        // The other half of #103: a session whose transport accepts
+        // no writes for the stall window ends instead of hanging
+        // open. The host side reads nothing; the shell side produces
+        // an un-dripping burst; the pump must return on its own.
+        let _spawns = SPAWN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let (conn, conn_peer) = socketpair();
+        let (master, master_peer) = socketpair();
+        let pump_fd_conn = conn.as_raw_fd();
+        let pump_fd_master = master.as_raw_fd();
+        let pump_handle =
+            std::thread::spawn(move || pump_bounded(pump_fd_conn, pump_fd_master, -1, 250));
+
+        let burst_peer = master_peer.try_clone().unwrap();
+        let burst_handle = std::thread::spawn(move || {
+            let mut peer = burst_peer;
+            let _ = peer.write_all(&vec![b'o'; 600 * 1024]);
+            peer
+        });
+        let started = Instant::now();
+        pump_handle.join().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(30));
+
+        drop(conn_peer);
+        drop(master);
+        drop(conn);
+        drop(burst_handle.join().unwrap());
+    }
+
+    #[test]
+    fn classify_read_matrix() {
+        assert!(matches!(classify_read(1, 0), ReadOutcome::Data(1)));
+        assert!(matches!(classify_read(4096, 0), ReadOutcome::Data(4096)));
+        assert!(matches!(classify_read(0, 0), ReadOutcome::Eof));
+        assert!(matches!(classify_read(-1, libc::EAGAIN), ReadOutcome::Wait));
+        assert!(matches!(
+            classify_read(-1, libc::EWOULDBLOCK),
+            ReadOutcome::Wait
+        ));
+        assert!(matches!(classify_read(-1, libc::EPIPE), ReadOutcome::End));
+        assert!(matches!(classify_read(-1, libc::EBADF), ReadOutcome::End));
+    }
+
+    #[test]
+    fn classify_write_matrix() {
+        assert!(matches!(classify_write(1, 0), WriteOutcome::Wrote(1)));
+        assert!(matches!(
+            classify_write(-1, libc::EAGAIN),
+            WriteOutcome::Wait
+        ));
+        assert!(matches!(
+            classify_write(-1, libc::EWOULDBLOCK),
+            WriteOutcome::Wait
+        ));
+        assert!(matches!(classify_write(0, 0), WriteOutcome::End));
+        assert!(matches!(classify_write(-1, libc::EPIPE), WriteOutcome::End));
+    }
+
+    #[test]
+    fn poll_events_table() {
+        // Read wanted, no write pending.
+        assert_eq!(poll_events(true, false), libc::POLLIN);
+        // Write pending: POLLOUT joins in.
+        assert_eq!(poll_events(true, true), libc::POLLIN | libc::POLLOUT);
+        // Backpressure/at-EOF shapes: reads off, writes wanted.
+        assert_eq!(poll_events(false, true), libc::POLLOUT);
+        assert_eq!(poll_events(false, false), 0);
+    }
+
+    #[test]
+    fn write_step_matrix() {
+        // Nothing pending: never.
+        assert!(!write_step(b"", true, true));
+        // Pending and writable but not polled-out: never.
+        assert!(!write_step(b"x", true, false));
+        // Pending and polled-out but the destination refused: never.
+        assert!(!write_step(b"x", false, true));
+        // All three: the write runs.
+        assert!(write_step(b"x", true, true));
+    }
+
+    /// A scripted PumpSys: poll reports one (conn, master) revents
+    /// pair per call and then answers 0 (the timeout path ends the
+    /// pump); reads and writes replay canned per-fd return
+    /// sequences, and errno replays one value per failed call — the
+    /// racy kernel shapes (would-block right after readiness, an
+    /// error write) as deterministic replies. Fd 9 is conn, 10 is
+    /// master.
+    struct FakePumpSys {
+        rounds: Vec<(libc::c_short, libc::c_short)>,
+        conn_reads: std::collections::VecDeque<isize>,
+        master_reads: std::collections::VecDeque<isize>,
+        conn_writes: std::collections::VecDeque<isize>,
+        master_writes: std::collections::VecDeque<isize>,
+        errnos: std::collections::VecDeque<libc::c_int>,
+        /// The errno of the last FAILED call, as the kernel sets it:
+        /// a successful call leaves errno alone (an argument-eager
+        /// queue would leak one errno per data byte).
+        last_errno: libc::c_int,
+        polled: usize,
+    }
+
+    impl FakePumpSys {
+        fn new(rounds: Vec<(libc::c_short, libc::c_short)>) -> Self {
+            Self {
+                rounds,
+                conn_reads: Default::default(),
+                master_reads: Default::default(),
+                conn_writes: Default::default(),
+                master_writes: Default::default(),
+                errnos: Default::default(),
+                last_errno: 0,
+                polled: 0,
+            }
+        }
+    }
+
+    impl msks_console_helper::session::PumpSys for FakePumpSys {
+        fn set_nonblocking(&mut self, _fd: RawFd) {}
+        fn poll(&mut self, fds: &mut [libc::pollfd; 2], _timeout: libc::c_int) -> libc::c_int {
+            let round = self.rounds.get(self.polled);
+            self.polled += 1;
+            match round {
+                Some((conn, master)) => {
+                    fds[0].revents = *conn;
+                    fds[1].revents = *master;
+                    1
+                }
+                None => 0,
+            }
+        }
+        fn read(&mut self, fd: RawFd, buf: &mut [u8]) -> isize {
+            let queue = if fd == 9 {
+                &mut self.conn_reads
+            } else {
+                &mut self.master_reads
+            };
+            match queue.pop_front() {
+                Some(n) if n > 0 => {
+                    buf[0] = b'x';
+                    self.last_errno = 0;
+                    n
+                }
+                failed => {
+                    self.last_errno = self.errnos.pop_front().unwrap_or(0);
+                    failed.unwrap_or(-1)
+                }
+            }
+        }
+        fn write(&mut self, fd: RawFd, _buf: &[u8]) -> isize {
+            let queue = if fd == 9 {
+                &mut self.conn_writes
+            } else {
+                &mut self.master_writes
+            };
+            let n = queue.pop_front().unwrap_or(-1);
+            if n < 0 {
+                self.last_errno = self.errnos.pop_front().unwrap_or(0);
+            }
+            n
+        }
+        fn errno(&mut self) -> libc::c_int {
+            self.last_errno
+        }
+    }
+
+    #[test]
+    fn would_block_read_after_readiness_waits() {
+        // POLLIN on both fds, both reads answer EAGAIN: the pump
+        // waits for the next round instead of ending the session —
+        // then the poll timeout (the scripted 0) ends it.
+        let mut sys = FakePumpSys::new(vec![(libc::POLLIN, libc::POLLIN)]);
+        sys.errnos = [libc::EAGAIN, libc::EAGAIN].into();
+        pump_sys(9, 10, 0, 60_000, &mut sys);
+    }
+
+    #[test]
+    fn would_block_write_after_pollout_waits_and_then_stall_ends() {
+        // Round 1: both reads deliver one byte (buffers go
+        // non-empty), both writes answer EAGAIN despite POLLOUT —
+        // the pump waits. With a zero stall window that undelivered
+        // round is itself the teardown: nothing was delivered and
+        // the clock is past due (#103's loud failure).
+        let mut sys = FakePumpSys::new(vec![(
+            libc::POLLIN | libc::POLLOUT,
+            libc::POLLIN | libc::POLLOUT,
+        )]);
+        sys.conn_reads = [1].into();
+        sys.master_reads = [1].into();
+        sys.master_writes = [-1].into();
+        sys.conn_writes = [-1].into();
+        sys.errnos = [libc::EAGAIN, libc::EAGAIN].into();
+        pump_sys(9, 10, 0, 0, &mut sys);
+    }
+
+    #[test]
+    fn errored_master_write_ends_the_session() {
+        // Data pending for the master, POLLOUT reported, the write
+        // answers EPIPE: the session ends on the conn->master
+        // direction's failure.
+        let mut sys = FakePumpSys::new(vec![(
+            libc::POLLIN | libc::POLLOUT,
+            libc::POLLIN | libc::POLLOUT,
+        )]);
+        sys.conn_reads = [1].into();
+        sys.master_reads = [1].into();
+        sys.master_writes = [-1].into();
+        sys.errnos = [libc::EPIPE].into();
+        pump_sys(9, 10, 0, 60_000, &mut sys);
+    }
+
+    #[test]
+    fn errored_conn_write_ends_the_session() {
+        // Round 1 moves one byte each way into the buffers (no
+        // POLLOUT yet); round 2 reports POLLOUT — the master write
+        // succeeds, the conn write answers EPIPE and ends the
+        // session (the master->conn direction's failure).
+        let mut sys = FakePumpSys::new(vec![
+            (libc::POLLIN, libc::POLLIN),
+            (libc::POLLOUT, libc::POLLOUT),
+        ]);
+        sys.conn_reads = [1].into();
+        sys.master_reads = [1].into();
+        sys.master_writes = [1].into();
+        sys.conn_writes = [-1].into();
+        sys.errnos = [libc::EPIPE].into();
+        pump_sys(9, 10, 0, 60_000, &mut sys);
+    }
+
+    #[test]
+    fn input_direction_stops_reading_at_the_pending_cap() {
+        // Backpressure on the input side (#103): with PENDING_CAP
+        // bytes undelivered to the shell, the pump stops reading the
+        // host side even while it reports POLLIN — and with nothing
+        // deliverable past the stall window the session ends.
+        let mut rounds = Vec::new();
+        for _ in 0..17 {
+            rounds.push((libc::POLLIN, 0));
+        }
+        // One more round: conn still readable, but the read is
+        // gated by the cap; nothing else moves.
+        rounds.push((libc::POLLIN, 0));
+        let mut sys = FakePumpSys::new(rounds);
+        // Sixteen 4 KiB reads fill the input buffer past the 64 KiB
+        // cap; the seventeenth round's POLLIN is skipped by the gate.
+        let mut reads = std::collections::VecDeque::new();
+        for _ in 0..16 {
+            reads.push_back(4096);
+        }
+        sys.conn_reads = reads;
+        // A live stall window: the session must not tear down while
+        // the scripted rounds still run.
+        pump_sys(9, 10, 0, 60_000, &mut sys);
+        // Every scripted read was consumed, all 18 rounds ran (the
+        // cap gate never ended the loop), and the 19th poll — the
+        // timeout — ended it.
+        assert_eq!(sys.conn_reads.len(), 0);
+        assert_eq!(sys.polled, 19);
+    }
+
+    #[test]
+    fn output_direction_stops_reading_at_the_pending_cap() {
+        // The output side's cap gate: with PENDING_CAP bytes
+        // undelivered to the host, master-side reads stop even if
+        // readiness is reported (the real kernel stops reporting
+        // POLLIN once it is not requested — the gate is the second
+        // line of defense, so only a scripted poll reaches it).
+        let mut rounds = Vec::new();
+        for _ in 0..17 {
+            rounds.push((0, libc::POLLIN));
+        }
+        rounds.push((0, libc::POLLIN));
+        let mut sys = FakePumpSys::new(rounds);
+        let mut reads = std::collections::VecDeque::new();
+        for _ in 0..16 {
+            reads.push_back(4096);
+        }
+        sys.master_reads = reads;
+        pump_sys(9, 10, 0, 60_000, &mut sys);
+        assert_eq!(sys.master_reads.len(), 0);
+        assert_eq!(sys.polled, 19);
+    }
+
+    #[test]
+    fn spurious_pollout_with_nothing_pending_loops() {
+        // A POLLOUT-only round with both buffers empty moves nothing:
+        // the pump loops (nothing read, nothing written, no stall
+        // clock — nothing pending) and the next poll timeout ends it.
+        let mut sys = FakePumpSys::new(vec![(libc::POLLOUT, libc::POLLOUT)]);
+        pump_sys(9, 10, 0, 60_000, &mut sys);
+    }
+
+    #[test]
+    fn client_eof_with_dead_master_ends_after_settling() {
+        // conn reads EOF with input pending and a master that
+        // refuses writes: the completion rule (source at EOF, every
+        // buffer flushed or refused) ends the session without the
+        // stall clock.
+        let mut sys = FakePumpSys::new(vec![
+            (libc::POLLIN | libc::POLLOUT, libc::POLLIN),
+            (libc::POLLIN, libc::POLLOUT),
+            (0, libc::POLLOUT),
+        ]);
+        // Round 1: one byte in from the client, one byte of output
+        // from the shell; the master write refuses (EPIPE).
+        sys.conn_reads = [1, 0].into();
+        sys.master_reads = [1].into();
+        sys.master_writes = [-1, -1].into();
+        sys.conn_writes = [1].into();
+        sys.errnos = [libc::EPIPE, libc::EPIPE].into();
+        pump_sys(9, 10, 0, 60_000, &mut sys);
+        // Two rounds scripted past the return: the completion rule
+        // ended the session, not script exhaustion.
+        assert_eq!(sys.polled, 2, "the session must end settled");
+    }
+
+    #[test]
+    fn refused_destination_is_not_written_again() {
+        // The writable-flag gate is load-bearing: an EPIPE'd fd keeps
+        // reporting POLLOUT, so without the gate every round would
+        // repeat a doomed write until the stall clock. Round 1
+        // refuses both writes (EPIPE) with bytes pending on both
+        // sides; round 2 reports POLLOUT again — and must not touch
+        // either write queue. A live stall window keeps the session
+        // alive through both rounds; the exhausted script (round 3's
+        // poll timeout) ends it.
+        let mut sys = FakePumpSys::new(vec![
+            (libc::POLLIN | libc::POLLOUT, libc::POLLIN | libc::POLLOUT),
+            (libc::POLLOUT, libc::POLLOUT),
+        ]);
+        sys.conn_reads = [1].into();
+        sys.master_reads = [1].into();
+        // One refusal each; a canary entry each that a gated-off
+        // round would consume.
+        sys.master_writes = [-1, -7].into();
+        sys.conn_writes = [-1, -7].into();
+        sys.errnos = [libc::EPIPE, libc::EPIPE].into();
+        pump_sys(9, 10, 0, 60_000, &mut sys);
+        assert_eq!(sys.polled, 3, "both scripted rounds ran, then the timeout");
+        assert_eq!(
+            sys.master_writes.len(),
+            1,
+            "round 2 must not write the master"
+        );
+        assert_eq!(sys.conn_writes.len(), 1, "round 2 must not write the conn");
+    }
+
+    #[test]
+    fn real_sys_set_nonblocking_skips_a_dead_fd() {
+        // fcntl F_GETFL on a closed fd answers -1: the flag-set arm
+        // is skipped and the fd is left alone (poll reports it and
+        // the session ends).
+        let mut sys = msks_console_helper::session::RealPumpSys;
+        sys.set_nonblocking(-1);
     }
 
     // --- write_all ---

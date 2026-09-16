@@ -242,6 +242,7 @@ CLOSE_CODE_REASONS = {
     4401: "authentication failed (bad token?)",
     4404: "no such workspace",
     4501: "console unavailable (is the workspace running?)",
+    4502: "console stalled (guest stream wedged; reconnect for a fresh session)",
 }
 
 

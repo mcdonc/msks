@@ -169,6 +169,176 @@ async def test_bridge_ends_when_guest_eof(tmp_path) -> None:
     await asyncio.wait_for(bridge_console(Socket(), reader, Writer()), 5)
 
 
+class _StallSocket:
+    """A websocket fake: one input message, then silence forever."""
+
+    def __init__(self) -> None:
+        self.closed: tuple[int, str] | None = None
+        self.first = True
+
+    async def receive(self):
+        if self.first:
+            self.first = False
+            return {"type": "websocket.receive", "bytes": b"echo hi\n"}
+        await asyncio.sleep(3600)
+
+    async def send_bytes(self, data: bytes) -> None:
+        return
+
+    async def close(self, code: int = 1000, reason: str = "") -> None:
+        self.closed = (code, reason)
+
+
+class _SilentWriter:
+    """A vsock writer fake that accepts writes without a drain hang."""
+
+    def __init__(self) -> None:
+        self.buffer = b""
+
+    def write(self, data):
+        self.buffer += data
+
+    async def drain(self):
+        return
+
+    def close(self):
+        return
+
+    async def wait_closed(self):
+        return
+
+
+async def test_bridge_closes_stalled_console_with_named_code() -> None:
+    """#103: input the guest never echoed past the stall window closes
+    the websocket with 4502 (a named failure) instead of hanging."""
+    reader = asyncio.StreamReader()  # silent guest: no echo, no EOF
+    writer = _SilentWriter()
+    socket = _StallSocket()
+    await asyncio.wait_for(
+        bridge_console(socket, reader, writer, stall_timeout_s=0.1), 5
+    )
+    assert socket.closed is not None
+    code, reason = socket.closed
+    assert code == 4502, reason
+    assert "stalled" in reason
+
+
+async def test_bridge_answered_input_then_idle_stays_open() -> None:
+    """The clock the echo resets must actually be reset: input that
+    the guest answers, then an idle period LONGER than the window,
+    keeps the session open (the review's regression case — the
+    deadline is cleared, not re-armed by the answer)."""
+    socket = _StallSocket()
+    reader = asyncio.StreamReader()
+    writer = _SilentWriter()
+
+    async def answer_then_idle():
+        # The echo lands early in a generous window: a loaded runner
+        # delaying the feed must not flip the outcome.
+        await asyncio.sleep(0.05)
+        reader.feed_data(b"echo hi\nhi\n")
+        # Idle past the whole window, twice over: no input, no EOF —
+        # only a correctly disarmed clock keeps the session open.
+        await asyncio.sleep(1.2)
+        reader.feed_eof()
+
+    race = asyncio.create_task(answer_then_idle())
+    await asyncio.wait_for(
+        bridge_console(socket, reader, writer, stall_timeout_s=0.5), 10
+    )
+    await race
+    assert socket.closed is None, "an answered-then-idle session must not close"
+
+
+class _ChatteringSocket(_StallSocket):
+    """A client that keeps sending: one input message every call."""
+
+    def __init__(self, interval_s: float) -> None:
+        super().__init__()
+        self.interval_s = interval_s
+
+    async def receive(self):
+        await asyncio.sleep(self.interval_s)
+        return {"type": "websocket.receive", "bytes": b"cmd\n"}
+
+
+async def test_bridge_continuous_input_cannot_starve_the_watchdog() -> None:
+    """The deadline is anchored at the FIRST unanswered input (#103,
+    second review): a client sending every 50 ms into a silent stream
+    must still be closed one window after that first input, not one
+    window after its last send."""
+    reader = asyncio.StreamReader()  # silent guest
+    writer = _SilentWriter()
+    socket = _ChatteringSocket(interval_s=0.05)
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    await asyncio.wait_for(
+        bridge_console(socket, reader, writer, stall_timeout_s=0.2), 5
+    )
+    elapsed = loop.time() - started
+    assert socket.closed is not None, "continuous input starved the watchdog"
+    assert socket.closed[0] == 4502
+    # One window (plus scheduling slack) after the first input — far
+    # short of what last-input anchoring would allow.
+    assert elapsed < 0.8, f"close took {elapsed:.2f}s; deadline not first-anchored"
+
+
+async def test_bridge_rearm_wakes_the_sleeping_watchdog() -> None:
+    """The re-arm wake path (#103): a second input after an answered
+    first re-arms the clock and must wake the watchdog mid-window
+    (the changed-event return from the deadline sleep). The sleeps
+    pin the interleaving: the watchdog parks on the first window
+    before the echo disarms it, and the second input's arm lands
+    while it sleeps."""
+    reader = asyncio.StreamReader()
+    writer = _SilentWriter()
+
+    class TwoInputSocket(_StallSocket):
+        async def receive(self):
+            # A beat before each message: the watchdog reaches its
+            # deadline sleep before the next arm.
+            await asyncio.sleep(0.05)
+            if self.first:
+                self.first = False
+                return {"type": "websocket.receive", "bytes": b"one\n"}
+            await asyncio.sleep(0.05)
+            return {"type": "websocket.receive", "bytes": b"two\n"}
+
+    socket = TwoInputSocket()
+
+    async def echo_between_inputs():
+        # The answer to input one, disarming the clock while the
+        # watchdog sleeps toward the first deadline.
+        await asyncio.sleep(0.1)
+        reader.feed_data(b"one\n")
+        await asyncio.sleep(0.2)
+        reader.feed_eof()
+
+    race = asyncio.create_task(echo_between_inputs())
+    await asyncio.wait_for(
+        bridge_console(socket, reader, writer, stall_timeout_s=0.5), 10
+    )
+    await race
+    assert socket.closed is None
+
+
+async def test_bridge_zero_stall_timeout_disables_the_watchdog() -> None:
+    """The documented off switch: with the window at zero, input that
+    draws no guest bytes ever still never closes the session."""
+    socket = _StallSocket()
+    reader = asyncio.StreamReader()
+    writer = _SilentWriter()
+
+    async def end_after_a_while():
+        await asyncio.sleep(0.2)
+        reader.feed_eof()
+
+    race = asyncio.create_task(end_after_a_while())
+    await asyncio.wait_for(bridge_console(socket, reader, writer, stall_timeout_s=0), 5)
+    await race
+    assert socket.closed is None, "a zero window must disable the close"
+
+
 def _make_prelude_image(tmp_path, hash_name: str = "a" * 64) -> str:
     """A catalog image with console markers; returns its hash."""
     from msks import imagestore

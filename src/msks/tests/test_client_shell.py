@@ -588,6 +588,12 @@ def test_report_close_carries_reason() -> None:
         shell._report_close(_closed(4501, "workspace stopped"))
 
 
+def test_report_close_4502_names_the_stall() -> None:
+
+    with pytest.raises(SystemExit, match="console stalled"):
+        shell._report_close(_closed(4502))
+
+
 def test_report_close_clean_end_is_quiet() -> None:
 
     assert shell._report_close(_closed(1000)) is None

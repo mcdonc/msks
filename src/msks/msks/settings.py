@@ -94,6 +94,12 @@ class VmmSettings:
     # Console bring-up wait: generous by default — nested-virt guests
     # can take longer than bare metal to arm the vsock device.
     vsock_wait_timeout_s: float = 15.0
+    # Mid-session stall window (#103): the guest pty echoes every
+    # input byte, so input that draws zero guest bytes for this long
+    # names a wedged stream, and the console websocket closes with
+    # 4502 instead of hanging open and silent. An idle session never
+    # trips it — the clock only runs after client input.
+    console_stall_timeout_s: float = 60.0
     # A host-side container-image tar imported into the catalog on first boot
     # and designated default (the appliance points this at the built
     # image's store path through its cmdline bridge).
@@ -121,6 +127,16 @@ class VmmSettings:
             raise ValueError(
                 f"MSKSD_VMM_DRIVER must be one of {VALID_DRIVERS}, got {driver!r}"
             )
+        # Zero is the documented off switch for the stall close; a
+        # negative window would close healthy sessions.
+        stall_timeout_s = _env_float(
+            env, "MSKSD_CONSOLE_STALL_TIMEOUT_S", cls.console_stall_timeout_s
+        )
+        if stall_timeout_s < 0:
+            raise ValueError(
+                "MSKSD_CONSOLE_STALL_TIMEOUT_S must be zero or positive, "
+                f"got {stall_timeout_s}"
+            )
         return cls(
             driver=driver,
             cloud_hypervisor=_env(env, "MSKSD_CLOUD_HYPERVISOR", cls.cloud_hypervisor),
@@ -136,6 +152,7 @@ class VmmSettings:
             vsock_wait_timeout_s=_env_float(
                 env, "MSKSD_VSOCK_WAIT_TIMEOUT_S", cls.vsock_wait_timeout_s
             ),
+            console_stall_timeout_s=stall_timeout_s,
             default_image=_env(env, "MSKSD_DEFAULT_IMAGE", cls.default_image),
             qemu_img=_env(env, "MSKSD_QEMU_IMG", cls.qemu_img),
             mkfs_ext4=_env(env, "MSKSD_MKFS_EXT4", cls.mkfs_ext4),

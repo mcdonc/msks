@@ -829,7 +829,9 @@ async def test_appliance_boot_and_workspace() -> None:
     # An operator's value wins.
     prior_cmdline_extra = os.environ.get("MSKS_APPLIANCE_CMDLINE_EXTRA")
     if not prior_cmdline_extra:
-        os.environ["MSKS_APPLIANCE_CMDLINE_EXTRA"] = "msksd.vsock_wait_timeout_s=120"
+        os.environ["MSKS_APPLIANCE_CMDLINE_EXTRA"] = (
+            "msksd.vsock_wait_timeout_s=120 msksd.console_stall_timeout_s=15"
+        )
 
     async def await_token(timeout_s: float = 120.0) -> str:
         # `up -d` returns when the MANAGER starts; setup (state-disk
@@ -940,67 +942,104 @@ async def test_appliance_boot_and_workspace() -> None:
                     message if isinstance(message, bytes) else message.encode()
                 )
 
-            # Guest networking, end to end through the appliance
-            # (#52, #70 review): the default (egress) workspace took a
-            # DHCP lease from the daemon's resolver path — the address
-            # on the NIC and a resolution through the forwarder. The
-            # host side must be wired (appliance-setup.sh: forwarding,
-            # NAT, and the appliance's upstream resolver) for these to
-            # pass, which is exactly the posture being pinned.
-            #
-            # A one-shot probe the SENDER retries: the guest may not
-            # have its lease yet (the console session can open while
-            # networkd is still configuring), and the console
-            # transport can corrupt a sent line (#103: mangled pty
-            # echo artifacts) — a fresh resend supersedes the corrupted
-            # round, so each probe measures the network path, not the
-            # console's byte fidelity. The markers render differently
-            # from the sent bytes, so the pty echo of the command
-            # cannot satisfy the wait.
-            probe_buf = b""
+        # Guest networking, end to end through the appliance
+        # (#52, #70 review): the default (egress) workspace took a
+        # DHCP lease from the daemon's resolver path — the address
+        # on the NIC and a resolution through the forwarder. The
+        # host side must be wired (appliance-setup.sh: forwarding,
+        # NAT, and the appliance's upstream resolver) for these to
+        # pass, which is exactly the posture being pinned.
+        #
+        # A one-shot probe the SENDER retries: the guest may not
+        # have its lease yet (the console session can open while
+        # networkd is still configuring), and the console
+        # transport can corrupt a sent line (#103: mangled pty
+        # echo artifacts) — a fresh resend supersedes the corrupted
+        # round, so each probe measures the network path, not the
+        # console's byte fidelity. The markers render differently
+        # from the sent bytes, so the pty echo of the command
+        # cannot satisfy the wait.
+        #
+        # A probe session that wedges mid-stream now fails loudly
+        # (#103): once sent input draws no guest bytes for the stall
+        # window (shortened through the cmdline bridge below), the
+        # daemon closes the websocket with 4502 and the probe opens
+        # a fresh session — the same recovery a human client gets.
+        probe_buf = b""
+        probe_ws: websockets.ClientConnection | None = None
 
-            async def probe_collect(marker: bytes) -> bytes:
-                nonlocal probe_buf
-                end = loop.time() + 7.0
-                while marker not in probe_buf and loop.time() < end:
-                    try:
-                        message = await asyncio.wait_for(shell_ws.recv(), 1.0)
-                    except TimeoutError:
-                        continue
-                    probe_buf += (
-                        message if isinstance(message, bytes) else message.encode()
+        async def probe_connect() -> websockets.ClientConnection:
+            nonlocal probe_ws
+            probe_ws = await websockets.connect(ws_url, ssl=ws_ctx, open_timeout=30)
+            return probe_ws
+
+        async def probe_collect(marker: bytes) -> bytes:
+            nonlocal probe_buf, probe_ws
+            end = loop.time() + 7.0
+            while marker not in probe_buf and loop.time() < end:
+                try:
+                    message = await asyncio.wait_for(probe_ws.recv(), 1.0)
+                except TimeoutError:
+                    continue
+                except websockets.ConnectionClosed as closed:
+                    # The named stall close (4502) or any teardown: the
+                    # send loop reconnects for a fresh session.
+                    print(
+                        f"probe session closed ({closed.rcvd}); reconnecting",
+                        flush=True,
                     )
-                return probe_buf
+                    probe_ws = None
+                    return probe_buf
+                probe_buf += message if isinstance(message, bytes) else message.encode()
+            return probe_buf
 
-            async def probe(marker: bytes, command: bytes) -> None:
-                # Send first, then collect: the first collect window is
-                # not free time to skip.
-                end = loop.time() + 180.0
-                await shell_ws.send(command)
-                while marker not in (await probe_collect(marker)):
-                    if loop.time() >= end:
-                        raise AssertionError(f"console never showed {marker!r}")
-                    await shell_ws.send(command)
-                    await asyncio.sleep(7.0)
+        async def probe_send(command: bytes) -> None:
+            # A close can land between collect rounds too (not just
+            # inside recv): the send must reconnect like the collect
+            # does, not raise the close into a test failure.
+            nonlocal probe_ws
+            if probe_ws is None:
+                await probe_connect()
+            try:
+                await probe_ws.send(command)
+            except websockets.ConnectionClosed as closed:
+                print(
+                    f"probe session closed mid-send ({closed.rcvd}); reconnecting",
+                    flush=True,
+                )
+                probe_ws = None
 
-            await probe(
-                b"NET-42-UP",
-                b"ip -4 addr | grep -q 172.31. && echo NET-$((6*7))-UP\n",
-            )
-            await probe(
-                b"DNS-42-UP",
-                b"getent hosts deb.debian.org >/dev/null && echo DNS-$((6*7))-UP\n",
-            )
-            # Forwarded egress through the NAT'd uplink (#101): a TCP
-            # connection the guest initiates must traverse the forward
-            # chain and the masquerade — the DHCP and DNS markers above
-            # both work without them (DNS relays through the daemon's
-            # own socket), so this is the probe that proves the path.
-            await probe(
-                b"TCP-42-UP",
-                b"timeout 5 bash -c '</dev/tcp/deb.debian.org/80' "
-                b"&& echo TCP-$((6*7))-UP\n",
-            )
+        async def probe(marker: bytes, command: bytes) -> None:
+            # Send first, then collect: the first collect window is
+            # not free time to skip.
+            end = loop.time() + 180.0
+            await probe_send(command)
+            while marker not in (await probe_collect(marker)):
+                if loop.time() >= end:
+                    raise AssertionError(f"console never showed {marker!r}")
+                await probe_send(command)
+                await asyncio.sleep(7.0)
+
+        await probe(
+            b"NET-42-UP",
+            b"ip -4 addr | grep -q 172.31. && echo NET-$((6*7))-UP\n",
+        )
+        await probe(
+            b"DNS-42-UP",
+            b"getent hosts deb.debian.org >/dev/null && echo DNS-$((6*7))-UP\n",
+        )
+        # Forwarded egress through the NAT'd uplink (#101): a TCP
+        # connection the guest initiates must traverse the forward
+        # chain and the masquerade — the DHCP and DNS markers above
+        # both work without them (DNS relays through the daemon's
+        # own socket), so this is the probe that proves the path.
+        await probe(
+            b"TCP-42-UP",
+            b"timeout 5 bash -c '</dev/tcp/deb.debian.org/80' "
+            b"&& echo TCP-$((6*7))-UP\n",
+        )
+        if probe_ws is not None:
+            await probe_ws.close()
         response = await client.get(f"{base}/workspaces/{wid}", headers=headers)
         assert response.json().get("status") == "running", response.text
 
