@@ -34,16 +34,18 @@ workspace-<name>-<version>.tar
 
 `disk/image.json` is what msksd reads; schema 2:
 
-| Field              | Meaning                                                                   |
-| ------------------ | ------------------------------------------------------------------------- |
-| `schema`           | `2`                                                                       |
-| `name`             | Catalog name, e.g. `debian`                                               |
-| `version`          | Catalog version, e.g. `13.6`; numeric segments sort correctly             |
-| `cmdline`          | Kernel command line for workspace boots                                   |
-| `vsock_shell_port` | AF_VSOCK port the guest's console service listens on                      |
-| `kernel_version`   | e.g. `6.12.107+deb13-amd64` (informational)                               |
-| `kernel_format`    | `bzImage` (informational)                                                 |
-| `capabilities`     | Optional capability object; `provisioner` names the seed consumer (below) |
+| Field              | Meaning                                                                                  |
+| ------------------ | ---------------------------------------------------------------------------------------- |
+| `schema`           | `2`                                                                                      |
+| `name`             | Catalog name, e.g. `debian`                                                              |
+| `version`          | Catalog version, e.g. `13.6`; numeric segments sort correctly                            |
+| `cmdline`          | Kernel command line for workspace boots                                                  |
+| `vsock_shell_port` | AF_VSOCK port the guest's console service listens on                                     |
+| `kernel_version`   | e.g. `6.12.107+deb13-amd64` (informational)                                              |
+| `kernel_format`    | `bzImage` (informational)                                                                |
+| `console_protocol` | Console handshake: `prelude-v1` (identity prelude) or `legacy` (raw root shell; default) |
+| `console_users`    | Users `msks console --user` may request; default `["root"]`                              |
+| `capabilities`     | Optional capability object; `provisioner` names the seed consumer (below)                |
 
 The manifest is self-describing: importing the archive needs nothing
 beside the archive itself.
@@ -58,15 +60,24 @@ boots. A guest image must:
   never runs its own bootloader. Stock Debian/Ubuntu kernels work.
 - **Ship a virtio console service.** `msks console` connects over
   AF_VSOCK, so the guest needs `vmw_vsock_virtio_transport` (module
-  or built-in) and a service that binds the vsock port and spawns a
-  login shell — the shipped image uses
-  `socat VSOCK-LISTEN:<port>,reuseaddr,fork
-EXEC:/bin/bash,pty,ctty,echo=1,icanon=1,stderr,setsid`
-  as `msks-console.service`, `Restart=always`. The pty is a plain
+  or built-in) and a service that binds the vsock port and spawns
+  login shells — the shipped image runs `msks-console-helper` (a
+  static Rust binary the image builds from `src/console-helper`) as
+  `msks-console.service`, `Restart=always`. The helper accepts
+  host-originated connections only, and each connection negotiates
+  the identity prelude (#63): the requested user, the client
+  terminal's size and TERM, then an `MSKS OK` reply (or a named
+  refusal) before the helper allocates the pty at the client's
+  geometry, drops to that user through the full
+  setgroups/setgid/setuid sequence, and execs the user's login
+  shell with a passwd-built environment. The pty is a plain
   canonical terminal — the line discipline echoes and edits input —
-  and the unit sets `TERM=xterm` so bash's readline engages (#61);
-  a service without these settings serves a shell that cannot echo
-  what the user types.
+  and it keeps its connect-time size for the session's life (live
+  resizes ride an ssh session through the forward, #108–#112). An
+  image whose manifest sets `console_protocol` to `legacy` (the
+  default) serves the raw root shell instead: the user, size, and
+  TERM never reach the guest, and the manifest's `console_users`
+  still gates which users `msks console --user` may request.
 - **Take an address over DHCP when a NIC is present.** Workspaces
   are networked by default (#52): the VM boots with a virtio-net NIC
   — Debian's kernel ships `virtio_net`, and the shipped overlay loads

@@ -305,6 +305,13 @@ $ msks console my-workspace --user msks
 (workspace prompt, as the workspace user)
 ```
 
+The guest pty keeps the size it was given at attach for the
+session's life: the console stream is a raw byte pipe, so a window
+resized mid-session does not reach it — reconnect for the new size.
+Full-screen work (editors, tmux) belongs to an ssh session through
+the forward (#108–#112): ssh's window-change channel resizes its
+pty live.
+
 A workspace that is already running attaches with no preamble. Two
 states get special handling:
 
