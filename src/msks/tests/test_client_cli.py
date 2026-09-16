@@ -1328,3 +1328,25 @@ async def test_volume_source_stdin(monkeypatch) -> None:
     assert cli.volume_source("-") is data
     assert [window async for window in cli.file_windows(data)] == [b"stdin-bytes"]
     assert not data.closed
+
+
+def test_home_export_broken_pipe_is_one_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A reader that vanishes mid-stream (`- | head`, a compressor
+    on a full disk) is one line and a non-zero exit, not a
+    traceback — the CLI's error contract holds on the pipe path."""
+    client_env(monkeypatch)
+
+    class BrokenSink:
+        def write(self, data):
+            raise BrokenPipeError
+
+    monkeypatch.setattr(
+        sys, "stdout", SimpleNamespace(buffer=BrokenSink(), fileno=lambda: 1)
+    )
+    with pytest.raises(SystemExit, match="reader closed early"):
+        cli.main(
+            ["home", "export", "ws1", "-"],
+            transport=mock(lambda req: httpx.Response(200, content=b"vol")),
+        )

@@ -10,6 +10,7 @@ interactive console command lives in :mod:`msks.client.console`.
 
 import argparse
 import asyncio
+import contextlib
 import json
 import os
 import sys
@@ -464,20 +465,34 @@ async def file_windows(source) -> AsyncIterator[bytes]:
 
 
 async def run_home_import(
-    url: str, token: str, workspace_id: str, source, transport
+    url: str, token: str, workspace_id: str, source_path: str, transport
 ) -> int:
-    """PUT the volume stream; the daemon's reported byte count."""
-    async with api_client(url, token, transport) as client:
-        reply = await upload(client, home_path(workspace_id), file_windows(source))
-    return reply["bytes"]
+    """PUT the volume stream; the daemon's reported byte count.
+
+    The source opens here and closes in the ``finally`` even when
+    the exchange dies before the body is consumed (a dead dial):
+    the file never waits for garbage collection.
+    """
+    source = volume_source(source_path)
+    owns = source is not sys.stdin.buffer
+    try:
+        async with api_client(url, token, transport) as client:
+            reply = await upload(client, home_path(workspace_id), file_windows(source))
+        return reply["bytes"]
+    finally:
+        if owns:
+            source.close()
 
 
 def cmd_home_export(workspace_id: str, out: str | None = None, transport=None) -> int:
     """``msks home export``: download a workspace's /home volume."""
     target = out if out is not None else f"{workspace_id}.ext4"
-    total = asyncio.run(
-        run_home_export(env_url(), env_token(), workspace_id, target, transport)
-    )
+    try:
+        total = asyncio.run(
+            run_home_export(env_url(), env_token(), workspace_id, target, transport)
+        )
+    except BrokenPipeError:
+        raise SystemExit(broken_pipe_line(target)) from None
     if target == "-":
         # Bytes own stdout; the confirmation goes to stderr.
         print(f"msks: exported {workspace_id} ({total} bytes)", file=sys.stderr)
@@ -486,11 +501,27 @@ def cmd_home_export(workspace_id: str, out: str | None = None, transport=None) -
     return 0
 
 
+def broken_pipe_line(target: str) -> str:
+    """The one-line report for a reader that went away (#80).
+
+    ``- | head`` or a downstream compressor on a full disk closes
+    the pipe mid-stream; stdout is unusable from here on, so its
+    buffered remains are pointed at devnull before the interpreter
+    flush would traceback on them again at exit.
+    """
+    with contextlib.suppress(OSError, ValueError, AttributeError):
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+        os.close(devnull)
+    return f"msks: the export's reader closed early ({target})"
+
+
 def cmd_home_import(workspace_id: str, source_path: str, transport=None) -> int:
     """``msks home import``: replace a workspace's /home volume."""
     url, token = env_url(), env_token()
-    source = volume_source(source_path)
-    total = asyncio.run(run_home_import(url, token, workspace_id, source, transport))
+    total = asyncio.run(
+        run_home_import(url, token, workspace_id, source_path, transport)
+    )
     print(f"imported {total} bytes into {workspace_id}")
     return 0
 

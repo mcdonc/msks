@@ -125,13 +125,19 @@ nominal size. A volume exported over a slow link composes with any
 compressor (`msks home export ws - | gzip > ws.ext4.gz`) because
 `-` streams the bytes to stdout.
 
-Both endpoints answer `409` while the workspace's VM is attached to
-the volume (`starting`, `running`, `paused`): an export under a
-guest mid-write is a torn image, and an import into a mounted
-device would be overwritten or lost. Stop the workspace first
-(`msks stop`); `created`, `stopped`, and `absent` workspaces move
-freely. A foreign host answers the placement `409` every artifact
-route shares, and the k8s backend answers `400` — its volume lives
+Both endpoints answer `409` unless the workspace's row says its
+VM is down — `created`, `stopped`, and `absent` move freely;
+`starting`, `running`, and `paused` keep the volume (an export
+under a guest mid-write is a torn image, and an import into a
+mounted device would be overwritten or lost), and `unknown`
+refuses too — the watcher writes it when it cannot probe the VMM,
+and a possibly-live VM gets the volume's protection. Stop the
+workspace first (`msks stop`). A move and a boot also serialize
+per workspace: a boot that arrives during a move waits for it to
+finish and boots the volume the move left, and a move that
+arrives after a boot sees the running row and answers `409`. A
+foreign host answers the placement `409` every artifact route
+shares, and the k8s backend answers `400` — its volume lives
 inside the runner pod's PVC, which only the pod's container
 reaches.
 
@@ -140,9 +146,11 @@ recorded `home_mib` mounts fine either way (an ext4 filesystem
 smaller than its device is legal); `home_mib` stays the size a
 blank rebuilt volume gets, and growing an imported filesystem is a
 guest-side `resize2fs`. The install is atomic — a failed or cut-off
-upload leaves the existing volume in place — and every move is
-announced on the events channel (`home.exported` /
-`home.imported`, with the byte count).
+upload leaves the existing volume in place — and every completed
+move is announced on the events channel (`home.exported` /
+`home.imported`, with the byte count; an export announces when its
+stream reaches the end, so a cancelled download publishes
+nothing).
 
 ## Placement and single-attach
 

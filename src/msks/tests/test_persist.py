@@ -416,8 +416,10 @@ async def yielding(chunks: list[bytes]):
 
 
 async def collect(path: Path) -> bytes:
-    """Everything :func:`persist.read_volume` yields, joined."""
-    return b"".join([window async for window in persist.read_volume(path)])
+    """Everything :func:`persist.read_volume` yields from an open
+    handle, joined."""
+    with path.open("rb") as handle:
+        return b"".join([window async for window in persist.read_volume(handle)])
 
 
 async def test_import_home_volume_installs_the_body(tools) -> None:

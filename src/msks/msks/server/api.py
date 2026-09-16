@@ -411,11 +411,12 @@ def host_mismatch(app, row: dict) -> str | None:
     )
 
 
-#: The lifecycle statuses a home-volume move refuses (#80): the
-#: volume is a live block device in each of them, so an export
-#: reads a guest mid-write (a torn image) and an import lands under
-#: a mounted device the guest overwrites or ignores.
-HOME_BUSY_STATUSES = ("starting", "running", "paused")
+#: The lifecycle statuses a home-volume move serves (#80): an
+#: allow-list, so ``unknown`` — a possibly-live VM the watcher
+#: could not probe — and any future status refuse until named here.
+#: ``starting``/``running``/``paused`` all keep the volume: it is a
+#: live block device in each of them.
+HOME_FREE_STATUSES = ("created", "stopped", "absent")
 
 
 def home_volume_guard(app, row: dict) -> tuple[int, str] | None:
@@ -426,7 +427,8 @@ def home_volume_guard(app, row: dict) -> tuple[int, str] | None:
     reaches, so the byte streams this endpoint serves have nothing
     to read or write (#80 is the local appliance's mechanism). On
     the local backend, placement (the artifacts live on one host)
-    and a live attachment are the two facts that block a move.
+    and a possibly-live attachment are the two facts that block a
+    move: the free statuses are named, everything else refuses.
     """
     if app.state.settings.vmm.driver == "k8s":
         return 400, (
@@ -436,12 +438,133 @@ def home_volume_guard(app, row: dict) -> tuple[int, str] | None:
     mismatch = host_mismatch(app, row)
     if mismatch is not None:
         return 409, mismatch
-    if row["status"] in HOME_BUSY_STATUSES:
+    if row["status"] not in HOME_FREE_STATUSES:
         return 409, (
             f"workspace {row['id']} is {row['status']}; "
             f"stop it before moving its home volume"
         )
     return None
+
+
+async def home_volume_lock(app, workspace_id: str) -> asyncio.Lock:
+    """Serialize a workspace's volume moves against its boots (#80).
+
+    A boot attaches the volume file by path; an install that
+    renames a new volume over that path mid-boot silently loses
+    every guest write after the rename. One lock per workspace,
+    held by start across launch and by both volume routes across
+    their whole exchange, orders the pair: the boot waits out an
+    in-flight move and boots the installed volume, and a move that
+    arrives after a boot sees the running row and answers 409.
+    """
+    lock = app.state.home_locks.setdefault(workspace_id, asyncio.Lock())
+    return lock
+
+
+async def locked_export(app, hub, workspace_id: str, home: Path) -> Response:
+    """The export under the workspace's move-lock (#80).
+
+    The lock spans the re-check and the open, and the body iterator
+    holds it through the stream: a boot that arrives mid-download
+    waits it out instead of attaching a volume whose bytes are
+    leaving. The row is re-read under the lock (a boot that won
+    first refuses here), and the size comes from the open handle,
+    so the served length always matches the body it yields.
+    """
+    lock = await home_volume_lock(app, workspace_id)
+    await lock.acquire()
+    try:
+        row = await app.state.model.get_workspace(workspace_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="no such workspace")
+        guard = home_volume_guard(app, row)
+        if guard is not None:
+            raise HTTPException(*guard)
+        try:
+            handle, size = await asyncio.to_thread(persist.open_sized, home)
+        except OSError:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"home volume file for workspace {workspace_id} is missing "
+                    f"or unreadable under the state dir; a start would rebuild "
+                    f"it blank"
+                ),
+            ) from None
+    except BaseException:
+        lock.release()
+        raise
+    return StreamingResponse(
+        export_body(hub, workspace_id, handle, lock),
+        media_type="application/octet-stream",
+        headers={
+            "content-length": str(size),
+            "content-disposition": f'attachment; filename="{workspace_id}.ext4"',
+        },
+    )
+
+
+async def export_body(hub, workspace_id: str, handle, lock) -> AsyncIterator[bytes]:
+    """The streamed half: the volume's windows, then the lock back.
+
+    The completion event fires only on a clean end of file — a
+    client that disconnects mid-download cancelled no export.
+    """
+    moved = 0
+    try:
+        async for window in persist.read_volume(handle):
+            moved += len(window)
+            yield window
+        await hub.publish("home.exported", {"id": workspace_id, "bytes": moved})
+    finally:
+        handle.close()
+        lock.release()
+
+
+async def installed_volume(state_dir: Path, workspace_id: str, request: Request) -> int:
+    """The upload's installed byte count, or its named HTTP failure.
+
+    A body that is not ext4 and a body the client cut off are
+    client errors; a disk-side failure is the daemon's — and all
+    three leave the workspace's existing volume in place.
+    """
+    try:
+        return await persist.import_home_volume(
+            state_dir, workspace_id, request.stream()
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    except (MicrovmError, OSError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from None
+    except ClientDisconnect as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="the upload ended before its body completed; "
+            "the workspace kept its existing volume",
+        ) from exc
+
+
+async def locked_import(app, hub, workspace_id: str, request: Request) -> Response:
+    """The upload under the workspace's move-lock (#80).
+
+    The row re-read under the lock plus the lock itself close the
+    boot race: a start either finished (the re-read refuses) or is
+    waiting (the boot opens the installed volume).
+    """
+    row = await app.state.model.get_workspace(workspace_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="no such workspace")
+    guard = home_volume_guard(app, row)
+    if guard is not None:
+        raise HTTPException(*guard)
+    state_dir = app.state.settings.vmm.state_dir
+    total = await installed_volume(state_dir, workspace_id, request)
+    await hub.publish("home.imported", {"id": workspace_id, "bytes": total})
+    return Response(
+        status_code=200,
+        content=json.dumps({"id": workspace_id, "bytes": total}),
+        media_type="application/json",
+    )
 
 
 async def serialize_create(app, workspace_id: str):
@@ -470,6 +593,7 @@ def build_api(app) -> FastAPI:
     """The FastAPI application bound to one msks App."""
     hub = EventHub()
     app.state.create_locks: dict[str, asyncio.Lock] = {}
+    app.state.home_locks: dict[str, asyncio.Lock] = {}
 
     @contextlib.asynccontextmanager
     async def lifespan(api: FastAPI) -> AsyncIterator[None]:
@@ -750,8 +874,14 @@ def build_api(app) -> FastAPI:
             # preference: booting elsewhere would present an empty
             # /home and a pristine root as if they were the data.
             raise HTTPException(status_code=409, detail=mismatch)
-        await app.state.microvm.launch(spec_for(row))
-        await app.state.model.set_status(workspace_id, "running")
+        # The home-volume move lock (#80): a volume import that
+        # renames a new file over the boot's path mid-attach would
+        # silently lose every guest write after the rename, so the
+        # boot and any in-flight move serialize — the status write
+        # stays inside the hold or a waiter would read a stale row.
+        async with await home_volume_lock(app, workspace_id):
+            await app.state.microvm.launch(spec_for(row))
+            await app.state.model.set_status(workspace_id, "running")
         return {"id": workspace_id, "status": "running"}
 
     @api.exception_handler(MicrovmError)
@@ -795,66 +925,35 @@ def build_api(app) -> FastAPI:
 
     # The home-volume byte streams (#80): export for backup and
     # migration, import to restore or seed. Both refuse a workspace
-    # whose VM is attached to the volume — the guard's statuses name
-    # the stops-everything rule.
+    # the guard names, and both hold the workspace's move-lock for
+    # their whole exchange — see home_volume_lock.
     @api.get(
         "/api/v1/workspaces/{workspace_id}/home", dependencies=[Depends(require_token)]
     )
     async def export_home_volume(workspace_id: str) -> Response:
+        """Stream the workspace's /home volume out (#80): the volume
+        file's bytes, verbatim."""
         row = await _workspace_or_404(app, workspace_id)
         guard = home_volume_guard(app, row)
         if guard is not None:
             raise HTTPException(*guard)
         state_dir = app.state.settings.vmm.state_dir
         home = persist.home_volume_path(state_dir, workspace_id)
-        if not home.is_file():
-            raise HTTPException(
-                status_code=404,
-                detail=(
-                    f"home volume file for workspace {workspace_id} does not "
-                    f"exist under the state dir; a start would rebuild it blank"
-                ),
-            )
-        size = home.stat().st_size
-        await hub.publish("home.exported", {"id": workspace_id, "bytes": size})
-        return StreamingResponse(
-            persist.read_volume(home),
-            media_type="application/octet-stream",
-            headers={
-                "content-length": str(size),
-                "content-disposition": f'attachment; filename="{workspace_id}.ext4"',
-            },
-        )
+        return await locked_export(app, hub, workspace_id, home)
 
     @api.put(
         "/api/v1/workspaces/{workspace_id}/home", dependencies=[Depends(require_token)]
     )
     async def import_home_volume(workspace_id: str, request: Request) -> Response:
+        """Replace the workspace's /home volume with the request body
+        (#80): the uploaded ext4 image lands atomically — a failed or
+        refused upload leaves the old volume in place."""
         row = await _workspace_or_404(app, workspace_id)
         guard = home_volume_guard(app, row)
         if guard is not None:
             raise HTTPException(*guard)
-        state_dir = app.state.settings.vmm.state_dir
-        try:
-            total = await persist.import_home_volume(
-                state_dir, workspace_id, request.stream()
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from None
-        except (MicrovmError, OSError) as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from None
-        except ClientDisconnect as exc:
-            raise HTTPException(
-                status_code=400,
-                detail="the upload ended before its body completed; "
-                "the workspace kept its existing volume",
-            ) from exc
-        await hub.publish("home.imported", {"id": workspace_id, "bytes": total})
-        return Response(
-            status_code=200,
-            content=json.dumps({"id": workspace_id, "bytes": total}),
-            media_type="application/json",
-        )
+        async with await home_volume_lock(app, workspace_id):
+            return await locked_import(app, hub, workspace_id, request)
 
     @api.delete(
         "/api/v1/workspaces/{workspace_id}", dependencies=[Depends(require_token)]

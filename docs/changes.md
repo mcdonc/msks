@@ -23,10 +23,11 @@ tagged `vX.Y.Z`.
   volume file out and replace it from an uploaded ext4 image, with
   `msks home export` / `msks home import` on top (`-` speaks stdio,
   so the bytes compose with gzip or ssh). The workspace must be
-  stopped; an upload that fails the ext4 check or dies mid-body
-  leaves the existing volume in place, all-zero windows come back
-  sparse, and every move publishes a `home.exported` /
-  `home.imported` event. See
+  stopped (`unknown` refuses too — the VM may be live), moves
+  serialize against boots per workspace, an upload that fails the
+  ext4 check or dies mid-body leaves the existing volume in place,
+  all-zero windows come back sparse, and each completed move
+  publishes a `home.exported` / `home.imported` event. See
   [storage](/storage/#home-volume-export-and-import) and
   [the CLI](/cli/#msks-home).
 - **Minted workspace identity and `msks key` (#111).** msksd mints a

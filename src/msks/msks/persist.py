@@ -341,17 +341,27 @@ def remove_home_volume(state_dir: Path, workspace_id: str) -> None:
     home.unlink(missing_ok=True)
 
 
-async def read_volume(path: Path) -> AsyncIterator[bytes]:
-    """Yield a volume file's bytes in export windows (#80).
+def open_sized(path: Path) -> tuple[object, int]:
+    """Open a volume for streaming and fstat the open handle (#80).
+
+    The size comes from the handle, not the path: a file renamed
+    over the path after this point changes nothing about the body
+    this handle yields, so the served length stays honest.
+    """
+    handle = path.open("rb")
+    return handle, os.fstat(handle.fileno()).st_size
+
+
+async def read_volume(handle) -> AsyncIterator[bytes]:
+    """Yield an open volume handle's bytes in export windows (#80).
 
     Each window's read runs off the event loop (streaming a 2 GiB
     volume must not stall the daemon), and a client disconnect
-    mid-stream cancels the loop and closes the file through the
-    context manager.
+    mid-stream cancels the loop — the caller owns the handle's
+    close, so its context manager closes it deterministically.
     """
-    with path.open("rb") as handle:
-        while window := await asyncio.to_thread(handle.read, HOME_WINDOW_B):
-            yield window
+    while window := await asyncio.to_thread(handle.read, HOME_WINDOW_B):
+        yield window
 
 
 async def import_home_volume(
