@@ -1,5 +1,5 @@
 """The ``msks`` CLI: ``ls``, ``create``, ``start``, ``stop``, ``rm``,
-``console``, ``forward``, and the ``image`` catalog subcommands.
+``console``, ``forward``, ``key``, and the ``image`` catalog subcommands.
 
 Every command speaks the daemon's REST surface with the same client
 conventions (#21): ``MSKSC_URL`` for the daemon, ``MSKSC_TOKEN`` for
@@ -10,6 +10,7 @@ interactive console command lives in :mod:`msks.client.console`.
 import argparse
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -130,6 +131,61 @@ def cmd_rm(workspace_ids: list[str], transport=None) -> int:
             )
         )
         print(f"{workspace_id} deleted")
+    return 0
+
+
+async def fetch_ssh_key(url, token, workspace_id, transport) -> dict:
+    """GET the workspace's minted identity (#111): type, both halves.
+
+    ``msks key`` prints it; ``msks ssh`` (#112) materializes the
+    private half for the duration of a connection through this same
+    call.
+    """
+    return await api_call(
+        "GET",
+        url,
+        token,
+        f"/api/v1/workspaces/{workspace_id}/ssh-key",
+        transport=transport,
+    )
+
+
+def write_private_key(key: dict, out: str) -> None:
+    """Materialize the private half at ``out``, mode 0600 (#111).
+
+    The mode is forced on every write, an existing file included —
+    open()'s mode argument only applies at creation, and a
+    pre-existing group- or world-readable file must not stay that
+    way under new contents. The path is always the operator's own
+    choice: the command writes the key to the file the operator
+    named and to stdout, and nowhere else.
+    """
+    try:
+        fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    except OSError as exc:
+        raise SystemExit(f"msks: cannot write key file {out}: {exc}") from None
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(key["private_key"])
+
+
+def cmd_key(
+    workspace_id: str, as_private: bool = False, out: str | None = None, transport=None
+) -> int:
+    """``msks key``: the workspace's minted ssh identity.
+
+    Prints the public half (safe to display anywhere); ``--private``
+    prints the private half, ``--out`` writes the private half to a
+    file with mode 0600 and prints nothing but its path.
+    """
+    key = asyncio.run(fetch_ssh_key(env_url(), env_token(), workspace_id, transport))
+    if out is not None:
+        write_private_key(key, out)
+        print(out)
+    elif as_private:
+        print(key["private_key"], end="")
+    else:
+        print(key["public_key"])
     return 0
 
 
@@ -448,6 +504,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="bind 127.0.0.1:PORT instead of stdio; every accepted "
         "connection gets its own forward",
     )
+    key = sub.add_parser("key", help="fetch a workspace's minted ssh identity (#111)")
+    key.add_argument("workspace_id", help="the workspace whose identity to fetch")
+    key_private = key.add_mutually_exclusive_group()
+    key_private.add_argument(
+        "--private",
+        action="store_true",
+        help="print the private half instead of the public line",
+    )
+    key_private.add_argument(
+        "--out",
+        metavar="FILE",
+        help="write the private half to FILE (mode 0600) instead of printing",
+    )
     image = sub.add_parser("image", help="manage the daemon's image catalog (#65)")
     image_sub = image.add_subparsers(dest="image_command", required=True)
     image_ls = image_sub.add_parser("ls", help="list catalog images")
@@ -500,6 +569,9 @@ def command_table(args: argparse.Namespace, transport) -> dict:
         "console": lambda: run_workspace_shell(args.workspace_id, args.user),
         "forward": lambda: run_workspace_forward(
             args.workspace_id, args.port, args.local
+        ),
+        "key": lambda: cmd_key(
+            args.workspace_id, args.private, args.out, transport=transport
         ),
         "image": lambda: image_command_table(args, transport)[args.image_command](),
     }

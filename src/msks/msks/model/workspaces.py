@@ -51,10 +51,19 @@ class Workspace(Base):
     # onto a per-VM tap in the appliance. The default keeps the
     # no-NIC posture.
     egress: Mapped[bool] = mapped_column(Boolean, default=True)
-    # First-boot provisioning payload (#41): verbatim user_data,
-    # delivered on the workspace's cidata seed disk. Create-time and
-    # immutable — NULL boots without a seed.
+    # First-boot provisioning payload (#41): the operator's
+    # user_data, delivered on the workspace's cidata seed disk
+    # beside the minted identity's seeding script (#111).
+    # Create-time and immutable — NULL boots with the identity
+    # script alone (or without a seed, pre-#111 rows).
     user_data: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The minted identity (#111): the public half is one
+    # authorized_keys line (algorithm name, key, and an
+    # ``msksd:<workspace-id>`` comment); the private half is
+    # OpenSSH-format PEM. NULL on a pre-#111 row — no identity was
+    # minted, no key fetch serves it.
+    ssh_pubkey: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ssh_privkey: Mapped[str | None] = mapped_column(Text, nullable=True)
     # The pool slice the workspace's /30 derives from (#70 review):
     # recorded at first attach so stop/start cycles and daemon
     # restarts keep the same address, even past digest collisions

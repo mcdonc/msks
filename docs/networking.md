@@ -312,18 +312,49 @@ A workspace without egress carries the same image unchanged: its
 forward is refused at the API with close code 4501 before any dial,
 and its console is the vsock one.
 
-With a key planted in the guest (issue #111 automates this), the
-usual client shapes work over the forward:
+### The minted workspace identity
 
-```console
-$ msks forward myws 22 --local 2201 &
-$ ssh -i ~/.cache/msks/myws.key -p 2201 root@127.0.0.1
-$ rsync -e 'ssh -i ~/.cache/msks/myws.key -p 2201' \
+Every workspace a local-backend daemon creates carries an ssh
+identity msksd minted at create (issue #111): a keypair stored with the workspace's state, whose
+public half the first boot plants into `authorized_keys` for both
+root and the `msks` workspace user — through the same cidata seed
+disk that carries `user_data`, so the guest needs no key steps of
+its own. The halves persist across daemon restarts and workspace
+stop/start: they live on the workspace's row, and a stop/start
+cycle serves the same identity again. The seed composes the
+identity's script with any `user_data` payload as MIME siblings, so
+a workspace can carry both.
+
+The private half is fetched over the authenticated API — a token
+holder already owns the workspace's root console, so it grants
+nothing new:
+
+```bash
+msks key myws                    # the public authorized_keys line
+msks key myws --private          # the private half, on stdout
+msks key myws --out ./myws.key   # the private half, mode 0600
+```
+
+The key type is the daemon's setting (`ssh_key_type` /
+`MSKSD_SSH_KEY_TYPE`): ECDSA P-256 by default, `ed25519` and `rsa`
+(3072-bit) selectable. The identity is minted at create on the local
+backend — a workspace created there and later started by a daemon
+reconfigured for the k8s runner keeps its halves, and the runner
+plants nothing (the same posture as its `user_data`). With the identity materialized, the usual
+client shapes work over the forward:
+
+```bash
+msks key myws --out ~/.cache/msks/myws.key
+msks forward myws 22 --local 2201 &
+ssh -i ~/.cache/msks/myws.key -p 2201 root@127.0.0.1
+rsync -e 'ssh -i ~/.cache/msks/myws.key -p 2201' \
     -av ./site/ root@127.0.0.1:/root/site/
 ```
 
-Issue #112 documents the `Host msks-*` ssh-config alias that hides
-the forward and the port entirely.
+The same login works as the workspace user —
+`ssh -i ... -p 2201 msks@127.0.0.1` — whose home rides the
+persistent `/home` volume. Issue #112 documents the `Host msks-*`
+ssh-config alias that hides the forward and the port entirely.
 
 ### Cryptographic agility (a future FIPS posture)
 

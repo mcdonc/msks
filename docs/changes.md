@@ -8,6 +8,17 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **Minted workspace identity and `msks key` (#111).** msksd mints a
+  per-workspace ssh keypair at create — ECDSA P-256 by default, the
+  FIPS-approvable choice (#115), with the type configurable via
+  `MSKSD_SSH_KEY_TYPE` — and stores both halves with the workspace's
+  state. The public half is planted into `authorized_keys` for root
+  and the `msks` workspace user through the first-boot seed (composed
+  with any `user_data` payload), so a fresh workspace accepts ssh
+  with no manual key steps. `msks key <ws>` fetches the identity over
+  the token-gated API; `--private` prints the private half, `--out`
+  writes it mode 0600. The halves persist across daemon restarts and
+  workspace stop/start.
 - **Guest sshd and rsync (#110).** The workspace image serves TCP on
   its forward path: sshd (Debian's own package, enabled) listens on
   all interfaces behind a boot-time unit that waits for the NIC's

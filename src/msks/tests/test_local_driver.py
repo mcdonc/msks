@@ -940,6 +940,20 @@ def test_disk_entries_attach_the_seed_read_only(tmp_path: Path) -> None:
     assert len(disk_entries(tmp_path, WID)) == 2
 
 
+def test_disk_entries_attach_the_seed_for_identity(tmp_path: Path) -> None:
+    """A minted identity attaches the seed with no user_data at all
+    (#111) — the seeding script is the whole payload; both present
+    together still attach exactly one seed.
+    """
+    seed_only = disk_entries(tmp_path, WID, ssh_pubkey="ecdsa-sha2-nistp256 AAAA")
+    assert len(seed_only) == 3
+    assert seed_only[2]["readonly"] is True
+    both = disk_entries(
+        tmp_path, WID, user_data="#!/bin/sh\ntrue\n", ssh_pubkey="ecdsa AAAA"
+    )
+    assert len(both) == 3
+
+
 async def test_launch_attaches_the_user_data_seed(env, fake, tmp_path: Path) -> None:
     """A user_data workspace boots with three disks (#41): the seed
     is healed by launch like the other artifacts and reaches the VMM

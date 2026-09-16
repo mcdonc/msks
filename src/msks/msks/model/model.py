@@ -186,12 +186,22 @@ class Model:
     # --- workspaces ---------------------------------------------------------
 
     async def create_workspace(
-        self, spec: VmSpec, image_hash: str | None = None, host: str | None = None
+        self,
+        spec: VmSpec,
+        image_hash: str | None = None,
+        host: str | None = None,
+        ssh_privkey: str | None = None,
     ) -> dict:
-        """Insert a workspace row from its VM spec and artifact facts."""
+        """Insert a workspace row from its VM spec and artifact facts.
+
+        ``ssh_privkey`` carries the minted identity's private half
+        (#111): the spec holds the public half (the seed needs it at
+        artifact-build time), the private half goes from mint to row
+        without ever riding a spec.
+        """
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
-            row = Workspace(**workspace_fields(spec, image_hash, host))
+            row = Workspace(**workspace_fields(spec, image_hash, host, ssh_privkey))
             session.add(row)
             await session.commit()
             return workspace_dict(row)
@@ -243,6 +253,18 @@ class Model:
             await session.commit()
             return result.rowcount > 0
 
+    async def get_ssh_key(self, workspace_id: str) -> dict | None:
+        """The workspace's minted identity halves (#111), or None
+        when the workspace does not exist. A row without an identity
+        (a pre-#111 workspace) returns halves of None — the caller
+        distinguishes row-missing from identity-missing."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            row = await session.get(Workspace, workspace_id)
+            if row is None:
+                return None
+            return {"public_key": row.ssh_pubkey, "private_key": row.ssh_privkey}
+
     async def delete_workspace(self, workspace_id: str) -> bool:
         """Remove a workspace row; False when absent."""
         maker = sessionmaker_for(self.engine())
@@ -255,7 +277,9 @@ class Model:
             return True
 
 
-def workspace_fields(spec: VmSpec, image_hash: str | None, host: str | None) -> dict:
+def workspace_fields(
+    spec: VmSpec, image_hash: str | None, host: str | None, ssh_privkey: str | None
+) -> dict:
     """The ORM column values a VmSpec maps to."""
     return {
         "id": spec.workspace_id,
@@ -271,6 +295,8 @@ def workspace_fields(spec: VmSpec, image_hash: str | None, host: str | None) -> 
         "home_mib": spec.home_mib,
         "egress": spec.egress,
         "user_data": spec.user_data,
+        "ssh_pubkey": spec.ssh_pubkey,
+        "ssh_privkey": ssh_privkey,
         "status": "created",
     }
 
@@ -292,6 +318,7 @@ def workspace_dict(row: Workspace) -> dict:
         "egress": row.egress,
         "egress_slice": row.egress_slice,
         "user_data": row.user_data,
+        "ssh_pubkey": row.ssh_pubkey,
         "status": row.status,
         "created_at": row.created_at.isoformat(),
     }

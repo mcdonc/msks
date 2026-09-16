@@ -11,15 +11,16 @@ from the VM's:
 - the **home volume** — an ext4 image file under
   ``<state_dir>/volumes/<id>.ext4``, attached as a second virtio-blk
   disk the guest mounts at /home (labeled ``msks-home``).
-- the **seed disk** (#41) — present only when the workspace was
-  created with ``user_data``: a small iso9660 image under
-  ``<state_dir>/vms/<id>/seed.img`` labeled ``cidata``, attached
-  read-only as a third virtio-blk disk. It carries the payload
-  verbatim as ``user-data`` plus a NoCloud ``meta-data``
-  (instance-id) — exactly what cloud-init's datasource reads. It can
-  embed tokens, so it is installed mode 0600 (the row that records
-  the payload makes the same promise: the daemon creates its
-  database file 0600).
+- the **seed disk** (#41) — present when the workspace carries a
+  ``user_data`` payload or a minted identity (#111): a small iso9660
+  image under ``<state_dir>/vms/<id>/seed.img`` labeled ``cidata``,
+  attached read-only as a third virtio-blk disk. Its ``user-data``
+  document is the operator payload composed with the identity's
+  seeding script when a key was minted — verbatim alone otherwise —
+  plus a NoCloud ``meta-data`` (instance-id): exactly what
+  cloud-init's datasource reads. It can embed tokens, so it is
+  installed mode 0600 (the row that records the payload makes the
+  same promise: the daemon creates its database file 0600).
 
 The first two are created at workspace create; all three survive
 ``stop``/``start`` and are removed with the workspace (the seed
@@ -51,6 +52,7 @@ import os
 import shutil
 from pathlib import Path
 
+from .identity import compose_user_data
 from .microvm.errors import MicrovmError
 from .microvm.spec import VmSpec
 
@@ -123,9 +125,10 @@ async def ensure_artifacts(spec: VmSpec, settings) -> None:
 
 
 async def ensure_seed(spec: VmSpec, settings, installed: list[Path]) -> None:
-    """Build the #41 seed when the workspace carries a payload and
-    the file is absent; a fresh build joins the rollback list."""
-    if spec.user_data is None:
+    """Build the #41 seed when the workspace carries a payload — its
+    own or the minted identity's (#111) — and the file is absent; a
+    fresh build joins the rollback list."""
+    if spec.user_data is None and spec.ssh_pubkey is None:
         return
     seed = seed_path(settings.state_dir, spec.workspace_id)
     if seed.is_file():
@@ -219,7 +222,10 @@ async def create_seed(spec: VmSpec, settings) -> None:
     scratch iso9660 volume labeled ``cidata`` — the exact layout
     cloud-init's NoCloud datasource expects — and the finished image
     is installed with the house atomic rename, mode 0600 (the payload
-    can embed tokens).
+    can embed tokens). The staged user-data is the composed document:
+    the operator's payload beside the minted identity's seeding
+    script when a key was minted (#111), the operator's payload
+    verbatim otherwise.
     """
     target = seed_path(settings.state_dir, spec.workspace_id)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -233,7 +239,9 @@ async def create_seed(spec: VmSpec, settings) -> None:
     stage = tmp_sibling(target)
     stage.mkdir(mode=0o700)
     try:
-        (stage / "user-data").write_text(spec.user_data, encoding="utf-8")
+        (stage / "user-data").write_text(
+            compose_user_data(spec.user_data, spec.ssh_pubkey), encoding="utf-8"
+        )
         (stage / "meta-data").write_text(
             seed_metadata(spec.workspace_id), encoding="utf-8"
         )

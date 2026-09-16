@@ -416,6 +416,7 @@ KEY_CASES = [
     ("nft_tool", "/nftt", "net.nft_tool", "/nftt"),
     ("egress_lease_s", 120, "net.lease_s", 120),
     ("egress_dns_timeout_s", 4.5, "net.dns_timeout_s", 4.5),
+    ("ssh_key_type", "ed25519", "vmm.ssh_key_type", "ed25519"),
 ]
 
 
