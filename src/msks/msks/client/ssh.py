@@ -27,6 +27,7 @@ import asyncio
 import os
 import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 from . import agent
@@ -65,9 +66,14 @@ def known_hosts_path(workspace_id: str, base: Path | None = None) -> str:
 
     Host keys persist across stop/start on the workspace's overlay
     (#110), so one accept-new entry per workspace keeps matching.
+    An unusable cache (the path taken by a file, an unwritable
+    directory) is operator-shaped: one line, not a traceback.
     """
     root = (base if base is not None else cache_dir()) / workspace_id
-    root.mkdir(parents=True, exist_ok=True)
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise SystemExit(f"msks ssh: cannot create {root}: {exc}") from exc
     return str(root / "known_hosts")
 
 
@@ -86,10 +92,13 @@ def passthrough_args(args: list[str]) -> list[str]:
 def split_command(passthrough: list[str]) -> tuple[list[str], list[str]]:
     """(ssh options, remote command) from the passthrough args.
 
-    ssh's own ``--`` separates them (``msks ssh ws -- -A -- top``):
-    options go before the destination the way ssh parses them, the
-    command follows it — the same split ssh itself would make.
+    Two unambiguous shapes: a passthrough that starts with a plain
+    word is all command (``msks ssh ws -- uname -a`` — the natural
+    form), and ssh's own ``--`` separates options from the command
+    (``msks ssh ws -- -A -- uname -a``) when options come first.
     """
+    if passthrough and not passthrough[0].startswith("-"):
+        return [], passthrough
     if "--" in passthrough:
         split = passthrough.index("--")
         return passthrough[:split], passthrough[split + 1 :]
@@ -127,6 +136,23 @@ def names_user(value: str) -> bool:
     return value.startswith("User=") or value.startswith("User ")
 
 
+def config_quote(value: str) -> str:
+    """Quote a value for an ``-o`` option: ssh_config honors double
+    quotes only — shell-style single quotes would reach the value
+    literally — and a value without whitespace needs none."""
+    return f'"{value}"' if any(c.isspace() for c in value) else value
+
+
+def proxy_command(workspace_id: str) -> str:
+    """The ProxyCommand value: THIS client, not whatever ``msks`` the
+    ssh child's PATH happens to carry — an absolute interpreter with
+    the module form works from any invocation (console script,
+    installed venv, ``python -m``). The command runs under a shell,
+    so the workspace id takes shell quoting."""
+    runner = f"{config_quote(sys.executable)} -m msks.client.cli"
+    return f"ProxyCommand={runner} forward {shlex.quote(workspace_id)} {SSH_PORT}"
+
+
 def build_args(
     workspace_id: str,
     agent_socket: str,
@@ -144,20 +170,19 @@ def build_args(
     the private half, and under ``IdentitiesOnly`` ssh offers that
     one key and nothing else.
     """
-    proxy = f"ProxyCommand=msks forward {shlex.quote(workspace_id)} {SSH_PORT}"
     options, command = split_command(passthrough)
     argv = [
         "ssh",
         "-o",
-        proxy,
+        proxy_command(workspace_id),
         "-o",
-        f"UserKnownHostsFile={shlex.quote(known_hosts)}",
+        f"UserKnownHostsFile={config_quote(known_hosts)}",
         "-o",
         "StrictHostKeyChecking=accept-new",
         "-o",
         "IdentitiesOnly=yes",
         "-o",
-        f"IdentityAgent={shlex.quote(agent_socket)}",
+        f"IdentityAgent={config_quote(agent_socket)}",
         "-i",
         identity_pub,
     ]

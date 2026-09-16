@@ -384,15 +384,15 @@ alias; ControlMaster shares one forward connection across
 concurrent invocations. The alias block names its identity with
 `IdentityFile` — create it once with `msks key devbox --out
 ~/.cache/msks/msks-devbox.key` (mode 0600, the private half fetched
-over the authenticated API), or drop the two identity lines and let
-`msks ssh` carry the identity per-session from memory. When
-client-held keys land (#121, #123), the alias points at the
-operator's own key instead and the minted identity retires to a
-first-boot enrollment credential. The ProxyCommand runs `msks` in
-the user's environment, so `MSKSC_URL`, `MSKSC_TOKEN`, and
-`MSKSC_CAFILE` must be set there; `ssh -l root msks-devbox` is the
-recovery login, and `-A` forwards the operator's own agent into
-the workspace.
+over the authenticated API). `msks ssh` is the command form that
+carries the identity per-session from memory instead — plain `ssh`
+invocations against the alias need the file. When client-held keys
+land (#121, #123), the alias points at the operator's own key
+instead and the minted identity retires to a first-boot enrollment
+credential. The ProxyCommand runs `msks` in the user's environment,
+so `MSKSC_URL`, `MSKSC_TOKEN`, and `MSKSC_CAFILE` must be set there;
+`ssh -l root msks-devbox` is the recovery login, and `-A` forwards
+the operator's own agent into the workspace.
 
 ### Cryptographic agility (a future FIPS posture)
 

@@ -378,6 +378,13 @@ def test_known_hosts_path_creates_its_directory(tmp_path: Path) -> None:
     assert (tmp_path / "alpha").is_dir()
 
 
+def test_known_hosts_path_names_an_unusable_cache(tmp_path: Path) -> None:
+    taken = tmp_path / "alpha"
+    taken.write_text("a file where the cache dir should be")
+    with pytest.raises(SystemExit, match="cannot create"):
+        ssh.known_hosts_path("alpha", base=tmp_path)
+
+
 def test_cache_dir_honors_xdg(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("XDG_CACHE_HOME", "/tmp/xdg-cache")
     assert ssh.cache_dir() == Path("/tmp/xdg-cache/msks")
@@ -408,6 +415,9 @@ def test_passthrough_args_passes_verbatim(raw: list[str], expected: list[str]) -
         (["-A", "--", "uname"], (["-A"], ["uname"])),
         (["--", "uname"], ([], ["uname"])),
         (["--", "--", "x"], ([], ["--", "x"])),  # split at the first --
+        # The natural form: a passthrough that starts with a plain
+        # word is all command (ssh would read it as the destination).
+        (["uname", "-a"], ([], ["uname", "-a"])),
     ],
 )
 def test_split_command_splits_at_ssh_separator(
@@ -437,10 +447,11 @@ def test_wants_user(args: list[str], names: bool) -> None:
 
 
 def test_build_args_injects_the_default_user() -> None:
-    assert ssh.build_args("alpha", "/agent.sock", "/id.pub", "/kh", ["-A"]) == [
-        "ssh",
-        "-o",
-        "ProxyCommand=msks forward alpha 22",
+    argv = ssh.build_args("alpha", "/agent.sock", "/id.pub", "/kh", ["-A"])
+    assert argv[0] == "ssh"
+    assert argv[2].startswith(f"ProxyCommand={ssh.config_quote(ssh.sys.executable)}")
+    assert argv[2].endswith("-m msks.client.cli forward alpha 22")
+    assert argv[3:13] == [
         "-o",
         "UserKnownHostsFile=/kh",
         "-o",
@@ -451,11 +462,8 @@ def test_build_args_injects_the_default_user() -> None:
         "IdentityAgent=/agent.sock",
         "-i",
         "/id.pub",
-        "-l",
-        "msks",
-        "-A",
-        "alpha",
     ]
+    assert argv[13:] == ["-l", "msks", "-A", "alpha"]
 
 
 def test_build_args_leaves_the_user_to_ssh() -> None:
@@ -468,6 +476,18 @@ def test_build_args_carries_a_remote_command_after_the_host() -> None:
         "alpha", "/agent.sock", "/id.pub", "/kh", ["-A", "--", "uname", "-a"]
     )
     assert argv[-4:] == ["-A", "alpha", "uname", "-a"]
+
+
+def test_build_args_treats_a_leading_plain_word_as_the_command() -> None:
+    """The natural form: `msks ssh ws -- uname -a` must not read
+    `uname` as the destination (the host is always the workspace)."""
+    argv = ssh.build_args("alpha", "/agent.sock", "/id.pub", "/kh", ["uname", "-a"])
+    assert argv[-3:] == ["alpha", "uname", "-a"]
+
+
+def test_config_quote_double_quotes_only_when_needed() -> None:
+    assert ssh.config_quote("/plain/path") == "/plain/path"
+    assert ssh.config_quote("/home/a b/sock") == '"/home/a b/sock"'
 
 
 # --- prepare: the boot pre-flight and the key fetch ---

@@ -432,20 +432,23 @@ holds it in memory for the session, ssh names the identity by its
 public half (`-i`, public material only) and signs through the
 agent socket — the key material goes away with the process, and a
 crash leaves nothing behind. Host keys land in a per-workspace
-`~/.cache/msks/<ws>/known_hosts` under
-`accept-new`; they persist across stop/start on the workspace's
+`known_hosts` under the msks cache root (XDG_CACHE_HOME, else
+`~/.cache/msks`, then `<ws>/known_hosts`) under `accept-new`; they
+persist across stop/start on the workspace's
 overlay, so the first-connection entry keeps matching.
 
 Everything after the workspace id (the `--` is optional — any
-argument ssh would take works verbatim) is passed to ssh unchanged.
-`-A` forwards the session agent — the guest can sign as the
-workspace identity (useful for nested logins to the same
-workspace); forwarding your own agent — git credentials for `git
-push` from inside — is the alias path's job, where your real
-`SSH_AUTH_SOCK` rides untouched. A remote
-command rides ssh's own separator — `msks ssh my-workspace -- -A --
-uname -a` — options before it, command after, exactly where ssh
-parses them. The login user
+argument ssh would take works verbatim) is passed to ssh. A
+passthrough that starts with a plain word is a remote command
+(`msks ssh my-workspace -- uname -a`); when it starts with an
+option, ssh's own separator carries a command after the options
+(`msks ssh my-workspace -- -A -- uname -a`). `-A` forwards the
+session agent — the guest can sign as the workspace identity
+(useful for nested logins to the same workspace); forwarding your
+own agent — git credentials for `git push` from inside — is the
+alias path's job, where your real `SSH_AUTH_SOCK` rides untouched.
+The exit code is ssh's own (255 for ssh failures), not the msks
+command set. The login user
 is the image's `msks` workspace user by default; ssh arguments that
 name a user (`-l root`, `-o User=root`) override it. The host
 argument ssh sees is the workspace id itself — the transport is the
