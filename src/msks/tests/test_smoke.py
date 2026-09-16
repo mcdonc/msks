@@ -931,51 +931,57 @@ async def test_appliance_boot_and_workspace() -> None:
             # host side must be wired (appliance-setup.sh: forwarding,
             # NAT, and the appliance's upstream resolver) for these to
             # pass, which is exactly the posture being pinned.
-            async def await_marker(needle: bytes, deadline_s: float = 180.0) -> bytes:
-                got = b""
-                end = loop.time() + deadline_s
-                while needle not in got:
-                    if loop.time() >= end:
-                        raise AssertionError(
-                            f"console never showed {needle!r}; got: {got[-400:]!r}"
-                        )
-                    # Same gap tolerance as the first marker: the
-                    # deadline, not a silent 30s, decides failure.
+            #
+            # A one-shot probe the SENDER retries: the guest may not
+            # have its lease yet (the console session can open while
+            # networkd is still configuring), and the console
+            # transport can corrupt a sent line (#103: mangled pty
+            # echo artifacts) — a fresh resend supersedes the corrupted
+            # round, so each probe measures the network path, not the
+            # console's byte fidelity. The markers render differently
+            # from the sent bytes, so the pty echo of the command
+            # cannot satisfy the wait.
+            probe_buf = b""
+
+            async def probe_collect(marker: bytes) -> bytes:
+                nonlocal probe_buf
+                end = loop.time() + 7.0
+                while marker not in probe_buf and loop.time() < end:
                     try:
-                        message = await asyncio.wait_for(shell_ws.recv(), 30.0)
+                        message = await asyncio.wait_for(shell_ws.recv(), 1.0)
                     except TimeoutError:
                         continue
-                    got += message if isinstance(message, bytes) else message.encode()
-                return got
+                    probe_buf += (
+                        message if isinstance(message, bytes) else message.encode()
+                    )
+                return probe_buf
 
-            # The probes retry inside the guest: the command can run
-            # before DHCP lands (fast hosts boot the console session
-            # concurrent with networkd), and a one-shot ip/getent
-            # would snapshot the pre-lease state. The markers render
-            # differently from the sent bytes — the pty echoes input
-            # (echo=1), so a literal marker in the command line would
-            # satisfy the wait on echo alone.
-            await shell_ws.send(
-                b"for i in $(seq 1 60); do ip -4 addr | grep -q 172.31. "
-                b"&& echo NET-$((6*7))-UP && break; sleep 2; done\n"
+            async def probe(marker: bytes, command: bytes) -> None:
+                end = loop.time() + 180.0
+                while marker not in (await probe_collect(marker)):
+                    if loop.time() >= end:
+                        raise AssertionError(f"console never showed {marker!r}")
+                    await shell_ws.send(command)
+                    await asyncio.sleep(7.0)
+
+            await probe(
+                b"NET-42-UP",
+                b"ip -4 addr | grep -q 172.31. && echo NET-$((6*7))-UP\n",
             )
-            await await_marker(b"NET-42-UP")
-            await shell_ws.send(
-                b"for i in $(seq 1 60); do getent hosts deb.debian.org "
-                b">/dev/null && echo DNS-$((6*7))-UP && break; sleep 2; done\n"
+            await probe(
+                b"DNS-42-UP",
+                b"getent hosts deb.debian.org >/dev/null && echo DNS-$((6*7))-UP\n",
             )
-            await await_marker(b"DNS-42-UP")
             # Forwarded egress through the NAT'd uplink (#101): a TCP
             # connection the guest initiates must traverse the forward
             # chain and the masquerade — the DHCP and DNS markers above
             # both work without them (DNS relays through the daemon's
             # own socket), so this is the probe that proves the path.
-            await shell_ws.send(
-                b"for i in $(seq 1 20); do timeout 5 bash -c "
-                b"'</dev/tcp/deb.debian.org/80' "
-                b"&& echo TCP-$((6*7))-UP && break; sleep 2; done\n"
+            await probe(
+                b"TCP-42-UP",
+                b"timeout 5 bash -c '</dev/tcp/deb.debian.org/80' "
+                b"&& echo TCP-$((6*7))-UP\n",
             )
-            await await_marker(b"TCP-42-UP")
         response = await client.get(f"{base}/workspaces/{wid}", headers=headers)
         assert response.json().get("status") == "running", response.text
 
@@ -1050,7 +1056,9 @@ async def test_appliance_boot_and_workspace() -> None:
             del os.environ["MSKS_APPLIANCE_CMDLINE_EXTRA"]
         elif prior_cmdline_extra != os.environ.get("MSKS_APPLIANCE_CMDLINE_EXTRA"):
             os.environ["MSKS_APPLIANCE_CMDLINE_EXTRA"] = prior_cmdline_extra
-        legacy_dir.cleanup()
+        # The state disk itself lives until the post-teardown reads
+        # below are done: the journal and the migration asserts read
+        # it after the appliance is down.
     assert not (app_dir / "api.sock").exists()
     # The supervisor is gone too: teardown is its view of "stopped",
     # not just pidfile/socket absence.
@@ -1101,6 +1109,18 @@ async def test_appliance_boot_and_workspace() -> None:
         # (the host-seeded debug-shell/diag.sh markers are not the
         # daemon's and are not touched).
         if seeded and journal is not None:
+            # The teardown can leave the ext4 mid-transaction (a
+            # hard-stopped guest — the same case read_appliance_journal
+            # repairs its own copy for); repair the throwaway disk in
+            # place so debugfs opens it.
+            fsck = subprocess.run(
+                ["e2fsck", "-fy", str(state_disk)],
+                capture_output=True,
+                timeout=300,
+            )
+            assert fsck.returncode <= 2, (
+                f"e2fsck could not repair the state disk:\n{fsck.stdout}"
+            )
 
             def debugfs_read(op: str) -> subprocess.CompletedProcess:
                 return subprocess.run(
@@ -1121,11 +1141,15 @@ async def test_appliance_boot_and_workspace() -> None:
             )
             top = debugfs_read("ls -l /")
             assert top.returncode == 0, top.stderr
-            names = {line.split()[-1] for line in top.stdout.splitlines()}
+            # debugfs pads with blank lines; only real rows carry a name.
+            names = {
+                line.split()[-1] for line in top.stdout.splitlines() if line.split()
+            }
             assert "msksd" in names, f"no service-user home on the disk:\n{top.stdout}"
             assert "volumes" not in names and "msks-cert.host" not in names, (
                 f"daemon entries still at the state-disk top level:\n{top.stdout}"
             )
+    legacy_dir.cleanup()
 
 
 # --- egress smoke (#52) ----------------------------------------------------

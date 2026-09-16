@@ -30,6 +30,13 @@ bootstrap_token="$(cat "$app_dir/bootstrap-token")"
 # boot. Optional — an appliance without one starts with an empty
 # catalog and images arrive by API.
 default_image="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("defaultImage", ""))' "$app_dir/appliance-manifest.json")"
+# The base cmdline comes from the manifest (nix/appliance-image.nix's
+# kernelCmdline) — one source of truth: the appliance's own flags ride
+# with the image that needs them. net.ifnames=0 lives there because the
+# egress nftables rules name the uplink eth0; a locally-hardcoded base
+# here drifted from it once and silently broke forwarded egress (#101).
+base_cmdline="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("cmdline", ""))' "$app_dir/appliance-manifest.json")"
+: "${base_cmdline:=console=ttyS0 root=/dev/vda rootfstype=ext4 ro}"
 # Optional msksd.<name>=<value> pairs the operator wants bridged into
 # the daemon's environment (e.g. msksd.vsock_wait_timeout_s=30 on
 # slow nested-virt hosts); each becomes MSKSD_<NAME> in the guest.
@@ -91,7 +98,7 @@ boot_vm() {
   "payload": {
     "kernel": "$app_dir/vmlinux",
     "initramfs": "$app_dir/initrd",
-    "cmdline": "console=ttyS0 root=/dev/vda rootfstype=ext4 ro msksd.bootstrap_token=$bootstrap_token msksd.default_image=$default_image $MSKS_APPLIANCE_CMDLINE_EXTRA"
+    "cmdline": "$base_cmdline msksd.bootstrap_token=$bootstrap_token msksd.default_image=$default_image $MSKS_APPLIANCE_CMDLINE_EXTRA"
   },
   "disks": [
     {"path": "$app_dir/rootfs.ext4", "readonly": true, "image_type": "Raw"},
