@@ -19,6 +19,7 @@ covered by the faked-transport unit suites).
 import asyncio
 import contextlib
 import os
+import re
 import shutil
 import socket
 import ssl
@@ -870,6 +871,17 @@ async def test_appliance_boot_and_workspace() -> None:
                 b">/dev/null && echo DNS-$((6*7))-UP && break; sleep 2; done\n"
             )
             await await_marker(b"DNS-42-UP")
+            # Forwarded egress through the NAT'd uplink (#101): a TCP
+            # connection the guest initiates must traverse the forward
+            # chain and the masquerade — the DHCP and DNS markers above
+            # both work without them (DNS relays through the daemon's
+            # own socket), so this is the probe that proves the path.
+            await shell_ws.send(
+                b"for i in $(seq 1 20); do timeout 5 bash -c "
+                b"'</dev/tcp/deb.debian.org/80' "
+                b"&& echo TCP-$((6*7))-UP && break; sleep 2; done\n"
+            )
+            await await_marker(b"TCP-42-UP")
         response = await client.get(f"{base}/workspaces/{wid}", headers=headers)
         assert response.json().get("status") == "running", response.text
 
@@ -962,6 +974,24 @@ async def test_appliance_boot_and_workspace() -> None:
         assert "msks appliance: cmdline env:" in joined, (
             "journal never recorded the cmdline bridge"
         )
+        # The privilege contract (#101): the daemon — and, through
+        # ambient inheritance, every tool and VMM it execs — runs as
+        # the service user, in the kvm group, holding exactly
+        # CAP_NET_BIND_SERVICE (10) + CAP_NET_ADMIN (12) = 0x1400.
+        # The boot script prints `id` and the /proc capability sets
+        # before execing msksd; the journal carries them.
+        identity = [ln for ln in journal if "daemon identity:" in ln]
+        assert identity, "journal never recorded the daemon identity"
+        match = re.search(r"uid=(\d+)\(msksd\)", identity[-1])
+        assert match, f"daemon identity is not the msksd user: {identity[-1]!r}"
+        assert int(match.group(1)) != 0, identity[-1]
+        assert "(kvm)" in identity[-1], f"daemon missed the kvm group: {identity[-1]!r}"
+        for field in ("CapEff", "CapAmb"):
+            lines = [ln for ln in journal if f"daemon {field}:" in ln]
+            assert lines, f"journal never recorded the daemon {field}"
+            assert "0000000000001400" in lines[-1], (
+                f"daemon {field} is not the two-capability set: {lines[-1]!r}"
+            )
 
 
 # --- egress smoke (#52) ----------------------------------------------------
@@ -971,7 +1001,10 @@ async def test_appliance_boot_and_workspace() -> None:
 # DHCP, resolves through the daemon's resolver, and reaches the
 # outside over the NAT'd uplink. Opt-in: it needs root (tap/nft/ports
 # 67+53), /dev/kvm, the built guest image (with the #52 DHCP overlay),
-# and an egress-capable default route.
+# and an egress-capable default route. Root is the TEST's constraint,
+# not the server's (#101): ambient capabilities cannot be handed to
+# an arbitrary shell, so the harness runs as full root — and owns
+# ip_forward itself, since the daemon only verifies it.
 
 EGRESS = os.environ.get("MSKSD_TEST_EGRESS")
 
@@ -1088,6 +1121,12 @@ async def test_local_egress_boot() -> None:
         cmdline=CMDLINE or "console=hvc0 root=/dev/vda rw",
         egress=True,
     )
+    # The daemon verifies, never writes, ip_forward (#101 — the
+    # appliance ships it as a sysctl); the root harness owns the dev
+    # host's setting for the run and restores what it found.
+    forwarding = Path("/proc/sys/net/ipv4/ip_forward")
+    forwarding_was = forwarding.read_text()
+    forwarding.write_text("1")
     try:
         await app.state.net.start()
         await app.state.model.create_workspace(spec)
@@ -1139,4 +1178,6 @@ async def test_local_egress_boot() -> None:
     finally:
         with contextlib.suppress(Exception):
             await microvm.cleanup(wid)
+        with contextlib.suppress(OSError):
+            forwarding.write_text(forwarding_was)
         shutil.rmtree(state_dir, ignore_errors=True)

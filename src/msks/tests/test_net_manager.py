@@ -57,7 +57,7 @@ async def net_app(tmp_path: Path, monkeypatch):
         server=ServerSettings(db_path=tmp_path / "net.db"),
     )
     app = build_app(settings)
-    monkeypatch.setattr(manager_mod, "enable_forwarding", lambda path=None: None)
+    monkeypatch.setattr(manager_mod, "verify_forwarding", lambda path=None: None)
     manager = NetManager(app, dhcp_factory=FakeService, dns_factory=FakeService)
     app.state.net = manager
     app.state.model.migrate()
@@ -103,13 +103,15 @@ async def test_start_records_an_unavailable_daemon(
     app, _ip, _nft = net_app
 
     def no_privilege(path=None):
-        raise MicrovmError("could not enable ip_forward: EPERM")
+        raise MicrovmError("net.ipv4.ip_forward is not enabled (reads '0')")
 
-    monkeypatch.setattr(manager_mod, "enable_forwarding", no_privilege)
+    monkeypatch.setattr(manager_mod, "verify_forwarding", no_privilege)
     await app.state.net.start()
     assert app.state.net._state == "unavailable"
     assert "egress unavailable" in capsys.readouterr().out
-    with pytest.raises(MicrovmError, match="CAP_NET_ADMIN"):
+    # The per-workspace refusal names both halves of the contract:
+    # the capability set and the sysctl key (#101).
+    with pytest.raises(MicrovmError, match=r"CAP_NET_ADMIN.*net\.ipv4\.ip_forward"):
         await app.state.net.attach("ws-a", want=True)
 
 
@@ -229,10 +231,26 @@ async def test_dns_upstream_prefers_the_setting(net_app, monkeypatch) -> None:
         manager.dns_upstream()
 
 
-def test_enable_forwarding_names_its_failure(tmp_path: Path) -> None:
-    # A directory: write_text raises OSError (EISDIR), the named error.
-    with pytest.raises(MicrovmError, match="could not enable ip_forward"):
-        manager_mod.enable_forwarding(tmp_path)
+def test_verify_forwarding_accepts_a_routing_kernel(tmp_path: Path) -> None:
+    # The appliance's sysctl.d setting, as the daemon reads it.
+    sysctl = tmp_path / "ip_forward"
+    sysctl.write_text("1\n")
+    manager_mod.verify_forwarding(sysctl)  # no refusal
+
+
+def test_verify_forwarding_names_the_sysctl_when_off(tmp_path: Path) -> None:
+    # A kernel that does not route: the refusal names the key, so
+    # the operator knows which sysctl to set (#101).
+    sysctl = tmp_path / "ip_forward"
+    sysctl.write_text("0\n")
+    with pytest.raises(MicrovmError, match="net.ipv4.ip_forward"):
+        manager_mod.verify_forwarding(sysctl)
+
+
+def test_verify_forwarding_names_an_unreadable_sysctl(tmp_path: Path) -> None:
+    # A directory: read_text raises OSError (EISDIR), the named error.
+    with pytest.raises(MicrovmError, match="could not read net.ipv4.ip_forward"):
+        manager_mod.verify_forwarding(tmp_path)
 
 
 class HalfBrokenDns(FakeService):

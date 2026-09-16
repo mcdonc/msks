@@ -49,6 +49,22 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **The appliance runs msksd as a non-root service user (#101).**
+  The daemon executes as a dedicated `msksd` user holding exactly two
+  ambient capabilities — `CAP_NET_ADMIN` (taps, nftables, and the
+  VMM's tap opens) and `CAP_NET_BIND_SERVICE` (DHCP 67, DNS 53) —
+  and nothing in its process tree runs as uid 0; `/dev/kvm` reaches
+  it through the `kvm` group. `net.ipv4.ip_forward=1` moves from a
+  daemon-time write to a boot-time `sysctl.d` setting: msksd verifies
+  it and refuses egress with the cause naming `net.ipv4.ip_forward`
+  when it reads `0`. The appliance pins its NIC to `eth0`
+  (`net.ifnames=0` on its kernel cmdline) so the default
+  `MSKSD_EGRESS_UPLINK` matches — full udev in the trixie base would
+  otherwise rename the NIC and silently break forwarded egress — and
+  the daemon's state moves to the service-user-owned `/state/msksd`
+  (an existing state disk migrates its daemon files on first boot).
+  See `docs/networking.md`.
+
 - **The workspace guest boots Debian's generic kernel (#96).** One
   kernel pin now serves both the guest and the appliance (#92): a
   host fetches a single kernel deb instead of two, and the workspace

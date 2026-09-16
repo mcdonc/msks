@@ -75,9 +75,15 @@ consent gates of #69 decide each new connection.
 
 **Inside the appliance:** the tap, its address, the per-VM
 nftables table, the NAT masquerade on the uplink, the DHCP service,
-and the DNS forwarder — all owned by msksd, which runs as root
-inside the appliance VM. The host's firewall is never touched;
-containment stays inside the appliance by design.
+and the DNS forwarder — all owned by msksd, which runs as a
+dedicated service user holding exactly two ambient capabilities:
+`CAP_NET_ADMIN` (taps and their addresses, the nftables tables,
+and — because ambient capabilities survive `exec` — the workspace
+VMM opening its tap) and `CAP_NET_BIND_SERVICE` (the DHCP and DNS
+listeners, UDP 67 and 53). Nothing in the daemon's process tree
+runs as uid 0; `/dev/kvm` reaches the VMM through the `kvm` group.
+The host's firewall is never touched; containment stays inside the
+appliance by design.
 
 **Inside the guest:** nothing msks-specific. The image overlay ships
 a systemd-networkd DHCP unit (see [images.md](images.md)); the
@@ -101,18 +107,34 @@ every backend, and the one that needs zero enforcement machinery.
 | `MSKSD_EGRESS_DNS_TIMEOUT_S`       | `3.0`           | How long the forwarder waits on the upstream                    |
 | `MSKSD_IP_TOOL` / `MSKSD_NFT_TOOL` | `ip` / `nft`    | The plumbing tools' paths                                       |
 
-Egress needs the daemon to hold `CAP_NET_ADMIN`, and the appliance's
-own uplink needs the host side wired — `scripts/appliance-setup.sh`
-performs both classes of setup as its documented privileged step:
-host forwarding + NAT for the appliance's bridge subnet, so traffic
-masqueraded out of the appliance reaches the internet. The appliance
-sets `MSKSD_EGRESS_ENABLED=true` and runs as root, so workspaces are
-networked there once the setup script has run. An operator who sets `MSKSD_EGRESS_ENABLED=false` arms nothing, and
+Egress needs the daemon to hold `CAP_NET_ADMIN` and
+`CAP_NET_BIND_SERVICE` — the appliance grants exactly those two to
+its service user — and a kernel that routes: the appliance ships
+`net.ipv4.ip_forward=1` as a boot-time `sysctl.d` setting, the
+daemon verifies it at startup, and a daemon that reads `0` refuses
+every egress workspace with a cause naming the sysctl key. The
+appliance's own uplink needs the host side wired —
+`scripts/appliance-setup.sh` performs that setup as its documented
+privileged step: host forwarding + NAT for the appliance's bridge
+subnet, so traffic masqueraded out of the appliance reaches the
+internet. The appliance pins its NIC to the kernel name `eth0`
+(its kernel cmdline carries `net.ifnames=0`), which is the default
+`MSKSD_EGRESS_UPLINK`, and sets `MSKSD_EGRESS_ENABLED=true`, so
+workspaces are networked there once the setup script has run. An
+operator who sets `MSKSD_EGRESS_ENABLED=false` arms nothing, and
 every egress workspace then refuses to boot with the cause named.
 When msksd cannot arm the plumbing (a dev-shell daemon, say), it
 stays up for everything else and every egress workspace **refuses
 to boot** with a named cause, rather than running with a half-open
 path — create those with `"egress": false` instead.
+
+The dev-host egress smoke (`MSKSD_TEST_EGRESS=1`) runs as root:
+ambient capabilities cannot be granted to an arbitrary shell, so
+the harness — which creates real taps, loads nftables rules, and
+binds ports 67 and 53 — runs as full root and sets `ip_forward`
+itself for the duration of the run. That is the test's constraint,
+not the server's: the daemon needs only the two capabilities and an
+already-routing kernel.
 
 ## Backend support
 

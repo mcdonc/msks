@@ -209,6 +209,15 @@ class NetSettings:
     the per-workspace /30 pool, the uplink the NAT masquerade hides
     behind, and the upstream the DNS forwarder relays to (unset
     reads the appliance's own /etc/resolv.conf).
+
+    The privilege contract (#101): a daemon serving egress holds
+    exactly two ambient capabilities — ``CAP_NET_ADMIN`` (taps and
+    their addresses, the nftables tables, and through exec
+    inheritance the VMM opening its tap) and
+    ``CAP_NET_BIND_SERVICE`` (DHCP 67, DNS 53) — and verifies,
+    never writes, ``net.ipv4.ip_forward``: the appliance ships it
+    as a boot-time sysctl, and a daemon that reads ``0`` refuses
+    egress naming the sysctl key.
     """
 
     enabled: bool = False
