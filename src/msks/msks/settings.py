@@ -94,6 +94,10 @@ class VmmSettings:
     # Console bring-up wait: generous by default — nested-virt guests
     # can take longer than bare metal to arm the vsock device.
     vsock_wait_timeout_s: float = 15.0
+    # Forward bring-up wait (#109): a freshly booted guest races
+    # DHCP against its services, so a refused dial during this window
+    # retries; past the deadline the refusal names the cause.
+    forward_wait_timeout_s: float = 15.0
     # Mid-session stall window (#103): the guest pty echoes every
     # input byte, so input that draws zero guest bytes for this long
     # names a wedged stream, and the console websocket closes with
@@ -137,6 +141,16 @@ class VmmSettings:
                 "MSKSD_CONSOLE_STALL_TIMEOUT_S must be zero or positive, "
                 f"got {stall_timeout_s}"
             )
+        # The same shape as the stall window: zero is a valid
+        # fail-fast deadline, a negative one is a configuration error.
+        forward_wait_s = _env_float(
+            env, "MSKSD_FORWARD_WAIT_TIMEOUT_S", cls.forward_wait_timeout_s
+        )
+        if forward_wait_s < 0:
+            raise ValueError(
+                "MSKSD_FORWARD_WAIT_TIMEOUT_S must be zero or positive, "
+                f"got {forward_wait_s}"
+            )
         return cls(
             driver=driver,
             cloud_hypervisor=_env(env, "MSKSD_CLOUD_HYPERVISOR", cls.cloud_hypervisor),
@@ -152,6 +166,7 @@ class VmmSettings:
             vsock_wait_timeout_s=_env_float(
                 env, "MSKSD_VSOCK_WAIT_TIMEOUT_S", cls.vsock_wait_timeout_s
             ),
+            forward_wait_timeout_s=forward_wait_s,
             console_stall_timeout_s=stall_timeout_s,
             default_image=_env(env, "MSKSD_DEFAULT_IMAGE", cls.default_image),
             qemu_img=_env(env, "MSKSD_QEMU_IMG", cls.qemu_img),

@@ -288,6 +288,16 @@ re-arms the state after such a reload (the NixOS unit above is
 immune on both counts: `networkmanager.unmanaged` claims the devices,
 and a rebuild re-runs the idempotent unit).
 
+## Reaching guest services (the forward)
+
+Egress is the guest's outbound path; the forward websocket
+(`msks forward`, issue #109) is the client's inbound one, and it rides
+the same per-VM tap.
+The daemon dials the workspace's deterministic tap address on the
+port the caller names and bridges raw bytes over its authenticated
+websocket API — see the CLI chapter's `msks forward` section for the
+stdio and `--local` shapes and the close-code contract.
+
 ## Backend support
 
 Egress is a local-backend feature today. On k8s the runner pod

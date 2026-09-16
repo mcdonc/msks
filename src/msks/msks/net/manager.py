@@ -15,6 +15,7 @@ without egress never touch any of this.
 """
 
 import asyncio
+import contextlib
 from dataclasses import dataclass
 from ipaddress import IPv4Network
 from pathlib import Path
@@ -26,6 +27,37 @@ from .dns import DnsForwarder
 
 FORWARDING = Path("/proc/sys/net/ipv4/ip_forward")
 SYSCTL_KEY = "net.ipv4.ip_forward"
+
+#: Between forward-dial retries (#109): the console bring-up poll's
+#: cadence — a just-booted guest's services answer in this rhythm.
+FORWARD_POLL_S = 0.05
+
+#: The cause named when every attempt was silent (each bound's
+#: TimeoutError carries no message of its own).
+DIAL_DEADLINE_EXPIRED = "dial deadline expired"
+
+
+async def dial_with_retry(dialer, host: str, port: int, timeout_s: float):
+    """Dial until the deadline, naming the last real refusal.
+
+    Each attempt is bounded by the deadline's remainder — a silent
+    peer (a dropped SYN) names the deadline, not the kernel's ~130 s
+    SYN retry — and the last refusal a dialer raised is the cause the
+    operator reads when the deadline finally closes the question.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_s
+    last_cause = ""
+    while loop.time() < deadline:
+        try:
+            return await asyncio.wait_for(dialer(host, port), deadline - loop.time())
+        except (OSError, TimeoutError) as exc:
+            last_cause = str(exc) or last_cause
+            await asyncio.sleep(FORWARD_POLL_S)
+    raise MicrovmError(
+        f"forward to {host}:{port} unavailable: {last_cause or DIAL_DEADLINE_EXPIRED}"
+    )
+
 
 NOT_READY_CAUSES = {
     "init": "the egress subsystem never started",
@@ -88,13 +120,18 @@ class NetManager:
     """Owns every workspace's egress plumbing."""
 
     def __init__(
-        self, app, *, dhcp_factory=DhcpServer, dns_factory=DnsForwarder
+        self, app, *, dhcp_factory=DhcpServer, dns_factory=DnsForwarder, dialer=None
     ) -> None:
         self.app = app
         self._dhcp_factory = dhcp_factory
         self._dns_factory = dns_factory
+        # The guest-dial seam for the forward websocket (#109): the
+        # default dials real TCP; the tests inject one that answers
+        # from a listener they control (fake_ch has no NIC).
+        self.dialer = dialer or asyncio.open_connection
         self._attachments: dict[str, NetAttachment] = {}
         self._services: dict[str, NetServices] = {}
+        self._forwards: dict[str, list] = {}
         self._used_slices: set[int] = set()
         self._state = "init"  # init | disabled | ready | unavailable
 
@@ -137,6 +174,56 @@ class NetManager:
         attachment = await self._build(workspace_id)
         return attachment
 
+    async def forward_stream(self, workspace_id: str, port: int):
+        """(reader, writer) dialed to the guest's address on ``port``.
+
+        The dial retries under one deadline (#109): a freshly booted
+        guest races DHCP against its services, and connection-refused
+        during that window is the bring-up state, not a failure. Each
+        attempt is bounded by the deadline's remainder — a silent peer
+        (a dropped SYN) names the deadline, not the kernel's ~130 s
+        SYN retry. A workspace with no live attachment — not running,
+        or created without egress — refuses immediately with a named
+        cause.
+        """
+        attachment = self._attachments.get(workspace_id)
+        if attachment is None:
+            raise MicrovmError(
+                f"workspace {workspace_id} has no live network attachment "
+                "(not running, or created without egress)"
+            )
+        return await dial_with_retry(
+            self.dialer,
+            attachment.guest_ip,
+            port,
+            self.app.state.settings.vmm.forward_wait_timeout_s,
+        )
+
+    def track_forward(self, workspace_id: str, writer) -> None:
+        """Remember a live forward's stream so detach can end it (#113).
+
+        Stopping, killing, or deleting a workspace tears its tap down;
+        without this, the daemon side of an open forward retransmits
+        into the void for minutes while the client waits.
+        """
+        self._forwards.setdefault(workspace_id, []).append(writer)
+
+    def untrack_forward(self, workspace_id: str, writer) -> None:
+        """Forget a forward stream the route closed itself."""
+        writers = self._forwards.get(workspace_id)
+        if writers is None:
+            return
+        with contextlib.suppress(ValueError):
+            writers.remove(writer)
+        if not writers:
+            self._forwards.pop(workspace_id, None)
+
+    def close_forwards(self, workspace_id: str) -> None:
+        """End the workspace's live forwards: closing the stream sends
+        the FIN the torn-down tap no longer can."""
+        for writer in self._forwards.pop(workspace_id, []):
+            writer.close()
+
     async def detach(self, workspace_id: str) -> None:
         """Tear one workspace's egress down (idempotent).
 
@@ -149,6 +236,7 @@ class NetManager:
         """
         attachment = self._attachments.pop(workspace_id, None)
         services = self._services.pop(workspace_id, None)
+        self.close_forwards(workspace_id)
         if attachment is None:
             return
         settings = self.app.state.settings

@@ -8,6 +8,20 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **`msks forward` and the forward websocket (#109).** A workspace's
+  guest TCP ports reach the client through a new authenticated
+  endpoint, `WS /api/v1/workspaces/{id}/forward/{port}`: the daemon
+  dials the workspace's deterministic tap address (retrying through
+  the DHCP/service bring-up race) and pumps raw bytes both ways —
+  one websocket per guest TCP connection, no framing, with
+  `forward.opened`/`forward.closed` events on the events channel.
+  The client command bridges stdio (the ssh ProxyCommand shape) or,
+  with `--local PORT`, a loopback listener where every accepted
+  connection gets its own forward. The token authenticates through
+  the `Authorization` header — the REST surface's Bearer form, kept
+  out of URLs and their logs; a workspace without egress is refused
+  with the reason naming the missing NIC. See `docs/cli.md`.
+
 - **The dev-workspace bootstrap seed (#77).**
   `scripts/dev-workspace.sh`, passed to `msks create --user-data`,
   bootstraps an msks development environment inside a workspace over
