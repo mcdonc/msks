@@ -908,7 +908,7 @@ async def test_appliance_boot_and_workspace() -> None:
         else:
             raise AssertionError(f"workspace never reached running: {status}")
 
-        # The workspace shell (#21): an authenticated byte stream into
+        # The workspace console (#21): an authenticated byte stream into
         # the VM over the daemon's websocket. Drive one command, read
         # its output back, detach, and require the workspace to keep
         # running afterwards.

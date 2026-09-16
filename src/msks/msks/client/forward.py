@@ -6,7 +6,7 @@ bridged to the command's stdio, the shape ssh's ProxyCommand expects.
 With ``--local PORT`` the command binds loopback instead, and every
 accepted connection gets its own forward websocket. A workspace the
 daemon reports as not running is booted first, exactly as ``msks
-shell`` does.
+console`` does.
 
 The forward is not a console: bytes pass unexamined both ways, so
 binary protocols (ssh, rsync) ride it cleanly, and the command works
@@ -33,7 +33,8 @@ from .rest import (
 READ_CHUNK = 4096
 
 #: The receive budget — one frame from the daemon is bounded by the
-#: pump's 4096-byte reads, this is the same ceiling the shell allows.
+#: pump's 4096-byte reads, this is the same ceiling the console client
+#: allows.
 MAX_FRAME = 2**22
 
 CLOSE_CODE_REASONS = {
@@ -170,7 +171,7 @@ async def stdio_session(address: str, token: str, ssl_ctx) -> int:
         ws = await connection
     except (OSError, ssl.SSLError, websockets.InvalidStatus) as exc:
         # Daemon down, TLS mismatch, or a rejected upgrade: one line,
-        # not a traceback — the same contract as the shell command.
+        # not a traceback — the same contract as the console command.
         raise SystemExit(f"msks: cannot reach {address}: {exc}") from exc
     async with ws:
         transport, stdin = await stdin_transport()

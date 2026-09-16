@@ -455,8 +455,8 @@ async def test_run_shell_detaches_on_escape(monkeypatch: pytest.MonkeyPatch) -> 
     assert stdout.buffer.getvalue() == b"hello\n"
 
 
-async def run_shell_via(console):
-    return await console.run_shell("wid", "u", "t", None)
+async def run_shell_via(mod):
+    return await mod.run_shell("wid", "u", "t", None)
 
 
 async def test_run_shell_survives_server_close(monkeypatch: pytest.MonkeyPatch) -> None:

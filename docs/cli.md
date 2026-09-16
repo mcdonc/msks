@@ -10,7 +10,7 @@ The command set covers the operator loop:
 ```bash
 msks ls                      # what exists, and what state is it in
 msks create ws                # make a workspace
-msks console ws                 # boot it if needed, then work inside it
+msks console ws               # boot it if needed, then work inside it
 msks forward ws 22            # bridge a guest TCP port to stdio
 msks start ws                 # boot it without attaching
 msks stop ws                  # power it off
