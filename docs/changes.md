@@ -58,7 +58,9 @@ tagged `vX.Y.Z`.
   verifies the install and names it when something is missing, so
   `devenv processes up` runs entirely unprivileged after the one-time
   install; re-run the installer to re-arm after a firewall reload or
-  to change the tap's owning user.
+  to change the tap's owning user. `docs/networking.md` documents the
+  fully static forms — networkd + nftables files, and a
+  copy-pasteable NixOS configuration equivalent to the installer.
 
 - **The appliance runs msksd as a non-root service user (#101).**
   The daemon executes as a dedicated `msksd` user holding exactly two

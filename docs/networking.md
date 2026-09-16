@@ -212,18 +212,80 @@ table ip msks-host {
 }
 ```
 
-On NixOS the same shapes are native configuration: the netdev and
-network content through the `systemd.network` module options, the
-masquerade through `networking.nat` (`internalInterfaces =
-[ "msksbr0" ]`, `externalInterface` = the default route's
-interface).
+On NixOS, paste this into `configuration.nix` (or a module) — it is the
+installer, shape for shape: the same bridge, the same owner-held tap,
+the same forwarding sysctl, the same three firewall rules. Substitute
+the user who runs the appliance:
 
-Hosts whose firewall is firewalld, or whose network NetworkManager
-manages, keep the installer path: NetworkManager does not consume
-networkd's `.netdev` files, and a firewalld complete reload replaces
-the whole ruleset — foreign rules added once, by script or by file,
-do not survive it. Re-running the installer re-arms the state after
-such a reload.
+```nix
+{ pkgs, ... }:
+
+let
+  # The user who runs the appliance; the tap is owned by it, which is
+  # what lets the unprivileged cloud-hypervisor open it.
+  applianceUser = "chrism";
+in
+{
+  # Host forwarding — the same machine-identity setting the appliance
+  # ships internally.
+  boot.kernelSysctl."net.ipv4.ip_forward" = "1";
+
+  # Keep NetworkManager's hands off the appliance's devices (inert
+  # where NetworkManager is not enabled).
+  networking.networkmanager.unmanaged = [ "msksbr0" "mskstap0" ];
+
+  systemd.services.msks-host-net = {
+    description = "msks appliance host network (bridge, tap, NAT)";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "systemd-modules-load.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    path = with pkgs; [ iproute2 iptables ];
+    script = ''
+      set -e
+      if ! ip link show dev msksbr0 >/dev/null 2>&1; then
+        ip link add name msksbr0 type bridge
+        ip addr add 192.168.77.1/24 dev msksbr0
+        ip link set msksbr0 up
+      fi
+      if ! ip link show dev mskstap0 >/dev/null 2>&1; then
+        ip tuntap add mode tap user ${applianceUser} mskstap0
+        ip link set mskstap0 master msksbr0
+        ip link set mskstap0 up
+      fi
+      ipt_rule() { # ipt_rule <table> <chain> <rule args...>: add if absent
+        table="$1"
+        shift
+        iptables -t "$table" -C "$@" >/dev/null 2>&1 ||
+          iptables -t "$table" -A "$@"
+      }
+      ipt_rule filter FORWARD -i msksbr0 -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j ACCEPT
+      ipt_rule filter FORWARD -o msksbr0 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+      ipt_rule nat POSTROUTING -s 192.168.77.0/24 ! -o msksbr0 -j MASQUERADE
+    '';
+  };
+}
+```
+
+The MASQUERADE rule matches any outbound interface (`! -o msksbr0`),
+so it follows the default route across wifi↔eth switches; the whole
+unit is idempotent, so a rebuild or a `systemctl restart
+msks-host-net` re-arms anything a firewall reload dropped. Hosts that
+prefer the blessed NAT module can replace the three `ipt_rule` calls
+with `networking.nat.enable = true; networking.nat.internalInterfaces
+= [ "msksbr0" ]; networking.nat.externalInterface = "<default-route
+iface>";` (that module also sets `ip_forward` itself).
+
+Non-NixOS hosts whose firewall is firewalld, or whose network
+NetworkManager manages, keep the installer path: NetworkManager does
+not consume networkd's `.netdev` files, and a firewalld complete
+reload replaces the whole ruleset — foreign rules added once, by
+script or by file, do not survive it. Re-running the installer
+re-arms the state after such a reload (the NixOS unit above is
+immune on both counts: `networkmanager.unmanaged` claims the devices,
+and a rebuild re-runs the idempotent unit).
 
 ## Backend support
 
