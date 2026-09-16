@@ -122,6 +122,19 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **Mid-session console stalls no longer wedge a session open (#103).**
+  The guest console helper's byte pump blocked on whichever direction
+  stalled first, so a wedged vsock transport froze the whole session —
+  input echoed but never executed, no output, no close. The pump now
+  moves each direction independently and a stream that accepts no
+  writes for 300 s ends the session; on the daemon side,
+  `console_stall_timeout_s` (`MSKSD_CONSOLE_STALL_TIMEOUT_S`, 60 s
+  default, `0` disables) closes a console websocket with 4502 when
+  client input draws no guest bytes for the window — `msks shell`
+  names the close, and reconnecting opens a fresh session. The
+  echo-off caveat (password prompts) and the helper-window
+  relationship are documented in `docs/cli.md` and `docs/config.md`.
+
 - **`/home` could fail to mount on slow boots (#14).** The guest fstab mounted the home volume by label under `x-systemd.device-timeout=2s`; that clock starts at sysinit job enqueue, before udevd runs, and on a first boot from a fresh overlay (every root read a copy-on-write miss) the udev label probe can exceed what is left of the budget — `home.mount` then fails for the whole boot (`nofail` keeps the boot moving and never retries). The device timeout is now 30s, so the mount rides out a slow coldplug; a boot with no volume at all waits the same 30s once and continues.
 
 - **`scripts/appliance-setup.sh` on iptables-nft hosts (#36).** The NAT rule was invoked as `iptables -C -t nat …`, and iptables-nft 1.8.13 rejects a table option after the command, so setup died before seeding the state disk. The rule helper now takes the table explicitly and places it before `-C`/`-A`, which legacy and nf_tables variants both accept.

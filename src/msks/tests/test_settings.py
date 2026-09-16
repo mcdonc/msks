@@ -20,10 +20,20 @@ def test_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MSKSD_VMM_DRIVER", "k8s")
     monkeypatch.setenv("MSKSD_K8S_NAMESPACE", "sandboxes")
     monkeypatch.setenv("MSKSD_SHUTDOWN_TIMEOUT_S", "3.5")
+    monkeypatch.setenv("MSKSD_CONSOLE_STALL_TIMEOUT_S", "0")
     settings = Settings.from_env()
     assert settings.vmm.driver == "k8s"
     assert settings.k8s.namespace == "sandboxes"
     assert settings.vmm.shutdown_timeout_s == 3.5
+    # Zero is the documented off switch for the stall close (#103).
+    assert settings.vmm.console_stall_timeout_s == 0
+
+
+def test_negative_stall_timeout_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A negative stall window would close healthy sessions (#103)."""
+    monkeypatch.setenv("MSKSD_CONSOLE_STALL_TIMEOUT_S", "-1")
+    with pytest.raises(ValueError, match="MSKSD_CONSOLE_STALL_TIMEOUT_S"):
+        Settings.from_env()
 
 
 def test_invalid_driver_rejected(monkeypatch: pytest.MonkeyPatch) -> None:

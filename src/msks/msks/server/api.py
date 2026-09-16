@@ -712,7 +712,9 @@ def build_api(app) -> FastAPI:
             await socket.close(code=4501, reason=close_reason(str(exc)))
             return
         try:
-            await bridge_console(socket, reader, writer)
+            await bridge_console(
+                socket, reader, writer, app.state.settings.vmm.console_stall_timeout_s
+            )
         finally:
             writer.close()
             with contextlib.suppress(Exception):
@@ -736,18 +738,31 @@ def build_api(app) -> FastAPI:
     return api
 
 
-async def bridge_console(socket: WebSocket, reader, writer) -> None:
+async def bridge_console(
+    socket: WebSocket, reader, writer, stall_timeout_s: float = 60.0
+) -> None:
     """Pump raw bytes between the websocket and the vsock stream.
 
     Two tasks, no queue: backpressure is websocket/TCP flow control
     (the byte stream must not lose or buffer unboundedly, #21).
     Whichever side finishes first (client detach or guest EOF)
     cancels the other.
+
+    A third task watches the echo deadline (#103): the guest pty
+    echoes every input byte, so client input that draws zero guest
+    bytes for ``stall_timeout_s`` names a wedged stream — the bridge
+    closes the websocket with 4502 instead of hanging open and
+    silent. An idle session (no input in flight) never trips it,
+    and ``stall_timeout_s <= 0`` switches the watchdog off.
     """
-    to_guest = asyncio.create_task(_ws_to_stream(socket, writer))
-    to_client = asyncio.create_task(_stream_to_ws(reader, socket))
+    clock = _StallClock()
+    to_guest = asyncio.create_task(
+        _ws_to_stream(socket, writer, clock, stall_timeout_s)
+    )
+    to_client = asyncio.create_task(_stream_to_ws(reader, socket, clock))
+    watchdog = asyncio.create_task(_echo_watchdog(socket, clock))
     done, pending = await asyncio.wait(
-        {to_guest, to_client}, return_when=asyncio.FIRST_COMPLETED
+        {to_guest, to_client, watchdog}, return_when=asyncio.FIRST_COMPLETED
     )
     for task in pending:
         task.cancel()
@@ -759,7 +774,82 @@ async def bridge_console(socket: WebSocket, reader, writer) -> None:
             task.result()
 
 
-async def _ws_to_stream(socket: WebSocket, writer) -> None:
+class _StallClock:
+    """The echo-deadline state (#103): armed by client input, cleared
+    by any guest byte.
+
+    A plain :class:`asyncio.Event` cannot carry the deadline: every
+    input's ``set()`` resolves the watchdog's pending wait, and a
+    later ``clear()`` from the guest-output task cannot cancel a
+    timeout that ``wait_for`` already armed — the session would
+    close one window after the last keystroke, echo or no echo.
+    The clock holds the deadline itself; the watchdog sleeps until
+    it and re-reads the state on every wake.
+    """
+
+    def __init__(self) -> None:
+        self.deadline: float | None = None
+        self.changed = asyncio.Event()
+
+    def arm(self, timeout_s: float) -> None:
+        """Input left the daemon: the guest has this long to answer.
+
+        Armed only while no deadline is pending: the window runs from
+        the FIRST unanswered input, not the last keystroke — a client
+        that keeps sending into a wedged stream (the smoke probes'
+        resend loop, a script pasting into a dead console) must not
+        push its own close out of reach (#103).
+        """
+        if timeout_s > 0 and self.deadline is None:
+            self.deadline = asyncio.get_running_loop().time() + timeout_s
+            self.changed.set()
+
+    def disarm(self) -> None:
+        """Any guest byte: the stream is alive, no deadline pending."""
+        self.deadline = None
+
+
+#: Close code for a console stream that went silent with input in
+#: flight (#103): input the guest never echoed means the stream (not
+#: the workspace) is wedged; a reconnect gets a fresh session.
+CONSOLE_STALLED_CLOSE_CODE = 4502
+
+
+async def _echo_watchdog(socket: WebSocket, clock: _StallClock) -> None:
+    """Close the session when the armed echo deadline expires."""
+    loop = asyncio.get_running_loop()
+    while True:
+        # Clear before reading: an arm() racing this loop must leave
+        # either a fresh deadline below or a set event to wake on —
+        # clearing after the read could erase the wake and sleep
+        # through an armed deadline.
+        clock.changed.clear()
+        deadline = clock.deadline
+        if deadline is None:
+            await clock.changed.wait()
+            continue
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            await socket.close(
+                code=CONSOLE_STALLED_CLOSE_CODE,
+                reason=close_reason(
+                    "console stalled: no guest bytes after input; "
+                    "reconnect for a fresh session"
+                ),
+            )
+            return
+        try:
+            await asyncio.wait_for(clock.changed.wait(), remaining)
+            clock.changed.clear()
+        except TimeoutError:
+            # The sleep ran out: loop around, re-read the deadline
+            # (input may have re-armed it, output cleared it).
+            continue
+
+
+async def _ws_to_stream(
+    socket: WebSocket, writer, clock: _StallClock, stall_timeout_s: float
+) -> None:
     """Client bytes to the guest; returns on disconnect."""
     while True:
         msg = await socket.receive()
@@ -770,15 +860,22 @@ async def _ws_to_stream(socket: WebSocket, writer) -> None:
             data = msg.get("text", "").encode()
         if data:
             writer.write(data)
+            # Input is now in flight: the echo deadline starts if
+            # none is pending — one deadline per quiet window, from
+            # the first unanswered input (#103).
+            clock.arm(stall_timeout_s)
             await writer.drain()
 
 
-async def _stream_to_ws(reader, socket: WebSocket) -> None:
+async def _stream_to_ws(reader, socket: WebSocket, clock: _StallClock) -> None:
     """Guest bytes to the client; returns on guest EOF."""
     while True:
         data = await reader.read(4096)
         if not data:
             return
+        # Any guest byte proves the stream alive, answering whatever
+        # input is in flight.
+        clock.disarm()
         await socket.send_bytes(data)
 
 

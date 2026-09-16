@@ -386,6 +386,7 @@ KEY_CASES = [
     ("shutdown_timeout_s", 21.0, "vmm.shutdown_timeout_s", 21.0),
     ("vsock_shell_port", 1024, "vmm.vsock_shell_port", 1024),
     ("vsock_wait_timeout_s", 16.0, "vmm.vsock_wait_timeout_s", 16.0),
+    ("console_stall_timeout_s", 31.0, "vmm.console_stall_timeout_s", 31.0),
     ("default_image", "/img.tar", "vmm.default_image", "/img.tar"),
     ("qemu_img", "/qi", "vmm.qemu_img", "/qi"),
     ("mkfs_ext4", "/mkfs", "vmm.mkfs_ext4", "/mkfs"),

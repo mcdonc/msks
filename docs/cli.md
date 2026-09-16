@@ -328,6 +328,25 @@ one frame per byte. The session needs a tty on both stdin and stdout.
 See the README's workspace-shell section (#21) for the transport
 story.
 
+A session whose guest stream stops carrying bytes while input keeps
+flowing is closed by the daemon after `console_stall_timeout_s`
+(`MSKSD_CONSOLE_STALL_TIMEOUT_S`, 60 s default): the guest pty echoes
+every input byte, so that silence names a wedged stream, and the
+client exits with `console stalled (guest stream wedged; reconnect
+for a fresh session)` — reconnecting opens a fresh shell in the same
+workspace. An idle session stays open indefinitely: the clock runs
+only while client input is waiting for its echo (#103). Two caveats:
+a program that reads with echo off (`read -s` password prompts, `su`)
+also draws no echo, so a prompt left waiting past the window closes
+the session — set the timeout higher or to `0` (off) for such
+workflows. The deadline is anchored at the first unanswered input, so
+continuous sending into a dead console still gets the named close one
+window later. A stream that wedges while the helper still holds
+undelivered output is closed by the helper's own teardown after
+300 s (without the 4502 name); a stream that wedges fully idle stays
+open — nothing is in flight to time — until the next input arms the
+daemon's clock.
+
 ## Errors, exit codes, and timeouts
 
 Every command fails with one readable line on stderr and exit code 1

@@ -68,6 +68,7 @@ SETTING_ENV_VARS: tuple[str, ...] = (
     "MSKSD_SHUTDOWN_TIMEOUT_S",
     "MSKSD_VSOCK_SHELL_PORT",
     "MSKSD_VSOCK_WAIT_TIMEOUT_S",
+    "MSKSD_CONSOLE_STALL_TIMEOUT_S",
     "MSKSD_DEFAULT_IMAGE",
     "MSKSD_QEMU_IMG",
     "MSKSD_MKFS_EXT4",
@@ -416,6 +417,9 @@ def render_template() -> str:
 #                           # listens on
 # vsock_wait_timeout_s: 15.0    # seconds to wait for the console at
 #                           # boot
+# console_stall_timeout_s: 60.0  # seconds of input-unanswered
+#                           # silence before a console session is
+#                           # closed as stalled (4502); 0 disables
 # socket_wait_timeout_s: 10.0   # seconds to wait for the VMM API
 #                           # socket at start
 # request_timeout_s: 5.0    # seconds per VMM API request
