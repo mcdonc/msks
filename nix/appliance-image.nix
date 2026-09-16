@@ -108,7 +108,8 @@ let
   # match below both speak eth0, and full udev in the trixie base
   # would otherwise rename it to an ens3-style name the nftables
   # rules never see — silently breaking forwarded egress (the DHCP
-  # and DNS markers still pass without the forward chain; #101).
+  # and DNS markers still pass without the forward chain; the guest
+  # hits exactly this rename — #36).
   kernelCmdline = "console=ttyS0 root=/dev/vda rootfstype=ext4 ro net.ifnames=0";
 
   # The minimal initramfs, the guest's recipe (#37, #96: one recipe,
@@ -335,14 +336,29 @@ let
       # database, and TLS keys are service-user-owned; the daemon is
       # not root and cannot mkdir under /state. The top-level entries
       # a pre-#101 (root-daemon) disk carries move into the new home,
-      # so an upgrade keeps its workspaces.
+      # so an upgrade keeps its workspaces AND its pinned TLS CA —
+      # the certificate material lives at the state-dir top level
+      # (msks-ca*.pem, msks-cert*, msks-key*; see tls.py), and a
+      # missed move would silently mint a fresh CA on first boot.
+      # /state/debug-shell and /state/diag.sh are host-seeded markers
+      # and stay at the top level.
       mkdir -p /run/msks-mnt/msksd
-      for name in msks.db msks.db-wal msks.db-shm tls vms volumes images; do
+      moved=0
+      for name in msks.db msks.db-wal msks.db-shm \
+        msks-ca.pem msks-ca-key.pem msks-cert.pem msks-key.pem msks-cert.host \
+        vms volumes images; do
         if [ -e /run/msks-mnt/$name ]; then
           mv /run/msks-mnt/$name /run/msks-mnt/msksd/
+          moved=1
         fi
       done
-      chown -R msksd:msksd /run/msks-mnt/msksd
+      # The directory itself converges every boot; the recursive
+      # chown runs only when something moved (a converged boot pays
+      # one chown, not a walk over every workspace artifact).
+      chown msksd:msksd /run/msks-mnt/msksd
+      if [ "$moved" -eq 1 ]; then
+        chown -R msksd:msksd /run/msks-mnt/msksd
+      fi
 
       umount /run/msks-mnt
       rm -rf /run/msks-mnt /run/msks-blank 2>/dev/null || true
@@ -544,12 +560,16 @@ let
           $out/etc/systemd/system/local-fs.target.wants/msks-state-format.service
 
         # The daemon: ordered after the store share and state disk it
-        # lives on (Requires: without them it cannot run at all) and
-        # the KVM module its workspaces need. Output goes to the
-        # journal AND the console (the serial log carries the TOFU
-        # fingerprint and the boot markers, as before). A crash
-        # restarts the daemon in place — the supervisor used to need
-        # a whole-VM restart for that.
+        # lives on (Requires: without them it cannot run at all), the
+        # state-disk preparation (Requires: a half-migrated disk —
+        # the format script died mid-move — must not get a daemon
+        # crash-looping against still-root-owned files; the next
+        # boot's converge finishes the migration), and the KVM module
+        # its workspaces need. Output goes to the journal AND the
+        # console (the serial log carries the TOFU fingerprint and
+        # the boot markers, as before). A crash restarts the daemon
+        # in place — the supervisor used to need a whole-VM restart
+        # for that.
         #
         # The privilege contract (#101): a dedicated service user
         # holds exactly two ambient capabilities — CAP_NET_ADMIN
@@ -569,8 +589,8 @@ let
           '[Unit]' \
           'Description=msksd appliance daemon' \
           'Documentation=https://github.com/mcdonc/msks' \
-          'Requires=nix-store.mount state.mount' \
-          'After=nix-store.mount state.mount msks-kvm.service systemd-networkd.service' \
+          'Requires=nix-store.mount state.mount msks-state-format.service' \
+          'After=nix-store.mount state.mount msks-state-format.service msks-kvm.service systemd-networkd.service' \
           'StartLimitIntervalSec=0' \
           ''' \
           '[Service]' \

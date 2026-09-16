@@ -712,6 +712,37 @@ needs_appliance = pytest.mark.skipif(
 )
 
 
+def seed_legacy_state_disk(state_disk: Path, marker_text: str) -> bool:
+    """Seed a pre-#101 (root-daemon) state disk shape (#101 review).
+
+    A legacy disk carries the daemon's entries at the /state TOP
+    level; first boot with the service-user daemon must converge
+    them into /state/msksd with service-user ownership — a missed
+    move silently rotates the TLS CA, so the convergence gets an
+    end-to-end check. debugfs writes root-owned inodes, exactly the
+    legacy ownership. Returns False when the host lacks debugfs
+    (the assertions then soften to a printed note, like the journal
+    read). The seeded entries are ones the running daemon tolerates:
+    volumes/ it never scans, msks-cert.host it rewrites.
+    """
+    if shutil.which("debugfs") is None:
+        return False
+    marker = state_disk.parent / "legacy-marker"
+    marker.write_text(marker_text)
+    for op in (
+        "mkdir /volumes",
+        f"write {marker} /volumes/legacy-marker",
+        f"write {marker} /msks-cert.host",
+    ):
+        seed = subprocess.run(
+            ["debugfs", "-w", "-R", op, str(state_disk)],
+            capture_output=True,
+            timeout=120,
+        )
+        assert seed.returncode == 0, f"seeding {op!r} failed: {seed.stderr}"
+    return True
+
+
 def _devenv_processes(*args: str, timeout: int = 600) -> subprocess.CompletedProcess:
     """Drive the devenv process manager from inside the shell."""
     return subprocess.run(
@@ -749,6 +780,46 @@ async def test_appliance_boot_and_workspace() -> None:
         )
         if probe.returncode == 0:
             pytest.skip("an appliance VMM is already answering on this host")
+
+    # The upgrade-path pin (#101 review): this run boots a FRESH
+    # state disk seeded with the pre-#101 legacy layout, so the
+    # migration runs for real every time — and the dev host's own
+    # state disk stays untouched.
+    marker_text = f"pre-101 daemon state {uuid.uuid4().hex[:8]}\n"
+    legacy_dir = tempfile.TemporaryDirectory(prefix="msks-legacy-state")
+    state_disk = Path(legacy_dir.name) / "state.ext4"
+    # Sparse copy: the template is an 8 GiB image with large holes,
+    # and a dense copy would ENOSPC a tmpfs-backed TMPDIR (the same
+    # care read_appliance_journal takes).
+    copy = subprocess.run(
+        [
+            "cp",
+            "--sparse=always",
+            str(app_dir / "image" / "state.ext4"),
+            str(state_disk),
+        ],
+        capture_output=True,
+        timeout=300,
+    )
+    assert copy.returncode == 0, (
+        f"sparse copy of the state template failed: {copy.stderr}"
+    )
+    # The template is 0444 in the store; the writable disk the VMM
+    # opens O_RDWR needs the write bit (appliance-setup.sh chmods its
+    # own copy — this pre-made one must match).
+    state_disk.chmod(0o644)
+    seeded = seed_legacy_state_disk(state_disk, marker_text)
+    if not seeded:
+        print("debugfs not on PATH; skipping the legacy-state assertions")
+    prior_state_env = os.environ.get("MSKSD_APPLIANCE_STATE")
+    os.environ["MSKSD_APPLIANCE_STATE"] = str(state_disk)
+    # The console bring-up knob's documented slow-host use: the
+    # workspace guest boots under nested KVM, and the default 15s
+    # vsock window is short there (the run script's own comment).
+    # An operator's value wins.
+    prior_cmdline_extra = os.environ.get("MSKS_APPLIANCE_CMDLINE_EXTRA")
+    if not prior_cmdline_extra:
+        os.environ["MSKS_APPLIANCE_CMDLINE_EXTRA"] = "msksd.vsock_wait_timeout_s=120"
 
     up = _devenv_processes("up", "-d")
     assert up.returncode == 0, f"devenv processes up failed:\n{up.stdout}\n{up.stderr}"
@@ -841,7 +912,14 @@ async def test_appliance_boot_and_workspace() -> None:
                     raise AssertionError(
                         f"console never echoed the marker; got: {console_got!r}"
                     )
-                message = await asyncio.wait_for(shell_ws.recv(), 30.0)
+                # A silent gap is normal, not failure: a nested-virt
+                # guest can take a minute or more past "running" to
+                # arm its vsock console, and the per-recv wait must
+                # not cut the marker's own deadline short.
+                try:
+                    message = await asyncio.wait_for(shell_ws.recv(), 30.0)
+                except TimeoutError:
+                    continue
                 console_got += (
                     message if isinstance(message, bytes) else message.encode()
                 )
@@ -861,7 +939,12 @@ async def test_appliance_boot_and_workspace() -> None:
                         raise AssertionError(
                             f"console never showed {needle!r}; got: {got[-400:]!r}"
                         )
-                    message = await asyncio.wait_for(shell_ws.recv(), 30.0)
+                    # Same gap tolerance as the first marker: the
+                    # deadline, not a silent 30s, decides failure.
+                    try:
+                        message = await asyncio.wait_for(shell_ws.recv(), 30.0)
+                    except TimeoutError:
+                        continue
                     got += message if isinstance(message, bytes) else message.encode()
                 return got
 
@@ -959,6 +1042,15 @@ async def test_appliance_boot_and_workspace() -> None:
         assert down.returncode == 0, (
             f"devenv processes down failed:\n{down.stdout}\n{down.stderr}"
         )
+        if prior_state_env is None:
+            del os.environ["MSKSD_APPLIANCE_STATE"]
+        else:
+            os.environ["MSKSD_APPLIANCE_STATE"] = prior_state_env
+        if prior_cmdline_extra is None:
+            del os.environ["MSKS_APPLIANCE_CMDLINE_EXTRA"]
+        elif prior_cmdline_extra != os.environ.get("MSKS_APPLIANCE_CMDLINE_EXTRA"):
+            os.environ["MSKS_APPLIANCE_CMDLINE_EXTRA"] = prior_cmdline_extra
+        legacy_dir.cleanup()
     assert not (app_dir / "api.sock").exists()
     # The supervisor is gone too: teardown is its view of "stopped",
     # not just pidfile/socket absence.
@@ -970,9 +1062,7 @@ async def test_appliance_boot_and_workspace() -> None:
     # disk by journald (#92): read it back from the host and require
     # the boot's records to have survived the teardown. Softens to a
     # printed note on hosts without journalctl/debugfs.
-    journal = read_appliance_journal(
-        Path(os.environ.get("MSKSD_APPLIANCE_STATE", app_dir / "state.ext4"))
-    )
+    journal = read_appliance_journal(state_disk)
     if journal is None:
         print("journalctl/debugfs not on PATH; skipping journal assertions")
     else:
@@ -995,13 +1085,46 @@ async def test_appliance_boot_and_workspace() -> None:
         assert identity, "journal never recorded the daemon identity"
         match = re.search(r"uid=(\d+)\(msksd\)", identity[-1])
         assert match, f"daemon identity is not the msksd user: {identity[-1]!r}"
-        assert int(match.group(1)) != 0, identity[-1]
+        service_uid = int(match.group(1))
+        assert service_uid != 0, identity[-1]
         assert "(kvm)" in identity[-1], f"daemon missed the kvm group: {identity[-1]!r}"
         for field in ("CapEff", "CapAmb"):
             lines = [ln for ln in journal if f"daemon {field}:" in ln]
             assert lines, f"journal never recorded the daemon {field}"
             assert "0000000000001400" in lines[-1], (
                 f"daemon {field} is not the two-capability set: {lines[-1]!r}"
+            )
+        # The legacy state converged into the service user's home
+        # (#101 review): the seeded pre-#101 entries moved (not were
+        # recreated — content survives) and carry the service user's
+        # ownership, and nothing daemon-shaped stays at the top level
+        # (the host-seeded debug-shell/diag.sh markers are not the
+        # daemon's and are not touched).
+        if seeded and journal is not None:
+
+            def debugfs_read(op: str) -> subprocess.CompletedProcess:
+                return subprocess.run(
+                    ["debugfs", "-R", op, str(state_disk)],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+
+            stat = debugfs_read("stat /msksd/volumes/legacy-marker")
+            assert stat.returncode == 0, stat.stderr
+            assert re.search(
+                rf"User:\s+{service_uid}\s+Group:\s+{service_uid}", stat.stdout
+            ), f"legacy marker not service-user-owned:\n{stat.stdout}"
+            readback = debugfs_read("cat /msksd/volumes/legacy-marker")
+            assert readback.stdout == marker_text, (
+                "the legacy marker was recreated, not moved"
+            )
+            top = debugfs_read("ls -l /")
+            assert top.returncode == 0, top.stderr
+            names = {line.split()[-1] for line in top.stdout.splitlines()}
+            assert "msksd" in names, f"no service-user home on the disk:\n{top.stdout}"
+            assert "volumes" not in names and "msks-cert.host" not in names, (
+                f"daemon entries still at the state-disk top level:\n{top.stdout}"
             )
 
 

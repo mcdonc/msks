@@ -35,8 +35,9 @@ the file is located.
 
 ### The appliance
 
-The appliance writes `/run/msksd/msksd.yaml` (a service-user-owned
-`RuntimeDirectory`; the tmpfs) at every boot
+The appliance writes `/run/msksd/msksd.yaml` — a
+service-user-owned `RuntimeDirectory` on the `/run` tmpfs — at
+every boot
 carrying the build's settings — the state dir, the listener's bind,
 and the store paths of the tools the daemon execs — and starts the
 daemon with `--config /run/msksd/msksd.yaml`. The file is regenerated at
