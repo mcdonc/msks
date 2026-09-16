@@ -169,6 +169,7 @@ jobs:
           PATH=\"\$PATH\" HOME=/root
           python -m pytest src/msks/tests/test_smoke.py::test_local_egress_boot
           src/msks/tests/test_smoke.py::test_local_sshd_and_rsync
+          src/msks/tests/test_smoke.py::test_local_minted_identity
           -q -p no:cacheprovider --no-cov"
 
       # The failing boot's own evidence, kept by the tests' failure

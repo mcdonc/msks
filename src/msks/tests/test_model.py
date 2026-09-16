@@ -64,6 +64,34 @@ async def test_create_and_get_workspace(app_for) -> None:
     assert fetched["cpus"] == 2
 
 
+async def test_create_and_fetch_minted_identity(app_for) -> None:
+    """The #111 columns round-trip: the spec's public half plus the
+    mint-to-row private half, which never rides the API-facing dict."""
+    app = app_for()
+    await app.state.model.create_all()
+    private_pem = "-----BEGIN OPENSSH PRIVATE KEY-----\n...\n"
+    pub = "ecdsa-sha2-nistp256 AAAA msksd:ws1"
+    row = await app.state.model.create_workspace(
+        spec(ssh_pubkey=pub), ssh_privkey=private_pem
+    )
+    assert row["ssh_pubkey"] == pub
+    assert "ssh_privkey" not in row
+    key = await app.state.model.get_ssh_key("ws1")
+    assert key == {"public_key": pub, "private_key": private_pem}
+
+
+async def test_get_ssh_key_without_identity_and_absent(app_for) -> None:
+    """A pre-#111 row carries NULL halves; a missing workspace is
+    None — the caller distinguishes row-missing from
+    identity-missing."""
+    app = app_for()
+    await app.state.model.create_all()
+    await app.state.model.create_workspace(spec())
+    key = await app.state.model.get_ssh_key("ws1")
+    assert key == {"public_key": None, "private_key": None}
+    assert await app.state.model.get_ssh_key("nope") is None
+
+
 async def test_workspace_carries_artifact_facts(app_for) -> None:
     """The #14 columns round-trip: image binding, owning host, sizes."""
     app = app_for()

@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
 from .. import __version__, imagestore
+from ..identity import mint
 from ..imagestore import ImageError
 from ..microvm.errors import MicrovmError
 from ..microvm.spec import VmSpec
@@ -75,10 +76,11 @@ class WorkspaceCreate(BaseModel):
     # into the no-NIC posture.
     egress: bool = True
     # First-boot provisioning (#41): a shell script (leading "#!") or
-    # cloud-config YAML — cloud-init runs both — delivered verbatim on
-    # the workspace's read-only cidata seed disk. Create-time and
-    # immutable: a workspace keeps its payload until it is deleted and
-    # recreated.
+    # cloud-config YAML — cloud-init runs both — delivered on the
+    # workspace's read-only cidata seed disk, composed beside the
+    # minted identity's seeding script when one was minted (#111).
+    # Create-time and immutable: a workspace keeps its payload until
+    # it is deleted and recreated.
     user_data: str | None = Field(default=None, max_length=USER_DATA_MAX)
 
 
@@ -366,6 +368,7 @@ def spec_for(row: dict) -> VmSpec:
         home_mib=row["home_mib"],
         egress=bool(row.get("egress", False)),
         user_data=row.get("user_data"),
+        ssh_pubkey=row.get("ssh_pubkey"),
     )
 
 
@@ -400,6 +403,21 @@ def host_mismatch(app, row: dict) -> str | None:
     )
 
 
+async def serialize_create(app, workspace_id: str):
+    """Serialize same-id creates end to end (#111).
+
+    The minted identity makes every create racer-specific — two
+    concurrent creates of one id would each mint their own key, and
+    the artifact installs are last-rename-wins, so the loser's seed
+    could outlive its 409 under the winner's row: a workspace whose
+    key never logs in. One lock per workspace id, held from the
+    exists-check through the row insert, keeps the pair (row, seed)
+    from one mint; the loser sees the winner's row and answers 409.
+    """
+    lock = app.state.create_locks.setdefault(workspace_id, asyncio.Lock())
+    return lock
+
+
 async def _workspace_or_404(app, workspace_id: str) -> dict:
     row = await app.state.model.get_workspace(workspace_id)
     if row is None:
@@ -410,6 +428,7 @@ async def _workspace_or_404(app, workspace_id: str) -> dict:
 def build_api(app) -> FastAPI:
     """The FastAPI application bound to one msks App."""
     hub = EventHub()
+    app.state.create_locks: dict[str, asyncio.Lock] = {}
 
     @contextlib.asynccontextmanager
     async def lifespan(api: FastAPI) -> AsyncIterator[None]:
@@ -465,6 +484,10 @@ def build_api(app) -> FastAPI:
 
     @api.post("/api/v1/workspaces", dependencies=[Depends(require_token)])
     async def create_workspace(body: WorkspaceCreate) -> Response:
+        async with await serialize_create(app, body.id):
+            return await create_workspace_locked(body)
+
+    async def create_workspace_locked(body: WorkspaceCreate) -> Response:
         if await app.state.model.get_workspace(body.id) is not None:
             raise HTTPException(status_code=409, detail="workspace exists")
         if body.egress and app.state.settings.vmm.driver == "k8s":
@@ -493,6 +516,24 @@ def build_api(app) -> FastAPI:
                 ),
             )
         boot = resolve_boot(app, body)
+        # The identity (#111) mints before the artifacts: its public
+        # half rides the seed (an artifact), its private half goes
+        # straight into the row. The k8s backend builds no seed
+        # disks, so it mints nothing — a k8s workspace keeps the
+        # pre-#111 shape (the key endpoint answers the no-identity
+        # 404), exactly like its user_data refusal. A bad key type on
+        # a directly-built Settings is a daemon fault, not a client
+        # error. Keygen is CPU-bound (RSA 3072 especially): off the
+        # loop, like every other tool call the routes make.
+        private_key = None
+        if app.state.settings.vmm.driver == "local":
+            try:
+                private_key, public_key = await asyncio.to_thread(
+                    mint, app.state.settings.vmm.ssh_key_type
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=500, detail=str(exc)) from None
+            boot["ssh_pubkey"] = f"{public_key} msksd:{body.id}"
         # The persistent artifacts (#14) come before the row: a refused
         # create (a leftover artifact from a previous workspace of this
         # id) answers 503 with nothing written and nothing removed, and
@@ -513,6 +554,7 @@ def build_api(app) -> FastAPI:
                 spec_for(boot),
                 image_hash=boot["image_hash"],
                 host=owner_host(app),
+                ssh_privkey=private_key,
             )
         except IntegrityError:
             # The insert lost the race. The winner's row owns whatever
@@ -609,6 +651,33 @@ def build_api(app) -> FastAPI:
     @api.get("/api/v1/workspaces/{workspace_id}", dependencies=[Depends(require_token)])
     async def get_workspace(workspace_id: str) -> dict:
         return await _workspace_or_404(app, workspace_id)
+
+    @api.get(
+        "/api/v1/workspaces/{workspace_id}/ssh-key",
+        dependencies=[Depends(require_token)],
+    )
+    async def workspace_ssh_key(workspace_id: str) -> dict:
+        """The minted identity (#111): both halves, token-gated.
+
+        A token holder already owns the workspace's root console, so
+        the private half grants nothing new; the response carries the
+        type name (parsed off the public line) so a client never
+        guesses the algorithm.
+        """
+        key = await app.state.model.get_ssh_key(workspace_id)
+        if key is None:
+            raise HTTPException(status_code=404, detail="no such workspace")
+        if key["public_key"] is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"workspace {workspace_id} has no minted identity",
+            )
+        return {
+            "workspace": workspace_id,
+            "type": key["public_key"].split()[0],
+            "public_key": key["public_key"],
+            "private_key": key["private_key"],
+        }
 
     # The #41 immutability contract, said out loud: workspaces are
     # create-time objects (user_data above all), and a mutation

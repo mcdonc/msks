@@ -35,6 +35,101 @@ def client_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MSKSC_TOKEN", "tok")
 
 
+KEY_BODY = {
+    "workspace": "alpha",
+    "type": "ecdsa-sha2-nistp256",
+    "public_key": "ecdsa-sha2-nistp256 AAAA msksd:alpha",
+    "private_key": (
+        "-----BEGIN OPENSSH PRIVATE KEY-----\nbytebyte\n"
+        "-----END OPENSSH PRIVATE KEY-----\n"
+    ),
+}
+
+
+def test_cmd_key_prints_public(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``msks key`` prints the safe half by default: the public line
+    a token holder can paste anywhere."""
+    client_env(monkeypatch)
+    seen = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["path"] = req.url.path
+        seen["auth"] = req.headers.get("authorization")
+        return httpx.Response(200, json=KEY_BODY)
+
+    rc = cli.cmd_key("alpha", transport=mock(handler))
+    assert rc == 0
+    assert seen["path"] == "/api/v1/workspaces/alpha/ssh-key"
+    assert seen["auth"] == "Bearer tok"
+    assert capsys.readouterr().out.strip() == KEY_BODY["public_key"]
+
+
+def test_cmd_key_private_and_out(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """--private prints the private half; --out materializes it 0600
+    at the operator-named path and prints only the path."""
+    client_env(monkeypatch)
+    transport = mock(lambda req: httpx.Response(200, json=KEY_BODY))
+    rc = cli.cmd_key("alpha", as_private=True, transport=transport)
+    assert rc == 0
+    assert capsys.readouterr().out == KEY_BODY["private_key"]
+    out = tmp_path / "id"
+    rc = cli.cmd_key("alpha", out=str(out), transport=transport)
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == str(out)
+    assert out.read_text() == KEY_BODY["private_key"]
+    assert out.stat().st_mode & 0o777 == 0o600
+
+
+def test_cmd_key_out_forces_mode_on_existing_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``--out`` forces 0600 even on a pre-existing world-readable
+    file: open()'s mode argument only applies at creation, the
+    write must not leave the old mode under new contents."""
+    client_env(monkeypatch)
+    out = tmp_path / "leaky"
+    out.write_text("stale\n")
+    out.chmod(0o644)
+    rc = cli.cmd_key(
+        "alpha",
+        out=str(out),
+        transport=mock(lambda req: httpx.Response(200, json=KEY_BODY)),
+    )
+    assert rc == 0
+    assert out.read_text() == KEY_BODY["private_key"]
+    assert out.stat().st_mode & 0o777 == 0o600
+
+
+def test_cmd_key_out_error_is_one_line(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An unwritable --out path fails with one readable line (exit 1),
+    the CLI's error contract — not a raw traceback."""
+    client_env(monkeypatch)
+    with pytest.raises(SystemExit, match="msks: cannot write key file"):
+        cli.cmd_key(
+            "alpha",
+            out=str(tmp_path / "no-such-dir" / "k"),
+            transport=mock(lambda req: httpx.Response(200, json=KEY_BODY)),
+        )
+
+
+def test_cmd_key_dispatch(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The parser route: `msks key <ws>` through main()."""
+    client_env(monkeypatch)
+    rc = cli.main(
+        ["key", "alpha"], transport=mock(lambda req: httpx.Response(200, json=KEY_BODY))
+    )
+    assert rc == 0
+    assert "ecdsa-sha2-nistp256" in capsys.readouterr().out
+
+
 def test_cmd_ls_formats_rows(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

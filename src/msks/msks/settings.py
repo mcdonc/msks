@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 from ipaddress import IPv4Network
 from pathlib import Path
 
+from .identity import KEY_TYPES
+
 VALID_DRIVERS = ("local", "k8s")
 
 
@@ -122,6 +124,10 @@ class VmmSettings:
     host_name: str = field(default_factory=socket.gethostname)
     root_mib: int = 10240
     home_mib: int = 2048
+    # The identity key type msksd mints at create (#111): ECDSA
+    # P-256 is the FIPS-approvable default (#115); the type is a
+    # setting so the default can move without code surgery.
+    ssh_key_type: str = "ecdsa"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> VmmSettings:
@@ -175,6 +181,7 @@ class VmmSettings:
             host_name=_env(env, "MSKSD_HOST_NAME", cls().host_name),
             root_mib=_parse_positive_int(env, "MSKSD_ROOT_MIB", cls.root_mib),
             home_mib=_parse_positive_int(env, "MSKSD_HOME_MIB", cls.home_mib),
+            ssh_key_type=parse_key_type(env, "MSKSD_SSH_KEY_TYPE", cls.ssh_key_type),
         )
 
 
@@ -283,6 +290,15 @@ class Settings:
             server=ServerSettings.from_env(env),
             net=NetSettings.from_env(env),
         )
+
+
+def parse_key_type(env: Mapping[str, str], name: str, default: str) -> str:
+    """One of the mintable identity types (#115): a named error
+    otherwise, so a typo fails at settings load, not at create."""
+    value = _env(env, name, default)
+    if value not in KEY_TYPES:
+        raise ValueError(f"{name} must be one of {sorted(KEY_TYPES)}, got {value!r}")
+    return value
 
 
 def _parse_subnet(env: Mapping[str, str], name: str, default: str) -> IPv4Network:

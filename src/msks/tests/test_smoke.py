@@ -152,7 +152,7 @@ def collect_failure_evidence(state_dir: Path, wid: str, serial_log: Path) -> Non
                 (keep / name).chmod(0o644)
     # The ssh smoke's forward-client logs: the ssh-path evidence the
     # artifact upload exists for.
-    for source in state_dir.glob("ssh-work/*.log"):
+    for source in state_dir.glob("*-work/*.log"):
         with contextlib.suppress(OSError):
             shutil.copy2(source, keep / source.name)
             (keep / source.name).chmod(0o644)
@@ -2147,6 +2147,363 @@ async def test_local_sshd_and_rsync() -> None:
     finally:
         # to_thread even for the SIGTERM waits: the API server shares
         # this loop (the run_ssh lesson applies to any blocking call).
+        for proc in forwards:
+            with contextlib.suppress(Exception):
+                proc.terminate()
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(proc.wait, 10)
+        if api_task is not None:
+            api_server.should_exit = True
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(asyncio.shield(api_task), timeout=10)
+        with contextlib.suppress(Exception):
+            await microvm.cleanup(wid)
+        with contextlib.suppress(OSError):
+            forwarding.write_text(forwarding_was)
+        shutil.rmtree(state_dir, ignore_errors=True)
+
+
+@needs_egress
+@needs_local
+@needs_ssh_tools
+async def test_local_minted_identity() -> None:
+    """The minted identity end to end (#111): create mints and seeds,
+    the key fetch serves the halves, and a fresh egress workspace
+    accepts ssh as root and as the msks workspace user with no manual
+    key steps anywhere.
+
+    The whole create path runs through the real API (POST /workspaces
+    → mint → seed build at prepare → row), the private half arrives
+    via ``msks key --out`` (the CLI over the same API the forward
+    uses), and a stop/start cycle serves the same identity again —
+    the halves live on the workspace's row, not in any process.
+    """
+    nft_tool = os.environ.get("MSKSD_TEST_NFT") or shutil.which("nft") or "nft"
+    ip_tool = os.environ.get("MSKSD_TEST_IP") or shutil.which("ip") or "ip"
+    state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
+    token = f"smoke-token-{uuid.uuid4().hex}"
+    api_port = free_port()
+    settings = Settings(
+        vmm=VmmSettings(state_dir=state_dir),
+        net=NetSettings(
+            enabled=True,
+            uplink=_default_route_iface(),
+            ip_tool=ip_tool,
+            nft_tool=nft_tool,
+        ),
+        server=ServerSettings(
+            host="127.0.0.1",
+            port=api_port,
+            db_path=state_dir / "smoke.db",
+            bootstrap_token=token,
+        ),
+    )
+    app = build_app(settings)
+    microvm = app.state.microvm
+    wid = f"ident-{uuid.uuid4().hex[:8]}"
+    serial_log = state_dir / "vms" / wid / "serial.log"
+    workdir = state_dir / "ident-work"
+    workdir.mkdir(parents=True)
+    key = workdir / "id"
+    known_hosts = workdir / "known_hosts"
+    # The operator payload rides the same seed as the identity (the
+    # MIME-composed default path every --user-data create now takes)
+    # and lands in the guest beside the planted keys.
+    payload_marker = f"PAYLOAD-{uuid.uuid4().hex[:8]}"
+
+    # The daemon verifies, never writes, ip_forward (#101); the root
+    # harness owns the host's setting for the run and restores it.
+    forwarding = Path("/proc/sys/net/ipv4/ip_forward")
+    forwarding_was = forwarding.read_text()
+    forwarding.write_text("1")
+
+    api_server = None
+    api_task = None
+    forwards: list[subprocess.Popen] = []
+    forward_logs: list[Path] = []
+
+    cli_env = dict(
+        os.environ,
+        MSKSC_URL=f"http://127.0.0.1:{api_port}",
+        MSKSC_TOKEN=token,
+    )
+
+    def start_forward(port: int) -> None:
+        log = workdir / f"forward-{len(forward_logs)}.log"
+        forward_logs.append(log)
+        forwards.append(
+            subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "msks.client.cli",
+                    "forward",
+                    wid,
+                    "22",
+                    "--local",
+                    str(port),
+                ],
+                env=cli_env,
+                stdout=subprocess.DEVNULL,
+                stderr=open(log, "ab"),
+            )
+        )
+
+    def forward_evidence() -> str:
+        return "\n".join(
+            f"--- {log.name} ---\n{log.read_text(errors='replace')[-800:]}"
+            for log in forward_logs
+            if log.exists()
+        )
+
+    async def await_forward_listener(port: int, timeout_s: float = 30.0) -> None:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_s
+        needle = f"msks: 127.0.0.1:{port} -> "
+        while loop.time() < deadline:
+            log = forward_logs[-1]
+            if log.exists() and needle in log.read_text(errors="replace"):
+                return
+            await asyncio.sleep(0.05)
+        raise AssertionError(
+            f"msks forward never listened on 127.0.0.1:{port} within "
+            f"{timeout_s}s; forward logs:\n{forward_evidence()}"
+        )
+
+    def ssh_opts(port: int) -> list[str]:
+        return [
+            "-F",
+            os.devnull,
+            "-i",
+            str(key),
+            "-o",
+            "IdentitiesOnly=yes",
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-o",
+            f"UserKnownHostsFile={known_hosts}",
+            "-o",
+            "ConnectTimeout=15",
+            "-o",
+            "BatchMode=yes",
+            "-p",
+            str(port),
+        ]
+
+    async def run_ssh(
+        port: int, user: str, command: str
+    ) -> subprocess.CompletedProcess:
+        # to_thread, never a bare subprocess.run: the API server rides
+        # this loop (the #110 harness lesson).
+        result = await asyncio.to_thread(
+            subprocess.run,
+            [SSH_BIN, *ssh_opts(port), f"{user}@127.0.0.1", command],
+            capture_output=True,
+            text=True,
+            timeout=SSH_CMD_TIMEOUT_S,
+        )
+        if result.returncode != 0:
+            verbose = await asyncio.to_thread(
+                subprocess.run,
+                [
+                    SSH_BIN,
+                    *ssh_opts(port),
+                    "-o",
+                    "LogLevel=DEBUG3",
+                    f"{user}@127.0.0.1",
+                    command,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=SSH_CMD_TIMEOUT_S,
+            )
+            result.stderr += (
+                f"\n--- verbose rerun (rc={verbose.returncode}) ---\n"
+                f"{verbose.stderr[-3000:]}"
+            )
+        return result
+
+    async def cli(*args: str, timeout: float = 120.0) -> subprocess.CompletedProcess:
+        """One msks CLI call against the test daemon (to_thread: the
+        API server shares this loop)."""
+        return await asyncio.to_thread(
+            subprocess.run,
+            [sys.executable, "-m", "msks.client.cli", *args],
+            env=cli_env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+
+    async def start_via_api() -> None:
+        started = await cli("start", wid)
+        assert started.returncode == 0, started.stderr
+
+    async def stop_via_api() -> None:
+        stopped = await cli("stop", wid)
+        assert stopped.returncode == 0, stopped.stderr
+
+    async def boot_and_wait() -> None:
+        await await_guest_up(serial_log)
+        # The seed's script runs in cloud-init's user-scripts stage
+        # (cloud_final); wait for cloud-init to be done before any
+        # login or authorized_keys assertion, so the stage's ordering
+        # relative to sshd never matters.
+        await run_in_console(microvm, wid, "cloud-init status --wait", "done")
+        await run_in_console(
+            microvm,
+            wid,
+            "i=0; while [ $i -lt 30 ] "
+            "&& ! { systemctl is-active msks-wait-address >/dev/null 2>&1 "
+            "&& systemctl is-active ssh >/dev/null 2>&1; }; "
+            "do sleep 1; i=$((i+1)); done; "
+            "systemctl is-active msks-wait-address >/dev/null 2>&1 "
+            "&& systemctl is-active ssh >/dev/null 2>&1 && echo U-$((6*7))",
+            "U-42",
+        )
+
+    async def fetch_key(out: Path) -> str:
+        # The CLI fetch (#111): same API, same token, mode 0600 —
+        # no manual key steps for the operator.
+        result = await asyncio.to_thread(
+            subprocess.run,
+            [
+                sys.executable,
+                "-m",
+                "msks.client.cli",
+                "key",
+                wid,
+                "--out",
+                str(out),
+            ],
+            env=cli_env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        assert out.stat().st_mode & 0o777 == 0o600
+        return out.read_text()
+
+    try:
+        api_server = uvicorn.Server(
+            uvicorn.Config(
+                build_api(app),
+                host="127.0.0.1",
+                port=api_port,
+                log_level="warning",
+            )
+        )
+        api_task = asyncio.create_task(api_server.serve())
+        deadline = asyncio.get_running_loop().time() + 30
+        while not api_server.started:
+            if asyncio.get_running_loop().time() > deadline:
+                raise AssertionError("the test API server never started (30s)")
+            await asyncio.sleep(0.05)
+
+        # The real create path: mint at create, seed at prepare.
+        payload_path = workdir / "payload.sh"
+        payload_path.write_text(
+            f"#!/bin/sh\nprintf '%s\\n' {payload_marker} > /root/payload\n",
+            encoding="utf-8",
+        )
+        created = await cli(
+            "create",
+            wid,
+            "--kernel",
+            VMLINUX,
+            *(["--initrd", INITRD] if INITRD else []),
+            "--rootfs",
+            ROOTFS,
+            *(["--cmdline", CMDLINE] if CMDLINE else []),
+            "--egress",
+            "--user-data",
+            str(payload_path),
+        )
+        assert created.returncode == 0, created.stderr
+
+        private_pem = await fetch_key(key)
+        assert private_pem.startswith("-----BEGIN OPENSSH PRIVATE KEY-----")
+
+        # Start via the API, boot, and let the guest say who its keys
+        # are for: both authorized_keys files carry the minted line.
+        await start_via_api()
+        await boot_and_wait()
+        pub = await asyncio.to_thread(
+            subprocess.run,
+            [sys.executable, "-m", "msks.client.cli", "key", wid],
+            env=cli_env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        minted = pub.stdout.strip()
+        assert minted.startswith("ecdsa-sha2-nistp256 ") and minted.endswith(
+            f"msksd:{wid}"
+        )
+        await run_in_console(
+            microvm,
+            wid,
+            f"grep -qxF '{minted}' /root/.ssh/authorized_keys "
+            f"&& grep -qxF '{minted}' /home/msks/.ssh/authorized_keys "
+            f"&& stat -c %a /home/msks/.ssh/authorized_keys "
+            f"&& echo AK-$((6*7))",
+            "AK-42",
+        )
+        # The operator payload landed beside the identity — the
+        # composed document ran whole through cloud-init.
+        await run_in_console(microvm, wid, "cat /root/payload", payload_marker)
+
+        # Logins: root and the workspace user, the minted key alone.
+        forward_port = free_port()
+        start_forward(forward_port)
+        await await_forward_listener(forward_port)
+        root_login = await run_ssh(forward_port, "root", "echo ROOT-$((6*7))")
+        assert root_login.returncode == 0, (
+            f"{root_login.stdout}\n{root_login.stderr}\n"
+            f"forward logs:\n{forward_evidence()}"
+        )
+        assert "ROOT-42" in root_login.stdout, root_login.stdout
+        user_login = await run_ssh(forward_port, "msks", 'echo "$(whoami)-$((6*7))"')
+        assert user_login.returncode == 0, (
+            f"{user_login.stdout}\n{user_login.stderr}\n"
+            f"forward logs:\n{forward_evidence()}"
+        )
+        assert "msks-42" in user_login.stdout, user_login.stdout
+
+        # stop/start: the row serves the same identity again — the
+        # halves persist on the workspace, not in any process — and
+        # the overlay keeps the planted keys, so the same private half
+        # still opens the same guest.
+        for proc in forwards:
+            proc.terminate()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                await asyncio.to_thread(proc.wait, 10)
+        forwards.clear()
+        await stop_via_api()
+        again_key = workdir / "id-again"
+        again_pem = await fetch_key(again_key)
+        assert again_pem == private_pem
+        serial_log.unlink(missing_ok=True)
+        await start_via_api()
+        await boot_and_wait()
+        start_forward(forward_port)
+        await await_forward_listener(forward_port)
+        relogin = await run_ssh(forward_port, "msks", 'echo "BACK-$(whoami)-$((6*7))"')
+        assert relogin.returncode == 0, (
+            f"{relogin.stdout}\n{relogin.stderr}\nforward logs:\n{forward_evidence()}"
+        )
+        assert "BACK-msks-42" in relogin.stdout, relogin.stdout
+
+        await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
+        final = await microvm.info(wid)
+        assert final.status.value in ("stopped", "absent")
+    except BaseException:
+        collect_failure_evidence(state_dir, wid, serial_log)
+        with contextlib.suppress(Exception):
+            await microvm.kill(wid)
+        raise
+    finally:
         for proc in forwards:
             with contextlib.suppress(Exception):
                 proc.terminate()

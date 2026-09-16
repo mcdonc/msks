@@ -107,7 +107,11 @@ def tools(tmp_path: Path):
 
 
 def spec(
-    base: Path, root_mib: int = 10240, home_mib: int = 2048, user_data=None
+    base: Path,
+    root_mib: int = 10240,
+    home_mib: int = 2048,
+    user_data=None,
+    ssh_pubkey=None,
 ) -> VmSpec:
     return VmSpec(
         workspace_id=WID,
@@ -116,6 +120,7 @@ def spec(
         root_mib=root_mib,
         home_mib=home_mib,
         user_data=user_data,
+        ssh_pubkey=ssh_pubkey,
     )
 
 

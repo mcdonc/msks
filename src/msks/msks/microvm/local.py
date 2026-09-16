@@ -206,7 +206,10 @@ def vm_net(attachment) -> dict | None:
 
 
 def disk_entries(
-    state_dir: Path, workspace_id: str, user_data: str | None = None
+    state_dir: Path,
+    workspace_id: str,
+    user_data: str | None = None,
+    ssh_pubkey: str | None = None,
 ) -> list[dict]:
     """The VM's persistent disks (#14): root overlay, home volume.
 
@@ -218,10 +221,10 @@ def disk_entries(
     ``backing_files``: v51 loads a qcow2 backing file only when the
     disk says so (landlock hardening, GHSA advisory follow-up).
 
-    A workspace created with ``user_data`` (#41) adds a third disk:
-    its ``cidata`` seed, read-only raw. The caller has run
-    ``ensure_artifacts`` first, so the file exists by the time the
-    VMM opens it.
+    A workspace created with ``user_data`` (#41) or a minted
+    identity (#111) adds a third disk: its ``cidata`` seed, read-only
+    raw. The caller has run ``ensure_artifacts`` first, so the file
+    exists by the time the VMM opens it.
     """
     disks = [
         {
@@ -236,7 +239,7 @@ def disk_entries(
             "image_type": "Raw",
         },
     ]
-    if user_data is not None:
+    if user_data is not None or ssh_pubkey is not None:
         disks.append(
             {
                 "path": str(persist.seed_path(state_dir, workspace_id)),
@@ -360,6 +363,7 @@ class LocalCloudHypervisor(MicrovmDriver):
                     self._settings().vmm.state_dir,
                     spec.workspace_id,
                     user_data=spec.user_data,
+                    ssh_pubkey=spec.ssh_pubkey,
                 ),
                 socket_path,
                 serial_log,

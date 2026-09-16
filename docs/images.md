@@ -91,9 +91,11 @@ EXEC:/bin/bash,pty,ctty,echo=1,icanon=1,stderr,setsid`
   stays on the right device whatever the disk order is; `nofail`
   keeps boots moving when the volume is absent.
 - **Run cloud-init against the cidata seed disk.** A workspace
-  created with `user_data` (#41) boots with a third, read-only
-  virtio disk: a small iso9660 filesystem labeled `cidata` carrying
-  `user-data` (the payload, verbatim) and `meta-data`
+  created with `user_data` (#41) or a minted identity (#111) boots
+  with a third, read-only virtio disk: a small iso9660 filesystem
+  labeled `cidata` carrying `user-data` (the operator payload,
+  composed beside the identity's seeding script when a key was
+  minted) and `meta-data`
   (`instance-id`, keyed off the workspace id) at its root — exactly
   cloud-init's NoCloud seed layout. The image ships cloud-init (the
   Debian `genericcloud` base does), and two dropins pin the

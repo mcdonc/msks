@@ -1,5 +1,6 @@
 """API-level tests over ASGITransport with a stubbed microvm seam."""
 
+import asyncio
 from pathlib import Path
 
 import httpx
@@ -180,6 +181,119 @@ async def test_workspace_lifecycle(client) -> None:
     assert start_missing.status_code == 404
 
 
+async def test_create_mints_identity(client) -> None:
+    """Create mints the identity (#111): the spec the seam saw
+    carries the public line (so the seed plants it), and the halves
+    the key endpoint serves re-derive each other — one keypair."""
+    from cryptography.hazmat.primitives import serialization
+    from msks.identity import KEY_TYPES
+
+    http, _app, stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-id", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    assert created.json()["ssh_pubkey"].startswith(f"{KEY_TYPES['ecdsa']} ")
+    assert created.json()["ssh_pubkey"].endswith("msksd:ws-id")
+    spec_seen = stub.seen_specs["ws-id"]
+    assert spec_seen.ssh_pubkey == created.json()["ssh_pubkey"]
+    key = await http.get("/api/v1/workspaces/ws-id/ssh-key", headers=auth())
+    assert key.status_code == 200
+    body = key.json()
+    assert body["type"] == KEY_TYPES["ecdsa"]
+    assert body["public_key"] == created.json()["ssh_pubkey"]
+    loaded = serialization.load_ssh_private_key(
+        body["private_key"].encode(), password=b""
+    )
+    derived = (
+        loaded.public_key()
+        .public_bytes(
+            encoding=serialization.Encoding.OpenSSH,
+            format=serialization.PublicFormat.OpenSSH,
+        )
+        .decode()
+    )
+    assert derived in body["public_key"]
+
+
+async def test_ssh_key_endpoint_auth_and_missing(client) -> None:
+    """The key fetch is token-gated; a missing workspace and a
+    pre-#111 row are different 404s."""
+    http, app, _stub = client
+    unauthorized = await http.get("/api/v1/workspaces/ws-x/ssh-key")
+    assert unauthorized.status_code == 401
+    absent = await http.get("/api/v1/workspaces/ghost/ssh-key", headers=auth())
+    assert absent.status_code == 404
+    assert "no such workspace" in absent.json()["detail"]
+    # A row without an identity: minted-identity 404, distinct detail.
+    await app.state.model.create_workspace(
+        VmSpec(workspace_id="ws-old", kernel="/k", rootfs="/r")
+    )
+    legacy = await http.get("/api/v1/workspaces/ws-old/ssh-key", headers=auth())
+    assert legacy.status_code == 404
+    assert "no minted identity" in legacy.json()["detail"]
+
+
+async def test_concurrent_same_id_creates_serialize(client, monkeypatch) -> None:
+    """Two concurrent creates of one id (#111): exactly one 201, the
+    loser the honest 409 — and the winner's mint never interleaves
+    with the loser's prepare, the pair (row, seed) comes from one
+    racer. The stub's prepare records entry/exit so the test can pin
+    the serialization, not just the outcome."""
+    http, app, stub = client
+    events: list[tuple[str, str]] = []
+
+    async def traced_prepare(spec: VmSpec) -> None:
+        events.append(("enter", spec.workspace_id))
+        await asyncio.sleep(0.05)  # widen the window the lock closes
+        events.append(("exit", spec.workspace_id))
+
+    monkeypatch.setattr(stub, "prepare", traced_prepare)
+    replies = await asyncio.gather(
+        http.post(
+            "/api/v1/workspaces",
+            json={"id": "ws-race", "kernel": "/k", "rootfs": "/r"},
+            headers=auth(),
+        ),
+        http.post(
+            "/api/v1/workspaces",
+            json={"id": "ws-race", "kernel": "/k", "rootfs": "/r"},
+            headers=auth(),
+        ),
+    )
+    codes = sorted(reply.status_code for reply in replies)
+    assert codes == [201, 409]
+    # Serialized: prepares alternate enter→exit — one racer's
+    # mint→prepare→insert sequence never interleaves with the
+    # other's (the corruption window the lock closes).
+    kinds = [kind for kind, _ in events]
+    assert kinds in (
+        ["enter", "exit"],  # loser saw the row first: no prepare
+        ["enter", "exit", "enter", "exit"],  # loser entered after the winner
+    )
+    # The winner's row carries exactly one identity, served whole.
+    key = await http.get("/api/v1/workspaces/ws-race/ssh-key", headers=auth())
+    assert key.status_code == 200
+    assert key.json()["public_key"].endswith("msksd:ws-race")
+
+
+async def test_create_with_bad_key_type_setting_is_500(client, monkeypatch) -> None:
+    """A directly-built Settings carrying an unknown key type (env
+    loading validates first) fails the create with the named error,
+    not a bare traceback."""
+    http, app, _stub = client
+    monkeypatch.setattr(app.state.settings.vmm, "ssh_key_type", "bogus")
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-bad", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 500
+    assert "unknown ssh key type" in created.json()["detail"]
+
+
 async def test_workspace_validation(client) -> None:
     http, _app, _stub = client
     bad = await http.post(
@@ -229,7 +343,7 @@ async def test_delete_falls_back_to_kill(client) -> None:
 async def test_create_race_maps_to_409(client, monkeypatch) -> None:
     http, app, stub = client
 
-    async def lose(spec, image_hash=None, host=None):
+    async def lose(spec, image_hash=None, host=None, ssh_privkey=None):
         raise IntegrityError("stmt", {}, Exception("unique"))
 
     monkeypatch.setattr(app.state.model, "create_workspace", lose)
@@ -443,6 +557,14 @@ async def test_k8s_create_records_no_host(client, monkeypatch) -> None:
     )
     assert response.status_code == 201
     assert response.json()["host"] is None
+    # No minted identity on the k8s backend (#111): the runner pod
+    # builds no seed, so nothing would ever plant the key — the key
+    # endpoint answers the no-identity 404 instead of serving a key
+    # no guest will accept.
+    assert response.json()["ssh_pubkey"] is None
+    key = await http.get("/api/v1/workspaces/ws-k8s/ssh-key", headers=auth())
+    assert key.status_code == 404
+    assert "no minted identity" in key.json()["detail"]
     app.state.settings.vmm.driver = "local"
 
 

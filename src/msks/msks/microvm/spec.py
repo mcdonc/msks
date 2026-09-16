@@ -34,10 +34,17 @@ class VmSpec:
     # machinery).
     egress: bool = True
     # First-boot provisioning payload (#41): a shell script (leading
-    # ``#!``) or cloud-config YAML, delivered verbatim on a per-
-    # workspace seed disk labeled ``cidata``. Create-time only; None
-    # boots the workspace without a seed at all.
+    # ``#!``) or cloud-config YAML, delivered on a per-workspace seed
+    # disk labeled ``cidata`` — composed beside the minted identity's
+    # seeding script when one was minted (#111). Create-time only;
+    # None boots the workspace without an operator payload (the
+    # identity alone still builds a seed).
     user_data: str | None = None
+    # The minted identity's public half, one authorized_keys line
+    # (#111): composed into the seed's user-data beside any operator
+    # payload. None is a workspace without a minted identity (a
+    # pre-#111 row).
+    ssh_pubkey: str | None = None
 
 
 class VmStatus(StrEnum):

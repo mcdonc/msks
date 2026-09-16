@@ -12,6 +12,7 @@ msks ls                      # what exists, and what state is it in
 msks create ws                # make a workspace
 msks console ws               # boot it if needed, then work inside it
 msks forward ws 22            # bridge a guest TCP port to stdio
+msks key ws                   # fetch the workspace's minted ssh identity
 msks start ws                 # boot it without attaching
 msks stop ws                  # power it off
 msks rm ws                    # delete it (and its data)
@@ -126,7 +127,7 @@ with `msks start` — or just `msks console` it: the console command boots
 a not-running workspace on its own (below).
 
 `--user-data` is the first-boot provisioning hook (#41): the file's
-contents travel to the daemon verbatim and run once on the
+contents travel to the daemon and run once on the
 workspace's first boot (see `docs/images.md` for the seed-disk
 mechanism, the payload forms each image provisioner accepts, and
 the create-time immutability). It composes with `--start`:
@@ -376,6 +377,32 @@ proxy and process logs, headers do not. Only egress workspaces have
 a NIC to forward to — a workspace created `--no-egress` is refused
 with the reason naming it. `forward.opened` and `forward.closed`
 events appear on the daemon's events channel for every session.
+
+## `msks key`
+
+The workspace's minted ssh identity (#111): every workspace a
+local-backend daemon creates carries
+a keypair msksd created at create-time, whose public half the
+guest's first boot planted into `authorized_keys` for root and the
+`msks` workspace user. The fetch takes the same
+`MSKSC_URL`/`MSKSC_TOKEN`/`MSKSC_CAFILE` environment as every other
+command:
+
+```bash
+msks key my-workspace                    # the public authorized_keys line
+msks key my-workspace --private          # the private half, on stdout
+msks key my-workspace --out ~/.cache/msks/my-workspace.key
+```
+
+`--out FILE` writes the private half with mode 0600 and prints
+nothing but the path; the mode is forced on an existing file too.
+The path is always the operator's choice: the command writes the
+key to the file the operator named and to stdout, and nowhere else.
+A shell redirect (`msks key my-workspace --private > f`) keeps the
+shell's own umask — that is what `--out` is for. A workspace that
+predates #111 answers 404 with "no minted identity"; the key type is
+the daemon's `MSKSD_SSH_KEY_TYPE` setting (ECDSA P-256 by default).
+Both halves persist across daemon restarts and workspace stop/start.
 
 ## Errors, exit codes, and timeouts
 

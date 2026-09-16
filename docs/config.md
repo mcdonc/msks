@@ -153,6 +153,7 @@ the file itself carries them all at one level.
 | `host_name`               | `MSKSD_HOST_NAME`               | string | _(the hostname)_       | The host name recorded as owning locally-created workspaces.                                                                                                                                                                                                    |
 | `root_mib`                | `MSKSD_ROOT_MIB`                | int    | `10240`                | Default workspace root overlay size, MiB (a per-create request overrides).                                                                                                                                                                                      |
 | `home_mib`                | `MSKSD_HOME_MIB`                | int    | `2048`                 | Default workspace `/home` volume size, MiB (a per-create request overrides).                                                                                                                                                                                    |
+| `ssh_key_type`            | `MSKSD_SSH_KEY_TYPE`            | string | `ecdsa`                | The identity type minted at create (#111): `ecdsa` (P-256, the FIPS-approvable default, #115), `ed25519`, or `rsa` (3072-bit).                                                                                                                                  |
 
 ### The Kubernetes runner driver
 

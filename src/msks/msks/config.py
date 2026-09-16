@@ -77,6 +77,7 @@ SETTING_ENV_VARS: tuple[str, ...] = (
     "MSKSD_HOST_NAME",
     "MSKSD_ROOT_MIB",
     "MSKSD_HOME_MIB",
+    "MSKSD_SSH_KEY_TYPE",
     # ServerSettings — the API listener.
     "MSKSD_HOST",
     "MSKSD_PORT",
@@ -434,6 +435,9 @@ def render_template() -> str:
 #                           # workspaces; empty -> the hostname
 # root_mib: 10240           # default root overlay size (MiB)
 # home_mib: 2048            # default /home volume size (MiB)
+# ssh_key_type: ecdsa       # the identity type minted at create
+#                           # (#111): ecdsa (P-256, the FIPS-approvable
+#                           # default, #115), ed25519, or rsa
 #
 # --- The Kubernetes runner driver ---
 # k8s_namespace: msks       # the namespace workspaces run in
