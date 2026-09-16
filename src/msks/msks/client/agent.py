@@ -213,6 +213,16 @@ class AgentHandler(socketserver.BaseRequestHandler):
     """One agent connection: read frames, answer frames, until EOF."""
 
     def handle(self) -> None:
+        try:
+            self.exchange()
+        except OSError:
+            # The peer vanished mid-frame or between request and
+            # reply (killed ssh, a reset forwarded-agent channel):
+            # the connection ends — it is not an error to report.
+            return
+
+    def exchange(self) -> None:
+        """Frames in, frames out, until the peer's EOF."""
         while True:
             payload = self.receive()
             if payload is None:
@@ -269,6 +279,7 @@ def serve(private, comment: str):
             + "\n"
         )
     except BaseException:
+        server.server_close()
         shutil.rmtree(directory, ignore_errors=True)
         raise
     thread = threading.Thread(target=server.serve_forever, daemon=True)

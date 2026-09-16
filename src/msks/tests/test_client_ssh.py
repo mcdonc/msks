@@ -295,6 +295,32 @@ def test_serve_cleans_up_when_staging_fails(
     assert not home.exists()
 
 
+def test_agent_stays_quiet_when_the_peer_resets(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A peer that vanishes mid-exchange ends its connection — the
+    agent never prints a traceback into the ssh session's stderr."""
+    with agent.serve(agent.load_private(PEM), "") as served:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as gone:
+            gone.connect(served.server_address)
+            gone.sendall(agent.frame(struct.pack("B", agent.REQUEST_IDENTITIES)))
+            # SO_LINGER 0: close sends RST, so the server's reply
+            # write fails after the recv succeeded.
+            gone.setsockopt(
+                socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0)
+            )
+            gone.close()
+        import time
+
+        time.sleep(0.1)  # let the handler thread hit the reset
+        # The agent still serves the next connection.
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as fresh:
+            fresh.connect(served.server_address)
+            answer = call_agent(fresh, struct.pack("B", agent.REQUEST_IDENTITIES))
+            assert answer[0] == agent.IDENTITIES_ANSWER
+    assert capsys.readouterr().err == ""
+
+
 def test_agent_ends_the_connection_on_truncation() -> None:
     with agent.serve(agent.load_private(PEM), "") as served:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
@@ -319,7 +345,9 @@ def test_ssh_logs_in_through_the_agent(pem: str, tmp_path: Path) -> None:
     the default minted type (ECDSA P-256) and ed25519 — with -F
     /dev/null, whose absence lets a host ssh_config drop ECDSA from
     PubkeyAcceptedAlgorithms (the #110 lesson applied here too)."""
-    user = os.environ.get("USER") or "nobody"
+    import pwd
+
+    user = pwd.getpwuid(os.getuid()).pw_name
     hostkey = tmp_path / "host_ed25519"
     keygen = subprocess.run(
         [KEYGEN_BIN, "-t", "ed25519", "-N", "", "-q", "-f", str(hostkey)],
@@ -343,13 +371,14 @@ def test_ssh_logs_in_through_the_agent(pem: str, tmp_path: Path) -> None:
         "AllowAgentForwarding yes\n"
         f"PidFile {tmp_path / 'sshd.pid'}\n",
     )
+    sshd_stderr = tmp_path / "sshd.log"
     sshd = subprocess.Popen(
         [SSHD_BIN, "-D", "-e", "-f", str(config)],
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=open(sshd_stderr, "ab"),
     )
     try:
-        wait_listening(port)
+        wait_listening(port, evidence=sshd_stderr)
         with agent.serve(agent.load_private(pem), "msksd:alpha") as served:
             common = [
                 SSH_BIN,
@@ -401,7 +430,9 @@ def free_port() -> int:
         return probe.getsockname()[1]
 
 
-def wait_listening(port: int, timeout_s: float = 10.0) -> None:
+def wait_listening(
+    port: int, timeout_s: float = 10.0, evidence: Path | None = None
+) -> None:
     import time
 
     deadline = time.monotonic() + timeout_s
@@ -410,7 +441,10 @@ def wait_listening(port: int, timeout_s: float = 10.0) -> None:
             if probe.connect_ex(("127.0.0.1", port)) == 0:
                 return
         time.sleep(0.05)
-    raise AssertionError(f"sshd never listened on {port}")
+    detail = ""
+    if evidence is not None and evidence.exists():
+        detail = f"; sshd log:\n{evidence.read_text(errors='replace')[-800:]}"
+    raise AssertionError(f"sshd never listened on {port}{detail}")
 
 
 # --- the per-workspace known_hosts file ---
@@ -475,10 +509,12 @@ def test_split_command_splits_at_ssh_separator(
     [
         (["-l", "root"], True),
         (["-o", "User=root"], True),
+        (["-o", "user=root"], True),  # ssh keywords are case-insensitive
+        (["-o", "USER=root"], True),
         (["-o", "User root"], True),
         (["-o", "ProxyCommand=x"], False),
         (["-A"], False),
-        (["-l"], False),  # a trailing -l with no value names nothing
+        (["-l"], True),  # dangling: ssh's own error is the clear one
         (["-oUser=root"], True),  # the inline -o form
         (["-oProxyCommand=x"], False),
     ],
@@ -493,9 +529,9 @@ def test_wants_user(args: list[str], names: bool) -> None:
 def test_build_args_injects_the_default_user() -> None:
     argv = ssh.build_args("alpha", "/agent.sock", "/id.pub", "/kh", ["-A"])
     assert argv[0] == "ssh"
-    assert argv[2].startswith(f"ProxyCommand={ssh.config_quote(ssh.sys.executable)}")
-    assert argv[2].endswith("-m msks.client.cli forward alpha 22")
-    assert argv[3:13] == [
+    assert argv[1] == "-A"  # passthrough options come first...
+    assert argv[2:4] == ["-o", ssh.proxy_command("alpha")]
+    assert argv[4:14] == [
         "-o",
         "UserKnownHostsFile=/kh",
         "-o",
@@ -507,19 +543,42 @@ def test_build_args_injects_the_default_user() -> None:
         "-i",
         "/id.pub",
     ]
-    assert argv[13:] == ["-l", "msks", "-A", "alpha"]
+    assert argv[14:] == ["-l", "msks", "alpha"]
 
 
 def test_build_args_leaves_the_user_to_ssh() -> None:
     argv = ssh.build_args("alpha", "/agent.sock", "/id.pub", "/kh", ["-l", "root"])
-    assert argv[-3:] == ["-l", "root", "alpha"]
+    assert argv[1:3] == ["-l", "root"]
+    assert argv[-1] == "alpha"
+    assert "-l" not in argv[3:]  # the default is not injected twice
+
+
+def test_build_args_lets_an_explicit_override_win() -> None:
+    """ssh takes the first obtained value for a repeated option, so
+    a passthrough override lands before the injected defaults —
+    exactly the stock-ssh override shape."""
+    argv = ssh.build_args(
+        "alpha",
+        "/agent.sock",
+        "/id.pub",
+        "/kh",
+        ["-o", "UserKnownHostsFile=/dev/null", "-o", "StrictHostKeyChecking=no"],
+    )
+    assert argv[1:5] == [
+        "-o",
+        "UserKnownHostsFile=/dev/null",
+        "-o",
+        "StrictHostKeyChecking=no",
+    ]
+    assert argv[5] == "-o"  # the injected defaults follow, not precede
 
 
 def test_build_args_carries_a_remote_command_after_the_host() -> None:
     argv = ssh.build_args(
         "alpha", "/agent.sock", "/id.pub", "/kh", ["-A", "--", "uname", "-a"]
     )
-    assert argv[-4:] == ["-A", "alpha", "uname", "-a"]
+    assert argv[0:2] == ["ssh", "-A"]
+    assert argv[-3:] == ["alpha", "uname", "-a"]
 
 
 def test_build_args_treats_a_leading_plain_word_as_the_command() -> None:
@@ -602,7 +661,8 @@ def test_run_workspace_ssh_runs_ssh_and_stops_the_agent(
     argv = calls[0]["argv"]
     assert argv[0] == "ssh"
     assert "IdentityAgent=/faked/agent.sock" in argv
-    assert argv[-3:] == ["-l", "root", "alpha"]
+    assert argv[-1] == "alpha"
+    assert argv[1:3] == ["-l", "root"]
     assert stopped == ["stopped"]  # the agent tears down after ssh exits
 
 

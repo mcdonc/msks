@@ -114,7 +114,7 @@ def wants_user(args: list[str]) -> bool:
     """
     for index, arg in enumerate(args):
         if arg == "-l":
-            return index + 1 < len(args)
+            return True  # even dangling: ssh's own error is the clear one
         value = option_value(index, arg, args)
         if value is not None and names_user(value):
             return True
@@ -132,14 +132,18 @@ def option_value(index: int, arg: str, args: list[str]) -> str | None:
 
 
 def names_user(value: str) -> bool:
-    """Whether an ssh ``-o`` value sets the login user."""
-    return value.startswith("User=") or value.startswith("User ")
+    """Whether an ssh ``-o`` value sets the login user. ssh_config
+    keywords are case-insensitive (``user=`` is ``User=``), so the
+    comparison is too."""
+    lowered = value.lower()
+    return lowered.startswith("user=") or lowered.startswith("user ")
 
 
 def config_quote(value: str) -> str:
-    """Quote a value for an ``-o`` option: ssh_config honors double
-    quotes only — shell-style single quotes would reach the value
-    literally — and a value without whitespace needs none."""
+    """Double-quote a value for an ``-o`` option when it carries
+    whitespace: double quotes are honored everywhere ssh parses
+    option values (the parser strips them itself, and the shell
+    strips the remainder), keeping the value whole."""
     return f'"{value}"' if any(c.isspace() for c in value) else value
 
 
@@ -160,10 +164,13 @@ def build_args(
     known_hosts: str,
     passthrough: list[str],
 ) -> list[str]:
-    """ssh's argv: transport, host-key, agent identity — the
-    workspace id as the destination between the passthrough's
-    options and its remote command — so both ``-A`` (an option) and
-    a command land where ssh parses them.
+    """ssh's argv: the passthrough's options FIRST, then the
+    transport, host-key, and agent options as defaults — ssh takes
+    the first obtained value for a repeated option, so an explicit
+    passthrough override (``-o UserKnownHostsFile=/dev/null``, a
+    different ProxyCommand) wins exactly as it would with stock
+    ssh, and the workspace id sits between the options and the
+    remote command where ssh parses them.
 
     ``-i identity.pub`` names the identity (public material only);
     ``IdentityAgent`` points ssh at the transient agent that holds
@@ -171,10 +178,8 @@ def build_args(
     one key and nothing else.
     """
     options, command = split_command(passthrough)
-    argv = [
-        "ssh",
-        "-o",
-        proxy_command(workspace_id),
+    argv = ["ssh", *options, "-o", proxy_command(workspace_id)]
+    argv += [
         "-o",
         f"UserKnownHostsFile={config_quote(known_hosts)}",
         "-o",
@@ -188,7 +193,7 @@ def build_args(
     ]
     if not wants_user(options):
         argv += ["-l", DEFAULT_USER]
-    return argv + options + [workspace_id] + command
+    return argv + [workspace_id] + command
 
 
 def identity_comment(key: dict) -> str:
