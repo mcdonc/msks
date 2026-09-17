@@ -419,15 +419,21 @@ carries it. With the alias's ControlMaster, put the `-A` on the
 connection that creates the master: a session over an existing
 master shares that master's environment, agent included.
 
-Wide open by design in this interim phase (#81): every destination
-— remotes, package mirrors, any host — answers without a grant;
+Wide open by design in this interim phase (#81): every
+destination reachable through the uplink — remotes, package
+mirrors, any off-appliance host — answers without a grant, while
+guest-initiated connections aimed at the appliance itself stay
+dropped (the input chain answers DHCP and the resolver only, #52);
 consent-gated egress (#69) narrows guest-initiated connections
 later. The end-to-end proof is the opt-in root smoke
 `test_local_egress_git_out` (`MSKSD_TEST_EGRESS=1`), which runs in
 the KVM workflow's egress step: the workspace installs git from
-Debian's mirrors over the NAT'd uplink, then pushes a commit to a
-scratch git server on the host — authenticating only with a key
-that arrived through the forward as a forwarded agent.
+Debian's mirrors and fetches an unrelated HTTPS host over the
+NAT'd uplink — the path an off-host remote rides — then pushes a
+commit to a scratch git server on the host through a single
+test-widened input pin (a hermetic runner has no off-host remote
+to receive the push), authenticating only with a key that arrived
+through the forward as a forwarded agent.
 
 ### Cryptographic agility (a future FIPS posture)
 

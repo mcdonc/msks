@@ -19,8 +19,10 @@ covered by the faked-transport unit suites).
 import asyncio
 import contextlib
 import os
+import pwd
 import re
 import shutil
+import signal
 import socket
 import ssl
 import subprocess
@@ -36,6 +38,7 @@ import websockets
 from httpx import AsyncClient
 from msks.app import build_app
 from msks.microvm import VmSpec
+from msks.net.alloc import table_name, tap_name
 from msks.server.api import build_api
 from msks.settings import (
     K8sSettings,
@@ -2250,25 +2253,50 @@ async def test_local_egress_git_out() -> None:
 
     The dogfood loop's outbound half, end to end over the real
     paths: a workspace with egress reaches destinations the seed
-    never needs (an HTTPS fetch of an unrelated host, and this
-    test's own git server on the dev host, dialed through the
-    NAT'd uplink), and the credential the push authenticates with
-    rides the forward as the operator's forwarded agent — nothing
-    about it is baked into the image or the seed. Wide open, per
-    #81's charter: every probe below runs with no grant or consent
-    anywhere; #69 is the later narrowing of guest-initiated egress,
-    not this loop.
+    never needs through the NAT'd uplink (Debian's mirrors via
+    apt, an HTTPS fetch of an unrelated host), and the credential
+    the push authenticates with rides the forward as the
+    operator's forwarded agent — nothing about it is baked into
+    the image or the seed. Wide open, per #81's charter: every
+    probe below runs with no grant or consent anywhere; #69 is the
+    later narrowing of guest-initiated egress, not this loop.
 
     Legs, in order: the DHCP lease's resolver is the daemon's own
     (resolv.conf's nameserver sits inside the /30 pool — no public
-    resolver); apt installs git and curl from Debian's mirrors; the
-    guest commits and pushes to a bare repo behind a scratch sshd
-    on the host, authenticating only with the agent key that
-    arrived through ``msks forward --local`` — the alias workflow's
-    ``-A`` path (#112) — never a key on the guest's disk.
+    resolver); apt installs git and curl from Debian's mirrors and
+    an HTTPS fetch reaches an unrelated host, both through the
+    NAT'd egress path an off-host git remote rides; then the guest
+    commits and pushes to a bare repo behind a scratch sshd on the
+    host, authenticating only with the agent key that arrived
+    through ``msks forward --local`` — the alias workflow's ``-A``
+    path (#112) — never a key on the guest's disk. That push leg
+    crosses a test-widened input pin: the daemon's own posture
+    drops guest traffic aimed at the appliance by design (#52 —
+    test_local_egress_boot pins the drop), and a hermetic runner
+    has no off-host remote to receive the push, so the test pins
+    exactly one widening (this workspace's git port) into its own
+    ingress chain and removes it after.
     """
     nft_tool = os.environ.get("MSKSD_TEST_NFT") or shutil.which("nft") or "nft"
     ip_tool = os.environ.get("MSKSD_TEST_IP") or shutil.which("ip") or "ip"
+    uplink_iface = _default_route_iface()
+    uplink_ip = _uplink_address()
+    # The listen address and the NAT'd uplink iface must agree:
+    # _uplink_address() picks the default route's source, which on
+    # a multihomed host can diverge from the iface settings name —
+    # fail naming both instead of binding a destination the daemon
+    # never NATs for.
+    iface = subprocess.run(
+        [ip_tool, "-4", "addr", "show", "dev", uplink_iface],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert iface.returncode == 0, iface.stderr
+    assert uplink_ip in iface.stdout, (
+        f"{uplink_ip!r} is not an address of the uplink iface "
+        f"{uplink_iface!r}: {iface.stdout}"
+    )
     state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
     token = f"smoke-token-{uuid.uuid4().hex}"
     api_port = free_port()
@@ -2276,7 +2304,7 @@ async def test_local_egress_git_out() -> None:
         vmm=VmmSettings(state_dir=state_dir),
         net=NetSettings(
             enabled=True,
-            uplink=_default_route_iface(),
+            uplink=uplink_iface,
             ip_tool=ip_tool,
             nft_tool=nft_tool,
         ),
@@ -2310,7 +2338,6 @@ async def test_local_egress_git_out() -> None:
     gitd_log = workdir / "git-sshd.log"
     bare = workdir / "bare.git"
     push_marker = f"PUSHED-{uuid.uuid4().hex[:8]}"
-    uplink_ip = _uplink_address()
     git_port = free_port()
 
     forwarding = Path("/proc/sys/net/ipv4/ip_forward")
@@ -2322,6 +2349,7 @@ async def test_local_egress_git_out() -> None:
     forwards: list[subprocess.Popen] = []
     forward_logs: list[Path] = []
     agent_env: dict[str, str] | None = None
+    agent_pid: int | None = None
     gitd: subprocess.Popen | None = None
 
     def start_forward(port: int) -> None:
@@ -2412,6 +2440,69 @@ async def test_local_egress_git_out() -> None:
             "&& systemctl is-active ssh >/dev/null 2>&1 && echo U-$((6*7))",
             "U-42",
         )
+
+    async def widen_input(port: int) -> None:
+        """One accept at the top of this workspace's ingress chain.
+
+        The daemon's chain drops host-directed guest traffic by
+        design (#52); the push leg pins a single widening — this
+        workspace's tap, the git port — inserted FIRST in the chain
+        so it wins ahead of the drop. narrow_input removes it; a
+        leak dies with the table at teardown regardless.
+        """
+        rule = await asyncio.to_thread(
+            subprocess.run,
+            [
+                nft_tool,
+                "insert",
+                "rule",
+                "inet",
+                table_name(wid),
+                "ingress",
+                "iifname",
+                tap_name(wid),
+                "tcp",
+                "dport",
+                str(port),
+                "accept",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert rule.returncode == 0, rule.stderr
+
+    async def narrow_input() -> None:
+        """Drop every handle this test pinned into the chain."""
+        listing = await asyncio.to_thread(
+            subprocess.run,
+            [nft_tool, "-a", "list", "chain", "inet", table_name(wid), "ingress"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if listing.returncode != 0:
+            return  # the table is gone; teardown already won
+        for line in listing.stdout.splitlines():
+            if f"tcp dport {git_port} accept" not in line:
+                continue
+            handle = re.search(r"handle (\d+)", line)
+            if handle:
+                await asyncio.to_thread(
+                    subprocess.run,
+                    [
+                        nft_tool,
+                        "delete",
+                        "rule",
+                        "inet",
+                        table_name(wid),
+                        "ingress",
+                        "handle",
+                        handle.group(1),
+                    ],
+                    capture_output=True,
+                    timeout=30,
+                )
 
     async def await_gitd(timeout_s: float = 15.0) -> None:
         """Until the scratch sshd accepts a TCP connection."""
@@ -2521,10 +2612,37 @@ async def test_local_egress_git_out() -> None:
             f"SetEnv PATH={Path(GIT_BIN).parent}:{Path(SSH_BIN).parent}"
             ":/usr/sbin:/usr/bin:/sbin:/bin\n"
         )
-        # OpenSSH's privilege-separation directory: present wherever
-        # sshd runs as a service, absent on hosts that only run the
-        # client.
-        os.makedirs("/run/sshd", exist_ok=True)
+        # OpenSSH's privilege-separation directory: sshd refuses to
+        # start without it. The compiled-in path differs by build —
+        # Debian's is /run/sshd, nix openssh's is /var/empty (the
+        # dev host ships both; the CI runner ships neither) — so
+        # every candidate gets created, root-owned and 0755 (the
+        # perms sshd demands).
+        for privsep in ("/run/sshd", "/var/empty", "/var/empty/sshd"):
+            os.makedirs(privsep, exist_ok=True)
+        # The privilege-separation USER is the same story: a
+        # compile-time name (nix's is "sshd") the distro's packaging
+        # normally creates. Best-effort — 9.8+ builds tolerate its
+        # absence in some shapes, and a missing binary must not
+        # mask the real failure — but where useradd exists and the
+        # user does not, create it rather than discover the
+        # hard-coded name one CI round at a time.
+        try:
+            pwd.getpwnam("sshd")
+        except KeyError:
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(
+                    subprocess.run,
+                    [
+                        "useradd",
+                        "--system",
+                        "--no-create-home",
+                        "--shell",
+                        "/usr/sbin/nologin",
+                        "sshd",
+                    ],
+                    timeout=30,
+                )
         gitd = subprocess.Popen(
             [SSHD_BIN, "-D", "-e", "-f", str(sshd_config)],
             stdout=subprocess.DEVNULL,
@@ -2535,6 +2653,8 @@ async def test_local_egress_git_out() -> None:
         # The operator's scratch agent: holds the credential, runs on
         # the host, and only ever enters the guest as a forwarded
         # socket. ssh-agent forks; its stdout names the socket + pid.
+        # Both are captured before any assertion so a failed parse
+        # still cleans the fork up (finally keys off the pid).
         boot = await asyncio.to_thread(
             subprocess.run,
             [SSH_AGENT_BIN, "-s"],
@@ -2544,7 +2664,9 @@ async def test_local_egress_git_out() -> None:
         )
         assert boot.returncode == 0, boot.stderr
         sock = re.search(r"SSH_AUTH_SOCK=([^;]+);", boot.stdout)
-        assert sock, boot.stdout
+        pidm = re.search(r"SSH_AGENT_PID=(\d+);", boot.stdout)
+        agent_pid = int(pidm.group(1)) if pidm else None
+        assert sock and pidm, boot.stdout
         agent_env = dict(os.environ, SSH_AUTH_SOCK=sock.group(1))
         add = await asyncio.to_thread(
             subprocess.run,
@@ -2627,40 +2749,61 @@ async def test_local_egress_git_out() -> None:
 
         # git-out: log in through the forward with -A (the agent
         # rides in), then push from inside the guest to the scratch
-        # sshd — guest-initiated egress through the NAT, ssh auth
-        # with the forwarded agent only: no IdentityFile anywhere,
-        # and agent_key never touched the guest's disk.
+        # sshd — guest-initiated TCP from the tap, ssh auth with the
+        # forwarded agent only: no IdentityFile anywhere, and
+        # agent_key never touched the guest's disk. The daemon's
+        # own input chain drops host-directed guest traffic by
+        # design (#52's containment — test_local_egress_boot pins
+        # it), so this leg rides a test-widened pin: one accept for
+        # the git port, inserted at the top of this workspace's
+        # ingress chain and removed after. The NAT egress path the
+        # dogfood loop really rides (pushes to off-host remotes)
+        # is proven by this test's apt and HTTPS legs — a hermetic
+        # runner has no off-host remote to receive a push.
+        await widen_input(git_port)
         forward_port = free_port()
         start_forward(forward_port)
         await await_forward_listener(forward_port)
         remote = (
             "export GIT_SSH_COMMAND="
             f'"ssh -F /dev/null -o StrictHostKeyChecking=no '
-            f'-o UserKnownHostsFile=/dev/null -p {git_port}"; '
+            f"-o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 "
+            f'-p {git_port}"; '
             "ssh-add -l > /root/.gitout/agent-list 2>&1; "
             f"git -C /root/push-src push -q "
             f"ssh://root@{uplink_ip}:{git_port}{bare} main "
             "&& echo P-$((6*7))"
         )
-        push = await asyncio.to_thread(
-            subprocess.run,
-            [
-                SSH_BIN,
-                *ssh_opts(forward_port),
-                "-o",
-                "ForwardAgent=yes",
-                "root@127.0.0.1",
-                remote,
-            ],
-            env=agent_env,
-            capture_output=True,
-            text=True,
-            timeout=SSH_CMD_TIMEOUT_S,
-        )
+        try:
+            push = await asyncio.to_thread(
+                subprocess.run,
+                [
+                    SSH_BIN,
+                    *ssh_opts(forward_port),
+                    "-o",
+                    "ForwardAgent=yes",
+                    "root@127.0.0.1",
+                    remote,
+                ],
+                env=agent_env,
+                capture_output=True,
+                text=True,
+                timeout=SSH_CMD_TIMEOUT_S,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise AssertionError(
+                f"the push session timed out after {SSH_CMD_TIMEOUT_S}s "
+                "(a dropped or unroutable destination black-holes "
+                "exactly like this); git sshd log:\n"
+                f"{gitd_log.read_text(errors='replace')[-800:]}\n"
+                f"forward logs:\n{forward_evidence()}"
+            ) from exc
         if push.returncode != 0:
             # The failure rerun at full verbosity, off the loop: a
             # bare rc says nothing about which leg died (console,
-            # forward, agent, guest-side push).
+            # forward, agent, guest-side push). The rerun asks only
+            # for the agent listing — re-running the push itself
+            # could report "up-to-date" and mask a transport flake.
             verbose = await asyncio.to_thread(
                 subprocess.run,
                 [
@@ -2671,7 +2814,7 @@ async def test_local_egress_git_out() -> None:
                     "-o",
                     "LogLevel=DEBUG3",
                     "root@127.0.0.1",
-                    remote,
+                    "ssh-add -l",
                 ],
                 env=agent_env,
                 capture_output=True,
@@ -2727,6 +2870,12 @@ async def test_local_egress_git_out() -> None:
                 gitd.terminate()
             with contextlib.suppress(Exception):
                 await asyncio.to_thread(gitd.wait, 10)
+        # The input pin goes before the agent and API teardown so a
+        # slow guest cannot hold a widened chain past the workspace's
+        # own cleanup; a failure here leaves the rule to die with the
+        # per-VM table at microvm cleanup.
+        with contextlib.suppress(Exception):
+            await narrow_input()
         if agent_env is not None:
             with contextlib.suppress(Exception):
                 await asyncio.to_thread(
@@ -2735,6 +2884,10 @@ async def test_local_egress_git_out() -> None:
                     env=agent_env,
                     timeout=15,
                 )
+        elif agent_pid is not None:
+            # A parse that failed after the fork still gets cleaned.
+            with contextlib.suppress(Exception):
+                os.kill(agent_pid, signal.SIGTERM)
         if api_task is not None:
             api_server.should_exit = True
             with contextlib.suppress(Exception):
