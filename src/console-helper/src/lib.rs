@@ -49,6 +49,7 @@
 //! outside the gate, exercised end-to-end by the integration tests
 //! through its `--test-listen-fd` mode.
 
+pub mod auth;
 pub mod cli;
 pub mod passwd;
 pub mod prelude;
@@ -60,6 +61,10 @@ pub const PRELUDE_DEADLINE: std::time::Duration = std::time::Duration::from_secs
 
 /// The production account database.
 pub const PASSWD_PATH: &str = "/etc/passwd";
+
+/// The production console-auth trust store (#123); absent on guests
+/// seeded before it, which serve no challenge.
+pub const CONSOLE_SIGNERS_PATH: &str = "/etc/msks/console.allowed_signers";
 
 /// Write a buffer fully to a stream fd. Partial writes loop; write
 /// errors end the session. No EINTR retry is needed: the process

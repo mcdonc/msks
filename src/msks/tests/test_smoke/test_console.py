@@ -56,16 +56,44 @@ async def test_local_console_identity_drop() -> None:
         # helper creates a bare home, and bash without rc files
         # prints no recognizable prompt.
         await run_in_console(
-            microvm, wid, "cp -r /etc/skel/. /home/msks/ && echo S-$((6*7))", "S-42"
+            microvm,
+            wid,
+            "cp -r /etc/skel/. /home/msks/ && echo S-$((6*7))",
+            "S-42",
+            app=app,
         )
         await run_in_console(
-            microvm, wid, "chown -R msks:msks /home/msks && echo O-$((6*7))", "O-42"
+            microvm,
+            wid,
+            "chown -R msks:msks /home/msks && echo O-$((6*7))",
+            "O-42",
+            app=app,
         )
         # The real drop: uid 1000, the persistent home, and root
         # alongside.
-        await run_in_console(microvm, wid, "echo I-$(id -u)", "I-1000", user="msks")
-        await run_in_console(microvm, wid, "echo H-$(pwd)", "H-/home/msks", user="msks")
-        await run_in_console(microvm, wid, "echo R-$(id -u)", "R-0")
+        await run_in_console(
+            microvm,
+            wid,
+            "echo I-$(id -u)",
+            "I-1000",
+            user="msks",
+            app=app,
+        )
+        await run_in_console(
+            microvm,
+            wid,
+            "echo H-$(pwd)",
+            "H-/home/msks",
+            user="msks",
+            app=app,
+        )
+        await run_in_console(
+            microvm,
+            wid,
+            "echo R-$(id -u)",
+            "R-0",
+            app=app,
+        )
         await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
     except BaseException:
         collect_failure_evidence(state_dir, wid, serial_log)

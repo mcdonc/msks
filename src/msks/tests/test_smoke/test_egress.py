@@ -115,10 +115,18 @@ async def test_local_egress_boot() -> None:
         # so a marker inside the command text would match the echo
         # and pass even when the probe found nothing.
         await run_in_console(
-            microvm, wid, "ip -4 addr | grep 172.31 && echo ADDR-$((6*7))", "ADDR-42"
+            microvm,
+            wid,
+            "ip -4 addr | grep 172.31 && echo ADDR-$((6*7))",
+            "ADDR-42",
+            app=app,
         )
         await run_in_console(
-            microvm, wid, "ip route | grep default", "default via 172.31"
+            microvm,
+            wid,
+            "ip route | grep default",
+            "default via 172.31",
+            app=app,
         )
         # DNS: through the daemon's forwarder (the offered resolver).
         await run_in_console(
@@ -126,6 +134,7 @@ async def test_local_egress_boot() -> None:
             wid,
             "getent hosts deb.debian.org && echo DNS-$((6*7))",
             "DNS-42",
+            app=app,
         )
         # Egress: a TCP connection out through the NAT'd uplink.
         await run_in_console(
@@ -133,6 +142,7 @@ async def test_local_egress_boot() -> None:
             wid,
             "timeout 5 bash -c '</dev/tcp/deb.debian.org/80' && echo TCP-$((6*7))",
             "TCP-42",
+            app=app,
         )
         # Containment: the tap's input chain lets DHCP and DNS through
         # and nothing else — the appliance's API (on the tap gateway)
@@ -144,6 +154,7 @@ async def test_local_egress_boot() -> None:
             'timeout 3 bash -c "</dev/tcp/$G/8660" 2>/dev/null '
             "&& echo API-$((2+2)) || echo API-$((6*7))",
             "API-42",
+            app=app,
         )
         await microvm.shutdown(wid, timeout_s=60)
         final = await microvm.info(wid)
@@ -344,7 +355,7 @@ async def test_local_egress_git_out() -> None:
             str(port),
         ]
 
-    async def wait_sshd() -> None:
+    async def wait_sshd(app=None) -> None:
         """Until the guest's address and ssh services are up."""
         await await_guest_up(serial_log)
         await run_in_console(
@@ -357,6 +368,7 @@ async def test_local_egress_git_out() -> None:
             "systemctl is-active msks-wait-address >/dev/null 2>&1 "
             "&& systemctl is-active ssh >/dev/null 2>&1 && echo U-$((6*7))",
             "U-42",
+            app=app,
         )
 
     async def widen_input(port: int) -> None:
@@ -607,7 +619,7 @@ async def test_local_egress_git_out() -> None:
         assert add.returncode == 0, add.stderr
 
         # Guest up; plant the login key through the console.
-        await wait_sshd()
+        await wait_sshd(app=app)
         public = login_key.with_suffix(".pub").read_text().strip()
         await run_in_console(
             microvm,
@@ -616,6 +628,7 @@ async def test_local_egress_git_out() -> None:
             f"&& printf '%s\\n' '{public}' > /root/.ssh/authorized_keys "
             f"&& chmod 600 /root/.ssh/authorized_keys && echo K-$((6*7))",
             "K-42",
+            app=app,
         )
 
         # The DHCP lease's resolver is the daemon's forwarder: the
@@ -630,6 +643,7 @@ async def test_local_egress_git_out() -> None:
             "( resolvectl dns 2>/dev/null || cat /etc/resolv.conf ) "
             "| grep -q '172\\.31\\.' && echo R-$((6*7))",
             "R-42",
+            app=app,
         )
 
         # Substitutes in, over egress, destinations the seed never
@@ -686,6 +700,7 @@ async def test_local_egress_git_out() -> None:
             "' >>/root/.gitout/run.log 2>&1 </dev/null & } "
             "&& disown && echo BG-$((6*7))",
             "BG-42",
+            app=app,
         )
         trail_probe = (
             "cat /root/.gitout/trail 2>/dev/null; "
@@ -696,14 +711,17 @@ async def test_local_egress_git_out() -> None:
         # apt budget. "apt" in the trail is the detached script's
         # first act.
         await await_guest_trail(
-            microvm, wid, trail_probe, b"apt", min(90.0, GIT_OUT_TIMEOUT_S)
+            microvm, app, wid, trail_probe, b"apt", min(90.0, GIT_OUT_TIMEOUT_S)
         )
-        await await_guest_trail(microvm, wid, trail_probe, b"done", GIT_OUT_TIMEOUT_S)
+        await await_guest_trail(
+            microvm, app, wid, trail_probe, b"done", GIT_OUT_TIMEOUT_S
+        )
         await run_in_console(
             microvm,
             wid,
             "test -s /root/.gitout/remote && echo Z-$((6*7))",
             "Z-42",
+            app=app,
         )
 
         # The commit the guest pushes: made inside, identity local
@@ -719,6 +737,7 @@ async def test_local_egress_git_out() -> None:
             "&& git -C /root/push-src commit -qm 'git-out probe' "
             "&& echo C-$((6*7))",
             "C-42",
+            app=app,
         )
 
         # git-out: log in through the forward with -A (the agent
@@ -816,6 +835,7 @@ async def test_local_egress_git_out() -> None:
             wid,
             "grep -q msks-git-cred /root/.gitout/agent-list && echo A-$((6*7))",
             "A-42",
+            app=app,
         )
 
         # The landing: the bare repo's HEAD is the guest's commit,

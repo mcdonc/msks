@@ -58,21 +58,28 @@ def test_mint_rejects_unknown_type() -> None:
         raise AssertionError("mint accepted an unknown type")
 
 
-def test_seed_script_plants_both_users_idempotently() -> None:
+def test_seed_script_plants_both_users_and_the_trust_store() -> None:
     """The script targets root and the msks user with the
     mkdir/chmod/append shape, and a key already present is not
     duplicated."""
-    script = seed_script(PUBLIC)
+    script = seed_script(PUBLIC, "ws-id")
     assert script.startswith("#!/bin/sh\n")
     assert f"key='{PUBLIC}'" in script
-    assert script.count("grep -qxF") == 2
+    assert "wsid='ws-id'" in script
+    assert script.count("grep -qxF") == 3
     assert "/root/.ssh/authorized_keys" in script
     assert "/home/msks/.ssh/authorized_keys" in script
     assert "chown msks:msks" in script
     # Idempotent shape: the append only runs when grep misses.
-    assert script.count("|| printf") == 2
+    assert script.count("|| printf") == 3
     assert script.count(">> /root/.ssh/authorized_keys") == 1
     assert script.count(">> /home/msks/.ssh/authorized_keys") == 1
+    # The console challenge's trust store (#123): the workspace id
+    # principal, the key's own two fields (the authorized_keys
+    # comment is not signers syntax), root-owned and private.
+    assert "/etc/msks/console.allowed_signers" in script
+    assert '"$wsid" "$1" "$2" >> "$signers"' in script
+    assert 'chmod 0600 "$signers"' in script
 
 
 def test_compose_without_key_is_verbatim() -> None:
@@ -85,20 +92,20 @@ def test_compose_without_key_is_verbatim() -> None:
 def test_compose_without_payload_is_the_script() -> None:
     """A minted key and no operator payload: the seed is the script
     alone, one plain document."""
-    assert compose_user_data(None, PUBLIC) == seed_script(PUBLIC)
+    assert compose_user_data(None, PUBLIC, "ws-id") == seed_script(PUBLIC, "ws-id")
 
 
 def test_compose_merges_script_and_script_payload() -> None:
     """Both halves present: MIME multipart, script first, the
     operator's shell payload second with its sniffed type."""
     payload = "#!/bin/sh\necho operator\n"
-    composed = compose_user_data(payload, PUBLIC)
+    composed = compose_user_data(payload, PUBLIC, "ws-id")
     assert composed.startswith(
         f'Content-Type: multipart/mixed; boundary="{MIME_BOUNDARY}"'
     )
     assert 'Content-Type: text/x-shellscript; charset="utf-8"' in composed
     assert 'Content-Type: text/cloud-config; charset="utf-8"' not in composed
-    assert seed_script(PUBLIC) in composed
+    assert seed_script(PUBLIC, "ws-id") in composed
     assert payload in composed
     assert composed.endswith(f"--{MIME_BOUNDARY}--\n")
 
@@ -106,7 +113,7 @@ def test_compose_merges_script_and_script_payload() -> None:
 def test_compose_merges_cloud_config_payload() -> None:
     """A #cloud-config operator payload rides as text/cloud-config."""
     payload = "#cloud-config\npackages: []\n"
-    composed = compose_user_data(payload, PUBLIC)
+    composed = compose_user_data(payload, PUBLIC, "ws-id")
     assert 'Content-Type: text/cloud-config; charset="utf-8"' in composed
 
 
@@ -114,7 +121,7 @@ def test_compose_appends_missing_trailing_newline() -> None:
     """A payload without a final newline gets one: the closing
     boundary must start on its own line."""
     payload = "#!/bin/sh\necho operator"
-    composed = compose_user_data(payload, PUBLIC)
+    composed = compose_user_data(payload, PUBLIC, "ws-id")
     assert f"\n--{MIME_BOUNDARY}--" in composed
 
 
@@ -122,8 +129,8 @@ def test_unique_boundary_falls_back_when_embedded() -> None:
     """A payload embedding the boundary string forces a random one;
     ordinary payloads keep the documented boundary."""
     hostile = f"echo {MIME_BOUNDARY}\n"
-    assert MIME_BOUNDARY not in unique_boundary(hostile, seed_script(PUBLIC))
-    assert MIME_BOUNDARY in unique_boundary("echo hi\n", seed_script(PUBLIC))
+    assert MIME_BOUNDARY not in unique_boundary(hostile, seed_script(PUBLIC, "ws-id"))
+    assert MIME_BOUNDARY in unique_boundary("echo hi\n", seed_script(PUBLIC, "ws-id"))
 
 
 def test_operator_content_type_by_first_line() -> None:

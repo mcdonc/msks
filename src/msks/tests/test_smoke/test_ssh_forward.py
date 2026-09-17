@@ -232,7 +232,7 @@ async def test_local_sshd_and_rsync() -> None:
             )
         return result
 
-    async def boot_and_wait_sshd() -> None:
+    async def boot_and_wait_sshd(app=None) -> None:
         await microvm.launch(spec)
         await app.state.model.set_status(wid, "running")
         await await_guest_up(serial_log)
@@ -252,9 +252,10 @@ async def test_local_sshd_and_rsync() -> None:
             "systemctl is-active msks-wait-address >/dev/null 2>&1 "
             "&& systemctl is-active ssh >/dev/null 2>&1 && echo U-$((6*7))",
             "U-42",
+            app=app,
         )
 
-    async def assert_sshd_posture() -> None:
+    async def assert_sshd_posture(app=None) -> None:
         """The image's login contract, read from the running sshd:
         key-only, root by key only. The probe prints the effective
         values into the session before gating on them — a drift
@@ -274,6 +275,7 @@ async def test_local_sshd_and_rsync() -> None:
             "in prohibit-password|without-password) true;; *) false;; esac "
             "&& echo P-$((6*7))",
             "P-42",
+            app=app,
         )
 
     try:
@@ -322,7 +324,7 @@ async def test_local_sshd_and_rsync() -> None:
         # First boot: plant the login key through the console (the
         # identity path #111 automates; here the operator does it by
         # hand) and note the host key before any client records it.
-        await boot_and_wait_sshd()
+        await boot_and_wait_sshd(app=app)
         public = (workdir / "id_ecdsa.pub").read_text().strip()
         await run_in_console(
             microvm,
@@ -331,6 +333,7 @@ async def test_local_sshd_and_rsync() -> None:
             f"&& printf '%s\\n' '{public}' > /root/.ssh/authorized_keys "
             f"&& chmod 600 /root/.ssh/authorized_keys && echo K-$((6*7))",
             "K-42",
+            app=app,
         )
         # The guest names its host key on its own disk: the file rides
         # the overlay, so the second boot compares against the first
@@ -341,6 +344,7 @@ async def test_local_sshd_and_rsync() -> None:
             "ssh-keygen -lf /etc/ssh/ssh_host_ecdsa_key.pub > /root/host-fp "
             "&& echo N-$((6*7))",
             "N-42",
+            app=app,
         )
 
         # Login through the forward (#109 transport, #110 listener):
@@ -376,8 +380,14 @@ async def test_local_sshd_and_rsync() -> None:
             timeout=SSH_CMD_TIMEOUT_S,
         )
         assert sync.returncode == 0, f"{sync.stdout}\n{sync.stderr}"
-        await run_in_console(microvm, wid, "cat /root/synced/sentinel.txt", sync_marker)
-        await assert_sshd_posture()
+        await run_in_console(
+            microvm,
+            wid,
+            "cat /root/synced/sentinel.txt",
+            sync_marker,
+            app=app,
+        )
+        await assert_sshd_posture(app=app)
 
         # Stop/start: the overlay keeps the host key (its sshd-keygen
         # wrote it there on first boot), so the recorded known_hosts
@@ -390,7 +400,7 @@ async def test_local_sshd_and_rsync() -> None:
         forwards.clear()
         await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
         serial_log.unlink(missing_ok=True)
-        await boot_and_wait_sshd()
+        await boot_and_wait_sshd(app=app)
         await run_in_console(
             microvm,
             wid,
@@ -398,6 +408,7 @@ async def test_local_sshd_and_rsync() -> None:
             '= "$(ssh-keygen -lf /etc/ssh/ssh_host_ecdsa_key.pub)" '
             "&& echo SAME-$((6*7))",
             "SAME-42",
+            app=app,
         )
         # The SAME local port: the recorded known_hosts entry is
         # per [host]:port, so the reconnect meets the first boot's key.

@@ -158,8 +158,10 @@ client identity (mode 0600): /home/you/.local/share/msks/my-workspace/identity
 attach with: msks console my-workspace
 ```
 
-Losing that file loses ssh to the workspace (the console still
-opens); move it somewhere safe or keep backups. The file lives
+Losing that file loses ssh to the workspace and the console with
+it (a seeded guest challenges the console with the same key) —
+unless the operator's ssh-agent holds that key, which the console
+consults next; move it somewhere safe or keep backups. The file lives
 under the data root, not the cache, so cache sweeps leave it alone.
 A client-minted workspace answers `msks key` with its public half
 only. The key type of a _minted_ key is the machine's choice

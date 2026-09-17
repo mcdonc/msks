@@ -101,11 +101,17 @@ async def test_local_persistence_across_restart_and_reset() -> None:
     root_marker = f"ROOT-{uuid.uuid4().hex[:6]}"
     home_marker = f"HOME-{uuid.uuid4().hex[:6]}"
 
-    async def boot_and_probe(probe_commands: list[tuple[str, str]]) -> None:
+    async def boot_and_probe(probe_commands: list[tuple[str, str]], app=None) -> None:
         await microvm.launch(spec)
         await await_guest_up(serial_log)
         for command, marker in probe_commands:
-            await run_in_console(microvm, wid, command, marker)
+            await run_in_console(
+                microvm,
+                wid,
+                command,
+                marker,
+                app=app,
+            )
         await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
 
     try:
@@ -128,14 +134,16 @@ async def test_local_persistence_across_restart_and_reset() -> None:
                     f"echo {home_marker} > /home/probe && echo WROTE-$((6*7))",
                     "WROTE-42",
                 ),
-            ]
+            ],
+            app=app,
         )
         serial_log.unlink(missing_ok=True)
         await boot_and_probe(
             [
                 ("cat /root/probe", root_marker),
                 ("cat /home/probe", home_marker),
-            ]
+            ],
+            app=app,
         )
         # Factory reset: pristine root, same /home.
         serial_log.unlink(missing_ok=True)
@@ -146,7 +154,8 @@ async def test_local_persistence_across_restart_and_reset() -> None:
             [
                 ("cat /home/probe", home_marker),
                 ("test ! -e /root/probe && echo GONE-$((6*7))", "GONE-42"),
-            ]
+            ],
+            app=app,
         )
     except BaseException:
         collect_failure_evidence(state_dir, wid, serial_log)

@@ -12,6 +12,7 @@ from pathlib import Path
 
 import uvicorn
 from msks.app import build_app
+from msks.client import consoleauth
 from msks.server.api import build_api
 from msks.settings import (
     NetSettings,
@@ -220,13 +221,19 @@ async def test_local_minted_identity() -> None:
         stopped = await cli("stop", wid)
         assert stopped.returncode == 0, stopped.stderr
 
-    async def boot_and_wait() -> None:
+    async def boot_and_wait(app=None) -> None:
         await await_guest_up(serial_log)
         # The seed's script runs in cloud-init's user-scripts stage
         # (cloud_final); wait for cloud-init to be done before any
         # login or authorized_keys assertion, so the stage's ordering
         # relative to sshd never matters.
-        await run_in_console(microvm, wid, "cloud-init status --wait", "done")
+        await run_in_console(
+            microvm,
+            wid,
+            "cloud-init status --wait",
+            "done",
+            app=app,
+        )
         await run_in_console(
             microvm,
             wid,
@@ -237,6 +244,7 @@ async def test_local_minted_identity() -> None:
             "systemctl is-active msks-wait-address >/dev/null 2>&1 "
             "&& systemctl is-active ssh >/dev/null 2>&1 && echo U-$((6*7))",
             "U-42",
+            app=app,
         )
 
     async def fetch_key(out: Path) -> str:
@@ -309,7 +317,7 @@ async def test_local_minted_identity() -> None:
         # Start via the API, boot, and let the guest say who its keys
         # are for: both authorized_keys files carry the minted line.
         await start_via_api()
-        await boot_and_wait()
+        await boot_and_wait(app=app)
         pub = await asyncio.to_thread(
             subprocess.run,
             [sys.executable, "-m", "msks.client.cli", "key", wid],
@@ -330,10 +338,17 @@ async def test_local_minted_identity() -> None:
             f"&& stat -c %a /home/msks/.ssh/authorized_keys "
             f"&& echo AK-$((6*7))",
             "AK-42",
+            app=app,
         )
         # The operator payload landed beside the identity — the
         # composed document ran whole through cloud-init.
-        await run_in_console(microvm, wid, "cat /root/payload", payload_marker)
+        await run_in_console(
+            microvm,
+            wid,
+            "cat /root/payload",
+            payload_marker,
+            app=app,
+        )
 
         # Logins: root and the workspace user, the minted key alone.
         forward_port = free_port()
@@ -419,7 +434,7 @@ async def test_local_minted_identity() -> None:
         assert again_pem == private_pem
         serial_log.unlink(missing_ok=True)
         await start_via_api()
-        await boot_and_wait()
+        await boot_and_wait(app=app)
         start_forward(forward_port)
         await await_forward_listener(forward_port)
         relogin = await run_ssh(forward_port, "msks", 'echo "BACK-$(whoami)-$((6*7))"')
@@ -510,6 +525,7 @@ async def test_local_client_minted_identity() -> None:
         XDG_DATA_HOME=str(data),
         XDG_CACHE_HOME=str(workdir / "cache"),
     )
+    os.environ["XDG_DATA_HOME"] = str(data)
 
     async def cli(*args: str, timeout: float = 120.0) -> subprocess.CompletedProcess:
         return await asyncio.to_thread(
@@ -585,7 +601,13 @@ async def test_local_client_minted_identity() -> None:
         started = await cli("start", wid)
         assert started.returncode == 0, started.stderr
         await await_guest_up(serial_log)
-        await run_in_console(microvm, wid, "cloud-init status --wait", "done")
+        await run_in_console(
+            microvm,
+            wid,
+            "cloud-init status --wait",
+            "done",
+            app=app,
+        )
         await run_in_console(
             microvm,
             wid,
@@ -596,6 +618,7 @@ async def test_local_client_minted_identity() -> None:
             "systemctl is-active msks-wait-address >/dev/null 2>&1 "
             "&& systemctl is-active ssh >/dev/null 2>&1 && echo U-$((6*7))",
             "U-42",
+            app=app,
         )
         await run_in_console(
             microvm,
@@ -604,7 +627,39 @@ async def test_local_client_minted_identity() -> None:
             f"&& grep -qxF '{pub}' /home/msks/.ssh/authorized_keys "
             f"&& echo AK-$((6*7))",
             "AK-42",
+            app=app,
         )
+        # The console challenge (#123): the seed planted the
+        # allowed_signers trust store beside authorized_keys, so a
+        # console session is challenged — the daemon relays a nonce
+        # it cannot answer. Without the client's signature the
+        # session is refused: a relayed attacker gets the refusal,
+        # not a shell. The signers entry is the principal plus the
+        # key's own two fields — an authorized_keys comment is not
+        # signers syntax, so the store's line drops it.
+        signers_key = " ".join(pub.split()[:2])
+        await run_in_console(
+            microvm,
+            wid,
+            f"grep -qxF '{wid} {signers_key}' /etc/msks/console.allowed_signers "
+            f"&& echo AS-$((6*7))",
+            "AS-42",
+            app=app,
+        )
+        attacker_reader, attacker_writer = await microvm.console(wid, user="root")
+        try:
+            challenge = await asyncio.wait_for(attacker_reader.readline(), 30)
+            assert challenge.startswith(b"AUTH CHALLENGE "), challenge
+            # The refusal lands when the guest's own 30s auth clock
+            # expires — a clock that started before this one, on a
+            # slower guest than this host — so this window outruns
+            # it with room for the lag.
+            refusal = await asyncio.wait_for(attacker_reader.readline(), 60)
+            assert refusal.startswith(b"MSKS ERR auth"), refusal
+        finally:
+            attacker_writer.close()
+            with contextlib.suppress(Exception):
+                await attacker_writer.wait_closed()
 
         # ``msks ssh`` from the local cache alone: the API serves the
         # public half, the private half comes from the file the create
@@ -652,6 +707,7 @@ async def test_local_client_minted_identity() -> None:
             await microvm.cleanup(wid)
         with contextlib.suppress(OSError):
             forwarding.write_text(forwarding_was)
+        os.environ.pop("XDG_DATA_HOME", None)
         shutil.rmtree(state_dir, ignore_errors=True)
 
 
@@ -723,6 +779,10 @@ async def test_local_operator_pubkey() -> None:
     assert keygen.returncode == 0, keygen.stderr
     pub_file = Path(f"{key_path}.pub")
     supplied = pub_file.read_text().strip()
+    # The console challenge's answer for an operator-key workspace:
+    # the harness signs with the operator's own half (as the
+    # operator's agent would).
+    operator_signer = consoleauth.console_signer(key_path.read_text())
 
     async def cli(*args: str, timeout: float = 120.0) -> subprocess.CompletedProcess:
         return await asyncio.to_thread(
@@ -814,7 +874,14 @@ async def test_local_operator_pubkey() -> None:
         started = await cli("start", wid)
         assert started.returncode == 0, started.stderr
         await await_guest_up(serial_log)
-        await run_in_console(microvm, wid, "cloud-init status --wait", "done")
+        await run_in_console(
+            microvm,
+            wid,
+            "cloud-init status --wait",
+            "done",
+            app=app,
+            signer=operator_signer,
+        )
         await run_in_console(
             microvm,
             wid,
@@ -825,6 +892,8 @@ async def test_local_operator_pubkey() -> None:
             "systemctl is-active msks-wait-address >/dev/null 2>&1 "
             "&& systemctl is-active ssh >/dev/null 2>&1 && echo U-$((6*7))",
             "U-42",
+            app=app,
+            signer=operator_signer,
         )
         await run_in_console(
             microvm,
@@ -833,6 +902,8 @@ async def test_local_operator_pubkey() -> None:
             f"&& grep -qxF '{pub}' /home/msks/.ssh/authorized_keys "
             f"&& echo AK-$((6*7))",
             "AK-42",
+            app=app,
+            signer=operator_signer,
         )
 
         forward_port = free_port()

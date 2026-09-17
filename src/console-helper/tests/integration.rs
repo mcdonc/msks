@@ -5,7 +5,7 @@
 //! processes' counters merge into the gate instead of clobbering the
 //! parent's).
 
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
@@ -16,6 +16,11 @@ use std::time::Duration;
 const HELPER: &str = env!("CARGO_BIN_EXE_msks-console-helper");
 
 static FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
+
+/// The auth tests serialize: each spawns the helper, ssh-keygen, and
+/// the verify child, and the CI runner's 2 vCPUs also run ten other
+/// integration tests — the pair is small enough to take turns.
+static AUTH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 struct Fixture {
     child: Child,
@@ -35,7 +40,11 @@ impl Drop for Fixture {
 }
 
 /// Spawn the helper serving an inherited listener fd.
-fn spawn_helper(passwd: Option<&std::path::Path>, deadline_ms: u64) -> Fixture {
+fn spawn_helper(
+    passwd: Option<&std::path::Path>,
+    deadline_ms: u64,
+    signers: Option<&std::path::Path>,
+) -> Fixture {
     let dir = std::env::temp_dir().join("msks-helper-integration");
     std::fs::create_dir_all(&dir).unwrap();
     let id = FIXTURE_ID.fetch_add(1, Ordering::SeqCst);
@@ -58,6 +67,18 @@ fn spawn_helper(passwd: Option<&std::path::Path>, deadline_ms: u64) -> Fixture {
             .arg(passwd)
             .arg("--test-deadline-ms")
             .arg(deadline_ms.to_string());
+        if let Some(signers) = signers {
+            command.arg("--test-signers").arg(signers);
+            // The verify child writes its signature file into the
+            // sig dir the env names; the production default under
+            // /run is root-only, so a privileged-session test
+            // points it at a directory this test owns.
+            let sig_dir = std::env::temp_dir()
+                .join(format!("msks-helper-sigdir-i-{}-{id}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&sig_dir);
+            std::fs::create_dir_all(&sig_dir).unwrap();
+            command.env("MSKS_CONSOLE_SIG_DIR", &sig_dir);
+        }
     }
     profile_env(&mut command);
     let child = command.spawn().expect("helper spawn");
@@ -135,13 +156,31 @@ fn test_passwd() -> (PathBuf, String) {
 }
 
 fn read_line(stream: &mut UnixStream) -> String {
-    stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .unwrap();
-    let mut reader = BufReader::new(stream.try_clone().unwrap());
-    let mut line = String::new();
-    reader.read_line(&mut line).expect("reply line");
-    line
+    read_line_within(stream, Duration::from_secs(10), "reply line")
+}
+
+/// Byte-wise: no per-call BufReader. The helper's protocol lines
+/// are small, and a buffered reader built per call silently drops
+/// whatever followed the returned line in its buffer when two guest
+/// lines coalesce into one read — exactly what a slow CI runner
+/// schedules between MSKS OK and the challenge.
+fn read_line_within(stream: &mut UnixStream, timeout: Duration, awaited: &str) -> String {
+    stream.set_read_timeout(Some(timeout)).unwrap();
+    let mut line = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+        match stream.read(&mut byte) {
+            Ok(0) => break,
+            Ok(_) => {
+                line.push(byte[0]);
+                if byte[0] == b'\n' {
+                    break;
+                }
+            }
+            Err(error) => panic!("{awaited}: {error}"),
+        }
+    }
+    String::from_utf8_lossy(&line).into_owned()
 }
 
 fn read_until_eof(stream: &mut UnixStream) -> String {
@@ -162,7 +201,7 @@ fn send_prelude(stream: &mut UnixStream, user: &str, rows: u16, cols: u16) {
 #[test]
 fn shell_session_round_trip() {
     let (passwd, user) = test_passwd();
-    let fixture = spawn_helper(Some(&passwd), 10_000);
+    let fixture = spawn_helper(Some(&passwd), 10_000, None);
     let mut client = connect(&fixture);
     send_prelude(&mut client, &user, 34, 120);
     assert_eq!(read_line(&mut client), format!("MSKS OK {user}\n"));
@@ -191,7 +230,7 @@ fn shell_session_round_trip() {
 #[test]
 fn window_size_is_applied_to_the_pty() {
     let (passwd, user) = test_passwd();
-    let fixture = spawn_helper(Some(&passwd), 10_000);
+    let fixture = spawn_helper(Some(&passwd), 10_000, None);
     let mut client = connect(&fixture);
     // A size no terminal would default to.
     send_prelude(&mut client, &user, 33, 111);
@@ -220,7 +259,7 @@ fn window_size_is_applied_to_the_pty() {
 #[test]
 fn env_is_built_from_passwd_not_the_listener() {
     let (passwd, user) = test_passwd();
-    let fixture = spawn_helper(Some(&passwd), 10_000);
+    let fixture = spawn_helper(Some(&passwd), 10_000, None);
     let mut client = connect(&fixture);
     send_prelude(&mut client, &user, 24, 80);
     assert_eq!(read_line(&mut client), format!("MSKS OK {user}\n"));
@@ -252,7 +291,7 @@ fn env_is_built_from_passwd_not_the_listener() {
 #[test]
 fn refused_user_gets_a_named_refusal() {
     let (passwd, _) = test_passwd();
-    let fixture = spawn_helper(Some(&passwd), 10_000);
+    let fixture = spawn_helper(Some(&passwd), 10_000, None);
     let mut client = connect(&fixture);
     send_prelude(&mut client, "nosuchuser", 24, 80);
     assert_eq!(read_line(&mut client), "MSKS ERR user\n");
@@ -265,7 +304,7 @@ fn system_account_is_refused() {
     std::fs::create_dir_all(&dir).unwrap();
     let passwd = dir.join("passwd-system");
     std::fs::write(&passwd, "daemon:x:1:1::/nonexistent:/usr/sbin/nologin\n").unwrap();
-    let fixture = spawn_helper(Some(&passwd), 10_000);
+    let fixture = spawn_helper(Some(&passwd), 10_000, None);
     let mut client = connect(&fixture);
     send_prelude(&mut client, "daemon", 24, 80);
     assert_eq!(read_line(&mut client), "MSKS ERR user\n");
@@ -274,7 +313,7 @@ fn system_account_is_refused() {
 #[test]
 fn bad_version_is_refused() {
     let (passwd, _) = test_passwd();
-    let fixture = spawn_helper(Some(&passwd), 10_000);
+    let fixture = spawn_helper(Some(&passwd), 10_000, None);
     let mut client = connect(&fixture);
     client.write_all(b"HELLO 2\nUSER root\nGO\n").unwrap();
     assert_eq!(read_line(&mut client), "MSKS ERR version\n");
@@ -283,7 +322,7 @@ fn bad_version_is_refused() {
 #[test]
 fn syntax_is_refused() {
     let (passwd, _) = test_passwd();
-    let fixture = spawn_helper(Some(&passwd), 10_000);
+    let fixture = spawn_helper(Some(&passwd), 10_000, None);
     let mut client = connect(&fixture);
     client.write_all(b"HELLO 1\nEXEC /bin/sh\nGO\n").unwrap();
     assert_eq!(read_line(&mut client), "MSKS ERR syntax\n");
@@ -293,7 +332,7 @@ fn syntax_is_refused() {
 fn silence_times_out_and_fails_closed() {
     let (passwd, _) = test_passwd();
     // A deadline the test can wait out.
-    let fixture = spawn_helper(Some(&passwd), 300);
+    let fixture = spawn_helper(Some(&passwd), 300, None);
     let mut client = connect(&fixture);
     client.write_all(b"HELLO 1\n").unwrap();
     assert_eq!(read_line(&mut client), "MSKS ERR timeout\n");
@@ -312,7 +351,7 @@ fn exec_failure_closes_the_session_after_ok() {
         format!("msks:x:1000:1000::{}:/nonexistent/shell\n", home.display()),
     )
     .unwrap();
-    let fixture = spawn_helper(Some(&passwd), 10_000);
+    let fixture = spawn_helper(Some(&passwd), 10_000, None);
     let mut client = connect(&fixture);
     send_prelude(&mut client, "msks", 24, 80);
     assert_eq!(read_line(&mut client), "MSKS OK msks\n");
@@ -330,4 +369,125 @@ fn usage_exits_two() {
         let status = command.status().unwrap();
         assert_eq!(status.code(), Some(2), "{args:?}");
     }
+}
+
+/// The console challenge, end to end through the real binary: a
+/// trust store planted for a real key, a real signature over the
+/// served nonce, and the shell behind it.
+#[test]
+fn console_auth_admits_a_real_signature() {
+    let _auth = AUTH_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let dir = std::env::temp_dir().join(format!("msks-helper-auth-ok-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let key = dir.join("key");
+    let status = Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+        .arg(&key)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let public = std::fs::read_to_string(key.with_extension("pub")).unwrap();
+    let signers = dir.join("signers");
+    std::fs::write(&signers, format!("ws-int {}", public)).unwrap();
+    let (passwd, user) = test_passwd();
+    let fixture = spawn_helper(Some(&passwd), 10_000, Some(&signers));
+    let mut client = connect(&fixture);
+    send_prelude(&mut client, &user, 24, 80);
+    assert_eq!(read_line(&mut client), format!("MSKS OK {user}\n"));
+
+    let challenge = read_line_within(&mut client, Duration::from_secs(30), "challenge");
+    let nonce_hex = challenge
+        .strip_prefix("AUTH CHALLENGE ")
+        .unwrap_or_else(|| panic!("expected a challenge, got {challenge:?}"));
+    let nonce = (0..nonce_hex.trim().len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&nonce_hex.trim()[i..i + 2], 16).unwrap())
+        .collect::<Vec<u8>>();
+    let nonce_file = dir.join("nonce");
+    std::fs::write(&nonce_file, &nonce).unwrap();
+    let status = Command::new("ssh-keygen")
+        .args(["-Y", "sign", "-q", "-f"])
+        .arg(&key)
+        .arg("-n")
+        .arg("msks-console")
+        .arg(&nonce_file)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let armored = std::fs::read_to_string(dir.join("nonce.sig")).unwrap();
+    let body: String = armored
+        .lines()
+        .filter(|line| !line.starts_with('-'))
+        .collect();
+    let blob = msks_console_helper::auth::b64_decode(&body).expect("armored body decodes");
+    client
+        .write_all(
+            format!(
+                "AUTH SIG {}\n",
+                msks_console_helper::auth::b64_encode(&blob, 0)
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+    assert_eq!(
+        read_line_within(&mut client, Duration::from_secs(30), "auth verdict"),
+        "AUTH OK\n"
+    );
+
+    let marker = format!("a{}", std::process::id());
+    client
+        .write_all(format!("echo {marker}\n").as_bytes())
+        .unwrap();
+    let mut seen = String::new();
+    let mut byte = [0u8; 1];
+    client
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    while !seen.contains(&marker) {
+        match client.read(&mut byte) {
+            Ok(0) => panic!("session ended before the marker: {seen}"),
+            Ok(_) => seen.push(byte[0] as char),
+            Err(error) => panic!("read failed: {error}"),
+        }
+    }
+    drop(client);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The same wiring, refused: a signature that verifies against
+/// nothing gets one refusal line and a closed session.
+#[test]
+fn console_auth_refuses_garbage() {
+    let _auth = AUTH_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    // No key generation needed: any principal line turns the
+    // challenge on, and a garbage signature fails the verify
+    // regardless of what key the store names.
+    let dir = std::env::temp_dir().join(format!("msks-helper-auth-no-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let signers = dir.join("signers");
+    std::fs::write(
+        &signers,
+        "ws-int ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAtest\n",
+    )
+    .unwrap();
+    let (passwd, user) = test_passwd();
+    let fixture = spawn_helper(Some(&passwd), 10_000, Some(&signers));
+    let mut client = connect(&fixture);
+    send_prelude(&mut client, &user, 24, 80);
+    assert_eq!(read_line(&mut client), format!("MSKS OK {user}\n"));
+    let window = Duration::from_secs(30);
+    let challenge = read_line_within(&mut client, window, "challenge");
+    assert!(
+        challenge.starts_with("AUTH CHALLENGE "),
+        "expected a challenge, got {challenge:?}"
+    );
+    client
+        .write_all(b"AUTH SIG bm90LXNpZ25hdHVyZQ==\n")
+        .unwrap();
+    let refusal = read_line_within(&mut client, window, "challenge");
+    assert_eq!(refusal, "MSKS ERR auth\n", "got {challenge:?} first");
+    assert_eq!(read_until_eof(&mut client), "");
+    let _ = std::fs::remove_dir_all(&dir);
 }

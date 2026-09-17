@@ -80,6 +80,7 @@ mod cli {
                 fd: 7,
                 passwd: PathBuf::from("/etc/passwd"),
                 deadline: Duration::from_millis(10_000),
+                signers: PathBuf::from("/nonexistent/msks-console.allowed_signers"),
             }
         );
     }
@@ -94,6 +95,7 @@ mod cli {
                 fd: 9,
                 passwd: PathBuf::from("/tmp/p"),
                 deadline: Duration::from_millis(10_000),
+                signers: PathBuf::from("/nonexistent/msks-console.allowed_signers"),
             }
         );
     }
@@ -115,6 +117,83 @@ mod cli {
                 fd: 3,
                 passwd: PathBuf::from("/tmp/p"),
                 deadline: Duration::from_millis(250),
+                signers: PathBuf::from("/nonexistent/msks-console.allowed_signers"),
+            }
+        );
+    }
+
+    #[test]
+    fn test_listen_with_a_wrong_flag_falls_through() {
+        // Eight arguments with each guard condition false in turn:
+        // the 8-arg arm never matches and the catch-all answers the
+        // usage line.
+        let lists = [
+            vec![
+                "--nope",
+                "5",
+                "--test-passwd",
+                "/tmp/p",
+                "--test-deadline-ms",
+                "500",
+                "--test-signers",
+                "/tmp/signers",
+            ],
+            vec![
+                "--test-listen-fd",
+                "5",
+                "--nope",
+                "/tmp/p",
+                "--test-deadline-ms",
+                "500",
+                "--test-signers",
+                "/tmp/signers",
+            ],
+            vec![
+                "--test-listen-fd",
+                "5",
+                "--test-passwd",
+                "/tmp/p",
+                "--nope",
+                "500",
+                "--test-signers",
+                "/tmp/signers",
+            ],
+            vec![
+                "--test-listen-fd",
+                "5",
+                "--test-passwd",
+                "/tmp/p",
+                "--test-deadline-ms",
+                "500",
+                "--nope",
+                "/tmp/signers",
+            ],
+        ];
+        for list in &lists {
+            assert_eq!(parse_args(&args(list)), Err(USAGE.to_string()));
+        }
+    }
+
+    #[test]
+    fn test_listen_with_signers() {
+        let mode = parse_args(&args(&[
+            "--test-listen-fd",
+            "5",
+            "--test-passwd",
+            "/tmp/p",
+            "--test-deadline-ms",
+            "500",
+            "--test-signers",
+            "/tmp/signers",
+        ]))
+        .unwrap();
+        assert_eq!(
+            mode,
+            Mode::TestListen {
+                fd: 5,
+                passwd: PathBuf::from("/tmp/p"),
+                deadline: Duration::from_millis(500),
+                signers: PathBuf::from("/tmp/signers"),
             }
         );
     }
@@ -717,6 +796,11 @@ mod serve {
 
     #[test]
     fn install_signals_is_idempotent() {
+        // Signal dispositions are process-global: serialize against
+        // tests that spawn children (their wait() needs SIG_DFL).
+        let _spawns = SPAWN_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         install_signals();
         install_signals();
     }
@@ -724,6 +808,8 @@ mod serve {
 
 mod session {
     use super::lock::SPAWN_LOCK;
+    use msks_console_helper::auth::RealAuthSys;
+    use std::path::Path;
 
     use msks_console_helper::passwd::UserEntry;
     use msks_console_helper::session::{
@@ -843,7 +929,16 @@ mod session {
         let fd = server.as_raw_fd();
         std::mem::forget(server);
         let handle = std::thread::spawn(move || {
-            handle_session(fd, &*sys, &passwd, Instant::now() + FAR);
+            // A signers path that does not exist: no trust store, no
+            // challenge — these tests pin the session machinery.
+            handle_session(
+                fd,
+                &*sys,
+                &RealAuthSys,
+                Path::new("/nonexistent/msks-signers"),
+                &passwd,
+                Instant::now() + FAR,
+            );
             ran.store(true, Ordering::SeqCst);
         });
         (client, fd, handle, done)
@@ -890,7 +985,50 @@ mod session {
         let passwd = passwd_file();
         let fd = server.as_raw_fd();
         std::mem::forget(server);
-        handle_session(fd, &*sys, &passwd, Instant::now() + FAR);
+        handle_session(
+            fd,
+            &*sys,
+            &RealAuthSys,
+            Path::new("/nonexistent/msks-signers"),
+            &passwd,
+            Instant::now() + FAR,
+        );
+        assert_eq!(*sys.closed.lock().unwrap(), vec![fd]);
+    }
+
+    #[test]
+    fn auth_refusal_closes_after_ok() {
+        // A session against a guest with the trust store whose client
+        // cannot sign: the refusal line, then close (#123).
+        let sys = Arc::new(FakeSessionSys::default());
+        let (mut client, server) = UnixStream::pair().unwrap();
+        client.write_all(b"HELLO 1\nUSER root\nGO\n").unwrap();
+        let dir = std::env::temp_dir().join("msks-helper-session-auth");
+        std::fs::create_dir_all(&dir).unwrap();
+        let signers = dir.join(format!("signers-{}", std::process::id()));
+        std::fs::write(&signers, "ws1 ssh-ed25519 AAAA\n").unwrap();
+        struct NoAuth;
+        impl msks_console_helper::auth::AuthSys for NoAuth {
+            fn urandom(&self, out: &mut [u8; 32]) -> bool {
+                out.fill(1);
+                true
+            }
+            fn verify(&self, _: &[u8], _: &[u8], _: &str, _: &Path) -> bool {
+                false
+            }
+        }
+        let passwd = passwd_file();
+        let fd = server.as_raw_fd();
+        std::mem::forget(server);
+        handle_session(fd, &*sys, &NoAuth, &signers, &passwd, Instant::now() + FAR);
+        client
+            .set_read_timeout(Some(Duration::from_millis(500)))
+            .unwrap();
+        let mut seen = String::new();
+        use std::io::Read;
+        let _ = client.read_to_string(&mut seen);
+        assert!(seen.starts_with("MSKS OK root\nAUTH CHALLENGE "), "{seen}");
+        assert!(seen.ends_with("MSKS ERR auth\n"), "{seen}");
         assert_eq!(*sys.closed.lock().unwrap(), vec![fd]);
     }
 
@@ -1883,7 +2021,7 @@ mod real_impls {
     use std::io::Write;
     use std::os::fd::AsRawFd;
     use std::os::unix::net::UnixStream;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
 
     use super::lock::SPAWN_LOCK;
@@ -2086,7 +2224,12 @@ mod real_impls {
         let limit = rlimit(libc::RLIMIT_NPROC);
         set_rlimit(libc::RLIMIT_NPROC, 0);
         let passwd = passwd_with_current_user();
-        let result = fork_session(0, &passwd, Instant::now() + Duration::from_millis(100));
+        let result = fork_session(
+            0,
+            &passwd,
+            Path::new("/nonexistent/msks-console.allowed_signers"),
+            Instant::now() + Duration::from_millis(100),
+        );
         set_rlimit(libc::RLIMIT_NPROC, limit);
         assert_eq!(result, Err(SpawnFail));
     }
@@ -2104,7 +2247,12 @@ mod real_impls {
         let passwd = passwd_with_current_user();
         let fd = server.as_raw_fd();
         std::mem::forget(server);
-        let result = fork_session(fd, &passwd, Instant::now() + Duration::from_secs(10));
+        let result = fork_session(
+            fd,
+            &passwd,
+            Path::new("/nonexistent/msks-console.allowed_signers"),
+            Instant::now() + Duration::from_secs(10),
+        );
         assert_eq!(result, Ok(()));
     }
 
@@ -2138,5 +2286,535 @@ mod shell_command {
         assert!(debug.contains("\"-bash\""), "{debug}");
         assert!(debug.contains("TERM=\"xterm\""), "{debug}");
         assert!(debug.contains("HOME=\"/home/msks\""), "{debug}");
+    }
+}
+
+/// The console challenge (#123): the exchange's every branch, the
+/// codec, the trust-store read, and the real ssh-keygen edge.
+mod auth {
+    use msks_console_helper::auth::{
+        authenticate, b64_decode, b64_encode, hex, read_signers, sig_dir, AuthSys, RealAuthSys,
+        Signers, NAMESPACE, NONCE_BYTES,
+    };
+    use msks_console_helper::refuse;
+    use std::io::{Read, Write};
+    use std::os::fd::AsRawFd;
+    use std::os::unix::net::UnixStream;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use std::time::{Duration, Instant};
+
+    use super::lock::SPAWN_LOCK;
+
+    /// The fake edge: entropy and verdict on demand.
+    struct FakeAuth {
+        entropy: bool,
+        verdict: bool,
+    }
+
+    impl AuthSys for FakeAuth {
+        fn urandom(&self, out: &mut [u8; NONCE_BYTES]) -> bool {
+            if !self.entropy {
+                return false;
+            }
+            out.fill(7);
+            true
+        }
+        fn verify(&self, _sig: &[u8], _nonce: &[u8], _principal: &str, _signers: &Path) -> bool {
+            self.verdict
+        }
+    }
+
+    fn signers_file(body: &str) -> PathBuf {
+        static LINE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let line_no = LINE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let dir = std::env::temp_dir().join("msks-helper-auth-tests");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("signers-{}", line_no));
+        std::fs::write(&path, body).unwrap();
+        path
+    }
+
+    fn read_reply(client: &mut UnixStream) -> String {
+        client
+            .set_read_timeout(Some(Duration::from_millis(500)))
+            .unwrap();
+        let mut reply = [0u8; 128];
+        let n = client.read(&mut reply).unwrap_or(0);
+        String::from_utf8_lossy(&reply[..n]).into_owned()
+    }
+
+    #[test]
+    fn no_trust_store_passes_through() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let sys = FakeAuth {
+            entropy: false,
+            verdict: false,
+        };
+        assert!(authenticate(
+            server.as_raw_fd(),
+            Instant::now() + Duration::from_secs(1),
+            Path::new("/nonexistent/msks-signers"),
+            &sys
+        ));
+        client
+            .set_read_timeout(Some(Duration::from_millis(50)))
+            .unwrap();
+        let mut buf = [0u8; 1];
+        assert_eq!(client.read(&mut buf).unwrap_or(0), 0);
+    }
+
+    #[test]
+    fn entropy_failure_refuses() {
+        let signers = signers_file("ws1 ssh-ed25519 AAAA\n");
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let sys = FakeAuth {
+            entropy: false,
+            verdict: true,
+        };
+        assert!(!authenticate(
+            server.as_raw_fd(),
+            Instant::now() + Duration::from_secs(1),
+            &signers,
+            &sys
+        ));
+        assert_eq!(read_reply(&mut client), "MSKS ERR auth\n");
+    }
+
+    #[test]
+    fn challenge_and_signature_round_trip() {
+        let signers = signers_file("ws1 ssh-ed25519 AAAA\n");
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let sys = FakeAuth {
+            entropy: true,
+            verdict: true,
+        };
+        let server_fd = server.as_raw_fd();
+        let handle = std::thread::spawn(move || {
+            authenticate(
+                server_fd,
+                Instant::now() + Duration::from_secs(2),
+                &signers,
+                &sys,
+            )
+        });
+        let challenge = read_reply(&mut client);
+        assert!(challenge.starts_with("AUTH CHALLENGE "), "{challenge}");
+        client
+            .write_all(format!("AUTH SIG {}\n", b64_encode(b"sigblob", 0)).as_bytes())
+            .unwrap();
+        let mut seen = read_reply(&mut client);
+        while !seen.is_empty() && !seen.contains("AUTH OK") {
+            seen.push_str(&read_reply(&mut client));
+        }
+        assert!(seen.ends_with("AUTH OK\n"), "{seen}");
+        assert!(handle.join().unwrap());
+    }
+
+    #[test]
+    fn wrong_line_bad_base64_and_failed_verify_all_refuse() {
+        for reply in ["hello\n", "AUTH SIG !!!\n", "AUTH SIG QUJD\n"] {
+            let signers = signers_file("ws1 ssh-ed25519 AAAA\n");
+            let (mut client, server) = UnixStream::pair().unwrap();
+            let sys = FakeAuth {
+                entropy: true,
+                verdict: false,
+            };
+            let server_fd = server.as_raw_fd();
+            let handle = std::thread::spawn(move || {
+                authenticate(
+                    server_fd,
+                    Instant::now() + Duration::from_secs(2),
+                    &signers,
+                    &sys,
+                )
+            });
+            let challenge = read_reply(&mut client);
+            assert!(challenge.starts_with("AUTH CHALLENGE "), "{challenge}");
+            client.write_all(reply.as_bytes()).unwrap();
+            let mut seen = read_reply(&mut client);
+            while !seen.is_empty() && !seen.contains("MSKS ERR") {
+                seen.push_str(&read_reply(&mut client));
+            }
+            assert!(seen.ends_with("MSKS ERR auth\n"), "{seen}");
+            assert!(!handle.join().unwrap());
+        }
+    }
+
+    #[test]
+    fn silence_times_out() {
+        let signers = signers_file("ws1 ssh-ed25519 AAAA\n");
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let sys = FakeAuth {
+            entropy: true,
+            verdict: true,
+        };
+        assert!(!authenticate(
+            server.as_raw_fd(),
+            Instant::now() + Duration::from_millis(80),
+            &signers,
+            &sys
+        ));
+        let mut seen = read_reply(&mut client);
+        // The challenge precedes the refusal; a 128-byte read may
+        // carry both at once.
+        while !seen.contains("MSKS ERR") {
+            seen.push_str(&read_reply(&mut client));
+        }
+        assert!(seen.starts_with("AUTH CHALLENGE "));
+        assert!(seen.ends_with("MSKS ERR auth\n"));
+        drop(client);
+    }
+
+    #[test]
+    fn oversize_signature_line_refuses() {
+        let signers = signers_file("ws1 ssh-ed25519 AAAA\n");
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let sys = FakeAuth {
+            entropy: true,
+            verdict: true,
+        };
+        let server_fd = server.as_raw_fd();
+        let handle = std::thread::spawn(move || {
+            authenticate(
+                server_fd,
+                Instant::now() + Duration::from_secs(2),
+                &signers,
+                &sys,
+            )
+        });
+        let challenge = read_reply(&mut client);
+        assert!(challenge.starts_with("AUTH CHALLENGE "), "{challenge}");
+        client.write_all(&vec![b'A'; 20000]).unwrap();
+        // The helper reads its cap one byte at a time — on a loaded
+        // machine the refusal trails the write by more than one
+        // read window, so the wait is a deadline, not one quiet
+        // read.
+        let mut seen = String::new();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !seen.contains("MSKS ERR") && Instant::now() < deadline {
+            seen.push_str(&read_reply(&mut client));
+        }
+        assert!(seen.ends_with("MSKS ERR auth\n"), "{seen}");
+        assert!(!handle.join().unwrap());
+        drop(client);
+    }
+
+    #[test]
+    fn dead_peer_ends_the_exchange() {
+        let signers = signers_file("ws1 ssh-ed25519 AAAA\n");
+        let (client, server) = UnixStream::pair().unwrap();
+        drop(client);
+        // Let the peer's close reach the socket before the write.
+        std::thread::sleep(Duration::from_millis(100));
+        let sys = FakeAuth {
+            entropy: true,
+            verdict: true,
+        };
+        assert!(!authenticate(
+            server.as_raw_fd(),
+            Instant::now() + Duration::from_millis(300),
+            &signers,
+            &sys
+        ));
+    }
+
+    #[test]
+    fn the_trust_store_has_three_states() {
+        // A principal line names the workspace id to verify as.
+        assert!(matches!(
+            read_signers(&signers_file("ws1 ssh-ed25519 AAAA\nws2 x y\n")),
+            Signers::Principal(p) if p == "ws1"
+        ));
+        // Absent: a pre-change guest, no challenge.
+        assert!(matches!(
+            read_signers(Path::new("/nonexistent")),
+            Signers::Absent
+        ));
+        // Present without a principal: half-seeded, fails closed.
+        assert!(matches!(
+            read_signers(&signers_file("")),
+            Signers::NoPrincipal
+        ));
+        assert!(matches!(
+            read_signers(&signers_file("\n")),
+            Signers::NoPrincipal
+        ));
+    }
+
+    #[test]
+    fn an_unreadable_trust_store_refuses() {
+        // Not-found is the only absence that reads as absent: a
+        // store that exists but cannot be read (here: a directory
+        // in its place) refuses, fail closed.
+        let dir = std::env::temp_dir().join(format!("msks-helper-dir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).unwrap();
+        assert!(matches!(read_signers(&dir), Signers::NoPrincipal));
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn a_half_seeded_trust_store_refuses() {
+        // The seed's file exists but no line landed: ssh is
+        // key-gated, so the console fails closed rather than
+        // serving the weaker posture.
+        let signers = signers_file("");
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let sys = FakeAuth {
+            entropy: true,
+            verdict: true,
+        };
+        assert!(!authenticate(
+            server.as_raw_fd(),
+            Instant::now() + Duration::from_millis(200),
+            &signers,
+            &sys
+        ));
+        assert_eq!(read_reply(&mut client), "MSKS ERR auth\n");
+    }
+
+    #[test]
+    fn hex_is_lowercase_pairs() {
+        assert_eq!(hex(&[0x00, 0x0f, 0xff, 0xa5]), "000fffa5");
+        assert_eq!(hex(&[]), "");
+    }
+
+    #[test]
+    fn base64_round_trips_every_padding_shape() {
+        for len in [1usize, 2, 3, 4, 5, 255, 256] {
+            let bytes: Vec<u8> = (0..len).map(|i| (i * 37 % 256) as u8).collect();
+            let encoded = b64_encode(&bytes, 0);
+            assert_eq!(encoded.len() % 4, 0);
+            assert_eq!(b64_decode(&encoded).unwrap(), bytes);
+        }
+    }
+
+    #[test]
+    fn base64_wraps_at_the_requested_width() {
+        let encoded = b64_encode(&[0u8; 6], 4);
+        assert_eq!(encoded, "AAAA\nAAAA");
+        assert_eq!(b64_encode(b"a", 0), "YQ==");
+        assert_eq!(b64_encode(b"ab", 0), "YWI=");
+        assert_eq!(b64_encode(b"abc", 0), "YWJj");
+    }
+
+    #[test]
+    fn base64_rejects_the_malformed() {
+        for bad in ["", "A", "AAAAA", "AA=A", "A===", "A!==", "AA A", "AAAA="] {
+            assert_eq!(b64_decode(bad), None, "{bad}");
+        }
+        assert_eq!(b64_decode("QUJD").unwrap(), b"ABC");
+    }
+
+    // --- the real edge ---
+
+    #[test]
+    fn real_urandom_yields_fresh_bytes() {
+        let sys = RealAuthSys;
+        let mut one = [0u8; NONCE_BYTES];
+        let mut two = [0u8; NONCE_BYTES];
+        assert!(sys.urandom(&mut one));
+        assert!(sys.urandom(&mut two));
+        assert_ne!(one, two);
+    }
+
+    /// A directory path the test owns, standing in for the
+    /// production root-only /run dir as the verify child's sig dir.
+    /// Left uncreated so `verify` exercises creating it itself.
+    fn owned_sig_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("msks-helper-sigdir-{}", tag));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    fn set_sig_dir(dir: &Path) -> Option<String> {
+        let old = std::env::var("MSKS_CONSOLE_SIG_DIR").ok();
+        std::env::set_var("MSKS_CONSOLE_SIG_DIR", dir);
+        old
+    }
+
+    fn restore_sig_dir(old: Option<String>) {
+        match old {
+            Some(v) => std::env::set_var("MSKS_CONSOLE_SIG_DIR", v),
+            None => std::env::remove_var("MSKS_CONSOLE_SIG_DIR"),
+        }
+    }
+
+    #[test]
+    fn sig_dir_defaults_to_the_run_path_when_unset() {
+        // Serialized against the tests that point the env elsewhere.
+        let _spawns = SPAWN_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let prior = std::env::var("MSKS_CONSOLE_SIG_DIR").ok();
+        std::env::remove_var("MSKS_CONSOLE_SIG_DIR");
+        assert_eq!(
+            sig_dir(),
+            std::path::PathBuf::from("/run/msks-console-helper")
+        );
+        if let Some(v) = prior {
+            std::env::set_var("MSKS_CONSOLE_SIG_DIR", v);
+        }
+    }
+
+    #[test]
+    fn real_verify_accepts_a_real_signature() {
+        // The PATH-mutation test below is process-global: every test
+        // that spawns ssh-keygen serializes against it.
+        let _spawns = SPAWN_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let dir = owned_sig_dir("ok");
+        let prior = set_sig_dir(&dir);
+        // A concurrently-run serve test may have installed SIG_IGN
+        // for SIGCHLD (auto-reap): wait() would then fail ECHILD.
+        // SAFETY: the default disposition for the test's own spawns.
+        unsafe {
+            libc::signal(libc::SIGCHLD, libc::SIG_DFL);
+        }
+        let dir = std::env::temp_dir().join("msks-helper-auth-real");
+        std::fs::create_dir_all(&dir).unwrap();
+        let key = dir.join(format!("key-{}", std::process::id()));
+        // A leftover key from an earlier run would stall ssh-keygen
+        // at its overwrite prompt.
+        let _ = std::fs::remove_file(key.with_extension("pub"));
+        let _ = std::fs::remove_file(&key);
+        let out = Command::new("ssh-keygen")
+            .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+            .arg(&key)
+            .output()
+            .expect("ssh-keygen");
+        assert!(
+            out.status.success(),
+            "ssh-keygen: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let principal = "ws-real";
+        let signers = dir.join(format!("signers-{}", std::process::id()));
+        let pubkey = std::fs::read_to_string(key.with_extension("pub"))
+            .unwrap()
+            .trim()
+            .to_string();
+        let key_fields: Vec<&str> = pubkey.split(' ').collect();
+        std::fs::write(
+            &signers,
+            format!("{principal} {} {}\n", key_fields[0], key_fields[1]),
+        )
+        .unwrap();
+        let nonce = b"fresh nonce bytes";
+        let payload = dir.join(format!("payload-{}", std::process::id()));
+        std::fs::write(&payload, nonce).unwrap();
+        // -Y sign writes the signature beside the payload: <file>.sig
+        let armored = dir.join(format!("payload-{}.sig", std::process::id()));
+        let signed = Command::new("ssh-keygen")
+            .args(["-Y", "sign", "-f"])
+            .arg(&key)
+            .arg("-n")
+            .arg(NAMESPACE)
+            .arg(&payload)
+            .output()
+            .expect("ssh-keygen -Y sign");
+        assert!(
+            signed.status.success(),
+            "sign: {}",
+            String::from_utf8_lossy(&signed.stderr)
+        );
+        let text = std::fs::read_to_string(armored).unwrap();
+        let body = text
+            .lines()
+            .filter(|l| !l.starts_with('-'))
+            .collect::<String>();
+        let blob = b64_decode(&body).expect("armored body decodes");
+        assert!(RealAuthSys.verify(&blob, nonce, principal, &signers));
+        // The namespace binds: a signature for another namespace
+        // must not verify here.
+        let other = dir.join(format!("payload2-{}", std::process::id()));
+        std::fs::write(&other, nonce).unwrap();
+        let armored2 = dir.join(format!("payload2-{}.sig", std::process::id()));
+        let signed2 = Command::new("ssh-keygen")
+            .args(["-Y", "sign", "-f"])
+            .arg(&key)
+            .arg("-n")
+            .arg("other-namespace")
+            .arg(&other)
+            .output()
+            .expect("ssh-keygen -Y sign");
+        assert!(signed2.status.success());
+        let text2 = std::fs::read_to_string(armored2).unwrap();
+        let body2 = text2
+            .lines()
+            .filter(|l| !l.starts_with('-'))
+            .collect::<String>();
+        let blob2 = b64_decode(&body2).expect("armored body decodes");
+        assert!(!RealAuthSys.verify(&blob2, nonce, principal, &signers));
+        restore_sig_dir(prior);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn real_verify_fails_when_the_sig_path_is_unwritable() {
+        let _spawns = SPAWN_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let dir = owned_sig_dir("unwritable");
+        std::fs::create_dir(&dir).unwrap();
+        let prior = set_sig_dir(&dir);
+        // A directory squatting on the per-child sig-file path makes
+        // the write fail: verdict false, nothing leaked.
+        std::fs::create_dir(dir.join(format!("sig.{}", std::process::id()))).unwrap();
+        let signers = signers_file("ws1 ssh-ed25519 AAAA\n");
+        assert!(!RealAuthSys.verify(b"blob", b"nonce", "ws1", &signers));
+        restore_sig_dir(prior);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn real_verify_fails_when_the_sig_dir_is_unusable() {
+        let _spawns = SPAWN_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // The configured sig dir exists as a plain file: the
+        // directory cannot come into being and the verdict is false.
+        let blocker =
+            std::env::temp_dir().join(format!("msks-helper-sigdir-blocker-{}", std::process::id()));
+        std::fs::write(&blocker, b"file where a directory belongs").unwrap();
+        let prior = set_sig_dir(&blocker);
+        let signers = signers_file("ws1 ssh-ed25519 AAAA\n");
+        assert!(!RealAuthSys.verify(b"blob", b"nonce", "ws1", &signers));
+        restore_sig_dir(prior);
+        let _ = std::fs::remove_file(&blocker);
+    }
+
+    #[test]
+    fn real_verify_fails_when_ssh_keygen_cannot_spawn() {
+        let _spawns = SPAWN_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let dir = owned_sig_dir("nospawn");
+        std::fs::create_dir(&dir).unwrap();
+        let prior = set_sig_dir(&dir);
+        let signers = signers_file("ws1 ssh-ed25519 AAAA\n");
+        let path = std::env::var("PATH").unwrap_or_default();
+        // An empty PATH: the spawn cannot resolve ssh-keygen and the
+        // verdict is false, not a panic.
+        std::env::set_var("PATH", "");
+        let verdict = RealAuthSys.verify(b"blob", b"nonce", "ws1", &signers);
+        std::env::set_var("PATH", &path);
+        restore_sig_dir(prior);
+        // The spawn failed but the signature file was still written
+        // and cleaned up with the verdict.
+        assert!(!verdict);
+        assert!(!dir.join(format!("sig.{}", std::process::id())).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The refusal helper's line, pinned (the auth refusals ride it).
+    #[test]
+    fn refuse_line_shape() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        refuse(server.as_raw_fd(), "auth");
+        drop(server);
+        assert_eq!(read_reply(&mut client), "MSKS ERR auth\n");
     }
 }

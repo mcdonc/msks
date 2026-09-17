@@ -17,6 +17,17 @@ tagged `vX.Y.Z`.
   unchanged. The workflow is manual dispatch until such a runner
   registers; arming a nightly schedule is adding the trigger back.
   See README's recursion section.
+- **Console challenge-response (#123, first half).** The guest
+  console demands a signature the daemon cannot produce: workspaces
+  seeded with an identity now also plant an allowed_signers trust
+  store, and each console connection carries a fresh nonce the
+  client must sign (SSHSIG, `msks-console` namespace) before any
+  shell — verified by the guest's own ssh-keygen, refused closed
+  otherwise. `msks console` answers transparently with the same key
+  as ssh (escrow, client data root, or the operator's ssh-agent,
+  hardware keys included — msks never reads an agent-held half).
+  Pre-change guests serve no challenge. Enrollment, minted-key
+  rotation, and the audited re-enable follow in the second half.
 - **Operator-supplied ssh key at create (#132).** `msks create
 --pubkey FILE` (or `-` on stdin) builds the workspace around a
   public key the operator already owns, at any well-formed key

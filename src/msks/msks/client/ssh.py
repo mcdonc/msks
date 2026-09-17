@@ -98,8 +98,9 @@ def resolve_private(key: dict, workspace_id: str) -> str:
     stale cache (the id re-created from another client, a backup
     restored over a re-created workspace) fails as one named line,
     not as ssh's opaque ``Permission denied (publickey)``. Losing
-    the file loses ssh (the console still opens): the error names
-    the path and the recovery, not a traceback.
+    the file loses ssh and the console alike — a seeded guest
+    challenges the console with the same key: the error names the
+    path and the recovery, not a traceback.
     """
     if key["private_key"] is not None:
         return key["private_key"]
@@ -109,13 +110,15 @@ def resolve_private(key: dict, workspace_id: str) -> str:
         private = agent.load_private(pem)
     except OSError as exc:
         raise SystemExit(
-            f"msks ssh: the workspace's private half is not on this "
+            f"msks: the workspace's private half is not on this "
             f"client — the daemon holds none, and {path} is not "
             f"readable: {exc}\n"
             "The key was minted on another client (the file lives at "
             "that path on that machine), or it is a key you supplied "
             "at create — log in with it directly (ssh -i, or the "
-            "Host msks-* alias). The console still opens without it."
+            "Host msks-* alias), or run the console from the client "
+            "that holds the current key: both console and ssh now "
+            "need this half."
         ) from exc
     except ValueError as exc:
         raise SystemExit(
@@ -128,7 +131,7 @@ def resolve_private(key: dict, workspace_id: str) -> str:
             f"match {workspace_id} — the workspace was re-created since "
             "that key was stored. Delete that file and re-create the "
             "workspace (the client that holds the current identity "
-            "keeps working), or use the console"
+            "keeps working for both ssh and the console)"
         )
     return pem
 
