@@ -209,6 +209,94 @@ def test_cmd_create_start_boots_and_hints(
     assert "msks console ws1" in out
 
 
+def test_cmd_create_client_mint_sends_public_only(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """--client-mint (#121): the keypair is minted on this client, the
+    POST body carries the public half only, and the private half is
+    persisted mode 0600 under the client cache after the create."""
+    from cryptography.hazmat.primitives import serialization
+
+    client_env(monkeypatch)
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(201, json={"id": "ws1", "status": "created"})
+
+    rc = cli.cmd_create({"id": "ws1"}, transport=mock(handler), key_type="ed25519")
+    assert rc == 0
+    supplied = seen["body"]["ssh_pubkey"]
+    assert supplied.startswith("ssh-ed25519 ")
+    # No private material crosses the wire under any name.
+    assert not any("priv" in name for name in seen["body"])
+    identity = tmp_path / "msks" / "ws1" / "identity"
+    pem = identity.read_text()
+    assert pem.startswith("-----BEGIN OPENSSH PRIVATE KEY-----")
+    assert identity.stat().st_mode & 0o777 == 0o600
+    # The stored half is the pair's other half: it derives the line
+    # that was sent.
+    loaded = serialization.load_ssh_private_key(pem.encode(), password=b"")
+    derived = (
+        loaded.public_key()
+        .public_bytes(
+            encoding=serialization.Encoding.OpenSSH,
+            format=serialization.PublicFormat.OpenSSH,
+        )
+        .decode()
+    )
+    assert derived == supplied
+    out = capsys.readouterr().out
+    assert "client identity" in out
+    assert str(identity) in out
+
+
+def test_write_client_identity_names_an_unusable_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A cache the client cannot write into is operator-shaped: one
+    SystemExit line naming the path and the recovery, after the
+    workspace itself was created."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    (tmp_path / "msks").write_text("a file where a directory belongs")
+    with pytest.raises(SystemExit, match="could not be written"):
+        cli.write_client_identity("ws1", "private material")
+
+
+def test_client_mint_key_type_pairing() -> None:
+    """--key-type names a type for --client-mint alone: alone it is
+    rejected, with --client-mint it applies, and the default is the
+    FIPS-approvable one the daemon also mints."""
+    parser = cli.build_parser()
+    alone = parser.parse_args(["create", "ws1", "--key-type", "ed25519"])
+    with pytest.raises(SystemExit, match="--key-type needs --client-mint"):
+        cli.client_mint_key_type(alone)
+    plain = parser.parse_args(["create", "ws1"])
+    assert cli.client_mint_key_type(plain) is None
+    minting = parser.parse_args(["create", "ws1", "--client-mint"])
+    assert cli.client_mint_key_type(minting) == "ecdsa"
+    typed = parser.parse_args(["create", "ws1", "--client-mint", "--key-type", "rsa"])
+    assert cli.client_mint_key_type(typed) == "rsa"
+
+
+def test_cmd_key_private_refused_for_client_minted(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A client-minted workspace serves its public half; the private
+    forms explain where that half lives instead of printing None."""
+    client_env(monkeypatch)
+    body = dict(KEY_BODY, private_key=None)
+    transport = mock(lambda req: httpx.Response(200, json=body))
+    with pytest.raises(SystemExit, match="client-minted identity"):
+        cli.cmd_key("alpha", as_private=True, transport=transport)
+    with pytest.raises(SystemExit, match="client-minted identity"):
+        cli.cmd_key("alpha", out="/tmp/never-written", transport=transport)
+    rc = cli.cmd_key("alpha", transport=transport)
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == body["public_key"]
+
+
 def test_cmd_create_start_failure_keeps_the_workspace(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

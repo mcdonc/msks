@@ -2,8 +2,10 @@
 
 One-off sugar over the pieces that already exist: the workspace is
 booted when the daemon reports it as not running (the same pre-flight
-as ``msks console``), the minted identity (#111) is fetched over the
-authenticated API, and ``ssh`` runs with the forward websocket
+as ``msks console``), the workspace identity is fetched over the
+authenticated API — the daemon-minted half pair (#111) or the public
+half of a client-minted one (#121, whose private half then comes from
+the local cache) — and ``ssh`` runs with the forward websocket
 (#109) as its ProxyCommand. The private half never becomes a file:
 a transient in-process ssh-agent (:mod:`msks.client.agent`) holds it
 in memory and ssh authenticates through the agent socket
@@ -48,7 +50,7 @@ async def prepare(
     ssl_ctx=None,
     transport=None,
 ) -> dict:
-    """Boot the workspace if needed, then fetch its minted identity."""
+    """Boot the workspace if needed, then fetch its identity."""
     await ensure_running(workspace_id, url, token, ssl_ctx=ssl_ctx, transport=transport)
     return await fetch_ssh_key(
         url, token, workspace_id, transport=transport, ssl_ctx=ssl_ctx
@@ -59,6 +61,36 @@ def cache_dir() -> Path:
     """The client cache root: XDG_CACHE_HOME or ~/.cache, under msks."""
     base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
     return Path(base) / "msks"
+
+
+def client_identity_path(workspace_id: str, base: Path | None = None) -> Path:
+    """Where a client-minted private half lives (#121): the cache's
+    per-workspace directory, beside ``known_hosts``."""
+    root = (base if base is not None else cache_dir()) / workspace_id
+    return root / "identity"
+
+
+def resolve_private(key: dict, workspace_id: str) -> str:
+    """The private half to serve, by the identity's source.
+
+    A daemon-minted workspace (#111) hands its half over the API; a
+    client-minted one (#121) answers ``private_key: null`` — its
+    half lives in the local cache, written at create. Losing that
+    file loses ssh (the console still opens): the error names the
+    path and the recovery, not a traceback.
+    """
+    if key["private_key"] is not None:
+        return key["private_key"]
+    path = client_identity_path(workspace_id)
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise SystemExit(
+            f"msks ssh: {workspace_id} carries a client-minted identity "
+            f"and its private half is not readable at {path}: {exc}\n"
+            "The identity was minted on the client that created the "
+            "workspace; the console still opens without it."
+        ) from exc
 
 
 def known_hosts_path(workspace_id: str, base: Path | None = None) -> str:
@@ -209,7 +241,7 @@ def run_workspace_ssh(workspace_id: str, passthrough: list[str], transport=None)
     url = env_url()
     ssl_ctx = ssl_context()
     key = asyncio.run(prepare(workspace_id, url, token, ssl_ctx, transport))
-    private = agent.load_private(key["private_key"])
+    private = agent.load_private(resolve_private(key, workspace_id))
     with agent.serve(private, identity_comment(key)) as served:
         argv = build_args(
             workspace_id,

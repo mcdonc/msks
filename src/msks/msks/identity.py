@@ -10,9 +10,13 @@ holder already owns the root console, so this grants nothing new).
 The key type is a setting (#115): ECDSA P-256 is the FIPS-approvable
 default, and nothing in the daemon, the client, or the image depends
 on which type a workspace carries — the algorithm name travels with
-the key material itself.
+the key material itself. The no-escrow mode (#121) moves the minting
+to the client: the daemon receives and stores the public half only,
+validated here.
 """
 
+import base64
+import binascii
 import secrets
 
 from cryptography.hazmat.primitives import serialization
@@ -30,6 +34,43 @@ KEY_TYPES = {
 #: The RSA bit size — 3072 stays inside every FIPS policy that admits
 #: RSA while remaining fast to mint at create.
 RSA_BITS = 3072
+
+
+def normalize_public_key(line: str) -> tuple[str, str]:
+    """Validate one supplied public key line (#121): ``(algo, body)``.
+
+    The no-escrow mode sends a public half the client minted; the
+    daemon checks it the way it checks its own output — the algorithm
+    is one it mints itself (the #115 posture covers client material
+    too), and the body decodes and self-describes consistently. The
+    caller's comment is dropped: the daemon annotates provenance its
+    own way, like the minted mode.
+    """
+    fields = line.split()
+    if len(fields) < 2:
+        raise ValueError("public key line needs an algorithm and a key body")
+    algo, encoded = fields[0], fields[1]
+    if algo not in KEY_TYPES.values():
+        raise ValueError(f"unsupported public key algorithm {algo!r}")
+    check_key_body(algo, encoded)
+    return algo, encoded
+
+
+def check_key_body(algo: str, encoded: str) -> None:
+    """The body half of a supplied line: decodes as base64, carries a
+    length-prefixed algorithm name that fits the blob and matches
+    the label the line gave."""
+    try:
+        blob = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError(f"public key body is not valid base64: {exc}") from None
+    if len(blob) < 4:
+        raise ValueError("public key body is truncated")
+    length = int.from_bytes(blob[:4], "big")
+    if length + 4 > len(blob):
+        raise ValueError("public key body is truncated")
+    if blob[4 : 4 + length] != algo.encode():
+        raise ValueError("public key algorithm does not match its key body")
 
 
 def mint(key_type: str) -> tuple[str, str]:

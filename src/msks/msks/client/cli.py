@@ -17,6 +17,7 @@ import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+from ..identity import KEY_TYPES, mint
 from ..imagestore import is_hash_shape, version_key
 from .console import run_workspace_shell
 from .forward import run_workspace_forward
@@ -33,7 +34,7 @@ from .rest import (
 from .rest import (
     fetch_ssh_key as rest_fetch_ssh_key,
 )
-from .ssh import run_workspace_ssh
+from .ssh import cache_dir, run_workspace_ssh
 
 
 def format_workspace(row: dict) -> str:
@@ -63,21 +64,42 @@ def cmd_ls(as_json: bool = False, transport=None) -> int:
     return 0
 
 
-def cmd_create(body: dict, start: bool = False, transport=None) -> int:
-    """``msks create``: one workspace, optionally booted."""
-    asyncio.run(create_workspace(env_url(), env_token(), body, start, transport))
+def cmd_create(
+    body: dict, start: bool = False, transport=None, key_type: str | None = None
+) -> int:
+    """``msks create``: one workspace, optionally booted.
+
+    ``key_type`` names the client-mint mode (#121): minted locally,
+    public half sent, private half kept.
+    """
+    asyncio.run(
+        create_workspace(env_url(), env_token(), body, start, transport, key_type)
+    )
     return 0
 
 
-async def create_workspace(url, token, body, start, transport) -> dict:
+async def create_workspace(
+    url, token, body, start, transport, key_type: str | None = None
+) -> dict:
     """POST the workspace, print its id, then boot it when asked.
 
     The id prints before the boot attempt: a failed start must not
     hide that the workspace exists — recover with ``msks start``.
+    In the client-mint mode (#121) the keypair is minted here — the
+    private half never crosses the wire — and is persisted (mode
+    0600, client cache) only after the create succeeded, so a
+    refused create leaves no orphaned key behind.
     """
+    private_pem = None
+    if key_type is not None:
+        private_pem, public = await asyncio.to_thread(mint, key_type)
+        body["ssh_pubkey"] = public
     async with api_client(url, token, transport) as client:
         row = await request(client, "POST", "/api/v1/workspaces", json_body=body)
         print(f"created {row['id']}")
+        if private_pem is not None:
+            path = write_client_identity(row["id"], private_pem)
+            print(f"client identity (mode 0600): {path}")
         if not start:
             return row
         try:
@@ -90,6 +112,30 @@ async def create_workspace(url, token, body, start, transport) -> dict:
         print(f"attach with: msks console {row['id']}")
         row["status"] = "running"
         return row
+
+
+def write_client_identity(workspace_id: str, private_pem: str) -> Path:
+    """The client-minted private half, persisted mode 0600 (#121).
+
+    No escrow cuts both ways: losing this file loses ssh to the
+    workspace (the console still opens), so a failed write is loud —
+    the workspace exists with the public half planted, and the
+    operator must move this material somewhere safe or recreate.
+    """
+    root = cache_dir() / workspace_id
+    path = root / "identity"
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        path.write_text(private_pem, encoding="utf-8")
+        path.chmod(0o600)
+    except OSError as exc:
+        raise SystemExit(
+            f"msks: {workspace_id} was created, but its client-minted "
+            f"identity could not be written to {path}: {exc}\n"
+            "ssh needs this file (the console still opens); keep the "
+            "private half safe or delete and recreate the workspace"
+        ) from exc
+    return path
 
 
 def cmd_start(workspace_id: str, transport=None) -> int:
@@ -174,16 +220,34 @@ def write_private_key(key: dict, out: str) -> None:
         handle.write(key["private_key"])
 
 
+def require_daemon_half(key: dict, workspace_id: str) -> None:
+    """Refuse the private forms for a client-minted workspace (#121):
+    the daemon never held that half, so the error names where it
+    lives instead of printing nothing."""
+    if key["private_key"] is None:
+        raise SystemExit(
+            f"msks key: {workspace_id} carries a client-minted identity — "
+            "the daemon never held its private half. It lives on the "
+            "client that created the workspace, under the client cache "
+            f"({cache_dir() / workspace_id / 'identity'})"
+        )
+
+
 def cmd_key(
     workspace_id: str, as_private: bool = False, out: str | None = None, transport=None
 ) -> int:
-    """``msks key``: the workspace's minted ssh identity.
+    """``msks key``: the workspace's ssh identity.
 
     Prints the public half (safe to display anywhere); ``--private``
     prints the private half, ``--out`` writes the private half to a
-    file with mode 0600 and prints nothing but its path.
+    file with mode 0600 and prints nothing but its path. A
+    client-minted workspace (#121) serves its public half; its
+    private half never reached the daemon, so the private forms
+    explain where that half lives instead.
     """
     key = asyncio.run(fetch_ssh_key(env_url(), env_token(), workspace_id, transport))
+    if as_private or out is not None:
+        require_daemon_half(key, workspace_id)
     if out is not None:
         write_private_key(key, out)
         print(out)
@@ -601,6 +665,21 @@ def build_parser() -> argparse.ArgumentParser:
         "(#41); - reads stdin. Create-time only",
     )
     create.add_argument(
+        "--client-mint",
+        action="store_true",
+        help="mint the workspace's ssh identity on this client and send "
+        "the public half only (#121): the daemon never holds the "
+        "private half. It is written mode 0600 to the client cache "
+        "(~/.cache/msks/<id>/identity), and msks ssh picks it up from "
+        "there",
+    )
+    create.add_argument(
+        "--key-type",
+        choices=sorted(KEY_TYPES),
+        help="the --client-mint key type (default ecdsa, the same "
+        "FIPS-approvable default the daemon mints)",
+    )
+    create.add_argument(
         "--start", action="store_true", help="boot the workspace immediately"
     )
     starter = sub.add_parser("start", help="boot a created workspace")
@@ -630,7 +709,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="bind 127.0.0.1:PORT instead of stdio; every accepted "
         "connection gets its own forward",
     )
-    key = sub.add_parser("key", help="fetch a workspace's minted ssh identity (#111)")
+    key = sub.add_parser(
+        "key",
+        help="fetch a workspace's ssh identity (#111; the public half "
+        "alone for a client-minted #121 workspace)",
+    )
     key.add_argument("workspace_id", help="the workspace whose identity to fetch")
     key_private = key.add_mutually_exclusive_group()
     key_private.add_argument(
@@ -718,12 +801,30 @@ def main(argv: list[str] | None = None, transport=None) -> int:
         raise SystemExit(130) from None
 
 
+def client_mint_key_type(args: argparse.Namespace) -> str | None:
+    """The client-mint key type, or None for the daemon-mint default.
+
+    ``--key-type`` names a type for ``--client-mint`` alone; given
+    alone it is a footgun (it would look like it did something) —
+    rejected with the pairing named.
+    """
+    key_type = args.key_type or "ecdsa"
+    if not args.client_mint:
+        if args.key_type is not None:
+            raise SystemExit("msks: --key-type needs --client-mint")
+        return None
+    return key_type
+
+
 def command_table(args: argparse.Namespace, transport) -> dict:
     """One entry per subcommand: its zero-argument body."""
     return {
         "ls": lambda: cmd_ls(args.json, transport=transport),
         "create": lambda: cmd_create(
-            create_body(args), args.start, transport=transport
+            create_body(args),
+            args.start,
+            transport=transport,
+            key_type=client_mint_key_type(args),
         ),
         "start": lambda: cmd_start(args.workspace_id, transport=transport),
         "stop": lambda: cmd_stop(args.workspace_id, transport=transport),
