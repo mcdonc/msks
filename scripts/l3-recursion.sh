@@ -30,10 +30,10 @@
 #   msks key l3 --out ~/.cache/msks/l3.key
 #   msks forward l3 22 --local 2201 &
 #   rsync -e 'ssh -i ~/.cache/msks/l3.key -p 2201' -avP \
-#       .guest/workspace-debian-13.6.tar root@127.0.0.1:/root/
+#       .guest/workspace-debian-13.6.tar root@127.0.0.1:/root/inner-image.tar
 #   # then, inside the workspace:
 #   MSKSC_URL=http://127.0.0.1:8660 MSKSC_TOKEN=$(cat /root/.msks-inner/token) \
-#       /root/msks/.venv/bin/msks image import /root/workspace-debian-13.6.tar
+#       /root/msks/.venv/bin/msks image import /root/inner-image.tar
 #       ... msks create inner1 --start
 #
 # The bootstrap token is generated once into /root/.msks-inner/token
@@ -209,7 +209,6 @@ After=network-online.target msks-kvm.service
 
 [Service]
 Environment=MSKSD_STATE_DIR=$INNER_STATE
-Environment=MSKSD_DB_PATH=$INNER_STATE/msks.db
 EnvironmentFile=$INNER_DIR/env
 Environment=MSKSD_CLOUD_HYPOPERISOR=$ch_bin
 Environment=MSKSD_EGRESS_ENABLED=true

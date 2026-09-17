@@ -3908,14 +3908,12 @@ def l3_seed() -> str:
 #: recursion's own success line — the bytes the host asserts on.
 L3_INNER_PROBE = """
 import asyncio
-import sys
 import time
 
 import websockets
 
-INNER = sys.argv[1] if len(sys.argv) > 1 else "inner1"
 TOKEN = open("/root/.msks-inner/token").read().strip()
-URL = f"ws://127.0.0.1:8660/api/v1/workspaces/{INNER}/console?token={TOKEN}"
+URL = "ws://127.0.0.1:8660/api/v1/workspaces/inner1/console?token=" + TOKEN
 PROMPT = b"root@msks-guest:~# "
 
 
@@ -3945,14 +3943,22 @@ def l3_inner_setup_script() -> str:
     second exits 0 immediately; the marker files are the truth)."""
     return """#!/bin/sh
 # Staged by the L3 recursion smoke (#82): idempotent inner bring-up.
+# The EXIT trap records done-<exit> on the log the host polls — only
+# a round that held the lock and ran the steps to completion writes
+# done-0; a failed step leaves done-N with the error text above it.
 set -eu
 export MSKSC_URL=http://127.0.0.1:8660
 export MSKSC_TOKEN=$(cat /root/.msks-inner/token)
 MSKS=/root/msks/.venv/bin/msks
 MARK=/root/.msks-l3-inner
 mkdir -p "$MARK"
+trap 'echo done-$?' EXIT
+# BLOCKING flock: a duplicate round (a resent launch line) waits for
+# the running round, then re-runs the steps as no-ops — its own
+# done-0 is true by then. A bail-here exit would record done-0 while
+# the first round was still importing.
 exec 9>"$MARK/lock"
-flock -n 9 || exit 0
+flock 9
 if [ ! -f "$MARK/imported" ]; then
   echo import
   "$MSKS" image import /root/inner-image.tar
@@ -3970,7 +3976,6 @@ if [ ! -f "$MARK/started" ]; then
   echo $(( $(date +%s) - t0 )) > "$MARK/boot-s"
   touch "$MARK/started"
 fi
-echo done-0
 """
 
 
@@ -3983,8 +3988,7 @@ def l3_setup_launch() -> str:
     run.log carries the step trail (and the recorded exit status)
     for the host to poll."""
     return (
-        "nohup sh -c 'sh /root/l3-inner-up.sh; "
-        "echo done-$? >> /root/.msks-l3-inner/run.log' "
+        "nohup sh /root/l3-inner-up.sh "
         "> /root/.msks-l3-inner/run.log 2>&1 & echo LAUNCHED-$((6*7))"
     )
 
@@ -4000,35 +4004,53 @@ async def l3_console_command(
     deadline = loop.time() + timeout_s
     buf = b""
     ws = None
-    while marker not in buf:
-        if loop.time() >= deadline:
-            raise AssertionError(
-                f"console never showed {marker!r} within {timeout_s}s; "
-                f"got: {buf[-500:]!r}"
-            )
-        try:
-            if ws is None:
-                ws = await connect()
-            await ws.send(command)
-            chunk = await asyncio.wait_for(ws.recv(), 20.0)
-            buf += chunk if isinstance(chunk, bytes) else chunk.encode()
-        except (TimeoutError, OSError, websockets.WebSocketException) as exc:
-            # Silence (resend), a stall close (4502 — fresh session),
-            # or a mid-flight teardown: all retriable under the
-            # deadline, with the exception named on the final failure.
-            if ws is not None:
-                with contextlib.suppress(Exception):
-                    await ws.close()
-                ws = None
+
+    def remaining() -> float:
+        return max(deadline - loop.time(), 0.001)
+
+    async def fresh_session() -> None:
+        """Connect and send once: a new session's first line can be
+        lost to readline's typeahead flush (#75), so the send is
+        repeated per silence window below, never per chunk — a
+        send-per-chunk loop would re-execute the command for every
+        websocket message the pty splits the output into."""
+        nonlocal ws
+        ws = await connect()
+        await ws.send(command)
+
+    try:
+        while marker not in buf:
             if loop.time() >= deadline:
                 raise AssertionError(
-                    f"console never showed {marker!r} within {timeout_s}s "
-                    f"(last session died: {exc!r}); got: {buf[-500:]!r}"
-                ) from exc
-            continue
-    if ws is not None:
-        with contextlib.suppress(Exception):
-            await ws.close()
+                    f"console never showed {marker!r} within {timeout_s}s; "
+                    f"got: {buf[-500:]!r}"
+                )
+            try:
+                if ws is None:
+                    await fresh_session()
+                chunk = await asyncio.wait_for(ws.recv(), 20.0)
+                buf += chunk if isinstance(chunk, bytes) else chunk.encode()
+            except TimeoutError:
+                # One silent window: the shell may have dropped the
+                # line to the typeahead flush — resend it, same
+                # session. (Idempotent commands only, by contract.)
+                with contextlib.suppress(Exception):
+                    await ws.send(command)
+                continue
+            except OSError, websockets.WebSocketException:
+                # A stall close (4502), a teardown, or a boot-window
+                # refusal: a fresh session retries under the deadline,
+                # with the exception named on the final failure.
+                if ws is not None:
+                    with contextlib.suppress(Exception):
+                        await ws.close()
+                    ws = None
+                await asyncio.sleep(min(2.0, remaining()))
+                continue
+    finally:
+        if ws is not None:
+            with contextlib.suppress(Exception):
+                await ws.close()
     return buf
 
 
@@ -4099,8 +4121,12 @@ async def test_appliance_l3_recursion() -> None:
     os.environ["MSKSD_APPLIANCE_STATE"] = str(state_disk)
     prior_cmdline_extra = os.environ.get("MSKS_APPLIANCE_CMDLINE_EXTRA")
     if not prior_cmdline_extra:
+        # console_stall_timeout_s=0: this test's probe steps wait
+        # minutes for the inner guest between console bytes — the
+        # stall window exists to free wedged sessions for humans, and
+        # this run's own resend loop already recovers the wedged case.
         os.environ["MSKS_APPLIANCE_CMDLINE_EXTRA"] = (
-            "msksd.vsock_wait_timeout_s=120 msksd.console_stall_timeout_s=15"
+            "msksd.vsock_wait_timeout_s=120 msksd.console_stall_timeout_s=0"
         )
 
     ws_ctx = ssl.create_default_context()
@@ -4253,6 +4279,7 @@ async def test_appliance_l3_recursion() -> None:
         assert keygen.returncode == 0, keygen.stderr
         forward_port = free_port()
         forward_log = workdir / "forward.log"
+        forward_err = open(forward_log, "ab")
         forward_proc = subprocess.Popen(
             [
                 sys.executable,
@@ -4266,7 +4293,7 @@ async def test_appliance_l3_recursion() -> None:
             ],
             env=cli_env,
             stdout=subprocess.DEVNULL,
-            stderr=open(forward_log, "ab"),
+            stderr=forward_err,
         )
         deadline = loop.time() + 30.0
         while loop.time() < deadline:
@@ -4404,14 +4431,16 @@ async def test_appliance_l3_recursion() -> None:
             flush=True,
         )
 
-        # The tuning record (#82): the inner boot wall time the seed
-        # measured, and the daemon's timeouts that carried it.
-        await l3_console_command(
+        # The tuning record (#82): the inner boot's wall seconds, for
+        # the issue's evidence and anyone sizing the timeouts after.
+        tuning = await l3_console_command(
             connect_l2_console,
             b"cat /root/.msks-l3-inner/boot-s 2>/dev/null; echo T-$((6*7))\n",
             b"T-42",
             120.0,
         )
+        body = tuning.split(b"T-$((6*7))", 1)[-1].split(b"T-42", 1)[0]
+        print(f"L3 tuning: msks start inner1 -> {body.strip()!r} seconds", flush=True)
 
         # Orderly teardown, inner first: the inner workspace stops
         # through its own daemon, then the L2 workspace and the
@@ -4439,6 +4468,10 @@ async def test_appliance_l3_recursion() -> None:
             forward_proc.terminate()
             with contextlib.suppress(Exception):
                 await asyncio.to_thread(forward_proc.wait, 10)
+            with contextlib.suppress(Exception):
+                forward_proc.kill()
+                await asyncio.to_thread(forward_proc.wait, 5)
+            forward_err.close()
         with contextlib.suppress(Exception):
             auth = {"authorization": f"Bearer {token}"} if token else {}
             await client.delete(f"{base}/workspaces/{wid}", headers=auth)
