@@ -911,12 +911,19 @@ IDENTITY_CONFLICTS = (
 )
 
 
+def flag_set(args: argparse.Namespace, name: str) -> bool:
+    """Whether a flag was supplied — a store_true flag by truth, a
+    value flag by presence (an explicit empty value counts, so
+    ``--pubkey ""`` still conflicts rather than slipping past)."""
+    value = getattr(args, name)
+    return bool(value) if name == "daemon_mint" else value is not None
+
+
 def check_identity_conflicts(args: argparse.Namespace) -> None:
     """Reject the flag pairings that would look meaningful but are
     not, with the conflict named."""
     for message, flags in IDENTITY_CONFLICTS:
-        present = [bool(getattr(args, flag, None)) for flag in flags]
-        if all(present):
+        if all(flag_set(args, flag) for flag in flags):
             raise SystemExit(f"msks: {message}")
 
 

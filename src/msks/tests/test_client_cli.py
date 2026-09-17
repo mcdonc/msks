@@ -426,6 +426,12 @@ def test_create_identity_pubkey_mode(tmp_path: Path) -> None:
                 ["create", "ws1", "--pubkey", str(source), "--key-type", "rsa"]
             )
         )
+    # An explicit empty value still counts as supplied: it conflicts
+    # with --daemon-mint instead of silently daemon-minting.
+    with pytest.raises(SystemExit, match="--pubkey conflicts with --daemon-mint"):
+        cli.create_identity(
+            parser.parse_args(["create", "ws1", "--pubkey", "", "--daemon-mint"])
+        )
 
 
 def test_read_pubkey_file_stdin_and_rejections(

@@ -209,7 +209,15 @@ def test_normalize_public_key_rejects_a_shell_crafted_label() -> None:
     charset check is what refuses it, not the shape."""
     from msks.identity import normalize_public_key
 
-    for label in ("x';poweroff;'", 'x" && rm -rf / && "', "a;b", "x$HOME"):
+    for label in (
+        "x';poweroff;'",
+        'x" && rm -rf / && "',
+        "a;b",
+        "x$HOME",
+        "a%b",
+        "SSH-RSA",
+        "café",
+    ):
         blob = base64.b64encode(
             len(label).to_bytes(4, "big") + label.encode() + b"rest"
         ).decode()
