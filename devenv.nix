@@ -251,6 +251,47 @@ in
       exec = ''
         exec env MSKS_GUEST_NIXPKGS=${pkgs.path} bash "$DEVENV_ROOT/scripts/build-appliance.sh"
       '';
+      # Keyed on everything that feeds the built artifacts — the
+      # nix expressions (appliance image, msksd package, guest
+      # assets behind the default-image archive, the Rust
+      # console-helper baked into the workspace image), the build
+      # script, the daemon's Python sources (msks-pkg.nix filters
+      # exactly this tree plus pyproject/README), the helper's
+      # crate sources and lock, and the nixpkgs pin
+      # (MSKS_GUEST_NIXPKGS moves with devenv.lock).
+      #
+      # Pattern shapes matter (verified live against devenv
+      # 2.3.1's cache): a bare directory entry watches only the
+      # directory's own metadata — edits to files inside it do
+      # NOT trigger — so trees use the /** glob. But glob-expanded
+      # DIRECTORY rows hash recursively INCLUDING gitignored
+      # content and bare mtimes (a __pycache__/.pyc landing, or a
+      # touch with unchanged content, re-triggers), so the Python
+      # tree also negates its directory rows: file rows alone
+      # remain, new/deleted files are still caught because the
+      # glob is re-walked and compared on every invocation. That
+      # trades an occasional missed mtime-only no-op for zero
+      # rebuild churn from test-run bytecode — the safe direction
+      # is content: any real edit lands in a file row. The helper
+      # keys its src/ tree and crate files only, so its gitignored
+      # target/ never enters.
+      #
+      # The appliance process runs this task before every boot
+      # (see processes.appliance): unchanged inputs make it a
+      # no-op, so `devenv processes up` is the whole update story
+      # after a pull or an edit.
+      execIfModified = [
+        "nix/**"
+        "scripts/build-appliance.sh"
+        "pyproject.toml"
+        "README.md"
+        "src/msks/msks/**"
+        "!src/msks/msks/**/"
+        "src/console-helper/src/**"
+        "src/console-helper/Cargo.toml"
+        "src/console-helper/Cargo.lock"
+        "devenv.lock"
+      ];
     };
     "msks:appliance-up" = {
       description = "Start the appliance processes (virtiofsd + the VM), detached";
@@ -270,7 +311,29 @@ in
   # shares one lifecycle, and a crash-restart brings both back.
   processes = {
     appliance = {
-      exec = ''bash "$DEVENV_ROOT/scripts/appliance-run.sh"'';
+      exec = ''
+        # Artifacts as a conditional side effect: the build task
+        # no-ops through execIfModified when nothing feeding the
+        # image changed, and rebuilds (minutes from a cold store,
+        # ~20s warm) after a pull or an edit to the daemon
+        # sources, the nix expressions, or the build script —
+        # `devenv processes up` is the whole update story. The
+        # guard covers the gap the task cache cannot see (a
+        # deleted or half-deleted .appliance with unchanged
+        # inputs would make the task skip and leave nothing or a
+        # broken set to boot): the build script runs directly,
+        # unconditionally, exactly until ALL the boot artifacts
+        # are back.
+        if [ ! -f "$DEVENV_ROOT/.appliance/appliance-manifest.json" ] \
+          || [ ! -f "$DEVENV_ROOT/.appliance/vmlinux" ] \
+          || [ ! -f "$DEVENV_ROOT/.appliance/initrd" ] \
+          || [ ! -f "$DEVENV_ROOT/.appliance/rootfs.ext4" ]; then
+          env MSKS_GUEST_NIXPKGS=${pkgs.path} bash "$DEVENV_ROOT/scripts/build-appliance.sh"
+        else
+          devenv tasks run msks:appliance-build
+        fi
+        exec bash "$DEVENV_ROOT/scripts/appliance-run.sh"
+      '';
       # The run script's stop choreography (ACPI, then a bounded
       # SIGTERM wait) needs up to ~10s; the supervisor's default
       # SIGKILL grace is 5 — a busy guest would be hard-killed
