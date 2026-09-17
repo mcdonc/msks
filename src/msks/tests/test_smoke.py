@@ -17,6 +17,7 @@ covered by the faked-transport unit suites).
 """
 
 import asyncio
+import base64
 import contextlib
 import os
 import pwd
@@ -3847,3 +3848,610 @@ async def test_local_operator_pubkey() -> None:
         with contextlib.suppress(OSError):
             forwarding.write_text(forwarding_was)
         shutil.rmtree(state_dir, ignore_errors=True)
+
+
+# --- L3 recursion smoke (#82) ----------------------------------------------
+#
+# The full recursion on real KVM: the appliance (L1) boots a dev
+# workspace (L2) seeded with scripts/l3-recursion.sh, and msksd
+# running INSIDE that workspace boots an inner workspace (L3)
+# reachable through its console. Opt-in beyond the appliance smoke
+# (MSKSD_TEST_L3=1): the sequence is the slowest thing this suite
+# runs — the L2 bootstrap downloads the toolchain over nested-virt
+# egress (minutes), and the L3 guest boots on nested-in-nested KVM
+# (minutes more) — so it carries its own wall-clock budget
+# (MSKSD_TEST_L3_TIMEOUT_S).
+L3 = os.environ.get("MSKSD_TEST_L3")
+
+
+def guest_image_archive() -> Path | None:
+    """The built workspace image archive (.guest/, msks:build-guest)
+    — the artifact the rsync leg pushes into the L2 workspace for
+    the inner daemon to import."""
+    matches = sorted((REPO_ROOT / ".guest").glob("workspace-*.tar"))
+    return matches[0] if matches else None
+
+
+needs_l3 = pytest.mark.skipif(
+    not L3
+    or not APPLIANCE
+    or not os.access("/dev/kvm", os.W_OK)
+    or not (REPO_ROOT / ".appliance" / "vmlinux").is_file()
+    or not _host_net_installed()
+    or not (SSH_BIN and RSYNC_BIN)
+    or guest_image_archive() is None,
+    reason=(
+        "set MSKSD_TEST_L3=1 with /dev/kvm, the one-time host network, "
+        "ssh+rsync on PATH, and devenv tasks run msks:appliance-build "
+        "+ msks:build-guest"
+    ),
+)
+
+#: The recursion's whole-sequence budget: the L2 bootstrap (apt, uv,
+#: the checkout, uv sync — download-bound under nested KVM), the
+#: archive rsync, the inner image import, and the L3 boot to console.
+L3_RECURSION_TIMEOUT_S = float(os.environ.get("MSKSD_TEST_L3_TIMEOUT_S", "5400"))
+
+
+def l3_seed() -> str:
+    """The L3 recursion bootstrap from the repo's scripts/ tree."""
+    path = REPO_ROOT / "scripts" / "l3-recursion.sh"
+    return path.read_text()
+
+
+#: The inner workspace's console probe, run INSIDE the L2 guest
+#: against the inner daemon's own websocket: base64-staged as one
+#: console line, because the vsock pty can corrupt long sent lines
+#: (#103) and a base64 blob has nothing to corrupt — any mangled
+#: round is superseded by the resend. The probe waits for the inner
+#: guest's prompt, echoes a guest-computed marker, and prints the
+#: recursion's own success line — the bytes the host asserts on.
+L3_INNER_PROBE = """
+import asyncio
+import sys
+import time
+
+import websockets
+
+INNER = sys.argv[1] if len(sys.argv) > 1 else "inner1"
+TOKEN = open("/root/.msks-inner/token").read().strip()
+URL = f"ws://127.0.0.1:8660/api/v1/workspaces/{INNER}/console?token={TOKEN}"
+PROMPT = b"root@msks-guest:~# "
+
+
+async def main() -> None:
+    started = time.monotonic()
+    async with websockets.connect(URL, open_timeout=30, max_size=2**22) as ws:
+        buf = b""
+        while PROMPT not in buf:
+            buf += await asyncio.wait_for(ws.recv(), 240)
+        await ws.send(b"echo L3-$((6*7))-CONSOLE\\n")
+        while b"L3-42-CONSOLE" not in buf:
+            buf += await asyncio.wait_for(ws.recv(), 240)
+    print(f"INNER-CONSOLE-42-OK after {time.monotonic() - started:.1f}s")
+
+
+asyncio.run(main())
+"""
+
+
+def l3_inner_setup_script() -> str:
+    """The idempotent inner-bring-up script staged into L2: import
+    the archive, create the inner workspace, start it. Step markers
+    under /root/.msks-l3-inner/ make every step a no-op on re-run —
+    the console probe resends the WHOLE script when a session stalls
+    (#103), so a half-finished first round must converge, never
+    restart. flock keeps concurrent rounds from interleaving (the
+    second exits 0 immediately; the marker files are the truth)."""
+    return """#!/bin/sh
+# Staged by the L3 recursion smoke (#82): idempotent inner bring-up.
+set -eu
+export MSKSC_URL=http://127.0.0.1:8660
+export MSKSC_TOKEN=$(cat /root/.msks-inner/token)
+MSKS=/root/msks/.venv/bin/msks
+MARK=/root/.msks-l3-inner
+mkdir -p "$MARK"
+exec 9>"$MARK/lock"
+flock -n 9 || exit 0
+if [ ! -f "$MARK/imported" ]; then
+  echo import
+  "$MSKS" image import /root/inner-image.tar
+  touch "$MARK/imported"
+fi
+if [ ! -f "$MARK/created" ]; then
+  echo create
+  "$MSKS" create inner1
+  touch "$MARK/created"
+fi
+if [ ! -f "$MARK/started" ]; then
+  echo start
+  t0=$(date +%s)
+  "$MSKS" start inner1
+  echo $(( $(date +%s) - t0 )) > "$MARK/boot-s"
+  touch "$MARK/started"
+fi
+echo done-0
+"""
+
+
+def l3_setup_launch() -> str:
+    """The one-liner that runs the setup script DETACHED from the
+    console session: the inner import is minutes of guest work with
+    no console output, and the outer console's stall window would
+    otherwise tear the session down around it (#103) — killing the
+    shell's children mid-import. nohup keeps the work on the guest;
+    run.log carries the step trail (and the recorded exit status)
+    for the host to poll."""
+    return (
+        "nohup sh -c 'sh /root/l3-inner-up.sh; "
+        "echo done-$? >> /root/.msks-l3-inner/run.log' "
+        "> /root/.msks-l3-inner/run.log 2>&1 & echo LAUNCHED-$((6*7))"
+    )
+
+
+async def l3_console_command(
+    connect, command: bytes, marker: bytes, timeout_s: float
+) -> bytes:
+    """One command over the L2 workspace's console websocket, driven
+    to its marker with the #103 ride-out (resend in the same session
+    on silence; a fresh session after a stall close), under one
+    deadline. Idempotent commands only — every silence re-sends."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_s
+    buf = b""
+    ws = None
+    while marker not in buf:
+        if loop.time() >= deadline:
+            raise AssertionError(
+                f"console never showed {marker!r} within {timeout_s}s; "
+                f"got: {buf[-500:]!r}"
+            )
+        try:
+            if ws is None:
+                ws = await connect()
+            await ws.send(command)
+            chunk = await asyncio.wait_for(ws.recv(), 20.0)
+            buf += chunk if isinstance(chunk, bytes) else chunk.encode()
+        except (TimeoutError, OSError, websockets.WebSocketException) as exc:
+            # Silence (resend), a stall close (4502 — fresh session),
+            # or a mid-flight teardown: all retriable under the
+            # deadline, with the exception named on the final failure.
+            if ws is not None:
+                with contextlib.suppress(Exception):
+                    await ws.close()
+                ws = None
+            if loop.time() >= deadline:
+                raise AssertionError(
+                    f"console never showed {marker!r} within {timeout_s}s "
+                    f"(last session died: {exc!r}); got: {buf[-500:]!r}"
+                ) from exc
+            continue
+    if ws is not None:
+        with contextlib.suppress(Exception):
+            await ws.close()
+    return buf
+
+
+@needs_l3
+async def test_appliance_l3_recursion() -> None:
+    """msksd inside a workspace boots an inner workspace (#82).
+
+    The two feasibility questions this run answers with evidence:
+
+    - the Debian generic kernel ships kvm/kvm-intel/kvm-amd as
+      modules (CONFIG_KVM*=m in the pinned deb) and the workspace
+      image's module closure carries them (#82's closure growth);
+      the L2 guest proves it live — vmx in /proc/cpuinfo, the kvm
+      module loaded by the image's own msks-kvm.service, /dev/kvm
+      present;
+    - vmx survives two removes of cloud-hypervisor's default CPU
+      config (host -> appliance -> workspace -> inner workspace):
+      proven by the L3 boot itself — cloud-hypervisor has no TCG
+      fallback, so an inner VM that reaches its console is running
+      on nested-in-nested KVM.
+
+    The inner daemon is the dev image's own (#77's bootstrap + the
+    L3 seed's additions), its state on the persistent /home volume,
+    and the inner workspace's console is driven through the inner
+    daemon's websocket from inside L2 — console in console.
+    """
+    app_dir = REPO_ROOT / ".appliance"
+    base = "https://192.168.77.2:8660/api/v1"
+    wid = f"l3-{uuid.uuid4().hex[:8]}"
+    archive = guest_image_archive()
+
+    # Refuse to stomp a running appliance (the appliance smoke's own
+    # guard; both tests boot THE appliance on this host).
+    if (app_dir / "api.sock").is_socket():
+        probe = subprocess.run(
+            [
+                "curl",
+                "-sS",
+                "--unix-socket",
+                str(app_dir / "api.sock"),
+                "-X",
+                "PUT",
+                "http://localhost/api/v1/vm.info",
+            ],
+            capture_output=True,
+            timeout=30,
+        )
+        if probe.returncode == 0:
+            pytest.skip("an appliance VMM is already answering on this host")
+
+    # A fresh state disk (the appliance smoke's shape): this run's
+    # workspaces must not touch the dev host's own appliance state.
+    scratch = tempfile.TemporaryDirectory(prefix="msks-l3-state")
+    state_disk = Path(scratch.name) / "state.ext4"
+    copy = subprocess.run(
+        [
+            "cp",
+            "--sparse=always",
+            str(app_dir / "image" / "state.ext4"),
+            str(state_disk),
+        ],
+        capture_output=True,
+        timeout=300,
+    )
+    assert copy.returncode == 0, f"sparse state copy failed: {copy.stderr}"
+    state_disk.chmod(0o644)
+    prior_state_env = os.environ.get("MSKSD_APPLIANCE_STATE")
+    os.environ["MSKSD_APPLIANCE_STATE"] = str(state_disk)
+    prior_cmdline_extra = os.environ.get("MSKS_APPLIANCE_CMDLINE_EXTRA")
+    if not prior_cmdline_extra:
+        os.environ["MSKS_APPLIANCE_CMDLINE_EXTRA"] = (
+            "msksd.vsock_wait_timeout_s=120 msksd.console_stall_timeout_s=15"
+        )
+
+    ws_ctx = ssl.create_default_context()
+    ws_ctx.check_hostname = False
+    ws_ctx.verify_mode = ssl.CERT_NONE
+
+    async def connect_l2_console():
+        url = (
+            base.replace("https://", "wss://")
+            + f"/workspaces/{wid}/console?token={token}"
+        )
+        return await websockets.connect(url, ssl=ws_ctx, open_timeout=30)
+
+    token = None
+    up = None
+    forward_proc = None
+    try:
+        up = _devenv_processes("up", "-d")
+        assert up.returncode == 0, (
+            f"devenv processes up failed:\n{up.stdout}\n{up.stderr}"
+        )
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 120.0
+        while loop.time() < deadline:
+            token_file = app_dir / "bootstrap-token"
+            if token_file.is_file() and token_file.read_text().strip():
+                token = token_file.read_text().strip()
+                break
+            await asyncio.sleep(0.5)
+        else:
+            raise AssertionError("appliance bootstrap token never appeared")
+        headers = {"authorization": f"Bearer {token}"}
+        deadline = loop.time() + 120.0
+        while loop.time() < deadline:
+            try:
+                response = await client.get(f"{base}/health")
+                if response.status_code == 200:
+                    break
+            except httpx.HTTPError:
+                pass
+            await asyncio.sleep(1.0)
+        else:
+            serial = (app_dir / "serial.log").read_text(errors="replace")[-2000:]
+            raise AssertionError(f"appliance API never healthy; serial tail:\n{serial}")
+
+        # The L2 workspace: egress (the bootstrap downloads over it),
+        # the recursion seed, memory for a daemon beside an inner
+        # guest, and a /home volume sized for the inner state.
+        response = await client.post(
+            f"{base}/workspaces",
+            json={
+                "id": wid,
+                "mem_mib": 4096,
+                "home_mib": 30720,
+                "user_data": l3_seed(),
+            },
+            headers=headers,
+        )
+        assert response.status_code == 201, response.text
+        response = await client.post(
+            f"{base}/workspaces/{wid}/start", headers=headers, timeout=120.0
+        )
+        assert response.status_code in (200, 202), response.text
+        deadline = loop.time() + 120.0
+        while loop.time() < deadline:
+            response = await client.get(f"{base}/workspaces/{wid}", headers=headers)
+            if response.json().get("status") == "running":
+                break
+            await asyncio.sleep(1.0)
+        else:
+            raise AssertionError(f"L2 workspace never reached running: {response.text}")
+
+        # Q1 evidence, live in the L2 guest: the closure's kvm trio
+        # is in the shipped tree, the image's unit loaded it, and the
+        # CPU carries vmx through one remove already (the appliance's
+        # vm.create sets no CPU options).
+        tree = await l3_console_command(
+            connect_l2_console,
+            b"ls /usr/lib/modules/*/kernel/arch/x86/kvm/ && echo TREE-$((6*7))\n",
+            b"TREE-42",
+            300.0,
+        )
+        assert "kvm-intel.ko.xz" in tree.decode(errors="replace"), tree[-400:]
+        await l3_console_command(
+            connect_l2_console,
+            b"grep -qc vmx /proc/cpuinfo && systemctl is-active -q msks-kvm "
+            b"&& test -c /dev/kvm && echo Q1-$((6*7))\n",
+            b"Q1-42",
+            300.0,
+        )
+
+        # The bootstrap: minutes of downloads over nested-virt egress,
+        # watched through the seed's own state trail (the appliance
+        # smoke's dev-workspace shape). "done" gates on the inner
+        # daemon's unit being live; a failed step fails by name.
+        async def bootstrap_state() -> bytes:
+            return await l3_console_command(
+                connect_l2_console,
+                b"cat /root/.msks-bootstrap/state 2>/dev/null; echo E-$((21*2))\n",
+                b"E-42",
+                60.0,
+            )
+
+        deadline = loop.time() + L3_RECURSION_TIMEOUT_S
+        last = b""
+        while loop.time() < deadline:
+            data = await bootstrap_state()
+            body = data.split(b"E-$((21*2))", 1)[-1].split(b"E-42", 1)[0]
+            last = body.strip()
+            if last == b"done":
+                break
+            if last.startswith(b"no-route"):
+                raise AssertionError(f"the L3 seed could not find an uplink: {last!r}")
+            await asyncio.sleep(15.0)
+        else:
+            raise AssertionError(
+                f"L2 bootstrap never reached done within "
+                f"{L3_RECURSION_TIMEOUT_S}s; last state: {last!r}"
+            )
+
+        # The inner daemon is up and answering inside L2 (its own
+        # health, through the same console).
+        await l3_console_command(
+            connect_l2_console,
+            b"curl -sf http://127.0.0.1:8660/api/v1/health && echo DAEMON-$((6*7))\n",
+            b"DAEMON-42",
+            120.0,
+        )
+
+        # The archive ride: the minted key + the TCP forward + rsync
+        # — the documented operator path (docs/networking.md), driven
+        # by the host against the appliance's API.
+        workdir = Path(scratch.name) / "l3-work"
+        workdir.mkdir()
+        key = workdir / "l3.key"
+        known_hosts = workdir / "known_hosts"
+        cli_env = dict(
+            os.environ,
+            MSKSC_URL=base,
+            MSKSC_TOKEN=token,
+        )
+        keygen = await asyncio.to_thread(
+            subprocess.run,
+            [sys.executable, "-m", "msks.client.cli", "key", wid, "--out", str(key)],
+            env=cli_env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert keygen.returncode == 0, keygen.stderr
+        forward_port = free_port()
+        forward_log = workdir / "forward.log"
+        forward_proc = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "msks.client.cli",
+                "forward",
+                wid,
+                "22",
+                "--local",
+                str(forward_port),
+            ],
+            env=cli_env,
+            stdout=subprocess.DEVNULL,
+            stderr=open(forward_log, "ab"),
+        )
+        deadline = loop.time() + 30.0
+        while loop.time() < deadline:
+            log = (
+                forward_log.read_text(errors="replace") if forward_log.exists() else ""
+            )
+            if f"msks: 127.0.0.1:{forward_port} -> " in log:
+                break
+            await asyncio.sleep(0.2)
+        else:
+            raise AssertionError(
+                f"forward never listened on {forward_port}; "
+                f"log: {forward_log.read_text(errors='replace')[-800:]}"
+            )
+        sync = await asyncio.to_thread(
+            subprocess.run,
+            [
+                RSYNC_BIN,
+                "-e",
+                f"{SSH_BIN} -i {key} -p {forward_port} -F {os.devnull} "
+                f"-o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new "
+                f"-o UserKnownHostsFile={known_hosts} -o BatchMode=yes "
+                f"-o ConnectTimeout=20",
+                # -z: the archive's layer is an uncompressed tar whose
+                # rootfs member is mostly zero slack (mke2fs seeks past
+                # free space; tar writes the zeros); in-transit
+                # compression collapses them on the wire. -S keeps the
+                # receiver's copy sparse.
+                "-aPzS",
+                str(archive),
+                "root@127.0.0.1:/root/inner-image.tar",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=1800,
+        )
+        assert sync.returncode == 0, (
+            f"archive rsync failed:\n{sync.stdout[-1500:]}\n{sync.stderr[-1500:]}"
+        )
+
+        # Inner bring-up, staged as base64 (one console line; #103's
+        # corruption can only cost a resend) and LAUNCHED detached:
+        # the import is minutes of silent guest work, and a console
+        # session would stall-close around it (see l3_setup_launch).
+        # The host polls the run.log trail to completion.
+        setup_b64 = base64.b64encode(l3_inner_setup_script().encode()).decode()
+        await l3_console_command(
+            connect_l2_console,
+            f"mkdir -p /root/.msks-l3-inner && echo {setup_b64} "
+            f"| base64 -d > /root/l3-inner-up.sh "
+            f"&& echo SETUP-$((6*7))\n".encode(),
+            b"SETUP-42",
+            300.0,
+        )
+        await l3_console_command(
+            connect_l2_console, l3_setup_launch().encode() + b"\n", b"LAUNCHED-42", 60.0
+        )
+        deadline = loop.time() + 1800.0
+        last = b""
+        while loop.time() < deadline:
+            data = await l3_console_command(
+                connect_l2_console,
+                b"tail -n +1 /root/.msks-l3-inner/run.log 2>/dev/null; "
+                b"echo E-$((21*2))\n",
+                b"E-42",
+                60.0,
+            )
+            last = data.split(b"E-$((21*2))", 1)[-1].split(b"E-42", 1)[0].strip()
+            if b"done-0" in last:
+                break
+            for line in last.splitlines():
+                if line.startswith(b"done-") and line != b"done-0":
+                    raise AssertionError(
+                        f"inner bring-up exited nonzero ({line!r}); "
+                        f"log:\n{last.decode(errors='replace')}"
+                    )
+            await asyncio.sleep(15.0)
+        else:
+            raise AssertionError(
+                f"inner bring-up never finished within 1800s; log:\n"
+                f"{last.decode(errors='replace')}"
+            )
+
+        # Q2's answer: the inner console, driven from inside L2
+        # through the inner daemon's own websocket. An inner guest
+        # reaching its prompt is running on nested-in-nested KVM —
+        # there is no fallback path. The probe is base64-staged and
+        # re-run until it prints its OK line (each run is a fresh
+        # inner console session; the boot is slow and the first runs
+        # simply time out inside the probe).
+        probe_b64 = base64.b64encode(L3_INNER_PROBE.encode()).decode()
+        await l3_console_command(
+            connect_l2_console,
+            f"echo {probe_b64} | base64 -d > /root/inner-probe.py "
+            f"&& echo STAGED-$((6*7))\n".encode(),
+            b"STAGED-42",
+            120.0,
+        )
+        started = loop.time()
+        deadline = started + L3_RECURSION_TIMEOUT_S
+        evidence = b""
+        while loop.time() < deadline:
+            try:
+                evidence = await l3_console_command(
+                    connect_l2_console,
+                    b"/root/msks/.venv/bin/python /root/inner-probe.py; "
+                    b"echo PROBE-$((6*7))\n",
+                    b"PROBE-42",
+                    330.0,
+                )
+            except AssertionError as exc:
+                # A probe round can fail two ways while the inner
+                # guest is still booting: its inner console wait
+                # times out inside the guest (a traceback lands on
+                # the console before the marker), or the outer
+                # session stalls first. Both are the boot's own
+                # slowness — retry under the recursion's budget.
+                print(f"inner probe round: {exc}", flush=True)
+                await asyncio.sleep(10.0)
+                continue
+            if b"INNER-CONSOLE-42-OK" in evidence:
+                break
+            print(f"inner probe round without marker: {evidence[-300:]!r}", flush=True)
+            await asyncio.sleep(10.0)
+        else:
+            raise AssertionError(
+                "the inner workspace console never answered within "
+                f"{L3_RECURSION_TIMEOUT_S}s (Q2: vmx did not compose, or "
+                "the boot is slower than the budget)"
+            )
+        elapsed = loop.time() - started
+        print(
+            f"L3 recursion: inner console answered after {elapsed:.0f}s "
+            f"of probing; transcript bytes: {evidence[-400:]!r}",
+            flush=True,
+        )
+
+        # The tuning record (#82): the inner boot wall time the seed
+        # measured, and the daemon's timeouts that carried it.
+        await l3_console_command(
+            connect_l2_console,
+            b"cat /root/.msks-l3-inner/boot-s 2>/dev/null; echo T-$((6*7))\n",
+            b"T-42",
+            120.0,
+        )
+
+        # Orderly teardown, inner first: the inner workspace stops
+        # through its own daemon, then the L2 workspace and the
+        # appliance.
+        with contextlib.suppress(AssertionError):
+            await l3_console_command(
+                connect_l2_console,
+                b"MSKSC_URL=http://127.0.0.1:8660 "
+                b"MSKSC_TOKEN=$(cat /root/.msks-inner/token) "
+                b"/root/msks/.venv/bin/msks stop inner1; "
+                b"echo STOP-$((6*7))\n",
+                b"STOP-42",
+                300.0,
+            )
+        response = await client.post(
+            f"{base}/workspaces/{wid}/stop", headers=headers, timeout=120.0
+        )
+        assert response.status_code == 200, response.text
+        response = await client.delete(
+            f"{base}/workspaces/{wid}", headers=headers, timeout=120.0
+        )
+        assert response.status_code == 200, response.text
+    finally:
+        if forward_proc is not None:
+            forward_proc.terminate()
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(forward_proc.wait, 10)
+        with contextlib.suppress(Exception):
+            auth = {"authorization": f"Bearer {token}"} if token else {}
+            await client.delete(f"{base}/workspaces/{wid}", headers=auth)
+        if prior_state_env is None:
+            del os.environ["MSKSD_APPLIANCE_STATE"]
+        elif prior_state_env != os.environ.get("MSKSD_APPLIANCE_STATE"):
+            os.environ["MSKSD_APPLIANCE_STATE"] = prior_state_env
+        if prior_cmdline_extra is None:
+            del os.environ["MSKS_APPLIANCE_CMDLINE_EXTRA"]
+        elif prior_cmdline_extra != os.environ.get("MSKS_APPLIANCE_CMDLINE_EXTRA"):
+            os.environ["MSKS_APPLIANCE_CMDLINE_EXTRA"] = prior_cmdline_extra
+        down = _devenv_processes("down", timeout=300)
+        assert down.returncode == 0, (
+            f"devenv processes down failed:\n{down.stdout}\n{down.stderr}"
+        )
+        scratch.cleanup()

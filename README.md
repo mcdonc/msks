@@ -381,6 +381,58 @@ over the egress NIC with nothing stored in the image or the seed
 See `docs/storage.md` for the byte-stream endpoints and their
 contract.
 
+### The full recursion: msksd inside a workspace (#82)
+
+The workspace image carries what a workspace needs to run msksd
+itself: the nested-KVM modules (`kvm`/`kvm-intel`/`kvm-amd`, loaded
+at boot by the image's own `msks-kvm.service` when the host exposes
+virt extensions through the appliance) and the inner-egress stack
+(`tun` plus the nftables/NAT set) — the same posture the appliance
+image ships, so a workspace can be an appliance in miniature. The
+L3 recursion seed layers the daemon on top of the dev bootstrap
+(#77): same first steps (uv, the checkout, `uv sync`), then
+cloud-hypervisor's pinned static binary and the daemon's
+workspace-side tools over egress, and msksd as a systemd unit —
+state on the persistent `/home` volume, egress armed behind the
+workspace's own NIC, and the nested-virt timeouts the recursion
+demands (`MSKSD_VSOCK_WAIT_TIMEOUT_S=75` and friends; the unit's
+comments record the tuning). The bootstrap token lands in
+`/root/.msks-inner/token`:
+
+```bash
+msks create l3 --egress --user-data scripts/l3-recursion.sh \
+  --mem-mib 4096 --home-mib 30720
+msks start l3   # first boot provisions, then msksd serves 8660 inside
+```
+
+The one artifact the seed cannot fetch is a workspace image — it is
+a host-side build product. Push it over the forward plane and
+import it into the inner daemon:
+
+```bash
+msks key l3 --out ~/.cache/msks/l3.key
+msks forward l3 22 --local 2201 &
+rsync -e 'ssh -i ~/.cache/msks/l3.key -p 2201' -avP \
+    .guest/workspace-debian-13.6.tar root@127.0.0.1:/root/inner-image.tar
+msks console l3   # then, inside the workspace:
+#   export MSKSC_URL=http://127.0.0.1:8660
+#   export MSKSC_TOKEN=$(cat /root/.msks-inner/token)
+#   /root/msks/.venv/bin/msks image import /root/inner-image.tar
+#   /root/msks/.venv/bin/msks create inner1
+#   /root/msks/.venv/bin/msks console inner1
+```
+
+The console of the inner workspace then appears inside the console
+of the workspace: host → appliance → workspace → inner workspace.
+The end-to-end proof is the opt-in smoke `test_appliance_l3_recursion`
+(`MSKSD_TEST_L3=1` with the appliance built), which also pins the
+two facts the recursion rests on: Debian's generic kernel ships the
+KVM modules the image's closure carries, and vmx survives two
+removes of cloud-hypervisor's default CPU config — an inner guest
+that reaches its console is running on nested-in-nested KVM,
+because cloud-hypervisor boots VMs through `/dev/kvm` and has no
+software fallback.
+
 ### The workspace console (`msks console`) (#21)
 
 From any host that can reach the appliance, an interactive shell in

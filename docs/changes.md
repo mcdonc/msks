@@ -20,13 +20,24 @@ tagged `vX.Y.Z`.
   `msks create` mints the workspace's ssh keypair on the client and
   sends the public half only: the daemon stores and seeds that half
   exactly like its own minted one and holds no private half — `msks
-key` answers the public line, and `msks ssh` serves the private
+  key` answers the public line, and `msks ssh` serves the private
   half from the client data root
   (`~/.local/share/msks/<id>/identity`, mode 0600). `--daemon-mint`
   keeps the daemon-minted escrow mode (#111; the k8s backend serves
   no identity and needs the flag); `--key-type` selects the type
   (`ecdsa` default). See `docs/networking.md`.
-
+- **msksd inside a workspace — the L3 recursion (#82).** The
+  workspace image's module closure now carries the nested-KVM trio
+  and the inner-egress stack (`kvm`/`kvm-intel`/`kvm-amd`, `tun`,
+  the nftables/NAT set — twenty-nine files total), and the image
+  loads KVM at boot through its own `msks-kvm.service` when the
+  host exposes virt extensions, so a workspace can run msksd
+  itself. The `scripts/l3-recursion.sh` seed layers the inner
+  daemon on the dev bootstrap (#77) and runs it as a unit with the
+  nested-virt timeouts recorded; `test_appliance_l3_recursion`
+  (`MSKSD_TEST_L3=1`) is the end-to-end proof — an inner workspace
+  booted by msksd inside a workspace, console reachable through the
+  inner daemon. See the README's recursion section.
 - **git-out through egress with a forwarded agent (#81).** The
   dogfood loop's outbound half is proven end to end by a new opt-in
   root smoke, `test_local_egress_git_out` (it runs in the KVM
