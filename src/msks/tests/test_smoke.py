@@ -4039,20 +4039,6 @@ fi
 """
 
 
-def l3_setup_launch() -> str:
-    """The one-liner that runs the setup script DETACHED from the
-    console session: the inner import is minutes of guest work with
-    no console output, and the outer console's stall window would
-    otherwise tear the session down around it (#103) — killing the
-    shell's children mid-import. nohup keeps the work on the guest;
-    run.log carries the step trail (and the recorded exit status)
-    for the host to poll."""
-    return (
-        "nohup sh /root/l3-inner-up.sh "
-        "> /root/.msks-l3-inner/run.log 2>&1 & echo LAUNCHED-$((6*7))"
-    )
-
-
 async def l3_console_command(
     connect, command: bytes, marker: bytes, timeout_s: float
 ) -> bytes:
@@ -4179,6 +4165,15 @@ async def test_appliance_l3_recursion() -> None:
     state_disk.chmod(0o644)
     prior_state_env = os.environ.get("MSKSD_APPLIANCE_STATE")
     os.environ["MSKSD_APPLIANCE_STATE"] = str(state_disk)
+    # Three levels of guest memory ride the appliance's own: the L2
+    # (4 GiB) plus the inner VMs' RAM faulting inside it, beside the
+    # appliance's OS and daemon. The default 6 GiB OOM-kills the L2's
+    # VMM once the inner guests touch their pages (seen live: the
+    # appliance kernel's oom-kill of the workspace VMM, anon-rss
+    # ~2.9 GiB, mid-probe) — 12 GiB carries it with headroom.
+    prior_mem_mib = os.environ.get("MSKS_APPLIANCE_MEM_MIB")
+    if not prior_mem_mib:
+        os.environ["MSKS_APPLIANCE_MEM_MIB"] = "12288"
     prior_cmdline_extra = os.environ.get("MSKS_APPLIANCE_CMDLINE_EXTRA")
     if not prior_cmdline_extra:
         # console_stall_timeout_s=0: this test's probe steps wait
@@ -4406,11 +4401,11 @@ async def test_appliance_l3_recursion() -> None:
                 f"-o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new "
                 f"-o UserKnownHostsFile={known_hosts} -o BatchMode=yes "
                 f"-o ConnectTimeout=20",
-                # -S is the whole game: the rootfs is ~1.5 GiB logical
-                # but mostly mke2fs zero-seek slack — rsync's sparse
-                # mode skips the holes on the wire and lands the
-                # receiver's copy sparse.
-                "-aPS",
+                # -S lands the receiver's copy sparse and skips the
+                # rootfs's mke2fs zero-seek slack; -z collapses what
+                # does cross — the same content moved 26s compressed
+                # against 181s sparse-only, live.
+                "-aPSz",
                 *sorted(str(path) for path in artifacts.values()),
                 "root@127.0.0.1:/root/inner-artifacts/",
             ],
@@ -4441,9 +4436,10 @@ async def test_appliance_l3_recursion() -> None:
             b"SETUP-42",
             300.0,
         )
-        await l3_console_command(
-            connect_l2_console, l3_setup_launch().encode() + b"\n", b"LAUNCHED-42", 60.0
-        )
+        # No separate launch step: the poll's own round command starts
+        # the idempotent script when its log is missing or empty, so a
+        # corrupted launch line — the #103 pty mangling — costs one
+        # round, never the phase.
         # The create/start steps build the overlay and home volume
         # inside the L2 (nested I/O), and a console session can wedge
         # silently through them — the daemon's own vsock bring-up
@@ -4457,6 +4453,9 @@ async def test_appliance_l3_recursion() -> None:
             try:
                 data = await l3_console_command(
                     connect_l2_console,
+                    b"[ -s /root/.msks-l3-inner/run.log ] || "
+                    b"nohup sh /root/l3-inner-up.sh "
+                    b"> /root/.msks-l3-inner/run.log 2>&1 & sleep 1; "
                     b"tail -n +1 /root/.msks-l3-inner/run.log 2>/dev/null; "
                     b"grep -q ^done-0$ /root/.msks-l3-inner/run.log 2>/dev/null "
                     b"&& echo INNER-UP-$((6*7)); "
@@ -4595,6 +4594,10 @@ async def test_appliance_l3_recursion() -> None:
             del os.environ["MSKS_APPLIANCE_CMDLINE_EXTRA"]
         elif prior_cmdline_extra != os.environ.get("MSKS_APPLIANCE_CMDLINE_EXTRA"):
             os.environ["MSKS_APPLIANCE_CMDLINE_EXTRA"] = prior_cmdline_extra
+        if prior_mem_mib is None:
+            del os.environ["MSKS_APPLIANCE_MEM_MIB"]
+        elif prior_mem_mib != os.environ.get("MSKS_APPLIANCE_MEM_MIB"):
+            os.environ["MSKS_APPLIANCE_MEM_MIB"] = prior_mem_mib
         down = _devenv_processes("down", timeout=300)
         assert down.returncode == 0, (
             f"devenv processes down failed:\n{down.stdout}\n{down.stderr}"
