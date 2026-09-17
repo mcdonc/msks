@@ -1,0 +1,10 @@
+# actionlint config — repo-specific knowledge the linter cannot
+# infer (https://github.com/rhysd/actionlint/blob/main/docs/config.md).
+#
+# Custom self-hosted runner labels: nightly-l3.yml's proving smoke
+# runs on a registered runner labeled `msks-l3` (#135) — the depth
+# of nesting the recursion proves (two levels below the runner)
+# exists only there, not on GitHub's hosted runners.
+self-hosted-runner:
+  labels:
+    - msks-l3

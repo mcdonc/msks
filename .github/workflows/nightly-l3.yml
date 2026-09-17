@@ -1,0 +1,127 @@
+# The nightly run of the L3 recursion proving smoke (#135) —
+# test_appliance_l3_recursion (#82), the host -> appliance ->
+# workspace -> inner-workspace recursion, on the self-hosted
+# KVM runner.
+#
+# Why self-hosted: the proving smoke needs two levels of nesting
+# *below* the runner (vmx in the workspace, so the inner workspace
+# can run KVM). GitHub's hosted runners expose /dev/kvm for exactly
+# one nesting level — the local smokes' workspaces (smoke.yml's
+# header) — and the appliance's own workspaces already sit beyond
+# it. Azure does not accelerate the depth this test proves, so the
+# nightly runs where that depth exists: a registered self-hosted
+# runner labeled `msks-l3` (the dev host's shape: /dev/kvm, the
+# one-time `scripts/appliance-host-setup.sh` network install, and
+# podman for the appliance image build — README "Appliance" section
+# documents the pieces). Until such a runner registers, the
+# scheduled runs sit queued: the pending run is the visible signal
+# that the proving leg is down, and `workflow_dispatch` validates
+# the setup the day the runner registers.
+#
+# Frequency, not per-PR: the sequence costs tens of minutes on a
+# warm cache (its phase timeline is narrated in the run log — #82's
+# evidence holds the reference numbers), needs the runner's network
+# to itself (the appliance claims the msksbr0 bridge), and touches
+# state (a built .guest/ and .appliance/) that per-PR runs would
+# fight over. A nightly cadence bounds the recursion's silent-rot
+# window to a day at a fraction of the per-PR cost. Failed
+# scheduled runs notify repo watchers by GitHub's default email —
+# red is the alarm; the timeline in the log is the triage.
+name: Nightly L3 recursion smoke
+
+on:
+  schedule:
+    # 03:17 UTC — off the whole-hour cron rush, and the small
+    # hours local for the runner's host so the network takeover
+    # meets nothing else running.
+    - cron: "17 3 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  # A dispatch may cancel a scheduled run in flight; the proving
+  # smoke is serial and exclusive either way.
+  group: nightly-l3
+  cancel-in-progress: true
+
+jobs:
+  l3-recursion:
+    runs-on: [self-hosted, msks-l3]
+    timeout-minutes: 120
+    steps:
+      # The runner service's PATH is minimal; the devenv (and git,
+      # for the checkout) live in the runner user's nix profile.
+      # Preceding checkout: the checkout step needs that PATH too.
+      # A missing devenv reds the prerequisite check below with the
+      # named gap instead of a bare command-not-found.
+      - name: Put the nix profile on PATH
+        run: echo "$HOME/.nix-profile/bin" >> "$GITHUB_PATH"
+
+      - uses: actions/checkout@v5
+
+      # Inside the devenv shell — the same environment the prove
+      # step runs in — so `ip`, `ssh`, and `rsync` resolve the way
+      # the test itself resolves them, not by the runner's ambient
+      # PATH luck.
+      # Fail on the first missing piece, named — no accumulation,
+      # no shell variables inside the single-quoted script.
+      - name: Check prerequisites
+        run: |
+          devenv --quiet -O dotenv.enable:bool false shell -- bash -c '
+          command -v ssh >/dev/null || { echo "ssh not on PATH (the recursion rsync leg)"; exit 1; }
+          command -v rsync >/dev/null || { echo "rsync not on PATH (the recursion rsync leg)"; exit 1; }
+          [ -w /dev/kvm ] || { echo "/dev/kvm missing or not writable"; exit 1; }
+          ip link show msksbr0 >/dev/null 2>&1 || { echo "msksbr0 missing (one-time: sudo bash scripts/appliance-host-setup.sh)"; exit 1; }
+          echo "prerequisites: all present"
+          '
+
+      # Idempotent, cached after the first run: nix keeps the guest
+      # toolchain and the appliance image's build inputs in the
+      # store, so a warm nightly pays only the copy-out. Building
+      # here (not in the test) keeps the prove step's own timeline
+      # clean of build noise.
+      - name: Build appliance and guest assets
+        run: >-
+          devenv --quiet -O dotenv.enable:bool false shell --
+          devenv tasks run msks:appliance-build msks:build-guest
+
+      # The proving smoke, exactly the documented dev-host
+      # invocation. The test owns its per-phase budgets and the
+      # whole-sequence wall (MSKSD_TEST_L3_TIMEOUT_S); the 3600s
+      # ceiling is the measured need plus margin — the phases
+      # finished inside ~330s idle-host, and the budget absorbs a
+      # loaded runner's slower nested boots. The run log carries
+      # the full phase timeline and every guest step marker, so a
+      # red run is its own evidence without a dev-host rerun.
+      - name: L3 recursion smoke
+        env:
+          MSKSD_TEST_APPLIANCE: "1"
+          MSKSD_TEST_L3: "1"
+          MSKSD_TEST_L3_TIMEOUT_S: "3600"
+        run: >-
+          TMPDIR=/tmp
+          devenv --quiet -O dotenv.enable:bool false shell --
+          python -m pytest src/msks/tests/test_smoke.py::test_appliance_l3_recursion
+          -q -p no:cacheprovider --no-cov
+
+      # The failure paths' own evidence (the tests' collected
+      # /tmp/msks-smoke-failed/, the appliance's serial log and
+      # run log from .appliance/). The self-hosted workspace
+      # persists, but the artifact makes the red run legible from
+      # the run page itself. Runs on cancellation too — the
+      # sequence is long enough that the job wall can cut it
+      # mid-probe, and that cut is exactly when the evidence
+      # matters.
+      - name: Collect smoke state on failure
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-l3-failure-evidence
+          path: |
+            /tmp/msks-smoke-failed/
+            .appliance/serial.log
+            .appliance/run.log
+          if-no-files-found: ignore
+          retention-days: 14
