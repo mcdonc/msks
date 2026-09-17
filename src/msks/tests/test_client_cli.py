@@ -451,6 +451,17 @@ def test_read_pubkey_file_stdin_and_rejections(
         cli.read_pubkey(str(tmp_path / "missing.pub"))
 
 
+def test_pubkey_and_user_data_stdin_conflict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--pubkey -`` and ``--user-data -`` both read stdin; the
+    pairing is rejected up front instead of one flag starving the
+    other into a confusing daemon-side error."""
+    client_env(monkeypatch)
+    with pytest.raises(SystemExit, match="both read stdin"):
+        cli.main(["create", "ws1", "--pubkey", "-", "--user-data", "-"])
+
+
 def test_cmd_create_pubkey_sends_the_line_and_writes_nothing(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
@@ -523,9 +534,9 @@ def test_cmd_key_private_refused_for_client_minted(
     client_env(monkeypatch)
     body = dict(KEY_BODY, private_key=None)
     transport = mock(lambda req: httpx.Response(200, json=body))
-    with pytest.raises(SystemExit, match="client-minted identity"):
+    with pytest.raises(SystemExit, match="holds no private half"):
         cli.cmd_key("alpha", as_private=True, transport=transport)
-    with pytest.raises(SystemExit, match="client-minted identity"):
+    with pytest.raises(SystemExit, match="holds no private half"):
         cli.cmd_key("alpha", out="/tmp/never-written", transport=transport)
     rc = cli.cmd_key("alpha", transport=transport)
     assert rc == 0

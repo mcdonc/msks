@@ -293,11 +293,11 @@ def require_daemon_half(key: dict, workspace_id: str) -> None:
     places that half can be instead of printing nothing."""
     if key["private_key"] is None:
         raise SystemExit(
-            f"msks key: {workspace_id} carries a client-minted identity — "
-            "the daemon never held its private half. It lives on the "
-            "client that minted it (under the client data root, "
-            f"{data_dir() / workspace_id / 'identity'}), or it is a key "
-            "you supplied at create — use that key directly"
+            f"msks key: the daemon holds no private half for {workspace_id}. "
+            "The workspace's key was minted on a client (its private half "
+            f"lives at {data_dir() / workspace_id / 'identity'} on that "
+            "machine), or supplied from a key you already own — use that "
+            "key directly"
         )
 
 
@@ -955,6 +955,11 @@ def run_create(args: argparse.Namespace, transport) -> int:
     """Resolve the identity mode once — the resolver may read stdin
     (``--pubkey -``) or reject a flag pairing, so it runs a single
     time — then create."""
+    if args.pubkey == "-" and args.user_data == "-":
+        raise SystemExit(
+            "msks: --pubkey - and --user-data - both read stdin; "
+            "pass one of them by file"
+        )
     key_type, pubkey = create_identity(args)
     return cmd_create(
         create_body(args),
