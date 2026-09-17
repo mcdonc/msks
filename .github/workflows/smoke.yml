@@ -8,10 +8,17 @@
 # VM itself is L1 on Azure metal; the workspace VM is L2, which is
 # exactly the one nesting level Azure's nested virt supports.
 #
-# What stays out: the appliance smoke test (MSKSD_TEST_APPLIANCE) —
-# its workspace boots inside the appliance VM, a third level (L3)
-# Azure does not accelerate — and the k8s smoke (needs a cluster).
-# Both remain dev-host-only, opt-in exactly as before.
+# This workflow owns the unprivileged boots. The root egress smokes
+# (tap/DHCP/DNS/NAT — root plus nftables and a firewall
+# precondition) live in their own workflow, smoke-egress.yml, so a
+# failure there cannot mask or re-run these and the two run in
+# parallel.
+#
+# What stays out everywhere: the appliance smoke test
+# (MSKSD_TEST_APPLIANCE) — its workspace boots inside the appliance
+# VM, a third level (L3) Azure does not accelerate — and the k8s
+# smoke (needs a cluster). Both remain dev-host-only, opt-in exactly
+# as before.
 #
 # Path-filtered to its real inputs: the guest/toolchain files (a
 # nixpkgs pin move lands through devenv.lock), everything under the
@@ -26,6 +33,7 @@ on:
     branches: [main]
     paths:
       - .github/workflows/smoke.yml
+      - .github/workflows/smoke-egress.yml
       - devenv.nix
       - devenv.yaml
       - devenv.lock
@@ -38,6 +46,7 @@ on:
   pull_request:
     paths:
       - .github/workflows/smoke.yml
+      - .github/workflows/smoke-egress.yml
       - devenv.nix
       - devenv.yaml
       - devenv.lock
@@ -58,7 +67,7 @@ concurrency:
 jobs:
   smoke-kvm:
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v5
 
@@ -95,10 +104,10 @@ jobs:
 
       # The smoke suite never counts toward the coverage gate (the
       # faked-transport unit suites own the 100%); serial (-n auto
-      # stays off) so the two real boots do not fight over the
-      # runner's 2 vCPUs. TMPDIR=/tmp for the same AF_UNIX path-depth
-      # reason as ci.yml; the tests keep their own shallow
-      # /tmp/msks-smoke-* state dirs.
+      # stays off) so the real boots do not fight over the runner's
+      # 2 vCPUs. TMPDIR=/tmp for the same AF_UNIX path-depth reason
+      # as ci.yml; the tests keep their own shallow /tmp/msks-smoke-*
+      # state dirs.
       # Nested-KVM guests run the same boots several times slower
       # than a dev host's KVM guest (#64): give each phase of the
       # persistence test's four boot cycles generous ceilings. The
@@ -114,66 +123,6 @@ jobs:
           python -m pytest src/msks/tests/test_smoke.py
           -q -p no:cacheprovider --no-cov
 
-      # The egress smoke (#52) needs root — tap/nft/DHCP/DNS — and
-      # nftables, which the runner image does not preinstall. Run it
-      # under sudo with the devenv shell's PATH (the test resolves
-      # the ip/nft tools through it), serial and after the unprivileged
-      # smokes so a failure there is not mistaken for this one. Nested
-      # KVM boots are slow; the phase timeouts apply here too.
-      # This step guards the bare-host posture — msksd's net stack on
-      # a kernel it shares with other firewall owners — which the
-      # appliance does not exercise (msksd is the only firewall in
-      # its kernel) and which nothing ships today: retire this step
-      # if k8s workspace egress (#69) settles on pod networking, keep
-      # and promote it if it lands on host taps — the additive
-      # appliance-side coverage is #88. Either way the
-      # lesson it pins is the product lesson for that posture: an
-      # nft accept in the daemon's own tables cannot override a
-      # foreign base chain's drop — on a shared kernel, host firewall
-      # control must be taken explicitly, the way appliance-setup.sh
-      # takes it for the appliance bridge. Concretely here: the
-      # runner's docker leaves FORWARD policy DROP for traffic not
-      # its own, so the smoke prints whatever the image left behind,
-      # clears FORWARD, and hands the forward hook to the daemon's
-      # own nft tables — the rules this smoke exists to test. Without
-      # that, guest TCP out blackholes behind docker's policy while
-      # DHCP and DNS (host-terminated, input chain) pass; validated
-      # against a faithful FORWARD policy-drop simulation during #75.
-      # The runner is a per-job VM, so the flush and policy travel
-      # with it and touch no other workload.
-      - name: Egress smoke forwarding precondition
-        run: |
-          echo "::group::forward/firewall state before"
-          sysctl net.ipv4.ip_forward
-          sudo iptables -S FORWARD || true
-          sudo nft list tables || true
-          echo "::endgroup::"
-          sudo iptables -F FORWARD
-          sudo iptables -P FORWARD ACCEPT
-          sudo iptables -S FORWARD
-
-      - name: Egress smoke (root)
-        env:
-          TMPDIR: /tmp
-          MSKSD_TEST_GUEST_UP_TIMEOUT_S: "180"
-          MSKSD_TEST_CONSOLE_TIMEOUT_S: "120"
-          MSKSD_TEST_SHUTDOWN_TIMEOUT_S: "180"
-        run: >-
-          sudo apt-get update -qq && sudo apt-get install -y -qq nftables &&
-          devenv --quiet -O dotenv.enable:bool false shell -- bash -c "
-          sudo -n env MSKSD_TEST_EGRESS=1 TMPDIR=/tmp
-          MSKSD_TEST_GUEST_UP_TIMEOUT_S=180
-          MSKSD_TEST_CONSOLE_TIMEOUT_S=120
-          MSKSD_TEST_SHUTDOWN_TIMEOUT_S=180
-          MSKSD_TEST_SSH_TIMEOUT_S=120
-          MSKSD_TEST_GIT_OUT_TIMEOUT_S=900
-          PATH=\"\$PATH\" HOME=/root
-          python -m pytest src/msks/tests/test_smoke.py::test_local_egress_boot
-          src/msks/tests/test_smoke.py::test_local_sshd_and_rsync
-          src/msks/tests/test_smoke.py::test_local_egress_git_out
-          src/msks/tests/test_smoke.py::test_local_minted_identity
-          -q -p no:cacheprovider --no-cov"
-
       # The failing boot's own evidence, kept by the tests' failure
       # path (serial log, VMM log, raw vsock probe printed in the step
       # log) — the runner recycles, so /tmp/msks-smoke-failed/ is the
@@ -181,7 +130,7 @@ jobs:
       # cancellation too (#75 review): the console retries can now
       # spend long enough on a wedged guest to hit the job wall, and
       # `failure()` alone is false on a timeout cancel — losing the
-      # evidence exactly when it is most needed.
+      # evidence exactly when it's most needed.
       - name: Collect smoke state on failure
         if: failure() || cancelled()
         uses: actions/upload-artifact@v4

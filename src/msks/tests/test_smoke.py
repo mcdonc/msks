@@ -2197,17 +2197,20 @@ async def test_local_sshd_and_rsync() -> None:
 
 
 async def await_guest_trail(
-    microvm, workspace_id: str, trail: str, needle: bytes, timeout_s: float
+    microvm, workspace_id: str, probe: str, needle: bytes, timeout_s: float
 ) -> None:
-    """Poll a guest-side trail file until it carries ``needle``.
+    """Poll a guest-side probe command until its output carries
+    ``needle``.
 
-    The git-out smoke's long legs (apt, an HTTPS fetch) run nohup'd
-    inside the guest and append step names to a trail file; each
-    probe here is a fresh console session well inside
+    The git-out smoke's long legs (apt, an HTTPS ``git ls-remote``)
+    run detached inside the guest and append step names to a trail
+    file; each probe here is a fresh console session well inside
     CONSOLE_TIMEOUT_S — the same fresh-session-per-probe shape the
-    bootstrap poll uses (#103 workaround). A ``fail-*`` trail line
-    fails the wait immediately, naming the step that died instead of
-    spinning to the deadline.
+    bootstrap poll uses (#103 workaround). The probe fragment cats
+    the trail and tails the run log, so a wait that times out or
+    fast-fails names the step that died with its own stderr in the
+    assertion — no rerun needed to see why. A ``fail-*`` trail line
+    fails the wait immediately instead of spinning to the deadline.
     """
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_s
@@ -2217,7 +2220,7 @@ async def await_guest_trail(
             reader, writer = await microvm.console(workspace_id, user="root")
             try:
                 await read_until(reader, CONSOLE_PROMPT_NEEDLE)
-                writer.write(f"cat {trail} 2>/dev/null; echo E-$((21*2))\n".encode())
+                writer.write(f"{probe}; echo E-$((21*2))\n".encode())
                 await writer.drain()
                 data = await read_until(reader, b"E-42", timeout_s=CONSOLE_TIMEOUT_S)
             finally:
@@ -2234,13 +2237,13 @@ async def await_guest_trail(
             for line in body.splitlines():
                 if line.startswith(b"fail-"):
                     raise AssertionError(
-                        f"guest trail {trail} reported {line!r} while "
-                        f"awaiting {needle!r}"
+                        f"guest trail reported {line!r} while awaiting "
+                        f"{needle!r}: {last[-400:]!r}"
                     )
         await asyncio.sleep(5)
     raise AssertionError(
-        f"{trail} never showed {needle!r} within {timeout_s}s; "
-        f"last observed: {last[-200:]!r}"
+        f"the guest never showed {needle!r} within {timeout_s}s; "
+        f"last observed: {last[-400:]!r}"
     )
 
 
@@ -2714,15 +2717,29 @@ async def test_local_egress_git_out() -> None:
         # Substitutes in, over egress, destinations the seed never
         # touches: Debian's mirrors, then an HTTPS ``git ls-remote``
         # of the project's own public remote — the host a real
-        # dogfood push targets. nohup'd with a trail — apt runs
-        # past CONSOLE_TIMEOUT_S. --no-install-recommends keeps the
-        # download to what the legs use (git-man alone is tens of
-        # MB of recommends the proof gains nothing from).
+        # dogfood push targets.
+        #
+        # The setup (mkdir, rm, the trail's first line) runs in the
+        # FOREGROUND, gated on the BG marker: the marker proves the
+        # trail file exists and is writable before anything detaches.
+        # The long legs run as one ``nohup setsid sh -c`` — SIGHUP
+        # ignored from the exec's first instruction and a fresh
+        # session with no controlling tty, so neither the login
+        # shell's exit-time job signaling (the CI failure this shape
+        # replaces: the background chain died before its first echo)
+        # nor the pty-master close can reach it. Every byte of its
+        # output — including the inner sh's own parse errors — lands
+        # in run.log, which the trail probe tails. --no-install-
+        # recommends keeps the download to what the legs use
+        # (git-man alone is tens of MB of recommends the proof gains
+        # nothing from).
         await run_in_console(
             microvm,
             wid,
-            "mkdir -p /root/.gitout && rm -f /root/.gitout/trail "
-            "&& nohup sh -c '"
+            "mkdir -p /root/.gitout "
+            "&& rm -f /root/.gitout/trail /root/.gitout/run.log "
+            "&& echo start >>/root/.gitout/trail "
+            "&& { nohup setsid sh -c '"
             "echo apt >>/root/.gitout/trail; "
             "apt-get update -qq >>/root/.gitout/run.log 2>&1 "
             "|| { echo fail-apt-update >>/root/.gitout/trail; exit 1; }; "
@@ -2735,12 +2752,22 @@ async def test_local_egress_git_out() -> None:
             ">/root/.gitout/remote 2>>/root/.gitout/run.log "
             "|| { echo fail-ls-remote >>/root/.gitout/trail; exit 1; }; "
             "echo done >>/root/.gitout/trail"
-            "' >/dev/null 2>&1 & echo BG-$((6*7))",
+            "' >>/root/.gitout/run.log 2>&1 </dev/null & } "
+            "&& echo BG-$((6*7))",
             "BG-42",
         )
-        await await_guest_trail(
-            microvm, wid, "/root/.gitout/trail", b"done", GIT_OUT_TIMEOUT_S
+        trail_probe = (
+            "cat /root/.gitout/trail 2>/dev/null; "
+            "tail -c 400 /root/.gitout/run.log 2>/dev/null"
         )
+        # A short grace first: if the detached script died instantly,
+        # fail within 90s naming run.log's tail, not after the whole
+        # apt budget. "apt" in the trail is the detached script's
+        # first act.
+        await await_guest_trail(
+            microvm, wid, trail_probe, b"apt", min(90.0, GIT_OUT_TIMEOUT_S)
+        )
+        await await_guest_trail(microvm, wid, trail_probe, b"done", GIT_OUT_TIMEOUT_S)
         await run_in_console(
             microvm,
             wid,
