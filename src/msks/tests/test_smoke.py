@@ -19,6 +19,7 @@ covered by the faked-transport unit suites).
 import asyncio
 import base64
 import contextlib
+import json
 import os
 import pwd
 import re
@@ -3865,12 +3866,20 @@ async def test_local_operator_pubkey() -> None:
 L3 = os.environ.get("MSKSD_TEST_L3")
 
 
-def guest_image_archive() -> Path | None:
-    """The built workspace image archive (.guest/, msks:build-guest)
-    — the artifact the rsync leg pushes into the L2 workspace for
-    the inner daemon to import."""
-    matches = sorted((REPO_ROOT / ".guest").glob("workspace-*.tar"))
-    return matches[0] if matches else None
+def guest_boot_artifacts() -> dict[str, Path] | None:
+    """The built guest's boot artifacts (.guest/, msks:build-guest)
+    — kernel, initrd, and the sparse rootfs the rsync leg pushes
+    into the L2 workspace. The inner daemon boots them directly
+    (create with explicit paths): the catalog import would copy,
+    hash, and densely extract the ~1.5 GiB archive for a rootfs
+    that is mostly mke2fs zero-seek slack — several GiB of nested
+    I/O the recursion does not need to re-prove (the appliance's
+    own first-boot import covers the catalog path at L1)."""
+    names = ("vmlinux", "initrd", "rootfs.ext4")
+    paths = {name: REPO_ROOT / ".guest" / name for name in names}
+    if not all(path.is_file() for path in paths.values()):
+        return None
+    return paths
 
 
 needs_l3 = pytest.mark.skipif(
@@ -3880,7 +3889,7 @@ needs_l3 = pytest.mark.skipif(
     or not (REPO_ROOT / ".appliance" / "vmlinux").is_file()
     or not _host_net_installed()
     or not (SSH_BIN and RSYNC_BIN)
-    or guest_image_archive() is None,
+    or guest_boot_artifacts() is None,
     reason=(
         "set MSKSD_TEST_L3=1 with /dev/kvm, the one-time host network, "
         "ssh+rsync on PATH, and devenv tasks run msks:appliance-build "
@@ -3984,14 +3993,16 @@ asyncio.run(main())
 """
 
 
-def l3_inner_setup_script() -> str:
-    """The idempotent inner-bring-up script staged into L2: import
-    the archive, create the inner workspace, start it. Step markers
-    under /root/.msks-l3-inner/ make every step a no-op on re-run —
-    the console probe resends the WHOLE script when a session stalls
-    (#103), so a half-finished first round must converge, never
-    restart. flock keeps concurrent rounds from interleaving (the
-    second exits 0 immediately; the marker files are the truth)."""
+def l3_inner_setup_script(cmdline: str) -> str:
+    """The idempotent inner-bring-up script staged into L2: create
+    the inner workspace over the rsynced boot artifacts (explicit
+    kernel/initrd/rootfs paths, the manifest's cmdline), then start
+    it. Step markers under /root/.msks-l3-inner/ make every step a
+    no-op on re-run — the console probe resends the WHOLE script when
+    a session stalls (#103), so a half-finished first round must
+    converge, never restart. flock keeps concurrent rounds from
+    interleaving (the second waits, then re-runs as no-ops)."""
+    assert "'" not in cmdline, cmdline
     return """#!/bin/sh
 # Staged by the L3 recursion smoke (#82): idempotent inner bring-up.
 # The EXIT trap records done-<exit> on the log the host polls — only
@@ -4006,18 +4017,16 @@ mkdir -p "$MARK"
 trap 'echo done-$?' EXIT
 # BLOCKING flock: a duplicate round (a resent launch line) waits for
 # the running round, then re-runs the steps as no-ops — its own
-# done-0 is true by then. A bail-here exit would record done-0 while
-# the first round was still importing.
+# done-0 is true by then.
 exec 9>"$MARK/lock"
 flock 9
-if [ ! -f "$MARK/imported" ]; then
-  echo import
-  "$MSKS" image import /root/inner-image.tar
-  touch "$MARK/imported"
-fi
 if [ ! -f "$MARK/created" ]; then
   echo create
-  "$MSKS" create inner1
+  "$MSKS" create inner1 \
+    --kernel /root/inner-artifacts/vmlinux \
+    --initrd /root/inner-artifacts/initrd \
+    --rootfs /root/inner-artifacts/rootfs.ext4 \
+    --cmdline 'CMDLINE'
   touch "$MARK/created"
 fi
 if [ ! -f "$MARK/started" ]; then
@@ -4131,7 +4140,7 @@ async def test_appliance_l3_recursion() -> None:
     app_dir = REPO_ROOT / ".appliance"
     base = "https://192.168.77.2:8660/api/v1"
     wid = f"l3-{uuid.uuid4().hex[:8]}"
-    archive = guest_image_archive()
+    artifacts = guest_boot_artifacts()
 
     # Refuse to stomp a running appliance (the appliance smoke's own
     # guard; both tests boot THE appliance on this host).
@@ -4397,33 +4406,36 @@ async def test_appliance_l3_recursion() -> None:
                 f"-o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new "
                 f"-o UserKnownHostsFile={known_hosts} -o BatchMode=yes "
                 f"-o ConnectTimeout=20",
-                # -z: the archive's layer is an uncompressed tar whose
-                # rootfs member is mostly zero slack (mke2fs seeks past
-                # free space; tar writes the zeros); in-transit
-                # compression collapses them on the wire. -S keeps the
+                # -S is the whole game: the rootfs is ~1.5 GiB logical
+                # but mostly mke2fs zero-seek slack — rsync's sparse
+                # mode skips the holes on the wire and lands the
                 # receiver's copy sparse.
-                "-aPzS",
-                str(archive),
-                "root@127.0.0.1:/root/inner-image.tar",
+                "-aPS",
+                *sorted(str(path) for path in artifacts.values()),
+                "root@127.0.0.1:/root/inner-artifacts/",
             ],
             capture_output=True,
             text=True,
             timeout=1800,
         )
         assert sync.returncode == 0, (
-            f"archive rsync failed:\n{sync.stdout[-1500:]}\n{sync.stderr[-1500:]}"
+            f"artifact rsync failed:\n{sync.stdout[-1500:]}\n{sync.stderr[-1500:]}"
         )
-        timeline.mark("archive-rsynced")
+        timeline.mark("artifacts-rsynced")
 
         # Inner bring-up, staged as base64 (one console line; #103's
         # corruption can only cost a resend) and LAUNCHED detached:
         # the import is minutes of silent guest work, and a console
         # session would stall-close around it (see l3_setup_launch).
         # The host polls the run.log trail to completion.
-        setup_b64 = base64.b64encode(l3_inner_setup_script().encode()).decode()
+        cmdline = json.loads(
+            (REPO_ROOT / ".guest" / "guest-manifest.json").read_text()
+        )["cmdline"]
+        setup_b64 = base64.b64encode(l3_inner_setup_script(cmdline).encode()).decode()
         await l3_console_command(
             connect_l2_console,
-            f"mkdir -p /root/.msks-l3-inner && echo {setup_b64} "
+            f"mkdir -p /root/.msks-l3-inner /root/inner-artifacts "
+            f"&& echo {setup_b64} "
             f"| base64 -d > /root/l3-inner-up.sh "
             f"&& echo SETUP-$((6*7))\n".encode(),
             b"SETUP-42",
@@ -4432,12 +4444,13 @@ async def test_appliance_l3_recursion() -> None:
         await l3_console_command(
             connect_l2_console, l3_setup_launch().encode() + b"\n", b"LAUNCHED-42", 60.0
         )
-        # The import hammers the L2 (a 1.5 GiB hash plus extract under
-        # nested virt), and a console session can wedge silently
-        # through it — the daemon's own vsock bring-up window is 120s,
-        # so a round's budget must exceed it, and a wedged round is
-        # retried under the phase deadline instead of failing the run
-        # (the same recovery the review's probe machinery rides on).
+        # The create/start steps build the overlay and home volume
+        # inside the L2 (nested I/O), and a console session can wedge
+        # silently through them — the daemon's own vsock bring-up
+        # window is 120s, so a round's budget must exceed it, and a
+        # wedged round is retried under the phase deadline instead of
+        # failing the run (the same recovery the review's probe
+        # machinery rides on).
         deadline = loop.time() + 1800.0
         last = b""
         while loop.time() < deadline:
@@ -4457,7 +4470,7 @@ async def test_appliance_l3_recursion() -> None:
                 continue
             last = data.split(b"E-$((21*2))", 1)[-1].split(b"E-42", 1)[0].strip()
             print(f"L3 inner bring-up round: {last[-160:]!r}", flush=True)
-            for step in re.findall(rb"^(import|create|start|done-\d+)$", last, re.M):
+            for step in re.findall(rb"^(create|start|done-\d+)$", last, re.M):
                 timeline.step("inner:" + step.decode())
             if b"INNER-UP-42" in last:
                 timeline.mark("inner-bringup-done")

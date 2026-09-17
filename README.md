@@ -405,20 +405,27 @@ msks create l3 --egress --user-data scripts/l3-recursion.sh \
 msks start l3   # first boot provisions, then msksd serves 8660 inside
 ```
 
-The one artifact the seed cannot fetch is a workspace image — it is
-a host-side build product. Push it over the forward plane and
-import it into the inner daemon:
+The boot artifacts for the inner workspace are host-side build
+products — the one thing the seed cannot fetch. Push them over the
+forward plane (sparse, so the mostly-zero rootfs crosses as its real
+blocks) and create the inner workspace over them directly; the
+daemon builds the workspace's own overlay and volumes on top:
 
 ```bash
 msks key l3 --out ~/.cache/msks/l3.key
 msks forward l3 22 --local 2201 &
-rsync -e 'ssh -i ~/.cache/msks/l3.key -p 2201' -avP \
-    .guest/workspace-debian-13.6.tar root@127.0.0.1:/root/inner-image.tar
+rsync -e 'ssh -i ~/.cache/msks/l3.key -p 2201' -aPS \
+    .guest/vmlinux .guest/initrd .guest/rootfs.ext4 \
+    root@127.0.0.1:/root/inner-artifacts/
 msks console l3   # then, inside the workspace:
 #   export MSKSC_URL=http://127.0.0.1:8660
 #   export MSKSC_TOKEN=$(cat /root/.msks-inner/token)
-#   /root/msks/.venv/bin/msks image import /root/inner-image.tar
-#   /root/msks/.venv/bin/msks create inner1
+#   /root/msks/.venv/bin/msks create inner1 \
+#     --kernel /root/inner-artifacts/vmlinux \
+#     --initrd /root/inner-artifacts/initrd \
+#     --rootfs /root/inner-artifacts/rootfs.ext4 \
+#     --cmdline 'console=ttyS0 root=/dev/vda rootfstype=ext4 rw'
+#   /root/msks/.venv/bin/msks start inner1
 #   /root/msks/.venv/bin/msks console inner1
 ```
 

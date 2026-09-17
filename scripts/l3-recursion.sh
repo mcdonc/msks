@@ -22,19 +22,27 @@
 #     (vsock_wait_timeout_s above the default: an inner guest boots
 #     much slower than its L2 parent)
 #
-# The image archive for the inner workspace is the one artifact this
-# seed cannot fetch: it is a host-side build product, so the operator
-# rsyncs it in over the forward plane
-# (docs/networking.md) and imports it:
+# The inner workspace's boot artifacts are the one thing this seed
+# cannot fetch: they are host-side build products, so the operator
+# rsyncs them in over the forward plane (docs/networking.md) —
+# sparse, so the mostly-zero rootfs crosses as its ~250M of real
+# blocks — and creates the inner workspace over them directly (the
+# catalog import would copy, hash, and densely re-extract the 1.5G
+# archive for a rootfs the daemon can boot as-is):
 #
 #   msks key l3 --out ~/.cache/msks/l3.key
 #   msks forward l3 22 --local 2201 &
-#   rsync -e 'ssh -i ~/.cache/msks/l3.key -p 2201' -avP \
-#       .guest/workspace-debian-13.6.tar root@127.0.0.1:/root/inner-image.tar
+#   rsync -e 'ssh -i ~/.cache/msks/l3.key -p 2201' -aPS \
+#       .guest/vmlinux .guest/initrd .guest/rootfs.ext4 \
+#       root@127.0.0.1:/root/inner-artifacts/
 #   # then, inside the workspace:
 #   MSKSC_URL=http://127.0.0.1:8660 MSKSC_TOKEN=$(cat /root/.msks-inner/token) \
-#       /root/msks/.venv/bin/msks image import /root/inner-image.tar
-#       ... msks create inner1 --start
+#       /root/msks/.venv/bin/msks create inner1 \
+#         --kernel /root/inner-artifacts/vmlinux \
+#         --initrd /root/inner-artifacts/initrd \
+#         --rootfs /root/inner-artifacts/rootfs.ext4 \
+#         --cmdline 'console=ttyS0 root=/dev/vda rootfstype=ext4 rw'
+#   ... msks start inner1; msks console inner1
 #
 # The bootstrap token is generated once into /root/.msks-inner/token
 # (mode 0600); the daemon's unit reads it from there.
