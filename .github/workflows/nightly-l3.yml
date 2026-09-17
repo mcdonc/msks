@@ -12,8 +12,8 @@
 # nightly runs where that depth exists: a registered self-hosted
 # runner labeled `msks-l3` (the dev host's shape: /dev/kvm, the
 # one-time `scripts/appliance-host-setup.sh` network install, and
-# podman for the appliance image build — README "Appliance" section
-# documents the pieces). Until such a runner registers, one
+# nix for both asset builds — README "Appliance" section documents
+# the pieces). Until such a runner registers, one
 # scheduled run sits queued and rolls forward a night at a time
 # (each new cron replaces the pending run): that pending run is
 # the visible signal that the proving leg is down, and

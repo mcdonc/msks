@@ -452,7 +452,7 @@ levels of nesting below the runner, one more than GitHub's hosted
 runners accelerate, so the nightly runs where that depth exists.
 The runner's host needs what the manual run needs (`/dev/kvm`, the
 one-time `scripts/appliance-host-setup.sh` network install, and
-podman behind `msks:appliance-build`); until a runner with that
+nix for both asset builds); until a runner with that
 label registers, one scheduled run sits queued and rolls forward a
 night at a time (each new cron replaces the pending run) — that
 pending run is the visible signal that the proving leg is down.
