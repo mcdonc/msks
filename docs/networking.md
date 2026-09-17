@@ -394,6 +394,41 @@ so `MSKSC_URL`, `MSKSC_TOKEN`, and `MSKSC_CAFILE` must be set there;
 `ssh -l root msks-devbox` is the recovery login, and `-A` forwards
 the operator's own agent into the workspace.
 
+### Code out: a push that carries its own credentials
+
+The loop's outbound half rides the guest's own egress NIC: a push
+from inside the workspace reaches any git remote through the NAT'd
+uplink, with the credential stored nowhere in the image, the seed,
+or the workspace's disks. The identity the push authenticates with
+is the operator's, delivered per session as a forwarded agent: log
+in through the forward with `-A`, an agent holding the credential
+on the client machine, and the guest session inherits
+`SSH_AUTH_SOCK` — `ssh-add -l` inside lists the operator's keys,
+and git's ssh offers them to the remote the same way it does on
+the client machine:
+
+```bash
+ssh -A msks-devbox                        # or: ssh -A -i ... -p 2201 root@127.0.0.1
+git -C ~/work/proj remote add origin git@github.com:you/proj.git
+git -C ~/work/proj push
+```
+
+`msks ssh` forwards its own transient agent (the minted identity)
+— the operator's agent rides the plain `ssh` forms, whose `-A`
+carries it. With the alias's ControlMaster, put the `-A` on the
+connection that creates the master: a session over an existing
+master shares that master's environment, agent included.
+
+Wide open by design in this interim phase (#81): every destination
+— remotes, package mirrors, any host — answers without a grant;
+consent-gated egress (#69) narrows guest-initiated connections
+later. The end-to-end proof is the opt-in root smoke
+`test_local_egress_git_out` (`MSKSD_TEST_EGRESS=1`), which runs in
+the KVM workflow's egress step: the workspace installs git from
+Debian's mirrors over the NAT'd uplink, then pushes a commit to a
+scratch git server on the host — authenticating only with a key
+that arrived through the forward as a forwarded agent.
+
 ### Cryptographic agility (a future FIPS posture)
 
 The image pins login policy — who may authenticate, and how — and
