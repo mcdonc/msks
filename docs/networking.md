@@ -578,7 +578,8 @@ when one exists. The algorithm choices in play are FIPS-approvable
 from the start: identities default to Ed25519 (#138 — FIPS 186-5
 approves EdDSA, and ssh clients restricted to the common
 `ssh-ed25519,ssh-rsa` set accept it out of the box), with ECDSA
-P-256 and RSA as `--key-type` choices,
+P-256 and RSA as explicit `--key-type` / `MSKSD_SSH_KEY_TYPE`
+choices,
 and first boot generates the full `ssh-keygen -A` host-key set,
 whose RSA and ECDSA members are the keys a FIPS-mode sshd serves —
 all persisting across stop/start on the overlay.

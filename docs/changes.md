@@ -93,8 +93,8 @@ key` answers the public line, and `msks ssh` serves the private
   [storage](/storage/#home-volume-export-and-import) and
   [the CLI](/cli/#msks-home).
 - **Minted workspace identity and `msks key` (#111).** msksd mints a
-  per-workspace ssh keypair at create — ECDSA P-256 by default, the
-  FIPS-approvable choice (#115), with the type configurable via
+  per-workspace ssh keypair at create — Ed25519 by default (#115,
+  #138), with the type configurable via
   `MSKSD_SSH_KEY_TYPE` — and stores both halves with the workspace's
   state. The public half is planted into `authorized_keys` for root
   and the `msks` workspace user through the first-boot seed (composed
@@ -184,9 +184,9 @@ no`, `PermitRootLogin prohibit-password`) pinned by a config dropin,
 - **Minted identity keys default to `ed25519` (#138).** The
   client mint (`--key-type`, `msks create`) and the daemon mint
   (`ssh_key_type` / `MSKSD_SSH_KEY_TYPE`) now mint Ed25519 keys —
-  FIPS-approvable (FIPS 186-5) and accepted by ssh clients that
-  restrict the accepted key algorithms, so `msks ssh` into a
-  default-created workspace needs no algorithm passthrough.
+  FIPS-approvable (FIPS 186-5) and accepted by ssh clients
+  restricted to the common `ssh-ed25519,ssh-rsa` set, so `msks ssh`
+  into a default-created workspace needs no algorithm passthrough.
   `--key-type ecdsa` (the former default) and `--key-type rsa`
   remain available for deployments whose validated crypto module
   predates EdDSA. See `docs/networking.md`.
