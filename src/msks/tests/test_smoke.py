@@ -3212,6 +3212,9 @@ async def test_local_minted_identity() -> None:
             f"#!/bin/sh\nprintf '%s\\n' {payload_marker} > /root/payload\n",
             encoding="utf-8",
         )
+        # --daemon-mint keeps this smoke on the daemon-mint path
+        # it pins (#111): the client mint is now the create default
+        # (#121) and has its own smoke below.
         created = await cli(
             "create",
             wid,
@@ -3224,6 +3227,7 @@ async def test_local_minted_identity() -> None:
             "--egress",
             "--user-data",
             str(payload_path),
+            "--daemon-mint",
         )
         assert created.returncode == 0, created.stderr
 
@@ -3366,6 +3370,209 @@ async def test_local_minted_identity() -> None:
                 proc.terminate()
             with contextlib.suppress(Exception):
                 await asyncio.to_thread(proc.wait, 10)
+        if api_task is not None:
+            api_server.should_exit = True
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(asyncio.shield(api_task), timeout=10)
+        with contextlib.suppress(Exception):
+            await microvm.cleanup(wid)
+        with contextlib.suppress(OSError):
+            forwarding.write_text(forwarding_was)
+        shutil.rmtree(state_dir, ignore_errors=True)
+
+
+@needs_egress
+@needs_local
+@needs_ssh_tools
+async def test_local_client_minted_identity() -> None:
+    """The client-minted identity end to end (#121): the client mints
+    the keypair and sends the public half only, the daemon's row holds
+    no private half (the no-escrow contract, checked in the database
+    itself), and ``msks ssh`` opens the fresh workspace from the local
+    cache alone — the identity the client kept is the identity the
+    guest planted.
+    """
+    nft_tool = os.environ.get("MSKSD_TEST_NFT") or shutil.which("nft") or "nft"
+    ip_tool = os.environ.get("MSKSD_TEST_IP") or shutil.which("ip") or "ip"
+    state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
+    token = f"smoke-token-{uuid.uuid4().hex}"
+    api_port = free_port()
+    settings = Settings(
+        vmm=VmmSettings(state_dir=state_dir),
+        net=NetSettings(
+            enabled=True,
+            uplink=_default_route_iface(),
+            ip_tool=ip_tool,
+            nft_tool=nft_tool,
+        ),
+        server=ServerSettings(
+            host="127.0.0.1",
+            port=api_port,
+            db_path=state_dir / "smoke.db",
+            bootstrap_token=token,
+        ),
+    )
+    app = build_app(settings)
+    microvm = app.state.microvm
+    wid = f"cmint-{uuid.uuid4().hex[:8]}"
+    serial_log = state_dir / "vms" / wid / "serial.log"
+    workdir = state_dir / "cmint-work"
+    workdir.mkdir(parents=True)
+    data = workdir / "data"
+    identity = data / "msks" / wid / "identity"
+
+    forwarding = Path("/proc/sys/net/ipv4/ip_forward")
+    forwarding_was = forwarding.read_text()
+    forwarding.write_text("1")
+
+    api_server = None
+    api_task = None
+
+    # XDG_DATA_HOME holds the client-minted identity (#121);
+    # XDG_CACHE_HOME keeps the msks ssh known_hosts inside the
+    # workdir (the #110 hermeticity lesson).
+    cli_env = dict(
+        os.environ,
+        MSKSC_URL=f"http://127.0.0.1:{api_port}",
+        MSKSC_TOKEN=token,
+        XDG_DATA_HOME=str(data),
+        XDG_CACHE_HOME=str(workdir / "cache"),
+    )
+
+    async def cli(*args: str, timeout: float = 120.0) -> subprocess.CompletedProcess:
+        return await asyncio.to_thread(
+            subprocess.run,
+            [sys.executable, "-m", "msks.client.cli", *args],
+            env=cli_env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+
+    def row_halves() -> tuple[str | None, str | None]:
+        """(ssh_privkey, ssh_pubkey) straight from the daemon's own
+        database — the no-escrow contract, not the API's word for it."""
+        import sqlite3
+
+        with sqlite3.connect(settings.server.db_path) as conn:
+            return conn.execute(
+                "select ssh_privkey, ssh_pubkey from workspaces where id = ?", (wid,)
+            ).fetchone()
+
+    try:
+        api_server = uvicorn.Server(
+            uvicorn.Config(
+                build_api(app),
+                host="127.0.0.1",
+                port=api_port,
+                log_level="warning",
+            )
+        )
+        api_task = asyncio.create_task(api_server.serve())
+        deadline = asyncio.get_running_loop().time() + 30
+        while not api_server.started:
+            if asyncio.get_running_loop().time() > deadline:
+                raise AssertionError("the test API server never started (30s)")
+            await asyncio.sleep(0.05)
+
+        # The client mint is the create default (#121): the POST
+        # carries the public half only, and the private half lands
+        # mode 0600 under the client data root after the create.
+        created = await cli(
+            "create",
+            wid,
+            "--kernel",
+            VMLINUX,
+            *(["--initrd", INITRD] if INITRD else []),
+            "--rootfs",
+            ROOTFS,
+            *(["--cmdline", CMDLINE] if CMDLINE else []),
+            "--egress",
+        )
+        assert created.returncode == 0, created.stderr
+        assert identity.exists()
+        assert identity.stat().st_mode & 0o777 == 0o600
+        assert identity.read_text().startswith("-----BEGIN OPENSSH PRIVATE KEY-----")
+
+        # The daemon's row: public half annotated with its own
+        # provenance marker, private half NULL — no escrow.
+        priv, pub = row_halves()
+        assert priv is None
+        assert pub is not None and pub.endswith(f"msks-client:{wid}")
+
+        # The key endpoint serves the public half; the private forms
+        # name where that half lives instead.
+        served = await cli("key", wid)
+        assert served.returncode == 0, served.stderr
+        assert served.stdout.strip() == pub
+        refused = await cli("key", wid, "--private")
+        assert refused.returncode != 0
+        assert "client-minted" in refused.stderr
+
+        # Boot, let cloud-init plant the key, and confirm the guest's
+        # authorized_keys carry the client's line.
+        started = await cli("start", wid)
+        assert started.returncode == 0, started.stderr
+        await await_guest_up(serial_log)
+        await run_in_console(microvm, wid, "cloud-init status --wait", "done")
+        await run_in_console(
+            microvm,
+            wid,
+            "i=0; while [ $i -lt 30 ] "
+            "&& ! { systemctl is-active msks-wait-address >/dev/null 2>&1 "
+            "&& systemctl is-active ssh >/dev/null 2>&1; }; "
+            "do sleep 1; i=$((i+1)); done; "
+            "systemctl is-active msks-wait-address >/dev/null 2>&1 "
+            "&& systemctl is-active ssh >/dev/null 2>&1 && echo U-$((6*7))",
+            "U-42",
+        )
+        await run_in_console(
+            microvm,
+            wid,
+            f"grep -qxF '{pub}' /root/.ssh/authorized_keys "
+            f"&& grep -qxF '{pub}' /home/msks/.ssh/authorized_keys "
+            f"&& echo AK-$((6*7))",
+            "AK-42",
+        )
+
+        # ``msks ssh`` from the local cache alone: the API serves the
+        # public half, the private half comes from the file the create
+        # wrote, and the login runs as the workspace user.
+        login = await asyncio.to_thread(
+            subprocess.run,
+            [
+                sys.executable,
+                "-m",
+                "msks.client.cli",
+                "ssh",
+                wid,
+                "--",
+                "-F",
+                os.devnull,
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=15",
+                "--",
+                "echo CMINT-$(whoami)-$((6*7))",
+            ],
+            env=cli_env,
+            capture_output=True,
+            text=True,
+            timeout=SSH_CMD_TIMEOUT_S,
+        )
+        assert login.returncode == 0, f"{login.stdout}\n{login.stderr}"
+        assert "CMINT-msks-42" in login.stdout, login.stdout
+
+        await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
+        final = await microvm.info(wid)
+        assert final.status.value in ("stopped", "absent")
+    except BaseException:
+        collect_failure_evidence(state_dir, wid, serial_log)
+        with contextlib.suppress(Exception):
+            await microvm.kill(wid)
+        raise
+    finally:
         if api_task is not None:
             api_server.should_exit = True
             with contextlib.suppress(Exception):

@@ -1,5 +1,8 @@
 """The minted workspace identity (#111): mint, seed script, compose."""
 
+import base64
+
+import pytest
 from cryptography.hazmat.primitives import serialization
 from msks.identity import (
     KEY_TYPES,
@@ -142,3 +145,51 @@ def test_operator_content_type_by_first_line() -> None:
 def test_trailing_newline() -> None:
     assert trailing_newline("x\n") == "x\n"
     assert trailing_newline("x") == "x\n"
+
+
+def test_normalize_public_key_round_trips_every_minted_type() -> None:
+    """A supplied line validates for each type the daemon itself
+    mints (#121), and the comment is dropped — the daemon annotates
+    provenance its own way."""
+    from msks.identity import normalize_public_key
+
+    for key_type in KEY_TYPES:
+        _private, public = mint(key_type)
+        algo, body = normalize_public_key(f"{public} operator@laptop")
+        expected = public.split()
+        assert (algo, body) == (expected[0], expected[1])
+        # The minted line's own form (no comment) validates identically.
+        assert normalize_public_key(public) == (algo, body)
+
+
+def test_normalize_public_key_rejects_malformed_lines() -> None:
+    """Each way a public line can lie: no body, an algorithm the
+    daemon does not mint, a body that is not base64, a truncated
+    blob, and a label that disagrees with the body it carries."""
+    from msks.identity import normalize_public_key
+
+    _private, ecdsa = mint("ecdsa")
+    _private, ed25519 = mint("ed25519")
+    ecdsa_body = ecdsa.split()[1]
+    # A blob whose embedded length runs past its own end: decodes
+    # fine, claims more than it carries.
+    oversized = base64.b64encode(b"\x00\x00\x00\x10AB").decode()
+    bad_lines = [
+        "lonely-label",
+        f"ssh-dss {ecdsa_body}",
+        "ecdsa-sha2-nistp256 !!not-base64!!",
+        "ecdsa-sha2-nistp256 QUJD",
+        f"ecdsa-sha2-nistp256 {oversized}",
+        f"ecdsa-sha2-nistp256 {ed25519.split()[1]}",
+    ]
+    details = [
+        "needs an algorithm",
+        "unsupported public key algorithm",
+        "not valid base64",
+        "truncated",
+        "truncated",
+        "does not match its key body",
+    ]
+    for line, detail in zip(bad_lines, details, strict=True):
+        with pytest.raises(ValueError, match=detail):
+            normalize_public_key(line)

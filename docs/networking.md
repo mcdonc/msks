@@ -314,7 +314,8 @@ and its console is the vsock one.
 
 ### The minted workspace identity
 
-Every workspace a local-backend daemon creates carries an ssh
+A workspace created without a client-supplied key — a direct API
+create, or `msks create --daemon-mint` — carries an ssh
 identity msksd minted at create (issue #111): a keypair stored with the workspace's state, whose
 public half the first boot plants into `authorized_keys` for both
 root and the `msks` workspace user — through the same cidata seed
@@ -386,13 +387,53 @@ concurrent invocations. The alias block names its identity with
 ~/.cache/msks/msks-devbox.key` (mode 0600, the private half fetched
 over the authenticated API). `msks ssh` is the command form that
 carries the identity per-session from memory instead — plain `ssh`
-invocations against the alias need the file. When client-held keys
-land (#121, #123), the alias points at the operator's own key
-instead and the minted identity retires to a first-boot enrollment
-credential. The ProxyCommand runs `msks` in the user's environment,
+invocations against the alias need the file. For a client-minted
+workspace (#121, the create default) that file is the client-held
+private half itself (`~/.local/share/msks/<id>/identity`, written
+at create); when #123
+lands, the alias points at the operator's own key and the minted
+identity retires to a first-boot enrollment credential. The
+ProxyCommand runs `msks` in the user's environment,
 so `MSKSC_URL`, `MSKSC_TOKEN`, and `MSKSC_CAFILE` must be set there;
 `ssh -l root msks-devbox` is the recovery login, and `-A` forwards
 the operator's own agent into the workspace.
+
+### The client-minted default (no escrow)
+
+`msks create` mints the workspace's ssh keypair on the client by
+default (issue #121): the client generates it locally, sends the
+public half with the create request, and keeps the private half —
+the daemon stores the public line and seeds it into the guest's
+`authorized_keys` exactly as it seeds its own minted half, and its
+database never holds a private half for the workspace (the API's
+key fetch answers `private_key: null`). The daemon validates the
+supplied line the way it validates its own output — the accepted
+algorithms are the ones it mints itself — and annotates it with its
+own provenance comment (`msks-client:<id>`, beside the minted
+mode's `msksd:<id>`). `--daemon-mint` opts back into the
+daemon-minted mode above; the k8s backend serves no identity in
+either mode, so creates against it pass `--daemon-mint`.
+
+The private half is written mode 0600 under the client data root
+after the create succeeds — `~/.local/share/msks/<id>/identity`,
+honoring `XDG_DATA_HOME` — and `msks ssh` reads it from there when
+the API serves the public half alone (checking the stored half
+against the served public line, so a stale copy fails as one named
+line, not ssh's opaque `Permission denied`). Losing the file loses
+ssh to that workspace (the console still opens); the alias workflow
+can point `IdentityFile` at a copy kept anywhere the operator
+likes. The data root, not the cache, holds the key on purpose:
+cache sweeps leave it alone. Deleting the workspace leaves the
+stored half behind, like its `known_hosts` — remove the
+per-workspace directory under the data root when you want the
+material gone. The key type is the client's choice at create
+(`--key-type`: `ecdsa` by default, `ed25519`, `rsa`), independent
+of the daemon's `MSKSD_SSH_KEY_TYPE` setting.
+
+This is the ssh half of the client-held-secrets posture: an
+appliance owner keeps every capability the console and forward
+grant, but no longer holds a private key that opens the workspace's
+ssh. The console challenge-response half is #123.
 
 ### Pushing code out with your own credentials
 

@@ -84,20 +84,23 @@ workspace charset — lowercase letters, digits, and dashes, starting
 with a letter or digit, up to 64 chars (it becomes a directory name
 under the state dir and a pod name on k8s).
 
-Flags map one-to-one onto the create request's fields:
+Flags map onto the create request's fields (the identity flags
+below generate theirs):
 
-| Flag          | API field   | Meaning                                                     |
-| ------------- | ----------- | ----------------------------------------------------------- |
-| `--image`     | `image`     | Catalog ref: `name:version`, bare name, or hash             |
-| `--kernel`    | `kernel`    | Explicit kernel path (skips the catalog)                    |
-| `--initrd`    | `initrd`    | Explicit initrd path                                        |
-| `--rootfs`    | `rootfs`    | Explicit rootfs path (skips the catalog)                    |
-| `--cmdline`   | `cmdline`   | Explicit kernel cmdline                                     |
-| `--cpus`      | `cpus`      | vcpus, 1–64 (daemon default: 2)                             |
-| `--mem-mib`   | `mem_mib`   | Guest memory MiB, 64–32768 (daemon default: 1024)           |
-| `--root-mib`  | `root_mib`  | Persistent root overlay size (daemon default)               |
-| `--home-mib`  | `home_mib`  | Persistent /home volume size (daemon default)               |
-| `--user-data` | `user_data` | First-boot provisioning payload file; `-` reads stdin (#41) |
+| Flag            | API field   | Meaning                                                                      |
+| --------------- | ----------- | ---------------------------------------------------------------------------- |
+| `--image`       | `image`     | Catalog ref: `name:version`, bare name, or hash                              |
+| `--kernel`      | `kernel`    | Explicit kernel path (skips the catalog)                                     |
+| `--initrd`      | `initrd`    | Explicit initrd path                                                         |
+| `--rootfs`      | `rootfs`    | Explicit rootfs path (skips the catalog)                                     |
+| `--cmdline`     | `cmdline`   | Explicit kernel cmdline                                                      |
+| `--cpus`        | `cpus`      | vcpus, 1–64 (daemon default: 2)                                              |
+| `--mem-mib`     | `mem_mib`   | Guest memory MiB, 64–32768 (daemon default: 1024)                            |
+| `--root-mib`    | `root_mib`  | Persistent root overlay size (daemon default)                                |
+| `--home-mib`    | `home_mib`  | Persistent /home volume size (daemon default)                                |
+| `--user-data`   | `user_data` | First-boot provisioning payload file; `-` reads stdin (#41)                  |
+| `--daemon-mint` | —           | Hand the identity to the daemon instead of the client mint (#121); see below |
+| `--key-type`    | —           | The client mint's key type: `ecdsa` (the default), `ed25519`, or `rsa`       |
 
 Only the flags you pass are sent — unset flags let the daemon apply
 its own defaults. An `--image` reference resolves against the
@@ -138,6 +141,36 @@ $ printf '#!/bin/sh\napt-get update\n' | msks create ws --user-data - --start
 created ws
 attach with: msks console ws
 ```
+
+The client mint is the create default (#121): `msks create` mints
+the workspace's ssh keypair on this client, sends the public half
+only, and keeps the private half — the daemon never holds it (no
+escrow). The private half is written mode 0600 under the client
+data root (`~/.local/share/msks/<id>/identity`, honoring
+`XDG_DATA_HOME`) after the create succeeds, and `msks ssh` picks it
+up from there:
+
+```bash
+$ msks create my-workspace --image debian:13 --start
+created my-workspace
+client identity (mode 0600): /home/you/.local/share/msks/my-workspace/identity
+attach with: msks console my-workspace
+```
+
+Losing that file loses ssh to the workspace (the console still
+opens); move it somewhere safe or keep backups. The file lives
+under the data root, not the cache, so cache sweeps leave it alone.
+A client-minted workspace answers `msks key` with its public half
+only. The key type is the client's choice (`--key-type`,
+defaulting to `ecdsa`, the same FIPS-approvable default the daemon
+mints) — the daemon accepts the types it mints itself and rejects
+any other line with a 400 at create.
+
+`--daemon-mint` hands the identity to the daemon instead
+(#111): it mints the keypair at create and stores both halves with
+its state — the private half is then fetchable with `msks key
+--private`. The k8s backend serves no identity in either mode, so
+creates against it need `--daemon-mint`.
 
 ## `msks start`
 
@@ -457,6 +490,12 @@ predates #111 answers 404 with "no minted identity"; the key type is
 the daemon's `MSKSD_SSH_KEY_TYPE` setting (ECDSA P-256 by default).
 Both halves persist across daemon restarts and workspace stop/start.
 
+A client-minted workspace (#121, the `msks create` default) serves
+its public half; its private half never reached the daemon, so
+`--private` and `--out` exit with an error naming where that half
+lives — the client data root of the client that created the
+workspace (`~/.local/share/msks/<id>/identity`).
+
 ## `msks ssh`
 
 Stock ssh into a workspace over the forward, with the minted
@@ -472,12 +511,19 @@ msks ssh my-workspace -- -L 8080:localhost:80
 The command boots the workspace first when the daemon reports it as
 not running (the same notices as `msks console`), fetches the
 identity over the authenticated API, and runs `ssh` with the
-forward websocket as its ProxyCommand (`msks forward <ws> 22`). The
-private half never becomes a file: a transient in-process ssh-agent
-holds it in memory for the session, ssh names the identity by its
-public half (`-i`, public material only) and signs through the
-agent socket — the key material goes away with the process, and a
-crash leaves no private material behind. Host keys land in a per-workspace
+forward websocket as its ProxyCommand (`msks forward <ws> 22`). For
+a daemon-minted workspace the private half arrives over that API;
+for a client-minted one (#121, the create default) the API serves
+the public half and the private half comes from the local data root
+(`~/.local/share/msks/<id>/identity`, written at create) — a
+missing, stale, or corrupt file exits with one line naming the path
+and the recovery. Either way the session writes no new copy of the
+private half anywhere: a transient in-process ssh-agent holds it in
+memory for the session, ssh names the identity by its public half
+(`-i`, public material only) and signs through the agent socket — a
+daemon-minted half arrives over the API and goes away with the
+process, and a client-minted half is read from its one file and
+left exactly there. Host keys land in a per-workspace
 `known_hosts` under the msks cache root (XDG_CACHE_HOME, else
 `~/.cache/msks`, then `<ws>/known_hosts`) under `accept-new`; they
 persist across stop/start on the workspace's

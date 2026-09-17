@@ -236,6 +236,84 @@ async def test_ssh_key_endpoint_auth_and_missing(client) -> None:
     assert "no minted identity" in legacy.json()["detail"]
 
 
+async def test_create_with_client_supplied_pubkey(client) -> None:
+    """The no-escrow create (#121): the daemon validates the supplied
+    public line, seeds and stores it annotated with its own provenance
+    comment, and holds no private half — the key endpoint answers
+    private_key: null for the client that minted the pair."""
+    from msks.identity import mint
+
+    http, _app, stub = client
+    _private, public = mint("ed25519")
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-cm",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "ssh_pubkey": f"{public} operator@laptop",
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    row = created.json()
+    # The caller's comment is replaced by the daemon's provenance
+    # marker, exactly as the minted mode annotates its own lines.
+    assert row["ssh_pubkey"].startswith("ssh-ed25519 ")
+    assert row["ssh_pubkey"].endswith("msks-client:ws-cm")
+    assert "operator@laptop" not in row["ssh_pubkey"]
+    # The seed carries it (the spec the seam saw) and the row holds
+    # no private half.
+    assert stub.seen_specs["ws-cm"].ssh_pubkey == row["ssh_pubkey"]
+    key = await http.get("/api/v1/workspaces/ws-cm/ssh-key", headers=auth())
+    assert key.status_code == 200
+    body = key.json()
+    assert body["type"] == "ssh-ed25519"
+    assert body["public_key"] == row["ssh_pubkey"]
+    assert body["private_key"] is None
+
+
+async def test_create_rejects_a_malformed_pubkey(client) -> None:
+    """A supplied line that does not validate is a 400 before any
+    artifact or row exists — the id stays free for a corrected
+    create."""
+    http, _app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-bad", "kernel": "/k", "rootfs": "/r", "ssh_pubkey": "nonsense"},
+        headers=auth(),
+    )
+    assert created.status_code == 400
+    assert "public key line" in created.json()["detail"]
+    missing = await http.get("/api/v1/workspaces/ws-bad", headers=auth())
+    assert missing.status_code == 404
+
+
+async def test_k8s_refuses_client_supplied_pubkey(client) -> None:
+    """The same refusal shape as user_data: the runner pod builds no
+    seed disks, so a client-supplied key would store a line nothing
+    ever plants."""
+    from msks.identity import mint
+
+    http, app, _stub = client
+    app.state.settings.vmm.driver = "k8s"
+    _private, public = mint("ecdsa")
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-k8s-cm",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "egress": False,
+            "ssh_pubkey": public,
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 400
+    assert "not served by the k8s backend" in created.json()["detail"]
+    app.state.settings.vmm.driver = "local"
+
+
 async def test_concurrent_same_id_creates_serialize(client, monkeypatch) -> None:
     """Two concurrent creates of one id (#111): exactly one 201, the
     loser the honest 409 — and the winner's mint never interleaves

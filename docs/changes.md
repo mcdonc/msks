@@ -8,6 +8,17 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **Client-minted workspace identity as the create default (#121).**
+  `msks create` mints the workspace's ssh keypair on the client and
+  sends the public half only: the daemon stores and seeds that half
+  exactly like its own minted one and holds no private half — `msks
+key` answers the public line, and `msks ssh` serves the private
+  half from the client data root
+  (`~/.local/share/msks/<id>/identity`, mode 0600). `--daemon-mint`
+  keeps the daemon-minted escrow mode (#111; the k8s backend serves
+  no identity and needs the flag); `--key-type` selects the type
+  (`ecdsa` default). See `docs/networking.md`.
+
 - **git-out through egress with a forwarded agent (#81).** The
   dogfood loop's outbound half is proven end to end by a new opt-in
   root smoke, `test_local_egress_git_out` (it runs in the KVM

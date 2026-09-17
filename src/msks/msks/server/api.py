@@ -28,7 +28,7 @@ from sqlalchemy.exc import IntegrityError
 from starlette.requests import ClientDisconnect
 
 from .. import __version__, imagestore, persist
-from ..identity import mint
+from ..identity import mint, normalize_public_key
 from ..imagestore import ImageError
 from ..microvm.errors import MicrovmError
 from ..microvm.spec import VmSpec, VmStatus
@@ -91,6 +91,11 @@ class WorkspaceCreate(BaseModel):
     # Create-time and immutable: a workspace keeps its payload until
     # it is deleted and recreated.
     user_data: str | None = Field(default=None, max_length=USER_DATA_MAX)
+    # The no-escrow identity mode (#121): a public key line the
+    # client minted. Present → the daemon stores and seeds the
+    # public half only — no private half ever reaches it. Absent →
+    # the daemon mints both halves itself (#111).
+    ssh_pubkey: str | None = Field(default=None, max_length=4096)
 
 
 def bootstrap_default_image(app) -> None:
@@ -760,6 +765,19 @@ def build_api(app) -> FastAPI:
                     "workspace without user_data"
                 ),
             )
+        if body.ssh_pubkey is not None and app.state.settings.vmm.driver == "k8s":
+            # The same shape as the user_data refusal: the runner pod
+            # builds no seed disks, so a client-supplied key would
+            # store a line nothing ever plants.
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "a client-supplied ssh key is not served by the k8s "
+                    "backend yet (the runner pod builds no seed disks); "
+                    "create the workspace without ssh_pubkey (the msks "
+                    "CLI's --daemon-mint)"
+                ),
+            )
         boot = resolve_boot(app, body)
         # The identity (#111) mints before the artifacts: its public
         # half rides the seed (an artifact), its private half goes
@@ -770,8 +788,20 @@ def build_api(app) -> FastAPI:
         # a directly-built Settings is a daemon fault, not a client
         # error. Keygen is CPU-bound (RSA 3072 especially): off the
         # loop, like every other tool call the routes make.
+        #
+        # The no-escrow mode (#121) replaces the mint: the client
+        # minted the keypair and sent the public line; the daemon
+        # validates it, re-annotates provenance, and stores the
+        # public half only — the row's private half stays NULL and
+        # the key endpoint answers private_key: null.
         private_key = None
-        if app.state.settings.vmm.driver == "local":
+        if body.ssh_pubkey is not None:
+            try:
+                algo, key_body = normalize_public_key(body.ssh_pubkey)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from None
+            boot["ssh_pubkey"] = f"{algo} {key_body} msks-client:{body.id}"
+        elif app.state.settings.vmm.driver == "local":
             try:
                 private_key, public_key = await asyncio.to_thread(
                     mint, app.state.settings.vmm.ssh_key_type
@@ -902,12 +932,14 @@ def build_api(app) -> FastAPI:
         dependencies=[Depends(require_token)],
     )
     async def workspace_ssh_key(workspace_id: str) -> dict:
-        """The minted identity (#111): both halves, token-gated.
+        """The workspace identity (#111): both halves, token-gated.
 
         A token holder already owns the workspace's root console, so
-        the private half grants nothing new; the response carries the
-        type name (parsed off the public line) so a client never
-        guesses the algorithm.
+        the private half grants nothing new; the response carries
+        the type name (parsed off the public line) so a client never
+        guesses the algorithm. A client-minted workspace (#121)
+        answers ``private_key: null`` — the daemon never held that
+        half; it lives on the client that created the workspace.
         """
         key = await app.state.model.get_ssh_key(workspace_id)
         if key is None:

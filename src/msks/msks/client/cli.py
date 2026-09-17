@@ -17,6 +17,7 @@ import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+from ..identity import KEY_TYPES, mint
 from ..imagestore import is_hash_shape, version_key
 from .console import run_workspace_shell
 from .forward import run_workspace_forward
@@ -33,7 +34,7 @@ from .rest import (
 from .rest import (
     fetch_ssh_key as rest_fetch_ssh_key,
 )
-from .ssh import run_workspace_ssh
+from .ssh import data_dir, run_workspace_ssh
 
 
 def format_workspace(row: dict) -> str:
@@ -63,21 +64,44 @@ def cmd_ls(as_json: bool = False, transport=None) -> int:
     return 0
 
 
-def cmd_create(body: dict, start: bool = False, transport=None) -> int:
-    """``msks create``: one workspace, optionally booted."""
-    asyncio.run(create_workspace(env_url(), env_token(), body, start, transport))
+def cmd_create(
+    body: dict, start: bool = False, transport=None, key_type: str | None = None
+) -> int:
+    """``msks create``: one workspace, optionally booted.
+
+    ``key_type`` names the client-mint mode (#121): minted locally,
+    public half sent, private half kept.
+    """
+    asyncio.run(
+        create_workspace(env_url(), env_token(), body, start, transport, key_type)
+    )
     return 0
 
 
-async def create_workspace(url, token, body, start, transport) -> dict:
+async def create_workspace(
+    url, token, body, start, transport, key_type: str | None = None
+) -> dict:
     """POST the workspace, print its id, then boot it when asked.
 
     The id prints before the boot attempt: a failed start must not
     hide that the workspace exists — recover with ``msks start``.
+    In the client-mint mode (#121) the keypair is minted here — the
+    private half never crosses the wire — and is persisted (mode
+    0600, client data root) only after the create succeeded, so a
+    refused create leaves no orphaned key behind.
     """
+    private_pem = None
+    public = None
+    if key_type is not None:
+        private_pem, public = await asyncio.to_thread(mint, key_type)
+        body["ssh_pubkey"] = public
     async with api_client(url, token, transport) as client:
         row = await request(client, "POST", "/api/v1/workspaces", json_body=body)
         print(f"created {row['id']}")
+        if private_pem is not None:
+            await verify_no_escrow(client, row["id"], public)
+            path = write_client_identity(row["id"], private_pem)
+            print(f"client identity (mode 0600): {path}")
         if not start:
             return row
         try:
@@ -90,6 +114,60 @@ async def create_workspace(url, token, body, start, transport) -> dict:
         print(f"attach with: msks console {row['id']}")
         row["status"] = "running"
         return row
+
+
+async def verify_no_escrow(client, workspace_id: str, public: str) -> None:
+    """Confirm the daemon kept the no-escrow promise (#121).
+
+    A daemon one version behind this client drops the unknown
+    ``ssh_pubkey`` field (pydantic ignores extras) and silently mints
+    its own pair — the create reports success while the daemon
+    escrows a private half the operator was told does not exist.
+    The key fetch answers for it: the served public line must carry
+    the client's key material and the private half must be null.
+    """
+    key = await request(client, "GET", f"/api/v1/workspaces/{workspace_id}/ssh-key")
+    served = key.get("public_key", "").split()[:2]
+    if key.get("private_key") is not None or served != public.split():
+        raise SystemExit(
+            f"msks: {workspace_id} was created, but the daemon did not "
+            "keep the no-escrow promise: it holds its own minted "
+            "identity for the workspace (a daemon older than this "
+            "client's client mint support). The daemon's version of "
+            "msks must be updated before creating without "
+            "--daemon-mint; remove the escrowed workspace with: "
+            f"msks rm {workspace_id}"
+        )
+
+
+def write_client_identity(workspace_id: str, private_pem: str) -> Path:
+    """The client-minted private half, persisted mode 0600 (#121).
+
+    The file is created 0600 from the first byte (open-write-chmod
+    would leave a umask-window where the workspace's only private
+    half is group-readable), the mode forced again on a pre-existing
+    file, under the data root (not the cache: this half must survive
+    cache sweeps). No escrow cuts both ways: a failed write is loud —
+    the workspace exists with the public half planted, and the
+    private half exists nowhere on disk.
+    """
+    root = data_dir() / workspace_id
+    path = root / "identity"
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(private_pem)
+    except OSError as exc:
+        raise SystemExit(
+            f"msks: {workspace_id} was created, but its client-minted "
+            f"identity could not be written to {path}: {exc}\n"
+            "The private half now exists nowhere on disk — ssh cannot "
+            "use this workspace's identity. Use the console, or delete "
+            "and recreate the workspace"
+        ) from exc
+    return path
 
 
 def cmd_start(workspace_id: str, transport=None) -> int:
@@ -145,7 +223,8 @@ def cmd_rm(workspace_ids: list[str], transport=None) -> int:
 
 
 async def fetch_ssh_key(url, token, workspace_id, transport) -> dict:
-    """GET the workspace's minted identity (#111): type, both halves.
+    """GET the workspace's identity: type, public half, private half
+    (null for a client-minted workspace, #121).
 
     A re-export of :func:`msks.client.rest.fetch_ssh_key` (the call
     moved to rest.py when ``msks ssh`` (#112) began sharing it);
@@ -174,16 +253,34 @@ def write_private_key(key: dict, out: str) -> None:
         handle.write(key["private_key"])
 
 
+def require_daemon_half(key: dict, workspace_id: str) -> None:
+    """Refuse the private forms for a client-minted workspace (#121):
+    the daemon never held that half, so the error names where it
+    lives instead of printing nothing."""
+    if key["private_key"] is None:
+        raise SystemExit(
+            f"msks key: {workspace_id} carries a client-minted identity — "
+            "the daemon never held its private half. It lives on the "
+            "client that created the workspace, under the client data "
+            f"root ({data_dir() / workspace_id / 'identity'})"
+        )
+
+
 def cmd_key(
     workspace_id: str, as_private: bool = False, out: str | None = None, transport=None
 ) -> int:
-    """``msks key``: the workspace's minted ssh identity.
+    """``msks key``: the workspace's ssh identity.
 
     Prints the public half (safe to display anywhere); ``--private``
     prints the private half, ``--out`` writes the private half to a
-    file with mode 0600 and prints nothing but its path.
+    file with mode 0600 and prints nothing but its path. A
+    client-minted workspace (#121) serves its public half; its
+    private half never reached the daemon, so the private forms
+    explain where that half lives instead.
     """
     key = asyncio.run(fetch_ssh_key(env_url(), env_token(), workspace_id, transport))
+    if as_private or out is not None:
+        require_daemon_half(key, workspace_id)
     if out is not None:
         write_private_key(key, out)
         print(out)
@@ -601,6 +698,23 @@ def build_parser() -> argparse.ArgumentParser:
         "(#41); - reads stdin. Create-time only",
     )
     create.add_argument(
+        "--daemon-mint",
+        action="store_true",
+        help="let the daemon mint the workspace's ssh identity and "
+        "escrow both halves (#111) instead of the client mint — the "
+        "create default (#121) mints on this client, sends the public "
+        "half only, and keeps the private half (mode 0600 under the "
+        "client data root, ~/.local/share/msks/<id>/identity, where "
+        "msks ssh finds it). The k8s backend serves no identity and "
+        "needs this flag",
+    )
+    create.add_argument(
+        "--key-type",
+        choices=sorted(KEY_TYPES),
+        help="the client mint's key type (default ecdsa, the same "
+        "FIPS-approvable default the daemon mints)",
+    )
+    create.add_argument(
         "--start", action="store_true", help="boot the workspace immediately"
     )
     starter = sub.add_parser("start", help="boot a created workspace")
@@ -630,7 +744,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="bind 127.0.0.1:PORT instead of stdio; every accepted "
         "connection gets its own forward",
     )
-    key = sub.add_parser("key", help="fetch a workspace's minted ssh identity (#111)")
+    key = sub.add_parser(
+        "key",
+        help="fetch a workspace's ssh identity (#111; the public half "
+        "alone for a client-minted #121 workspace)",
+    )
     key.add_argument("workspace_id", help="the workspace whose identity to fetch")
     key_private = key.add_mutually_exclusive_group()
     key_private.add_argument(
@@ -718,12 +836,35 @@ def main(argv: list[str] | None = None, transport=None) -> int:
         raise SystemExit(130) from None
 
 
+def client_mint_key_type(args: argparse.Namespace) -> str | None:
+    """The client mint's key type, or None for ``--daemon-mint``.
+
+    The client mint is the create default (#121): absent flags mint
+    locally (ecdsa, the same FIPS-approvable default the daemon
+    mints). ``--daemon-mint`` hands the identity to the daemon
+    (escrow on the local backend; the k8s backend serves no identity
+    either way), and ``--key-type`` names a type for the client mint
+    alone — paired with ``--daemon-mint`` it would look like it did
+    something, so it is rejected with the pairing named.
+    """
+    if args.daemon_mint:
+        if args.key_type is not None:
+            raise SystemExit(
+                "msks: --key-type needs the client mint (drop --daemon-mint)"
+            )
+        return None
+    return args.key_type or "ecdsa"
+
+
 def command_table(args: argparse.Namespace, transport) -> dict:
     """One entry per subcommand: its zero-argument body."""
     return {
         "ls": lambda: cmd_ls(args.json, transport=transport),
         "create": lambda: cmd_create(
-            create_body(args), args.start, transport=transport
+            create_body(args),
+            args.start,
+            transport=transport,
+            key_type=client_mint_key_type(args),
         ),
         "start": lambda: cmd_start(args.workspace_id, transport=transport),
         "stop": lambda: cmd_stop(args.workspace_id, transport=transport),
