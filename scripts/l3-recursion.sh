@@ -218,7 +218,7 @@ After=network-online.target msks-kvm.service
 [Service]
 Environment=MSKSD_STATE_DIR=$INNER_STATE
 EnvironmentFile=$INNER_DIR/env
-Environment=MSKSD_CLOUD_HYPOPERISOR=$ch_bin
+Environment=MSKSD_CLOUD_HYPERVISOR=$ch_bin
 Environment=MSKSD_EGRESS_ENABLED=true
 Environment=MSKSD_EGRESS_UPLINK=$uplink
 Environment=MSKSD_VSOCK_WAIT_TIMEOUT_S=75
