@@ -162,8 +162,11 @@ crypto keeps these rules:
   `PubkeyAcceptedAlgorithms` lists. Policy config — authentication,
   addresses, timeouts — is the kind that ships.
 - **Key types are `MSKSD_*` settings, and defaults may change.**
-  #111's minted identity defaults to ECDSA P-256 so day-one choices
-  are FIPS-approvable, with RSA as the fallback. Filenames, storage
+  #111's minted identity defaults to Ed25519 (#138: FIPS 186-5
+  approves EdDSA, and the type is accepted by ssh clients
+  restricted to the common `ssh-ed25519,ssh-rsa` set), with ECDSA
+  P-256 and RSA as choices for validated crypto modules that
+  predate EdDSA. Filenames, storage
   paths, and wire formats treat the key type as opaque — changing
   the setting is the whole of a key-type change.
 - **The guest's crypto libraries are Debian's own.** The rsync deb,

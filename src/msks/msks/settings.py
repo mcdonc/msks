@@ -142,10 +142,13 @@ class VmmSettings:
     host_name: str = field(default_factory=socket.gethostname)
     root_mib: int = 10240
     home_mib: int = 2048
-    # The identity key type msksd mints at create (#111): ECDSA
-    # P-256 is the FIPS-approvable default (#115); the type is a
-    # setting so the default can move without code surgery.
-    ssh_key_type: str = "ecdsa"
+    # The identity key type msksd mints at create (#111): Ed25519
+    # is FIPS-approvable (FIPS 186-5) and accepted by ssh clients
+    # restricted to the common ssh-ed25519,ssh-rsa set (#138);
+    # ECDSA P-256 and RSA remain choices for validated crypto
+    # modules that predate EdDSA. The type is a setting so the
+    # default can move without code surgery (#115).
+    ssh_key_type: str = "ed25519"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> VmmSettings:

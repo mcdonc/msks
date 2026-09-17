@@ -395,7 +395,13 @@ def test_create_identity_modes() -> None:
     rejected with the conflict named."""
     parser = cli.build_parser()
     plain = parser.parse_args(["create", "ws1"])
-    assert cli.create_identity(plain) == ("ecdsa", None)
+    assert cli.create_identity(plain) == ("ed25519", None)
+    # The client and daemon mints share one default — the CLI help,
+    # docs/cli.md, and the #121 changelog entry all say "the same
+    # default the daemon mints". Pin the two literals together so
+    # a one-sided change fails here instead of silently falsifying
+    # that prose (#138's split-default hazard).
+    assert cli.create_identity(plain) == (VmmSettings().ssh_key_type, None)
     typed = parser.parse_args(["create", "ws1", "--key-type", "rsa"])
     assert cli.create_identity(typed) == ("rsa", None)
     daemon = parser.parse_args(["create", "ws1", "--daemon-mint"])

@@ -7,8 +7,9 @@ accepts ssh with no manual key steps anywhere. The private half is
 served over the authenticated API to whoever holds a token (a token
 holder already owns the root console, so this grants nothing new).
 
-The key type is a setting (#115): ECDSA P-256 is the FIPS-approvable
-default, and nothing in the daemon, the client, or the image depends
+The key type is a setting (#115): the default is Ed25519 (#138 —
+FIPS 186-5 approves EdDSA), with ECDSA P-256 and RSA as choices,
+and nothing in the daemon, the client, or the image depends
 on which type a workspace carries — the algorithm name travels with
 the key material itself. The no-escrow mode (#121) moves the minting
 to the client: the daemon receives and stores the public half only,

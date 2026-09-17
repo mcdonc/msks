@@ -297,9 +297,10 @@ async def test_local_sshd_and_rsync() -> None:
             await asyncio.sleep(0.05)
 
         await app.state.model.create_workspace(spec)
-        # ECDSA P-256 — FIPS-approvable from day one (#115); nothing
-        # in the image or daemon depends on the key type, and a future
-        # default change is this line plus #111's setting.
+        # ECDSA P-256 through the operator's hand-planted path —
+        # nothing in the image or daemon depends on the key type
+        # (the type-independence #132 leans on; the mint's own
+        # default lives in settings, #138).
         keygen = await asyncio.to_thread(
             subprocess.run,
             [

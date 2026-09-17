@@ -436,9 +436,12 @@ def render_template() -> str:
 #                           # workspaces; empty -> the hostname
 # root_mib: 10240           # default root overlay size (MiB)
 # home_mib: 2048            # default /home volume size (MiB)
-# ssh_key_type: ecdsa       # the identity type minted at create
-#                           # (#111): ecdsa (P-256, the FIPS-approvable
-#                           # default, #115), ed25519, or rsa
+# ssh_key_type: ed25519     # the identity type minted at create
+#                           # (#111): ed25519 (the FIPS-approvable
+#                           # default, #138; accepted by ssh clients
+#                           # restricted to the common
+#                           # ssh-ed25519,ssh-rsa set), ecdsa
+#                           # (P-256), or rsa
 #
 # --- The Kubernetes runner driver ---
 # k8s_namespace: msks       # the namespace workspaces run in

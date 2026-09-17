@@ -327,9 +327,7 @@ async def test_local_minted_identity() -> None:
             timeout=60,
         )
         minted = pub.stdout.strip()
-        assert minted.startswith("ecdsa-sha2-nistp256 ") and minted.endswith(
-            f"msksd:{wid}"
-        )
+        assert minted.startswith("ssh-ed25519 ") and minted.endswith(f"msksd:{wid}")
         await run_in_console(
             microvm,
             wid,

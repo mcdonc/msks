@@ -754,7 +754,7 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument(
         "--key-type",
         choices=sorted(KEY_TYPES),
-        help="the client mint's key type (default ecdsa, the same "
+        help="the client mint's key type (default ed25519, the same "
         "FIPS-approvable default the daemon mints)",
     )
     create.add_argument(
@@ -883,7 +883,7 @@ def create_identity(args: argparse.Namespace) -> tuple[str | None, str | None]:
     """The create's identity mode: ``(mint key type, supplied line)``.
 
     The client mint is the default (#121): absent flags mint locally
-    (ecdsa, the same FIPS-approvable default the daemon mints).
+    (ed25519, the same FIPS-approvable default the daemon mints).
     ``--daemon-mint`` hands the identity to the daemon (escrow on the
     local backend; the k8s backend serves no identity either way).
     ``--pubkey`` supplies an operator key (#132) — any well-formed
@@ -895,7 +895,7 @@ def create_identity(args: argparse.Namespace) -> tuple[str | None, str | None]:
         return None, None
     if args.pubkey is not None:
         return None, read_pubkey(args.pubkey)
-    return args.key_type or "ecdsa", None
+    return args.key_type or "ed25519", None
 
 
 #: The identity-mode flag conflicts, as message → attribute names:
