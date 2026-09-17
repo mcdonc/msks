@@ -153,12 +153,15 @@ def collect_failure_evidence(state_dir: Path, wid: str, serial_log: Path) -> Non
             with contextlib.suppress(OSError):
                 shutil.copy2(source, keep / name)
                 (keep / name).chmod(0o644)
-    # The ssh smoke's forward-client logs: the ssh-path evidence the
-    # artifact upload exists for.
-    for source in state_dir.glob("*-work/*.log"):
-        with contextlib.suppress(OSError):
-            shutil.copy2(source, keep / source.name)
-            (keep / source.name).chmod(0o644)
+    # The ssh and git-out smokes' scratch logs (forward clients,
+    # the scratch sshd): the ssh-path evidence the artifact upload
+    # exists for. The git-out workdir is plain "gitout" (no -work
+    # suffix), so both shapes are globbed.
+    for pattern in ("*-work/*.log", "gitout/*.log"):
+        for source in state_dir.glob(pattern):
+            with contextlib.suppress(OSError):
+                shutil.copy2(source, keep / source.name)
+                (keep / source.name).chmod(0o644)
 
 
 async def await_guest_up(serial_log: Path, timeout_s: float | None = None) -> None:
@@ -2297,9 +2300,11 @@ async def test_local_egress_git_out() -> None:
         timeout=30,
     )
     assert iface.returncode == 0, iface.stderr
-    assert uplink_ip in iface.stdout, (
+    assert re.search(rf"inet {re.escape(uplink_ip)}[/ ]", iface.stdout), (
         f"{uplink_ip!r} is not an address of the uplink iface "
         f"{uplink_iface!r}: {iface.stdout}"
+        " (the inet/<prefixlen> anchor matters: a bare substring "
+        "match lets 10.1.0.19 pass against 10.1.0.198)"
     )
     state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
     token = f"smoke-token-{uuid.uuid4().hex}"
@@ -2630,6 +2635,7 @@ async def test_local_egress_git_out() -> None:
         # perms sshd demands).
         for privsep in ("/run/sshd", "/var/empty", "/var/empty/sshd"):
             os.makedirs(privsep, exist_ok=True)
+            os.chmod(privsep, 0o755)
         # The privilege-separation USER is the same story: a
         # compile-time name (nix's is "sshd") the distro's packaging
         # normally creates. Best-effort — 9.8+ builds tolerate its
@@ -2674,7 +2680,9 @@ async def test_local_egress_git_out() -> None:
         )
         assert boot.returncode == 0, boot.stderr
         sock = re.search(r"SSH_AUTH_SOCK=([^;]+);", boot.stdout)
-        pidm = re.search(r"SSH_AGENT_PID=(\d+);", boot.stdout)
+        pidm = re.search(r"SSH_AGENT_PID=(\d+);", boot.stdout) or re.search(
+            r"Agent pid (\d+)", boot.stdout
+        )
         agent_pid = int(pidm.group(1)) if pidm else None
         assert sock and pidm, boot.stdout
         agent_env = dict(os.environ, SSH_AUTH_SOCK=sock.group(1))
@@ -2735,17 +2743,24 @@ async def test_local_egress_git_out() -> None:
         # nohup (HUP ignored) and setsid (fresh session, no ctty)
         # carry the rest; stdin comes off the pty and every output
         # byte — including the inner sh's own parse errors — lands
-        # in run.log, which the trail probe tails. --no-install-
-        # recommends keeps the download to what the legs use
-        # (git-man alone is tens of MB of recommends the proof gains
-        # nothing from).
+        # in run.log, which the trail probe tails. The lockdir guard
+        # (atomic mkdir) plus the guarded rm make a #103 retry of
+        # this session harmless: a second detached instance exits
+        # silently at the lock and the foreground leaves the running
+        # instance's trail alone — without it, two apt-gets would
+        # fight over the dpkg lock and the loser would write a
+        # bogus fail marker. --no-install-recommends keeps the
+        # download to what the legs use (git-man alone is tens of
+        # MB of recommends the proof gains nothing from).
         await run_in_console(
             microvm,
             wid,
             "mkdir -p /root/.gitout "
-            "&& rm -f /root/.gitout/trail /root/.gitout/run.log "
+            "&& { [ ! -d /root/.gitout/lock ] "
+            "&& rm -f /root/.gitout/trail /root/.gitout/run.log || true; } "
             "&& echo start >>/root/.gitout/trail "
             "&& { nohup setsid sh -c '"
+            "mkdir /root/.gitout/lock 2>/dev/null || exit 0; "
             "echo apt >>/root/.gitout/trail; "
             "apt-get update -qq >>/root/.gitout/run.log 2>&1 "
             "|| { echo fail-apt-update >>/root/.gitout/trail; exit 1; }; "
@@ -2852,28 +2867,33 @@ async def test_local_egress_git_out() -> None:
             # bare rc says nothing about which leg died (console,
             # forward, agent, guest-side push). The rerun asks only
             # for the agent listing — re-running the push itself
-            # could report "up-to-date" and mask a transport flake.
-            verbose = await asyncio.to_thread(
-                subprocess.run,
-                [
-                    SSH_BIN,
-                    *ssh_opts(forward_port),
-                    "-o",
-                    "ForwardAgent=yes",
-                    "-o",
-                    "LogLevel=DEBUG3",
-                    "root@127.0.0.1",
-                    "ssh-add -l",
-                ],
-                env=agent_env,
-                capture_output=True,
-                text=True,
-                timeout=SSH_CMD_TIMEOUT_S,
-            )
-            push.stderr += (
-                f"\n--- verbose rerun (rc={verbose.returncode}) ---\n"
-                f"{verbose.stderr[-3000:]}"
-            )
+            # could report "up-to-date" and mask a transport flake —
+            # and a rerun that itself times out degrades to the
+            # original failure instead of replacing it.
+            try:
+                verbose = await asyncio.to_thread(
+                    subprocess.run,
+                    [
+                        SSH_BIN,
+                        *ssh_opts(forward_port),
+                        "-o",
+                        "ForwardAgent=yes",
+                        "-o",
+                        "LogLevel=DEBUG3",
+                        "root@127.0.0.1",
+                        "ssh-add -l",
+                    ],
+                    env=agent_env,
+                    capture_output=True,
+                    text=True,
+                    timeout=SSH_CMD_TIMEOUT_S,
+                )
+                push.stderr += (
+                    f"\n--- verbose rerun (rc={verbose.returncode}) ---\n"
+                    f"{verbose.stderr[-3000:]}"
+                )
+            except subprocess.TimeoutExpired:
+                push.stderr += "\n--- verbose rerun timed out ---\n"
         assert push.returncode == 0, (
             f"{push.stdout}\n{push.stderr}\nforward logs:\n{forward_evidence()}\n"
             f"git sshd log:\n{gitd_log.read_text(errors='replace')[-800:]}"

@@ -447,8 +447,10 @@ and the resolver answer it); per-destination consent gates (#69)
 narrow guest-initiated egress later. The end-to-end proof is the
 `test_local_egress_git_out` smoke (`MSKSD_TEST_EGRESS=1` locally,
 and part of CI's KVM workflow): it installs git in the guest over
-the egress path and pushes a commit using only a key that arrived
-through the forward as a forwarded agent.
+the egress path and pushes a commit — over a test-widened input
+pin, since the appliance itself stays unreachable from the guest
+by design — using only a key that arrived through the forward as a
+forwarded agent.
 
 ### Cryptographic agility (a future FIPS posture)
 
