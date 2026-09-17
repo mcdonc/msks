@@ -16,7 +16,11 @@ app_dir="$root/.appliance"
 
 for f in vmlinux initrd rootfs.ext4; do
   [ -f "$app_dir/$f" ] || {
-    echo "msks: $app_dir/$f missing — run: devenv tasks run msks:appliance-build" >&2
+    # The plain task run may SKIP (execIfModified keys unchanged —
+    # the process-level guard in devenv.nix heals this by building
+    # directly; reached from here, that path is `devenv processes
+    # up`, which never skips the guard).
+    echo "msks: $app_dir/$f missing — run: devenv processes up (it rebuilds missing artifacts)" >&2
     exit 1
   }
 done
