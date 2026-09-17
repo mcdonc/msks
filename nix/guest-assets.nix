@@ -214,9 +214,11 @@ let
 
   # The msks additions, staged as an overlay tree: the vsock console
   # service, serial-console autologin (the debug console), the vsock
-  # and net module loads, a stable hostname, the DHCP client an
-  # egress workspace (#52) brings up, the sshd posture + rsync the
-  # TCP service plane rides (#110), and the console helper binary.
+  # and net module loads, the nested-KVM module and inner-egress
+  # stack a workspace running msksd itself needs (#82), a stable
+  # hostname, the DHCP client an egress workspace (#52) brings up,
+  # the sshd posture + rsync the TCP service plane rides (#110),
+  # and the console helper binary.
   # Debian's socat 1.8.x is built WITH_VSOCK, so nothing is
   # cross-compiled in.
   guestOverlay = pkgs.runCommand "msks-guest-overlay" { } ''
@@ -363,6 +365,50 @@ let
       '# The virtio-net driver for egress NICs (#52).' \
       'virtio_net' \
       > $out/etc/modules-load.d/msks-net.conf
+
+    # The L3 recursion stack (#82): a workspace running msksd needs
+    # the same kernel modules the appliance loads — tun for the
+    # per-inner-workspace taps, the nftables/NAT set the daemon's
+    # rulesets name — so the image can be an appliance in miniature.
+    # KVM does NOT ride this file: which flavor loads depends on the
+    # host CPU, and a modules-load.d entry that fails leaves
+    # systemd-modules-load.service failed (a degraded boot) — the
+    # oneshot service below picks the flavor and swallows a host
+    # without nested virt, exactly as the appliance image does.
+    printf '%s\n' \
+      '# msks: the inner-egress stack (#82); KVM loads via its unit.' \
+      'tun' \
+      'nf_tables' \
+      'nft_chain_nat' \
+      'nft_masq' \
+      'nft_ct' \
+      'nf_nat' \
+      'nf_conntrack' \
+      > $out/etc/modules-load.d/msks-egress.conf
+
+    # The nested-KVM module for inner workspace VMs (#82), the
+    # appliance's own unit verbatim in shape: which flavor loads
+    # depends on the host CPU, so a shell picks, and a workspace
+    # booted where vmx does not reach (a host without nested virt)
+    # still boots — the unit stays active (exited) and /dev/kvm
+    # simply never appears. udev makes the node when a module
+    # registers; root (the only inner-daemon operator today) opens
+    # it regardless of the kvm group's mode bits.
+    printf '%s\n' \
+      '[Unit]' \
+      'Description=msks nested-KVM module (inner workspace VMs, #82)' \
+      'After=systemd-modules-load.service' \
+      ''' \
+      '[Service]' \
+      'Type=oneshot' \
+      'ExecStart=/bin/sh -c "modprobe kvm-intel || modprobe kvm-amd || true"' \
+      'RemainAfterExit=yes' \
+      ''' \
+      '[Install]' \
+      'WantedBy=multi-user.target' \
+      > $out/etc/systemd/system/msks-kvm.service
+    ln -s ../msks-kvm.service \
+      $out/etc/systemd/system/multi-user.target.wants/msks-kvm.service
 
     # The DHCP client for an egress NIC (#52): networkd takes an
     # address and the daemon's resolver over DHCP on whatever NIC
@@ -561,26 +607,51 @@ let
         # probing; the initrd loads it before root anyway), the
         # ACPI power-button pair (button + evdev: logind answers the
         # host-side graceful shutdown with a clean poweroff, #25),
-        # isofs (the #41 NoCloud seed disk is iso9660), and
+        # isofs (the #41 NoCloud seed disk is iso9660),
         # crc32c-intel (the hardware crc32c ext4's metadata_csum
         # asks the crypto API for; udev autoloads it via its
-        # x86cpu modalias). button, evdev, and isofs are modules in
-        # BOTH Debian flavors — the old cloud image found them only
-        # because it shipped Debian's whole tree, and the smoke
-        # tests caught button and isofs missing when this closure
-        # first shipped without them. The rest of the x86cpu set
-        # (aesni_intel and friends) stays out by design: userspace
-        # crypto uses its own CPU-feature code, and only kernel-
-        # side consumers miss the modules. The closure is resolved
-        # mechanically with modprobe --show-depends over depmod
-        # metadata generated from the pinned deb and pinned at
-        # build time by comparing the full tree's closure against
-        # the shipped tree's (the assert below) — the set cannot
-        # drift from the kernel's own dependency facts (the #36
-        # bug class). The appliance ships the whole tree; a
-        # workspace's ~25MB of cloud modules becomes twelve files.
-        # The generic /boot payload (kernel, initrd) leaves too —
-        # the VM direct-boots artifacts kept outside the image.
+        # x86cpu modalias), and the L3 recursion set (#82): the
+        # nested-KVM trio (kvm-intel/kvm-amd; a workspace running
+        # msksd boots inner workspace VMs through /dev/kvm — kvm,
+        # irqbypass, and ccp ride in as their dependencies) and the
+        # egress stack (tun for per-inner-workspace taps plus the
+        # nftables/NAT modules the daemon's rulesets need — the
+        # same list the appliance image loads, and what makes the
+        # image able to BE an appliance in miniature). button,
+        # evdev, and isofs are modules in BOTH Debian flavors — the
+        # old cloud image found them only because it shipped
+        # Debian's whole tree, and the smoke tests caught button and
+        # isofs missing when this closure first shipped without
+        # them. The rest of the x86cpu set (aesni_intel and
+        # friends) stays out by design: userspace crypto uses its
+        # own CPU-feature code, and only kernel-side consumers miss
+        # the modules. The closure is resolved mechanically with
+        # modprobe --show-depends over depmod metadata generated
+        # from the pinned deb and pinned at build time by comparing
+        # the full tree's closure against the shipped tree's (the
+        # assert below) — the set cannot drift from the kernel's
+        # own dependency facts (the #36 bug class). The appliance
+        # ships the whole tree; a workspace's ~25MB of cloud
+        # modules becomes twenty-nine files (isofs's own cdrom
+        # dependency included).
+        runtimeModules="
+          vmw_vsock_virtio_transport
+          virtio_net
+          virtio_blk
+          button
+          evdev
+          isofs
+          crc32c-intel
+          kvm-intel
+          kvm-amd
+          tun
+          nf_tables
+          nft_chain_nat
+          nft_masq
+          nft_ct
+          nf_nat
+          nf_conntrack
+        "
         rm -rf "$root"/lib/modules/*
         rm -rf "$root"/usr/lib/modules/* 2>/dev/null || true
         rm -f "$root"/boot/vmlinuz-* "$root"/boot/initrd.img-* \
@@ -598,14 +669,7 @@ let
         find "$modsrc"/usr/lib/modules -type d -exec chmod u+w {} +
         depmod -b "$modsrc" "$kver"
         mkdir -p "$root"/usr/lib/modules/"$kver"
-        for mod in \
-          vmw_vsock_virtio_transport \
-          virtio_net \
-          virtio_blk \
-          button \
-          evdev \
-          isofs \
-          crc32c-intel; do
+        for mod in $runtimeModules; do
           modprobe -d "$modsrc" -S "$kver" --show-depends "$mod" \
             | awk '/^insmod /{print $2}'
         done | sort -u | while read -r ko; do
@@ -635,25 +699,11 @@ let
         # set the FULL tree resolves against the set the SHIPPED
         # tree resolves — a closure member lost from the image
         # fails the build, not the boot.
-        full_closure=$(for mod in \
-          vmw_vsock_virtio_transport \
-          virtio_net \
-          virtio_blk \
-          button \
-          evdev \
-          isofs \
-          crc32c-intel; do
+        full_closure=$(for mod in $runtimeModules; do
           modprobe -d "$modsrc" -S "$kver" --show-depends "$mod" \
             | awk '/^insmod /{print $2}'
         done | xargs -n1 basename | sort -u)
-        tree_closure=$(for mod in \
-          vmw_vsock_virtio_transport \
-          virtio_net \
-          virtio_blk \
-          button \
-          evdev \
-          isofs \
-          crc32c-intel; do
+        tree_closure=$(for mod in $runtimeModules; do
           modprobe -d "$root" -S "$kver" --show-depends "$mod" \
             | awk '/^insmod /{print $2}'
         done | xargs -n1 basename | sort -u)
