@@ -251,6 +251,25 @@ in
       exec = ''
         exec env MSKS_GUEST_NIXPKGS=${pkgs.path} bash "$DEVENV_ROOT/scripts/build-appliance.sh"
       '';
+      # Keyed on everything that feeds the built artifacts — the
+      # nix expressions (appliance image, msksd package, guest
+      # assets behind the default-image archive), the build script,
+      # the daemon's Python sources (msks-pkg.nix filters exactly
+      # this tree plus pyproject/README), and the nixpkgs pin
+      # (MSKS_GUEST_NIXPKGS moves with devenv.lock). Globs, not bare
+      # directories: a dir entry keys only the directory's own
+      # metadata, not its files' edits. The appliance process runs
+      # this task before every boot (see processes.appliance):
+      # unchanged inputs make it a no-op, so `devenv processes up`
+      # is the whole update story after a pull or an edit.
+      execIfModified = [
+        "nix/**"
+        "scripts/build-appliance.sh"
+        "pyproject.toml"
+        "README.md"
+        "src/msks/msks/**"
+        "devenv.lock"
+      ];
     };
     "msks:appliance-up" = {
       description = "Start the appliance processes (virtiofsd + the VM), detached";
@@ -270,7 +289,24 @@ in
   # shares one lifecycle, and a crash-restart brings both back.
   processes = {
     appliance = {
-      exec = ''bash "$DEVENV_ROOT/scripts/appliance-run.sh"'';
+      exec = ''
+        # Artifacts as a conditional side effect: the build task
+        # no-ops through execIfModified when nothing feeding the
+        # image changed, and rebuilds (minutes, nix store warm)
+        # after a pull or an edit to the daemon sources, the nix
+        # expressions, or the build script — `devenv processes up`
+        # is the whole update story. The guard covers the gap the
+        # task cache cannot see (a deleted .appliance with
+        # unchanged inputs would make the task skip and leave
+        # nothing to boot): the build script runs directly,
+        # unconditionally, exactly until the manifest is back.
+        if [ ! -f "$DEVENV_ROOT/.appliance/appliance-manifest.json" ]; then
+          env MSKS_GUEST_NIXPKGS=${pkgs.path} bash "$DEVENV_ROOT/scripts/build-appliance.sh"
+        else
+          devenv tasks run msks:appliance-build
+        fi
+        exec bash "$DEVENV_ROOT/scripts/appliance-run.sh"
+      '';
       # The run script's stop choreography (ACPI, then a bounded
       # SIGTERM wait) needs up to ~10s; the supervisor's default
       # SIGKILL grace is 5 — a busy guest would be hard-killed
