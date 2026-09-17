@@ -39,6 +39,15 @@ def test_negative_forward_wait_timeout_rejected(
         Settings.from_env()
 
 
+def test_negative_move_wait_timeout_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A negative move-wait bound is a configuration error (#80)."""
+    monkeypatch.setenv("MSKSD_MOVE_WAIT_TIMEOUT_S", "-1")
+    with pytest.raises(ValueError, match="MSKSD_MOVE_WAIT_TIMEOUT_S"):
+        Settings.from_env()
+
+
 def test_negative_stall_timeout_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     """A negative stall window would close healthy sessions (#103)."""
     monkeypatch.setenv("MSKSD_CONSOLE_STALL_TIMEOUT_S", "-1")

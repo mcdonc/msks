@@ -1,6 +1,6 @@
 """The ``msks`` CLI: ``ls``, ``create``, ``start``, ``stop``, ``rm``,
-``console``, ``forward``, ``ssh``, ``key``, and the ``image`` catalog
-subcommands.
+``console``, ``forward``, ``ssh``, ``key``, the ``image`` catalog
+subcommands, and the ``home`` volume moves.
 
 Every command speaks the daemon's REST surface with the same client
 conventions (#21): ``MSKSC_URL`` for the daemon, ``MSKSC_TOKEN`` for
@@ -10,20 +10,25 @@ interactive console command lives in :mod:`msks.client.console`.
 
 import argparse
 import asyncio
+import contextlib
 import json
 import os
 import sys
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 from ..imagestore import is_hash_shape, version_key
 from .console import run_workspace_shell
 from .forward import run_workspace_forward
 from .rest import (
+    STREAM_WINDOW_B,
     api_call,
     api_client,
+    download,
     env_token,
     env_url,
     request,
+    upload,
 )
 from .rest import (
     fetch_ssh_key as rest_fetch_ssh_key,
@@ -409,6 +414,127 @@ def cmd_image_info(ref: str, transport=None) -> int:
     return 0
 
 
+# --- Home-volume export/import (#80) ---
+
+
+def home_path(workspace_id: str) -> str:
+    """The workspace's home-volume byte-stream endpoint."""
+    return f"/api/v1/workspaces/{workspace_id}/home"
+
+
+async def run_home_export(
+    url: str, token: str, workspace_id: str, out: str, transport
+) -> int:
+    """GET the volume stream and write it to ``out``; the bytes."""
+    async with api_client(url, token, transport) as client:
+        if out == "-":
+            return await download(client, home_path(workspace_id), sys.stdout.buffer)
+        try:
+            with open(out, "wb") as sink:
+                return await download(client, home_path(workspace_id), sink)
+        except OSError as exc:
+            raise SystemExit(f"msks: cannot write {out}: {exc}") from None
+
+
+def volume_source(path: str):
+    """The opened upload body: stdin for ``-``, else the file.
+
+    Opening happens here, not inside the stream: an unreadable
+    source fails with one line before any network activity.
+    """
+    if path == "-":
+        return sys.stdin.buffer
+    try:
+        return open(path, "rb")
+    except OSError as exc:
+        raise SystemExit(f"msks: cannot read volume image {path}: {exc}") from None
+
+
+async def file_windows(source) -> AsyncIterator[bytes]:
+    """Yield an open binary source's bytes in stream windows.
+
+    Reads run off the event loop; stdin keeps its shell-owned
+    lifecycle (only the file the command opened is closed).
+    """
+    try:
+        while window := await asyncio.to_thread(source.read, STREAM_WINDOW_B):
+            yield window
+    finally:
+        if source is not sys.stdin.buffer:
+            source.close()
+
+
+async def run_home_import(
+    url: str, token: str, workspace_id: str, source_path: str, transport
+) -> int:
+    """PUT the volume stream; the daemon's reported byte count.
+
+    The source opens here and closes in the ``finally`` even when
+    the exchange dies before the body is consumed (a dead dial):
+    the file never waits for garbage collection.
+    """
+    source = volume_source(source_path)
+    owns = source is not sys.stdin.buffer
+    try:
+        async with api_client(url, token, transport) as client:
+            reply = await upload(client, home_path(workspace_id), file_windows(source))
+        return imported_bytes(reply)
+    finally:
+        if owns:
+            source.close()
+
+
+def imported_bytes(reply: dict) -> int:
+    """The reply's byte count, or the one-line refusal when a 2xx
+    answer carries none (a daemon that is not this protocol)."""
+    count = reply.get("bytes")
+    if not isinstance(count, int):
+        raise SystemExit("msks: the daemon's import reply carried no byte count")
+    return count
+
+
+def cmd_home_export(workspace_id: str, out: str | None = None, transport=None) -> int:
+    """``msks home export``: download a workspace's /home volume."""
+    target = out if out is not None else f"{workspace_id}.ext4"
+    try:
+        total = asyncio.run(
+            run_home_export(env_url(), env_token(), workspace_id, target, transport)
+        )
+    except BrokenPipeError:
+        raise SystemExit(broken_pipe_line(target)) from None
+    if target == "-":
+        # Bytes own stdout; the confirmation goes to stderr.
+        print(f"msks: exported {workspace_id} ({total} bytes)", file=sys.stderr)
+    else:
+        print(f"exported {workspace_id} ({total} bytes) to {target}")
+    return 0
+
+
+def broken_pipe_line(target: str) -> str:
+    """The one-line report for a reader that went away (#80).
+
+    ``- | head`` or a downstream compressor on a full disk closes
+    the pipe mid-stream; stdout is unusable from here on, so its
+    buffered remains are pointed at devnull before the interpreter
+    flush would traceback on them again at exit.
+    """
+    with contextlib.suppress(OSError, ValueError, AttributeError):
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+        os.close(devnull)
+    return f"msks: the export's reader closed early ({target})"
+
+
+def cmd_home_import(workspace_id: str, source_path: str, transport=None) -> int:
+    """``msks home import``: replace a workspace's /home volume."""
+    url, token = env_url(), env_token()
+    total = asyncio.run(
+        run_home_import(url, token, workspace_id, source_path, transport)
+    )
+    print(f"imported {total} bytes into {workspace_id}")
+    return 0
+
+
 def read_user_data(path: str) -> str:
     """The #41 payload: a file's contents, or stdin for ``-``."""
     try:
@@ -553,6 +679,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="name:version, bare name, name@hash, or hash "
         "(a unique hash prefix works too)",
     )
+    home = sub.add_parser(
+        "home", help="move a workspace's /home volume through the daemon (#80)"
+    )
+    home_sub = home.add_subparsers(dest="home_command", required=True)
+    home_export = home_sub.add_parser(
+        "export", help="download a workspace's /home volume"
+    )
+    home_export.add_argument(
+        "workspace_id", help="the workspace whose volume to download"
+    )
+    home_export.add_argument(
+        "file",
+        nargs="?",
+        default=None,
+        help="output file (default: <workspace_id>.ext4); - writes stdout",
+    )
+    home_import = home_sub.add_parser(
+        "import", help="replace a workspace's /home volume from an ext4 image"
+    )
+    home_import.add_argument(
+        "workspace_id", help="the workspace whose volume to replace"
+    )
+    home_import.add_argument(
+        "file", help="the ext4 volume image to upload; - reads stdin"
+    )
     return parser
 
 
@@ -588,6 +739,7 @@ def command_table(args: argparse.Namespace, transport) -> dict:
             args.workspace_id, args.passthrough, transport=transport
         ),
         "image": lambda: image_command_table(args, transport)[args.image_command](),
+        "home": lambda: home_command_table(args, transport)[args.home_command](),
     }
 
 
@@ -598,6 +750,18 @@ def image_command_table(args: argparse.Namespace, transport) -> dict:
         "import": lambda: cmd_image_import(args.source, transport=transport),
         "rm": lambda: cmd_image_rm(args.ref, transport=transport),
         "info": lambda: cmd_image_info(args.ref, transport=transport),
+    }
+
+
+def home_command_table(args: argparse.Namespace, transport) -> dict:
+    """One entry per ``home`` subcommand."""
+    return {
+        "export": lambda: cmd_home_export(
+            args.workspace_id, args.file, transport=transport
+        ),
+        "import": lambda: cmd_home_import(
+            args.workspace_id, args.file, transport=transport
+        ),
     }
 
 

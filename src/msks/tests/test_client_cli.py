@@ -9,8 +9,12 @@ import argparse
 import asyncio
 import io
 import json
+import os
 import ssl
+import sys
+from collections.abc import AsyncIterator
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -1210,3 +1214,157 @@ def test_create_user_data_non_utf8_is_one_line(
     source.write_bytes(b"\xff\xfe#\x00")
     with pytest.raises(SystemExit, match="cannot read user-data"):
         cli.read_user_data(str(source))
+
+
+def test_main_home_export_dispatch(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """``msks home export`` dispatches to the download with the id's
+    default filename."""
+    client_env(monkeypatch)
+    seen = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["path"] = req.url.path
+        return httpx.Response(200, content=b"vol-bytes")
+
+    monkeypatch.chdir(tmp_path)
+    rc = cli.main(["home", "export", "ws1"], transport=mock(handler))
+    assert rc == 0
+    assert seen["path"] == "/api/v1/workspaces/ws1/home"
+    assert (tmp_path / "ws1.ext4").read_bytes() == b"vol-bytes"
+    assert "exported ws1" in capsys.readouterr().out
+
+
+def test_main_home_import_dispatch(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """``msks home import`` dispatches to the upload with the file's
+    bytes as the body."""
+    client_env(monkeypatch)
+    volume = tmp_path / "v.ext4"
+    volume.write_bytes(b"upload-me")
+    seen = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["path"] = req.url.path
+        seen["content_type"] = req.headers.get("content-type")
+        return httpx.Response(200, json={"id": "ws1", "bytes": 9})
+
+    rc = cli.main(["home", "import", "ws1", str(volume)], transport=mock(handler))
+    assert rc == 0
+    assert seen["path"] == "/api/v1/workspaces/ws1/home"
+    assert seen["content_type"] == "application/octet-stream"
+    assert "imported 9 bytes into ws1" in capsys.readouterr().out
+
+
+def test_main_home_export_stdout_note(
+    monkeypatch: pytest.MonkeyPatch, capsysbinary: pytest.CaptureFixture[bytes]
+) -> None:
+    """`-` streams the bytes to stdout and keeps the note on stderr,
+    so a pipe stays clean for gzip/ssh."""
+    client_env(monkeypatch)
+    rc = cli.main(
+        ["home", "export", "ws1", "-"],
+        transport=mock(lambda req: httpx.Response(200, content=b"vol-bytes")),
+    )
+    assert rc == 0
+    captured = capsysbinary.readouterr()
+    assert captured.out == b"vol-bytes"
+    assert "exported ws1" in captured.err.decode()
+
+
+def test_main_home_import_missing_file_is_one_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unreadable source fails before any network activity."""
+    client_env(monkeypatch)
+    with pytest.raises(SystemExit, match="msks: cannot read volume image"):
+        cli.main(["home", "import", "ws1", "/no/such/volume.ext4"])
+
+
+async def test_home_stream_errors_are_one_line(monkeypatch) -> None:
+    """The streaming helpers keep ``request``'s one-line error
+    contract: a dead dial and a stalled read both name the daemon."""
+    client_env(monkeypatch)
+
+    async def body() -> AsyncIterator[bytes]:
+        yield b"x"
+
+    async def refused(req: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    async def stalled(req: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow")
+
+    for handler in (refused, stalled):
+        async with rest.api_client(
+            "https://daemon", "tok", transport=mock(handler)
+        ) as client:
+            with pytest.raises(SystemExit, match="msks: (cannot reach|timed out)"):
+                await rest.download(client, "/api/v1/workspaces/x/home", io.BytesIO())
+            with pytest.raises(SystemExit, match="msks: (cannot reach|timed out)"):
+                await rest.upload(client, "/api/v1/workspaces/x/home", body())
+
+
+async def test_home_export_unwritable_out_is_one_line(monkeypatch) -> None:
+    """An output path the command cannot create fails with one line
+    before any bytes move."""
+    client_env(monkeypatch)
+    with pytest.raises(SystemExit, match="msks: cannot write"):
+        await cli.run_home_export(
+            "https://daemon",
+            "tok",
+            "ws1",
+            "/no/such/dir/v.ext4",
+            mock(lambda req: httpx.Response(200, content=b"vol")),
+        )
+
+
+async def test_volume_source_stdin(monkeypatch) -> None:
+    """`-` reads stdin and keeps its lifecycle: the stream yields the
+    bytes and closes nothing."""
+    data = io.BytesIO(b"stdin-bytes")
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(buffer=data))
+    assert cli.volume_source("-") is data
+    assert [window async for window in cli.file_windows(data)] == [b"stdin-bytes"]
+    assert not data.closed
+
+
+def test_home_export_broken_pipe_is_one_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A reader that vanishes mid-stream (`- | head`, a compressor
+    on a full disk) is one line and a non-zero exit, not a
+    traceback — the CLI's error contract holds on the pipe path."""
+    client_env(monkeypatch)
+
+    class BrokenSink:
+        def write(self, data):
+            raise BrokenPipeError
+
+    # A spare fd stands in for the real stdout: broken_pipe_line's
+    # dup2-to-devnull must not clobber the test session's captured fd 1.
+    spare = os.open(os.devnull, os.O_WRONLY)
+    monkeypatch.setattr(
+        sys, "stdout", SimpleNamespace(buffer=BrokenSink(), fileno=lambda: spare)
+    )
+    with pytest.raises(SystemExit, match="reader closed early"):
+        cli.main(
+            ["home", "export", "ws1", "-"],
+            transport=mock(lambda req: httpx.Response(200, content=b"vol")),
+        )
+
+
+def test_home_import_reply_without_a_count_is_one_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 2xx reply that carries no byte count is a protocol break,
+    not a KeyError traceback."""
+    client_env(monkeypatch)
+    volume = Path("/dev/null")
+    with pytest.raises(SystemExit, match="carried no byte count"):
+        cli.main(
+            ["home", "import", "ws1", str(volume)],
+            transport=mock(lambda req: httpx.Response(200, json={})),
+        )

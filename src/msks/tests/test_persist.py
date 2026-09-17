@@ -7,6 +7,7 @@ module's logic (layout, idempotence, atomic install, clamping,
 error mapping) without the real binaries.
 """
 
+import os
 import re
 from pathlib import Path
 
@@ -394,3 +395,124 @@ async def test_failed_seed_rolls_back_the_fresh_pair(tools) -> None:
     assert persist.seed_path(settings.state_dir, WID).is_file()
     assert persist.overlay_path(settings.state_dir, WID).is_file()
     assert persist.home_volume_path(settings.state_dir, WID).is_file()
+
+
+# --- Home-volume export/import (#80) ---
+
+
+def ext4_image(windows: list[bytes]) -> bytes:
+    """A stand-in ext4 volume: the magic at 1080, then whole 1 MiB
+    windows of caller-chosen bytes (zeros for sparse regions)."""
+    body = bytearray(b"".join(windows))
+    body[persist.EXT4_MAGIC_OFFSET : persist.EXT4_MAGIC_OFFSET + 2] = persist.EXT4_MAGIC
+    return bytes(body)
+
+
+async def yielding(chunks: list[bytes]):
+    """An async body iterator that hands out ``chunks`` as given —
+    sizes and boundaries are the caller's (the wire chunks never
+    match the import window)."""
+    for chunk in chunks:
+        yield chunk
+
+
+async def collect(path: Path) -> bytes:
+    """Everything :func:`persist.read_volume` yields from an open
+    fd, joined."""
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        return b"".join([window async for window in persist.read_volume(fd)])
+    finally:
+        os.close(fd)
+
+
+async def test_import_home_volume_installs_the_body(tools) -> None:
+    """A well-formed body lands verbatim at the volume path, the
+    scratch is swept, and the return is the byte count."""
+    settings, _record, _base = tools
+    image = ext4_image([b"volume-data".ljust(persist.HOME_WINDOW_B, b"x")])
+    total = await persist.import_home_volume(
+        settings.state_dir, WID, yielding([image[:1234], image[1234:]])
+    )
+    assert total == len(image)
+    home = persist.home_volume_path(settings.state_dir, WID)
+    assert home.read_bytes() == image
+    assert not tmp_debris(settings)
+    # The export side reads the same bytes back (#80 round trip).
+    assert await collect(home) == image
+
+
+async def test_import_home_volume_keeps_zero_windows_sparse(tools) -> None:
+    """All-zero windows become holes: a 3 MiB volume whose two last
+    windows are blank costs ~1 MiB of real disk, not 3."""
+    settings, _record, _base = tools
+    blank = b"\0" * persist.HOME_WINDOW_B
+    image = ext4_image([b"data".ljust(persist.HOME_WINDOW_B, b"d"), blank, blank])
+    await persist.import_home_volume(settings.state_dir, WID, yielding([image]))
+    home = persist.home_volume_path(settings.state_dir, WID)
+    assert home.stat().st_size == len(image)
+    assert home.stat().st_blocks * 512 < 2 * persist.HOME_WINDOW_B
+    assert home.read_bytes() == image
+
+
+async def test_import_home_volume_replaces_an_existing_volume(tools) -> None:
+    """Import replaces what stood at the path — restore duty, not
+    append."""
+    settings, _record, _base = tools
+    home = persist.home_volume_path(settings.state_dir, WID)
+    home.parent.mkdir(parents=True, exist_ok=True)
+    home.write_bytes(b"stale-contents" * 10)
+    image = ext4_image([b"fresh".ljust(persist.HOME_WINDOW_B, b"f")])
+    await persist.import_home_volume(settings.state_dir, WID, yielding([image]))
+    assert home.read_bytes() == image
+
+
+async def test_import_home_volume_refuses_non_ext4(tools) -> None:
+    """A body without the ext4 magic is refused the moment its
+    prefix arrives (before a window is written): nothing is
+    installed, the old volume survives, and the scratch is swept."""
+    settings, _record, _base = tools
+    home = persist.home_volume_path(settings.state_dir, WID)
+    home.parent.mkdir(parents=True, exist_ok=True)
+    home.write_bytes(b"preexisting")
+    with pytest.raises(ValueError, match="not an ext4 image"):
+        await persist.import_home_volume(
+            settings.state_dir, WID, yielding([b"garbage" * 1000])
+        )
+    assert home.read_bytes() == b"preexisting"
+    assert not tmp_debris(settings)
+
+
+async def test_import_home_volume_refuses_a_short_body(tools) -> None:
+    """A non-empty body shorter than the magic's offset never
+    reaches the early check; the post-stream backstop refuses it."""
+    settings, _record, _base = tools
+    with pytest.raises(ValueError, match="not an ext4 image"):
+        await persist.import_home_volume(
+            settings.state_dir, WID, yielding([b"garbage"])
+        )
+    assert not persist.home_volume_path(settings.state_dir, WID).exists()
+    assert not tmp_debris(settings)
+
+
+async def test_import_home_volume_refuses_an_empty_body(tools) -> None:
+    settings, _record, _base = tools
+    with pytest.raises(ValueError, match="body is empty"):
+        await persist.import_home_volume(settings.state_dir, WID, yielding([]))
+    assert not persist.home_volume_path(settings.state_dir, WID).exists()
+    assert not tmp_debris(settings)
+
+
+async def test_import_home_volume_keeps_short_zero_tail_sparse(tools) -> None:
+    """A final partial window of zeros relies on the closing
+    truncate for its hole — the tail skip and the window skip share
+    one path."""
+    settings, _record, _base = tools
+    image = ext4_image([b"full".ljust(persist.HOME_WINDOW_B, b"u")])
+    image += b"\0" * 4096
+    await persist.import_home_volume(
+        settings.state_dir, WID, yielding([image[:10], image[10:]])
+    )
+    home = persist.home_volume_path(settings.state_dir, WID)
+    assert home.stat().st_size == len(image)
+    assert home.read_bytes() == image

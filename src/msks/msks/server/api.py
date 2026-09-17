@@ -8,21 +8,30 @@ query is built outside ``msks.model``.
 import asyncio
 import contextlib
 import json
+import os
 import re
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import (
+    Depends,
+    FastAPI,
+    HTTPException,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi import __version__ as fastapi_version
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
+from starlette.requests import ClientDisconnect
 
-from .. import __version__, imagestore
+from .. import __version__, imagestore, persist
 from ..identity import mint
 from ..imagestore import ImageError
 from ..microvm.errors import MicrovmError
-from ..microvm.spec import VmSpec
+from ..microvm.spec import VmSpec, VmStatus
 from .auth import require_token
 from .events import EventHub, relay
 from .watcher import watch_loop
@@ -403,6 +412,241 @@ def host_mismatch(app, row: dict) -> str | None:
     )
 
 
+#: The lifecycle statuses a home-volume move serves (#80): an
+#: allow-list, so ``unknown`` — a possibly-live VM the watcher
+#: could not probe — and any future status refuse until named here.
+#: ``starting``/``running``/``paused`` all keep the volume: it is a
+#: live block device in each of them.
+HOME_FREE_STATUSES = ("created", "stopped", "absent")
+
+
+def home_volume_guard(app, row: dict) -> tuple[int, str] | None:
+    """(status, refusal) when this daemon cannot move the volume.
+
+    The k8s backend answers a named refusal — the volume lives
+    inside the runner pod's PVC, which only the pod's container
+    reaches, so the byte streams this endpoint serves have nothing
+    to read or write (#80 is the local appliance's mechanism). On
+    the local backend, placement (the artifacts live on one host)
+    and a possibly-live attachment are the two facts that block a
+    move: the free statuses are named, everything else refuses.
+    """
+    if app.state.settings.vmm.driver == "k8s":
+        return 400, (
+            "home volume export/import is not served by the k8s backend "
+            "(the volume lives inside the runner pod's PVC)"
+        )
+    mismatch = host_mismatch(app, row)
+    if mismatch is not None:
+        return 409, mismatch
+    if row["status"] not in HOME_FREE_STATUSES:
+        return 409, (
+            f"workspace {row['id']} is {row['status']}; "
+            f"stop it before moving its home volume"
+        )
+    return None
+
+
+async def home_volume_lock(app, workspace_id: str) -> asyncio.Lock:
+    """Serialize a workspace's volume moves against its boots (#80).
+
+    A boot attaches the volume file by path; an install that
+    renames a new volume over that path mid-boot silently loses
+    every guest write after the rename. One lock per workspace,
+    held by start across launch and by both volume routes across
+    their whole exchange, orders the pair: the boot waits out an
+    in-flight move and boots the installed volume, and a move that
+    arrives after a boot sees the running row and answers 409.
+    """
+    lock = app.state.home_locks.setdefault(workspace_id, asyncio.Lock())
+    return lock
+
+
+async def acquire_move_lock(app, workspace_id: str) -> asyncio.Lock:
+    """Acquire the workspace's move-lock, or answer the named 409.
+
+    A stalled reader holds an export's lock as long as its
+    connection lives; a waiter that blocked on it would hang with
+    it. Waiters give up after ``move_wait_timeout_s`` and name the
+    move in flight (#80 review).
+    """
+    lock = await home_volume_lock(app, workspace_id)
+    try:
+        async with asyncio.timeout(app.state.settings.vmm.move_wait_timeout_s):
+            await lock.acquire()
+    except TimeoutError:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"workspace {workspace_id} has a volume move in flight; "
+                f"retry when it finishes"
+            ),
+        ) from None
+    return lock
+
+
+@contextlib.asynccontextmanager
+async def move_lock(app, workspace_id: str):
+    """acquire_move_lock as a context: start, delete, and the
+    import route hold it this way."""
+    lock = await acquire_move_lock(app, workspace_id)
+    try:
+        yield lock
+    finally:
+        lock.release()
+
+
+async def rechecked_row(app, workspace_id: str) -> dict:
+    """The row re-read under the move-lock, with both guards applied.
+
+    The row's status is the cheap guard; the live seam is the
+    truth-guard: a watcher scan that probed a launch's spawn window
+    can leave a live VM's row at ``stopped`` for one poll interval,
+    and the seam's answer refuses where the row lies (#80 review).
+    """
+    row = await app.state.model.get_workspace(workspace_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="no such workspace")
+    guard = home_volume_guard(app, row)
+    if guard is not None:
+        raise HTTPException(*guard)
+    info = await app.state.microvm.info(workspace_id)
+    if info.status not in (VmStatus.ABSENT, VmStatus.STOPPED):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"workspace {workspace_id}'s VMM reports {info.status.value}; "
+                f"stop it before moving its home volume"
+            ),
+        )
+    return row
+
+
+class HoldingStreamingResponse(StreamingResponse):
+    """A streaming response that owns its fd and lock to its last
+    send (#80 review).
+
+    The release is bound to the response's own ``__call__`` — the
+    send loop the server awaits — not the body iterator's fate: a
+    client disconnect or a send failure unwinds this frame
+    deterministically, where an abandoned generator's ``finally``
+    would wait on garbage collection.
+    """
+
+    def __init__(self, body, *, teardown, **kwargs) -> None:
+        super().__init__(body, **kwargs)
+        self.teardown = teardown
+
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self.teardown()
+
+
+def volume_teardown(fd: int, lock: asyncio.Lock):
+    """The response's teardown: close the fd, then hand the lock
+    back (close first, so the waiter behind the lock never observes
+    a live fd; raw-fd close stays EBADF-safe against a late
+    threadpool read)."""
+
+    def teardown() -> None:
+        with contextlib.suppress(OSError):
+            os.close(fd)
+        lock.release()
+
+    return teardown
+
+
+async def locked_export(app, hub, workspace_id: str, home: Path) -> Response:
+    """The export under the workspace's move-lock (#80).
+
+    The lock spans the re-check and the open and rides the response
+    through the stream: a boot that arrives mid-download waits it
+    out instead of attaching a volume whose bytes are leaving. The
+    size comes from the open fd, so the served length always
+    matches the body it yields.
+    """
+    lock = await acquire_move_lock(app, workspace_id)
+    try:
+        await rechecked_row(app, workspace_id)
+        try:
+            fd, size = await asyncio.to_thread(persist.open_sized, home)
+        except OSError:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"home volume file for workspace {workspace_id} is missing "
+                    f"or unreadable under the state dir; a start would rebuild "
+                    f"it blank"
+                ),
+            ) from None
+    except BaseException:
+        lock.release()
+        raise
+    return HoldingStreamingResponse(
+        export_body(hub, workspace_id, fd),
+        teardown=volume_teardown(fd, lock),
+        media_type="application/octet-stream",
+        headers={
+            "content-length": str(size),
+            "content-disposition": f'attachment; filename="{workspace_id}.ext4"',
+        },
+    )
+
+
+async def export_body(hub, workspace_id: str, fd: int) -> AsyncIterator[bytes]:
+    """The streamed half: the volume's windows. The completion event
+    fires only on a clean end of file — a client that disconnects
+    mid-download cancelled no export."""
+    moved = 0
+    async for window in persist.read_volume(fd):
+        moved += len(window)
+        yield window
+    await hub.publish("home.exported", {"id": workspace_id, "bytes": moved})
+
+
+async def installed_volume(state_dir: Path, workspace_id: str, request: Request) -> int:
+    """The upload's installed byte count, or its named HTTP failure.
+
+    A body that is not ext4 and a body the client cut off are
+    client errors; a disk-side failure is the daemon's — and all
+    three leave the workspace's existing volume in place.
+    """
+    try:
+        return await persist.import_home_volume(
+            state_dir, workspace_id, request.stream()
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    except (MicrovmError, OSError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from None
+    except ClientDisconnect as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="the upload ended before its body completed; "
+            "the workspace kept its existing volume",
+        ) from exc
+
+
+async def locked_import(app, hub, workspace_id: str, request: Request) -> Response:
+    """The upload under the workspace's move-lock (#80).
+
+    The row and seam re-read under the lock plus the lock itself
+    close the boot race: a start either finished (the re-read
+    refuses) or is waiting (the boot opens the installed volume).
+    """
+    await rechecked_row(app, workspace_id)
+    state_dir = app.state.settings.vmm.state_dir
+    total = await installed_volume(state_dir, workspace_id, request)
+    await hub.publish("home.imported", {"id": workspace_id, "bytes": total})
+    return Response(
+        status_code=200,
+        content=json.dumps({"id": workspace_id, "bytes": total}),
+        media_type="application/json",
+    )
+
+
 async def serialize_create(app, workspace_id: str):
     """Serialize same-id creates end to end (#111).
 
@@ -429,6 +673,7 @@ def build_api(app) -> FastAPI:
     """The FastAPI application bound to one msks App."""
     hub = EventHub()
     app.state.create_locks: dict[str, asyncio.Lock] = {}
+    app.state.home_locks: dict[str, asyncio.Lock] = {}
 
     @contextlib.asynccontextmanager
     async def lifespan(api: FastAPI) -> AsyncIterator[None]:
@@ -709,8 +954,14 @@ def build_api(app) -> FastAPI:
             # preference: booting elsewhere would present an empty
             # /home and a pristine root as if they were the data.
             raise HTTPException(status_code=409, detail=mismatch)
-        await app.state.microvm.launch(spec_for(row))
-        await app.state.model.set_status(workspace_id, "running")
+        # The home-volume move lock (#80): a volume import that
+        # renames a new file over the boot's path mid-attach would
+        # silently lose every guest write after the rename, so the
+        # boot and any in-flight move serialize — the status write
+        # stays inside the hold or a waiter would read a stale row.
+        async with move_lock(app, workspace_id):
+            await app.state.microvm.launch(spec_for(row))
+            await app.state.model.set_status(workspace_id, "running")
         return {"id": workspace_id, "status": "running"}
 
     @api.exception_handler(MicrovmError)
@@ -752,6 +1003,38 @@ def build_api(app) -> FastAPI:
         await app.state.model.set_status(workspace_id, "created")
         return {"id": workspace_id, "status": "created"}
 
+    # The home-volume byte streams (#80): export for backup and
+    # migration, import to restore or seed. Both refuse a workspace
+    # the guard names, and both hold the workspace's move-lock for
+    # their whole exchange — see home_volume_lock.
+    @api.get(
+        "/api/v1/workspaces/{workspace_id}/home", dependencies=[Depends(require_token)]
+    )
+    async def export_home_volume(workspace_id: str) -> Response:
+        """Stream the workspace's /home volume out (#80): the volume
+        file's bytes, verbatim."""
+        row = await _workspace_or_404(app, workspace_id)
+        guard = home_volume_guard(app, row)
+        if guard is not None:
+            raise HTTPException(*guard)
+        state_dir = app.state.settings.vmm.state_dir
+        home = persist.home_volume_path(state_dir, workspace_id)
+        return await locked_export(app, hub, workspace_id, home)
+
+    @api.put(
+        "/api/v1/workspaces/{workspace_id}/home", dependencies=[Depends(require_token)]
+    )
+    async def import_home_volume(workspace_id: str, request: Request) -> Response:
+        """Replace the workspace's /home volume with the request body
+        (#80): the uploaded ext4 image lands atomically — a failed or
+        refused upload leaves the old volume in place."""
+        row = await _workspace_or_404(app, workspace_id)
+        guard = home_volume_guard(app, row)
+        if guard is not None:
+            raise HTTPException(*guard)
+        async with move_lock(app, workspace_id):
+            return await locked_import(app, hub, workspace_id, request)
+
     @api.delete(
         "/api/v1/workspaces/{workspace_id}", dependencies=[Depends(require_token)]
     )
@@ -761,14 +1044,20 @@ def build_api(app) -> FastAPI:
             # Deleting the row from a non-owning host would orphan a
             # possibly-running VM: every route 404s without the row.
             raise HTTPException(status_code=409, detail=mismatch)
-        # A wedged VM must still be deletable: a failed graceful
-        # shutdown falls back to kill before cleanup.
-        try:
-            await app.state.microvm.shutdown(workspace_id)
-        except MicrovmError:
-            await app.state.microvm.kill(workspace_id)
-        await app.state.microvm.cleanup(workspace_id)
-        await app.state.model.delete_workspace(workspace_id)
+        # The home-volume move lock (#80 review): a delete that
+        # races an import must not leave the row gone with the
+        # import's rename landing after it (an orphaned volume the
+        # next create would refuse on). Delete holds the same lock
+        # the import does, so the pair is ordered either way.
+        async with move_lock(app, workspace_id):
+            # A wedged VM must still be deletable: a failed graceful
+            # shutdown falls back to kill before cleanup.
+            try:
+                await app.state.microvm.shutdown(workspace_id)
+            except MicrovmError:
+                await app.state.microvm.kill(workspace_id)
+            await app.state.microvm.cleanup(workspace_id)
+            await app.state.model.delete_workspace(workspace_id)
         return {"deleted": workspace_id}
 
     @api.websocket("/api/v1/workspaces/{workspace_id}/console")

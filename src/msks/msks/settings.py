@@ -80,6 +80,18 @@ def _env_float(env: Mapping[str, str], name: str, default: float) -> float:
     return value
 
 
+def move_wait_seconds(env) -> float:
+    """The move-wait bound from MSKSD_MOVE_WAIT_TIMEOUT_S (#80):
+    zero is a valid fail-fast deadline, a negative one is a
+    configuration error."""
+    seconds = _env_float(env, "MSKSD_MOVE_WAIT_TIMEOUT_S", 120.0)
+    if seconds < 0:
+        raise ValueError(
+            f"MSKSD_MOVE_WAIT_TIMEOUT_S must be zero or positive, got {seconds}"
+        )
+    return seconds
+
+
 @dataclass
 class VmmSettings:
     """Local VMM (cloud-hypervisor) driver settings."""
@@ -106,6 +118,12 @@ class VmmSettings:
     # 4502 instead of hanging open and silent. An idle session never
     # trips it — the clock only runs after client input.
     console_stall_timeout_s: float = 60.0
+    # How long a boot or volume move waits for the workspace's other
+    # volume move to finish (#80): a stalled reader holds an export's
+    # lock as long as its connection lives, and the waiter answers a
+    # named 409 past this bound instead of hanging with it. Zero is a
+    # valid fail-fast deadline.
+    move_wait_timeout_s: float = 120.0
     # A host-side container-image tar imported into the catalog on first boot
     # and designated default (the appliance points this at the built
     # image's store path through its cmdline bridge).
@@ -157,6 +175,7 @@ class VmmSettings:
                 "MSKSD_FORWARD_WAIT_TIMEOUT_S must be zero or positive, "
                 f"got {forward_wait_s}"
             )
+        move_wait_s = move_wait_seconds(env)
         return cls(
             driver=driver,
             cloud_hypervisor=_env(env, "MSKSD_CLOUD_HYPERVISOR", cls.cloud_hypervisor),
@@ -174,6 +193,7 @@ class VmmSettings:
             ),
             forward_wait_timeout_s=forward_wait_s,
             console_stall_timeout_s=stall_timeout_s,
+            move_wait_timeout_s=move_wait_s,
             default_image=_env(env, "MSKSD_DEFAULT_IMAGE", cls.default_image),
             qemu_img=_env(env, "MSKSD_QEMU_IMG", cls.qemu_img),
             mkfs_ext4=_env(env, "MSKSD_MKFS_EXT4", cls.mkfs_ext4),

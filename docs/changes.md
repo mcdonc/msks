@@ -17,6 +17,21 @@ tagged `vX.Y.Z`.
   workspace user by default (`-l root` for recovery); per-workspace
   `known_hosts` under `accept-new`. See `docs/cli.md` and the alias
   workflow in `docs/networking.md`.
+- **Home-volume export/import (#80).** A workspace's `/home` volume
+  now moves through the daemon's authenticated listener as byte
+  streams: `GET`/`PUT /api/v1/workspaces/{id}/home` stream the
+  volume file out and replace it from an uploaded ext4 image, with
+  `msks home export` / `msks home import` on top (`-` speaks stdio,
+  so the bytes compose with gzip or ssh). The workspace must be
+  stopped (`unknown` refuses too — the VM may be live), moves
+  serialize against boots and deletes per workspace (waiters
+  answer a named 409 after `MSKSD_MOVE_WAIT_TIMEOUT_S`, and the
+  daemon re-checks the live VMM under the lock), an upload that
+  fails the ext4 check or dies mid-body leaves the existing volume
+  in place, all-zero windows come back sparse, and each completed
+  move publishes a `home.exported` / `home.imported` event. See
+  [storage](/storage/#home-volume-export-and-import) and
+  [the CLI](/cli/#msks-home).
 - **Minted workspace identity and `msks key` (#111).** msksd mints a
   per-workspace ssh keypair at create — ECDSA P-256 by default, the
   FIPS-approvable choice (#115), with the type configurable via

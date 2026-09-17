@@ -94,6 +94,77 @@ provisioned state the guest keeps there (cloud-init's run-once
 markers live under `/var/lib/cloud`), so future provisioning
 re-runs on the next boot.
 
+## Home volume export and import
+
+The home volume travels through the daemon's authenticated
+listener as byte streams (#80) — the interim mechanism for backup,
+migration to another daemon, and seeding a fresh workspace with
+data:
+
+```text
+GET /api/v1/workspaces/{id}/home    → the volume file's bytes, streamed
+PUT /api/v1/workspaces/{id}/home    → replaces the volume from the body
+```
+
+`msks home export` / `msks home import` drive both endpoints from
+the CLI (`docs/cli.md`); a token holder may also call them with any
+HTTP client.
+
+The body is the volume file's bytes **verbatim** — an ext4 image,
+labeled `msks-home` when msksd made it. An import installs what it
+receives: a hand-made ext4 image (or one exported from another
+workspace) lands exactly as uploaded. The ext-family magic sits
+~1 KiB into the image, and the daemon checks it as the body's
+first bytes arrive — a wrong file is refused with `400` at
+kilobyte cost, and the workspace's existing volume is untouched.
+The check cannot judge completeness: the daemon installs the bytes
+that arrive, so verify a hand-made image (`e2fsck -n`) before
+importing it; a transfer that dies mid-body is the disconnect
+case and installs nothing.
+
+Sparseness survives the round trip: the import writes in 1 MiB
+windows and turns every all-zero window back into a sparse hole, so
+a blank 2 GiB volume re-imports at its data's cost, not its
+nominal size. A volume exported over a slow link composes with any
+compressor (`msks home export ws - | gzip > ws.ext4.gz`) because
+`-` streams the bytes to stdout.
+
+Both endpoints answer `409` unless the workspace's row says its
+VM is down — `created`, `stopped`, and `absent` move freely;
+`starting`, `running`, and `paused` keep the volume (an export
+under a guest mid-write is a torn image, and an import into a
+mounted device would be overwritten or lost), and `unknown`
+refuses too: the seam reports it when a live VMM stopped answering
+its API, so a possibly-live VM gets the volume's protection. Stop
+the workspace first (`msks stop`). Under the move's lock the
+daemon also asks the seam itself: a row can lag a boot by one
+watcher poll interval, and the live VMM's answer refuses where the
+row would pass.
+
+A move, a boot, and a delete serialize per workspace on one lock:
+a boot that arrives during a move waits for it to finish and boots
+the volume the move left, a move that arrives after a boot sees
+the running row and answers `409`, and a delete orders against an
+import instead of racing it. A waiter gives up after
+`MSKSD_MOVE_WAIT_TIMEOUT_S` (120 s default) and answers a named
+`409` (a volume move is in flight) rather than hanging — a stalled
+export reader holds its lock as long as its connection lives. A
+foreign host answers the placement `409` every artifact route
+shares, and the k8s backend answers `400` — its volume lives
+inside the runner pod's PVC, which only the pod's container
+reaches.
+
+An import whose filesystem size differs from the workspace's
+recorded `home_mib` mounts fine either way (an ext4 filesystem
+smaller than its device is legal); `home_mib` stays the size a
+blank rebuilt volume gets, and growing an imported filesystem is a
+guest-side `resize2fs`. The install is atomic — a failed or cut-off
+upload leaves the existing volume in place — and every completed
+move is announced on the events channel (`home.exported` /
+`home.imported`, with the byte count; an export announces when its
+stream reaches the end, so a cancelled download publishes
+nothing).
+
 ## Placement and single-attach
 
 The workspace row records the **host** that owns its artifacts. On
@@ -157,14 +228,15 @@ boot. Deleting the workspace releases the pin.
 
 ## Environment variables
 
-| Variable                          | Default      | Meaning                                                                                                          |
-| --------------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------- |
-| `MSKSD_ROOT_MIB`                  | `10240`      | Default overlay (root) size for new workspaces, MiB.                                                             |
-| `MSKSD_HOME_MIB`                  | `2048`       | Default `/home` volume size, MiB.                                                                                |
-| `MSKSD_QEMU_IMG`                  | `qemu-img`   | The `qemu-img` binary that creates overlays.                                                                     |
-| `MSKSD_MKFS_EXT4`                 | `mkfs.ext4`  | The mkfs that formats `/home` volumes.                                                                           |
-| `MSKSD_MKISOFS`                   | `mkisofs`    | The mkisofs (genisoimage) that builds `cidata` seed disks (#41).                                                 |
-| `MSKSD_HOST_NAME`                 | the hostname | The host recorded as owning locally-created artifacts.                                                           |
-| `MSKSD_SHUTDOWN_TIMEOUT_S`        | `20`         | How long `stop` waits for the guest's clean poweroff before the fallback kill; a stop answers within this bound. |
-| `MSKSD_K8S_STORAGE_CLASS`         | unset        | Storage class for per-workspace claims; unset asks the cluster's default.                                        |
-| `MSKSD_K8S_WORKSPACE_STORAGE_GIB` | unset        | Claim size in GiB; unset derives it from `root_mib` + `home_mib`.                                                |
+| Variable                          | Default      | Meaning                                                                                                           |
+| --------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------- |
+| `MSKSD_ROOT_MIB`                  | `10240`      | Default overlay (root) size for new workspaces, MiB.                                                              |
+| `MSKSD_HOME_MIB`                  | `2048`       | Default `/home` volume size, MiB.                                                                                 |
+| `MSKSD_QEMU_IMG`                  | `qemu-img`   | The `qemu-img` binary that creates overlays.                                                                      |
+| `MSKSD_MKFS_EXT4`                 | `mkfs.ext4`  | The mkfs that formats `/home` volumes.                                                                            |
+| `MSKSD_MKISOFS`                   | `mkisofs`    | The mkisofs (genisoimage) that builds `cidata` seed disks (#41).                                                  |
+| `MSKSD_HOST_NAME`                 | the hostname | The host recorded as owning locally-created artifacts.                                                            |
+| `MSKSD_SHUTDOWN_TIMEOUT_S`        | `20`         | How long `stop` waits for the guest's clean poweroff before the fallback kill; a stop answers within this bound.  |
+| `MSKSD_MOVE_WAIT_TIMEOUT_S`       | `120`        | How long a boot, delete, or volume move waits for the workspace's other volume move before answering a named 409. |
+| `MSKSD_K8S_STORAGE_CLASS`         | unset        | Storage class for per-workspace claims; unset asks the cluster's default.                                         |
+| `MSKSD_K8S_WORKSPACE_STORAGE_GIB` | unset        | Claim size in GiB; unset derives it from `root_mib` + `home_mib`.                                                 |
