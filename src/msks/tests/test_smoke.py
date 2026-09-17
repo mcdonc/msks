@@ -2471,6 +2471,58 @@ async def test_local_minted_identity() -> None:
         )
         assert "msks-42" in user_login.stdout, user_login.stdout
 
+        # msks ssh (#112): the same login as one command — identity
+        # fetched and served from the transient agent, the forward as
+        # ProxyCommand,
+        # the msks user by default and root via -l. -F /dev/null in
+        # the passthrough keeps the harness hermetic (the #110
+        # lesson: a host ssh_config can carry options this build
+        # rejects); XDG_CACHE_HOME keeps the per-workspace known_hosts
+        # inside the workdir.
+        ssh_cache = workdir / "ssh-cache"
+        ssh_env = dict(cli_env, XDG_CACHE_HOME=str(ssh_cache))
+
+        async def run_msks_ssh(
+            *options: str, command: str
+        ) -> subprocess.CompletedProcess:
+            return await asyncio.to_thread(
+                subprocess.run,
+                [
+                    sys.executable,
+                    "-m",
+                    "msks.client.cli",
+                    "ssh",
+                    wid,
+                    "--",
+                    "-F",
+                    os.devnull,
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    "ConnectTimeout=15",
+                    *options,
+                    "--",
+                    command,
+                ],
+                env=ssh_env,
+                capture_output=True,
+                text=True,
+                timeout=SSH_CMD_TIMEOUT_S,
+            )
+
+        sugar_login = await run_msks_ssh(command="echo SSHU-$(whoami)-$((6*7))")
+        assert sugar_login.returncode == 0, (
+            f"{sugar_login.stdout}\n{sugar_login.stderr}"
+        )
+        assert "SSHU-msks-42" in sugar_login.stdout, sugar_login.stdout
+        root_login = await run_msks_ssh(
+            "-l", "root", command="echo SSHR-$(id -u)-$((6*7))"
+        )
+        assert root_login.returncode == 0, f"{root_login.stdout}\n{root_login.stderr}"
+        assert "SSHR-0-42" in root_login.stdout, root_login.stdout
+        # The logins recorded the guest's host key in the msks cache.
+        assert (ssh_cache / "msks" / wid / "known_hosts").exists()
+
         # stop/start: the row serves the same identity again — the
         # halves persist on the workspace, not in any process — and
         # the overlay keeps the planted keys, so the same private half

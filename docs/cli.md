@@ -411,6 +411,63 @@ predates #111 answers 404 with "no minted identity"; the key type is
 the daemon's `MSKSD_SSH_KEY_TYPE` setting (ECDSA P-256 by default).
 Both halves persist across daemon restarts and workspace stop/start.
 
+## `msks ssh`
+
+Stock ssh into a workspace over the forward, with the minted
+identity staged in memory (#112) — one command, no key steps:
+
+```bash
+msks ssh my-workspace              # as the msks workspace user
+msks ssh my-workspace -- -l root   # the recovery login
+msks ssh my-workspace -- -A        # forward the session agent (the workspace identity)
+msks ssh my-workspace -- -L 8080:localhost:80
+```
+
+The command boots the workspace first when the daemon reports it as
+not running (the same notices as `msks console`), fetches the
+identity over the authenticated API, and runs `ssh` with the
+forward websocket as its ProxyCommand (`msks forward <ws> 22`). The
+private half never becomes a file: a transient in-process ssh-agent
+holds it in memory for the session, ssh names the identity by its
+public half (`-i`, public material only) and signs through the
+agent socket — the key material goes away with the process, and a
+crash leaves no private material behind. Host keys land in a per-workspace
+`known_hosts` under the msks cache root (XDG_CACHE_HOME, else
+`~/.cache/msks`, then `<ws>/known_hosts`) under `accept-new`; they
+persist across stop/start on the workspace's
+overlay, so the first-connection entry keeps matching. (The alias block keeps
+its own known_hosts under `~/.cache/msks/msks-<ws>/` — the two
+paths record the same host key independently.)
+
+Everything after the workspace id (the `--` is optional — any
+argument ssh would take works verbatim) is passed to ssh. A
+passthrough that starts with a plain word is a remote command
+(`msks ssh my-workspace -- uname -a`); when it starts with an
+option, ssh's own separator carries a command after the options
+(`msks ssh my-workspace -- -A -- uname -a`). `-A` forwards the
+session agent — the guest can sign as the workspace identity
+(useful for nested logins to the same workspace); forwarding your
+own agent — git credentials for `git push` from inside — is the
+alias path's job, where your real `SSH_AUTH_SOCK` rides untouched.
+The exit code is ssh's own (255 for ssh failures), not the msks
+command set. The session agent lives exactly as long as the
+`msks ssh` process — `ControlPersist`/mux sessions that outlive it
+belong to the alias path, whose identity is a key file. Explicit
+passthrough options override the injected defaults (your own
+`UserKnownHostsFile`, a different `ProxyCommand`) exactly as with
+stock ssh: ssh takes the first value a repeated option receives,
+and the passthrough comes first. The login user is the image's
+`msks` workspace user by default; ssh arguments that name a user
+(`-l root`, `-o User=root`) override it. The host argument ssh
+sees is the workspace id itself — the transport is the proxy, so
+the name never resolves. The ProxyCommand runs this very
+client (the absolute interpreter and module form — `msks` need not
+be on the ssh child's PATH), and it inherits your environment:
+`MSKSC_URL`, `MSKSC_TOKEN`, and
+`MSKSC_CAFILE` must be set where ssh runs (see the
+networking chapter's alias workflow for the `Host msks-*`
+configuration that hides all of this).
+
 ## Errors, exit codes, and timeouts
 
 Every command fails with one readable line on stderr and exit code 1
