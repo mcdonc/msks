@@ -385,21 +385,111 @@ def test_cmd_create_client_mint_with_start_boots_after_verification(
     assert "msks console ws1" in out
 
 
-def test_client_mint_key_type_pairing() -> None:
-    """The client mint is the create default (#121) with the
-    FIPS-approvable type; --daemon-mint hands the identity to the
-    daemon, and --key-type pairs with the client mint alone."""
+SUPPLIED_PUBKEY = "ssh-ed25519 AAAAc3NzaC1lZDI1 operator@laptop"
+
+
+def test_create_identity_modes() -> None:
+    """The three identity modes (#121 default, #111 daemon, #132
+    operator key) resolve to (key type, supplied line), and the
+    flag pairings that would look meaningful but are not are
+    rejected with the conflict named."""
     parser = cli.build_parser()
     plain = parser.parse_args(["create", "ws1"])
-    assert cli.client_mint_key_type(plain) == "ecdsa"
+    assert cli.create_identity(plain) == ("ecdsa", None)
     typed = parser.parse_args(["create", "ws1", "--key-type", "rsa"])
-    assert cli.client_mint_key_type(typed) == "rsa"
+    assert cli.create_identity(typed) == ("rsa", None)
     daemon = parser.parse_args(["create", "ws1", "--daemon-mint"])
-    assert cli.client_mint_key_type(daemon) is None
-    with pytest.raises(SystemExit, match="--key-type needs the client mint"):
-        cli.client_mint_key_type(
+    assert cli.create_identity(daemon) == (None, None)
+    with pytest.raises(SystemExit, match="--key-type conflicts with --daemon-mint"):
+        cli.create_identity(
             parser.parse_args(["create", "ws1", "--daemon-mint", "--key-type", "rsa"])
         )
+
+
+def test_create_identity_pubkey_mode(tmp_path: Path) -> None:
+    """--pubkey FILE resolves to (None, line) — no mint — and every
+    conflicting pairing is rejected before anything runs."""
+    parser = cli.build_parser()
+    source = tmp_path / "id.pub"
+    source.write_text(f"{SUPPLIED_PUBKEY}\n")
+    args = parser.parse_args(["create", "ws1", "--pubkey", str(source)])
+    assert cli.create_identity(args) == (None, SUPPLIED_PUBKEY)
+    with pytest.raises(SystemExit, match="--pubkey conflicts with --daemon-mint"):
+        cli.create_identity(
+            parser.parse_args(
+                ["create", "ws1", "--pubkey", str(source), "--daemon-mint"]
+            )
+        )
+    with pytest.raises(SystemExit, match="--key-type needs the client mint"):
+        cli.create_identity(
+            parser.parse_args(
+                ["create", "ws1", "--pubkey", str(source), "--key-type", "rsa"]
+            )
+        )
+
+
+def test_read_pubkey_file_stdin_and_rejections(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The line arrives stripped from a file or stdin; a file that
+    is not exactly one public key line fails as one readable error
+    before any network roundtrip."""
+    source = tmp_path / "id.pub"
+    source.write_text(f"  {SUPPLIED_PUBKEY}  \n")
+    assert cli.read_pubkey(str(source)) == SUPPLIED_PUBKEY
+    monkeypatch.setattr("sys.stdin", io.StringIO(f"{SUPPLIED_PUBKEY}\n"))
+    assert cli.read_pubkey("-") == SUPPLIED_PUBKEY
+    two = tmp_path / "two.pub"
+    two.write_text(f"{SUPPLIED_PUBKEY}\nssh-ed25519 AAAA second@host\n")
+    with pytest.raises(SystemExit, match="exactly one line"):
+        cli.read_pubkey(str(two))
+    junk = tmp_path / "junk.pub"
+    junk.write_text("lonely\n")
+    with pytest.raises(SystemExit, match="does not look like a public key"):
+        cli.read_pubkey(str(junk))
+    with pytest.raises(SystemExit, match="cannot read public key file"):
+        cli.read_pubkey(str(tmp_path / "missing.pub"))
+
+
+def test_cmd_create_pubkey_sends_the_line_and_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """--pubkey (#132): the operator's line is the ssh_pubkey sent,
+    the daemon's answer is checked against the no-escrow promise,
+    and nothing lands in the client data root — the private half
+    stays wherever the operator keeps it."""
+    client_env(monkeypatch)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    source = tmp_path / "id.pub"
+    source.write_text(f"{SUPPLIED_PUBKEY}\n")
+    seen = {}
+
+    annotated = f"{' '.join(SUPPLIED_PUBKEY.split()[:2])} msks-client:ws1"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/ssh-key"):
+            return httpx.Response(
+                200,
+                json={
+                    "workspace": "ws1",
+                    "type": "ssh-ed25519",
+                    "public_key": annotated,
+                    "private_key": None,
+                },
+            )
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(201, json={"id": "ws1", "status": "created"})
+
+    rc = cli.main(
+        ["create", "ws1", "--pubkey", str(source)],
+        transport=mock(handler),
+    )
+    assert rc == 0
+    assert seen["body"]["ssh_pubkey"] == SUPPLIED_PUBKEY
+    assert not (tmp_path / "msks" / "ws1").exists()
+    out = capsys.readouterr().out
+    assert "created ws1" in out
+    assert "client identity" not in out
 
 
 def test_cmd_create_daemon_mint_sends_no_key(

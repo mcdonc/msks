@@ -37,21 +37,22 @@ RSA_BITS = 3072
 
 
 def normalize_public_key(line: str) -> tuple[str, str]:
-    """Validate one supplied public key line (#121): ``(algo, body)``.
+    """Validate one supplied public key line: ``(algo, body)``.
 
-    The no-escrow mode sends a public half the client minted; the
-    daemon checks it the way it checks its own output — the algorithm
-    is one it mints itself (the #115 posture covers client material
-    too), and the body decodes and self-describes consistently. The
-    caller's comment is dropped: the daemon annotates provenance its
-    own way, like the minted mode.
+    A supplied line may be a key the client minted (#121) or a key
+    the operator already owns (#132) — any key type is accepted, at
+    whatever type it carries: the guest's sshd, the platform's own
+    (#115 posture), stays the authority on which keys it will
+    authenticate. The daemon checks shape only — fields, base64
+    body, and a blob whose embedded algorithm name agrees with its
+    label. The mint paths stay separate and stay limited to the
+    FIPS-approvable type set. The caller's comment is dropped: the
+    daemon annotates provenance its own way, like the minted mode.
     """
     fields = line.split()
     if len(fields) < 2:
         raise ValueError("public key line needs an algorithm and a key body")
     algo, encoded = fields[0], fields[1]
-    if algo not in KEY_TYPES.values():
-        raise ValueError(f"unsupported public key algorithm {algo!r}")
     check_key_body(algo, encoded)
     return algo, encoded
 

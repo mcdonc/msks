@@ -87,20 +87,21 @@ under the state dir and a pod name on k8s).
 Flags map onto the create request's fields (the identity flags
 below generate theirs):
 
-| Flag            | API field   | Meaning                                                                      |
-| --------------- | ----------- | ---------------------------------------------------------------------------- |
-| `--image`       | `image`     | Catalog ref: `name:version`, bare name, or hash                              |
-| `--kernel`      | `kernel`    | Explicit kernel path (skips the catalog)                                     |
-| `--initrd`      | `initrd`    | Explicit initrd path                                                         |
-| `--rootfs`      | `rootfs`    | Explicit rootfs path (skips the catalog)                                     |
-| `--cmdline`     | `cmdline`   | Explicit kernel cmdline                                                      |
-| `--cpus`        | `cpus`      | vcpus, 1–64 (daemon default: 2)                                              |
-| `--mem-mib`     | `mem_mib`   | Guest memory MiB, 64–32768 (daemon default: 1024)                            |
-| `--root-mib`    | `root_mib`  | Persistent root overlay size (daemon default)                                |
-| `--home-mib`    | `home_mib`  | Persistent /home volume size (daemon default)                                |
-| `--user-data`   | `user_data` | First-boot provisioning payload file; `-` reads stdin (#41)                  |
-| `--daemon-mint` | —           | Hand the identity to the daemon instead of the client mint (#121); see below |
-| `--key-type`    | —           | The client mint's key type: `ecdsa` (the default), `ed25519`, or `rsa`       |
+| Flag            | API field               | Meaning                                                                      |
+| --------------- | ----------------------- | ---------------------------------------------------------------------------- |
+| `--image`       | `image`                 | Catalog ref: `name:version`, bare name, or hash                              |
+| `--kernel`      | `kernel`                | Explicit kernel path (skips the catalog)                                     |
+| `--initrd`      | `initrd`                | Explicit initrd path                                                         |
+| `--rootfs`      | `rootfs`                | Explicit rootfs path (skips the catalog)                                     |
+| `--cmdline`     | `cmdline`               | Explicit kernel cmdline                                                      |
+| `--cpus`        | `cpus`                  | vcpus, 1–64 (daemon default: 2)                                              |
+| `--mem-mib`     | `mem_mib`               | Guest memory MiB, 64–32768 (daemon default: 1024)                            |
+| `--root-mib`    | `root_mib`              | Persistent root overlay size (daemon default)                                |
+| `--home-mib`    | `home_mib`              | Persistent /home volume size (daemon default)                                |
+| `--user-data`   | `user_data`             | First-boot provisioning payload file; `-` reads stdin (#41)                  |
+| `--daemon-mint` | —                       | Hand the identity to the daemon instead of the client mint (#121); see below |
+| `--pubkey`      | `ssh_pubkey` (verbatim) | Use a public key you already own as the identity (#132); `-` reads stdin     |
+| `--key-type`    | —                       | The client mint's key type: `ecdsa` (the default), `ed25519`, or `rsa`       |
 
 Only the flags you pass are sent — unset flags let the daemon apply
 its own defaults. An `--image` reference resolves against the
@@ -161,10 +162,19 @@ Losing that file loses ssh to the workspace (the console still
 opens); move it somewhere safe or keep backups. The file lives
 under the data root, not the cache, so cache sweeps leave it alone.
 A client-minted workspace answers `msks key` with its public half
-only. The key type is the client's choice (`--key-type`,
-defaulting to `ecdsa`, the same FIPS-approvable default the daemon
-mints) — the daemon accepts the types it mints itself and rejects
-any other line with a 400 at create.
+only. The key type of a _minted_ key is the machine's choice
+(`--key-type`, defaulting to `ecdsa`, the same FIPS-approvable
+default the daemon mints).
+
+`--pubkey FILE` builds the workspace around a public key you
+already own (#132): the file's one line travels to the daemon at
+any well-formed key type, the private half stays wherever you keep
+it, and nothing is written client-side. Log in with that key
+directly — `ssh -i` through a forward, or the `Host msks-*` alias
+with `IdentityFile` pointing at it; `msks ssh` on such a workspace
+exits with a line saying exactly that. The three identity modes are
+exclusive: `--pubkey` conflicts with `--daemon-mint`, and
+`--key-type` pairs with the mint alone.
 
 `--daemon-mint` hands the identity to the daemon instead
 (#111): it mints the keypair at create and stores both halves with

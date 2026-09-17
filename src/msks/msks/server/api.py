@@ -92,10 +92,11 @@ class WorkspaceCreate(BaseModel):
     # it is deleted and recreated.
     user_data: str | None = Field(default=None, max_length=USER_DATA_MAX)
     # The no-escrow identity mode (#121): a public key line the
-    # client minted. Present → the daemon stores and seeds the
+    # client minted, or one the operator already owns (#132) — any
+    # well-formed key type. Present → the daemon stores and seeds the
     # public half only — no private half ever reaches it. Absent →
     # the daemon mints both halves itself (#111).
-    ssh_pubkey: str | None = Field(default=None, max_length=4096)
+    ssh_pubkey: str | None = Field(default=None, max_length=16384)
 
 
 def bootstrap_default_image(app) -> None:
@@ -790,10 +791,12 @@ def build_api(app) -> FastAPI:
         # loop, like every other tool call the routes make.
         #
         # The no-escrow mode (#121) replaces the mint: the client
-        # minted the keypair and sent the public line; the daemon
-        # validates it, re-annotates provenance, and stores the
-        # public half only — the row's private half stays NULL and
-        # the key endpoint answers private_key: null.
+        # minted the keypair and sent the public line, or the
+        # operator supplied a key they already own (#132) — any
+        # well-formed type, sshd the authority; the daemon validates
+        # shape, re-annotates provenance, and stores the public half
+        # only — the row's private half stays NULL and the key
+        # endpoint answers private_key: null.
         private_key = None
         if body.ssh_pubkey is not None:
             try:

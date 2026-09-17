@@ -188,6 +188,7 @@ jobs:
           src/msks/tests/test_smoke.py::test_local_egress_git_out
           src/msks/tests/test_smoke.py::test_local_minted_identity
           src/msks/tests/test_smoke.py::test_local_client_minted_identity
+          src/msks/tests/test_smoke.py::test_local_operator_pubkey
           -q -p no:cacheprovider --no-cov"
 
       # The failing boot's own evidence, kept by the tests' failure

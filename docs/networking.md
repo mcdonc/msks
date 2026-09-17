@@ -407,8 +407,9 @@ the daemon stores the public line and seeds it into the guest's
 `authorized_keys` exactly as it seeds its own minted half, and its
 database never holds a private half for the workspace (the API's
 key fetch answers `private_key: null`). The daemon validates the
-supplied line the way it validates its own output — the accepted
-algorithms are the ones it mints itself — and annotates it with its
+supplied line by shape — fields, base64 body, and a blob whose
+embedded algorithm name agrees with its label, at any key type
+(#132) — and annotates it with its
 own provenance comment (`msks-client:<id>`, beside the minted
 mode's `msksd:<id>`). `--daemon-mint` opts back into the
 daemon-minted mode above; the k8s backend serves no identity in
@@ -434,6 +435,26 @@ This is the ssh half of the client-held-secrets posture: an
 appliance owner keeps every capability the console and forward
 grant, but no longer holds a private key that opens the workspace's
 ssh. The console challenge-response half is #123.
+
+### An operator-supplied key
+
+`msks create --pubkey FILE` (issue #132) builds the workspace
+around a public key the operator already owns — the key that
+`~/.ssh/id_ed25519.pub` names, a hardware token's key, any
+well-formed OpenSSH line. The supplied line travels to the daemon
+at its own key type: keys the machine mints stay limited to the
+FIPS-approvable types, while a supplied key is accepted at any type
+— the guest's sshd, the platform's own, is the authority on which
+keys it will authenticate. The daemon re-annotates the line with
+its provenance comment and seeds it like any other identity; its
+database holds the public half only.
+
+The private half never leaves the operator's custody: nothing is
+written client-side, and login uses the operator's own key — `ssh
+-i` through a forward, or the `Host msks-*` alias with `IdentityFile`
+pointing at the operator's key file (no `msks key --out` step, no
+client data root). `msks ssh` on such a workspace exits with a line
+naming that recovery instead of pointing at a file it never wrote.
 
 ### Pushing code out with your own credentials
 
