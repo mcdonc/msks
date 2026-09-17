@@ -8,24 +8,26 @@
 # VM itself is L1 on Azure metal; the workspace VM is L2, which is
 # exactly the one nesting level Azure's nested virt supports.
 #
-# This workflow owns the unprivileged boots. The root egress smokes
-# (tap/DHCP/DNS/NAT — root plus nftables and a firewall
-# precondition) live in their own workflow, smoke-egress.yml, so a
-# failure there cannot mask or re-run these and the two run in
-# parallel.
+# Two phases, serial: the unprivileged boots first (plain KVM smokes
+# on the built .guest/ assets), then the egress smokes under root —
+# they need the host's network to themselves (tap/DHCP/DNS on
+# privileged ports, nftables, and a FORWARD-handoff precondition
+# step) and run an explicit test list. The egress phase is fast now
+# that the git-out smoke's detached apt leg is deterministic (#81),
+# so one workflow carries both again — a failure anywhere reds the
+# same check, and the unprivileged pass still shows in the step log.
 #
-# What stays out everywhere: the appliance smoke test
-# (MSKSD_TEST_APPLIANCE) — its workspace boots inside the appliance
-# VM, a third level (L3) Azure does not accelerate — and the k8s
-# smoke (needs a cluster). Both remain dev-host-only, opt-in exactly
-# as before.
+# What stays out: the appliance smoke test (MSKSD_TEST_APPLIANCE) —
+# its workspace boots inside the appliance VM, a third level (L3)
+# Azure does not accelerate — and the k8s smoke (needs a cluster).
+# Both remain dev-host-only, opt-in exactly as before.
 #
 # Path-filtered to its real inputs: the guest/toolchain files (a
 # nixpkgs pin move lands through devenv.lock), everything under the
 # server package the boots exercise, and the tests themselves. That
 # is most code PRs — deliberate: this is the only real-VM coverage
-# the repo has until #9's QEMU driver, and ~5 minutes of runner time
-# is cheaper than a green-but-cannot-boot merge.
+# the repo has until #9's QEMU driver, and a few minutes of runner
+# time is cheaper than a green-but-cannot-boot merge.
 name: Smoke (KVM)
 
 on:
@@ -33,7 +35,6 @@ on:
     branches: [main]
     paths:
       - .github/workflows/smoke.yml
-      - .github/workflows/smoke-egress.yml
       - devenv.nix
       - devenv.yaml
       - devenv.lock
@@ -46,7 +47,6 @@ on:
   pull_request:
     paths:
       - .github/workflows/smoke.yml
-      - .github/workflows/smoke-egress.yml
       - devenv.nix
       - devenv.yaml
       - devenv.lock
@@ -122,6 +122,72 @@ jobs:
           devenv --quiet -O dotenv.enable:bool false shell --
           python -m pytest src/msks/tests/test_smoke.py
           -q -p no:cacheprovider --no-cov
+
+      # The egress smokes need root and the runner's FORWARD chain
+      # handed to the daemon's own nft tables. This step also guards
+      # the bare-host posture — msksd's net stack on a kernel it
+      # shares with other firewall owners — which the appliance does
+      # not exercise (msksd is the only firewall in its kernel) and
+      # which nothing ships today: retire the egress step if k8s
+      # workspace egress (#69) settles on pod networking, keep and
+      # promote it if it lands on host taps — the additive
+      # appliance-side coverage is #88. Either way the lesson it pins
+      # is the product lesson for that posture: an nft accept in the
+      # daemon's own tables cannot override a foreign base chain's
+      # drop — on a shared kernel, host firewall control must be taken
+      # explicitly, the way appliance-setup.sh takes it for the
+      # appliance bridge. Concretely here: the runner's docker leaves
+      # FORWARD policy DROP for traffic not its own, so the step
+      # prints whatever the image left behind, clears FORWARD, and
+      # hands the forward hook to the daemon's own tables — the rules
+      # the egress smokes exist to test. Without that, guest TCP out
+      # blackholes behind docker's policy while DHCP and DNS
+      # (host-terminated, input chain) pass; validated against a
+      # faithful FORWARD policy-drop simulation during #75. The
+      # runner is a per-job VM, so the flush and policy travel with it
+      # and touch no other workload.
+      - name: Egress smoke forwarding precondition
+        run: |
+          echo "::group::forward/firewall state before"
+          sysctl net.ipv4.ip_forward
+          sudo iptables -S FORWARD || true
+          sudo nft list tables || true
+          echo "::endgroup::"
+          sudo iptables -F FORWARD
+          sudo iptables -P FORWARD ACCEPT
+          sudo iptables -S FORWARD
+
+      # Root, serial, explicit: every egress smoke boots a VM through
+      # the daemon's own net stack — egress boot (DHCP, the daemon's
+      # resolver, NAT'd TCP, input-chain containment), sshd+rsync
+      # through the forward, git-out (#81: substitutes in over
+      # egress, then a push whose credential rode the forward as a
+      # forwarded agent), and the minted identity. HOME=/root because
+      # sudo -i semantics do not apply to `sudo -n env`; TMPDIR=/tmp
+      # for the AF_UNIX path-depth reason as ci.yml; the devenv PATH
+      # rides along so the tests resolve ip/nft and the scratch
+      # sshd/git the git-out smoke spawns.
+      - name: Egress smoke (root)
+        env:
+          TMPDIR: /tmp
+          MSKSD_TEST_GUEST_UP_TIMEOUT_S: "180"
+          MSKSD_TEST_CONSOLE_TIMEOUT_S: "120"
+          MSKSD_TEST_SHUTDOWN_TIMEOUT_S: "180"
+        run: >-
+          sudo apt-get update -qq && sudo apt-get install -y -qq nftables &&
+          devenv --quiet -O dotenv.enable:bool false shell -- bash -c "
+          sudo -n env MSKSD_TEST_EGRESS=1 TMPDIR=/tmp
+          MSKSD_TEST_GUEST_UP_TIMEOUT_S=180
+          MSKSD_TEST_CONSOLE_TIMEOUT_S=120
+          MSKSD_TEST_SHUTDOWN_TIMEOUT_S=180
+          MSKSD_TEST_SSH_TIMEOUT_S=120
+          MSKSD_TEST_GIT_OUT_TIMEOUT_S=900
+          PATH=\"\$PATH\" HOME=/root
+          python -m pytest src/msks/tests/test_smoke.py::test_local_egress_boot
+          src/msks/tests/test_smoke.py::test_local_sshd_and_rsync
+          src/msks/tests/test_smoke.py::test_local_egress_git_out
+          src/msks/tests/test_smoke.py::test_local_minted_identity
+          -q -p no:cacheprovider --no-cov"
 
       # The failing boot's own evidence, kept by the tests' failure
       # path (serial log, VMM log, raw vsock probe printed in the step
