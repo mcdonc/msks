@@ -2722,13 +2722,19 @@ async def test_local_egress_git_out() -> None:
         # The setup (mkdir, rm, the trail's first line) runs in the
         # FOREGROUND, gated on the BG marker: the marker proves the
         # trail file exists and is writable before anything detaches.
-        # The long legs run as one ``nohup setsid sh -c`` — SIGHUP
-        # ignored from the exec's first instruction and a fresh
-        # session with no controlling tty, so neither the login
-        # shell's exit-time job signaling (the CI failure this shape
-        # replaces: the background chain died before its first echo)
-        # nor the pty-master close can reach it. Every byte of its
-        # output — including the inner sh's own parse errors — lands
+        # The long legs run as one ``nohup setsid sh -c`` — and the
+        # job is DISOWNED before the marker is echoed. The CI failure
+        # this shape replaces: on the session close the login bash
+        # resends SIGHUP to everything in its jobs table, and on slow
+        # nested KVM the background child's exec chain (nohup, then
+        # setsid, then sh — three cold binaries) is still mid-flight
+        # with a default HUP disposition, so it died before writing a
+        # byte (run.log was never even created; only the disowned
+        # table survives that resend deterministically — the marker
+        # reaches the client strictly after the disown). Post-exec,
+        # nohup (HUP ignored) and setsid (fresh session, no ctty)
+        # carry the rest; stdin comes off the pty and every output
+        # byte — including the inner sh's own parse errors — lands
         # in run.log, which the trail probe tails. --no-install-
         # recommends keeps the download to what the legs use
         # (git-man alone is tens of MB of recommends the proof gains
@@ -2753,7 +2759,7 @@ async def test_local_egress_git_out() -> None:
             "|| { echo fail-ls-remote >>/root/.gitout/trail; exit 1; }; "
             "echo done >>/root/.gitout/trail"
             "' >>/root/.gitout/run.log 2>&1 </dev/null & } "
-            "&& echo BG-$((6*7))",
+            "&& disown && echo BG-$((6*7))",
             "BG-42",
         )
         trail_probe = (
