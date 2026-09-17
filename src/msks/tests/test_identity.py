@@ -202,6 +202,21 @@ def test_normalize_public_key_accepts_any_supplied_type() -> None:
         assert (algo, body) == (line.split()[0], line.split()[1])
 
 
+def test_normalize_public_key_rejects_a_shell_crafted_label() -> None:
+    """A label carrying shell metacharacters cannot ride the
+    annotation into the seed script's single-quoted assignment
+    (#132): the blob may embed the crafted label consistently — the
+    charset check is what refuses it, not the shape."""
+    from msks.identity import normalize_public_key
+
+    for label in ("x';poweroff;'", 'x" && rm -rf / && "', "a;b", "x$HOME"):
+        blob = base64.b64encode(
+            len(label).to_bytes(4, "big") + label.encode() + b"rest"
+        ).decode()
+        with pytest.raises(ValueError, match="not a valid name"):
+            normalize_public_key(f"{label} {blob}")
+
+
 def test_normalize_public_key_rejects_malformed_lines() -> None:
     """Each way a public line can lie: no body, a body that is not
     base64, a truncated blob, and a label that disagrees with the
