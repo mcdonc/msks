@@ -3507,7 +3507,8 @@ async def test_local_client_minted_identity() -> None:
         assert served.stdout.strip() == pub
         refused = await cli("key", wid, "--private")
         assert refused.returncode != 0
-        assert "client-minted" in refused.stderr
+        assert "holds no private half" in refused.stderr
+        assert "minted on a client" in refused.stderr
 
         # Boot, let cloud-init plant the key, and confirm the guest's
         # authorized_keys carry the client's line.
@@ -3739,7 +3740,8 @@ async def test_local_operator_pubkey() -> None:
         assert served.stdout.strip() == pub
         refused = await cli("key", wid, "--private")
         assert refused.returncode != 0
-        assert "never held its private half" in refused.stderr
+        assert "holds no private half" in refused.stderr
+        assert "supplied from a key you already own" in refused.stderr
 
         started = await cli("start", wid)
         assert started.returncode == 0, started.stderr
