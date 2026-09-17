@@ -29,6 +29,7 @@ import ssl
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from pathlib import Path
 
@@ -3893,6 +3894,45 @@ needs_l3 = pytest.mark.skipif(
 L3_RECURSION_TIMEOUT_S = float(os.environ.get("MSKSD_TEST_L3_TIMEOUT_S", "5400"))
 
 
+class L3Timeline:
+    """Per-phase wall-clock tracking for one recursion run (#82).
+
+    ``mark`` names each host-side phase as it completes; ``step``
+    records the first-seen time of every guest-side step marker (the
+    seed's state trail, the inner bring-up's log steps), so the
+    summary printed at the end — success or failure — names where the
+    minutes went. That table is the speed record the issue's evidence
+    cites and the baseline any follow-up speedup compares against.
+    """
+
+    def __init__(self) -> None:
+        self.started = time.monotonic()
+        self.marks: list[tuple[str, float]] = []
+        self.steps: dict[str, float] = {}
+
+    def mark(self, name: str) -> None:
+        at = time.monotonic() - self.started
+        self.marks.append((name, at))
+        print(f"L3 phase: {name} at +{at:.0f}s", flush=True)
+
+    def step(self, name: str) -> None:
+        if not name or "$" in name or name in self.steps:
+            return
+        self.steps[name] = time.monotonic() - self.started
+        print(f"L3 guest step: {name} at +{self.steps[name]:.0f}s", flush=True)
+
+    def summary(self) -> None:
+        print("L3 phase timeline (mark, at, since previous):", flush=True)
+        previous = 0.0
+        for name, at in self.marks:
+            print(f"  {name:<26} +{at:6.0f}s  ({at - previous:5.0f}s)", flush=True)
+            previous = at
+        if self.steps:
+            print("L3 guest steps (first seen):", flush=True)
+            for name, at in sorted(self.steps.items(), key=lambda pair: pair[1]):
+                print(f"  {name:<26} +{at:6.0f}s", flush=True)
+
+
 def l3_seed() -> str:
     """The L3 recursion bootstrap from the repo's scripts/ tree."""
     path = REPO_ROOT / "scripts" / "l3-recursion.sh"
@@ -3919,13 +3959,24 @@ PROMPT = b"root@msks-guest:~# "
 
 async def main() -> None:
     started = time.monotonic()
-    async with websockets.connect(URL, open_timeout=30, max_size=2**22) as ws:
+
+    async def collect(ws, needle: bytes) -> None:
         buf = b""
-        while PROMPT not in buf:
-            buf += await asyncio.wait_for(ws.recv(), 240)
+        while needle not in buf:
+            try:
+                chunk = await asyncio.wait_for(ws.recv(), 10)
+            except TimeoutError:
+                # A heartbeat every silent window: the outer console's
+                # stall detector (input answered by nothing) would
+                # otherwise close the session under this wait.
+                print(f"waiting {time.monotonic() - started:.0f}s", flush=True)
+                continue
+            buf += chunk if isinstance(chunk, bytes) else chunk.encode()
+
+    async with websockets.connect(URL, open_timeout=30, max_size=2**22) as ws:
+        await collect(ws, PROMPT)
         await ws.send(b"echo L3-$((6*7))-CONSOLE\\n")
-        while b"L3-42-CONSOLE" not in buf:
-            buf += await asyncio.wait_for(ws.recv(), 240)
+        await collect(ws, b"L3-42-CONSOLE")
     print(f"INNER-CONSOLE-42-OK after {time.monotonic() - started:.1f}s")
 
 
@@ -4143,6 +4194,7 @@ async def test_appliance_l3_recursion() -> None:
     token = None
     up = None
     forward_proc = None
+    timeline = L3Timeline()
     try:
         up = _devenv_processes("up", "-d")
         assert up.returncode == 0, (
@@ -4171,6 +4223,7 @@ async def test_appliance_l3_recursion() -> None:
         else:
             serial = (app_dir / "serial.log").read_text(errors="replace")[-2000:]
             raise AssertionError(f"appliance API never healthy; serial tail:\n{serial}")
+        timeline.mark("appliance-up")
 
         # The L2 workspace: egress (the bootstrap downloads over it),
         # the recursion seed, memory for a daemon beside an inner
@@ -4198,6 +4251,7 @@ async def test_appliance_l3_recursion() -> None:
             await asyncio.sleep(1.0)
         else:
             raise AssertionError(f"L2 workspace never reached running: {response.text}")
+        timeline.mark("l2-running")
 
         # Q1 evidence, live in the L2 guest: the closure's kvm trio
         # is in the shipped tree, the image's unit loaded it, and the
@@ -4217,6 +4271,7 @@ async def test_appliance_l3_recursion() -> None:
             b"Q1-42",
             300.0,
         )
+        timeline.mark("l2-console-evidence")
 
         # The bootstrap: minutes of downloads over nested-virt egress,
         # watched through the seed's own state trail (the appliance
@@ -4245,7 +4300,10 @@ async def test_appliance_l3_recursion() -> None:
             # pty noise (bracketed-paste bytes, banners) cannot
             # synthesize it, and the echoed command carries only the
             # unevaluated $((6*7)) form.
+            for step in re.findall(rb"STATE:(\S+)", body):
+                timeline.step(step.decode(errors="replace"))
             if b"BOOT-42" in body:
+                timeline.mark("l2-bootstrap-done")
                 break
             if b"no-route" in body:
                 raise AssertionError(f"the L3 seed could not find an uplink: {last!r}")
@@ -4264,6 +4322,7 @@ async def test_appliance_l3_recursion() -> None:
             b"DAEMON-42",
             120.0,
         )
+        timeline.mark("inner-daemon-up")
 
         # The archive ride: the minted key + the TCP forward + rsync
         # — the documented operator path (docs/networking.md), driven
@@ -4346,6 +4405,7 @@ async def test_appliance_l3_recursion() -> None:
         assert sync.returncode == 0, (
             f"archive rsync failed:\n{sync.stdout[-1500:]}\n{sync.stderr[-1500:]}"
         )
+        timeline.mark("archive-rsynced")
 
         # Inner bring-up, staged as base64 (one console line; #103's
         # corruption can only cost a resend) and LAUNCHED detached:
@@ -4378,7 +4438,10 @@ async def test_appliance_l3_recursion() -> None:
             )
             last = data.split(b"E-$((21*2))", 1)[-1].split(b"E-42", 1)[0].strip()
             print(f"L3 inner bring-up round: {last[-160:]!r}", flush=True)
+            for step in re.findall(rb"^(import|create|start|done-\d+)$", last, re.M):
+                timeline.step("inner:" + step.decode())
             if b"INNER-UP-42" in last:
+                timeline.mark("inner-bringup-done")
                 break
             for line in last.splitlines():
                 if line.startswith(b"done-") and line != b"done-0":
@@ -4431,6 +4494,7 @@ async def test_appliance_l3_recursion() -> None:
                 await asyncio.sleep(10.0)
                 continue
             if b"INNER-CONSOLE-42-OK" in evidence:
+                timeline.mark("inner-console-ok")
                 break
             print(f"inner probe round without marker: {evidence[-300:]!r}", flush=True)
             await asyncio.sleep(10.0)
@@ -4503,4 +4567,5 @@ async def test_appliance_l3_recursion() -> None:
         assert down.returncode == 0, (
             f"devenv processes down failed:\n{down.stdout}\n{down.stderr}"
         )
+        timeline.summary()
         scratch.cleanup()

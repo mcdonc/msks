@@ -20,7 +20,7 @@ tagged `vX.Y.Z`.
   `msks create` mints the workspace's ssh keypair on the client and
   sends the public half only: the daemon stores and seeds that half
   exactly like its own minted one and holds no private half — `msks
-  key` answers the public line, and `msks ssh` serves the private
+key` answers the public line, and `msks ssh` serves the private
   half from the client data root
   (`~/.local/share/msks/<id>/identity`, mode 0600). `--daemon-mint`
   keeps the daemon-minted escrow mode (#111; the k8s backend serves
