@@ -3212,6 +3212,9 @@ async def test_local_minted_identity() -> None:
             f"#!/bin/sh\nprintf '%s\\n' {payload_marker} > /root/payload\n",
             encoding="utf-8",
         )
+        # --no-client-mint keeps this smoke on the daemon-mint path
+        # it pins (#111): the client mint is now the create default
+        # (#121) and has its own smoke below.
         created = await cli(
             "create",
             wid,
@@ -3224,6 +3227,7 @@ async def test_local_minted_identity() -> None:
             "--egress",
             "--user-data",
             str(payload_path),
+            "--no-client-mint",
         )
         assert created.returncode == 0, created.stderr
 
