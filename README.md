@@ -420,7 +420,7 @@ rsync -e 'ssh -i ~/.cache/msks/l3.key -p 2201' -aPS \
 msks console l3   # then, inside the workspace:
 #   export MSKSC_URL=http://127.0.0.1:8660
 #   export MSKSC_TOKEN=$(cat /root/.msks-inner/token)
-#   /root/msks/.venv/bin/msks create inner1 \
+#   /root/msks/.venv/bin/msks create inner1 --cpus 1 \
 #     --kernel /root/inner-artifacts/vmlinux \
 #     --initrd /root/inner-artifacts/initrd \
 #     --rootfs /root/inner-artifacts/rootfs.ext4 \
@@ -429,8 +429,13 @@ msks console l3   # then, inside the workspace:
 #   /root/msks/.venv/bin/msks console inner1
 ```
 
-The console of the inner workspace then appears inside the console
-of the workspace: host → appliance → workspace → inner workspace.
+With `--cpus 1`, that is: the measured boundary on the reference
+host is that a 1-vCPU inner guest boots to its login prompt at two
+removes, while a 2-vCPU one hangs in early SMP bringup (the vCPU
+executes; the kernel never reaches its first serial byte — see #82's
+evidence for the full characterization). The console of the inner
+workspace then appears inside the console of the workspace:
+host → appliance → workspace → inner workspace.
 The end-to-end proof is the opt-in smoke `test_appliance_l3_recursion`
 (`MSKSD_TEST_L3=1` with the appliance built), which also pins the
 two facts the recursion rests on: Debian's generic kernel ships the

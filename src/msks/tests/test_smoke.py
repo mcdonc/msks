@@ -4022,7 +4022,11 @@ exec 9>"$MARK/lock"
 flock 9
 if [ ! -f "$MARK/created" ]; then
   echo create
-  "$MSKS" create inner1 \
+  # --cpus 1 is the measured depth-2 boundary: a 1-vCPU inner guest
+  # boots to its login prompt at two removes, while a 2-vCPU one
+  # hangs in early SMP bringup (vCPU executing, zero serial bytes —
+  # the apicv-era pathology; see the issue evidence).
+  "$MSKS" create inner1 --cpus 1 \
     --kernel /root/inner-artifacts/vmlinux \
     --initrd /root/inner-artifacts/initrd \
     --rootfs /root/inner-artifacts/rootfs.ext4 \
