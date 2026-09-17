@@ -106,7 +106,7 @@ jobs:
           set -o pipefail
           TMPDIR=/tmp devenv --quiet -O dotenv.enable:bool false shell -- \
             python -m pytest \
-            src/msks/tests/test_smoke.py::test_appliance_l3_recursion \
+            src/msks/tests/test_smoke/test_l3_recursion.py::test_appliance_l3_recursion \
             -q -rs -p no:cacheprovider --no-cov 2>&1 \
             | tee /tmp/nightly-l3-pytest.log
           ! grep -qE '^SKIPPED|no tests ran' /tmp/nightly-l3-pytest.log
