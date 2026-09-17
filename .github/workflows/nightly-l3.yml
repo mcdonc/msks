@@ -88,23 +88,30 @@ jobs:
           devenv tasks run msks:appliance-build msks:build-guest
 
       # The proving smoke, exactly the documented dev-host
-      # invocation. The test owns its per-phase budgets and the
+      # invocation, with one CI-specific guard: the test's skip
+      # guards (needs_l3) skip — not fail — when a prerequisite is
+      # missing, and a nightly that quietly skips would report
+      # green while proving nothing. -rs surfaces every skip
+      # reason, the tee keeps the timeline in the step log, and the
+      # closing grep turns any skip (or an empty collection) into a
+      # red run. The test owns its per-phase budgets and the
       # whole-sequence wall (MSKSD_TEST_L3_TIMEOUT_S); the 3600s
       # ceiling is the measured need plus margin — the phases
       # finished inside ~330s idle-host, and the budget absorbs a
-      # loaded runner's slower nested boots. The run log carries
-      # the full phase timeline and every guest step marker, so a
-      # red run is its own evidence without a dev-host rerun.
+      # loaded runner's slower nested boots.
       - name: L3 recursion smoke
         env:
           MSKSD_TEST_APPLIANCE: "1"
           MSKSD_TEST_L3: "1"
           MSKSD_TEST_L3_TIMEOUT_S: "3600"
-        run: >-
-          TMPDIR=/tmp
-          devenv --quiet -O dotenv.enable:bool false shell --
-          python -m pytest src/msks/tests/test_smoke.py::test_appliance_l3_recursion
-          -q -p no:cacheprovider --no-cov
+        run: |
+          set -o pipefail
+          TMPDIR=/tmp devenv --quiet -O dotenv.enable:bool false shell -- \
+            python -m pytest \
+            src/msks/tests/test_smoke.py::test_appliance_l3_recursion \
+            -q -rs -p no:cacheprovider --no-cov 2>&1 \
+            | tee /tmp/nightly-l3-pytest.log
+          ! grep -qE '^SKIPPED|no tests ran' /tmp/nightly-l3-pytest.log
 
       # The failure paths' own evidence (the tests' collected
       # /tmp/msks-smoke-failed/, the appliance's serial log and
