@@ -445,17 +445,18 @@ that reaches its console is running on nested-in-nested KVM,
 because cloud-hypervisor boots VMs through `/dev/kvm` and has no
 software fallback.
 
-The proving smoke runs unattended in CI once per day (#135):
-`nightly-l3.yml` schedules `test_appliance_l3_recursion` on a
+The proving smoke also runs in CI (#135):
+`nightly-l3.yml` runs `test_appliance_l3_recursion` on a
 self-hosted runner labeled `msks-l3` — the recursion needs two
 levels of nesting below the runner, one more than GitHub's hosted
-runners accelerate, so the nightly runs where that depth exists.
+runners accelerate (verified empirically: a KVM guest booted on a
+hosted runner sees no vmx), so it runs where that depth exists.
 The runner's host needs what the manual run needs (`/dev/kvm`, the
 one-time `scripts/appliance-host-setup.sh` network install, and
-nix for both asset builds); until a runner with that
-label registers, one scheduled run sits queued and rolls forward a
-night at a time (each new cron replaces the pending run) — that
-pending run is the visible signal that the proving leg is down.
+nix for both asset builds). The workflow is manual-dispatch only
+until such a runner registers — a schedule with no runner queues
+forever and signals nothing; arming the nightly is adding the
+trigger back.
 
 ### The workspace console (`msks console`) (#21)
 

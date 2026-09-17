@@ -8,14 +8,15 @@ tagged `vX.Y.Z`.
 
 ### Added
 
-- **Nightly L3 recursion smoke in CI (#135).**
-  `.github/workflows/nightly-l3.yml` schedules
-  `test_appliance_l3_recursion` once per day on a self-hosted runner
-  labeled `msks-l3` — the recursion needs two nesting levels below
-  the runner, one beyond what GitHub's hosted runners accelerate.
-  Per-PR CI stays unchanged; until such a runner registers, the
-  nightly's runs stay queued as the visible signal the proving leg
-  is down. See README's recursion section.
+- **L3 recursion smoke in CI (#135).**
+  `.github/workflows/nightly-l3.yml` runs
+  `test_appliance_l3_recursion` on a self-hosted runner labeled
+  `msks-l3` — the recursion needs two nesting levels below the
+  runner, one beyond what GitHub's hosted runners accelerate
+  (verified empirically on the live fleet). Per-PR CI stays
+  unchanged. The workflow is manual dispatch until such a runner
+  registers; arming a nightly schedule is adding the trigger back.
+  See README's recursion section.
 - **Operator-supplied ssh key at create (#132).** `msks create
 --pubkey FILE` (or `-` on stdin) builds the workspace around a
   public key the operator already owns, at any well-formed key

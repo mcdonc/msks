@@ -1,7 +1,9 @@
-# The nightly run of the L3 recursion proving smoke (#135) —
+# The L3 recursion proving smoke (#135) on demand —
 # test_appliance_l3_recursion (#82), the host -> appliance ->
 # workspace -> inner-workspace recursion, on the self-hosted
-# KVM runner.
+# KVM runner. Manual dispatch only: no schedule is armed until a
+# runner labeled msks-l3 actually registers — a scheduled run
+# with no runner would sit queued forever and signal nothing.
 #
 # Why self-hosted: the proving smoke needs two levels of nesting
 # *below* the runner (vmx in the workspace, so the inner workspace
@@ -13,39 +15,31 @@
 # runner labeled `msks-l3` (the dev host's shape: /dev/kvm, the
 # one-time `scripts/appliance-host-setup.sh` network install, and
 # nix for both asset builds — README "Appliance" section documents
-# the pieces). Until such a runner registers, one
-# scheduled run sits queued and rolls forward a night at a time
-# (each new cron replaces the pending run): that pending run is
-# the visible signal that the proving leg is down, and
-# `workflow_dispatch` validates the setup the day a runner
-# registers.
+# the pieces). No `msks-l3` runner is registered yet, so this
+# workflow carries no `schedule:`. Re-arm the nightly by adding
+# the trigger back once the runner is live and `workflow_dispatch`
+# has validated one clean end-to-end run.
 #
-# Frequency, not per-PR: the sequence costs tens of minutes on a
-# warm cache (its phase timeline is narrated in the run log — #82's
-# evidence holds the reference numbers), needs the runner's network
-# to itself (the appliance claims the msksbr0 bridge), and touches
+# Not per-PR: the sequence costs tens of minutes on a warm cache
+# (its phase timeline is narrated in the run log — #82's evidence
+# holds the reference numbers), needs the runner's network to
+# itself (the appliance claims the msksbr0 bridge), and touches
 # state (a built .guest/ and .appliance/) that per-PR runs would
-# fight over. A nightly cadence bounds the recursion's silent-rot
-# window to a day at a fraction of the per-PR cost. Failed
-# scheduled runs notify repo watchers by GitHub's default email —
-# red is the alarm; the timeline in the log is the triage.
-name: Nightly L3 recursion smoke
+# fight over. When the schedule returns, its cadence bounds the
+# recursion's silent-rot window to a day; a red run is the alarm,
+# and the timeline in its log is the triage.
+name: L3 recursion smoke (self-hosted)
 
 on:
-  schedule:
-    # 03:17 UTC — off the whole-hour cron rush, and the small
-    # hours local for the runner's host so the network takeover
-    # meets nothing else running.
-    - cron: "17 3 * * *"
   workflow_dispatch: {}
 
 permissions:
   contents: read
 
 concurrency:
-  # A dispatch may cancel a scheduled run in flight; the proving
-  # smoke is serial and exclusive either way.
-  group: nightly-l3
+  # The proving smoke is serial and exclusive: the appliance claims
+  # the runner's network and state.
+  group: l3-recursion
   cancel-in-progress: true
 
 jobs:

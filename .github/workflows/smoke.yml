@@ -24,9 +24,10 @@
 # additionally gated on MSKSD_TEST_APPLIANCE; #82 — its inner
 # workspace boots nested-in-nested under the appliance, hours on a
 # runner), and the k8s smoke (needs a cluster). The L3 recursion
-# smoke does run in CI on a nightly cadence — on a self-hosted
-# runner where the depth exists (nightly-l3.yml, #135); this
-# workflow's hosted-runner legs never touch it.
+# smoke has its own workflow (nightly-l3.yml, #135) for a
+# self-hosted runner where the depth exists — manual dispatch
+# until one registers; this workflow's hosted-runner legs never
+# touch it.
 #
 # Path-filtered to its real inputs: the guest/toolchain files (a
 # nixpkgs pin move lands through devenv.lock), everything under the
