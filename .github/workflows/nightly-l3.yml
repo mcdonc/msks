@@ -13,10 +13,12 @@
 # runner labeled `msks-l3` (the dev host's shape: /dev/kvm, the
 # one-time `scripts/appliance-host-setup.sh` network install, and
 # podman for the appliance image build — README "Appliance" section
-# documents the pieces). Until such a runner registers, the
-# scheduled runs sit queued: the pending run is the visible signal
-# that the proving leg is down, and `workflow_dispatch` validates
-# the setup the day the runner registers.
+# documents the pieces). Until such a runner registers, one
+# scheduled run sits queued and rolls forward a night at a time
+# (each new cron replaces the pending run): that pending run is
+# the visible signal that the proving leg is down, and
+# `workflow_dispatch` validates the setup the day a runner
+# registers.
 #
 # Frequency, not per-PR: the sequence costs tens of minutes on a
 # warm cache (its phase timeline is narrated in the run log — #82's
@@ -49,13 +51,11 @@ concurrency:
 jobs:
   l3-recursion:
     runs-on: [self-hosted, msks-l3]
-    timeout-minutes: 120
+    timeout-minutes: 150
     steps:
       # The runner service's PATH is minimal; the devenv (and git,
       # for the checkout) live in the runner user's nix profile.
       # Preceding checkout: the checkout step needs that PATH too.
-      # A missing devenv reds the prerequisite check below with the
-      # named gap instead of a bare command-not-found.
       - name: Put the nix profile on PATH
         run: echo "$HOME/.nix-profile/bin" >> "$GITHUB_PATH"
 
@@ -66,9 +66,14 @@ jobs:
       # the test itself resolves them, not by the runner's ambient
       # PATH luck.
       # Fail on the first missing piece, named — no accumulation,
-      # no shell variables inside the single-quoted script.
+      # no shell variables inside the single-quoted script. The
+      # devenv check stays OUTSIDE the devenv wrapper: a missing
+      # devenv names itself here rather than dying as a bare
+      # command-not-found under the wrapper.
       - name: Check prerequisites
         run: |
+          command -v devenv >/dev/null \
+            || { echo "devenv not on PATH (~/.nix-profile/bin)"; exit 1; }
           devenv --quiet -O dotenv.enable:bool false shell -- bash -c '
           command -v ssh >/dev/null || { echo "ssh not on PATH (the recursion rsync leg)"; exit 1; }
           command -v rsync >/dev/null || { echo "rsync not on PATH (the recursion rsync leg)"; exit 1; }
@@ -95,15 +100,14 @@ jobs:
       # reason, the tee keeps the timeline in the step log, and the
       # closing grep turns any skip (or an empty collection) into a
       # red run. The test owns its per-phase budgets and the
-      # whole-sequence wall (MSKSD_TEST_L3_TIMEOUT_S); the 3600s
-      # ceiling is the measured need plus margin — the phases
-      # finished inside ~330s idle-host, and the budget absorbs a
-      # loaded runner's slower nested boots.
+      # whole-sequence wall (its own 5400s default — the phases
+      # finished inside ~330s idle-host; the budget absorbs a
+      # loaded runner's slower nested boots, and the job wall
+      # leaves room for it beside the build).
       - name: L3 recursion smoke
         env:
           MSKSD_TEST_APPLIANCE: "1"
           MSKSD_TEST_L3: "1"
-          MSKSD_TEST_L3_TIMEOUT_S: "3600"
         run: |
           set -o pipefail
           TMPDIR=/tmp devenv --quiet -O dotenv.enable:bool false shell -- \
@@ -113,22 +117,48 @@ jobs:
             | tee /tmp/nightly-l3-pytest.log
           ! grep -qE '^SKIPPED|no tests ran' /tmp/nightly-l3-pytest.log
 
-      # The failure paths' own evidence (the tests' collected
-      # /tmp/msks-smoke-failed/, the appliance's serial log and
-      # run log from .appliance/). The self-hosted workspace
-      # persists, but the artifact makes the red run legible from
-      # the run page itself. Runs on cancellation too — the
-      # sequence is long enough that the job wall can cut it
-      # mid-probe, and that cut is exactly when the evidence
-      # matters.
+      # The failure paths' own evidence: the appliance's three logs
+      # (serial, VMM, virtiofsd — scripts/appliance-run.sh's
+      # outputs). The L3 test narrates its phases to the step log
+      # rather than collecting to /tmp/msks-smoke-failed/ (that
+      # path belongs to the L1/L2 smokes' collector). The
+      # self-hosted workspace persists, but the artifact makes the
+      # red run legible from the run page itself. Runs on
+      # cancellation too — the sequence is long enough that the job
+      # wall can cut it mid-probe, and that cut is exactly when the
+      # evidence matters.
       - name: Collect smoke state on failure
         if: failure() || cancelled()
         uses: actions/upload-artifact@v4
         with:
           name: nightly-l3-failure-evidence
           path: |
-            /tmp/msks-smoke-failed/
             .appliance/serial.log
-            .appliance/run.log
+            .appliance/cloud-hypervisor.log
+            .appliance/virtiofsd.log
           if-no-files-found: ignore
           retention-days: 14
+
+      # Orphan recovery, after the evidence upload so it never
+      # destroys the logs it guards. The test starts the appliance
+      # through the detached devenv supervisor; a cancelled or
+      # wall-cut run never reaches the test's teardown, and the
+      # orphan VMM keeps the bridge tap, the guest IP, and its
+      # memory — poisoning every later night (the next run's
+      # checkout cleans .appliance/ including api.sock, so the
+      # test's stomp guard sees nothing while the VMM still
+      # answers). This is the recovery the repo documents for
+      # exactly that shape: graceful down first, then the named
+      # pkill patterns, then the stale sockets. always() — a green
+      # run's down is the clean no-op the supervisor contract
+      # promises.
+      - name: Ensure appliance is down
+        if: always()
+        run: |
+          devenv --quiet -O dotenv.enable:bool false shell -- bash -c '
+          devenv processes down || true
+          pkill -f "cloud-hypervisor --api-socket.*.appliance/api.sock" || true
+          pkill -f "virtiofsd --socket-path.*.appliance" || true
+          rm -f .appliance/api.sock .appliance/vsock.sock
+          echo "appliance teardown: clean"
+          '
