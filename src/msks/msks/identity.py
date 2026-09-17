@@ -17,6 +17,7 @@ validated here.
 
 import base64
 import binascii
+import re
 import secrets
 
 from cryptography.hazmat.primitives import serialization
@@ -36,22 +37,37 @@ KEY_TYPES = {
 RSA_BITS = 3072
 
 
-def normalize_public_key(line: str) -> tuple[str, str]:
-    """Validate one supplied public key line (#121): ``(algo, body)``.
+#: The label charset of an algorithm name: OpenSSH's key types are
+#: lowercase token shapes (`ssh-rsa`, `ecdsa-sha2-nistp256`,
+#: `sk-ssh-ed25519@openssh.com`, `*-cert-v01@openssh.com`) — letters,
+#: digits, dash, dot, at. The charset is not an algorithm policy
+#: (any *shape-valid* type passes, #132); it is the guard that keeps
+#: the interpolated label inside `seed_script`'s single-quoted
+#: assignment — a quote or metacharacter in the label would close
+#: the string and run as shell code in the guest's first boot.
+LABEL_PATTERN = re.compile(r"[a-z0-9@.\-]+")
 
-    The no-escrow mode sends a public half the client minted; the
-    daemon checks it the way it checks its own output — the algorithm
-    is one it mints itself (the #115 posture covers client material
-    too), and the body decodes and self-describes consistently. The
-    caller's comment is dropped: the daemon annotates provenance its
-    own way, like the minted mode.
+
+def normalize_public_key(line: str) -> tuple[str, str]:
+    """Validate one supplied public key line: ``(algo, body)``.
+
+    A supplied line may be a key the client minted (#121) or a key
+    the operator already owns (#132) — any key type is accepted, at
+    whatever type it carries: the guest's sshd, the platform's own
+    (#115 posture), stays the authority on which keys it will
+    authenticate. The daemon checks shape only — the label matches
+    the algorithm-name charset, the body is base64, and the blob's
+    embedded algorithm name agrees with its label. The mint paths
+    stay separate and stay limited to the FIPS-approvable type set.
+    The caller's comment is dropped: the daemon annotates provenance
+    its own way, like the minted mode.
     """
     fields = line.split()
     if len(fields) < 2:
         raise ValueError("public key line needs an algorithm and a key body")
     algo, encoded = fields[0], fields[1]
-    if algo not in KEY_TYPES.values():
-        raise ValueError(f"unsupported public key algorithm {algo!r}")
+    if LABEL_PATTERN.fullmatch(algo) is None:
+        raise ValueError(f"public key algorithm {algo!r} is not a valid name")
     check_key_body(algo, encoded)
     return algo, encoded
 

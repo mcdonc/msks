@@ -162,32 +162,99 @@ def test_normalize_public_key_round_trips_every_minted_type() -> None:
         assert normalize_public_key(public) == (algo, body)
 
 
+def test_normalize_public_key_accepts_any_supplied_type() -> None:
+    """A supplied line passes shape validation at any key type
+    (#132): the types the daemon mints, a non-default RSA size,
+    another ECDSA curve, and hardware/certificate labels — the
+    guest's sshd stays the authority on what it authenticates."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec, rsa
+    from msks.identity import normalize_public_key
+
+    lines = [mint(key_type)[1] for key_type in KEY_TYPES]
+    lines.append(
+        rsa.generate_private_key(public_exponent=65537, key_size=4096)
+        .public_key()
+        .public_bytes(
+            encoding=serialization.Encoding.OpenSSH,
+            format=serialization.PublicFormat.OpenSSH,
+        )
+        .decode()
+    )
+    lines.append(
+        ec.generate_private_key(ec.SECP384R1())
+        .public_key()
+        .public_bytes(
+            encoding=serialization.Encoding.OpenSSH,
+            format=serialization.PublicFormat.OpenSSH,
+        )
+        .decode()
+    )
+    # A hardware-key label the daemon cannot mint: structurally the
+    # same wire shape, synthesized (embedded name matches label).
+    sk = "sk-ssh-ed25519@openssh.com"
+    lines.append(
+        f"{sk} "
+        + base64.b64encode(len(sk).to_bytes(4, "big") + sk.encode() + b"rest").decode()
+    )
+    for line in lines:
+        algo, body = normalize_public_key(f"{line} operator@laptop")
+        assert (algo, body) == (line.split()[0], line.split()[1])
+
+
+def test_normalize_public_key_rejects_a_shell_crafted_label() -> None:
+    """A label carrying shell metacharacters cannot ride the
+    annotation into the seed script's single-quoted assignment
+    (#132): the blob may embed the crafted label consistently — the
+    charset check is what refuses it, not the shape."""
+    from msks.identity import normalize_public_key
+
+    for label in (
+        "x';poweroff;'",
+        'x" && rm -rf / && "',
+        "a;b",
+        "x$HOME",
+        "a%b",
+        "SSH-RSA",
+        "café",
+    ):
+        blob = base64.b64encode(
+            len(label).to_bytes(4, "big") + label.encode() + b"rest"
+        ).decode()
+        with pytest.raises(ValueError, match="not a valid name"):
+            normalize_public_key(f"{label} {blob}")
+
+
 def test_normalize_public_key_rejects_malformed_lines() -> None:
-    """Each way a public line can lie: no body, an algorithm the
-    daemon does not mint, a body that is not base64, a truncated
-    blob, and a label that disagrees with the body it carries."""
+    """Each way a public line can lie: no body, a body that is not
+    base64, a truncated blob, and a label that disagrees with the
+    body it carries — at any type, the label/body agreement is the
+    one check that pins the line to its own material."""
     from msks.identity import normalize_public_key
 
     _private, ecdsa = mint("ecdsa")
     _private, ed25519 = mint("ed25519")
-    ecdsa_body = ecdsa.split()[1]
     # A blob whose embedded length runs past its own end: decodes
     # fine, claims more than it carries.
     oversized = base64.b64encode(b"\x00\x00\x00\x10AB").decode()
+    dss = "ssh-dss"
+    dss_mislabeled = base64.b64encode(
+        len(dss).to_bytes(4, "big") + dss.encode() + b"rest"
+    ).decode()
     bad_lines = [
         "lonely-label",
-        f"ssh-dss {ecdsa_body}",
         "ecdsa-sha2-nistp256 !!not-base64!!",
         "ecdsa-sha2-nistp256 QUJD",
         f"ecdsa-sha2-nistp256 {oversized}",
         f"ecdsa-sha2-nistp256 {ed25519.split()[1]}",
+        f"ssh-rsa {dss_mislabeled}",
     ]
     details = [
         "needs an algorithm",
-        "unsupported public key algorithm",
         "not valid base64",
         "truncated",
         "truncated",
+        "does not match its key body",
         "does not match its key body",
     ]
     for line, detail in zip(bad_lines, details, strict=True):

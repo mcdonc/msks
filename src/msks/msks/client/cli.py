@@ -65,21 +65,35 @@ def cmd_ls(as_json: bool = False, transport=None) -> int:
 
 
 def cmd_create(
-    body: dict, start: bool = False, transport=None, key_type: str | None = None
+    body: dict,
+    start: bool = False,
+    transport=None,
+    key_type: str | None = None,
+    pubkey: str | None = None,
 ) -> int:
     """``msks create``: one workspace, optionally booted.
 
     ``key_type`` names the client-mint mode (#121): minted locally,
-    public half sent, private half kept.
+    public half sent, private half kept. ``pubkey`` is an
+    operator-supplied public line (#132): sent as-is, no private
+    half anywhere msks manages.
     """
     asyncio.run(
-        create_workspace(env_url(), env_token(), body, start, transport, key_type)
+        create_workspace(
+            env_url(), env_token(), body, start, transport, key_type, pubkey
+        )
     )
     return 0
 
 
 async def create_workspace(
-    url, token, body, start, transport, key_type: str | None = None
+    url,
+    token,
+    body,
+    start,
+    transport,
+    key_type: str | None = None,
+    pubkey: str | None = None,
 ) -> dict:
     """POST the workspace, print its id, then boot it when asked.
 
@@ -88,18 +102,18 @@ async def create_workspace(
     In the client-mint mode (#121) the keypair is minted here — the
     private half never crosses the wire — and is persisted (mode
     0600, client data root) only after the create succeeded, so a
-    refused create leaves no orphaned key behind.
+    refused create leaves no orphaned key behind. With an
+    operator-supplied key (#132) only the public line travels and
+    nothing is written client-side: the private half stays wherever
+    the operator keeps it.
     """
-    private_pem = None
-    public = None
-    if key_type is not None:
-        private_pem, public = await asyncio.to_thread(mint, key_type)
-        body["ssh_pubkey"] = public
+    private_pem, public = await identity_material(body, key_type, pubkey)
     async with api_client(url, token, transport) as client:
         row = await request(client, "POST", "/api/v1/workspaces", json_body=body)
         print(f"created {row['id']}")
-        if private_pem is not None:
+        if public is not None:
             await verify_no_escrow(client, row["id"], public)
+        if private_pem is not None:
             path = write_client_identity(row["id"], private_pem)
             print(f"client identity (mode 0600): {path}")
         if not start:
@@ -116,6 +130,26 @@ async def create_workspace(
         return row
 
 
+async def identity_material(
+    body: dict, key_type: str | None, pubkey: str | None
+) -> tuple[str | None, str | None]:
+    """Prepare the create's identity: ``(private_pem, public_line)``.
+
+    The mint produces both halves; an operator-supplied line is the
+    public half alone. Either way the public line rides the body as
+    ``ssh_pubkey``; a daemon-mint create supplies neither and keeps
+    the body free of key material.
+    """
+    if key_type is not None:
+        private_pem, public = await asyncio.to_thread(mint, key_type)
+    elif pubkey is None:
+        return None, None
+    else:
+        private_pem, public = None, pubkey
+    body["ssh_pubkey"] = public
+    return private_pem, public
+
+
 async def verify_no_escrow(client, workspace_id: str, public: str) -> None:
     """Confirm the daemon kept the no-escrow promise (#121).
 
@@ -124,16 +158,16 @@ async def verify_no_escrow(client, workspace_id: str, public: str) -> None:
     its own pair — the create reports success while the daemon
     escrows a private half the operator was told does not exist.
     The key fetch answers for it: the served public line must carry
-    the client's key material and the private half must be null.
+    the supplied key material and the private half must be null.
     """
     key = await request(client, "GET", f"/api/v1/workspaces/{workspace_id}/ssh-key")
     served = key.get("public_key", "").split()[:2]
-    if key.get("private_key") is not None or served != public.split():
+    if key.get("private_key") is not None or served != public.split()[:2]:
         raise SystemExit(
             f"msks: {workspace_id} was created, but the daemon did not "
             "keep the no-escrow promise: it holds its own minted "
             "identity for the workspace (a daemon older than this "
-            "client's client mint support). The daemon's version of "
+            "client's supplied-key support). The daemon's version of "
             "msks must be updated before creating without "
             "--daemon-mint; remove the escrowed workspace with: "
             f"msks rm {workspace_id}"
@@ -254,15 +288,16 @@ def write_private_key(key: dict, out: str) -> None:
 
 
 def require_daemon_half(key: dict, workspace_id: str) -> None:
-    """Refuse the private forms for a client-minted workspace (#121):
-    the daemon never held that half, so the error names where it
-    lives instead of printing nothing."""
+    """Refuse the private forms for a workspace whose private half
+    the daemon never held (#121, #132): the error names the two
+    places that half can be instead of printing nothing."""
     if key["private_key"] is None:
         raise SystemExit(
-            f"msks key: {workspace_id} carries a client-minted identity — "
-            "the daemon never held its private half. It lives on the "
-            "client that created the workspace, under the client data "
-            f"root ({data_dir() / workspace_id / 'identity'})"
+            f"msks key: the daemon holds no private half for {workspace_id}. "
+            "The workspace's key was minted on a client (its private half "
+            f"lives at {data_dir() / workspace_id / 'identity'} on that "
+            "machine), or supplied from a key you already own — use that "
+            "key directly"
         )
 
 
@@ -709,6 +744,14 @@ def build_parser() -> argparse.ArgumentParser:
         "needs this flag",
     )
     create.add_argument(
+        "--pubkey",
+        metavar="FILE",
+        help="use a public key you already own as the workspace's ssh "
+        "identity (#132): the file's one line travels to the daemon, "
+        "any well-formed key type, and the private half stays wherever "
+        "you keep it (nothing is written client-side). - reads stdin",
+    )
+    create.add_argument(
         "--key-type",
         choices=sorted(KEY_TYPES),
         help="the client mint's key type (default ecdsa, the same "
@@ -836,36 +879,109 @@ def main(argv: list[str] | None = None, transport=None) -> int:
         raise SystemExit(130) from None
 
 
-def client_mint_key_type(args: argparse.Namespace) -> str | None:
-    """The client mint's key type, or None for ``--daemon-mint``.
+def create_identity(args: argparse.Namespace) -> tuple[str | None, str | None]:
+    """The create's identity mode: ``(mint key type, supplied line)``.
 
-    The client mint is the create default (#121): absent flags mint
-    locally (ecdsa, the same FIPS-approvable default the daemon
-    mints). ``--daemon-mint`` hands the identity to the daemon
-    (escrow on the local backend; the k8s backend serves no identity
-    either way), and ``--key-type`` names a type for the client mint
-    alone — paired with ``--daemon-mint`` it would look like it did
-    something, so it is rejected with the pairing named.
+    The client mint is the default (#121): absent flags mint locally
+    (ecdsa, the same FIPS-approvable default the daemon mints).
+    ``--daemon-mint`` hands the identity to the daemon (escrow on the
+    local backend; the k8s backend serves no identity either way).
+    ``--pubkey`` supplies an operator key (#132) — any well-formed
+    type, no mint, nothing written client-side. The three modes are
+    exclusive (:func:`check_identity_conflicts` names the pairings).
     """
+    check_identity_conflicts(args)
     if args.daemon_mint:
-        if args.key_type is not None:
-            raise SystemExit(
-                "msks: --key-type needs the client mint (drop --daemon-mint)"
-            )
-        return None
-    return args.key_type or "ecdsa"
+        return None, None
+    if args.pubkey is not None:
+        return None, read_pubkey(args.pubkey)
+    return args.key_type or "ecdsa", None
+
+
+#: The identity-mode flag conflicts, as message → attribute names:
+#: each pairing would look meaningful but is not, so it is rejected
+#: with the conflict named.
+IDENTITY_CONFLICTS = (
+    ("--key-type conflicts with --daemon-mint", ("key_type", "daemon_mint")),
+    ("--pubkey conflicts with --daemon-mint", ("pubkey", "daemon_mint")),
+    (
+        "--key-type needs the client mint (--pubkey carries its own key)",
+        ("key_type", "pubkey"),
+    ),
+)
+
+
+def flag_set(args: argparse.Namespace, name: str) -> bool:
+    """Whether a flag was supplied — a store_true flag by truth, a
+    value flag by presence (an explicit empty value counts, so
+    ``--pubkey ""`` still conflicts rather than slipping past)."""
+    value = getattr(args, name)
+    return bool(value) if name == "daemon_mint" else value is not None
+
+
+def check_identity_conflicts(args: argparse.Namespace) -> None:
+    """Reject the flag pairings that would look meaningful but are
+    not, with the conflict named."""
+    for message, flags in IDENTITY_CONFLICTS:
+        if all(flag_set(args, flag) for flag in flags):
+            raise SystemExit(f"msks: {message}")
+
+
+def read_pubkey(path: str) -> str:
+    """One public key line from a file (or stdin with ``-``), checked
+    lightly here so a typo fails before any network roundtrip — the
+    daemon's shape validation is the authority."""
+    return checked_pubkey_line(pubkey_text(path))
+
+
+def pubkey_text(path: str) -> str:
+    """The file's (or stdin's) raw text, with a one-line read error."""
+    try:
+        if path == "-":
+            return sys.stdin.read()
+        return Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise SystemExit(f"msks: cannot read public key file {path}: {exc}") from exc
+
+
+def checked_pubkey_line(text: str) -> str:
+    """Exactly one public key line, stripped — a .pub file's shape."""
+    lines = [line for line in text.splitlines() if line.strip()]
+    if len(lines) != 1:
+        raise SystemExit(
+            f"msks: the public key file must carry exactly one line "
+            f"(found {len(lines)})"
+        )
+    line = lines[0].strip()
+    if len(line.split()) < 2:
+        raise SystemExit("msks: that line does not look like a public key")
+    return line
+
+
+def run_create(args: argparse.Namespace, transport) -> int:
+    """Resolve the identity mode once — the resolver may read stdin
+    (``--pubkey -``) or reject a flag pairing, so it runs a single
+    time — then create."""
+    if args.pubkey == "-" and args.user_data == "-":
+        raise SystemExit(
+            "msks: --pubkey - and --user-data - both read stdin; "
+            "pass one of them by file"
+        )
+    key_type, pubkey = create_identity(args)
+    return cmd_create(
+        create_body(args),
+        args.start,
+        transport=transport,
+        key_type=key_type,
+        pubkey=pubkey,
+    )
 
 
 def command_table(args: argparse.Namespace, transport) -> dict:
     """One entry per subcommand: its zero-argument body."""
     return {
         "ls": lambda: cmd_ls(args.json, transport=transport),
-        "create": lambda: cmd_create(
-            create_body(args),
-            args.start,
-            transport=transport,
-            key_type=client_mint_key_type(args),
-        ),
+        "create": lambda: run_create(args, transport),
         "start": lambda: cmd_start(args.workspace_id, transport=transport),
         "stop": lambda: cmd_stop(args.workspace_id, transport=transport),
         "rm": lambda: cmd_rm(args.workspace_ids, transport=transport),

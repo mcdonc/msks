@@ -3507,7 +3507,8 @@ async def test_local_client_minted_identity() -> None:
         assert served.stdout.strip() == pub
         refused = await cli("key", wid, "--private")
         assert refused.returncode != 0
-        assert "client-minted" in refused.stderr
+        assert "holds no private half" in refused.stderr
+        assert "minted on a client" in refused.stderr
 
         # Boot, let cloud-init plant the key, and confirm the guest's
         # authorized_keys carry the client's line.
@@ -3573,6 +3574,270 @@ async def test_local_client_minted_identity() -> None:
             await microvm.kill(wid)
         raise
     finally:
+        if api_task is not None:
+            api_server.should_exit = True
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(asyncio.shield(api_task), timeout=10)
+        with contextlib.suppress(Exception):
+            await microvm.cleanup(wid)
+        with contextlib.suppress(OSError):
+            forwarding.write_text(forwarding_was)
+        shutil.rmtree(state_dir, ignore_errors=True)
+
+
+@needs_egress
+@needs_local
+@needs_ssh_tools
+async def test_local_operator_pubkey() -> None:
+    """An operator-supplied key end to end (#132): the workspace is
+    created around a public key the operator already owns — here a
+    real ssh-keygen pair — at any well-formed type, the daemon's row
+    holds no private half, nothing is written client-side, and the
+    guest accepts ssh with that key alone. ``msks ssh`` cannot serve
+    a half it never had: its recovery names the operator's key.
+    """
+    nft_tool = os.environ.get("MSKSD_TEST_NFT") or shutil.which("nft") or "nft"
+    ip_tool = os.environ.get("MSKSD_TEST_IP") or shutil.which("ip") or "ip"
+    state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
+    token = f"smoke-token-{uuid.uuid4().hex}"
+    api_port = free_port()
+    settings = Settings(
+        vmm=VmmSettings(state_dir=state_dir),
+        net=NetSettings(
+            enabled=True,
+            uplink=_default_route_iface(),
+            ip_tool=ip_tool,
+            nft_tool=nft_tool,
+        ),
+        server=ServerSettings(
+            host="127.0.0.1",
+            port=api_port,
+            db_path=state_dir / "smoke.db",
+            bootstrap_token=token,
+        ),
+    )
+    app = build_app(settings)
+    microvm = app.state.microvm
+    wid = f"opkey-{uuid.uuid4().hex[:8]}"
+    serial_log = state_dir / "vms" / wid / "serial.log"
+    workdir = state_dir / "opkey-work"
+    workdir.mkdir(parents=True)
+    data = workdir / "data"
+
+    forwarding = Path("/proc/sys/net/ipv4/ip_forward")
+    forwarding_was = forwarding.read_text()
+    forwarding.write_text("1")
+
+    api_server = None
+    api_task = None
+    forwards: list[subprocess.Popen] = []
+    forward_logs: list[Path] = []
+
+    cli_env = dict(
+        os.environ,
+        MSKSC_URL=f"http://127.0.0.1:{api_port}",
+        MSKSC_TOKEN=token,
+        XDG_DATA_HOME=str(data),
+        XDG_CACHE_HOME=str(workdir / "cache"),
+    )
+
+    # The operator's own key, the way operators make them.
+    key_path = workdir / "operator_key"
+    keygen = await asyncio.to_thread(
+        subprocess.run,
+        [SSH_KEYGEN_BIN, "-q", "-t", "ed25519", "-N", "", "-f", str(key_path)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert keygen.returncode == 0, keygen.stderr
+    pub_file = Path(f"{key_path}.pub")
+    supplied = pub_file.read_text().strip()
+
+    async def cli(*args: str, timeout: float = 120.0) -> subprocess.CompletedProcess:
+        return await asyncio.to_thread(
+            subprocess.run,
+            [sys.executable, "-m", "msks.client.cli", *args],
+            env=cli_env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+
+    def row_halves() -> tuple[str | None, str | None]:
+        import sqlite3
+
+        with sqlite3.connect(settings.server.db_path) as conn:
+            return conn.execute(
+                "select ssh_privkey, ssh_pubkey from workspaces where id = ?", (wid,)
+            ).fetchone()
+
+    def forward_evidence() -> str:
+        return "\n".join(
+            f"--- {log.name} ---\n{log.read_text(errors='replace')[-800:]}"
+            for log in forward_logs
+            if log.exists()
+        )
+
+    ssh_opts = [
+        "-F",
+        os.devnull,
+        "-i",
+        str(key_path),
+        "-o",
+        "IdentitiesOnly=yes",
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+        "-o",
+        f"UserKnownHostsFile={workdir / 'known_hosts'}",
+        "-o",
+        "ConnectTimeout=15",
+        "-o",
+        "BatchMode=yes",
+    ]
+
+    try:
+        api_server = uvicorn.Server(
+            uvicorn.Config(
+                build_api(app),
+                host="127.0.0.1",
+                port=api_port,
+                log_level="warning",
+            )
+        )
+        api_task = asyncio.create_task(api_server.serve())
+        deadline = asyncio.get_running_loop().time() + 30
+        while not api_server.started:
+            if asyncio.get_running_loop().time() > deadline:
+                raise AssertionError("the test API server never started (30s)")
+            await asyncio.sleep(0.05)
+
+        created = await cli(
+            "create",
+            wid,
+            "--kernel",
+            VMLINUX,
+            *(["--initrd", INITRD] if INITRD else []),
+            "--rootfs",
+            ROOTFS,
+            *(["--cmdline", CMDLINE] if CMDLINE else []),
+            "--egress",
+            "--pubkey",
+            str(pub_file),
+        )
+        assert created.returncode == 0, created.stderr
+        # Nothing was written client-side: the private half stays
+        # wherever the operator keeps it (here, the workdir).
+        assert not (data / "msks" / wid).exists()
+
+        priv, pub = row_halves()
+        assert priv is None
+        assert pub is not None and pub.endswith(f"msks-client:{wid}")
+        assert pub.split()[:2] == supplied.split()[:2]
+
+        served = await cli("key", wid)
+        assert served.returncode == 0, served.stderr
+        assert served.stdout.strip() == pub
+        refused = await cli("key", wid, "--private")
+        assert refused.returncode != 0
+        assert "holds no private half" in refused.stderr
+        assert "supplied from a key you already own" in refused.stderr
+
+        started = await cli("start", wid)
+        assert started.returncode == 0, started.stderr
+        await await_guest_up(serial_log)
+        await run_in_console(microvm, wid, "cloud-init status --wait", "done")
+        await run_in_console(
+            microvm,
+            wid,
+            "i=0; while [ $i -lt 30 ] "
+            "&& ! { systemctl is-active msks-wait-address >/dev/null 2>&1 "
+            "&& systemctl is-active ssh >/dev/null 2>&1; }; "
+            "do sleep 1; i=$((i+1)); done; "
+            "systemctl is-active msks-wait-address >/dev/null 2>&1 "
+            "&& systemctl is-active ssh >/dev/null 2>&1 && echo U-$((6*7))",
+            "U-42",
+        )
+        await run_in_console(
+            microvm,
+            wid,
+            f"grep -qxF '{pub}' /root/.ssh/authorized_keys "
+            f"&& grep -qxF '{pub}' /home/msks/.ssh/authorized_keys "
+            f"&& echo AK-$((6*7))",
+            "AK-42",
+        )
+
+        forward_port = free_port()
+        log = workdir / "forward.log"
+        forward_logs.append(log)
+        forwards.append(
+            subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "msks.client.cli",
+                    "forward",
+                    wid,
+                    "22",
+                    "--local",
+                    str(forward_port),
+                ],
+                env=cli_env,
+                stdout=subprocess.DEVNULL,
+                stderr=open(log, "ab"),
+            )
+        )
+        needle = f"msks: 127.0.0.1:{forward_port} -> "
+        deadline = asyncio.get_running_loop().time() + 30
+        while asyncio.get_running_loop().time() < deadline:
+            if log.exists() and needle in log.read_text(errors="replace"):
+                break
+            await asyncio.sleep(0.05)
+        else:
+            raise AssertionError(
+                f"msks forward never listened within 30s; logs:\n{forward_evidence()}"
+            )
+
+        login = await asyncio.to_thread(
+            subprocess.run,
+            [
+                SSH_BIN,
+                *ssh_opts,
+                "-p",
+                str(forward_port),
+                "msks@127.0.0.1",
+                'echo "OPKEY-$(whoami)-$((6*7))"',
+            ],
+            capture_output=True,
+            text=True,
+            timeout=SSH_CMD_TIMEOUT_S,
+        )
+        assert login.returncode == 0, (
+            f"{login.stdout}\n{login.stderr}\nforward logs:\n{forward_evidence()}"
+        )
+        assert "OPKEY-msks-42" in login.stdout, login.stdout
+
+        # msks ssh has no half to serve for an operator key: the
+        # recovery names both places the half can be.
+        sugar = await cli("ssh", wid, "--", "-F", os.devnull, "--", "true")
+        assert sugar.returncode != 0
+        assert "not on this client" in sugar.stderr
+        assert "supplied" in sugar.stderr
+
+        await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
+        final = await microvm.info(wid)
+        assert final.status.value in ("stopped", "absent")
+    except BaseException:
+        collect_failure_evidence(state_dir, wid, serial_log)
+        with contextlib.suppress(Exception):
+            await microvm.kill(wid)
+        raise
+    finally:
+        for proc in forwards:
+            with contextlib.suppress(Exception):
+                proc.terminate()
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(proc.wait, 10)
         if api_task is not None:
             api_server.should_exit = True
             with contextlib.suppress(Exception):

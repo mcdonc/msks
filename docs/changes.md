@@ -8,6 +8,14 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **Operator-supplied ssh key at create (#132).** `msks create
+--pubkey FILE` (or `-` on stdin) builds the workspace around a
+  public key the operator already owns, at any well-formed key
+  type: the daemon accepts the supplied line as-is (shape-checked,
+  re-annotated, seeded like any identity) and holds no private
+  half. Minted keys keep the FIPS-approvable type set; login uses
+  the operator's own key, and `msks ssh`'s recovery text names it.
+  See `docs/networking.md`.
 - **Client-minted workspace identity as the create default (#121).**
   `msks create` mints the workspace's ssh keypair on the client and
   sends the public half only: the daemon stores and seeds that half

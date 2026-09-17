@@ -535,11 +535,12 @@ def test_resolve_private_names_a_corrupt_cached_half(
 def test_resolve_private_names_a_missing_client_half(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """No daemon half and no local file: one SystemExit line with the
-    path and the recovery (the console still opens), not a
-    traceback."""
+    """No daemon half and no local file: one SystemExit line naming
+    both recoveries — minted on another client, or the operator's
+    own key — with the path and the console fallback, not a
+    traceback (#121, #132)."""
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
-    with pytest.raises(SystemExit, match="client-minted identity"):
+    with pytest.raises(SystemExit, match="another client"):
         ssh.resolve_private({"public_key": "x", "private_key": None}, "alpha")
 
 

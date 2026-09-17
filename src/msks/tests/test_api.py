@@ -273,6 +273,51 @@ async def test_create_with_client_supplied_pubkey(client) -> None:
     assert body["private_key"] is None
 
 
+async def test_create_accepts_any_supplied_pubkey_type(client) -> None:
+    """A supplied line passes at any key type (#132): another ECDSA
+    curve and a hardware-key label the daemon cannot mint both
+    store, seed, and serve exactly like a mintable type — sshd is
+    the authority on what it authenticates."""
+    import base64
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    http, _app, stub = client
+    p384 = (
+        ec.generate_private_key(ec.SECP384R1())
+        .public_key()
+        .public_bytes(
+            encoding=serialization.Encoding.OpenSSH,
+            format=serialization.PublicFormat.OpenSSH,
+        )
+        .decode()
+    )
+    sk = "sk-ssh-ed25519@openssh.com"
+    sk_line = (
+        f"{sk} "
+        + base64.b64encode(len(sk).to_bytes(4, "big") + sk.encode() + b"rest").decode()
+    )
+    for index, line in enumerate((p384, sk_line)):
+        wid = f"ws-any-{index}"
+        created = await http.post(
+            "/api/v1/workspaces",
+            json={
+                "id": wid,
+                "kernel": "/k",
+                "rootfs": "/r",
+                "ssh_pubkey": f"{line} operator@laptop",
+            },
+            headers=auth(),
+        )
+        assert created.status_code == 201, created.json()
+        assert created.json()["ssh_pubkey"].startswith(f"{line.split()[0]} ")
+        assert created.json()["ssh_pubkey"].endswith(f"msks-client:{wid}")
+        assert stub.seen_specs[wid].ssh_pubkey == created.json()["ssh_pubkey"]
+        key = await http.get(f"/api/v1/workspaces/{wid}/ssh-key", headers=auth())
+        assert key.json()["private_key"] is None
+
+
 async def test_create_rejects_a_malformed_pubkey(client) -> None:
     """A supplied line that does not validate is a 400 before any
     artifact or row exists — the id stays free for a corrected

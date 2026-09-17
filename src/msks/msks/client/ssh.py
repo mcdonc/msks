@@ -109,10 +109,13 @@ def resolve_private(key: dict, workspace_id: str) -> str:
         private = agent.load_private(pem)
     except OSError as exc:
         raise SystemExit(
-            f"msks ssh: {workspace_id} carries a client-minted identity "
-            f"and its private half is not readable at {path}: {exc}\n"
-            "The identity was minted on the client that created the "
-            "workspace; the console still opens without it."
+            f"msks ssh: the workspace's private half is not on this "
+            f"client — the daemon holds none, and {path} is not "
+            f"readable: {exc}\n"
+            "The key was minted on another client (the file lives at "
+            "that path on that machine), or it is a key you supplied "
+            "at create — log in with it directly (ssh -i, or the "
+            "Host msks-* alias). The console still opens without it."
         ) from exc
     except ValueError as exc:
         raise SystemExit(
