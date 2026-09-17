@@ -342,7 +342,8 @@ def test_ssh_logs_in_through_the_agent(pem: str, tmp_path: Path) -> None:
     real client: ssh authenticates from an IdentityAgent listing
     alone (no identity file), under IdentitiesOnly, and ``-A``
     forwards that same agent into the session. Parametrized over
-    the default minted type (ECDSA P-256) and ed25519 — with -F
+    two mint types, ecdsa (P-256, #138's former default) and
+    ed25519 (the current default) — with -F
     /dev/null, whose absence lets a host ssh_config drop ECDSA from
     PubkeyAcceptedAlgorithms (the #110 lesson applied here too)."""
     import pwd

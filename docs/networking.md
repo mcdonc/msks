@@ -576,8 +576,9 @@ itself, without msks-side config surgery. The guest's libraries are
 Debian's own (OpenSSL 3), the line that carries a certified provider
 when one exists. The algorithm choices in play are FIPS-approvable
 from the start: identities default to Ed25519 (#138 — FIPS 186-5
-approves EdDSA, and every restricted ssh client accepts the type
-out of the box), with ECDSA P-256 and RSA as `--key-type` choices,
+approves EdDSA, and ssh clients restricted to the common
+`ssh-ed25519,ssh-rsa` set accept it out of the box), with ECDSA
+P-256 and RSA as `--key-type` choices,
 and first boot generates the full `ssh-keygen -A` host-key set,
 whose RSA and ECDSA members are the keys a FIPS-mode sshd serves —
 all persisting across stop/start on the overlay.

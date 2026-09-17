@@ -260,8 +260,9 @@ let
     # Authentication policy only, never algorithm policy: no cipher,
     # MAC, key-exchange, or host-key lists here, so a FIPS-restricted
     # OpenSSH (a distro crypto provider) narrows itself without
-    # config surgery (#115 — identities ride ECDSA P-256, and
-    # ssh-keygen -A's rsa/ecdsa host keys are FIPS-approvable).
+    # config surgery (#115 — identities ride the mint's setting,
+    # Ed25519 by default, #138, and ssh-keygen -A's rsa/ecdsa host
+    # keys are FIPS-approvable).
     printf '%s\n' \
       '# msks (#110): key-only login; the forward is the road in.' \
       'PasswordAuthentication no' \

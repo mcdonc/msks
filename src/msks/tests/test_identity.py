@@ -32,15 +32,6 @@ def minted_public(private_pem: str) -> str:
     )
 
 
-def test_mint_ecdsa_p256_pair() -> None:
-    """ECDSA P-256 (a `--key-type` choice, #138's former default)
-    with halves that are actually one keypair."""
-    private_pem, public = mint("ecdsa")
-    assert public.startswith("ecdsa-sha2-nistp256 ")
-    assert private_pem.startswith("-----BEGIN OPENSSH PRIVATE KEY-----")
-    assert minted_public(private_pem).split()[:2] == public.split()[:2]
-
-
 def test_mint_each_supported_type() -> None:
     """Every KEY_TYPES entry mints to its own OpenSSH name."""
     for key_type, ssh_name in KEY_TYPES.items():

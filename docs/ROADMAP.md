@@ -81,8 +81,8 @@ no web frontend yet.
   runs an sshd in the guest image (#110: `PasswordAuthentication no`,
   key-only logins, rsync shipped, host keys in the persistent overlay)
   and msksd mints a per-workspace identity at create time (#111:
-  ECDSA P-256 — the FIPS-approvable curve from day one, #115 — public
-  half seeded through `user_data`, private half served over the
+  Ed25519 by default, #138 — FIPS-approvable per FIPS 186-5, #115 —
+  public half seeded through `user_data`, private half served over the
   authenticated API and materialized by the client only for the
   connection's duration). The service plane is the TCP forward
   websocket (#109, landed): the caller names a guest port, the daemon

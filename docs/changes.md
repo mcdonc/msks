@@ -45,7 +45,7 @@ key` answers the public line, and `msks ssh` serves the private
   (`~/.local/share/msks/<id>/identity`, mode 0600). `--daemon-mint`
   keeps the daemon-minted escrow mode (#111; the k8s backend serves
   no identity and needs the flag); `--key-type` selects the type
-  (`ecdsa` default). See `docs/networking.md`.
+  (`ed25519` default, #138). See `docs/networking.md`.
 - **msksd inside a workspace — the L3 recursion (#82).** The
   workspace image's module closure now carries the nested-KVM trio
   and the inner-egress stack (`kvm`/`kvm-intel`/`kvm-amd`, `tun`,
