@@ -91,6 +91,7 @@ async def create_workspace(
     refused create leaves no orphaned key behind.
     """
     private_pem = None
+    public = None
     if key_type is not None:
         private_pem, public = await asyncio.to_thread(mint, key_type)
         body["ssh_pubkey"] = public
@@ -98,6 +99,7 @@ async def create_workspace(
         row = await request(client, "POST", "/api/v1/workspaces", json_body=body)
         print(f"created {row['id']}")
         if private_pem is not None:
+            await verify_no_escrow(client, row["id"], public)
             path = write_client_identity(row["id"], private_pem)
             print(f"client identity (mode 0600): {path}")
         if not start:
@@ -114,27 +116,54 @@ async def create_workspace(
         return row
 
 
+async def verify_no_escrow(client, workspace_id: str, public: str) -> None:
+    """Confirm the daemon kept the no-escrow promise (#121).
+
+    A daemon one version behind this client drops the unknown
+    ``ssh_pubkey`` field (pydantic ignores extras) and silently mints
+    its own pair — the create reports success while the daemon
+    escrows a private half the operator was told does not exist.
+    The key fetch answers for it: the served public line must carry
+    the client's key material and the private half must be null.
+    """
+    key = await request(client, "GET", f"/api/v1/workspaces/{workspace_id}/ssh-key")
+    served = key.get("public_key", "").split()[:2]
+    if key.get("private_key") is not None or served != public.split():
+        raise SystemExit(
+            f"msks: {workspace_id} was created, but the daemon did not "
+            "keep the no-escrow promise: it holds its own minted "
+            "identity for the workspace (a daemon older than this "
+            "client's --client-mint support). The daemon's version of "
+            "msks must be updated before using --client-mint"
+        )
+
+
 def write_client_identity(workspace_id: str, private_pem: str) -> Path:
     """The client-minted private half, persisted mode 0600 (#121).
 
-    No escrow cuts both ways: losing this file loses ssh to the
-    workspace (the console still opens), so a failed write is loud —
-    the workspace exists with the public half planted, and the
-    operator must move this material somewhere safe or recreate.
+    The file is created 0600 from the first byte (open-write-chmod
+    would leave a umask-window where the workspace's only private
+    half is group-readable), the mode forced again on a pre-existing
+    file. No escrow cuts both ways: a failed write is loud — the
+    workspace exists with the public half planted, and the private
+    half exists nowhere on disk.
     """
     root = cache_dir() / workspace_id
     path = root / "identity"
     try:
         root.mkdir(parents=True, exist_ok=True)
-        path.write_text(private_pem, encoding="utf-8")
-        path.chmod(0o600)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     except OSError as exc:
         raise SystemExit(
             f"msks: {workspace_id} was created, but its client-minted "
             f"identity could not be written to {path}: {exc}\n"
-            "ssh needs this file (the console still opens); keep the "
-            "private half safe or delete and recreate the workspace"
+            "The private half now exists nowhere on disk — ssh cannot "
+            "use this workspace's identity. Use the console, or delete "
+            "and recreate the workspace"
         ) from exc
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(private_pem)
     return path
 
 

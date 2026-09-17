@@ -32,6 +32,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from cryptography.hazmat.primitives import serialization
+
 from . import agent
 from .rest import ensure_running, env_token, env_url, fetch_ssh_key, ssl_context
 
@@ -75,15 +77,20 @@ def resolve_private(key: dict, workspace_id: str) -> str:
 
     A daemon-minted workspace (#111) hands its half over the API; a
     client-minted one (#121) answers ``private_key: null`` — its
-    half lives in the local cache, written at create. Losing that
-    file loses ssh (the console still opens): the error names the
-    path and the recovery, not a traceback.
+    half lives in the local cache, written at create. The cached
+    half is checked against the served public line before use: a
+    stale cache (the id re-created from another client, a backup
+    restored over a re-created workspace) fails as one named line,
+    not as ssh's opaque ``Permission denied (publickey)``. Losing
+    the file loses ssh (the console still opens): the error names
+    the path and the recovery, not a traceback.
     """
     if key["private_key"] is not None:
         return key["private_key"]
     path = client_identity_path(workspace_id)
     try:
-        return path.read_text(encoding="utf-8")
+        pem = path.read_text(encoding="utf-8")
+        private = agent.load_private(pem)
     except OSError as exc:
         raise SystemExit(
             f"msks ssh: {workspace_id} carries a client-minted identity "
@@ -91,6 +98,35 @@ def resolve_private(key: dict, workspace_id: str) -> str:
             "The identity was minted on the client that created the "
             "workspace; the console still opens without it."
         ) from exc
+    except ValueError as exc:
+        raise SystemExit(
+            f"msks ssh: the client-minted identity at {path} is not a "
+            f"usable private key: {exc}"
+        ) from exc
+    if derived_public(private) != key["public_key"].split()[:2]:
+        raise SystemExit(
+            f"msks ssh: the client-minted identity at {path} does not "
+            f"match {workspace_id} — the workspace was re-created since "
+            "that key was cached. Delete and recreate the workspace, or "
+            "clear the cache entry and re-create it from the client "
+            "that holds the current identity"
+        )
+    return pem
+
+
+def derived_public(private) -> list[str]:
+    """The public line's identifying fields (algorithm, key body) of
+    a loaded private half — the comment is provenance, not identity,
+    so it stays out of the comparison."""
+    line = (
+        private.public_key()
+        .public_bytes(
+            encoding=serialization.Encoding.OpenSSH,
+            format=serialization.PublicFormat.OpenSSH,
+        )
+        .decode()
+    )
+    return line.split()[:2]
 
 
 def known_hosts_path(workspace_id: str, base: Path | None = None) -> str:

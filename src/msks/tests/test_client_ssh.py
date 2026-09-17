@@ -480,16 +480,56 @@ def test_resolve_private_falls_back_to_the_client_cache(
 ) -> None:
     """A client-minted workspace (#121) answers private_key: null;
     the private half then comes from the local cache, written at
-    create."""
+    create — and it must be the pair's other half, checked against
+    the served public line."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    private_pem, public = mint("ecdsa")
+    path = tmp_path / "msks" / "alpha" / "identity"
+    path.parent.mkdir(parents=True)
+    path.write_text(private_pem)
+    key = {
+        "public_key": f"{public} msks-client:alpha",
+        "private_key": None,
+    }
+    assert ssh.resolve_private(key, "alpha") == private_pem
+
+
+def test_resolve_private_names_a_stale_cached_half(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A cache entry from a previous incarnation of the workspace id
+    fails as one named line — not as ssh's opaque publickey denial
+    deep inside a session."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    stale_pem, _stale_public = mint("ecdsa")
+    path = tmp_path / "msks" / "alpha" / "identity"
+    path.parent.mkdir(parents=True)
+    path.write_text(stale_pem)
+    _current_pem, current_public = mint("ecdsa")
+    key = {
+        "public_key": f"{current_public} msks-client:alpha",
+        "private_key": None,
+    }
+    with pytest.raises(SystemExit, match="does not match"):
+        ssh.resolve_private(key, "alpha")
+
+
+def test_resolve_private_names_a_corrupt_cached_half(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A file that is not a private key at all fails as one named
+    line too — the module's error contract holds for every way the
+    cache can be wrong."""
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     path = tmp_path / "msks" / "alpha" / "identity"
     path.parent.mkdir(parents=True)
-    path.write_text(ECDSA_PEM)
+    path.write_text("not a key")
     key = {
         "public_key": "ecdsa-sha2-nistp256 AAAA msks-client:alpha",
         "private_key": None,
     }
-    assert ssh.resolve_private(key, "alpha") == ECDSA_PEM
+    with pytest.raises(SystemExit, match="not a usable private key"):
+        ssh.resolve_private(key, "alpha")
 
 
 def test_resolve_private_names_a_missing_client_half(

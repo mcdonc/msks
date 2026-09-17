@@ -413,12 +413,16 @@ mode's `msksd:<id>`).
 The private half is written mode 0600 to the client cache after the
 create succeeds — `~/.cache/msks/<id>/identity`, honoring
 `XDG_CACHE_HOME` — and `msks ssh` reads it from there when the API
-serves the public half alone. Losing the file loses ssh to that
+serves the public half alone (checking the cached half against the
+served public line, so a stale cache fails as one named line, not
+ssh's opaque `Permission denied`). Losing the file loses ssh to that
 workspace (the console still opens); the alias workflow can point
-`IdentityFile` at a copy kept anywhere the operator likes. The key
-type is the client's choice at create (`--key-type`: `ecdsa` by
-default, `ed25519`, `rsa`), independent of the daemon's
-`MSKSD_SSH_KEY_TYPE` setting.
+`IdentityFile` at a copy kept anywhere the operator likes. Deleting
+the workspace leaves the cached half behind, like its
+`known_hosts` — remove the per-workspace cache directory when you
+want the material gone. The key type is the client's choice at
+create (`--key-type`: `ecdsa` by default, `ed25519`, `rsa`),
+independent of the daemon's `MSKSD_SSH_KEY_TYPE` setting.
 
 This is the ssh half of the client-held-secrets posture: an
 appliance owner keeps every capability the console and forward

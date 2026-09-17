@@ -934,7 +934,7 @@ def build_api(app) -> FastAPI:
         """The workspace identity (#111): both halves, token-gated.
 
         A token holder already owns the workspace's root console, so
-        # the private half grants nothing new; the response carries
+        the private half grants nothing new; the response carries
         the type name (parsed off the public line) so a client never
         guesses the algorithm. A client-minted workspace (#121)
         answers ``private_key: null`` — the daemon never held that
