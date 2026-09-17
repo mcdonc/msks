@@ -2262,10 +2262,11 @@ async def test_local_egress_git_out() -> None:
     later narrowing of guest-initiated egress, not this loop.
 
     Legs, in order: the DHCP lease's resolver is the daemon's own
-    (resolv.conf's nameserver sits inside the /30 pool — no public
-    resolver); apt installs git and curl from Debian's mirrors and
-    an HTTPS fetch reaches an unrelated host, both through the
-    NAT'd egress path an off-host git remote rides; then the guest
+    (the per-link DNS the lease hands out sits inside the /30 pool
+    — no public resolver); apt installs git and curl from Debian's
+    mirrors and an HTTPS fetch reaches an unrelated host, both
+    through the NAT'd egress path an off-host git remote rides;
+    then the guest
     commits and pushes to a bare repo behind a scratch sshd on the
     host, authenticating only with the agent key that arrived
     through ``msks forward --local`` — the alias workflow's ``-A``
@@ -2692,10 +2693,15 @@ async def test_local_egress_git_out() -> None:
 
         # The DHCP lease's resolver is the daemon's forwarder: the
         # /30 pool (default 172.31.0.0/16), never a public resolver.
+        # The image runs systemd-resolved, so the offered server is
+        # resolved's per-link upstream (resolvectl) while the stub
+        # owns resolv.conf — the cat fallback covers a resolver-less
+        # image writing the lease straight to resolv.conf.
         await run_in_console(
             microvm,
             wid,
-            "grep -q '^nameserver 172\\.31\\.' /etc/resolv.conf && echo R-$((6*7))",
+            "( resolvectl dns 2>/dev/null || cat /etc/resolv.conf ) "
+            "| grep -q '172\\.31\\.' && echo R-$((6*7))",
             "R-42",
         )
 
