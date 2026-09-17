@@ -2263,10 +2263,10 @@ async def test_local_egress_git_out() -> None:
 
     Legs, in order: the DHCP lease's resolver is the daemon's own
     (the per-link DNS the lease hands out sits inside the /30 pool
-    — no public resolver); apt installs git and curl from Debian's
-    mirrors and an HTTPS fetch reaches an unrelated host, both
-    through the NAT'd egress path an off-host git remote rides;
-    then the guest
+    — no public resolver); apt installs git from Debian's mirrors
+    (no recommends) and an HTTPS `git ls-remote` reaches the
+    project's public remote — both through the NAT'd egress path
+    an off-host git remote rides; then the guest
     commits and pushes to a bare repo behind a scratch sshd on the
     host, authenticating only with the agent key that arrived
     through ``msks forward --local`` — the alias workflow's ``-A``
@@ -2426,9 +2426,8 @@ async def test_local_egress_git_out() -> None:
             str(port),
         ]
 
-    async def boot_and_wait_sshd() -> None:
-        await microvm.launch(spec)
-        await app.state.model.set_status(wid, "running")
+    async def wait_sshd() -> None:
+        """Until the guest's address and ssh services are up."""
         await await_guest_up(serial_log)
         await run_in_console(
             microvm,
@@ -2540,6 +2539,13 @@ async def test_local_egress_git_out() -> None:
             await asyncio.sleep(0.05)
 
         await app.state.model.create_workspace(spec)
+
+        # Launch first: the boot runs while the host side builds its
+        # scratch pieces (the whole prep is seconds of subprocess
+        # time, but on nested KVM every second of serial boot wall
+        # counts).
+        await microvm.launch(spec)
+        await app.state.model.set_status(wid, "running")
 
         # The login key (this smoke's stand-in for the operator's
         # alias identity) and the credential the agent carries.
@@ -2680,7 +2686,7 @@ async def test_local_egress_git_out() -> None:
         assert add.returncode == 0, add.stderr
 
         # Guest up; plant the login key through the console.
-        await boot_and_wait_sshd()
+        await wait_sshd()
         public = login_key.with_suffix(".pub").read_text().strip()
         await run_in_console(
             microvm,
@@ -2706,9 +2712,12 @@ async def test_local_egress_git_out() -> None:
         )
 
         # Substitutes in, over egress, destinations the seed never
-        # touches: Debian's mirrors, then an HTTPS fetch of an
-        # unrelated host. nohup'd with a trail — apt runs past
-        # CONSOLE_TIMEOUT_S.
+        # touches: Debian's mirrors, then an HTTPS ``git ls-remote``
+        # of the project's own public remote — the host a real
+        # dogfood push targets. nohup'd with a trail — apt runs
+        # past CONSOLE_TIMEOUT_S. --no-install-recommends keeps the
+        # download to what the legs use (git-man alone is tens of
+        # MB of recommends the proof gains nothing from).
         await run_in_console(
             microvm,
             wid,
@@ -2718,12 +2727,13 @@ async def test_local_egress_git_out() -> None:
             "apt-get update -qq >>/root/.gitout/run.log 2>&1 "
             "|| { echo fail-apt-update >>/root/.gitout/trail; exit 1; }; "
             "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "
-            "git curl openssh-client >>/root/.gitout/run.log 2>&1 "
+            "--no-install-recommends git openssh-client "
+            ">>/root/.gitout/run.log 2>&1 "
             "|| { echo fail-apt-install >>/root/.gitout/trail; exit 1; }; "
-            "echo curl >>/root/.gitout/trail; "
-            "curl -fsS --max-time 60 https://api.github.com/zen "
-            "-o /root/.gitout/zen >>/root/.gitout/run.log 2>&1 "
-            "|| { echo fail-zen >>/root/.gitout/trail; exit 1; }; "
+            "echo ls-remote >>/root/.gitout/trail; "
+            "git ls-remote https://github.com/mcdonc/msks HEAD "
+            ">/root/.gitout/remote 2>>/root/.gitout/run.log "
+            "|| { echo fail-ls-remote >>/root/.gitout/trail; exit 1; }; "
             "echo done >>/root/.gitout/trail"
             "' >/dev/null 2>&1 & echo BG-$((6*7))",
             "BG-42",
@@ -2734,7 +2744,7 @@ async def test_local_egress_git_out() -> None:
         await run_in_console(
             microvm,
             wid,
-            "test -s /root/.gitout/zen && echo Z-$((6*7))",
+            "test -s /root/.gitout/remote && echo Z-$((6*7))",
             "Z-42",
         )
 
