@@ -297,7 +297,9 @@ msks home import fresh-ws - < backup.ext4
 The workspace must be stopped (a volume under a running VM answers
 `409` — stop it first; `msks stop` is enough). A boot that arrives
 during a move waits for it and boots the volume the move left
-(moves and boots serialize per workspace). Export streams the
+(moves, boots, and deletes serialize per workspace; the waiter
+answers a named 409 after `MSKSD_MOVE_WAIT_TIMEOUT_S` instead of
+hanging). Export streams the
 volume file's bytes verbatim and prints one confirmation line
 (`exported my-workspace (2097152 bytes) to my-workspace.ext4`);
 `-` writes the bytes to stdout and moves the note to stderr, so a

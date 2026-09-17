@@ -478,10 +478,19 @@ async def run_home_import(
     try:
         async with api_client(url, token, transport) as client:
             reply = await upload(client, home_path(workspace_id), file_windows(source))
-        return reply["bytes"]
+        return imported_bytes(reply)
     finally:
         if owns:
             source.close()
+
+
+def imported_bytes(reply: dict) -> int:
+    """The reply's byte count, or the one-line refusal when a 2xx
+    answer carries none (a daemon that is not this protocol)."""
+    count = reply.get("bytes")
+    if not isinstance(count, int):
+        raise SystemExit("msks: the daemon's import reply carried no byte count")
+    return count
 
 
 def cmd_home_export(workspace_id: str, out: str | None = None, transport=None) -> int:

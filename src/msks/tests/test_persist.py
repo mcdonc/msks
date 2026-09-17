@@ -7,6 +7,7 @@ module's logic (layout, idempotence, atomic install, clamping,
 error mapping) without the real binaries.
 """
 
+import os
 import re
 from pathlib import Path
 
@@ -417,9 +418,12 @@ async def yielding(chunks: list[bytes]):
 
 async def collect(path: Path) -> bytes:
     """Everything :func:`persist.read_volume` yields from an open
-    handle, joined."""
-    with path.open("rb") as handle:
-        return b"".join([window async for window in persist.read_volume(handle)])
+    fd, joined."""
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        return b"".join([window async for window in persist.read_volume(fd)])
+    finally:
+        os.close(fd)
 
 
 async def test_import_home_volume_installs_the_body(tools) -> None:
@@ -464,9 +468,9 @@ async def test_import_home_volume_replaces_an_existing_volume(tools) -> None:
 
 
 async def test_import_home_volume_refuses_non_ext4(tools) -> None:
-    """A body without the ext4 magic is a client error: nothing is
-    installed, the old volume (when one exists) survives, and the
-    scratch is swept."""
+    """A body without the ext4 magic is refused the moment its
+    prefix arrives (before a window is written): nothing is
+    installed, the old volume survives, and the scratch is swept."""
     settings, _record, _base = tools
     home = persist.home_volume_path(settings.state_dir, WID)
     home.parent.mkdir(parents=True, exist_ok=True)
@@ -476,6 +480,18 @@ async def test_import_home_volume_refuses_non_ext4(tools) -> None:
             settings.state_dir, WID, yielding([b"garbage" * 1000])
         )
     assert home.read_bytes() == b"preexisting"
+    assert not tmp_debris(settings)
+
+
+async def test_import_home_volume_refuses_a_short_body(tools) -> None:
+    """A non-empty body shorter than the magic's offset never
+    reaches the early check; the post-stream backstop refuses it."""
+    settings, _record, _base = tools
+    with pytest.raises(ValueError, match="not an ext4 image"):
+        await persist.import_home_volume(
+            settings.state_dir, WID, yielding([b"garbage"])
+        )
+    assert not persist.home_volume_path(settings.state_dir, WID).exists()
     assert not tmp_debris(settings)
 
 

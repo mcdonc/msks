@@ -341,26 +341,27 @@ def remove_home_volume(state_dir: Path, workspace_id: str) -> None:
     home.unlink(missing_ok=True)
 
 
-def open_sized(path: Path) -> tuple[object, int]:
-    """Open a volume for streaming and fstat the open handle (#80).
+def open_sized(path: Path) -> tuple[int, int]:
+    """Open a volume for streaming and fstat the open fd (#80).
 
-    The size comes from the handle, not the path: a file renamed
+    The size comes from the open fd, not the path: a file renamed
     over the path after this point changes nothing about the body
-    this handle yields, so the served length stays honest.
+    this fd yields, so the served length stays honest. Raw fds, not
+    buffered handles: a late threadpool read after a close sees
+    EBADF (well-defined) instead of racing buffered state.
     """
-    handle = path.open("rb")
-    return handle, os.fstat(handle.fileno()).st_size
+    fd = os.open(path, os.O_RDONLY)
+    return fd, os.fstat(fd).st_size
 
 
-async def read_volume(handle) -> AsyncIterator[bytes]:
-    """Yield an open volume handle's bytes in export windows (#80).
+async def read_volume(fd: int) -> AsyncIterator[bytes]:
+    """Yield an open volume fd's bytes in export windows (#80).
 
     Each window's read runs off the event loop (streaming a 2 GiB
-    volume must not stall the daemon), and a client disconnect
-    mid-stream cancels the loop — the caller owns the handle's
-    close, so its context manager closes it deterministically.
+    volume must not stall the daemon); the caller owns the fd, and
+    os-level reads stay EBADF-safe against the caller's close.
     """
-    while window := await asyncio.to_thread(handle.read, HOME_WINDOW_B):
+    while window := await asyncio.to_thread(os.read, fd, HOME_WINDOW_B):
         yield window
 
 
@@ -373,62 +374,96 @@ async def import_home_volume(
     windows; an all-zero window writes nothing (the seek past it and
     the final truncate re-create it as a sparse hole), so a blank
     volume round-trips at its data's cost, not its nominal size. The
-    ext4 magic is checked before the atomic install: a refused body
-    leaves the old volume in place, and the ``finally`` sweeps the
-    scratch either way.
+    ext4 magic is checked as the prefix arrives (a wrong file is
+    refused at kilobyte cost, not its full size) and again before
+    the atomic install for short bodies: a refused body leaves the
+    old volume in place, and the ``finally`` sweeps the scratch
+    either way.
     """
     home = home_volume_path(state_dir, workspace_id)
     home.parent.mkdir(parents=True, exist_ok=True)
     scratch = tmp_sibling(home)
     pending = bytearray()
     total = 0
+    checked = False
+    fd = os.open(str(scratch), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
-        with scratch.open("wb") as handle:
-            async for chunk in chunks:
-                pending += chunk
-                while len(pending) >= HOME_WINDOW_B:
-                    window = bytes(pending[:HOME_WINDOW_B])
-                    del pending[:HOME_WINDOW_B]
-                    await settle_window(handle, window, total)
-                    total += len(window)
-            if pending:
-                await settle_window(handle, bytes(pending), total)
-                total += len(pending)
-            await asyncio.to_thread(handle.truncate, total)
-        validate_ext4(scratch, total)
+        async for chunk in chunks:
+            pending += chunk
+            if not checked and len(pending) > EXT4_MAGIC_OFFSET + 1:
+                require_ext4_prefix(bytes(pending[: EXT4_MAGIC_OFFSET + 2]))
+                checked = True
+            total = await drain_windows(fd, pending, total)
+        total = await finish_volume(fd, scratch, pending, total, checked)
         install(scratch, home)
         return total
     finally:
+        os.close(fd)
         scratch.unlink(missing_ok=True)
 
 
-async def settle_window(handle, window: bytes, position: int) -> None:
+async def finish_volume(
+    fd: int, scratch: Path, pending: bytearray, total: int, checked: bool
+) -> int:
+    """The stream's tail: settle the partial window, refuse a short
+    body the prefix check never saw, and pin the file's size."""
+    if pending:
+        await settle_window(fd, bytes(pending), total)
+        total += len(pending)
+    if not checked:
+        validate_ext4(scratch, total)
+    await asyncio.to_thread(os.ftruncate, fd, total)
+    return total
+
+
+async def drain_windows(fd: int, pending: bytearray, total: int) -> int:
+    """Settle every full window buffered in ``pending``; the new
+    stream position."""
+    while len(pending) >= HOME_WINDOW_B:
+        window = bytes(pending[:HOME_WINDOW_B])
+        del pending[:HOME_WINDOW_B]
+        await settle_window(fd, window, total)
+        total += len(window)
+    return total
+
+
+async def settle_window(fd: int, window: bytes, position: int) -> None:
     """One window at its stream position: zeros leave a hole, data
     is written (off the event loop)."""
     if window.count(0) == len(window):
         return
-    await asyncio.to_thread(place_window, handle, window, position)
+    await asyncio.to_thread(place_window, fd, window, position)
 
 
-def place_window(handle, window: bytes, position: int) -> None:
-    """Write one window at its stream position (a threadpool body)."""
-    handle.seek(position)
-    handle.write(window)
+def place_window(fd: int, window: bytes, position: int) -> None:
+    """Write one window at its stream position (a threadpool body).
+
+    ``pwrite`` places the window without a shared file offset, and a
+    1 MiB pwrite to a regular file completes in one call.
+    """
+    os.pwrite(fd, window, position)
+
+
+def require_ext4_prefix(head: bytes) -> None:
+    """Refuse a body whose first bytes lack the ext magic (#80).
+
+    The magic sits ~1 KiB into the image, so the refusal fires as
+    soon as the prefix arrives — a wrong file costs kilobytes of
+    scratch, not its full size. The magic is the ext-family's
+    (ext2/3/4 share it); the daemon serves volumes it or mkfs.ext4
+    made.
+    """
+    if head[EXT4_MAGIC_OFFSET : EXT4_MAGIC_OFFSET + 2] != EXT4_MAGIC:
+        raise ValueError(
+            "the request body is not an ext4 image "
+            f"(the ext4 magic at byte {EXT4_MAGIC_OFFSET} is missing)"
+        )
 
 
 def validate_ext4(scratch: Path, total: int) -> None:
-    """Refuse a body that is not an ext4 image (#80).
-
-    The magic check catches garbage uploads (a wrong file, a
-    truncated transfer) before they replace a workspace's /home.
-    """
+    """The short-body backstop: refuse empties and bodies too short
+    to carry the magic at all."""
     if total == 0:
         raise ValueError("the request body is empty; a home volume is an ext4 image")
     with scratch.open("rb") as handle:
-        handle.seek(EXT4_MAGIC_OFFSET)
-        magic = handle.read(len(EXT4_MAGIC))
-    if magic != EXT4_MAGIC:
-        raise ValueError(
-            f"the request body is not an ext4 image ({total} bytes received; "
-            f"the ext4 magic at byte {EXT4_MAGIC_OFFSET} is missing)"
-        )
+        require_ext4_prefix(handle.read(EXT4_MAGIC_OFFSET + 2))

@@ -388,6 +388,7 @@ KEY_CASES = [
     ("vsock_wait_timeout_s", 16.0, "vmm.vsock_wait_timeout_s", 16.0),
     ("forward_wait_timeout_s", 5.5, "vmm.forward_wait_timeout_s", 5.5),
     ("console_stall_timeout_s", 31.0, "vmm.console_stall_timeout_s", 31.0),
+    ("move_wait_timeout_s", 7.5, "vmm.move_wait_timeout_s", 7.5),
     ("default_image", "/img.tar", "vmm.default_image", "/img.tar"),
     ("qemu_img", "/qi", "vmm.qemu_img", "/qi"),
     ("mkfs_ext4", "/mkfs", "vmm.mkfs_ext4", "/mkfs"),

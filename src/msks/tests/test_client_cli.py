@@ -9,6 +9,7 @@ import argparse
 import asyncio
 import io
 import json
+import os
 import ssl
 import sys
 from collections.abc import AsyncIterator
@@ -1342,11 +1343,28 @@ def test_home_export_broken_pipe_is_one_line(
         def write(self, data):
             raise BrokenPipeError
 
+    # A spare fd stands in for the real stdout: broken_pipe_line's
+    # dup2-to-devnull must not clobber the test session's captured fd 1.
+    spare = os.open(os.devnull, os.O_WRONLY)
     monkeypatch.setattr(
-        sys, "stdout", SimpleNamespace(buffer=BrokenSink(), fileno=lambda: 1)
+        sys, "stdout", SimpleNamespace(buffer=BrokenSink(), fileno=lambda: spare)
     )
     with pytest.raises(SystemExit, match="reader closed early"):
         cli.main(
             ["home", "export", "ws1", "-"],
             transport=mock(lambda req: httpx.Response(200, content=b"vol")),
+        )
+
+
+def test_home_import_reply_without_a_count_is_one_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 2xx reply that carries no byte count is a protocol break,
+    not a KeyError traceback."""
+    client_env(monkeypatch)
+    volume = Path("/dev/null")
+    with pytest.raises(SystemExit, match="carried no byte count"):
+        cli.main(
+            ["home", "import", "ws1", str(volume)],
+            transport=mock(lambda req: httpx.Response(200, json={})),
         )

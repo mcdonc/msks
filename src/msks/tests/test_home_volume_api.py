@@ -17,6 +17,7 @@ import httpx
 import pytest
 from msks.app import build_app
 from msks.client import cli
+from msks.microvm.spec import VmStatus
 from msks.server.api import build_api, home_volume_lock
 from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
 from test_api import TOKEN, StubMicrovm, auth
@@ -469,3 +470,116 @@ async def test_import_rechecks_the_row_under_the_lock(home_api) -> None:
         )
         await model.delete_workspace("ws-iv")
     assert (await task).status_code == 404
+
+
+# --- The second review's findings (#80): bounded waiters, the seam
+# --- probe, deterministic release, early magic, delete ordering.
+
+
+async def test_waiters_answer_a_named_409_past_the_bound(home_api, monkeypatch) -> None:
+    """A stalled reader can hold an export's lock as long as its
+    connection lives; a boot or move that waits past
+    move_wait_timeout_s answers a named 409 instead of hanging."""
+    await create_workspace(home_api, "ws-bound")
+    planted_volume(home_api, "ws-bound")
+    monkeypatch.setattr(home_api.app.state.settings.vmm, "move_wait_timeout_s", 0.05)
+    lock = await home_volume_lock(home_api.app, "ws-bound")
+    async with lock:
+        waiters = [
+            asyncio.create_task(call)
+            for call in (
+                home_api.http.post("/api/v1/workspaces/ws-bound/start", headers=auth()),
+                home_api.http.get("/api/v1/workspaces/ws-bound/home", headers=auth()),
+                home_api.http.put(
+                    "/api/v1/workspaces/ws-bound/home", content=IMAGE, headers=auth()
+                ),
+            )
+        ]
+        replies = await asyncio.gather(*waiters)
+    assert [reply.status_code for reply in replies] == [409, 409, 409]
+    for reply in replies:
+        assert "volume move in flight" in reply.json()["detail"]
+
+
+async def test_the_live_seam_refuses_where_the_row_lies(home_api) -> None:
+    """A watcher scan that probed a launch's spawn window can leave
+    a live VM's row at ``stopped`` for one poll interval; the seam
+    re-check under the lock refuses where the row would pass."""
+    await create_workspace(home_api, "ws-seam")
+    planted_volume(home_api, "ws-seam")
+    home_api.stub.statuses["ws-seam"] = VmStatus.RUNNING
+    for method, body in (("GET", None), ("PUT", IMAGE)):
+        response = await home_api.http.request(
+            method,
+            "/api/v1/workspaces/ws-seam/home",
+            content=body,
+            headers=auth(),
+        )
+        assert response.status_code == 409
+        assert "VMM reports running" in response.json()["detail"]
+    # The refused import installed nothing.
+    assert volume_path(home_api, "ws-seam").read_bytes() == IMAGE
+
+
+async def test_holding_response_tears_down_on_send_failure() -> None:
+    """The export's lock and fd release with the response's own send
+    loop, not the body iterator's fate: a transport that dies
+    mid-stream unwinds __call__ deterministically, on both the
+    spec-2.4 path and the older task-group path (#80 review)."""
+    from msks.server.api import HoldingStreamingResponse
+
+    for asgi in ({"version": "3.0", "spec_version": "2.4"}, {"version": "3.0"}):
+        torn: list[int] = []
+
+        async def body():
+            yield b"window"
+
+        response = HoldingStreamingResponse(
+            body(),
+            teardown=lambda: torn.append(1),
+            media_type="application/octet-stream",
+        )
+
+        async def dying_send(message) -> None:
+            raise RuntimeError("transport died")
+
+        scope = {
+            "type": "http",
+            "asgi": asgi,
+            "method": "GET",
+            "path": "/",
+            "headers": [],
+            "query_string": b"",
+        }
+        disconnects = {"seen": False}
+
+        async def receive() -> dict:
+            if not disconnects["seen"]:
+                disconnects["seen"] = True
+                return {"type": "http.request", "body": b"", "more_body": False}
+            return {"type": "http.disconnect"}
+
+        with pytest.raises(RuntimeError, match="transport died"):
+            await response(scope, receive, dying_send)
+        assert torn == [1]
+
+
+async def test_a_delete_waits_out_a_held_move_lock(home_api) -> None:
+    """Delete holds the move lock too: an import racing a delete
+    cannot resurrect the volume under a deleted row — the pair is
+    ordered, and the loser sees the row gone."""
+    await create_workspace(home_api, "ws-del")
+    planted_volume(home_api, "ws-del")
+    lock = await home_volume_lock(home_api.app, "ws-del")
+    async with lock:
+        gone = await delayed(
+            home_api,
+            home_api.http.delete("/api/v1/workspaces/ws-del", headers=auth()),
+        )
+        assert not gone.done()
+    assert (await gone).status_code == 200
+    assert ("cleanup", "ws-del") in home_api.stub.calls
+    later = await home_api.http.put(
+        "/api/v1/workspaces/ws-del/home", content=IMAGE, headers=auth()
+    )
+    assert later.status_code == 404
