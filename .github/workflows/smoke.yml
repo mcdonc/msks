@@ -17,13 +17,17 @@
 # so one workflow carries both again — a failure anywhere reds the
 # same check, and the unprivileged pass still shows in the step log.
 #
-# What stays out, all dev-host-only and opt-in exactly as before:
-# the appliance smoke test (MSKSD_TEST_APPLIANCE — its workspace
-# boots inside the appliance VM, nested virt the runner does not
-# accelerate), the L3 recursion smoke (MSKSD_TEST_L3, additionally
-# gated on MSKSD_TEST_APPLIANCE; #82 — its inner workspace boots
-# nested-in-nested under the appliance, hours on a runner), and the
-# k8s smoke (needs a cluster).
+# What stays out of this per-PR workflow, all opt-in exactly as
+# before: the appliance smoke test (MSKSD_TEST_APPLIANCE — its
+# workspace boots inside the appliance VM, nested virt the runner
+# does not accelerate), the L3 recursion smoke (MSKSD_TEST_L3,
+# additionally gated on MSKSD_TEST_APPLIANCE; #82 — its inner
+# workspace boots nested-in-nested under the appliance, hours on a
+# runner), and the k8s smoke (needs a cluster). The L3 recursion
+# smoke has its own workflow (nightly-l3.yml, #135) for a
+# self-hosted runner where the depth exists — manual dispatch
+# until one registers; this workflow's hosted-runner legs never
+# touch it.
 #
 # Path-filtered to its real inputs: the guest/toolchain files (a
 # nixpkgs pin move lands through devenv.lock), everything under the
