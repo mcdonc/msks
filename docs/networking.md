@@ -315,7 +315,7 @@ and its console is the vsock one.
 ### The minted workspace identity
 
 A workspace created without a client-supplied key — a direct API
-create, or `msks create --no-client-mint` — carries an ssh
+create, or `msks create --daemon-mint` — carries an ssh
 identity msksd minted at create (issue #111): a keypair stored with the workspace's state, whose
 public half the first boot plants into `authorized_keys` for both
 root and the `msks` workspace user — through the same cidata seed
@@ -410,9 +410,9 @@ key fetch answers `private_key: null`). The daemon validates the
 supplied line the way it validates its own output — the accepted
 algorithms are the ones it mints itself — and annotates it with its
 own provenance comment (`msks-client:<id>`, beside the minted
-mode's `msksd:<id>`). `--no-client-mint` opts back into the
+mode's `msksd:<id>`). `--daemon-mint` opts back into the
 daemon-minted mode above; the k8s backend serves no identity in
-either mode, so creates against it pass `--no-client-mint`.
+either mode, so creates against it pass `--daemon-mint`.
 
 The private half is written mode 0600 under the client data root
 after the create succeeds — `~/.local/share/msks/<id>/identity`,

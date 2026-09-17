@@ -774,7 +774,8 @@ def build_api(app) -> FastAPI:
                 detail=(
                     "a client-supplied ssh key is not served by the k8s "
                     "backend yet (the runner pod builds no seed disks); "
-                    "create the workspace without ssh_pubkey"
+                    "create the workspace without ssh_pubkey (the msks "
+                    "CLI's --daemon-mint)"
                 ),
             )
         boot = resolve_boot(app, body)

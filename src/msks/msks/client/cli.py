@@ -133,9 +133,9 @@ async def verify_no_escrow(client, workspace_id: str, public: str) -> None:
             f"msks: {workspace_id} was created, but the daemon did not "
             "keep the no-escrow promise: it holds its own minted "
             "identity for the workspace (a daemon older than this "
-            "client's client-mint support). The daemon's version of "
+            "client's client mint support). The daemon's version of "
             "msks must be updated before creating without "
-            "--no-client-mint"
+            "--daemon-mint"
         )
 
 
@@ -696,17 +696,15 @@ def build_parser() -> argparse.ArgumentParser:
         "(#41); - reads stdin. Create-time only",
     )
     create.add_argument(
-        "--client-mint",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help="mint the workspace's ssh identity on this client and send "
-        "the public half only — the create default (#121): the daemon "
-        "never holds the private half. It is written mode 0600 under "
-        "the client data root (~/.local/share/msks/<id>/identity), and "
-        "msks ssh picks it up from there. --no-client-mint hands the "
-        "identity to the daemon instead: it mints and escrows both "
-        "halves on the local backend (#111), and the k8s backend "
-        "serves no identity",
+        "--daemon-mint",
+        action="store_true",
+        help="let the daemon mint the workspace's ssh identity and "
+        "escrow both halves (#111) instead of the client mint — the "
+        "create default (#121) mints on this client, sends the public "
+        "half only, and keeps the private half (mode 0600 under the "
+        "client data root, ~/.local/share/msks/<id>/identity, where "
+        "msks ssh finds it). The k8s backend serves no identity and "
+        "needs this flag",
     )
     create.add_argument(
         "--key-type",
@@ -837,20 +835,20 @@ def main(argv: list[str] | None = None, transport=None) -> int:
 
 
 def client_mint_key_type(args: argparse.Namespace) -> str | None:
-    """The client mint's key type, or None for the daemon-mint mode.
+    """The client mint's key type, or None for ``--daemon-mint``.
 
     The client mint is the create default (#121): absent flags mint
     locally (ecdsa, the same FIPS-approvable default the daemon
-    mints). ``--no-client-mint`` hands the identity to the daemon
+    mints). ``--daemon-mint`` hands the identity to the daemon
     (escrow on the local backend; the k8s backend serves no identity
     either way), and ``--key-type`` names a type for the client mint
-    alone — paired with ``--no-client-mint`` it would look like it
-    did something, so it is rejected with the pairing named.
+    alone — paired with ``--daemon-mint`` it would look like it did
+    something, so it is rejected with the pairing named.
     """
-    if args.client_mint is False:
+    if args.daemon_mint:
         if args.key_type is not None:
             raise SystemExit(
-                "msks: --key-type needs the client mint (drop --no-client-mint)"
+                "msks: --key-type needs the client mint (drop --daemon-mint)"
             )
         return None
     return args.key_type or "ecdsa"

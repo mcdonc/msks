@@ -14,7 +14,7 @@ tagged `vX.Y.Z`.
   exactly like its own minted one and holds no private half — `msks
 key` answers the public line, and `msks ssh` serves the private
   half from the client data root
-  (`~/.local/share/msks/<id>/identity`, mode 0600). `--no-client-mint`
+  (`~/.local/share/msks/<id>/identity`, mode 0600). `--daemon-mint`
   keeps the daemon-minted escrow mode (#111; the k8s backend serves
   no identity and needs the flag); `--key-type` selects the type
   (`ecdsa` default). See `docs/networking.md`.

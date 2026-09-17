@@ -328,30 +328,27 @@ def test_create_client_mint_refuses_a_silent_escrow(
 
 def test_client_mint_key_type_pairing() -> None:
     """The client mint is the create default (#121) with the
-    FIPS-approvable type; --no-client-mint hands the identity to the
+    FIPS-approvable type; --daemon-mint hands the identity to the
     daemon, and --key-type pairs with the client mint alone."""
     parser = cli.build_parser()
     plain = parser.parse_args(["create", "ws1"])
     assert cli.client_mint_key_type(plain) == "ecdsa"
     typed = parser.parse_args(["create", "ws1", "--key-type", "rsa"])
     assert cli.client_mint_key_type(typed) == "rsa"
-    explicit = parser.parse_args(["create", "ws1", "--client-mint"])
-    assert cli.client_mint_key_type(explicit) == "ecdsa"
-    daemon = parser.parse_args(["create", "ws1", "--no-client-mint"])
+    daemon = parser.parse_args(["create", "ws1", "--daemon-mint"])
     assert cli.client_mint_key_type(daemon) is None
     with pytest.raises(SystemExit, match="--key-type needs the client mint"):
         cli.client_mint_key_type(
-            parser.parse_args(
-                ["create", "ws1", "--no-client-mint", "--key-type", "rsa"]
-            )
+            parser.parse_args(["create", "ws1", "--daemon-mint", "--key-type", "rsa"])
         )
 
 
-def test_cmd_create_no_client_mint_sends_no_key(
+def test_cmd_create_daemon_mint_sends_no_key(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """--no-client-mint restores the daemon-mint default (#111): the
-    body carries no key material and nothing is written client-side."""
+    """--daemon-mint hands the identity to the daemon (#111): the
+    body carries no key material and nothing is written
+    client-side."""
     client_env(monkeypatch)
     seen = {}
 
@@ -639,10 +636,10 @@ def test_main_create_dispatch(
         seen["body"] = json.loads(request.content)
         return httpx.Response(201, json={"id": "ws1", "status": "created"})
 
-    # --no-client-mint keeps this dispatch test off the keygen path
+    # --daemon-mint keeps this dispatch test off the keygen path
     # (the client mint's own suite covers it).
     rc = cli.main(
-        ["create", "ws1", "--image", "debian:13", "--cpus", "4", "--no-client-mint"],
+        ["create", "ws1", "--image", "debian:13", "--cpus", "4", "--daemon-mint"],
         transport=mock(handler),
     )
     assert rc == 0
@@ -1330,7 +1327,7 @@ def test_create_user_data_reads_the_file(
         return httpx.Response(201, json={"id": "ws1", "status": "created"})
 
     rc = cli.main(
-        ["create", "ws1", "--user-data", str(source), "--no-client-mint"],
+        ["create", "ws1", "--user-data", str(source), "--daemon-mint"],
         transport=mock(handler),
     )
     assert rc == 0
@@ -1352,7 +1349,7 @@ def test_create_user_data_reads_stdin(
         return httpx.Response(201, json={"id": "ws1", "status": "created"})
 
     rc = cli.main(
-        ["create", "ws1", "--user-data", "-", "--no-client-mint"],
+        ["create", "ws1", "--user-data", "-", "--daemon-mint"],
         transport=mock(handler),
     )
     assert rc == 0

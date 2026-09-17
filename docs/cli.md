@@ -86,20 +86,20 @@ under the state dir and a pod name on k8s).
 
 Flags map one-to-one onto the create request's fields:
 
-| Flag               | API field   | Meaning                                                                      |
-| ------------------ | ----------- | ---------------------------------------------------------------------------- |
-| `--image`          | `image`     | Catalog ref: `name:version`, bare name, or hash                              |
-| `--kernel`         | `kernel`    | Explicit kernel path (skips the catalog)                                     |
-| `--initrd`         | `initrd`    | Explicit initrd path                                                         |
-| `--rootfs`         | `rootfs`    | Explicit rootfs path (skips the catalog)                                     |
-| `--cmdline`        | `cmdline`   | Explicit kernel cmdline                                                      |
-| `--cpus`           | `cpus`      | vcpus, 1–64 (daemon default: 2)                                              |
-| `--mem-mib`        | `mem_mib`   | Guest memory MiB, 64–32768 (daemon default: 1024)                            |
-| `--root-mib`       | `root_mib`  | Persistent root overlay size (daemon default)                                |
-| `--home-mib`       | `home_mib`  | Persistent /home volume size (daemon default)                                |
-| `--user-data`      | `user_data` | First-boot provisioning payload file; `-` reads stdin (#41)                  |
-| `--no-client-mint` | —           | Hand the identity to the daemon instead of the client mint (#121); see below |
-| `--key-type`       | —           | The client mint's key type: `ecdsa` (the default), `ed25519`, or `rsa`       |
+| Flag            | API field   | Meaning                                                                      |
+| --------------- | ----------- | ---------------------------------------------------------------------------- |
+| `--image`       | `image`     | Catalog ref: `name:version`, bare name, or hash                              |
+| `--kernel`      | `kernel`    | Explicit kernel path (skips the catalog)                                     |
+| `--initrd`      | `initrd`    | Explicit initrd path                                                         |
+| `--rootfs`      | `rootfs`    | Explicit rootfs path (skips the catalog)                                     |
+| `--cmdline`     | `cmdline`   | Explicit kernel cmdline                                                      |
+| `--cpus`        | `cpus`      | vcpus, 1–64 (daemon default: 2)                                              |
+| `--mem-mib`     | `mem_mib`   | Guest memory MiB, 64–32768 (daemon default: 1024)                            |
+| `--root-mib`    | `root_mib`  | Persistent root overlay size (daemon default)                                |
+| `--home-mib`    | `home_mib`  | Persistent /home volume size (daemon default)                                |
+| `--user-data`   | `user_data` | First-boot provisioning payload file; `-` reads stdin (#41)                  |
+| `--daemon-mint` | —           | Hand the identity to the daemon instead of the client mint (#121); see below |
+| `--key-type`    | —           | The client mint's key type: `ecdsa` (the default), `ed25519`, or `rsa`       |
 
 Only the flags you pass are sent — unset flags let the daemon apply
 its own defaults. An `--image` reference resolves against the
@@ -165,11 +165,11 @@ defaulting to `ecdsa`, the same FIPS-approvable default the daemon
 mints) — the daemon accepts the types it mints itself and rejects
 any other line with a 400 at create.
 
-`--no-client-mint` hands the identity to the daemon instead
+`--daemon-mint` hands the identity to the daemon instead
 (#111): it mints the keypair at create and stores both halves with
 its state — the private half is then fetchable with `msks key
 --private`. The k8s backend serves no identity in either mode, so
-creates against it need `--no-client-mint`.
+creates against it need `--daemon-mint`.
 
 ## `msks start`
 
