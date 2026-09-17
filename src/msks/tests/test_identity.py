@@ -32,9 +32,9 @@ def minted_public(private_pem: str) -> str:
     )
 
 
-def test_mint_default_is_ecdsa_p256() -> None:
-    """ECDSA P-256 (#115's FIPS-approvable default) with halves that
-    are actually one keypair."""
+def test_mint_ecdsa_p256_pair() -> None:
+    """ECDSA P-256 (a `--key-type` choice, #138's former default)
+    with halves that are actually one keypair."""
     private_pem, public = mint("ecdsa")
     assert public.startswith("ecdsa-sha2-nistp256 ")
     assert private_pem.startswith("-----BEGIN OPENSSH PRIVATE KEY-----")

@@ -70,7 +70,7 @@ def test_ssh_key_type_valid_and_rejected(monkeypatch: pytest.MonkeyPatch) -> Non
     with pytest.raises(ValueError, match="MSKSD_SSH_KEY_TYPE"):
         Settings.from_env()
     monkeypatch.delenv("MSKSD_SSH_KEY_TYPE")
-    assert Settings.from_env().vmm.ssh_key_type == "ecdsa"
+    assert Settings.from_env().vmm.ssh_key_type == "ed25519"
 
 
 def test_non_numeric_float_rejected(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -337,8 +337,8 @@ msks key myws --out ./myws.key   # the private half, mode 0600
 ```
 
 The key type is the daemon's setting (`ssh_key_type` /
-`MSKSD_SSH_KEY_TYPE`): ECDSA P-256 by default, `ed25519` and `rsa`
-(3072-bit) selectable. The identity is minted at create on the local
+`MSKSD_SSH_KEY_TYPE`): Ed25519 by default, `ecdsa` (P-256) and
+`rsa` (3072-bit) selectable. The identity is minted at create on the local
 backend — a workspace created there and later started by a daemon
 reconfigured for the k8s runner keeps its halves, and the runner
 plants nothing (the same posture as its `user_data`). With the identity materialized, the usual
@@ -430,7 +430,7 @@ cache sweeps leave it alone. Deleting the workspace leaves the
 stored half behind, like its `known_hosts` — remove the
 per-workspace directory under the data root when you want the
 material gone. The key type is the client's choice at create
-(`--key-type`: `ecdsa` by default, `ed25519`, `rsa`), independent
+(`--key-type`: `ed25519` by default, `ecdsa`, `rsa`), independent
 of the daemon's `MSKSD_SSH_KEY_TYPE` setting.
 
 This is the ssh half of the client-held-secrets posture: an
@@ -575,11 +575,12 @@ crypto library enforces a FIPS module applies its restrictions by
 itself, without msks-side config surgery. The guest's libraries are
 Debian's own (OpenSSL 3), the line that carries a certified provider
 when one exists. The algorithm choices in play are FIPS-approvable
-from the start: identities are ECDSA P-256 (#111's mint, and the
-example above takes whatever key the mint hands it), and first boot
-generates the full `ssh-keygen -A` host-key set, whose RSA and ECDSA
-members are the keys a FIPS-mode sshd serves — all persisting across
-stop/start on the overlay.
+from the start: identities default to Ed25519 (#138 — FIPS 186-5
+approves EdDSA, and every restricted ssh client accepts the type
+out of the box), with ECDSA P-256 and RSA as `--key-type` choices,
+and first boot generates the full `ssh-keygen -A` host-key set,
+whose RSA and ECDSA members are the keys a FIPS-mode sshd serves —
+all persisting across stop/start on the overlay.
 Issue #115 records the constraint that keeps it that way: every
 crypto choice stays a setting or a platform default, never a pinned
 list.

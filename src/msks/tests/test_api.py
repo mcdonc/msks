@@ -195,14 +195,14 @@ async def test_create_mints_identity(client) -> None:
         headers=auth(),
     )
     assert created.status_code == 201
-    assert created.json()["ssh_pubkey"].startswith(f"{KEY_TYPES['ecdsa']} ")
+    assert created.json()["ssh_pubkey"].startswith(f"{KEY_TYPES['ed25519']} ")
     assert created.json()["ssh_pubkey"].endswith("msksd:ws-id")
     spec_seen = stub.seen_specs["ws-id"]
     assert spec_seen.ssh_pubkey == created.json()["ssh_pubkey"]
     key = await http.get("/api/v1/workspaces/ws-id/ssh-key", headers=auth())
     assert key.status_code == 200
     body = key.json()
-    assert body["type"] == KEY_TYPES["ecdsa"]
+    assert body["type"] == KEY_TYPES["ed25519"]
     assert body["public_key"] == created.json()["ssh_pubkey"]
     loaded = serialization.load_ssh_private_key(
         body["private_key"].encode(), password=b""

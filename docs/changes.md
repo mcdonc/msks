@@ -181,6 +181,15 @@ no`, `PermitRootLogin prohibit-password`) pinned by a config dropin,
 
 ### Changed
 
+- **Minted identity keys default to `ed25519` (#138).** The
+  client mint (`--key-type`, `msks create`) and the daemon mint
+  (`ssh_key_type` / `MSKSD_SSH_KEY_TYPE`) now mint Ed25519 keys —
+  FIPS-approvable (FIPS 186-5) and accepted by ssh clients that
+  restrict the accepted key algorithms, so `msks ssh` into a
+  default-created workspace needs no algorithm passthrough.
+  `--key-type ecdsa` (the former default) and `--key-type rsa`
+  remain available for deployments whose validated crypto module
+  predates EdDSA. See `docs/networking.md`.
 - **`msks console` (#117).** The interactive workspace command is
   renamed from `msks shell` to `msks console`, matching the
   `/api/v1/workspaces/{id}/console` websocket it speaks. A hard

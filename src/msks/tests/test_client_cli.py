@@ -395,7 +395,7 @@ def test_create_identity_modes() -> None:
     rejected with the conflict named."""
     parser = cli.build_parser()
     plain = parser.parse_args(["create", "ws1"])
-    assert cli.create_identity(plain) == ("ecdsa", None)
+    assert cli.create_identity(plain) == ("ed25519", None)
     typed = parser.parse_args(["create", "ws1", "--key-type", "rsa"])
     assert cli.create_identity(typed) == ("rsa", None)
     daemon = parser.parse_args(["create", "ws1", "--daemon-mint"])
