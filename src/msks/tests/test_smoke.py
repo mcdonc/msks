@@ -4236,9 +4236,14 @@ async def test_appliance_l3_recursion() -> None:
             data = await bootstrap_state()
             body = data.split(b"E-$((21*2))", 1)[-1].split(b"E-42", 1)[0]
             last = body.strip()
-            if last == b"done":
+            # CONTAINS, not equality: the login shell's bracketed-
+            # paste sequences (\e[?2004l around every read command)
+            # ride between the echoed command and the output, so a
+            # stripped body still carries them ahead of the state
+            # word. The step names share no prefix with "done".
+            if b"done" in body:
                 break
-            if last.startswith(b"no-route"):
+            if b"no-route" in body:
                 raise AssertionError(f"the L3 seed could not find an uplink: {last!r}")
             await asyncio.sleep(15.0)
         else:
