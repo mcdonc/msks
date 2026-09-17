@@ -31,6 +31,7 @@ from urllib.parse import quote, quote_plus
 
 import websockets
 
+from . import consoleauth
 from .rest import (  # noqa: F401
     DEFAULT_URL,
     ensure_running,
@@ -214,6 +215,8 @@ async def run_shell(
         # not a traceback.
         raise SystemExit(f"msks: cannot reach {url}: {exc}") from exc
     async with ws:
+        if not await open_session(ws, workspace_id, url, token, ssl_ctx):
+            return 0
         loop = asyncio.get_running_loop()
         stdin = asyncio.StreamReader()
         reader_protocol = asyncio.StreamReaderProtocol(stdin)
@@ -235,6 +238,39 @@ async def run_shell(
                     await task
             transport.close()
     return 0
+
+
+async def open_session(ws, workspace_id: str, url: str, token: str, ssl_ctx) -> bool:
+    """The session's console challenge (#123): a guest whose seed
+    planted the trust store demands a signature before any shell; a
+    pre-#123 guest's first bytes pass straight through to the pump.
+    The shell's first output lands on stdout; False is a closed
+    session (named refusals report, a clean close is a clean end).
+    """
+    try:
+        lead = await consoleauth.auth_exchange(ws, workspace_id, url, token, ssl_ctx)
+    except websockets.ConnectionClosed as closed:
+        _report_close(closed)
+        return False
+    if isinstance(lead, str):
+        # A text frame from the relay: bytes are bytes on a tty.
+        lead = lead.encode()
+    if lead.startswith(b"MSKS ERR "):
+        # A guest that refused before any challenge: its trust store
+        # is broken (a half-seeded state), and the recovery is
+        # documented beside the challenge itself.
+        raise SystemExit(
+            f"msks console: {workspace_id} refused the session "
+            f"({lead.decode(errors='replace').strip()}) — the guest's "
+            "console trust store is broken. ssh still works with the "
+            "workspace key: restore the identity line in "
+            "/etc/msks/console.allowed_signers, or re-create the "
+            "workspace (docs/networking.md, The console challenge)."
+        )
+    if lead:
+        sys.stdout.buffer.write(lead)
+        sys.stdout.buffer.flush()
+    return True
 
 
 CLOSE_CODE_REASONS = {

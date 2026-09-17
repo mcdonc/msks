@@ -5,6 +5,7 @@ use std::io;
 use std::os::fd::RawFd;
 use std::time::Instant;
 
+use crate::auth::RealAuthSys;
 use crate::close_fd;
 use crate::session::handle_session;
 use crate::session::{RealSessionSys, SpawnFail};
@@ -81,6 +82,7 @@ pub fn serve(
 pub fn fork_session(
     conn: RawFd,
     passwd: &std::path::Path,
+    signers: &std::path::Path,
     deadline: Instant,
 ) -> Result<(), SpawnFail> {
     // SAFETY: fork(2); the child only runs handle_session and exits.
@@ -89,7 +91,14 @@ pub fn fork_session(
         return Err(SpawnFail);
     }
     if pid == 0 {
-        handle_session(conn, &RealSessionSys, passwd, deadline);
+        handle_session(
+            conn,
+            &RealSessionSys,
+            &RealAuthSys,
+            signers,
+            passwd,
+            deadline,
+        );
         std::process::exit(0);
     }
     close_fd(conn);

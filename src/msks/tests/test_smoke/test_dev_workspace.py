@@ -81,7 +81,7 @@ async def test_local_dev_workspace_bootstrap() -> None:
     forwarding_was = forwarding.read_text()
     forwarding.write_text("1")
 
-    async def probe(marker_prefix: str, probe_cmd: str) -> None:
+    async def probe(marker_prefix: str, probe_cmd: str, app=None) -> None:
         # Each marker is gated on the probe's exit status so the
         # echoed command text cannot satisfy it (see run_in_console).
         await run_in_console(
@@ -89,6 +89,7 @@ async def test_local_dev_workspace_bootstrap() -> None:
             wid,
             f"{probe_cmd} && echo {marker_prefix}-$((6*7))",
             f"{marker_prefix}-42",
+            app=app,
         )
 
     try:
@@ -98,7 +99,7 @@ async def test_local_dev_workspace_bootstrap() -> None:
         await await_guest_up(serial_log)
         # First boot: the seed runs in cloud-final; poll its state
         # trail to "done" (each tool's marker gated on its presence).
-        await await_dev_state(microvm, wid, b"done")
+        await await_dev_state(microvm, app, wid, b"done")
         await probe("UV", "command -v uv")
         await probe("CLONE", "git -C /root/msks rev-parse --is-inside-work-tree")
         await probe("SYNC", "test -x /root/msks/.venv/bin/pytest")
@@ -110,7 +111,7 @@ async def test_local_dev_workspace_bootstrap() -> None:
         serial_log.unlink(missing_ok=True)
         await microvm.launch(spec)
         await await_guest_up(serial_log)
-        await await_dev_state(microvm, wid, b"done")
+        await await_dev_state(microvm, app, wid, b"done")
         # Console-readiness after the reboot plus the persistence
         # proof: the venv survives, and the rerun log does not exist
         # — the seed executed exactly once (cloud-init state rode the
@@ -129,8 +130,9 @@ async def test_local_dev_workspace_bootstrap() -> None:
             "sh /mnt/cidata/user-data >/root/.msks-bootstrap/rerun.log 2>&1; "
             "echo R-$?",
             "R-0",
+            app=app,
         )
-        await await_dev_state(microvm, wid, b"done")
+        await await_dev_state(microvm, app, wid, b"done")
 
         # The suite, inside the guest, the way the `unit-tests` task
         # runs it (the task's exec line, from the venv uv built) —
@@ -156,8 +158,9 @@ async def test_local_dev_workspace_bootstrap() -> None:
             "echo done-$? >/root/.msks-bootstrap/unit-tests.rc' "
             ">/dev/null 2>&1 & echo BG-$((6*7)); fi",
             "BG-42",
+            app=app,
         )
-        await await_dev_state(microvm, wid, b"done-0")
+        await await_dev_state(microvm, app, wid, b"done-0")
         await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
         final = await microvm.info(wid)
         assert final.status.value in ("stopped", "absent")

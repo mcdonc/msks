@@ -122,9 +122,10 @@ def mint(key_type: str) -> tuple[str, str]:
     return private_pem, public
 
 
-def seed_script(public_key: str) -> str:
+def seed_script(public_key: str, workspace_id: str) -> str:
     """The seeding payload's script half: authorized_keys for root
-    and the msks workspace user (#63), written idempotently.
+    and the msks workspace user (#63) plus the console helper's
+    allowed_signers (#123), written idempotently.
 
     The same mkdir/chmod/append shape #110's smoke planted by hand,
     now the daemon's own first-boot step. The msks user's home rides
@@ -132,13 +133,22 @@ def seed_script(public_key: str) -> str:
     its .ssh) with the right ownership when the console helper has
     not yet. A key already present is left alone, so a re-provision
     (a factory reset) cannot duplicate lines.
+
+    The allowed_signers file is the console challenge's trust store
+    (#123): the guest helper's ``ssh-keygen -Y verify`` checks the
+    client's signature against it, principal-bound to this
+    workspace's id. The daemon relays the challenge and the
+    signature; it can answer for neither. ssh and console share the
+    key: what authorized_keys accepts, allowed_signers accepts.
     """
     return (
         "#!/bin/sh\n"
-        "# msks (#111): the minted workspace identity — authorized_keys\n"
-        "# for root and the msks workspace user, planted first boot.\n"
+        "# msks (#111, #123): the workspace identity — authorized_keys\n"
+        "# for root and the msks user, and the console helper's\n"
+        "# allowed_signers, planted first boot.\n"
         "set -eu\n"
         f"key='{public_key}'\n"
+        f"wsid='{workspace_id}'\n"
         "install -d -m 0700 -o root -g root /root/.ssh\n"
         "touch /root/.ssh/authorized_keys\n"
         'grep -qxF "$key" /root/.ssh/authorized_keys '
@@ -151,6 +161,19 @@ def seed_script(public_key: str) -> str:
         "|| printf '%s\\n' \"$key\" >> /home/msks/.ssh/authorized_keys\n"
         "chown msks:msks /home/msks/.ssh/authorized_keys\n"
         "chmod 0600 /home/msks/.ssh/authorized_keys\n"
+        # The signers line: the workspace id principal, then the
+        # key's own two fields (an authorized_keys comment is not
+        # signers syntax). Splitting with globbing off — the key's
+        # charset carries no glob characters.
+        "set -f\n"
+        "set -- $key\n"
+        "install -d -m 0700 -o root -g root /etc/msks\n"
+        "signers=/etc/msks/console.allowed_signers\n"
+        'touch "$signers"\n'
+        'grep -qxF "$wsid $1 $2" "$signers" '
+        '|| printf \'%s %s %s\\n\' "$wsid" "$1" "$2" >> "$signers"\n'
+        'chown root:root "$signers"\n'
+        'chmod 0600 "$signers"\n'
     )
 
 
@@ -161,7 +184,9 @@ def seed_script(public_key: str) -> str:
 MIME_BOUNDARY = "============msks-identity=="
 
 
-def compose_user_data(operator_payload: str | None, public_key: str | None) -> str:
+def compose_user_data(
+    operator_payload: str | None, public_key: str | None, workspace_id: str = ""
+) -> str:
     """The seed's user-data document: what cidata actually carries.
 
     With no minted key the operator's payload travels verbatim (the
@@ -174,7 +199,7 @@ def compose_user_data(operator_payload: str | None, public_key: str | None) -> s
     """
     if public_key is None:
         return operator_payload
-    script = seed_script(public_key)
+    script = seed_script(public_key, workspace_id)
     if operator_payload is None:
         return script
     boundary = unique_boundary(operator_payload, script)

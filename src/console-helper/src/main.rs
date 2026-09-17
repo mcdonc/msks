@@ -13,7 +13,7 @@ use msks_console_helper::cli::{parse_args, Mode};
 use msks_console_helper::serve::{
     fork_session, install_signals, serve, vsock_peer_allowed, AF_VSOCK, VMADDR_CID_ANY,
 };
-use msks_console_helper::{PASSWD_PATH, PRELUDE_DEADLINE};
+use msks_console_helper::{CONSOLE_SIGNERS_PATH, PASSWD_PATH, PRELUDE_DEADLINE};
 
 fn die(what: &str, error: std::io::Error) -> ! {
     eprintln!("msks-console-helper: {what}: {error}");
@@ -72,12 +72,18 @@ fn vsock_listen(port: u32) -> std::io::Result<i32> {
     }
 }
 
-fn run(listener: i32, allowed: impl Fn(u16, u32) -> bool, passwd: &Path, deadline: Duration) -> ! {
+fn run(
+    listener: i32,
+    allowed: impl Fn(u16, u32) -> bool,
+    passwd: &Path,
+    signers: &Path,
+    deadline: Duration,
+) -> ! {
     // The deadline belongs to each connection: one measured at process
     // start would expire every shell opened more than `deadline`
     // after guest boot.
     match serve(listener, allowed, &|conn| {
-        fork_session(conn, passwd, Instant::now() + deadline)
+        fork_session(conn, passwd, signers, Instant::now() + deadline)
     }) {
         Ok(()) => exit(0),
         Err(error) => die("listener", error),
@@ -98,6 +104,7 @@ fn main() {
                 fd,
                 vsock_peer_allowed,
                 Path::new(PASSWD_PATH),
+                Path::new(CONSOLE_SIGNERS_PATH),
                 PRELUDE_DEADLINE,
             );
         }
@@ -105,9 +112,10 @@ fn main() {
             fd,
             passwd,
             deadline,
+            signers,
         }) => {
             install_signals();
-            run(fd, |_, _| true, &passwd, deadline);
+            run(fd, |_, _| true, &passwd, &signers, deadline);
         }
     }
 }

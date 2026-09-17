@@ -15,7 +15,7 @@ const DEFAULT_TERM: &str = "xterm";
 /// Why a prelude read stopped early: every shape fails closed, but
 /// the refusal names what actually happened.
 #[derive(Debug, PartialEq, Clone, Copy)]
-enum ReadFail {
+pub(crate) enum ReadFail {
     Deadline,
     Closed,
     Oversize,
@@ -31,9 +31,11 @@ pub struct Prelude {
     pub term: String,
 }
 
-/// One prelude line under the shared deadline, byte at a time; `Err`
-/// names the failure shape (all fail closed), `Ok` is the line.
-fn read_prelude_line(fd: RawFd, deadline: Instant) -> Result<String, ReadFail> {
+/// One bounded, deadline-driven line under the shared deadline,
+/// byte at a time; `Err` names the failure shape (all fail closed),
+/// `Ok` is the line. `max` bounds the line's length (the prelude's
+/// 128, the auth signature line's 16 KiB).
+pub(crate) fn read_line(fd: RawFd, deadline: Instant, max: usize) -> Result<String, ReadFail> {
     let mut line = Vec::new();
     loop {
         let Some(wait) = deadline.checked_duration_since(Instant::now()) else {
@@ -60,13 +62,18 @@ fn read_prelude_line(fd: RawFd, deadline: Instant) -> Result<String, ReadFail> {
             b'\r' => continue,
             b'\n' => return Ok(String::from_utf8_lossy(&line).into_owned()),
             c => {
-                if line.len() + 1 >= PRELUDE_LINE_MAX {
+                if line.len() + 1 >= max {
                     return Err(ReadFail::Oversize);
                 }
                 line.push(c);
             }
         }
     }
+}
+
+/// One prelude line under the shared deadline.
+fn read_prelude_line(fd: RawFd, deadline: Instant) -> Result<String, ReadFail> {
+    read_line(fd, deadline, PRELUDE_LINE_MAX)
 }
 
 /// The wire charset for a TERM value: printable ASCII minus space —

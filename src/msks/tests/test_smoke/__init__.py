@@ -226,12 +226,64 @@ CONSOLE_PROMPT_NEEDLE = b"root@msks-guest:~# "
 USER_CONSOLE_PROMPT_NEEDLE = b"msks@msks-guest:~$ "
 
 
+async def answer_console_auth(reader, writer, workspace_id, app, signer=None) -> None:
+    """Answer a #123 console challenge on a raw vsock stream.
+
+    A seeded guest challenges before any prompt; a guest without the
+    trust store speaks the shell's own first bytes — the bracketed-
+    paste escape and a prompt that carries no newline, so a line
+    read would stall forever. The detection is byte-wise against the
+    challenge prefix; bytes that are not the challenge go back for
+    the marker wait. The key record comes straight from the daemon's
+    model — the harness runs in-process with it.
+    """
+    from msks.client import consoleauth  # allow-deferred-import
+
+    prefix = b"AUTH CHALLENGE "
+    seen = b""
+    while True:
+        chunk = await asyncio.wait_for(reader.read(4096), 30)
+        seen += chunk
+        if not chunk:
+            # EOF: nothing to answer, and nothing more will come.
+            if seen:
+                reader.feed_data(seen)
+            return
+        if seen.startswith(prefix):
+            if b"\n" in seen:
+                break
+            continue  # the challenge line is still arriving
+        if prefix.startswith(seen):
+            continue  # a prefix-sized first chunk: not decidable yet
+        # The shell's own bytes: put everything back and let the
+        # prompt wait read them.
+        if seen:
+            reader.feed_data(seen)
+        return
+    line, _, rest = seen.partition(b"\n")
+    if rest and rest != b"":
+        reader.feed_data(rest)
+    nonce = bytes.fromhex(line[len(prefix) :].strip().decode())
+    if signer is None:
+        key = await app.state.model.get_ssh_key(workspace_id)
+        assert key is not None and key["public_key"] is not None, (
+            f"guest challenged but {workspace_id} has no identity key"
+        )
+        signer, _public = consoleauth.signer_for_key(key, workspace_id)
+    writer.write(b"AUTH SIG " + signer(nonce).encode() + b"\n")
+    await writer.drain()
+    reply = await asyncio.wait_for(reader.readline(), 30)
+    assert reply.startswith(b"AUTH OK"), f"console auth refused: {reply!r}"
+
+
 async def run_in_console(
     microvm,
     workspace_id: str,
     command: str,
     marker: str,
     user: str = "root",
+    app=None,
+    signer=None,
 ) -> None:
     """Run one shell command over the vsock console and wait for its
     marker, in a fresh guest shell session per attempt (#75).
@@ -257,6 +309,10 @@ async def run_in_console(
         try:
             reader, writer = await microvm.console(workspace_id, user=user)
             try:
+                if app is not None or signer is not None:
+                    # The console challenge (#123): answer it with the
+                    # workspace key before any prompt appears.
+                    await answer_console_auth(reader, writer, workspace_id, app, signer)
                 needle = (
                     CONSOLE_PROMPT_NEEDLE
                     if user == "root"
@@ -533,7 +589,7 @@ def dev_workspace_seed() -> str:
     return path.read_text()
 
 
-async def await_dev_state(microvm, workspace_id: str, needle: bytes) -> bytes:
+async def await_dev_state(microvm, app, workspace_id: str, needle: bytes) -> bytes:
     """Poll the guest's bootstrap state trail until it says ``needle``.
 
     Each probe is a fresh console session well inside
@@ -562,6 +618,7 @@ async def await_dev_state(microvm, workspace_id: str, needle: bytes) -> bytes:
             # so the raw console() default cannot speak to it.
             reader, writer = await microvm.console(workspace_id, user="root")
             try:
+                await answer_console_auth(reader, writer, workspace_id, app)
                 await read_until(reader, CONSOLE_PROMPT_NEEDLE)
                 writer.write(
                     b"cat /root/.msks-bootstrap/state "
@@ -640,7 +697,7 @@ def free_port() -> int:
 
 
 async def await_guest_trail(
-    microvm, workspace_id: str, probe: str, needle: bytes, timeout_s: float
+    microvm, app, workspace_id: str, probe: str, needle: bytes, timeout_s: float
 ) -> None:
     """Poll a guest-side probe command until its output carries
     ``needle``.
@@ -662,6 +719,7 @@ async def await_guest_trail(
         try:
             reader, writer = await microvm.console(workspace_id, user="root")
             try:
+                await answer_console_auth(reader, writer, workspace_id, app)
                 await read_until(reader, CONSOLE_PROMPT_NEEDLE)
                 writer.write(f"{probe}; echo E-$((21*2))\n".encode())
                 await writer.drain()

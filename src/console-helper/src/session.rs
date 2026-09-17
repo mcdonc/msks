@@ -11,6 +11,7 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Instant;
 
+use crate::auth::{authenticate, AuthSys, AUTH_DEADLINE};
 use crate::passwd::{lookup_groups_at, lookup_user_at, UserEntry, UserLookup};
 use crate::prelude::read_prelude;
 use crate::refuse;
@@ -607,7 +608,14 @@ pub fn classify_write(n: isize, errno: libc::c_int) -> WriteOutcome {
 /// One whole session on an accepted connection: prelude, user
 /// lookup, OK reply, pty, shell, pump, close. Every refusal path
 /// closes the connection — a shell is never exec'd on failure.
-pub fn handle_session(conn: RawFd, sys: &dyn SessionSys, passwd: &Path, deadline: Instant) {
+pub fn handle_session(
+    conn: RawFd,
+    sys: &dyn SessionSys,
+    auth: &dyn AuthSys,
+    signers: &Path,
+    passwd: &Path,
+    deadline: Instant,
+) {
     let pre = match read_prelude(conn, deadline) {
         Some(pre) => pre,
         None => {
@@ -625,6 +633,14 @@ pub fn handle_session(conn: RawFd, sys: &dyn SessionSys, passwd: &Path, deadline
     };
     let reply = format!("MSKS OK {}\n", user.name);
     if !write_all(conn, reply.as_bytes()) {
+        sys.close(conn);
+        return;
+    }
+    // The console challenge (#123): a guest whose seed planted the
+    // trust store admits only a signature over a fresh nonce. A
+    // guest without the store (pre-#123) passes straight through.
+    // The auth runs on its own clock: signing can be a touch.
+    if !authenticate(conn, Instant::now() + AUTH_DEADLINE, signers, auth) {
         sys.close(conn);
         return;
     }

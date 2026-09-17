@@ -59,36 +59,52 @@ async def test_local_user_data_provisioning() -> None:
         user_data=script,
     )
 
-    async def boot_and_probe(expected_count: int) -> None:
+    async def boot_and_probe(expected_count: int, app=None) -> None:
         await microvm.launch(spec)
         await await_guest_up(serial_log)
         # Payloads run in cloud-final, which can lag the login getty;
         # wait for cloud-init to be done before asserting on files it
         # was supposed to write.
-        await run_in_console(microvm, wid, "cloud-init status --wait", "done")
         await run_in_console(
-            microvm, wid, "cat /root/firstboot-count", str(expected_count)
+            microvm,
+            wid,
+            "cloud-init status --wait",
+            "done",
+            app=app,
+        )
+        await run_in_console(
+            microvm,
+            wid,
+            "cat /root/firstboot-count",
+            str(expected_count),
+            app=app,
         )
         # The seed reaches the guest as a labeled, read-only disk.
-        await run_in_console(microvm, wid, "blkid -o value -s LABEL /dev/vdc", "cidata")
+        await run_in_console(
+            microvm,
+            wid,
+            "blkid -o value -s LABEL /dev/vdc",
+            "cidata",
+            app=app,
+        )
         await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
 
     try:
         await microvm.prepare(spec)
         seed = persist.seed_path(state_dir, wid)
         assert seed.is_file()
-        await boot_and_probe(1)
+        await boot_and_probe(1, app=app)
         # stop/start: cloud-init's state survives on the overlay, the
         # script does not run again.
         serial_log.unlink(missing_ok=True)
-        await boot_and_probe(1)
+        await boot_and_probe(1, app=app)
         # Factory reset: the overlay (cloud-init state included) dies;
         # the seed stays and provisions the pristine root again.
         serial_log.unlink(missing_ok=True)
         await microvm.reset(wid)
         assert not persist.overlay_path(state_dir, wid).exists()
         assert seed.is_file()
-        await boot_and_probe(1)
+        await boot_and_probe(1, app=app)
     except BaseException:
         collect_failure_evidence(state_dir, wid, serial_log)
         with contextlib.suppress(Exception):
@@ -132,8 +148,20 @@ async def test_local_user_data_cloud_config() -> None:
     try:
         await microvm.launch(spec)
         await await_guest_up(serial_log)
-        await run_in_console(microvm, wid, "cloud-init status --wait", "done")
-        await run_in_console(microvm, wid, "cat /root/provisioned.txt", marker)
+        await run_in_console(
+            microvm,
+            wid,
+            "cloud-init status --wait",
+            "done",
+            app=app,
+        )
+        await run_in_console(
+            microvm,
+            wid,
+            "cat /root/provisioned.txt",
+            marker,
+            app=app,
+        )
         await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
     except BaseException:
         collect_failure_evidence(state_dir, wid, serial_log)
