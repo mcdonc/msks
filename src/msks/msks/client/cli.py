@@ -87,7 +87,7 @@ async def create_workspace(
     hide that the workspace exists — recover with ``msks start``.
     In the client-mint mode (#121) the keypair is minted here — the
     private half never crosses the wire — and is persisted (mode
-    0600, client cache) only after the create succeeded, so a
+    0600, client data root) only after the create succeeded, so a
     refused create leaves no orphaned key behind.
     """
     private_pem = None
@@ -135,7 +135,8 @@ async def verify_no_escrow(client, workspace_id: str, public: str) -> None:
             "identity for the workspace (a daemon older than this "
             "client's client mint support). The daemon's version of "
             "msks must be updated before creating without "
-            "--daemon-mint"
+            "--daemon-mint; remove the escrowed workspace with: "
+            f"msks rm {workspace_id}"
         )
 
 
@@ -155,6 +156,9 @@ def write_client_identity(workspace_id: str, private_pem: str) -> Path:
     try:
         root.mkdir(parents=True, exist_ok=True)
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(private_pem)
     except OSError as exc:
         raise SystemExit(
             f"msks: {workspace_id} was created, but its client-minted "
@@ -163,9 +167,6 @@ def write_client_identity(workspace_id: str, private_pem: str) -> Path:
             "use this workspace's identity. Use the console, or delete "
             "and recreate the workspace"
         ) from exc
-    os.fchmod(fd, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(private_pem)
     return path
 
 
@@ -222,7 +223,8 @@ def cmd_rm(workspace_ids: list[str], transport=None) -> int:
 
 
 async def fetch_ssh_key(url, token, workspace_id, transport) -> dict:
-    """GET the workspace's minted identity (#111): type, both halves.
+    """GET the workspace's identity: type, public half, private half
+    (null for a client-minted workspace, #121).
 
     A re-export of :func:`msks.client.rest.fetch_ssh_key` (the call
     moved to rest.py when ``msks ssh`` (#112) began sharing it);

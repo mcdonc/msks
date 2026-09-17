@@ -4,14 +4,17 @@ One-off sugar over the pieces that already exist: the workspace is
 booted when the daemon reports it as not running (the same pre-flight
 as ``msks console``), the workspace identity is fetched over the
 authenticated API — the daemon-minted half pair (#111) or the public
-half of a client-minted one (#121, whose private half then comes from
-the local cache) — and ``ssh`` runs with the forward websocket
-(#109) as its ProxyCommand. The private half never becomes a file:
-a transient in-process ssh-agent (:mod:`msks.client.agent`) holds it
-in memory and ssh authenticates through the agent socket
-(``-o IdentityAgent=...``) — ssh closes inherited descriptors at
-startup, so the socket is the one channel that survives to
-authentication.
+half of a client-minted one (#121, whose private half then comes
+from the client data root) — and ``ssh`` runs with the forward
+websocket (#109) as its ProxyCommand. The session stages the
+private half in a transient in-process ssh-agent
+(:mod:`msks.client.agent`) and ssh authenticates through the agent
+socket (``-o IdentityAgent=...``) — ssh closes inherited descriptors
+at startup, so the socket is the one channel that survives to
+authentication — writing no new copy anywhere: a daemon-minted
+half arrives over the API and stays in memory for the session; a
+client-minted half is read from its one file and left exactly
+there.
 
 The session logs in as the image's workspace user by default;
 ``-l root`` in the passthrough args is the recovery login. Agent
@@ -90,7 +93,7 @@ def resolve_private(key: dict, workspace_id: str) -> str:
 
     A daemon-minted workspace (#111) hands its half over the API; a
     client-minted one (#121) answers ``private_key: null`` — its
-    half lives in the local cache, written at create. The cached
+    half lives in the client data root, written at create. The stored
     half is checked against the served public line before use: a
     stale cache (the id re-created from another client, a backup
     restored over a re-created workspace) fails as one named line,
@@ -120,9 +123,9 @@ def resolve_private(key: dict, workspace_id: str) -> str:
         raise SystemExit(
             f"msks ssh: the client-minted identity at {path} does not "
             f"match {workspace_id} — the workspace was re-created since "
-            "that key was cached. Delete and recreate the workspace, or "
-            "clear the cache entry and re-create it from the client "
-            "that holds the current identity"
+            "that key was stored. Delete that file and re-create the "
+            "workspace (the client that holds the current identity "
+            "keeps working), or use the console"
         )
     return pem
 

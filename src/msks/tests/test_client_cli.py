@@ -326,6 +326,65 @@ def test_create_client_mint_refuses_a_silent_escrow(
     assert "created ws1" in capsys.readouterr().out
 
 
+def test_write_client_identity_fails_as_one_line_when_unwritable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Every phase of the write — open, chmod, the write itself —
+    exits as one named line: a directory squatting on the identity
+    path raises the same operator-shaped SystemExit as an unusable
+    cache root."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    blocker = tmp_path / "msks" / "ws1" / "identity"
+    blocker.parent.mkdir(parents=True)
+    blocker.mkdir()  # a directory where the key file belongs
+    with pytest.raises(SystemExit, match="could not be written"):
+        cli.write_client_identity("ws1", "private material")
+
+
+def test_cmd_create_client_mint_with_start_boots_after_verification(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Client mint composes with --start in order: create, escrow
+    verification, identity write, then boot — a failure anywhere
+    earlier leaves the workspace created but unbooted, and the boot
+    rides the same client."""
+    client_env(monkeypatch)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    paths = []
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if request.url.path.endswith("/ssh-key"):
+            return httpx.Response(
+                200,
+                json={
+                    "workspace": "ws1",
+                    "type": "ssh-ed25519",
+                    "public_key": f"{seen['supplied']} msks-client:ws1",
+                    "private_key": None,
+                },
+            )
+        if request.url.path.endswith("/start"):
+            return httpx.Response(200, json={"id": "ws1", "status": "running"})
+        seen["supplied"] = json.loads(request.content)["ssh_pubkey"]
+        return httpx.Response(201, json={"id": "ws1", "status": "created"})
+
+    rc = cli.cmd_create(
+        {"id": "ws1"}, start=True, transport=mock(handler), key_type="ed25519"
+    )
+    assert rc == 0
+    assert paths == [
+        "/api/v1/workspaces",
+        "/api/v1/workspaces/ws1/ssh-key",
+        "/api/v1/workspaces/ws1/start",
+    ]
+    assert (tmp_path / "msks" / "ws1" / "identity").exists()
+    out = capsys.readouterr().out
+    assert "created ws1" in out
+    assert "msks console ws1" in out
+
+
 def test_client_mint_key_type_pairing() -> None:
     """The client mint is the create default (#121) with the
     FIPS-approvable type; --daemon-mint hands the identity to the

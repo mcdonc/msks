@@ -84,7 +84,8 @@ workspace charset — lowercase letters, digits, and dashes, starting
 with a letter or digit, up to 64 chars (it becomes a directory name
 under the state dir and a pod name on k8s).
 
-Flags map one-to-one onto the create request's fields:
+Flags map onto the create request's fields (the identity flags
+below generate theirs):
 
 | Flag            | API field   | Meaning                                                                      |
 | --------------- | ----------- | ---------------------------------------------------------------------------- |
@@ -516,12 +517,13 @@ for a client-minted one (#121, the create default) the API serves
 the public half and the private half comes from the local data root
 (`~/.local/share/msks/<id>/identity`, written at create) — a
 missing, stale, or corrupt file exits with one line naming the path
-and the recovery. Either way the
-private half never becomes a file: a transient in-process ssh-agent
-holds it in memory for the session, ssh names the identity by its
-public half (`-i`, public material only) and signs through the
-agent socket — the key material goes away with the process, and a
-crash leaves no private material behind. Host keys land in a per-workspace
+and the recovery. Either way the session writes no new copy of the
+private half anywhere: a transient in-process ssh-agent holds it in
+memory for the session, ssh names the identity by its public half
+(`-i`, public material only) and signs through the agent socket — a
+daemon-minted half arrives over the API and goes away with the
+process, and a client-minted half is read from its one file and
+left exactly there. Host keys land in a per-workspace
 `known_hosts` under the msks cache root (XDG_CACHE_HOME, else
 `~/.cache/msks`, then `<ws>/known_hosts`) under `accept-new`; they
 persist across stop/start on the workspace's
