@@ -8,6 +8,16 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **git-out through egress with a forwarded agent (#81).** The
+  dogfood loop's outbound half is proven end to end by a new opt-in
+  root smoke, `test_local_egress_git_out` (it runs in the KVM
+  workflow's egress step): the workspace installs git from Debian's
+  mirrors and fetches an unrelated HTTPS host through the NAT'd
+  uplink, then pushes a commit to a scratch git server on the host
+  through a test-widened input pin, authenticating only with an
+  operator key that rode the forward as a forwarded agent — no
+  credential in the image or the seed. The workflow and its
+  ControlMaster caveat are in `docs/networking.md`.
 - **`msks ssh` (#112).** One command logs into a workspace with stock
   ssh over the forward websocket: it boots the workspace if needed,
   fetches the minted identity over the authenticated API, and serves

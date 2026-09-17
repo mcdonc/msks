@@ -394,6 +394,64 @@ so `MSKSC_URL`, `MSKSC_TOKEN`, and `MSKSC_CAFILE` must be set there;
 `ssh -l root msks-devbox` is the recovery login, and `-A` forwards
 the operator's own agent into the workspace.
 
+### Pushing code out with your own credentials
+
+Written for the developer working inside a workspace: your repo's
+remote — GitHub, a private GitLab host, anything reachable on the
+network — accepts a push only with your credentials, and the
+workspace has none of them and should hold none. The workflow is
+one login with agent forwarding, after which a push from inside
+the workspace works exactly as it does on your own machine.
+
+On your client machine, load the key into your agent (`ssh-add`),
+then log in through the forward with `-A`:
+
+```bash
+ssh -A msks-devbox
+```
+
+Inside the session your agent is present: `ssh-add -l` lists your
+keys, and every ssh the session starts — git's included — offers
+them to the remote, so the ordinary push needs no extra setup:
+
+```bash
+git -C ~/work/proj push origin main
+```
+
+The credential stays on your machine. The agent rides the
+connection as a socket, so nothing is written to the workspace's
+disks, the image, or the seed; when the session closes, the
+workspace keeps no copy of the key. Host-key checking for the
+remote behaves as anywhere else (the workspace has its own
+`~/.ssh/known_hosts`).
+
+Two msks-specific details:
+
+- `msks ssh`, the one-command login, forwards its own transient
+  agent — the one holding the minted workspace identity. That
+  agent carries no credentials for your remotes. To push with
+  your own keys, use a plain `ssh -A`: the alias form above, or
+  the forward port directly
+  (`ssh -A -i ~/.cache/msks/msks-devbox.key -p 2201 msks@127.0.0.1`).
+- With the alias's ControlMaster, the agent arrives only on the
+  connection that creates the master. If you connected earlier
+  without `-A`, close the master first — `ssh -O exit msks-devbox`
+  — then reconnect with `-A`, or wait out the ControlPersist
+  window.
+
+What the network allows: a workspace with egress reaches any
+off-appliance destination without a grant — remotes, package
+mirrors, any host reachable through the uplink. Guest-initiated
+connections aimed at the appliance itself stay dropped (only DHCP
+and the resolver answer it); per-destination consent gates (#69)
+narrow guest-initiated egress later. The end-to-end proof is the
+`test_local_egress_git_out` smoke (`MSKSD_TEST_EGRESS=1` locally,
+and part of CI's KVM workflow): it installs git in the guest over
+the egress path and pushes a commit — over a test-widened input
+pin, since the appliance itself stays unreachable from the guest
+by design — using only a key that arrived through the forward as a
+forwarded agent.
+
 ### Cryptographic agility (a future FIPS posture)
 
 The image pins login policy — who may authenticate, and how — and

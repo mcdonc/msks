@@ -85,9 +85,15 @@ boots. A guest image must:
   gateway, and its own resolver. The overlay carries a
   systemd-networkd `.network` unit (`Name=en* eth*`, `DHCP=yes`)
   plus resolved's stub resolv.conf, so the guest configures whatever
-  NIC appears. A workspace created with `"egress": false` presents
-  no NIC: nothing matches the unit and networkd stays idle — the
-  same image serves both postures.
+  NIC appears. The offered resolver becomes resolved's per-link
+  upstream: `/etc/resolv.conf` names the `127.0.0.53` stub, and the
+  lease's resolver in effect is read from `resolvectl dns` (the
+  git-out smoke's probe, #81). A workspace created with
+  `"egress": false` presents no NIC: nothing matches the unit and
+  networkd stays idle — the same image serves both postures. The
+  shipped base carries no developer toolchain: git, curl, and uv
+  all land over the egress NIC when a seed or the operator
+  installs them (#77, #81).
 - **Answer the ACPI power button.** `stop` presses the power button
   (`vm.power-button`) and waits; the guest's own handler runs the
   clean shutdown that flushes its disks — systemd-logind does this

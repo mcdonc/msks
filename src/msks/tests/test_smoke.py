@@ -19,8 +19,10 @@ covered by the faked-transport unit suites).
 import asyncio
 import contextlib
 import os
+import pwd
 import re
 import shutil
+import signal
 import socket
 import ssl
 import subprocess
@@ -36,6 +38,7 @@ import websockets
 from httpx import AsyncClient
 from msks.app import build_app
 from msks.microvm import VmSpec
+from msks.net.alloc import table_name, tap_name
 from msks.server.api import build_api
 from msks.settings import (
     K8sSettings,
@@ -150,12 +153,15 @@ def collect_failure_evidence(state_dir: Path, wid: str, serial_log: Path) -> Non
             with contextlib.suppress(OSError):
                 shutil.copy2(source, keep / name)
                 (keep / name).chmod(0o644)
-    # The ssh smoke's forward-client logs: the ssh-path evidence the
-    # artifact upload exists for.
-    for source in state_dir.glob("*-work/*.log"):
-        with contextlib.suppress(OSError):
-            shutil.copy2(source, keep / source.name)
-            (keep / source.name).chmod(0o644)
+    # The ssh and git-out smokes' scratch logs (forward clients,
+    # the scratch sshd): the ssh-path evidence the artifact upload
+    # exists for. The git-out workdir is plain "gitout" (no -work
+    # suffix), so both shapes are globbed.
+    for pattern in ("*-work/*.log", "gitout/*.log"):
+        for source in state_dir.glob(pattern):
+            with contextlib.suppress(OSError):
+                shutil.copy2(source, keep / source.name)
+                (keep / source.name).chmod(0o644)
 
 
 async def await_guest_up(serial_log: Path, timeout_s: float | None = None) -> None:
@@ -1360,6 +1366,19 @@ def _default_route_iface() -> str:
     raise AssertionError(f"no default route to NAT behind: {route!r}")
 
 
+def _uplink_address() -> str:
+    """The host's own address on the default-route interface.
+
+    A connect() on an unconnected-protocol socket only picks the
+    route's source address — nothing is sent — so this names the
+    address NAT'd guest traffic wears reaching the host itself:
+    where the git-out smoke's scratch sshd listens (#81).
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.connect(("9.9.9.9", 53))
+        return sock.getsockname()[0]
+
+
 needs_egress = pytest.mark.skipif(
     not EGRESS
     or not VMLINUX
@@ -1760,6 +1779,23 @@ needs_ssh_tools = pytest.mark.skipif(
     reason="ssh, ssh-keygen, and rsync must be on PATH (the devenv shell ships them)",
 )
 
+#: The git-out smoke's host tools (#81): a scratch sshd serves the
+#: push target and a scratch agent carries the credential — the
+#: devenv shell ships all four; a bare environment skips.
+GIT_BIN = shutil.which("git")
+SSHD_BIN = shutil.which("sshd")
+SSH_AGENT_BIN = shutil.which("ssh-agent")
+SSH_ADD_BIN = shutil.which("ssh-add")
+needs_git_tools = pytest.mark.skipif(
+    not (GIT_BIN and SSHD_BIN and SSH_AGENT_BIN and SSH_ADD_BIN),
+    reason="git, sshd, ssh-agent, and ssh-add must be on PATH",
+)
+
+#: The git-out legs' ceiling (#81): apt + an HTTPS fetch inside the
+#: guest and the push itself. Download-bound, like the bootstrap
+#: smoke's budget — CI raises it on slow paths.
+GIT_OUT_TIMEOUT_S = float(os.environ.get("MSKSD_TEST_GIT_OUT_TIMEOUT_S", "600"))
+
 
 def free_port() -> int:
     """One loopback port the kernel has not handed out (bind/close)."""
@@ -2152,6 +2188,775 @@ async def test_local_sshd_and_rsync() -> None:
                 proc.terminate()
             with contextlib.suppress(Exception):
                 await asyncio.to_thread(proc.wait, 10)
+        if api_task is not None:
+            api_server.should_exit = True
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(asyncio.shield(api_task), timeout=10)
+        with contextlib.suppress(Exception):
+            await microvm.cleanup(wid)
+        with contextlib.suppress(OSError):
+            forwarding.write_text(forwarding_was)
+        shutil.rmtree(state_dir, ignore_errors=True)
+
+
+async def await_guest_trail(
+    microvm, workspace_id: str, probe: str, needle: bytes, timeout_s: float
+) -> None:
+    """Poll a guest-side probe command until its output carries
+    ``needle``.
+
+    The git-out smoke's long legs (apt, an HTTPS ``git ls-remote``)
+    run detached inside the guest and append step names to a trail
+    file; each probe here is a fresh console session well inside
+    CONSOLE_TIMEOUT_S — the same fresh-session-per-probe shape the
+    bootstrap poll uses (#103 workaround). The probe fragment cats
+    the trail and tails the run log, so a wait that times out or
+    fast-fails names the step that died with its own stderr in the
+    assertion — no rerun needed to see why. A ``fail-*`` trail line
+    fails the wait immediately instead of spinning to the deadline.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_s
+    last = b""
+    while loop.time() < deadline:
+        try:
+            reader, writer = await microvm.console(workspace_id, user="root")
+            try:
+                await read_until(reader, CONSOLE_PROMPT_NEEDLE)
+                writer.write(f"{probe}; echo E-$((21*2))\n".encode())
+                await writer.drain()
+                data = await read_until(reader, b"E-42", timeout_s=CONSOLE_TIMEOUT_S)
+            finally:
+                writer.close()
+                with contextlib.suppress(Exception):
+                    await writer.wait_closed()
+        except (AssertionError, OSError) as exc:
+            last = f"<console probe failed: {exc}>".encode()
+        else:
+            body = data.split(b"E-$((21*2))", 1)[-1].split(b"E-42", 1)[0]
+            last = body.strip()
+            if needle in body:
+                return
+            for line in body.splitlines():
+                if line.startswith(b"fail-"):
+                    raise AssertionError(
+                        f"guest trail reported {line!r} while awaiting "
+                        f"{needle!r}: {last[-400:]!r}"
+                    )
+        await asyncio.sleep(5)
+    raise AssertionError(
+        f"the guest never showed {needle!r} within {timeout_s}s; "
+        f"last observed: {last[-400:]!r}"
+    )
+
+
+@needs_egress
+@needs_local
+@needs_ssh_tools
+@needs_git_tools
+async def test_local_egress_git_out() -> None:
+    """git-out through egress with a forwarded agent (#81).
+
+    The dogfood loop's outbound half, end to end over the real
+    paths: a workspace with egress reaches destinations the seed
+    never needs through the NAT'd uplink (Debian's mirrors via
+    apt, an HTTPS fetch of an unrelated host), and the credential
+    the push authenticates with rides the forward as the
+    operator's forwarded agent — nothing about it is baked into
+    the image or the seed. Wide open, per #81's charter: every
+    probe below runs with no grant or consent anywhere; #69 is the
+    later narrowing of guest-initiated egress, not this loop.
+
+    Legs, in order: the DHCP lease's resolver is the daemon's own
+    (the per-link DNS the lease hands out sits inside the /30 pool
+    — no public resolver); apt installs git from Debian's mirrors
+    (no recommends) and an HTTPS `git ls-remote` reaches the
+    project's public remote — both through the NAT'd egress path
+    an off-host git remote rides; then the guest
+    commits and pushes to a bare repo behind a scratch sshd on the
+    host, authenticating only with the agent key that arrived
+    through ``msks forward --local`` — the alias workflow's ``-A``
+    path (#112) — never a key on the guest's disk. That push leg
+    crosses a test-widened input pin: the daemon's own posture
+    drops guest traffic aimed at the appliance by design (#52 —
+    test_local_egress_boot pins the drop), and a hermetic runner
+    has no off-host remote to receive the push, so the test pins
+    exactly one widening (this workspace's git port) into its own
+    ingress chain and removes it after.
+    """
+    nft_tool = os.environ.get("MSKSD_TEST_NFT") or shutil.which("nft") or "nft"
+    ip_tool = os.environ.get("MSKSD_TEST_IP") or shutil.which("ip") or "ip"
+    uplink_iface = _default_route_iface()
+    uplink_ip = _uplink_address()
+    # The listen address and the NAT'd uplink iface must agree:
+    # _uplink_address() picks the default route's source, which on
+    # a multihomed host can diverge from the iface settings name —
+    # fail naming both instead of binding a destination the daemon
+    # never NATs for.
+    iface = subprocess.run(
+        [ip_tool, "-4", "addr", "show", "dev", uplink_iface],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert iface.returncode == 0, iface.stderr
+    assert re.search(rf"inet {re.escape(uplink_ip)}[/ ]", iface.stdout), (
+        f"{uplink_ip!r} is not an address of the uplink iface "
+        f"{uplink_iface!r}: {iface.stdout}"
+        " (the inet/<prefixlen> anchor matters: a bare substring "
+        "match lets 10.1.0.19 pass against 10.1.0.198)"
+    )
+    state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
+    token = f"smoke-token-{uuid.uuid4().hex}"
+    api_port = free_port()
+    settings = Settings(
+        vmm=VmmSettings(state_dir=state_dir),
+        net=NetSettings(
+            enabled=True,
+            uplink=uplink_iface,
+            ip_tool=ip_tool,
+            nft_tool=nft_tool,
+        ),
+        server=ServerSettings(
+            host="127.0.0.1",
+            port=api_port,
+            db_path=state_dir / "smoke.db",
+            bootstrap_token=token,
+        ),
+    )
+    app = build_app(settings)
+    microvm = app.state.microvm
+    wid = f"smoke-{uuid.uuid4().hex[:8]}"
+    serial_log = state_dir / "vms" / wid / "serial.log"
+    spec = VmSpec(
+        workspace_id=wid,
+        kernel=Path(VMLINUX),
+        rootfs=Path(ROOTFS),
+        initrd=Path(INITRD) if INITRD else None,
+        cmdline=CMDLINE or "console=hvc0 root=/dev/vda rw",
+        egress=True,
+    )
+    workdir = state_dir / "gitout"
+    workdir.mkdir(parents=True)
+    login_key = workdir / "login_key"  # console-planted; logs in through the forward
+    agent_key = workdir / "agent_key"  # the git-out credential: host agent only
+    git_host_key = workdir / "git_host_key"  # the scratch sshd's host key
+    known_hosts = workdir / "known_hosts"
+    authorized = workdir / "authorized_keys"
+    sshd_config = workdir / "git-sshd.conf"
+    gitd_log = workdir / "git-sshd.log"
+    bare = workdir / "bare.git"
+    push_marker = f"PUSHED-{uuid.uuid4().hex[:8]}"
+    git_port = free_port()
+
+    forwarding = Path("/proc/sys/net/ipv4/ip_forward")
+    forwarding_was = forwarding.read_text()
+    forwarding.write_text("1")
+
+    api_server = None
+    api_task = None
+    forwards: list[subprocess.Popen] = []
+    forward_logs: list[Path] = []
+    agent_env: dict[str, str] | None = None
+    agent_pid: int | None = None
+    gitd: subprocess.Popen | None = None
+
+    def start_forward(port: int) -> None:
+        """One ``msks forward --local`` client against the test API
+        (the #109 transport the whole smoke rides)."""
+        env = dict(
+            os.environ,
+            MSKSC_URL=f"http://127.0.0.1:{api_port}",
+            MSKSC_TOKEN=token,
+        )
+        log = workdir / f"forward-{len(forward_logs)}.log"
+        forward_logs.append(log)
+        forwards.append(
+            subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "msks.client.cli",
+                    "forward",
+                    wid,
+                    "22",
+                    "--local",
+                    str(port),
+                ],
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=open(log, "ab"),
+            )
+        )
+
+    def forward_evidence() -> str:
+        """The forward clients' collected stderr, for failure messages."""
+        return "\n".join(
+            f"--- {log.name} ---\n{log.read_text(errors='replace')[-800:]}"
+            for log in forward_logs
+            if log.exists()
+        )
+
+    async def await_forward_listener(port: int, timeout_s: float = 30.0) -> None:
+        """Until the forward client says its loopback listener is up."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_s
+        needle = f"msks: 127.0.0.1:{port} -> "
+        while loop.time() < deadline:
+            log = forward_logs[-1]
+            if log.exists() and needle in log.read_text(errors="replace"):
+                return
+            await asyncio.sleep(0.05)
+        raise AssertionError(
+            f"msks forward never listened on 127.0.0.1:{port} within "
+            f"{timeout_s}s; forward logs:\n{forward_evidence()}"
+        )
+
+    def ssh_opts(port: int) -> list[str]:
+        """The client flags every host-side login shares (hermetic,
+        this key only, no prompting)."""
+        return [
+            "-F",
+            os.devnull,
+            "-i",
+            str(login_key),
+            "-o",
+            "IdentitiesOnly=yes",
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-o",
+            f"UserKnownHostsFile={known_hosts}",
+            "-o",
+            "ConnectTimeout=15",
+            "-o",
+            "BatchMode=yes",
+            "-p",
+            str(port),
+        ]
+
+    async def wait_sshd() -> None:
+        """Until the guest's address and ssh services are up."""
+        await await_guest_up(serial_log)
+        await run_in_console(
+            microvm,
+            wid,
+            "i=0; while [ $i -lt 30 ] "
+            "&& ! { systemctl is-active msks-wait-address >/dev/null 2>&1 "
+            "&& systemctl is-active ssh >/dev/null 2>&1; }; "
+            "do sleep 1; i=$((i+1)); done; "
+            "systemctl is-active msks-wait-address >/dev/null 2>&1 "
+            "&& systemctl is-active ssh >/dev/null 2>&1 && echo U-$((6*7))",
+            "U-42",
+        )
+
+    async def widen_input(port: int) -> None:
+        """One accept at the top of this workspace's ingress chain.
+
+        The daemon's chain drops host-directed guest traffic by
+        design (#52); the push leg pins a single widening — this
+        workspace's tap, the git port — inserted FIRST in the chain
+        so it wins ahead of the drop. narrow_input removes it; a
+        leak dies with the table at teardown regardless.
+        """
+        rule = await asyncio.to_thread(
+            subprocess.run,
+            [
+                nft_tool,
+                "insert",
+                "rule",
+                "inet",
+                table_name(wid),
+                "ingress",
+                "iifname",
+                tap_name(wid),
+                "tcp",
+                "dport",
+                str(port),
+                "accept",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert rule.returncode == 0, rule.stderr
+
+    async def narrow_input() -> None:
+        """Drop every handle this test pinned into the chain."""
+        listing = await asyncio.to_thread(
+            subprocess.run,
+            [nft_tool, "-a", "list", "chain", "inet", table_name(wid), "ingress"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if listing.returncode != 0:
+            return  # the table is gone; teardown already won
+        for line in listing.stdout.splitlines():
+            if f"tcp dport {git_port} accept" not in line:
+                continue
+            handle = re.search(r"handle (\d+)", line)
+            if handle:
+                await asyncio.to_thread(
+                    subprocess.run,
+                    [
+                        nft_tool,
+                        "delete",
+                        "rule",
+                        "inet",
+                        table_name(wid),
+                        "ingress",
+                        "handle",
+                        handle.group(1),
+                    ],
+                    capture_output=True,
+                    timeout=30,
+                )
+
+    async def await_gitd(timeout_s: float = 15.0) -> None:
+        """Until the scratch sshd accepts a TCP connection."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_s
+        while loop.time() < deadline:
+            try:
+                reader, writer = await asyncio.open_connection(uplink_ip, git_port)
+                writer.close()
+                with contextlib.suppress(Exception):
+                    await writer.wait_closed()
+                return
+            except OSError:
+                await asyncio.sleep(0.2)
+        raise AssertionError(
+            f"the scratch sshd never listened on {uplink_ip}:{git_port}; "
+            f"its log:\n{gitd_log.read_text(errors='replace')[-800:]}"
+        )
+
+    try:
+        api_server = uvicorn.Server(
+            uvicorn.Config(
+                build_api(app),
+                host="127.0.0.1",
+                port=api_port,
+                log_level="warning",
+            )
+        )
+        api_task = asyncio.create_task(api_server.serve())
+        deadline = asyncio.get_running_loop().time() + 30
+        while not api_server.started:
+            if asyncio.get_running_loop().time() > deadline:
+                raise AssertionError("the test API server never started (30s)")
+            await asyncio.sleep(0.05)
+
+        await app.state.model.create_workspace(spec)
+
+        # Launch first: the boot runs while the host side builds its
+        # scratch pieces (the whole prep is seconds of subprocess
+        # time, but on nested KVM every second of serial boot wall
+        # counts).
+        await microvm.launch(spec)
+        await app.state.model.set_status(wid, "running")
+
+        # The login key (this smoke's stand-in for the operator's
+        # alias identity) and the credential the agent carries.
+        for path, comment in (
+            (login_key, "msks-smoke-login"),
+            (agent_key, "msks-git-cred"),
+        ):
+            keygen = await asyncio.to_thread(
+                subprocess.run,
+                [
+                    SSH_KEYGEN_BIN,
+                    "-t",
+                    "ecdsa",
+                    "-b",
+                    "256",
+                    "-N",
+                    "",
+                    "-C",
+                    comment,
+                    "-f",
+                    str(path),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert keygen.returncode == 0, keygen.stderr
+
+        # The push target: a bare repo behind a scratch sshd that
+        # authorizes only the agent key. StrictModes off — the workdir
+        # is a fresh tmp tree, not a home. SetEnv PATH: sshd's default
+        # PATH has no nix store entries, and git-receive-pack must
+        # resolve for the push's ssh to find it.
+        init = await asyncio.to_thread(
+            subprocess.run,
+            [GIT_BIN, "init", "--bare", "-b", "main", str(bare)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert init.returncode == 0, init.stderr
+        authorized.write_text((agent_key.with_suffix(".pub")).read_text())
+        hostgen = await asyncio.to_thread(
+            subprocess.run,
+            [
+                SSH_KEYGEN_BIN,
+                "-t",
+                "ed25519",
+                "-N",
+                "",
+                "-C",
+                "msks-smoke-githost",
+                "-f",
+                str(git_host_key),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert hostgen.returncode == 0, hostgen.stderr
+        sshd_config.write_text(
+            f"Port {git_port}\n"
+            f"ListenAddress {uplink_ip}\n"
+            f"HostKey {git_host_key}\n"
+            "PermitRootLogin prohibit-password\n"
+            "PasswordAuthentication no\n"
+            "KbdInteractiveAuthentication no\n"
+            f"AuthorizedKeysFile {authorized}\n"
+            "StrictModes no\n"
+            f"PidFile {workdir / 'git-sshd.pid'}\n"
+            f"SetEnv PATH={Path(GIT_BIN).parent}:{Path(SSH_BIN).parent}"
+            ":/usr/sbin:/usr/bin:/sbin:/bin\n"
+        )
+        # OpenSSH's privilege-separation directory: sshd refuses to
+        # start without it. The compiled-in path differs by build —
+        # Debian's is /run/sshd, nix openssh's is /var/empty (the
+        # dev host ships both; the CI runner ships neither) — so
+        # every candidate gets created, root-owned and 0755 (the
+        # perms sshd demands).
+        for privsep in ("/run/sshd", "/var/empty", "/var/empty/sshd"):
+            os.makedirs(privsep, exist_ok=True)
+            os.chmod(privsep, 0o755)
+        # The privilege-separation USER is the same story: a
+        # compile-time name (nix's is "sshd") the distro's packaging
+        # normally creates. Best-effort — 9.8+ builds tolerate its
+        # absence in some shapes, and a missing binary must not
+        # mask the real failure — but where useradd exists and the
+        # user does not, create it rather than discover the
+        # hard-coded name one CI round at a time.
+        try:
+            pwd.getpwnam("sshd")
+        except KeyError:
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(
+                    subprocess.run,
+                    [
+                        "useradd",
+                        "--system",
+                        "--no-create-home",
+                        "--shell",
+                        "/usr/sbin/nologin",
+                        "sshd",
+                    ],
+                    timeout=30,
+                )
+        gitd = subprocess.Popen(
+            [SSHD_BIN, "-D", "-e", "-f", str(sshd_config)],
+            stdout=subprocess.DEVNULL,
+            stderr=open(gitd_log, "ab"),
+        )
+        await await_gitd()
+
+        # The operator's scratch agent: holds the credential, runs on
+        # the host, and only ever enters the guest as a forwarded
+        # socket. ssh-agent forks; its stdout names the socket + pid.
+        # Both are captured before any assertion so a failed parse
+        # still cleans the fork up (finally keys off the pid).
+        boot = await asyncio.to_thread(
+            subprocess.run,
+            [SSH_AGENT_BIN, "-s"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        assert boot.returncode == 0, boot.stderr
+        sock = re.search(r"SSH_AUTH_SOCK=([^;]+);", boot.stdout)
+        pidm = re.search(r"SSH_AGENT_PID=(\d+);", boot.stdout) or re.search(
+            r"Agent pid (\d+)", boot.stdout
+        )
+        agent_pid = int(pidm.group(1)) if pidm else None
+        assert sock and pidm, boot.stdout
+        agent_env = dict(os.environ, SSH_AUTH_SOCK=sock.group(1))
+        add = await asyncio.to_thread(
+            subprocess.run,
+            [SSH_ADD_BIN, str(agent_key)],
+            env=agent_env,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        assert add.returncode == 0, add.stderr
+
+        # Guest up; plant the login key through the console.
+        await wait_sshd()
+        public = login_key.with_suffix(".pub").read_text().strip()
+        await run_in_console(
+            microvm,
+            wid,
+            f"mkdir -p /root/.ssh && chmod 700 /root/.ssh "
+            f"&& printf '%s\\n' '{public}' > /root/.ssh/authorized_keys "
+            f"&& chmod 600 /root/.ssh/authorized_keys && echo K-$((6*7))",
+            "K-42",
+        )
+
+        # The DHCP lease's resolver is the daemon's forwarder: the
+        # /30 pool (default 172.31.0.0/16), never a public resolver.
+        # The image runs systemd-resolved, so the offered server is
+        # resolved's per-link upstream (resolvectl) while the stub
+        # owns resolv.conf — the cat fallback covers a resolver-less
+        # image writing the lease straight to resolv.conf.
+        await run_in_console(
+            microvm,
+            wid,
+            "( resolvectl dns 2>/dev/null || cat /etc/resolv.conf ) "
+            "| grep -q '172\\.31\\.' && echo R-$((6*7))",
+            "R-42",
+        )
+
+        # Substitutes in, over egress, destinations the seed never
+        # touches: Debian's mirrors, then an HTTPS ``git ls-remote``
+        # of the project's own public remote — the host a real
+        # dogfood push targets.
+        #
+        # The setup (mkdir, rm, the trail's first line) runs in the
+        # FOREGROUND, gated on the BG marker: the marker proves the
+        # trail file exists and is writable before anything detaches.
+        # The long legs run as one ``nohup setsid sh -c`` — and the
+        # job is DISOWNED before the marker is echoed. The CI failure
+        # this shape replaces: on the session close the login bash
+        # resends SIGHUP to everything in its jobs table, and on slow
+        # nested KVM the background child's exec chain (nohup, then
+        # setsid, then sh — three cold binaries) is still mid-flight
+        # with a default HUP disposition, so it died before writing a
+        # byte (run.log was never even created; only the disowned
+        # table survives that resend deterministically — the marker
+        # reaches the client strictly after the disown). Post-exec,
+        # nohup (HUP ignored) and setsid (fresh session, no ctty)
+        # carry the rest; stdin comes off the pty and every output
+        # byte — including the inner sh's own parse errors — lands
+        # in run.log, which the trail probe tails. The lockdir guard
+        # (atomic mkdir) plus the guarded rm make a #103 retry of
+        # this session harmless: a second detached instance exits
+        # silently at the lock and the foreground leaves the running
+        # instance's trail alone — without it, two apt-gets would
+        # fight over the dpkg lock and the loser would write a
+        # bogus fail marker. --no-install-recommends keeps the
+        # download to what the legs use (git-man alone is tens of
+        # MB of recommends the proof gains nothing from).
+        await run_in_console(
+            microvm,
+            wid,
+            "mkdir -p /root/.gitout "
+            "&& { [ ! -d /root/.gitout/lock ] "
+            "&& rm -f /root/.gitout/trail /root/.gitout/run.log || true; } "
+            "&& echo start >>/root/.gitout/trail "
+            "&& { nohup setsid sh -c '"
+            "mkdir /root/.gitout/lock 2>/dev/null || exit 0; "
+            "echo apt >>/root/.gitout/trail; "
+            "apt-get update -qq >>/root/.gitout/run.log 2>&1 "
+            "|| { echo fail-apt-update >>/root/.gitout/trail; exit 1; }; "
+            "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "
+            "--no-install-recommends git openssh-client "
+            ">>/root/.gitout/run.log 2>&1 "
+            "|| { echo fail-apt-install >>/root/.gitout/trail; exit 1; }; "
+            "echo ls-remote >>/root/.gitout/trail; "
+            "git ls-remote https://github.com/mcdonc/msks HEAD "
+            ">/root/.gitout/remote 2>>/root/.gitout/run.log "
+            "|| { echo fail-ls-remote >>/root/.gitout/trail; exit 1; }; "
+            "echo done >>/root/.gitout/trail"
+            "' >>/root/.gitout/run.log 2>&1 </dev/null & } "
+            "&& disown && echo BG-$((6*7))",
+            "BG-42",
+        )
+        trail_probe = (
+            "cat /root/.gitout/trail 2>/dev/null; "
+            "tail -c 400 /root/.gitout/run.log 2>/dev/null"
+        )
+        # A short grace first: if the detached script died instantly,
+        # fail within 90s naming run.log's tail, not after the whole
+        # apt budget. "apt" in the trail is the detached script's
+        # first act.
+        await await_guest_trail(
+            microvm, wid, trail_probe, b"apt", min(90.0, GIT_OUT_TIMEOUT_S)
+        )
+        await await_guest_trail(microvm, wid, trail_probe, b"done", GIT_OUT_TIMEOUT_S)
+        await run_in_console(
+            microvm,
+            wid,
+            "test -s /root/.gitout/remote && echo Z-$((6*7))",
+            "Z-42",
+        )
+
+        # The commit the guest pushes: made inside, identity local
+        # to the guest, content the landing assertion knows.
+        await run_in_console(
+            microvm,
+            wid,
+            "git config --global user.email dev@msks.invalid "
+            "&& git config --global user.name msks-dev "
+            "&& git init -q -b main /root/push-src "
+            f"&& printf '%s\\n' '{push_marker}' > /root/push-src/pushed.txt "
+            "&& git -C /root/push-src add pushed.txt "
+            "&& git -C /root/push-src commit -qm 'git-out probe' "
+            "&& echo C-$((6*7))",
+            "C-42",
+        )
+
+        # git-out: log in through the forward with -A (the agent
+        # rides in), then push from inside the guest to the scratch
+        # sshd — guest-initiated TCP from the tap, ssh auth with the
+        # forwarded agent only: no IdentityFile anywhere, and
+        # agent_key never touched the guest's disk. The daemon's
+        # own input chain drops host-directed guest traffic by
+        # design (#52's containment — test_local_egress_boot pins
+        # it), so this leg rides a test-widened pin: one accept for
+        # the git port, inserted at the top of this workspace's
+        # ingress chain and removed after. The NAT egress path the
+        # dogfood loop really rides (pushes to off-host remotes)
+        # is proven by this test's apt and HTTPS legs — a hermetic
+        # runner has no off-host remote to receive a push.
+        await widen_input(git_port)
+        forward_port = free_port()
+        start_forward(forward_port)
+        await await_forward_listener(forward_port)
+        remote = (
+            "export GIT_SSH_COMMAND="
+            f'"ssh -F /dev/null -o StrictHostKeyChecking=no '
+            f"-o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 "
+            f'-p {git_port}"; '
+            "ssh-add -l > /root/.gitout/agent-list 2>&1; "
+            f"git -C /root/push-src push -q "
+            f"ssh://root@{uplink_ip}:{git_port}{bare} main "
+            "&& echo P-$((6*7))"
+        )
+        try:
+            push = await asyncio.to_thread(
+                subprocess.run,
+                [
+                    SSH_BIN,
+                    *ssh_opts(forward_port),
+                    "-o",
+                    "ForwardAgent=yes",
+                    "root@127.0.0.1",
+                    remote,
+                ],
+                env=agent_env,
+                capture_output=True,
+                text=True,
+                timeout=SSH_CMD_TIMEOUT_S,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise AssertionError(
+                f"the push session timed out after {SSH_CMD_TIMEOUT_S}s "
+                "(a dropped or unroutable destination black-holes "
+                "exactly like this); git sshd log:\n"
+                f"{gitd_log.read_text(errors='replace')[-800:]}\n"
+                f"forward logs:\n{forward_evidence()}"
+            ) from exc
+        if push.returncode != 0:
+            # The failure rerun at full verbosity, off the loop: a
+            # bare rc says nothing about which leg died (console,
+            # forward, agent, guest-side push). The rerun asks only
+            # for the agent listing — re-running the push itself
+            # could report "up-to-date" and mask a transport flake —
+            # and a rerun that itself times out degrades to the
+            # original failure instead of replacing it.
+            try:
+                verbose = await asyncio.to_thread(
+                    subprocess.run,
+                    [
+                        SSH_BIN,
+                        *ssh_opts(forward_port),
+                        "-o",
+                        "ForwardAgent=yes",
+                        "-o",
+                        "LogLevel=DEBUG3",
+                        "root@127.0.0.1",
+                        "ssh-add -l",
+                    ],
+                    env=agent_env,
+                    capture_output=True,
+                    text=True,
+                    timeout=SSH_CMD_TIMEOUT_S,
+                )
+                push.stderr += (
+                    f"\n--- verbose rerun (rc={verbose.returncode}) ---\n"
+                    f"{verbose.stderr[-3000:]}"
+                )
+            except subprocess.TimeoutExpired:
+                push.stderr += "\n--- verbose rerun timed out ---\n"
+        assert push.returncode == 0, (
+            f"{push.stdout}\n{push.stderr}\nforward logs:\n{forward_evidence()}\n"
+            f"git sshd log:\n{gitd_log.read_text(errors='replace')[-800:]}"
+        )
+        assert "P-42" in push.stdout, push.stdout
+        # The forwarded agent carried the scratch key: the guest's
+        # ssh-add lists it (comment and all).
+        await run_in_console(
+            microvm,
+            wid,
+            "grep -q msks-git-cred /root/.gitout/agent-list && echo A-$((6*7))",
+            "A-42",
+        )
+
+        # The landing: the bare repo's HEAD is the guest's commit,
+        # content and all.
+        landed = await asyncio.to_thread(
+            subprocess.run,
+            [GIT_BIN, "-C", str(bare), "show", "HEAD:pushed.txt"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert landed.returncode == 0, landed.stderr
+        assert landed.stdout.strip() == push_marker, landed.stdout
+
+        await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
+        final = await microvm.info(wid)
+        assert final.status.value in ("stopped", "absent")
+    except BaseException:
+        collect_failure_evidence(state_dir, wid, serial_log)
+        with contextlib.suppress(Exception):
+            await microvm.kill(wid)
+        raise
+    finally:
+        for proc in forwards:
+            with contextlib.suppress(Exception):
+                proc.terminate()
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(proc.wait, 10)
+        if gitd is not None:
+            with contextlib.suppress(Exception):
+                gitd.terminate()
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(gitd.wait, 10)
+        # The input pin goes before the agent and API teardown so a
+        # slow guest cannot hold a widened chain past the workspace's
+        # own cleanup; a failure here leaves the rule to die with the
+        # per-VM table at microvm cleanup.
+        with contextlib.suppress(Exception):
+            await narrow_input()
+        if agent_env is not None:
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(
+                    subprocess.run,
+                    [SSH_AGENT_BIN, "-k"],
+                    env=agent_env,
+                    timeout=15,
+                )
+        elif agent_pid is not None:
+            # A parse that failed after the fork still gets cleaned.
+            with contextlib.suppress(Exception):
+                os.kill(agent_pid, signal.SIGTERM)
         if api_task is not None:
             api_server.should_exit = True
             with contextlib.suppress(Exception):
