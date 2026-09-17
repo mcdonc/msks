@@ -4362,12 +4362,15 @@ async def test_appliance_l3_recursion() -> None:
             data = await l3_console_command(
                 connect_l2_console,
                 b"tail -n +1 /root/.msks-l3-inner/run.log 2>/dev/null; "
+                b"grep -q ^done-0$ /root/.msks-l3-inner/run.log 2>/dev/null "
+                b"&& echo INNER-UP-$((6*7)); "
                 b"echo E-$((21*2))\n",
                 b"E-42",
                 60.0,
             )
             last = data.split(b"E-$((21*2))", 1)[-1].split(b"E-42", 1)[0].strip()
-            if b"done-0" in last:
+            print(f"L3 inner bring-up round: {last[-160:]!r}", flush=True)
+            if b"INNER-UP-42" in last:
                 break
             for line in last.splitlines():
                 if line.startswith(b"done-") and line != b"done-0":
