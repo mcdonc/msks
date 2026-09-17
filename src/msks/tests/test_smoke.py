@@ -4291,7 +4291,15 @@ async def test_appliance_l3_recursion() -> None:
         deadline = loop.time() + L3_RECURSION_TIMEOUT_S
         last = b""
         while loop.time() < deadline:
-            data = await bootstrap_state()
+            try:
+                data = await bootstrap_state()
+            except AssertionError as exc:
+                # A wedged console round under the bootstrap's own load
+                # is the boot's slowness, not a failure — retry under
+                # the phase deadline (the bring-up poll rides the same).
+                print(f"L3 bootstrap round stalled ({exc}); retrying", flush=True)
+                await asyncio.sleep(10.0)
+                continue
             body = data.split(b"E-$((21*2))", 1)[-1].split(b"E-42", 1)[0]
             last = body.strip()
             print(f"L3 bootstrap state round: {last[-120:]!r}", flush=True)
@@ -4424,18 +4432,29 @@ async def test_appliance_l3_recursion() -> None:
         await l3_console_command(
             connect_l2_console, l3_setup_launch().encode() + b"\n", b"LAUNCHED-42", 60.0
         )
+        # The import hammers the L2 (a 1.5 GiB hash plus extract under
+        # nested virt), and a console session can wedge silently
+        # through it — the daemon's own vsock bring-up window is 120s,
+        # so a round's budget must exceed it, and a wedged round is
+        # retried under the phase deadline instead of failing the run
+        # (the same recovery the review's probe machinery rides on).
         deadline = loop.time() + 1800.0
         last = b""
         while loop.time() < deadline:
-            data = await l3_console_command(
-                connect_l2_console,
-                b"tail -n +1 /root/.msks-l3-inner/run.log 2>/dev/null; "
-                b"grep -q ^done-0$ /root/.msks-l3-inner/run.log 2>/dev/null "
-                b"&& echo INNER-UP-$((6*7)); "
-                b"echo E-$((21*2))\n",
-                b"E-42",
-                60.0,
-            )
+            try:
+                data = await l3_console_command(
+                    connect_l2_console,
+                    b"tail -n +1 /root/.msks-l3-inner/run.log 2>/dev/null; "
+                    b"grep -q ^done-0$ /root/.msks-l3-inner/run.log 2>/dev/null "
+                    b"&& echo INNER-UP-$((6*7)); "
+                    b"echo E-$((21*2))\n",
+                    b"E-42",
+                    150.0,
+                )
+            except AssertionError as exc:
+                print(f"L3 inner bring-up round stalled ({exc}); retrying", flush=True)
+                await asyncio.sleep(10.0)
+                continue
             last = data.split(b"E-$((21*2))", 1)[-1].split(b"E-42", 1)[0].strip()
             print(f"L3 inner bring-up round: {last[-160:]!r}", flush=True)
             for step in re.findall(rb"^(import|create|start|done-\d+)$", last, re.M):
