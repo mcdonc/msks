@@ -65,10 +65,23 @@ def cache_dir() -> Path:
     return Path(base) / "msks"
 
 
+def data_dir() -> Path:
+    """The client data root: XDG_DATA_HOME or ~/.local/share, under msks.
+
+    Distinct from :func:`cache_dir` on purpose: the cache is
+    disposable by convention (``~/.cache`` may be swept at any
+    time), while the client-minted private half (#121) is the
+    workspace's only copy — losing it loses ssh — so it lives with
+    data that survives cache cleanup.
+    """
+    base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+    return Path(base) / "msks"
+
+
 def client_identity_path(workspace_id: str, base: Path | None = None) -> Path:
-    """Where a client-minted private half lives (#121): the cache's
-    per-workspace directory, beside ``known_hosts``."""
-    root = (base if base is not None else cache_dir()) / workspace_id
+    """Where a client-minted private half lives (#121): the data
+    root's per-workspace directory."""
+    root = (base if base is not None else data_dir()) / workspace_id
     return root / "identity"
 
 

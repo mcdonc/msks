@@ -212,14 +212,15 @@ def test_cmd_create_start_boots_and_hints(
 def test_cmd_create_client_mint_sends_public_only(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    """--client-mint (#121): the keypair is minted on this client, the
-    POST body carries the public half only, the daemon's answer is
-    checked against the no-escrow promise, and the private half is
-    persisted mode 0600 under the client cache after the create."""
+    """The create default (#121): the keypair is minted on this
+    client, the POST body carries the public half only, the daemon's
+    answer is checked against the no-escrow promise, and the private
+    half is persisted mode 0600 under the client data root after the
+    create."""
     from cryptography.hazmat.primitives import serialization
 
     client_env(monkeypatch)
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -270,7 +271,7 @@ def test_write_client_identity_names_an_unusable_cache(
     """A cache the client cannot write into is operator-shaped: one
     SystemExit line naming the path and the recovery, after the
     workspace itself was created."""
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     (tmp_path / "msks").write_text("a file where a directory belongs")
     with pytest.raises(SystemExit, match="could not be written"):
         cli.write_client_identity("ws1", "private material")
@@ -280,8 +281,8 @@ def test_write_client_identity_forces_mode_on_a_preexisting_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The identity lands 0600 even when the path already holds a
-    world-readable file: the cache is the only home of this half."""
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    world-readable file: the data root is the only home of this half."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     target = tmp_path / "msks" / "ws1" / "identity"
     target.parent.mkdir(parents=True)
     target.write_text("stale")
@@ -302,7 +303,7 @@ def test_create_client_mint_refuses_a_silent_escrow(
     from msks.identity import mint
 
     client_env(monkeypatch)
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     daemon_private, daemon_public = mint("ed25519")
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -326,19 +327,46 @@ def test_create_client_mint_refuses_a_silent_escrow(
 
 
 def test_client_mint_key_type_pairing() -> None:
-    """--key-type names a type for --client-mint alone: alone it is
-    rejected, with --client-mint it applies, and the default is the
-    FIPS-approvable one the daemon also mints."""
+    """The client mint is the create default (#121) with the
+    FIPS-approvable type; --no-client-mint hands the identity to the
+    daemon, and --key-type pairs with the client mint alone."""
     parser = cli.build_parser()
-    alone = parser.parse_args(["create", "ws1", "--key-type", "ed25519"])
-    with pytest.raises(SystemExit, match="--key-type needs --client-mint"):
-        cli.client_mint_key_type(alone)
     plain = parser.parse_args(["create", "ws1"])
-    assert cli.client_mint_key_type(plain) is None
-    minting = parser.parse_args(["create", "ws1", "--client-mint"])
-    assert cli.client_mint_key_type(minting) == "ecdsa"
-    typed = parser.parse_args(["create", "ws1", "--client-mint", "--key-type", "rsa"])
+    assert cli.client_mint_key_type(plain) == "ecdsa"
+    typed = parser.parse_args(["create", "ws1", "--key-type", "rsa"])
     assert cli.client_mint_key_type(typed) == "rsa"
+    explicit = parser.parse_args(["create", "ws1", "--client-mint"])
+    assert cli.client_mint_key_type(explicit) == "ecdsa"
+    daemon = parser.parse_args(["create", "ws1", "--no-client-mint"])
+    assert cli.client_mint_key_type(daemon) is None
+    with pytest.raises(SystemExit, match="--key-type needs the client mint"):
+        cli.client_mint_key_type(
+            parser.parse_args(
+                ["create", "ws1", "--no-client-mint", "--key-type", "rsa"]
+            )
+        )
+
+
+def test_cmd_create_no_client_mint_sends_no_key(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--no-client-mint restores the daemon-mint default (#111): the
+    body carries no key material and nothing is written client-side."""
+    client_env(monkeypatch)
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/ssh-key"):
+            raise AssertionError("the daemon-mint create fetches no key")
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(201, json={"id": "ws1", "status": "created"})
+
+    rc = cli.cmd_create({"id": "ws1"}, transport=mock(handler), key_type=None)
+    assert rc == 0
+    assert "ssh_pubkey" not in seen["body"]
+    out = capsys.readouterr().out
+    assert "created ws1" in out
+    assert "client identity" not in out
 
 
 def test_cmd_key_private_refused_for_client_minted(
@@ -611,8 +639,10 @@ def test_main_create_dispatch(
         seen["body"] = json.loads(request.content)
         return httpx.Response(201, json={"id": "ws1", "status": "created"})
 
+    # --no-client-mint keeps this dispatch test off the keygen path
+    # (the client mint's own suite covers it).
     rc = cli.main(
-        ["create", "ws1", "--image", "debian:13", "--cpus", "4"],
+        ["create", "ws1", "--image", "debian:13", "--cpus", "4", "--no-client-mint"],
         transport=mock(handler),
     )
     assert rc == 0
@@ -1300,7 +1330,7 @@ def test_create_user_data_reads_the_file(
         return httpx.Response(201, json={"id": "ws1", "status": "created"})
 
     rc = cli.main(
-        ["create", "ws1", "--user-data", str(source)],
+        ["create", "ws1", "--user-data", str(source), "--no-client-mint"],
         transport=mock(handler),
     )
     assert rc == 0
@@ -1321,7 +1351,10 @@ def test_create_user_data_reads_stdin(
         seen["body"] = json.loads(request.content)
         return httpx.Response(201, json={"id": "ws1", "status": "created"})
 
-    rc = cli.main(["create", "ws1", "--user-data", "-"], transport=mock(handler))
+    rc = cli.main(
+        ["create", "ws1", "--user-data", "-", "--no-client-mint"],
+        transport=mock(handler),
+    )
     assert rc == 0
     assert seen["body"]["user_data"] == payload
 

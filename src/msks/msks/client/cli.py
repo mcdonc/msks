@@ -34,7 +34,7 @@ from .rest import (
 from .rest import (
     fetch_ssh_key as rest_fetch_ssh_key,
 )
-from .ssh import cache_dir, run_workspace_ssh
+from .ssh import data_dir, run_workspace_ssh
 
 
 def format_workspace(row: dict) -> str:
@@ -133,8 +133,9 @@ async def verify_no_escrow(client, workspace_id: str, public: str) -> None:
             f"msks: {workspace_id} was created, but the daemon did not "
             "keep the no-escrow promise: it holds its own minted "
             "identity for the workspace (a daemon older than this "
-            "client's --client-mint support). The daemon's version of "
-            "msks must be updated before using --client-mint"
+            "client's client-mint support). The daemon's version of "
+            "msks must be updated before creating without "
+            "--no-client-mint"
         )
 
 
@@ -144,11 +145,12 @@ def write_client_identity(workspace_id: str, private_pem: str) -> Path:
     The file is created 0600 from the first byte (open-write-chmod
     would leave a umask-window where the workspace's only private
     half is group-readable), the mode forced again on a pre-existing
-    file. No escrow cuts both ways: a failed write is loud — the
-    workspace exists with the public half planted, and the private
-    half exists nowhere on disk.
+    file, under the data root (not the cache: this half must survive
+    cache sweeps). No escrow cuts both ways: a failed write is loud —
+    the workspace exists with the public half planted, and the
+    private half exists nowhere on disk.
     """
-    root = cache_dir() / workspace_id
+    root = data_dir() / workspace_id
     path = root / "identity"
     try:
         root.mkdir(parents=True, exist_ok=True)
@@ -257,8 +259,8 @@ def require_daemon_half(key: dict, workspace_id: str) -> None:
         raise SystemExit(
             f"msks key: {workspace_id} carries a client-minted identity — "
             "the daemon never held its private half. It lives on the "
-            "client that created the workspace, under the client cache "
-            f"({cache_dir() / workspace_id / 'identity'})"
+            "client that created the workspace, under the client data "
+            f"root ({data_dir() / workspace_id / 'identity'})"
         )
 
 
@@ -695,17 +697,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     create.add_argument(
         "--client-mint",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=None,
         help="mint the workspace's ssh identity on this client and send "
-        "the public half only (#121): the daemon never holds the "
-        "private half. It is written mode 0600 to the client cache "
-        "(~/.cache/msks/<id>/identity), and msks ssh picks it up from "
-        "there",
+        "the public half only — the create default (#121): the daemon "
+        "never holds the private half. It is written mode 0600 under "
+        "the client data root (~/.local/share/msks/<id>/identity), and "
+        "msks ssh picks it up from there. --no-client-mint hands the "
+        "identity to the daemon instead: it mints and escrows both "
+        "halves on the local backend (#111), and the k8s backend "
+        "serves no identity",
     )
     create.add_argument(
         "--key-type",
         choices=sorted(KEY_TYPES),
-        help="the --client-mint key type (default ecdsa, the same "
+        help="the client mint's key type (default ecdsa, the same "
         "FIPS-approvable default the daemon mints)",
     )
     create.add_argument(
@@ -831,18 +837,23 @@ def main(argv: list[str] | None = None, transport=None) -> int:
 
 
 def client_mint_key_type(args: argparse.Namespace) -> str | None:
-    """The client-mint key type, or None for the daemon-mint default.
+    """The client mint's key type, or None for the daemon-mint mode.
 
-    ``--key-type`` names a type for ``--client-mint`` alone; given
-    alone it is a footgun (it would look like it did something) —
-    rejected with the pairing named.
+    The client mint is the create default (#121): absent flags mint
+    locally (ecdsa, the same FIPS-approvable default the daemon
+    mints). ``--no-client-mint`` hands the identity to the daemon
+    (escrow on the local backend; the k8s backend serves no identity
+    either way), and ``--key-type`` names a type for the client mint
+    alone — paired with ``--no-client-mint`` it would look like it
+    did something, so it is rejected with the pairing named.
     """
-    key_type = args.key_type or "ecdsa"
-    if not args.client_mint:
+    if args.client_mint is False:
         if args.key_type is not None:
-            raise SystemExit("msks: --key-type needs --client-mint")
+            raise SystemExit(
+                "msks: --key-type needs the client mint (drop --no-client-mint)"
+            )
         return None
-    return key_type
+    return args.key_type or "ecdsa"
 
 
 def command_table(args: argparse.Namespace, transport) -> dict:

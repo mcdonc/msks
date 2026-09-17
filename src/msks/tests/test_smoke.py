@@ -3414,8 +3414,8 @@ async def test_local_client_minted_identity() -> None:
     serial_log = state_dir / "vms" / wid / "serial.log"
     workdir = state_dir / "cmint-work"
     workdir.mkdir(parents=True)
-    cache = workdir / "cache"
-    identity = cache / "msks" / wid / "identity"
+    data = workdir / "data"
+    identity = data / "msks" / wid / "identity"
 
     forwarding = Path("/proc/sys/net/ipv4/ip_forward")
     forwarding_was = forwarding.read_text()
@@ -3424,11 +3424,15 @@ async def test_local_client_minted_identity() -> None:
     api_server = None
     api_task = None
 
+    # XDG_DATA_HOME holds the client-minted identity (#121);
+    # XDG_CACHE_HOME keeps the msks ssh known_hosts inside the
+    # workdir (the #110 hermeticity lesson).
     cli_env = dict(
         os.environ,
         MSKSC_URL=f"http://127.0.0.1:{api_port}",
         MSKSC_TOKEN=token,
-        XDG_CACHE_HOME=str(cache),
+        XDG_DATA_HOME=str(data),
+        XDG_CACHE_HOME=str(workdir / "cache"),
     )
 
     async def cli(*args: str, timeout: float = 120.0) -> subprocess.CompletedProcess:
@@ -3467,9 +3471,9 @@ async def test_local_client_minted_identity() -> None:
                 raise AssertionError("the test API server never started (30s)")
             await asyncio.sleep(0.05)
 
-        # The client mints (#121): the POST carries the public half
-        # only, and the private half lands mode 0600 in the client
-        # cache after the create.
+        # The client mint is the create default (#121): the POST
+        # carries the public half only, and the private half lands
+        # mode 0600 under the client data root after the create.
         created = await cli(
             "create",
             wid,
@@ -3480,7 +3484,6 @@ async def test_local_client_minted_identity() -> None:
             ROOTFS,
             *(["--cmdline", CMDLINE] if CMDLINE else []),
             "--egress",
-            "--client-mint",
         )
         assert created.returncode == 0, created.stderr
         assert identity.exists()

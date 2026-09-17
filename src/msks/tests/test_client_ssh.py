@@ -463,7 +463,7 @@ def test_known_hosts_path_names_an_unusable_cache(tmp_path: Path) -> None:
         ssh.known_hosts_path("alpha", base=tmp_path)
 
 
-def test_client_identity_path_sits_beside_known_hosts(tmp_path: Path) -> None:
+def test_client_identity_path_lives_under_the_data_root(tmp_path: Path) -> None:
     assert ssh.client_identity_path("alpha", base=tmp_path) == (
         tmp_path / "alpha" / "identity"
     )
@@ -482,7 +482,7 @@ def test_resolve_private_falls_back_to_the_client_cache(
     the private half then comes from the local cache, written at
     create — and it must be the pair's other half, checked against
     the served public line."""
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     private_pem, public = mint("ecdsa")
     path = tmp_path / "msks" / "alpha" / "identity"
     path.parent.mkdir(parents=True)
@@ -500,7 +500,7 @@ def test_resolve_private_names_a_stale_cached_half(
     """A cache entry from a previous incarnation of the workspace id
     fails as one named line — not as ssh's opaque publickey denial
     deep inside a session."""
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     stale_pem, _stale_public = mint("ecdsa")
     path = tmp_path / "msks" / "alpha" / "identity"
     path.parent.mkdir(parents=True)
@@ -520,7 +520,7 @@ def test_resolve_private_names_a_corrupt_cached_half(
     """A file that is not a private key at all fails as one named
     line too — the module's error contract holds for every way the
     cache can be wrong."""
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     path = tmp_path / "msks" / "alpha" / "identity"
     path.parent.mkdir(parents=True)
     path.write_text("not a key")
@@ -538,7 +538,7 @@ def test_resolve_private_names_a_missing_client_half(
     """No daemon half and no local file: one SystemExit line with the
     path and the recovery (the console still opens), not a
     traceback."""
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     with pytest.raises(SystemExit, match="client-minted identity"):
         ssh.resolve_private({"public_key": "x", "private_key": None}, "alpha")
 
