@@ -4225,7 +4225,10 @@ async def test_appliance_l3_recursion() -> None:
         async def bootstrap_state() -> bytes:
             return await l3_console_command(
                 connect_l2_console,
-                b"cat /root/.msks-bootstrap/state 2>/dev/null; echo E-$((21*2))\n",
+                b"s=$(cat /root/.msks-bootstrap/state 2>/dev/null); "
+                b'echo "STATE:$s"; '
+                b'[ "$s" = done ] && echo BOOT-$((6*7)); '
+                b"echo E-$((21*2))\n",
                 b"E-42",
                 60.0,
             )
@@ -4236,12 +4239,13 @@ async def test_appliance_l3_recursion() -> None:
             data = await bootstrap_state()
             body = data.split(b"E-$((21*2))", 1)[-1].split(b"E-42", 1)[0]
             last = body.strip()
-            # CONTAINS, not equality: the login shell's bracketed-
-            # paste sequences (\e[?2004l around every read command)
-            # ride between the echoed command and the output, so a
-            # stripped body still carries them ahead of the state
-            # word. The step names share no prefix with "done".
-            if b"done" in body:
+            print(f"L3 bootstrap state round: {last[-120:]!r}", flush=True)
+            # The break gate is a COMPUTED marker the shell emits only
+            # when the state file's whole content is exactly "done" —
+            # pty noise (bracketed-paste bytes, banners) cannot
+            # synthesize it, and the echoed command carries only the
+            # unevaluated $((6*7)) form.
+            if b"BOOT-42" in body:
                 break
             if b"no-route" in body:
                 raise AssertionError(f"the L3 seed could not find an uplink: {last!r}")
@@ -4268,9 +4272,13 @@ async def test_appliance_l3_recursion() -> None:
         workdir.mkdir()
         key = workdir / "l3.key"
         known_hosts = workdir / "known_hosts"
+        # Scheme://host:port only: the client builds its own /api/v1
+        # paths (rest.py), so a base carrying the suffix doubles it —
+        # every CLI call then answers FastAPI's bare "Not Found".
+        daemon_url = base.rsplit("/api/v1", 1)[0]
         cli_env = dict(
             os.environ,
-            MSKSC_URL=base,
+            MSKSC_URL=daemon_url,
             MSKSC_TOKEN=token,
         )
         keygen = await asyncio.to_thread(
