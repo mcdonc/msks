@@ -136,7 +136,9 @@ def open_layer(path: Path) -> Iterator[tarfile.TarFile]:
 def validate_manifest(layer: tarfile.TarFile) -> dict:
     member = extract(layer, BOOT_MEMBERS["manifest"])
     if member is None:
-        raise ImageError("no disk/image.json in the layer: not a containerDisk")
+        raise ImageError(
+            "no disk/image.json in the layer: not a containerDisk"
+        )
     try:
         raw = json.load(member)
     except json.JSONDecodeError as exc:
@@ -144,7 +146,9 @@ def validate_manifest(layer: tarfile.TarFile) -> dict:
     if not isinstance(raw, dict):
         raise ImageError("image.json is not a JSON object")
     if raw.get("schema") != 2:
-        raise ImageError(f"image.json schema {raw.get('schema')!r}, expected 2")
+        raise ImageError(
+            f"image.json schema {raw.get('schema')!r}, expected 2"
+        )
     require_fields(raw)
     # Before any staging/renaming: a bad provisioner must fail the
     # import with nothing installed, not leave an invisible cache

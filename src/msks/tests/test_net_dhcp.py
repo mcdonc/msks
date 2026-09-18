@@ -15,7 +15,11 @@ from msks.net import dhcp
 
 
 def message(
-    kind: int, xid: bytes, mac: bytes, flags: bytes = b"\0\0", options: bytes = b""
+    kind: int,
+    xid: bytes,
+    mac: bytes,
+    flags: bytes = b"\0\0",
+    options: bytes = b"",
 ) -> bytes:
     """A client datagram with hand-built options."""
     head = struct.pack(
@@ -108,7 +112,10 @@ def test_reply_dest_broadcast_rules() -> None:
     broadcast = ("255.255.255.255", dhcp.CLIENT_PORT)
     assert dhcp.reply_dest(("0.0.0.0", 68), b"\0\0") == broadcast
     assert dhcp.reply_dest(("172.31.0.1", 54321), b"\x80\0") == broadcast
-    assert dhcp.reply_dest(("172.31.0.1", 54321), b"\0\0") == ("172.31.0.1", 54321)
+    assert dhcp.reply_dest(("172.31.0.1", 54321), b"\0\0") == (
+        "172.31.0.1",
+        54321,
+    )
 
 
 def server() -> dhcp.DhcpServer:
@@ -129,7 +136,9 @@ def test_reply_for_answers_discover_and_our_requests() -> None:
     assert parse_options_of(ack)[53] == bytes((dhcp.ACK,))
     # SELECTING for someone else, and garbage: silence.
     assert (
-        service.reply_for(request(b"\x01\x00\x00\x03", mac, "10.9.9.9", "172.31.0.1"))
+        service.reply_for(
+            request(b"\x01\x00\x00\x03", mac, "10.9.9.9", "172.31.0.1")
+        )
         is None
     )
     assert service.reply_for(b"not-dhcp-at-all") is None
@@ -158,7 +167,9 @@ def test_request_for_us_honors_init_reboot_renewal() -> None:
 @pytest.fixture
 async def loop_pair():
     """A started server on a localhost socket plus its client peer."""
-    service = dhcp.DhcpServer("127.0.0.1", "127.0.0.2", "255.255.255.252", 3600)
+    service = dhcp.DhcpServer(
+        "127.0.0.1", "127.0.0.2", "255.255.255.252", 3600
+    )
     server_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     server_sock.bind(("127.0.0.1", 0))
     client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -188,7 +199,10 @@ async def test_serve_ignores_foreign_requests(loop_pair) -> None:
     service, client = loop_pair
     client.sendto(
         request(
-            b"\x0a\x0b\x0c\x0e", b"\xaa\xbb\xcc\xdd\xee\xff", "10.9.9.9", "172.31.0.1"
+            b"\x0a\x0b\x0c\x0e",
+            b"\xaa\xbb\xcc\xdd\xee\xff",
+            "10.9.9.9",
+            "172.31.0.1",
         ),
         service._sock.getsockname(),
     )
@@ -197,7 +211,9 @@ async def test_serve_ignores_foreign_requests(loop_pair) -> None:
 
 
 async def test_serve_stops_when_the_socket_closes() -> None:
-    service = dhcp.DhcpServer("127.0.0.1", "127.0.0.2", "255.255.255.252", 3600)
+    service = dhcp.DhcpServer(
+        "127.0.0.1", "127.0.0.2", "255.255.255.252", 3600
+    )
     server_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     server_sock.bind(("127.0.0.1", 0))
     await service.start(sock=server_sock)
@@ -214,7 +230,11 @@ def test_parse_options_stops_at_a_missing_length_byte() -> None:
 
 async def test_start_binds_its_own_socket() -> None:
     service = dhcp.DhcpServer(
-        "127.0.0.1", "127.0.0.2", "255.255.255.252", 3600, bind=("127.0.0.1", 0)
+        "127.0.0.1",
+        "127.0.0.2",
+        "255.255.255.252",
+        3600,
+        bind=("127.0.0.1", 0),
     )
     await service.start()  # the fresh path: creates and binds its own
     assert service._sock is not None
@@ -247,7 +267,12 @@ async def test_start_sets_the_device_option() -> None:
     )
     sock = FakeSock()
     await service.start(sock=sock)
-    assert sock.calls[0] == ("setsockopt", socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    assert sock.calls[0] == (
+        "setsockopt",
+        socket.SOL_SOCKET,
+        socket.SO_BROADCAST,
+        1,
+    )
     assert sock.calls[1] == ("setsockopt", socket.SOL_SOCKET, 25, b"msks-x\0")
     assert ("setblocking", False) in sock.calls
     assert ("bind", ("", 67)) not in sock.calls  # injected: pre-bound
@@ -271,7 +296,9 @@ def test_serve_answers_a_discover_under_uvloop() -> None:
     uvloop = pytest.importorskip("uvloop")
 
     async def scenario() -> bytes:
-        service = dhcp.DhcpServer("127.0.0.1", "127.0.0.2", "255.255.255.252", 3600)
+        service = dhcp.DhcpServer(
+            "127.0.0.1", "127.0.0.2", "255.255.255.252", 3600
+        )
         server_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         server_sock.bind(("127.0.0.1", 0))
         client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -353,7 +380,9 @@ async def test_serve_survives_a_failing_reply_send() -> None:
             sent.append(data)
             return super().sendto(data, *args)
 
-    service = dhcp.DhcpServer("127.0.0.1", "127.0.0.2", "255.255.255.252", 3600)
+    service = dhcp.DhcpServer(
+        "127.0.0.1", "127.0.0.2", "255.255.255.252", 3600
+    )
     server_sock = DroppingSocket()
     server_sock.bind(("127.0.0.1", 0))
     client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

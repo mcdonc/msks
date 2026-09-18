@@ -19,7 +19,9 @@ def upgrade() -> None:
     # default (egress on) applies to rows created after the upgrade.
     op.add_column(
         "workspaces",
-        sa.Column("egress", sa.Boolean(), nullable=False, server_default=sa.false()),
+        sa.Column(
+            "egress", sa.Boolean(), nullable=False, server_default=sa.false()
+        ),
     )
 
 

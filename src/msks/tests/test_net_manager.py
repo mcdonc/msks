@@ -57,13 +57,22 @@ async def net_app(tmp_path: Path, monkeypatch):
         server=ServerSettings(db_path=tmp_path / "net.db"),
     )
     app = build_app(settings)
-    monkeypatch.setattr(manager_mod, "verify_forwarding", lambda path=None: None)
-    manager = NetManager(app, dhcp_factory=FakeService, dns_factory=FakeService)
+    monkeypatch.setattr(
+        manager_mod, "verify_forwarding", lambda path=None: None
+    )
+    manager = NetManager(
+        app, dhcp_factory=FakeService, dns_factory=FakeService
+    )
     app.state.net = manager
     app.state.model.migrate()
     for wid in ("ws-a", "ws-b", "ws-c"):
         await app.state.model.create_workspace(
-            VmSpec(workspace_id=wid, kernel=Path("/k"), rootfs=Path("/r"), egress=True)
+            VmSpec(
+                workspace_id=wid,
+                kernel=Path("/k"),
+                rootfs=Path("/r"),
+                egress=True,
+            )
         )
     return app, ip_log, nft_log
 
@@ -111,7 +120,9 @@ async def test_start_records_an_unavailable_daemon(
     assert "egress unavailable" in capsys.readouterr().out
     # The per-workspace refusal names both halves of the contract:
     # the capability set and the sysctl key (#101).
-    with pytest.raises(MicrovmError, match=r"CAP_NET_ADMIN.*net\.ipv4\.ip_forward"):
+    with pytest.raises(
+        MicrovmError, match=r"CAP_NET_ADMIN.*net\.ipv4\.ip_forward"
+    ):
         await app.state.net.attach("ws-a", want=True)
 
 
@@ -134,7 +145,10 @@ async def test_attach_arms_the_whole_path(net_app) -> None:
     assert attachment.guest_ip == str(alloc.guest_addr(net))
     assert attachment.tap_ip == str(alloc.tap_addr(net))
     assert f"tuntap add dev {attachment.tap} mode tap" in log_lines(ip_log)
-    assert f"addr add {attachment.tap_ip}/30 dev {attachment.tap}" in log_lines(ip_log)
+    assert (
+        f"addr add {attachment.tap_ip}/30 dev {attachment.tap}"
+        in log_lines(ip_log)
+    )
     assert "-f -" in log_lines(nft_log)  # base + per-vm rulesets
     services = manager._services["ws-a"]
     assert services.dhcp.started and services.dns.started
@@ -182,7 +196,9 @@ async def test_slice_collisions_walk_forward_and_pools_exhaust(
         await manager.attach("ws-c", want=True)
 
 
-async def test_a_failed_build_unwinds_its_plumbing(net_app, monkeypatch) -> None:
+async def test_a_failed_build_unwinds_its_plumbing(
+    net_app, monkeypatch
+) -> None:
     app, ip_log, nft_log = net_app
     manager = await ready(app)
     monkeypatch.setenv(NFT_FAIL_AT, "-f -")
@@ -223,10 +239,13 @@ async def test_dns_upstream_prefers_the_setting(net_app, monkeypatch) -> None:
     assert manager.dns_upstream() == ("10.9.9.9", 53)
     app.state.settings.net.dns_upstream = None
     monkeypatch.setattr(
-        "msks.net.dns.upstream_from_resolv", lambda path=None: ("192.168.1.1", 53)
+        "msks.net.dns.upstream_from_resolv",
+        lambda path=None: ("192.168.1.1", 53),
     )
     assert manager.dns_upstream() == ("192.168.1.1", 53)
-    monkeypatch.setattr("msks.net.dns.upstream_from_resolv", lambda path=None: None)
+    monkeypatch.setattr(
+        "msks.net.dns.upstream_from_resolv", lambda path=None: None
+    )
     with pytest.raises(MicrovmError, match="MSKSD_EGRESS_DNS_UPSTREAM"):
         manager.dns_upstream()
 
@@ -249,7 +268,9 @@ def test_verify_forwarding_names_the_sysctl_when_off(tmp_path: Path) -> None:
 
 def test_verify_forwarding_names_an_unreadable_sysctl(tmp_path: Path) -> None:
     # A directory: read_text raises OSError (EISDIR), the named error.
-    with pytest.raises(MicrovmError, match="could not read net.ipv4.ip_forward"):
+    with pytest.raises(
+        MicrovmError, match="could not read net.ipv4.ip_forward"
+    ):
         manager_mod.verify_forwarding(tmp_path)
 
 
@@ -334,7 +355,9 @@ async def test_recorded_slice_survives_a_daemon_restart(net_app) -> None:
     app, _ip, _nft = net_app
     first = await (await ready(app)).attach("ws-a", want=True)
     await app.state.net.detach("ws-a")
-    restarted = NetManager(app, dhcp_factory=FakeService, dns_factory=FakeService)
+    restarted = NetManager(
+        app, dhcp_factory=FakeService, dns_factory=FakeService
+    )
     await restarted.start()
     again = await restarted.attach("ws-a", want=True)
     assert again.slice == first.slice

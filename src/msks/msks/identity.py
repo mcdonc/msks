@@ -80,7 +80,9 @@ def check_key_body(algo: str, encoded: str) -> None:
     try:
         blob = base64.b64decode(encoded, validate=True)
     except (binascii.Error, ValueError) as exc:
-        raise ValueError(f"public key body is not valid base64: {exc}") from None
+        raise ValueError(
+            f"public key body is not valid base64: {exc}"
+        ) from None
     if len(blob) < 4:
         raise ValueError("public key body is truncated")
     length = int.from_bytes(blob[:4], "big")
@@ -104,7 +106,9 @@ def mint(key_type: str) -> tuple[str, str]:
     elif key_type == "ed25519":
         private = ed25519.Ed25519PrivateKey.generate()
     elif key_type == "rsa":
-        private = rsa.generate_private_key(public_exponent=65537, key_size=RSA_BITS)
+        private = rsa.generate_private_key(
+            public_exponent=65537, key_size=RSA_BITS
+        )
     else:
         raise ValueError(f"unknown ssh key type {key_type!r}")
     private_pem = private.private_bytes(
@@ -186,7 +190,9 @@ MIME_BOUNDARY = "============msks-identity=="
 
 
 def compose_user_data(
-    operator_payload: str | None, public_key: str | None, workspace_id: str = ""
+    operator_payload: str | None,
+    public_key: str | None,
+    workspace_id: str = "",
 ) -> str:
     """The seed's user-data document: what cidata actually carries.
 
@@ -214,7 +220,8 @@ def compose_user_data(
         "",
         script,
         f"--{boundary}",
-        f'Content-Type: {operator_content_type(operator_payload)}; charset="utf-8"',
+        f"Content-Type: {operator_content_type(operator_payload)}; "
+        'charset="utf-8"',
         "MIME-Version: 1.0",
         "",
         trailing_newline(operator_payload),

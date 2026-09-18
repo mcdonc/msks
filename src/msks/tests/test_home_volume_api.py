@@ -80,7 +80,9 @@ def planted_volume(home_api, workspace_id: str, image: bytes = IMAGE) -> Path:
 
 
 async def test_export_unknown_workspace_is_404(home_api) -> None:
-    response = await home_api.http.get("/api/v1/workspaces/ghost/home", headers=auth())
+    response = await home_api.http.get(
+        "/api/v1/workspaces/ghost/home", headers=auth()
+    )
     assert response.status_code == 404
     assert "no such workspace" in response.json()["detail"]
 
@@ -88,7 +90,9 @@ async def test_export_unknown_workspace_is_404(home_api) -> None:
 async def test_export_streams_the_volume_bytes(home_api) -> None:
     await create_workspace(home_api, "ws-exp")
     home = planted_volume(home_api, "ws-exp")
-    response = await home_api.http.get("/api/v1/workspaces/ws-exp/home", headers=auth())
+    response = await home_api.http.get(
+        "/api/v1/workspaces/ws-exp/home", headers=auth()
+    )
     assert response.status_code == 200
     assert response.content == IMAGE
     assert response.headers["content-length"] == str(len(IMAGE))
@@ -108,7 +112,10 @@ async def test_export_missing_volume_file_is_404(home_api) -> None:
         "/api/v1/workspaces/ws-novol/home", headers=auth()
     )
     assert response.status_code == 404
-    assert "missing or unreadable under the state dir" in response.json()["detail"]
+    assert (
+        "missing or unreadable under the state dir"
+        in response.json()["detail"]
+    )
 
 
 async def test_move_refused_while_the_vm_is_attached(home_api) -> None:
@@ -129,10 +136,14 @@ async def test_move_refused_while_the_vm_is_attached(home_api) -> None:
                 headers=auth(),
             )
             assert response.status_code == 409, (status, method)
-            assert f"workspace ws-live is {status}" in response.json()["detail"]
+            assert (
+                f"workspace ws-live is {status}" in response.json()["detail"]
+            )
     # Stopped again, the same pair answers 200.
     await model.set_status("ws-live", "stopped")
-    ok = await home_api.http.get("/api/v1/workspaces/ws-live/home", headers=auth())
+    ok = await home_api.http.get(
+        "/api/v1/workspaces/ws-live/home", headers=auth()
+    )
     assert ok.status_code == 200
 
 
@@ -185,7 +196,9 @@ async def test_import_refuses_non_ext4_and_empty(home_api) -> None:
     await create_workspace(home_api, "ws-bad")
     home = planted_volume(home_api, "ws-bad", b"preexisting" * 64)
     garbage = await home_api.http.put(
-        "/api/v1/workspaces/ws-bad/home", content=b"garbage" * 1000, headers=auth()
+        "/api/v1/workspaces/ws-bad/home",
+        content=b"garbage" * 1000,
+        headers=auth(),
     )
     assert garbage.status_code == 400
     assert "not an ext4 image" in garbage.json()["detail"]
@@ -215,7 +228,9 @@ async def test_moves_publish_events(home_api) -> None:
     try:
         await create_workspace(home_api, "ws-ev")
         planted_volume(home_api, "ws-ev")
-        await home_api.http.get("/api/v1/workspaces/ws-ev/home", headers=auth())
+        await home_api.http.get(
+            "/api/v1/workspaces/ws-ev/home", headers=auth()
+        )
         await home_api.http.put(
             "/api/v1/workspaces/ws-ev/home", content=IMAGE, headers=auth()
         )
@@ -281,7 +296,9 @@ async def test_upload_cut_off_mid_body_keeps_the_volume(home_api) -> None:
 # --- The client layer on the same endpoints ---
 
 
-async def test_client_layer_round_trips(home_api, tmp_path, monkeypatch) -> None:
+async def test_client_layer_round_trips(
+    home_api, tmp_path, monkeypatch
+) -> None:
     """The dogfood pair through the client's own streaming helpers:
     export one workspace's volume into another (seeding), end to
     end over the same streaming endpoints."""
@@ -324,7 +341,11 @@ async def test_client_import_refused_volume_is_one_line(
     bad.write_bytes(b"not-an-ext4" * 100)
     with pytest.raises(SystemExit, match="msks: 400: the request body is not"):
         await cli.run_home_import(
-            cli.env_url(), cli.env_token(), "ws-ref", str(bad), home_api.transport
+            cli.env_url(),
+            cli.env_token(),
+            "ws-ref",
+            str(bad),
+            home_api.transport,
         )
 
 
@@ -368,7 +389,9 @@ async def test_a_boot_waits_out_a_held_move_lock(home_api) -> None:
     async with lock:
         boot = await delayed(
             home_api,
-            home_api.http.post("/api/v1/workspaces/ws-boot/start", headers=auth()),
+            home_api.http.post(
+                "/api/v1/workspaces/ws-boot/start", headers=auth()
+            ),
         )
         assert not boot.done()  # waiting on the move, not racing it
     assert (await boot).status_code == 200
@@ -383,7 +406,9 @@ async def test_an_import_waits_for_the_lock(home_api) -> None:
         move = await delayed(
             home_api,
             home_api.http.put(
-                "/api/v1/workspaces/ws-move/home", content=IMAGE, headers=auth()
+                "/api/v1/workspaces/ws-move/home",
+                content=IMAGE,
+                headers=auth(),
             ),
         )
         assert not move.done()
@@ -398,7 +423,9 @@ async def test_the_export_holds_the_lock_through_the_stream(home_api) -> None:
     async with lock:
         export = await delayed(
             home_api,
-            home_api.http.get("/api/v1/workspaces/ws-str/home", headers=auth()),
+            home_api.http.get(
+                "/api/v1/workspaces/ws-str/home", headers=auth()
+            ),
         )
         assert not export.done()
     response = await export
@@ -476,22 +503,32 @@ async def test_import_rechecks_the_row_under_the_lock(home_api) -> None:
 # --- probe, deterministic release, early magic, delete ordering.
 
 
-async def test_waiters_answer_a_named_409_past_the_bound(home_api, monkeypatch) -> None:
+async def test_waiters_answer_a_named_409_past_the_bound(
+    home_api, monkeypatch
+) -> None:
     """A stalled reader can hold an export's lock as long as its
     connection lives; a boot or move that waits past
     move_wait_timeout_s answers a named 409 instead of hanging."""
     await create_workspace(home_api, "ws-bound")
     planted_volume(home_api, "ws-bound")
-    monkeypatch.setattr(home_api.app.state.settings.vmm, "move_wait_timeout_s", 0.05)
+    monkeypatch.setattr(
+        home_api.app.state.settings.vmm, "move_wait_timeout_s", 0.05
+    )
     lock = await home_volume_lock(home_api.app, "ws-bound")
     async with lock:
         waiters = [
             asyncio.create_task(call)
             for call in (
-                home_api.http.post("/api/v1/workspaces/ws-bound/start", headers=auth()),
-                home_api.http.get("/api/v1/workspaces/ws-bound/home", headers=auth()),
+                home_api.http.post(
+                    "/api/v1/workspaces/ws-bound/start", headers=auth()
+                ),
+                home_api.http.get(
+                    "/api/v1/workspaces/ws-bound/home", headers=auth()
+                ),
                 home_api.http.put(
-                    "/api/v1/workspaces/ws-bound/home", content=IMAGE, headers=auth()
+                    "/api/v1/workspaces/ws-bound/home",
+                    content=IMAGE,
+                    headers=auth(),
                 ),
             )
         ]
@@ -528,7 +565,10 @@ async def test_holding_response_tears_down_on_send_failure() -> None:
     spec-2.4 path and the older task-group path (#80 review)."""
     from msks.server.api import HoldingStreamingResponse
 
-    for asgi in ({"version": "3.0", "spec_version": "2.4"}, {"version": "3.0"}):
+    for asgi in (
+        {"version": "3.0", "spec_version": "2.4"},
+        {"version": "3.0"},
+    ):
         torn: list[int] = []
 
         async def body():
@@ -556,7 +596,11 @@ async def test_holding_response_tears_down_on_send_failure() -> None:
         async def receive() -> dict:
             if not disconnects["seen"]:
                 disconnects["seen"] = True
-                return {"type": "http.request", "body": b"", "more_body": False}
+                return {
+                    "type": "http.request",
+                    "body": b"",
+                    "more_body": False,
+                }
             return {"type": "http.disconnect"}
 
         with pytest.raises(RuntimeError, match="transport died"):

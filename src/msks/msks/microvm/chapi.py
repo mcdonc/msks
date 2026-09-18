@@ -66,7 +66,8 @@ class CloudHypervisorApi:
         if response.status_code >= 400:
             detail = response.text.strip()
             raise MicrovmError(
-                f"cloud-hypervisor {path} failed: {response.status_code} {detail}",
+                f"cloud-hypervisor {path} failed: "
+                f"{response.status_code} {detail}",
                 status=response.status_code,
             )
         if response.status_code == 200:

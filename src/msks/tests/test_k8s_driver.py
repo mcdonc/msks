@@ -59,7 +59,9 @@ def app_with_k8s(tmp_path, monkeypatch, handler) -> object:
     def fake_client(_settings):
         # A fresh client per call, matching the real kube_client the
         # driver closes after each request.
-        return httpx.AsyncClient(transport=transport, base_url="https://127.0.0.1:6443")
+        return httpx.AsyncClient(
+            transport=transport, base_url="https://127.0.0.1:6443"
+        )
 
     monkeypatch.setattr("msks.microvm.kube.kube_client", fake_client)
     return build_app(settings)
@@ -104,7 +106,10 @@ def test_pod_manifest_shape(tmp_path) -> None:
         "MSKSD_HOME_MIB": "2048",
     }
     volumes = {v["name"]: v for v in manifest["spec"]["volumes"]}
-    assert volumes["kvm"]["hostPath"] == {"path": "/dev/kvm", "type": "CharDevice"}
+    assert volumes["kvm"]["hostPath"] == {
+        "path": "/dev/kvm",
+        "type": "CharDevice",
+    }
     assert volumes["workspace-state"]["persistentVolumeClaim"] == {
         "claimName": pvc_name(WID)
     }
@@ -148,13 +153,24 @@ def test_pvc_size_derivation_rounds_up(tmp_path) -> None:
         home_mib=25,
     )
     assert storage_gib(odd, K8sSettings()) == 2
-    assert storage_gib(spec(tmp_path), K8sSettings(workspace_storage_gib=3)) == 3
+    assert (
+        storage_gib(spec(tmp_path), K8sSettings(workspace_storage_gib=3)) == 3
+    )
 
 
 def test_claim_gib_parses_k8s_quantities() -> None:
-    assert claim_gib({"spec": {"resources": {"requests": {"storage": "12Gi"}}}}) == 12
-    assert claim_gib({"spec": {"resources": {"requests": {"storage": "2Gi"}}}}) == 2
-    assert claim_gib({"spec": {"resources": {"requests": {"storage": "1Ti"}}}}) is None
+    assert (
+        claim_gib({"spec": {"resources": {"requests": {"storage": "12Gi"}}}})
+        == 12
+    )
+    assert (
+        claim_gib({"spec": {"resources": {"requests": {"storage": "2Gi"}}}})
+        == 2
+    )
+    assert (
+        claim_gib({"spec": {"resources": {"requests": {"storage": "1Ti"}}}})
+        is None
+    )
     assert claim_gib({}) is None
 
 
@@ -190,7 +206,10 @@ async def test_prepare_tolerates_existing_claim(tmp_path, monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "GET":
             return httpx.Response(
-                200, json={"spec": {"resources": {"requests": {"storage": "20Gi"}}}}
+                200,
+                json={
+                    "spec": {"resources": {"requests": {"storage": "20Gi"}}}
+                },
             )
         return httpx.Response(409, text="already exists")
 
@@ -198,14 +217,17 @@ async def test_prepare_tolerates_existing_claim(tmp_path, monkeypatch) -> None:
     await app.state.microvm.prepare(spec(tmp_path))
 
 
-async def test_prepare_refuses_a_too_small_reused_claim(tmp_path, monkeypatch) -> None:
+async def test_prepare_refuses_a_too_small_reused_claim(
+    tmp_path, monkeypatch
+) -> None:
     """A claim smaller than the new workspace's artifacts is refused
     by name — reusing it would fail the guest with late ENOSPC."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "GET":
             return httpx.Response(
-                200, json={"spec": {"resources": {"requests": {"storage": "2Gi"}}}}
+                200,
+                json={"spec": {"resources": {"requests": {"storage": "2Gi"}}}},
             )
         return httpx.Response(409, text="already exists")
 
@@ -268,7 +290,11 @@ async def test_launch_ensures_the_claim(tmp_path, monkeypatch) -> None:
 
 
 async def test_info_maps_phases(tmp_path, monkeypatch) -> None:
-    cases = {"Running": "running", "Pending": "starting", "Succeeded": "stopped"}
+    cases = {
+        "Running": "running",
+        "Pending": "starting",
+        "Succeeded": "stopped",
+    }
     for phase, expected in cases.items():
 
         def handler(request: httpx.Request, phase=phase) -> httpx.Response:
@@ -459,7 +485,9 @@ def test_kube_client_requires_server(tmp_path) -> None:
             {
                 "current-context": "d",
                 "clusters": [{"name": "d", "cluster": {}}],
-                "contexts": [{"name": "d", "context": {"cluster": "d", "user": "u"}}],
+                "contexts": [
+                    {"name": "d", "context": {"cluster": "d", "user": "u"}}
+                ],
                 "users": [{"name": "u", "user": {}}],
             }
         )
@@ -468,7 +496,9 @@ def test_kube_client_requires_server(tmp_path) -> None:
         kube_client(K8sSettings(kubeconfig=str(path)))
 
 
-async def test_shutdown_and_kill_tolerate_absent_pod(tmp_path, monkeypatch) -> None:
+async def test_shutdown_and_kill_tolerate_absent_pod(
+    tmp_path, monkeypatch
+) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(404)
 

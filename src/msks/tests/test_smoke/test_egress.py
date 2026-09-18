@@ -140,7 +140,8 @@ async def test_local_egress_boot() -> None:
         await run_in_console(
             microvm,
             wid,
-            "timeout 5 bash -c '</dev/tcp/deb.debian.org/80' && echo TCP-$((6*7))",
+            "timeout 5 bash -c '</dev/tcp/deb.debian.org/80' "
+            "&& echo TCP-$((6*7))",
             "TCP-42",
             app=app,
         )
@@ -259,8 +260,12 @@ async def test_local_egress_git_out() -> None:
     )
     workdir = state_dir / "gitout"
     workdir.mkdir(parents=True)
-    login_key = workdir / "login_key"  # console-planted; logs in through the forward
-    agent_key = workdir / "agent_key"  # the git-out credential: host agent only
+    login_key = (
+        workdir / "login_key"
+    )  # console-planted; logs in through the forward
+    agent_key = (
+        workdir / "agent_key"
+    )  # the git-out credential: host agent only
     git_host_key = workdir / "git_host_key"  # the scratch sshd's host key
     known_hosts = workdir / "known_hosts"
     authorized = workdir / "authorized_keys"
@@ -318,7 +323,9 @@ async def test_local_egress_git_out() -> None:
             if log.exists()
         )
 
-    async def await_forward_listener(port: int, timeout_s: float = 30.0) -> None:
+    async def await_forward_listener(
+        port: int, timeout_s: float = 30.0
+    ) -> None:
         """Until the forward client says its loopback listener is up."""
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout_s
@@ -406,7 +413,15 @@ async def test_local_egress_git_out() -> None:
         """Drop every handle this test pinned into the chain."""
         listing = await asyncio.to_thread(
             subprocess.run,
-            [nft_tool, "-a", "list", "chain", "inet", table_name(wid), "ingress"],
+            [
+                nft_tool,
+                "-a",
+                "list",
+                "chain",
+                "inet",
+                table_name(wid),
+                "ingress",
+            ],
             capture_output=True,
             text=True,
             timeout=30,
@@ -440,7 +455,9 @@ async def test_local_egress_git_out() -> None:
         deadline = loop.time() + timeout_s
         while loop.time() < deadline:
             try:
-                reader, writer = await asyncio.open_connection(uplink_ip, git_port)
+                reader, writer = await asyncio.open_connection(
+                    uplink_ip, git_port
+                )
                 writer.close()
                 with contextlib.suppress(Exception):
                     await writer.wait_closed()
@@ -711,7 +728,12 @@ async def test_local_egress_git_out() -> None:
         # apt budget. "apt" in the trail is the detached script's
         # first act.
         await await_guest_trail(
-            microvm, app, wid, trail_probe, b"apt", min(90.0, GIT_OUT_TIMEOUT_S)
+            microvm,
+            app,
+            wid,
+            trail_probe,
+            b"apt",
+            min(90.0, GIT_OUT_TIMEOUT_S),
         )
         await await_guest_trail(
             microvm, app, wid, trail_probe, b"done", GIT_OUT_TIMEOUT_S
@@ -824,7 +846,8 @@ async def test_local_egress_git_out() -> None:
             except subprocess.TimeoutExpired:
                 push.stderr += "\n--- verbose rerun timed out ---\n"
         assert push.returncode == 0, (
-            f"{push.stdout}\n{push.stderr}\nforward logs:\n{forward_evidence()}\n"
+            f"{push.stdout}\n{push.stderr}\n"
+            f"forward logs:\n{forward_evidence()}\n"
             f"git sshd log:\n{gitd_log.read_text(errors='replace')[-800:]}"
         )
         assert "P-42" in push.stdout, push.stdout
@@ -833,7 +856,8 @@ async def test_local_egress_git_out() -> None:
         await run_in_console(
             microvm,
             wid,
-            "grep -q msks-git-cred /root/.gitout/agent-list && echo A-$((6*7))",
+            "grep -q msks-git-cred /root/.gitout/agent-list "
+            "&& echo A-$((6*7))",
             "A-42",
             app=app,
         )

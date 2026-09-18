@@ -70,7 +70,9 @@ async def test_exchange_refusal_is_one_line(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ws = FakeWs([challenge_line(), b"MSKS ERR auth\n"])
-    monkeypatch.setattr(consoleauth, "workspace_signer", lambda *a, **k: _signer())
+    monkeypatch.setattr(
+        consoleauth, "workspace_signer", lambda *a, **k: _signer()
+    )
     with pytest.raises(SystemExit, match="refused the console signature"):
         await consoleauth.auth_exchange(ws, "alpha", "u", "t")
 
@@ -81,7 +83,9 @@ async def test_exchange_rejects_an_unexpected_reply(
     """Anything but AUTH OK or the refusal is a protocol break: one
     line, not a hang."""
     ws = FakeWs([challenge_line(), b"what?\n"])
-    monkeypatch.setattr(consoleauth, "workspace_signer", lambda *a, **k: _signer())
+    monkeypatch.setattr(
+        consoleauth, "workspace_signer", lambda *a, **k: _signer()
+    )
     with pytest.raises(SystemExit, match="unexpected auth reply"):
         await consoleauth.auth_exchange(ws, "alpha", "u", "t")
 
@@ -100,7 +104,9 @@ async def test_exchange_assembles_a_prefix_split_mid_prefix(
             b"AUTH OK\nprompt",
         ]
     )
-    monkeypatch.setattr(consoleauth, "workspace_signer", lambda *a, **k: _signer())
+    monkeypatch.setattr(
+        consoleauth, "workspace_signer", lambda *a, **k: _signer()
+    )
     lead = await consoleauth.auth_exchange(ws, "alpha", "u", "t")
     assert lead == b"prompt"
     assert ws.sent and ws.sent[0].startswith(b"AUTH SIG ")
@@ -123,7 +129,9 @@ async def test_exchange_assembles_split_lines(
             b"K\nprompt",
         ]
     )
-    monkeypatch.setattr(consoleauth, "workspace_signer", lambda *a, **k: _signer())
+    monkeypatch.setattr(
+        consoleauth, "workspace_signer", lambda *a, **k: _signer()
+    )
     lead = await consoleauth.auth_exchange(ws, "alpha", "u", "t")
     assert lead == b"prompt"
 
@@ -131,7 +139,9 @@ async def test_exchange_assembles_split_lines(
 async def test_signer_prefers_the_daemon_escrow() -> None:
     signer, public = consoleauth.signer_for_key(KEY, "alpha")
     assert public == KEY["public_key"]
-    assert signer(b"nonce") == sshsig.sign_payload(PEM, b"nonce", "msks-console")
+    assert signer(b"nonce") == sshsig.sign_payload(
+        PEM, b"nonce", "msks-console"
+    )
 
 
 async def test_signer_falls_back_to_the_client_data_root(
@@ -160,7 +170,10 @@ async def test_signer_uses_the_operator_agent(
     with agent.serve(private, "held") as served:
         os.symlink(served.server_address, sock)
         monkeypatch.setenv("SSH_AUTH_SOCK", str(sock))
-        no_escrow = {"public_key": f"{PUBLIC} msks-client:alpha", "private_key": None}
+        no_escrow = {
+            "public_key": f"{PUBLIC} msks-client:alpha",
+            "private_key": None,
+        }
         signer, _public = consoleauth.signer_for_key(no_escrow, "alpha")
         assert signer(b"nonce") == sshsig.sign_via_agent(
             str(sock), f"{PUBLIC} msks-client:alpha", b"nonce", "msks-console"
@@ -194,10 +207,14 @@ async def test_console_flow_answers_the_challenge(
     monkeypatch.delenv("MSKSC_CAFILE", raising=False)
     stdout = FakeStdout()
     monkeypatch.setattr(sys, "stdout", stdout)
-    monkeypatch.setattr(consoleauth, "workspace_signer", lambda *a, **k: _signer())
+    monkeypatch.setattr(
+        consoleauth, "workspace_signer", lambda *a, **k: _signer()
+    )
     loop = asyncio.get_running_loop()
     loop.run_in_executor(None, lambda: pipe.feed(b"\x1d"))  # detach
-    result = await asyncio.wait_for(console.run_shell("alpha", "u", "t", None), 5)
+    result = await asyncio.wait_for(
+        console.run_shell("alpha", "u", "t", None), 5
+    )
     assert result == 0
     assert ws.sent and ws.sent[0].startswith(b"AUTH SIG ")
     assert stdout.buffer.getvalue() == b"root@ws:~# "
@@ -210,15 +227,21 @@ async def test_workspace_signer_fetches_over_the_api(
     same resolution as the key dict."""
     seen = {}
 
-    async def fake_fetch(url, token, workspace_id, transport=None, ssl_ctx=None):
+    async def fake_fetch(
+        url, token, workspace_id, transport=None, ssl_ctx=None
+    ):
         seen["path"] = (url, token, workspace_id)
         return KEY
 
     monkeypatch.setattr(consoleauth, "fetch_ssh_key", fake_fetch)
-    signer, public = await consoleauth.workspace_signer("https://d", "tok", "alpha")
+    signer, public = await consoleauth.workspace_signer(
+        "https://d", "tok", "alpha"
+    )
     assert seen["path"] == ("https://d", "tok", "alpha")
     assert public == KEY["public_key"]
-    assert signer(b"nonce") == sshsig.sign_payload(PEM, b"nonce", "msks-console")
+    assert signer(b"nonce") == sshsig.sign_payload(
+        PEM, b"nonce", "msks-console"
+    )
 
 
 async def test_console_flow_with_empty_lead_and_pump_close(
@@ -238,8 +261,12 @@ async def test_console_flow_with_empty_lead_and_pump_close(
     monkeypatch.delenv("MSKSC_CAFILE", raising=False)
     stdout = FakeStdout()
     monkeypatch.setattr(sys, "stdout", stdout)
-    monkeypatch.setattr(consoleauth, "workspace_signer", lambda *a, **k: _signer())
-    result = await asyncio.wait_for(console.run_shell("alpha", "u", "t", None), 5)
+    monkeypatch.setattr(
+        consoleauth, "workspace_signer", lambda *a, **k: _signer()
+    )
+    result = await asyncio.wait_for(
+        console.run_shell("alpha", "u", "t", None), 5
+    )
     assert result == 0
     assert stdout.buffer.getvalue() == b""
 

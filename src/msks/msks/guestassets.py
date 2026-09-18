@@ -107,7 +107,9 @@ def load_guest_assets(root: Path | None = None) -> GuestAssets | None:
 
 def kvm_available() -> bool:
     """Whether ``/dev/kvm`` exists and this user may read and write it."""
-    return os.path.exists("/dev/kvm") and os.access("/dev/kvm", os.R_OK | os.W_OK)
+    return os.path.exists("/dev/kvm") and os.access(
+        "/dev/kvm", os.R_OK | os.W_OK
+    )
 
 
 def smoke_env_defaults(assets: GuestAssets | None) -> dict[str, str]:
@@ -146,7 +148,9 @@ def load_runner_image(root: Path | None = None) -> str | None:
     """
     base = root if root is not None else _root()
     try:
-        raw = json.loads((base / RUNNER_IMAGE_PATH).read_text(encoding="utf-8"))
+        raw = json.loads(
+            (base / RUNNER_IMAGE_PATH).read_text(encoding="utf-8")
+        )
     except OSError, ValueError:
         return None
     if not isinstance(raw, dict):

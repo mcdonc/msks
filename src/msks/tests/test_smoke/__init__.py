@@ -53,7 +53,9 @@ needs_local = pytest.mark.skipif(
     not VMLINUX or not ROOTFS or not os.access("/dev/kvm", os.W_OK),
     reason="set MSKSD_TEST_VMLINUX/MSKSD_TEST_ROOTFS with /dev/kvm access",
 )
-needs_k8s = pytest.mark.skipif(not KUBECONFIG, reason="set MSKSD_TEST_KUBECONFIG")
+needs_k8s = pytest.mark.skipif(
+    not KUBECONFIG, reason="set MSKSD_TEST_KUBECONFIG"
+)
 
 #: The serial autologin's root-shell prompt: the last line the
 #: Debian boot produces (#30) and the "guest is usable" marker —
@@ -70,9 +72,13 @@ GUEST_UP_MARKER = "root@msks-guest:~#"
 #: nested-KVM guest runs the same boot several times slower than a
 #: dev host's KVM guest, and CI sets all three explicitly. Defaults
 #: keep the dev-host behavior unchanged.
-GUEST_UP_TIMEOUT_S = float(os.environ.get("MSKSD_TEST_GUEST_UP_TIMEOUT_S", "60"))
+GUEST_UP_TIMEOUT_S = float(
+    os.environ.get("MSKSD_TEST_GUEST_UP_TIMEOUT_S", "60")
+)
 CONSOLE_TIMEOUT_S = float(os.environ.get("MSKSD_TEST_CONSOLE_TIMEOUT_S", "30"))
-SHUTDOWN_TIMEOUT_S = float(os.environ.get("MSKSD_TEST_SHUTDOWN_TIMEOUT_S", "60"))
+SHUTDOWN_TIMEOUT_S = float(
+    os.environ.get("MSKSD_TEST_SHUTDOWN_TIMEOUT_S", "60")
+)
 
 #: Fresh console sessions per command (#75): the vsock console can
 #: accept a connection and echo — the pty's line discipline answers
@@ -89,7 +95,9 @@ def serial_tail(serial_log: Path, limit: int = 2000) -> str:
     return serial_log.read_text(encoding="utf-8", errors="replace")[-limit:]
 
 
-def collect_failure_evidence(state_dir: Path, wid: str, serial_log: Path) -> None:
+def collect_failure_evidence(
+    state_dir: Path, wid: str, serial_log: Path
+) -> None:
     """On a smoke failure, print and keep the guest's own story.
 
     The console service's state is on the serial log (systemd names
@@ -99,7 +107,8 @@ def collect_failure_evidence(state_dir: Path, wid: str, serial_log: Path) -> Non
     CI artifact upload (``/tmp/msks-smoke-failed/``).
     """
     print(
-        f"smoke failure evidence — {wid} serial tail:\n{serial_tail(serial_log, 4000)}",
+        f"smoke failure evidence — {wid} serial tail:\n"
+        f"{serial_tail(serial_log, 4000)}",
         flush=True,
     )
     vm_dir = state_dir / "vms" / wid
@@ -123,7 +132,9 @@ def collect_failure_evidence(state_dir: Path, wid: str, serial_log: Path) -> Non
                 flush=True,
             )
         except OSError as exc:
-            print(f"smoke failure evidence — raw vsock probe: {exc}", flush=True)
+            print(
+                f"smoke failure evidence — raw vsock probe: {exc}", flush=True
+            )
         finally:
             with contextlib.suppress(OSError):
                 sock.close()
@@ -155,7 +166,9 @@ def collect_failure_evidence(state_dir: Path, wid: str, serial_log: Path) -> Non
                 (keep / source.name).chmod(0o644)
 
 
-async def await_guest_up(serial_log: Path, timeout_s: float | None = None) -> None:
+async def await_guest_up(
+    serial_log: Path, timeout_s: float | None = None
+) -> None:
     """Block until the guest announces itself on the serial console."""
     timeout_s = timeout_s if timeout_s is not None else GUEST_UP_TIMEOUT_S
     loop = asyncio.get_running_loop()
@@ -170,7 +183,9 @@ async def await_guest_up(serial_log: Path, timeout_s: float | None = None) -> No
     )
 
 
-async def read_until(reader, needle: bytes, timeout_s: float | None = None) -> bytes:
+async def read_until(
+    reader, needle: bytes, timeout_s: float | None = None
+) -> bytes:
     """Read the stream until it carries ``needle``; return the bytes.
 
     The vsock console is an echoing pty: the sent command comes
@@ -226,7 +241,9 @@ CONSOLE_PROMPT_NEEDLE = b"root@msks-guest:~# "
 USER_CONSOLE_PROMPT_NEEDLE = b"msks@msks-guest:~$ "
 
 
-async def answer_console_auth(reader, writer, workspace_id, app, signer=None) -> None:
+async def answer_console_auth(
+    reader, writer, workspace_id, app, signer=None
+) -> None:
     """Answer a #123 console challenge on a raw vsock stream.
 
     A seeded guest challenges before any prompt; a guest without the
@@ -312,7 +329,9 @@ async def run_in_console(
                 if app is not None or signer is not None:
                     # The console challenge (#123): answer it with the
                     # workspace key before any prompt appears.
-                    await answer_console_auth(reader, writer, workspace_id, app, signer)
+                    await answer_console_auth(
+                        reader, writer, workspace_id, app, signer
+                    )
                 needle = (
                     CONSOLE_PROMPT_NEEDLE
                     if user == "root"
@@ -598,7 +617,9 @@ def dev_workspace_seed() -> str:
     return path.read_text()
 
 
-async def await_dev_state(microvm, app, workspace_id: str, needle: bytes) -> bytes:
+async def await_dev_state(
+    microvm, app, workspace_id: str, needle: bytes
+) -> bytes:
     """Poll the guest's bootstrap state trail until it says ``needle``.
 
     Each probe is a fresh console session well inside
@@ -635,7 +656,9 @@ async def await_dev_state(microvm, app, workspace_id: str, needle: bytes) -> byt
                     b"echo E-$((21*2))\n"
                 )
                 await writer.drain()
-                data = await read_until(reader, b"E-42", timeout_s=CONSOLE_TIMEOUT_S)
+                data = await read_until(
+                    reader, b"E-42", timeout_s=CONSOLE_TIMEOUT_S
+                )
             finally:
                 writer.close()
                 with contextlib.suppress(Exception):
@@ -677,7 +700,10 @@ SSH_KEYGEN_BIN = shutil.which("ssh-keygen")
 RSYNC_BIN = shutil.which("rsync")
 needs_ssh_tools = pytest.mark.skipif(
     not (SSH_BIN and SSH_KEYGEN_BIN and RSYNC_BIN),
-    reason="ssh, ssh-keygen, and rsync must be on PATH (the devenv shell ships them)",
+    reason=(
+        "ssh, ssh-keygen, and rsync must be on PATH "
+        "(the devenv shell ships them)"
+    ),
 )
 
 #: The git-out smoke's host tools (#81): a scratch sshd serves the
@@ -695,7 +721,9 @@ needs_git_tools = pytest.mark.skipif(
 #: The git-out legs' ceiling (#81): apt + an HTTPS fetch inside the
 #: guest and the push itself. Download-bound, like the bootstrap
 #: smoke's budget — CI raises it on slow paths.
-GIT_OUT_TIMEOUT_S = float(os.environ.get("MSKSD_TEST_GIT_OUT_TIMEOUT_S", "600"))
+GIT_OUT_TIMEOUT_S = float(
+    os.environ.get("MSKSD_TEST_GIT_OUT_TIMEOUT_S", "600")
+)
 
 
 def free_port() -> int:
@@ -706,7 +734,12 @@ def free_port() -> int:
 
 
 async def await_guest_trail(
-    microvm, app, workspace_id: str, probe: str, needle: bytes, timeout_s: float
+    microvm,
+    app,
+    workspace_id: str,
+    probe: str,
+    needle: bytes,
+    timeout_s: float,
 ) -> None:
     """Poll a guest-side probe command until its output carries
     ``needle``.
@@ -732,7 +765,9 @@ async def await_guest_trail(
                 await read_until(reader, CONSOLE_PROMPT_NEEDLE)
                 writer.write(f"{probe}; echo E-$((21*2))\n".encode())
                 await writer.drain()
-                data = await read_until(reader, b"E-42", timeout_s=CONSOLE_TIMEOUT_S)
+                data = await read_until(
+                    reader, b"E-42", timeout_s=CONSOLE_TIMEOUT_S
+                )
             finally:
                 writer.close()
                 with contextlib.suppress(Exception):

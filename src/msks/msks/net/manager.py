@@ -50,12 +50,15 @@ async def dial_with_retry(dialer, host: str, port: int, timeout_s: float):
     last_cause = ""
     while loop.time() < deadline:
         try:
-            return await asyncio.wait_for(dialer(host, port), deadline - loop.time())
+            return await asyncio.wait_for(
+                dialer(host, port), deadline - loop.time()
+            )
         except (OSError, TimeoutError) as exc:
             last_cause = str(exc) or last_cause
             await asyncio.sleep(FORWARD_POLL_S)
     raise MicrovmError(
-        f"forward to {host}:{port} unavailable: {last_cause or DIAL_DEADLINE_EXPIRED}"
+        f"forward to {host}:{port} unavailable: "
+        f"{last_cause or DIAL_DEADLINE_EXPIRED}"
     )
 
 
@@ -108,7 +111,9 @@ def verify_forwarding(path: Path = FORWARDING) -> None:
     try:
         value = path.read_text().strip()
     except OSError as exc:
-        raise MicrovmError(f"could not read {SYSCTL_KEY} ({path}): {exc}") from exc
+        raise MicrovmError(
+            f"could not read {SYSCTL_KEY} ({path}): {exc}"
+        ) from exc
     if value != "1":
         raise MicrovmError(
             f"{SYSCTL_KEY} is not enabled (reads {value!r}); enable it "
@@ -120,7 +125,12 @@ class NetManager:
     """Owns every workspace's egress plumbing."""
 
     def __init__(
-        self, app, *, dhcp_factory=DhcpServer, dns_factory=DnsForwarder, dialer=None
+        self,
+        app,
+        *,
+        dhcp_factory=DhcpServer,
+        dns_factory=DnsForwarder,
+        dialer=None,
     ) -> None:
         self.app = app
         self._dhcp_factory = dhcp_factory
@@ -158,7 +168,9 @@ class NetManager:
             await self.detach(workspace_id)
         self._state = "init"
 
-    async def attach(self, workspace_id: str, *, want: bool) -> NetAttachment | None:
+    async def attach(
+        self, workspace_id: str, *, want: bool
+    ) -> NetAttachment | None:
         """Arm one workspace's egress; None when it asked for none.
 
         Idempotent per workspace: an existing attachment is returned
@@ -251,7 +263,9 @@ class NetManager:
         if self._state == "ready":
             return
         cause = NOT_READY_CAUSES.get(self._state, self._state)
-        raise MicrovmError(f"workspace {workspace_id} requests egress but {cause}")
+        raise MicrovmError(
+            f"workspace {workspace_id} requests egress but {cause}"
+        )
 
     def netmask(self) -> str:
         """The dotted-quad mask every /30 slice carries."""
@@ -310,7 +324,9 @@ class NetManager:
                 slice=slice_,
             )
             await taps.create_tap(
-                attachment.tap, f"{attachment.tap_ip}/{alloc.SLICE_PREFIX}", settings
+                attachment.tap,
+                f"{attachment.tap_ip}/{alloc.SLICE_PREFIX}",
+                settings,
             )
             await nft.install_vm(
                 settings,
@@ -358,7 +374,8 @@ class NetManager:
             # operator-shaped failure, not a raw 500.
             self._stop_started(services)
             raise MicrovmError(
-                f"egress services for {attachment.workspace_id} failed to start: {exc}"
+                f"egress services for {attachment.workspace_id} "
+                f"failed to start: {exc}"
             ) from exc
         except BaseException:
             self._stop_started(services)
@@ -375,7 +392,9 @@ class NetManager:
             return (settings.dns_upstream, dns.DNS_PORT)
         upstream = dns.upstream_from_resolv()
         if upstream is None:
-            raise MicrovmError("no upstream resolver: set MSKSD_EGRESS_DNS_UPSTREAM")
+            raise MicrovmError(
+                "no upstream resolver: set MSKSD_EGRESS_DNS_UPSTREAM"
+            )
         return upstream
 
     def _stop_started(self, services: NetServices) -> None:

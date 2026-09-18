@@ -273,12 +273,22 @@ class DhcpServer:
 
     def _offer(self, request: DhcpRequest) -> bytes:
         return build_reply(
-            request, OFFER, self._guest_ip, self._tap_ip, self._netmask, self._lease_s
+            request,
+            OFFER,
+            self._guest_ip,
+            self._tap_ip,
+            self._netmask,
+            self._lease_s,
         )
 
     def _ack(self, request: DhcpRequest) -> bytes:
         return build_reply(
-            request, ACK, self._guest_ip, self._tap_ip, self._netmask, self._lease_s
+            request,
+            ACK,
+            self._guest_ip,
+            self._tap_ip,
+            self._netmask,
+            self._lease_s,
         )
 
     def request_for_us(self, request: DhcpRequest) -> bool:

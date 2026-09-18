@@ -85,7 +85,9 @@ async def _vsock_handshake(
     (#63) negotiated in-band when ``user`` is given."""
     reader, writer = await vsock_attempt(socket_path, port)
     if user is not None:
-        await negotiate_prelude(reader, writer, user, rows or 24, cols or 80, term)
+        await negotiate_prelude(
+            reader, writer, user, rows or 24, cols or 80, term
+        )
     return reader, writer
 
 
@@ -111,7 +113,8 @@ async def negotiate_prelude(
     matches the client's terminal type.
     """
     prelude = (
-        f"HELLO {PRELUDE_VERSION}\nUSER {user}\nTERM {term}\nWINSZ {rows} {cols}\nGO\n"
+        f"HELLO {PRELUDE_VERSION}\nUSER {user}\nTERM {term}\n"
+        f"WINSZ {rows} {cols}\nGO\n"
     )
     try:
         writer.write(prelude.encode())
@@ -119,7 +122,9 @@ async def negotiate_prelude(
         reply = await asyncio.wait_for(reader.readline(), PRELUDE_REPLY_S)
     except (TimeoutError, OSError) as exc:
         writer.close()
-        raise MicrovmError(f"console prelude to {user!r} failed: {exc}") from exc
+        raise MicrovmError(
+            f"console prelude to {user!r} failed: {exc}"
+        ) from exc
     line = reply.strip()
     if line == f"MSKS OK {user}".encode():
         return
@@ -319,8 +324,9 @@ class LocalCloudHypervisor(MicrovmDriver):
         ):
             if artifact.exists():
                 raise MicrovmError(
-                    f"artifact for workspace {spec.workspace_id} already exists: "
-                    f"{artifact}; remove it (or restore the workspace row) first"
+                    f"artifact for workspace {spec.workspace_id} "
+                    f"already exists: {artifact}; "
+                    "remove it (or restore the workspace row) first"
                 )
         await persist.ensure_artifacts(spec, vmm)
 
@@ -352,11 +358,15 @@ class LocalCloudHypervisor(MicrovmDriver):
         await persist.ensure_artifacts(spec, vmm)
         socket_path = vm_dir / "api.sock"
         serial_log = vm_dir / "serial.log"
-        proc = await self._spawn(vmm.cloud_hypervisor, socket_path, vm_dir / "ch.log")
+        proc = await self._spawn(
+            vmm.cloud_hypervisor, socket_path, vm_dir / "ch.log"
+        )
         self._procs[spec.workspace_id] = proc
         (vm_dir / "ch.pid").write_text(str(proc.pid))
         try:
-            await self._wait_ready(socket_path, proc, vmm.socket_wait_timeout_s)
+            await self._wait_ready(
+                socket_path, proc, vmm.socket_wait_timeout_s
+            )
             await self._configure_and_boot(
                 spec,
                 disk_entries(
@@ -377,7 +387,9 @@ class LocalCloudHypervisor(MicrovmDriver):
 
     async def _net_attach(self, spec: VmSpec):
         """Arm the workspace's egress plumbing when it asked for it."""
-        return await self.app.state.net.attach(spec.workspace_id, want=spec.egress)
+        return await self.app.state.net.attach(
+            spec.workspace_id, want=spec.egress
+        )
 
     async def _net_detach(self, workspace_id: str) -> None:
         """Tear the workspace's egress plumbing down (idempotent)."""
@@ -397,7 +409,9 @@ class LocalCloudHypervisor(MicrovmDriver):
             )
 
     def _ensure_launchable(self, workspace_id: str, vm_dir: Path) -> None:
-        if workspace_id in self._procs or self._pid_alive(self._pid(workspace_id)):
+        if workspace_id in self._procs or self._pid_alive(
+            self._pid(workspace_id)
+        ):
             raise MicrovmError(
                 f"VM {workspace_id} already exists; shutdown or cleanup first"
             )
@@ -427,7 +441,9 @@ class LocalCloudHypervisor(MicrovmDriver):
                 start_new_session=True,
             )
         except FileNotFoundError as exc:
-            raise MicrovmError(f"cloud-hypervisor binary not found: {binary}") from exc
+            raise MicrovmError(
+                f"cloud-hypervisor binary not found: {binary}"
+            ) from exc
         finally:
             log_file.close()
 
@@ -443,7 +459,9 @@ class LocalCloudHypervisor(MicrovmDriver):
     ) -> None:
         api = CloudHypervisorApi(socket_path, timeout_s)
         try:
-            await api.create(vm_config(spec, disks, serial_log, vsock_socket, net))
+            await api.create(
+                vm_config(spec, disks, serial_log, vsock_socket, net)
+            )
             await api.boot()
         finally:
             await api.aclose()
@@ -470,14 +488,18 @@ class LocalCloudHypervisor(MicrovmDriver):
         socket_path = self._dir(workspace_id) / "vsock.sock"
         settings = self._settings().vmm
         port = settings.vsock_shell_port
-        deadline = asyncio.get_running_loop().time() + settings.vsock_wait_timeout_s
+        deadline = (
+            asyncio.get_running_loop().time() + settings.vsock_wait_timeout_s
+        )
         while True:
             if not self._vmm_reachable(workspace_id):
                 raise MicrovmError(
                     f"workspace {workspace_id} has no live VMM for a console"
                 )
             try:
-                return await _vsock_handshake(socket_path, port, user, rows, cols, term)
+                return await _vsock_handshake(
+                    socket_path, port, user, rows, cols, term
+                )
             except _VsockRetry as retry:
                 if asyncio.get_running_loop().time() >= deadline:
                     raise MicrovmError(
@@ -486,17 +508,20 @@ class LocalCloudHypervisor(MicrovmDriver):
                     ) from retry
             await asyncio.sleep(POLL_INTERVAL_S)
 
-    async def _wait_ready(self, socket_path: Path, proc, timeout_s: float) -> None:
+    async def _wait_ready(
+        self, socket_path: Path, proc, timeout_s: float
+    ) -> None:
         deadline = asyncio.get_running_loop().time() + timeout_s
         while not socket_path.exists():
             if proc.returncode is not None:
                 raise MicrovmError(
-                    f"cloud-hypervisor exited with {proc.returncode} before serving "
-                    f"{socket_path} (see its log)"
+                    f"cloud-hypervisor exited with {proc.returncode} "
+                    f"before serving {socket_path} (see its log)"
                 )
             if asyncio.get_running_loop().time() >= deadline:
                 raise MicrovmTimeoutError(
-                    f"cloud-hypervisor API socket never appeared: {socket_path}"
+                    f"cloud-hypervisor API socket never appeared: "
+                    f"{socket_path}"
                 )
             await asyncio.sleep(POLL_INTERVAL_S)
 
@@ -508,11 +533,15 @@ class LocalCloudHypervisor(MicrovmDriver):
         pid = self._pid(workspace_id)
         if not socket_path.exists():
             return VmInfo(workspace_id, VmStatus.STOPPED, pid)
-        api = CloudHypervisorApi(socket_path, self._settings().vmm.request_timeout_s)
+        api = CloudHypervisorApi(
+            socket_path, self._settings().vmm.request_timeout_s
+        )
         try:
             document = await api.info()
         except MicrovmError:
-            status = VmStatus.UNKNOWN if self._pid_alive(pid) else VmStatus.STOPPED
+            status = (
+                VmStatus.UNKNOWN if self._pid_alive(pid) else VmStatus.STOPPED
+            )
             return VmInfo(workspace_id, status, pid)
         finally:
             await api.aclose()
@@ -532,7 +561,9 @@ class LocalCloudHypervisor(MicrovmDriver):
             return True
         return False
 
-    async def shutdown(self, workspace_id: str, timeout_s: float | None = None) -> None:
+    async def shutdown(
+        self, workspace_id: str, timeout_s: float | None = None
+    ) -> None:
         """Stop one VM gracefully; an already-stopped VM is success.
 
         The absent-VM contract every backend honors (see the k8s
@@ -553,13 +584,17 @@ class LocalCloudHypervisor(MicrovmDriver):
             self._procs.pop(workspace_id, None)
             await self._net_detach(workspace_id)
             return
-        timeout = timeout_s if timeout_s is not None else vmm.shutdown_timeout_s
+        timeout = (
+            timeout_s if timeout_s is not None else vmm.shutdown_timeout_s
+        )
         deadline = asyncio.get_running_loop().time() + timeout
         await self._graceful_guest_down(workspace_id, deadline)
         await self._terminate(workspace_id, deadline)
         await self._net_detach(workspace_id)
 
-    async def _graceful_guest_down(self, workspace_id: str, deadline: float) -> None:
+    async def _graceful_guest_down(
+        self, workspace_id: str, deadline: float
+    ) -> None:
         """Request the ACPI poweroff and wait for the guest to land.
 
         The button is re-pressed every few seconds (_press_button_until_down):
@@ -630,7 +665,9 @@ class LocalCloudHypervisor(MicrovmDriver):
             proc.terminate()
         remaining = deadline - asyncio.get_running_loop().time()
         try:
-            await asyncio.wait_for(proc.wait(), max(remaining, POLL_INTERVAL_S))
+            await asyncio.wait_for(
+                proc.wait(), max(remaining, POLL_INTERVAL_S)
+            )
         except TimeoutError:
             raise MicrovmTimeoutError(
                 f"cloud-hypervisor for {workspace_id} did not exit after "
@@ -691,7 +728,9 @@ class LocalCloudHypervisor(MicrovmDriver):
             shutil.rmtree(self._dir(workspace_id), ignore_errors=True)
         # The home volume lives outside the vm dir so stop/start
         # cycles and resets cannot lose it; cleanup owns its removal.
-        persist.remove_home_volume(self._settings().vmm.state_dir, workspace_id)
+        persist.remove_home_volume(
+            self._settings().vmm.state_dir, workspace_id
+        )
 
 
 __all__ = [

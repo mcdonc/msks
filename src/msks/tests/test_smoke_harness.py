@@ -117,10 +117,14 @@ async def test_all_sessions_wedged_names_the_count(monkeypatch) -> None:
     assert microvm.opened == test_smoke.CONSOLE_ATTEMPTS
 
 
-async def test_stalled_read_until_names_needle_and_timeout(monkeypatch) -> None:
+async def test_stalled_read_until_names_needle_and_timeout(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(test_smoke, "CONSOLE_TIMEOUT_S", 0.1)
     reader, _ = wedged_session()
-    with pytest.raises(AssertionError, match=r"never saw b'needle' within 0.1s"):
+    with pytest.raises(
+        AssertionError, match=r"never saw b'needle' within 0.1s"
+    ):
         await test_smoke.read_until(reader, b"needle")
 
 

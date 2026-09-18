@@ -48,14 +48,18 @@ def _parse_int(env: Mapping[str, str], name: str, default: int) -> int:
         raise ValueError(f"{name} must be a number, got {raw!r}") from None
 
 
-def _parse_positive_int(env: Mapping[str, str], name: str, default: int) -> int:
+def _parse_positive_int(
+    env: Mapping[str, str], name: str, default: int
+) -> int:
     value = _parse_int(env, name, default)
     if value <= 0:
         raise ValueError(f"{name} must be positive, got {value}")
     return value
 
 
-def _parse_optional_int(env: Mapping[str, str], name: str, minimum: int) -> int | None:
+def _parse_optional_int(
+    env: Mapping[str, str], name: str, minimum: int
+) -> int | None:
     """A positive-when-set integer: unset means "derive it"."""
     raw = env.get(name)
     if raw in (None, ""):
@@ -87,7 +91,8 @@ def move_wait_seconds(env) -> float:
     seconds = _env_float(env, "MSKSD_MOVE_WAIT_TIMEOUT_S", 120.0)
     if seconds < 0:
         raise ValueError(
-            f"MSKSD_MOVE_WAIT_TIMEOUT_S must be zero or positive, got {seconds}"
+            f"MSKSD_MOVE_WAIT_TIMEOUT_S must be zero or positive, "
+            f"got {seconds}"
         )
     return seconds
 
@@ -156,7 +161,8 @@ class VmmSettings:
         driver = _env(env, "MSKSD_VMM_DRIVER", cls.driver)
         if driver not in VALID_DRIVERS:
             raise ValueError(
-                f"MSKSD_VMM_DRIVER must be one of {VALID_DRIVERS}, got {driver!r}"
+                f"MSKSD_VMM_DRIVER must be one of {VALID_DRIVERS}, "
+                f"got {driver!r}"
             )
         # Zero is the documented off switch for the stall close; a
         # negative window would close healthy sessions.
@@ -181,13 +187,19 @@ class VmmSettings:
         move_wait_s = move_wait_seconds(env)
         return cls(
             driver=driver,
-            cloud_hypervisor=_env(env, "MSKSD_CLOUD_HYPERVISOR", cls.cloud_hypervisor),
+            cloud_hypervisor=_env(
+                env, "MSKSD_CLOUD_HYPERVISOR", cls.cloud_hypervisor
+            ),
             state_dir=Path(
                 _env(env, "MSKSD_STATE_DIR", str(cls().state_dir))
             ).expanduser(),
-            socket_wait_timeout_s=_env_float(env, "MSKSD_SOCKET_WAIT_TIMEOUT_S", 10.0),
+            socket_wait_timeout_s=_env_float(
+                env, "MSKSD_SOCKET_WAIT_TIMEOUT_S", 10.0
+            ),
             request_timeout_s=_env_float(env, "MSKSD_REQUEST_TIMEOUT_S", 5.0),
-            shutdown_timeout_s=_env_float(env, "MSKSD_SHUTDOWN_TIMEOUT_S", 20.0),
+            shutdown_timeout_s=_env_float(
+                env, "MSKSD_SHUTDOWN_TIMEOUT_S", 20.0
+            ),
             vsock_shell_port=_parse_int(
                 env, "MSKSD_VSOCK_SHELL_PORT", cls.vsock_shell_port
             ),
@@ -204,7 +216,9 @@ class VmmSettings:
             host_name=_env(env, "MSKSD_HOST_NAME", cls().host_name),
             root_mib=_parse_positive_int(env, "MSKSD_ROOT_MIB", cls.root_mib),
             home_mib=_parse_positive_int(env, "MSKSD_HOME_MIB", cls.home_mib),
-            ssh_key_type=parse_key_type(env, "MSKSD_SSH_KEY_TYPE", cls.ssh_key_type),
+            ssh_key_type=parse_key_type(
+                env, "MSKSD_SSH_KEY_TYPE", cls.ssh_key_type
+            ),
         )
 
 
@@ -217,7 +231,9 @@ class ServerSettings:
     tls_cert: str | None = None
     tls_key: str | None = None
     db_path: Path = field(
-        default_factory=lambda: Path("~/.local/state/msksd/msks.db").expanduser()
+        default_factory=lambda: Path(
+            "~/.local/state/msksd/msks.db"
+        ).expanduser()
     )
     event_poll_s: float = 1.0
     bootstrap_token: str | None = None
@@ -283,7 +299,9 @@ class NetSettings:
     """
 
     enabled: bool = False
-    pool: IPv4Network = field(default_factory=lambda: IPv4Network("172.31.0.0/16"))
+    pool: IPv4Network = field(
+        default_factory=lambda: IPv4Network("172.31.0.0/16")
+    )
     uplink: str = "eth0"
     dns_upstream: str | None = None
     ip_tool: str = "ip"
@@ -320,17 +338,23 @@ def parse_key_type(env: Mapping[str, str], name: str, default: str) -> str:
     otherwise, so a typo fails at settings load, not at create."""
     value = _env(env, name, default)
     if value not in KEY_TYPES:
-        raise ValueError(f"{name} must be one of {sorted(KEY_TYPES)}, got {value!r}")
+        raise ValueError(
+            f"{name} must be one of {sorted(KEY_TYPES)}, got {value!r}"
+        )
     return value
 
 
-def _parse_subnet(env: Mapping[str, str], name: str, default: str) -> IPv4Network:
+def _parse_subnet(
+    env: Mapping[str, str], name: str, default: str
+) -> IPv4Network:
     """The per-workspace /30 pool: an IPv4 network of at least a /30."""
     value = _env(env, name, default)
     try:
         pool = ipaddress.IPv4Network(value)
     except ValueError:
-        raise ValueError(f"{name} must be an IPv4 network, got {value!r}") from None
+        raise ValueError(
+            f"{name} must be an IPv4 network, got {value!r}"
+        ) from None
     if pool.prefixlen > 30:
         raise ValueError(f"{name} must hold at least one /30, got {value!r}")
     return pool
@@ -343,11 +367,15 @@ def _net_settings_from_env(
     class block itself at xenon rank A)."""
     default = cls()
     lease = _parse_int(env, "MSKSD_EGRESS_LEASE_S", default.lease_s)
-    timeout = _env_float(env, "MSKSD_EGRESS_DNS_TIMEOUT_S", default.dns_timeout_s)
+    timeout = _env_float(
+        env, "MSKSD_EGRESS_DNS_TIMEOUT_S", default.dns_timeout_s
+    )
     if lease <= 0:
         raise ValueError(f"MSKSD_EGRESS_LEASE_S must be positive, got {lease}")
     if timeout <= 0:
-        raise ValueError(f"MSKSD_EGRESS_DNS_TIMEOUT_S must be positive, got {timeout}")
+        raise ValueError(
+            f"MSKSD_EGRESS_DNS_TIMEOUT_S must be positive, got {timeout}"
+        )
     return cls(
         enabled=_env(env, "MSKSD_EGRESS_ENABLED", str(default.enabled)).lower()
         == "true",
@@ -366,7 +394,9 @@ def _server_settings_from_env(
 ) -> ServerSettings:
     """Build ServerSettings from the environment (helper: keeps the
     class block itself at xenon rank A)."""
-    state = Path(_env(env, "MSKSD_STATE_DIR", str(cls().db_path.parent))).expanduser()
+    state = Path(
+        _env(env, "MSKSD_STATE_DIR", str(cls().db_path.parent))
+    ).expanduser()
     poll = _env_float(env, "MSKSD_EVENT_POLL_S", cls.event_poll_s)
     if poll <= 0:
         raise ValueError(f"MSKSD_EVENT_POLL_S must be positive, got {poll}")
@@ -378,5 +408,6 @@ def _server_settings_from_env(
         db_path=state / "msks.db",
         event_poll_s=poll,
         bootstrap_token=_env(env, "MSKSD_BOOTSTRAP_TOKEN", "") or None,
-        access_log=_env(env, "MSKSD_ACCESS_LOG", str(cls.access_log)).lower() == "true",
+        access_log=_env(env, "MSKSD_ACCESS_LOG", str(cls.access_log)).lower()
+        == "true",
     )

@@ -231,7 +231,9 @@ class ConnectStub:
         return _Ctx()
 
 
-def test_connect_passes_header_and_scheme_ssl(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_connect_passes_header_and_scheme_ssl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     stub = ConnectStub(FakeWs())
     monkeypatch.setattr(fwd.websockets, "connect", stub)
     fwd.connect("ws://h:1", "tok", "ctx")  # plain ws: no ssl argument
@@ -377,7 +379,9 @@ async def test_bridge_swallows_stream_errors_but_names_closes() -> None:
 
     # A non-close failure ends the session quietly (the survivor's
     # ending is the ending); the close re-raise stays covered above.
-    await asyncio.wait_for(fwd.bridge(BrokenWs(), fed_stream(b""), FakeWriter()), 5)
+    await asyncio.wait_for(
+        fwd.bridge(BrokenWs(), fed_stream(b""), FakeWriter()), 5
+    )
 
 
 class ClosedFdStdin:
@@ -406,7 +410,9 @@ async def test_stdio_session_treats_an_unusable_pipe_as_no_input(
     monkeypatch.setattr(sys, "stdin", ClosedFdStdin())
     monkeypatch.setattr(sys, "stdout", FakeStdout())
     monkeypatch.setattr(fwd.websockets, "connect", ConnectStub(ws))
-    assert await asyncio.wait_for(fwd.stdio_session("ws://d", "t", None), 5) == 0
+    assert (
+        await asyncio.wait_for(fwd.stdio_session("ws://d", "t", None), 5) == 0
+    )
     assert ws.sent == []
 
 
@@ -487,7 +493,9 @@ async def test_stdio_session_is_quiet_on_a_clean_close(
     monkeypatch.setattr(sys, "stdin", ClosedFdStdin())
     monkeypatch.setattr(sys, "stdout", FakeStdout())
     monkeypatch.setattr(fwd.websockets, "connect", ConnectStub(DoneWs()))
-    assert await asyncio.wait_for(fwd.stdio_session("ws://d", "t", None), 5) == 0
+    assert (
+        await asyncio.wait_for(fwd.stdio_session("ws://d", "t", None), 5) == 0
+    )
     assert "forward" not in capsys.readouterr().err
 
 
@@ -546,7 +554,9 @@ async def test_stdio_session_names_a_refusal_landing_after_stdin_eof(
 
     monkeypatch.setattr(sys, "stdin", ClosedFdStdin())
     monkeypatch.setattr(sys, "stdout", FakeStdout())
-    monkeypatch.setattr(fwd.websockets, "connect", ConnectStub(SlowRefusalWs()))
+    monkeypatch.setattr(
+        fwd.websockets, "connect", ConnectStub(SlowRefusalWs())
+    )
     with pytest.raises(SystemExit, match="no NIC"):
         await asyncio.wait_for(fwd.stdio_session("ws://d", "t", None), 5)
 
@@ -563,7 +573,9 @@ async def test_stdio_session_drain_ends_quietly(
     monkeypatch.setattr(sys, "stdin", ClosedFdStdin())
     monkeypatch.setattr(sys, "stdout", FakeStdout())
     monkeypatch.setattr(fwd.websockets, "connect", ConnectStub(QuietWs()))
-    assert await asyncio.wait_for(fwd.stdio_session("ws://d", "t", None), 5) == 0
+    assert (
+        await asyncio.wait_for(fwd.stdio_session("ws://d", "t", None), 5) == 0
+    )
 
 
 async def test_drain_close_reports_and_passes(monkeypatch) -> None:

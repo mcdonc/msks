@@ -47,7 +47,9 @@ LOGIN_MARKER = "msks-guest login:"
 PROMPT_MARKER = b"root@msks-guest"
 
 
-async def first_serial_byte(serial_log: Path, timeout_s: float = 30.0) -> float:
+async def first_serial_byte(
+    serial_log: Path, timeout_s: float = 30.0
+) -> float:
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_s
     while loop.time() < deadline:
@@ -57,7 +59,9 @@ async def first_serial_byte(serial_log: Path, timeout_s: float = 30.0) -> float:
     raise TimeoutError(f"no serial output within {timeout_s}s")
 
 
-async def wait_marker(path: Path, marker: str, timeout_s: float = 60.0) -> float:
+async def wait_marker(
+    path: Path, marker: str, timeout_s: float = 60.0
+) -> float:
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_s
     while loop.time() < deadline:
@@ -85,7 +89,9 @@ async def read_until_prompt(reader, timeout_s: float = 30.0) -> float:
     raise TimeoutError(f"no shell prompt within {timeout_s}s; got: {tail!r}")
 
 
-async def run_shell_command(reader, writer, command: str, timeout_s: float = 20.0):
+async def run_shell_command(
+    reader, writer, command: str, timeout_s: float = 20.0
+):
     sentinel = f"__PERF_{uuid.uuid4().hex[:8]}__"
     writer.write(f"{command}; echo {sentinel}\n".encode())
     await writer.drain()
@@ -114,7 +120,9 @@ def kernel_start_gap(serial_log: Path) -> str | None:
         text = serial_log.read_text(encoding="utf-8", errors="replace")
     except FileNotFoundError:
         return None
-    stamps = [ln[1 : ln.index("]")] for ln in text.splitlines() if is_stamp(ln)]
+    stamps = [
+        ln[1 : ln.index("]")] for ln in text.splitlines() if is_stamp(ln)
+    ]
     return stamps[-1].strip() if stamps else None
 
 
@@ -144,7 +152,9 @@ def parse_meminfo(out: str) -> dict:
     """The named /proc/meminfo fields, in KiB, from shell output."""
     kib = {}
     for line in out.splitlines():
-        match = re.match(r"^(MemTotal|MemAvailable|AnonPages|Cached):\s+(\d+)", line)
+        match = re.match(
+            r"^(MemTotal|MemAvailable|AnonPages|Cached):\s+(\d+)", line
+        )
         if match:
             kib[match.group(1)] = int(match.group(2))
     return kib
@@ -222,12 +232,16 @@ def setup_run(assets) -> tuple:
 
 async def collect_blame(microvm, wid: str) -> list[str]:
     reader, writer = await microvm.console(wid, user="root")
-    blame = await run_shell_command(reader, writer, "systemd-analyze blame | head -12")
+    blame = await run_shell_command(
+        reader, writer, "systemd-analyze blame | head -12"
+    )
     writer.close()
     # Keep timing lines only; the first line is the echoed command
     # prompt, not blame output.
     return [
-        line for line in blame.splitlines() if re.match(r"\s*[0-9]+[a-z]+\s+", line)
+        line
+        for line in blame.splitlines()
+        if re.match(r"\s*[0-9]+[a-z]+\s+", line)
     ][:12]
 
 
@@ -329,20 +343,27 @@ async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument(
-        "--keep", action="store_true", help="skip systemd-analyze (keep console)"
+        "--keep",
+        action="store_true",
+        help="skip systemd-analyze (keep console)",
     )
     args = parser.parse_args()
     assets = load_guest_assets()
     if assets is None:
         print(
-            "guest assets not built: devenv tasks run msks:build-guest", file=sys.stderr
+            "guest assets not built: devenv tasks run msks:build-guest",
+            file=sys.stderr,
         )
         return 2
     runs = []
     for _ in range(args.runs):
         r = await one_run(assets, keep=args.keep)
         runs.append(r)
-        print(json.dumps({k: v for k, v in r.items() if k != "blame"}, indent=None))
+        print(
+            json.dumps(
+                {k: v for k, v in r.items() if k != "blame"}, indent=None
+            )
+        )
     report(runs)
     return verdict(runs)
 
@@ -358,7 +379,10 @@ def verdict(runs: list[dict]) -> int:
     if p50 is None:
         return 1
     outcome = "PASS" if p50 < 5 else "FAIL"
-    print(f"\nRESULT start->interactive p50 = {p50:.2f}s (goal < 5.00s, {outcome})")
+    print(
+        f"\nRESULT start->interactive p50 = {p50:.2f}s "
+        f"(goal < 5.00s, {outcome})"
+    )
     return 0 if p50 < 5 else 1
 
 

@@ -87,13 +87,17 @@ def signer_for_key(key: dict, workspace_id: str):
         return agent_signer(agent_path, public), public
 
 
-async def workspace_signer(url: str, token: str, workspace_id: str, ssl_ctx=None):
+async def workspace_signer(
+    url: str, token: str, workspace_id: str, ssl_ctx=None
+):
     """The workspace's console signer, fetched over the API."""
     key = await fetch_ssh_key(url, token, workspace_id, ssl_ctx=ssl_ctx)
     return signer_for_key(key, workspace_id)
 
 
-async def auth_exchange(ws, workspace_id: str, url: str, token: str, ssl_ctx=None):
+async def auth_exchange(
+    ws, workspace_id: str, url: str, token: str, ssl_ctx=None
+):
     """One console connection's auth: answer a challenge, pass a
     pre-#123 guest through. Returns the bytes already read that are
     not the protocol's (the shell's first output), for the caller to

@@ -42,7 +42,9 @@ CLOSE_CODE_REASONS = {
     4401: "authentication failed (bad token?)",
     4404: "no such workspace",
     4403: "forward not permitted for this token",
-    4501: "forward unavailable (no NIC, not running, or service not listening?)",
+    4501: (
+        "forward unavailable (no NIC, not running, or service not listening?)"
+    ),
 }
 
 
@@ -122,7 +124,9 @@ async def settle_pump(tasks: set) -> None:
     """End a two-way pump: cancel the loser, then surface a websocket
     close from the finished task (other outcomes end the session
     without an error — the survivor's ending is the ending)."""
-    done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    done, pending = await asyncio.wait(
+        tasks, return_when=asyncio.FIRST_COMPLETED
+    )
     for task in pending:
         task.cancel()
     for task in pending:
@@ -309,7 +313,9 @@ async def local_listener(address: str, token: str, ssl_ctx, local_port: int):
     return server
 
 
-async def local_server(address: str, token: str, ssl_ctx, local_port: int) -> int:
+async def local_server(
+    address: str, token: str, ssl_ctx, local_port: int
+) -> int:
     """Serve the loopback listener until cancelled (Ctrl-C ends the
     command through the CLI's interrupt handling)."""
     server = await local_listener(address, token, ssl_ctx, local_port)
@@ -318,7 +324,9 @@ async def local_server(address: str, token: str, ssl_ctx, local_port: int) -> in
     return 0
 
 
-def run_workspace_forward(workspace_id: str, port: int, local: int | None) -> int:
+def run_workspace_forward(
+    workspace_id: str, port: int, local: int | None
+) -> int:
     """One forward session, from env/TLS setup to a clean end.
 
     The pre-flight boot check runs before any listening socket opens:
@@ -338,5 +346,7 @@ def run_workspace_forward(workspace_id: str, port: int, local: int | None) -> in
         except OSError as exc:
             # A refused bind (the port is taken) is operator-shaped:
             # one readable line, not a traceback.
-            raise SystemExit(f"msks: cannot bind 127.0.0.1:{local}: {exc}") from exc
+            raise SystemExit(
+                f"msks: cannot bind 127.0.0.1:{local}: {exc}"
+            ) from exc
     return asyncio.run(stdio_session(address, token, ssl_ctx))

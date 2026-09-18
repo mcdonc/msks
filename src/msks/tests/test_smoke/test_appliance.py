@@ -131,7 +131,8 @@ async def test_appliance_boot_and_workspace() -> None:
             await asyncio.sleep(1.0)
         serial = (app_dir / "serial.log").read_text(errors="replace")[-2000:]
         raise AssertionError(
-            f"appliance API never became healthy ({last}); serial tail:\n{serial}"
+            f"appliance API never became healthy ({last}); "
+            f"serial tail:\n{serial}"
         )
 
     status = None
@@ -164,13 +165,17 @@ async def test_appliance_boot_and_workspace() -> None:
         assert images.status_code == 200
         defaults = [i for i in images.json() if i["default"]]
         assert [i["name"] for i in defaults] == ["debian"], images.text
-        response = await client.post(f"{base}/workspaces/{wid}/start", headers=headers)
+        response = await client.post(
+            f"{base}/workspaces/{wid}/start", headers=headers
+        )
         assert response.status_code in (200, 202), response.text
 
         loop = asyncio.get_running_loop()
         deadline = loop.time() + 120.0
         while loop.time() < deadline:
-            response = await client.get(f"{base}/workspaces/{wid}", headers=headers)
+            response = await client.get(
+                f"{base}/workspaces/{wid}", headers=headers
+            )
             status = response.json().get("status")
             if status == "running":
                 break
@@ -189,7 +194,9 @@ async def test_appliance_boot_and_workspace() -> None:
             base.replace("https://", "wss://")
             + f"/workspaces/{wid}/console?token={token}"
         )
-        async with websockets.connect(ws_url, ssl=ws_ctx, open_timeout=30) as shell_ws:
+        async with websockets.connect(
+            ws_url, ssl=ws_ctx, open_timeout=30
+        ) as shell_ws:
             # The marker's rendering differs from the sent bytes, so
             # the step proves OUTPUT flowed — not merely the pty echo.
             await shell_ws.send(b"echo MSKS-$((6*7))-SHELL-SMOKE\n")
@@ -198,7 +205,8 @@ async def test_appliance_boot_and_workspace() -> None:
             while b"MSKS-42-SHELL-SMOKE" not in console_got:
                 if loop.time() >= console_deadline:
                     raise AssertionError(
-                        f"console never echoed the marker; got: {console_got!r}"
+                        f"console never echoed the marker; "
+                        f"got: {console_got!r}"
                     )
                 # A silent gap is normal, not failure: a nested-virt
                 # guest can take a minute or more past "running" to
@@ -240,7 +248,9 @@ async def test_appliance_boot_and_workspace() -> None:
 
         async def probe_connect() -> websockets.ClientConnection:
             nonlocal probe_ws
-            probe_ws = await websockets.connect(ws_url, ssl=ws_ctx, open_timeout=30)
+            probe_ws = await websockets.connect(
+                ws_url, ssl=ws_ctx, open_timeout=30
+            )
             return probe_ws
 
         async def probe_collect(marker: bytes) -> bytes:
@@ -260,7 +270,9 @@ async def test_appliance_boot_and_workspace() -> None:
                     )
                     probe_ws = None
                     return probe_buf
-                probe_buf += message if isinstance(message, bytes) else message.encode()
+                probe_buf += (
+                    message if isinstance(message, bytes) else message.encode()
+                )
             return probe_buf
 
         async def probe_send(command: bytes) -> None:
@@ -274,7 +286,8 @@ async def test_appliance_boot_and_workspace() -> None:
                 await probe_ws.send(command)
             except websockets.ConnectionClosed as closed:
                 print(
-                    f"probe session closed mid-send ({closed.rcvd}); reconnecting",
+                    f"probe session closed mid-send ({closed.rcvd}); "
+                    "reconnecting",
                     flush=True,
                 )
                 probe_ws = None
@@ -296,7 +309,8 @@ async def test_appliance_boot_and_workspace() -> None:
         )
         await probe(
             b"DNS-42-UP",
-            b"getent hosts deb.debian.org >/dev/null && echo DNS-$((6*7))-UP\n",
+            b"getent hosts deb.debian.org >/dev/null "
+            b"&& echo DNS-$((6*7))-UP\n",
         )
         # Forwarded egress through the NAT'd uplink (#101): a TCP
         # connection the guest initiates must traverse the forward
@@ -310,7 +324,9 @@ async def test_appliance_boot_and_workspace() -> None:
         )
         if probe_ws is not None:
             await probe_ws.close()
-        response = await client.get(f"{base}/workspaces/{wid}", headers=headers)
+        response = await client.get(
+            f"{base}/workspaces/{wid}", headers=headers
+        )
         assert response.json().get("status") == "running", response.text
 
         # #36: a killed vsock socat recovers without a workspace
@@ -319,9 +335,12 @@ async def test_appliance_boot_and_workspace() -> None:
         # works after the listener is SIGKILLed. The marker renders
         # differently from the sent bytes, so it proves OUTPUT flowed
         # — not merely the pty echo of the input.
-        async with websockets.connect(ws_url, ssl=ws_ctx, open_timeout=30) as kill_ws:
+        async with websockets.connect(
+            ws_url, ssl=ws_ctx, open_timeout=30
+        ) as kill_ws:
             await kill_ws.send(
-                b"systemctl kill --kill-who=main -s SIGKILL msks-console.service\n"
+                b"systemctl kill --kill-who=main -s SIGKILL "
+                b"msks-console.service\n"
             )
         recovered_at = None
         for attempt in range(30):
@@ -342,7 +361,9 @@ async def test_appliance_boot_and_workspace() -> None:
                 while b"MSKS-46-RECOVERED" not in recovered:
                     message = await asyncio.wait_for(recovery_ws.recv(), 30.0)
                     recovered += (
-                        message if isinstance(message, bytes) else message.encode()
+                        message
+                        if isinstance(message, bytes)
+                        else message.encode()
                     )
             finally:
                 await recovery_ws.close()
@@ -374,7 +395,9 @@ async def test_appliance_boot_and_workspace() -> None:
         assert response.status_code in (200, 202), response.text
         deadline = loop.time() + 120.0
         while loop.time() < deadline:
-            response = await client.get(f"{base}/workspaces/{dev_wid}", headers=headers)
+            response = await client.get(
+                f"{base}/workspaces/{dev_wid}", headers=headers
+            )
             if response.json().get("status") == "running":
                 break
             await asyncio.sleep(1.0)
@@ -401,7 +424,9 @@ async def test_appliance_boot_and_workspace() -> None:
                     except TimeoutError:
                         return
                     dev_buf += (
-                        message if isinstance(message, bytes) else message.encode()
+                        message
+                        if isinstance(message, bytes)
+                        else message.encode()
                     )
 
             # The sent line carries no "done" literal, so the marker
@@ -422,7 +447,9 @@ async def test_appliance_boot_and_workspace() -> None:
             # as the state loop: a corrupted round is superseded by a
             # fresh send, so the probe measures the venv, not the
             # console's byte fidelity.
-            venv_cmd = b"test -x /root/msks/.venv/bin/pytest && echo VENV-$((6*7))\n"
+            venv_cmd = (
+                b"test -x /root/msks/.venv/bin/pytest && echo VENV-$((6*7))\n"
+            )
             await dev_ws.send(venv_cmd)
             venv_end = loop.time() + 180.0
             while b"VENV-42" not in dev_buf:
@@ -454,12 +481,16 @@ async def test_appliance_boot_and_workspace() -> None:
             f"{base}/workspaces/{wid}", headers=headers, timeout=60.0
         )
         assert response.status_code == 200, response.text
-        response = await client.get(f"{base}/workspaces/{wid}", headers=headers)
+        response = await client.get(
+            f"{base}/workspaces/{wid}", headers=headers
+        )
         assert response.status_code == 404
     finally:
         if headers is not None:
             with contextlib.suppress(Exception):
-                await client.delete(f"{base}/workspaces/{wid}", headers=headers)
+                await client.delete(
+                    f"{base}/workspaces/{wid}", headers=headers
+                )
             if dev_wid is not None:
                 with contextlib.suppress(Exception):
                     await client.post(
@@ -482,7 +513,9 @@ async def test_appliance_boot_and_workspace() -> None:
             os.environ["MSKSD_APPLIANCE_STATE"] = prior_state_env
         if prior_cmdline_extra is None:
             del os.environ["MSKS_APPLIANCE_CMDLINE_EXTRA"]
-        elif prior_cmdline_extra != os.environ.get("MSKS_APPLIANCE_CMDLINE_EXTRA"):
+        elif prior_cmdline_extra != os.environ.get(
+            "MSKS_APPLIANCE_CMDLINE_EXTRA"
+        ):
             os.environ["MSKS_APPLIANCE_CMDLINE_EXTRA"] = prior_cmdline_extra
         down = devenv_task("msks:appliance-down", timeout=300)
         assert down.returncode == 0, (
@@ -521,7 +554,9 @@ async def test_appliance_boot_and_workspace() -> None:
         identity = [ln for ln in journal if "daemon identity:" in ln]
         assert identity, "journal never recorded the daemon identity"
         match = re.search(r"uid=(\d+)\(msksd\)", identity[-1])
-        assert match, f"daemon identity is not the msksd user: {identity[-1]!r}"
+        assert match, (
+            f"daemon identity is not the msksd user: {identity[-1]!r}"
+        )
         service_uid = int(match.group(1))
         assert service_uid != 0, identity[-1]
         # uid and gid are allocated independently at build time; the
@@ -529,7 +564,9 @@ async def test_appliance_boot_and_workspace() -> None:
         gid_match = re.search(r"gid=(\d+)\(msksd\)", identity[-1])
         assert gid_match, f"daemon identity carries no gid: {identity[-1]!r}"
         service_gid = int(gid_match.group(1))
-        assert "(kvm)" in identity[-1], f"daemon missed the kvm group: {identity[-1]!r}"
+        assert "(kvm)" in identity[-1], (
+            f"daemon missed the kvm group: {identity[-1]!r}"
+        )
         for field in ("CapEff", "CapAmb"):
             lines = [ln for ln in journal if f"daemon {field}:" in ln]
             assert lines, f"journal never recorded the daemon {field}"
@@ -577,10 +614,15 @@ async def test_appliance_boot_and_workspace() -> None:
             assert top.returncode == 0, top.stderr
             # debugfs pads with blank lines; only real rows carry a name.
             names = {
-                line.split()[-1] for line in top.stdout.splitlines() if line.split()
+                line.split()[-1]
+                for line in top.stdout.splitlines()
+                if line.split()
             }
-            assert "msksd" in names, f"no service-user home on the disk:\n{top.stdout}"
+            assert "msksd" in names, (
+                f"no service-user home on the disk:\n{top.stdout}"
+            )
             assert "volumes" not in names and "msks-cert.host" not in names, (
-                f"daemon entries still at the state-disk top level:\n{top.stdout}"
+                f"daemon entries still at the state-disk top level:\n"
+                f"{top.stdout}"
             )
     legacy_dir.cleanup()

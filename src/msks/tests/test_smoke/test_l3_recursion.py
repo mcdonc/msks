@@ -77,7 +77,9 @@ needs_l3 = pytest.mark.skipif(
 #: The recursion's whole-sequence budget: the L2 bootstrap (apt, uv,
 #: the checkout, uv sync — download-bound under nested KVM), the
 #: archive rsync, the inner image import, and the L3 boot to console.
-L3_RECURSION_TIMEOUT_S = float(os.environ.get("MSKSD_TEST_L3_TIMEOUT_S", "5400"))
+L3_RECURSION_TIMEOUT_S = float(
+    os.environ.get("MSKSD_TEST_L3_TIMEOUT_S", "5400")
+)
 
 
 class L3Timeline:
@@ -111,11 +113,16 @@ class L3Timeline:
         print("L3 phase timeline (mark, at, since previous):", flush=True)
         previous = 0.0
         for name, at in self.marks:
-            print(f"  {name:<26} +{at:6.0f}s  ({at - previous:5.0f}s)", flush=True)
+            print(
+                f"  {name:<26} +{at:6.0f}s  ({at - previous:5.0f}s)",
+                flush=True,
+            )
             previous = at
         if self.steps:
             print("L3 guest steps (first seen):", flush=True)
-            for name, at in sorted(self.steps.items(), key=lambda pair: pair[1]):
+            for name, at in sorted(
+                self.steps.items(), key=lambda pair: pair[1]
+            ):
                 print(f"  {name:<26} +{at:6.0f}s", flush=True)
 
 
@@ -406,8 +413,12 @@ async def test_appliance_l3_recursion() -> None:
                 pass
             await asyncio.sleep(1.0)
         else:
-            serial = (app_dir / "serial.log").read_text(errors="replace")[-2000:]
-            raise AssertionError(f"appliance API never healthy; serial tail:\n{serial}")
+            serial = (app_dir / "serial.log").read_text(errors="replace")[
+                -2000:
+            ]
+            raise AssertionError(
+                f"appliance API never healthy; serial tail:\n{serial}"
+            )
         timeline.mark("appliance-up")
 
         # The L2 workspace: egress (the bootstrap downloads over it),
@@ -430,12 +441,16 @@ async def test_appliance_l3_recursion() -> None:
         assert response.status_code in (200, 202), response.text
         deadline = loop.time() + 120.0
         while loop.time() < deadline:
-            response = await client.get(f"{base}/workspaces/{wid}", headers=headers)
+            response = await client.get(
+                f"{base}/workspaces/{wid}", headers=headers
+            )
             if response.json().get("status") == "running":
                 break
             await asyncio.sleep(1.0)
         else:
-            raise AssertionError(f"L2 workspace never reached running: {response.text}")
+            raise AssertionError(
+                f"L2 workspace never reached running: {response.text}"
+            )
         timeline.mark("l2-running")
 
         # Q1 evidence, live in the L2 guest: the closure's kvm trio
@@ -444,7 +459,8 @@ async def test_appliance_l3_recursion() -> None:
         # vm.create sets no CPU options).
         tree = await l3_console_command(
             connect_l2_console,
-            b"ls /usr/lib/modules/*/kernel/arch/x86/kvm/ && echo TREE-$((6*7))\n",
+            b"ls /usr/lib/modules/*/kernel/arch/x86/kvm/ "
+            b"&& echo TREE-$((6*7))\n",
             b"TREE-42",
             300.0,
         )
@@ -482,7 +498,9 @@ async def test_appliance_l3_recursion() -> None:
                 # A wedged console round under the bootstrap's own load
                 # is the boot's slowness, not a failure — retry under
                 # the phase deadline (the bring-up poll rides the same).
-                print(f"L3 bootstrap round stalled ({exc}); retrying", flush=True)
+                print(
+                    f"L3 bootstrap round stalled ({exc}); retrying", flush=True
+                )
                 await asyncio.sleep(10.0)
                 continue
             body = data.split(b"E-$((21*2))", 1)[-1].split(b"E-42", 1)[0]
@@ -499,7 +517,9 @@ async def test_appliance_l3_recursion() -> None:
                 timeline.mark("l2-bootstrap-done")
                 break
             if b"no-route" in body:
-                raise AssertionError(f"the L3 seed could not find an uplink: {last!r}")
+                raise AssertionError(
+                    f"the L3 seed could not find an uplink: {last!r}"
+                )
             await asyncio.sleep(15.0)
         else:
             raise AssertionError(
@@ -511,7 +531,8 @@ async def test_appliance_l3_recursion() -> None:
         # health, through the same console).
         await l3_console_command(
             connect_l2_console,
-            b"curl -sf http://127.0.0.1:8660/api/v1/health && echo DAEMON-$((6*7))\n",
+            b"curl -sf http://127.0.0.1:8660/api/v1/health "
+            b"&& echo DAEMON-$((6*7))\n",
             b"DAEMON-42",
             120.0,
         )
@@ -535,7 +556,15 @@ async def test_appliance_l3_recursion() -> None:
         )
         keygen = await asyncio.to_thread(
             subprocess.run,
-            [sys.executable, "-m", "msks.client.cli", "key", wid, "--out", str(key)],
+            [
+                sys.executable,
+                "-m",
+                "msks.client.cli",
+                "key",
+                wid,
+                "--out",
+                str(key),
+            ],
             env=cli_env,
             capture_output=True,
             text=True,
@@ -563,7 +592,9 @@ async def test_appliance_l3_recursion() -> None:
         deadline = loop.time() + 30.0
         while loop.time() < deadline:
             log = (
-                forward_log.read_text(errors="replace") if forward_log.exists() else ""
+                forward_log.read_text(errors="replace")
+                if forward_log.exists()
+                else ""
             )
             if f"msks: 127.0.0.1:{forward_port} -> " in log:
                 break
@@ -595,7 +626,8 @@ async def test_appliance_l3_recursion() -> None:
             timeout=1800,
         )
         assert sync.returncode == 0, (
-            f"artifact rsync failed:\n{sync.stdout[-1500:]}\n{sync.stderr[-1500:]}"
+            f"artifact rsync failed:\n{sync.stdout[-1500:]}\n"
+            f"{sync.stderr[-1500:]}"
         )
         timeline.mark("artifacts-rsynced")
 
@@ -607,7 +639,9 @@ async def test_appliance_l3_recursion() -> None:
         cmdline = json.loads(
             (REPO_ROOT / ".guest" / "guest-manifest.json").read_text()
         )["cmdline"]
-        setup_b64 = base64.b64encode(l3_inner_setup_script(cmdline).encode()).decode()
+        setup_b64 = base64.b64encode(
+            l3_inner_setup_script(cmdline).encode()
+        ).decode()
         await l3_console_command(
             connect_l2_console,
             f"mkdir -p /root/.msks-l3-inner /root/inner-artifacts "
@@ -638,17 +672,23 @@ async def test_appliance_l3_recursion() -> None:
                     b"nohup sh /root/l3-inner-up.sh "
                     b"> /root/.msks-l3-inner/run.log 2>&1 & sleep 1; "
                     b"tail -n +1 /root/.msks-l3-inner/run.log 2>/dev/null; "
-                    b"grep -q ^done-0$ /root/.msks-l3-inner/run.log 2>/dev/null "
+                    b"grep -q ^done-0$ /root/.msks-l3-inner/run.log "
+                    b"2>/dev/null "
                     b"&& echo INNER-UP-$((6*7)); "
                     b"echo E-$((21*2))\n",
                     b"E-42",
                     150.0,
                 )
             except AssertionError as exc:
-                print(f"L3 inner bring-up round stalled ({exc}); retrying", flush=True)
+                print(
+                    f"L3 inner bring-up round stalled ({exc}); retrying",
+                    flush=True,
+                )
                 await asyncio.sleep(10.0)
                 continue
-            last = data.split(b"E-$((21*2))", 1)[-1].split(b"E-42", 1)[0].strip()
+            last = (
+                data.split(b"E-$((21*2))", 1)[-1].split(b"E-42", 1)[0].strip()
+            )
             print(f"L3 inner bring-up round: {last[-160:]!r}", flush=True)
             for step in re.findall(rb"^(create|start|done-\d+)$", last, re.M):
                 timeline.step("inner:" + step.decode())
@@ -708,7 +748,10 @@ async def test_appliance_l3_recursion() -> None:
             if b"INNER-CONSOLE-42-OK" in evidence:
                 timeline.mark("inner-console-ok")
                 break
-            print(f"inner probe round without marker: {evidence[-300:]!r}", flush=True)
+            print(
+                f"inner probe round without marker: {evidence[-300:]!r}",
+                flush=True,
+            )
             await asyncio.sleep(10.0)
         else:
             raise AssertionError(
@@ -732,7 +775,10 @@ async def test_appliance_l3_recursion() -> None:
             120.0,
         )
         body = tuning.split(b"T-$((6*7))", 1)[-1].split(b"T-42", 1)[0]
-        print(f"L3 tuning: msks start inner1 -> {body.strip()!r} seconds", flush=True)
+        print(
+            f"L3 tuning: msks start inner1 -> {body.strip()!r} seconds",
+            flush=True,
+        )
 
         # Orderly teardown, inner first: the inner workspace stops
         # through its own daemon, then the L2 workspace and the
@@ -773,7 +819,9 @@ async def test_appliance_l3_recursion() -> None:
             os.environ["MSKSD_APPLIANCE_STATE"] = prior_state_env
         if prior_cmdline_extra is None:
             del os.environ["MSKS_APPLIANCE_CMDLINE_EXTRA"]
-        elif prior_cmdline_extra != os.environ.get("MSKS_APPLIANCE_CMDLINE_EXTRA"):
+        elif prior_cmdline_extra != os.environ.get(
+            "MSKS_APPLIANCE_CMDLINE_EXTRA"
+        ):
             os.environ["MSKS_APPLIANCE_CMDLINE_EXTRA"] = prior_cmdline_extra
         if prior_mem_mib is None:
             del os.environ["MSKS_APPLIANCE_MEM_MIB"]

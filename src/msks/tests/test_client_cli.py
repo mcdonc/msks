@@ -25,7 +25,12 @@ from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
 from test_api import TOKEN, StubMicrovm
 
 ROWS = [
-    {"id": "alpha", "status": "running", "image_hash": "a" * 64, "host": "hv1"},
+    {
+        "id": "alpha",
+        "status": "running",
+        "image_hash": "a" * 64,
+        "host": "hv1",
+    },
     {"id": "beta", "status": "created", "image_hash": None, "host": None},
 ]
 
@@ -71,7 +76,9 @@ def test_cmd_key_prints_public(
 
 
 def test_cmd_key_private_and_out(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
 ) -> None:
     """--private prints the private half; --out materializes it 0600
     at the operator-named path and prints only the path."""
@@ -128,7 +135,8 @@ def test_cmd_key_dispatch(
     """The parser route: `msks key <ws>` through main()."""
     client_env(monkeypatch)
     rc = cli.main(
-        ["key", "alpha"], transport=mock(lambda req: httpx.Response(200, json=KEY_BODY))
+        ["key", "alpha"],
+        transport=mock(lambda req: httpx.Response(200, json=KEY_BODY)),
     )
     assert rc == 0
     assert "ecdsa-sha2-nistp256" in capsys.readouterr().out
@@ -150,7 +158,10 @@ def test_cmd_ls_json(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     client_env(monkeypatch)
-    cli.cmd_ls(as_json=True, transport=mock(lambda req: httpx.Response(200, json=ROWS)))
+    cli.cmd_ls(
+        as_json=True,
+        transport=mock(lambda req: httpx.Response(200, json=ROWS)),
+    )
     assert json.loads(capsys.readouterr().out) == ROWS
 
 
@@ -210,7 +221,9 @@ def test_cmd_create_start_boots_and_hints(
 
 
 def test_cmd_create_client_mint_sends_public_only(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
 ) -> None:
     """The create default (#121): the keypair is minted on this
     client, the POST body carries the public half only, the daemon's
@@ -238,7 +251,9 @@ def test_cmd_create_client_mint_sends_public_only(
         seen["supplied"] = seen["body"]["ssh_pubkey"]
         return httpx.Response(201, json={"id": "ws1", "status": "created"})
 
-    rc = cli.cmd_create({"id": "ws1"}, transport=mock(handler), key_type="ed25519")
+    rc = cli.cmd_create(
+        {"id": "ws1"}, transport=mock(handler), key_type="ed25519"
+    )
     assert rc == 0
     supplied = seen["body"]["ssh_pubkey"]
     assert supplied.startswith("ssh-ed25519 ")
@@ -294,7 +309,9 @@ def test_write_client_identity_forces_mode_on_a_preexisting_file(
 
 
 def test_create_client_mint_refuses_a_silent_escrow(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
 ) -> None:
     """A daemon one version behind drops the unknown field and mints
     its own pair: the create's follow-up check catches the swapped
@@ -320,7 +337,9 @@ def test_create_client_mint_refuses_a_silent_escrow(
         return httpx.Response(201, json={"id": "ws1", "status": "created"})
 
     with pytest.raises(SystemExit, match="no-escrow promise"):
-        cli.cmd_create({"id": "ws1"}, transport=mock(handler), key_type="ed25519")
+        cli.cmd_create(
+            {"id": "ws1"}, transport=mock(handler), key_type="ed25519"
+        )
     # Nothing was cached for the half the daemon swapped in.
     assert not (tmp_path / "msks" / "ws1").exists()
     assert "created ws1" in capsys.readouterr().out
@@ -342,7 +361,9 @@ def test_write_client_identity_fails_as_one_line_when_unwritable(
 
 
 def test_cmd_create_client_mint_with_start_boots_after_verification(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
 ) -> None:
     """Client mint composes with --start in order: create, escrow
     verification, identity write, then boot — a failure anywhere
@@ -406,9 +427,13 @@ def test_create_identity_modes() -> None:
     assert cli.create_identity(typed) == ("rsa", None)
     daemon = parser.parse_args(["create", "ws1", "--daemon-mint"])
     assert cli.create_identity(daemon) == (None, None)
-    with pytest.raises(SystemExit, match="--key-type conflicts with --daemon-mint"):
+    with pytest.raises(
+        SystemExit, match="--key-type conflicts with --daemon-mint"
+    ):
         cli.create_identity(
-            parser.parse_args(["create", "ws1", "--daemon-mint", "--key-type", "rsa"])
+            parser.parse_args(
+                ["create", "ws1", "--daemon-mint", "--key-type", "rsa"]
+            )
         )
 
 
@@ -420,7 +445,9 @@ def test_create_identity_pubkey_mode(tmp_path: Path) -> None:
     source.write_text(f"{SUPPLIED_PUBKEY}\n")
     args = parser.parse_args(["create", "ws1", "--pubkey", str(source)])
     assert cli.create_identity(args) == (None, SUPPLIED_PUBKEY)
-    with pytest.raises(SystemExit, match="--pubkey conflicts with --daemon-mint"):
+    with pytest.raises(
+        SystemExit, match="--pubkey conflicts with --daemon-mint"
+    ):
         cli.create_identity(
             parser.parse_args(
                 ["create", "ws1", "--pubkey", str(source), "--daemon-mint"]
@@ -434,9 +461,13 @@ def test_create_identity_pubkey_mode(tmp_path: Path) -> None:
         )
     # An explicit empty value still counts as supplied: it conflicts
     # with --daemon-mint instead of silently daemon-minting.
-    with pytest.raises(SystemExit, match="--pubkey conflicts with --daemon-mint"):
+    with pytest.raises(
+        SystemExit, match="--pubkey conflicts with --daemon-mint"
+    ):
         cli.create_identity(
-            parser.parse_args(["create", "ws1", "--pubkey", "", "--daemon-mint"])
+            parser.parse_args(
+                ["create", "ws1", "--pubkey", "", "--daemon-mint"]
+            )
         )
 
 
@@ -475,7 +506,9 @@ def test_pubkey_and_user_data_stdin_conflict(
 
 
 def test_cmd_create_pubkey_sends_the_line_and_writes_nothing(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
 ) -> None:
     """--pubkey (#132): the operator's line is the ssh_pubkey sent,
     the daemon's answer is checked against the no-escrow promise,
@@ -627,7 +660,9 @@ def test_cmd_stop_shutdown_deadline_is_one_line(
     # 503 with the endpoint's detail; the client passes it through.
     client_env(monkeypatch)
     transport = mock(
-        lambda req: httpx.Response(503, json={"detail": "workspace ws1 wedged"})
+        lambda req: httpx.Response(
+            503, json={"detail": "workspace ws1 wedged"}
+        )
     )
     with pytest.raises(SystemExit, match="msks: 503: workspace ws1 wedged"):
         cli.cmd_stop("ws1", transport=transport)
@@ -703,13 +738,19 @@ def test_cmd_rm_missing_workspace_is_one_line(
         cli.cmd_rm(["ghost"], transport=transport)
 
 
-def test_cmd_rm_foreign_host_is_one_line(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cmd_rm_foreign_host_is_one_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # The 409 host-mismatch detail surfaces verbatim, like shell's
     # close codes — the operator learns where the artifacts live.
     client_env(monkeypatch)
-    detail = "home volume for workspace ws1 lives on host hv1; this host is hv2"
+    detail = (
+        "home volume for workspace ws1 lives on host hv1; this host is hv2"
+    )
     transport = mock(lambda req: httpx.Response(409, json={"detail": detail}))
-    with pytest.raises(SystemExit, match="msks: 409: home volume.*lives on host hv1"):
+    with pytest.raises(
+        SystemExit, match="msks: 409: home volume.*lives on host hv1"
+    ):
         cli.cmd_rm(["ws1"], transport=transport)
 
 
@@ -718,7 +759,9 @@ def test_api_call_status_error_uses_detail() -> None:
         lambda req: httpx.Response(409, json={"detail": "workspace exists"})
     )
     with pytest.raises(SystemExit, match="409: workspace exists"):
-        asyncio.run(rest.api_call("POST", "https://d", "t", "/x", transport=transport))
+        asyncio.run(
+            rest.api_call("POST", "https://d", "t", "/x", transport=transport)
+        )
 
 
 def test_api_call_validation_errors_join_to_one_line() -> None:
@@ -731,9 +774,14 @@ def test_api_call_validation_errors_join_to_one_line() -> None:
     transport = mock(lambda req: httpx.Response(422, json={"detail": detail}))
     with pytest.raises(
         SystemExit,
-        match="body.id: String should match pattern; Input should be greater than 0",
+        match=(
+            "body.id: String should match pattern; "
+            "Input should be greater than 0"
+        ),
     ):
-        asyncio.run(rest.api_call("POST", "https://d", "t", "/x", transport=transport))
+        asyncio.run(
+            rest.api_call("POST", "https://d", "t", "/x", transport=transport)
+        )
 
 
 def test_error_detail_empty_validation_list() -> None:
@@ -747,7 +795,9 @@ def test_api_call_timeout_names_the_daemon() -> None:
 
     with pytest.raises(SystemExit, match="timed out talking to"):
         asyncio.run(
-            rest.api_call("POST", "https://d", "t", "/x", transport=mock(handler))
+            rest.api_call(
+                "POST", "https://d", "t", "/x", transport=mock(handler)
+            )
         )
 
 
@@ -767,13 +817,17 @@ def test_api_client_reuses_a_passed_ssl_context() -> None:
 def test_api_call_non_detail_json_falls_back_to_body() -> None:
     transport = mock(lambda req: httpx.Response(500, json={"nope": 1}))
     with pytest.raises(SystemExit, match="nope"):
-        asyncio.run(cli.api_call("GET", "https://d", "t", "/x", transport=transport))
+        asyncio.run(
+            cli.api_call("GET", "https://d", "t", "/x", transport=transport)
+        )
 
 
 def test_api_call_non_json_body_falls_back_to_text() -> None:
     transport = mock(lambda req: httpx.Response(503, text="boom"))
     with pytest.raises(SystemExit, match="boom"):
-        asyncio.run(cli.api_call("GET", "https://d", "t", "/x", transport=transport))
+        asyncio.run(
+            cli.api_call("GET", "https://d", "t", "/x", transport=transport)
+        )
 
 
 def test_cmd_ls_unreachable_daemon(
@@ -792,7 +846,8 @@ def test_main_ls_dispatch(
 ) -> None:
     client_env(monkeypatch)
     rc = cli.main(
-        ["ls", "--json"], transport=mock(lambda req: httpx.Response(200, json=ROWS))
+        ["ls", "--json"],
+        transport=mock(lambda req: httpx.Response(200, json=ROWS)),
     )
     assert rc == 0
     assert json.loads(capsys.readouterr().out) == ROWS
@@ -811,7 +866,15 @@ def test_main_create_dispatch(
     # --daemon-mint keeps this dispatch test off the keygen path
     # (the client mint's own suite covers it).
     rc = cli.main(
-        ["create", "ws1", "--image", "debian:13", "--cpus", "4", "--daemon-mint"],
+        [
+            "create",
+            "ws1",
+            "--image",
+            "debian:13",
+            "--cpus",
+            "4",
+            "--daemon-mint",
+        ],
         transport=mock(handler),
     )
     assert rc == 0
@@ -825,7 +888,9 @@ def test_main_start_dispatch(
     client_env(monkeypatch)
     rc = cli.main(
         ["start", "ws1"],
-        transport=mock(lambda req: httpx.Response(200, json={"status": "running"})),
+        transport=mock(
+            lambda req: httpx.Response(200, json={"status": "running"})
+        ),
     )
     assert rc == 0
     assert "ws1 running" in capsys.readouterr().out
@@ -837,7 +902,9 @@ def test_main_stop_dispatch(
     client_env(monkeypatch)
     rc = cli.main(
         ["stop", "ws1"],
-        transport=mock(lambda req: httpx.Response(200, json={"status": "stopped"})),
+        transport=mock(
+            lambda req: httpx.Response(200, json={"status": "stopped"})
+        ),
     )
     assert rc == 0
     assert "ws1 stopped" in capsys.readouterr().out
@@ -886,7 +953,11 @@ async def test_api_call_creates_and_lists_workspaces(api_transport) -> None:
     assert row["id"] == "cli-a"
     assert row["status"] == "created"
     rows = await rest.api_call(
-        "GET", "https://test", TOKEN, "/api/v1/workspaces", transport=api_transport
+        "GET",
+        "https://test",
+        TOKEN,
+        "/api/v1/workspaces",
+        transport=api_transport,
     )
     assert [item["id"] for item in rows] == ["cli-a"]
 
@@ -934,7 +1005,11 @@ async def test_api_call_stops_and_deletes_a_workspace(api_transport) -> None:
     )
     assert [row["status"] for row in rows] == ["stopped"]
     deleted = await rest.api_call(
-        "DELETE", "https://test", TOKEN, "/api/v1/workspaces/cli-l", transport=transport
+        "DELETE",
+        "https://test",
+        TOKEN,
+        "/api/v1/workspaces/cli-l",
+        transport=transport,
     )
     assert deleted == {"deleted": "cli-l"}
     with pytest.raises(SystemExit, match="404: no such workspace"):
@@ -968,7 +1043,11 @@ async def test_api_call_rm_deletes_a_running_workspace(api_transport) -> None:
         transport=transport,
     )
     deleted = await rest.api_call(
-        "DELETE", "https://test", TOKEN, "/api/v1/workspaces/cli-r", transport=transport
+        "DELETE",
+        "https://test",
+        TOKEN,
+        "/api/v1/workspaces/cli-r",
+        transport=transport,
     )
     assert deleted == {"deleted": "cli-r"}
     assert stub.calls.index(("shutdown", "cli-r")) < stub.calls.index(
@@ -976,7 +1055,9 @@ async def test_api_call_rm_deletes_a_running_workspace(api_transport) -> None:
     )
 
 
-async def test_api_call_stop_and_rm_missing_are_one_line(api_transport) -> None:
+async def test_api_call_stop_and_rm_missing_are_one_line(
+    api_transport,
+) -> None:
     for path in (
         "/api/v1/workspaces/ghost/stop",
         "/api/v1/workspaces/ghost",
@@ -1001,9 +1082,15 @@ async def test_ensure_running_boots_a_created_workspace(api_transport) -> None:
         json_body={"id": "cli-b", "kernel": "/k", "rootfs": "/r"},
         transport=transport,
     )
-    await rest.ensure_running("cli-b", "https://test", TOKEN, transport=transport)
+    await rest.ensure_running(
+        "cli-b", "https://test", TOKEN, transport=transport
+    )
     row = await rest.api_call(
-        "GET", "https://test", TOKEN, "/api/v1/workspaces/cli-b", transport=transport
+        "GET",
+        "https://test",
+        TOKEN,
+        "/api/v1/workspaces/cli-b",
+        transport=transport,
     )
     assert row["status"] == "running"
 
@@ -1025,7 +1112,9 @@ async def test_ensure_running_skips_a_running_workspace(api_transport) -> None:
         "/api/v1/workspaces/cli-c/start",
         transport=app_transport,
     )
-    await rest.ensure_running("cli-c", "https://test", TOKEN, transport=app_transport)
+    await rest.ensure_running(
+        "cli-c", "https://test", TOKEN, transport=app_transport
+    )
     row = await rest.api_call(
         "GET",
         "https://test",
@@ -1063,7 +1152,9 @@ async def test_ensure_running_waits_out_a_concurrent_boot(
         if request.method == "POST":
             posts.append(request.url.path)
             raise AssertionError("no start while another boot runs")
-        return httpx.Response(200, json={"id": "ws1", "status": statuses.pop(0)})
+        return httpx.Response(
+            200, json={"id": "ws1", "status": statuses.pop(0)}
+        )
 
     await rest.ensure_running("ws1", "https://d", "t", transport=mock(handler))
     assert posts == []
@@ -1079,7 +1170,9 @@ async def test_ensure_running_boot_wait_times_out(
     monkeypatch.setattr(rest.asyncio, "sleep", fast_sleep)
     monkeypatch.setattr(rest, "BOOT_WAIT_S", 0.0)
     transport = mock(
-        lambda req: httpx.Response(200, json={"id": "ws1", "status": "starting"})
+        lambda req: httpx.Response(
+            200, json={"id": "ws1", "status": "starting"}
+        )
     )
     with pytest.raises(SystemExit, match="still starting"):
         await rest.ensure_running("ws1", "https://d", "t", transport=transport)
@@ -1094,8 +1187,12 @@ async def test_ensure_running_attaches_to_a_won_race() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(f"{request.method} {request.url.path}")
         if request.method == "POST":
-            return httpx.Response(503, json={"detail": "VM ws1 already exists"})
-        return httpx.Response(200, json={"id": "ws1", "status": next(statuses)})
+            return httpx.Response(
+                503, json={"detail": "VM ws1 already exists"}
+            )
+        return httpx.Response(
+            200, json={"id": "ws1", "status": next(statuses)}
+        )
 
     await rest.ensure_running("ws1", "https://d", "t", transport=mock(handler))
     assert calls == [
@@ -1110,11 +1207,17 @@ async def test_ensure_running_lost_race_reports_the_state() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "POST":
-            return httpx.Response(503, json={"detail": "VM ws1 already exists"})
-        return httpx.Response(200, json={"id": "ws1", "status": next(statuses)})
+            return httpx.Response(
+                503, json={"detail": "VM ws1 already exists"}
+            )
+        return httpx.Response(
+            200, json={"id": "ws1", "status": next(statuses)}
+        )
 
     with pytest.raises(SystemExit, match="ws1 is stopped"):
-        await rest.ensure_running("ws1", "https://d", "t", transport=mock(handler))
+        await rest.ensure_running(
+            "ws1", "https://d", "t", transport=mock(handler)
+        )
 
 
 def test_main_interrupt_is_one_line(
@@ -1146,7 +1249,9 @@ def test_create_body_egress_flags() -> None:
 # --- The image catalog commands (#65) ---
 
 
-def image_row(name: str, version: str, digest: str, default: bool = False) -> dict:
+def image_row(
+    name: str, version: str, digest: str, default: bool = False
+) -> dict:
     return {
         "hash": digest,
         "name": name,
@@ -1212,7 +1317,9 @@ def test_image_ls_empty_prints_nothing(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     client_env(monkeypatch)
-    rc = cli.cmd_image_ls(transport=mock(lambda req: httpx.Response(200, json=[])))
+    rc = cli.cmd_image_ls(
+        transport=mock(lambda req: httpx.Response(200, json=[]))
+    )
     assert rc == 0
     assert capsys.readouterr().out == ""
 
@@ -1237,7 +1344,9 @@ def test_image_import_posts_source_and_prints_ref(
             },
         )
 
-    rc = cli.cmd_image_import("/srv/images/debian.tar", transport=mock(handler))
+    rc = cli.cmd_image_import(
+        "/srv/images/debian.tar", transport=mock(handler)
+    )
     assert rc == 0
     assert seen["path"] == "/api/v1/images"
     assert seen["auth"] == "Bearer tok"
@@ -1295,13 +1404,19 @@ def test_image_rm_refusal_names_the_workspace(
     client_env(monkeypatch)
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(409, json={"detail": "workspace ws1 boots this image"})
+        return httpx.Response(
+            409, json={"detail": "workspace ws1 boots this image"}
+        )
 
-    with pytest.raises(SystemExit, match=r"msks: 409: workspace ws1 boots this image"):
+    with pytest.raises(
+        SystemExit, match=r"msks: 409: workspace ws1 boots this image"
+    ):
         cli.cmd_image_rm("debian:13", transport=listing_transport(handler))
 
 
-def test_image_rm_miss_lists_the_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_image_rm_miss_lists_the_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     client_env(monkeypatch)
     with pytest.raises(SystemExit) as excinfo:
         cli.cmd_image_rm("fedora:40", transport=listing_transport())
@@ -1313,7 +1428,9 @@ def test_image_rm_miss_lists_the_catalog(monkeypatch: pytest.MonkeyPatch) -> Non
         cli.cmd_image_rm("fedora", transport=listing_transport())
 
 
-def test_image_rm_ambiguous_prefix_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_image_rm_ambiguous_prefix_is_named(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     client_env(monkeypatch)
     rows = IMAGES + [image_row("debian", "13.1", "a" * 63 + "e")]
 
@@ -1328,10 +1445,14 @@ def test_image_rm_ambiguous_prefix_is_named(monkeypatch: pytest.MonkeyPatch) -> 
     assert "use the full hash or name@hash" in message
 
 
-def test_image_rm_malformed_pin_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_image_rm_malformed_pin_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     client_env(monkeypatch)
     for ref in ("debian@zzz", "debian@" + "a" * 12):
-        with pytest.raises(SystemExit, match=f"malformed image hash in '{ref}'"):
+        with pytest.raises(
+            SystemExit, match=f"malformed image hash in '{ref}'"
+        ):
             cli.cmd_image_rm(ref, transport=listing_transport())
 
 
@@ -1384,7 +1505,9 @@ async def test_image_commands_against_the_real_api(api_transport) -> None:
     archive.parent.mkdir(parents=True, exist_ok=True)
     build_containerdisk(archive)
 
-    record = await cli.import_image("https://test", TOKEN, str(archive), transport)
+    record = await cli.import_image(
+        "https://test", TOKEN, str(archive), transport
+    )
     assert record["ref"] == "debian:13.6"
 
     rows = await cli.fetch_images("https://test", TOKEN, transport)
@@ -1397,19 +1520,24 @@ async def test_image_commands_against_the_real_api(api_transport) -> None:
     )
     assert described["hash"] == record["hash"]
 
-    removed = await cli.remove_image("https://test", TOKEN, "debian:13.6", transport)
+    removed = await cli.remove_image(
+        "https://test", TOKEN, "debian:13.6", transport
+    )
     assert removed == {"removed": record["hash"]}
     with pytest.raises(SystemExit, match="no image matches"):
         await cli.remove_image("https://test", TOKEN, "debian:13.6", transport)
 
 
-def test_image_rm_miss_caps_a_large_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_image_rm_miss_caps_a_large_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The miss line spells out at most CATALOG_REF_CAP refs."""
     client_env(monkeypatch)
     rows = [image_row("distro", str(n), f"{n:064x}") for n in range(12)]
     with pytest.raises(SystemExit) as excinfo:
         cli.cmd_image_rm(
-            "missing", transport=mock(lambda req: httpx.Response(200, json=rows))
+            "missing",
+            transport=mock(lambda req: httpx.Response(200, json=rows)),
         )
     message = str(excinfo.value)
     assert "distro:0" in message and "distro:7" in message
@@ -1451,7 +1579,8 @@ def test_image_rm_hash_shaped_miss_does_not_fall_through_to_name(
     rows = [image_row("f" * 64, "1", "9" * 64)]
     with pytest.raises(SystemExit, match="no image matches"):
         cli.cmd_image_rm(
-            "f" * 63 + "e", transport=mock(lambda req: httpx.Response(200, json=rows))
+            "f" * 63 + "e",
+            transport=mock(lambda req: httpx.Response(200, json=rows)),
         )
 
 
@@ -1468,14 +1597,20 @@ def test_image_rm_bare_name_with_duplicate_refs_is_ambiguous(
     ]
     with pytest.raises(SystemExit) as excinfo:
         cli.cmd_image_rm(
-            "debian", transport=mock(lambda req: httpx.Response(200, json=rows))
+            "debian",
+            transport=mock(lambda req: httpx.Response(200, json=rows)),
         )
     message = str(excinfo.value)
     assert "matches 2 images" in message
-    assert f"debian:13 ({'a' * 12})" in message and f"debian:13 ({'b' * 12})" in message
+    assert (
+        f"debian:13 ({'a' * 12})" in message
+        and f"debian:13 ({'b' * 12})" in message
+    )
 
 
-def test_image_rm_on_an_empty_catalog_names_it(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_image_rm_on_an_empty_catalog_names_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     client_env(monkeypatch)
     with pytest.raises(SystemExit, match=r"\(the catalog is empty\)"):
         cli.cmd_image_rm(
@@ -1484,7 +1619,9 @@ def test_image_rm_on_an_empty_catalog_names_it(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_create_user_data_reads_the_file(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
 ) -> None:
     """--user-data FILE (#41) carries the file's bytes verbatim as the
     create body's user_data."""
@@ -1556,7 +1693,9 @@ def test_create_user_data_missing_file_is_one_line(
 
 
 def test_create_user_data_non_utf8_is_one_line(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    tmp_path: Path,
 ) -> None:
     """A binary payload file fails like an unreadable one: one line,
     before any network activity."""
@@ -1568,7 +1707,9 @@ def test_create_user_data_non_utf8_is_one_line(
 
 
 def test_main_home_export_dispatch(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
 ) -> None:
     """``msks home export`` dispatches to the download with the id's
     default filename."""
@@ -1588,7 +1729,9 @@ def test_main_home_export_dispatch(
 
 
 def test_main_home_import_dispatch(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
 ) -> None:
     """``msks home import`` dispatches to the upload with the file's
     bytes as the body."""
@@ -1602,7 +1745,9 @@ def test_main_home_import_dispatch(
         seen["content_type"] = req.headers.get("content-type")
         return httpx.Response(200, json={"id": "ws1", "bytes": 9})
 
-    rc = cli.main(["home", "import", "ws1", str(volume)], transport=mock(handler))
+    rc = cli.main(
+        ["home", "import", "ws1", str(volume)], transport=mock(handler)
+    )
     assert rc == 0
     assert seen["path"] == "/api/v1/workspaces/ws1/home"
     assert seen["content_type"] == "application/octet-stream"
@@ -1652,9 +1797,15 @@ async def test_home_stream_errors_are_one_line(monkeypatch) -> None:
         async with rest.api_client(
             "https://daemon", "tok", transport=mock(handler)
         ) as client:
-            with pytest.raises(SystemExit, match="msks: (cannot reach|timed out)"):
-                await rest.download(client, "/api/v1/workspaces/x/home", io.BytesIO())
-            with pytest.raises(SystemExit, match="msks: (cannot reach|timed out)"):
+            with pytest.raises(
+                SystemExit, match="msks: (cannot reach|timed out)"
+            ):
+                await rest.download(
+                    client, "/api/v1/workspaces/x/home", io.BytesIO()
+                )
+            with pytest.raises(
+                SystemExit, match="msks: (cannot reach|timed out)"
+            ):
                 await rest.upload(client, "/api/v1/workspaces/x/home", body())
 
 
@@ -1678,7 +1829,9 @@ async def test_volume_source_stdin(monkeypatch) -> None:
     data = io.BytesIO(b"stdin-bytes")
     monkeypatch.setattr(sys, "stdin", SimpleNamespace(buffer=data))
     assert cli.volume_source("-") is data
-    assert [window async for window in cli.file_windows(data)] == [b"stdin-bytes"]
+    assert [window async for window in cli.file_windows(data)] == [
+        b"stdin-bytes"
+    ]
     assert not data.closed
 
 
@@ -1698,7 +1851,9 @@ def test_home_export_broken_pipe_is_one_line(
     # dup2-to-devnull must not clobber the test session's captured fd 1.
     spare = os.open(os.devnull, os.O_WRONLY)
     monkeypatch.setattr(
-        sys, "stdout", SimpleNamespace(buffer=BrokenSink(), fileno=lambda: spare)
+        sys,
+        "stdout",
+        SimpleNamespace(buffer=BrokenSink(), fileno=lambda: spare),
     )
     with pytest.raises(SystemExit, match="reader closed early"):
         cli.main(

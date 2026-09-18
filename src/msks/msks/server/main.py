@@ -28,7 +28,9 @@ def server_config(app) -> uvicorn.Config:
     """The uvicorn config for one msks App (testable, not run here)."""
     server = app.state.settings.server
     cert, key = ssl_paths(app)
-    ssl_kwargs = {"ssl_certfile": cert, "ssl_keyfile": key} if cert and key else {}
+    ssl_kwargs = (
+        {"ssl_certfile": cert, "ssl_keyfile": key} if cert and key else {}
+    )
     return uvicorn.Config(
         build_api(app),
         host=server.host,
@@ -125,7 +127,9 @@ def keep_startup_bound(old: Settings, new: Settings) -> None:
 
 def install_sighup_reload(app, config: str | None) -> None:
     """Wire SIGHUP to :func:`reload_settings` (main thread only)."""
-    signal.signal(signal.SIGHUP, lambda signum, frame: reload_settings(app, config))
+    signal.signal(
+        signal.SIGHUP, lambda signum, frame: reload_settings(app, config)
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -58,7 +58,9 @@ class FakeCH:
             body = json.loads(raw)
         return method, path, body
 
-    async def _respond(self, writer, method: str, path: str, body: dict | None) -> None:
+    async def _respond(
+        self, writer, method: str, path: str, body: dict | None
+    ) -> None:
         if (method, path) in self.responses:
             status, payload = self.responses[(method, path)]
             data = payload.encode() if payload else b""
@@ -73,7 +75,9 @@ class FakeCH:
                 % (len(payload), payload)
             )
         else:
-            writer.write(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+            writer.write(
+                b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n"
+            )
             if path in ("/api/v1/vm.shutdown", "/api/v1/vm.power-button"):
                 for hook in self.on_shutdown:
                     hook()

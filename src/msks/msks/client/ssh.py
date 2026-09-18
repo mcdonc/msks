@@ -38,7 +38,13 @@ from pathlib import Path
 from cryptography.hazmat.primitives import serialization
 
 from . import agent
-from .rest import ensure_running, env_token, env_url, fetch_ssh_key, ssl_context
+from .rest import (
+    ensure_running,
+    env_token,
+    env_url,
+    fetch_ssh_key,
+    ssl_context,
+)
 
 #: The guest port sshd listens on (#110).
 SSH_PORT = 22
@@ -56,7 +62,9 @@ async def prepare(
     transport=None,
 ) -> dict:
     """Boot the workspace if needed, then fetch its identity."""
-    await ensure_running(workspace_id, url, token, ssl_ctx=ssl_ctx, transport=transport)
+    await ensure_running(
+        workspace_id, url, token, ssl_ctx=ssl_ctx, transport=transport
+    )
     return await fetch_ssh_key(
         url, token, workspace_id, transport=transport, ssl_ctx=ssl_ctx
     )
@@ -77,7 +85,9 @@ def data_dir() -> Path:
     workspace's only copy — losing it loses ssh — so it lives with
     data that survives cache cleanup.
     """
-    base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+    base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser(
+        "~/.local/share"
+    )
     return Path(base) / "msks"
 
 
@@ -244,7 +254,9 @@ def proxy_command(workspace_id: str) -> str:
     installed venv, ``python -m``). The command runs under a shell,
     so the workspace id takes shell quoting."""
     runner = f"{config_quote(sys.executable)} -m msks.client.cli"
-    return f"ProxyCommand={runner} forward {shlex.quote(workspace_id)} {SSH_PORT}"
+    return (
+        f"ProxyCommand={runner} forward {shlex.quote(workspace_id)} {SSH_PORT}"
+    )
 
 
 def build_args(
@@ -292,7 +304,9 @@ def identity_comment(key: dict) -> str:
     return fields[2] if len(fields) > 2 else ""
 
 
-def run_workspace_ssh(workspace_id: str, passthrough: list[str], transport=None) -> int:
+def run_workspace_ssh(
+    workspace_id: str, passthrough: list[str], transport=None
+) -> int:
     """One ssh session, from boot pre-flight to ssh's own exit code."""
     passthrough = passthrough_args(passthrough)
     token = env_token()

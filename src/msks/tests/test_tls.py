@@ -13,7 +13,12 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 from msks.server import tls
-from msks.server.tls import fingerprint, generate_ca, generate_leaf, load_or_generate
+from msks.server.tls import (
+    fingerprint,
+    generate_ca,
+    generate_leaf,
+    load_or_generate,
+)
 
 
 def test_generate_ca_and_leaf_roundtrip() -> None:
@@ -40,8 +45,12 @@ def test_generated_pair_verifies_under_strict_client(tmp_path: Path) -> None:
     ca = x509.load_pem_x509_certificate(ca_cert)
     leaf = x509.load_pem_x509_certificate(leaf_cert)
     caSKI = ca.extensions.get_extension_for_class(x509.SubjectKeyIdentifier)
-    leafSKI = leaf.extensions.get_extension_for_class(x509.SubjectKeyIdentifier)
-    leafAKI = leaf.extensions.get_extension_for_class(x509.AuthorityKeyIdentifier)
+    leafSKI = leaf.extensions.get_extension_for_class(
+        x509.SubjectKeyIdentifier
+    )
+    leafAKI = leaf.extensions.get_extension_for_class(
+        x509.AuthorityKeyIdentifier
+    )
     assert leafAKI.value.key_identifier == caSKI.value.digest
     assert leafSKI.value.digest != caSKI.value.digest
     # The pair as files: load_cert_chain wants paths, and the leaf's
@@ -181,7 +190,9 @@ def mint_legacy_ca() -> tuple[bytes, bytes]:
         .serial_number(x509.random_serial_number())
         .not_valid_before(now)
         .not_valid_after(now + datetime.timedelta(days=10))
-        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .add_extension(
+            x509.BasicConstraints(ca=True, path_length=0), critical=True
+        )
         .sign(key, hashes.SHA256())
     )
     key_pem = key.private_bytes(
@@ -204,7 +215,9 @@ def test_legacy_ca_is_replaced_wholesale(tmp_path: Path) -> None:
     old_fp = fingerprint(ca_pem)
     cert, _key, fp = load_or_generate(tmp_path, "192.168.77.2", None, None)
     assert fp != old_fp
-    new_ca = x509.load_pem_x509_certificate((tmp_path / "msks-ca.pem").read_bytes())
+    new_ca = x509.load_pem_x509_certificate(
+        (tmp_path / "msks-ca.pem").read_bytes()
+    )
     new_ca.extensions.get_extension_for_class(x509.SubjectKeyIdentifier)
     leaf = x509.load_pem_x509_certificate(Path(cert).read_bytes())
     leaf.extensions.get_extension_for_class(x509.AuthorityKeyIdentifier)
@@ -235,12 +248,17 @@ def test_mismatched_ca_pair_is_replaced(tmp_path, capsys) -> None:
     (tmp_path / "msks-ca.pem").write_bytes(good_cert)
     (tmp_path / "msks-ca-key.pem").write_bytes(other_key)
     cert, _key, _fp = load_or_generate(tmp_path, "h", None, None)
-    ca = x509.load_pem_x509_certificate((tmp_path / "msks-ca.pem").read_bytes())
+    ca = x509.load_pem_x509_certificate(
+        (tmp_path / "msks-ca.pem").read_bytes()
+    )
     ca_key = serialization.load_pem_private_key(
         (tmp_path / "msks-ca-key.pem").read_bytes(), password=None
     )
     leaf = x509.load_pem_x509_certificate(Path(cert).read_bytes())
-    assert ca.public_key().public_numbers() == ca_key.public_key().public_numbers()
+    assert (
+        ca.public_key().public_numbers()
+        == ca_key.public_key().public_numbers()
+    )
     leaf.verify_directly_issued_by(ca)
     assert "mismatched" in capsys.readouterr().err
 

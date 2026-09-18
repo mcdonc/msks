@@ -55,7 +55,11 @@ def cmd_ls(as_json: bool = False, transport=None) -> int:
     """``msks ls``: every workspace the daemon knows."""
     rows = asyncio.run(
         api_call(
-            "GET", env_url(), env_token(), "/api/v1/workspaces", transport=transport
+            "GET",
+            env_url(),
+            env_token(),
+            "/api/v1/workspaces",
+            transport=transport,
         )
     )
     text = render_ls(rows, as_json)
@@ -109,7 +113,9 @@ async def create_workspace(
     """
     private_pem, public = await identity_material(body, key_type, pubkey)
     async with api_client(url, token, transport) as client:
-        row = await request(client, "POST", "/api/v1/workspaces", json_body=body)
+        row = await request(
+            client, "POST", "/api/v1/workspaces", json_body=body
+        )
         print(f"created {row['id']}")
         if public is not None:
             await verify_no_escrow(client, row["id"], public)
@@ -119,7 +125,9 @@ async def create_workspace(
         if not start:
             return row
         try:
-            await request(client, "POST", f"/api/v1/workspaces/{row['id']}/start")
+            await request(
+                client, "POST", f"/api/v1/workspaces/{row['id']}/start"
+            )
         except SystemExit as exc:
             raise SystemExit(
                 f"{exc}\nmsks: {row['id']} is created; "
@@ -160,7 +168,9 @@ async def verify_no_escrow(client, workspace_id: str, public: str) -> None:
     The key fetch answers for it: the served public line must carry
     the supplied key material and the private half must be null.
     """
-    key = await request(client, "GET", f"/api/v1/workspaces/{workspace_id}/ssh-key")
+    key = await request(
+        client, "GET", f"/api/v1/workspaces/{workspace_id}/ssh-key"
+    )
     served = key.get("public_key", "").split()[:2]
     if key.get("private_key") is not None or served != public.split()[:2]:
         raise SystemExit(
@@ -302,7 +312,10 @@ def require_daemon_half(key: dict, workspace_id: str) -> None:
 
 
 def cmd_key(
-    workspace_id: str, as_private: bool = False, out: str | None = None, transport=None
+    workspace_id: str,
+    as_private: bool = False,
+    out: str | None = None,
+    transport=None,
 ) -> int:
     """``msks key``: the workspace's ssh identity.
 
@@ -313,7 +326,9 @@ def cmd_key(
     private half never reached the daemon, so the private forms
     explain where that half lives instead.
     """
-    key = asyncio.run(fetch_ssh_key(env_url(), env_token(), workspace_id, transport))
+    key = asyncio.run(
+        fetch_ssh_key(env_url(), env_token(), workspace_id, transport)
+    )
     if as_private or out is not None:
         require_daemon_half(key, workspace_id)
     if out is not None:
@@ -351,7 +366,9 @@ def render_image_ls(rows: list[dict], as_json: bool) -> str:
 
 async def fetch_images(url, token, transport) -> list[dict]:
     """The catalog listing (GET /api/v1/images)."""
-    return await api_call("GET", url, token, "/api/v1/images", transport=transport)
+    return await api_call(
+        "GET", url, token, "/api/v1/images", transport=transport
+    )
 
 
 async def import_image(url, token, source, transport) -> dict:
@@ -377,7 +394,9 @@ async def remove_image(url, token, ref, transport) -> dict:
     async with api_client(url, token, transport) as client:
         rows = await request(client, "GET", "/api/v1/images")
         row = resolve_image_ref(ref, rows)
-        result = await request(client, "DELETE", f"/api/v1/images/{row['hash']}")
+        result = await request(
+            client, "DELETE", f"/api/v1/images/{row['hash']}"
+        )
     print(f"{row['name']}:{row['version']} deleted")
     return result
 
@@ -461,7 +480,9 @@ def pin_matches(ref: str, rows: list[dict]) -> list[dict]:
     name, _, digest = ref.partition("@")
     require_hash_digest(ref, digest)
     return [
-        row for row in rows if row["name"] == name and row["hash"].startswith(digest)
+        row
+        for row in rows
+        if row["name"] == name and row["hash"].startswith(digest)
     ]
 
 
@@ -475,7 +496,11 @@ def require_hash_digest(ref: str, digest: str) -> None:
 def name_version_matches(ref: str, rows: list[dict]) -> list[dict]:
     """``name:version``: the exact pair."""
     name, _, version = ref.partition(":")
-    return [row for row in rows if row["name"] == name and row["version"] == version]
+    return [
+        row
+        for row in rows
+        if row["name"] == name and row["version"] == version
+    ]
 
 
 def hash_prefix_matches(rows: list[dict], prefix: str) -> list[dict]:
@@ -515,7 +540,8 @@ def match_refs(matches: list[dict]) -> str:
     """The matched images with short hashes — when the refs read the
     same (re-imported archive), the hashes are the discriminator."""
     return ", ".join(
-        f"{row['name']}:{row['version']} ({row['hash'][:12]})" for row in matches
+        f"{row['name']}:{row['version']} ({row['hash'][:12]})"
+        for row in matches
     )
 
 
@@ -560,7 +586,9 @@ async def run_home_export(
     """GET the volume stream and write it to ``out``; the bytes."""
     async with api_client(url, token, transport) as client:
         if out == "-":
-            return await download(client, home_path(workspace_id), sys.stdout.buffer)
+            return await download(
+                client, home_path(workspace_id), sys.stdout.buffer
+            )
         try:
             with open(out, "wb") as sink:
                 return await download(client, home_path(workspace_id), sink)
@@ -579,7 +607,9 @@ def volume_source(path: str):
     try:
         return open(path, "rb")
     except OSError as exc:
-        raise SystemExit(f"msks: cannot read volume image {path}: {exc}") from None
+        raise SystemExit(
+            f"msks: cannot read volume image {path}: {exc}"
+        ) from None
 
 
 async def file_windows(source) -> AsyncIterator[bytes]:
@@ -609,7 +639,9 @@ async def run_home_import(
     owns = source is not sys.stdin.buffer
     try:
         async with api_client(url, token, transport) as client:
-            reply = await upload(client, home_path(workspace_id), file_windows(source))
+            reply = await upload(
+                client, home_path(workspace_id), file_windows(source)
+            )
         return imported_bytes(reply)
     finally:
         if owns:
@@ -621,22 +653,30 @@ def imported_bytes(reply: dict) -> int:
     answer carries none (a daemon that is not this protocol)."""
     count = reply.get("bytes")
     if not isinstance(count, int):
-        raise SystemExit("msks: the daemon's import reply carried no byte count")
+        raise SystemExit(
+            "msks: the daemon's import reply carried no byte count"
+        )
     return count
 
 
-def cmd_home_export(workspace_id: str, out: str | None = None, transport=None) -> int:
+def cmd_home_export(
+    workspace_id: str, out: str | None = None, transport=None
+) -> int:
     """``msks home export``: download a workspace's /home volume."""
     target = out if out is not None else f"{workspace_id}.ext4"
     try:
         total = asyncio.run(
-            run_home_export(env_url(), env_token(), workspace_id, target, transport)
+            run_home_export(
+                env_url(), env_token(), workspace_id, target, transport
+            )
         )
     except BrokenPipeError:
         raise SystemExit(broken_pipe_line(target)) from None
     if target == "-":
         # Bytes own stdout; the confirmation goes to stderr.
-        print(f"msks: exported {workspace_id} ({total} bytes)", file=sys.stderr)
+        print(
+            f"msks: exported {workspace_id} ({total} bytes)", file=sys.stderr
+        )
     else:
         print(f"exported {workspace_id} ({total} bytes) to {target}")
     return 0
@@ -657,7 +697,9 @@ def broken_pipe_line(target: str) -> str:
     return f"msks: the export's reader closed early ({target})"
 
 
-def cmd_home_import(workspace_id: str, source_path: str, transport=None) -> int:
+def cmd_home_import(
+    workspace_id: str, source_path: str, transport=None
+) -> int:
     """``msks home import``: replace a workspace's /home volume."""
     url, token = env_url(), env_token()
     total = asyncio.run(
@@ -674,7 +716,9 @@ def read_user_data(path: str) -> str:
             return sys.stdin.read()
         return Path(path).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
-        raise SystemExit(f"msks: cannot read user-data file {path}: {exc}") from None
+        raise SystemExit(
+            f"msks: cannot read user-data file {path}: {exc}"
+        ) from None
 
 
 def create_body(args: argparse.Namespace) -> dict:
@@ -702,22 +746,39 @@ def create_body(args: argparse.Namespace) -> dict:
 def build_parser() -> argparse.ArgumentParser:
     """The ``msks`` command line."""
     parser = argparse.ArgumentParser(
-        prog="msks", description="msks client: workspace microvms over the daemon API"
+        prog="msks",
+        description="msks client: workspace microvms over the daemon API",
     )
     sub = parser.add_subparsers(dest="command", required=True)
     listing = sub.add_parser("ls", help="list workspaces on the daemon")
-    listing.add_argument("--json", action="store_true", help="one JSON document")
+    listing.add_argument(
+        "--json", action="store_true", help="one JSON document"
+    )
     create = sub.add_parser("create", help="create a workspace")
-    create.add_argument("workspace_id", help="the id to create (DNS-label charset)")
-    create.add_argument("--image", help="catalog ref: name:version, name, or hash")
-    create.add_argument("--kernel", help="explicit kernel path (skips the catalog)")
+    create.add_argument(
+        "workspace_id", help="the id to create (DNS-label charset)"
+    )
+    create.add_argument(
+        "--image", help="catalog ref: name:version, name, or hash"
+    )
+    create.add_argument(
+        "--kernel", help="explicit kernel path (skips the catalog)"
+    )
     create.add_argument("--initrd", help="explicit initrd path")
-    create.add_argument("--rootfs", help="explicit rootfs path (skips the catalog)")
+    create.add_argument(
+        "--rootfs", help="explicit rootfs path (skips the catalog)"
+    )
     create.add_argument("--cmdline", help="explicit kernel cmdline")
     create.add_argument("--cpus", type=int, help="vcpu count (default 2)")
-    create.add_argument("--mem-mib", type=int, help="guest memory, MiB (default 1024)")
-    create.add_argument("--root-mib", type=int, help="persistent root size, MiB")
-    create.add_argument("--home-mib", type=int, help="persistent home size, MiB")
+    create.add_argument(
+        "--mem-mib", type=int, help="guest memory, MiB (default 1024)"
+    )
+    create.add_argument(
+        "--root-mib", type=int, help="persistent root size, MiB"
+    )
+    create.add_argument(
+        "--home-mib", type=int, help="persistent home size, MiB"
+    )
     create.add_argument(
         "--egress",
         action=argparse.BooleanOptionalAction,
@@ -768,7 +829,9 @@ def build_parser() -> argparse.ArgumentParser:
     remover.add_argument(
         "workspace_ids", nargs="+", help="the workspaces to delete, in order"
     )
-    console = sub.add_parser("console", help="interactive shell in a workspace")
+    console = sub.add_parser(
+        "console", help="interactive shell in a workspace"
+    )
     console.add_argument("workspace_id", help="the workspace to attach to")
     console.add_argument(
         "--user",
@@ -792,7 +855,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="fetch a workspace's ssh identity (#111; the public half "
         "alone for a client-minted #121 workspace)",
     )
-    key.add_argument("workspace_id", help="the workspace whose identity to fetch")
+    key.add_argument(
+        "workspace_id", help="the workspace whose identity to fetch"
+    )
     key_private = key.add_mutually_exclusive_group()
     key_private.add_argument(
         "--private",
@@ -805,7 +870,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="write the private half to FILE (mode 0600) instead of printing",
     )
     ssh = sub.add_parser(
-        "ssh", help="ssh into a workspace over the forward, identity staged in memory"
+        "ssh",
+        help=(
+            "ssh into a workspace over the forward, identity staged in memory"
+        ),
     )
     ssh.add_argument("workspace_id", help="the workspace to log into")
     ssh.add_argument(
@@ -815,10 +883,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="arguments passed to ssh verbatim ('-l root' is the recovery "
         "login; '-A' forwards the session agent)",
     )
-    image = sub.add_parser("image", help="manage the daemon's image catalog (#65)")
+    image = sub.add_parser(
+        "image", help="manage the daemon's image catalog (#65)"
+    )
     image_sub = image.add_subparsers(dest="image_command", required=True)
     image_ls = image_sub.add_parser("ls", help="list catalog images")
-    image_ls.add_argument("--json", action="store_true", help="one JSON document")
+    image_ls.add_argument(
+        "--json", action="store_true", help="one JSON document"
+    )
     image_import = image_sub.add_parser(
         "import",
         help="register an image archive from a daemon-side path",
@@ -828,13 +900,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="archive path as the daemon sees it (its own filesystem; "
         "the file is read by the daemon, not uploaded by this command)",
     )
-    image_rm = image_sub.add_parser("rm", help="remove an image from the catalog")
+    image_rm = image_sub.add_parser(
+        "rm", help="remove an image from the catalog"
+    )
     image_rm.add_argument(
         "ref",
         help="name:version, bare name (newest), name@hash (full hash), "
         "or hash (a unique hash prefix works too)",
     )
-    image_info = image_sub.add_parser("info", help="show one image's full record")
+    image_info = image_sub.add_parser(
+        "info", help="show one image's full record"
+    )
     image_info.add_argument(
         "ref",
         help="name:version, bare name, name@hash, or hash "
@@ -941,7 +1017,9 @@ def pubkey_text(path: str) -> str:
             return sys.stdin.read()
         return Path(path).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
-        raise SystemExit(f"msks: cannot read public key file {path}: {exc}") from exc
+        raise SystemExit(
+            f"msks: cannot read public key file {path}: {exc}"
+        ) from exc
 
 
 def checked_pubkey_line(text: str) -> str:
@@ -995,8 +1073,12 @@ def command_table(args: argparse.Namespace, transport) -> dict:
         "ssh": lambda: run_workspace_ssh(
             args.workspace_id, args.passthrough, transport=transport
         ),
-        "image": lambda: image_command_table(args, transport)[args.image_command](),
-        "home": lambda: home_command_table(args, transport)[args.home_command](),
+        "image": lambda: image_command_table(args, transport)[
+            args.image_command
+        ](),
+        "home": lambda: home_command_table(args, transport)[
+            args.home_command
+        ](),
     }
 
 

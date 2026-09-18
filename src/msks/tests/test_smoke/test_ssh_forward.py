@@ -145,7 +145,9 @@ async def test_local_sshd_and_rsync() -> None:
             if log.exists()
         )
 
-    async def await_forward_listener(port: int, timeout_s: float = 30.0) -> None:
+    async def await_forward_listener(
+        port: int, timeout_s: float = 30.0
+    ) -> None:
         """Until the forward client says its loopback listener is up.
 
         The client prints its bind line after ``start_server``
@@ -268,7 +270,8 @@ async def test_local_sshd_and_rsync() -> None:
             "sshd -T > /root/sshd-T 2>&1; "
             "grep -E '^(passwordauthentication|kbdinteractiveauthentication"
             "|permitrootlogin) ' /root/sshd-T; "
-            "test \"$(awk '/^passwordauthentication/{print $2}' /root/sshd-T)\" = no "
+            "test \"$(awk '/^passwordauthentication/{print $2}' "
+            '/root/sshd-T)" = no '
             "&& test \"$(awk '/^kbdinteractiveauthentication/{print $2}' "
             '/root/sshd-T)" = no '
             "&& case \"$(awk '/^permitrootlogin/{print $2}' /root/sshd-T)\" "
@@ -356,14 +359,17 @@ async def test_local_sshd_and_rsync() -> None:
         await await_forward_listener(forward_port)
         login = await run_ssh(forward_port, "echo SSH-OK-$((6*7))")
         assert login.returncode == 0, (
-            f"{login.stdout}\n{login.stderr}\nforward logs:\n{forward_evidence()}"
+            f"{login.stdout}\n{login.stderr}\n"
+            f"forward logs:\n{forward_evidence()}"
         )
         assert "SSH-OK-42" in login.stdout, login.stdout
 
         # rsync over the same forward: a directory lands whole.
         source = workdir / "src"
         source.mkdir()
-        (source / "sentinel.txt").write_text(f"{sync_marker}\n", encoding="utf-8")
+        (source / "sentinel.txt").write_text(
+            f"{sync_marker}\n", encoding="utf-8"
+        )
         # to_thread for the same reason as run_ssh: the API server
         # shares this loop.
         sync = await asyncio.to_thread(
@@ -417,7 +423,8 @@ async def test_local_sshd_and_rsync() -> None:
         await await_forward_listener(forward_port)
         relogin = await run_ssh(forward_port, "echo AGAIN-$((6*7))")
         assert relogin.returncode == 0, (
-            f"{relogin.stdout}\n{relogin.stderr}\nforward logs:\n{forward_evidence()}"
+            f"{relogin.stdout}\n{relogin.stderr}\n"
+            f"forward logs:\n{forward_evidence()}"
         )
         assert "AGAIN-42" in relogin.stdout, relogin.stdout
 

@@ -38,10 +38,10 @@ half — the root returns to the pristine base, the home volume keeps
 its data, and the seed stays: it is immutable create-time input, so
 a reset workspace re-provisions from it exactly as a fresh one
 would (cloud-init's run-once state, the /var/lib/cloud cache, lives
-on the overlay a reset drops). A crash mid-create leaves only ``*.tmp`` scratch behind:
-harmless debris, swept by the removal helpers for the file-shaped
-artifacts and by the vm-dir rmtree for the seed's staging
-directory.
+on the overlay a reset drops). A crash mid-create leaves only
+``*.tmp`` scratch behind: harmless debris, swept by the removal
+helpers for the file-shaped artifacts and by the vm-dir rmtree for
+the seed's staging directory.
 """
 
 import asyncio
@@ -100,7 +100,9 @@ def tmp_sibling(target: Path) -> Path:
     workspace never share a scratch file; the pid makes debris from
     a crashed creator identifiable on the host.
     """
-    return target.with_name(f"{target.name}.{os.getpid()}-{next(_tmp_counter)}.tmp")
+    return target.with_name(
+        f"{target.name}.{os.getpid()}-{next(_tmp_counter)}.tmp"
+    )
 
 
 def sweep_tmp_siblings(target: Path) -> None:
@@ -160,7 +162,14 @@ async def create_home_volume(target: Path, spec: VmSpec, settings) -> None:
             # Sparse: an idle volume costs its metadata, not its size.
             handle.truncate(spec.home_mib * MIB)
         await run_tool(
-            [settings.mkfs_ext4, "-q", "-F", "-L", HOME_VOLUME_LABEL, str(scratch)],
+            [
+                settings.mkfs_ext4,
+                "-q",
+                "-F",
+                "-L",
+                HOME_VOLUME_LABEL,
+                str(scratch),
+            ],
             "mkfs on the home volume",
         )
         install(scratch, target)
@@ -254,7 +263,9 @@ async def create_seed(spec: VmSpec, settings) -> None:
     stage.mkdir(mode=0o700)
     try:
         (stage / "user-data").write_text(
-            compose_user_data(spec.user_data, spec.ssh_pubkey, spec.workspace_id),
+            compose_user_data(
+                spec.user_data, spec.ssh_pubkey, spec.workspace_id
+            ),
             encoding="utf-8",
         )
         (stage / "meta-data").write_text(
@@ -298,7 +309,9 @@ async def base_info(base: Path, qemu_img: str) -> tuple[int, str]:
         ) from exc
 
 
-async def run_tool(argv: list[str], what: str, cwd: Path | None = None) -> bytes:
+async def run_tool(
+    argv: list[str], what: str, cwd: Path | None = None
+) -> bytes:
     """Run one host tool; a failure becomes a named operator error.
 
     stderr stays out of the captured stdout: ``qemu-img info`` is
@@ -465,6 +478,8 @@ def validate_ext4(scratch: Path, total: int) -> None:
     """The short-body backstop: refuse empties and bodies too short
     to carry the magic at all."""
     if total == 0:
-        raise ValueError("the request body is empty; a home volume is an ext4 image")
+        raise ValueError(
+            "the request body is empty; a home volume is an ext4 image"
+        )
     with scratch.open("rb") as handle:
         require_ext4_prefix(handle.read(EXT4_MAGIC_OFFSET + 2))

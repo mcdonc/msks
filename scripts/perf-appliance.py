@@ -47,7 +47,9 @@ UP_TIMEOUT_S = 300.0
 HEALTH_TIMEOUT_S = 180.0
 
 
-def devenv_task(task: str, timeout: float = 300.0) -> subprocess.CompletedProcess:
+def devenv_task(
+    task: str, timeout: float = 300.0
+) -> subprocess.CompletedProcess:
     """Run one devenv task — the appliance's opt-in lifecycle (#141)."""
     return subprocess.run(
         ["bash", "-c", f"devenv tasks run {task}"],
@@ -93,13 +95,16 @@ async def poll_health(result: dict, t0: float) -> None:
             await asyncio.sleep(0.1)
         serial = (APP_DIR / "serial.log").read_text(errors="replace")[-1500:]
         raise AssertionError(
-            f"appliance API never became healthy ({last}); serial tail:\n{serial}"
+            f"appliance API never became healthy ({last}); "
+            f"serial tail:\n{serial}"
         )
     finally:
         await client.aclose()
 
 
-async def await_token(result: dict, t0: float, timeout_s: float = 60.0) -> None:
+async def await_token(
+    result: dict, t0: float, timeout_s: float = 60.0
+) -> None:
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_s
     while loop.time() < deadline:
@@ -114,8 +119,12 @@ async def one_run(label: str) -> dict:
     result: dict = {"run": label}
     ensure_down()
     t0 = time.perf_counter()
-    up = await asyncio.to_thread(devenv_task, "msks:appliance-up", timeout=UP_TIMEOUT_S)
-    assert up.returncode == 0, f"msks:appliance-up failed:\n{up.stdout}{up.stderr}"
+    up = await asyncio.to_thread(
+        devenv_task, "msks:appliance-up", timeout=UP_TIMEOUT_S
+    )
+    assert up.returncode == 0, (
+        f"msks:appliance-up failed:\n{up.stdout}{up.stderr}"
+    )
     result["t_task"] = time.perf_counter() - t0
     await asyncio.gather(await_token(result, t0), poll_health(result, t0))
     down = devenv_task("msks:appliance-down", timeout=120.0)
@@ -135,7 +144,9 @@ def print_run(r: dict) -> None:
 
 def warm_health_series(runs: list[dict]) -> list[float]:
     """t_health of the warm runs (the comparable posture; #92)."""
-    return [r["t_health"] for r in runs if r["run"] != "cold" and "t_health" in r]
+    return [
+        r["t_health"] for r in runs if r["run"] != "cold" and "t_health" in r
+    ]
 
 
 def report(runs: list[dict]) -> None:
@@ -162,7 +173,9 @@ def assets_present() -> bool:
 
 def state_disk_path() -> Path:
     """The state disk the run script boots against."""
-    return Path(os.environ.get("MSKSD_APPLIANCE_STATE", APP_DIR / "state.ext4"))
+    return Path(
+        os.environ.get("MSKSD_APPLIANCE_STATE", APP_DIR / "state.ext4")
+    )
 
 
 def fresh_state_disk() -> None:

@@ -222,7 +222,9 @@ def test_section_shaped_file_rejected(tmp_path) -> None:
 
 def test_non_scalar_value_rejected(tmp_path) -> None:
     path = dump_config(tmp_path, {"host": ["a", "b"]})
-    with pytest.raises(ValueError, match="must be a number, boolean, or string"):
+    with pytest.raises(
+        ValueError, match="must be a number, boolean, or string"
+    ):
         file_env_overrides(path)
 
 
@@ -252,7 +254,9 @@ def test_merge_keys_refused_with_their_own_message(tmp_path) -> None:
     *anchor`` is refused by name (fresh-eyes review) — not by
     PyYAML's opaque tag error, and not as the anchor carrier's
     unknown-key error."""
-    path = write_config(tmp_path, "base: &b\n  port: 9001\nhost: 0.0.0.0\n<<: *b\n")
+    path = write_config(
+        tmp_path, "base: &b\n  port: 9001\nhost: 0.0.0.0\n<<: *b\n"
+    )
     with pytest.raises(ValueError, match=r"merge keys .<<. are not supported"):
         file_env_overrides(path)
 
@@ -524,14 +528,17 @@ def test_reload_latches_the_state_dir(tmp_path) -> None:
 
 def test_reload_keeps_operator_tls(tmp_path) -> None:
     app = app_with_file(
-        tmp_path, {"port": 9001, "tls_cert": "/op/c.pem", "tls_key": "/op/k.pem"}
+        tmp_path,
+        {"port": 9001, "tls_cert": "/op/c.pem", "tls_key": "/op/k.pem"},
     )
     write_config(tmp_path, "port: 9004\n")
     main_mod.reload_settings(app, str(tmp_path / "msksd.yaml"))
     assert app.state.settings.server.tls_cert == "/op/c.pem"
 
 
-def test_reload_with_half_configured_tls_keeps_startup_values(tmp_path) -> None:
+def test_reload_with_half_configured_tls_keeps_startup_values(
+    tmp_path,
+) -> None:
     """A reload that names only one side of the pair keeps the other
     startup value — the listener runs on the pair it booted with."""
     app = app_with_file(tmp_path, {"port": 9001})
@@ -576,7 +583,9 @@ def test_install_sighup_reload_wires_the_handler(tmp_path) -> None:
 # --- main() wiring ---
 
 
-def test_main_reads_config_file(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+def test_main_reads_config_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
     monkeypatch.setenv("MSKSD_STATE_DIR", str(tmp_path / "state"))
     previous = signal.getsignal(signal.SIGHUP)
     try:
@@ -584,7 +593,9 @@ def test_main_reads_config_file(monkeypatch: pytest.MonkeyPatch, tmp_path) -> No
         monkeypatch.setattr(
             main_mod,
             "serve",
-            lambda app, no_tls: seen.update(port=app.state.settings.server.port),
+            lambda app, no_tls: seen.update(
+                port=app.state.settings.server.port
+            ),
         )
         config = dump_config(tmp_path, {"port": 9010})
         assert main_mod.main(["--config", config]) == 0
@@ -599,7 +610,9 @@ def test_main_half_configured_tls_fails_clean(
     """A file naming only one side of the TLS pair exits 2 with the
     one-line pair error, not a traceback from inside serve."""
     served = []
-    monkeypatch.setattr(main_mod, "serve", lambda app, no_tls: served.append(1))
+    monkeypatch.setattr(
+        main_mod, "serve", lambda app, no_tls: served.append(1)
+    )
     config = dump_config(tmp_path, {"tls_cert": "/c.pem"})
     assert main_mod.main(["--config", config]) == 2
     assert served == []
@@ -627,7 +640,9 @@ def test_main_missing_config_fails_fast(
     monkeypatch: pytest.MonkeyPatch, tmp_path, capsys
 ) -> None:
     served = []
-    monkeypatch.setattr(main_mod, "serve", lambda app, no_tls: served.append(1))
+    monkeypatch.setattr(
+        main_mod, "serve", lambda app, no_tls: served.append(1)
+    )
     assert main_mod.main(["--config", str(tmp_path / "nope.yaml")]) == 2
     assert served == []
     assert "config file not found" in capsys.readouterr().err
@@ -637,7 +652,9 @@ def test_main_invalid_config_fails_fast(
     monkeypatch: pytest.MonkeyPatch, tmp_path, capsys
 ) -> None:
     served = []
-    monkeypatch.setattr(main_mod, "serve", lambda app, no_tls: served.append(1))
+    monkeypatch.setattr(
+        main_mod, "serve", lambda app, no_tls: served.append(1)
+    )
     path = write_config(tmp_path, "vmm_driver: firecracker\n")
     assert main_mod.main(["--config", path]) == 2
     assert served == []

@@ -27,16 +27,25 @@ async def create_tap(name: str, address: str, settings) -> None:
     """
     await remove_tap(name, settings)
     await ip_cmd(
-        settings, ["tuntap", "add", "dev", name, "mode", "tap"], f"tap create {name}"
+        settings,
+        ["tuntap", "add", "dev", name, "mode", "tap"],
+        f"tap create {name}",
     )
-    await ip_cmd(settings, ["addr", "add", address, "dev", name], f"tap address {name}")
-    await ip_cmd(settings, ["link", "set", "dev", name, "up"], f"tap up {name}")
+    await ip_cmd(
+        settings, ["addr", "add", address, "dev", name], f"tap address {name}"
+    )
+    await ip_cmd(
+        settings, ["link", "set", "dev", name, "up"], f"tap up {name}"
+    )
 
 
 async def remove_tap(name: str, settings) -> None:
     """Delete the tap; an already-absent tap is success."""
     await ip_cmd(
-        settings, ["link", "del", "dev", name], f"tap remove {name}", absent_ok=True
+        settings,
+        ["link", "del", "dev", name],
+        f"tap remove {name}",
+        absent_ok=True,
     )
 
 
@@ -53,7 +62,9 @@ async def ip_cmd(
             stderr=asyncio.subprocess.PIPE,
         )
     except FileNotFoundError as exc:
-        raise MicrovmError(f"{what}: tool not found: {settings.net.ip_tool}") from exc
+        raise MicrovmError(
+            f"{what}: tool not found: {settings.net.ip_tool}"
+        ) from exc
     output, err = await proc.communicate()
     if proc.returncode == 0:
         return

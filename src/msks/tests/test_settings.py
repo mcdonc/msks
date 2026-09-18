@@ -48,7 +48,9 @@ def test_negative_move_wait_timeout_rejected(
         Settings.from_env()
 
 
-def test_negative_stall_timeout_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_negative_stall_timeout_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A negative stall window would close healthy sessions (#103)."""
     monkeypatch.setenv("MSKSD_CONSOLE_STALL_TIMEOUT_S", "-1")
     with pytest.raises(ValueError, match="MSKSD_CONSOLE_STALL_TIMEOUT_S"):
@@ -61,7 +63,9 @@ def test_invalid_driver_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
         Settings.from_env()
 
 
-def test_ssh_key_type_valid_and_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ssh_key_type_valid_and_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The mint type is a setting (#115): a known name loads, an
     unknown one is a named error at settings load, not at create."""
     monkeypatch.setenv("MSKSD_SSH_KEY_TYPE", "ecdsa")

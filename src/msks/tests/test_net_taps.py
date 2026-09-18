@@ -29,7 +29,9 @@ async def test_create_tap_runs_the_three_commands(tools) -> None:
     ]
 
 
-async def test_remove_tap_tolerates_an_absent_device(tools, monkeypatch) -> None:
+async def test_remove_tap_tolerates_an_absent_device(
+    tools, monkeypatch
+) -> None:
     settings, log = tools
     monkeypatch.setenv(IP_FAIL_AT, "link del")
     monkeypatch.setenv(IP_STDERR, 'Cannot find device "msks-abc"')

@@ -81,7 +81,9 @@ def generate_ca() -> tuple[bytes, bytes]:
         .serial_number(x509.random_serial_number())
         .not_valid_before(now)
         .not_valid_after(now + datetime.timedelta(days=CA_DAYS))
-        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .add_extension(
+            x509.BasicConstraints(ca=True, path_length=0), critical=True
+        )
         # Strict-verification clean: VERIFY_X509_STRICT rejects a
         # path_length without KeyUsage keyCertSign (the second
         # strictness rung the #141 dev loop hit, after the missing
@@ -189,7 +191,9 @@ def load_or_generate(
     """
     if tls_cert or tls_key:
         if not (tls_cert and tls_key):
-            raise ValueError("MSKSD_TLS_CERT and MSKSD_TLS_KEY must be set together")
+            raise ValueError(
+                "MSKSD_TLS_CERT and MSKSD_TLS_KEY must be set together"
+            )
         return tls_cert, tls_key, None
     return _self_signed(state_dir, host)
 
@@ -248,7 +252,9 @@ def _ca_usable(ca_cert: Path, ca_key: Path) -> bool:
         return False
     try:
         cert = x509.load_pem_x509_certificate(ca_cert.read_bytes())
-        key = serialization.load_pem_private_key(ca_key.read_bytes(), password=None)
+        key = serialization.load_pem_private_key(
+            ca_key.read_bytes(), password=None
+        )
         cert.extensions.get_extension_for_class(x509.SubjectKeyIdentifier)
     except ValueError, IndexError, x509.ExtensionNotFound:
         return False
@@ -257,7 +263,9 @@ def _ca_usable(ca_cert: Path, ca_key: Path) -> bool:
     # cert carries its SKI, and the mint path would sign a leaf
     # with the wrong key: a served-but-never-verifiable chain with
     # no crash to name it (#148 review finding).
-    return cert.public_key().public_numbers() == key.public_key().public_numbers()
+    return (
+        cert.public_key().public_numbers() == key.public_key().public_numbers()
+    )
 
 
 def leaf_stale(

@@ -101,7 +101,9 @@ async def test_local_dev_workspace_bootstrap() -> None:
         # trail to "done" (each tool's marker gated on its presence).
         await await_dev_state(microvm, app, wid, b"done")
         await probe("UV", "command -v uv")
-        await probe("CLONE", "git -C /root/msks rev-parse --is-inside-work-tree")
+        await probe(
+            "CLONE", "git -C /root/msks rev-parse --is-inside-work-tree"
+        )
         await probe("SYNC", "test -x /root/msks/.venv/bin/pytest")
 
         # Persistence: stop/start keeps the toolchain and the
@@ -126,7 +128,8 @@ async def test_local_dev_workspace_bootstrap() -> None:
         await run_in_console(
             microvm,
             wid,
-            "mkdir -p /mnt/cidata && mount -r /dev/vdc /mnt/cidata 2>/dev/null; "
+            "mkdir -p /mnt/cidata "
+            "&& mount -r /dev/vdc /mnt/cidata 2>/dev/null; "
             "sh /mnt/cidata/user-data >/root/.msks-bootstrap/rerun.log 2>&1; "
             "echo R-$?",
             "R-0",

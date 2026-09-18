@@ -134,7 +134,9 @@ async def test_local_minted_identity() -> None:
             if log.exists()
         )
 
-    async def await_forward_listener(port: int, timeout_s: float = 30.0) -> None:
+    async def await_forward_listener(
+        port: int, timeout_s: float = 30.0
+    ) -> None:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout_s
         needle = f"msks: 127.0.0.1:{port} -> "
@@ -201,7 +203,9 @@ async def test_local_minted_identity() -> None:
             )
         return result
 
-    async def cli(*args: str, timeout: float = 120.0) -> subprocess.CompletedProcess:
+    async def cli(
+        *args: str, timeout: float = 120.0
+    ) -> subprocess.CompletedProcess:
         """One msks CLI call against the test daemon (to_thread: the
         API server shares this loop)."""
         return await asyncio.to_thread(
@@ -327,7 +331,9 @@ async def test_local_minted_identity() -> None:
             timeout=60,
         )
         minted = pub.stdout.strip()
-        assert minted.startswith("ssh-ed25519 ") and minted.endswith(f"msksd:{wid}")
+        assert minted.startswith("ssh-ed25519 ") and minted.endswith(
+            f"msksd:{wid}"
+        )
         await run_in_console(
             microvm,
             wid,
@@ -358,7 +364,9 @@ async def test_local_minted_identity() -> None:
             f"forward logs:\n{forward_evidence()}"
         )
         assert "ROOT-42" in root_login.stdout, root_login.stdout
-        user_login = await run_ssh(forward_port, "msks", 'echo "$(whoami)-$((6*7))"')
+        user_login = await run_ssh(
+            forward_port, "msks", 'echo "$(whoami)-$((6*7))"'
+        )
         assert user_login.returncode == 0, (
             f"{user_login.stdout}\n{user_login.stderr}\n"
             f"forward logs:\n{forward_evidence()}"
@@ -404,7 +412,9 @@ async def test_local_minted_identity() -> None:
                 timeout=SSH_CMD_TIMEOUT_S,
             )
 
-        sugar_login = await run_msks_ssh(command="echo SSHU-$(whoami)-$((6*7))")
+        sugar_login = await run_msks_ssh(
+            command="echo SSHU-$(whoami)-$((6*7))"
+        )
         assert sugar_login.returncode == 0, (
             f"{sugar_login.stdout}\n{sugar_login.stderr}"
         )
@@ -412,7 +422,9 @@ async def test_local_minted_identity() -> None:
         root_login = await run_msks_ssh(
             "-l", "root", command="echo SSHR-$(id -u)-$((6*7))"
         )
-        assert root_login.returncode == 0, f"{root_login.stdout}\n{root_login.stderr}"
+        assert root_login.returncode == 0, (
+            f"{root_login.stdout}\n{root_login.stderr}"
+        )
         assert "SSHR-0-42" in root_login.stdout, root_login.stdout
         # The logins recorded the guest's host key in the msks cache.
         assert (ssh_cache / "msks" / wid / "known_hosts").exists()
@@ -435,9 +447,12 @@ async def test_local_minted_identity() -> None:
         await boot_and_wait(app=app)
         start_forward(forward_port)
         await await_forward_listener(forward_port)
-        relogin = await run_ssh(forward_port, "msks", 'echo "BACK-$(whoami)-$((6*7))"')
+        relogin = await run_ssh(
+            forward_port, "msks", 'echo "BACK-$(whoami)-$((6*7))"'
+        )
         assert relogin.returncode == 0, (
-            f"{relogin.stdout}\n{relogin.stderr}\nforward logs:\n{forward_evidence()}"
+            f"{relogin.stdout}\n{relogin.stderr}\n"
+            f"forward logs:\n{forward_evidence()}"
         )
         assert "BACK-msks-42" in relogin.stdout, relogin.stdout
 
@@ -525,7 +540,9 @@ async def test_local_client_minted_identity() -> None:
     )
     os.environ["XDG_DATA_HOME"] = str(data)
 
-    async def cli(*args: str, timeout: float = 120.0) -> subprocess.CompletedProcess:
+    async def cli(
+        *args: str, timeout: float = 120.0
+    ) -> subprocess.CompletedProcess:
         return await asyncio.to_thread(
             subprocess.run,
             [sys.executable, "-m", "msks.client.cli", *args],
@@ -540,7 +557,8 @@ async def test_local_client_minted_identity() -> None:
         database — the no-escrow contract, not the API's word for it."""
         with sqlite3.connect(settings.server.db_path) as conn:
             return conn.execute(
-                "select ssh_privkey, ssh_pubkey from workspaces where id = ?", (wid,)
+                "select ssh_privkey, ssh_pubkey from workspaces where id = ?",
+                (wid,),
             ).fetchone()
 
     try:
@@ -576,7 +594,9 @@ async def test_local_client_minted_identity() -> None:
         assert created.returncode == 0, created.stderr
         assert identity.exists()
         assert identity.stat().st_mode & 0o777 == 0o600
-        assert identity.read_text().startswith("-----BEGIN OPENSSH PRIVATE KEY-----")
+        assert identity.read_text().startswith(
+            "-----BEGIN OPENSSH PRIVATE KEY-----"
+        )
 
         # The daemon's row: public half annotated with its own
         # provenance marker, private half NULL — no escrow.
@@ -639,12 +659,15 @@ async def test_local_client_minted_identity() -> None:
         await run_in_console(
             microvm,
             wid,
-            f"grep -qxF '{wid} {signers_key}' /etc/msks/console.allowed_signers "
+            f"grep -qxF '{wid} {signers_key}' "
+            "/etc/msks/console.allowed_signers "
             f"&& echo AS-$((6*7))",
             "AS-42",
             app=app,
         )
-        attacker_reader, attacker_writer = await microvm.console(wid, user="root")
+        attacker_reader, attacker_writer = await microvm.console(
+            wid, user="root"
+        )
         try:
             challenge = await asyncio.wait_for(attacker_reader.readline(), 30)
             assert challenge.startswith(b"AUTH CHALLENGE "), challenge
@@ -782,7 +805,9 @@ async def test_local_operator_pubkey() -> None:
     # operator's agent would).
     operator_signer = consoleauth.console_signer(key_path.read_text())
 
-    async def cli(*args: str, timeout: float = 120.0) -> subprocess.CompletedProcess:
+    async def cli(
+        *args: str, timeout: float = 120.0
+    ) -> subprocess.CompletedProcess:
         return await asyncio.to_thread(
             subprocess.run,
             [sys.executable, "-m", "msks.client.cli", *args],
@@ -795,7 +820,8 @@ async def test_local_operator_pubkey() -> None:
     def row_halves() -> tuple[str | None, str | None]:
         with sqlite3.connect(settings.server.db_path) as conn:
             return conn.execute(
-                "select ssh_privkey, ssh_pubkey from workspaces where id = ?", (wid,)
+                "select ssh_privkey, ssh_pubkey from workspaces where id = ?",
+                (wid,),
             ).fetchone()
 
     def forward_evidence() -> str:
@@ -932,7 +958,8 @@ async def test_local_operator_pubkey() -> None:
             await asyncio.sleep(0.05)
         else:
             raise AssertionError(
-                f"msks forward never listened within 30s; logs:\n{forward_evidence()}"
+                f"msks forward never listened within 30s; "
+                f"logs:\n{forward_evidence()}"
             )
 
         login = await asyncio.to_thread(
@@ -950,7 +977,8 @@ async def test_local_operator_pubkey() -> None:
             timeout=SSH_CMD_TIMEOUT_S,
         )
         assert login.returncode == 0, (
-            f"{login.stdout}\n{login.stderr}\nforward logs:\n{forward_evidence()}"
+            f"{login.stdout}\n{login.stderr}\n"
+            f"forward logs:\n{forward_evidence()}"
         )
         assert "OPKEY-msks-42" in login.stdout, login.stdout
 

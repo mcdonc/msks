@@ -15,10 +15,13 @@ ANSWER = QUERY[:2] + bytes.fromhex(
 )
 
 
-def test_upstream_from_resolv_reads_the_first_nameserver(tmp_path: Path) -> None:
+def test_upstream_from_resolv_reads_the_first_nameserver(
+    tmp_path: Path,
+) -> None:
     conf = tmp_path / "resolv.conf"
     conf.write_text(
-        "# comment\nsearch example.com\nnameserver 10.1.1.1\nnameserver 10.1.1.2\n"
+        "# comment\nsearch example.com\n"
+        "nameserver 10.1.1.1\nnameserver 10.1.1.2\n"
     )
     assert dns.upstream_from_resolv(conf) == ("10.1.1.1", dns.DNS_PORT)
 
@@ -39,7 +42,10 @@ async def pair(tmp_path: Path):
     # and a blocking socket handed to sock_recvfrom wedges the loop.
     upstream.setblocking(False)
     forwarder = dns.DnsForwarder(
-        upstream.getsockname(), 1.0, bind=("127.0.0.1", 0), client_ip="127.0.0.1"
+        upstream.getsockname(),
+        1.0,
+        bind=("127.0.0.1", 0),
+        client_ip="127.0.0.1",
     )
     await forwarder.start()
     client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -65,7 +71,9 @@ async def test_serve_relays_query_and_answer(pair) -> None:
         await loop.sock_sendto(upstream, ANSWER, requester)
 
     relay = asyncio.create_task(answer_upstream())
-    await asyncio.to_thread(client.sendto, QUERY, forwarder._sock.getsockname())
+    await asyncio.to_thread(
+        client.sendto, QUERY, forwarder._sock.getsockname()
+    )
     reply, _addr = await asyncio.to_thread(client.recvfrom, 4096)
     assert reply == ANSWER
     await asyncio.wait_for(relay, 2.0)
@@ -73,7 +81,9 @@ async def test_serve_relays_query_and_answer(pair) -> None:
 
 async def test_serve_stays_silent_when_upstream_times_out(pair) -> None:
     forwarder, client, _upstream = pair
-    await asyncio.to_thread(client.sendto, QUERY, forwarder._sock.getsockname())
+    await asyncio.to_thread(
+        client.sendto, QUERY, forwarder._sock.getsockname()
+    )
     with pytest.raises(TimeoutError):
         await asyncio.to_thread(client.recvfrom, 4096)
 
@@ -95,7 +105,9 @@ async def test_stop_cancels_in_flight_relays() -> None:
     client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     client.bind(("127.0.0.1", 0))
     serve = asyncio.create_task(forwarder.serve())
-    await asyncio.to_thread(client.sendto, QUERY, forwarder._sock.getsockname())
+    await asyncio.to_thread(
+        client.sendto, QUERY, forwarder._sock.getsockname()
+    )
     await asyncio.sleep(0.1)  # the relay task exists and is waiting
     forwarder.stop()
     serve.cancel()
@@ -116,7 +128,10 @@ async def test_serve_drops_queries_from_other_sources(tmp_path: Path) -> None:
     upstream.bind(("127.0.0.1", 0))
     upstream.setblocking(False)
     forwarder = dns.DnsForwarder(
-        upstream.getsockname(), 0.5, bind=("127.0.0.1", 0), client_ip="172.31.0.1"
+        upstream.getsockname(),
+        0.5,
+        bind=("127.0.0.1", 0),
+        client_ip="172.31.0.1",
     )
     await forwarder.start()
     client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -125,7 +140,9 @@ async def test_serve_drops_queries_from_other_sources(tmp_path: Path) -> None:
     serve = asyncio.create_task(forwarder.serve())
     try:
         # This client's source is 127.0.0.1, not the pinned guest IP.
-        await asyncio.to_thread(client.sendto, QUERY, forwarder._sock.getsockname())
+        await asyncio.to_thread(
+            client.sendto, QUERY, forwarder._sock.getsockname()
+        )
         with pytest.raises(TimeoutError):
             await asyncio.to_thread(client.recvfrom, 4096)
         # And nothing reached the upstream either.
@@ -162,7 +179,10 @@ def test_relay_timeout_teardown_under_uvloop() -> None:
         sink = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sink.bind(("127.0.0.1", 0))
         forwarder = dns.DnsForwarder(
-            sink.getsockname(), 0.2, bind=("127.0.0.1", 0), client_ip="127.0.0.1"
+            sink.getsockname(),
+            0.2,
+            bind=("127.0.0.1", 0),
+            client_ip="127.0.0.1",
         )
         await forwarder.start()
         serve = asyncio.create_task(forwarder.serve())
@@ -226,7 +246,10 @@ async def test_relay_drops_a_failed_reply_send() -> None:
     upstream.bind(("127.0.0.1", 0))
     upstream.setblocking(False)
     forwarder = dns.DnsForwarder(
-        upstream.getsockname(), 2.0, bind=("127.0.0.1", 0), client_ip="127.0.0.1"
+        upstream.getsockname(),
+        2.0,
+        bind=("127.0.0.1", 0),
+        client_ip="127.0.0.1",
     )
     await forwarder.start(sock=DroppingReplySend())
     serve = asyncio.create_task(forwarder.serve())

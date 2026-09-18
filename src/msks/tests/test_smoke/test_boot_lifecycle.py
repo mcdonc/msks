@@ -101,7 +101,9 @@ async def test_local_persistence_across_restart_and_reset() -> None:
     root_marker = f"ROOT-{uuid.uuid4().hex[:6]}"
     home_marker = f"HOME-{uuid.uuid4().hex[:6]}"
 
-    async def boot_and_probe(probe_commands: list[tuple[str, str]], app=None) -> None:
+    async def boot_and_probe(
+        probe_commands: list[tuple[str, str]], app=None
+    ) -> None:
         await microvm.launch(spec)
         await await_guest_up(serial_log)
         for command, marker in probe_commands:
