@@ -4,6 +4,14 @@ Speaks just enough HTTP/1.1 for the driver: parses the request line +
 headers + Content-Length body, then answers from a per-route handler
 table. Handlers may mutate ``FakeCH.state`` (the ``vm.info`` payload)
 and fire ``on_shutdown`` hooks so tests can simulate process exit.
+
+Stub-double rule (#157): any spawned test double that code under test
+identity-checks must keep an identity-bearing /proc/<pid>/cmdline --
+the double's own path (and its --api-socket argument) has to stay in
+the process's cmdline. `sh -c 'exec sleep ...'` erases both and reads
+as a foreign process; the python-stub pattern (shebang keeps the
+script path, one process, no exec) in test_local_driver.py --
+``spawn_stub_vmm`` -- is the copy-paste shape.
 """
 
 import asyncio
@@ -45,7 +53,12 @@ class FakeCH:
         await self._respond(writer, method, path, body)
 
     async def _read_request(self, reader: asyncio.StreamReader):
-        head = await reader.readuntil(b"\r\n\r\n")
+        try:
+            head = await reader.readuntil(b"\r\n\r\n")
+        except asyncio.IncompleteReadError, ConnectionResetError:
+            # A liveness probe (#151's sweep) connects and closes with
+            # no bytes; that is legitimate traffic, not an error.
+            return None
         lines = head.decode().split("\r\n")
         method, path, _version = lines[0].split(" ", 2)
         length = 0

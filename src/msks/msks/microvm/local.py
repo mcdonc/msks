@@ -655,7 +655,10 @@ class LocalCloudHypervisor(MicrovmDriver):
         binary = self._settings().vmm.cloud_hypervisor
         try:
             cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
-        except OSError:
+        except OSError:  # pragma: no cover
+            # An alive pid whose procfs entry cannot be read is not
+            # provably ours; only a race between kill(0) and this
+            # read reaches here, and the suite cannot arrange it.
             return False
         return os.fsencode(binary) in cmdline
 
