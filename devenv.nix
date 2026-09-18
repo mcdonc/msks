@@ -147,16 +147,21 @@ in
 
   env.UV_PYTHON = config.languages.python.package;
 
-  # The msks client (#21) targets the local appliance by default, so
-  # `msks console <id>` works from any devenv shell with no exports.
-  env.MSKSC_URL = "https://192.168.77.2:8660";
-  # The bootstrap token is composed in nix from the file
-  # appliance-setup.sh seeds: read at evaluation time, so each
-  # `devenv shell` picks up a rotated token. Before the first
-  # `devenv processes up` the file does not exist and the variable is
-  # empty — the client names the missing env. Explicit exports win.
-  env.MSKSC_TOKEN = lib.optionalString (builtins.pathExists ./.appliance/bootstrap-token) (
-    lib.removeSuffix "\n" (builtins.readFile ./.appliance/bootstrap-token)
+  # The msks client (#21) targets the BARE-HOST dev daemon (#141) by
+  # default, so `msks console <id>` works from any devenv shell with
+  # no exports. The state lives under .msksd/ (first `devenv processes
+  # up` creates it); before that the files do not exist and the
+  # variables are empty — the client names the missing env. Explicit
+  # exports win, so targeting the opt-in appliance instead is one
+  # `export MSKSC_URL=https://192.168.77.2:8660` (plus its token) away.
+  env.MSKSC_URL = "https://127.0.0.1:8660";
+  # The bootstrap token and CA are read at evaluation time, so each
+  # `devenv shell` picks up a rotated pair — the .appliance pattern.
+  env.MSKSC_TOKEN = lib.optionalString (builtins.pathExists ./.msksd/bootstrap-token) (
+    lib.removeSuffix "\n" (builtins.readFile ./.msksd/bootstrap-token)
+  );
+  env.MSKSC_CAFILE = lib.optionalString (builtins.pathExists ./.msksd/msks-ca.pem) (
+    toString ./.msksd/msks-ca.pem
   );
 
   tasks = {
@@ -293,52 +298,169 @@ in
         "devenv.lock"
       ];
     };
-    "msks:appliance-up" = {
-      description = "Start the appliance processes (virtiofsd + the VM), detached";
-      exec = "exec devenv processes up -d";
-    };
-    "msks:appliance-down" = {
-      description = "Stop the appliance processes (graceful ACPI via the run script's TERM trap)";
-      exec = "exec devenv processes down";
-    };
-  };
-
-  # The appliance as ONE supervised process (#25): `devenv processes
-  # up` (or the msks:appliance-up task) starts it; the process manager
-  # owns restart and teardown. The store-share daemon is a child of
-  # the run script, not its own process: virtiofsd is vhost-user 1:1
-  # with the VM — it exits when the client disconnects — so the pair
-  # shares one lifecycle, and a crash-restart brings both back.
-  processes = {
-    appliance = {
+    # The workspace image archive, alone (#141): the bare-host dev
+    # daemon's default image. Same derivation tree as msks:build-guest
+    # (pinned nixpkgs, guest-assets expression, the Rust
+    # console-helper baked into the workspace image), but built as
+    # ONE artifact and landed as a symlink the daemon imports on its
+    # first boot — no kernel/rootfs copies, no .guest/.
+    "msks:build-guest-archive" = {
+      description = "Build the workspace image archive into .msksd/default-image";
       exec = ''
-        # Artifacts as a conditional side effect: the build task
-        # no-ops through execIfModified when nothing feeding the
-        # image changed, and rebuilds (minutes from a cold store,
-        # ~20s warm) after a pull or an edit to the daemon
-        # sources, the nix expressions, or the build script —
-        # `devenv processes up` is the whole update story. The
-        # guard covers the gap the task cache cannot see (a
-        # deleted or half-deleted .appliance with unchanged
-        # inputs would make the task skip and leave nothing or a
-        # broken set to boot): the build script runs directly,
-        # unconditionally, exactly until ALL the boot artifacts
-        # are back.
-        if [ ! -f "$DEVENV_ROOT/.appliance/appliance-manifest.json" ] \
-          || [ ! -f "$DEVENV_ROOT/.appliance/vmlinux" ] \
-          || [ ! -f "$DEVENV_ROOT/.appliance/initrd" ] \
-          || [ ! -f "$DEVENV_ROOT/.appliance/rootfs.ext4" ]; then
-          env MSKS_GUEST_NIXPKGS=${pkgs.path} bash "$DEVENV_ROOT/scripts/build-appliance.sh"
+        root="$DEVENV_ROOT"
+        mkdir -p "$root/.msksd"
+        out=$(
+          nix-build --no-out-link -I nixpkgs=${pkgs.path} \
+            "$root/nix/guest.nix" -A image-archive
+        )
+        ln -sfn "$out" "$root/.msksd/default-image"
+        echo "msks: image archive at $out"
+      '';
+      # Keyed on exactly what feeds the archive: the guest-assets
+      # expression (Debian packages, image build, their pinned
+      # hashes), the console-helper it bakes in, and the nixpkgs pin
+      # (devenv.lock). Pattern lessons from #140: trees glob with
+      # /** (a bare directory entry watches only its own metadata);
+      # the helper's src/ tree carries no generated content, so no
+      # directory-row negation is needed.
+      execIfModified = [
+        "nix/guest.nix"
+        "nix/guest-assets.nix"
+        "src/console-helper/src/**"
+        "src/console-helper/Cargo.toml"
+        "src/console-helper/Cargo.lock"
+        "devenv.lock"
+      ];
+    };
+    # The bare-host daemon's state convergence (#141): the idempotent
+    # half the task cache cannot own — a deleted symlink or token
+    # file with unchanged sources would make the keyed archive task
+    # skip (the #140 manifest lesson), so this task ALWAYS runs and
+    # heals the residue. The `after` edge is the #141 marker story:
+    # running dev-ready pulls the conditional archive build first
+    # when inputs changed, and no-ops past it when they did not.
+    "msks:dev-ready" = {
+      description = "Converge the bare-host dev daemon state (.msksd/ token + image pointer)";
+      exec = ''
+        root="$DEVENV_ROOT"
+        state="$root/.msksd"
+        mkdir -p "$state"
+        if [ ! -s "$state/bootstrap-token" ]; then
+          # 256 bits of urandom, hex: the same shape the appliance's
+          # setup seeds. Stable across restarts — the daemon inserts
+          # it into its catalog once and keeps it valid.
+          od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > "$state/bootstrap-token"
+          chmod 600 "$state/bootstrap-token"
+          echo "msks: minted .msksd/bootstrap-token"
+        fi
+        if [ ! -e "$state/default-image" ]; then
+          out=$(
+            nix-build --no-out-link -I nixpkgs=${pkgs.path} \
+              "$root/nix/guest.nix" -A image-archive
+          )
+          ln -sfn "$out" "$state/default-image"
+          echo "msks: image archive at $out"
+        fi
+      '';
+      after = [ "msks:build-guest-archive" ];
+    };
+
+    # The appliance as OPT-IN (#141): the default `devenv processes up`
+    # starts the bare-host msksd (see processes below); the appliance
+    # — the deployed shape — boots through these tasks when you need
+    # egress networking (which holds CAP_NET_ADMIN, #101), the guest
+    # network bridge, or the appliance image itself. Detached like the
+    # old `up -d`: the run script's TERM/INT trap still owns the ACPI
+    # choreography; the pidfile it writes gives msks:appliance-down a
+    # handle no supervisor is needed for.
+    "msks:appliance-up" = {
+      description = "Start the appliance VM detached (conditional build first)";
+      exec = ''
+        root="$DEVENV_ROOT"
+        app="$root/.appliance"
+        # The #140 four-artifact guard, unchanged in semantics: the
+        # task cache cannot see a deleted or half-deleted .appliance
+        # (inputs unchanged -> the keyed task skips), so the build
+        # script runs directly until the boot set is whole.
+        if [ ! -f "$app/appliance-manifest.json" ] \
+          || [ ! -f "$app/vmlinux" ] \
+          || [ ! -f "$app/initrd" ] \
+          || [ ! -f "$app/rootfs.ext4" ]; then
+          env MSKS_GUEST_NIXPKGS=${pkgs.path} bash "$root/scripts/build-appliance.sh"
         else
           devenv tasks run msks:appliance-build
         fi
-        exec bash "$DEVENV_ROOT/scripts/appliance-run.sh"
+        # setup.sh refuses a double-up when the API socket answers,
+        # so a second invocation dies loudly in up.log instead of
+        # racing the running VM.
+        cd "$root"
+        setsid nohup bash "$root/scripts/appliance-run.sh" \
+          >>"$app/up.log" 2>&1 </dev/null &
+        echo "msks: appliance detached (pid $!) — log: $app/up.log; stop: devenv tasks run msks:appliance-down"
       '';
-      # The run script's stop choreography (ACPI, then a bounded
-      # SIGTERM wait) needs up to ~10s; the supervisor's default
-      # SIGKILL grace is 5 — a busy guest would be hard-killed
-      # mid-poweroff otherwise.
-      shutdown.grace = 15;
+    };
+    "msks:appliance-down" = {
+      description = "Stop the appliance VM (graceful ACPI via the run script's TERM trap)";
+      exec = ''
+        app="$DEVENV_ROOT/.appliance"
+        pidfile="$app/run.pid"
+        if [ ! -s "$pidfile" ]; then
+          echo "msks: no appliance pidfile — the appliance is not running"
+          exit 0
+        fi
+        pid=$(cat "$pidfile")
+        if ! kill -0 "$pid" 2>/dev/null; then
+          echo "msks: stale pidfile (pid $pid gone) — cleaning it"
+          rm -f "$pidfile"
+          exit 0
+        fi
+        echo "msks: stopping the appliance (TERM -> ACPI, bounded wait)"
+        kill -TERM "$pid"
+        # 90s: the run script's own ACPI window is 60s (a workspace
+        # running inside needs its nested stop cycle — see the
+        # comment there for the page-cache loss a shorter window
+        # caused), plus teardown margin.
+        for _ in $(seq 1 450); do
+          kill -0 "$pid" 2>/dev/null || break
+          sleep 0.2
+        done
+        if kill -0 "$pid" 2>/dev/null; then
+          echo "msks: still alive after 90s — kill -9 $pid and remove $pidfile" >&2
+          exit 1
+        fi
+        echo "msks: appliance stopped"
+      '';
+    };
+  };
+
+  # The bare-host dev daemon (#141): `devenv processes up` starts
+  # msksd NATIVELY — no appliance VM, no artifact assembly, just the
+  # conditional image-archive task and the daemon on 127.0.0.1:8660.
+  # The daemon converges everything else itself: TLS CA + leaf under
+  # .msksd/, the sqlite catalog, and the default-image import on first
+  # boot. A crash-restart re-runs dev-ready (fast: the archive task
+  # skips, the convergence is a few file tests) and re-execs the
+  # daemon. Egress stays OFF on this path (and workspaces created
+  # without --egress are fully served: vsock console, user-data
+  # seeds, stop/start persistence): serving egress holds
+  # CAP_NET_ADMIN (#101), which is the appliance's job, not a dev
+  # shell's — ssh forwards ride the egress NIC, so host-side `msks
+  # ssh` stays an appliance workflow (or a root-run daemon).
+  processes = {
+    msksd = {
+      exec = ''
+        devenv tasks run msks:dev-ready
+        state="$DEVENV_ROOT/.msksd"
+        export MSKSD_STATE_DIR="$state"
+        export MSKSD_BOOTSTRAP_TOKEN="$(cat "$state/bootstrap-token")"
+        img=$(readlink -f "$state/default-image")
+        [ -f "$img" ] && export MSKSD_DEFAULT_IMAGE="$img"
+        echo "msksd: bare-host dev daemon on https://127.0.0.1:8660 (state: $state)"
+        exec msksd
+      '';
+      # A clean TERM stop of uvicorn is fast; workspaces keep their
+      # disks (state dir persists across restarts).
+      shutdown.grace = 10;
     };
   };
 

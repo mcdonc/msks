@@ -21,6 +21,11 @@ in
 {
   inherit guest;
 
+  # The workspace image archive on its own (#141): the bare-host dev
+  # daemon's default image — same derivation the `guest` build embeds,
+  # buildable without the kernel/rootfs copies that shape serves.
+  image-archive = guest.imageArchive;
+
   # Container image archive for the k8s backend's vm-runner pods: the
   # same cloud-hypervisor as the devenv shell plus the guest assets at
   # fixed paths. Loadable into k3s with `ctr images import`.

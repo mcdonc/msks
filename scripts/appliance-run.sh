@@ -18,6 +18,13 @@ root="${DEVENV_ROOT:?not running inside the devenv shell}"
 app_dir="$root/.appliance"
 guest_ip="192.168.77.2"
 
+# The pidfile msks:appliance-down TERMs (#141): the run script may
+# run under the devenv process manager OR detached under the opt-in
+# msks:appliance-up task — the pidfile gives the down task its handle
+# in both worlds (the manager's TERM and the task's TERM hit the same
+# trap). Removed by the EXIT trap below.
+echo $$ >"$app_dir/run.pid"
+
 # Idempotent prerequisites (artifacts, state, token) — MUST run
 # before the token read below: on a fresh checkout the token does not
 # exist until setup creates it. The HOST network is verified, not
@@ -144,8 +151,10 @@ booter=$!
 cleanup() {
   kill "$booter" 2>/dev/null || true
   kill "$vfpid" 2>/dev/null || true
-  # virtiofsd leaves its pidfile behind even on graceful exit.
-  rm -f "$app_dir/api.sock" "$app_dir/vmm-sock" "$app_dir/vmm-sock.pid"
+  # virtiofsd leaves its pidfile behind even on graceful exit; the
+  # run pidfile goes too, so a stopped appliance reports stopped.
+  rm -f "$app_dir/api.sock" "$app_dir/vmm-sock" "$app_dir/vmm-sock.pid" \
+    "$app_dir/run.pid"
 }
 trap cleanup EXIT
 
@@ -157,9 +166,15 @@ graceful() {
   # The guest's logind turns the ACPI power button into a clean
   # shutdown; bounded wait, then the hard stop. vm.power-button is
   # the ACPI press — vm.shutdown would be the hard stop itself.
+  # The window is 60s, not 10s: a workspace running inside the
+  # appliance needs its own stop cycle (nested VMM ACPI), and a TERM
+  # that lands mid-shutdown loses everything still sitting in the
+  # guest's page cache — observed live: a sqlite row committed only
+  # to the WAL vanished when the 10s window expired under a running
+  # workspace, while artifacts written with fsync survived.
   curl -sS --unix-socket "$app_dir/api.sock" -X PUT \
     http://localhost/api/v1/vm.power-button >/dev/null 2>&1 || true
-  for _ in $(seq 1 50); do
+  for _ in $(seq 1 300); do
     kill -0 "$chpid" 2>/dev/null || break
     sleep 0.2
   done

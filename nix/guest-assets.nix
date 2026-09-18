@@ -987,6 +987,7 @@ pkgs.runCommand "msks-guest"
       inherit
         debianImage
         genericKernel
+        imageArchive
         ;
       inherit
         kernelCmdline

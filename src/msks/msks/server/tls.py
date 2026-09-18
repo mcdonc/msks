@@ -62,7 +62,13 @@ def _write(path: Path, data: bytes, mode: int) -> None:
 
 
 def generate_ca() -> tuple[bytes, bytes]:
-    """A fresh self-signed CA (cert PEM, key PEM)."""
+    """A fresh self-signed CA (cert PEM, key PEM).
+
+    Strict-verification clean: Python 3.14's default client context
+    sets ``VERIFY_X509_STRICT``, which rejects a CA without a
+    Subject Key Identifier — the first bare-host dev loop (#141)
+    hit exactly that against certificates minted by older builds.
+    """
     key = ec.generate_private_key(ec.SECP256R1())
     subject = _name("msks CA")
     now = datetime.datetime.now(datetime.UTC)
@@ -75,6 +81,28 @@ def generate_ca() -> tuple[bytes, bytes]:
         .not_valid_before(now)
         .not_valid_after(now + datetime.timedelta(days=CA_DAYS))
         .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        # Strict-verification clean: VERIFY_X509_STRICT rejects a
+        # path_length without KeyUsage keyCertSign (the second
+        # strictness rung the #141 dev loop hit, after the missing
+        # SKI/AKI pair).
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=False,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=True,
+                crl_sign=True,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(
+            x509.SubjectKeyIdentifier.from_public_key(key.public_key()),
+            critical=False,
+        )
         .sign(key, hashes.SHA256())
     )
     key_pem = key.private_bytes(
@@ -106,6 +134,21 @@ def generate_leaf(
         .not_valid_after(now + datetime.timedelta(days=CERT_DAYS))
         .add_extension(
             x509.SubjectAlternativeName(names),
+            critical=False,
+        )
+        # Strict-verification clean (see generate_ca): the leaf needs
+        # both key identifiers — its own SKI and the signer's AKI —
+        # for Python 3.14 clients to accept the chain.
+        .add_extension(
+            x509.SubjectKeyIdentifier.from_public_key(key.public_key()),
+            critical=False,
+        )
+        .add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(
+                ca_cert.extensions.get_extension_for_class(
+                    x509.SubjectKeyIdentifier
+                ).value
+            ),
             critical=False,
         )
         .sign(ca_key, hashes.SHA256())
