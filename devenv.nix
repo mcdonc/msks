@@ -446,8 +446,19 @@ in
           || [ ! -f "$DEVENV_ROOT/.appliance/vmlinux" ] \
           || [ ! -f "$DEVENV_ROOT/.appliance/initrd" ] \
           || [ ! -f "$DEVENV_ROOT/.appliance/rootfs.ext4" ]; then
+          # Both branches run the same script; the difference is the
+          # task cache. Here artifacts are missing, and the cache can
+          # be a false hit (inputs unchanged since the last successful
+          # run would make the task a no-op), so this branch runs the
+          # build script directly, bypassing the cache, and rebuilds
+          # unconditionally until every boot artifact is back.
           env MSKS_GUEST_NIXPKGS=${pkgs.path} bash "$DEVENV_ROOT/scripts/build-appliance.sh"
         else
+          # Artifacts are present: go through the task, whose
+          # execIfModified keys on the inputs that feed the image —
+          # unchanged inputs make it a no-op, changed inputs
+          # (a pull, an edit to the sources, the nix expressions,
+          # or the build script) rebuild it.
           devenv tasks run msks:appliance-build
         fi
         exec bash "$DEVENV_ROOT/scripts/appliance-run.sh"
