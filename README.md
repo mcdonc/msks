@@ -138,55 +138,39 @@ MSKSD_STATE_DIR=/tmp/msksd MSKSD_BOOTSTRAP_TOKEN=dev-secret MSKSD_PORT=8660 msks
 - **Schema**: the SQLite database is created and upgraded by Alembic at
   startup (inside the package: `msks/migrations`).
 
-### The bare-host dev daemon (the default `processes up`)
+### The bare-host daemon (by hand, no process)
 
-For daemon-side development, msksd runs NATIVELY on the host
-(#141) — no appliance VM, no appliance artifact assembly:
+When the appliance is not wanted — no KVM available, API/client
+work only — run msksd by hand from a devenv shell (#146). Two
+tasks converge a workable state first:
 
 ```bash
-devenv --quiet -O dotenv.enable:bool false shell -- devenv processes up -d
-msks ls                                   # client env is preset (127.0.0.1:8660)
-msks create h1 --no-egress && msks start h1 && msks console h1
-msks rm h1
+devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:dev-ready
+export MSKSD_STATE_DIR="$PWD/.msksd" MSKSD_BOOTSTRAP_TOKEN="$(cat .msksd/bootstrap-token)"
+msksd &                                    # serves https://127.0.0.1:8660
+MSKSC_URL=https://127.0.0.1:8660 MSKSC_CAFILE=$PWD/.msksd/msks-ca.pem \
+  MSKSC_TOKEN="$(cat .msksd/bootstrap-token)" msks ls
 ```
 
-(The client env is read at shell-entry time — after the daemon's
-first boot, open a fresh devenv shell so `MSKSC_TOKEN` and
-`MSKSC_CAFILE` pick up the minted files.)
-
 The state lives in `.msksd/` (TLS CA, bootstrap token, sqlite
-catalog, workspace volumes); the workspace image archive is built
-conditionally (`msks:build-guest-archive`, keyed on its inputs) and
-imported into the catalog on the daemon's first boot. The client
-environment targets this daemon by default, WITH certificate
-verification (`.msksd/msks-ca.pem`). A daemon edit restarts in
-seconds: `devenv processes restart msksd`.
+catalog, workspace volumes; gitignored but NOT disposable-clean —
+`git clean -xfd` deletes all of it). Workspaces without egress are
+fully served — vsock console, user-data seeds, stop/start
+persistence. Egress (and `msks ssh`, whose forwards ride the egress
+NIC) holds `CAP_NET_ADMIN` (#101): that is the appliance's job. A
+workspace created without `--no-egress` refuses to start here —
+the 503 names `MSKSD_EGRESS_ENABLED`, which is the appliance's
+setting; remove the workspace and recreate it with `--no-egress`,
+or use the appliance. Daemon edits restart with Ctrl-C and re-run
+(`--reload` restarts on tree change, #144).
 
-Workspaces without egress are fully served — vsock console,
-user-data seeds, stop/start persistence. Egress (and `msks ssh`,
-whose forwards ride the egress NIC) holds `CAP_NET_ADMIN` (#101):
-that is the appliance's job, not a dev shell's. A workspace
-created without `--no-egress` refuses to start here — the 503
-names `MSKSD_EGRESS_ENABLED`, which is the appliance's setting;
-remove the workspace and recreate it with `--no-egress`, or move
-to the appliance below.
+### The msksd appliance (the default `processes up`)
 
-State notes: `.msksd/` is gitignored but NOT disposable-clean —
-`git clean -xfd` deletes the token, CA, catalog, and every
-workspace volume with it. Each worktree owns its own `.msksd/`,
-and two checkouts cannot both bind 127.0.0.1:8660 — stop one (or
-`export MSKSD_PORT` for the second) before starting another.
-A crashed or exited daemon leaves running workspaces in place —
-the restarted daemon re-finds them (verified live). A deliberate
-`devenv processes restart msksd` / `down` kills the whole process
-tree, workspaces included, without their graceful stop — stop
-them first (`msks stop <id>`) when a clean shutdown matters.
-
-### The msksd appliance (opt-in, any Linux host)
-
-The daemon also runs as an appliance microvm — the deployed shape —
-for egress networking, the guest network bridge, or appliance-image
-work. Requirements: any Linux with KVM + nested virtualization
+The daemon runs as an appliance microvm — the deployed shape —
+and that is what `devenv processes up` starts (#146): egress
+networking, the guest network bridge, nested workspaces, and the
+dev tree all live here, and the client environment targets it by
+default. Requirements: any Linux with KVM + nested virtualization
 enabled, nix + devenv, and a one-time root setup of the host
 network:
 
@@ -196,37 +180,60 @@ sudo bash scripts/appliance-host-setup.sh
 
 That installs the bridge, tap, host forwarding (`sysctl.d`), and NAT
 rules — with a systemd unit that re-arms them on every host reboot —
-and nothing needs sudo afterwards: `devenv processes up` starts the
-appliance as your own user (cloud-hypervisor, ch-remote, and
-virtiofsd all come from the devenv shell). Re-run the installer to
-re-arm after a firewall reload; an existing tap keeps its owner, and
-the installer names the one-step fix (`ip link del mskstap0`, then
-re-run) when the appliance moves to another user.
+and nothing needs sudo afterwards: the appliance runs as your own
+user (cloud-hypervisor, ch-remote, and virtiofsd all come from the
+devenv shell). Re-run the installer to re-arm after a firewall
+reload; an existing tap keeps its owner, and the installer names
+the one-step fix (`ip link del mskstap0`, then re-run) when the
+appliance moves to another user.
 
 ```bash
-devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:appliance-up
-curl -sk https://192.168.77.2:8660/api/v1/health   # TOFU fingerprint: .appliance/serial.log
-devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:appliance-down
+devenv --quiet -O dotenv.enable:bool false shell -- devenv processes up -d
+msks ls                                   # in a FRESH shell (see the note below)
+curl --cacert .appliance/msks-ca.pem https://192.168.77.2:8660/api/v1/health
+devenv --quiet -O dotenv.enable:bool false shell -- devenv processes down
 ```
 
-**The appliance boots detached under the opt-in tasks (#141)**:
-`msks:appliance-up` builds conditionally (the #140 keys apply), then
-runs `scripts/appliance-run.sh` detached with a pidfile;
-`msks:appliance-down` TERMs that pid — the run script's ACPI-first
-trap owns the teardown (its 60s window covers a workspace's nested
-stop cycle; a shorter window lost page-cache-only sqlite commits,
-observed live). The default `devenv processes up`/`down` now manage
-the bare-host dev daemon, not the appliance.
+**The appliance is the one managed process (#146)**: its exec
+builds conditionally (the #140 keys apply) and runs
+`scripts/appliance-run.sh` under the supervisor — crash-restart,
+`devenv processes logs appliance`, and a graceful teardown whose
+90s grace covers the run script's ACPI-first stop (its 60s window
+holds a workspace's nested stop cycle; a shorter window lost
+page-cache-only sqlite commits, observed live). The
+`msks:appliance-up`/`-down` tasks are the detached wrappers over
+the same manager (`devenv processes up -d` / `down`). No bare-host
+msksd process exists — `devenv processes list` shows only the
+appliance.
+
+**The client environment presets to the appliance (#146)**:
+`MSKSC_URL` (`https://192.168.77.2:8660`), `MSKSC_TOKEN` (the
+appliance's bootstrap token), and `MSKSC_CAFILE`
+(`.appliance/msks-ca.pem`, extracted from the state disk by the
+run script once the guest serves). Until that file exists — the
+first boot — the client warns it does not verify; cross-check the
+TOFU fingerprint on `.appliance/serial.log`, then open a fresh
+devenv shell. The presets are read at shell-entry time, so a rotated
+token — or a replaced state disk, whose old CA stays in place until
+the new guest serves and the extraction refreshes it — needs a fresh
+shell too; that window self-heals on every boot.
+
+On a fresh checkout the presets start EMPTY — the token and CA do
+not exist until the appliance's first boot — so `msks` in that
+first shell names the missing env (curl above uses `-sk` plus the
+TOFU fingerprint on `.appliance/serial.log` until the CA file
+exists). Open a fresh devenv shell after the first boot; the client
+env is read at shell-entry time.
 
 **The dev tree (#144): daemon edits without appliance rebuilds.**
-`MSKS_DEV_TREE=1` on `msks:appliance-up` shares this checkout
+`MSKS_DEV_TREE=1` with `processes up` shares this checkout
 read-only into the guest as a second virtiofs tag; the guest daemon
 then runs from the shared tree — the checkout's venv python (a
 nix-store interpreter, resolved through the store share) with the
 package imported straight off the share — under `--reload`:
 
 ```bash
-MSKS_DEV_TREE=1 devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:appliance-up
+MSKS_DEV_TREE=1 devenv --quiet -O dotenv.enable:bool false shell -- devenv processes up -d
 # edit src/msks/msks/... — the change is detected within ~1s (poll
 # cadence 0.5s; virtiofs carries no inotify events, so the daemon
 # polls the tree's fingerprint) and the restarted daemon serves

@@ -229,9 +229,20 @@ let
       # heredoc body sits at column zero: an unquoted
       # delimiter expands nothing (the store paths are already
       # literal text) and the closing EOF must start a line.
+      # The daemon binds (and names in its minted cert — #146) the
+      # bridge address: it is the only address the guest has, and
+      # the cert's SAN must match the URL clients dial or verified
+      # TLS fails on hostname. Two consequences: a boot can race
+      # networkd for the address (msksd is only After=networkd, not
+      # waiting for it) — a lost race fails the bind and the unit's
+      # 1s Restart=always recovers within a retry or two; and a
+      # state disk minted before #146 (host 0.0.0.0) remints its
+      # LEAF automatically on the first boot (tls.py records the
+      # host beside the leaf and regenerates on a mismatch) — no
+      # manual removal, and the CA fingerprint is untouched.
       cat >/run/msksd/msksd.yaml <<EOF
       state_dir: /state/msksd
-      host: 0.0.0.0
+      host: ${net.address}
       port: 8660
       cloud_hypervisor: ${vmm}/bin/cloud-hypervisor
       qemu_img: ${qemuImg}/bin/qemu-img

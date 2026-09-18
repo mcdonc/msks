@@ -19,7 +19,7 @@ for f in vmlinux initrd rootfs.ext4; do
     # The plain build task run may SKIP (execIfModified keys
     # unchanged — the up task's four-artifact guard in devenv.nix
     # heals this by building directly; that is the command to name).
-    echo "msks: $app_dir/$f missing — run: devenv tasks run msks:appliance-up (it rebuilds missing artifacts)" >&2
+    echo "msks: $app_dir/$f missing — run: devenv processes up -d (it rebuilds missing artifacts)" >&2
     exit 1
   }
 done

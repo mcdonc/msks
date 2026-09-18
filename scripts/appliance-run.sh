@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# The appliance as ONE run script (#25, now opt-in under the #141
-# tasks): `msks:appliance-up` builds conditionally and runs this
-# script detached; its pidfile (.appliance/run.pid) is the handle
-# `msks:appliance-down` TERMs, and the TERM/INT trap below owns the
-# graceful choreography — no supervisor required.
+# The appliance as ONE run script (#25): the devenv process manager
+# (#146) execs it as the `appliance` process — the build runs first
+# inside the process exec — and the TERM/INT trap below owns the
+# graceful choreography (the msks:appliance-up/-down tasks wrap the
+# same manager). The pidfile it writes (.appliance/run.pid) is a
+# diagnostic handle for "which run-script instance owns this
+# .appliance"; teardown is the supervisor's TERM, not a pidfile
+# kill.
 #
 # The store-share daemon is a CHILD of this script, not its own
 # process: virtiofsd is vhost-user 1:1 with the VM — it exits when
@@ -29,10 +32,10 @@ guest_ip="192.168.77.2"
 # the running appliance's pid with its own short-lived one.
 bash "$root/scripts/appliance-setup.sh"
 
-# The pidfile msks:appliance-down TERMs (#141): the run script may
-# run detached under the opt-in msks:appliance-up task — the pidfile
-# gives the down task its handle. Written only once this instance
-# owns the appliance (setup above passed); removed by the EXIT trap.
+# The instance pidfile (#146): a diagnostic handle identifying which
+# run-script instance owns this .appliance (stale ones are cleaned by
+# the EXIT trap). Written only once this instance owns the appliance
+# (setup above passed).
 echo $$ >"$app_dir/run.pid"
 
 # The EXIT trap registers HERE, not after virtiofsd/VM bring-up: a
@@ -48,7 +51,8 @@ appliance_exit() {
   # virtiofsd leaves its pidfile behind even on graceful exit; the
   # run pidfile goes too, so a stopped appliance reports stopped.
   rm -f "$app_dir/api.sock" "$app_dir/vmm-sock" "$app_dir/vmm-sock.pid" \
-    "$app_dir/dev-sock" "$app_dir/dev-sock.pid" "$app_dir/run.pid"
+    "$app_dir/dev-sock" "$app_dir/dev-sock.pid" \
+    "$app_dir"/.msks-ca.pem.tmp.* "$app_dir/run.pid"
 }
 trap appliance_exit EXIT
 
@@ -232,6 +236,45 @@ cloud-hypervisor \
   --api-socket "$app_dir/api.sock" \
   >"$app_dir/cloud-hypervisor.log" 2>&1 &
 chpid=$!
+
+# The client's verified-CA preset (#146): once the guest serves, its
+# CA cert (minted on the state disk at first boot, path /msksd) is
+# extracted read-only from the state disk to .appliance/msks-ca.pem —
+# a fresh devenv shell then presets MSKSC_CAFILE to it and the client
+# verifies the appliance instead of warning. The read retries: on a
+# freshly minted CA the cert's data blocks sit in the ext4 JOURNAL
+# until the guest checkpoints them, and debugfs (no journal replay)
+# reads the checkpointed state only — an immediate read returns
+# empty. Best-effort and self-terminating either way: an empty result
+# leaves the TOFU fingerprint on the serial log as the fallback, and
+# the next boot retries.
+(
+  # errexit-safe polling: the script runs under set -e, and a bare
+  # `curl && break` dies on the first refused connect (the guest is
+  # not up yet) — the `if` condition is exempt.
+  for _ in $(seq 1 90); do
+    if curl -sk "https://$guest_ip:8660/api/v1/health" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
+  # The tmp name carries this script's pid: a SIGKILL'd instance's
+  # subshell lives on up to the window above, and a fixed name would
+  # let a replacement instance's extractor race it on the same file.
+  # The content check covers the same journal-lag class as the retry:
+  # a checkpointed inode with uncheckpointed data blocks reads back
+  # zeros — full-size, non-empty, not a certificate.
+  tmp="$app_dir/.msks-ca.pem.tmp.$$"
+  for _ in $(seq 1 24); do
+    if debugfs -R "cat /msksd/msks-ca.pem" "$state_disk" >"$tmp" 2>/dev/null &&
+      grep -q "BEGIN CERTIFICATE" "$tmp"; then
+      mv "$tmp" "$app_dir/msks-ca.pem"
+      exit 0
+    fi
+    sleep 5
+  done
+  rm -f "$tmp"
+) &
 
 # errexit-safe: a nonzero wait (crash, SIGKILL, SIGTERM) must not
 # kill the script before the booter is reaped and the diagnostic

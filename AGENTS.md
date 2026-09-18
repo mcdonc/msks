@@ -54,41 +54,42 @@ not process-compose. Consequences when debugging a managed stack:
 
 Background lifecycle semantics (all verified live):
 
-**The supervised process is the bare-host msksd (#141)** — `processes
-msksd`, not the appliance. `devenv processes up`/`down`/`restart`/
-`logs` manage the dev daemon on 127.0.0.1:8660 (state: `.msksd/`).
-
-- `devenv processes up -d` starts the manager detached — it survives
-  the shell that launched it, and a second `up -d` is a no-op.
-- `devenv processes down` (from any fresh shell) stops gracefully;
-  `.msksd/` (catalog, TLS, workspace volumes) persists across
-  restarts.
-- `devenv processes list` / `status` / `logs msksd` inspect the
-  supervised state; `restart msksd` is the daemon-edit inner loop
-  (~7s to serving again).
-- A crashed or exited daemon leaves running workspaces in place —
-  the supervisor's restart brings the daemon back and it re-finds
-  them (verified live; VMMs run in their own sessions). A deliberate
-  `restart`/`down` kills the process tree, workspaces included,
-  without their graceful stop — `msks stop` them first when a clean
-  shutdown matters.
-- A killed daemon crash-restarts under the supervisor; a
-  repeatedly-failing process reaches `gave_up` after five restarts
-  (`devenv processes logs` shows why).
-- If the manager daemon itself dies while processes run, they keep
-  running unsupervised; `devenv processes down` then reports "No
-  process manager is running".
-
-**The appliance is opt-in via tasks (#141)** — `msks:appliance-up`
-(detached, pidfile `.appliance/run.pid`, conditional build) and
-`msks:appliance-down` (TERM to the pid; the run script's ACPI-first
-trap owns teardown, 60s window for a nested workspace's stop cycle
-— shorter windows lost page-cache-only sqlite commits, observed
-live). If the run script dies without its EXIT trap firing, recovery
-is manual:
+**The supervised process is the appliance (#146)** — `processes
+appliance`, nothing else: `devenv processes list` shows no bare-host
+msksd. The process exec builds conditionally then runs
+`scripts/appliance-run.sh`; `devenv processes up/down/restart/logs
+appliance` manage it, with a 90s shutdown grace covering the run
+script's ACPI-first teardown (60s window for a nested workspace's
+stop cycle — shorter windows lost page-cache-only sqlite commits,
+observed live). The `msks:appliance-up`/`-down` tasks are detached
+wrappers over the same manager. The run script's EXIT trap owns
+its pidfile and sockets; if the script dies without the trap
+firing (SIGKILL), recovery is manual:
 `pkill -f 'cloud-hypervisor --api-socket <repo>/.appliance/api.sock'`
 (plus the matching `virtiofsd --socket-path` pattern) and removing
 the stale sockets under `.appliance/`.
+
+- `devenv processes up -d` starts the manager detached — it survives
+  the shell that launched it, and a second `up -d` is a no-op.
+- `devenv processes down` (from any fresh shell) stops gracefully:
+  the manager TERMs the appliance process, whose trap drives ACPI
+  poweroff through the CH API inside the 90s grace.
+- The client env presets to the appliance (`MSKSC_URL`/`TOKEN`/
+  `CAFILE` from `.appliance/`); the run script extracts the guest's
+  CA cert into `.appliance/msks-ca.pem` once the guest serves, so a
+  fresh shell verifies. A bare-host msksd is run BY HAND (see the
+  README section) — never a managed process.
+- A crashed run script crash-restarts under the supervisor; a
+  repeatedly-failing process reaches `gave_up` after five restarts
+  (`devenv processes logs` shows why).
+- If the manager daemon itself dies while the appliance runs, the
+  per-process **scope guardian** (its config lives under
+  `.devenv/run/processes/guardians/`) TERMs the whole process tree
+  with the process's grace — the appliance stops gracefully, it does
+  NOT keep running unsupervised (probe-verified on devenv 2.3.1 in a
+  throwaway project: a SIGKILL'd manager took the tree down within
+  seconds). `devenv processes down` afterwards reports "No process
+  manager is running" because nothing is left.
 
 ## Naming: no leading underscores on helper functions
 
