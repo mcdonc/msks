@@ -44,10 +44,11 @@ echo $$ >"$app_dir/run.pid"
 appliance_exit() {
   kill "${booter:-}" 2>/dev/null || true
   kill "${vfpid:-}" 2>/dev/null || true
+  kill "${devvfpid:-}" 2>/dev/null || true
   # virtiofsd leaves its pidfile behind even on graceful exit; the
   # run pidfile goes too, so a stopped appliance reports stopped.
   rm -f "$app_dir/api.sock" "$app_dir/vmm-sock" "$app_dir/vmm-sock.pid" \
-    "$app_dir/run.pid"
+    "$app_dir/dev-sock" "$app_dir/dev-sock.pid" "$app_dir/run.pid"
 }
 trap appliance_exit EXIT
 
@@ -78,6 +79,45 @@ base_cmdline="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).
 # the OS OOM-kills the VMM (seen live, #77) — 6 GiB carries a
 # workspace with headroom. An operator can shrink it back.
 : "${MSKS_APPLIANCE_MEM_MIB:=6144}"
+# The live dev-tree share (#144): set to any nonempty value and the
+# run script shares this checkout ($DEVENV_ROOT) read-only into the
+# guest as a second virtiofs tag (devtree), and tells the guest
+# daemon to run from it (msksd.dev_tree on the cmdline). The guest
+# mounts it at /run/msks-dev-tree and execs the checkout's venv
+# python over the shared sources with --reload: a daemon edit on
+# the host restarts the guest daemon in seconds — no appliance
+# rebuild, no VM reboot. The share runs with --cache never: the
+# reload watcher polls (mtime, size) fingerprints across virtiofs,
+# and cached attrs would hide host edits from it. The store share
+# keeps --cache auto — it is immutable, the dev tree is not.
+: "${MSKS_DEV_TREE:=}"
+dev_fs=""
+dev_cmdline=""
+if [ -n "$MSKS_DEV_TREE" ]; then
+  rm -f "$app_dir/dev-sock" "$app_dir/dev-sock.pid"
+  virtiofsd \
+    --socket-path "$app_dir/dev-sock" \
+    --shared-dir "$root" \
+    --readonly \
+    --sandbox none \
+    --cache never \
+    >"$app_dir/dev-virtiofsd.log" 2>&1 &
+  devvfpid=$!
+  for _ in $(seq 1 100); do
+    [ -S "$app_dir/dev-sock" ] && break
+    kill -0 "$devvfpid" 2>/dev/null || {
+      echo "msks: dev-tree virtiofsd exited before serving (see .appliance/dev-virtiofsd.log)" >&2
+      exit 1
+    }
+    sleep 0.1
+  done
+  [ -S "$app_dir/dev-sock" ] || {
+    echo "msks: dev-tree virtiofsd socket never appeared" >&2
+    exit 1
+  }
+  dev_fs=$(printf ',\n    {"tag": "devtree", "socket": "%s/dev-sock",\n     "num_queues": 1, "queue_size": 1024}' "$app_dir")
+  dev_cmdline=" msksd.dev_tree=/run/msks-dev-tree"
+fi
 
 # --- the store share (virtiofsd, unprivileged) --------------------------
 rm -f "$app_dir/vmm-sock"
@@ -139,7 +179,7 @@ boot_vm() {
   "payload": {
     "kernel": "$app_dir/vmlinux",
     "initramfs": "$app_dir/initrd",
-    "cmdline": "$base_cmdline msksd.bootstrap_token=$bootstrap_token msksd.default_image=$default_image $MSKS_APPLIANCE_CMDLINE_EXTRA"
+    "cmdline": "$base_cmdline msksd.bootstrap_token=$bootstrap_token msksd.default_image=$default_image$dev_cmdline $MSKS_APPLIANCE_CMDLINE_EXTRA"
   },
   "disks": [
     {"path": "$app_dir/rootfs.ext4", "readonly": true, "image_type": "Raw"},
@@ -147,7 +187,7 @@ boot_vm() {
   ],
   "fs": [
     {"tag": "store", "socket": "$app_dir/vmm-sock",
-     "num_queues": 1, "queue_size": 1024}
+     "num_queues": 1, "queue_size": 1024}$dev_fs
   ],
   "net": [
     {"tap": "mskstap0", "mac": "52:54:00:00:00:01"}

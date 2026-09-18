@@ -8,6 +8,16 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **Appliance dev tree: daemon edits without appliance rebuilds
+  (#144).** `MSKS_DEV_TREE=1` with `msks:appliance-up` shares the
+  checkout read-only into the appliance and runs the guest daemon
+  from it with `msksd --reload` — a daemon edit restarts the guest
+  daemon within seconds, no rebuild and no VM reboot; the state
+  disk, egress, and TLS keep serving. The default boot (store-path
+  daemon) is unchanged. `msksd --reload` is a general development
+  flag: any daemon invocation restarts itself when the msks package
+  tree it runs from changes.
+
 - **Bare-host dev daemon via `devenv processes up` (#141).** The
   default `processes up` now starts msksd natively on
   `https://127.0.0.1:8660` (state under `.msksd/`), with the
@@ -283,6 +293,12 @@ no`, `PermitRootLogin prohibit-password`) pinned by a config dropin,
 - **The `msksd` daemon and its `/api/v1` API (#8).** msksd now serves versioned endpoints over one HTTPS+WSS listener — public health, hashed bearer-token auth with revocation (`MSKSD_BOOTSTRAP_TOKEN` seeds the first credential), workspace create/list/status/start/stop/delete driving cloud-hypervisor through the microvm seam, and a websocket event channel for lifecycle transitions. TLS is operator-provided (`MSKSD_TLS_CERT`/`KEY`) or a self-signed CA generated on first run whose fingerprint is logged for trust-on-first-use pinning; `--no-tls` serves plain HTTP for development. State lives in an SQLite database under the state dir (`MSKSD_STATE_DIR`), managed by Alembic migrations.
 - **Nix-built guest assets (`msks:build-guest`, `msks:demo-vm`, `msks:build-runner-image`).** The devenv now produces everything needed to boot a microvm — kernel, initrd, read-only ext4 rootfs into `.guest/`, plus the k8s vm-runner container archive — from the nixpkgs revision devenv itself pins, on any Linux host with nix; the manual-download flow is gone. Boot tests pick the built artifacts up automatically (explicit `MSKSD_TEST_VMLINUX`/`MSKSD_TEST_ROOTFS`/`MSKSD_TEST_INITRD` variables keep precedence) and skip themselves when the guest was never built or `/dev/kvm` is unusable. `msks:demo-vm` boots one interactive VM from the artifacts with `ch-remote` ready (#5).
 
+- **`msksd --reload` (development, #144).** The daemon gains a
+  development flag that watches the msks package tree it runs from
+  and restarts the process when it changes; the appliance dev tree
+  (above) uses it to serve daemon edits without an appliance
+  rebuild.
+
 ### Fixed
 
 - **Strict-clean minted TLS certificates (#141).** The CA and leaf
@@ -305,6 +321,15 @@ no`, `PermitRootLogin prohibit-password`) pinned by a config dropin,
   names the close, and reconnecting opens a fresh session. The
   echo-off caveat (password prompts) and the helper-window
   relationship are documented in `docs/cli.md` and `docs/config.md`.
+- **Egress DHCP/DNS under uvloop-running daemons (#144).** The
+  development venv pulls uvloop (via `uvicorn[standard]`), which
+  does not implement `loop.sock_recvfrom`/`sock_sendto`; egress
+  workspaces created by such a daemon never received a DHCP lease
+  or DNS answer. The DHCP and DNS services now receive datagrams
+  through a loop-portable helper and behave identically under
+  asyncio and uvloop. This was also the real cause behind the
+  "guest NIC up but no frames" symptom recorded on #143 — not the
+  container boundary.
 
 - **`/home` could fail to mount on slow boots (#14).** The guest fstab mounted the home volume by label under `x-systemd.device-timeout=2s`; that clock starts at sysinit job enqueue, before udevd runs, and on a first boot from a fresh overlay (every root read a copy-on-write miss) the udev label probe can exceed what is left of the budget — `home.mount` then fails for the whole boot (`nofail` keeps the boot moving and never retries). The device timeout is now 30s, so the mount rides out a slow coldplug; a boot with no volume at all waits the same 30s once and continues.
 

@@ -218,6 +218,38 @@ stop cycle; a shorter window lost page-cache-only sqlite commits,
 observed live). The default `devenv processes up`/`down` now manage
 the bare-host dev daemon, not the appliance.
 
+**The dev tree (#144): daemon edits without appliance rebuilds.**
+`MSKS_DEV_TREE=1` on `msks:appliance-up` shares this checkout
+read-only into the guest as a second virtiofs tag; the guest daemon
+then runs from the shared tree — the checkout's venv python (a
+nix-store interpreter, resolved through the store share) with the
+package imported straight off the share — under `--reload`:
+
+```bash
+MSKS_DEV_TREE=1 devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:appliance-up
+# edit src/msks/msks/... — the change is detected within ~1s (poll
+# cadence 0.5s; virtiofs carries no inotify events, so the daemon
+# polls the tree's fingerprint) and the restarted daemon serves
+# again in ~10-15s (interpreter start, imports, TLS, migrations)
+```
+
+The state disk, TLS pair, tokens, and egress networking keep
+serving across restarts and across switches between the dev-tree
+daemon and the store daemon — same state, same settings file, same
+unit. Appliance assembly drops out of the edit loop entirely: the
+conditional build keys from #140 fire only when the image itself
+changes (nix expressions, guest assets), which is what they were
+scoped for.
+Dependency changes (`uv`/`pyproject.toml`) are the one host-side
+step: re-enter the devenv shell (or `devenv test regenerate`), then
+the next daemon restart sees the refreshed venv. The share is
+read-only — the guest never writes the tree — and it carries the
+whole checkout: the appliance's own `.appliance/` (bootstrap token,
+state disk) and any `.msksd/` beside it are visible to the guest.
+Same trust domain as the daemon itself (the token already rides the
+kernel cmdline); a checkout you would not hand the appliance should
+not be shared.
+
 How it fits together (#10, #25, #92):
 
 - The image is Debian 13 (trixie) — the same genericcloud base the

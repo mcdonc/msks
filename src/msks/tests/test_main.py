@@ -83,3 +83,41 @@ def test_serve_operator_certs_skip_fingerprint(
     )
     main_mod.serve(app, no_tls=False)
     assert app.state.settings.server.tls_cert == "/op/c.pem"
+
+
+def test_main_reload_arms_watcher(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    monkeypatch.setenv("MSKSD_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setenv("MSKSD_STATE_DIR", str(tmp_path / "state"))
+    previous = signal.getsignal(signal.SIGHUP)
+    try:
+        seen = {}
+        monkeypatch.setattr(
+            main_mod, "serve", lambda app, no_tls: seen.update(no_tls=no_tls)
+        )
+        monkeypatch.setattr(
+            main_mod, "arm_reload_watcher", lambda: seen.update(reload=True)
+        )
+        assert main(["--reload"]) == 0
+        assert seen == {"no_tls": False, "reload": True}
+    finally:
+        signal.signal(signal.SIGHUP, previous)
+
+
+def test_main_without_reload_leaves_watcher_disarmed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setenv("MSKSD_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setenv("MSKSD_STATE_DIR", str(tmp_path / "state"))
+    previous = signal.getsignal(signal.SIGHUP)
+    try:
+        seen = {}
+        monkeypatch.setattr(
+            main_mod, "serve", lambda app, no_tls: seen.update(no_tls=no_tls)
+        )
+        monkeypatch.setattr(
+            main_mod, "arm_reload_watcher", lambda: seen.update(reload=True)
+        )
+        assert main([]) == 0
+        assert seen == {"no_tls": False}
+    finally:
+        signal.signal(signal.SIGHUP, previous)

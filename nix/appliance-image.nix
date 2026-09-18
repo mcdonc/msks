@@ -181,7 +181,12 @@ let
       '';
 
   # The daemon bring-up script — what the busybox init's tail did,
-  # as a file msksd.service ExecStarts. Every msksd.<name>=<value>
+  # as a file msksd.service ExecStarts. Three daemon modes, in
+  # order of precedence: the DEBUG escape hatch, the dev-tree daemon
+  # (#144: msksd.dev_tree from the kernel cmdline names a
+  # live-shared checkout; the run script sends that pair only when
+  # the host set MSKS_DEV_TREE), and the default nix-built store
+  # daemon. Every msksd.<name>=<value>
   # pair on the kernel cmdline becomes an MSKSD_<NAME> environment
   # variable (upper-cased; dots map to underscores); the daemon's
   # settings file is generated on the tmpfs at every boot (#46
@@ -277,6 +282,37 @@ let
         fi
         echo "=== DIAG-END ==="
         exec sleep infinity
+      fi
+      # The dev-tree daemon (#144): the host shared its live
+      # checkout (tag devtree -> /run/msks-dev-tree, mounted by
+      # msks-dev-tree.service) and named it on the cmdline. The
+      # checkout's venv python is a nix-store interpreter (the store
+      # share resolves it); OUR package is imported from the shared
+      # tree via PYTHONPATH — path-independent, so the venv's
+      # host-absolute editable-install pointers never matter. The
+      # repo nests the package one level deep (src/msks/msks), so
+      # PYTHONPATH is $TREE/src/msks — that dir's msks/ is the
+      # package. --reload
+      # restarts the process when the shared tree changes (polling:
+      # virtiofs carries no inotify events across the boundary).
+      # Falls back to the store daemon — loudly — when the tree or
+      # its venv is missing, so a stale cmdline pair cannot boot
+      # half a daemon.
+      if [ -n "''${MSKSD_DEV_TREE:-}" ]; then
+        dev_py="$MSKSD_DEV_TREE/.devenv/state/venv/bin/python"
+        if [ "$(cat /run/dev-tree.state 2>/dev/null)" = mounted ] \
+          && [ -x "$dev_py" ] \
+          && [ -d "$MSKSD_DEV_TREE/src/msks/msks" ]; then
+          echo "msks appliance: DEV TREE daemon: $MSKSD_DEV_TREE (reload on edit)"
+          export PYTHONPATH="$MSKSD_DEV_TREE/src/msks"
+          # The share is read-only: every .pyc write attempt fails and
+          # costs a syscall per module per restart. Skipping them keeps
+          # the restart path quiet; nothing is lost (the share is ro).
+          export PYTHONDONTWRITEBYTECODE=1
+          exec "$dev_py" -m msks.server.main \
+            --config /run/msksd/msksd.yaml --reload
+        fi
+        echo "msks appliance: MSKSD_DEV_TREE set but not usable; store daemon"
       fi
       exec "${msks}/bin/msksd" --config /run/msksd/msksd.yaml
     '';
@@ -527,6 +563,27 @@ let
         ln -s ../msks-kvm.service \
           $out/etc/systemd/system/multi-user.target.wants/msks-kvm.service
 
+        # The live dev-tree share (#144): when the host boots the
+        # appliance with MSKS_DEV_TREE set, the run script attaches a
+        # second read-only virtiofs tag (devtree) carrying the host
+        # checkout. This root oneshot mounts it and records the
+        # outcome OUTSIDE the mountpoint (/run/dev-tree.state) so
+        # the marker can never sit on the read-only share; the unit
+        # succeeds either way — an absent share is the normal boot,
+        # not an error. Pulled in by msksd.service's Wants= below.
+        printf '%s\n' \
+          '[Unit]' \
+          'Description=msks dev-tree share mount (present only when the host opted in)' \
+          'DefaultDependencies=no' \
+          'After=systemd-modules-load.service' \
+          'Before=msksd.service' \
+          ''' \
+          '[Service]' \
+          'Type=oneshot' \
+          'ExecStart=/bin/sh -c "mkdir -p /run/msks-dev-tree && mount -t virtiofs devtree /run/msks-dev-tree 2>/dev/null && echo mounted > /run/dev-tree.state || echo absent > /run/dev-tree.state"' \
+          'StandardOutput=journal+console' \
+          > $out/etc/systemd/system/msks-dev-tree.service
+
         # The state disk converges before it mounts: the preparation
         # script (see msksStatePrepare) waits for the disk, labels or
         # formats it, and on every boot merges the var/ staging tree
@@ -594,6 +651,7 @@ let
           'Documentation=https://github.com/mcdonc/msks' \
           'Requires=nix-store.mount state.mount msks-state-format.service' \
           'After=nix-store.mount state.mount msks-state-format.service msks-kvm.service systemd-networkd.service' \
+          'Wants=msks-dev-tree.service' \
           'StartLimitIntervalSec=0' \
           ''' \
           '[Service]' \
