@@ -144,7 +144,7 @@ jobs:
       # answers). This is the recovery the repo documents for
       # exactly that shape: graceful down first, then the named
       # pkill patterns, then the stale sockets. always() — a green
-      # run's down is the clean no-op the supervisor contract
+      # run's down is the clean no-op the pidfile contract
       # promises.
       - name: Ensure appliance is down
         if: always()

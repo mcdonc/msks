@@ -8,6 +8,17 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **Bare-host dev daemon via `devenv processes up` (#141).** The
+  default `processes up` now starts msksd natively on
+  `https://127.0.0.1:8660` (state under `.msksd/`), with the
+  workspace image archive built conditionally (`msks:build-guest-archive`)
+  and the client env preset to it with certificate verification —
+  a daemon edit restarts in seconds instead of rebuilding and
+  rebooting the appliance. The appliance becomes opt-in:
+  `devenv tasks run msks:appliance-up` / `msks:appliance-down`
+  (detached, pidfile-based, conditional build) — required for
+  egress workspaces and `msks ssh` forwards, which hold
+  `CAP_NET_ADMIN`.
 - **L3 recursion smoke in CI (#135).**
   `.github/workflows/nightly-l3.yml` runs
   `test_appliance_l3_recursion` on a self-hosted runner labeled

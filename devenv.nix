@@ -151,12 +151,15 @@ in
   # default, so `msks console <id>` works from any devenv shell with
   # no exports. The state lives under .msksd/ (first `devenv processes
   # up` creates it); before that the files do not exist and the
-  # variables are empty — the client names the missing env. Explicit
-  # exports win, so targeting the opt-in appliance instead is two
-  # exports: MSKSC_URL=https://192.168.77.2:8660 and its MSKSC_TOKEN —
-  # plus EMPTYING MSKSC_CAFILE (`MSKSC_CAFILE= msks ls`), or the
-  # client verifies the appliance's cert against THIS daemon's CA and
-  # reads the mismatch as an unreachable host.
+  # variables are empty — the client names the missing env. Exports
+  # made INSIDE the devenv shell win over these presets; a variable
+  # exported before entering the shell is clobbered by them (verified
+  # live: devenv's env.* overrides pre-set exports). Targeting the
+  # opt-in appliance from a dev shell is two exports plus an EMPTY
+  # CAFILE (`MSKSC_URL=https://192.168.77.2:8660 MSKSC_CAFILE= msks
+  # ls`, with its token) — or the client verifies the appliance's
+  # cert against THIS daemon's CA and reads the mismatch as an
+  # unreachable host.
   env.MSKSC_URL = "https://127.0.0.1:8660";
   # The bootstrap token and CA are read at evaluation time, so each
   # `devenv shell` picks up a rotated pair — the .appliance pattern.
@@ -354,12 +357,20 @@ in
           # it into its catalog once and keeps it valid. temp+rename:
           # a concurrent daemon start must never `cat` a half-written
           # token (the daemon would insert the truncated value as a
-          # valid row, and every later login 401s).
-          tok=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
-          printf '%s' "$tok" >"$state/.bootstrap-token.tmp"
-          chmod 600 "$state/.bootstrap-token.tmp"
-          mv "$state/.bootstrap-token.tmp" "$state/bootstrap-token"
-          echo "msks: minted .msksd/bootstrap-token"
+          # valid row, and every later login 401s). The flock closes
+          # the two-writer window: a manual `devenv tasks run
+          # msks:dev-ready` racing the process's own run cannot mint
+          # two tokens where the file keeps one and the daemon booted
+          # with the other (a 401 until restart, otherwise).
+          (
+            flock 9
+            [ -s "$state/bootstrap-token" ] && exit 0
+            tok=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
+            printf '%s' "$tok" >"$state/.bootstrap-token.tmp"
+            chmod 600 "$state/.bootstrap-token.tmp"
+            mv "$state/.bootstrap-token.tmp" "$state/bootstrap-token"
+            echo "msks: minted .msksd/bootstrap-token"
+          ) 9>"$state/.lock"
         fi
         if [ ! -e "$state/default-image" ]; then
           out=$(

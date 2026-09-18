@@ -150,6 +150,10 @@ msks create h1 --no-egress && msks start h1 && msks console h1
 msks rm h1
 ```
 
+(The client env is read at shell-entry time — after the daemon's
+first boot, open a fresh devenv shell so `MSKSC_TOKEN` and
+`MSKSC_CAFILE` pick up the minted files.)
+
 The state lives in `.msksd/` (TLS CA, bootstrap token, sqlite
 catalog, workspace volumes); the workspace image archive is built
 conditionally (`msks:build-guest-archive`, keyed on its inputs) and

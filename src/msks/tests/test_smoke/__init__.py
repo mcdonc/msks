@@ -521,18 +521,6 @@ def seed_legacy_state_disk(state_disk: Path, marker_text: str) -> bool:
     return True
 
 
-def devenv_processes(*args: str, timeout: int = 600) -> subprocess.CompletedProcess:
-    """Drive the devenv process manager from inside the shell."""
-    return subprocess.run(
-        ["bash", "-c", f"devenv processes {' '.join(args)}"],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        cwd=REPO_ROOT,
-        env={**os.environ, "DEVENV_TUI": "false"},
-    )
-
-
 def devenv_task(task: str, timeout: int = 900) -> subprocess.CompletedProcess:
     """Run one devenv task — the opt-in appliance lifecycle (#141).
 
