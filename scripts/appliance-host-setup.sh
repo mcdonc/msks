@@ -118,4 +118,4 @@ if systemctl daemon-reload && systemctl enable msks-host-net.service; then
 else
   echo "msks: host network armed for THIS boot; boot persistence unavailable (systemd not managing the host)" >&2
 fi
-echo "msks: the appliance now starts without sudo (devenv tasks run msks:appliance-up)"
+echo "msks: the appliance now starts without sudo (devenv processes up -d)"

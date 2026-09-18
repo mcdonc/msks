@@ -233,6 +233,39 @@ cloud-hypervisor \
   >"$app_dir/cloud-hypervisor.log" 2>&1 &
 chpid=$!
 
+# The client's verified-CA preset (#146): once the guest serves, its
+# CA cert (minted on the state disk at first boot, path /msksd) is
+# extracted read-only from the state disk to .appliance/msks-ca.pem —
+# a fresh devenv shell then presets MSKSC_CAFILE to it and the client
+# verifies the appliance instead of warning. The read retries: on a
+# freshly minted CA the cert's data blocks sit in the ext4 JOURNAL
+# until the guest checkpoints them, and debugfs (no journal replay)
+# reads the checkpointed state only — an immediate read returns
+# empty. Best-effort and self-terminating either way: an empty result
+# leaves the TOFU fingerprint on the serial log as the fallback, and
+# the next boot retries.
+(
+  # errexit-safe polling: the script runs under set -e, and a bare
+  # `curl && break` dies on the first refused connect (the guest is
+  # not up yet) — the `if` condition is exempt.
+  for _ in $(seq 1 90); do
+    if curl -sk "https://$guest_ip:8660/api/v1/health" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
+  tmp="$app_dir/.msks-ca.pem.tmp"
+  for _ in $(seq 1 24); do
+    if debugfs -R "cat /msksd/msks-ca.pem" "$state_disk" >"$tmp" 2>/dev/null &&
+      [ -s "$tmp" ]; then
+      mv "$tmp" "$app_dir/msks-ca.pem"
+      exit 0
+    fi
+    sleep 5
+  done
+  rm -f "$tmp"
+) &
+
 # errexit-safe: a nonzero wait (crash, SIGKILL, SIGTERM) must not
 # kill the script before the booter is reaped and the diagnostic
 # prints — the exit status still reaches the supervisor either way.

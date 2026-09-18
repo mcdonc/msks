@@ -8,8 +8,22 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The appliance as the one managed process, client env preset to
+  it (#146, #141).** `devenv processes up` boots the appliance —
+  the deployed shape: egress workspaces, `msks ssh` forwards, the
+  guest network bridge, and the dev tree below — under the process
+  manager (crash-restart, logs, 90s graceful grace covering the
+  ACPI teardown; `msks:appliance-up`/`-down` are the detached
+  wrappers). The client env presets to it: `MSKSC_URL`, the
+  appliance's bootstrap token, and certificate verification via
+  `.appliance/msks-ca.pem`, which the run script extracts from the
+  state disk once the guest serves (until then the TOFU fingerprint
+  on the serial log covers the first connect). No bare-host msksd
+  process exists; running the daemon by hand on the host stays
+  supported and documented (own `.msksd/` state,
+  `msks:dev-ready`, no egress).
 - **Appliance dev tree: daemon edits without appliance rebuilds
-  (#144).** `MSKS_DEV_TREE=1` with `msks:appliance-up` shares the
+  (#144).** `MSKS_DEV_TREE=1` with `processes up` shares the
   checkout read-only into the appliance and runs the guest daemon
   from it with `msksd --reload` — a daemon edit restarts the guest
   daemon within seconds, no rebuild and no VM reboot; the state
@@ -17,18 +31,6 @@ tagged `vX.Y.Z`.
   daemon) is unchanged. `msksd --reload` is a general development
   flag: any daemon invocation restarts itself when the msks package
   tree it runs from changes.
-
-- **Bare-host dev daemon via `devenv processes up` (#141).** The
-  default `processes up` now starts msksd natively on
-  `https://127.0.0.1:8660` (state under `.msksd/`), with the
-  workspace image archive built conditionally (`msks:build-guest-archive`)
-  and the client env preset to it with certificate verification —
-  a daemon edit restarts in seconds instead of rebuilding and
-  rebooting the appliance. The appliance becomes opt-in:
-  `devenv tasks run msks:appliance-up` / `msks:appliance-down`
-  (detached, pidfile-based, conditional build) — required for
-  egress workspaces and `msks ssh` forwards, which hold
-  `CAP_NET_ADMIN`.
 - **L3 recursion smoke in CI (#135).**
   `.github/workflows/nightly-l3.yml` runs
   `test_appliance_l3_recursion` on a self-hosted runner labeled

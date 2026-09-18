@@ -229,9 +229,15 @@ let
       # heredoc body sits at column zero: an unquoted
       # delimiter expands nothing (the store paths are already
       # literal text) and the closing EOF must start a line.
+      # The daemon binds (and names in its minted cert — #146) the
+      # bridge address: it is the only address the guest has, and
+      # the cert's SAN must match the URL clients dial or verified
+      # TLS fails on hostname. State disks minted before #146 carry
+      # a 0.0.0.0-named pair; removing /msksd/msks-*.pem from the
+      # state disk lets the next boot mint the replacement.
       cat >/run/msksd/msksd.yaml <<EOF
       state_dir: /state/msksd
-      host: 0.0.0.0
+      host: ${net.address}
       port: 8660
       cloud_hypervisor: ${vmm}/bin/cloud-hypervisor
       qemu_img: ${qemuImg}/bin/qemu-img

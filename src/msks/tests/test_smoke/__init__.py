@@ -522,14 +522,15 @@ def seed_legacy_state_disk(state_disk: Path, marker_text: str) -> bool:
 
 
 def devenv_task(task: str, timeout: int = 900) -> subprocess.CompletedProcess:
-    """Run one devenv task — the opt-in appliance lifecycle (#141).
+    """Run one devenv task — the appliance lifecycle entry points (#146).
 
-    The appliance no longer lives under the process manager (that is
-    the bare-host dev daemon's home now): msks:appliance-up boots it
-    detached behind a pidfile, msks:appliance-down TERMs that pid
-    through the ACPI-first trap. Environment surgery (state disk,
-    cmdline extras, memory) reaches the VM exactly as before — the
-    task and its detached child inherit this process's environment.
+    The appliance is THE managed process: msks:appliance-up is the
+    detached start (`devenv processes up -d` — the manager owns the
+    build-then-run exec, crash restarts, and the graceful ACPI
+    teardown), msks:appliance-down is `devenv processes down`.
+    Environment surgery (state disk, cmdline extras, memory, the
+    #144 dev tree) reaches the VM exactly as before — the process
+    and its manager inherit this process's environment.
     """
     return subprocess.run(
         ["bash", "-c", f"devenv tasks run {task}"],
