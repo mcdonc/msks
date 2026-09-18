@@ -9,6 +9,7 @@ Running -> VMM SIGTERM).
 import asyncio
 import os
 import shutil
+import socket
 import tempfile
 from dataclasses import replace
 from pathlib import Path
@@ -46,7 +47,12 @@ def env(tmp_path: Path):
     step creates files without the real binaries.
     """
     stub = tmp_path / "ch-stub"
-    stub.write_text("#!/bin/sh\nexec sleep 600\n")
+    # A single python process, not `sh -c 'exec sleep'`: #151's
+    # identity-checked liveness reads /proc/<pid>/cmdline, and an
+    # exec'd sleep erases the stub (and --api-socket) from it. The
+    # shebang keeps the stub's own path in the cmdline, exactly like
+    # the real binary spawn.
+    stub.write_text(f"#!/usr/bin/env python3\nimport time\ntime.sleep(600)\n")
     stub.chmod(0o755)
     qemu_stub = tmp_path / "qemu-img"
     qemu_stub.write_text(
@@ -1205,3 +1211,92 @@ async def test_handshake_without_user_sends_no_prelude(tmp_path: Path) -> None:
         await server.wait_closed()
     assert seen["rest"] in (b"", None) or not seen["rest"].startswith(b"HELLO")
     writer.close()
+
+
+def bind_then_abandon(path: Path) -> None:
+    """A genuine stale socket: bound, then closed with the file left.
+
+    The exact residue a hard-killed VMM leaves — a socket file at
+    the name with nothing listening (#151).
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    srv.bind(str(path))
+    srv.close()  # the file stays; no listener does
+
+
+async def test_launch_sweeps_stale_sockets(env, fake, tmp_path: Path) -> None:
+    """Socket residue from a hard kill must not doom the next start (#151).
+
+    A VMM killed without cleanup leaves api.sock and vsock.sock
+    behind; the next spawn died binding them (AddrInUse) and the
+    operator saw a misleading unreachable-API 503. The stale vsock
+    residue here is the incident's exact shape (bound, abandoned);
+    the fake's LIVE api.sock pre-bound beside it proves the sweep
+    takes only what nothing listens on — its removal is asserted
+    because nothing (the fake does not emulate vsock) re-creates it.
+    """
+    app, _, _ = env
+    vm_dir = app.state.microvm.local._dir(WID)
+    assert (vm_dir / "api.sock").exists()  # the fake's live listener
+    stale = vm_dir / "vsock.sock"
+    bind_then_abandon(stale)
+    await app.state.microvm.launch(spec(tmp_path))
+    assert not stale.exists()  # swept; nothing recreated it
+    info = await app.state.microvm.info(WID)
+    assert info.status is not VmStatus.STOPPED
+
+
+def test_socket_stale_contract(tmp_path: Path) -> None:
+    """Absent no, abandoned yes, live no — the sweep's whole policy."""
+    from msks.microvm.local import socket_stale
+
+    assert not socket_stale(tmp_path / "absent.sock")
+    abandoned = tmp_path / "abandoned.sock"
+    bind_then_abandon(abandoned)
+    assert socket_stale(abandoned)
+    live = tmp_path / "live.sock"
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    srv.bind(str(live))
+    srv.listen(1)
+    try:
+        assert not socket_stale(live)
+    finally:
+        srv.close()
+
+
+async def test_launch_reports_the_vmm_log_tail_on_early_exit(
+    env, tmp_path: Path
+) -> None:
+    """A dying VMM names its own cause in the error (#151).
+
+    The stub binary replays the real fatal line from the incident
+    (CreateApiServerSocket AddrInUse) into ch.log and exits: the
+    operator error must carry it, not a bare exit code.
+    """
+    app, _, _ = env
+    stub = tmp_path / "vmm-stub"
+    stub.write_text(
+        "#!/bin/sh\n"
+        'echo "cloud-hypervisor: Fatal error: '
+        'CreateApiServerSocket(Os { code: 98, AddrInUse })" >&2\n'
+        "exit 1\n"
+    )
+    stub.chmod(0o755)
+    app.state.settings.vmm.cloud_hypervisor = str(stub)
+    with pytest.raises(MicrovmError, match="AddrInUse"):
+        await app.state.microvm.launch(spec(tmp_path))
+
+
+def test_log_tail_shapes() -> None:
+    from msks.microvm.local import LocalCloudHypervisor
+
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "ch.log"
+        assert LocalCloudHypervisor._log_tail(None) == " (no log)"
+        p.write_text("one line\n")
+        assert LocalCloudHypervisor._log_tail(p) == "; last log lines: one line"
+        p.write_text("")
+        assert LocalCloudHypervisor._log_tail(p) == " (log empty)"
+        p.unlink()
+        assert LocalCloudHypervisor._log_tail(p) == " (log unreadable)"
