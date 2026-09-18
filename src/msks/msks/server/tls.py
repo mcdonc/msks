@@ -210,7 +210,8 @@ def _self_signed(state_dir: Path, host: str) -> tuple[str, str, str]:
         # beside it; a first mint needs no explanation.
         if replacing:
             print(
-                "msksd: replacing an unusable CA (unreadable or pre-strict-clean);"
+                "msksd: replacing an unusable CA"
+                " (unreadable, mismatched, or pre-strict-clean);"
                 " clients must re-pin the new fingerprint",
                 file=sys.stderr,
             )
@@ -247,11 +248,16 @@ def _ca_usable(ca_cert: Path, ca_key: Path) -> bool:
         return False
     try:
         cert = x509.load_pem_x509_certificate(ca_cert.read_bytes())
-        serialization.load_pem_private_key(ca_key.read_bytes(), password=None)
+        key = serialization.load_pem_private_key(ca_key.read_bytes(), password=None)
         cert.extensions.get_extension_for_class(x509.SubjectKeyIdentifier)
     except ValueError, IndexError, x509.ExtensionNotFound:
         return False
-    return True
+    # The pair must correspond: a crash between the two _write
+    # calls leaves a new cert beside an old key — both parse, the
+    # cert carries its SKI, and the mint path would sign a leaf
+    # with the wrong key: a served-but-never-verifiable chain with
+    # no crash to name it (#148 review finding).
+    return cert.public_key().public_numbers() == key.public_key().public_numbers()
 
 
 def leaf_stale(

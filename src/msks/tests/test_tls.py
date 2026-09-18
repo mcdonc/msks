@@ -163,11 +163,12 @@ def test_ca_usable_rejects_garbage(tmp_path: Path) -> None:
 
 
 def mint_legacy_ca() -> tuple[bytes, bytes]:
-    """A self-signed CA with NO extensions — the pre-strict-clean shape.
+    """A self-signed CA shaped exactly like the pre-strict-clean mint.
 
-    Parses fine, which is what made it toxic: the leaf-remint path
-    reads the CA's SKI to build the new leaf's AKI and crashed
-    against it (#148).
+    BasicConstraints(ca=True, path_length=0) and nothing else — no
+    SKI (the pre-#141 generate_ca wrote exactly this). Parses fine,
+    which is what made it toxic: the leaf-remint path reads the CA's
+    SKI to build the new leaf's AKI and crashed against it (#148).
     """
     key = ec.generate_private_key(ec.SECP256R1())
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "msks CA")])
@@ -180,6 +181,7 @@ def mint_legacy_ca() -> tuple[bytes, bytes]:
         .serial_number(x509.random_serial_number())
         .not_valid_before(now)
         .not_valid_after(now + datetime.timedelta(days=10))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
         .sign(key, hashes.SHA256())
     )
     key_pem = key.private_bytes(
@@ -212,11 +214,60 @@ def test_legacy_ca_is_replaced_wholesale(tmp_path: Path) -> None:
 
 
 def test_ca_replacement_is_named_on_stderr(tmp_path, capsys) -> None:
-    (tmp_path / "msks-ca.pem").write_bytes(mint_legacy_ca()[0])
-    (tmp_path / "msks-ca-key.pem").write_bytes(mint_legacy_ca()[1])
+    ca_pem, key_pem = mint_legacy_ca()  # ONE pair: cert and key correspond
+    (tmp_path / "msks-ca.pem").write_bytes(ca_pem)
+    (tmp_path / "msks-ca-key.pem").write_bytes(key_pem)
     load_or_generate(tmp_path, "h", None, None)
     err = capsys.readouterr().err
     assert "replacing an unusable CA" in err
+
+
+def test_mismatched_ca_pair_is_replaced(tmp_path, capsys) -> None:
+    """New cert beside an old key (a crash between the two writes).
+
+    Both parse and the cert has its SKI; without the correspondence
+    check the mint path signed a leaf with the wrong key and served
+    a chain no client could verify — silently. Such a pair is
+    unusable: replaced wholesale, named on stderr.
+    """
+    good_cert, _good_key = generate_ca()  # has SKI
+    _other_cert, other_key = generate_ca()  # a DIFFERENT key
+    (tmp_path / "msks-ca.pem").write_bytes(good_cert)
+    (tmp_path / "msks-ca-key.pem").write_bytes(other_key)
+    cert, _key, _fp = load_or_generate(tmp_path, "h", None, None)
+    ca = x509.load_pem_x509_certificate((tmp_path / "msks-ca.pem").read_bytes())
+    ca_key = serialization.load_pem_private_key(
+        (tmp_path / "msks-ca-key.pem").read_bytes(), password=None
+    )
+    leaf = x509.load_pem_x509_certificate(Path(cert).read_bytes())
+    assert ca.public_key().public_numbers() == ca_key.public_key().public_numbers()
+    leaf.verify_directly_issued_by(ca)
+    assert "mismatched" in capsys.readouterr().err
+
+
+def test_ca_usable_contract() -> None:
+    """The three sides of usable: strict-clean yes, no-SKI no, wrong key no."""
+    import tempfile
+
+    from msks.server.tls import _ca_usable
+
+    with tempfile.TemporaryDirectory() as d:
+        state = Path(d)
+        good_cert, good_key = generate_ca()
+        (state / "msks-ca.pem").write_bytes(good_cert)
+        (state / "msks-ca-key.pem").write_bytes(good_key)
+        assert _ca_usable(state / "msks-ca.pem", state / "msks-ca-key.pem")
+        legacy_cert, legacy_key = mint_legacy_ca()
+        (state / "msks-ca.pem").write_bytes(legacy_cert)
+        (state / "msks-ca-key.pem").write_bytes(legacy_key)
+        assert not _ca_usable(state / "msks-ca.pem", state / "msks-ca-key.pem")
+        (state / "msks-ca-key.pem").write_bytes(other_key := good_key)
+        # a strict-clean cert beside a foreign strict-clean key
+        _, foreign_key = generate_ca()
+        (state / "msks-ca.pem").write_bytes(good_cert)
+        (state / "msks-ca-key.pem").write_bytes(foreign_key)
+        assert not _ca_usable(state / "msks-ca.pem", state / "msks-ca-key.pem")
+        assert other_key == good_key  # the earlier rebind did not matter
 
 
 def test_first_mint_prints_no_replacement_note(tmp_path, capsys) -> None:
