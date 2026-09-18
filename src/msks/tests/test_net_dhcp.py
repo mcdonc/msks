@@ -8,6 +8,7 @@ needed, since a caller-provided socket skips SO_BINDTODEVICE.
 import asyncio
 import socket
 import struct
+import threading
 
 import pytest
 from msks.net import dhcp
@@ -250,3 +251,82 @@ async def test_start_sets_the_device_option() -> None:
     assert sock.calls[1] == ("setsockopt", socket.SOL_SOCKET, 25, b"msks-x\0")
     assert ("setblocking", False) in sock.calls
     assert ("bind", ("", 67)) not in sock.calls  # injected: pre-bound
+
+
+@pytest.mark.filterwarnings(
+    # uvloop 0.22.1 itself calls asyncio.iscoroutinefunction (removed
+    # in 3.16); our code does not. Ignore until uvloop ships the fix.
+    "ignore:.*'asyncio.iscoroutinefunction' is deprecated.*:DeprecationWarning"
+)
+def test_serve_answers_a_discover_under_uvloop() -> None:
+    """The full receive path under uvloop (the dev venv's loop).
+
+    uvloop does not implement ``loop.sock_recvfrom`` (a plain
+    NotImplementedError): before the loop-portable helpers, the serve
+    task died on its first await under uvloop while the nix closure
+    (plain asyncio) served — the dev-tree daemon's guests never got
+    a lease. This round-trip pins the fix under the loop that broke.
+    """
+
+    uvloop = pytest.importorskip("uvloop")
+
+    async def scenario() -> bytes:
+        service = dhcp.DhcpServer("127.0.0.1", "127.0.0.2", "255.255.255.252", 3600)
+        server_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        server_sock.bind(("127.0.0.1", 0))
+        client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        client.bind(("127.0.0.1", 0))
+        client.settimeout(5.0)
+        await service.start(sock=server_sock)
+        task = asyncio.create_task(service.serve())
+        client.sendto(
+            discover(b"\x0a\x0b\x0c\x0d", b"\xaa\xbb\xcc\xdd\xee\xff"),
+            server_sock.getsockname(),
+        )
+        reply: bytes = b""
+        try:
+            got = await asyncio.to_thread(client.recvfrom, 4096)
+            reply = got[0]
+        finally:
+            task.cancel()
+            service.stop()
+            client.close()
+        return reply
+
+    def runner() -> bytes:
+        return uvloop.run(scenario())
+
+    # uvloop installs its own policy inside run(); run it off-thread
+    # so it cannot disturb this thread's asyncio loop (pytest-asyncio).
+    with ThreadPoolWithResult() as pool:
+        reply = pool.run(runner)
+    assert parse_options_of(reply)[53] == bytes((dhcp.OFFER,))
+
+
+class ThreadPoolWithResult:
+    """One-shot helper: run a callable on a fresh thread, return its value."""
+
+    def __init__(self) -> None:
+        self._result: bytes | None = None
+        self._exc: BaseException | None = None
+
+    def __enter__(self):
+        return self
+
+    def run(self, fn) -> bytes:
+        def work() -> None:
+            try:
+                self._result = fn()
+            except BaseException as exc:  # surfaced on the caller thread
+                self._exc = exc
+
+        t = threading.Thread(target=work)
+        t.start()
+        t.join(timeout=30)
+        if self._exc is not None:
+            raise self._exc
+        assert self._result is not None
+        return self._result
+
+    def __exit__(self, *exc_info) -> None:
+        return None

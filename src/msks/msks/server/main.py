@@ -12,6 +12,7 @@ from ..app import build_app
 from ..config import load_settings
 from ..settings import Settings
 from .api import build_api
+from .reload import arm_reload_watcher
 from .tls import load_or_generate
 
 
@@ -137,6 +138,15 @@ def main(argv: list[str] | None = None) -> int:
         help="serve plain HTTP (development only)",
     )
     parser.add_argument(
+        "--reload",
+        action="store_true",
+        help=(
+            "development: watch the msks package source tree and "
+            "restart the process when it changes (used by the "
+            "appliance dev-tree flow, #144)"
+        ),
+    )
+    parser.add_argument(
         "--config",
         metavar="PATH",
         help=(
@@ -154,6 +164,8 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # config + TLS errors read as one line
         print(f"msksd: {exc}", file=sys.stderr)
         return 2
+    if args.reload:
+        arm_reload_watcher()
     serve(app, args.no_tls)
     return 0
 

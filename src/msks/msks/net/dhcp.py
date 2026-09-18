@@ -21,6 +21,8 @@ import socket
 import struct
 from dataclasses import dataclass
 
+from .loopio import recvfrom, sendto
+
 SERVER_PORT = 67
 CLIENT_PORT = 68
 MAGIC = b"\x63\x82\x53\x63"
@@ -238,7 +240,7 @@ class DhcpServer:
             if sock is None:
                 return
             try:
-                data, addr = await loop.sock_recvfrom(sock, 4096)
+                data, addr = await recvfrom(loop, sock, 4096)
             except OSError:
                 return  # the socket closed underneath the loop
             await self._answer(sock, data, addr)
@@ -249,10 +251,9 @@ class DhcpServer:
         reply = self.reply_for(data)
         if reply is None:
             return
-        loop = asyncio.get_running_loop()
         request = parse_request(data)
         assert request is not None  # reply_for parsed it already
-        await loop.sock_sendto(sock, reply, reply_dest(addr, request.flags))
+        sendto(sock, reply, reply_dest(addr, request.flags))
 
     def reply_for(self, data: bytes) -> bytes | None:
         """The reply datagram for one client message, or None."""
