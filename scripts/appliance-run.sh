@@ -48,7 +48,7 @@ appliance_exit() {
   # virtiofsd leaves its pidfile behind even on graceful exit; the
   # run pidfile goes too, so a stopped appliance reports stopped.
   rm -f "$app_dir/api.sock" "$app_dir/vmm-sock" "$app_dir/vmm-sock.pid" \
-    "$app_dir/dev-sock" "$app_dir/run.pid"
+    "$app_dir/dev-sock" "$app_dir/dev-sock.pid" "$app_dir/run.pid"
 }
 trap appliance_exit EXIT
 
@@ -94,7 +94,7 @@ base_cmdline="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).
 dev_fs=""
 dev_cmdline=""
 if [ -n "$MSKS_DEV_TREE" ]; then
-  rm -f "$app_dir/dev-sock"
+  rm -f "$app_dir/dev-sock" "$app_dir/dev-sock.pid"
   virtiofsd \
     --socket-path "$app_dir/dev-sock" \
     --shared-dir "$root" \

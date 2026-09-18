@@ -305,6 +305,10 @@ let
           && [ -d "$MSKSD_DEV_TREE/src/msks/msks" ]; then
           echo "msks appliance: DEV TREE daemon: $MSKSD_DEV_TREE (reload on edit)"
           export PYTHONPATH="$MSKSD_DEV_TREE/src/msks"
+          # The share is read-only: every .pyc write attempt fails and
+          # costs a syscall per module per restart. Skipping them keeps
+          # the restart path quiet; nothing is lost (the share is ro).
+          export PYTHONDONTWRITEBYTECODE=1
           exec "$dev_py" -m msks.server.main \
             --config /run/msksd/msksd.yaml --reload
         fi

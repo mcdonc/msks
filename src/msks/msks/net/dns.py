@@ -128,9 +128,11 @@ class DnsForwarder:
             # closed socket (an AttributeError past the OSError guard).
             sendto(sock, answer[0], client)
         except TimeoutError, OSError:
-            # No upstream answer inside the window: silence. The
-            # client's own resolver timeout retries or fails; an
-            # empty reply would only confuse it.
+            # No upstream answer inside the window, or a datagram send
+            # that failed outright (a full buffer on the reply, a
+            # vanished tap): silence either way. The client's own
+            # resolver timeout retries or fails; an empty reply would
+            # only confuse it.
             return
         finally:
             upstream.close()

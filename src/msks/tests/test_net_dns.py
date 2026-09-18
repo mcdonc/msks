@@ -180,7 +180,7 @@ def test_relay_timeout_teardown_under_uvloop() -> None:
         # A second query proves the loop still dispatches after the
         # timed-out relay: the forwarder is alive, not wedged.
         client.sendto(QUERY, forwarder._sock.getsockname())
-        still_alive = serve is not None and not serve.done()
+        still_alive = not serve.done()
         serve.cancel()
         forwarder.stop()
         client.close()
@@ -197,3 +197,66 @@ def test_relay_timeout_teardown_under_uvloop() -> None:
     t.join(timeout=30)
     assert not t.is_alive()
     assert result.get("ok") is True
+
+
+async def test_relay_drops_a_failed_reply_send() -> None:
+    """A failed reply send silences one query, not the forwarder.
+
+    The reply sendto is synchronous now: a full buffer (BlockingIOError)
+    must leave the forwarder dispatching — the client's resolver
+    retries, and the retry gets its answer.
+    """
+    relayed: list[bytes] = []
+
+    class DroppingReplySend(socket.socket):
+        """The forwarder's socket: the first reply send fails."""
+
+        def __init__(self) -> None:
+            super().__init__(socket.AF_INET, socket.SOCK_DGRAM)
+            self._sends = 0
+
+        def sendto(self, data, *args):
+            self._sends += 1
+            if self._sends == 1:
+                raise BlockingIOError("send buffer full")
+            relayed.append(data)
+            return super().sendto(data, *args)
+
+    upstream = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    upstream.bind(("127.0.0.1", 0))
+    upstream.setblocking(False)
+    forwarder = dns.DnsForwarder(
+        upstream.getsockname(), 2.0, bind=("127.0.0.1", 0), client_ip="127.0.0.1"
+    )
+    await forwarder.start(sock=DroppingReplySend())
+    serve = asyncio.create_task(forwarder.serve())
+    client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    client.bind(("127.0.0.1", 0))
+    client.settimeout(3.0)
+
+    answers = {"n": 0}
+
+    async def answer_upstream() -> None:
+        loop = asyncio.get_running_loop()
+        while True:
+            data, requester = await loop.sock_recvfrom(upstream, 4096)
+            answers["n"] += 1
+            await loop.sock_sendto(upstream, data, requester)
+
+    responder = asyncio.create_task(answer_upstream())
+    try:
+        client.sendto(QUERY, forwarder._sock.getsockname())
+        # First relay's reply send fails: silence, not a crash.
+        with pytest.raises(TimeoutError):
+            await asyncio.to_thread(client.recvfrom, 4096)
+        assert not serve.done()
+        client.sendto(QUERY, forwarder._sock.getsockname())
+        reply, _addr = await asyncio.to_thread(client.recvfrom, 4096)
+        assert reply == QUERY  # the responder echoes the query back
+        assert len(relayed) == 1  # exactly one reply made it out
+    finally:
+        responder.cancel()
+        serve.cancel()
+        forwarder.stop()
+        client.close()
+        upstream.close()

@@ -330,3 +330,55 @@ class ThreadPoolWithResult:
 
     def __exit__(self, *exc_info) -> None:
         return None
+
+
+async def test_serve_survives_a_failing_reply_send() -> None:
+    """A failed reply send drops the reply, not the serve task.
+
+    The sync sendto raises immediately where the awaited form waited;
+    a full buffer or a vanished tap must leave the server alive to
+    answer the next discover (DHCP clients retransmit by design).
+    """
+    sent: list[bytes] = []
+
+    class DroppingSocket(socket.socket):
+        def __init__(self) -> None:
+            super().__init__(socket.AF_INET, socket.SOCK_DGRAM)
+            self._sends = 0
+
+        def sendto(self, data, *args):
+            self._sends += 1
+            if self._sends == 1:
+                raise BlockingIOError("send buffer full")
+            sent.append(data)
+            return super().sendto(data, *args)
+
+    service = dhcp.DhcpServer("127.0.0.1", "127.0.0.2", "255.255.255.252", 3600)
+    server_sock = DroppingSocket()
+    server_sock.bind(("127.0.0.1", 0))
+    client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    client.bind(("127.0.0.1", 0))
+    client.settimeout(2.0)
+    await service.start(sock=server_sock)
+    task = asyncio.create_task(service.serve())
+    try:
+        client.sendto(
+            discover(b"\x0a\x0b\x0c\x0f", b"\xaa\xbb\xcc\xdd\xee\xff"),
+            server_sock.getsockname(),
+        )
+        # The first reply's send fails: no answer arrives...
+        with pytest.raises(TimeoutError):
+            await asyncio.to_thread(client.recvfrom, 4096)
+        # ...and the serve task survives to answer the retransmit.
+        assert not task.done()
+        client.sendto(
+            discover(b"\x0a\x0b\x0c\x0f", b"\xaa\xbb\xcc\xdd\xee\xff"),
+            server_sock.getsockname(),
+        )
+        reply, _addr = await asyncio.to_thread(client.recvfrom, 4096)
+        assert parse_options_of(reply)[53] == bytes((dhcp.OFFER,))
+        assert len(sent) == 1
+    finally:
+        task.cancel()
+        service.stop()
+        client.close()
