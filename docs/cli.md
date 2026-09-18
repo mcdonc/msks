@@ -33,12 +33,21 @@ namespace — a box that runs both can export each side independently.
 
 A missing `MSKSC_TOKEN` is an error before any network activity: the
 client names the variable and exits. Tokens come from the daemon:
-`POST /api/v1/tokens` mints one, and the appliance writes its
-bootstrap token to `.appliance/bootstrap-token` on first boot —
+`POST /api/v1/tokens` mints one; the devenv environment presets both
+from the bare-host dev daemon's `.msksd/` state (token + CA, from the
+first `devenv processes up`), and the appliance writes its bootstrap
+token to `.appliance/bootstrap-token` on first boot —
 
 ```bash
+export MSKSC_URL=https://127.0.0.1:8660          # the dev default
+export MSKSC_TOKEN=$(cat .msksd/bootstrap-token)
+export MSKSC_CAFILE=.msksd/msks-ca.pem
+
+# targeting the opt-in appliance instead: same pair, its files,
+# and an EMPTY CAFILE (the appliance's CA is not the dev daemon's)
 export MSKSC_URL=https://192.168.77.2:8660
 export MSKSC_TOKEN=$(cat .appliance/bootstrap-token)
+export MSKSC_CAFILE=
 ```
 
 The daemon serves TLS with a self-signed certificate. Point

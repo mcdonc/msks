@@ -52,27 +52,43 @@ not process-compose. Consequences when debugging a managed stack:
   process takes the unit down. Debug by running the suspect process directly
   under the devenv shell (bypassing the supervisor) to see its real stderr.
 
-Background lifecycle semantics of the msks appliance (all verified live, #25):
+Background lifecycle semantics (all verified live):
+
+**The supervised process is the bare-host msksd (#141)** — `processes
+msksd`, not the appliance. `devenv processes up`/`down`/`restart`/
+`logs` manage the dev daemon on 127.0.0.1:8660 (state: `.msksd/`).
 
 - `devenv processes up -d` starts the manager detached — it survives
   the shell that launched it, and a second `up -d` is a no-op.
-- `devenv processes down` (from any fresh shell) stops gracefully:
-  the supervisor TERMs the whole process session at once — the run
-  script's trap drives ACPI poweroff through the CH API (up to 10s,
-  within the configured 15s kill grace) while the VMM's own SIGTERM
-  handling shuts it down in parallel — both processes gone, sockets
-  and virtiofsd's pidfile cleaned. A second `down` is a clean no-op.
-- `devenv processes list` / `status` / `logs appliance` inspect the
-  supervised state; `restart` reboots it on demand.
-- A killed VMM (`kill -9`) crash-restarts under the supervisor; a
+- `devenv processes down` (from any fresh shell) stops gracefully;
+  `.msksd/` (catalog, TLS, workspace volumes) persists across
+  restarts.
+- `devenv processes list` / `status` / `logs msksd` inspect the
+  supervised state; `restart msksd` is the daemon-edit inner loop
+  (~7s to serving again).
+- A crashed or exited daemon leaves running workspaces in place —
+  the supervisor's restart brings the daemon back and it re-finds
+  them (verified live; VMMs run in their own sessions). A deliberate
+  `restart`/`down` kills the process tree, workspaces included,
+  without their graceful stop — `msks stop` them first when a clean
+  shutdown matters.
+- A killed daemon crash-restarts under the supervisor; a
   repeatedly-failing process reaches `gave_up` after five restarts
   (`devenv processes logs` shows why).
 - If the manager daemon itself dies while processes run, they keep
   running unsupervised; `devenv processes down` then reports "No
-  process manager is running". Recovery is manual:
-  `pkill -f 'cloud-hypervisor --api-socket <repo>/.appliance/api.sock'`
-  (plus the matching `virtiofsd --socket-path` pattern) and removing
-  the stale sockets under `.appliance/`.
+  process manager is running".
+
+**The appliance is opt-in via tasks (#141)** — `msks:appliance-up`
+(detached, pidfile `.appliance/run.pid`, conditional build) and
+`msks:appliance-down` (TERM to the pid; the run script's ACPI-first
+trap owns teardown, 60s window for a nested workspace's stop cycle
+— shorter windows lost page-cache-only sqlite commits, observed
+live). If the run script dies without its EXIT trap firing, recovery
+is manual:
+`pkill -f 'cloud-hypervisor --api-socket <repo>/.appliance/api.sock'`
+(plus the matching `virtiofsd --socket-path` pattern) and removing
+the stale sockets under `.appliance/`.
 
 ## Naming: no leading underscores on helper functions
 

@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# The appliance as ONE supervised process (#25): run under the devenv
-# process manager (processes.appliance), which owns restart and
-# teardown. No daemonizing, no pidfiles — the supervisor supervises.
+# The appliance as ONE run script (#25, now opt-in under the #141
+# tasks): `msks:appliance-up` builds conditionally and runs this
+# script detached; its pidfile (.appliance/run.pid) is the handle
+# `msks:appliance-down` TERMs, and the TERM/INT trap below owns the
+# graceful choreography — no supervisor required.
 #
 # The store-share daemon is a CHILD of this script, not its own
 # process: virtiofsd is vhost-user 1:1 with the VM — it exits when
 # its client disconnects — so its correct owner is the same lifecycle
-# as the VM: a crash-restart of the appliance brings both back
-# together, and neither outlives the other.
+# as the VM, and neither outlives the other.
 #
 # Graceful stop is a TERM/INT trap: ACPI poweroff through the CH API
 # socket first (the guest's logind turns the button event into a clean
@@ -22,8 +23,33 @@ guest_ip="192.168.77.2"
 # before the token read below: on a fresh checkout the token does not
 # exist until setup creates it. The HOST network is verified, not
 # ensured: appliance-setup.sh names the one-time root installer when
-# anything is missing.
+# anything is missing. This also refuses a DOUBLE-UP while the VM is
+# already running (api-socket probe) — deliberately BEFORE the
+# pidfile write below, so a refused second instance cannot clobber
+# the running appliance's pid with its own short-lived one.
 bash "$root/scripts/appliance-setup.sh"
+
+# The pidfile msks:appliance-down TERMs (#141): the run script may
+# run detached under the opt-in msks:appliance-up task — the pidfile
+# gives the down task its handle. Written only once this instance
+# owns the appliance (setup above passed); removed by the EXIT trap.
+echo $$ >"$app_dir/run.pid"
+
+# The EXIT trap registers HERE, not after virtiofsd/VM bring-up: a
+# TERM or an early failure (virtiofsd never serving, vm.create
+# rejected) must remove the pidfile it just wrote, or the next
+# start needs a down/up self-heal first. The kill targets are
+# guarded — they exist only from their spawn sites below.
+# shellcheck disable=SC2329
+appliance_exit() {
+  kill "${booter:-}" 2>/dev/null || true
+  kill "${vfpid:-}" 2>/dev/null || true
+  # virtiofsd leaves its pidfile behind even on graceful exit; the
+  # run pidfile goes too, so a stopped appliance reports stopped.
+  rm -f "$app_dir/api.sock" "$app_dir/vmm-sock" "$app_dir/vmm-sock.pid" \
+    "$app_dir/run.pid"
+}
+trap appliance_exit EXIT
 
 state_disk="${MSKSD_APPLIANCE_STATE:-$app_dir/state.ext4}"
 bootstrap_token="$(cat "$app_dir/bootstrap-token")"
@@ -138,17 +164,6 @@ JSON
 boot_vm &
 booter=$!
 
-# Invoked by the EXIT trap below; shellcheck 0.11 misses that
-# under a later explicit `exit` (SC2329 false positive).
-# shellcheck disable=SC2329
-cleanup() {
-  kill "$booter" 2>/dev/null || true
-  kill "$vfpid" 2>/dev/null || true
-  # virtiofsd leaves its pidfile behind even on graceful exit.
-  rm -f "$app_dir/api.sock" "$app_dir/vmm-sock" "$app_dir/vmm-sock.pid"
-}
-trap cleanup EXIT
-
 # Invoked by the TERM/INT trap below; same SC2329 false positive
 # as cleanup() above.
 # shellcheck disable=SC2329
@@ -157,9 +172,15 @@ graceful() {
   # The guest's logind turns the ACPI power button into a clean
   # shutdown; bounded wait, then the hard stop. vm.power-button is
   # the ACPI press — vm.shutdown would be the hard stop itself.
+  # The window is 60s, not 10s: a workspace running inside the
+  # appliance needs its own stop cycle (nested VMM ACPI), and a TERM
+  # that lands mid-shutdown loses everything still sitting in the
+  # guest's page cache — observed live: a sqlite row committed only
+  # to the WAL vanished when the 10s window expired under a running
+  # workspace, while artifacts written with fsync survived.
   curl -sS --unix-socket "$app_dir/api.sock" -X PUT \
     http://localhost/api/v1/vm.power-button >/dev/null 2>&1 || true
-  for _ in $(seq 1 50); do
+  for _ in $(seq 1 300); do
     kill -0 "$chpid" 2>/dev/null || break
     sleep 0.2
   done

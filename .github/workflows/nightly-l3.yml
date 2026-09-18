@@ -144,15 +144,15 @@ jobs:
       # answers). This is the recovery the repo documents for
       # exactly that shape: graceful down first, then the named
       # pkill patterns, then the stale sockets. always() — a green
-      # run's down is the clean no-op the supervisor contract
+      # run's down is the clean no-op the pidfile contract
       # promises.
       - name: Ensure appliance is down
         if: always()
         run: |
           devenv --quiet -O dotenv.enable:bool false shell -- bash -c '
-          devenv processes down || true
+          devenv tasks run msks:appliance-down || true
           pkill -f "cloud-hypervisor --api-socket.*.appliance/api.sock" || true
           pkill -f "virtiofsd --socket-path.*.appliance" || true
-          rm -f .appliance/api.sock .appliance/vsock.sock
+          rm -f .appliance/api.sock .appliance/vsock.sock .appliance/run.pid
           echo "appliance teardown: clean"
           '

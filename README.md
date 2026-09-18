@@ -138,12 +138,57 @@ MSKSD_STATE_DIR=/tmp/msksd MSKSD_BOOTSTRAP_TOKEN=dev-secret MSKSD_PORT=8660 msks
 - **Schema**: the SQLite database is created and upgraded by Alembic at
   startup (inside the package: `msks/migrations`).
 
-### The msksd appliance (any Linux host)
+### The bare-host dev daemon (the default `processes up`)
 
-The daemon runs as an appliance microvm — no NixOS required on the
-host or in the guest. Requirements: any Linux with KVM + nested
-virtualization enabled, nix + devenv, and a one-time root setup of
-the host network:
+For daemon-side development, msksd runs NATIVELY on the host
+(#141) — no appliance VM, no appliance artifact assembly:
+
+```bash
+devenv --quiet -O dotenv.enable:bool false shell -- devenv processes up -d
+msks ls                                   # client env is preset (127.0.0.1:8660)
+msks create h1 --no-egress && msks start h1 && msks console h1
+msks rm h1
+```
+
+(The client env is read at shell-entry time — after the daemon's
+first boot, open a fresh devenv shell so `MSKSC_TOKEN` and
+`MSKSC_CAFILE` pick up the minted files.)
+
+The state lives in `.msksd/` (TLS CA, bootstrap token, sqlite
+catalog, workspace volumes); the workspace image archive is built
+conditionally (`msks:build-guest-archive`, keyed on its inputs) and
+imported into the catalog on the daemon's first boot. The client
+environment targets this daemon by default, WITH certificate
+verification (`.msksd/msks-ca.pem`). A daemon edit restarts in
+seconds: `devenv processes restart msksd`.
+
+Workspaces without egress are fully served — vsock console,
+user-data seeds, stop/start persistence. Egress (and `msks ssh`,
+whose forwards ride the egress NIC) holds `CAP_NET_ADMIN` (#101):
+that is the appliance's job, not a dev shell's. A workspace
+created without `--no-egress` refuses to start here — the 503
+names `MSKSD_EGRESS_ENABLED`, which is the appliance's setting;
+remove the workspace and recreate it with `--no-egress`, or move
+to the appliance below.
+
+State notes: `.msksd/` is gitignored but NOT disposable-clean —
+`git clean -xfd` deletes the token, CA, catalog, and every
+workspace volume with it. Each worktree owns its own `.msksd/`,
+and two checkouts cannot both bind 127.0.0.1:8660 — stop one (or
+`export MSKSD_PORT` for the second) before starting another.
+A crashed or exited daemon leaves running workspaces in place —
+the restarted daemon re-finds them (verified live). A deliberate
+`devenv processes restart msksd` / `down` kills the whole process
+tree, workspaces included, without their graceful stop — stop
+them first (`msks stop <id>`) when a clean shutdown matters.
+
+### The msksd appliance (opt-in, any Linux host)
+
+The daemon also runs as an appliance microvm — the deployed shape —
+for egress networking, the guest network bridge, or appliance-image
+work. Requirements: any Linux with KVM + nested virtualization
+enabled, nix + devenv, and a one-time root setup of the host
+network:
 
 ```bash
 sudo bash scripts/appliance-host-setup.sh
@@ -159,20 +204,19 @@ the installer names the one-step fix (`ip link del mskstap0`, then
 re-run) when the appliance moves to another user.
 
 ```bash
-devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:appliance-build
-devenv --quiet -O dotenv.enable:bool false shell -- devenv processes up -d   # or: msks:appliance-up
+devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:appliance-up
 curl -sk https://192.168.77.2:8660/api/v1/health   # TOFU fingerprint: .appliance/serial.log
-devenv --quiet -O dotenv.enable:bool false shell -- devenv processes down     # or: msks:appliance-down
+devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:appliance-down
 ```
 
-**The appliance runs under the devenv process manager (#25)**, not a
-daemonizing task: `processes.appliance` (one supervised process that
-owns both the VM and its store-share daemon) gets crash-restart,
-logs, and clean teardown from the environment's own supervisor.
-Background lifecycle semantics — detached `up -d`, graceful
-ACPI-first teardown, crash-restart and `gave_up`, and the manual
-recovery when the manager daemon dies — are documented in
-AGENTS.md ("Process manager").
+**The appliance boots detached under the opt-in tasks (#141)**:
+`msks:appliance-up` builds conditionally (the #140 keys apply), then
+runs `scripts/appliance-run.sh` detached with a pidfile;
+`msks:appliance-down` TERMs that pid — the run script's ACPI-first
+trap owns the teardown (its 60s window covers a workspace's nested
+stop cycle; a shorter window lost page-cache-only sqlite commits,
+observed live). The default `devenv processes up`/`down` now manage
+the bare-host dev daemon, not the appliance.
 
 How it fits together (#10, #25, #92):
 

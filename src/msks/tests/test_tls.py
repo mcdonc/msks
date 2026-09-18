@@ -1,8 +1,12 @@
 """TLS material: generation, operator-provided mode, TOFU fingerprint."""
 
+import socket
+import ssl
+import threading
 from pathlib import Path
 
 import pytest
+from cryptography import x509
 from msks.server import tls
 from msks.server.tls import fingerprint, generate_ca, generate_leaf, load_or_generate
 
@@ -14,6 +18,72 @@ def test_generate_ca_and_leaf_roundtrip() -> None:
     assert b"BEGIN EC PRIVATE" in ca_key or b"PRIVATE KEY" in ca_key
     assert leaf_cert.startswith(b"-----BEGIN CERTIFICATE-----")
     assert fingerprint(leaf_cert) != fingerprint(ca_cert)
+
+
+def test_generated_pair_verifies_under_strict_client(tmp_path: Path) -> None:
+    """The minted CA + leaf pass Python 3.14's default client context.
+
+    ``ssl.create_default_context()`` sets VERIFY_X509_STRICT there,
+    which rejects a chain without Subject/Authority Key Identifiers —
+    the exact failure the first bare-host dev loop hit (#141): curl
+    accepted the pair, the msks client did not. The handshake below
+    pins that the minted material can never regress behind the
+    strictness clients actually run.
+    """
+    ca_cert, ca_key = generate_ca()
+    leaf_cert, leaf_key = generate_leaf(ca_cert, ca_key, "127.0.0.1")
+    ca = x509.load_pem_x509_certificate(ca_cert)
+    leaf = x509.load_pem_x509_certificate(leaf_cert)
+    caSKI = ca.extensions.get_extension_for_class(x509.SubjectKeyIdentifier)
+    leafSKI = leaf.extensions.get_extension_for_class(x509.SubjectKeyIdentifier)
+    leafAKI = leaf.extensions.get_extension_for_class(x509.AuthorityKeyIdentifier)
+    assert leafAKI.value.key_identifier == caSKI.value.digest
+    assert leafSKI.value.digest != caSKI.value.digest
+    # The pair as files: load_cert_chain wants paths, and the leaf's
+    # SAN names 127.0.0.1, so check_hostname on the client matches
+    # the very address the dev daemon serves.
+    cert_file = tmp_path / "leaf.pem"
+    key_file = tmp_path / "leaf-key.pem"
+    cert_file.write_bytes(leaf_cert)
+    key_file.write_bytes(leaf_key)
+    server_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server_ctx.load_cert_chain(certfile=str(cert_file), keyfile=str(key_file))
+    client_ctx = ssl.create_default_context(cafile=None)
+    # Explicit rather than trusting the interpreter's default: the
+    # assertion must hold under strictness everywhere it can be set.
+    client_ctx.verify_flags |= ssl.VERIFY_X509_STRICT
+    client_ctx.load_verify_locations(cadata=ca_cert.decode())
+    client_ctx.check_hostname = True
+    client, server = socket.socketpair()
+    try:
+        tls_server = server_ctx.wrap_socket(
+            server, server_side=True, do_handshake_on_connect=False
+        )
+        tls_client = client_ctx.wrap_socket(
+            client, do_handshake_on_connect=False, server_hostname="127.0.0.1"
+        )
+        handshake: list[BaseException] = []
+
+        def run_server() -> None:
+            try:
+                tls_server.do_handshake()
+            except BaseException as exc:  # noqa: BLE001 - recorded, not raised
+                handshake.append(exc)
+
+        thread = threading.Thread(target=run_server)
+        thread.start()
+        try:
+            tls_client.do_handshake()  # raises SSLError on a rejected chain
+        finally:
+            thread.join(timeout=5)
+        # A deadlocked server thread would pass the empty-`handshake`
+        # assert below vacuously — it must have finished.
+        assert not thread.is_alive(), "server handshake thread did not finish"
+        assert not handshake, f"server handshake failed: {handshake}"
+        assert tls_client.getpeercert()["subject"]
+    finally:
+        client.close()
+        server.close()
 
 
 def test_generate_leaf_with_ip_host() -> None:

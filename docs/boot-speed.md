@@ -144,14 +144,14 @@ bundle shipping both images shrinks by the archive delta
 ## The appliance
 
 The appliance's readiness number is boot-to-API: from
-`devenv processes up -d` to the first 200 from `GET /api/v1/health`
+`devenv tasks run msks:appliance-up` to the first 200 from
+`GET /api/v1/health`
 on `https://192.168.77.2:8660` — measured with
 `scripts/perf-appliance.py` (`--runs 4 --fresh`), which also
 separates the first boot against a fresh state disk (image import,
 token generation) from the warm boots an operator's restart pays.
 
 ```bash
-devenv tasks run msks:appliance-build
 python scripts/perf-appliance.py --runs 4 --fresh
 ```
 
