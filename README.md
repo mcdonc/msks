@@ -189,8 +189,8 @@ appliance moves to another user.
 
 ```bash
 devenv --quiet -O dotenv.enable:bool false shell -- devenv processes up -d
-msks ls                                   # client env is preset (192.168.77.2:8660)
-curl https://192.168.77.2:8660/api/v1/health   # verified once msks-ca.pem exists
+msks ls                                   # in a FRESH shell (see the note below)
+curl --cacert .appliance/msks-ca.pem https://192.168.77.2:8660/api/v1/health
 devenv --quiet -O dotenv.enable:bool false shell -- devenv processes down
 ```
 
@@ -217,6 +217,13 @@ devenv shell. The presets are read at shell-entry time, so a rotated
 token — or a replaced state disk, whose old CA stays in place until
 the new guest serves and the extraction refreshes it — needs a fresh
 shell too; that window self-heals on every boot.
+
+On a fresh checkout the presets start EMPTY — the token and CA do
+not exist until the appliance's first boot — so `msks` in that
+first shell names the missing env (curl above uses `-sk` plus the
+TOFU fingerprint on `.appliance/serial.log` until the CA file
+exists). Open a fresh devenv shell after the first boot; the client
+env is read at shell-entry time.
 
 **The dev tree (#144): daemon edits without appliance rebuilds.**
 `MSKS_DEV_TREE=1` with `processes up` shares this checkout

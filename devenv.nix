@@ -416,7 +416,7 @@ in
 
   # The bare-host daemon by HAND (#146): no managed process — run
   # `msksd` from a devenv shell when the appliance is not wanted
-  # (no KVM, API/client-only work). The two tasks below converge a
+  # (no KVM, API/client-only work). The two tasks above converge a
   # workable state under .msksd/ first (token, default image);
   # egress stays off (that is the appliance's job, #101) and the
   # client env presets target the appliance, so point the client at
