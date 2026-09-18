@@ -25,14 +25,19 @@ def test_base_ruleset_masquerades_the_uplink() -> None:
 
 
 def test_vm_ruleset_scopes_the_tap() -> None:
-    ruleset = nft.vm_ruleset("ws-a", "msks-tap", "172.31.0.1", "172.31.0.2", "eth0")
+    ruleset = nft.vm_ruleset(
+        "ws-a", "msks-tap", "172.31.0.1", "172.31.0.2", "eth0"
+    )
     assert f"table inet {table_name('ws-a')}" in ruleset
     # Forward: only this guest's source leaves via the uplink; only
     # established replies come back toward the tap; everything else
     # in either direction across this tap drops (which is also what
     # blocks guest-to-guest hops between two taps).
     assert "type filter hook forward priority filter" in ruleset
-    assert 'iifname "msks-tap" ip saddr 172.31.0.1 oifname "eth0" accept' in ruleset
+    assert (
+        'iifname "msks-tap" ip saddr 172.31.0.1 oifname "eth0" accept'
+        in ruleset
+    )
     assert 'oifname "msks-tap" ct state established,related accept' in ruleset
     assert 'oifname "msks-tap" drop' in ruleset
     assert 'iifname "msks-tap" drop' in ruleset
@@ -44,7 +49,8 @@ def test_vm_ruleset_scopes_the_tap() -> None:
     assert "type filter hook input priority filter" in ruleset
     assert 'iifname "msks-tap" udp dport 67 accept' in ruleset
     assert (
-        'iifname "msks-tap" ip saddr 172.31.0.1 ip daddr 172.31.0.2 udp dport 53 accept'
+        'iifname "msks-tap" ip saddr 172.31.0.1 '
+        "ip daddr 172.31.0.2 udp dport 53 accept"
     ) in ruleset
     assert (
         'iifname "msks-tap" ip saddr 172.31.0.1 '
@@ -55,20 +61,25 @@ def test_vm_ruleset_scopes_the_tap() -> None:
     # is dead code, and a dead established accept is exactly the
     # bug the forward dial once died of (#110's smoke). Scoped per
     # chain — both chains carry iifname drops.
-    egress = ruleset[ruleset.index("chain egress") : ruleset.index("chain ingress")]
+    egress = ruleset[
+        ruleset.index("chain egress") : ruleset.index("chain ingress")
+    ]
     ingress = ruleset[ruleset.index("chain ingress") :]
     assert egress.index(
         'oifname "msks-tap" ct state established,related accept'
     ) < egress.index('oifname "msks-tap" drop')
     assert ingress.index(
-        'iifname "msks-tap" ip saddr 172.31.0.1 ct state established,related accept'
+        'iifname "msks-tap" ip saddr 172.31.0.1 '
+        "ct state established,related accept"
     ) < ingress.index('iifname "msks-tap" drop')
 
 
 async def test_apply_base_and_install_vm(tools) -> None:
     settings, log = tools
     await nft.apply_base(settings)
-    await nft.install_vm(settings, "ws-a", "msks-tap", "172.31.0.1", "172.31.0.2")
+    await nft.install_vm(
+        settings, "ws-a", "msks-tap", "172.31.0.1", "172.31.0.2"
+    )
     # install converges: the old table drops before the fresh one.
     assert log_lines(log) == [
         "-f -",
@@ -82,7 +93,8 @@ async def test_delete_vm_table_tolerates_absence(tools, monkeypatch) -> None:
     monkeypatch.setenv(NFT_FAIL_AT, "delete table")
     monkeypatch.setenv(
         NFT_STDERR,
-        "netlink: Error: cache initialization failed: No such file or directory",
+        "netlink: Error: cache initialization failed: "
+        "No such file or directory",
     )
     await nft.delete_vm_table(settings, "ws-a")
     assert log_lines(log) == [f"delete table inet {table_name('ws-a')}"]
@@ -107,7 +119,9 @@ async def test_install_vm_pins_the_workspace_ruleset(tools) -> None:
     guest address (#70 review) — chain↔workspace scoping, end to end
     through the stub's captured stdin."""
     settings, log = tools
-    await nft.install_vm(settings, "ws-pin", "msks-pinned", "172.31.0.1", "172.31.0.2")
+    await nft.install_vm(
+        settings, "ws-pin", "msks-pinned", "172.31.0.1", "172.31.0.2"
+    )
     applied = log.with_name(log.name + ".stdin").read_text()
     assert 'iifname "msks-pinned" ip saddr 172.31.0.1' in applied
     assert "msks-e-" in applied

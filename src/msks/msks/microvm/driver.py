@@ -34,7 +34,9 @@ class MicrovmDriver(abc.ABC):
         """Report the current lifecycle state of one workspace."""
 
     @abc.abstractmethod
-    async def shutdown(self, workspace_id: str, timeout_s: float | None = None) -> None:
+    async def shutdown(
+        self, workspace_id: str, timeout_s: float | None = None
+    ) -> None:
         """Ask the VM to power off. Backends bound to a local process
         wait for the exit within the deadline and raise on timeout;
         remote backends (k8s) request deletion with a grace period and
@@ -75,4 +77,6 @@ class MicrovmDriver(abc.ABC):
         interactive console raise MicrovmError; the API layer maps
         that to a close code, never a silent no-op.
         """
-        raise MicrovmError(f"the {type(self).__name__} backend has no console support")
+        raise MicrovmError(
+            f"the {type(self).__name__} backend has no console support"
+        )

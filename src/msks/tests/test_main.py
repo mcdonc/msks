@@ -26,7 +26,9 @@ def test_ssl_paths_operator() -> None:
 
 
 def test_server_config_plain_and_tls() -> None:
-    plain = server_config(app_with(ServerSettings(host="127.0.0.1", port=8999)))
+    plain = server_config(
+        app_with(ServerSettings(host="127.0.0.1", port=8999))
+    )
     assert plain.host == "127.0.0.1" and plain.port == 8999
     secure = server_config(
         app_with(ServerSettings(tls_cert="/c.pem", tls_key="/k.pem"))
@@ -78,14 +80,18 @@ def test_serve_operator_certs_skip_fingerprint(
     monkeypatch.setattr(main_mod, "run_forever", lambda app: None)
     app = app_with(
         ServerSettings(
-            db_path=tmp_path / "x.db", tls_cert="/op/c.pem", tls_key="/op/k.pem"
+            db_path=tmp_path / "x.db",
+            tls_cert="/op/c.pem",
+            tls_key="/op/k.pem",
         )
     )
     main_mod.serve(app, no_tls=False)
     assert app.state.settings.server.tls_cert == "/op/c.pem"
 
 
-def test_main_reload_arms_watcher(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+def test_main_reload_arms_watcher(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
     monkeypatch.setenv("MSKSD_CONFIG_DIR", str(tmp_path / "cfg"))
     monkeypatch.setenv("MSKSD_STATE_DIR", str(tmp_path / "state"))
     previous = signal.getsignal(signal.SIGHUP)

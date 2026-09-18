@@ -90,7 +90,9 @@ class Model:
         future failure worded the same — needs an operator, not a
         guess, and is re-raised.
         """
-        torn = "already exists" in str(exc) or "duplicate column name" in str(exc)
+        torn = "already exists" in str(exc) or "duplicate column name" in str(
+            exc
+        )
         if not torn or not self.torn_head_is_next(config):
             raise
         command.stamp(config, "head")
@@ -103,7 +105,9 @@ class Model:
         engine = create_engine(f"sqlite:///{self._db_path()}")
         try:
             with engine.connect() as connection:
-                current = MigrationContext.configure(connection).get_current_revision()
+                current = MigrationContext.configure(
+                    connection
+                ).get_current_revision()
         finally:
             engine.dispose()
         return current is None or current == revisions[1]
@@ -120,7 +124,9 @@ class Model:
     async def create_token(
         self, name: str, plaintext: str | None = None
     ) -> tuple[int, str]:
-        """Insert a token; returns ``(id, plaintext)`` — plaintext shown once."""
+        """Insert a token; returns ``(id, plaintext)``.
+
+        The plaintext is shown once."""
         token = plaintext if plaintext is not None else new_token()
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
@@ -201,7 +207,9 @@ class Model:
         """
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
-            row = Workspace(**workspace_fields(spec, image_hash, host, ssh_privkey))
+            row = Workspace(
+                **workspace_fields(spec, image_hash, host, ssh_privkey)
+            )
             session.add(row)
             await session.commit()
             return workspace_dict(row)
@@ -217,7 +225,9 @@ class Model:
         """All workspace rows."""
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
-            rows = await session.scalars(select(Workspace).order_by(Workspace.id))
+            rows = await session.scalars(
+                select(Workspace).order_by(Workspace.id)
+            )
             return [workspace_dict(row) for row in rows]
 
     async def set_status(self, workspace_id: str, status: str) -> bool:
@@ -263,7 +273,10 @@ class Model:
             row = await session.get(Workspace, workspace_id)
             if row is None:
                 return None
-            return {"public_key": row.ssh_pubkey, "private_key": row.ssh_privkey}
+            return {
+                "public_key": row.ssh_pubkey,
+                "private_key": row.ssh_privkey,
+            }
 
     async def delete_workspace(self, workspace_id: str) -> bool:
         """Remove a workspace row; False when absent."""
@@ -278,7 +291,10 @@ class Model:
 
 
 def workspace_fields(
-    spec: VmSpec, image_hash: str | None, host: str | None, ssh_privkey: str | None
+    spec: VmSpec,
+    image_hash: str | None,
+    host: str | None,
+    ssh_privkey: str | None,
 ) -> dict:
     """The ORM column values a VmSpec maps to."""
     return {

@@ -42,7 +42,9 @@ def load_context(path: Path) -> tuple[dict, dict]:
     except OSError as exc:
         raise MicrovmError(f"cannot read kubeconfig {path}: {exc}") from exc
     except yaml.YAMLError as exc:
-        raise MicrovmError(f"kubeconfig {path} is not valid YAML: {exc}") from exc
+        raise MicrovmError(
+            f"kubeconfig {path} is not valid YAML: {exc}"
+        ) from exc
     current = document.get("current-context")
     if not current:
         raise MicrovmError(f"kubeconfig {path} has no current-context")
@@ -95,7 +97,8 @@ def auth_header(user: dict) -> dict[str, str]:
     token = user.get("token")
     if not token:
         raise MicrovmError(
-            "kubeconfig user has no token; use a token-based ServiceAccount kubeconfig"
+            "kubeconfig user has no token; "
+            "use a token-based ServiceAccount kubeconfig"
         )
     return {"Authorization": f"Bearer {token}"}
 

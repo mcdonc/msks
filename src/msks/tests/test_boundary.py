@@ -20,13 +20,15 @@ def server_imports(path: Path) -> list[str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module:
             if any(
-                node.module == m or node.module.startswith(m + ".") for m in FORBIDDEN
+                node.module == m or node.module.startswith(m + ".")
+                for m in FORBIDDEN
             ):
                 found.append(f"from {node.module}")
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if any(
-                    alias.name == m or alias.name.startswith(m + ".") for m in FORBIDDEN
+                    alias.name == m or alias.name.startswith(m + ".")
+                    for m in FORBIDDEN
                 ):
                     found.append(f"import {alias.name}")
         if isinstance(node, ast.ImportFrom) and node.module == "msks":

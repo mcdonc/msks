@@ -95,7 +95,9 @@ def pod_manifest(spec: VmSpec, settings: K8sSettings) -> dict:
                 },
                 {
                     "name": "workspace-state",
-                    "persistentVolumeClaim": {"claimName": pvc_name(spec.workspace_id)},
+                    "persistentVolumeClaim": {
+                        "claimName": pvc_name(spec.workspace_id)
+                    },
                 },
             ],
             "containers": [
@@ -135,7 +137,9 @@ def pvc_manifest(spec: VmSpec, settings: K8sSettings) -> dict:
     """
     claim: dict = {
         "accessModes": ["ReadWriteOnce"],
-        "resources": {"requests": {"storage": f"{storage_gib(spec, settings)}Gi"}},
+        "resources": {
+            "requests": {"storage": f"{storage_gib(spec, settings)}Gi"}
+        },
     }
     if settings.storage_class:
         claim["storageClassName"] = settings.storage_class
@@ -155,7 +159,10 @@ def pvc_manifest(spec: VmSpec, settings: K8sSettings) -> dict:
 
 
 def _pod_url(settings: K8sSettings, workspace_id: str) -> str:
-    return f"/api/v1/namespaces/{settings.namespace}/pods/{pod_name(workspace_id)}"
+    return (
+        f"/api/v1/namespaces/{settings.namespace}"
+        f"/pods/{pod_name(workspace_id)}"
+    )
 
 
 def _pods_url(settings: K8sSettings) -> str:
@@ -222,13 +229,16 @@ class KubernetesRunner(MicrovmDriver):
         if response.status_code in (200, 201):
             return
         raise MicrovmError(
-            f"k8s pvc create failed: {response.status_code} {response.text.strip()}",
+            f"k8s pvc create failed: {response.status_code} "
+            f"{response.text.strip()}",
             status=response.status_code,
         )
 
     async def _check_claim_size(self, spec: VmSpec, client) -> None:
         """Refuse a reused claim too small for the new workspace."""
-        response = await client.get(_pvc_url(self._settings().k8s, spec.workspace_id))
+        response = await client.get(
+            _pvc_url(self._settings().k8s, spec.workspace_id)
+        )
         if response.status_code != 200:
             return
         existing = claim_gib(response.json())
@@ -273,20 +283,25 @@ class KubernetesRunner(MicrovmDriver):
     async def info(self, workspace_id: str) -> VmInfo:
         client = await self._client()
         try:
-            response = await client.get(_pod_url(self._settings().k8s, workspace_id))
+            response = await client.get(
+                _pod_url(self._settings().k8s, workspace_id)
+            )
         finally:
             await client.aclose()
         if response.status_code == 404:
             return VmInfo(workspace_id, VmStatus.ABSENT)
         if response.status_code >= 400:
             raise MicrovmError(
-                f"k8s pod get failed: {response.status_code} {response.text.strip()}",
+                f"k8s pod get failed: {response.status_code} "
+                f"{response.text.strip()}",
                 status=response.status_code,
             )
         phase = response.json().get("status", {}).get("phase")
         return VmInfo(workspace_id, map_phase(phase))
 
-    async def shutdown(self, workspace_id: str, timeout_s: float | None = None) -> None:
+    async def shutdown(
+        self, workspace_id: str, timeout_s: float | None = None
+    ) -> None:
         """Delete with the graceful termination period.
 
         A missing pod is success, not an error: stopping a workspace
@@ -316,7 +331,8 @@ class KubernetesRunner(MicrovmDriver):
         if response.status_code in (200, 404):
             return
         raise MicrovmError(
-            f"k8s pvc delete failed: {response.status_code} {response.text.strip()}",
+            f"k8s pvc delete failed: {response.status_code} "
+            f"{response.text.strip()}",
             status=response.status_code,
         )
 

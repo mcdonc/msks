@@ -22,7 +22,9 @@ import httpx
 import pytest
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, padding
-from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+from cryptography.hazmat.primitives.asymmetric.utils import (
+    decode_dss_signature,
+)
 from msks.client import agent, cli, ssh
 from msks.identity import mint
 
@@ -127,7 +129,8 @@ def test_rsa_sign_refuses_an_unpinned_digest() -> None:
     rsa_private = agent.load_private(RSA_PEM)
     assert agent.sign(rsa_private, b"x", 0) is None
     assert (
-        agent.sign(rsa_private, b"x", agent.RSA_SHA2_256 | agent.RSA_SHA2_512) is None
+        agent.sign(rsa_private, b"x", agent.RSA_SHA2_256 | agent.RSA_SHA2_512)
+        is None
     )
     assert agent.sign(agent.load_private(PEM), b"x", 0) is not None
     assert agent.sign(agent.load_private(ECDSA_PEM), b"x", 0) is not None
@@ -149,7 +152,9 @@ def test_rsa_honors_the_sha512_flag() -> None:
     verify(blob, private, challenge, sha512=True)
 
 
-def verify(blob: bytes, private, challenge: bytes, sha512: bool = False) -> None:
+def verify(
+    blob: bytes, private, challenge: bytes, sha512: bool = False
+) -> None:
     reader = agent.Reader(blob)
     algo = reader.string().decode()
     sig = reader.string()
@@ -173,7 +178,9 @@ def der_from_mpints(sig: bytes) -> bytes:
 
 
 def der_from_rs(r: int, s: int) -> bytes:
-    from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
+    from cryptography.hazmat.primitives.asymmetric.utils import (
+        encode_dss_signature,
+    )
 
     return encode_dss_signature(r, s)
 
@@ -205,7 +212,9 @@ def test_agent_lists_and_signs_over_the_socket() -> None:
         assert agent.socket_mode(served.server_address) == 0o600
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
             sock.connect(served.server_address)
-            listing = call_agent(sock, struct.pack("B", agent.REQUEST_IDENTITIES))
+            listing = call_agent(
+                sock, struct.pack("B", agent.REQUEST_IDENTITIES)
+            )
             assert listing[0] == agent.IDENTITIES_ANSWER
             reader = agent.Reader(listing)
             reader.offset = 1
@@ -303,7 +312,9 @@ def test_agent_stays_quiet_when_the_peer_resets(
     with agent.serve(agent.load_private(PEM), "") as served:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as gone:
             gone.connect(served.server_address)
-            gone.sendall(agent.frame(struct.pack("B", agent.REQUEST_IDENTITIES)))
+            gone.sendall(
+                agent.frame(struct.pack("B", agent.REQUEST_IDENTITIES))
+            )
             # SO_LINGER 0: close sends RST, so the server's reply
             # write fails after the recv succeeded.
             gone.setsockopt(
@@ -316,7 +327,9 @@ def test_agent_stays_quiet_when_the_peer_resets(
         # The agent still serves the next connection.
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as fresh:
             fresh.connect(served.server_address)
-            answer = call_agent(fresh, struct.pack("B", agent.REQUEST_IDENTITIES))
+            answer = call_agent(
+                fresh, struct.pack("B", agent.REQUEST_IDENTITIES)
+            )
             assert answer[0] == agent.IDENTITIES_ANSWER
     assert capsys.readouterr().err == ""
 
@@ -464,7 +477,9 @@ def test_known_hosts_path_names_an_unusable_cache(tmp_path: Path) -> None:
         ssh.known_hosts_path("alpha", base=tmp_path)
 
 
-def test_client_identity_path_lives_under_the_data_root(tmp_path: Path) -> None:
+def test_client_identity_path_lives_under_the_data_root(
+    tmp_path: Path,
+) -> None:
     assert ssh.client_identity_path("alpha", base=tmp_path) == (
         tmp_path / "alpha" / "identity"
     )
@@ -564,7 +579,9 @@ def test_cache_dir_honors_xdg(monkeypatch: pytest.MonkeyPatch) -> None:
         (["--", "uname", "-a"], ["--", "uname", "-a"]),
     ],
 )
-def test_passthrough_args_passes_verbatim(raw: list[str], expected: list[str]) -> None:
+def test_passthrough_args_passes_verbatim(
+    raw: list[str], expected: list[str]
+) -> None:
     assert ssh.passthrough_args(raw) == expected
 
 
@@ -629,7 +646,9 @@ def test_build_args_injects_the_default_user() -> None:
 
 
 def test_build_args_leaves_the_user_to_ssh() -> None:
-    argv = ssh.build_args("alpha", "/agent.sock", "/id.pub", "/kh", ["-l", "root"])
+    argv = ssh.build_args(
+        "alpha", "/agent.sock", "/id.pub", "/kh", ["-l", "root"]
+    )
     assert argv[1:3] == ["-l", "root"]
     assert argv[-1] == "alpha"
     assert "-l" not in argv[3:]  # the default is not injected twice
@@ -644,7 +663,12 @@ def test_build_args_lets_an_explicit_override_win() -> None:
         "/agent.sock",
         "/id.pub",
         "/kh",
-        ["-o", "UserKnownHostsFile=/dev/null", "-o", "StrictHostKeyChecking=no"],
+        [
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-o",
+            "StrictHostKeyChecking=no",
+        ],
     )
     assert argv[1:5] == [
         "-o",
@@ -666,7 +690,9 @@ def test_build_args_carries_a_remote_command_after_the_host() -> None:
 def test_build_args_treats_a_leading_plain_word_as_the_command() -> None:
     """The natural form: `msks ssh ws -- uname -a` must not read
     `uname` as the destination (the host is always the workspace)."""
-    argv = ssh.build_args("alpha", "/agent.sock", "/id.pub", "/kh", ["uname", "-a"])
+    argv = ssh.build_args(
+        "alpha", "/agent.sock", "/id.pub", "/kh", ["uname", "-a"]
+    )
     assert argv[-3:] == ["alpha", "uname", "-a"]
 
 
@@ -721,7 +747,9 @@ def test_run_workspace_ssh_runs_ssh_and_stops_the_agent(
 
     stopped: list = []
     monkeypatch.setattr(ssh, "prepare", fake_prepare)
-    monkeypatch.setattr(ssh, "known_hosts_path", lambda ws, base=None: str(tmp_path))
+    monkeypatch.setattr(
+        ssh, "known_hosts_path", lambda ws, base=None: str(tmp_path)
+    )
 
     @contextmanager
     def fake_serve(private, comment):
@@ -755,14 +783,18 @@ def test_run_workspace_ssh_names_a_missing_binary(
         return KEY
 
     monkeypatch.setattr(ssh, "prepare", fake_prepare)
-    monkeypatch.setattr(ssh, "known_hosts_path", lambda ws, base=None: str(tmp_path))
+    monkeypatch.setattr(
+        ssh, "known_hosts_path", lambda ws, base=None: str(tmp_path)
+    )
 
     def missing(argv, **kwargs):
         raise FileNotFoundError("ssh")
 
     monkeypatch.setattr(ssh.subprocess, "run", missing)
     with pytest.raises(SystemExit, match="ssh not found"):
-        ssh.run_workspace_ssh("alpha", [])  # the real agent stops around the failure
+        ssh.run_workspace_ssh(
+            "alpha", []
+        )  # the real agent stops around the failure
 
 
 # --- CLI wiring ---
@@ -774,7 +806,9 @@ def test_cli_parses_the_ssh_passthrough() -> None:
     assert args.passthrough == ["-l", "root"]  # argparse eats the --
 
 
-def test_cli_dispatch_reaches_the_ssh_body(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cli_dispatch_reaches_the_ssh_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls: list = []
     monkeypatch.setattr(
         cli,

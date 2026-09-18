@@ -43,7 +43,9 @@ class StubMicrovm:
         status = self.statuses.get(workspace_id, VmStatus.ABSENT)
         return VmInfo(workspace_id, status)
 
-    async def shutdown(self, workspace_id: str, timeout_s: float | None = None) -> None:
+    async def shutdown(
+        self, workspace_id: str, timeout_s: float | None = None
+    ) -> None:
         self.calls.append(("shutdown", workspace_id))
         self.statuses[workspace_id] = VmStatus.STOPPED
 
@@ -88,14 +90,18 @@ async def test_lifespan_startup_failure_closes_engine(tmp_path: Path) -> None:
     settings = Settings(
         vmm=VmmSettings(state_dir=tmp_path / "vms"),
         net=NetSettings(enabled=False),
-        server=ServerSettings(db_path=tmp_path / "f.db", bootstrap_token=TOKEN),
+        server=ServerSettings(
+            db_path=tmp_path / "f.db", bootstrap_token=TOKEN
+        ),
     )
     app = build_app(settings)
     model = app.state.model
 
     async def bootstrap_boom() -> None:
         model.engine()  # the real bootstrap creates the engine first
-        raise OperationalError("statement", {}, Exception("database is locked"))
+        raise OperationalError(
+            "statement", {}, Exception("database is locked")
+        )
 
     model.bootstrap_token = bootstrap_boom
     api = build_api(app)
@@ -118,13 +124,17 @@ async def test_auth_required(client) -> None:
     assert response.status_code == 401
     response = await http.get("/api/v1/tokens", headers=auth("nope"))
     assert response.status_code == 401
-    response = await http.get("/api/v1/tokens", headers={"Authorization": "weird"})
+    response = await http.get(
+        "/api/v1/tokens", headers={"Authorization": "weird"}
+    )
     assert response.status_code == 401
 
 
 async def test_token_admin(client) -> None:
     http, _app, _stub = client
-    created = await http.post("/api/v1/tokens", json={"name": "cli"}, headers=auth())
+    created = await http.post(
+        "/api/v1/tokens", json={"name": "cli"}, headers=auth()
+    )
     assert created.status_code == 201
     plaintext = created.json()["token"]
     listed = await http.get("/api/v1/tokens", headers=auth())
@@ -177,7 +187,9 @@ async def test_workspace_lifecycle(client) -> None:
     assert deleted.status_code == 200
     missing = await http.get("/api/v1/workspaces/ws-a", headers=auth())
     assert missing.status_code == 404
-    start_missing = await http.post("/api/v1/workspaces/ghost/start", headers=auth())
+    start_missing = await http.post(
+        "/api/v1/workspaces/ghost/start", headers=auth()
+    )
     assert start_missing.status_code == 404
 
 
@@ -231,7 +243,9 @@ async def test_ssh_key_endpoint_auth_and_missing(client) -> None:
     await app.state.model.create_workspace(
         VmSpec(workspace_id="ws-old", kernel="/k", rootfs="/r")
     )
-    legacy = await http.get("/api/v1/workspaces/ws-old/ssh-key", headers=auth())
+    legacy = await http.get(
+        "/api/v1/workspaces/ws-old/ssh-key", headers=auth()
+    )
     assert legacy.status_code == 404
     assert "no minted identity" in legacy.json()["detail"]
 
@@ -296,7 +310,9 @@ async def test_create_accepts_any_supplied_pubkey_type(client) -> None:
     sk = "sk-ssh-ed25519@openssh.com"
     sk_line = (
         f"{sk} "
-        + base64.b64encode(len(sk).to_bytes(4, "big") + sk.encode() + b"rest").decode()
+        + base64.b64encode(
+            len(sk).to_bytes(4, "big") + sk.encode() + b"rest"
+        ).decode()
     )
     for index, line in enumerate((p384, sk_line)):
         wid = f"ws-any-{index}"
@@ -314,7 +330,9 @@ async def test_create_accepts_any_supplied_pubkey_type(client) -> None:
         assert created.json()["ssh_pubkey"].startswith(f"{line.split()[0]} ")
         assert created.json()["ssh_pubkey"].endswith(f"msks-client:{wid}")
         assert stub.seen_specs[wid].ssh_pubkey == created.json()["ssh_pubkey"]
-        key = await http.get(f"/api/v1/workspaces/{wid}/ssh-key", headers=auth())
+        key = await http.get(
+            f"/api/v1/workspaces/{wid}/ssh-key", headers=auth()
+        )
         assert key.json()["private_key"] is None
 
 
@@ -325,7 +343,12 @@ async def test_create_rejects_a_malformed_pubkey(client) -> None:
     http, _app, _stub = client
     created = await http.post(
         "/api/v1/workspaces",
-        json={"id": "ws-bad", "kernel": "/k", "rootfs": "/r", "ssh_pubkey": "nonsense"},
+        json={
+            "id": "ws-bad",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "ssh_pubkey": "nonsense",
+        },
         headers=auth(),
     )
     assert created.status_code == 400
@@ -359,7 +382,9 @@ async def test_k8s_refuses_client_supplied_pubkey(client) -> None:
     app.state.settings.vmm.driver = "local"
 
 
-async def test_concurrent_same_id_creates_serialize(client, monkeypatch) -> None:
+async def test_concurrent_same_id_creates_serialize(
+    client, monkeypatch
+) -> None:
     """Two concurrent creates of one id (#111): exactly one 201, the
     loser the honest 409 — and the winner's mint never interleaves
     with the loser's prepare, the pair (row, seed) comes from one
@@ -402,7 +427,9 @@ async def test_concurrent_same_id_creates_serialize(client, monkeypatch) -> None
     assert key.json()["public_key"].endswith("msksd:ws-race")
 
 
-async def test_create_with_bad_key_type_setting_is_500(client, monkeypatch) -> None:
+async def test_create_with_bad_key_type_setting_is_500(
+    client, monkeypatch
+) -> None:
     """A directly-built Settings carrying an unknown key type (env
     loading validates first) fails the create with the named error,
     not a bare traceback."""
@@ -482,7 +509,9 @@ async def test_create_race_maps_to_409(client, monkeypatch) -> None:
     assert ("cleanup", "ws-race") not in stub.calls
 
 
-async def test_create_race_after_prepare_answers_409(client, monkeypatch) -> None:
+async def test_create_race_after_prepare_answers_409(
+    client, monkeypatch
+) -> None:
     """A racer that won between the 404 check and a strict-prepare
     refusal turns the 503 into the honest 409."""
     http, app, _stub = client
@@ -614,7 +643,9 @@ async def test_reset_falls_back_to_kill(client) -> None:
 
 async def test_reset_missing_workspace_is_404(client) -> None:
     http, _app, _stub = client
-    response = await http.post("/api/v1/workspaces/ghost/reset", headers=auth())
+    response = await http.post(
+        "/api/v1/workspaces/ghost/reset", headers=auth()
+    )
     assert response.status_code == 404
 
 
@@ -629,7 +660,9 @@ async def test_reset_on_foreign_host_is_409(client) -> None:
         headers=auth(),
     )
     app.state.settings.vmm.host_name = "elsewhere"
-    response = await http.post("/api/v1/workspaces/ws-foreign/reset", headers=auth())
+    response = await http.post(
+        "/api/v1/workspaces/ws-foreign/reset", headers=auth()
+    )
     assert response.status_code == 409
     assert "lives on host" in response.json()["detail"]
     assert ("reset", "ws-foreign") not in stub.calls
@@ -729,7 +762,9 @@ async def test_delete_never_started_workspace(client) -> None:
         json={"id": "never-started", "kernel": "/k", "rootfs": "/r"},
         headers=auth(),
     )
-    response = await http.delete("/api/v1/workspaces/never-started", headers=auth())
+    response = await http.delete(
+        "/api/v1/workspaces/never-started", headers=auth()
+    )
     assert response.status_code == 200
 
 
@@ -754,7 +789,12 @@ async def test_create_records_egress(client) -> None:
     assert plain.json()["egress"] is True  # the default
     quiet = await http.post(
         "/api/v1/workspaces",
-        json={"id": "ws-quiet", "kernel": "/k", "rootfs": "/r", "egress": False},
+        json={
+            "id": "ws-quiet",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "egress": False,
+        },
         headers=auth(),
     )
     assert quiet.json()["egress"] is False
@@ -788,7 +828,12 @@ async def test_create_with_user_data_reaches_the_row(client) -> None:
     payload = "#!/bin/sh\necho seeded > /root/stamp\n"
     created = await http.post(
         "/api/v1/workspaces",
-        json={"id": "ws-ud", "kernel": "/k", "rootfs": "/r", "user_data": payload},
+        json={
+            "id": "ws-ud",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "user_data": payload,
+        },
         headers=auth(),
     )
     assert created.status_code == 201, created.text
@@ -802,7 +847,12 @@ async def test_create_rejects_empty_user_data(client) -> None:
     http, _app, _stub = client
     empty = await http.post(
         "/api/v1/workspaces",
-        json={"id": "ws-ud", "kernel": "/k", "rootfs": "/r", "user_data": "  \n"},
+        json={
+            "id": "ws-ud",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "user_data": "  \n",
+        },
         headers=auth(),
     )
     assert empty.status_code == 400
@@ -866,16 +916,23 @@ async def test_create_accepts_both_payload_forms(client) -> None:
         ("ws-sh", {"image": "img-cloud", "user_data": "#!/bin/sh\n"}),
         # No manifest, no declaration: the same acceptance (msksd
         # cannot police a foreign guest's consumer).
-        ("ws-bare", {"kernel": "/k", "rootfs": "/r", "user_data": cloud_config}),
+        (
+            "ws-bare",
+            {"kernel": "/k", "rootfs": "/r", "user_data": cloud_config},
+        ),
     ):
         created = await http.post(
-            "/api/v1/workspaces", json={"id": wid, **body_extra}, headers=auth()
+            "/api/v1/workspaces",
+            json={"id": wid, **body_extra},
+            headers=auth(),
         )
         assert created.status_code == 201, created.text
         assert created.json()["user_data"] == body_extra["user_data"]
 
 
-async def test_workspace_mutation_is_refused_with_a_named_error(client) -> None:
+async def test_workspace_mutation_is_refused_with_a_named_error(
+    client,
+) -> None:
     """user_data is create-time (#41): PUT/PATCH answer a 405 that
     says what to do instead, and an unknown id still 404s."""
     http, _app, _stub = client

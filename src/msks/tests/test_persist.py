@@ -54,7 +54,9 @@ def write_qemu_stub(directory: Path, record: Path) -> Path:
 def write_mkfs_stub(directory: Path, record: Path) -> Path:
     """A recording mkfs.ext4 stand-in."""
     stub = directory / "mkfs.ext4"
-    stub.write_text(f'#!/bin/sh\nprintf "%s\\n" "mkfs $*" >> {record}\nexit 0\n')
+    stub.write_text(
+        f'#!/bin/sh\nprintf "%s\\n" "mkfs $*" >> {record}\nexit 0\n'
+    )
     stub.chmod(0o755)
     return stub
 
@@ -147,7 +149,9 @@ def test_paths_pin_the_layout(tmp_path: Path) -> None:
     assert persist.home_volume_path(tmp_path, "ws1") == (
         tmp_path / "volumes" / "ws1.ext4"
     )
-    assert persist.seed_path(tmp_path, "ws1") == (tmp_path / "vms" / "ws1" / "seed.img")
+    assert persist.seed_path(tmp_path, "ws1") == (
+        tmp_path / "vms" / "ws1" / "seed.img"
+    )
 
 
 async def test_ensure_creates_overlay_and_volume(tools) -> None:
@@ -289,7 +293,8 @@ async def test_garbage_info_maps_to_named_error(tmp_path: Path) -> None:
     settings = VmmSettings(state_dir=tmp_path / "state", qemu_img=str(stub))
     with pytest.raises(MicrovmError, match="no virtual-size"):
         await persist.ensure_artifacts(
-            VmSpec(workspace_id=WID, kernel=tmp_path / "k", rootfs=base), settings
+            VmSpec(workspace_id=WID, kernel=tmp_path / "k", rootfs=base),
+            settings,
         )
 
 
@@ -382,7 +387,9 @@ async def test_failed_seed_rolls_back_the_fresh_pair(tools) -> None:
     settings, record, base = tools
     mkisofs = Path(settings.mkisofs)
     mkisofs.write_text("#!/bin/sh\nexit 1\n")
-    with pytest.raises(MicrovmError, match="mkisofs on the cidata seed failed"):
+    with pytest.raises(
+        MicrovmError, match="mkisofs on the cidata seed failed"
+    ):
         await persist.ensure_artifacts(
             spec(base, user_data="#!/bin/sh\ntrue\n"), settings
         )
@@ -391,7 +398,9 @@ async def test_failed_seed_rolls_back_the_fresh_pair(tools) -> None:
     assert not persist.home_volume_path(settings.state_dir, WID).exists()
     assert not tmp_debris(settings)
     write_mkisofs_stub(mkisofs.parent, record)
-    await persist.ensure_artifacts(spec(base, user_data="#!/bin/sh\ntrue\n"), settings)
+    await persist.ensure_artifacts(
+        spec(base, user_data="#!/bin/sh\ntrue\n"), settings
+    )
     assert persist.seed_path(settings.state_dir, WID).is_file()
     assert persist.overlay_path(settings.state_dir, WID).is_file()
     assert persist.home_volume_path(settings.state_dir, WID).is_file()
@@ -404,7 +413,9 @@ def ext4_image(windows: list[bytes]) -> bytes:
     """A stand-in ext4 volume: the magic at 1080, then whole 1 MiB
     windows of caller-chosen bytes (zeros for sparse regions)."""
     body = bytearray(b"".join(windows))
-    body[persist.EXT4_MAGIC_OFFSET : persist.EXT4_MAGIC_OFFSET + 2] = persist.EXT4_MAGIC
+    body[persist.EXT4_MAGIC_OFFSET : persist.EXT4_MAGIC_OFFSET + 2] = (
+        persist.EXT4_MAGIC
+    )
     return bytes(body)
 
 
@@ -447,8 +458,12 @@ async def test_import_home_volume_keeps_zero_windows_sparse(tools) -> None:
     windows are blank costs ~1 MiB of real disk, not 3."""
     settings, _record, _base = tools
     blank = b"\0" * persist.HOME_WINDOW_B
-    image = ext4_image([b"data".ljust(persist.HOME_WINDOW_B, b"d"), blank, blank])
-    await persist.import_home_volume(settings.state_dir, WID, yielding([image]))
+    image = ext4_image(
+        [b"data".ljust(persist.HOME_WINDOW_B, b"d"), blank, blank]
+    )
+    await persist.import_home_volume(
+        settings.state_dir, WID, yielding([image])
+    )
     home = persist.home_volume_path(settings.state_dir, WID)
     assert home.stat().st_size == len(image)
     assert home.stat().st_blocks * 512 < 2 * persist.HOME_WINDOW_B
@@ -463,7 +478,9 @@ async def test_import_home_volume_replaces_an_existing_volume(tools) -> None:
     home.parent.mkdir(parents=True, exist_ok=True)
     home.write_bytes(b"stale-contents" * 10)
     image = ext4_image([b"fresh".ljust(persist.HOME_WINDOW_B, b"f")])
-    await persist.import_home_volume(settings.state_dir, WID, yielding([image]))
+    await persist.import_home_volume(
+        settings.state_dir, WID, yielding([image])
+    )
     assert home.read_bytes() == image
 
 

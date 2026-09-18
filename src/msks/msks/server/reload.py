@@ -68,7 +68,9 @@ def package_roots() -> list[str]:
     return [os.path.dirname(os.path.dirname(os.path.abspath(__file__)))]
 
 
-def exec_restart(argv: list[str]) -> None:  # pragma: no cover — exec never returns
+def exec_restart(
+    argv: list[str],
+) -> None:  # pragma: no cover — exec never returns
     """Replace this process with a fresh interpreter over *argv*."""
     os.execv(sys.executable, argv)
 

@@ -186,7 +186,9 @@ def note_key(loader, key_node, seen: set, deep: bool) -> None:
     try:
         duplicate = key in seen
     except TypeError:
-        raise ValueError("config keys must be scalars, not lists or mappings") from None
+        raise ValueError(
+            "config keys must be scalars, not lists or mappings"
+        ) from None
     if duplicate:
         raise ValueError(f"duplicate config key {key!r}")
     seen.add(key)
@@ -219,7 +221,9 @@ def key_layer(doc: dict, path: str) -> dict[str, str]:
     layer: dict[str, str] = {}
     for key, value in doc.items():
         if not isinstance(key, str):
-            raise ValueError(f"{path}: config keys must be strings, got {key!r}")
+            raise ValueError(
+                f"{path}: config keys must be strings, got {key!r}"
+            )
         var = CONFIG_ENV_VARS.get(key)
         if var is None:
             valid = ", ".join(sorted(CONFIG_ENV_VARS))
@@ -258,7 +262,9 @@ class LayeredEnv(Mapping):
 
     def _merged(self) -> dict[str, str]:
         merged = dict(self._overrides)
-        merged.update({name: value for name, value in os.environ.items() if value})
+        merged.update(
+            {name: value for name, value in os.environ.items() if value}
+        )
         return merged
 
     def __getitem__(self, name: str) -> str:

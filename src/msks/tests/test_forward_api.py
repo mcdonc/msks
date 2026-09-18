@@ -56,7 +56,9 @@ class ForwardNet:
         if self.refusal is not None:
             raise MicrovmError(self.refusal)
         if self._server is None:
-            self._server = await asyncio.start_server(self._echo, "127.0.0.1", 0)
+            self._server = await asyncio.start_server(
+                self._echo, "127.0.0.1", 0
+            )
         address = self._server.sockets[0].getsockname()
         return await asyncio.open_connection(*address)
 
@@ -83,7 +85,9 @@ def forward_api(tmp_path):
     settings = Settings(
         net=NetSettings(enabled=False),
         server=ServerSettings(
-            db_path=tmp_path / "ws.db", bootstrap_token=TOKEN, event_poll_s=0.05
+            db_path=tmp_path / "ws.db",
+            bootstrap_token=TOKEN,
+            event_poll_s=0.05,
         ),
     )
     app = build_app(settings)
@@ -111,7 +115,9 @@ def test_forward_rejects_missing_token(forward_api) -> None:
     api, app, net = forward_api
     with TestClient(api) as client:
         _make_workspace(client)
-        with client.websocket_connect("/api/v1/workspaces/ws-f/forward/22") as s:
+        with client.websocket_connect(
+            "/api/v1/workspaces/ws-f/forward/22"
+        ) as s:
             with pytest.raises(WebSocketDisconnect) as caught:
                 s.receive_text()
         assert caught.value.code == 4401
@@ -217,7 +223,9 @@ def test_forward_bridges_bytes_both_ways(forward_api) -> None:
         with client.websocket_connect(
             "/api/v1/workspaces/ws-f/forward/22", headers=bearer()
         ) as socket:
-            socket.send_text("")  # an empty text frame must not break the bridge
+            socket.send_text(
+                ""
+            )  # an empty text frame must not break the bridge
             socket.send_bytes(b"hello ")
             socket.send_bytes(b"world\n")
             got = b""
@@ -248,7 +256,9 @@ def test_two_forwards_run_concurrently(forward_api) -> None:
     assert sorted(net.calls) == [("ws-f", 22), ("ws-f", 8022)]
 
 
-def test_forward_publishes_open_and_closed_events(forward_api, monkeypatch) -> None:
+def test_forward_publishes_open_and_closed_events(
+    forward_api, monkeypatch
+) -> None:
     # A publish spy beats draining the events websocket: the route
     # awaits the hub, so the recording is synchronous with the
     # session — no drain loop racing watcher noise.
@@ -300,7 +310,9 @@ def test_bearer_token_reads_the_authorization_header() -> None:
             self.headers = Headers(value)
 
     assert bearer_token(Socket("Bearer tok")) == "tok"
-    assert bearer_token(Socket("bearer tok")) == "tok"  # scheme is case-insensitive
+    assert (
+        bearer_token(Socket("bearer tok")) == "tok"
+    )  # scheme is case-insensitive
     assert bearer_token(Socket("Basic dXNlcg==")) is None
     assert bearer_token(Socket("")) is None
 
@@ -382,7 +394,9 @@ async def test_bridge_console_stall_cancels_the_pump_tasks() -> None:
         await asyncio.sleep(0.01)
     assert writer.buffer == b"echo hi\n"
     strays = [
-        task for task in asyncio.all_tasks() if task is not asyncio.current_task()
+        task
+        for task in asyncio.all_tasks()
+        if task is not asyncio.current_task()
     ]
     assert strays == []
 

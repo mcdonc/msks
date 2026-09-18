@@ -51,7 +51,9 @@ async def recvfrom(
     Mirrors ``loop.sock_recvfrom``. A spurious readiness (readable
     but no datagram) simply re-arms — the loop calls back again.
     """
-    future: asyncio.Future[tuple[bytes, tuple[str, int]]] = loop.create_future()
+    future: asyncio.Future[tuple[bytes, tuple[str, int]]] = (
+        loop.create_future()
+    )
     fd = sock.fileno()
     if fd < 0:
         # Already closed: the caller's OSError path treats this as

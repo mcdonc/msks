@@ -1,4 +1,5 @@
-"""Tests for msks.guestassets — discovery of the nix-built guest assets (#5)."""
+"""Tests for msks.guestassets — discovery of the nix-built guest
+assets (#5)."""
 
 from __future__ import annotations
 
@@ -27,7 +28,9 @@ def write_manifest(root: Path, **overrides: object) -> None:
         "rootfs": "rootfs.ext4",
     }
     manifest.update(overrides)
-    (guest / "guest-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (guest / "guest-manifest.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
 
 
 def test_load_returns_assets(tmp_path: Path) -> None:
@@ -111,7 +114,9 @@ def test_load_defaults_to_devenv_root(
     assert assets.rootfs == tmp_path / ".guest" / "rootfs.ext4"
 
 
-def test_load_defaults_to_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_defaults_to_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     write_manifest(tmp_path)
     monkeypatch.delenv("DEVENV_ROOT", raising=False)
     monkeypatch.chdir(tmp_path)

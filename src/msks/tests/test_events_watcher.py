@@ -54,7 +54,9 @@ def api_with_stub(tmp_path: Path):
     settings = Settings(
         net=NetSettings(enabled=False),
         server=ServerSettings(
-            db_path=tmp_path / "ws.db", bootstrap_token=TOKEN, event_poll_s=0.05
+            db_path=tmp_path / "ws.db",
+            bootstrap_token=TOKEN,
+            event_poll_s=0.05,
         ),
     )
     app = build_app(settings)
@@ -66,7 +68,9 @@ def api_with_stub(tmp_path: Path):
 def test_websocket_receives_transitions(tmp_path: Path) -> None:
     api, app, stub = api_with_stub(tmp_path)
     with TestClient(api) as client:
-        with client.websocket_connect(f"/api/v1/events?token={TOKEN}") as socket:
+        with client.websocket_connect(
+            f"/api/v1/events?token={TOKEN}"
+        ) as socket:
             # Create a workspace, then flip the seam underneath it: the
             # watcher must publish the transition within a few polls.
             client.post(
@@ -101,8 +105,12 @@ async def test_scan_once_publishes_transition(tmp_path: Path) -> None:
         hub = api.state.hub
         published = await scan_once(app, hub)
         assert published == 2
-        assert (await app.state.model.get_workspace("ws-s"))["status"] == "stopped"
-        assert (await app.state.model.get_workspace("ws-t"))["status"] == "running"
+        assert (await app.state.model.get_workspace("ws-s"))[
+            "status"
+        ] == "stopped"
+        assert (await app.state.model.get_workspace("ws-t"))[
+            "status"
+        ] == "running"
         assert await scan_once(app, hub) == 0
 
 
@@ -194,7 +202,9 @@ async def test_scan_skips_absent_over_created(tmp_path: Path) -> None:
             VmSpec(workspace_id="ws-c", kernel=Path("/k"), rootfs=Path("/r"))
         )
         assert await scan_workspace(app, api.state.hub, row) is False
-        assert (await app.state.model.get_workspace("ws-c"))["status"] == "created"
+        assert (await app.state.model.get_workspace("ws-c"))[
+            "status"
+        ] == "created"
 
 
 async def test_scan_publishes_when_row_vanishes(tmp_path: Path) -> None:

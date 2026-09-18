@@ -193,7 +193,10 @@ async def test_launch_puts_create_then_boot(env, fake, tmp_path: Path) -> None:
     app, state_dir, _ = env
     await app.state.microvm.launch(spec(tmp_path))
     methods = [(m, p) for m, p, _b in fake.requests]
-    assert methods == [("PUT", "/api/v1/vm.create"), ("PUT", "/api/v1/vm.boot")]
+    assert methods == [
+        ("PUT", "/api/v1/vm.create"),
+        ("PUT", "/api/v1/vm.boot"),
+    ]
     body = dict(fake.requests[0][2])
     assert body["payload"]["kernel"] == str(tmp_path / "vmlinux")
     assert body["memory"]["size"] == 1024 * 1024 * 1024
@@ -202,7 +205,9 @@ async def test_launch_puts_create_then_boot(env, fake, tmp_path: Path) -> None:
     await app.state.microvm.kill(WID)  # reap the stub VMM
 
 
-async def test_launch_error_maps_and_reaps_process(env, tmp_path: Path) -> None:
+async def test_launch_error_maps_and_reaps_process(
+    env, tmp_path: Path
+) -> None:
     app, state_dir, _ = env
     socket_path = state_dir / "vms" / WID / "api.sock"
     socket_path.parent.mkdir(parents=True, exist_ok=True)
@@ -230,7 +235,9 @@ async def test_dir_rejects_unsafe_ids(env) -> None:
 
 async def test_launch_rejects_overlong_socket_path(tmp_path: Path) -> None:
     deep = tmp_path / ("x" * 90) / ("y" * 30)
-    settings = Settings(vmm=VmmSettings(cloud_hypervisor="false", state_dir=deep))
+    settings = Settings(
+        vmm=VmmSettings(cloud_hypervisor="false", state_dir=deep)
+    )
     app = build_app(settings)
     with pytest.raises(MicrovmError, match="AF_UNIX"):
         await app.state.microvm.launch(spec(tmp_path))
@@ -244,14 +251,18 @@ async def test_launch_rejects_double_launch(env, fake, tmp_path: Path) -> None:
     await app.state.microvm.kill(WID)
 
 
-async def test_launch_missing_binary_maps_to_error(env, tmp_path: Path) -> None:
+async def test_launch_missing_binary_maps_to_error(
+    env, tmp_path: Path
+) -> None:
     app, _, _ = env
     app.state.settings.vmm.cloud_hypervisor = "/nonexistent/ch"
     with pytest.raises(MicrovmError, match="not found"):
         await app.state.microvm.launch(spec(tmp_path))
 
 
-async def test_launch_binary_exits_early_maps_to_error(env, tmp_path: Path) -> None:
+async def test_launch_binary_exits_early_maps_to_error(
+    env, tmp_path: Path
+) -> None:
     app, _, _ = env
     app.state.settings.vmm.cloud_hypervisor = "false"
     with pytest.raises(MicrovmError, match="exited with"):
@@ -274,7 +285,9 @@ async def test_info_absent_when_no_dir(env) -> None:
     assert info.status is VmStatus.ABSENT
 
 
-async def test_info_stopped_when_socket_gone(env, fake, tmp_path: Path) -> None:
+async def test_info_stopped_when_socket_gone(
+    env, fake, tmp_path: Path
+) -> None:
     app, _, _ = env
     await app.state.microvm.launch(spec(tmp_path))
     await fake.stop()
@@ -292,7 +305,9 @@ async def test_info_running_via_api(env, fake, tmp_path: Path) -> None:
     await app.state.microvm.kill(WID)
 
 
-async def test_info_created_maps_to_starting(env, fake, tmp_path: Path) -> None:
+async def test_info_created_maps_to_starting(
+    env, fake, tmp_path: Path
+) -> None:
     app, _, _ = env
     await app.state.microvm.launch(spec(tmp_path))
     fake.state = {"state": "Created"}
@@ -345,7 +360,9 @@ async def test_shutdown_graceful(env, fake, tmp_path: Path) -> None:
 
     fake.on_shutdown.append(guest_powers_off)
     await app.state.microvm.shutdown(WID, timeout_s=5)
-    assert ("PUT", "/api/v1/vm.power-button") in [(m, p) for m, p, _b in fake.requests]
+    assert ("PUT", "/api/v1/vm.power-button") in [
+        (m, p) for m, p, _b in fake.requests
+    ]
 
 
 async def test_shutdown_represses_button_when_guest_ignores_it(
@@ -388,7 +405,9 @@ async def test_shutdown_without_socket_is_noop(env, tmp_path: Path) -> None:
     await app.state.microvm.shutdown(WID)
 
 
-async def test_shutdown_without_process_ref_terminates_pidfile_pid(env, fake) -> None:
+async def test_shutdown_without_process_ref_terminates_pidfile_pid(
+    env, fake
+) -> None:
     app, state_dir, _ = env
     fake.state = {"state": "Shutdown"}
     sleeper = await asyncio.create_subprocess_exec("sleep", "600")
@@ -397,7 +416,9 @@ async def test_shutdown_without_process_ref_terminates_pidfile_pid(env, fake) ->
     await sleeper.wait()
 
 
-async def test_shutdown_timeout_when_vmm_ignores_sigterm(env, tmp_path: Path) -> None:
+async def test_shutdown_timeout_when_vmm_ignores_sigterm(
+    env, tmp_path: Path
+) -> None:
     # A stub that traps SIGTERM: the guest powers off, the VMM refuses to die.
     app, state_dir, _ = env
     stubborn = tmp_path / "ch-stubborn"
@@ -412,7 +433,9 @@ async def test_shutdown_timeout_when_vmm_ignores_sigterm(env, tmp_path: Path) ->
     try:
         await app.state.microvm.launch(spec(tmp_path))
         proc = app.state.microvm.local._procs[WID]
-        with pytest.raises(MicrovmTimeoutError, match="did not exit after SIGTERM"):
+        with pytest.raises(
+            MicrovmTimeoutError, match="did not exit after SIGTERM"
+        ):
             await app.state.microvm.shutdown(WID, timeout_s=0.5)
     finally:
         await server.stop()
@@ -420,7 +443,9 @@ async def test_shutdown_timeout_when_vmm_ignores_sigterm(env, tmp_path: Path) ->
     await proc.wait()  # reap: no orphaned-Process GC warning
 
 
-async def test_shutdown_without_pidfile_returns_after_guest_down(env, fake) -> None:
+async def test_shutdown_without_pidfile_returns_after_guest_down(
+    env, fake
+) -> None:
     app, state_dir, _ = env
     fake.state = {"state": "Shutdown"}
     await app.state.microvm.shutdown(WID, timeout_s=5)
@@ -484,7 +509,9 @@ async def test_prepare_creates_artifacts(env, tmp_path: Path) -> None:
     assert persist.home_volume_path(state_dir, WID).is_file()
 
 
-async def test_prepare_refuses_a_predecessors_artifacts(env, tmp_path: Path) -> None:
+async def test_prepare_refuses_a_predecessors_artifacts(
+    env, tmp_path: Path
+) -> None:
     """Create never reuses another workspace-of-the-same-id's data.
 
     The leftover is what a failed create whose cleanup could not
@@ -500,7 +527,9 @@ async def test_prepare_refuses_a_predecessors_artifacts(env, tmp_path: Path) -> 
     assert not persist.overlay_path(state_dir, WID).exists()
 
 
-async def test_launch_heals_a_volume_only_leftover(env, fake, tmp_path: Path) -> None:
+async def test_launch_heals_a_volume_only_leftover(
+    env, fake, tmp_path: Path
+) -> None:
     """Launch heals an artifact pair with only the volume present: the
     overlay is recreated (data recovery), the volume is kept as data."""
     app, state_dir, _ = env
@@ -513,7 +542,9 @@ async def test_launch_heals_a_volume_only_leftover(env, fake, tmp_path: Path) ->
     await app.state.microvm.kill(WID)
 
 
-async def test_prepare_failure_rolls_back_the_pair(env, tmp_path: Path) -> None:
+async def test_prepare_failure_rolls_back_the_pair(
+    env, tmp_path: Path
+) -> None:
     """The round-two wedge repro: a tool failure after the volume is
     made must leave NO artifact, or the strict next create refuses
     the id forever (the daemon's own leftover)."""
@@ -557,7 +588,9 @@ async def test_prepare_failure_rolls_back_the_pair(env, tmp_path: Path) -> None:
     assert persist.home_volume_path(state_dir, WID).is_file()
 
 
-async def test_launch_heals_missing_artifacts(env, fake, tmp_path: Path) -> None:
+async def test_launch_heals_missing_artifacts(
+    env, fake, tmp_path: Path
+) -> None:
     """A workspace row predating #14, or a crash mid-create, gets its
     artifacts back on the next start — data that exists is kept."""
     app, state_dir, _ = env
@@ -582,7 +615,9 @@ async def test_launch_missing_base_maps_to_error(env, tmp_path: Path) -> None:
         await app.state.microvm.launch(broken)
 
 
-async def test_reset_drops_overlay_keeps_home(env, fake, tmp_path: Path) -> None:
+async def test_reset_drops_overlay_keeps_home(
+    env, fake, tmp_path: Path
+) -> None:
     app, state_dir, _ = env
     await app.state.microvm.launch(spec(tmp_path))
     await app.state.microvm.kill(WID)
@@ -637,7 +672,9 @@ async def test_terminate_sigterms_pidfile_pid(env, tmp_path: Path) -> None:
         os.kill(sleeper.pid, 0)
 
 
-async def test_shutdown_escalates_when_api_dies_midcall(env, monkeypatch) -> None:
+async def test_shutdown_escalates_when_api_dies_midcall(
+    env, monkeypatch
+) -> None:
     # The VMM looked alive but its API died between the liveness check
     # and the call: shutdown must fall through to SIGTERM (the
     # _terminate path), not surface a 500.
@@ -784,9 +821,13 @@ async def test_console_silent_server_times_out(env, monkeypatch) -> None:
         handlers.append(asyncio.create_task(silent(reader, writer)))
 
     monkeypatch.setattr(local_mod, "VSOCK_REPLY_S", 0.1)
-    server = await asyncio.start_unix_server(accept, str(vm_dir / "vsock.sock"))
+    server = await asyncio.start_unix_server(
+        accept, str(vm_dir / "vsock.sock")
+    )
     try:
-        with pytest.raises(MicrovmError, match="handshake reply never arrived"):
+        with pytest.raises(
+            MicrovmError, match="handshake reply never arrived"
+        ):
             await app.state.microvm.console(WID)
     finally:
         for task in handlers:
@@ -821,7 +862,9 @@ async def test_console_stream_dies_mid_handshake(env, monkeypatch) -> None:
         # Accept, then kill the stream before any reply.
         writer.close()
 
-    server = await asyncio.start_unix_server(resetter, str(vm_dir / "vsock.sock"))
+    server = await asyncio.start_unix_server(
+        resetter, str(vm_dir / "vsock.sock")
+    )
     try:
         with pytest.raises(MicrovmError, match="handshake"):
             await app.state.microvm.console(WID)
@@ -840,7 +883,9 @@ def test_vm_config_carries_the_net_device(tmp_path: Path) -> None:
         tmp_path / "serial.log",
         net={"tap": "msks-abc123", "mac": "02:11:22:33:44:55"},
     )
-    assert config["net"] == [{"tap": "msks-abc123", "mac": "02:11:22:33:44:55"}]
+    assert config["net"] == [
+        {"tap": "msks-abc123", "mac": "02:11:22:33:44:55"}
+    ]
     # Without egress the VM presents no net device at all.
     plain = vm_config(
         VmSpec(workspace_id=WID, kernel=tmp_path / "k", rootfs=tmp_path / "r"),
@@ -873,15 +918,21 @@ async def egress_env(env, tmp_path: Path, monkeypatch):
         nft_tool=str(stub_nft(tmp_path, tmp_path / "egress-nft.log")),
         dns_upstream="10.9.9.9",
     )
-    monkeypatch.setattr(manager_mod, "verify_forwarding", lambda path=None: None)
-    manager = NetManager(app, dhcp_factory=FakeService, dns_factory=FakeService)
+    monkeypatch.setattr(
+        manager_mod, "verify_forwarding", lambda path=None: None
+    )
+    manager = NetManager(
+        app, dhcp_factory=FakeService, dns_factory=FakeService
+    )
     app.state.net = manager
     # claim_slice records slices on workspace rows (#70 review): the
     # egress boots need a real model behind them.
     app.state.settings.server.db_path = tmp_path / "egress.db"
     app.state.model.migrate()
     await app.state.model.create_workspace(
-        VmSpec(workspace_id=WID, kernel=Path("/k"), rootfs=Path("/r"), egress=True)
+        VmSpec(
+            workspace_id=WID, kernel=Path("/k"), rootfs=Path("/r"), egress=True
+        )
     )
     await manager.start()
     return app, ip_log
@@ -901,18 +952,22 @@ async def test_launch_attaches_egress_and_configures_the_nic(
     await app.state.microvm.shutdown(WID)
     assert WID not in app.state.net._attachments
     assert any(
-        line.startswith("link del dev") for line in ip_log.read_text().splitlines()
+        line.startswith("link del dev")
+        for line in ip_log.read_text().splitlines()
     )
 
 
-async def test_launch_failure_unwinds_egress(egress_env, fake, tmp_path: Path) -> None:
+async def test_launch_failure_unwinds_egress(
+    egress_env, fake, tmp_path: Path
+) -> None:
     app, ip_log = egress_env
     fake.responses[("PUT", "/api/v1/vm.create")] = (500, "boom")
     with pytest.raises(MicrovmError):
         await app.state.microvm.launch(spec(tmp_path, egress=True))
     assert WID not in app.state.net._attachments
     assert any(
-        line.startswith("link del dev") for line in ip_log.read_text().splitlines()
+        line.startswith("link del dev")
+        for line in ip_log.read_text().splitlines()
     )
 
 
@@ -929,7 +984,9 @@ async def test_launch_refuses_egress_without_the_plumbing(
 def test_disk_entries_attach_the_seed_read_only(tmp_path: Path) -> None:
     """A user_data workspace (#41) attaches its cidata seed as a
     third, read-only raw disk; a plain workspace keeps two disks."""
-    overlay, home, seed = disk_entries(tmp_path, WID, user_data="#!/bin/sh\ntrue\n")
+    overlay, home, seed = disk_entries(
+        tmp_path, WID, user_data="#!/bin/sh\ntrue\n"
+    )
     assert overlay["path"] == str(tmp_path / "vms" / WID / "root.qcow2")
     assert home["path"] == str(tmp_path / "volumes" / f"{WID}.ext4")
     assert seed == {
@@ -945,7 +1002,9 @@ def test_disk_entries_attach_the_seed_for_identity(tmp_path: Path) -> None:
     (#111) — the seeding script is the whole payload; both present
     together still attach exactly one seed.
     """
-    seed_only = disk_entries(tmp_path, WID, ssh_pubkey="ecdsa-sha2-nistp256 AAAA")
+    seed_only = disk_entries(
+        tmp_path, WID, ssh_pubkey="ecdsa-sha2-nistp256 AAAA"
+    )
     assert len(seed_only) == 3
     assert seed_only[2]["readonly"] is True
     both = disk_entries(
@@ -954,7 +1013,9 @@ def test_disk_entries_attach_the_seed_for_identity(tmp_path: Path) -> None:
     assert len(both) == 3
 
 
-async def test_launch_attaches_the_user_data_seed(env, fake, tmp_path: Path) -> None:
+async def test_launch_attaches_the_user_data_seed(
+    env, fake, tmp_path: Path
+) -> None:
     """A user_data workspace boots with three disks (#41): the seed
     is healed by launch like the other artifacts and reaches the VMM
     read-only."""
@@ -996,7 +1057,9 @@ async def test_handshake_sends_prelude(tmp_path: Path) -> None:
         server.close()
         await server.wait_closed()
     assert seen["connect"] == b"CONNECT 1023\n"
-    assert seen["prelude"] == (b"HELLO 1\nUSER msks\nTERM xterm\nWINSZ 34 120\nGO\n")
+    assert seen["prelude"] == (
+        b"HELLO 1\nUSER msks\nTERM xterm\nWINSZ 34 120\nGO\n"
+    )
     writer.close()
 
 

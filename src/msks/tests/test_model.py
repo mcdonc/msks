@@ -25,7 +25,9 @@ async def app_for(tmp_path: Path):
     (no unclosed-database ResourceWarnings from the GC)."""
     made: list[App] = []
 
-    def factory(bootstrap: str | None = None, db_path: Path | None = None) -> App:
+    def factory(
+        bootstrap: str | None = None, db_path: Path | None = None
+    ) -> App:
         settings = Settings(
             server=ServerSettings(
                 db_path=db_path or tmp_path / "t.db", bootstrap_token=bootstrap
@@ -120,7 +122,9 @@ async def test_migration_backfills_pre14_rows(tmp_path: Path, app_for) -> None:
         with engine.begin() as conn:
             # Reflected off the migrated database, so the insert sees
             # exactly the 0001 shape — a row written before #14.
-            workspaces = sa.Table("workspaces", sa.MetaData(), autoload_with=conn)
+            workspaces = sa.Table(
+                "workspaces", sa.MetaData(), autoload_with=conn
+            )
             assert "image_hash" not in workspaces.columns
             conn.execute(
                 workspaces.insert().values(
@@ -236,7 +240,9 @@ async def test_close_without_engine(app_for) -> None:
     assert app.state.model._engine is None
 
 
-async def test_migrate_recovers_from_torn_migration(tmp_path: Path, app_for) -> None:
+async def test_migrate_recovers_from_torn_migration(
+    tmp_path: Path, app_for
+) -> None:
     # A power cut between 0001's committed DDL and its version stamp
     # leaves tables present with no alembic_version row; migrate()
     # stamps head instead of wedging on "table already exists".
@@ -269,7 +275,9 @@ def test_migrate_reraises_unrelated_operational_errors(
     # Only the torn-migration "already exists" heals; any other
     # OperationalError (locked db, io error) surfaces unchanged.
     def boom(config, revision):
-        raise OperationalError("statement", {}, Exception("database is locked"))
+        raise OperationalError(
+            "statement", {}, Exception("database is locked")
+        )
 
     monkeypatch.setattr(command, "upgrade", boom)
     settings = Settings(server=ServerSettings(db_path=tmp_path / "locked.db"))
@@ -277,7 +285,9 @@ def test_migrate_reraises_unrelated_operational_errors(
         model_mod.Model(App(settings)).migrate()
 
 
-def test_migrate_refuses_to_stamp_past_an_older_gap(tmp_path, monkeypatch) -> None:
+def test_migrate_refuses_to_stamp_past_an_older_gap(
+    tmp_path, monkeypatch
+) -> None:
     """A torn-shaped error on a database already at head must not be
     stamped past: with a longer chain, that gap would skip pending
     DDL — it needs an operator, not a guess (#14 round two)."""
@@ -285,7 +295,9 @@ def test_migrate_refuses_to_stamp_past_an_older_gap(tmp_path, monkeypatch) -> No
     model_mod.Model(App(settings)).migrate()  # DB now stamped at head
 
     def boom(config, revision):
-        raise OperationalError("statement", {}, Exception("duplicate column name"))
+        raise OperationalError(
+            "statement", {}, Exception("duplicate column name")
+        )
 
     monkeypatch.setattr(command, "upgrade", boom)
     with pytest.raises(OperationalError, match="duplicate column name"):

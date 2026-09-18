@@ -36,7 +36,9 @@ def test_tap_name_fits_ifnamsiz_and_is_stable() -> None:
     name = alloc.tap_name("a-very-long-workspace-id-that-exceeds-limits")
     assert name.startswith("msks-")
     assert len(name) < alloc.IFNAMSIZ
-    assert name == alloc.tap_name("a-very-long-workspace-id-that-exceeds-limits")
+    assert name == alloc.tap_name(
+        "a-very-long-workspace-id-that-exceeds-limits"
+    )
 
 
 def test_table_name_and_mac_are_deterministic() -> None:

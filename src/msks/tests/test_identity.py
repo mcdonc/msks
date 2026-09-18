@@ -21,7 +21,9 @@ PUBLIC = "ecdsa-sha2-nistp256 AAAAE2VjZHNh user@host"
 def minted_public(private_pem: str) -> str:
     """The public line a private half derives to, for round-trip
     checks that the two halves mint() returns are one keypair."""
-    key = serialization.load_ssh_private_key(private_pem.encode(), password=b"")
+    key = serialization.load_ssh_private_key(
+        private_pem.encode(), password=b""
+    )
     return (
         key.public_key()
         .public_bytes(
@@ -83,7 +85,9 @@ def test_compose_without_key_is_verbatim() -> None:
 def test_compose_without_payload_is_the_script() -> None:
     """A minted key and no operator payload: the seed is the script
     alone, one plain document."""
-    assert compose_user_data(None, PUBLIC, "ws-id") == seed_script(PUBLIC, "ws-id")
+    assert compose_user_data(None, PUBLIC, "ws-id") == seed_script(
+        PUBLIC, "ws-id"
+    )
 
 
 def test_compose_merges_script_and_script_payload() -> None:
@@ -120,8 +124,12 @@ def test_unique_boundary_falls_back_when_embedded() -> None:
     """A payload embedding the boundary string forces a random one;
     ordinary payloads keep the documented boundary."""
     hostile = f"echo {MIME_BOUNDARY}\n"
-    assert MIME_BOUNDARY not in unique_boundary(hostile, seed_script(PUBLIC, "ws-id"))
-    assert MIME_BOUNDARY in unique_boundary("echo hi\n", seed_script(PUBLIC, "ws-id"))
+    assert MIME_BOUNDARY not in unique_boundary(
+        hostile, seed_script(PUBLIC, "ws-id")
+    )
+    assert MIME_BOUNDARY in unique_boundary(
+        "echo hi\n", seed_script(PUBLIC, "ws-id")
+    )
 
 
 def test_operator_content_type_by_first_line() -> None:
@@ -133,7 +141,8 @@ def test_operator_content_type_by_first_line() -> None:
     # Whole-line match: cloud-config-archive is its own cloud-init
     # handler, not a prefix of cloud-config.
     assert (
-        operator_content_type("#cloud-config-archive\n") == "text/cloud-config-archive"
+        operator_content_type("#cloud-config-archive\n")
+        == "text/cloud-config-archive"
     )
     assert operator_content_type("#cloud-config-with-suffix\n") == (
         "text/x-shellscript"
@@ -193,7 +202,9 @@ def test_normalize_public_key_accepts_any_supplied_type() -> None:
     sk = "sk-ssh-ed25519@openssh.com"
     lines.append(
         f"{sk} "
-        + base64.b64encode(len(sk).to_bytes(4, "big") + sk.encode() + b"rest").decode()
+        + base64.b64encode(
+            len(sk).to_bytes(4, "big") + sk.encode() + b"rest"
+        ).decode()
     )
     for line in lines:
         algo, body = normalize_public_key(f"{line} operator@laptop")

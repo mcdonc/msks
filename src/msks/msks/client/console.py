@@ -240,7 +240,9 @@ async def run_shell(
     return 0
 
 
-async def open_session(ws, workspace_id: str, url: str, token: str, ssl_ctx) -> bool:
+async def open_session(
+    ws, workspace_id: str, url: str, token: str, ssl_ctx
+) -> bool:
     """The session's console challenge (#123): a guest whose seed
     planted the trust store demands a signature before any shell; a
     pre-#123 guest's first bytes pass straight through to the pump.
@@ -248,7 +250,9 @@ async def open_session(ws, workspace_id: str, url: str, token: str, ssl_ctx) -> 
     session (named refusals report, a clean close is a clean end).
     """
     try:
-        lead = await consoleauth.auth_exchange(ws, workspace_id, url, token, ssl_ctx)
+        lead = await consoleauth.auth_exchange(
+            ws, workspace_id, url, token, ssl_ctx
+        )
     except websockets.ConnectionClosed as closed:
         _report_close(closed)
         return False
@@ -278,7 +282,9 @@ CLOSE_CODE_REASONS = {
     4401: "authentication failed (bad token?)",
     4404: "no such workspace",
     4501: "console unavailable (is the workspace running?)",
-    4502: "console stalled (guest stream wedged; reconnect for a fresh session)",
+    4502: (
+        "console stalled (guest stream wedged; reconnect for a fresh session)"
+    ),
 }
 
 
@@ -318,7 +324,9 @@ class _StdinPipe:
 
 def require_tty() -> None:
     if not sys.stdin.isatty() or not sys.stdout.isatty():
-        raise SystemExit("msks console: needs an interactive tty on stdin and stdout")
+        raise SystemExit(
+            "msks console: needs an interactive tty on stdin and stdout"
+        )
 
 
 def restore(old, had: bool) -> None:
@@ -357,7 +365,13 @@ def run_workspace_shell(workspace_id: str, user: str = "root") -> int:
             tty.setraw(sys.stdin.fileno())
         return asyncio.run(
             run_shell(
-                workspace_id, url, token, ssl_ctx, user=user, size=size, term=term
+                workspace_id,
+                url,
+                token,
+                ssl_ctx,
+                user=user,
+                size=size,
+                term=term,
             )
         )
     finally:

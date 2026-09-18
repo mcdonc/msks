@@ -63,7 +63,9 @@ def console_api(tmp_path):
     settings = Settings(
         net=NetSettings(enabled=False),
         server=ServerSettings(
-            db_path=tmp_path / "ws.db", bootstrap_token=TOKEN, event_poll_s=0.05
+            db_path=tmp_path / "ws.db",
+            bootstrap_token=TOKEN,
+            event_poll_s=0.05,
         ),
     )
     app = build_app(settings)
@@ -87,7 +89,9 @@ def test_console_rejects_bad_token(console_api) -> None:
     api, app, stub = console_api
     with TestClient(api) as client:
         _make_workspace(client)
-        with client.websocket_connect("/api/v1/workspaces/ws-c/console?token=x") as s:
+        with client.websocket_connect(
+            "/api/v1/workspaces/ws-c/console?token=x"
+        ) as s:
             with pytest.raises(WebSocketDisconnect) as caught:
                 s.receive_text()
         assert caught.value.code == 4401
@@ -124,7 +128,9 @@ def test_console_bridges_bytes_both_ways(console_api) -> None:
         with client.websocket_connect(
             f"/api/v1/workspaces/ws-c/console?token={TOKEN}"
         ) as socket:
-            socket.send_text("")  # an empty text frame must not break the bridge
+            socket.send_text(
+                ""
+            )  # an empty text frame must not break the bridge
             socket.send_bytes(b"hello ")
             socket.send_bytes(b"world\n")
             got = b""
@@ -247,7 +253,9 @@ async def test_bridge_answered_input_then_idle_stays_open() -> None:
         bridge_console(socket, reader, writer, stall_timeout_s=0.5), 10
     )
     await race
-    assert socket.closed is None, "an answered-then-idle session must not close"
+    assert socket.closed is None, (
+        "an answered-then-idle session must not close"
+    )
 
 
 class _ChatteringSocket(_StallSocket):
@@ -280,7 +288,9 @@ async def test_bridge_continuous_input_cannot_starve_the_watchdog() -> None:
     assert socket.closed[0] == 4502
     # One window (plus scheduling slack) after the first input — far
     # short of what last-input anchoring would allow.
-    assert elapsed < 0.8, f"close took {elapsed:.2f}s; deadline not first-anchored"
+    assert elapsed < 0.8, (
+        f"close took {elapsed:.2f}s; deadline not first-anchored"
+    )
 
 
 async def test_bridge_rearm_wakes_the_sleeping_watchdog() -> None:
@@ -334,7 +344,9 @@ async def test_bridge_zero_stall_timeout_disables_the_watchdog() -> None:
         reader.feed_eof()
 
     race = asyncio.create_task(end_after_a_while())
-    await asyncio.wait_for(bridge_console(socket, reader, writer, stall_timeout_s=0), 5)
+    await asyncio.wait_for(
+        bridge_console(socket, reader, writer, stall_timeout_s=0), 5
+    )
     await race
     assert socket.closed is None, "a zero window must disable the close"
 
@@ -363,7 +375,9 @@ def _make_prelude_image(tmp_path, hash_name: str = "a" * 64) -> str:
     return hash_name
 
 
-def _make_prelude_workspace(client, tmp_path, workspace_id: str = "ws-p") -> None:
+def _make_prelude_workspace(
+    client, tmp_path, workspace_id: str = "ws-p"
+) -> None:
     digest = _make_prelude_image(tmp_path)
     response = client.post(
         "/api/v1/workspaces",
@@ -415,7 +429,9 @@ def test_console_bad_rows_closes_4400(console_api) -> None:
     assert stub.console_calls == []
 
 
-def test_console_prelude_image_passes_user_and_size(console_api, tmp_path) -> None:
+def test_console_prelude_image_passes_user_and_size(
+    console_api, tmp_path
+) -> None:
     api, app, stub = console_api
     app.state.settings.vmm.state_dir = tmp_path
     with TestClient(api) as client:
@@ -460,7 +476,9 @@ def test_console_prelude_image_carries_term(console_api, tmp_path) -> None:
     assert stub.console_calls == [("ws-p", "msks", 24, 80, "tmux-256color")]
 
 
-def test_console_unreadable_image_record_closes_4501(console_api, tmp_path) -> None:
+def test_console_unreadable_image_record_closes_4501(
+    console_api, tmp_path
+) -> None:
     api, app, stub = console_api
     app.state.settings.vmm.state_dir = tmp_path
     with TestClient(api) as client:
@@ -470,7 +488,9 @@ def test_console_unreadable_image_record_closes_4501(console_api, tmp_path) -> N
     digest = next(
         p.name for p in imagestore.images_dir(tmp_path).iterdir() if p.is_dir()
     )
-    (imagestore.images_dir(tmp_path) / digest / "image.json").write_text("{corrupt")
+    (imagestore.images_dir(tmp_path) / digest / "image.json").write_text(
+        "{corrupt"
+    )
     with TestClient(api) as client:
         with client.websocket_connect(
             f"/api/v1/workspaces/ws-p/console?token={TOKEN}"
@@ -482,7 +502,9 @@ def test_console_unreadable_image_record_closes_4501(console_api, tmp_path) -> N
     assert stub.console_calls == []
 
 
-def test_console_missing_image_record_closes_4501(console_api, tmp_path) -> None:
+def test_console_missing_image_record_closes_4501(
+    console_api, tmp_path
+) -> None:
     api, app, stub = console_api
     app.state.settings.vmm.state_dir = tmp_path
     with TestClient(api) as client:

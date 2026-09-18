@@ -68,7 +68,9 @@ def test_env_url_default(monkeypatch: pytest.MonkeyPatch) -> None:
     assert env_url() == DEFAULT_URL
 
 
-def test_env_url_overridden_and_slash_trimmed(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_env_url_overridden_and_slash_trimmed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("MSKSC_URL", "https://10.0.0.9:8660/")
     assert env_url() == "https://10.0.0.9:8660"
 
@@ -110,7 +112,9 @@ def test_tty_size_reads_ioctl(monkeypatch: pytest.MonkeyPatch) -> None:
     assert console_mod.tty_size(0) == (34, 120)
 
 
-def test_tty_size_zero_geometry_is_none(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_tty_size_zero_geometry_is_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import fcntl as fcntl_mod
     import struct as struct_mod
 
@@ -237,7 +241,9 @@ async def test_pump_sends_input_and_detaches() -> None:
     ws = FakeWs(incoming=[b"prompt> "])
     stdout = FakeStdout()
     try:
-        await asyncio.wait_for(pump(feed_stdin(b"l" + DETACH), ws, stdout), timeout=5)
+        await asyncio.wait_for(
+            pump(feed_stdin(b"l" + DETACH), ws, stdout), timeout=5
+        )
     finally:
         await _cancel_orphans()
     assert ws.sent == [b"l"]
@@ -263,7 +269,8 @@ async def test_pump_doubled_escape_sends_literal() -> None:
     ws = FakeWs()
     try:
         await asyncio.wait_for(
-            pump(feed_stdin(DETACH + DETACH + b"x"), ws, FakeStdout()), timeout=5
+            pump(feed_stdin(DETACH + DETACH + b"x"), ws, FakeStdout()),
+            timeout=5,
         )
     finally:
         await _cancel_orphans()
@@ -307,7 +314,8 @@ async def test_pump_delivers_prefix_before_detach() -> None:
     ws = FakeWs()
     try:
         await asyncio.wait_for(
-            pump(feed_stdin(b"hi" + DETACH + b"z"), ws, FakeStdout()), timeout=5
+            pump(feed_stdin(b"hi" + DETACH + b"z"), ws, FakeStdout()),
+            timeout=5,
         )
     finally:
         await _cancel_orphans()
@@ -351,7 +359,9 @@ async def test_pump_stdin_eof_detaches() -> None:
     try:
         # A byte first (ws stays quiet), then EOF: exercises the
         # loop iteration where only stdin completed.
-        await asyncio.wait_for(pump(feed_stdin(b"x"), ws, FakeStdout()), timeout=5)
+        await asyncio.wait_for(
+            pump(feed_stdin(b"x"), ws, FakeStdout()), timeout=5
+        )
     finally:
         await _cancel_orphans()
     assert ws.sent == [b"x"]
@@ -437,7 +447,9 @@ class PipeStdin:
         os.write(self._w, data)
 
 
-async def test_run_shell_detaches_on_escape(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_run_shell_detaches_on_escape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
 
     ws = FakeWs(incoming=[b"hello\n"])
     pipe = PipeStdin()
@@ -459,7 +471,9 @@ async def run_shell_via(mod):
     return await mod.run_shell("wid", "u", "t", None)
 
 
-async def test_run_shell_survives_server_close(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_run_shell_survives_server_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
 
     class ClosingWs:
         def __init__(self) -> None:
@@ -484,7 +498,9 @@ async def test_run_shell_survives_server_close(monkeypatch: pytest.MonkeyPatch) 
 
     pipe = PipeStdin()
     monkeypatch.setattr(sys, "stdin", pipe)
-    monkeypatch.setattr(console.websockets, "connect", ConnectStub(ClosingWs()))
+    monkeypatch.setattr(
+        console.websockets, "connect", ConnectStub(ClosingWs())
+    )
     monkeypatch.setattr(sys, "stdout", FakeStdout())
     assert await console.run_shell("wid", "u", "t", None) == 0
 
@@ -514,13 +530,19 @@ def test_main_raw_mode_cycle(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(console, "ensure_running", preflight)
     restored: list = []
 
-    async def fake_run(wid, url, token, ssl_ctx, user="root", size=None, term=None):
+    async def fake_run(
+        wid, url, token, ssl_ctx, user="root", size=None, term=None
+    ):
         return 7
 
     monkeypatch.setattr(console, "run_shell", fake_run)
-    monkeypatch.setattr(console.termios, "tcgetattr", lambda fd: ["old"], raising=True)
     monkeypatch.setattr(
-        console.termios, "tcsetattr", lambda fd, when, attrs: restored.append(attrs)
+        console.termios, "tcgetattr", lambda fd: ["old"], raising=True
+    )
+    monkeypatch.setattr(
+        console.termios,
+        "tcsetattr",
+        lambda fd, when, attrs: restored.append(attrs),
     )
     monkeypatch.setattr(console.tty, "setraw", lambda fd: order.append("raw"))
     assert cli.main(["console", "wid"]) == 7
@@ -538,10 +560,14 @@ def test_main_without_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(console, "require_tty", lambda: None)
     monkeypatch.setattr(console, "ensure_running", async_noop)
     monkeypatch.setattr(
-        console.termios, "tcgetattr", lambda fd: (_ for _ in ()).throw(termios.error())
+        console.termios,
+        "tcgetattr",
+        lambda fd: (_ for _ in ()).throw(termios.error()),
     )
 
-    async def fake_run(wid, url, token, ssl_ctx, user="root", size=None, term=None):
+    async def fake_run(
+        wid, url, token, ssl_ctx, user="root", size=None, term=None
+    ):
         return 0
 
     monkeypatch.setattr(console, "run_shell", fake_run)
@@ -641,7 +667,9 @@ def test_run_workspace_shell_preflights_boot(
     seen = {}
 
     async def fake_ensure(workspace_id, url, token, ssl_ctx=None):
-        seen.update(workspace_id=workspace_id, url=url, token=token, ssl=ssl_ctx)
+        seen.update(
+            workspace_id=workspace_id, url=url, token=token, ssl=ssl_ctx
+        )
 
     monkeypatch.setattr(sys, "stdin", FdOnly())
     monkeypatch.setenv("MSKSC_TOKEN", "t")
@@ -650,12 +678,21 @@ def test_run_workspace_shell_preflights_boot(
     monkeypatch.setattr(console, "ensure_running", fake_ensure)
     monkeypatch.setattr(console, "ssl_context", lambda: "ctx")
     monkeypatch.setattr(
-        console.termios, "tcgetattr", lambda fd: (_ for _ in ()).throw(termios.error())
+        console.termios,
+        "tcgetattr",
+        lambda fd: (_ for _ in ()).throw(termios.error()),
     )
 
-    async def fake_run(wid, url, token, ssl_ctx, user="root", size=None, term=None):
+    async def fake_run(
+        wid, url, token, ssl_ctx, user="root", size=None, term=None
+    ):
         return 0
 
     monkeypatch.setattr(console, "run_shell", fake_run)
     assert console.run_workspace_shell("wid") == 0
-    assert seen == {"workspace_id": "wid", "url": "u", "token": "t", "ssl": "ctx"}
+    assert seen == {
+        "workspace_id": "wid",
+        "url": "u",
+        "token": "t",
+        "ssl": "ctx",
+    }

@@ -76,7 +76,8 @@ def test_package_roots_is_the_msks_package_dir():
 def test_restart_argv_preserves_flags(monkeypatch):
     monkeypatch.setattr("sys.executable", "/fake/python")
     monkeypatch.setattr(
-        "sys.argv", ["/fake/msksd", "--config", "/run/msksd/msksd.yaml", "--reload"]
+        "sys.argv",
+        ["/fake/msksd", "--config", "/run/msksd/msksd.yaml", "--reload"],
     )
     assert restart_argv() == [
         "/fake/python",
@@ -105,7 +106,9 @@ def test_watch_loop_restarts_on_change(tmp_path, monkeypatch):
         calls["restarts"].append(list(argv))
 
     monkeypatch.setattr("sys.executable", "/fake/python")
-    monkeypatch.setattr("sys.argv", ["/fake/msksd", "--reload", "--config", "none"])
+    monkeypatch.setattr(
+        "sys.argv", ["/fake/msksd", "--reload", "--config", "none"]
+    )
     with pytest.raises(LoopDone):
         watch_loop([str(tmp_path)], sleep=fake_sleep, restart=fake_restart)
     assert len(calls["restarts"]) == 1

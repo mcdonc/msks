@@ -55,7 +55,9 @@ class Microvm:
         """Report one workspace's lifecycle state."""
         return await self.driver.info(workspace_id)
 
-    async def shutdown(self, workspace_id: str, timeout_s: float | None = None) -> None:
+    async def shutdown(
+        self, workspace_id: str, timeout_s: float | None = None
+    ) -> None:
         """Gracefully power off one workspace VM."""
         await self.driver.shutdown(workspace_id, timeout_s)
 

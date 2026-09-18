@@ -133,7 +133,10 @@ async def guarded(client: httpx.AsyncClient, exchange):
 
 
 async def request(
-    client: httpx.AsyncClient, method: str, path: str, json_body: dict | None = None
+    client: httpx.AsyncClient,
+    method: str,
+    path: str,
+    json_body: dict | None = None,
 ):
     """One request on ``client``; failures exit with one readable line."""
 
@@ -213,7 +216,10 @@ def error_detail(response: httpx.Response) -> str:
 
 def validation_detail(items: list) -> str:
     """FastAPI's validation error list joined into one line."""
-    return "; ".join(validation_message(item) for item in items) or "invalid request"
+    return (
+        "; ".join(validation_message(item) for item in items)
+        or "invalid request"
+    )
 
 
 def validation_message(item) -> str:
@@ -241,14 +247,18 @@ async def ensure_running(
     row = await workspace_row(workspace_id, url, token, ssl_ctx, transport)
     if row["status"] == "starting":
         print(
-            f"msks: {workspace_id} is starting; waiting for the boot", file=sys.stderr
+            f"msks: {workspace_id} is starting; waiting for the boot",
+            file=sys.stderr,
         )
         row = await wait_boot(workspace_id, url, token, ssl_ctx, transport)
     if row["status"] == "running":
         return
     if row["status"] == "paused":
         raise SystemExit(paused_advice(workspace_id))
-    print(f"msks: {workspace_id} is {row['status']}; starting it", file=sys.stderr)
+    print(
+        f"msks: {workspace_id} is {row['status']}; starting it",
+        file=sys.stderr,
+    )
     await boot_workspace(workspace_id, url, token, ssl_ctx, transport)
     print(f"msks: {workspace_id} running", file=sys.stderr)
 
@@ -285,7 +295,9 @@ async def wait_boot(
         if row["status"] != "starting":
             return row
         await asyncio.sleep(BOOT_POLL_S)
-    raise SystemExit(f"msks: {workspace_id} still starting after {BOOT_WAIT_S}s")
+    raise SystemExit(
+        f"msks: {workspace_id} still starting after {BOOT_WAIT_S}s"
+    )
 
 
 async def boot_workspace(
@@ -313,7 +325,9 @@ async def boot_workspace(
     except SystemExit as exc:
         row = await workspace_row(workspace_id, url, token, ssl_ctx, transport)
         if row["status"] != "running":
-            raise SystemExit(f"{exc}\nmsks: {workspace_id} is {row['status']}") from exc
+            raise SystemExit(
+                f"{exc}\nmsks: {workspace_id} is {row['status']}"
+            ) from exc
 
 
 def paused_advice(workspace_id: str) -> str:

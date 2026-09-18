@@ -15,8 +15,12 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("workspaces", sa.Column("ssh_pubkey", sa.Text(), nullable=True))
-    op.add_column("workspaces", sa.Column("ssh_privkey", sa.Text(), nullable=True))
+    op.add_column(
+        "workspaces", sa.Column("ssh_pubkey", sa.Text(), nullable=True)
+    )
+    op.add_column(
+        "workspaces", sa.Column("ssh_privkey", sa.Text(), nullable=True)
+    )
 
 
 def downgrade() -> None:

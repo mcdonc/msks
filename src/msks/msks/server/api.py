@@ -143,7 +143,9 @@ def image_record(app, body: WorkspaceCreate):
         except ImageError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
         if record is None:
-            raise HTTPException(status_code=404, detail=f"no such image: {body.image}")
+            raise HTTPException(
+                status_code=404, detail=f"no such image: {body.image}"
+            )
         return record
     return imagestore.default_image(state_dir)
 
@@ -176,7 +178,9 @@ def resolve_boot(app, body: WorkspaceCreate) -> dict:
     record = image_record(app, body)
     kernel, rootfs = boot_pair(body, record)
     if (body.kernel is None) != (body.rootfs is None):
-        raise HTTPException(status_code=400, detail="kernel and rootfs come together")
+        raise HTTPException(
+            status_code=400, detail="kernel and rootfs come together"
+        )
     return {
         "id": body.id,
         "kernel": kernel,
@@ -296,7 +300,9 @@ def console_dimension(name: str, raw: str | None, default: int) -> int | str:
     return value
 
 
-def console_image_policy(app, row: dict) -> tuple[str, tuple[str, ...], str | None]:
+def console_image_policy(
+    app, row: dict
+) -> tuple[str, tuple[str, ...], str | None]:
     """The workspace image's console protocol, served users, and the
     refusal reason when the record cannot be read.
 
@@ -314,10 +320,18 @@ def console_image_policy(app, row: dict) -> tuple[str, tuple[str, ...], str | No
         return "legacy", ("root",), None
     cache = imagestore.images_dir(state_dir) / image_hash
     if not (cache / "image.json").is_file():
-        return "legacy", ("root",), f"image record unreadable: {image_hash[:12]}"
+        return (
+            "legacy",
+            ("root",),
+            f"image record unreadable: {image_hash[:12]}",
+        )
     record = imagestore.load_record(cache)
     if record is None:
-        return "legacy", ("root",), f"image record unreadable: {image_hash[:12]}"
+        return (
+            "legacy",
+            ("root",),
+            f"image record unreadable: {image_hash[:12]}",
+        )
     return record.console_protocol, record.console_users, None
 
 
@@ -335,8 +349,12 @@ def artifact_sizes(app, body: WorkspaceCreate) -> dict:
     """root/home sizes: the request's, else the settings defaults."""
     vmm = app.state.settings.vmm
     return {
-        "root_mib": body.root_mib if body.root_mib is not None else vmm.root_mib,
-        "home_mib": body.home_mib if body.home_mib is not None else vmm.home_mib,
+        "root_mib": body.root_mib
+        if body.root_mib is not None
+        else vmm.root_mib,
+        "home_mib": body.home_mib
+        if body.home_mib is not None
+        else vmm.home_mib,
     }
 
 
@@ -587,9 +605,9 @@ async def locked_export(app, hub, workspace_id: str, home: Path) -> Response:
             raise HTTPException(
                 status_code=404,
                 detail=(
-                    f"home volume file for workspace {workspace_id} is missing "
-                    f"or unreadable under the state dir; a start would rebuild "
-                    f"it blank"
+                    f"home volume file for workspace {workspace_id} "
+                    f"is missing or unreadable under the state dir; "
+                    "a start would rebuild it blank"
                 ),
             ) from None
     except BaseException:
@@ -601,7 +619,9 @@ async def locked_export(app, hub, workspace_id: str, home: Path) -> Response:
         media_type="application/octet-stream",
         headers={
             "content-length": str(size),
-            "content-disposition": f'attachment; filename="{workspace_id}.ext4"',
+            "content-disposition": (
+                f'attachment; filename="{workspace_id}.ext4"'
+            ),
         },
     )
 
@@ -617,7 +637,9 @@ async def export_body(hub, workspace_id: str, fd: int) -> AsyncIterator[bytes]:
     await hub.publish("home.exported", {"id": workspace_id, "bytes": moved})
 
 
-async def installed_volume(state_dir: Path, workspace_id: str, request: Request) -> int:
+async def installed_volume(
+    state_dir: Path, workspace_id: str, request: Request
+) -> int:
     """The upload's installed byte count, or its named HTTP failure.
 
     A body that is not ext4 and a body the client cut off are
@@ -640,7 +662,9 @@ async def installed_volume(state_dir: Path, workspace_id: str, request: Request)
         ) from exc
 
 
-async def locked_import(app, hub, workspace_id: str, request: Request) -> Response:
+async def locked_import(
+    app, hub, workspace_id: str, request: Request
+) -> Response:
     """The upload under the workspace's move-lock (#80).
 
     The row and seam re-read under the lock plus the lock itself
@@ -718,21 +742,29 @@ def build_api(app) -> FastAPI:
 
     @api.get("/api/v1/health")
     async def health() -> dict:
-        return {"status": "ok", "version": __version__, "fastapi": fastapi_version}
+        return {
+            "status": "ok",
+            "version": __version__,
+            "fastapi": fastapi_version,
+        }
 
     @api.post("/api/v1/tokens", dependencies=[Depends(require_token)])
     async def create_token(body: TokenCreate) -> Response:
         token_id, plaintext = await app.state.model.create_token(body.name)
         payload = {"id": token_id, "name": body.name, "token": plaintext}
         return Response(
-            status_code=201, content=json.dumps(payload), media_type="application/json"
+            status_code=201,
+            content=json.dumps(payload),
+            media_type="application/json",
         )
 
     @api.get("/api/v1/tokens", dependencies=[Depends(require_token)])
     async def list_tokens() -> list[dict]:
         return await app.state.model.list_tokens()
 
-    @api.delete("/api/v1/tokens/{token_id}", dependencies=[Depends(require_token)])
+    @api.delete(
+        "/api/v1/tokens/{token_id}", dependencies=[Depends(require_token)]
+    )
     async def revoke_token(token_id: int) -> dict:
         if not await app.state.model.revoke_token(token_id):
             raise HTTPException(status_code=404, detail="no such token")
@@ -758,7 +790,10 @@ def build_api(app) -> FastAPI:
                     '"egress": false'
                 ),
             )
-        if body.user_data is not None and app.state.settings.vmm.driver == "k8s":
+        if (
+            body.user_data is not None
+            and app.state.settings.vmm.driver == "k8s"
+        ):
             # Same shape as the egress refusal: the runner pod does not
             # build seed disks yet (it ignores even the overlay/home
             # env vars, #14), so a user_data workspace would store a
@@ -771,7 +806,10 @@ def build_api(app) -> FastAPI:
                     "workspace without user_data"
                 ),
             )
-        if body.ssh_pubkey is not None and app.state.settings.vmm.driver == "k8s":
+        if (
+            body.ssh_pubkey is not None
+            and app.state.settings.vmm.driver == "k8s"
+        ):
             # The same shape as the user_data refusal: the runner pod
             # builds no seed disks, so a client-supplied key would
             # store a line nothing ever plants.
@@ -844,9 +882,13 @@ def build_api(app) -> FastAPI:
             # blank artifacts sit at this id's paths now (ours and its
             # are indistinguishable), so nothing is cleaned up — the
             # row-exists-⇒-artifacts-exist invariant must not break.
-            raise HTTPException(status_code=409, detail="workspace exists") from None
+            raise HTTPException(
+                status_code=409, detail="workspace exists"
+            ) from None
         return Response(
-            status_code=201, content=json.dumps(row), media_type="application/json"
+            status_code=201,
+            content=json.dumps(row),
+            media_type="application/json",
         )
 
     @api.get("/api/v1/images", dependencies=[Depends(require_token)])
@@ -899,7 +941,9 @@ def build_api(app) -> FastAPI:
             media_type="application/json",
         )
 
-    @api.delete("/api/v1/images/{digest}", dependencies=[Depends(require_token)])
+    @api.delete(
+        "/api/v1/images/{digest}", dependencies=[Depends(require_token)]
+    )
     async def delete_image(digest: str) -> dict:
         state_dir = app.state.settings.vmm.state_dir
         record = next(
@@ -917,9 +961,9 @@ def build_api(app) -> FastAPI:
         # and its overlay would lose its backing file (#14).
         cache_prefix = str(record.kernel.parent) + "/"
         for row in await app.state.model.list_workspaces():
-            if row.get("image_hash") == digest or str(row.get("kernel", "")).startswith(
-                cache_prefix
-            ):
+            if row.get("image_hash") == digest or str(
+                row.get("kernel", "")
+            ).startswith(cache_prefix):
                 raise HTTPException(
                     status_code=409,
                     detail=f"workspace {row['id']} boots this image",
@@ -931,7 +975,10 @@ def build_api(app) -> FastAPI:
     async def list_workspaces() -> list[dict]:
         return await app.state.model.list_workspaces()
 
-    @api.get("/api/v1/workspaces/{workspace_id}", dependencies=[Depends(require_token)])
+    @api.get(
+        "/api/v1/workspaces/{workspace_id}",
+        dependencies=[Depends(require_token)],
+    )
     async def get_workspace(workspace_id: str) -> dict:
         return await _workspace_or_404(app, workspace_id)
 
@@ -968,9 +1015,13 @@ def build_api(app) -> FastAPI:
     # create-time objects (user_data above all), and a mutation
     # attempt gets a named error instead of a bare 405 from the
     # router's method table.
-    @api.put("/api/v1/workspaces/{workspace_id}", dependencies=[Depends(require_token)])
+    @api.put(
+        "/api/v1/workspaces/{workspace_id}",
+        dependencies=[Depends(require_token)],
+    )
     @api.patch(
-        "/api/v1/workspaces/{workspace_id}", dependencies=[Depends(require_token)]
+        "/api/v1/workspaces/{workspace_id}",
+        dependencies=[Depends(require_token)],
     )
     async def mutate_workspace(workspace_id: str) -> dict:
         await _workspace_or_404(app, workspace_id)
@@ -984,7 +1035,8 @@ def build_api(app) -> FastAPI:
         )
 
     @api.post(
-        "/api/v1/workspaces/{workspace_id}/start", dependencies=[Depends(require_token)]
+        "/api/v1/workspaces/{workspace_id}/start",
+        dependencies=[Depends(require_token)],
     )
     async def start_workspace(workspace_id: str) -> dict:
         row = await _workspace_or_404(app, workspace_id)
@@ -1009,7 +1061,8 @@ def build_api(app) -> FastAPI:
         return JSONResponse(status_code=503, content={"detail": str(exc)})
 
     @api.post(
-        "/api/v1/workspaces/{workspace_id}/stop", dependencies=[Depends(require_token)]
+        "/api/v1/workspaces/{workspace_id}/stop",
+        dependencies=[Depends(require_token)],
     )
     async def stop_workspace(workspace_id: str) -> dict:
         row = await _workspace_or_404(app, workspace_id)
@@ -1022,7 +1075,8 @@ def build_api(app) -> FastAPI:
         return {"id": workspace_id, "status": "stopped"}
 
     @api.post(
-        "/api/v1/workspaces/{workspace_id}/reset", dependencies=[Depends(require_token)]
+        "/api/v1/workspaces/{workspace_id}/reset",
+        dependencies=[Depends(require_token)],
     )
     async def reset_workspace(workspace_id: str) -> dict:
         """Factory reset: a pristine root, the same /home (#14)."""
@@ -1048,7 +1102,8 @@ def build_api(app) -> FastAPI:
     # the guard names, and both hold the workspace's move-lock for
     # their whole exchange — see home_volume_lock.
     @api.get(
-        "/api/v1/workspaces/{workspace_id}/home", dependencies=[Depends(require_token)]
+        "/api/v1/workspaces/{workspace_id}/home",
+        dependencies=[Depends(require_token)],
     )
     async def export_home_volume(workspace_id: str) -> Response:
         """Stream the workspace's /home volume out (#80): the volume
@@ -1062,9 +1117,12 @@ def build_api(app) -> FastAPI:
         return await locked_export(app, hub, workspace_id, home)
 
     @api.put(
-        "/api/v1/workspaces/{workspace_id}/home", dependencies=[Depends(require_token)]
+        "/api/v1/workspaces/{workspace_id}/home",
+        dependencies=[Depends(require_token)],
     )
-    async def import_home_volume(workspace_id: str, request: Request) -> Response:
+    async def import_home_volume(
+        workspace_id: str, request: Request
+    ) -> Response:
         """Replace the workspace's /home volume with the request body
         (#80): the uploaded ext4 image lands atomically — a failed or
         refused upload leaves the old volume in place."""
@@ -1076,7 +1134,8 @@ def build_api(app) -> FastAPI:
             return await locked_import(app, hub, workspace_id, request)
 
     @api.delete(
-        "/api/v1/workspaces/{workspace_id}", dependencies=[Depends(require_token)]
+        "/api/v1/workspaces/{workspace_id}",
+        dependencies=[Depends(require_token)],
     )
     async def delete_workspace(workspace_id: str) -> dict:
         row = await _workspace_or_404(app, workspace_id)
@@ -1150,7 +1209,10 @@ def build_api(app) -> FastAPI:
             return
         try:
             await bridge_console(
-                socket, reader, writer, app.state.settings.vmm.console_stall_timeout_s
+                socket,
+                reader,
+                writer,
+                app.state.settings.vmm.console_stall_timeout_s,
             )
         finally:
             writer.close()
@@ -1186,7 +1248,8 @@ def build_api(app) -> FastAPI:
             await socket.close(
                 code=4501,
                 reason=close_reason(
-                    f"workspace {workspace_id} has no NIC (created without egress)"
+                    f"workspace {workspace_id} has no NIC "
+                    "(created without egress)"
                 ),
             )
             return
@@ -1217,7 +1280,9 @@ def build_api(app) -> FastAPI:
             # and skip the event), and publish never blocks — it fans
             # out to subscriber queues synchronously.
             asyncio.create_task(
-                hub.publish("forward.closed", {"id": workspace_id, "port": target_port})
+                hub.publish(
+                    "forward.closed", {"id": workspace_id, "port": target_port}
+                )
             )
 
     @api.websocket("/api/v1/events")
@@ -1258,7 +1323,9 @@ async def pump_streams(
     the console's echo watchdog (#103) arms and disarms its deadline
     through them; a plain forward passes none.
     """
-    to_guest = asyncio.create_task(_ws_to_stream(socket, writer, on_input or noop))
+    to_guest = asyncio.create_task(
+        _ws_to_stream(socket, writer, on_input or noop)
+    )
     to_client = asyncio.create_task(_stream_to_ws(reader, socket, on_output))
     try:
         done, pending = await asyncio.wait(

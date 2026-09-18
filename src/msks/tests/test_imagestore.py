@@ -39,7 +39,8 @@ def build_containerdisk(
     schema: int | None = None,
     members: dict | None = None,
 ) -> None:
-    """Write a minimal-but-valid container-image tar in containerDisk layout."""
+    """Write a minimal-but-valid container-image tar
+    in containerDisk layout."""
     layer = BytesIO()
     with tarfile.open(fileobj=layer, mode="w") as tar:
         payload = members or {
@@ -268,7 +269,9 @@ async def test_image_endpoints_and_create_by_ref(tmp_path) -> None:
     settings = Settings(
         vmm=VmmSettings(state_dir=tmp_path / "vms"),
         server=ServerSettings(
-            db_path=tmp_path / "ws.db", bootstrap_token=TOKEN, event_poll_s=0.05
+            db_path=tmp_path / "ws.db",
+            bootstrap_token=TOKEN,
+            event_poll_s=0.05,
         ),
     )
     app = build_app(settings)
@@ -298,7 +301,9 @@ async def _drive_image_flow(http, archive) -> None:
     assert imported.json()["ref"] == "debian:13.6"
 
     # First import became the default: bare create resolves.
-    made = await http.post("/api/v1/workspaces", json={"id": "ws-img"}, headers=auth())
+    made = await http.post(
+        "/api/v1/workspaces", json={"id": "ws-img"}, headers=auth()
+    )
     assert made.status_code == 201, made.text
     row = made.json()
     assert row["kernel"].endswith("/kernel")
@@ -347,7 +352,9 @@ async def test_create_explicit_artifacts_without_catalog(tmp_path) -> None:
         vmm=VmmSettings(state_dir=tmp_path / "vms"),
         net=NetSettings(enabled=False),
         server=ServerSettings(
-            db_path=tmp_path / "ws.db", bootstrap_token=TOKEN, event_poll_s=10.0
+            db_path=tmp_path / "ws.db",
+            bootstrap_token=TOKEN,
+            event_poll_s=10.0,
         ),
     )
     app = build_app(settings)
@@ -386,7 +393,9 @@ def test_import_rejects_directory_manifest(tmp_path: Path) -> None:
     """extractfile on a directory yields None, not KeyError."""
     archive = tmp_path / "d.tar"
     with tarfile.open(archive, "w") as outer:
-        outer.addfile(tarfile.TarInfo("manifest.json"), BytesIO(b"")) if False else None
+        outer.addfile(
+            tarfile.TarInfo("manifest.json"), BytesIO(b"")
+        ) if False else None
         info = tarfile.TarInfo("manifest.json")
         info.type = tarfile.DIRTYPE
         outer.addfile(info)
@@ -462,7 +471,9 @@ async def test_default_image_bootstrap(tmp_path, capsys) -> None:
     build_containerdisk(archive, name="boot", version="1")
 
     settings = Settings(
-        vmm=VmmSettings(state_dir=tmp_path / "vms", default_image=str(archive)),
+        vmm=VmmSettings(
+            state_dir=tmp_path / "vms", default_image=str(archive)
+        ),
         net=NetSettings(enabled=False),
         server=ServerSettings(
             db_path=tmp_path / "ws.db", bootstrap_token="t", event_poll_s=10.0
@@ -499,7 +510,9 @@ async def test_default_image_bootstrap(tmp_path, capsys) -> None:
         },
     )
     settings = Settings(
-        vmm=VmmSettings(state_dir=tmp_path / "vms", default_image=str(rebuilt)),
+        vmm=VmmSettings(
+            state_dir=tmp_path / "vms", default_image=str(rebuilt)
+        ),
         net=NetSettings(enabled=False),
         server=ServerSettings(
             db_path=tmp_path / "ws.db", bootstrap_token="t", event_poll_s=10.0
@@ -507,12 +520,16 @@ async def test_default_image_bootstrap(tmp_path, capsys) -> None:
     )
     app3 = build_app(settings)
     with TestClient(build_api(app3)):
-        assert default_image(tmp_path / "vms").hash == imagestore.hash_file(rebuilt)
+        assert default_image(tmp_path / "vms").hash == imagestore.hash_file(
+            rebuilt
+        )
         assert "default image boot:1" in capsys.readouterr().out
 
     # A broken pointer is loud but non-fatal: the API still serves.
     settings = Settings(
-        vmm=VmmSettings(state_dir=tmp_path / "vms2", default_image="/absent.tar"),
+        vmm=VmmSettings(
+            state_dir=tmp_path / "vms2", default_image="/absent.tar"
+        ),
         net=NetSettings(enabled=False),
         server=ServerSettings(
             db_path=tmp_path / "ws2.db", bootstrap_token="t", event_poll_s=10.0
@@ -572,7 +589,9 @@ async def test_bootstrap_repoint_takes_default(tmp_path) -> None:
             vmm=VmmSettings(state_dir=state, default_image=str(archive)),
             net=NetSettings(enabled=False),
             server=ServerSettings(
-                db_path=tmp_path / "ws.db", bootstrap_token="t", event_poll_s=10.0
+                db_path=tmp_path / "ws.db",
+                bootstrap_token="t",
+                event_poll_s=10.0,
             ),
         )
         app = build_app(settings)
@@ -593,10 +612,14 @@ async def test_create_explicit_kernel_keeps_own_initrd(tmp_path) -> None:
     archive = tmp_path / "d.tar"
     build_containerdisk(archive)
     settings = Settings(
-        vmm=VmmSettings(state_dir=tmp_path / "vms", default_image=str(archive)),
+        vmm=VmmSettings(
+            state_dir=tmp_path / "vms", default_image=str(archive)
+        ),
         net=NetSettings(enabled=False),
         server=ServerSettings(
-            db_path=tmp_path / "ws.db", bootstrap_token=TOKEN, event_poll_s=10.0
+            db_path=tmp_path / "ws.db",
+            bootstrap_token=TOKEN,
+            event_poll_s=10.0,
         ),
     )
     app = build_app(settings)
@@ -605,7 +628,11 @@ async def test_create_explicit_kernel_keeps_own_initrd(tmp_path) -> None:
     with TestClient(build_api(app)) as client:
         made = client.post(
             "/api/v1/workspaces",
-            json={"id": "ws-k", "kernel": "/my/kernel", "rootfs": "/my/rootfs"},
+            json={
+                "id": "ws-k",
+                "kernel": "/my/kernel",
+                "rootfs": "/my/rootfs",
+            },
             headers={"authorization": f"Bearer {TOKEN}"},
         )
         assert made.status_code == 201, made.text
@@ -661,7 +688,9 @@ async def test_concurrent_same_hash_imports() -> None:
     """Two simultaneous imports of one archive cannot collide."""
 
     async def run(tmpdir):
-        return await asyncio.to_thread(import_archive, tmpdir / "c.tar", tmpdir)
+        return await asyncio.to_thread(
+            import_archive, tmpdir / "c.tar", tmpdir
+        )
 
     root = Path("/tmp") / f"msks-conc-{uuid4hex()}"
     root.mkdir(parents=True)
@@ -727,10 +756,14 @@ async def test_image_delete_with_reference_guard(tmp_path) -> None:
     archive = tmp_path / "del.tar"
     build_containerdisk(archive, name="gone", version="1")
     settings = Settings(
-        vmm=VmmSettings(state_dir=tmp_path / "vms", default_image=str(archive)),
+        vmm=VmmSettings(
+            state_dir=tmp_path / "vms", default_image=str(archive)
+        ),
         net=NetSettings(enabled=False),
         server=ServerSettings(
-            db_path=tmp_path / "ws.db", bootstrap_token=TOKEN, event_poll_s=10.0
+            db_path=tmp_path / "ws.db",
+            bootstrap_token=TOKEN,
+            event_poll_s=10.0,
         ),
     )
     app = build_app(settings)
@@ -760,7 +793,9 @@ async def test_image_delete_with_reference_guard(tmp_path) -> None:
         assert guarded.status_code == 409
         assert "ws-keep" in guarded.json()["detail"]
         assert (
-            client.delete(f"/api/v1/images/{'f' * 64}", headers=headers).status_code
+            client.delete(
+                f"/api/v1/images/{'f' * 64}", headers=headers
+            ).status_code
             == 404
         )
         gone = client.delete("/api/v1/workspaces/ws-keep", headers=headers)
@@ -837,7 +872,9 @@ async def test_concurrent_import_swap_paths(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(imagestore, "hash_file", slow_hash)
 
     async def run():
-        return await asyncio.to_thread(imagestore.import_archive, archive, tmp_path)
+        return await asyncio.to_thread(
+            imagestore.import_archive, archive, tmp_path
+        )
 
     first, second = await asyncio.gather(run(), run())
     assert first.hash == second.hash
@@ -919,7 +956,9 @@ def test_sweep_crash_leftovers(tmp_path: Path) -> None:
     assert list(root.iterdir()) == [keep]
 
 
-def test_foreign_archive_has_no_fabricated_kernel_format(tmp_path: Path) -> None:
+def test_foreign_archive_has_no_fabricated_kernel_format(
+    tmp_path: Path,
+) -> None:
     """kernel_format is a declared fact, not a default."""
     archive = tmp_path / "foreign.tar"
     layer = BytesIO()
@@ -1011,7 +1050,9 @@ def test_unknown_provisioner_is_a_named_import_error(tmp_path: Path) -> None:
     assert list((tmp_path / "images").iterdir()) == []
 
 
-def test_non_object_capabilities_is_a_named_import_error(tmp_path: Path) -> None:
+def test_non_object_capabilities_is_a_named_import_error(
+    tmp_path: Path,
+) -> None:
     archive = tmp_path / "a.tar"
     build_containerdisk(
         archive,
@@ -1036,7 +1077,9 @@ def test_non_object_capabilities_is_a_named_import_error(tmp_path: Path) -> None
         import_archive(archive, tmp_path)
 
 
-def test_cached_manifest_with_bad_provisioner_is_invisible(tmp_path: Path) -> None:
+def test_cached_manifest_with_bad_provisioner_is_invisible(
+    tmp_path: Path,
+) -> None:
     """A hand-edited cache entry with a bogus provisioner is an
     invisible image, not a daemon crash; re-import repairs it."""
     archive = tmp_path / "a.tar"
@@ -1051,7 +1094,9 @@ def test_cached_manifest_with_bad_provisioner_is_invisible(tmp_path: Path) -> No
     assert repaired.provisioner is None
 
 
-def test_capabilities_without_provisioner_reads_as_none(tmp_path: Path) -> None:
+def test_capabilities_without_provisioner_reads_as_none(
+    tmp_path: Path,
+) -> None:
     """capabilities may exist without a provisioner (future keys):
     the provisioner reads as absent, not as an error."""
     archive = tmp_path / "a.tar"

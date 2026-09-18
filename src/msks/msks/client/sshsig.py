@@ -27,7 +27,9 @@ import struct
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding
-from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+from cryptography.hazmat.primitives.asymmetric.utils import (
+    decode_dss_signature,
+)
 
 from .agent import Reader, load_private, public_parts, wire_string
 
@@ -106,7 +108,9 @@ def sshsig_blob(payload: bytes, namespace: str) -> bytes:
     )
 
 
-def sshsig_body(public_blob: bytes, signature_wire: bytes, namespace: str) -> bytes:
+def sshsig_body(
+    public_blob: bytes, signature_wire: bytes, namespace: str
+) -> bytes:
     """The SSHSIG file body: the raw magic, the format version, the
     signer's public key blob, the namespace, the reserved field, the
     hash algorithm, and the signature. Armored, this is what a
@@ -130,7 +134,9 @@ def sign_payload(private_pem: str, payload: bytes, namespace: str) -> str:
     return sign_key(private, public_blob, payload, namespace)
 
 
-def sign_key(private, public_blob: bytes, payload: bytes, namespace: str) -> str:
+def sign_key(
+    private, public_blob: bytes, payload: bytes, namespace: str
+) -> str:
     """The SSHSIG body with every signer: the blob to cover, the
     signature over it, and the body that carries both."""
     blob = sshsig_blob(payload, namespace)
@@ -214,11 +220,15 @@ class AgentClient:
             # garbage lists no keys.
             return []
 
-    def parse_identities(self, reader: Reader, count: int) -> list[tuple[bytes, str]]:
+    def parse_identities(
+        self, reader: Reader, count: int
+    ) -> list[tuple[bytes, str]]:
         """The listed pairs from an IDENTITIES_ANSWER body."""
         listed = []
         for _ in range(count):
-            listed.append((reader.string(), reader.string().decode(errors="replace")))
+            listed.append(
+                (reader.string(), reader.string().decode(errors="replace"))
+            )
         return listed
 
     def sign(self, key_blob: bytes, data: bytes, flags: int) -> bytes | None:
@@ -254,10 +264,14 @@ def sign_via_agent(
             if blob != want:
                 continue
             flags = RSA_SHA2_512 if public_line.startswith("ssh-rsa ") else 0
-            signature = client.sign(blob, sshsig_blob(payload, namespace), flags)
+            signature = client.sign(
+                blob, sshsig_blob(payload, namespace), flags
+            )
             if signature is None:
                 break
-            return base64.b64encode(sshsig_body(blob, signature, namespace)).decode()
+            return base64.b64encode(
+                sshsig_body(blob, signature, namespace)
+            ).decode()
         raise SystemExit(
             "msks console: the agent at "
             f"{socket_path} produced no signature for the workspace's "

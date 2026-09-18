@@ -15,7 +15,9 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("workspaces", sa.Column("user_data", sa.Text(), nullable=True))
+    op.add_column(
+        "workspaces", sa.Column("user_data", sa.Text(), nullable=True)
+    )
 
 
 def downgrade() -> None:

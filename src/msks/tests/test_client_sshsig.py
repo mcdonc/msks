@@ -26,11 +26,18 @@ def armor(body: bytes) -> str:
     """The armored file a verifier reads, from the wire body."""
     b64 = base64.b64encode(body).decode()
     wrapped = "\n".join(b64[i : i + 70] for i in range(0, len(b64), 70))
-    return f"-----BEGIN SSH SIGNATURE-----\n{wrapped}\n-----END SSH SIGNATURE-----\n"
+    return (
+        f"-----BEGIN SSH SIGNATURE-----\n{wrapped}\n"
+        "-----END SSH SIGNATURE-----\n"
+    )
 
 
 def verify(
-    sig_body: bytes, payload: bytes, public_line: str, namespace: str, tmp_path: Path
+    sig_body: bytes,
+    payload: bytes,
+    public_line: str,
+    namespace: str,
+    tmp_path: Path,
 ) -> bool:
     """ssh-keygen -Y verify: the guest helper's exact verdict."""
     fields = public_line.split()
@@ -73,7 +80,11 @@ def test_sign_payload_round_trips_through_ssh_keygen(
     body = sshsig.sign_payload(private_pem, b"nonce bytes", sshsig.NAMESPACE)
     assert base64.b64decode(body)  # the wire form is plain base64
     assert verify(
-        base64.b64decode(body), b"nonce bytes", public, sshsig.NAMESPACE, tmp_path
+        base64.b64decode(body),
+        b"nonce bytes",
+        public,
+        sshsig.NAMESPACE,
+        tmp_path,
     )
 
 
@@ -103,7 +114,11 @@ def test_sign_via_agent_round_trips_and_needs_the_key(tmp_path: Path) -> None:
             served.server_address, public, b"nonce", sshsig.NAMESPACE
         )
         assert verify(
-            base64.b64decode(body), b"nonce", public, sshsig.NAMESPACE, tmp_path
+            base64.b64decode(body),
+            b"nonce",
+            public,
+            sshsig.NAMESPACE,
+            tmp_path,
         )
         # The wrong workspace key is not in the agent: one line, not
         # a traceback.
@@ -288,7 +303,9 @@ def test_sign_via_agent_reports_a_refused_signature() -> None:
     sshsig.AgentClient.__init__ = patched
     try:
         with pytest.raises(SystemExit, match="produced no signature"):
-            sshsig.sign_via_agent(server_path, public, b"nonce", "msks-console")
+            sshsig.sign_via_agent(
+                server_path, public, b"nonce", "msks-console"
+            )
     finally:
         sshsig.AgentClient.__init__ = original
 

@@ -23,7 +23,9 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("revoked", sa.Boolean(), nullable=False),
     )
-    op.create_index("ix_tokens_token_hash", "tokens", ["token_hash"], unique=True)
+    op.create_index(
+        "ix_tokens_token_hash", "tokens", ["token_hash"], unique=True
+    )
     op.create_table(
         "workspaces",
         sa.Column("id", sa.String(), primary_key=True),

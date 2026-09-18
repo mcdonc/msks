@@ -117,7 +117,9 @@ async def install_vm(
     """Install one workspace's tables, converging on any previous
     table of the same name first."""
     await delete_vm_table(settings, workspace_id)
-    ruleset = vm_ruleset(workspace_id, tap, guest_ip, tap_ip, settings.net.uplink)
+    ruleset = vm_ruleset(
+        workspace_id, tap, guest_ip, tap_ip, settings.net.uplink
+    )
     await nft_run(
         settings,
         ["-f", "-"],
@@ -158,7 +160,9 @@ async def nft_run(
             stderr=asyncio.subprocess.PIPE,
         )
     except FileNotFoundError as exc:
-        raise MicrovmError(f"{what}: tool not found: {settings.net.nft_tool}") from exc
+        raise MicrovmError(
+            f"{what}: tool not found: {settings.net.nft_tool}"
+        ) from exc
     output, err = await proc.communicate(input_text)
     if proc.returncode == 0:
         return

@@ -15,15 +15,21 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("workspaces", sa.Column("image_hash", sa.String(), nullable=True))
+    op.add_column(
+        "workspaces", sa.Column("image_hash", sa.String(), nullable=True)
+    )
     op.add_column("workspaces", sa.Column("host", sa.String(), nullable=True))
     op.add_column(
         "workspaces",
-        sa.Column("root_mib", sa.Integer(), nullable=False, server_default="10240"),
+        sa.Column(
+            "root_mib", sa.Integer(), nullable=False, server_default="10240"
+        ),
     )
     op.add_column(
         "workspaces",
-        sa.Column("home_mib", sa.Integer(), nullable=False, server_default="2048"),
+        sa.Column(
+            "home_mib", sa.Integer(), nullable=False, server_default="2048"
+        ),
     )
 
 

@@ -117,7 +117,9 @@ def enclosing_try(node: ast.AST) -> ast.Try | None:
     if isinstance(parent, ast.Try):
         return parent
     handler_parent = getattr(parent, "_parent", None)
-    if isinstance(parent, ast.ExceptHandler) and isinstance(handler_parent, ast.Try):
+    if isinstance(parent, ast.ExceptHandler) and isinstance(
+        handler_parent, ast.Try
+    ):
         return handler_parent
     return None
 
@@ -164,7 +166,11 @@ def is_marked(lines: list[str], lineno: int, comment: str) -> bool:
 def is_exempt(node: ast.AST) -> bool:
     """Is the import module-scope in one of the canonical patterns (plain
     top-level, ``if TYPE_CHECKING:``, or a guarded optional dependency)?"""
-    return is_top_level(node) or is_type_checking(node) or is_guarded_optional(node)
+    return (
+        is_top_level(node)
+        or is_type_checking(node)
+        or is_guarded_optional(node)
+    )
 
 
 def is_flagged_import(node: ast.AST, source_lines: list[str]) -> bool:
@@ -185,7 +191,9 @@ def deferred_import_error(root: Path, pyfile: Path, node) -> str:
     module = node.module or ""
     prefix = "." * node.level + module
     names = ", ".join(a.name for a in node.names)
-    return f"{rel}:{node.lineno}: deferred import: from {prefix} import {names}"
+    return (
+        f"{rel}:{node.lineno}: deferred import: from {prefix} import {names}"
+    )
 
 
 def file_deferred_errors(root: Path, pyfile: Path) -> list[str]:
@@ -197,7 +205,11 @@ def file_deferred_errors(root: Path, pyfile: Path) -> list[str]:
         return [parsed]
     tree, source_lines = parsed
     flagged = sorted(
-        (node for node in ast.walk(tree) if is_flagged_import(node, source_lines)),
+        (
+            node
+            for node in ast.walk(tree)
+            if is_flagged_import(node, source_lines)
+        ),
         key=lambda node: node.lineno,
     )
     return [deferred_import_error(root, pyfile, node) for node in flagged]

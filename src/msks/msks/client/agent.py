@@ -26,7 +26,9 @@ from pathlib import Path
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding
-from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+from cryptography.hazmat.primitives.asymmetric.utils import (
+    decode_dss_signature,
+)
 
 #: Protocol message types this agent answers (draft-miller-ssh-agent).
 REQUEST_IDENTITIES = 11

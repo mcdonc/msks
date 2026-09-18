@@ -147,7 +147,9 @@ def print_report(report: dict, keys: list[str]) -> int:
     for key in keys:
         entry = report["files"].get(key)
         if entry is None:
-            print(f"{key}: never measured — no test imported it (or a path typo)")
+            print(
+                f"{key}: never measured — no test imported it (or a path typo)"
+            )
             total += 1
             continue
         details = file_gaps(entry)

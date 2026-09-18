@@ -59,7 +59,9 @@ async def publish_transition(
     """Write the new status and announce it; False when the row vanished."""
     if not await app.state.model.set_status(workspace_id, status):
         return False
-    await hub.publish("workspace.status", {"id": workspace_id, "status": status})
+    await hub.publish(
+        "workspace.status", {"id": workspace_id, "status": status}
+    )
     return True
 
 
@@ -74,5 +76,7 @@ async def watch_loop(app, hub: EventHub) -> None:
         try:
             await scan_once(app, hub)
         except Exception:
-            LOG.exception("workspace status scan failed; retrying next interval")
+            LOG.exception(
+                "workspace status scan failed; retrying next interval"
+            )
         await asyncio.sleep(interval)
