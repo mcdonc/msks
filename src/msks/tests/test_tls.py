@@ -1,5 +1,7 @@
 """TLS material: generation, operator-provided mode, TOFU fingerprint."""
 
+import datetime
+import ipaddress
 import socket
 import ssl
 import threading
@@ -7,6 +9,9 @@ from pathlib import Path
 
 import pytest
 from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.x509.oid import NameOID
 from msks.server import tls
 from msks.server.tls import fingerprint, generate_ca, generate_leaf, load_or_generate
 
@@ -155,3 +160,77 @@ def test_ca_usable_rejects_garbage(tmp_path: Path) -> None:
     (tmp_path / "a").write_bytes(b"not a pem")
     (tmp_path / "b").write_bytes(b"not a pem")
     assert tls._ca_usable(tmp_path / "a", tmp_path / "b") is False
+
+
+def mint_legacy_ca() -> tuple[bytes, bytes]:
+    """A self-signed CA with NO extensions — the pre-strict-clean shape.
+
+    Parses fine, which is what made it toxic: the leaf-remint path
+    reads the CA's SKI to build the new leaf's AKI and crashed
+    against it (#148).
+    """
+    key = ec.generate_private_key(ec.SECP256R1())
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "msks CA")])
+    now = datetime.datetime.now(datetime.UTC)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(subject)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now)
+        .not_valid_after(now + datetime.timedelta(days=10))
+        .sign(key, hashes.SHA256())
+    )
+    key_pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+    return cert.public_bytes(serialization.Encoding.PEM), key_pem
+
+
+def test_legacy_ca_is_replaced_wholesale(tmp_path: Path) -> None:
+    """A no-SKI CA parses but cannot mint strict-clean leaves.
+
+    The daemon used to crash-loop on the leaf remint against it
+    (#148); now the whole pair is replaced and the next boot serves.
+    """
+    ca_pem, key_pem = mint_legacy_ca()
+    (tmp_path / "msks-ca.pem").write_bytes(ca_pem)
+    (tmp_path / "msks-ca-key.pem").write_bytes(key_pem)
+    old_fp = fingerprint(ca_pem)
+    cert, _key, fp = load_or_generate(tmp_path, "192.168.77.2", None, None)
+    assert fp != old_fp
+    new_ca = x509.load_pem_x509_certificate((tmp_path / "msks-ca.pem").read_bytes())
+    new_ca.extensions.get_extension_for_class(x509.SubjectKeyIdentifier)
+    leaf = x509.load_pem_x509_certificate(Path(cert).read_bytes())
+    leaf.extensions.get_extension_for_class(x509.AuthorityKeyIdentifier)
+    # Converged: a second resolve is a reuse, not another replacement.
+    cert2, _key2, fp2 = load_or_generate(tmp_path, "192.168.77.2", None, None)
+    assert fp2 == fp and Path(cert2) == Path(cert)
+
+
+def test_ca_replacement_is_named_on_stderr(tmp_path, capsys) -> None:
+    (tmp_path / "msks-ca.pem").write_bytes(mint_legacy_ca()[0])
+    (tmp_path / "msks-ca-key.pem").write_bytes(mint_legacy_ca()[1])
+    load_or_generate(tmp_path, "h", None, None)
+    err = capsys.readouterr().err
+    assert "replacing an unusable CA" in err
+
+
+def test_first_mint_prints_no_replacement_note(tmp_path, capsys) -> None:
+    load_or_generate(tmp_path, "h", None, None)
+    assert "replacing" not in capsys.readouterr().err
+
+
+def test_strict_clean_ca_keeps_leaf_only_remint(tmp_path: Path) -> None:
+    """A usable CA survives a host change: leaf-only, same CA fingerprint."""
+    _cert, _key, fp = load_or_generate(tmp_path, "127.0.0.1", None, None)
+    ca_bytes_before = (tmp_path / "msks-ca.pem").read_bytes()
+    cert, _key2, fp2 = load_or_generate(tmp_path, "192.168.77.2", None, None)
+    assert fp2 == fp
+    assert (tmp_path / "msks-ca.pem").read_bytes() == ca_bytes_before
+    leaf = x509.load_pem_x509_certificate(Path(cert).read_bytes())
+    san = leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName)
+    assert x509.IPAddress(ipaddress.ip_address("192.168.77.2")) in san.value

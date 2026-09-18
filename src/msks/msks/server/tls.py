@@ -17,6 +17,7 @@ import datetime
 import hashlib
 import ipaddress
 import os
+import sys
 from pathlib import Path
 
 from cryptography import x509
@@ -197,11 +198,22 @@ def _self_signed(state_dir: Path, host: str) -> tuple[str, str, str]:
     """The CA + leaf pair under ``state_dir``, generated as needed."""
     ca_cert = state_dir / CA_CERT
     ca_key = state_dir / CA_KEY
+    replacing = ca_cert.exists() or ca_key.exists()
     if not _ca_usable(ca_cert, ca_key):
-        # Missing, or present but unreadable (a hard power cut between
-        # create and fsync leaves zero-length PEMs): regenerate rather
-        # than crash-loop. Clients pinned to the old fingerprint must
-        # re-pin — same procedure as any CA rotation.
+        # Missing, present but unreadable (a hard power cut between
+        # create and fsync leaves zero-length PEMs), or a legacy pair
+        # that cannot mint strict-clean leaves (no SKI — #148):
+        # regenerate rather than crash-loop. Clients pinned to the
+        # old fingerprint must re-pin — same procedure as any CA
+        # rotation. A REPLACEMENT (files existed) is named on stderr
+        # so the fingerprint change on the serial log has its cause
+        # beside it; a first mint needs no explanation.
+        if replacing:
+            print(
+                "msksd: replacing an unusable CA (unreadable or pre-strict-clean);"
+                " clients must re-pin the new fingerprint",
+                file=sys.stderr,
+            )
         cert_pem, key_pem = generate_ca()
         _write(ca_cert, cert_pem, 0o644)
         _write(ca_key, key_pem, 0o600)
@@ -220,14 +232,24 @@ def _self_signed(state_dir: Path, host: str) -> tuple[str, str, str]:
 
 
 def _ca_usable(ca_cert: Path, ca_key: Path) -> bool:
-    """Whether the CA pair exists and parses; False when regeneration
-    must run."""
+    """Whether the CA pair exists, parses, and can mint strict-clean
+    leaves; False when regeneration must run.
+
+    A CA that parses but carries no Subject Key Identifier (any pair
+    minted before #141's strict-clean change) cannot sign the leaf
+    the current mint code builds an AKI for — the remint raises and
+    the unit crash-loops (#148, observed live on a long-lived state
+    disk after #146 changed the appliance's bind host). Such a CA is
+    not usable: it is replaced wholesale, the same recovery as a
+    missing pair.
+    """
     if not ca_cert.is_file() or not ca_key.is_file():
         return False
     try:
-        x509.load_pem_x509_certificate(ca_cert.read_bytes())
+        cert = x509.load_pem_x509_certificate(ca_cert.read_bytes())
         serialization.load_pem_private_key(ca_key.read_bytes(), password=None)
-    except ValueError, IndexError:
+        cert.extensions.get_extension_for_class(x509.SubjectKeyIdentifier)
+    except ValueError, IndexError, x509.ExtensionNotFound:
         return False
     return True
 

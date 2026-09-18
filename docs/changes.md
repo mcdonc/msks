@@ -303,6 +303,15 @@ no`, `PermitRootLogin prohibit-password`) pinned by a config dropin,
 
 ### Fixed
 
+- **Legacy CA crash-loop on leaf remint (#148).** A CA minted before
+  the strict-clean change parses but carries no Subject Key
+  Identifier; the leaf remint that a host change triggers read the
+  missing extension and exited, and `Restart=always` looped the
+  daemon forever (observed live on a long-lived appliance state disk
+  after #146 changed the bind host). Such a CA is now replaced
+  wholesale — a stderr line names the replacement beside the new
+  fingerprint on the serial log — instead of crash-looping. Current
+  strict-clean pairs keep leaf-only remints (same CA fingerprint).
 - **Strict-clean minted TLS certificates (#141).** The CA and leaf
   msksd generates now carry Subject/Authority Key Identifiers and
   the CA a `keyCertSign` KeyUsage, so Python 3.14 clients — whose
