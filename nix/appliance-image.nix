@@ -232,9 +232,14 @@ let
       # The daemon binds (and names in its minted cert — #146) the
       # bridge address: it is the only address the guest has, and
       # the cert's SAN must match the URL clients dial or verified
-      # TLS fails on hostname. State disks minted before #146 carry
-      # a 0.0.0.0-named pair; removing /msksd/msks-*.pem from the
-      # state disk lets the next boot mint the replacement.
+      # TLS fails on hostname. Two consequences: a boot can race
+      # networkd for the address (msksd is only After=networkd, not
+      # waiting for it) — a lost race fails the bind and the unit's
+      # 1s Restart=always recovers within a retry or two; and a
+      # state disk minted before #146 (host 0.0.0.0) remints its
+      # LEAF automatically on the first boot (tls.py records the
+      # host beside the leaf and regenerates on a mismatch) — no
+      # manual removal, and the CA fingerprint is untouched.
       cat >/run/msksd/msksd.yaml <<EOF
       state_dir: /state/msksd
       host: ${net.address}

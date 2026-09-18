@@ -60,16 +60,18 @@ def devenv_task(task: str, timeout: float = 300.0) -> subprocess.CompletedProces
 
 
 def ensure_down(timeout: float = 300.0) -> None:
-    """Stop any running appliance; no pidfile is already stopped.
+    """Stop any running appliance; already stopped is success.
 
-    ``msks:appliance-down`` exits 0 both when it TERMs a live run
-    script and when the pidfile is absent (the stopped state this
-    helper establishes either way).
+    ``msks:appliance-down`` wraps ``devenv processes down``: it exits
+    0 when it stops a live manager, and exits 1 with "No process
+    manager is running" when nothing is up — the normal state before
+    a session's first run. Both mean stopped.
     """
     down = devenv_task("msks:appliance-down", timeout=timeout)
-    assert down.returncode == 0, (
-        f"msks:appliance-down failed:\n{down.stdout}{down.stderr}"
+    stopped = down.returncode == 0 or "No process manager is running" in (
+        down.stdout + down.stderr
     )
+    assert stopped, f"msks:appliance-down failed:\n{down.stdout}{down.stderr}"
 
 
 async def poll_health(result: dict, t0: float) -> None:

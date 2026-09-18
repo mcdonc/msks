@@ -213,11 +213,13 @@ appliance's bootstrap token), and `MSKSC_CAFILE`
 run script once the guest serves). Until that file exists — the
 first boot — the client warns it does not verify; cross-check the
 TOFU fingerprint on `.appliance/serial.log`, then open a fresh
-devenv shell. The presets are read at shell-entry time, so a
-rotated token needs a fresh shell too.
+devenv shell. The presets are read at shell-entry time, so a rotated
+token — or a replaced state disk, whose old CA stays in place until
+the new guest serves and the extraction refreshes it — needs a fresh
+shell too; that window self-heals on every boot.
 
 **The dev tree (#144): daemon edits without appliance rebuilds.**
-`MSKS_DEV_TREE=1` on `msks:appliance-up` shares this checkout
+`MSKS_DEV_TREE=1` with `processes up` shares this checkout
 read-only into the guest as a second virtiofs tag; the guest daemon
 then runs from the shared tree — the checkout's venv python (a
 nix-store interpreter, resolved through the store share) with the

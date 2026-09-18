@@ -37,4 +37,4 @@ nix-build --no-out-link -I nixpkgs="$nixpkgs" \
   "$root/nix/appliance.nix" -A appliance -o "$app_dir/image"
 
 echo "msks: appliance assets built into .appliance/ (from $out)"
-echo "msks: boot it with: devenv tasks run msks:appliance-up"
+echo "msks: boot it with: devenv processes up -d"

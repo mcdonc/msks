@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# The appliance as ONE run script (#25, now opt-in under the #141
-# tasks): `msks:appliance-up` builds conditionally and runs this
-# script detached; its pidfile (.appliance/run.pid) is the handle
-# `msks:appliance-down` TERMs, and the TERM/INT trap below owns the
-# graceful choreography — no supervisor required.
+# The appliance as ONE run script (#25): the devenv process manager
+# (#146) execs it as the `appliance` process — the build runs first
+# inside the process exec — and the TERM/INT trap below owns the
+# graceful choreography (the msks:appliance-up/-down tasks wrap the
+# same manager). The pidfile it writes (.appliance/run.pid) is a
+# diagnostic handle for "which run-script instance owns this
+# .appliance"; teardown is the supervisor's TERM, not a pidfile
+# kill.
 #
 # The store-share daemon is a CHILD of this script, not its own
 # process: virtiofsd is vhost-user 1:1 with the VM — it exits when
@@ -29,10 +32,10 @@ guest_ip="192.168.77.2"
 # the running appliance's pid with its own short-lived one.
 bash "$root/scripts/appliance-setup.sh"
 
-# The pidfile msks:appliance-down TERMs (#141): the run script may
-# run detached under the opt-in msks:appliance-up task — the pidfile
-# gives the down task its handle. Written only once this instance
-# owns the appliance (setup above passed); removed by the EXIT trap.
+# The instance pidfile (#146): a diagnostic handle identifying which
+# run-script instance owns this .appliance (stale ones are cleaned by
+# the EXIT trap). Written only once this instance owns the appliance
+# (setup above passed).
 echo $$ >"$app_dir/run.pid"
 
 # The EXIT trap registers HERE, not after virtiofsd/VM bring-up: a
@@ -48,7 +51,8 @@ appliance_exit() {
   # virtiofsd leaves its pidfile behind even on graceful exit; the
   # run pidfile goes too, so a stopped appliance reports stopped.
   rm -f "$app_dir/api.sock" "$app_dir/vmm-sock" "$app_dir/vmm-sock.pid" \
-    "$app_dir/dev-sock" "$app_dir/dev-sock.pid" "$app_dir/run.pid"
+    "$app_dir/dev-sock" "$app_dir/dev-sock.pid" \
+    "$app_dir"/.msks-ca.pem.tmp.* "$app_dir/run.pid"
 }
 trap appliance_exit EXIT
 
@@ -254,10 +258,16 @@ chpid=$!
     fi
     sleep 1
   done
-  tmp="$app_dir/.msks-ca.pem.tmp"
+  # The tmp name carries this script's pid: a SIGKILL'd instance's
+  # subshell lives on up to the window above, and a fixed name would
+  # let a replacement instance's extractor race it on the same file.
+  # The content check covers the same journal-lag class as the retry:
+  # a checkpointed inode with uncheckpointed data blocks reads back
+  # zeros — full-size, non-empty, not a certificate.
+  tmp="$app_dir/.msks-ca.pem.tmp.$$"
   for _ in $(seq 1 24); do
     if debugfs -R "cat /msksd/msks-ca.pem" "$state_disk" >"$tmp" 2>/dev/null &&
-      [ -s "$tmp" ]; then
+      grep -q "BEGIN CERTIFICATE" "$tmp"; then
       mv "$tmp" "$app_dir/msks-ca.pem"
       exit 0
     fi

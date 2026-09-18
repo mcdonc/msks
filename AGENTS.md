@@ -82,9 +82,14 @@ the stale sockets under `.appliance/`.
 - A crashed run script crash-restarts under the supervisor; a
   repeatedly-failing process reaches `gave_up` after five restarts
   (`devenv processes logs` shows why).
-- If the manager daemon itself dies while the appliance runs, it
-  keeps running unsupervised; `devenv processes down` then reports
-  "No process manager is running".
+- If the manager daemon itself dies while the appliance runs, the
+  per-process **scope guardian** (its config lives under
+  `.devenv/run/processes/guardians/`) TERMs the whole process tree
+  with the process's grace — the appliance stops gracefully, it does
+  NOT keep running unsupervised (probe-verified on devenv 2.3.1 in a
+  throwaway project: a SIGKILL'd manager took the tree down within
+  seconds). `devenv processes down` afterwards reports "No process
+  manager is running" because nothing is left.
 
 ## Naming: no leading underscores on helper functions
 

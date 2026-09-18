@@ -382,14 +382,12 @@ in
       after = [ "msks:build-guest-archive" ];
     };
 
-    # The appliance as OPT-IN (#141): the default `devenv processes up`
-    # starts the bare-host msksd (see processes below); the appliance
-    # — the deployed shape — boots through these tasks when you need
-    # egress networking (which holds CAP_NET_ADMIN, #101), the guest
-    # network bridge, or the appliance image itself. Detached like the
-    # old `up -d`: the run script's TERM/INT trap still owns the ACPI
-    # choreography; the pidfile it writes gives msks:appliance-down a
-    # handle no supervisor is needed for.
+    # The appliance lifecycle tasks (#146): thin wrappers over the
+    # process manager, which owns the appliance process above —
+    # `up -d` detached (a second up while the manager lives is a
+    # no-op; environment surgery reaches the VM through the
+    # manager's inherited environment, verified live), `down` as the
+    # graceful stop.
     "msks:appliance-up" = {
       description = "Start the appliance under the process manager, detached (conditional build first)";
       exec = ''
@@ -407,7 +405,10 @@ in
       exec = ''
         # The manager TERMs the appliance process; the run script's
         # ACPI-first trap owns the teardown inside the process's
-        # 90s shutdown grace. A second down is a clean no-op.
+        # 90s shutdown grace. Exit codes: 0 stopped a live manager;
+        # 1 with "No process manager is running" when nothing is up
+        # (the first down also stops the manager, so a second down
+        # reports that — callers treat it as stopped).
         exec devenv processes down
       '';
     };
@@ -451,6 +452,12 @@ in
         fi
         exec bash "$DEVENV_ROOT/scripts/appliance-run.sh"
       '';
+      # A persistent failure inside this exec (the build above all)
+      # crash-restarts up to the manager's default five attempts
+      # before gave_up — five consecutive multi-minute build tries
+      # where the task era failed once. The loud loop in
+      # `processes logs appliance` is the accepted diagnostic.
+      #
       # The run script's stop choreography is ACPI-first with a
       # 60s window (a workspace running inside the appliance needs
       # its own nested stop cycle; a shorter window lost
