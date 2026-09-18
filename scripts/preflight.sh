@@ -111,17 +111,17 @@ changed_all=$(
   } | sort -u
 )
 
-# Alembic loads the migration version files by exec, outside the
-# import system, so the suite's coverage never measures them — the
-# same blindness CI's fail-under gate has. They stay out of the
-# covgaps list instead of failing as "never measured".
+# Alembic loads the migration tree (env.py and the version files)
+# by exec, outside the import system, so the suite's coverage never
+# measures them — the same blindness CI's fail-under gate has. They
+# stay out of the covgaps list instead of failing as "never measured".
 backend=()
 while IFS= read -r f; do
   backend+=("$f")
 done < <(
   printf '%s\n' "$changed_all" |
     grep '^src/msks/msks/' |
-    grep -v '^src/msks/msks/migrations/versions/' || true
+    grep -v '^src/msks/msks/migrations/' || true
 )
 
 note "coverage"
