@@ -576,7 +576,7 @@ let
           ''' \
           '[Service]' \
           'Type=oneshot' \
-          'ExecStart=/bin/sh -c "mkdir -p /run/msks-dev-tree && mount -t virtiofs devtree /run/msks-dev-tree && echo mounted > /run/dev-tree.state || echo absent > /run/dev-tree.state"' \
+          'ExecStart=/bin/sh -c "mkdir -p /run/msks-dev-tree && mount -t virtiofs devtree /run/msks-dev-tree 2>/dev/null && echo mounted > /run/dev-tree.state || echo absent > /run/dev-tree.state"' \
           'StandardOutput=journal+console' \
           > $out/etc/systemd/system/msks-dev-tree.service
 

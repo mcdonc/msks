@@ -253,7 +253,11 @@ class DhcpServer:
             return
         request = parse_request(data)
         assert request is not None  # reply_for parsed it already
-        sendto(sock, reply, reply_dest(addr, request.flags))
+        with contextlib.suppress(OSError):
+            # A failed send drops the reply — a full send buffer or a
+            # vanished tap must not kill the serve task; the DHCP
+            # client retransmits.
+            sendto(sock, reply, reply_dest(addr, request.flags))
 
     def reply_for(self, data: bytes) -> bytes | None:
         """The reply datagram for one client message, or None."""

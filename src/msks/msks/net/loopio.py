@@ -73,7 +73,9 @@ async def recvfrom(
 def sendto(sock: socket.socket, data: bytes, addr: tuple[str, int]) -> None:
     """Send one datagram without awaiting.
 
-    A UDP ``sendto`` on a non-blocking socket completes inline; a full
-    send buffer raises ``OSError`` just as the awaited form would.
+    Unlike the awaited ``sock_sendto``, a full send buffer raises
+    ``BlockingIOError`` immediately instead of waiting for
+    writability — callers treat send failure as a dropped reply
+    (DHCP and DNS clients both retransmit).
     """
     sock.sendto(data, addr)

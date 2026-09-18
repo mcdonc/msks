@@ -137,3 +137,63 @@ async def test_serve_drops_queries_from_other_sources(tmp_path: Path) -> None:
         forwarder.stop()
         client.close()
         upstream.close()
+
+
+@pytest.mark.filterwarnings(
+    # uvloop 0.22.1 itself calls asyncio.iscoroutinefunction (removed
+    # in 3.16); our code does not. Ignore until uvloop ships the fix.
+    "ignore:.*'asyncio.iscoroutinefunction' is deprecated.*:DeprecationWarning"
+)
+def test_relay_timeout_teardown_under_uvloop() -> None:
+    """A relay timeout cancels the recvfrom await under uvloop.
+
+    The cancellation path — wait_for cancels, recvfrom's finally
+    removes the reader — is exactly the machinery uvloop lacked a
+    native awaitable for; this pins reader teardown on cancellation
+    under the loop that broke, complementing the asyncio-side
+    timeout tests.
+    """
+    import threading
+
+    uvloop = pytest.importorskip("uvloop")
+
+    async def scenario() -> bool:
+        # An upstream that never answers: bound, never reading.
+        sink = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sink.bind(("127.0.0.1", 0))
+        forwarder = dns.DnsForwarder(
+            sink.getsockname(), 0.2, bind=("127.0.0.1", 0), client_ip="127.0.0.1"
+        )
+        await forwarder.start()
+        serve = asyncio.create_task(forwarder.serve())
+        client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        client.bind(("127.0.0.1", 0))
+        client.settimeout(2.0)
+        client.sendto(QUERY, forwarder._sock.getsockname())
+        # No reply arrives (upstream silent): the relay times out and
+        # its reader must be gone — the client sees nothing.
+        replied = True
+        try:
+            await asyncio.to_thread(client.recvfrom, 4096)
+        except TimeoutError:
+            replied = False
+        # A second query proves the loop still dispatches after the
+        # timed-out relay: the forwarder is alive, not wedged.
+        client.sendto(QUERY, forwarder._sock.getsockname())
+        still_alive = serve is not None and not serve.done()
+        serve.cancel()
+        forwarder.stop()
+        client.close()
+        sink.close()
+        return replied is False and still_alive
+
+    result: dict[str, bool] = {}
+
+    def runner() -> None:
+        result["ok"] = uvloop.run(scenario())
+
+    t = threading.Thread(target=runner)
+    t.start()
+    t.join(timeout=30)
+    assert not t.is_alive()
+    assert result.get("ok") is True

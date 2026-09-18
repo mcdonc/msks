@@ -145,3 +145,30 @@ def test_arm_reload_watcher_starts_daemon_thread(monkeypatch):
     assert seen["roots"] == package_roots()
     release.set()
     threads[0].join(timeout=5)
+
+
+def test_watch_loop_survives_a_failed_restart(tmp_path):
+    """A failed exec must not kill the watcher thread.
+
+    The interpreter path can vanish under a live-shared tree; the
+    watcher logs, adopts the changed baseline, and keeps serving
+    the current process until the next edit retries.
+    """
+    write(str(tmp_path / "a.py"))
+    calls = {"sleeps": 0, "restarts": 0}
+
+    def fake_sleep(seconds):
+        assert seconds == POLL_SECONDS
+        calls["sleeps"] += 1
+        if calls["sleeps"] == 1:
+            write(str(tmp_path / "a.py"), b"changed")
+        elif calls["sleeps"] == 3:
+            raise LoopDone
+
+    def failing_restart(_argv):
+        calls["restarts"] += 1
+        raise OSError("interpreter vanished")
+
+    with pytest.raises(LoopDone):
+        watch_loop([str(tmp_path)], sleep=fake_sleep, restart=failing_restart)
+    assert calls["restarts"] == 1

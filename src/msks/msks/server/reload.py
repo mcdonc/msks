@@ -86,6 +86,14 @@ def watch_loop(
 ) -> None:
     """Poll *roots* forever; on change, *restart* the process.
 
+    Known limits, deliberate for a development tool: an edit landing
+    between interpreter start and the first snapshot is absorbed
+    into the baseline (the next edit restarts), and there is no
+    debounce — a multi-file ``git checkout`` can restart on a
+    half-updated tree (the unit's crash-restart self-heals a
+    mid-write file). mtime+size fingerprints miss an mtime- and
+    size-preserving rewrite, which editors do not do.
+
     *sleep* and *restart* are injection seams for the tests; in
     production the loop only ever leaves through :func:`exec_restart`
     (which never returns) or process teardown — a daemon thread that
@@ -97,7 +105,16 @@ def watch_loop(
         now = snapshot(roots)
         if changed(before, now):
             print("msksd: source tree changed — restarting", file=sys.stderr)
-            restart(restart_argv())
+            try:
+                restart(restart_argv())
+            except OSError as exc:
+                # A failed exec (the interpreter path vanished, say)
+                # must not kill the watcher: the current process keeps
+                # serving, and the next change retries.
+                print(
+                    f"msksd: restart failed ({exc}); watching continues",
+                    file=sys.stderr,
+                )
             before = now
 
 
