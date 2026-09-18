@@ -483,6 +483,33 @@ async def test_default_image_bootstrap(tmp_path, capsys) -> None:
         assert default_image(tmp_path / "vms").ref == "boot:1"
         assert capsys.readouterr().out == ""
 
+    # A REBUILT archive (content changed) is a fresh import and takes
+    # the default slot however full the catalog is (#141): the dev
+    # loop's console-helper edit must become what `msks create`
+    # boots, not land silently beside the old default.
+    rebuilt = tmp_path / "boot-rebuilt.tar"
+    build_containerdisk(
+        rebuilt,
+        name="boot",
+        version="1",
+        members={
+            "boot/vmlinuz": b"kernel-bytes-v2",
+            "boot/initrd.img": b"initrd-bytes",
+            "disk/rootfs.ext4": b"rootfs-bytes",
+        },
+    )
+    settings = Settings(
+        vmm=VmmSettings(state_dir=tmp_path / "vms", default_image=str(rebuilt)),
+        net=NetSettings(enabled=False),
+        server=ServerSettings(
+            db_path=tmp_path / "ws.db", bootstrap_token="t", event_poll_s=10.0
+        ),
+    )
+    app3 = build_app(settings)
+    with TestClient(build_api(app3)):
+        assert default_image(tmp_path / "vms").hash == imagestore.hash_file(rebuilt)
+        assert "default image boot:1" in capsys.readouterr().out
+
     # A broken pointer is loud but non-fatal: the API still serves.
     settings = Settings(
         vmm=VmmSettings(state_dir=tmp_path / "vms2", default_image="/absent.tar"),
@@ -524,14 +551,23 @@ def test_import_image_json_is_directory(tmp_path: Path) -> None:
         import_archive(archive, tmp_path)
 
 
-async def test_bootstrap_second_image_no_default_steal(tmp_path) -> None:
-    """A later bootstrap import must not steal the designation."""
+async def test_bootstrap_repoint_takes_default(tmp_path) -> None:
+    """A changed MSKSD_DEFAULT_IMAGE owns the default slot (#141).
+
+    The setting names the archive the environment just built: when
+    its content changes (a rebuild, or an operator repoint), the
+    fresh import becomes what bare creates boot — the first
+    implementation only designated an empty catalog, so every
+    rebuild after the first landed silently while creates kept
+    booting the old default. A warm hit (content unchanged) never
+    touches the pointer.
+    """
 
     first, second = tmp_path / "a.tar", tmp_path / "b.tar"
     build_containerdisk(first, name="first", version="1")
     build_containerdisk(second, name="second", version="2")
     state = tmp_path / "vms"
-    for archive in (first, second):
+    for archive, expected in ((first, "first:1"), (second, "second:2")):
         settings = Settings(
             vmm=VmmSettings(state_dir=state, default_image=str(archive)),
             net=NetSettings(enabled=False),
@@ -542,9 +578,13 @@ async def test_bootstrap_second_image_no_default_steal(tmp_path) -> None:
         app = build_app(settings)
         with TestClient(build_api(app)):
             pass
+        assert default_image(state).ref == expected
 
-    default = default_image(state)
-    assert default.ref == "first:1"
+    # Warm restart with the same pointer: no fresh import, the slot
+    # stays exactly as the last fresh import left it.
+    app = build_app(settings)
+    with TestClient(build_api(app)):
+        assert default_image(state).ref == "second:2"
 
 
 async def test_create_explicit_kernel_keeps_own_initrd(tmp_path) -> None:

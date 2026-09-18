@@ -152,8 +152,11 @@ in
   # no exports. The state lives under .msksd/ (first `devenv processes
   # up` creates it); before that the files do not exist and the
   # variables are empty — the client names the missing env. Explicit
-  # exports win, so targeting the opt-in appliance instead is one
-  # `export MSKSC_URL=https://192.168.77.2:8660` (plus its token) away.
+  # exports win, so targeting the opt-in appliance instead is two
+  # exports: MSKSC_URL=https://192.168.77.2:8660 and its MSKSC_TOKEN —
+  # plus EMPTYING MSKSC_CAFILE (`MSKSC_CAFILE= msks ls`), or the
+  # client verifies the appliance's cert against THIS daemon's CA and
+  # reads the mismatch as an unreachable host.
   env.MSKSC_URL = "https://127.0.0.1:8660";
   # The bootstrap token and CA are read at evaluation time, so each
   # `devenv shell` picks up a rotated pair — the .appliance pattern.
@@ -348,9 +351,14 @@ in
         if [ ! -s "$state/bootstrap-token" ]; then
           # 256 bits of urandom, hex: the same shape the appliance's
           # setup seeds. Stable across restarts — the daemon inserts
-          # it into its catalog once and keeps it valid.
-          od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > "$state/bootstrap-token"
-          chmod 600 "$state/bootstrap-token"
+          # it into its catalog once and keeps it valid. temp+rename:
+          # a concurrent daemon start must never `cat` a half-written
+          # token (the daemon would insert the truncated value as a
+          # valid row, and every later login 401s).
+          tok=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
+          printf '%s' "$tok" >"$state/.bootstrap-token.tmp"
+          chmod 600 "$state/.bootstrap-token.tmp"
+          mv "$state/.bootstrap-token.tmp" "$state/bootstrap-token"
           echo "msks: minted .msksd/bootstrap-token"
         fi
         if [ ! -e "$state/default-image" ]; then
@@ -409,8 +417,9 @@ in
           exit 0
         fi
         pid=$(cat "$pidfile")
-        if ! kill -0 "$pid" 2>/dev/null; then
-          echo "msks: stale pidfile (pid $pid gone) — cleaning it"
+        if ! kill -0 "$pid" 2>/dev/null \
+          || ! grep -q appliance-run "/proc/$pid/cmdline" 2>/dev/null; then
+          echo "msks: stale pidfile (pid $pid gone or foreign) — cleaning it"
           rm -f "$pidfile"
           exit 0
         fi

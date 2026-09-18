@@ -150,9 +150,9 @@ jobs:
         if: always()
         run: |
           devenv --quiet -O dotenv.enable:bool false shell -- bash -c '
-          devenv processes down || true
+          devenv tasks run msks:appliance-down || true
           pkill -f "cloud-hypervisor --api-socket.*.appliance/api.sock" || true
           pkill -f "virtiofsd --socket-path.*.appliance" || true
-          rm -f .appliance/api.sock .appliance/vsock.sock
+          rm -f .appliance/api.sock .appliance/vsock.sock .appliance/run.pid
           echo "appliance teardown: clean"
           '

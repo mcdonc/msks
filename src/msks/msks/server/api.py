@@ -121,12 +121,17 @@ def bootstrap_default_image(app) -> None:
         # by API once the operator clears it).
         print(f"msksd: default image import failed: {exc}")
         return
-    # Empty-before-import is the first-boot case; the sole-entry
-    # fallback would resolve anyway, but the pointer makes the
-    # designation explicit and survives later imports.
-    if len(imagestore.list_images(state_dir)) == 1:
-        imagestore.set_default(record.hash, state_dir)
-        print(f"msksd: default image {record.ref} ({record.hash[:12]}) imported")
+    # A FRESH import of MSKSD_DEFAULT_IMAGE owns the default slot,
+    # however many images the catalog holds (#141): the setting points
+    # at the archive the environment just built, and a rebuild whose
+    # content changed must become what `msks create` boots — the first
+    # implementation only designated when the catalog was empty, so
+    # every rebuild after the first landed silently while creates kept
+    # booting the old default. A warm hit (content unchanged) leaves
+    # the pointer alone, so an operator's later API designation is
+    # never stolen back by a restart.
+    imagestore.set_default(record.hash, state_dir)
+    print(f"msksd: default image {record.ref} ({record.hash[:12]}) imported")
 
 
 def image_record(app, body: WorkspaceCreate):

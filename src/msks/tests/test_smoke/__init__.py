@@ -533,6 +533,26 @@ def devenv_processes(*args: str, timeout: int = 600) -> subprocess.CompletedProc
     )
 
 
+def devenv_task(task: str, timeout: int = 900) -> subprocess.CompletedProcess:
+    """Run one devenv task — the opt-in appliance lifecycle (#141).
+
+    The appliance no longer lives under the process manager (that is
+    the bare-host dev daemon's home now): msks:appliance-up boots it
+    detached behind a pidfile, msks:appliance-down TERMs that pid
+    through the ACPI-first trap. Environment surgery (state disk,
+    cmdline extras, memory) reaches the VM exactly as before — the
+    task and its detached child inherit this process's environment.
+    """
+    return subprocess.run(
+        ["bash", "-c", f"devenv tasks run {task}"],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        cwd=REPO_ROOT,
+        env={**os.environ, "DEVENV_TUI": "false"},
+    )
+
+
 EGRESS = os.environ.get("MSKSD_TEST_EGRESS")
 
 

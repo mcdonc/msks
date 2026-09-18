@@ -412,6 +412,19 @@ class LocalCloudHypervisor(MicrovmDriver):
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=log_file,
                 stderr=asyncio.subprocess.STDOUT,
+                # The VMM gets its own session (#141): the daemon's
+                # death must not become the workspace's — a TERM sent
+                # to msksd directly (or a crash, or a plain exit)
+                # leaves the VMM running for the restarted daemon to
+                # re-find (info() probes the socket; cleanup's
+                # pidfile fallback is the #56 case), verified live.
+                # A guardian's managed stop (devenv processes down /
+                # restart) kills the whole process TREE and takes
+                # workspaces with it — hard, without their ACPI
+                # cycle — so stop workspaces first when that matters;
+                # the session split at least keeps every accidental
+                # and crash path safe.
+                start_new_session=True,
             )
         except FileNotFoundError as exc:
             raise MicrovmError(f"cloud-hypervisor binary not found: {binary}") from exc

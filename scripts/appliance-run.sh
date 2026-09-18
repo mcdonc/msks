@@ -18,19 +18,21 @@ root="${DEVENV_ROOT:?not running inside the devenv shell}"
 app_dir="$root/.appliance"
 guest_ip="192.168.77.2"
 
-# The pidfile msks:appliance-down TERMs (#141): the run script may
-# run under the devenv process manager OR detached under the opt-in
-# msks:appliance-up task — the pidfile gives the down task its handle
-# in both worlds (the manager's TERM and the task's TERM hit the same
-# trap). Removed by the EXIT trap below.
-echo $$ >"$app_dir/run.pid"
-
 # Idempotent prerequisites (artifacts, state, token) — MUST run
 # before the token read below: on a fresh checkout the token does not
 # exist until setup creates it. The HOST network is verified, not
 # ensured: appliance-setup.sh names the one-time root installer when
-# anything is missing.
+# anything is missing. This also refuses a DOUBLE-UP while the VM is
+# already running (api-socket probe) — deliberately BEFORE the
+# pidfile write below, so a refused second instance cannot clobber
+# the running appliance's pid with its own short-lived one.
 bash "$root/scripts/appliance-setup.sh"
+
+# The pidfile msks:appliance-down TERMs (#141): the run script may
+# run detached under the opt-in msks:appliance-up task — the pidfile
+# gives the down task its handle. Written only once this instance
+# owns the appliance (setup above passed); removed by the EXIT trap.
+echo $$ >"$app_dir/run.pid"
 
 state_disk="${MSKSD_APPLIANCE_STATE:-$app_dir/state.ext4}"
 bootstrap_token="$(cat "$app_dir/bootstrap-token")"

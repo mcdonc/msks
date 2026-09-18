@@ -161,7 +161,22 @@ seconds: `devenv processes restart msksd`.
 Workspaces without egress are fully served — vsock console,
 user-data seeds, stop/start persistence. Egress (and `msks ssh`,
 whose forwards ride the egress NIC) holds `CAP_NET_ADMIN` (#101):
-that is the appliance's job, not a dev shell's.
+that is the appliance's job, not a dev shell's. A workspace
+created without `--no-egress` refuses to start here — the 503
+names `MSKSD_EGRESS_ENABLED`, which is the appliance's setting;
+remove the workspace and recreate it with `--no-egress`, or move
+to the appliance below.
+
+State notes: `.msksd/` is gitignored but NOT disposable-clean —
+`git clean -xfd` deletes the token, CA, catalog, and every
+workspace volume with it. Each worktree owns its own `.msksd/`,
+and two checkouts cannot both bind 127.0.0.1:8660 — stop one (or
+`export MSKSD_PORT` for the second) before starting another.
+A crashed or exited daemon leaves running workspaces in place —
+the restarted daemon re-finds them (verified live). A deliberate
+`devenv processes restart msksd` / `down` kills the whole process
+tree, workspaces included, without their graceful stop — stop
+them first (`msks stop <id>`) when a clean shutdown matters.
 
 ### The msksd appliance (opt-in, any Linux host)
 

@@ -24,7 +24,7 @@ from test_smoke import (
     RSYNC_BIN,
     SSH_BIN,
     client,
-    devenv_processes,
+    devenv_task,
     free_port,
     host_net_installed,
 )
@@ -381,9 +381,9 @@ async def test_appliance_l3_recursion() -> None:
     forward_proc = None
     timeline = L3Timeline()
     try:
-        up = devenv_processes("up", "-d")
+        up = devenv_task("msks:appliance-up")
         assert up.returncode == 0, (
-            f"devenv processes up failed:\n{up.stdout}\n{up.stderr}"
+            f"msks:appliance-up failed:\n{up.stdout}\n{up.stderr}"
         )
         loop = asyncio.get_running_loop()
         deadline = loop.time() + 120.0
@@ -779,9 +779,9 @@ async def test_appliance_l3_recursion() -> None:
             del os.environ["MSKS_APPLIANCE_MEM_MIB"]
         elif prior_mem_mib != os.environ.get("MSKS_APPLIANCE_MEM_MIB"):
             os.environ["MSKS_APPLIANCE_MEM_MIB"] = prior_mem_mib
-        down = devenv_processes("down", timeout=300)
+        down = devenv_task("msks:appliance-down", timeout=300)
         assert down.returncode == 0, (
-            f"devenv processes down failed:\n{down.stdout}\n{down.stderr}"
+            f"msks:appliance-down failed:\n{down.stdout}\n{down.stderr}"
         )
         timeline.summary()
         scratch.cleanup()

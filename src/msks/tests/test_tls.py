@@ -76,6 +76,9 @@ def test_generated_pair_verifies_under_strict_client(tmp_path: Path) -> None:
             tls_client.do_handshake()  # raises SSLError on a rejected chain
         finally:
             thread.join(timeout=5)
+        # A deadlocked server thread would pass the empty-`handshake`
+        # assert below vacuously — it must have finished.
+        assert not thread.is_alive(), "server handshake thread did not finish"
         assert not handshake, f"server handshake failed: {handshake}"
         assert tls_client.getpeercert()["subject"]
     finally:

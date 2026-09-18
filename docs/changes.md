@@ -8,14 +8,6 @@ tagged `vX.Y.Z`.
 
 ### Added
 
-- **Strict-clean minted TLS certificates (#141).** The CA and leaf
-  msksd generates now carry Subject/Authority Key Identifiers and
-  the CA a `keyCertSign` KeyUsage, so Python 3.14 clients — whose
-  default SSL context enables `VERIFY_X509_STRICT` — verify the pair
-  instead of rejecting it. Existing state directories keep their
-  current pair; removing the `msks-ca*.pem`/`msks-cert*.pem` files
-  under the state dir lets the next start mint the strict-clean
-  replacement.
 - **L3 recursion smoke in CI (#135).**
   `.github/workflows/nightly-l3.yml` runs
   `test_appliance_l3_recursion` on a self-hosted runner labeled
@@ -282,6 +274,14 @@ no`, `PermitRootLogin prohibit-password`) pinned by a config dropin,
 
 ### Fixed
 
+- **Strict-clean minted TLS certificates (#141).** The CA and leaf
+  msksd generates now carry Subject/Authority Key Identifiers and
+  the CA a `keyCertSign` KeyUsage, so Python 3.14 clients — whose
+  default SSL context enables `VERIFY_X509_STRICT` — verify the pair
+  instead of rejecting it. Existing state directories keep their
+  current pair; removing the `msks-ca*.pem`/`msks-cert*.pem` files
+  under the state dir lets the next start mint the strict-clean
+  replacement.
 - **Mid-session console stalls no longer wedge a session open (#103).**
   The guest console helper's byte pump blocked on whichever direction
   stalled first, so a wedged vsock transport froze the whole session —

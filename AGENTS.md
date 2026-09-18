@@ -66,6 +66,12 @@ msksd`, not the appliance. `devenv processes up`/`down`/`restart`/
 - `devenv processes list` / `status` / `logs msksd` inspect the
   supervised state; `restart msksd` is the daemon-edit inner loop
   (~7s to serving again).
+- A crashed or exited daemon leaves running workspaces in place —
+  the supervisor's restart brings the daemon back and it re-finds
+  them (verified live; VMMs run in their own sessions). A deliberate
+  `restart`/`down` kills the process tree, workspaces included,
+  without their graceful stop — `msks stop` them first when a clean
+  shutdown matters.
 - A killed daemon crash-restarts under the supervisor; a
   repeatedly-failing process reaches `gave_up` after five restarts
   (`devenv processes logs` shows why).

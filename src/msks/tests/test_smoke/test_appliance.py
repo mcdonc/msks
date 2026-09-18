@@ -19,7 +19,7 @@ from test_smoke import (
     REPO_ROOT,
     client,
     dev_workspace_seed,
-    devenv_processes,
+    devenv_task,
     needs_appliance,
     read_appliance_journal,
     seed_legacy_state_disk,
@@ -42,8 +42,8 @@ async def test_appliance_boot_and_workspace() -> None:
     wid = f"appliance-{uuid.uuid4().hex[:8]}"
 
     # Refuse to stomp a *running* appliance — including the README's
-    # documented orphan case (manager dead, VMM still answering on
-    # api.sock, unreachable by `devenv processes down`).
+    # documented orphan case (run script dead, VMM still answering on
+    # api.sock, unreachable by msks:appliance-down).
     if (app_dir / "api.sock").is_socket():
         probe = subprocess.run(
             [
@@ -104,9 +104,9 @@ async def test_appliance_boot_and_workspace() -> None:
         )
 
     async def await_token(timeout_s: float = 120.0) -> str:
-        # `up -d` returns when the MANAGER starts; setup (state-disk
-        # copy, token generation) still runs asynchronously — poll for
-        # the token instead of assuming it exists.
+        # The up TASK returns when the run script is detached; setup
+        # (state-disk copy, token generation) still runs asynchronously
+        # — poll for the token instead of assuming it exists.
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout_s
         while loop.time() < deadline:
@@ -140,11 +140,11 @@ async def test_appliance_boot_and_workspace() -> None:
     dev_wid = None
     try:
         # Inside the guarded region: a failed start still tears the
-        # detached manager down below instead of leaving it running
+        # detached appliance down below instead of leaving it running
         # against the temp state disk with mutated env.
-        up = devenv_processes("up", "-d")
+        up = devenv_task("msks:appliance-up")
         assert up.returncode == 0, (
-            f"devenv processes up failed:\n{up.stdout}\n{up.stderr}"
+            f"msks:appliance-up failed:\n{up.stdout}\n{up.stderr}"
         )
         token = await await_token()
         headers = {"authorization": f"Bearer {token}"}
@@ -484,20 +484,17 @@ async def test_appliance_boot_and_workspace() -> None:
             del os.environ["MSKS_APPLIANCE_CMDLINE_EXTRA"]
         elif prior_cmdline_extra != os.environ.get("MSKS_APPLIANCE_CMDLINE_EXTRA"):
             os.environ["MSKS_APPLIANCE_CMDLINE_EXTRA"] = prior_cmdline_extra
-        down = devenv_processes("down", timeout=300)
+        down = devenv_task("msks:appliance-down", timeout=300)
         assert down.returncode == 0, (
-            f"devenv processes down failed:\n{down.stdout}\n{down.stderr}"
+            f"msks:appliance-down failed:\n{down.stdout}\n{down.stderr}"
         )
         # The state disk itself lives until the post-teardown reads
         # below are done: the journal and the migration asserts read
         # it after the appliance is down.
     assert not (app_dir / "api.sock").exists()
-    # The supervisor is gone too: teardown is its view of "stopped",
-    # not just pidfile/socket absence.
-    listing = devenv_processes("list", timeout=120)
-    assert "No process manager is running" in listing.stdout + listing.stderr, (
-        f"process manager still alive after down:\n{listing.stdout}"
-    )
+    # The run script's own teardown view of "stopped": the pidfile is
+    # gone with the socket, not just the VM beneath it.
+    assert not (app_dir / "run.pid").exists()
     # The journal is the appliance's own story, persisted to the state
     # disk by journald (#92): read it back from the host and require
     # the boot's records to have survived the teardown. Softens to a
