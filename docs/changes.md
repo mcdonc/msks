@@ -370,6 +370,20 @@ processes up` shows one devenv startup instead of two, and the
 
 ### Fixed
 
+- **Guest and appliance images keep the base image's file
+  ownership (#179).** `apt` runs inside a workspace now see the
+  stock Debian metadata the base image ships: `mandb`'s cache is
+  `man:man` again (an `apt upgrade` printed `Permission denied` on
+  the whole man cache), and every other non-root owner — the
+  shadow-group password files, `utmp` logs, the
+  `systemd-network`, `dbus`, and `polkit` state directories —
+  round-trips with it. The image build records the source image's
+  mode/uid/gid for every inode and restores the set in the fakeroot
+  pack stage (#169 restored only the setuid/setgid bits); build-time
+  pins fail the build when `sudo` loses setuid or the man cache
+  loses its owner. Workspaces must be recreated to pick up a
+  rebuilt image.
+
 - **Workspace home and the guest's account list (#171).** The
   first-boot identity seed now creates `/home/msks` owned by the
   workspace user and populates it from `/etc/skel` (a home left

@@ -37,10 +37,16 @@
 #   $out/guest-manifest.json - artifact names + the boot cmdline.
 #
 # Extraction is unprivileged — debugfs rdump, no mount — and rdump
-# drops setuid/setgid bits, so the build records the source image's
-# own special modes at dump time and the fakeroot pack stage applies
-# them with uid-0 ownership (#169): the msks user (#63) needs working
-# sudo, and sudo's elevation depends on that pairing.
+# flattens inode metadata: files land build-user owned with the
+# setuid/setgid bits dropped. The build records the source image's
+# own mode/uid/gid for every inode at dump time and the fakeroot
+# pack stage restores the whole set (#169 restored only the special
+# bits; #179 widened it to ownership after mandb lost its man:man
+# cache): the msks user (#63) needs working sudo, and
+# package-maintained directories keep the owners their postinsts
+# assume. rdump also drops xattrs and hardlinks; the pinned base
+# ships no xattrs that matter (spot-checked), and the hardlink
+# flattening is deliberate (see the root.tar comment below).
 #
 # Evaluate through the msks-build-guest / msks-build-runner-image
 # scripts (they pin nixpkgs to the devenv.lock revision);
@@ -567,31 +573,40 @@ let
     print(root["start"] * table.get("sectorsize", 512))
   '';
 
-  # The setuid/setgid restoration data (#169): unprivileged rdump
-  # drops the bits (its mode_xlate() table carries only the nine rwx
-  # bits, so the chmod after extraction never sees them), and the
-  # build sandbox is a user namespace where the kernel refuses to
-  # set them back for real. `walk` records every special-bit inode
-  # of the source image into a manifest; the fakeroot pack stage
-  # runs `apply` on it — fakeroot records the chmods without
-  # touching the kernel, and mke2fs -d bakes them into the image
-  # alongside the faked uid-0 ownership. A separate file (not
-  # inline) for the same de-indentation reason as partitionOffset
-  # above.
-  specialModes = pkgs.writeText "msks-special-modes.py" ''
+  # The inode-metadata restoration data (#169, #179): unprivileged
+  # rdump lands every inode build-user owned with only the nine rwx
+  # mode bits, and the build sandbox is a user namespace where the
+  # kernel refuses to set uid/gid or the special bits back for real.
+  # `walk` records EVERY source-image inode's mode, uid, and gid
+  # into one manifest (#169 restored only the special bits; #179
+  # widened it to full ownership after mandb lost its man:man cache);
+  # the fakeroot pack stage runs `apply` on it — fakeroot records
+  # the chmods/chowns without touching the kernel, and mke2fs -d
+  # bakes them into the image. A separate file (not inline) for the
+  # same de-indentation reason as partitionOffset above.
+  inodeMeta = pkgs.writeText "msks-inode-meta.py" ''
     import os
     import subprocess
     import sys
 
     MARKER = "debugfs: ls -p "
 
+    # Load-bearing invariants of the metadata round trip, asserted
+    # after apply: #169 exists because sudo lost its setuid bit, #179
+    # because /var/cache/man lost its man:man owner (mandb's trigger
+    # runs as the man user and got EACCES/EPERM on the whole cache).
+    # A pin must be present in the manifest and land on the tree
+    # with the manifest's own mode and ownership — a parse
+    # regression or a base-image change fails the build here, not a
+    # workspace's apt run.
+    PINS = ("/usr/bin/sudo", "/var/cache/man")
 
     def walk(image, workdir):
-        """Return [(path, perm)] for every inode whose mode carries
-        setuid, setgid, or sticky, breadth-first through debugfs batch
+        """Return [(path, mode, uid, gid)] for every inode of the
+        source filesystem, breadth-first through debugfs batch
         listings."""
         pending = ["/"]
-        special = []
+        inodes = []
         while pending:
             cmds = os.path.join(workdir, "ls-cmds")
             with open(cmds, "w") as batch:
@@ -628,9 +643,11 @@ let
                             f"unparsable ls -p line: {line!r}"
                         )
                     mode = int(parts[2], 8)
+                    uid = int(parts[3])
+                    gid = int(parts[4])
                     name = parts[5]
                     if name not in (".", ".."):
-                        entries[current].append((name, mode))
+                        entries[current].append((name, mode, uid, gid))
             # debugfs errors never reach stdout and never set the
             # exit code — a failed listing (an unbalanced quote from
             # an exotic name, a lookup drift) echoes only the command
@@ -647,52 +664,104 @@ let
             next_pending = []
             for path, dir_entries in entries.items():
                 prefix = "" if path == "/" else path
-                for name, mode in dir_entries:
+                for name, mode, uid, gid in dir_entries:
                     child = prefix + "/" + name
                     if (mode & 0o170000) == 0o040000:
                         next_pending.append(child)
-                    if mode & 0o7000:
-                        special.append((child, mode & 0o7777))
+                    inodes.append((child, mode, uid, gid))
             pending = sorted(set(next_pending))
-        return special
+        return inodes
 
 
     def do_walk(image, manifest):
-        special = walk(image, os.path.dirname(os.path.abspath(image)))
-        setuid = {path for path, perm in special if perm & 0o4000}
-        # #169 exists because sudo broke: pin the binary itself, not
-        # just "some setuid survived" — a parse regression that
-        # keeps any other setuid file would otherwise pass.
-        if "/usr/bin/sudo" not in setuid:
+        inodes = walk(image, os.path.dirname(os.path.abspath(image)))
+        by_path = {path: (mode, uid, gid) for path, mode, uid, gid in inodes}
+        # The pins double as parse guards: a walk that misparsed or
+        # stopped early drops these, and a base image that changed
+        # them moves the goalposts — either fails the build here.
+        if not by_path.get("/usr/bin/sudo", (0,))[0] & 0o4000:
             raise SystemExit(
                 "/usr/bin/sudo is not setuid in the source image; "
                 "the debugfs walk parse must have broken, or the "
                 "source image changed"
             )
+        if by_path.get("/var/cache/man", (0, 0, 0))[1:] == (0, 0):
+            raise SystemExit(
+                "/var/cache/man is root-owned in the source image "
+                "(Debian ships it man:man); the walk parse or the "
+                "base image changed"
+            )
         with open(manifest, "w") as out:
-            for path, perm in special:
-                out.write(f"{perm:04o} {path}\n")
+            for path, mode, uid, gid in inodes:
+                out.write(f"{mode:06o} {uid} {gid} {path}\n")
+        special = sum(1 for _, mode, _, _ in inodes if mode & 0o7000)
+        foreign = sum(1 for _, _, uid, gid in inodes if uid or gid)
         print(
-            f"recorded {len(special)} special modes "
-            f"({len(setuid)} setuid)"
+            f"recorded {len(inodes)} inodes "
+            f"({special} special-mode, {foreign} non-root)"
         )
 
 
     def do_apply(manifest, tree):
-        applied = 0
+        """Restore the manifest's mode/uid/gid onto the packed tree,
+        then assert the pins survived."""
+        restored = 0
+        skipped = 0
+        pins = {}
         with open(manifest) as entries:
             for line in entries:
-                mode_s, path = line.split(" ", 1)
+                mode_s, uid_s, gid_s, path = line.split(" ", 3)
                 path = path.rstrip("\n")
+                mode = int(mode_s, 8)
+                uid = int(uid_s)
+                gid = int(gid_s)
+                if path in PINS:
+                    pins[path] = (mode, uid, gid)
                 if not os.path.lexists(tree + path):
-                    raise SystemExit(
-                        f"special-mode path absent from the tree: {path}"
+                    # Paths the build deleted or replaced between the
+                    # walk and the pack (the kernel swap, netplan,
+                    # resolv.conf) are expected absences, not drift.
+                    skipped += 1
+                    continue
+                if (mode & 0o170000) == 0o120000:
+                    # A symlink's stored mode is always 0777 and
+                    # chmod follows links — it would wreck the
+                    # target — so a manifest symlink only chowns
+                    # the link itself, whatever the tree holds
+                    # there now (resolv.conf becomes a real file).
+                    os.chown(
+                        tree + path, uid, gid, follow_symlinks=False
                     )
-                os.chmod(tree + path, int(mode_s, 8))
-                applied += 1
-        if not applied:
-            raise SystemExit("empty special-mode manifest")
-        print(f"applied {applied} special modes")
+                else:
+                    os.chmod(tree + path, mode & 0o7777)
+                    os.chown(
+                        tree + path, uid, gid, follow_symlinks=False
+                    )
+                restored += 1
+        if not restored:
+            raise SystemExit("inode metadata manifest restored nothing")
+        for pin in PINS:
+            if pin not in pins or not os.path.lexists(tree + pin):
+                raise SystemExit(
+                    f"metadata pin lost from the tree or manifest: {pin}"
+                )
+            mode, uid, gid = pins[pin]
+            st = os.lstat(tree + pin)
+            if (
+                st.st_uid != uid
+                or st.st_gid != gid
+                or st.st_mode & 0o7777 != mode & 0o7777
+            ):
+                raise SystemExit(
+                    f"metadata pin mismatch on {pin}: want "
+                    f"{mode & 0o7777:04o} {uid}:{gid}, tree has "
+                    f"{st.st_mode & 0o7777:04o} {st.st_uid}:"
+                    f"{st.st_gid}"
+                )
+        print(
+            f"restored {restored} inodes "
+            f"({skipped} absent since the walk)"
+        )
 
 
     def main():
@@ -750,8 +819,8 @@ let
 
         # ext4 -> tree (ownership errors are expected unprivileged: the
         # files land owned by the build user, and the setuid/setgid
-        # bits drop — recorded right below for the pack stage to
-        # apply).
+        # bits drop — the metadata walk right below records what the
+        # pack stage restores).
         debugfs -R "rdump / $root" root.part 2>/dev/null || true
         rm -rf "$root"/lost+found
         # rdump's stderr mixes benign ownership noise with real errors,
@@ -760,16 +829,19 @@ let
           test -d "$root/$top"
         done
 
-        # Record the setuid/setgid set rdump dropped (#169): the
-        # source image's own inode modes are the authority — sudo,
-        # su, mount and the rest come back as the distro ships
-        # them, and an image pin update cannot drift the set. The
-        # bits cannot be set back on this tree (the build sandbox
-        # is a user namespace; the kernel refuses), so they ride a
-        # manifest to the fakeroot pack stage, which applies them
-        # alongside the faked uid-0 ownership.
+        # Record every inode's mode/uid/gid before the tree diverges
+        # from the source image (#169's special bits, #179's full
+        # ownership): the source image's own inode metadata is the
+        # authority — sudo, su, mount and the man cache come back
+        # exactly as the distro ships them, and an image pin update
+        # cannot silently drift the set (the walk's pins fail the
+        # build first). The metadata cannot be set back on this tree
+        # (the build sandbox is a user namespace; the kernel
+        # refuses), so it rides a manifest to the fakeroot pack
+        # stage, which applies it alongside the faked baseline
+        # ownership.
         mkdir -p "$out"
-        python3 ${specialModes} walk root.part "$out"/special-modes
+        python3 ${inodeMeta} walk root.part "$out"/inode-metadata
 
         # The msks overlay.
         cp -a --no-preserve=ownership ${guestOverlay}/. "$root"/
@@ -1024,21 +1096,25 @@ let
   # root ownership. This also restores sane permissions on the
   # password files and the sudoers dropin's 0440 (the tar hop's
   # u+w pass had widened both), and applies debianRoot's
-  # special-mode manifest (#169): the faked chmods put sudo and its
-  # setuid kin back as uid-0 inodes, the pairing sudo's elevation
-  # depends on.
+  # inode-metadata manifest (#169's special modes, #179's full
+  # ownership): the faked chmods/chowns put sudo and its setuid kin
+  # back as uid-0 inodes and every distro-owned path (the man
+  # cache, _apt's partial dirs) back under its own uid/gid.
   packScript = pkgs.writeText "msks-rootfs-pack.sh" ''
     set -eu
     tree="''${PACK_TREE:?}"
     img="''${PACK_IMG:?}"
     blocks="''${PACK_BLOCKS:?}"
     fake_epoch="''${PACK_FAKE_EPOCH:?}"
-    modes="''${PACK_MODES:?}"
+    meta="''${PACK_META:?}"
     applier="''${PACK_APPLIER:?}"
+    # The root:root baseline for overlay-added paths the manifest
+    # never knew; the manifest then restores the source image's own
+    # metadata wherever the path still exists.
     chown -R 0:0 "$tree"
     chmod 0640 "$tree"/etc/shadow "$tree"/etc/gshadow
     chmod 0440 "$tree"/etc/sudoers.d/msks
-    python3 "$applier" apply "$modes" "$tree"
+    python3 "$applier" apply "$meta" "$tree"
     E2FSPROGS_FAKE_TIME="$fake_epoch" mke2fs -q -t ext4 -b 4096 -I 256 \
       -L msks-rootfs \
       -E hash_seed=00000000-0000-0000-0000-000000000000 \
@@ -1049,7 +1125,7 @@ let
   rootfs =
     pkgs.runCommand "msks-guest-rootfs"
       {
-        inherit debianRoot packScript specialModes;
+        inherit debianRoot packScript inodeMeta;
         nativeBuildInputs = [
           pkgs.e2fsprogs
           pkgs.fakeroot
@@ -1080,8 +1156,8 @@ let
           PACK_IMG="$out/rootfs.ext4" \
           PACK_BLOCKS=$(( $(cat "$debianRoot"/tree-blocks) + 262144 )) \
           PACK_FAKE_EPOCH="$fakeEpoch" \
-          PACK_MODES="$debianRoot/special-modes" \
-          PACK_APPLIER="${specialModes}" \
+          PACK_META="$debianRoot/inode-metadata" \
+          PACK_APPLIER="${inodeMeta}" \
           fakeroot -- /bin/sh -e "$packScript"
       '';
 
@@ -1205,6 +1281,10 @@ pkgs.runCommand "msks-guest"
         genericKernel
         imageArchive
         ;
+      # The inode-metadata walker (#169, #179): the appliance build
+      # extracts the same base image the same unprivileged way, so
+      # it records and restores the same manifest.
+      inherit inodeMeta;
       inherit
         kernelCmdline
         vsockShellPort
