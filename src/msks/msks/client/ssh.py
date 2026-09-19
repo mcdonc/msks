@@ -343,16 +343,17 @@ def probe_args(
     known_hosts: str,
     passthrough: list[str],
 ) -> list[str]:
-    """The readiness probe's argv: the session's own options with a
-    throwaway ``true`` as the remote command.
+    """The readiness probe's argv: the session's own options — the
+    ones a probe can carry — with a throwaway ``true`` as the remote
+    command, run quietly.
 
     The probe shares the real session's transport, host-key, agent,
     and login-user settings — it authenticates exactly as the real
     session will — so its exit code is the readiness answer: 0 once
-    the guest authenticates the workspace identity, 255 while the
-    guest is still booting or the seed has yet to land. ``true``
+    the guest authenticates the workspace identity, nonzero while
+    the guest is still booting or the seed has yet to land. ``true``
     runs no user command, so a retried probe cannot run anything
-    twice.
+    twice; ``-q`` keeps each attempt to msks's own notice line.
     """
     options, _ = split_command(passthrough)
     return build_args(
@@ -360,29 +361,96 @@ def probe_args(
         agent_socket,
         identity_pub,
         known_hosts,
-        [*options, "--", "true"],
+        ["-q", *probe_options(options), "--", "true"],
     )
+
+
+#: The ssh flags a probe must drop, mapped to how many argv slots
+#: each consumes (``-W`` carries its host:port value as a second
+#: argument): both hold the connection open with the probe's
+#: ``true`` ignored or replaced.
+HOLD_OPEN_FLAGS = {"-N": 1, "-W": 2}
+
+
+def probe_options(options: list[str]) -> list[str]:
+    """The session options a probe can carry: every one but those
+    that suppress or bar its remote command.
+
+    ``-N`` and ``SessionType=none`` make ssh ignore the command and
+    hold the connection open (a tunnel session's probe would never
+    answer); ``-W`` replaces the session with a stdio forward that
+    never ends on its own; ``RemoteCommand`` makes ssh refuse a
+    command-line command outright. Dropping them leaves a probe
+    whose exit code answers the one question asked — did the guest
+    accept the identity — while the session behind it keeps every
+    option intact.
+    """
+    kept: list[str] = []
+    index = 0
+    while index < len(options):
+        skip = probe_skip(options, index)
+        if skip:
+            index += skip
+            continue
+        kept.append(options[index])
+        index += 1
+    return kept
+
+
+def probe_skip(options: list[str], index: int) -> int:
+    """How many arguments at ``index`` the probe drops: 0 to keep
+    the argument, 1 for a flag or inline option that bars the
+    command, 2 for a split option and its value."""
+    arg = options[index]
+    if arg in HOLD_OPEN_FLAGS:
+        return HOLD_OPEN_FLAGS[arg]
+    return option_skip(arg, option_value(index, arg, options))
+
+
+def option_skip(arg: str, value: str | None) -> int:
+    """How many argv slots a dropped ``-o`` option takes: the split
+    form (``-o`` beside its value) is two, the inline form
+    (``-oValue``) is one."""
+    if value is None or not suppresses_probe_command(value):
+        return 0
+    return 2 if arg == "-o" else 1
+
+
+def suppresses_probe_command(value: str) -> bool:
+    """Whether an ``-o`` value names ``SessionType`` or
+    ``RemoteCommand`` — the two keywords that replace or bar a
+    command-line command (ssh_config keywords are case-insensitive,
+    so the comparison is too)."""
+    lowered = value.lower()
+    return lowered.startswith(("sessiontype", "remotecommand"))
 
 
 def wait_for_identity(
     workspace_id: str, probe_argv: list[str], deadline: float
 ) -> None:
-    """Retry the probe until the guest authenticates or the deadline
-    passes (#168).
+    """Retry the probe until the guest accepts the login or the
+    deadline passes (#168).
 
-    A deadline that passes leaves the failure to the real session:
-    ssh's own message names the refusal, and the probe's notices
-    have already said what was being waited for.
+    Each attempt is bounded by the time the deadline leaves — a
+    stalled connection (a wedged forward, a guest that accepts the
+    TCP session and stalls) is one more not-ready answer, not a
+    hang — and the whole wait stays inside the deadline plus one
+    pause. A deadline that passes leaves the failure to the real
+    session: ssh's own message names the refusal, and the probe's
+    notices have already said what was being waited for.
     """
     while True:
-        completed = subprocess.run(probe_argv)
-        if completed.returncode == 0:
+        now = time.monotonic()
+        if now >= deadline:
             return
-        if time.monotonic() >= deadline:
-            return
+        try:
+            completed = subprocess.run(probe_argv, timeout=deadline - now)
+            if completed.returncode == 0:
+                return
+        except subprocess.TimeoutExpired:
+            pass
         print(
-            f"msks: {workspace_id} is still first-booting; "
-            "retrying the connection",
+            f"msks: {workspace_id} is not accepting the login yet; retrying",
             file=sys.stderr,
         )
         time.sleep(SSH_RETRY_PAUSE_S)
