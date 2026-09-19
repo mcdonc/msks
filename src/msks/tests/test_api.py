@@ -8,6 +8,7 @@ import pytest
 from msks.app import build_app
 from msks.microvm.errors import MicrovmError, MicrovmTimeoutError
 from msks.microvm.spec import VmInfo, VmSpec, VmStatus
+from msks.server import api as api_mod
 from msks.server.api import build_api
 from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -454,6 +455,28 @@ async def test_workspace_validation(client) -> None:
     # catalog, #40).
     assert bad.status_code == 400
     assert "required" in bad.json()["detail"]
+
+
+async def test_health_reports_the_booted_image(
+    client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The daemon names the appliance image it booted from (#160):
+    the msksd.image pair off the kernel cmdline, None without one
+    (a bare msksd, or a daemon predating the pair)."""
+    http, _app, _stub = client
+    cmdline = tmp_path / "cmdline"
+    monkeypatch.setattr(api_mod, "CMDLINE", cmdline)
+
+    cmdline.write_text(
+        "console=ttyS0 root=/dev/vda ro "
+        "msksd.image=/nix/store/x-msks-appliance\n"
+    )
+    body = (await http.get("/api/v1/health")).json()
+    assert body["image"] == "/nix/store/x-msks-appliance"
+
+    cmdline.write_text("console=ttyS0 root=/dev/vda ro\n")
+    body = (await http.get("/api/v1/health")).json()
+    assert body["image"] is None
 
 
 async def test_microvm_error_maps_to_503(client) -> None:

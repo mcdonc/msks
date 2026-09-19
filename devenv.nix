@@ -698,5 +698,11 @@ in
     *.lock
     .devenv/
     PRETTIER
+    # The appliance-image drift check (#160): what THIS checkout's
+    # .appliance points at, resolved per shell — a rebuild swaps the
+    # symlink without re-evaluating nix, so an env.* preset would go
+    # stale. `msks ls` compares it with the running daemon's
+    # reported image (its /health) and names the drift with the fix.
+    export MSKSC_EXPECTED_IMAGE="$(readlink -f "$DEVENV_ROOT/.appliance/image" 2>/dev/null || true)"
   '';
 }
