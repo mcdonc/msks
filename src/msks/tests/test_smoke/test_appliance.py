@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import os
 import re
+import shutil
 import ssl
 import subprocess
 import tempfile
@@ -102,6 +103,27 @@ async def test_appliance_boot_and_workspace() -> None:
     # (appliance-setup.sh chmods its own copy — this one must
     # match).
     state_disk.chmod(0o644)
+    # The EIO aftermath of the filled disk (#180): the superblock
+    # carries the error flag, which resize2fs refuses until e2fsck
+    # clears it — seed it so the grow path's repair step runs for
+    # real. (The kernel preserves the seeded error bit across the
+    # boot's own rw mount/umount, so the grown-filesystem assertion
+    # below genuinely proves the repair ran.)
+    if shutil.which("debugfs"):
+        flagged = subprocess.run(
+            [
+                "debugfs",
+                "-w",
+                "-R",
+                "set_super_value state 2",
+                str(state_disk),
+            ],
+            capture_output=True,
+            timeout=120,
+        )
+        assert flagged.returncode == 0, (
+            f"seeding the superblock error state failed: {flagged.stderr}"
+        )
     seeded = seed_legacy_state_disk(state_disk, marker_text)
     if not seeded:
         print("debugfs not on PATH; skipping the legacy-state assertions")

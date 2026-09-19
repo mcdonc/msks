@@ -418,12 +418,26 @@ let
       umount /run/msks-mnt
       # Grow an undersized filesystem into the device (#180): the
       # host setup script grows the state-disk FILE to the template's
-      # size, and this converges the ext4 to match — a disk formatted
-      # at the device's size makes this a fast no-op. Best-effort: a
-      # failed grow is loud (console and journal) and retries next
-      # boot, which beats failing the unit over free space.
-      resize2fs /dev/vdb \
-        || echo "msks-state-prepare: resize2fs failed; retrying next boot"
+      # size, and this converges the ext4 to match. resize2fs refuses
+      # a filesystem carrying errors or an unreplayed journal — what
+      # a disk that lived through a filled state disk presents (the
+      # EIO storm sets the error flag) — so the grow path repairs
+      # first (e2fsck replays the journal and clears the flags) and
+      # resizes after. The byte-size comparison gates both steps: a
+      # filesystem already at the device's size pays nothing on the
+      # steady-state boot, and a failed grow is loud and retries
+      # next boot instead of failing the unit.
+      super=$(dumpe2fs -h /dev/vdb 2>/dev/null || true)
+      fs_blocks=$(printf '%s\n' "$super" | sed -n 's/^Block count:[[:space:]]*//p')
+      fs_block_size=$(printf '%s\n' "$super" | sed -n 's/^Block size:[[:space:]]*//p')
+      dev_bytes=$(( $(cat /sys/block/vdb/size) * 512 ))
+      if [ -z "$fs_blocks" ] || [ -z "$fs_block_size" ]; then
+        echo "msks-state-prepare: could not read the filesystem size; skipping the grow"
+      elif [ "$fs_blocks" * "$fs_block_size" -lt "$dev_bytes" ]; then
+        e2fsck -fy /dev/vdb || true
+        resize2fs /dev/vdb \
+          || echo "msks-state-prepare: resize2fs failed; retrying next boot"
+      fi
       rm -rf /run/msks-mnt /run/msks-blank 2>/dev/null || true
     '';
   };
@@ -634,6 +648,7 @@ let
           '[Service]' \
           'Type=oneshot' \
           'ExecStart=/usr/local/sbin/msks-state-prepare' \
+          'TimeoutStartSec=15min' \
           'StandardOutput=journal+console' \
           'StandardError=journal+console' \
           ''' \
@@ -919,7 +934,9 @@ let
         test -x "$root"/sbin/init
         test -x "$root"/sbin/mkfs.ext4
         test -x "$root"/sbin/e2label
+        test -x "$root"/sbin/e2fsck
         test -x "$root"/sbin/resize2fs
+        test -x "$root"/sbin/dumpe2fs
         test -x "$root"/usr/local/sbin/msks-boot
         test -x "$root"/usr/local/sbin/msks-state-prepare
         test -d "$root"/var/lib/systemd

@@ -251,8 +251,12 @@ up -d`, `msks-dev-ready`), then delete the old dirs — they are no
   `Input/output error` storms. The new template carries the images
   with ~5x headroom for workspace overlays and volumes; existing
   disks grow in place on the appliance's next start (the host
-  extends the sparse file, the guest's state preparation runs
-  `resize2fs`). `docs/storage.md` documents the capacity model.
+  extends the sparse file; the guest's state preparation repairs
+  the filesystem with `e2fsck` — an error-flagged or
+  journal-flagged disk is what a filled one leaves — then resizes
+  it with `resize2fs`, and a disk already at the device's size
+  pays neither step). `docs/storage.md` documents the capacity
+  model.
 - **Appliance process console output (#176).** A requested stop
   (Ctrl-C, `devenv processes down`) ends with a calm final line,
   `appliance stopped`. Unexpected VMM exits state that the
