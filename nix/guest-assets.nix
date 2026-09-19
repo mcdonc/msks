@@ -642,12 +642,20 @@ let
                         raise SystemExit(
                             f"unparsable ls -p line: {line!r}"
                         )
+                    if parts[1] == "0" or parts[5] in ("", ".", ".."):
+                        # Inode 0 with an empty name is a directory
+                        # block's padding slot (inode 0 with a kept
+                        # name is a deleted dirent) — never a real
+                        # inode. Recorded, the degenerate path
+                        # (parent + trailing slash) with no type bits
+                        # would chmod the parent directory to 0000
+                        # on apply.
+                        continue
                     mode = int(parts[2], 8)
                     uid = int(parts[3])
                     gid = int(parts[4])
                     name = parts[5]
-                    if name not in (".", ".."):
-                        entries[current].append((name, mode, uid, gid))
+                    entries[current].append((name, mode, uid, gid))
             # debugfs errors never reach stdout and never set the
             # exit code — a failed listing (an unbalanced quote from
             # an exotic name, a lookup drift) echoes only the command
@@ -679,7 +687,7 @@ let
         # The pins double as parse guards: a walk that misparsed or
         # stopped early drops these, and a base image that changed
         # them moves the goalposts — either fails the build here.
-        if not by_path.get("/usr/bin/sudo", (0,))[0] & 0o4000:
+        if not by_path.get("/usr/bin/sudo", (0, 0, 0))[0] & 0o4000:
             raise SystemExit(
                 "/usr/bin/sudo is not setuid in the source image; "
                 "the debugfs walk parse must have broken, or the "
@@ -702,9 +710,13 @@ let
         )
 
 
-    def do_apply(manifest, tree):
+    def do_apply(manifest, tree, expected_absent):
         """Restore the manifest's mode/uid/gid onto the packed tree,
-        then assert the pins survived."""
+        then assert the pins survived. expected_absent names
+        special-mode paths the build DELIBERATELY deleted (the
+        appliance drops /var/log/journal for the state disk's own
+        copy); any other special-mode absence is drift and fails the
+        build."""
         restored = 0
         skipped = 0
         pins = {}
@@ -718,17 +730,32 @@ let
                 if path in PINS:
                     pins[path] = (mode, uid, gid)
                 if not os.path.lexists(tree + path):
-                    # Paths the build deleted or replaced between the
-                    # walk and the pack (the kernel swap, netplan,
-                    # resolv.conf) are expected absences, not drift.
+                    # Paths the build deleted or replaced between
+                    # the walk and the pack (the kernel swap,
+                    # netplan, resolv.conf) are expected absences —
+                    # unless the inode carried a special bit:
+                    # #169's guarantee, that no setuid/setgid/sticky
+                    # path silently disappears, covers every
+                    # special-mode inode beyond the pins and the
+                    # declared expected_absent list.
+                    if mode & 0o7000 and path not in expected_absent:
+                        raise SystemExit(
+                            f"special-mode path absent from the "
+                            f"tree: {path}"
+                        )
                     skipped += 1
                     continue
-                if (mode & 0o170000) == 0o120000:
+                if (
+                    (mode & 0o170000) == 0o120000
+                    or os.path.islink(tree + path)
+                ):
                     # A symlink's stored mode is always 0777 and
                     # chmod follows links — it would wreck the
-                    # target — so a manifest symlink only chowns
-                    # the link itself, whatever the tree holds
-                    # there now (resolv.conf becomes a real file).
+                    # target (or crash on a dangling one) — so a
+                    # symlink on EITHER side of the walk/pack gap
+                    # (the manifest recorded one, or the tree holds
+                    # one where the manifest recorded a regular
+                    # file) only chowns the link itself.
                     os.chown(
                         tree + path, uid, gid, follow_symlinks=False
                     )
@@ -765,14 +792,15 @@ let
 
 
     def main():
-        usage = f"usage: {sys.argv[0]} walk <image> <manifest> | apply <manifest> <tree>"
-        if len(sys.argv) != 4:
-            raise SystemExit(usage)
-        command, one, two = sys.argv[1:]
-        if command == "walk":
-            do_walk(one, two)
-        elif command == "apply":
-            do_apply(one, two)
+        usage = (
+            f"usage: {sys.argv[0]} walk <image> <manifest> | "
+            f"apply <manifest> <tree> [expected-absent-path ...]"
+        )
+        argv = sys.argv[1:]
+        if len(argv) == 3 and argv[0] == "walk":
+            do_walk(argv[1], argv[2])
+        elif len(argv) >= 3 and argv[0] == "apply":
+            do_apply(argv[1], argv[2], argv[3:])
         else:
             raise SystemExit(usage)
 

@@ -377,12 +377,9 @@ processes up` shows one devenv startup instead of two, and the
   the whole man cache), and every other non-root owner — the
   shadow-group password files, `utmp` logs, the
   `systemd-network`, `dbus`, and `polkit` state directories —
-  round-trips with it. The image build records the source image's
-  mode/uid/gid for every inode and restores the set in the fakeroot
-  pack stage (#169 restored only the setuid/setgid bits); build-time
-  pins fail the build when `sudo` loses setuid or the man cache
-  loses its owner. Workspaces must be recreated to pick up a
-  rebuilt image.
+  round-trips with it. Build-time pins fail the image build when
+  `sudo` loses its setuid bit or the man cache loses its owner.
+  Workspaces must be recreated to pick up a rebuilt image.
 
 - **Workspace home and the guest's account list (#171).** The
   first-boot identity seed now creates `/home/msks` owned by the

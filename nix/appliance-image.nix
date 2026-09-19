@@ -803,6 +803,9 @@ let
         # /var/log/journal leaves too: against the read-only root it
         # would only trick journald into a persistent start it cannot
         # write — the state disk's staged directory is the real one.
+        # It is a setgid directory (gid 999, systemd-journal), so
+        # the deletion is declared to the pack stage as an expected
+        # special-mode absence.
         rm -rf "$root"/var/log/journal
         rm -f "$root"/etc/machine-id
         cp -a --no-preserve=ownership ${applianceOverlay}/. "$root"/
@@ -941,10 +944,11 @@ let
     fake_epoch="''${PACK_FAKE_EPOCH:?}"
     meta="''${PACK_META:?}"
     applier="''${PACK_APPLIER:?}"
+    expected_absent="''${PACK_EXPECTED_ABSENT:-}"
     chown -R 0:0 "$tree"
     chmod 0640 "$tree"/etc/shadow "$tree"/etc/gshadow
     chmod 0600 "$tree"/etc/ssh/ssh_host_*_key 2>/dev/null || true
-    python3 "$applier" apply "$meta" "$tree"
+    python3 "$applier" apply "$meta" "$tree" $expected_absent
     E2FSPROGS_FAKE_TIME="$fake_epoch" mke2fs -q -t ext4 -b 4096 -I 256 \
       -L msks-rootfs \
       -E hash_seed=00000000-0000-0000-0000-000000000001 \
@@ -979,6 +983,7 @@ let
           PACK_FAKE_EPOCH="$fakeEpoch" \
           PACK_META="$applianceRoot/inode-metadata" \
           PACK_APPLIER="${inodeMeta}" \
+          PACK_EXPECTED_ABSENT="/var/log/journal" \
           fakeroot -- /bin/sh -e "$packScript"
       '';
 
