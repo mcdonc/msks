@@ -934,7 +934,7 @@ def build_parser() -> argparse.ArgumentParser:
         nargs=argparse.REMAINDER,
         metavar="ARGS",
         help="arguments passed to ssh verbatim ('-l root' is the recovery "
-        "login; '-A' forwards the session agent)",
+        "login; '-A' forwards your agent, $SSH_AUTH_SOCK)",
     )
     image = sub.add_parser(
         "image", help="manage the daemon's image catalog (#65)"

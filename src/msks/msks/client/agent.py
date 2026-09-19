@@ -298,3 +298,18 @@ def serve(private, comment: str):
 def socket_mode(path: str) -> int:
     """The socket's permission bits (the 0600 forced at bind)."""
     return os.stat(path).st_mode & 0o777
+
+
+def environment_agent() -> str | None:
+    """The agent socket the operator's environment names, when it
+    names one and it exists.
+
+    The one resolver for the operator's agent: the console's
+    challenge signer (:mod:`msks.client.consoleauth`), ssh-session
+    agent forwarding (:mod:`msks.client.ssh`), and the agent-held
+    key authentication #123 will add all consult it.
+    """
+    path = os.environ.get("SSH_AUTH_SOCK", "")
+    if path and os.path.exists(path):
+        return path
+    return None

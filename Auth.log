@@ -1,0 +1,3 @@
+debug1: OpenSSH_10.5p1, OpenSSL 3.6.3 9 Jun 2026
+debug1: Reading configuration data /dev/null
+Pseudo-terminal will not be allocated because stdin is not a terminal.

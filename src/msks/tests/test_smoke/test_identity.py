@@ -26,6 +26,8 @@ from test_smoke import (
     INITRD,
     ROOTFS,
     SHUTDOWN_TIMEOUT_S,
+    SSH_ADD_BIN,
+    SSH_AGENT_BIN,
     SSH_BIN,
     SSH_CMD_TIMEOUT_S,
     SSH_KEYGEN_BIN,
@@ -385,7 +387,7 @@ async def test_local_minted_identity() -> None:
         ssh_env = dict(cli_env, XDG_CACHE_HOME=str(ssh_cache))
 
         async def run_msks_ssh(
-            *options: str, command: str
+            *options: str, command: str, env: dict | None = None
         ) -> subprocess.CompletedProcess:
             return await asyncio.to_thread(
                 subprocess.run,
@@ -406,7 +408,7 @@ async def test_local_minted_identity() -> None:
                     "--",
                     command,
                 ],
-                env=ssh_env,
+                env=env or ssh_env,
                 capture_output=True,
                 text=True,
                 timeout=SSH_CMD_TIMEOUT_S,
@@ -426,6 +428,79 @@ async def test_local_minted_identity() -> None:
             f"{root_login.stdout}\n{root_login.stderr}"
         )
         assert "SSHR-0-42" in root_login.stdout, root_login.stdout
+
+        # -A names the operator's agent (#174): a throwaway agent
+        # holding a generated key rides the session in, and the
+        # guest lists that key and nothing else — stock ssh with an
+        # IdentityAgent set would forward the session agent (the
+        # workspace identity) instead, so the client rewrites the
+        # request onto the operator's socket.
+        agent_key = workdir / "agent-key"
+        keygen_agent = await asyncio.to_thread(
+            subprocess.run,
+            [
+                SSH_KEYGEN_BIN,
+                "-t",
+                "ed25519",
+                "-N",
+                "",
+                "-q",
+                "-f",
+                str(agent_key),
+            ],
+            capture_output=True,
+            timeout=30,
+        )
+        assert keygen_agent.returncode == 0, keygen_agent.stderr
+        agent_up = await asyncio.to_thread(
+            subprocess.run,
+            [SSH_AGENT_BIN, "-s"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert agent_up.returncode == 0, agent_up.stderr
+        agent_vars = {}
+        for line in agent_up.stdout.splitlines():
+            if line.startswith("SSH_") and "=" in line:
+                name, _, value = line.partition("=")
+                agent_vars[name] = value.split(";")[0].strip()
+        agent_env = dict(ssh_env, **agent_vars)
+        try:
+            added = await asyncio.to_thread(
+                subprocess.run,
+                [SSH_ADD_BIN, str(agent_key)],
+                env=agent_env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert added.returncode == 0, added.stderr
+            host_list = await asyncio.to_thread(
+                subprocess.run,
+                [SSH_ADD_BIN, "-l"],
+                env=agent_env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            forwarded = await run_msks_ssh(
+                "-A",
+                command="ssh-add -l",
+                env=agent_env,
+            )
+            assert forwarded.returncode == 0, (
+                f"{forwarded.stdout}\n{forwarded.stderr}"
+            )
+            # The guest's agent serves the operator's key — the one
+            # entry, with the host's fingerprint.
+            assert forwarded.stdout.strip() == host_list.stdout.strip(), (
+                f"guest:\n{forwarded.stdout}\nhost:\n{host_list.stdout}"
+            )
+        finally:
+            if "SSH_AGENT_PID" in agent_vars:
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(int(agent_vars["SSH_AGENT_PID"]), 15)
         # The logins recorded the guest's host key in the msks cache.
         assert (ssh_cache / "msks" / wid / "known_hosts").exists()
 

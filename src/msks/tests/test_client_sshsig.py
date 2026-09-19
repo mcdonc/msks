@@ -154,20 +154,6 @@ def test_agent_client_frame_round_trip(tmp_path: Path) -> None:
             client.close()
 
 
-def test_environment_agent_absent(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
-    assert sshsig.environment_agent() is None
-
-
-def test_environment_agent_present(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.setenv("SSH_AUTH_SOCK", str(tmp_path / "agent.sock"))
-    assert sshsig.environment_agent() is None  # not there yet
-    (tmp_path / "agent.sock").write_bytes(b"")
-    assert sshsig.environment_agent() == str(tmp_path / "agent.sock")
-
-
 def test_mpint_padding() -> None:
     assert sshsig.mpint(0xFF) == struct.pack(">I", 2) + b"\x00\xff"
     assert sshsig.mpint(0) == struct.pack(">I", 1) + b"\x00"
