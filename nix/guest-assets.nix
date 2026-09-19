@@ -577,8 +577,9 @@ let
   # rdump lands every inode build-user owned with only the nine rwx
   # mode bits, and the build sandbox is a user namespace where the
   # kernel refuses to set uid/gid or the special bits back for real.
-  # `walk` records EVERY source-image inode's mode, uid, and gid
-  # into one manifest (#169 restored only the special bits; #179
+  # `walk` records every source-image inode BELOW THE ROOT (the
+  # root itself appears only as each listing's `.`) — mode, uid, and
+  # gid in one manifest (#169 restored only the special bits; #179
   # widened it to full ownership after mandb lost its man:man cache);
   # the fakeroot pack stage runs `apply` on it — fakeroot records
   # the chmods/chowns without touching the kernel, and mke2fs -d
@@ -760,6 +761,20 @@ let
                         tree + path, uid, gid, follow_symlinks=False
                     )
                 else:
+                    # Neither side is a symlink: the manifest and
+                    # the tree must agree on the inode TYPE. A
+                    # directory standing where the manifest records
+                    # a regular file (or the reverse) would take
+                    # the other kind's mode silently — an
+                    # untraversable 0640 directory ships that way —
+                    # so the drift fails the build here.
+                    if (mode & 0o170000) != (
+                        os.lstat(tree + path).st_mode & 0o170000
+                    ):
+                        raise SystemExit(
+                            f"inode type drift between the manifest "
+                            f"and the tree: {path}"
+                        )
                     os.chmod(tree + path, mode & 0o7777)
                     os.chown(
                         tree + path, uid, gid, follow_symlinks=False
@@ -767,7 +782,22 @@ let
                 restored += 1
         if not restored:
             raise SystemExit("inode metadata manifest restored nothing")
+        # A declared absence that is actually present rots unnoticed
+        # otherwise: the declaration only matters on the absence
+        # branch, so a stale entry (the build stopped deleting the
+        # path) would silently pass forever.
+        for path in expected_absent:
+            if os.path.lexists(tree + path):
+                raise SystemExit(
+                    f"path declared expected-absent but present in "
+                    f"the tree: {path}"
+                )
         for pin in PINS:
+            if pin in expected_absent:
+                raise SystemExit(
+                    f"metadata pin {pin} is declared expected-absent; "
+                    f"a pin cannot be a deliberate deletion"
+                )
             if pin not in pins or not os.path.lexists(tree + pin):
                 raise SystemExit(
                     f"metadata pin lost from the tree or manifest: {pin}"
@@ -857,9 +887,10 @@ let
           test -d "$root/$top"
         done
 
-        # Record every inode's mode/uid/gid before the tree diverges
-        # from the source image (#169's special bits, #179's full
-        # ownership): the source image's own inode metadata is the
+        # Record every inode's mode/uid/gid below the root before
+        # the tree diverges from the source image (#169's special
+        # bits, #179's full ownership): the source image's own inode
+        # metadata is the
         # authority — sudo, su, mount and the man cache come back
         # exactly as the distro ships them, and an image pin update
         # cannot silently drift the set (the walk's pins fail the

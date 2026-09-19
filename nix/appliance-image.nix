@@ -944,6 +944,7 @@ let
     fake_epoch="''${PACK_FAKE_EPOCH:?}"
     meta="''${PACK_META:?}"
     applier="''${PACK_APPLIER:?}"
+    # Word-split intended: a fixed list of space-separated paths.
     expected_absent="''${PACK_EXPECTED_ABSENT:-}"
     chown -R 0:0 "$tree"
     chmod 0640 "$tree"/etc/shadow "$tree"/etc/gshadow

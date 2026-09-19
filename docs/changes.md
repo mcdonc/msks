@@ -371,7 +371,7 @@ processes up` shows one devenv startup instead of two, and the
 ### Fixed
 
 - **Guest and appliance images keep the base image's file
-  ownership (#179).** `apt` runs inside a workspace now see the
+  ownership (#179).** `apt` inside a workspace now sees the
   stock Debian metadata the base image ships: `mandb`'s cache is
   `man:man` again (an `apt upgrade` printed `Permission denied` on
   the whole man cache), and every other non-root owner — the
