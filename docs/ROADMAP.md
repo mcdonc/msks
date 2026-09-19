@@ -33,9 +33,10 @@ no web frontend yet.
   workspace and the metal — and a pure client/host division: the
   physical host runs only the appliance's supervisor and exposes only
   the appliance's HTTPS listener. The host OS is irrelevant (#10
-  revision): the supervisor is the repo's devenv tasks
-  (`msks-appliance-build`/`-up`/`-down` driving cloud-hypervisor and
-  virtiofsd from the pinned devenv shell) — no NixOS host requirement,
+  revision): the supervisor is the repo's devenv process manager
+  (the `msks-appliance-build`/`-up`/`-down` scripts driving
+  cloud-hypervisor and virtiofsd from the pinned devenv shell) — no
+  NixOS host requirement,
   and no NixOS in the guest either: the appliance image is built like
   the workspace guest (pure nixpkgs derivations, direct kernel boot),
   with its heavy runtime (the msksd closure, the VMM, workspace

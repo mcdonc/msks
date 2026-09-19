@@ -31,8 +31,12 @@ mkdir -p "$app_dir"
 # rebuild. rm -f first so a missing or bogus symlink always heals
 # (#160). The previous target feeds the status line at the end.
 previous="$(readlink -f "$app_dir/image" 2>/dev/null || true)"
-rm -f "$app_dir/image"
-echo "msks: building appliance assets into $app_dir (idempotent — unchanged inputs are a cached no-op)"
+# No rm -f here: nix-build -o below atomically replaces the symlink
+# (bogus or dangling targets included, verified — #160 healing is
+# unaffected), and keeping the old GC root in place until the build
+# succeeds avoids an unrooted window where a store GC could collect
+# the closure a RUNNING appliance still resolves through.
+echo "msks: ensuring appliance assets in $app_dir (idempotent — unchanged inputs are a cached no-op)"
 out="$(
   nix-build -I nixpkgs="$nixpkgs" \
     "$root/nix/appliance.nix" -A appliance -o "$app_dir/image"
@@ -46,10 +50,13 @@ if [ "$previous" != "$out" ] ||
   # Copy only what changed: rootfs.ext4 is ~0.9 GB, and a no-change
   # reboot must not rewrite it (page cache, disk wear). The missing-
   # artifact checks heal a deleted or half-deleted state dir (#160).
+  # temp+mv is atomic: an interrupted copy leaves the complete old
+  # file or no file — a truncated rootfs would pass -f forever while
+  # the gate above protects it (verified by review round 2).
   for name in vmlinux initrd rootfs.ext4 appliance-manifest.json; do
-    rm -f "$app_dir/$name"
-    cp -L "$out/$name" "$app_dir/$name"
-    chmod 0644 "$app_dir/$name"
+    cp -L "$out/$name" "$app_dir/.$name.tmp"
+    chmod 0644 "$app_dir/.$name.tmp"
+    mv -f "$app_dir/.$name.tmp" "$app_dir/$name"
   done
 fi
 # The state disk is NOT an artifact: a rebuild must never clobber live
@@ -57,8 +64,9 @@ fi
 # appliance's msks-state-format.service (blank, foreign, and existing
 # disks all converge) handle the rest.
 if [ ! -f "$app_dir/state.ext4" ]; then
-  cp -L "$out/state.ext4" "$app_dir/state.ext4"
-  chmod 0644 "$app_dir/state.ext4"
+  cp -L "$out/state.ext4" "$app_dir/.state.ext4.tmp"
+  chmod 0644 "$app_dir/.state.ext4.tmp"
+  mv -f "$app_dir/.state.ext4.tmp" "$app_dir/state.ext4"
 fi
 if [ "$previous" = "$out" ]; then
   echo "msks: appliance assets up to date in $app_dir (image $out)"

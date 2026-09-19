@@ -233,20 +233,20 @@ up -d`, `msks-dev-ready`), then delete the old dirs — they are no
 ### Changed
 
 - **Plain scripts instead of dependency-free devenv tasks (#166).**
-  The msks devenv tasks with no `after`/`before` ordering are now
-  plain scripts on the devenv shell's PATH — `msks-xenon`,
-  `msks-jscpd`, `msks-preflight`, `msks-build-guest`,
-  `msks-build-runner-image`, `msks-demo-vm`, `msks-appliance-build`,
-  `msks-build-guest-archive`, `msks-appliance-up`,
-  `msks-appliance-down`, `msks-dev-ready` — run them directly from a
-  devenv shell or `devenv --quiet -O dotenv.enable:bool false shell
--- <name>` from outside; `msks:uv-sync` remains the one msks task
-  (it orders against devenv's venv and shell tasks). Appliance
-  startup runs its build script directly, so `devenv processes up`
-  shows one devenv startup instead of two, with the nix cache making
-  unchanged inputs a seconds-long no-op — a stale cached skip can no
-  longer leave broken artifacts (#160). The build and lifecycle
-  scripts print their start and outcome.
+  Every msks devenv task without `after`/`before` ordering is now a
+  plain script on the devenv shell's PATH (`msks-build-guest`,
+  `msks-appliance-build`, `msks-appliance-up`/`-down`,
+  `msks-preflight`, and the rest) — run it from a devenv shell
+  directly or `devenv --quiet -O dotenv.enable:bool false shell --
+<name>` from outside; `msks:uv-sync` remains the one task. The
+  appliance process now runs its build script directly, so `devenv
+processes up` shows one devenv startup instead of two, and the
+  build re-runs every start with the nix cache making unchanged
+  inputs a seconds-long no-op — healing stale or half-deleted
+  artifacts (#160) instead of skipping them. The pinned nixpkgs
+  source is exported as `MSKS_GUEST_NIXPKGS` to every devenv
+  context, and the build and lifecycle scripts print their start and
+  outcome.
 
 - **Minted identity keys default to `ed25519` (#138).** The
   client mint (`--key-type`, `msks create`) and the daemon mint
