@@ -57,6 +57,8 @@ async def test_local_workspace_user_sudo() -> None:
     )
     try:
         await microvm.launch(spec)
+        info = await microvm.info(wid)
+        assert info.status.value == "running"
         await await_guest_up(serial_log)
         # The pairing sudo checks first: uid-0 ownership of a 04755
         # binary. Guest-computed sentinel, per run_in_console's

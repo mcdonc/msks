@@ -612,12 +612,23 @@ let
                 if line.startswith(MARKER):
                     current = line[len(MARKER) :].strip('"')
                     entries[current] = []
+                elif line.startswith("debugfs: "):
+                    # A debugfs error (unbalanced quotes, lookup
+                    # failure) aborts the walk — exiting silently
+                    # would drop the whole subtree from the manifest,
+                    # and the set could drift on an image pin update
+                    # without a trace.
+                    raise SystemExit(f"debugfs: {line}")
                 elif line.startswith("/") and current is not None:
                     parts = line.rstrip("/").split("/")
-                    if len(parts) < 6 or parts[0] != "":
-                        continue
-                    if not all(p.isdigit() for p in parts[1:5]):
-                        continue
+                    if (
+                        len(parts) < 6
+                        or parts[0] != ""
+                        or not all(p.isdigit() for p in parts[1:5])
+                    ):
+                        raise SystemExit(
+                            f"unparsable ls -p line: {line!r}"
+                        )
                     mode = int(parts[2], 8)
                     name = parts[5]
                     if name not in (".", ".."):
@@ -637,10 +648,13 @@ let
 
     def do_walk(image, manifest):
         special = walk(image, os.path.dirname(os.path.abspath(image)))
-        setuid = [path for path, perm in special if perm & 0o4000]
-        if not setuid:
+        setuid = {path for path, perm in special if perm & 0o4000}
+        # #169 exists because sudo broke: pin the binary itself, not
+        # just "some setuid survived" — a parse regression that
+        # keeps any other setuid file would otherwise pass.
+        if "/usr/bin/sudo" not in setuid:
             raise SystemExit(
-                "no setuid binaries found in the source image; "
+                "/usr/bin/sudo is not setuid in the source image; "
                 "the debugfs walk parse must have broken"
             )
         with open(manifest, "w") as out:
