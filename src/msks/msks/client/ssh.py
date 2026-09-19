@@ -240,17 +240,25 @@ def split_command(passthrough: list[str]) -> tuple[list[str], list[str]]:
 def wants_user(args: list[str]) -> bool:
     """Whether the passthrough args name a login user themselves.
 
-    ``-l root`` (the recovery login) and ``-o User=root`` — the value
-    separate or inline — both count; when ssh is told its user, the
-    default is not injected twice.
+    ``-l root``, its attached spelling ``-lroot``, and
+    ``-o User=root`` — the value separate or inline — all count;
+    when ssh is told its user, the default is not injected twice.
+    A dangling ``-l`` counts too: ssh's own error is the clear one.
     """
     for index, arg in enumerate(args):
-        if arg == "-l":
-            return True  # even dangling: ssh's own error is the clear one
+        if names_login(arg):
+            return True
         value = option_value(index, arg, args)
         if value is not None and names_user(value):
             return True
     return False
+
+
+def names_login(arg: str) -> bool:
+    """Whether an argument is ssh's ``-l`` — the flag beside its
+    value, the attached ``-lroot`` spelling, or dangling. Uppercase
+    ``-L`` (a local forward) is a different option."""
+    return arg == "-l" or (arg.startswith("-l") and len(arg) > 2)
 
 
 def option_value(index: int, arg: str, args: list[str]) -> str | None:
@@ -364,29 +372,39 @@ def probe_args(
     identity_pub: str,
     known_hosts: str,
     passthrough: list[str],
-) -> list[str]:
+) -> list[str] | None:
     """The readiness probe's argv: msks's own transport and agent
     settings, the session's login user, and a throwaway ``true`` as
     the remote command — the passthrough contributes nothing else.
 
     The probe asks one question — does the guest accept the
-    identity yet — so it carries exactly the settings that shape
-    that answer. The session's own luggage stays with the session:
-    ``-N``/``SessionType=none`` make ssh ignore a command and hold
-    the connection open, ``-W`` and the ``-L``/``-R``/``-D``
-    forwards stretch a probe into a tunnel (bundled short flags
-    like ``-fN`` reach the same states spelling-free), and
+    identity yet, as the user the session will log in as — so it
+    carries exactly the settings that shape that answer. The
+    session's own luggage stays with the session: ``-N``/
+    ``SessionType=none`` make ssh ignore a command and hold the
+    connection open, ``-W`` and the ``-L``/``-R``/``-D`` forwards
+    stretch a probe into a tunnel (bundled short flags like
+    ``-fN`` reach the same states spelling-free), and
     ``RemoteCommand`` makes ssh refuse a command-line command
     outright — none of them can stall or distort the probe when
     none of them is in it. ``true`` runs no user command, so a
-    retried probe cannot run anything twice; ``-q`` keeps each
-    attempt to msks's own notice line.
+    retried probe cannot run anything twice, and ``-q`` keeps
+    ssh's own per-attempt chatter quiet (the notice and the
+    forward's refusal line are what a retry prints).
+
+    None when no probe can represent the session: a user named in
+    a shape ssh refuses outright (a dangling ``-l``) answers
+    nothing — the session fails with its own immediate usage
+    error, so it runs at once.
     """
     options, _ = split_command(passthrough)
+    user = probe_user(options)
+    if wants_user(options) and not user:
+        return None
     argv = [
         "ssh",
         "-q",
-        *probe_user(options),
+        *user,
         *session_options(
             workspace_id, agent_socket, identity_pub, known_hosts
         ),
@@ -413,12 +431,23 @@ def probe_user(options: list[str]) -> list[str]:
 
 def user_pair(index: int, arg: str, options: list[str]) -> list[str]:
     """The passthrough fragments at ``index`` that name the login
-    user: ``-l`` with its value, or an ``-o User=...`` in either
-    spelling — an empty pair when the argument names no user."""
+    user: ``-l`` in either spelling, or an ``-o User=...`` in
+    either spelling — an empty pair when the argument names no
+    user."""
+    if names_login(arg):
+        return login_pair(index, arg, options)
     value = option_value(index, arg, options)
     if value is not None and names_user(value):
         return inline_user_pair(arg, value)
-    if arg == "-l" and next_arg_names_user(options, index):
+    return []
+
+
+def login_pair(index: int, arg: str, options: list[str]) -> list[str]:
+    """The ``-l`` fragments: the attached ``-lroot`` spelling is
+    one argument, the value split beside the flag is two."""
+    if len(arg) > 2:
+        return [arg]
+    if next_arg_names_user(options, index):
         return [arg, options[index + 1]]
     return []
 
@@ -495,23 +524,26 @@ def run_workspace_ssh(
     )
     private = agent.load_private(resolve_private(key, workspace_id))
     with agent.serve(private, identity_comment(key)) as served:
+        known_hosts = known_hosts_path(workspace_id)
         if booted:
-            wait_for_identity(
+            probe_argv = probe_args(
                 workspace_id,
-                probe_args(
-                    workspace_id,
-                    served.server_address,
-                    served.identity_path,
-                    known_hosts_path(workspace_id),
-                    passthrough,
-                ),
-                time.monotonic() + SSH_SEED_WAIT_S,
+                served.server_address,
+                served.identity_path,
+                known_hosts,
+                passthrough,
             )
+            if probe_argv is not None:
+                wait_for_identity(
+                    workspace_id,
+                    probe_argv,
+                    time.monotonic() + SSH_SEED_WAIT_S,
+                )
         argv = build_args(
             workspace_id,
             served.server_address,
             served.identity_path,
-            known_hosts_path(workspace_id),
+            known_hosts,
             passthrough,
         )
         try:

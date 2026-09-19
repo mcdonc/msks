@@ -614,6 +614,8 @@ def test_split_command_splits_at_ssh_separator(
         (["-o", "ProxyCommand=x"], False),
         (["-A"], False),
         (["-l"], True),  # dangling: ssh's own error is the clear one
+        (["-lroot"], True),  # the attached -l spelling ssh accepts
+        (["-L8080:localhost:80"], False),  # -L (a forward) is not -l
         (["-oUser=root"], True),  # the inline -o form
         (["-oProxyCommand=x"], False),
     ],
@@ -910,16 +912,46 @@ def test_probe_args_drops_all_session_luggage() -> None:
 
 
 def test_probe_user_extracts_each_user_form() -> None:
-    # -l with its value, split and inline -o User=..., both kept;
+    # -l in both spellings, split and inline -o User=..., all kept;
     # a dangling -l (an option where its value would be) stays out
-    # so the probe logs in as the default user while ssh's own
-    # usage error answers the session.
+    # so the probe falls back — probe_args then skips the wait
+    # entirely, pinned below — and an uppercase -L forward names no
+    # user.
     assert ssh.probe_user(["-l", "root"]) == ["-l", "root"]
+    assert ssh.probe_user(["-lroot"]) == ["-lroot"]
     assert ssh.probe_user(["-o", "User=root"]) == ["-o", "User=root"]
     assert ssh.probe_user(["-oUser=root"]) == ["-oUser=root"]
-    assert ssh.probe_user(["-o", "User=robot"]) == ["-o", "User=robot"]
     assert ssh.probe_user(["-l", "-A"]) == []
     assert ssh.probe_user(["-A", "-T"]) == []
+    assert ssh.probe_user(["-L8080:localhost:80"]) == []
+
+
+def test_probe_args_carries_the_attached_login_spelling() -> None:
+    # ssh parses -lroot as user root and takes the first user it
+    # sees, so the probe must carry it too — not the default user.
+    argv = probe_argv_of(["-lroot"])
+    assert "-lroot" in argv
+    assert "msks" not in argv
+
+
+def test_probe_args_shares_the_sessions_transport_options() -> None:
+    # The probe authenticates through the same ProxyCommand,
+    # known_hosts, host-key policy, agent, and identity — the
+    # injected option block is the session's own, verbatim.
+    session = ssh.build_args(
+        "alpha", "/faked/agent.sock", "/faked/identity.pub", "/kh", []
+    )
+    probe = probe_argv_of([])
+    injected = session[1:-2]  # no passthrough options: the whole tail
+    assert probe[2 : 2 + len(injected)] == injected
+
+
+def test_probe_args_refuses_a_session_no_probe_can_mirror() -> None:
+    # A dangling -l names a user ssh will refuse outright — the
+    # session answers with its own immediate usage error, so no
+    # probe is built and the wait is skipped.
+    assert probe_argv_of(["-l"]) is None
+    assert probe_argv_of(["-l", "-A"]) is None
 
 
 def test_probe_args_keeps_a_defaulted_user_from_double_injection() -> None:
@@ -1109,6 +1141,36 @@ def test_run_workspace_ssh_skips_the_wait_when_not_booted(
     rc = ssh.run_workspace_ssh("alpha", [])
     assert rc == 255
     assert len(commands) == 1  # an already-running guest gets one dial
+
+
+def test_run_workspace_ssh_skips_the_wait_when_no_probe_exists(
+    monkeypatch: pytest.MonkeyPatch, client_env: None, tmp_path: Path
+) -> None:
+    # A dangling -l: probe_args answers None, the wait is skipped,
+    # and the session fails once with ssh's own immediate error.
+    async def fake_prepare(*args, **kwargs) -> tuple[dict, bool]:
+        return KEY, True
+
+    monkeypatch.setattr(ssh, "prepare", fake_prepare)
+    monkeypatch.setattr(
+        ssh, "known_hosts_path", lambda ws, base=None: str(tmp_path)
+    )
+
+    @contextmanager
+    def fake_serve(private, comment):
+        yield FakeAgent()
+
+    monkeypatch.setattr(ssh.agent, "serve", fake_serve)
+    commands: list[list[str]] = []
+
+    def fake_run(argv, **kwargs) -> SimpleNamespace:
+        commands.append(argv)
+        return SimpleNamespace(returncode=255)
+
+    monkeypatch.setattr(ssh.subprocess, "run", fake_run)
+    rc = ssh.run_workspace_ssh("alpha", ["-l"])
+    assert rc == 255
+    assert len(commands) == 1
 
 
 # --- CLI wiring ---
