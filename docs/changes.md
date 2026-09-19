@@ -233,15 +233,15 @@ up -d`, `msks-dev-ready`), then delete the old dirs — they are no
 ### Changed
 
 - **Appliance process console output (#176).** A requested stop
-  (Ctrl-C, `devenv processes down`) ends with `appliance stopped
-(SIGTERM)` — the stop completing. Unexpected VMM exits state that
-  the supervisor restarts them and name `devenv processes logs
-  appliance`; a clean, unrequested VMM exit (a guest poweroff) says
-  the appliance stays stopped and names `devenv processes restart
-  appliance`. The serving line repeats the appliance URL beside the
-  image's short name, and the first-boot booting line says the
-  client CA lands at `msks-ca.pem` (a fresh devenv shell then
-  verifies) instead of naming the serial log without explanation.
+  (Ctrl-C, `devenv processes down`) ends with a calm final line,
+  `appliance stopped`. Unexpected VMM exits state that the
+  supervisor restarts them and name the cloud-hypervisor and serial
+  logs that hold the cause; a clean, unrequested VMM exit (a guest
+  poweroff) says the appliance stays stopped and names `devenv
+processes restart appliance`. The serving line repeats the
+  appliance URL beside the image's short name, and the first-boot
+  booting line says the client CA lands at `msks-ca.pem` and a
+  fresh devenv shell then verifies.
 - **Plain scripts instead of dependency-free devenv tasks (#166).**
   Every msks devenv task without `after`/`before` ordering is now a
   plain script on the devenv shell's PATH (`msks-build-guest`,

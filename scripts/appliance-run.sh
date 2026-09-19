@@ -222,7 +222,8 @@ boot_vm() {
 }
 JSON
   api vm.boot || return 1
-  # This hint fires only on a first boot: the guest mints its CA
+  # This hint fires whenever no CA has landed yet — a first boot,
+  # or a manually deleted msks-ca.pem: the guest mints its CA
   # at first start and the extractor below lands msks-ca.pem once
   # it serves — fresh devenv shells pick it up as MSKSC_CAFILE, so
   # connects verify and every later boot's line stays short. A
@@ -420,26 +421,28 @@ rc=0
 wait "$chpid" || rc=$?
 wait "$booter" 2>/dev/null || true
 # Name the exit for the console reader. A requested stop ends
-# calmly: the VMM exit IS the stop sequence finishing (its own
-# SIGTERM, or the guest's ACPI poweroff exiting first), so the line
-# says "stopped" and names the signal — a bare "rc=143" there read
-# as a crash (#176). A clean exit nobody requested (the guest
-# powered itself off, or someone drove vm.shutdown through the API
-# socket) stays stopped: devenv's default restart policy is
-# on_failure (five attempts), so exit 0 is final and the line names
-# the way back instead of a restart that never comes. Anything else
-# is a failure, and the concrete "what happens next" is the
-# supervisor's restart.
+# calmly: the line says "stopped", full stop — the choreography
+# line above already names ACPI and SIGTERM, and rc here is the
+# SHELL's own trap-interrupted wait (128 + the request's signal),
+# not the VMM's exit: a fast ACPI poweroff exits 0 and still
+# reports 143, so decorating the line would misname the VMM's
+# death (#176). A clean exit nobody requested (the guest powered
+# itself off, or someone drove vm.shutdown through the API socket)
+# stays stopped: devenv's default restart policy is on_failure
+# (five attempts), so exit 0 is final and the line names the way
+# back instead of a restart that never comes. Anything else is a
+# failure: the supervisor restarts it, and the why lives in the
+# two logs, not the manager's replay of the console.
 sig=""
 if [ "$rc" -gt 128 ]; then
   name="$(kill -l "$rc" 2>/dev/null || true)"
   if [ -n "$name" ]; then sig=" (SIG$name)"; fi
 fi
 if [ -n "${stopping:-}" ]; then
-  echo "msks: appliance stopped$sig"
+  echo "msks: appliance stopped"
 elif [ "$rc" -eq 0 ]; then
   echo "msks: appliance VMM exited cleanly (rc=0); it stays stopped — restart it with: devenv processes restart appliance"
 else
-  echo "msks: appliance VMM exited unexpectedly — rc=$rc$sig; the supervisor restarts it (devenv processes logs appliance shows why)" >&2
+  echo "msks: appliance VMM exited unexpectedly — rc=$rc$sig; the supervisor restarts it — cloud-hypervisor.log: $app_dir/cloud-hypervisor.log, serial: $app_dir/serial.log" >&2
 fi
 exit "$rc"
