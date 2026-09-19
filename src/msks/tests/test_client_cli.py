@@ -154,6 +154,83 @@ def test_cmd_ls_formats_rows(
     assert "beta" in out and "created" in out and "-" in out
 
 
+OLD_IMAGE = "/nix/store/oldaaaa-msks-appliance"
+NEW_IMAGE = "/nix/store/newwwww-msks-appliance"
+
+
+def route(req: httpx.Request) -> httpx.Response:
+    """The ls route pair: workspaces plus a health that serves an
+    older image — the drifted-appliance shape #160 names."""
+    if req.url.path == "/api/v1/health":
+        return httpx.Response(200, json={"status": "ok", "image": OLD_IMAGE})
+    return httpx.Response(200, json=ROWS)
+
+
+def test_cmd_ls_names_a_stale_appliance_image(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The drift notice (#160): the daemon serves a different image
+    than this tree builds — older OR newer, the wording takes no
+    direction — and `msks ls` says so with the fix."""
+    client_env(monkeypatch)
+    monkeypatch.setenv("MSKSC_EXPECTED_IMAGE", NEW_IMAGE)
+    rc = cli.cmd_ls(transport=mock(route))
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "different image" in err
+    assert Path(OLD_IMAGE).name in err and Path(NEW_IMAGE).name in err
+    assert "devenv processes down, then devenv processes up -d" in err
+
+    # The reverse drift (an older checkout beside a newer running
+    # appliance — bisect, a worktree switch) uses the same wording.
+    monkeypatch.setenv(
+        "MSKSC_EXPECTED_IMAGE", "/nix/store/ancient-msks-appliance"
+    )
+    cli.cmd_ls(transport=mock(route))
+    assert "different image" in capsys.readouterr().err
+
+
+def test_cmd_ls_stays_silent_when_images_match(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A current appliance (or a daemon that predates the image
+    pair — `image: null`) prints the listing and nothing else."""
+    client_env(monkeypatch)
+    monkeypatch.setenv("MSKSC_EXPECTED_IMAGE", OLD_IMAGE)
+    cli.cmd_ls(transport=mock(route))
+    assert capsys.readouterr().err == ""
+
+    monkeypatch.setenv("MSKSC_EXPECTED_IMAGE", NEW_IMAGE)
+    cli.cmd_ls(
+        transport=mock(
+            lambda req: (
+                httpx.Response(200, json={"status": "ok", "image": None})
+                if req.url.path == "/api/v1/health"
+                else httpx.Response(200, json=ROWS)
+            )
+        )
+    )
+    assert capsys.readouterr().err == ""
+
+
+def test_cmd_ls_skips_the_health_probe_without_an_expected_image(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No MSKSC_EXPECTED_IMAGE (outside a devenv shell, or before
+    the first build): one request — the listing — and no probe."""
+    client_env(monkeypatch)
+    monkeypatch.delenv("MSKSC_EXPECTED_IMAGE", raising=False)
+    seen: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen.append(req.url.path)
+        return httpx.Response(200, json=ROWS)
+
+    cli.cmd_ls(transport=mock(handler))
+    assert seen == ["/api/v1/workspaces"]
+    assert capsys.readouterr().err == ""
+
+
 def test_cmd_ls_json(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

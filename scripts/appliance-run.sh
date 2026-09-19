@@ -74,6 +74,19 @@ base_cmdline="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).
 # included — so the drift this indirection exists to prevent cannot
 # sneak back in through the fallback.
 : "${base_cmdline:=console=ttyS0 root=/dev/vda rootfstype=ext4 ro net.ifnames=0}"
+# The image identity this boot serves (#160): the daemon reports it
+# in /health (msksd.image from /proc/cmdline), the drift check below
+# and `msks ls` compare it with what the tree builds today, and a
+# drifted appliance names itself instead of failing opaquely. A
+# missing symlink is a named failure, not a bogus identity: with it
+# absent, readlink -f echoes the literal path (rc=0), the daemon
+# would report that, and the comparison would silently no-op (#160
+# review).
+if [ ! -e "$app_dir/image" ]; then
+  echo "msks: .appliance/image is missing; rebuild with: devenv tasks run msks:appliance-build" >&2
+  exit 1
+fi
+booted_image="$(readlink -f "$app_dir/image")"
 # Optional msksd.<name>=<value> pairs the operator wants bridged into
 # the daemon's environment (e.g. msksd.vsock_wait_timeout_s=30 on
 # slow nested-virt hosts); each becomes MSKSD_<NAME> in the guest.
@@ -183,7 +196,7 @@ boot_vm() {
   "payload": {
     "kernel": "$app_dir/vmlinux",
     "initramfs": "$app_dir/initrd",
-    "cmdline": "$base_cmdline msksd.bootstrap_token=$bootstrap_token msksd.default_image=$default_image$dev_cmdline $MSKS_APPLIANCE_CMDLINE_EXTRA"
+    "cmdline": "$base_cmdline msksd.bootstrap_token=$bootstrap_token msksd.default_image=$default_image msksd.image=$booted_image$dev_cmdline $MSKS_APPLIANCE_CMDLINE_EXTRA"
   },
   "disks": [
     {"path": "$app_dir/rootfs.ext4", "readonly": true, "image_type": "Raw"},
@@ -275,6 +288,91 @@ chpid=$!
   done
   rm -f "$tmp"
 ) &
+
+# --- converge on up (#160): the guest must serve, loudly ---------
+# `devenv processes up` reporting a ready process while the guest
+# never reaches its API is the silent-failure class #158 named: the
+# operator's first signal was an msks ssh failure against the wrong
+# closure. The gate blocks until the daemon answers /health — then
+# names the image it serves — and a boot that never serves within
+# the window exits with the named cause (serial log path); the
+# supervisor restarts it, and a persistently broken image reaches
+# gave_up loudly instead of idling as a "ready" appliance.
+: "${MSKS_APPLIANCE_SERVE_TIMEOUT_S:=300}"
+served=""
+vmm_died=""
+for _ in $(seq 1 "$MSKS_APPLIANCE_SERVE_TIMEOUT_S"); do
+  if curl -sk --connect-timeout 2 "https://$guest_ip:8660/api/v1/health" >/dev/null 2>&1; then
+    served=1
+    break
+  fi
+  if ! kill -0 "$chpid" 2>/dev/null; then
+    vmm_died=1
+    break
+  fi
+  sleep 1
+done
+if [ -z "$served" ]; then
+  if [ -n "$vmm_died" ]; then
+    echo "msks: appliance VMM exited before serving — cloud-hypervisor.log: $app_dir/cloud-hypervisor.log, serial: $app_dir/serial.log" >&2
+  else
+    echo "msks: appliance guest never served https://$guest_ip:8660 within ${MSKS_APPLIANCE_SERVE_TIMEOUT_S}s — serial log: $app_dir/serial.log" >&2
+  fi
+  exit 1
+fi
+echo "msks: appliance serving (image $booted_image)"
+
+# --- opt-in drift auto-restart (#160) ------------------------------
+# MSKS_APPLIANCE_AUTO_RESTART=1: while the appliance runs, compare
+# the booted image with the tree's current build; on drift, with no
+# workspace running, rebuild and restart into the fresh image — the
+# whole `up` update story, unattended. A workspace in any live-ish
+# state holds the restart off (the documented behavior: a live
+# workspace keeps its appliance until it stops). The loop is tied to
+# this VMM's lifetime and never fires under MSKS_DEV_TREE — a
+# dev-tree daemon serves the live tree, and restarting its appliance
+# on image drift would churn for nothing.
+if [ "${MSKS_APPLIANCE_AUTO_RESTART:-}" = "1" ] && [ -z "$MSKS_DEV_TREE" ]; then
+  (
+    interval="${MSKS_APPLIANCE_DRIFT_CHECK_S:-300}"
+    # A non-numeric interval would kill the subshell at its first
+    # sleep; fall back to the default and keep watching (#160 review).
+    case "$interval" in
+    "" | *[!0-9]*) interval=300 ;;
+    esac
+    while kill -0 "$chpid" 2>/dev/null; do
+      sleep "$interval"
+      kill -0 "$chpid" 2>/dev/null || break
+      current="$(readlink -f "$app_dir/image" 2>/dev/null || true)"
+      [ -n "$current" ] || continue
+      [ "$current" = "$booted_image" ] && continue
+      rows="$(curl -sk --connect-timeout 2 -H "Authorization: Bearer $bootstrap_token" \
+        "https://$guest_ip:8660/api/v1/workspaces" 2>/dev/null)" || continue
+      state="$(python3 -c '
+import json, sys
+try:
+    rows = json.loads(sys.argv[1])
+except Exception:
+    # An unreadable answer never restarts anything: retry next cycle.
+    print("busy")
+    sys.exit()
+live = ("starting", "running", "paused", "unknown")
+print("busy" if any(r.get("status") in live for r in rows) else "idle")
+' "$rows" 2>/dev/null || echo busy)"
+      if [ "$state" != "idle" ]; then
+        echo "msks: image drifted to $current but a workspace is live; holding off" >&2
+        continue
+      fi
+      echo "msks: image drifted ($booted_image -> $current); rebuilding and restarting" >&2
+      devenv tasks run msks:appliance-build || continue
+      # TERM to this script runs the graceful trap (ACPI, then
+      # SIGTERM); the supervisor restarts the process into the
+      # freshly built image.
+      kill -TERM "$$"
+      exit 0
+    done
+  ) &
+fi
 
 # errexit-safe: a nonzero wait (crash, SIGKILL, SIGTERM) must not
 # kill the script before the booter is reaped and the diagnostic

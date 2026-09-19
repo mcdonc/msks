@@ -436,16 +436,23 @@ in
         # ~20s warm) after a pull or an edit to the daemon
         # sources, the nix expressions, or the build script —
         # `devenv processes up` is the whole update story. The
-        # guard covers the gap the task cache cannot see (a
-        # deleted or half-deleted .appliance with unchanged
-        # inputs would make the task skip and leave nothing or a
-        # broken set to boot): the build script runs directly,
-        # unconditionally, exactly until ALL the boot artifacts
-        # are back.
+        # guard covers the gaps the task cache cannot see: a
+        # deleted or half-deleted .appliance with unchanged inputs
+        # would make the task skip and leave nothing or a broken
+        # set to boot. The image SYMLINK is in the guard because
+        # only the build script's `nix-build -o` recreates it — a
+        # task-cached run leaves a missing (or bogus — repointed,
+        # so it dereferences to nothing) symlink broken forever,
+        # and the boot that follows would carry a bogus identity
+        # (#160, found live: the drift auto-restart's rebuild was
+        # a cached no-op, the restart then crash-looped on the
+        # missing-symlink guard instead of converging). `! -e`
+        # dereferences, so a bogus target counts as missing.
         if [ ! -f "$DEVENV_ROOT/.appliance/appliance-manifest.json" ] \
           || [ ! -f "$DEVENV_ROOT/.appliance/vmlinux" ] \
           || [ ! -f "$DEVENV_ROOT/.appliance/initrd" ] \
-          || [ ! -f "$DEVENV_ROOT/.appliance/rootfs.ext4" ]; then
+          || [ ! -f "$DEVENV_ROOT/.appliance/rootfs.ext4" ] \
+          || [ ! -e "$DEVENV_ROOT/.appliance/image" ]; then
           # Both branches run the same script; the difference is the
           # task cache. Here artifacts are missing, and the cache can
           # be a false hit (inputs unchanged since the last successful
@@ -698,5 +705,11 @@ in
     *.lock
     .devenv/
     PRETTIER
+    # The appliance-image drift check (#160): what THIS checkout's
+    # .appliance points at, resolved per shell — a rebuild swaps the
+    # symlink without re-evaluating nix, so an env.* preset would go
+    # stale. `msks ls` compares it with the running daemon's
+    # reported image (its /health) and names the drift with the fix.
+    export MSKSC_EXPECTED_IMAGE="$(readlink -f "$DEVENV_ROOT/.appliance/image" 2>/dev/null || true)"
   '';
 }

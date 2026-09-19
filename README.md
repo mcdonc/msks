@@ -214,6 +214,26 @@ also how a fix merged to main reaches a running appliance —
 between restarts the daemon keeps serving the image it started
 with, so `msks` behavior stays that of the build inside the VM.
 
+**`up` converges loudly (#160).** The daemon names the image it
+boots from in `/health` (the `msksd.image` cmdline pair), and a
+devenv shell presets `MSKSC_EXPECTED_IMAGE` to what this checkout
+builds — `msks ls` compares the two and, on drift, prints the
+running and expected images with the fix (`devenv processes down
+&& devenv processes up -d`). The run script also gates its own
+boot: `up` waits for the guest to serve `/health`
+(`MSKS_APPLIANCE_SERVE_TIMEOUT_S`, default 300s) and exits with
+the serial-log path when it never does, so a broken image reaches
+the supervisor's loud restart loop instead of idling as a "ready"
+appliance. With `MSKS_APPLIANCE_AUTO_RESTART=1` the appliance
+takes the update story on itself: every
+`MSKS_APPLIANCE_DRIFT_CHECK_S` (default 300) it compares images,
+and on drift — with no workspace in a live state — rebuilds and
+gracefully restarts into the fresh image; a live workspace holds
+the restart off until it stops. An in-flight image import (a
+multi-GB upload) creates no workspace row, so the restart can
+interrupt one — finish large imports before enabling a restart
+window, or run imports with the setting off.
+
 **The client environment presets to the appliance (#146)**:
 `MSKSC_URL` (`https://192.168.77.2:8660`), `MSKSC_TOKEN` (the
 appliance's bootstrap token), and `MSKSC_CAFILE`

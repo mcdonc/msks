@@ -8,6 +8,19 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **`devenv processes up` converges to a working appliance, loudly
+  (#160).** The daemon reports the image it booted from in
+  `/health` (an `msksd.image` kernel-cmdline pair), a devenv shell
+  presets `MSKSC_EXPECTED_IMAGE` to what the checkout builds, and
+  `msks ls` names the drift with the fix (`devenv processes down`,
+  then `devenv processes up -d`) when the two differ. The run
+  script gates its boot on the guest serving `/health`
+  (`MSKS_APPLIANCE_SERVE_TIMEOUT_S`, default 300) and exits with a
+  named cause — a never-serving guest or an exited VMM — instead
+  of idling as a "ready" appliance; `MSKS_APPLIANCE_AUTO_RESTART=1`
+  makes a drifted appliance rebuild and gracefully restart itself
+  when no workspace is live (see the README's appliance section).
+
 - **The appliance as the one managed process, client env preset to
   it (#146, #141).** `devenv processes up` boots the appliance —
   the deployed shape: egress workspaces, `msks ssh` forwards, the

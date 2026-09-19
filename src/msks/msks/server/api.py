@@ -99,6 +99,28 @@ class WorkspaceCreate(BaseModel):
     ssh_pubkey: str | None = Field(default=None, max_length=16384)
 
 
+#: The daemon's boot cmdline — the appliance run script names the
+#: image it booted on it (``msksd.image=<store path>``), and
+#: :func:`cmdline_image` reports that in ``/health`` so a client
+#: can name drift between a running appliance and the tree's
+#: current build (#160).
+CMDLINE = Path("/proc/cmdline")
+
+
+def cmdline_image() -> str | None:
+    """The appliance image this daemon booted from, when it says.
+
+    A bare ``msksd`` (no appliance) carries no ``msksd.image`` pair
+    and reports ``None``; clients treat that as "unknown" and skip
+    the drift comparison.
+    """
+    with contextlib.suppress(OSError):
+        for pair in CMDLINE.read_text().split():
+            if pair.startswith("msksd.image="):
+                return pair.split("=", 1)[1]
+    return None
+
+
 def bootstrap_default_image(app) -> None:
     """Import MSKSD_DEFAULT_IMAGE once, as the catalog default.
 
@@ -746,6 +768,7 @@ def build_api(app) -> FastAPI:
             "status": "ok",
             "version": __version__,
             "fastapi": fastapi_version,
+            "image": cmdline_image(),
         }
 
     @api.post("/api/v1/tokens", dependencies=[Depends(require_token)])

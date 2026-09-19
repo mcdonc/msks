@@ -51,20 +51,58 @@ def render_ls(rows: list[dict], as_json: bool) -> str:
     return "\n".join(format_workspace(row) for row in rows)
 
 
+def stale_image_notice(expected: str, health: dict | None) -> str | None:
+    """The one-line drift notice for ``msks ls`` (#160), or None.
+
+    Both sides must be known: ``MSKSC_EXPECTED_IMAGE`` names what
+    this checkout's ``.appliance`` builds (unset outside a devenv
+    shell, or before the first build), and the daemon's ``/health``
+    carries the image it booted (``None`` on a daemon predating the
+    ``msksd.image`` cmdline pair). An unknown side stays silent.
+    """
+    image = (health or {}).get("image")
+    if not expected or not image or image == expected:
+        return None
+    return (
+        f"msks: appliance serves a different image: {Path(image).name}; "
+        f"this tree builds {Path(expected).name}; align them with: "
+        "devenv processes down, then devenv processes up -d"
+    )
+
+
 def cmd_ls(as_json: bool = False, transport=None) -> int:
     """``msks ls``: every workspace the daemon knows."""
-    rows = asyncio.run(
-        api_call(
+
+    async def fetch() -> tuple[list, dict | None]:
+        rows = await api_call(
             "GET",
             env_url(),
             env_token(),
             "/api/v1/workspaces",
             transport=transport,
         )
-    )
+        health = None
+        if os.environ.get("MSKSC_EXPECTED_IMAGE"):
+            # Best-effort: an unreachable /health never hides the
+            # listing itself.
+            with contextlib.suppress(SystemExit, Exception):
+                health = await api_call(
+                    "GET",
+                    env_url(),
+                    env_token(),
+                    "/api/v1/health",
+                    transport=transport,
+                )
+        return rows, health
+
+    rows, health = asyncio.run(fetch())
     text = render_ls(rows, as_json)
     if text:
         print(text)
+    if notice := stale_image_notice(
+        os.environ.get("MSKSC_EXPECTED_IMAGE", ""), health
+    ):
+        print(notice, file=sys.stderr)
     return 0
 
 
