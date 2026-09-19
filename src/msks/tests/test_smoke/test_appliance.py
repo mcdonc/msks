@@ -106,9 +106,9 @@ async def test_appliance_boot_and_workspace() -> None:
     # The EIO aftermath of the filled disk (#180): the superblock
     # carries the error flag, which resize2fs refuses until e2fsck
     # clears it — seed it so the grow path's repair step runs for
-    # real. (Without debugfs the repair still gets covered: the
-    # boot's own mount/umount leaves the journal flagged, the other
-    # condition resize2fs refuses and the repair clears.)
+    # real. (The kernel preserves the seeded error bit across the
+    # boot's own rw mount/umount, so the grown-filesystem assertion
+    # below genuinely proves the repair ran.)
     if shutil.which("debugfs"):
         flagged = subprocess.run(
             [
