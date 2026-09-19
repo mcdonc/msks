@@ -7,10 +7,10 @@
 # msks-appliance-build script and the appliance process pass the
 # pinned source via MSKS_GUEST_NIXPKGS. Pure derivations all the way
 # down — any Linux host with nix runs this unchanged; the host OS is
-# irrelevant. Idempotent (#166): every invocation re-lands every
-# artifact and the GC-root symlink, and unchanged inputs make the
-# nix-build a cached no-op — the appliance process runs this script
-# before every boot.
+# irrelevant. Idempotent (#166): every invocation re-runs the
+# (cached) nix-build and re-links the GC-root symlink, and copies the
+# artifacts only when the image changed or one is missing — the
+# appliance process runs this script before every boot.
 set -euo pipefail
 
 root="${DEVENV_ROOT:?not running inside the devenv shell}"
@@ -38,11 +38,20 @@ out="$(
     "$root/nix/appliance.nix" -A appliance -o "$app_dir/image"
 )"
 
-for name in vmlinux initrd rootfs.ext4 appliance-manifest.json; do
-  rm -f "$app_dir/$name"
-  cp -L "$out/$name" "$app_dir/$name"
-  chmod 0644 "$app_dir/$name"
-done
+if [ "$previous" != "$out" ] ||
+  [ ! -f "$app_dir/vmlinux" ] ||
+  [ ! -f "$app_dir/initrd" ] ||
+  [ ! -f "$app_dir/rootfs.ext4" ] ||
+  [ ! -f "$app_dir/appliance-manifest.json" ]; then
+  # Copy only what changed: rootfs.ext4 is ~0.9 GB, and a no-change
+  # reboot must not rewrite it (page cache, disk wear). The missing-
+  # artifact checks heal a deleted or half-deleted state dir (#160).
+  for name in vmlinux initrd rootfs.ext4 appliance-manifest.json; do
+    rm -f "$app_dir/$name"
+    cp -L "$out/$name" "$app_dir/$name"
+    chmod 0644 "$app_dir/$name"
+  done
+fi
 # The state disk is NOT an artifact: a rebuild must never clobber live
 # appliance state. Seed it once from the template; the
 # appliance's msks-state-format.service (blank, foreign, and existing

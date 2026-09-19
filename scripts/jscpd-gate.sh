@@ -2,7 +2,7 @@
 # Token-clone gate (#71, ported from klangk #2904's advisory scan):
 # jscpd exits 1 when it finds any exact clone of at least 70 tokens in
 # the backend package. This script owns the gate invocation — the
-# pre-commit hook and the ``msks:jscpd`` devenv task both run it, so
+# pre-commit hook and the ``msks-jscpd`` devenv script both run it, so
 # the threshold and the scanned file set have exactly one definition
 # and cannot drift apart. ``--min-tokens 70`` matches the invocation
 # klangk's consolidation issues used, so clone reports are comparable

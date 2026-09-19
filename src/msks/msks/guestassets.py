@@ -1,6 +1,6 @@
 """Discovery of the nix-built guest VM assets (#5).
 
-``devenv tasks run msks:build-guest`` builds the kernel, initrd, and
+``msks-build-guest`` builds the kernel, initrd, and
 ext4 rootfs with nix and copies them next to a JSON manifest into
 the guest state dir — ``.devenv/state/guest`` below the repository
 root by default; ``MSKS_GUEST_DIR`` relocates it (an absolute path
@@ -164,7 +164,7 @@ def _absolute(path: Path) -> Path:
 def load_runner_image(root: Path | None = None) -> str | None:
     """Image reference of the built vm-runner archive below ``root``, if any.
 
-    Written by ``devenv tasks run msks:build-runner-image`` once the
+    Written by ``msks-build-runner-image`` once the
     container archive is ready to import on the k3s node.
     """
     base = root if root is not None else _root()

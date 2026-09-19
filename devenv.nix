@@ -147,6 +147,14 @@ in
 
   env.UV_PYTHON = config.languages.python.package;
 
+  # The nixpkgs source the devenv lock pins — the revision every
+  # guest/appliance build compiles against. Exported to every devenv
+  # context (shells, processes, tasks, scripts), so the build scripts'
+  # MSKS_GUEST_NIXPKGS requirement holds however they are reached:
+  # the appliance process exec, the drift watcher inside the run
+  # script, or a hand-run script from a debugging shell.
+  env.MSKS_GUEST_NIXPKGS = pkgs.path;
+
   # The msks client (#21) targets the APPLIANCE (#146) by default,
   # so `msks ls` / `msks ssh` work from any devenv shell with no
   # exports. The token and CA are resolved per shell in enterShell
@@ -211,16 +219,17 @@ in
         # lock/shell evaluation doubled the startup output and cost a
         # second, sometimes cold, devenv evaluation) and no task cache
         # to go stale. The script is idempotent: unchanged inputs make
-        # it a quick no-op (cached nix eval + build check, seconds), and
+        # it a quick no-op (a cached nix eval + build check, seconds), and
         # a pull, an edit to the sources, or the nix expressions
         # rebuilds the image (minutes from a cold store, ~20s warm) —
-        # `devenv processes up` is the whole update story. The script
-        # always re-lands every artifact INCLUDING the image symlink,
-        # so a deleted or half-deleted appliance state dir heals on the
-        # next boot (#160) instead of crash-looping on a missing or
-        # bogus symlink. The export feeds the initial build AND the
-        # drift watcher inside the run script.
-        export MSKS_GUEST_NIXPKGS=${pkgs.path}
+        # `devenv processes up` is the whole update story. The build
+        # always re-runs and re-links the image GC root, so a deleted
+        # or bogus symlink heals on the next boot (#160), and the
+        # artifact copies run only when the image changed or an
+        # artifact is missing (rootfs.ext4 is ~0.9 GB — a no-change
+        # reboot must not rewrite it). MSKS_GUEST_NIXPKGS comes from env.* in
+        # devenv.nix — it feeds the initial build here, the drift
+        # watcher inside the run script, and hand-run debugging shells.
         bash "$DEVENV_ROOT/scripts/build-appliance.sh"
         exec bash "$DEVENV_ROOT/scripts/appliance-run.sh"
       '';
@@ -275,12 +284,12 @@ in
   # and the build needs nothing from the host but nix.
   scripts.msks-build-guest = {
     description = "Build the microvm guest assets (kernel, initrd, ext4 rootfs) into the guest state dir (.devenv/state/guest; MSKS_GUEST_DIR relocates it)";
-    exec = ''exec env MSKS_GUEST_NIXPKGS=${pkgs.path} bash "$DEVENV_ROOT/scripts/build-guest.sh" "$@"'';
+    exec = ''exec bash "$DEVENV_ROOT/scripts/build-guest.sh" "$@"'';
   };
 
   scripts.msks-build-runner-image = {
     description = "Build the k8s vm-runner container image archive into the guest state dir (.devenv/state/guest; MSKS_GUEST_DIR relocates it)";
-    exec = ''exec env MSKS_GUEST_NIXPKGS=${pkgs.path} bash "$DEVENV_ROOT/scripts/build-runner-image.sh" "$@"'';
+    exec = ''exec bash "$DEVENV_ROOT/scripts/build-runner-image.sh" "$@"'';
   };
 
   scripts.msks-demo-vm = {
@@ -290,7 +299,7 @@ in
 
   scripts.msks-appliance-build = {
     description = "Build the msksd appliance image into the appliance state dir (.devenv/state/appliance; MSKS_APPLIANCE_DIR relocates it)";
-    exec = ''exec env MSKS_GUEST_NIXPKGS=${pkgs.path} bash "$DEVENV_ROOT/scripts/build-appliance.sh" "$@"'';
+    exec = ''exec bash "$DEVENV_ROOT/scripts/build-appliance.sh" "$@"'';
   };
 
   # The workspace image archive, alone (#141): the bare-host dev
@@ -302,6 +311,9 @@ in
   scripts.msks-build-guest-archive = {
     description = "Build the workspace image archive into the bare-host daemon state (.devenv/state/msksd/default-image; MSKSD_STATE_DIR relocates it)";
     exec = ''
+      # devenv's script wrapper adds no errexit — a failed build below
+      # must not print success and exit 0.
+      set -euo pipefail
       root="$DEVENV_ROOT"
       state="''${MSKSD_STATE_DIR:-$root/.devenv/state/msksd}"
       # Anchor a relative value below the repo root; the DAEMON
@@ -332,6 +344,9 @@ in
   scripts.msks-dev-ready = {
     description = "Converge the bare-host dev daemon state (the daemon state dir's token + image pointer; .devenv/state/msksd by default, MSKSD_STATE_DIR relocates it)";
     exec = ''
+      # devenv's script wrapper adds no errexit — a failed archive
+      # build must not mint a token and print success.
+      set -euo pipefail
       root="$DEVENV_ROOT"
       state="''${MSKSD_STATE_DIR:-$root/.devenv/state/msksd}"
       # See msks-build-guest-archive's case block.
@@ -377,8 +392,9 @@ in
   # appliance-setup.sh only verifies it, so starting the appliance
   # needs no sudo.
   scripts.msks-appliance-up = {
-    description = "Start the appliance under the process manager, detached (conditional build first)";
+    description = "Start the appliance under the process manager, detached (idempotent build first)";
     exec = ''
+      set -euo pipefail
       # The lifecycle has ONE owner: the process manager (#146).
       # This script is the detached entry point — the manager runs
       # the appliance process (idempotent build, then the run
@@ -393,6 +409,7 @@ in
   scripts.msks-appliance-down = {
     description = "Stop the appliance through the process manager (graceful ACPI)";
     exec = ''
+      set -euo pipefail
       # The manager TERMs the appliance process; the run script's
       # ACPI-first trap owns the teardown inside the process's
       # 90s shutdown grace. Exit codes: 0 stopped a live manager;

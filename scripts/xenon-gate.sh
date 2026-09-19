@@ -4,8 +4,8 @@
 # xenon exits 0 — success — even when its parser cannot read a graded
 # file: it logs a "cannot parse" WARNING and silently drops that file
 # from grading. This wrapper makes any skip a hard failure and owns the
-# gate invocation: the pre-commit hook and the ``msks:xenon`` devenv
-# task both run this script, so the thresholds and the graded file set
+# gate invocation: the pre-commit hook and the ``msks-xenon`` devenv
+# script both run this script, so the thresholds and the graded file set
 # have exactly one definition and cannot drift apart.
 #
 # Usage: xenon-gate.sh [FILE...]

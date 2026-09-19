@@ -2,7 +2,7 @@
 
 - Local: boots a real cloud-hypervisor VM when MSKSD_TEST_VMLINUX and
   MSKSD_TEST_ROOTFS point at guest artifacts (and /dev/kvm is
-  accessible); skipped otherwise. The devenv task `msks-build-guest`
+  accessible); skipped otherwise. The msks-build-guest script
   sets all of these from the guest state dir
   (`.devenv/state/guest` by default) automatically (see conftest.py
   and msks.guestassets); the stock nixpkgs kernel also needs the initrd
