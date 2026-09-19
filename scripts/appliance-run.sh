@@ -222,16 +222,19 @@ boot_vm() {
 }
 JSON
   api vm.boot || return 1
-  # A previous boot already extracted the client CA (msks-ca.pem,
-  # picked up by fresh devenv shells as MSKSC_CAFILE), so connects
-  # verify and the line stays short. On a first boot — or a replaced
-  # state disk — the CA does not exist yet, a connect warns
-  # unverified, and the guest's serial-log fingerprint is the
-  # cross-check until a fresh shell picks up the extracted CA.
+  # This hint fires only on a first boot: the guest mints its CA
+  # at first start and the extractor below lands msks-ca.pem once
+  # it serves — fresh devenv shells pick it up as MSKSC_CAFILE, so
+  # connects verify and every later boot's line stays short. A
+  # REPLACED state disk takes the short line too, misleadingly: the
+  # stale msks-ca.pem stays on the host until the extractor
+  # refreshes it, and verification against it fails until then —
+  # pre-existing, documented behavior (README, the client presets
+  # section).
   if [ -s "$app_dir/msks-ca.pem" ]; then
     echo "msks: appliance booting — https://$guest_ip:8660"
   else
-    echo "msks: appliance booting — https://$guest_ip:8660 (client CA not extracted yet; cross-check the server certificate on first connect: grep 'CA fingerprint' $app_dir/serial.log)"
+    echo "msks: appliance booting — https://$guest_ip:8660 (first boot: msks warns it does not verify until the CA lands at $app_dir/msks-ca.pem — once serving, open a fresh devenv shell and it verifies)"
   fi
 }
 # The booter races the VMM's own startup — it exits as soon as
@@ -420,9 +423,13 @@ wait "$booter" 2>/dev/null || true
 # calmly: the VMM exit IS the stop sequence finishing (its own
 # SIGTERM, or the guest's ACPI poweroff exiting first), so the line
 # says "stopped" and names the signal — a bare "rc=143" there read
-# as a crash (#176). Anything else is unexpected, and the concrete
-# "what happens next" is the supervisor's restart (five
-# consecutive failures reach gave_up).
+# as a crash (#176). A clean exit nobody requested (the guest
+# powered itself off, or someone drove vm.shutdown through the API
+# socket) stays stopped: devenv's default restart policy is
+# on_failure (five attempts), so exit 0 is final and the line names
+# the way back instead of a restart that never comes. Anything else
+# is a failure, and the concrete "what happens next" is the
+# supervisor's restart.
 sig=""
 if [ "$rc" -gt 128 ]; then
   name="$(kill -l "$rc" 2>/dev/null || true)"
@@ -430,6 +437,8 @@ if [ "$rc" -gt 128 ]; then
 fi
 if [ -n "${stopping:-}" ]; then
   echo "msks: appliance stopped$sig"
+elif [ "$rc" -eq 0 ]; then
+  echo "msks: appliance VMM exited cleanly (rc=0); it stays stopped — restart it with: devenv processes restart appliance"
 else
   echo "msks: appliance VMM exited unexpectedly — rc=$rc$sig; the supervisor restarts it (devenv processes logs appliance shows why)" >&2
 fi
