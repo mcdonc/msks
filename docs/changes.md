@@ -347,6 +347,15 @@ processes up` shows one devenv startup instead of two, and the
 
 ### Fixed
 
+- **Workspace home and the guest's account list (#171).** The
+  first-boot identity seed now creates `/home/msks` owned by the
+  workspace user and populates it from `/etc/skel` (a home left
+  root-owned is repaired on the next provisioning), and the guest
+  image ships a cloud-init dropin that keeps the Debian cloud
+  image's own default account (`debian`, with `/home/debian` and a
+  passwordless-sudo entry) from ever being created — a workspace
+  created from this image carries `msks` as its only account.
+
 - **Failed starts keep an actionable status (#158).** A `vm.boot`
   failure reaps the half-created VMM and the watcher's dead-socket
   probe consults the identity check, so the workspace reports

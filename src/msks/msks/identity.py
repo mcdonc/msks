@@ -134,10 +134,14 @@ def seed_script(public_key: str, workspace_id: str) -> str:
 
     The same mkdir/chmod/append shape #110's smoke planted by hand,
     now the daemon's own first-boot step. The msks user's home rides
-    the persistent /home volume (#14) — ``install -d`` makes it (and
-    its .ssh) with the right ownership when the console helper has
-    not yet. A key already present is left alone, so a re-provision
-    (a factory reset) cannot duplicate lines.
+    the persistent /home volume (#14): the seed makes it — owned by
+    the user, populated from /etc/skel — before the console helper
+    ever connects (#171; a bare ``install -d`` of the .ssh path
+    would leave the home itself root-owned, because install -d
+    applies -o/-g to the final component only). A home that already
+    carries dotfiles keeps them (a factory reset preserves the
+    user's files), and a key already present is left alone, so a
+    re-provision cannot duplicate lines.
 
     The allowed_signers file is the console challenge's trust store
     (#123): the guest helper's ``ssh-keygen -Y verify`` checks the
@@ -160,6 +164,21 @@ def seed_script(public_key: str, workspace_id: str) -> str:
         "|| printf '%s\\n' \"$key\" >> /root/.ssh/authorized_keys\n"
         "chown root:root /root/.ssh/authorized_keys\n"
         "chmod 0600 /root/.ssh/authorized_keys\n"
+        # The workspace home (#171): install -d both creates the
+        # home and repairs one a pre-#171 seed left root-owned (it
+        # applies -o/-g to an existing directory too); the skel copy
+        # is skipped when the home already has dotfiles, and cp -a
+        # preserves the skel's root ownership, so the chown -R that
+        # follows is what hands the copy to the user — the same
+        # useradd -m shape. The copy is best-effort (set -eu would
+        # otherwise abort the whole seed on an image without a
+        # skeleton): a bare home still starts the shell, and the
+        # chown runs on whatever is there.
+        "install -d -m 0755 -o msks -g msks /home/msks\n"
+        "if [ ! -e /home/msks/.profile ]; then\n"
+        "cp -a /etc/skel/. /home/msks/ || true\n"
+        "chown -R msks:msks /home/msks\n"
+        "fi\n"
         "install -d -m 0700 -o msks -g msks /home/msks/.ssh\n"
         "touch /home/msks/.ssh/authorized_keys\n"
         'grep -qxF "$key" /home/msks/.ssh/authorized_keys '

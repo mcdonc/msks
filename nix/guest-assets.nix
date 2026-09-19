@@ -321,6 +321,21 @@ let
       '# msks: networkd (see 80-msks-egress.network) owns the NIC.' \
       'network: {config: disabled}' \
       > $out/etc/cloud/cloud.cfg.d/99-msks-network.cfg
+    # cloud-init creates no accounts (#171): the image ships the
+    # msks workspace user (#63), and the identity seed makes its
+    # home. The genericcloud image's own default account — the
+    # 'debian' user with /home/debian and a passwordless-sudo
+    # sudoers entry — never comes into being. The dropin must keep
+    # lexicographically sorting at (or after) the tail of
+    # cloud.cfg.d: cloud-init merges the directory with the
+    # first-defined `users` winning, so a later-sorted dropin
+    # defining users would take precedence.
+    printf '%s\n' \
+      '# msks (#171): the image ships the msks user (#63);' \
+      '# cloud-init creates no accounts and the identity seed' \
+      '# makes the home.' \
+      'users: []' \
+      > $out/etc/cloud/cloud.cfg.d/99-msks-users.cfg
 
     # The image's fstab mounts the root filesystem by the PARTUUID of
     # the cloud image's partition table; direct kernel boot presents
@@ -587,8 +602,14 @@ let
 
         # The console workspace user (#63): uid/gid 1000, locked
         # password (no sign-in — the console helper is the only way
-        # in), home on the persistent /home volume (#14) — the helper
-        # creates it on first connect — and bash as the shell.
+        # in), home on the persistent /home volume (#14) — the
+        # identity seed creates it from /etc/skel on first boot
+        # (#171), and the console helper creates a bare one if a
+        # session ever precedes the seed — and bash as the shell.
+        # cloud-init's own account creation stays off (the
+        # 99-msks-users.cfg dropin), so this entry is the whole
+        # account list the guest ever gets beyond the image's
+        # system users.
         grep -q '^msks:' "$root"/etc/passwd || printf '%s\n' \
           'msks:x:1000:1000:msks workspace user:/home/msks:/bin/bash' \
           >> "$root"/etc/passwd
@@ -786,6 +807,16 @@ let
         test -x "$root"/usr/bin/msks-console-helper
         test -x "$root"/usr/bin/rsync
         test -x "$root"/usr/sbin/sshd
+        # The dropin's load-bearing line, not just the file's
+        # existence: a typo'd printf must fail the build here, not
+        # in the opt-in smoke.
+        grep -q '^users: \[\]' \
+          "$root"/etc/cloud/cloud.cfg.d/99-msks-users.cfg
+        # The image's own trees carry no home for the workspace user
+        # (the seed makes it on the persistent volume) and none for
+        # a cloud-image default account either (#171).
+        ! test -e "$root"/home/msks
+        ! test -e "$root"/home/debian
 
         # Size the final image from the tree (content-derived, no
         # magic constant): Debian unpacks to ~600M plus headroom.
