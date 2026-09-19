@@ -21,15 +21,16 @@ msks rm ws                    # delete it (and its data)
 
 ## Client environment
 
-The client reads three environment variables. They are prefixed
+The client reads four environment variables. They are prefixed
 `MSKSC_` (client) to stay apart from the daemon's `MSKSD_*` (server)
 namespace — a box that runs both can export each side independently.
 
-| Variable       | Meaning                                           | Default                  |
-| -------------- | ------------------------------------------------- | ------------------------ |
-| `MSKSC_URL`    | The daemon's base URL                             | `https://127.0.0.1:8660` |
-| `MSKSC_TOKEN`  | A daemon bearer token (see tokens below)          | — (required)             |
-| `MSKSC_CAFILE` | A PEM file to verify the daemon's TLS certificate | unverified with warning  |
+| Variable               | Meaning                                                                                                  | Default                  |
+| ---------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------ |
+| `MSKSC_URL`            | The daemon's base URL                                                                                    | `https://127.0.0.1:8660` |
+| `MSKSC_TOKEN`          | A daemon bearer token (see tokens below)                                                                 | — (required)             |
+| `MSKSC_CAFILE`         | A PEM file to verify the daemon's TLS certificate                                                        | unverified with warning  |
+| `MSKSC_EXPECTED_IMAGE` | The appliance image this checkout builds; `msks ls` compares it with the daemon's and names drift (#160) | unset (no check)         |
 
 A missing `MSKSC_TOKEN` is an error before any network activity: the
 client names the variable and exits. Tokens come from the daemon:

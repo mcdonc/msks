@@ -169,16 +169,25 @@ def route(req: httpx.Request) -> httpx.Response:
 def test_cmd_ls_names_a_stale_appliance_image(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The drift notice (#160): the daemon serves an older image
-    than this tree builds, and `msks ls` says so with the fix."""
+    """The drift notice (#160): the daemon serves a different image
+    than this tree builds — older OR newer, the wording takes no
+    direction — and `msks ls` says so with the fix."""
     client_env(monkeypatch)
     monkeypatch.setenv("MSKSC_EXPECTED_IMAGE", NEW_IMAGE)
     rc = cli.cmd_ls(transport=mock(route))
     assert rc == 0
     err = capsys.readouterr().err
-    assert "older image" in err
+    assert "different image" in err
     assert Path(OLD_IMAGE).name in err and Path(NEW_IMAGE).name in err
-    assert "devenv processes down && devenv processes up -d" in err
+    assert "devenv processes down, then devenv processes up -d" in err
+
+    # The reverse drift (an older checkout beside a newer running
+    # appliance — bisect, a worktree switch) uses the same wording.
+    monkeypatch.setenv(
+        "MSKSC_EXPECTED_IMAGE", "/nix/store/ancient-msks-appliance"
+    )
+    cli.cmd_ls(transport=mock(route))
+    assert "different image" in capsys.readouterr().err
 
 
 def test_cmd_ls_stays_silent_when_images_match(

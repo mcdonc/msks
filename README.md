@@ -229,7 +229,10 @@ takes the update story on itself: every
 `MSKS_APPLIANCE_DRIFT_CHECK_S` (default 300) it compares images,
 and on drift — with no workspace in a live state — rebuilds and
 gracefully restarts into the fresh image; a live workspace holds
-the restart off until it stops.
+the restart off until it stops. An in-flight image import (a
+multi-GB upload) creates no workspace row, so the restart can
+interrupt one — finish large imports before enabling a restart
+window, or run imports with the setting off.
 
 **The client environment presets to the appliance (#146)**:
 `MSKSC_URL` (`https://192.168.77.2:8660`), `MSKSC_TOKEN` (the

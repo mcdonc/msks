@@ -77,7 +77,15 @@ base_cmdline="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).
 # The image identity this boot serves (#160): the daemon reports it
 # in /health (msksd.image from /proc/cmdline), the drift check below
 # and `msks ls` compare it with what the tree builds today, and a
-# drifted appliance names itself instead of failing opaquely.
+# drifted appliance names itself instead of failing opaquely. A
+# missing symlink is a named failure, not a bogus identity: with it
+# absent, readlink -f echoes the literal path (rc=0), the daemon
+# would report that, and the comparison would silently no-op (#160
+# review).
+if [ ! -e "$app_dir/image" ]; then
+  echo "msks: .appliance/image is missing; rebuild with: devenv tasks run msks:appliance-build" >&2
+  exit 1
+fi
 booted_image="$(readlink -f "$app_dir/image")"
 # Optional msksd.<name>=<value> pairs the operator wants bridged into
 # the daemon's environment (e.g. msksd.vsock_wait_timeout_s=30 on
@@ -292,18 +300,24 @@ chpid=$!
 # gave_up loudly instead of idling as a "ready" appliance.
 : "${MSKS_APPLIANCE_SERVE_TIMEOUT_S:=300}"
 served=""
+vmm_died=""
 for _ in $(seq 1 "$MSKS_APPLIANCE_SERVE_TIMEOUT_S"); do
-  if curl -sk "https://$guest_ip:8660/api/v1/health" >/dev/null 2>&1; then
+  if curl -sk --connect-timeout 2 "https://$guest_ip:8660/api/v1/health" >/dev/null 2>&1; then
     served=1
     break
   fi
   if ! kill -0 "$chpid" 2>/dev/null; then
+    vmm_died=1
     break
   fi
   sleep 1
 done
 if [ -z "$served" ]; then
-  echo "msks: appliance guest never served https://$guest_ip:8660 within ${MSKS_APPLIANCE_SERVE_TIMEOUT_S}s — serial log: $app_dir/serial.log" >&2
+  if [ -n "$vmm_died" ]; then
+    echo "msks: appliance VMM exited before serving — cloud-hypervisor.log: $app_dir/cloud-hypervisor.log, serial: $app_dir/serial.log" >&2
+  else
+    echo "msks: appliance guest never served https://$guest_ip:8660 within ${MSKS_APPLIANCE_SERVE_TIMEOUT_S}s — serial log: $app_dir/serial.log" >&2
+  fi
   exit 1
 fi
 echo "msks: appliance serving (image $booted_image)"
@@ -321,13 +335,18 @@ echo "msks: appliance serving (image $booted_image)"
 if [ "${MSKS_APPLIANCE_AUTO_RESTART:-}" = "1" ] && [ -z "$MSKS_DEV_TREE" ]; then
   (
     interval="${MSKS_APPLIANCE_DRIFT_CHECK_S:-300}"
+    # A non-numeric interval would kill the subshell at its first
+    # sleep; fall back to the default and keep watching (#160 review).
+    case "$interval" in
+    "" | *[!0-9]*) interval=300 ;;
+    esac
     while kill -0 "$chpid" 2>/dev/null; do
       sleep "$interval"
       kill -0 "$chpid" 2>/dev/null || break
-      current="$(readlink -f "$app_dir/image")"
+      current="$(readlink -f "$app_dir/image" 2>/dev/null || true)"
       [ -n "$current" ] || continue
       [ "$current" = "$booted_image" ] && continue
-      rows="$(curl -sk -H "Authorization: Bearer $bootstrap_token" \
+      rows="$(curl -sk --connect-timeout 2 -H "Authorization: Bearer $bootstrap_token" \
         "https://$guest_ip:8660/api/v1/workspaces" 2>/dev/null)" || continue
       state="$(python3 -c '
 import json, sys

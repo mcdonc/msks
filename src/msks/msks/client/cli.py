@@ -64,9 +64,9 @@ def stale_image_notice(expected: str, health: dict | None) -> str | None:
     if not expected or not image or image == expected:
         return None
     return (
-        f"msks: appliance serves an older image: {Path(image).name}; "
-        f"this tree builds {Path(expected).name}; land it with: "
-        "devenv processes down && devenv processes up -d"
+        f"msks: appliance serves a different image: {Path(image).name}; "
+        f"this tree builds {Path(expected).name}; align them with: "
+        "devenv processes down, then devenv processes up -d"
     )
 
 
