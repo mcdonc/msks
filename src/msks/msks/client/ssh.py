@@ -26,6 +26,15 @@ rides untouched (see ``docs/networking.md``). Everything after the
 workspace id (or after ``--``) is passed to ssh verbatim; ssh's own
 ``--`` inside it separates options from a remote command
 (``msks ssh <ws> -- -A -- uname -a``).
+
+A session whose pre-flight booted the workspace first waits out the
+guest's first-boot identity seed (#168): the daemon reports
+``running`` while the guest's sshd is up but cloud-init has yet to
+write ``authorized_keys``, so a bare dial in that window is refused
+with ``Permission denied (publickey)``. A probe login (``true`` as
+its remote command) retries behind the boot until the guest accepts
+the workspace key, and the real session — interactive or one-shot —
+then runs exactly once.
 """
 
 import asyncio
@@ -33,6 +42,7 @@ import os
 import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
@@ -53,6 +63,21 @@ SSH_PORT = 22
 #: to root in ``authorized_keys``.
 DEFAULT_USER = "msks"
 
+#: How long a just-booted workspace's first ssh attempt keeps
+#: retrying (#168): the daemon reports ``running`` when the VM
+#: process is up, but the guest's sshd answers before cloud-init's
+#: identity seed has written ``authorized_keys`` — an ssh dial in
+#: that window is refused with ``Permission denied (publickey)``
+#: and a bare retry succeeds. The wait applies only when this
+#: invocation booted the workspace (a seeded guest authenticates
+#: from the first attempt), and it probes with a throwaway ``true``
+#: command so a remote command in the passthrough runs exactly
+#: once either way.
+SSH_SEED_WAIT_S = 30.0
+
+#: The pause between probe attempts inside :data:`SSH_SEED_WAIT_S`.
+SSH_RETRY_PAUSE_S = 1.0
+
 
 async def prepare(
     workspace_id: str,
@@ -60,14 +85,21 @@ async def prepare(
     token: str,
     ssl_ctx=None,
     transport=None,
-) -> dict:
-    """Boot the workspace if needed, then fetch its identity."""
-    await ensure_running(
+) -> tuple[dict, bool]:
+    """Boot the workspace if needed, then fetch its identity.
+
+    The second half of the pair is whether this call observed a
+    boot (:func:`msks.client.rest.ensure_running`) — a just-booted
+    guest may still be running its first-boot identity seed, which
+    the run loop waits out before the real session.
+    """
+    booted = await ensure_running(
         workspace_id, url, token, ssl_ctx=ssl_ctx, transport=transport
     )
-    return await fetch_ssh_key(
+    key = await fetch_ssh_key(
         url, token, workspace_id, transport=transport, ssl_ctx=ssl_ctx
     )
+    return key, booted
 
 
 def cache_dir() -> Path:
@@ -304,6 +336,58 @@ def identity_comment(key: dict) -> str:
     return fields[2] if len(fields) > 2 else ""
 
 
+def probe_args(
+    workspace_id: str,
+    agent_socket: str,
+    identity_pub: str,
+    known_hosts: str,
+    passthrough: list[str],
+) -> list[str]:
+    """The readiness probe's argv: the session's own options with a
+    throwaway ``true`` as the remote command.
+
+    The probe shares the real session's transport, host-key, agent,
+    and login-user settings — it authenticates exactly as the real
+    session will — so its exit code is the readiness answer: 0 once
+    the guest authenticates the workspace identity, 255 while the
+    guest is still booting or the seed has yet to land. ``true``
+    runs no user command, so a retried probe cannot run anything
+    twice.
+    """
+    options, _ = split_command(passthrough)
+    return build_args(
+        workspace_id,
+        agent_socket,
+        identity_pub,
+        known_hosts,
+        [*options, "--", "true"],
+    )
+
+
+def wait_for_identity(
+    workspace_id: str, probe_argv: list[str], deadline: float
+) -> None:
+    """Retry the probe until the guest authenticates or the deadline
+    passes (#168).
+
+    A deadline that passes leaves the failure to the real session:
+    ssh's own message names the refusal, and the probe's notices
+    have already said what was being waited for.
+    """
+    while True:
+        completed = subprocess.run(probe_argv)
+        if completed.returncode == 0:
+            return
+        if time.monotonic() >= deadline:
+            return
+        print(
+            f"msks: {workspace_id} is still first-booting; "
+            "retrying the connection",
+            file=sys.stderr,
+        )
+        time.sleep(SSH_RETRY_PAUSE_S)
+
+
 def run_workspace_ssh(
     workspace_id: str, passthrough: list[str], transport=None
 ) -> int:
@@ -312,9 +396,23 @@ def run_workspace_ssh(
     token = env_token()
     url = env_url()
     ssl_ctx = ssl_context()
-    key = asyncio.run(prepare(workspace_id, url, token, ssl_ctx, transport))
+    key, booted = asyncio.run(
+        prepare(workspace_id, url, token, ssl_ctx, transport)
+    )
     private = agent.load_private(resolve_private(key, workspace_id))
     with agent.serve(private, identity_comment(key)) as served:
+        if booted:
+            wait_for_identity(
+                workspace_id,
+                probe_args(
+                    workspace_id,
+                    served.server_address,
+                    served.identity_path,
+                    known_hosts_path(workspace_id),
+                    passthrough,
+                ),
+                time.monotonic() + SSH_SEED_WAIT_S,
+            )
         argv = build_args(
             workspace_id,
             served.server_address,

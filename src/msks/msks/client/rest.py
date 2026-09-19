@@ -235,7 +235,7 @@ async def ensure_running(
     token: str,
     ssl_ctx: ssl.SSLContext | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
-) -> None:
+) -> bool:
     """Boot ``workspace_id`` when the daemon reports it not running.
 
     A concurrent boot is waited out; a paused workspace is refused
@@ -243,6 +243,14 @@ async def ensure_running(
     boot attaches to the winner instead of failing. The notices
     print to stderr before the caller enters raw tty mode, where a
     plain newline would leave the cursor mid-column.
+
+    True when this call observed a boot — the workspace was
+    ``starting``, or was started here — and False when it was
+    already running. A just-booted guest provisions its first-boot
+    state (the identity's ``authorized_keys`` seed) for seconds
+    after the daemon says ``running``; ``msks ssh`` (#168) waits
+    through that window, and its callers that ignore the value see
+    no change.
     """
     row = await workspace_row(workspace_id, url, token, ssl_ctx, transport)
     if row["status"] == "starting":
@@ -251,8 +259,10 @@ async def ensure_running(
             file=sys.stderr,
         )
         row = await wait_boot(workspace_id, url, token, ssl_ctx, transport)
+        if row["status"] == "running":
+            return True
     if row["status"] == "running":
-        return
+        return False
     if row["status"] == "paused":
         raise SystemExit(paused_advice(workspace_id))
     print(
@@ -261,6 +271,7 @@ async def ensure_running(
     )
     await boot_workspace(workspace_id, url, token, ssl_ctx, transport)
     print(f"msks: {workspace_id} running", file=sys.stderr)
+    return True
 
 
 async def workspace_row(

@@ -1186,9 +1186,10 @@ async def test_ensure_running_boots_a_created_workspace(api_transport) -> None:
         json_body={"id": "cli-b", "kernel": "/k", "rootfs": "/r"},
         transport=transport,
     )
-    await rest.ensure_running(
+    booted = await rest.ensure_running(
         "cli-b", "https://test", TOKEN, transport=transport
     )
+    assert booted is True
     row = await rest.api_call(
         "GET",
         "https://test",
@@ -1216,9 +1217,10 @@ async def test_ensure_running_skips_a_running_workspace(api_transport) -> None:
         "/api/v1/workspaces/cli-c/start",
         transport=app_transport,
     )
-    await rest.ensure_running(
+    booted = await rest.ensure_running(
         "cli-c", "https://test", TOKEN, transport=app_transport
     )
+    assert booted is False
     row = await rest.api_call(
         "GET",
         "https://test",
@@ -1260,9 +1262,41 @@ async def test_ensure_running_waits_out_a_concurrent_boot(
             200, json={"id": "ws1", "status": statuses.pop(0)}
         )
 
-    await rest.ensure_running("ws1", "https://d", "t", transport=mock(handler))
+    booted = await rest.ensure_running(
+        "ws1", "https://d", "t", transport=mock(handler)
+    )
+    assert booted is True  # a waited-out concurrent boot counts
     assert posts == []
     assert "waiting for the boot" in capsys.readouterr().err
+
+
+async def test_ensure_running_starts_after_a_waited_boot_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The concurrent boot ended stopped (it lost its own race or
+    # crashed): the wait falls through and this call starts the
+    # workspace itself.
+    statuses = iter(["starting", "stopped", "stopped"])
+    posts: list[str] = []
+
+    async def fast_sleep(seconds: float) -> None:
+        pass
+
+    monkeypatch.setattr(rest.asyncio, "sleep", fast_sleep)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            posts.append(request.url.path)
+            return httpx.Response(200, json={"id": "ws1"})
+        return httpx.Response(
+            200, json={"id": "ws1", "status": next(statuses)}
+        )
+
+    booted = await rest.ensure_running(
+        "ws1", "https://d", "t", transport=mock(handler)
+    )
+    assert booted is True
+    assert posts == ["/api/v1/workspaces/ws1/start"]
 
 
 async def test_ensure_running_boot_wait_times_out(
@@ -1298,7 +1332,10 @@ async def test_ensure_running_attaches_to_a_won_race() -> None:
             200, json={"id": "ws1", "status": next(statuses)}
         )
 
-    await rest.ensure_running("ws1", "https://d", "t", transport=mock(handler))
+    booted = await rest.ensure_running(
+        "ws1", "https://d", "t", transport=mock(handler)
+    )
+    assert booted is True
     assert calls == [
         "GET /api/v1/workspaces/ws1",
         "POST /api/v1/workspaces/ws1/start",
