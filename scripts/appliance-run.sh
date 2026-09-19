@@ -2,7 +2,7 @@
 # The appliance as ONE run script (#25): the devenv process manager
 # (#146) execs it as the `appliance` process — the build runs first
 # inside the process exec — and the TERM/INT trap below owns the
-# graceful choreography (the msks:appliance-up/-down tasks wrap the
+# graceful choreography (the msks-appliance-up/-down scripts wrap the
 # same manager). The pidfile it writes (<appliance state>/run.pid,
 # .devenv/state/appliance by default — MSKS_APPLIANCE_DIR relocates
 # it) is a diagnostic handle for "which run-script instance owns this
@@ -91,7 +91,7 @@ base_cmdline="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).
 # would report that, and the comparison would silently no-op (#160
 # review).
 if [ ! -e "$app_dir/image" ]; then
-  echo "msks: $app_dir/image is missing; rebuild with: MSKS_APPLIANCE_DIR=$app_dir devenv tasks run msks:appliance-build" >&2
+  echo "msks: $app_dir/image is missing; rebuild with: MSKS_APPLIANCE_DIR=$app_dir msks-appliance-build" >&2
   exit 1
 fi
 booted_image="$(readlink -f "$app_dir/image")"
@@ -372,7 +372,10 @@ print("busy" if any(r.get("status") in live for r in rows) else "idle")
         continue
       fi
       echo "msks: image drifted ($booted_image -> $current); rebuilding and restarting" >&2
-      devenv tasks run msks:appliance-build || continue
+      # The process exec exports MSKS_GUEST_NIXPKGS (the pinned
+      # source) before this script starts; the build script inherits
+      # it here.
+      bash "$DEVENV_ROOT/scripts/build-appliance.sh" || continue
       # TERM to this script runs the graceful trap (ACPI, then
       # SIGTERM); the supervisor restarts the process into the
       # freshly built image.

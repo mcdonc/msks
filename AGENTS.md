@@ -61,7 +61,7 @@ msksd. The process exec builds conditionally then runs
 appliance` manage it, with a 90s shutdown grace covering the run
 script's ACPI-first teardown (60s window for a nested workspace's
 stop cycle — shorter windows lost page-cache-only sqlite commits,
-observed live). The `msks:appliance-up`/`-down` tasks are detached
+observed live). The `msks-appliance-up`/`-down` scripts are detached
 wrappers over the same manager. The run script's EXIT trap owns
 its pidfile and sockets; if the script dies without the trap
 firing (SIGKILL), recovery is manual:
@@ -118,11 +118,11 @@ failing commit and write the pinning test.
 The pre-commit hooks run their gates over the staged tree at commit
 time; each rejection costs a full edit → test → commit round, and
 reading one gate's failure at a time grows a one-offender-per-round
-loop. `msks:preflight` delivers the same feedback before the first
+loop. `msks-preflight` delivers the same feedback before the first
 commit attempt, all offenders at once:
 
 ```bash
-devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:preflight
+devenv --quiet -O dotenv.enable:bool false shell -- msks-preflight
 ```
 
 It prints every ruff violation, every deferred import, every xenon

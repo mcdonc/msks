@@ -74,7 +74,7 @@ jobs:
       - name: Build guest assets
         run: >-
           devenv --quiet -O dotenv.enable:bool false shell --
-          devenv tasks run msks:build-guest
+          msks-build-guest
 
       # The real-artifact pinning test: the ''-escape RepoTag bug
       # shipped precisely because this test skipped everywhere CI

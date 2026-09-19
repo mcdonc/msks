@@ -10,7 +10,7 @@ Debian image.
 ## Measuring
 
 ```bash
-devenv tasks run msks:build-guest   # the image under test
+msks-build-guest                     # the image under test
 python scripts/perf-boot.py --runs 5
 ```
 

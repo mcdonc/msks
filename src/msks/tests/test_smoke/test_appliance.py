@@ -19,7 +19,7 @@ from test_smoke import (
     DEV_BOOTSTRAP_TIMEOUT_S,
     client,
     dev_workspace_seed,
-    devenv_task,
+    msks_script,
     needs_appliance,
     read_appliance_journal,
     seed_legacy_state_disk,
@@ -43,7 +43,7 @@ async def test_appliance_boot_and_workspace() -> None:
 
     # Refuse to stomp a *running* appliance — including the README's
     # documented orphan case (run script dead, VMM still answering on
-    # api.sock, unreachable by msks:appliance-down).
+    # api.sock, unreachable by msks-appliance-down).
     if (app_dir / "api.sock").is_socket():
         probe = subprocess.run(
             [
@@ -143,9 +143,9 @@ async def test_appliance_boot_and_workspace() -> None:
         # Inside the guarded region: a failed start still tears the
         # detached appliance down below instead of leaving it running
         # against the temp state disk with mutated env.
-        up = devenv_task("msks:appliance-up")
+        up = msks_script("msks-appliance-up")
         assert up.returncode == 0, (
-            f"msks:appliance-up failed:\n{up.stdout}\n{up.stderr}"
+            f"msks-appliance-up failed:\n{up.stdout}\n{up.stderr}"
         )
         token = await await_token()
         headers = {"authorization": f"Bearer {token}"}
@@ -517,9 +517,9 @@ async def test_appliance_boot_and_workspace() -> None:
             "MSKS_APPLIANCE_CMDLINE_EXTRA"
         ):
             os.environ["MSKS_APPLIANCE_CMDLINE_EXTRA"] = prior_cmdline_extra
-        down = devenv_task("msks:appliance-down", timeout=300)
+        down = msks_script("msks-appliance-down", timeout=300)
         assert down.returncode == 0, (
-            f"msks:appliance-down failed:\n{down.stdout}\n{down.stderr}"
+            f"msks-appliance-down failed:\n{down.stdout}\n{down.stderr}"
         )
         # The state disk itself lives until the post-teardown reads
         # below are done: the journal and the migration asserts read

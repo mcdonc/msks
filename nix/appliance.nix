@@ -1,7 +1,8 @@
 # Entry point for the msksd appliance builds (#10).
 #
-# Supported entry: the devenv tasks (`msks:appliance-build`) evaluate
-# this file with nixpkgs pinned to the devenv.lock revision. A bare
+# Supported entry: the msks-appliance-build script (and the
+# appliance process) evaluate this file with nixpkgs pinned to the
+# devenv.lock revision. A bare
 # `nix-build nix/appliance.nix -A appliance` also works and falls back
 # to `<nixpkgs>` from NIX_PATH.
 #

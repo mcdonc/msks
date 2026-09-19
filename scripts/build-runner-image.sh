@@ -21,6 +21,7 @@ case "$guest_dir" in
 esac
 image="msks-vm-runner:dev"
 
+echo "msks: building the vm-runner image archive (idempotent — unchanged inputs are a cached no-op)"
 out="$(
   nix-build --no-out-link -I nixpkgs="$nixpkgs" \
     "$root/nix/guest.nix" -A runner-image

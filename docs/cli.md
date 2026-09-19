@@ -46,7 +46,7 @@ msks ls        # presets: https://192.168.77.2:8660, the appliance's
 ```
 
 Targeting a hand-run bare-host daemon instead (#146 — no managed
-process; `msks:dev-ready` then `msksd` from a shell) takes the
+process; `msks-dev-ready` then `msksd` from a shell) takes the
 explicit pair from ITS state, with its own CA:
 
 ```bash

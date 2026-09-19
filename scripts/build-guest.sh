@@ -3,8 +3,9 @@
 # state dir (#5) — .devenv/state/guest by default; MSKS_GUEST_DIR
 # relocates it.
 #
-# Runs against the nixpkgs revision pinned by devenv.lock: the devenv
-# task passes the pinned source via MSKS_GUEST_NIXPKGS. The build is
+# Runs against the nixpkgs revision pinned by devenv.lock: the
+# msks-build-guest script passes the pinned source via
+# MSKS_GUEST_NIXPKGS. The build is
 # pure derivations all the way down, so any Linux host with nix runs
 # it unchanged.
 set -euo pipefail
@@ -29,6 +30,7 @@ out="$(
 # virtiofs store share (nothing in its closure depends on them), so
 # without a root a garbage collect would ENOENT every workspace boot.
 rm -f "$guest_dir/guest-root"
+echo "msks: building guest assets into $guest_dir (idempotent — unchanged inputs are a cached no-op)"
 nix-build -I nixpkgs="$nixpkgs" "$root/nix/guest.nix" -A guest \
   -o "$guest_dir/guest-root"
 
@@ -46,4 +48,4 @@ cp -L "$out/$tar_name" "$guest_dir/$tar_name"
 chmod 0644 "$guest_dir/$tar_name"
 
 echo "msks: guest assets built into $guest_dir (from $out)"
-echo "msks: boot one with: devenv tasks run msks:demo-vm"
+echo "msks: boot one with: msks-demo-vm"

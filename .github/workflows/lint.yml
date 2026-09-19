@@ -60,7 +60,7 @@ jobs:
           TMPDIR: /tmp
         run: >-
           devenv --quiet -O dotenv.enable:bool false shell --
-          devenv tasks run msks:xenon
+          msks-xenon
 
       # The full pre-commit suite (#72): deferred-imports, shfmt,
       # shellcheck, markdownlint, actionlint, trufflehog, nixfmt,

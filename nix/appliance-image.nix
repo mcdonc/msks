@@ -26,7 +26,7 @@
 # workspace VMs) is NOT copied into the image: at boot a systemd
 # mount unit mounts the host's /nix/store read-only over virtiofs
 # (tag=store), so the appliance runs the same store paths the host
-# built — and workspace guest assets built by msks:build-guest flow
+# built — and workspace guest assets built by msks-build-guest flow
 # in with zero copying. The manifest keeps those paths alive on the
 # host via GC roots. The kernel is Debian's generic flavor: virtiofs
 # and virtio-pci are built in, and the KVM (nested) and nftables

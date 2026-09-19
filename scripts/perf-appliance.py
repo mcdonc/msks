@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Measure appliance boot: ``msks:appliance-up`` -> healthy API.
+"""Measure appliance boot: ``msks-appliance-up`` -> healthy API.
 
-The clock starts when the opt-in up task is invoked and stops when
+The clock starts when the opt-in up script is invoked and stops when
 ``GET /api/v1/health`` answers 200 on ``https://192.168.77.2:8660`` —
 the appliance's readiness definition (#92): the VM booted, systemd
 came up, msksd is serving TLS. Per-run breakdown:
 
-- t_task       the up task returned (run script detached)
+- t_task       the up script returned (run script detached)
 - t_token      the bootstrap token file appeared (host setup)
 - t_health     first 200 from /health — **the readiness number**
 
@@ -63,12 +63,12 @@ UP_TIMEOUT_S = 300.0
 HEALTH_TIMEOUT_S = 180.0
 
 
-def devenv_task(
-    task: str, timeout: float = 300.0
+def msks_script(
+    script: str, timeout: float = 300.0
 ) -> subprocess.CompletedProcess:
-    """Run one devenv task — the appliance's opt-in lifecycle (#141)."""
+    """Run one msks command script — the appliance lifecycle (#166)."""
     return subprocess.run(
-        ["bash", "-c", f"devenv tasks run {task}"],
+        ["bash", "-c", script],
         capture_output=True,
         text=True,
         timeout=timeout,
@@ -80,16 +80,16 @@ def devenv_task(
 def ensure_down(timeout: float = 300.0) -> None:
     """Stop any running appliance; already stopped is success.
 
-    ``msks:appliance-down`` wraps ``devenv processes down``: it exits
+    ``msks-appliance-down`` wraps ``devenv processes down``: it exits
     0 when it stops a live manager, and exits 1 with "No process
     manager is running" when nothing is up — the normal state before
     a session's first run. Both mean stopped.
     """
-    down = devenv_task("msks:appliance-down", timeout=timeout)
+    down = msks_script("msks-appliance-down", timeout=timeout)
     stopped = down.returncode == 0 or "No process manager is running" in (
         down.stdout + down.stderr
     )
-    assert stopped, f"msks:appliance-down failed:\n{down.stdout}{down.stderr}"
+    assert stopped, f"msks-appliance-down failed:\n{down.stdout}{down.stderr}"
 
 
 async def poll_health(result: dict, t0: float) -> None:
@@ -136,16 +136,16 @@ async def one_run(label: str) -> dict:
     ensure_down()
     t0 = time.perf_counter()
     up = await asyncio.to_thread(
-        devenv_task, "msks:appliance-up", timeout=UP_TIMEOUT_S
+        msks_script, "msks-appliance-up", timeout=UP_TIMEOUT_S
     )
     assert up.returncode == 0, (
-        f"msks:appliance-up failed:\n{up.stdout}{up.stderr}"
+        f"msks-appliance-up failed:\n{up.stdout}{up.stderr}"
     )
     result["t_task"] = time.perf_counter() - t0
     await asyncio.gather(await_token(result, t0), poll_health(result, t0))
-    down = devenv_task("msks:appliance-down", timeout=120.0)
+    down = msks_script("msks-appliance-down", timeout=120.0)
     assert down.returncode == 0, (
-        f"msks:appliance-down failed:\n{down.stdout}{down.stderr}"
+        f"msks-appliance-down failed:\n{down.stdout}{down.stderr}"
     )
     return result
 
@@ -179,8 +179,7 @@ def assets_present() -> bool:
     for f in (APP_DIR / "vmlinux", APP_DIR / "rootfs.ext4"):
         if not f.is_file():
             print(
-                f"appliance assets missing ({f}) — "
-                "devenv tasks run msks:appliance-build",
+                f"appliance assets missing ({f}) — msks-appliance-build",
                 file=sys.stderr,
             )
             return False

@@ -1,9 +1,9 @@
 # Entry point for the msks guest-asset builds (#5).
 #
-# Supported entry: the devenv tasks (`msks:build-guest`,
-# `msks:build-runner-image`) evaluate this file with nixpkgs pinned to
-# the devenv.lock revision, so the guest toolchain matches the dev
-# shell exactly. A bare `nix-build nix/guest.nix -A guest` also works
+# Supported entry: the msks-build-guest and
+# msks-build-runner-image scripts evaluate this file with nixpkgs
+# pinned to the devenv.lock revision, so the guest toolchain matches
+# the dev shell exactly. A bare `nix-build nix/guest.nix -A guest` also works
 # and falls back to `<nixpkgs>` from NIX_PATH.
 #
 # Overlays and config are pinned explicitly so a host's channels or
