@@ -61,32 +61,46 @@ async def test_appliance_boot_and_workspace() -> None:
         if probe.returncode == 0:
             pytest.skip("an appliance VMM is already answering on this host")
 
-    # The upgrade-path pin (#101 review): this run boots a FRESH
-    # state disk seeded with the pre-#101 legacy layout, so the
-    # migration runs for real every time — and the dev host's own
-    # state disk stays untouched.
+    # The upgrade-path pin (#101 review, #180): this run boots a
+    # FRESH state disk seeded with the pre-#101 legacy layout, so the
+    # migration runs for real every time — and the disk itself is
+    # built at the pre-#180 8G template size instead of copied from
+    # the current one, so the #180 in-place grow (the host's
+    # truncate to the template's size, the guest's resize2fs) runs
+    # for real too. The dev host's own state disk stays untouched.
     marker_text = f"pre-101 daemon state {uuid.uuid4().hex[:8]}\n"
     legacy_dir = tempfile.TemporaryDirectory(prefix="msks-legacy-state")
     state_disk = Path(legacy_dir.name) / "state.ext4"
-    # Sparse copy: the template is a 40 GiB image with large holes,
-    # and a dense copy would ENOSPC a tmpfs-backed TMPDIR (the same
-    # care read_appliance_journal takes).
-    copy = subprocess.run(
+    # Sparse 8G file, formatted in place: the same shape the
+    # pre-#180 template produced (labeled msks-state, empty staging
+    # tree — the guest's state preparation converges the missing
+    # var/ directories on the mounted disk).
+    grow_test = subprocess.run(
+        ["truncate", "-s", "8G", str(state_disk)],
+        capture_output=True,
+        timeout=120,
+    )
+    assert grow_test.returncode == 0, (
+        f"truncate of the 8G test state disk failed: {grow_test.stderr}"
+    )
+    grow_test = subprocess.run(
         [
-            "cp",
-            "--sparse=always",
-            str(app_dir / "image" / "state.ext4"),
+            "mkfs.ext4",
+            "-q",
+            "-F",
+            "-L",
+            "msks-state",
             str(state_disk),
         ],
         capture_output=True,
         timeout=300,
     )
-    assert copy.returncode == 0, (
-        f"sparse copy of the state template failed: {copy.stderr}"
+    assert grow_test.returncode == 0, (
+        f"mkfs of the 8G test state disk failed: {grow_test.stderr}"
     )
-    # The template is 0444 in the store; the writable disk the VMM
-    # opens O_RDWR needs the write bit (appliance-setup.sh chmods its
-    # own copy — this pre-made one must match).
+    # The pre-made disk the VMM opens O_RDWR needs the write bit
+    # (appliance-setup.sh chmods its own copy — this one must
+    # match).
     state_disk.chmod(0o644)
     seeded = seed_legacy_state_disk(state_disk, marker_text)
     if not seeded:
@@ -528,6 +542,34 @@ async def test_appliance_boot_and_workspace() -> None:
     # The run script's own teardown view of "stopped": the pidfile is
     # gone with the socket, not just the VM beneath it.
     assert not (app_dir / "run.pid").exists()
+    # The #180 in-place grow: the disk was built at the pre-#180 8G
+    # size, and the run's setup plus the guest's state preparation
+    # must have grown BOTH layers — the file to the template's size
+    # (the host's truncate) and the ext4 to the device (the guest's
+    # resize2fs). dumpe2fs reads the superblock on a mid-transaction
+    # filesystem too (the hard-stop case); the block count is the
+    # grown fact.
+    template = app_dir / "image" / "state.ext4"
+    assert template.is_file(), f"state-disk template missing: {template}"
+    assert state_disk.stat().st_size == template.stat().st_size, (
+        "the state-disk file was not grown to the template's size"
+    )
+    grown = subprocess.run(
+        ["dumpe2fs", "-h", str(state_disk)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert grown.returncode == 0, (
+        f"dumpe2fs could not read the state disk:\n{grown.stderr}"
+    )
+    blocks = re.search(r"^Block count:\s+(\d+)", grown.stdout, re.MULTILINE)
+    assert blocks, f"no block count in dumpe2fs output:\n{grown.stdout}"
+    # 40G at 4k blocks — the template's size, not the seeded 8G.
+    assert int(blocks.group(1)) == 10485760, (
+        "the state-disk filesystem stayed at its seeded size: "
+        f"{blocks.group(1)} blocks"
+    )
     # The journal is the appliance's own story, persisted to the state
     # disk by journald (#92): read it back from the host and require
     # the boot's records to have survived the teardown. Softens to a

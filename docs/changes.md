@@ -245,10 +245,9 @@ up -d`, `msks-dev-ready`), then delete the old dirs — they are no
 
 ### Changed
 
-- **The appliance state disk grows to 40G (#180).** The template
-  was a fixed 8G, and two imported images left under 2G of it — an
-  `apt install` inside a workspace then filled the disk, and the
-  host-side write failures surfaced in the guest as raw virtio-blk
+- **The appliance state disk grows to 40G (#180).** The fixed 8G
+  template filled up once two images were imported and a workspace
+  ran `apt install`, surfacing in the guest as virtio-blk
   `Input/output error` storms. The new template carries the images
   with ~5x headroom for workspace overlays and volumes; existing
   disks grow in place on the appliance's next start (the host

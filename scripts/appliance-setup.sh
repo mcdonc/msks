@@ -74,8 +74,8 @@ if [ ! -f "$state_disk" ]; then
 fi
 # A template growth reaches existing installs (#180): the seed above
 # covers only a missing disk, so a smaller existing one grows to the
-# template's size here. The comparison only ever grows a disk — a
-# hand-enlarged or relocated one keeps its size — and the truncate
+# template's size here. The comparison only ever grows a disk — one
+# already larger than the template keeps its size — and the truncate
 # costs metadata on a sparse file; the guest's writes, not this
 # step, spend the host disk. The guest's state preparation then runs
 # resize2fs to grow the ext4 into the device.
