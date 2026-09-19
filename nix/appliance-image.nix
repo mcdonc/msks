@@ -418,12 +418,23 @@ let
       umount /run/msks-mnt
       # Grow an undersized filesystem into the device (#180): the
       # host setup script grows the state-disk FILE to the template's
-      # size, and this converges the ext4 to match — a disk formatted
-      # at the device's size makes this a fast no-op. Best-effort: a
-      # failed grow is loud (console and journal) and retries next
-      # boot, which beats failing the unit over free space.
-      resize2fs /dev/vdb \
-        || echo "msks-state-prepare: resize2fs failed; retrying next boot"
+      # size, and this converges the ext4 to match. resize2fs refuses
+      # a filesystem carrying errors or an unreplayed journal — the
+      # mount/umount above can leave the journal flagged, and the
+      # EIO aftermath of a filled disk sets the error flag — so the
+      # grow path repairs first (e2fsck replays the journal and
+      # clears both) and resizes after. The size comparison gates
+      # both steps: a filesystem already at the device's size pays
+      # nothing on the steady-state boot, and a failed grow is loud
+      # and retries next boot instead of failing the unit.
+      fs_blocks=$(dumpe2fs -h /dev/vdb 2>/dev/null \
+        | sed -n 's/^Block count:[[:space:]]*//p')
+      dev_blocks=$(( $(cat /sys/block/vdb/size) / 8 ))
+      if [ -n "$fs_blocks" ] && [ "$fs_blocks" -lt "$dev_blocks" ]; then
+        e2fsck -fy /dev/vdb || true
+        resize2fs /dev/vdb \
+          || echo "msks-state-prepare: resize2fs failed; retrying next boot"
+      fi
       rm -rf /run/msks-mnt /run/msks-blank 2>/dev/null || true
     '';
   };
@@ -920,6 +931,7 @@ let
         test -x "$root"/sbin/mkfs.ext4
         test -x "$root"/sbin/e2label
         test -x "$root"/sbin/resize2fs
+        test -x "$root"/sbin/dumpe2fs
         test -x "$root"/usr/local/sbin/msks-boot
         test -x "$root"/usr/local/sbin/msks-state-prepare
         test -d "$root"/var/lib/systemd
