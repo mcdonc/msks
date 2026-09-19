@@ -25,7 +25,7 @@
 
 let
   # Only what hatchling reads: pyproject context at the root plus the
-  # package tree. Keeps .devenv/.guest/worktree noise out of the hash
+  # package tree. Keeps .devenv/worktree noise out of the hash
   # so unrelated edits cannot rebuild the appliance closure.
   src = lib.cleanSourceWith {
     src = ./..;

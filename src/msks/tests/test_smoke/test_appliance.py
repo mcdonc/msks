@@ -15,8 +15,8 @@ import pytest
 import websockets
 
 from test_smoke import (
+    APPLIANCE_DIR,
     DEV_BOOTSTRAP_TIMEOUT_S,
-    REPO_ROOT,
     client,
     dev_workspace_seed,
     devenv_task,
@@ -37,7 +37,7 @@ from test_smoke import (
 
 @needs_appliance
 async def test_appliance_boot_and_workspace() -> None:
-    app_dir = REPO_ROOT / ".appliance"
+    app_dir = APPLIANCE_DIR
     base = "https://192.168.77.2:8660/api/v1"
     wid = f"appliance-{uuid.uuid4().hex[:8]}"
 

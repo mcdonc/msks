@@ -41,7 +41,23 @@ from pathlib import Path
 import httpx
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-APP_DIR = REPO_ROOT / ".appliance"
+
+
+def state_dir(override: str | None, name: str) -> Path:
+    """A devenv state dir below the repo, honoring its env override.
+
+    A relative override resolves below the repo root (the same
+    resolution the build/run scripts apply).
+    """
+    if override:
+        path = Path(override)
+        return path if path.is_absolute() else REPO_ROOT / path
+    return REPO_ROOT / ".devenv" / "state" / name
+
+
+#: The appliance state dir (.devenv/state/appliance by default;
+#: MSKS_APPLIANCE_DIR relocates it).
+APP_DIR = state_dir(os.environ.get("MSKS_APPLIANCE_DIR"), "appliance")
 BASE = "https://192.168.77.2:8660/api/v1"
 UP_TIMEOUT_S = 300.0
 HEALTH_TIMEOUT_S = 180.0

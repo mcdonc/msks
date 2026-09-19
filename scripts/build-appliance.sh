@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Build the msksd appliance assets with nix and land them in .appliance/ (#10).
+# Build the msksd appliance assets with nix and land them in the
+# appliance state dir (#10) — .devenv/state/appliance by default;
+# MSKS_APPLIANCE_DIR relocates it.
 #
 # Runs against the nixpkgs revision pinned by devenv.lock: the devenv
 # task passes the pinned source via MSKS_GUEST_NIXPKGS. Pure
@@ -9,7 +11,14 @@ set -euo pipefail
 
 root="${DEVENV_ROOT:?not running inside the devenv shell}"
 nixpkgs="${MSKS_GUEST_NIXPKGS:?devenv must pass MSKS_GUEST_NIXPKGS}"
-app_dir="$root/.appliance"
+app_dir="${MSKS_APPLIANCE_DIR:-$root/.devenv/state/appliance}"
+# A relative MSKS_APPLIANCE_DIR resolves below the repo root,
+# matching the Python-side resolution: a CWD-relative read would
+# depend on where the shell was opened.
+case "$app_dir" in
+/*) ;;
+*) app_dir="$root/$app_dir" ;;
+esac
 
 out="$(
   nix-build --no-out-link -I nixpkgs="$nixpkgs" \
@@ -36,5 +45,5 @@ rm -f "$app_dir/image"
 nix-build --no-out-link -I nixpkgs="$nixpkgs" \
   "$root/nix/appliance.nix" -A appliance -o "$app_dir/image"
 
-echo "msks: appliance assets built into .appliance/ (from $out)"
+echo "msks: appliance assets built into $app_dir (from $out)"
 echo "msks: boot it with: devenv processes up -d"

@@ -3,8 +3,9 @@
 - Local: boots a real cloud-hypervisor VM when MSKSD_TEST_VMLINUX and
   MSKSD_TEST_ROOTFS point at guest artifacts (and /dev/kvm is
   accessible); skipped otherwise. The devenv task `msks:build-guest`
-  sets all of these from `.guest/` automatically (see conftest.py and
-  msks.guestassets); the stock nixpkgs kernel also needs the initrd
+  sets all of these from the guest state dir
+  (`.devenv/state/guest` by default) automatically (see conftest.py
+  and msks.guestassets); the stock nixpkgs kernel also needs the initrd
   (MSKSD_TEST_INITRD) and the cmdline the manifest carries
   (MSKSD_TEST_CMDLINE) to reach userspace.
 - k8s: boots the runner image's guest in a pod when MSKSD_TEST_KUBECONFIG
@@ -47,6 +48,27 @@ CMDLINE = os.environ.get("MSKSD_TEST_CMDLINE")
 KUBECONFIG = os.environ.get("MSKSD_TEST_KUBECONFIG")
 # The package __init__ sits one level below the old flat module.
 REPO_ROOT = Path(__file__).resolve().parents[4]
+
+
+def state_dir(env: str, name: str) -> Path:
+    """A devenv state dir below the repo, honoring its env override.
+
+    #156: the build/run state lives under `.devenv/state/` —
+    `MSKS_GUEST_DIR` / `MSKS_APPLIANCE_DIR` relocate the two this
+    suite touches (a relative override resolves below the repo
+    root, the same resolution every build/run script applies).
+    """
+    override = os.environ.get(env)
+    if override:
+        path = Path(override)
+        return path if path.is_absolute() else REPO_ROOT / path
+    return REPO_ROOT / ".devenv" / "state" / name
+
+
+#: The guest asset dir and the appliance state dir (#156).
+GUEST_DIR = state_dir("MSKS_GUEST_DIR", "guest")
+APPLIANCE_DIR = state_dir("MSKS_APPLIANCE_DIR", "appliance")
+
 client = AsyncClient(verify=False, timeout=10.0)
 
 needs_local = pytest.mark.skipif(
@@ -499,7 +521,7 @@ def host_net_installed() -> bool:
 needs_appliance = pytest.mark.skipif(
     not APPLIANCE
     or not os.access("/dev/kvm", os.W_OK)
-    or not (REPO_ROOT / ".appliance" / "vmlinux").is_file()
+    or not (APPLIANCE_DIR / "vmlinux").is_file()
     or not host_net_installed(),
     reason=(
         "set MSKSD_TEST_APPLIANCE=1 with /dev/kvm, the one-time host "

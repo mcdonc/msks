@@ -12,9 +12,18 @@ from msks.guestassets import GuestAssets
 from msks import guestassets
 
 
-def write_manifest(root: Path, **overrides: object) -> None:
-    """Write a valid manifest into ``root/.guest/``, then patch fields."""
-    guest = root / ".guest"
+def guest_dir(root: Path) -> Path:
+    """The default guest state dir below ``root`` (no env override)."""
+    return root / ".devenv" / "state" / "guest"
+
+
+def write_manifest(
+    root: Path, *, guest: Path | None = None, **overrides: object
+) -> None:
+    """Write a valid manifest into ``root``'s guest state dir, then
+    patch fields (``guest`` targets a different dir — the
+    relocation tests)."""
+    guest = guest if guest is not None else guest_dir(root)
     guest.mkdir(parents=True, exist_ok=True)
     for name in ("vmlinux", "initrd", "rootfs.ext4"):
         (guest / name).write_bytes(b"artifact")
@@ -37,9 +46,9 @@ def test_load_returns_assets(tmp_path: Path) -> None:
     write_manifest(tmp_path)
     assets = guestassets.load_guest_assets(tmp_path)
     assert assets == GuestAssets(
-        vmlinux=tmp_path / ".guest" / "vmlinux",
-        initrd=tmp_path / ".guest" / "initrd",
-        rootfs=tmp_path / ".guest" / "rootfs.ext4",
+        vmlinux=guest_dir(tmp_path) / "vmlinux",
+        initrd=guest_dir(tmp_path) / "initrd",
+        rootfs=guest_dir(tmp_path) / "rootfs.ext4",
         cmdline="console=ttyS0 root=/dev/vda ro",
         kernel_version="6.18.50",
     )
@@ -57,7 +66,7 @@ def test_load_missing_manifest(tmp_path: Path) -> None:
 
 
 def test_load_invalid_json(tmp_path: Path) -> None:
-    guest = tmp_path / ".guest"
+    guest = guest_dir(tmp_path)
     guest.mkdir(parents=True)
     (guest / "guest-manifest.json").write_text("not json", encoding="utf-8")
     assert guestassets.load_guest_assets(tmp_path) is None
@@ -66,14 +75,14 @@ def test_load_invalid_json(tmp_path: Path) -> None:
 def test_load_unreadable_manifest(tmp_path: Path) -> None:
     # A directory in place of the file: reading it raises OSError
     # (EISDIR) for every user — root included, unlike a chmod 000 file.
-    guest = tmp_path / ".guest"
+    guest = guest_dir(tmp_path)
     guest.mkdir(parents=True)
     (guest / "guest-manifest.json").mkdir()
     assert guestassets.load_guest_assets(tmp_path) is None
 
 
 def test_load_manifest_is_not_a_mapping(tmp_path: Path) -> None:
-    guest = tmp_path / ".guest"
+    guest = guest_dir(tmp_path)
     guest.mkdir(parents=True)
     (guest / "guest-manifest.json").write_text("[1, 2]", encoding="utf-8")
     assert guestassets.load_guest_assets(tmp_path) is None
@@ -95,7 +104,7 @@ def test_load_rejects_artifact_names_outside_guest_dir(
 
 def test_load_missing_artifact_file(tmp_path: Path) -> None:
     write_manifest(tmp_path)
-    (tmp_path / ".guest" / "rootfs.ext4").unlink()
+    (guest_dir(tmp_path) / "rootfs.ext4").unlink()
     assert guestassets.load_guest_assets(tmp_path) is None
 
 
@@ -111,7 +120,7 @@ def test_load_defaults_to_devenv_root(
     monkeypatch.setenv("DEVENV_ROOT", str(tmp_path))
     assets = guestassets.load_guest_assets()
     assert assets is not None
-    assert assets.rootfs == tmp_path / ".guest" / "rootfs.ext4"
+    assert assets.rootfs == guest_dir(tmp_path) / "rootfs.ext4"
 
 
 def test_load_defaults_to_cwd(
@@ -121,6 +130,39 @@ def test_load_defaults_to_cwd(
     monkeypatch.delenv("DEVENV_ROOT", raising=False)
     monkeypatch.chdir(tmp_path)
     assert guestassets.load_guest_assets() is not None
+
+
+# --- the MSKS_GUEST_DIR relocation (#156) -----------------------------
+
+
+def test_guest_dir_default(tmp_path: Path) -> None:
+    assert guestassets.guest_dir(tmp_path) == guest_dir(tmp_path)
+
+
+def test_guest_dir_env_absolute(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(guestassets.GUEST_DIR_ENV, "/elsewhere/guest")
+    assert guestassets.guest_dir(tmp_path) == Path("/elsewhere/guest")
+
+
+def test_guest_dir_env_relative(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(guestassets.GUEST_DIR_ENV, "other-guest")
+    assert guestassets.guest_dir(tmp_path) == tmp_path / "other-guest"
+
+
+def test_load_honors_guest_dir_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """MSKS_GUEST_DIR relocates everything the loader reads."""
+    moved = tmp_path / "relocated"
+    monkeypatch.setenv(guestassets.GUEST_DIR_ENV, str(moved))
+    write_manifest(tmp_path, guest=moved)
+    assets = guestassets.load_guest_assets(tmp_path)
+    assert assets is not None
+    assert assets.rootfs == moved / "rootfs.ext4"
 
 
 def test_kvm_available_true(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -187,9 +229,20 @@ def test_smoke_env_without_kvm(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_load_runner_image(tmp_path: Path) -> None:
-    guest = tmp_path / ".guest"
-    guest.mkdir()
+    guest = guest_dir(tmp_path)
+    guest.mkdir(parents=True)
     (guest / "runner-image.json").write_text(
+        json.dumps({"image": "msks-vm-runner:dev"}), encoding="utf-8"
+    )
+    assert guestassets.load_runner_image(tmp_path) == "msks-vm-runner:dev"
+
+
+def test_load_runner_image_honors_guest_dir_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(guestassets.GUEST_DIR_ENV, str(tmp_path / "moved"))
+    (tmp_path / "moved").mkdir()
+    (tmp_path / "moved" / "runner-image.json").write_text(
         json.dumps({"image": "msks-vm-runner:dev"}), encoding="utf-8"
     )
     assert guestassets.load_runner_image(tmp_path) == "msks-vm-runner:dev"
@@ -197,8 +250,8 @@ def test_load_runner_image(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("body", ["", "[]", '{"image": ""}'])
 def test_load_runner_image_invalid(tmp_path: Path, body: str) -> None:
-    guest = tmp_path / ".guest"
-    guest.mkdir()
+    guest = guest_dir(tmp_path)
+    guest.mkdir(parents=True)
     (guest / "runner-image.json").write_text(body, encoding="utf-8")
     assert guestassets.load_runner_image(tmp_path) is None
 
@@ -206,8 +259,8 @@ def test_load_runner_image_invalid(tmp_path: Path, body: str) -> None:
 def test_load_runner_image_defaults_to_devenv_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    guest = tmp_path / ".guest"
-    guest.mkdir()
+    guest = guest_dir(tmp_path)
+    guest.mkdir(parents=True)
     (guest / "runner-image.json").write_text(
         json.dumps({"image": "msks-vm-runner:dev"}), encoding="utf-8"
     )

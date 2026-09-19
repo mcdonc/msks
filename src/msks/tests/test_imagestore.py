@@ -243,7 +243,7 @@ def test_gzip_layer_supported(tmp_path: Path) -> None:
 
 
 def test_import_of_the_real_built_image(tmp_path: Path) -> None:
-    """The .guest-built containerDisk, when present, imports as-is."""
+    """The msks:build-guest containerDisk, when present, imports as-is."""
 
     assets = guestassets.load_guest_assets()
     if assets is None:

@@ -151,7 +151,8 @@ with byte-stable tar flags (`--sort=name --mtime=@1
 --numeric-owner`). Identical rebuilds hash identically, so the same
 image deduplicates across hosts.
 
-The output lands under `.guest/`; `scripts/build-guest.sh` and
+The output lands under `.devenv/state/guest/` (`MSKS_GUEST_DIR`
+relocates it); `scripts/build-guest.sh` and
 `nix/guest-assets.nix` document every step and are the reference for
 what an image build does.
 

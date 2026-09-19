@@ -85,7 +85,8 @@ devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:build-
 ```
 
 The artifacts (plus a `guest-manifest.json` describing them and the
-boot cmdline) land in `.guest/`. Boot one interactive VM from them —
+boot cmdline) land in `.devenv/state/guest/` (relocatable with
+`MSKS_GUEST_DIR`). Boot one interactive VM from them —
 
 ```bash
 devenv tasks run msks:demo-vm
@@ -95,7 +96,8 @@ devenv tasks run msks:demo-vm
 (`poweroff -f` inside the guest or Ctrl-C stops it) and leaves
 `ch-remote` reachable on the printed API socket path.
 
-Boot tests self-provision: when `.guest/` holds built artifacts and
+Boot tests self-provision: when `.devenv/state/guest/` holds built
+artifacts and
 `/dev/kvm` is usable, the smoke tests find them without any exported
 variables (`MSKSD_TEST_VMLINUX` / `MSKSD_TEST_INITRD` /
 `MSKSD_TEST_ROOTFS` / `MSKSD_TEST_CMDLINE` / `MSKSD_TEST_RUNNER_IMAGE`
@@ -146,15 +148,20 @@ tasks converge a workable state first:
 
 ```bash
 devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:dev-ready
-export MSKSD_STATE_DIR="$PWD/.msksd" MSKSD_BOOTSTRAP_TOKEN="$(cat .msksd/bootstrap-token)"
+export MSKSD_STATE_DIR="$PWD/.devenv/state/msksd" MSKSD_BOOTSTRAP_TOKEN="$(cat .devenv/state/msksd/bootstrap-token)"
 msksd &                                    # serves https://127.0.0.1:8660
-MSKSC_URL=https://127.0.0.1:8660 MSKSC_CAFILE=$PWD/.msksd/msks-ca.pem \
-  MSKSC_TOKEN="$(cat .msksd/bootstrap-token)" msks ls
+MSKSC_URL=https://127.0.0.1:8660 MSKSC_CAFILE=$PWD/.devenv/state/msksd/msks-ca.pem \
+  MSKSC_TOKEN="$(cat .devenv/state/msksd/bootstrap-token)" msks ls
 ```
 
-The state lives in `.msksd/` (TLS CA, bootstrap token, sqlite
-catalog, workspace volumes; gitignored but NOT disposable-clean —
-`git clean -xfd` deletes all of it). Workspaces without egress are
+The state lives in `.devenv/state/msksd/` (TLS CA, bootstrap token,
+sqlite catalog, workspace volumes). The dir honors `MSKSD_STATE_DIR`
+— export it before `msks:dev-ready` to relocate it, as an absolute
+path: the tasks anchor a relative value below the repo root while
+the daemon resolves one against its own CWD, so only an absolute
+value moves both to the same place.
+Gitignored but NOT disposable-clean — `git clean -xfd` deletes all
+of it. Workspaces without egress are
 fully served — vsock console, user-data seeds, stop/start
 persistence. Egress (and `msks ssh`, whose forwards ride the egress
 NIC) holds `CAP_NET_ADMIN` (#101): that is the appliance's job. A
@@ -190,7 +197,7 @@ appliance moves to another user.
 ```bash
 devenv --quiet -O dotenv.enable:bool false shell -- devenv processes up -d
 msks ls                                   # in a FRESH shell (see the note below)
-curl --cacert .appliance/msks-ca.pem https://192.168.77.2:8660/api/v1/health
+curl --cacert .devenv/state/appliance/msks-ca.pem https://192.168.77.2:8660/api/v1/health
 devenv --quiet -O dotenv.enable:bool false shell -- devenv processes down
 ```
 
@@ -237,20 +244,20 @@ window, or run imports with the setting off.
 **The client environment presets to the appliance (#146)**:
 `MSKSC_URL` (`https://192.168.77.2:8660`), `MSKSC_TOKEN` (the
 appliance's bootstrap token), and `MSKSC_CAFILE`
-(`.appliance/msks-ca.pem`, extracted from the state disk by the
-run script once the guest serves). Until that file exists — the
+(`.devenv/state/appliance/msks-ca.pem`, extracted from the state disk
+by the run script once the guest serves). Until that file exists — the
 first boot — the client warns it does not verify; cross-check the
-TOFU fingerprint on `.appliance/serial.log`, then open a fresh
-devenv shell. The presets are read at shell-entry time, so a rotated
-token — or a replaced state disk, whose old CA stays in place until
-the new guest serves and the extraction refreshes it — needs a fresh
-shell too; that window self-heals on every boot.
+TOFU fingerprint on `.devenv/state/appliance/serial.log`, then open a
+fresh devenv shell. The presets are read at shell-entry time, so a
+rotated token — or a replaced state disk, whose old CA stays in place
+until the new guest serves and the extraction refreshes it — needs a
+fresh shell too; that window self-heals on every boot.
 
 On a fresh checkout the presets start EMPTY — the token and CA do
 not exist until the appliance's first boot — so `msks` in that
 first shell names the missing env (curl above uses `-sk` plus the
-TOFU fingerprint on `.appliance/serial.log` until the CA file
-exists). Open a fresh devenv shell after the first boot; the client
+TOFU fingerprint on `.devenv/state/appliance/serial.log` until the CA
+file exists). Open a fresh devenv shell after the first boot; the client
 env is read at shell-entry time.
 
 **The dev tree (#144): daemon edits without appliance rebuilds.**
@@ -279,8 +286,10 @@ Dependency changes (`uv`/`pyproject.toml`) are the one host-side
 step: re-enter the devenv shell (or `devenv test regenerate`), then
 the next daemon restart sees the refreshed venv. The share is
 read-only — the guest never writes the tree — and it carries the
-whole checkout: the appliance's own `.appliance/` (bootstrap token,
-state disk) and any `.msksd/` beside it are visible to the guest.
+whole checkout: the appliance's own state dir,
+`.devenv/state/appliance/` (bootstrap token, state disk) and any
+bare-host daemon state (`.devenv/state/msksd/`) beside it are visible
+to the guest.
 Same trust domain as the daemon itself (the token already rides the
 kernel cmdline); a checkout you would not hand the appliance should
 not be shared.
@@ -305,9 +314,10 @@ How it fits together (#10, #25, #92):
   `msks:build-guest` roots the workspace guest assets (which the
   appliance references only through the share).
 - Persistent state (SQLite, workspace overlays, logs) is a second
-  disk under `.appliance/state.ext4` (relocatable via
+  disk under `.devenv/state/appliance/state.ext4` (relocatable via
   `MSKSD_APPLIANCE_STATE`); rebuilds never clobber it.
-- The bootstrap token is generated into `.appliance/bootstrap-token`
+- The bootstrap token is generated into
+  `.devenv/state/appliance/bootstrap-token`
   and delivered on the kernel cmdline (`msksd.bootstrap_token=...`):
   the host file is the single source of truth, and rotation means
   editing it and restarting the processes.
@@ -321,7 +331,7 @@ How it fits together (#10, #25, #92):
   VMs run on the appliance's `/dev/kvm` (verified: a workspace boots,
   runs, and stops inside, driven through the API).
 - Debug hatch: seed a `debug-shell` marker onto the state disk
-  (`debugfs -w -R "write <file> debug-shell" .appliance/state.ext4`)
+  (`debugfs -w -R "write <file> debug-shell" .devenv/state/appliance/state.ext4`)
   and the init backgrounds the daemon, prints a one-way diagnostics
   dump (kvm modules, `/dev/kvm`, VMM binary, store visibility) to the
   serial log, runs `/state/diag.sh` if present, and leaves a shell on
@@ -526,7 +536,8 @@ daemon builds the workspace's own overlay and volumes on top:
 msks key l3 --out ~/.cache/msks/l3.key
 msks forward l3 22 --local 2201 &
 rsync -e 'ssh -i ~/.cache/msks/l3.key -p 2201' -aPS \
-    .guest/vmlinux .guest/initrd .guest/rootfs.ext4 \
+    .devenv/state/guest/vmlinux .devenv/state/guest/initrd \
+    .devenv/state/guest/rootfs.ext4 \
     root@127.0.0.1:/root/inner-artifacts/
 msks console l3   # then, inside the workspace:
 #   export MSKSC_URL=http://127.0.0.1:8660
@@ -576,7 +587,7 @@ a running workspace:
 
 ```bash
 export MSKSC_URL=https://192.168.77.2:8660
-export MSKSC_TOKEN=$(cat .appliance/bootstrap-token)
+export MSKSC_TOKEN=$(cat .devenv/state/appliance/bootstrap-token)
 devenv --quiet -O dotenv.enable:bool false shell -- msks console my-workspace
 ```
 
@@ -629,7 +640,7 @@ Transport (#21), in the preferred vsock-first shape:
 - `MSKSC_CAFILE` pins the daemon certificate for verification when
   you have it (a directly-run msksd's CA, or the appliance CA
   exported from its state disk:
-  `debugfs -R "dump /msks-ca.pem msks-ca.pem" .appliance/state.ext4`).
+  `debugfs -R "dump /msks-ca.pem msks-ca.pem" .devenv/state/appliance/state.ext4`).
   Without it the client proceeds with certificate verification off
   and says so on stderr — the serial log's TOFU fingerprint is the
   cross-check.
@@ -646,7 +657,7 @@ the local backend's cloud-hypervisor:
 
 ```bash
 devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:build-runner-image
-sudo k3s ctr images import .guest/msks-vm-runner.docker.tar.gz
+sudo k3s ctr images import .devenv/state/guest/msks-vm-runner.docker.tar.gz
 ```
 
 The k8s smoke tests reference the imported `msks-vm-runner:dev` image

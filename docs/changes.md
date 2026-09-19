@@ -29,12 +29,12 @@ tagged `vX.Y.Z`.
   ACPI teardown; `msks:appliance-up`/`-down` are the detached
   wrappers). The client env presets to it: `MSKSC_URL`, the
   appliance's bootstrap token, and certificate verification via
-  `.appliance/msks-ca.pem`, which the run script extracts from the
-  state disk once the guest serves (until then the TOFU fingerprint
-  on the serial log covers the first connect). No bare-host msksd
-  process exists; running the daemon by hand on the host stays
-  supported and documented (own `.msksd/` state,
-  `msks:dev-ready`, no egress).
+  `.devenv/state/appliance/msks-ca.pem`, which the run script
+  extracts from the state disk once the guest serves (until then the
+  TOFU fingerprint on the serial log covers the first connect). No
+  bare-host msksd process exists; running the daemon by hand on the
+  host stays supported and documented (own
+  `.devenv/state/msksd/` state, `msks:dev-ready`, no egress).
 - **Appliance dev tree: daemon edits without appliance rebuilds
   (#144).** `MSKS_DEV_TREE=1` with `processes up` shares the
   checkout read-only into the appliance and runs the guest daemon
@@ -215,6 +215,21 @@ no`, `PermitRootLogin prohibit-password`) pinned by a config dropin,
 
 - **Workspace shell (#21).** `msks shell <workspace-id>` gives an interactive shell inside a running workspace microvm, from any host that can reach the daemon: the client speaks the authenticated `/api/v1/workspaces/{id}/console` websocket (TLS + token, Ctrl-] detach, raw tty mode), and the daemon proxies it over virtio-vsock — the VM's vsock unix socket after a `CONNECT <port>` handshake — into a per-connection busybox ash on a pty served by static socat in the guest (root shell today, per #5's guest userland; `MSKSC_URL`/`MSKSC_TOKEN`/`MSKSC_CAFILE` configure the client). The guest assets gained the vsock module, `/dev/vsock` creation, devpts/ptmx setup, and socat; the daemon retries the console handshake across the guest's post-boot bring-up window.
 
+### Breaking
+
+- **Dev state moved under `.devenv/state/` (#156).** The three
+  repo-root state dirs — `.guest/`, `.appliance/`, `.msksd/` — now
+  live at `.devenv/state/{guest,appliance,msksd}/`, each relocatable
+  via `MSKS_GUEST_DIR`, `MSKS_APPLIANCE_DIR`, or `MSKSD_STATE_DIR`
+  (the daemon's own setting; use an absolute value so the tasks and
+  the daemon land in the same place). Existing state does not
+  migrate: move the directory you want to keep (the appliance state
+  disk holds workspaces and tokens) or rebuild (`devenv processes
+up -d`, `msks:dev-ready`), then delete the old dirs — they are no
+  longer gitignored. The devenv shell also prunes its own stale
+  one-shot wrappers (`.devenv/shell-*.sh` older than an hour)
+  automatically.
+
 ### Changed
 
 - **Minted identity keys default to `ed25519` (#138).** The
@@ -306,7 +321,7 @@ no`, `PermitRootLogin prohibit-password`) pinned by a config dropin,
 - **Appliance hardening fixes found by the e2e and the fresh-eyes review (#10).** The local driver now honors the absent-VM contract on stop/kill (a stale api socket behind a dead VMM reported ECONNREFUSED and delete-after-stop 500'd), the rootfs disk is declared `readonly` + `image_type: Raw` in `vm.create` (v52's autodetection otherwise disables sector-0 writes, and O_RDWR on the read-only store share fails), and `tls._write` loops `os.write` (a short write through virtio-backed storage left a truncated CA key).
 
 - **The `msksd` daemon and its `/api/v1` API (#8).** msksd now serves versioned endpoints over one HTTPS+WSS listener — public health, hashed bearer-token auth with revocation (`MSKSD_BOOTSTRAP_TOKEN` seeds the first credential), workspace create/list/status/start/stop/delete driving cloud-hypervisor through the microvm seam, and a websocket event channel for lifecycle transitions. TLS is operator-provided (`MSKSD_TLS_CERT`/`KEY`) or a self-signed CA generated on first run whose fingerprint is logged for trust-on-first-use pinning; `--no-tls` serves plain HTTP for development. State lives in an SQLite database under the state dir (`MSKSD_STATE_DIR`), managed by Alembic migrations.
-- **Nix-built guest assets (`msks:build-guest`, `msks:demo-vm`, `msks:build-runner-image`).** The devenv now produces everything needed to boot a microvm — kernel, initrd, read-only ext4 rootfs into `.guest/`, plus the k8s vm-runner container archive — from the nixpkgs revision devenv itself pins, on any Linux host with nix; the manual-download flow is gone. Boot tests pick the built artifacts up automatically (explicit `MSKSD_TEST_VMLINUX`/`MSKSD_TEST_ROOTFS`/`MSKSD_TEST_INITRD` variables keep precedence) and skip themselves when the guest was never built or `/dev/kvm` is unusable. `msks:demo-vm` boots one interactive VM from the artifacts with `ch-remote` ready (#5).
+- **Nix-built guest assets (`msks:build-guest`, `msks:demo-vm`, `msks:build-runner-image`).** The devenv now produces everything needed to boot a microvm — kernel, initrd, read-only ext4 rootfs into the guest state dir (`.devenv/state/guest/`), plus the k8s vm-runner container archive — from the nixpkgs revision devenv itself pins, on any Linux host with nix; the manual-download flow is gone. Boot tests pick the built artifacts up automatically (explicit `MSKSD_TEST_VMLINUX`/`MSKSD_TEST_ROOTFS`/`MSKSD_TEST_INITRD` variables keep precedence) and skip themselves when the guest was never built or `/dev/kvm` is unusable. `msks:demo-vm` boots one interactive VM from the artifacts with `ch-remote` ready (#5).
 
 - **`msksd --reload` (development, #144).** The daemon gains a
   development flag that watches the msks package tree it runs from

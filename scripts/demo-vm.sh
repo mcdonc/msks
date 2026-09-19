@@ -8,11 +8,18 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-guest_dir="$root/.guest"
+guest_dir="${MSKS_GUEST_DIR:-$root/.devenv/state/guest}"
+# A relative MSKS_GUEST_DIR resolves below the repo root, matching
+# the Python-side resolution (guestassets.guest_dir): a CWD-relative
+# read would depend on where the shell was opened.
+case "$guest_dir" in
+/*) ;;
+*) guest_dir="$root/$guest_dir" ;;
+esac
 manifest="$guest_dir/guest-manifest.json"
 
 if [ ! -f "$manifest" ]; then
-  echo "msks: no guest assets in .guest/ — build them first:" >&2
+  echo "msks: no guest assets in $guest_dir — build them first:" >&2
   echo "  devenv tasks run msks:build-guest" >&2
   exit 1
 fi

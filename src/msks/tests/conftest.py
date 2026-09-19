@@ -10,9 +10,11 @@ from msks import guestassets
 os.environ.setdefault("COVERAGE_CORE", "sysmon")
 
 # Self-provisioned smoke-test assets (#5): when the devenv task has
-# built .guest/ and /dev/kvm is usable, point the MSKSD_TEST_* variables
-# at the built artifacts. Explicitly exported variables win; when
-# nothing was built the smoke tests keep skipping themselves.
+# built the guest assets (.devenv/state/guest by default;
+# MSKS_GUEST_DIR relocates it) and /dev/kvm is usable, point the
+# MSKSD_TEST_* variables at the built artifacts. Explicitly exported
+# variables win; when nothing was built the smoke tests keep
+# skipping themselves.
 for _name, _value in guestassets.smoke_env_defaults(
     guestassets.load_guest_assets(),
 ).items():

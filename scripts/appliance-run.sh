@@ -3,9 +3,10 @@
 # (#146) execs it as the `appliance` process — the build runs first
 # inside the process exec — and the TERM/INT trap below owns the
 # graceful choreography (the msks:appliance-up/-down tasks wrap the
-# same manager). The pidfile it writes (.appliance/run.pid) is a
-# diagnostic handle for "which run-script instance owns this
-# .appliance"; teardown is the supervisor's TERM, not a pidfile
+# same manager). The pidfile it writes (<appliance state>/run.pid,
+# .devenv/state/appliance by default — MSKS_APPLIANCE_DIR relocates
+# it) is a diagnostic handle for "which run-script instance owns this
+# appliance"; teardown is the supervisor's TERM, not a pidfile
 # kill.
 #
 # The store-share daemon is a CHILD of this script, not its own
@@ -19,7 +20,14 @@
 set -euo pipefail
 
 root="${DEVENV_ROOT:?not running inside the devenv shell}"
-app_dir="$root/.appliance"
+app_dir="${MSKS_APPLIANCE_DIR:-$root/.devenv/state/appliance}"
+# A relative MSKS_APPLIANCE_DIR resolves below the repo root,
+# matching the Python-side resolution: a CWD-relative read would
+# depend on where the shell was opened.
+case "$app_dir" in
+/*) ;;
+*) app_dir="$root/$app_dir" ;;
+esac
 guest_ip="192.168.77.2"
 
 # Idempotent prerequisites (artifacts, state, token) — MUST run
@@ -33,7 +41,7 @@ guest_ip="192.168.77.2"
 bash "$root/scripts/appliance-setup.sh"
 
 # The instance pidfile (#146): a diagnostic handle identifying which
-# run-script instance owns this .appliance (stale ones are cleaned by
+# run-script instance owns this appliance (stale ones are cleaned by
 # the EXIT trap). Written only once this instance owns the appliance
 # (setup above passed).
 echo $$ >"$app_dir/run.pid"
@@ -83,7 +91,7 @@ base_cmdline="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).
 # would report that, and the comparison would silently no-op (#160
 # review).
 if [ ! -e "$app_dir/image" ]; then
-  echo "msks: .appliance/image is missing; rebuild with: devenv tasks run msks:appliance-build" >&2
+  echo "msks: $app_dir/image is missing; rebuild with: MSKS_APPLIANCE_DIR=$app_dir devenv tasks run msks:appliance-build" >&2
   exit 1
 fi
 booted_image="$(readlink -f "$app_dir/image")"
@@ -123,7 +131,7 @@ if [ -n "$MSKS_DEV_TREE" ]; then
   for _ in $(seq 1 100); do
     [ -S "$app_dir/dev-sock" ] && break
     kill -0 "$devvfpid" 2>/dev/null || {
-      echo "msks: dev-tree virtiofsd exited before serving (see .appliance/dev-virtiofsd.log)" >&2
+      echo "msks: dev-tree virtiofsd exited before serving (see $app_dir/dev-virtiofsd.log)" >&2
       exit 1
     }
     sleep 0.1
@@ -149,7 +157,7 @@ vfpid=$!
 for _ in $(seq 1 100); do
   [ -S "$app_dir/vmm-sock" ] && break
   kill -0 "$vfpid" 2>/dev/null || {
-    echo "msks: virtiofsd exited before serving (see .appliance/virtiofsd.log)" >&2
+    echo "msks: virtiofsd exited before serving (see $app_dir/virtiofsd.log)" >&2
     exit 1
   }
   sleep 0.1
@@ -252,8 +260,8 @@ chpid=$!
 
 # The client's verified-CA preset (#146): once the guest serves, its
 # CA cert (minted on the state disk at first boot, path /msksd) is
-# extracted read-only from the state disk to .appliance/msks-ca.pem —
-# a fresh devenv shell then presets MSKSC_CAFILE to it and the client
+# extracted read-only from the state disk to
+# <appliance state>/msks-ca.pem — a fresh devenv shell then presets MSKSC_CAFILE to it and the client
 # verifies the appliance instead of warning. The read retries: on a
 # freshly minted CA the cert's data blocks sit in the ext4 JOURNAL
 # until the guest checkpoints them, and debugfs (no journal replay)
