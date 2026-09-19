@@ -614,6 +614,8 @@ def test_split_command_splits_at_ssh_separator(
         (["-o", "ProxyCommand=x"], False),
         (["-A"], False),
         (["-l"], True),  # dangling: ssh's own error is the clear one
+        (["-lroot"], True),  # the attached -l spelling ssh accepts
+        (["-L8080:localhost:80"], False),  # -L (a forward) is not -l
         (["-oUser=root"], True),  # the inline -o form
         (["-oProxyCommand=x"], False),
     ],
@@ -713,14 +715,33 @@ def test_prepare_boots_then_fetches() -> None:
             return httpx.Response(200, json=KEY)
         return httpx.Response(200, json=RUNNING_ROW)
 
-    key = asyncio.run(
+    key, booted = asyncio.run(
         ssh.prepare("alpha", "https://daemon", "tok", transport=mock(handler))
     )
     assert key == KEY
+    assert booted is False  # the workspace was already running
     assert seen == [
         "GET /api/v1/workspaces/alpha",
         "GET /api/v1/workspaces/alpha/ssh-key",
     ]
+
+
+def test_prepare_reports_the_boot_it_performed() -> None:
+    stopped = {"id": "alpha", "status": "stopped"}
+    statuses = iter([stopped, stopped])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(200, json={"id": "alpha"})
+        if request.url.path.endswith("/ssh-key"):
+            return httpx.Response(200, json=KEY)
+        return httpx.Response(200, json=next(statuses))
+
+    key, booted = asyncio.run(
+        ssh.prepare("alpha", "https://daemon", "tok", transport=mock(handler))
+    )
+    assert key == KEY
+    assert booted is True
 
 
 def test_identity_comment_reads_the_public_line() -> None:
@@ -742,8 +763,8 @@ class FakeAgent:
 def test_run_workspace_ssh_runs_ssh_and_stops_the_agent(
     monkeypatch: pytest.MonkeyPatch, client_env: None, tmp_path: Path
 ) -> None:
-    async def fake_prepare(*args, **kwargs) -> dict:
-        return KEY
+    async def fake_prepare(*args, **kwargs) -> tuple[dict, bool]:
+        return KEY, False
 
     stopped: list = []
     monkeypatch.setattr(ssh, "prepare", fake_prepare)
@@ -779,8 +800,8 @@ def test_run_workspace_ssh_runs_ssh_and_stops_the_agent(
 def test_run_workspace_ssh_names_a_missing_binary(
     monkeypatch: pytest.MonkeyPatch, client_env: None, tmp_path: Path
 ) -> None:
-    async def fake_prepare(*args, **kwargs) -> dict:
-        return KEY
+    async def fake_prepare(*args, **kwargs) -> tuple[dict, bool]:
+        return KEY, False
 
     monkeypatch.setattr(ssh, "prepare", fake_prepare)
     monkeypatch.setattr(
@@ -795,6 +816,361 @@ def test_run_workspace_ssh_names_a_missing_binary(
         ssh.run_workspace_ssh(
             "alpha", []
         )  # the real agent stops around the failure
+
+
+def test_run_workspace_ssh_names_a_missing_binary_from_the_wait(
+    monkeypatch: pytest.MonkeyPatch, client_env: None, tmp_path: Path
+) -> None:
+    # The booted path probes before the session: a missing ssh is
+    # the same one-line exit there, not a traceback from the probe.
+    async def fake_prepare(*args, **kwargs) -> tuple[dict, bool]:
+        return KEY, True
+
+    monkeypatch.setattr(ssh, "prepare", fake_prepare)
+    monkeypatch.setattr(
+        ssh, "known_hosts_path", lambda ws, base=None: str(tmp_path)
+    )
+
+    @contextmanager
+    def fake_serve(private, comment):
+        yield FakeAgent()
+
+    monkeypatch.setattr(ssh.agent, "serve", fake_serve)
+
+    def missing(argv, **kwargs):
+        raise FileNotFoundError("ssh")
+
+    monkeypatch.setattr(ssh.subprocess, "run", missing)
+    with pytest.raises(SystemExit, match="ssh not found"):
+        ssh.run_workspace_ssh("alpha", [])
+
+
+# --- the first-boot wait (#168) ---
+
+
+def probe_argv_of(passthrough: list[str]) -> list[str]:
+    """The probe argv for a passthrough, through build_args itself."""
+    return ssh.probe_args(
+        "alpha", "/faked/agent.sock", "/faked/identity.pub", "/kh", passthrough
+    )
+
+
+def test_probe_args_carries_the_user_and_a_true_command() -> None:
+    argv = probe_argv_of(["-l", "root"])
+    assert argv[0] == "ssh"
+    assert "-q" in argv  # the probe keeps its attempts to one line
+    assert "-l" in argv and "root" in argv
+    assert argv[argv.index("alpha") + 1 :] == ["true"]
+
+
+def test_probe_args_never_carries_a_command_form_passthrough() -> None:
+    # A command-first passthrough ("msks ssh ws -- uname -a") is all
+    # command to split_command, so its words cannot reach the probe —
+    # the double-run guard this whole wait exists for.
+    argv = probe_argv_of(["uname", "-a"])
+    assert argv[argv.index("alpha") + 1 :] == ["true"]
+    assert "uname" not in argv
+
+
+def test_probe_args_drops_all_session_luggage() -> None:
+    # Tunnels, forwards, verbosity — bundled spellings included —
+    # and RemoteCommand cannot reach the probe: -N and
+    # SessionType=none would hold it open running nothing, -W never
+    # ends on its own, and RemoteCommand refuses a command-line
+    # command outright. The session keeps every one (pinned below).
+    passthrough = [
+        "-fN",
+        "-L",
+        "8080:localhost:80",
+        "-W",
+        "localhost:22",
+        "-oRemoteCommand=sleep 600",
+        "-v",
+        "-l",
+        "root",
+    ]
+    argv = probe_argv_of(passthrough)
+    tail = argv[argv.index("alpha") + 1 :]
+    assert tail == ["true"]
+    for word in (
+        "-fN",
+        "-L",
+        "8080:localhost:80",
+        "-W",
+        "localhost:22",
+        "-v",
+    ):
+        assert word not in argv
+    assert "RemoteCommand" not in " ".join(argv)
+    # The login user is the one setting the probe keeps.
+    assert "-l" in argv and "root" in argv
+    session = ssh.build_args(
+        "alpha", "/faked/agent.sock", "/faked/identity.pub", "/kh", passthrough
+    )
+    assert "-fN" in session and "-W" in session
+    assert "-oRemoteCommand=sleep 600" in session
+
+
+def test_probe_user_extracts_each_user_form() -> None:
+    # -l in both spellings, split and inline -o User=..., all kept;
+    # a dangling -l (an option where its value would be) stays out
+    # so the probe falls back — probe_args then skips the wait
+    # entirely, pinned below — and an uppercase -L forward names no
+    # user.
+    assert ssh.probe_user(["-l", "root"]) == ["-l", "root"]
+    assert ssh.probe_user(["-lroot"]) == ["-lroot"]
+    assert ssh.probe_user(["-o", "User=root"]) == ["-o", "User=root"]
+    assert ssh.probe_user(["-oUser=root"]) == ["-oUser=root"]
+    assert ssh.probe_user(["-l", "-A"]) == []
+    assert ssh.probe_user(["-A", "-T"]) == []
+    assert ssh.probe_user(["-L8080:localhost:80"]) == []
+
+
+def test_probe_args_carries_the_attached_login_spelling() -> None:
+    # ssh parses -lroot as user root and takes the first user it
+    # sees, so the probe must carry it too — not the default user.
+    argv = probe_argv_of(["-lroot"])
+    assert "-lroot" in argv
+    assert "msks" not in argv
+
+
+def test_probe_args_shares_the_sessions_transport_options() -> None:
+    # The probe authenticates through the same ProxyCommand,
+    # known_hosts, host-key policy, agent, and identity — the
+    # injected option block is the session's own, verbatim.
+    session = ssh.build_args(
+        "alpha", "/faked/agent.sock", "/faked/identity.pub", "/kh", []
+    )
+    probe = probe_argv_of([])
+    injected = session[1:-2]  # no passthrough options: the whole tail
+    assert probe[2 : 2 + len(injected)] == injected
+
+
+def test_probe_args_refuses_a_session_no_probe_can_mirror() -> None:
+    # A dangling -l names a user ssh will refuse outright — the
+    # session answers with its own immediate usage error, so no
+    # probe is built and the wait is skipped.
+    assert probe_argv_of(["-l"]) is None
+    assert probe_argv_of(["-l", "-A"]) is None
+
+
+def test_probe_args_keeps_a_defaulted_user_from_double_injection() -> None:
+    argv = probe_argv_of([])
+    # wants_user saw no user in the options, so the default login rides
+    # the probe exactly as it rides the real session.
+    assert "-l" in argv
+    assert argv[argv.index("alpha") + 1 :] == ["true"]
+
+
+def test_run_workspace_ssh_waits_out_a_first_boot(
+    monkeypatch: pytest.MonkeyPatch,
+    client_env: None,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    async def fake_prepare(*args, **kwargs) -> tuple[dict, bool]:
+        return KEY, True
+
+    sleeps: list[float] = []
+
+    def fast_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    clock = {"now": 0.0}
+
+    def fake_monotonic() -> float:
+        return clock["now"]
+
+    monkeypatch.setattr(ssh, "prepare", fake_prepare)
+    monkeypatch.setattr(
+        ssh, "known_hosts_path", lambda ws, base=None: str(tmp_path)
+    )
+    monkeypatch.setattr(ssh.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(ssh.time, "sleep", fast_sleep)
+
+    @contextmanager
+    def fake_serve(private, comment):
+        yield FakeAgent()
+
+    monkeypatch.setattr(ssh.agent, "serve", fake_serve)
+    codes = iter([255, 255, 0, 7])  # two refusals, then seeded; real: 7
+    commands: list[list[str]] = []
+
+    def fake_run(argv, **kwargs) -> SimpleNamespace:
+        commands.append(argv)
+        clock["now"] += 1.0
+        return SimpleNamespace(returncode=next(codes))
+
+    monkeypatch.setattr(ssh.subprocess, "run", fake_run)
+    rc = ssh.run_workspace_ssh("alpha", [])
+    assert rc == 7
+    assert len(commands) == 4  # three probes, then the one real session
+    assert commands[-1][-1] == "alpha"  # the real session carries no probe
+    assert all(c[-1] == "true" for c in commands[:-1])
+    assert sleeps == [ssh.SSH_RETRY_PAUSE_S, ssh.SSH_RETRY_PAUSE_S]
+    err = capsys.readouterr().err
+    assert err.count("not accepting the login yet") == 2
+
+
+def test_run_workspace_ssh_treats_a_stalled_probe_as_not_ready(
+    monkeypatch: pytest.MonkeyPatch,
+    client_env: None,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    async def fake_prepare(*args, **kwargs) -> tuple[dict, bool]:
+        return KEY, True
+
+    monkeypatch.setattr(ssh, "prepare", fake_prepare)
+    monkeypatch.setattr(
+        ssh, "known_hosts_path", lambda ws, base=None: str(tmp_path)
+    )
+    clock = {"now": 0.0}
+
+    def fake_monotonic() -> float:
+        return clock["now"]
+
+    monkeypatch.setattr(ssh.time, "monotonic", fake_monotonic)
+
+    def advance(seconds: float) -> None:
+        clock["now"] += 1.0
+
+    monkeypatch.setattr(ssh.time, "sleep", advance)
+
+    @contextmanager
+    def fake_serve(private, comment):
+        yield FakeAgent()
+
+    monkeypatch.setattr(ssh.agent, "serve", fake_serve)
+    timeouts: list[float] = []
+
+    def stalled_then_ready(argv, timeout=None):
+        clock["now"] += 1.0
+        if timeout is not None:
+            timeouts.append(timeout)
+        if len(timeouts) == 1:
+            # A wedged forward never answers: the attempt is bounded
+            # by the time the deadline leaves, not by the stall.
+            raise subprocess.TimeoutExpired(cmd="ssh", timeout=timeout)
+        if argv[-1] == "true":
+            return SimpleNamespace(returncode=0)
+        return SimpleNamespace(returncode=7)
+
+    monkeypatch.setattr(ssh.subprocess, "run", stalled_then_ready)
+    monkeypatch.setattr(ssh, "SSH_SEED_WAIT_S", 30.0)
+    rc = ssh.run_workspace_ssh("alpha", [])
+    assert rc == 7
+    # 30s deadline at t=0; the stall consumed 1s, the pause 1s more.
+    assert timeouts == [30.0, 28.0]
+    err = capsys.readouterr().err
+    assert err.count("not accepting the login yet") == 1
+
+
+def test_run_workspace_ssh_stops_waiting_at_the_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+    client_env: None,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    async def fake_prepare(*args, **kwargs) -> tuple[dict, bool]:
+        return KEY, True
+
+    monkeypatch.setattr(ssh, "prepare", fake_prepare)
+    monkeypatch.setattr(
+        ssh, "known_hosts_path", lambda ws, base=None: str(tmp_path)
+    )
+    clock = {"now": 0.0}
+
+    def fake_monotonic() -> float:
+        return clock["now"]
+
+    monkeypatch.setattr(ssh.time, "monotonic", fake_monotonic)
+
+    def advance(seconds: float) -> None:
+        clock["now"] += 10.0
+
+    monkeypatch.setattr(ssh.time, "sleep", advance)
+
+    @contextmanager
+    def fake_serve(private, comment):
+        yield FakeAgent()
+
+    monkeypatch.setattr(ssh.agent, "serve", fake_serve)
+    count = {"n": 0}
+
+    def fake_run(argv, **kwargs) -> SimpleNamespace:
+        count["n"] += 1
+        clock["now"] += 1.0
+        # The probe never succeeds; the real session runs regardless
+        # and stands or falls on its own.
+        return SimpleNamespace(returncode=0 if argv[-1] != "true" else 255)
+
+    monkeypatch.setattr(ssh.subprocess, "run", fake_run)
+    monkeypatch.setattr(ssh, "SSH_SEED_WAIT_S", 3.0)
+    rc = ssh.run_workspace_ssh("alpha", [])
+    assert rc == 0
+    # One probe at t=0; the pause lands at t=11, past the 3s
+    # deadline, so the loop stops before a second attempt and the
+    # real session runs exactly once.
+    assert count["n"] == 2
+
+
+def test_run_workspace_ssh_skips_the_wait_when_not_booted(
+    monkeypatch: pytest.MonkeyPatch, client_env: None, tmp_path: Path
+) -> None:
+    async def fake_prepare(*args, **kwargs) -> tuple[dict, bool]:
+        return KEY, False
+
+    monkeypatch.setattr(ssh, "prepare", fake_prepare)
+    monkeypatch.setattr(
+        ssh, "known_hosts_path", lambda ws, base=None: str(tmp_path)
+    )
+
+    @contextmanager
+    def fake_serve(private, comment):
+        yield FakeAgent()
+
+    monkeypatch.setattr(ssh.agent, "serve", fake_serve)
+    commands: list[list[str]] = []
+
+    def fake_run(argv, **kwargs) -> SimpleNamespace:
+        commands.append(argv)
+        return SimpleNamespace(returncode=255)
+
+    monkeypatch.setattr(ssh.subprocess, "run", fake_run)
+    rc = ssh.run_workspace_ssh("alpha", [])
+    assert rc == 255
+    assert len(commands) == 1  # an already-running guest gets one dial
+
+
+def test_run_workspace_ssh_skips_the_wait_when_no_probe_exists(
+    monkeypatch: pytest.MonkeyPatch, client_env: None, tmp_path: Path
+) -> None:
+    # A dangling -l: probe_args answers None, the wait is skipped,
+    # and the session fails once with ssh's own immediate error.
+    async def fake_prepare(*args, **kwargs) -> tuple[dict, bool]:
+        return KEY, True
+
+    monkeypatch.setattr(ssh, "prepare", fake_prepare)
+    monkeypatch.setattr(
+        ssh, "known_hosts_path", lambda ws, base=None: str(tmp_path)
+    )
+
+    @contextmanager
+    def fake_serve(private, comment):
+        yield FakeAgent()
+
+    monkeypatch.setattr(ssh.agent, "serve", fake_serve)
+    commands: list[list[str]] = []
+
+    def fake_run(argv, **kwargs) -> SimpleNamespace:
+        commands.append(argv)
+        return SimpleNamespace(returncode=255)
+
+    monkeypatch.setattr(ssh.subprocess, "run", fake_run)
+    rc = ssh.run_workspace_ssh("alpha", ["-l"])
+    assert rc == 255
+    assert len(commands) == 1
 
 
 # --- CLI wiring ---

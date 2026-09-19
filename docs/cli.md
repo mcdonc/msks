@@ -537,7 +537,19 @@ msks ssh my-workspace -- -L 8080:localhost:80
 The command boots the workspace first when the daemon reports it as
 not running (the same notices as `msks console`), fetches the
 identity over the authenticated API, and runs `ssh` with the
-forward websocket as its ProxyCommand (`msks forward <ws> 22`). For
+forward websocket as its ProxyCommand (`msks forward <ws> 22`). A
+session that booted its workspace waits out the guest's first boot
+(#168): the daemon reports `running` while the guest's sshd is
+already up but the identity seed has yet to land in
+`authorized_keys`, so the command probes the login first (a
+throwaway `true` as the remote command, retried for up to 30s with
+a one-line notice between attempts) and opens the real session —
+interactive or one-shot — once the guest accepts the workspace
+key; a remote command runs exactly once either way. The probe
+carries only the session's login user — msks's own transport, its
+quiet flag, and a `true` command — so a session's tunnels and
+other ssh options cannot hold the wait open or alter it; the
+session itself keeps every option. For
 a daemon-minted workspace the private half arrives over that API;
 for a client-minted one (#121, the create default) the API serves
 the public half and the private half comes from the local data root

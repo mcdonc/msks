@@ -355,6 +355,14 @@ processes up` shows one devenv startup instead of two, and the
   image's own default account (`debian`, with `/home/debian` and a
   passwordless-sudo entry) from ever being created — a workspace
   created from this image carries `msks` as its only account.
+- **`msks ssh` waits out a just-booted workspace's identity seed
+  (#168).** The first `msks ssh` against a freshly created
+  workspace could exit `Permission denied (publickey)`: the guest's
+  sshd answers before first-boot provisioning has written
+  `authorized_keys`, and a bare retry succeeds. A session whose
+  pre-flight booted the workspace now probes the login (a
+  throwaway `true` command, retried up to 30s) before opening the
+  real session, which runs exactly once either way.
 
 - **Failed starts keep an actionable status (#158).** A `vm.boot`
   failure reaps the half-created VMM and the watcher's dead-socket

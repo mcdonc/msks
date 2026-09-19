@@ -26,6 +26,15 @@ rides untouched (see ``docs/networking.md``). Everything after the
 workspace id (or after ``--``) is passed to ssh verbatim; ssh's own
 ``--`` inside it separates options from a remote command
 (``msks ssh <ws> -- -A -- uname -a``).
+
+A session whose pre-flight booted the workspace first waits out the
+guest's first-boot identity seed (#168): the daemon reports
+``running`` while the guest's sshd is up but cloud-init has yet to
+write ``authorized_keys``, so a bare dial in that window is refused
+with ``Permission denied (publickey)``. A probe login (``true`` as
+its remote command) retries behind the boot until the guest accepts
+the workspace key, and the real session — interactive or one-shot —
+then runs exactly once.
 """
 
 import asyncio
@@ -33,6 +42,7 @@ import os
 import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
@@ -53,6 +63,21 @@ SSH_PORT = 22
 #: to root in ``authorized_keys``.
 DEFAULT_USER = "msks"
 
+#: How long a just-booted workspace's first ssh attempt keeps
+#: retrying (#168): the daemon reports ``running`` when the VM
+#: process is up, but the guest's sshd answers before cloud-init's
+#: identity seed has written ``authorized_keys`` — an ssh dial in
+#: that window is refused with ``Permission denied (publickey)``
+#: and a bare retry succeeds. The wait applies only when this
+#: invocation booted the workspace (a seeded guest authenticates
+#: from the first attempt), and it probes with a throwaway ``true``
+#: command so a remote command in the passthrough runs exactly
+#: once either way.
+SSH_SEED_WAIT_S = 30.0
+
+#: The pause between probe attempts inside :data:`SSH_SEED_WAIT_S`.
+SSH_RETRY_PAUSE_S = 1.0
+
 
 async def prepare(
     workspace_id: str,
@@ -60,14 +85,21 @@ async def prepare(
     token: str,
     ssl_ctx=None,
     transport=None,
-) -> dict:
-    """Boot the workspace if needed, then fetch its identity."""
-    await ensure_running(
+) -> tuple[dict, bool]:
+    """Boot the workspace if needed, then fetch its identity.
+
+    The second half of the pair is whether this call observed a
+    boot (:func:`msks.client.rest.ensure_running`) — a just-booted
+    guest may still be running its first-boot identity seed, which
+    the run loop waits out before the real session.
+    """
+    booted = await ensure_running(
         workspace_id, url, token, ssl_ctx=ssl_ctx, transport=transport
     )
-    return await fetch_ssh_key(
+    key = await fetch_ssh_key(
         url, token, workspace_id, transport=transport, ssl_ctx=ssl_ctx
     )
+    return key, booted
 
 
 def cache_dir() -> Path:
@@ -208,17 +240,25 @@ def split_command(passthrough: list[str]) -> tuple[list[str], list[str]]:
 def wants_user(args: list[str]) -> bool:
     """Whether the passthrough args name a login user themselves.
 
-    ``-l root`` (the recovery login) and ``-o User=root`` — the value
-    separate or inline — both count; when ssh is told its user, the
-    default is not injected twice.
+    ``-l root``, its attached spelling ``-lroot``, and
+    ``-o User=root`` — the value separate or inline — all count;
+    when ssh is told its user, the default is not injected twice.
+    A dangling ``-l`` counts too: ssh's own error is the clear one.
     """
     for index, arg in enumerate(args):
-        if arg == "-l":
-            return True  # even dangling: ssh's own error is the clear one
+        if names_login(arg):
+            return True
         value = option_value(index, arg, args)
         if value is not None and names_user(value):
             return True
     return False
+
+
+def names_login(arg: str) -> bool:
+    """Whether an argument is ssh's ``-l`` — the flag beside its
+    value, the attached ``-lroot`` spelling, or dangling. Uppercase
+    ``-L`` (a local forward) is a different option."""
+    return arg == "-l" or (arg.startswith("-l") and len(arg) > 2)
 
 
 def option_value(index: int, arg: str, args: list[str]) -> str | None:
@@ -259,6 +299,34 @@ def proxy_command(workspace_id: str) -> str:
     )
 
 
+def session_options(
+    workspace_id: str,
+    agent_socket: str,
+    identity_pub: str,
+    known_hosts: str,
+) -> list[str]:
+    """The transport, host-key, and agent options every msks ssh
+    invocation carries — the session and the first-boot probe
+    alike: the forward as ProxyCommand, the per-workspace
+    known_hosts under ``accept-new``, and the identity named by its
+    public half and served from the transient agent under
+    ``IdentitiesOnly``."""
+    return [
+        "-o",
+        proxy_command(workspace_id),
+        "-o",
+        f"UserKnownHostsFile={config_quote(known_hosts)}",
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+        "-o",
+        "IdentitiesOnly=yes",
+        "-o",
+        f"IdentityAgent={config_quote(agent_socket)}",
+        "-i",
+        identity_pub,
+    ]
+
+
 def build_args(
     workspace_id: str,
     agent_socket: str,
@@ -280,18 +348,12 @@ def build_args(
     one key and nothing else.
     """
     options, command = split_command(passthrough)
-    argv = ["ssh", *options, "-o", proxy_command(workspace_id)]
-    argv += [
-        "-o",
-        f"UserKnownHostsFile={config_quote(known_hosts)}",
-        "-o",
-        "StrictHostKeyChecking=accept-new",
-        "-o",
-        "IdentitiesOnly=yes",
-        "-o",
-        f"IdentityAgent={config_quote(agent_socket)}",
-        "-i",
-        identity_pub,
+    argv = [
+        "ssh",
+        *options,
+        *session_options(
+            workspace_id, agent_socket, identity_pub, known_hosts
+        ),
     ]
     if not wants_user(options):
         argv += ["-l", DEFAULT_USER]
@@ -304,6 +366,151 @@ def identity_comment(key: dict) -> str:
     return fields[2] if len(fields) > 2 else ""
 
 
+def probe_args(
+    workspace_id: str,
+    agent_socket: str,
+    identity_pub: str,
+    known_hosts: str,
+    passthrough: list[str],
+) -> list[str] | None:
+    """The readiness probe's argv: msks's own transport and agent
+    settings, the session's login user, and a throwaway ``true`` as
+    the remote command — the passthrough contributes nothing else.
+
+    The probe asks one question — does the guest accept the
+    identity yet, as the user the session will log in as — so it
+    carries exactly the settings that shape that answer. The
+    session's own luggage stays with the session: ``-N``/
+    ``SessionType=none`` make ssh ignore a command and hold the
+    connection open, ``-W`` and the ``-L``/``-R``/``-D`` forwards
+    stretch a probe into a tunnel (bundled short flags like
+    ``-fN`` reach the same states spelling-free), and
+    ``RemoteCommand`` makes ssh refuse a command-line command
+    outright — none of them can stall or distort the probe when
+    none of them is in it. ``true`` runs no user command, so a
+    retried probe cannot run anything twice, and ``-q`` keeps
+    ssh's own per-attempt chatter quiet (the notice and the
+    forward's refusal line are what a retry prints).
+
+    None when no probe can represent the session: a user named in
+    a shape ssh refuses outright (a dangling ``-l``) answers
+    nothing — the session fails with its own immediate usage
+    error, so it runs at once.
+    """
+    options, _ = split_command(passthrough)
+    user = probe_user(options)
+    if wants_user(options) and not user:
+        return None
+    argv = [
+        "ssh",
+        "-q",
+        *user,
+        *session_options(
+            workspace_id, agent_socket, identity_pub, known_hosts
+        ),
+    ]
+    if not wants_user(options):
+        argv += ["-l", DEFAULT_USER]
+    return argv + [workspace_id, "true"]
+
+
+def probe_user(options: list[str]) -> list[str]:
+    """The passthrough fragments that name the login user: ``-l``
+    with its value, and ``-o User=...`` in both spellings.
+
+    A guest can admit some users and refuse others (an operator's
+    ``AllowUsers``, a hardened ``PermitRootLogin``), so the probe
+    asks as the user the session will log in as — the one session
+    setting that changes the answer to its question.
+    """
+    fragments: list[str] = []
+    for index, arg in enumerate(options):
+        fragments += user_pair(index, arg, options)
+    return fragments
+
+
+def user_pair(index: int, arg: str, options: list[str]) -> list[str]:
+    """The passthrough fragments at ``index`` that name the login
+    user: ``-l`` in either spelling, or an ``-o User=...`` in
+    either spelling — an empty pair when the argument names no
+    user."""
+    if names_login(arg):
+        return login_pair(index, arg, options)
+    value = option_value(index, arg, options)
+    if value is not None and names_user(value):
+        return inline_user_pair(arg, value)
+    return []
+
+
+def login_pair(index: int, arg: str, options: list[str]) -> list[str]:
+    """The ``-l`` fragments: the attached ``-lroot`` spelling is
+    one argument, the value split beside the flag is two."""
+    if len(arg) > 2:
+        return [arg]
+    if next_arg_names_user(options, index):
+        return [arg, options[index + 1]]
+    return []
+
+
+def inline_user_pair(arg: str, value: str) -> list[str]:
+    """The ``-o User=...`` fragments: the split spelling is two
+    arguments, the inline ``-oValue`` spelling is one."""
+    return [arg, value] if arg == "-o" else [arg]
+
+
+def next_arg_names_user(options: list[str], index: int) -> bool:
+    """Whether the argument after a ``-l`` can be its value — a
+    plain word names the user; an option flag means the ``-l`` was
+    dangling, and ssh's own usage error for the session is the
+    clearer report."""
+    return index + 1 < len(options) and not options[index + 1].startswith("-")
+
+
+def wait_for_identity(
+    workspace_id: str, probe_argv: list[str], deadline: float
+) -> None:
+    """Retry the probe until the guest accepts the login or the
+    deadline passes (#168).
+
+    Each attempt is bounded by the time the deadline leaves, so a
+    stalled connection is one more not-ready answer, not a hang,
+    and the whole wait stays inside the deadline plus one pause. A
+    deadline that passes leaves the failure to the real session:
+    ssh's own message names the refusal, and the probe's notices
+    have already said what was being waited for.
+    """
+    while True:
+        now = time.monotonic()
+        if now >= deadline:
+            return
+        if probe_attempt(probe_argv, deadline - now):
+            return
+        time.sleep(SSH_RETRY_PAUSE_S)
+        if time.monotonic() < deadline:
+            print(
+                f"msks: {workspace_id} is not accepting the login yet; "
+                "retrying",
+                file=sys.stderr,
+            )
+
+
+def probe_attempt(probe_argv: list[str], budget: float) -> bool:
+    """One probe attempt: True when the guest accepted the login.
+
+    A stalled connection is one more not-ready answer — bounded by
+    the budget the deadline leaves the attempt — and an ssh missing
+    from PATH is the session's own named error, raised here so the
+    wait reports it before the session ever runs.
+    """
+    try:
+        completed = subprocess.run(probe_argv, timeout=budget)
+    except subprocess.TimeoutExpired:
+        return False
+    except FileNotFoundError:
+        raise SystemExit("msks ssh: ssh not found on PATH") from None
+    return completed.returncode == 0
+
+
 def run_workspace_ssh(
     workspace_id: str, passthrough: list[str], transport=None
 ) -> int:
@@ -312,14 +519,31 @@ def run_workspace_ssh(
     token = env_token()
     url = env_url()
     ssl_ctx = ssl_context()
-    key = asyncio.run(prepare(workspace_id, url, token, ssl_ctx, transport))
+    key, booted = asyncio.run(
+        prepare(workspace_id, url, token, ssl_ctx, transport)
+    )
     private = agent.load_private(resolve_private(key, workspace_id))
     with agent.serve(private, identity_comment(key)) as served:
+        known_hosts = known_hosts_path(workspace_id)
+        if booted:
+            probe_argv = probe_args(
+                workspace_id,
+                served.server_address,
+                served.identity_path,
+                known_hosts,
+                passthrough,
+            )
+            if probe_argv is not None:
+                wait_for_identity(
+                    workspace_id,
+                    probe_argv,
+                    time.monotonic() + SSH_SEED_WAIT_S,
+                )
         argv = build_args(
             workspace_id,
             served.server_address,
             served.identity_path,
-            known_hosts_path(workspace_id),
+            known_hosts,
             passthrough,
         )
         try:
