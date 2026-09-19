@@ -578,7 +578,9 @@ lists the same keys as on the host, and `git push git@github.com`,
 authenticates through a transient in-process agent (above), and
 stock ssh would forward _that_ one when asked to forward at all —
 so msks rewrites the request into `ForwardAgent=<your socket>`,
-an explicit path (OpenSSH 8.1+); the workspace identity stays an
+an explicit path (an OpenSSH client 8.2 or newer parses the
+form; an older client exits with its own usage error — RHEL 8's
+8.0, for one); the workspace identity stays an
 authentication credential and reaches the guest as nothing else.
 A request that already names a socket
 (`-o ForwardAgent=/path/to/sock`) keeps its own. `-A` with no
@@ -592,11 +594,14 @@ argument ssh would take works verbatim) is passed to ssh. A
 passthrough that starts with a plain word is a remote command
 (`msks ssh my-workspace -- uname -a`); when it starts with an
 option, ssh's own separator carries a command after the options
-(`msks ssh my-workspace -- -A -- uname -a`). `-A` forwards the
-session agent — the guest can sign as the workspace identity
-(useful for nested logins to the same workspace); forwarding your
-own agent — git credentials for `git push` from inside — is the
-alias path's job, where your real `SSH_AUTH_SOCK` rides untouched.
+(`msks ssh my-workspace -- -A -- uname -a`). `-A` forwards your
+agent, the same forwarding the paragraphs above describe —
+before #174 it forwarded the session agent, the minted workspace
+identity, which served nested logins to the same workspace (ssh
+from inside to `localhost`). That use now names the identity
+explicitly instead: `msks key my-workspace --private` writes the
+half, or your own agent (forwarded) holds it once you `ssh-add`
+the written key.
 The exit code is ssh's own (255 for ssh failures), not the msks
 command set. The session agent lives exactly as long as the
 `msks ssh` process — `ControlPersist`/mux sessions that outlive it

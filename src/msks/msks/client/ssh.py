@@ -297,9 +297,11 @@ def operator_agent_socket() -> str:
     if socket is None:
         named = os.environ.get("SSH_AUTH_SOCK", "") or "unset"
         raise SystemExit(
-            "msks ssh: -A forwards the operator's agent, and "
+            "msks ssh: -A (or ForwardAgent=yes) forwards the "
+            "operator's agent, and "
             f"SSH_AUTH_SOCK ({named}) names no live agent — start "
-            "one (ssh-agent, or the desktop agent) or drop -A"
+            "one (ssh-agent, or the desktop agent) or drop the "
+            "forwarding option"
         )
     return socket
 
@@ -308,25 +310,110 @@ def forward_agent_value(value: str) -> str | None:
     """The forwarding target an ssh ``-o`` value names, when it is a
     ForwardAgent setting. ssh_config keywords and the values yes/no
     are case-insensitive; an explicit socket path is returned as
-    written."""
+    written (surrounding double quotes — which ssh's parser strips
+    — kept on, so a passthrough token survives verbatim)."""
     for sep in ("=", " "):
         if value.lower().startswith("forwardagent" + sep):
             return value[len("forwardagent") + 1 :]
     return None
 
 
+def named_forward_agent_target(options: list[str]) -> str | None:
+    """The explicit socket some ForwardAgent setting in the options
+    names, when one does. An explicit path takes precedence in
+    stock ssh over every yes/flag form regardless of order, so its
+    presence means the operator already chose the socket and the
+    rewrite stands down entirely."""
+    for index, arg in enumerate(options):
+        value = option_value(index, arg, options)
+        if value is None:
+            continue
+        target = forward_agent_value(value)
+        if target is not None and target.strip('"').startswith("/"):
+            return target
+    return None
+
+
+def flags_until_value(arg: str) -> str:
+    """The leading short flags of a bundled token, up to the first
+    option that carries its value attached — the rest of the token
+    is that value, not more flags (``-JAdmin@h`` names a jump
+    host, not a bundle)."""
+    for pos, ch in enumerate(arg):
+        if ch in "DFIJLOPQSWbeilmopw":
+            return arg[:pos]
+    return arg
+
+
+def bundled_agent_request(arg: str) -> bool:
+    """Whether a bundled short-flag token carries ``-A`` — ssh
+    accepts ``-vA`` as ``-v`` plus ``-A``. A bundled request is not
+    a spelling the rewrite can replace, and leaving it alone would
+    silently forward the session agent — the very accident this
+    pass exists to prevent — so the caller refuses it. (The
+    value-attached options ``-o``/``-l`` and their inline forms
+    own everything after themselves, so they are excluded here.)"""
+    if len(arg) < 3 or not arg.startswith("-"):
+        return False
+    if arg.startswith(("--", "-o", "-l")):
+        return False
+    return "A" in flags_until_value(arg[1:])
+
+
+def refuse_bundled_requests(options: list[str]) -> None:
+    """Exit naming the first bundled token that carries ``-A``."""
+    for arg in options:
+        if bundled_agent_request(arg):
+            raise SystemExit(
+                f"msks ssh: {arg!r} bundles -A with other flags — "
+                "spell -A as its own argument so it forwards your "
+                "agent; the bundled spelling would forward the "
+                "session agent instead"
+            )
+
+
+def consumes_forward_slot(
+    index: int, arg: str, options: list[str], asked: bool
+) -> bool:
+    """Whether the option at ``index`` is consumed by the rewrite: a
+    request form, or any ForwardAgent setting beside a request (a
+    disabling ``no`` rides along — stock ssh resolves the pair to
+    forwarding, so the rewrite states the socket once for both)."""
+    if requests_forwarding(index, arg, options):
+        return True
+    value = option_value(index, arg, options)
+    return (
+        asked and value is not None and forward_agent_value(value) is not None
+    )
+
+
 def requests_forwarding(index: int, arg: str, options: list[str]) -> bool:
     """Whether the option at ``index`` asks for agent forwarding in a
     form msks rewrites: bare ``-A``, or a ForwardAgent setting whose
-    target is ``yes``/``SSH_AUTH_SOCK`` in either ``-o`` spelling."""
+    target is ``yes``/``SSH_AUTH_SOCK`` (quotes ssh would strip
+    included) in either ``-o`` spelling."""
     if arg == "-A":
         return True
     value = option_value(index, arg, options)
     target = forward_agent_value(value) if value is not None else None
-    return target is not None and target.lower() in (
+    return target is not None and target.strip('"').lower() in (
         "yes",
         "ssh_auth_sock",
     )
+
+
+def any_requests_forwarding(options: list[str]) -> bool:
+    """Whether any option in the list asks for agent forwarding."""
+    return any(
+        requests_forwarding(index, arg, options)
+        for index, arg in enumerate(options)
+    )
+
+
+def option_span(arg: str) -> int:
+    """How many argv tokens the option at ``arg`` owns — a separate
+    ``-o`` owns the value beside it."""
+    return 2 if arg == "-o" else 1
 
 
 def forward_agent_args(options: list[str]) -> list[str]:
@@ -340,22 +427,41 @@ def forward_agent_args(options: list[str]) -> list[str]:
     explicit form ``-o ForwardAgent=<path>``: the operator's socket,
     named here at launch. The workspace identity stays an
     authentication credential; the guest receives the operator's
-    real keys and nothing else. A request that already names a
-    socket is left untouched — ssh takes the first obtained value
-    for a repeated option, and the operator's own spelling wins as
-    with stock ssh. #123's own-key sessions authenticate through the
-    operator's agent or an identity file; the rewrite then points
-    forwarding at the same socket ssh already forwards, and this
-    pass reads as a no-op.
+    real keys and nothing else.
+
+    Precedence, mirroring stock ssh: an explicit socket named by any
+    ForwardAgent setting wins over every request regardless of
+    order, so its presence stands the rewrite down completely — the
+    operator's own spelling rides untouched. A disabling ``no``
+    beside a request is consumed with it (stock ssh resolves that
+    pair to forwarding, first value or not). A bundled short flag
+    carrying ``-A`` (``-vA``) is refused with a named error: it is
+    not a spelling this pass can rewrite, and passing it through
+    would silently forward the session agent. #123's own-key
+    sessions authenticate through the operator's agent or an
+    identity file; the rewrite then points forwarding at the same
+    socket ssh already forwards, and this pass reads as a no-op.
     """
+    if named_forward_agent_target(options) is not None:
+        return list(options)
+    refuse_bundled_requests(options)
+    asked = any_requests_forwarding(options)
     rewritten: list[str] = []
+    stated = False
     index = 0
     while index < len(options):
         arg = options[index]
-        if requests_forwarding(index, arg, options):
-            rewritten += ["-o", f"ForwardAgent={operator_agent_socket()}"]
+        if consumes_forward_slot(index, arg, options, asked):
+            # The first consumed setting states the socket; the
+            # rest drop away (ssh takes the first value anyway).
+            if not stated:
+                stated = True
+                rewritten += [
+                    "-o",
+                    "ForwardAgent=" + config_quote(operator_agent_socket()),
+                ]
             # A separate -o value was consumed as this option's own.
-            index += 2 if arg == "-o" else 1
+            index += option_span(arg)
             continue
         rewritten.append(arg)
         index += 1

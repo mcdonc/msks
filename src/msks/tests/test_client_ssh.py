@@ -803,6 +803,65 @@ def test_forward_agent_args_names_an_unset_agent(
         ssh.forward_agent_args(["-A"])
 
 
+def test_forward_agent_args_refuses_bundled_a(agent_env: str) -> None:
+    """A bundled short flag carrying -A is a forwarding request this
+    pass cannot spell — refusing it beats silently forwarding the
+    session agent. -JAdmin@h (a value attached to -J) and -ta are
+    not bundles."""
+    for arg in ("-vA", "-tA", "-At"):
+        with pytest.raises(SystemExit, match="spell -A as its own"):
+            ssh.forward_agent_args([arg])
+    assert ssh.forward_agent_args(["-JAdmin@h"]) == ["-JAdmin@h"]
+    assert ssh.forward_agent_args(["-ta"]) == ["-ta"]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        ["-A", "-o", "ForwardAgent=/own"],
+        ["-o", "ForwardAgent=/own", "-A"],
+        ["-o", "ForwardAgent=/own", "-o", "ForwardAgent=yes"],
+        ["-vA", "-o", "ForwardAgent=/own"],  # the explicit path wins
+    ],
+)
+def test_an_explicit_socket_wins_over_requests(raw: list[str]) -> None:
+    """An explicit socket named by any ForwardAgent setting takes
+    precedence in stock ssh over every yes/flag form regardless of
+    order — the rewrite stands down entirely, without resolving any
+    agent (no live SSH_AUTH_SOCK needed here)."""
+    assert ssh.forward_agent_args(list(raw)) == raw
+
+
+def test_a_request_consumes_a_disabling_no(agent_env: str) -> None:
+    # Stock ssh resolves no-then--A to forwarding; the rewrite gives
+    # the pair the operator's socket (one setting, not two).
+    assert ssh.forward_agent_args(["-o", "ForwardAgent=no", "-A"]) == [
+        "-o",
+        f"ForwardAgent={agent_env}",
+    ]
+
+
+def test_a_quoted_yes_is_a_request(agent_env: str) -> None:
+    # ssh's option parser strips surrounding double quotes, so a
+    # quoted yes means forwarding there — and here.
+    assert ssh.forward_agent_args(["-o", 'ForwardAgent="yes"']) == [
+        "-o",
+        f"ForwardAgent={agent_env}",
+    ]
+
+
+def test_a_socket_with_whitespace_is_quoted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sock = tmp_path / "agent sock"
+    sock.touch()
+    monkeypatch.setenv("SSH_AUTH_SOCK", str(sock))
+    assert ssh.forward_agent_args(["-A"]) == [
+        "-o",
+        f'ForwardAgent="{sock}"',
+    ]
+
+
 def test_build_args_points_forwarding_at_the_operators_agent(
     agent_env: str,
 ) -> None:

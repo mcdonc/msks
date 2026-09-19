@@ -14,7 +14,11 @@ tagged `vX.Y.Z`.
   `git push` inside the workspace use the operator's keys — no
   `Host msks-*` ssh-config block needed. The workspace identity
   stays the session's authentication credential; the guest
-  receives the operator's keys and nothing else.
+  receives the operator's keys and nothing else. An explicit
+  `-o ForwardAgent=<path>` keeps its own socket, and a bundled
+  spelling like `-vA` is refused with a one-line error. The
+  explicit form needs an OpenSSH client of 8.2 or newer (the
+  previous behavior forwards the session agent on older clients).
 
 - **`devenv processes up` converges to a working appliance, loudly
   (#160).** The daemon reports the image it booted from in
