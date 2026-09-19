@@ -353,8 +353,8 @@ processes up` shows one devenv startup instead of two, and the
   root-owned is repaired on the next provisioning), and the guest
   image ships a cloud-init dropin that keeps the Debian cloud
   image's own default account (`debian`, with `/home/debian` and a
-  passwordless-sudo entry) from ever being created — `msks` stays
-  the workspace's only account.
+  passwordless-sudo entry) from ever being created — a workspace
+  created from this image carries `msks` as its only account.
 
 - **Failed starts keep an actionable status (#158).** A `vm.boot`
   failure reaps the half-created VMM and the watcher's dead-socket

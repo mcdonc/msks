@@ -324,8 +324,12 @@ let
     # cloud-init creates no accounts (#171): the image ships the
     # msks workspace user (#63), and the identity seed makes its
     # home. The genericcloud image's own default account — the
-    # 'debian' user at uid 1000 with /home/debian and a
-    # passwordless-sudo sudoers entry — never comes into being.
+    # 'debian' user with /home/debian and a passwordless-sudo
+    # sudoers entry — never comes into being. The dropin must keep
+    # lexicographically sorting at (or after) the tail of
+    # cloud.cfg.d: cloud-init merges the directory with the
+    # first-defined `users` winning, so a later-sorted dropin
+    # defining users would take precedence.
     printf '%s\n' \
       '# msks (#171): the image ships the msks user (#63);' \
       '# cloud-init creates no accounts and the identity seed' \
@@ -803,7 +807,11 @@ let
         test -x "$root"/usr/bin/msks-console-helper
         test -x "$root"/usr/bin/rsync
         test -x "$root"/usr/sbin/sshd
-        test -f "$root"/etc/cloud/cloud.cfg.d/99-msks-users.cfg
+        # The dropin's load-bearing line, not just the file's
+        # existence: a typo'd printf must fail the build here, not
+        # in the opt-in smoke.
+        grep -q '^users: \[\]' \
+          "$root"/etc/cloud/cloud.cfg.d/99-msks-users.cfg
         # The image's own trees carry no home for the workspace user
         # (the seed makes it on the persistent volume) and none for
         # a cloud-image default account either (#171).
