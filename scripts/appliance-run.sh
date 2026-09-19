@@ -222,7 +222,21 @@ boot_vm() {
 }
 JSON
   api vm.boot || return 1
-  echo "msks: appliance booting — https://$guest_ip:8660 (TOFU fingerprint in $app_dir/serial.log)"
+  # This hint fires whenever no CA has landed yet — a first boot,
+  # or a manually deleted msks-ca.pem: the guest mints its CA
+  # at first start and the extractor below lands msks-ca.pem once
+  # it serves — fresh devenv shells pick it up as MSKSC_CAFILE, so
+  # connects verify and every later boot's line stays short. A
+  # REPLACED state disk takes the short line too, misleadingly: the
+  # stale msks-ca.pem stays on the host until the extractor
+  # refreshes it, and verification against it fails until then —
+  # pre-existing, documented behavior (README, the client presets
+  # section).
+  if [ -s "$app_dir/msks-ca.pem" ]; then
+    echo "msks: appliance booting — https://$guest_ip:8660"
+  else
+    echo "msks: appliance booting — https://$guest_ip:8660 (first boot: msks warns it does not verify until the CA lands at $app_dir/msks-ca.pem — once serving, open a fresh devenv shell and it verifies)"
+  fi
 }
 # The booter races the VMM's own startup — it exits as soon as
 # vm.boot is accepted.
@@ -233,6 +247,10 @@ booter=$!
 # as cleanup() above.
 # shellcheck disable=SC2329
 graceful() {
+  # Mark the stop as REQUESTED before anything else: the VMM exit
+  # this choreography causes must read below as the stop completing,
+  # not as a crash.
+  stopping=1
   echo "msks: stopping the appliance (ACPI, then SIGTERM)"
   # The guest's logind turns the ACPI power button into a clean
   # shutdown; bounded wait, then the hard stop. vm.power-button is
@@ -321,6 +339,13 @@ for _ in $(seq 1 "$MSKS_APPLIANCE_SERVE_TIMEOUT_S"); do
   sleep 1
 done
 if [ -z "$served" ]; then
+  # A stop request during the boot wait is a completed stop, not a
+  # boot failure: no crash diagnostics, and a clean exit status so
+  # the supervisor does not restart a deliberately stopped process.
+  if [ -n "${stopping:-}" ]; then
+    echo "msks: appliance stopped during boot"
+    exit 0
+  fi
   if [ -n "$vmm_died" ]; then
     echo "msks: appliance VMM exited before serving — cloud-hypervisor.log: $app_dir/cloud-hypervisor.log, serial: $app_dir/serial.log" >&2
   else
@@ -328,7 +353,11 @@ if [ -z "$served" ]; then
   fi
   exit 1
 fi
-echo "msks: appliance serving (image $booted_image)"
+# The URL is the actionable bit on the ready line (the issue-#176
+# reader looks here for "what do I connect to"); the image rides
+# along by its short name only — the build line above already
+# printed the full store path once.
+echo "msks: appliance serving — https://$guest_ip:8660 (image ${booted_image##*/})"
 
 # --- opt-in drift auto-restart (#160) ------------------------------
 # MSKS_APPLIANCE_AUTO_RESTART=1: while the appliance runs, compare
@@ -391,5 +420,29 @@ fi
 rc=0
 wait "$chpid" || rc=$?
 wait "$booter" 2>/dev/null || true
-echo "msks: appliance VMM exited (rc=$rc); the supervisor decides what happens next"
+# Name the exit for the console reader. A requested stop ends
+# calmly: the line says "stopped", full stop — the choreography
+# line above already names ACPI and SIGTERM, and rc here is the
+# SHELL's own trap-interrupted wait (128 + the request's signal),
+# not the VMM's exit: a fast ACPI poweroff exits 0 and still
+# reports 143, so decorating the line would misname the VMM's
+# death (#176). A clean exit nobody requested (the guest powered
+# itself off, or someone drove vm.shutdown through the API socket)
+# stays stopped: devenv's default restart policy is on_failure
+# (five attempts), so exit 0 is final and the line names the way
+# back instead of a restart that never comes. Anything else is a
+# failure: the supervisor restarts it, and the why lives in the
+# two logs, not the manager's replay of the console.
+sig=""
+if [ "$rc" -gt 128 ]; then
+  name="$(kill -l "$rc" 2>/dev/null || true)"
+  if [ -n "$name" ]; then sig=" (SIG$name)"; fi
+fi
+if [ -n "${stopping:-}" ]; then
+  echo "msks: appliance stopped"
+elif [ "$rc" -eq 0 ]; then
+  echo "msks: appliance VMM exited cleanly (rc=0); it stays stopped — restart it with: devenv processes restart appliance"
+else
+  echo "msks: appliance VMM exited unexpectedly — rc=$rc$sig; the supervisor restarts it — cloud-hypervisor.log: $app_dir/cloud-hypervisor.log, serial: $app_dir/serial.log" >&2
+fi
 exit "$rc"
