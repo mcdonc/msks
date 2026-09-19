@@ -35,13 +35,14 @@ namespace — a box that runs both can export each side independently.
 A missing `MSKSC_TOKEN` is an error before any network activity: the
 client names the variable and exits. Tokens come from the daemon:
 `POST /api/v1/tokens` mints one, and the devenv environment presets
-all three from the appliance's `.appliance/` state (token + CA) —
-after the appliance's first `devenv processes up`, a fresh devenv
-shell needs no exports:
+all three from the appliance's state dir,
+`.devenv/state/appliance/` (token + CA) — after the appliance's
+first `devenv processes up`, a fresh devenv shell needs no exports:
 
 ```bash
 msks ls        # presets: https://192.168.77.2:8660, the appliance's
-               # token, and .appliance/msks-ca.pem (verified TLS)
+               # token, and .devenv/state/appliance/msks-ca.pem
+               # (verified TLS)
 ```
 
 Targeting a hand-run bare-host daemon instead (#146 — no managed
@@ -50,8 +51,8 @@ explicit pair from ITS state, with its own CA:
 
 ```bash
 export MSKSC_URL=https://127.0.0.1:8660
-export MSKSC_TOKEN=$(cat .msksd/bootstrap-token)
-export MSKSC_CAFILE=.msksd/msks-ca.pem
+export MSKSC_TOKEN=$(cat .devenv/state/msksd/bootstrap-token)
+export MSKSC_CAFILE=.devenv/state/msksd/msks-ca.pem
 ```
 
 The daemon serves TLS with a self-signed certificate. Point

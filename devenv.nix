@@ -149,24 +149,14 @@ in
 
   # The msks client (#21) targets the APPLIANCE (#146) by default,
   # so `msks ls` / `msks ssh` work from any devenv shell with no
-  # exports — egress and forwards are the appliance's. The token is
-  # read at evaluation time, so each `devenv shell` picks up a
-  # rotated value — the .appliance pattern. The CA materializes
-  # after the appliance's first boot (the run script extracts the
-  # guest's msks-ca.pem from the state disk into
-  # .appliance/msks-ca.pem); until then MSKSC_CAFILE is empty and
-  # the client warns it does not verify — cross-check the TOFU
-  # fingerprint on .appliance/serial.log, then open a fresh shell.
-  # Exports made INSIDE the devenv shell win over these presets; a
-  # variable exported before entering the shell is clobbered by
-  # them (verified live: devenv's env.* overrides pre-set exports).
+  # exports. The token and CA are resolved per shell in enterShell
+  # (below), from the appliance state dir — `.devenv/state/appliance`
+  # by default, relocated with MSKS_APPLIANCE_DIR. Until the
+  # appliance's first boot the token and CA files do not exist, so
+  # those presets stay unset (a value exported before entering the
+  # shell survives), the client warns it does not verify, and the
+  # TOFU fingerprint on the serial log covers the first connect.
   env.MSKSC_URL = "https://192.168.77.2:8660";
-  env.MSKSC_TOKEN = lib.optionalString (builtins.pathExists ./.appliance/bootstrap-token) (
-    lib.removeSuffix "\n" (builtins.readFile ./.appliance/bootstrap-token)
-  );
-  env.MSKSC_CAFILE = lib.optionalString (builtins.pathExists ./.appliance/msks-ca.pem) (
-    toString ./.appliance/msks-ca.pem
-  );
 
   tasks = {
     # WORKAROUND (klangk pattern): devenv's uv sync gate only hashes the
@@ -232,13 +222,13 @@ in
     # evaluated — the guest toolchain cannot drift from the dev shell,
     # and the build needs nothing from the host but nix.
     "msks:build-guest" = {
-      description = "Build the microvm guest assets (kernel, initrd, ext4 rootfs) into .guest/";
+      description = "Build the microvm guest assets (kernel, initrd, ext4 rootfs) into the guest state dir (.devenv/state/guest; MSKS_GUEST_DIR relocates it)";
       exec = ''
         exec env MSKS_GUEST_NIXPKGS=${pkgs.path} bash "$DEVENV_ROOT/scripts/build-guest.sh"
       '';
     };
     "msks:build-runner-image" = {
-      description = "Build the k8s vm-runner container image archive into .guest/";
+      description = "Build the k8s vm-runner container image archive into the guest state dir (.devenv/state/guest; MSKS_GUEST_DIR relocates it)";
       exec = ''
         exec env MSKS_GUEST_NIXPKGS=${pkgs.path} bash "$DEVENV_ROOT/scripts/build-runner-image.sh"
       '';
@@ -256,7 +246,7 @@ in
     # host boot by its systemd unit; appliance-setup.sh only verifies
     # it, so starting the appliance needs no sudo.
     "msks:appliance-build" = {
-      description = "Build the msksd appliance image into .appliance/";
+      description = "Build the msksd appliance image into the appliance state dir (.devenv/state/appliance; MSKS_APPLIANCE_DIR relocates it)";
       exec = ''
         exec env MSKS_GUEST_NIXPKGS=${pkgs.path} bash "$DEVENV_ROOT/scripts/build-appliance.sh"
       '';
@@ -307,17 +297,18 @@ in
     # (pinned nixpkgs, guest-assets expression, the Rust
     # console-helper baked into the workspace image), but built as
     # ONE artifact and landed as a symlink the daemon imports on its
-    # first boot — no kernel/rootfs copies, no .guest/.
+    # first boot — no kernel/rootfs copies, no guest asset dir.
     "msks:build-guest-archive" = {
-      description = "Build the workspace image archive into .msksd/default-image";
+      description = "Build the workspace image archive into the bare-host daemon state (.devenv/state/msksd/default-image; MSKSD_STATE_DIR relocates it)";
       exec = ''
         root="$DEVENV_ROOT"
-        mkdir -p "$root/.msksd"
+        state="''${MSKSD_STATE_DIR:-$root/.devenv/state/msksd}"
+        mkdir -p "$state"
         out=$(
           nix-build --no-out-link -I nixpkgs=${pkgs.path} \
             "$root/nix/guest.nix" -A image-archive
         )
-        ln -sfn "$out" "$root/.msksd/default-image"
+        ln -sfn "$out" "$state/default-image"
         echo "msks: image archive at $out"
       '';
       # Keyed on exactly what feeds the archive: the guest-assets
@@ -344,10 +335,10 @@ in
     # running dev-ready pulls the conditional archive build first
     # when inputs changed, and no-ops past it when they did not.
     "msks:dev-ready" = {
-      description = "Converge the bare-host dev daemon state (.msksd/ token + image pointer)";
+      description = "Converge the bare-host dev daemon state (the daemon state dir's token + image pointer; .devenv/state/msksd by default, MSKSD_STATE_DIR relocates it)";
       exec = ''
         root="$DEVENV_ROOT"
-        state="$root/.msksd"
+        state="''${MSKSD_STATE_DIR:-$root/.devenv/state/msksd}"
         mkdir -p "$state"
         if [ ! -s "$state/bootstrap-token" ]; then
           # 256 bits of urandom, hex: the same shape the appliance's
@@ -367,7 +358,7 @@ in
             printf '%s' "$tok" >"$state/.bootstrap-token.tmp"
             chmod 600 "$state/.bootstrap-token.tmp"
             mv "$state/.bootstrap-token.tmp" "$state/bootstrap-token"
-            echo "msks: minted .msksd/bootstrap-token"
+            echo "msks: minted $state/bootstrap-token"
           ) 9>"$state/.lock"
         fi
         if [ ! -e "$state/default-image" ]; then
@@ -417,8 +408,9 @@ in
   # The bare-host daemon by HAND (#146): no managed process — run
   # `msksd` from a devenv shell when the appliance is not wanted
   # (no KVM, API/client-only work). The two tasks above converge a
-  # workable state under .msksd/ first (token, default image);
-  # egress stays off (that is the appliance's job, #101) and the
+  # workable state under the daemon state dir first (token, default
+  # image; .devenv/state/msksd by default, MSKSD_STATE_DIR relocates
+  # it); egress stays off (that is the appliance's job, #101) and the
   # client env presets target the appliance, so point the client at
   # the bare daemon with explicit exports (README has the recipe).
   processes = {
@@ -430,6 +422,7 @@ in
     # when the appliance is not wanted (README has the one-liner).
     appliance = {
       exec = ''
+        app_dir="''${MSKS_APPLIANCE_DIR:-$DEVENV_ROOT/.devenv/state/appliance}"
         # Artifacts as a conditional side effect: the build task
         # no-ops through execIfModified when nothing feeding the
         # image changed, and rebuilds (minutes from a cold store,
@@ -437,22 +430,22 @@ in
         # sources, the nix expressions, or the build script —
         # `devenv processes up` is the whole update story. The
         # guard covers the gaps the task cache cannot see: a
-        # deleted or half-deleted .appliance with unchanged inputs
-        # would make the task skip and leave nothing or a broken
-        # set to boot. The image SYMLINK is in the guard because
-        # only the build script's `nix-build -o` recreates it — a
-        # task-cached run leaves a missing (or bogus — repointed,
-        # so it dereferences to nothing) symlink broken forever,
-        # and the boot that follows would carry a bogus identity
-        # (#160, found live: the drift auto-restart's rebuild was
-        # a cached no-op, the restart then crash-looped on the
-        # missing-symlink guard instead of converging). `! -e`
-        # dereferences, so a bogus target counts as missing.
-        if [ ! -f "$DEVENV_ROOT/.appliance/appliance-manifest.json" ] \
-          || [ ! -f "$DEVENV_ROOT/.appliance/vmlinux" ] \
-          || [ ! -f "$DEVENV_ROOT/.appliance/initrd" ] \
-          || [ ! -f "$DEVENV_ROOT/.appliance/rootfs.ext4" ] \
-          || [ ! -e "$DEVENV_ROOT/.appliance/image" ]; then
+        # deleted or half-deleted appliance state dir with
+        # unchanged inputs would make the task skip and leave
+        # nothing or a broken set to boot. The image SYMLINK is in
+        # the guard because only the build script's `nix-build -o`
+        # recreates it — a task-cached run leaves a missing (or
+        # bogus — repointed, so it dereferences to nothing) symlink
+        # broken forever, and the boot that follows would carry a
+        # bogus identity (#160, found live: the drift auto-restart's
+        # rebuild was a cached no-op, the restart then crash-looped
+        # on the missing-symlink guard instead of converging).
+        # `! -e` dereferences, so a bogus target counts as missing.
+        if [ ! -f "$app_dir/appliance-manifest.json" ] \
+          || [ ! -f "$app_dir/vmlinux" ] \
+          || [ ! -f "$app_dir/initrd" ] \
+          || [ ! -f "$app_dir/rootfs.ext4" ] \
+          || [ ! -e "$app_dir/image" ]; then
           # Both branches run the same script; the difference is the
           # task cache. Here artifacts are missing, and the cache can
           # be a false hit (inputs unchanged since the last successful
@@ -705,11 +698,37 @@ in
     *.lock
     .devenv/
     PRETTIER
+    # The client presets (#146, #156): resolved here, per shell
+    # entry, from the appliance state dir — ".devenv/state/appliance"
+    # by default; MSKS_APPLIANCE_DIR relocates it (every appliance
+    # script resolves the same way, so the presets follow). Per-shell
+    # resolution, not env.*: the token file rotates, the CA
+    # materializes after the appliance's first boot (the run script
+    # extracts the guest's msks-ca.pem from the state disk), and a
+    # rebuild swaps the image symlink without re-evaluating nix —
+    # baked presets would go stale on all three. A file that does
+    # not exist yet leaves its variable untouched, so a value
+    # exported before entering the shell survives; otherwise the
+    # preset wins (unset it inside the shell to override).
+    app_dir="''${MSKS_APPLIANCE_DIR:-$DEVENV_ROOT/.devenv/state/appliance}"
+    if [ -s "$app_dir/bootstrap-token" ]; then
+      export MSKSC_TOKEN="$(cat "$app_dir/bootstrap-token")"
+    fi
+    if [ -s "$app_dir/msks-ca.pem" ]; then
+      export MSKSC_CAFILE="$app_dir/msks-ca.pem"
+    fi
     # The appliance-image drift check (#160): what THIS checkout's
-    # .appliance points at, resolved per shell — a rebuild swaps the
-    # symlink without re-evaluating nix, so an env.* preset would go
-    # stale. `msks ls` compares it with the running daemon's
-    # reported image (its /health) and names the drift with the fix.
-    export MSKSC_EXPECTED_IMAGE="$(readlink -f "$DEVENV_ROOT/.appliance/image" 2>/dev/null || true)"
+    # appliance state dir points at — `msks ls` compares it with the
+    # running daemon's reported image (its /health) and names the
+    # drift with the fix.
+    export MSKSC_EXPECTED_IMAGE="$(readlink -f "$app_dir/image" 2>/dev/null || true)"
+    # Tidy the state tree (#156): every `devenv shell --` /
+    # `devenv tasks run` invocation writes a one-shot wrapper
+    # (shell-<hash>.sh, ~150KB) at the top of .devenv/ and leaves it
+    # there. The wrapper execs away within milliseconds, so only the
+    # just-written current one is ever young — anything past an hour
+    # is stale by any measure and goes.
+    find "$DEVENV_ROOT/.devenv" -maxdepth 1 -name 'shell-*.sh' -mmin +60 \
+      -delete 2>/dev/null || true
   '';
 }

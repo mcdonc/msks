@@ -29,12 +29,12 @@ tagged `vX.Y.Z`.
   ACPI teardown; `msks:appliance-up`/`-down` are the detached
   wrappers). The client env presets to it: `MSKSC_URL`, the
   appliance's bootstrap token, and certificate verification via
-  `.appliance/msks-ca.pem`, which the run script extracts from the
-  state disk once the guest serves (until then the TOFU fingerprint
-  on the serial log covers the first connect). No bare-host msksd
-  process exists; running the daemon by hand on the host stays
-  supported and documented (own `.msksd/` state,
-  `msks:dev-ready`, no egress).
+  `.devenv/state/appliance/msks-ca.pem`, which the run script
+  extracts from the state disk once the guest serves (until then the
+  TOFU fingerprint on the serial log covers the first connect). No
+  bare-host msksd process exists; running the daemon by hand on the
+  host stays supported and documented (own
+  `.devenv/state/msksd/` state, `msks:dev-ready`, no egress).
 - **Appliance dev tree: daemon edits without appliance rebuilds
   (#144).** `MSKS_DEV_TREE=1` with `processes up` shares the
   checkout read-only into the appliance and runs the guest daemon
@@ -217,6 +217,19 @@ no`, `PermitRootLogin prohibit-password`) pinned by a config dropin,
 
 ### Changed
 
+- **Dev state moved under `.devenv/state/` (#156).** The three
+  runtime state directories that sat at the repo root — `.guest/`
+  (nix-built guest assets), `.appliance/` (appliance image, sockets,
+  token, CA), and `.msksd/` (bare-host daemon state) — now live at
+  `.devenv/state/guest/`, `.devenv/state/appliance/`, and
+  `.devenv/state/msksd/`, and each location is relocatable via an
+  environment variable (`MSKS_GUEST_DIR`, `MSKS_APPLIANCE_DIR`, and
+  `MSKSD_STATE_DIR` respectively — every build/run script, task, and
+  test resolves the same way). Existing state does not migrate:
+  move the directory (or rebuild — `devenv processes up -d`
+  regenerates the appliance, `msks:dev-ready` re-mints the token).
+  The devenv shell also prunes its own stale one-shot wrappers
+  (`.devenv/shell-*.sh` older than an hour) automatically.
 - **Minted identity keys default to `ed25519` (#138).** The
   client mint (`--key-type`, `msks create`) and the daemon mint
   (`ssh_key_type` / `MSKSD_SSH_KEY_TYPE`) now mint Ed25519 keys —

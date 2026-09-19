@@ -1,12 +1,14 @@
 """Discovery of the nix-built guest VM assets (#5).
 
 ``devenv tasks run msks:build-guest`` builds the kernel, initrd, and
-ext4 rootfs with nix and copies them next to a JSON manifest under
-``.guest/`` at the repository root. This module resolves that manifest
-so smoke tests (and, later, the CLI) use the built artifacts without
-hand-exported environment variables. Explicitly exported
-``MSKSD_TEST_*`` variables always keep precedence over anything
-discovered here.
+ext4 rootfs with nix and copies them next to a JSON manifest into
+the guest state dir — ``.devenv/state/guest`` below the repository
+root by default; ``MSKS_GUEST_DIR`` relocates it (an absolute path
+is taken as-is, a relative one resolves below the root). This
+module resolves that manifest so smoke tests (and, later, the CLI)
+use the built artifacts without hand-exported environment
+variables. Explicitly exported ``MSKSD_TEST_*`` variables always
+keep precedence over anything discovered here.
 """
 
 from __future__ import annotations
@@ -16,8 +18,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-MANIFEST_PATH = Path(".guest") / "guest-manifest.json"
-RUNNER_IMAGE_PATH = Path(".guest") / "runner-image.json"
+MANIFEST_NAME = "guest-manifest.json"
+RUNNER_IMAGE_NAME = "runner-image.json"
 
 VMLINUX_ENV = "MSKSD_TEST_VMLINUX"
 INITRD_ENV = "MSKSD_TEST_INITRD"
@@ -25,8 +27,25 @@ ROOTFS_ENV = "MSKSD_TEST_ROOTFS"
 CMDLINE_ENV = "MSKSD_TEST_CMDLINE"
 RUNNER_IMAGE_ENV = "MSKSD_TEST_RUNNER_IMAGE"
 
-#: Directory holding the manifest and the artifacts it names.
-GUEST_DIR = ".guest"
+#: Relocates the guest state dir (default ``<root>/.devenv/state/guest``).
+GUEST_DIR_ENV = "MSKS_GUEST_DIR"
+
+#: The guest state dir below ``base`` when the env override is unset.
+DEFAULT_GUEST_DIR = Path(".devenv") / "state" / "guest"
+
+
+def guest_dir(base: Path) -> Path:
+    """The guest state dir for ``base``, honoring ``MSKS_GUEST_DIR``.
+
+    An absolute override is taken as-is; a relative one resolves
+    below ``base`` (the same resolution the build scripts apply to
+    ``$MSKS_GUEST_DIR``).
+    """
+    override = os.environ.get(GUEST_DIR_ENV)
+    if override:
+        path = Path(override)
+        return path if path.is_absolute() else base / path
+    return base / DEFAULT_GUEST_DIR
 
 
 @dataclass(frozen=True)
@@ -59,14 +78,16 @@ def _artifact(base: Path, value: object) -> Path | None:
     name = _as_str(value)
     if name is None or name.startswith("/") or "/" in name:
         return None
-    path = base / GUEST_DIR / name
+    path = guest_dir(base) / name
     return path if path.is_file() else None
 
 
 def _load_manifest(base: Path) -> dict | None:
     """The parsed guest manifest, ``None`` unless it is a schema-1 dict."""
     try:
-        raw = json.loads((base / MANIFEST_PATH).read_text(encoding="utf-8"))
+        raw = json.loads(
+            (guest_dir(base) / MANIFEST_NAME).read_text(encoding="utf-8")
+        )
     except OSError, ValueError:
         return None
     if isinstance(raw, dict) and raw.get("schema") == 1:
@@ -149,7 +170,7 @@ def load_runner_image(root: Path | None = None) -> str | None:
     base = root if root is not None else _root()
     try:
         raw = json.loads(
-            (base / RUNNER_IMAGE_PATH).read_text(encoding="utf-8")
+            (guest_dir(base) / RUNNER_IMAGE_NAME).read_text(encoding="utf-8")
         )
     except OSError, ValueError:
         return None

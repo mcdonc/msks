@@ -8,11 +8,11 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-guest_dir="$root/.guest"
+guest_dir="${MSKS_GUEST_DIR:-$root/.devenv/state/guest}"
 manifest="$guest_dir/guest-manifest.json"
 
 if [ ! -f "$manifest" ]; then
-  echo "msks: no guest assets in .guest/ — build them first:" >&2
+  echo "msks: no guest assets in $guest_dir — build them first:" >&2
   echo "  devenv tasks run msks:build-guest" >&2
   exit 1
 fi

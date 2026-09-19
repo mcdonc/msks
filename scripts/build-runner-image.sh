@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Build the k8s vm-runner container image archive into .guest/ (#5).
+# Build the k8s vm-runner container image archive into the guest
+# state dir (#5) — .devenv/state/guest by default; MSKS_GUEST_DIR
+# relocates it.
 #
 # The archive is a plain docker-archive tar produced by nix; the
 # build host needs neither a container daemon nor a registry. Import
 # it on the k3s node to make the runner available to the k8s smoke
-# tests:
-#
-#   sudo k3s ctr images import .guest/msks-vm-runner.docker.tar
+# tests (the build prints the archive's full path).
 set -euo pipefail
 
 root="${DEVENV_ROOT:?not running inside the devenv shell}"
 nixpkgs="${MSKS_GUEST_NIXPKGS:?devenv must pass MSKS_GUEST_NIXPKGS}"
-guest_dir="$root/.guest"
+guest_dir="${MSKS_GUEST_DIR:-$root/.devenv/state/guest}"
 image="msks-vm-runner:dev"
 
 out="$(
@@ -20,7 +20,7 @@ out="$(
 )"
 
 # buildImage outputs the image archive (possibly gzipped) inside its
-# output directory; keep the extension honest in .guest/.
+# output directory; keep the extension honest in the guest state dir.
 archive="$(find "$out" -maxdepth 1 \( -name '*.tar' -o -name '*.tar.gz' \) -print -quit)"
 if [ -z "$archive" ]; then
   echo "msks: no image archive found in $out" >&2
@@ -38,7 +38,7 @@ chmod 0644 "$guest_dir/$archive_name"
 printf '{"image": "%s", "archive": "%s"}\n' "$image" "$archive_name" \
   >"$guest_dir/runner-image.json"
 
-echo "msks: runner image archive built into .guest/ (from $out)"
+echo "msks: runner image archive built into $guest_dir (from $out)"
 echo "msks: import on the k3s node with:"
 echo "  sudo k3s ctr images import $guest_dir/$archive_name"
 echo "msks: the image is tagged $image"

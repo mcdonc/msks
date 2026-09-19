@@ -20,6 +20,8 @@ import websockets
 
 from test_smoke import (
     APPLIANCE,
+    APPLIANCE_DIR,
+    GUEST_DIR,
     REPO_ROOT,
     RSYNC_BIN,
     SSH_BIN,
@@ -44,8 +46,9 @@ L3 = os.environ.get("MSKSD_TEST_L3")
 
 
 def guest_boot_artifacts() -> dict[str, Path] | None:
-    """The built guest's boot artifacts (.guest/, msks:build-guest)
-    — kernel, initrd, and the sparse rootfs the rsync leg pushes
+    """The built guest's boot artifacts (the guest state dir,
+    msks:build-guest) — kernel, initrd, and the sparse rootfs the
+    rsync leg pushes
     into the L2 workspace. The inner daemon boots them directly
     (create with explicit paths): the catalog import would copy,
     hash, and densely extract the ~1.5 GiB archive for a rootfs
@@ -53,7 +56,7 @@ def guest_boot_artifacts() -> dict[str, Path] | None:
     I/O the recursion does not need to re-prove (the appliance's
     own first-boot import covers the catalog path at L1)."""
     names = ("vmlinux", "initrd", "rootfs.ext4")
-    paths = {name: REPO_ROOT / ".guest" / name for name in names}
+    paths = {name: GUEST_DIR / name for name in names}
     if not all(path.is_file() for path in paths.values()):
         return None
     return paths
@@ -63,7 +66,7 @@ needs_l3 = pytest.mark.skipif(
     not L3
     or not APPLIANCE
     or not os.access("/dev/kvm", os.W_OK)
-    or not (REPO_ROOT / ".appliance" / "vmlinux").is_file()
+    or not (APPLIANCE_DIR / "vmlinux").is_file()
     or not host_net_installed()
     or not (SSH_BIN and RSYNC_BIN)
     or guest_boot_artifacts() is None,
@@ -311,7 +314,7 @@ async def test_appliance_l3_recursion() -> None:
     and the inner workspace's console is driven through the inner
     daemon's websocket from inside L2 — console in console.
     """
-    app_dir = REPO_ROOT / ".appliance"
+    app_dir = APPLIANCE_DIR
     base = "https://192.168.77.2:8660/api/v1"
     wid = f"l3-{uuid.uuid4().hex[:8]}"
     artifacts = guest_boot_artifacts()
@@ -636,9 +639,9 @@ async def test_appliance_l3_recursion() -> None:
         # the import is minutes of silent guest work, and a console
         # session would stall-close around it (see l3_setup_launch).
         # The host polls the run.log trail to completion.
-        cmdline = json.loads(
-            (REPO_ROOT / ".guest" / "guest-manifest.json").read_text()
-        )["cmdline"]
+        cmdline = json.loads((GUEST_DIR / "guest-manifest.json").read_text())[
+            "cmdline"
+        ]
         setup_b64 = base64.b64encode(
             l3_inner_setup_script(cmdline).encode()
         ).decode()

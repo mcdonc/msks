@@ -19,7 +19,8 @@ Usage (from the repo root, inside the devenv shell):
 
     python scripts/perf-boot.py [--runs 3] [--keep]
 
-Runs on the local backend with the built guest assets (.guest/, via
+Runs on the local backend with the built guest assets (the guest
+state dir — .devenv/state/guest by default — via
 ``devenv tasks run msks:build-guest``) and /dev/kvm. Exits nonzero if
 any run fails to reach the prompt.
 """

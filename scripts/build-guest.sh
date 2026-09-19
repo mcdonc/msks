@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Build the microvm guest assets with nix and land them in .guest/ (#5).
+# Build the microvm guest assets with nix and land them in the guest
+# state dir (#5) — .devenv/state/guest by default; MSKS_GUEST_DIR
+# relocates it.
 #
 # Runs against the nixpkgs revision pinned by devenv.lock: the devenv
 # task passes the pinned source via MSKS_GUEST_NIXPKGS. The build is
@@ -9,7 +11,7 @@ set -euo pipefail
 
 root="${DEVENV_ROOT:?not running inside the devenv shell}"
 nixpkgs="${MSKS_GUEST_NIXPKGS:?devenv must pass MSKS_GUEST_NIXPKGS}"
-guest_dir="$root/.guest"
+guest_dir="${MSKS_GUEST_DIR:-$root/.devenv/state/guest}"
 
 out="$(
   nix-build --no-out-link -I nixpkgs="$nixpkgs" \
@@ -36,5 +38,5 @@ rm -f "$guest_dir"/workspace-*.tar
 cp -L "$out/$tar_name" "$guest_dir/$tar_name"
 chmod 0644 "$guest_dir/$tar_name"
 
-echo "msks: guest assets built into .guest/ (from $out)"
+echo "msks: guest assets built into $guest_dir (from $out)"
 echo "msks: boot one with: devenv tasks run msks:demo-vm"

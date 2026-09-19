@@ -9,7 +9,7 @@
 # exactly the one nesting level Azure's nested virt supports.
 #
 # Two phases, serial: the unprivileged boots first (plain KVM smokes
-# on the built .guest/ assets), then the egress smokes under root —
+# on the built guest assets under .devenv/state/guest), then the egress smokes under root —
 # they need the host's network to themselves (tap/DHCP/DNS on
 # privileged ports, nftables, and a FORWARD-handoff precondition
 # step) and run an explicit test list. The egress phase is fast now
@@ -97,7 +97,7 @@ jobs:
       # /dev/kvm exists on the hosted runner image but is restricted;
       # this makes it 0666 for the runner user. kvm_available() then
       # passes and the conftest points the smoke tests at the built
-      # .guest/ artifacts.
+      # guest assets under .devenv/state/guest.
       - name: Enable KVM group perms
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules

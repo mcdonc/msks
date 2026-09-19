@@ -65,9 +65,9 @@ observed live). The `msks:appliance-up`/`-down` tasks are detached
 wrappers over the same manager. The run script's EXIT trap owns
 its pidfile and sockets; if the script dies without the trap
 firing (SIGKILL), recovery is manual:
-`pkill -f 'cloud-hypervisor --api-socket <repo>/.appliance/api.sock'`
+`pkill -f 'cloud-hypervisor --api-socket <repo>/.devenv/state/appliance/api.sock'`
 (plus the matching `virtiofsd --socket-path` pattern) and removing
-the stale sockets under `.appliance/`.
+the stale sockets under `.devenv/state/appliance/`.
 
 - `devenv processes up -d` starts the manager detached — it survives
   the shell that launched it, and a second `up -d` is a no-op.
@@ -75,8 +75,10 @@ the stale sockets under `.appliance/`.
   the manager TERMs the appliance process, whose trap drives ACPI
   poweroff through the CH API inside the 90s grace.
 - The client env presets to the appliance (`MSKSC_URL`/`TOKEN`/
-  `CAFILE` from `.appliance/`); the run script extracts the guest's
-  CA cert into `.appliance/msks-ca.pem` once the guest serves, so a
+  `CAFILE` from the appliance state dir, `.devenv/state/appliance`
+  by default — `MSKS_APPLIANCE_DIR` relocates it); the run script
+  extracts the guest's CA cert into
+  `.devenv/state/appliance/msks-ca.pem` once the guest serves, so a
   fresh shell verifies. A bare-host msksd is run BY HAND (see the
   README section) — never a managed process.
 - A crashed run script crash-restarts under the supervisor; a

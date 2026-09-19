@@ -15,14 +15,9 @@ __pycache__/
 .pytest_cache/
 .testmondata
 
-# nix-built guest VM assets (devenv tasks write here)
-.guest/
-.appliance/
-
 # nix build outputs
 result
 
 # rust (console-helper crate)
 src/console-helper/target/
 src/console-helper/.rustc_info.json
-.msksd/

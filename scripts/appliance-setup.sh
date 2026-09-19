@@ -12,7 +12,7 @@
 set -euo pipefail
 
 root="${DEVENV_ROOT:?not running inside the devenv shell}"
-app_dir="$root/.appliance"
+app_dir="${MSKS_APPLIANCE_DIR:-$root/.devenv/state/appliance}"
 
 for f in vmlinux initrd rootfs.ext4; do
   [ -f "$app_dir/$f" ] || {

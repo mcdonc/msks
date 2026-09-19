@@ -33,7 +33,8 @@
 #   msks key l3 --out ~/.cache/msks/l3.key
 #   msks forward l3 22 --local 2201 &
 #   rsync -e 'ssh -i ~/.cache/msks/l3.key -p 2201' -aPS \
-#       .guest/vmlinux .guest/initrd .guest/rootfs.ext4 \
+#       .devenv/state/guest/vmlinux .devenv/state/guest/initrd \
+#       .devenv/state/guest/rootfs.ext4 \
 #       root@127.0.0.1:/root/inner-artifacts/
 #   # then, inside the workspace:
 #   MSKSC_URL=http://127.0.0.1:8660 MSKSC_TOKEN=$(cat /root/.msks-inner/token) \

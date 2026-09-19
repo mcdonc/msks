@@ -24,7 +24,8 @@
 # (its phase timeline is narrated in the run log — #82's evidence
 # holds the reference numbers), needs the runner's network to
 # itself (the appliance claims the msksbr0 bridge), and touches
-# state (a built .guest/ and .appliance/) that per-PR runs would
+# state (a built guest state dir and appliance state dir under
+# .devenv/state/) that per-PR runs would
 # fight over. When the schedule returns, its cadence bounds the
 # recursion's silent-rot window to a day; a red run is the alarm,
 # and the timeline in its log is the triage.
@@ -127,9 +128,9 @@ jobs:
         with:
           name: nightly-l3-failure-evidence
           path: |
-            .appliance/serial.log
-            .appliance/cloud-hypervisor.log
-            .appliance/virtiofsd.log
+            .devenv/state/appliance/serial.log
+            .devenv/state/appliance/cloud-hypervisor.log
+            .devenv/state/appliance/virtiofsd.log
           if-no-files-found: ignore
           retention-days: 14
 
@@ -139,8 +140,8 @@ jobs:
       # wall-cut run never reaches the test's teardown, and the
       # orphan VMM keeps the bridge tap, the guest IP, and its
       # memory — poisoning every later night (the next run's
-      # checkout cleans .appliance/ including api.sock, so the
-      # test's stomp guard sees nothing while the VMM still
+      # checkout cleans the appliance state dir including api.sock,
+      # so the test's stomp guard sees nothing while the VMM still
       # answers). This is the recovery the repo documents for
       # exactly that shape: graceful down first, then the named
       # pkill patterns, then the stale sockets. always() — a green
@@ -151,8 +152,8 @@ jobs:
         run: |
           devenv --quiet -O dotenv.enable:bool false shell -- bash -c '
           devenv tasks run msks:appliance-down || true
-          pkill -f "cloud-hypervisor --api-socket.*.appliance/api.sock" || true
-          pkill -f "virtiofsd --socket-path.*.appliance" || true
-          rm -f .appliance/api.sock .appliance/vsock.sock .appliance/run.pid
+          pkill -f "cloud-hypervisor --api-socket.*.devenv/state/appliance/api.sock" || true
+          pkill -f "virtiofsd --socket-path.*.devenv/state/appliance" || true
+          rm -f .devenv/state/appliance/api.sock .devenv/state/appliance/vsock.sock .devenv/state/appliance/run.pid
           echo "appliance teardown: clean"
           '
