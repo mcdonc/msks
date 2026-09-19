@@ -303,9 +303,10 @@ in
       exec = ''
         root="$DEVENV_ROOT"
         state="''${MSKSD_STATE_DIR:-$root/.devenv/state/msksd}"
-        # A relative override resolves below the repo root (the
-        # Python-side resolution; a CWD-relative read would depend on
-        # where the shell was opened).
+        # The tasks anchor a relative value below the repo root;
+        # the DAEMON resolves a relative MSKSD_STATE_DIR against its
+        # own CWD (settings.py) — export an absolute path to move
+        # both identically (README says the same).
         case "$state" in
         /*) ;;
         *) state="$root/$state" ;;
@@ -346,7 +347,8 @@ in
       exec = ''
         root="$DEVENV_ROOT"
         state="''${MSKSD_STATE_DIR:-$root/.devenv/state/msksd}"
-        # A relative override resolves below the repo root (see
+        # The tasks anchor a relative value below the repo root; the
+        # daemon resolves one against its own CWD (see
         # msks:build-guest-archive's case block).
         case "$state" in
         /*) ;;

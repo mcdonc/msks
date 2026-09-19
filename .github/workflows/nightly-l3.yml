@@ -154,6 +154,7 @@ jobs:
           devenv tasks run msks:appliance-down || true
           pkill -f "cloud-hypervisor --api-socket.*.devenv/state/appliance/api.sock" || true
           pkill -f "virtiofsd --socket-path.*.devenv/state/appliance" || true
-          rm -f .devenv/state/appliance/api.sock .devenv/state/appliance/vsock.sock .devenv/state/appliance/run.pid
+          rm -f .devenv/state/appliance/api.sock .devenv/state/appliance/vmm-sock \
+            .devenv/state/appliance/vmm-sock.pid .devenv/state/appliance/run.pid
           echo "appliance teardown: clean"
           '

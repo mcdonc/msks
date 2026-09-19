@@ -51,7 +51,19 @@ def render_ls(rows: list[dict], as_json: bool) -> str:
     return "\n".join(format_workspace(row) for row in rows)
 
 
-def stale_image_notice(expected: str, health: dict | None) -> str | None:
+def health_image(health: object) -> str | None:
+    """The image a /health document names, or None.
+
+    Only a mapping with a string image counts: anything else a
+    wrong host or proxy might answer stays None (the drift probe is
+    best-effort and never tracebacks the listing).
+    """
+    if isinstance(health, dict) and isinstance(health.get("image"), str):
+        return health["image"]
+    return None
+
+
+def stale_image_notice(expected: str, health: object) -> str | None:
     """The one-line drift notice for ``msks ls`` (#160), or None.
 
     Both sides must be known: ``MSKSC_EXPECTED_IMAGE`` names what
@@ -61,10 +73,9 @@ def stale_image_notice(expected: str, health: dict | None) -> str | None:
     carries the image it booted (``None`` on a daemon predating the
     ``msksd.image`` cmdline pair). An unknown side stays silent —
     including a /health that answers something other than a mapping
-    (a wrong host, a proxy): the probe is best-effort and must never
-    turn the listing into a traceback.
+    with a string image (a wrong host, a proxy).
     """
-    image = health.get("image") if isinstance(health, dict) else None
+    image = health_image(health)
     if not expected or not image or image == expected:
         return None
     return (

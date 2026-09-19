@@ -132,7 +132,7 @@ jobs:
           MSKSD_TEST_SHUTDOWN_TIMEOUT_S: "180"
         run: |
           set -o pipefail
-          TMPDIR=/tmp devenv --quiet -O dotenv.enable:bool false shell -- \
+          devenv --quiet -O dotenv.enable:bool false shell -- \
             python -m pytest src/msks/tests/test_smoke/ \
             -q -rs -p no:cacheprovider --no-cov 2>&1 \
             | tee /tmp/smoke-pytest.log

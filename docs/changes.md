@@ -215,21 +215,23 @@ no`, `PermitRootLogin prohibit-password`) pinned by a config dropin,
 
 - **Workspace shell (#21).** `msks shell <workspace-id>` gives an interactive shell inside a running workspace microvm, from any host that can reach the daemon: the client speaks the authenticated `/api/v1/workspaces/{id}/console` websocket (TLS + token, Ctrl-] detach, raw tty mode), and the daemon proxies it over virtio-vsock — the VM's vsock unix socket after a `CONNECT <port>` handshake — into a per-connection busybox ash on a pty served by static socat in the guest (root shell today, per #5's guest userland; `MSKSC_URL`/`MSKSC_TOKEN`/`MSKSC_CAFILE` configure the client). The guest assets gained the vsock module, `/dev/vsock` creation, devpts/ptmx setup, and socat; the daemon retries the console handshake across the guest's post-boot bring-up window.
 
-### Changed
+### Breaking
 
 - **Dev state moved under `.devenv/state/` (#156).** The three
-  runtime state directories that sat at the repo root — `.guest/`
-  (nix-built guest assets), `.appliance/` (appliance image, sockets,
-  token, CA), and `.msksd/` (bare-host daemon state) — now live at
-  `.devenv/state/guest/`, `.devenv/state/appliance/`, and
-  `.devenv/state/msksd/`, and each location is relocatable via an
-  environment variable (`MSKS_GUEST_DIR`, `MSKS_APPLIANCE_DIR`, and
-  `MSKSD_STATE_DIR` respectively — every build/run script, task, and
-  test resolves the same way). Existing state does not migrate:
-  move the directory (or rebuild — `devenv processes up -d`
-  regenerates the appliance, `msks:dev-ready` re-mints the token).
-  The devenv shell also prunes its own stale one-shot wrappers
-  (`.devenv/shell-*.sh` older than an hour) automatically.
+  repo-root state dirs — `.guest/`, `.appliance/`, `.msksd/` — now
+  live at `.devenv/state/{guest,appliance,msksd}/`, each relocatable
+  via `MSKS_GUEST_DIR`, `MSKS_APPLIANCE_DIR`, or `MSKSD_STATE_DIR`
+  (the daemon's own setting; use an absolute value so the tasks and
+  the daemon land in the same place). Existing state does not
+  migrate: move the directory you want to keep (the appliance state
+  disk holds workspaces and tokens) or rebuild (`devenv processes
+up -d`, `msks:dev-ready`), then delete the old dirs — they are no
+  longer gitignored. The devenv shell also prunes its own stale
+  one-shot wrappers (`.devenv/shell-*.sh` older than an hour)
+  automatically.
+
+### Changed
+
 - **Minted identity keys default to `ed25519` (#138).** The
   client mint (`--key-type`, `msks create`) and the daemon mint
   (`ssh_key_type` / `MSKSD_SSH_KEY_TYPE`) now mint Ed25519 keys —

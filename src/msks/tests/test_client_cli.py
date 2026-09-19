@@ -232,6 +232,14 @@ def test_cmd_ls_ignores_a_malformed_health_document(
     assert "alpha" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("image", [5, True, ["x"], {"a": 1}, "", None])
+def test_stale_image_notice_rejects_non_string_images(image: object) -> None:
+    """Only a string image pairs with the notice: any other JSON
+    value a wrong host or proxy might answer for /health stays
+    silent instead of tracebacks `Path(image)` (#163 review)."""
+    assert cli.stale_image_notice(NEW_IMAGE, {"image": image}) is None
+
+
 def test_cmd_ls_skips_the_health_probe_without_an_expected_image(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
