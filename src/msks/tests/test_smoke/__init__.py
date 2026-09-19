@@ -2,7 +2,7 @@
 
 - Local: boots a real cloud-hypervisor VM when MSKSD_TEST_VMLINUX and
   MSKSD_TEST_ROOTFS point at guest artifacts (and /dev/kvm is
-  accessible); skipped otherwise. The devenv task `msks:build-guest`
+  accessible); skipped otherwise. The msks-build-guest script
   sets all of these from the guest state dir
   (`.devenv/state/guest` by default) automatically (see conftest.py
   and msks.guestassets); the stock nixpkgs kernel also needs the initrd
@@ -526,7 +526,7 @@ needs_appliance = pytest.mark.skipif(
     reason=(
         "set MSKSD_TEST_APPLIANCE=1 with /dev/kvm, the one-time host "
         "network (sudo bash scripts/appliance-host-setup.sh), and "
-        "devenv tasks run msks:appliance-build + msks:build-guest"
+        "msks-appliance-build + msks-build-guest"
     ),
 )
 
@@ -562,19 +562,24 @@ def seed_legacy_state_disk(state_disk: Path, marker_text: str) -> bool:
     return True
 
 
-def devenv_task(task: str, timeout: int = 900) -> subprocess.CompletedProcess:
-    """Run one devenv task — the appliance lifecycle entry points (#146).
+def msks_script(
+    script: str, timeout: int = 900
+) -> subprocess.CompletedProcess:
+    """Run one msks command script — the appliance lifecycle entry
+    points (#146).
 
-    The appliance is THE managed process: msks:appliance-up is the
+    The appliance is THE managed process: msks-appliance-up is the
     detached start (`devenv processes up -d` — the manager owns the
     build-then-run exec, crash restarts, and the graceful ACPI
-    teardown), msks:appliance-down is `devenv processes down`.
+    teardown), msks-appliance-down is `devenv processes down`.
     Environment surgery (state disk, cmdline extras, memory, the
     #144 dev tree) reaches the VM exactly as before — the process
-    and its manager inherit this process's environment.
+    and its manager inherit this process's environment. The scripts
+    live on the devenv shell's PATH (#166); the suite itself runs
+    inside that shell, so a bare name resolves.
     """
     return subprocess.run(
-        ["bash", "-c", f"devenv tasks run {task}"],
+        ["bash", "-c", script],
         capture_output=True,
         text=True,
         timeout=timeout,

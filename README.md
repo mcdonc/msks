@@ -37,7 +37,7 @@ devenv --quiet -O dotenv.enable:bool false shell -- testmon
 Complexity gate (also runs as a pre-commit hook):
 
 ```bash
-devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:xenon
+devenv --quiet -O dotenv.enable:bool false shell -- msks-xenon
 ```
 
 The Python-side pre-commit gates' full offender list in one pass —
@@ -47,7 +47,7 @@ every missing coverage line and branch arc for the changed files
 after one gated suite run:
 
 ```bash
-devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:preflight
+devenv --quiet -O dotenv.enable:bool false shell -- msks-preflight
 ```
 
 ### VM guest assets
@@ -81,7 +81,7 @@ Every step of the build runs inside the repo on any Linux host with
 nix (the k8s vm-runner container archive comes from the same tree):
 
 ```bash
-devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:build-guest
+devenv --quiet -O dotenv.enable:bool false shell -- msks-build-guest
 ```
 
 The artifacts (plus a `guest-manifest.json` describing them and the
@@ -89,7 +89,7 @@ boot cmdline) land in `.devenv/state/guest/` (relocatable with
 `MSKS_GUEST_DIR`). Boot one interactive VM from them —
 
 ```bash
-devenv tasks run msks:demo-vm
+msks-demo-vm
 ```
 
 — which attaches the guest's serial console to your terminal
@@ -143,11 +143,11 @@ MSKSD_STATE_DIR=/tmp/msksd MSKSD_BOOTSTRAP_TOKEN=dev-secret MSKSD_PORT=8660 msks
 ### The bare-host daemon (by hand, no process)
 
 When the appliance is not wanted — no KVM available, API/client
-work only — run msksd by hand from a devenv shell (#146). Two
-tasks converge a workable state first:
+work only — run msksd by hand from a devenv shell (#146). One
+script converges a workable state first:
 
 ```bash
-devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:dev-ready
+devenv --quiet -O dotenv.enable:bool false shell -- msks-dev-ready
 export MSKSD_STATE_DIR="$PWD/.devenv/state/msksd" MSKSD_BOOTSTRAP_TOKEN="$(cat .devenv/state/msksd/bootstrap-token)"
 msksd &                                    # serves https://127.0.0.1:8660
 MSKSC_URL=https://127.0.0.1:8660 MSKSC_CAFILE=$PWD/.devenv/state/msksd/msks-ca.pem \
@@ -156,8 +156,8 @@ MSKSC_URL=https://127.0.0.1:8660 MSKSC_CAFILE=$PWD/.devenv/state/msksd/msks-ca.p
 
 The state lives in `.devenv/state/msksd/` (TLS CA, bootstrap token,
 sqlite catalog, workspace volumes). The dir honors `MSKSD_STATE_DIR`
-— export it before `msks:dev-ready` to relocate it, as an absolute
-path: the tasks anchor a relative value below the repo root while
+— export it before `msks-dev-ready` to relocate it, as an absolute
+path: the script anchors a relative value below the repo root while
 the daemon resolves one against its own CWD, so only an absolute
 value moves both to the same place.
 Gitignored but NOT disposable-clean — `git clean -xfd` deletes all
@@ -201,14 +201,15 @@ curl --cacert .devenv/state/appliance/msks-ca.pem https://192.168.77.2:8660/api/
 devenv --quiet -O dotenv.enable:bool false shell -- devenv processes down
 ```
 
-**The appliance is the one managed process (#146)**: its exec
-builds conditionally (the #140 keys apply) and runs
+**The appliance is the one managed process (#146)**: its exec runs
+the idempotent `scripts/build-appliance.sh` (a cached nix build when
+nothing changed, a rebuild after a pull or an edit — #166) and then
 `scripts/appliance-run.sh` under the supervisor — crash-restart,
 `devenv processes logs appliance`, and a graceful teardown whose
 90s grace covers the run script's ACPI-first stop (its 60s window
 holds a workspace's nested stop cycle; a shorter window lost
 page-cache-only sqlite commits, observed live). The
-`msks:appliance-up`/`-down` tasks are the detached wrappers over
+`msks-appliance-up`/`-down` scripts are the detached wrappers over
 the same manager (`devenv processes up -d` / `down`). No bare-host
 msksd process exists — `devenv processes list` shows only the
 appliance.
@@ -305,13 +306,13 @@ How it fits together (#10, #25, #92):
   that restarts in place on a crash. (#30 has the guest's story;
   #92 the appliance's.)
 - The heavy runtime (the nix-built msksd closure, the VMM for
-  workspace VMs, and the workspace assets from `msks:build-guest`)
+  workspace VMs, and the workspace assets from `msks-build-guest`)
   rides a **read-only virtiofs share of the host `/nix/store`** —
   read-only enforced by `virtiofsd --readonly`, not just the guest's
   mount: the appliance runs the same store paths the host built, and
   nothing is copied into the image. Two GC roots keep them realized:
-  `msks:appliance-build` roots the appliance's own closure,
-  `msks:build-guest` roots the workspace guest assets (which the
+  `msks-appliance-build` roots the appliance's own closure,
+  `msks-build-guest` roots the workspace guest assets (which the
   appliance references only through the share).
 - Persistent state (SQLite, workspace overlays, logs) is a second
   disk under `.devenv/state/appliance/state.ext4` (relocatable via
@@ -656,7 +657,7 @@ The vm-runner container image comes from the same pinned nixpkgs as
 the local backend's cloud-hypervisor:
 
 ```bash
-devenv --quiet -O dotenv.enable:bool false shell -- devenv tasks run msks:build-runner-image
+devenv --quiet -O dotenv.enable:bool false shell -- msks-build-runner-image
 sudo k3s ctr images import .devenv/state/guest/msks-vm-runner.docker.tar.gz
 ```
 

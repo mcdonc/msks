@@ -20,7 +20,7 @@ manifest="$guest_dir/guest-manifest.json"
 
 if [ ! -f "$manifest" ]; then
   echo "msks: no guest assets in $guest_dir — build them first:" >&2
-  echo "  devenv tasks run msks:build-guest" >&2
+  echo "  msks-build-guest" >&2
   exit 1
 fi
 

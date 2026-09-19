@@ -26,7 +26,7 @@ tagged `vX.Y.Z`.
   the deployed shape: egress workspaces, `msks ssh` forwards, the
   guest network bridge, and the dev tree below — under the process
   manager (crash-restart, logs, 90s graceful grace covering the
-  ACPI teardown; `msks:appliance-up`/`-down` are the detached
+  ACPI teardown; `msks-appliance-up`/`-down` are the detached
   wrappers). The client env presets to it: `MSKSC_URL`, the
   appliance's bootstrap token, and certificate verification via
   `.devenv/state/appliance/msks-ca.pem`, which the run script
@@ -34,7 +34,7 @@ tagged `vX.Y.Z`.
   TOFU fingerprint on the serial log covers the first connect). No
   bare-host msksd process exists; running the daemon by hand on the
   host stays supported and documented (own
-  `.devenv/state/msksd/` state, `msks:dev-ready`, no egress).
+  `.devenv/state/msksd/` state, `msks-dev-ready`, no egress).
 - **Appliance dev tree: daemon edits without appliance rebuilds
   (#144).** `MSKS_DEV_TREE=1` with `processes up` shares the
   checkout read-only into the appliance and runs the guest daemon
@@ -190,7 +190,7 @@ no`, `PermitRootLogin prohibit-password`) pinned by a config dropin,
   crate under `src/console-helper`, gated at 100% line and branch
   coverage (`.github/workflows/rust.yml`).
 - **YAML config file for msksd (#46).** `msksd` reads `msksd.yaml` — `--config <path>` for an explicit file, `--config=none` for env-vars-only, and a bare `msksd` resolves `$MSKSD_CONFIG_DIR/msksd.yaml` (default `~/.config/msksd/msksd.yaml`), generating a commented template on first run. Precedence is `MSKSD_*` env vars > file > defaults; a config key is its variable minus the prefix, lowercased (`MSKSD_PORT` → `port`, `MSKSD_EGRESS_SUBNET` → `egress_subnet` — flat, klangkd's convention, derived by one rule so the spellings cannot drift), keys take native YAML scalars, and unknown keys, duplicate keys, or invalid values fail at startup. SIGHUP re-reads the file into the live settings without a restart. The appliance configures itself through the file — `/run/msksd.yaml`, generated at each boot with the build's store paths, with the kernel-cmdline `msksd.<name>=<value>` bridge remaining the variable-override channel — and a bare `alembic` run resolves the database URL from the default file when present. See `docs/config.md` for the key-by-key reference.
-- **`msks:preflight` (#43).** One command delivers the Python-side pre-commit gates' complete feedback before the first commit attempt: every ruff and deferred-import finding, every xenon offender, the jscpd report, and — when sources under `src/msks/` changed — the gated suite run followed by every missing coverage line and branch arc for the changed files (`scripts/covgaps.py`). AGENTS.md makes it part of the loop: fix everything it names in one editing pass, re-run, then commit. The xenon and jscpd gates now also grade untracked-but-present files, so a new file grades from the moment it exists.
+- **`msks-preflight` (#43).** One command delivers the Python-side pre-commit gates' complete feedback before the first commit attempt: every ruff and deferred-import finding, every xenon offender, the jscpd report, and — when sources under `src/msks/` changed — the gated suite run followed by every missing coverage line and branch arc for the changed files (`scripts/covgaps.py`). AGENTS.md makes it part of the loop: fix everything it names in one editing pass, re-run, then commit. The xenon and jscpd gates now also grade untracked-but-present files, so a new file grades from the moment it exists.
 
 - **Doubled-escape and chunked input in `msks shell` (#36).** The client reads stdin in 4,096-byte chunks and sends one websocket frame per chunk, so a large paste lands a few frames instead of one TLS frame per byte. Ctrl-] Ctrl-] — the second press within 50 ms, or both bytes in one chunk — sends one literal Ctrl-] (0x1d) to the guest; a single Ctrl-] still detaches, and bytes typed before the escape are delivered before the session closes. See `docs/cli.md`.
 - **Per-workspace `user_data` provisioning (#41).** A workspace created with `user_data` (API field; `msks create --user-data FILE`, `-` for stdin, ≤64 Ki characters) runs the payload on its first boot through cloud-init: the daemon builds a `cidata`-labeled iso9660 seed disk (NoCloud's own format, `MSKSD_MKISOFS`), attaches it read-only, stores it mode 0600, and deletes it with the workspace; both `#!` scripts and cloud-config documents run. The payload is create-time and immutable (`PUT`/`PATCH` answer a named 405). See `docs/images.md`.
@@ -198,7 +198,7 @@ no`, `PermitRootLogin prohibit-password`) pinned by a config dropin,
 - **Pre-commit hook suite (#72).** Eleven hooks join the commit-time suite: the deferred-imports checker (`scripts/check_deferred_imports.py`, ported from klangk — imports live at module scope, with `# allow-deferred-import` as the escape hatch), shfmt, shellcheck, check-executables-have-shebangs, markdownlint, actionlint, trufflehog, nixfmt, check-toml, yamllint, and prettier. `devenv shell` writes a generated `.prettierignore`; the lint rules live in `devenv.nix`; CI's lint workflow runs the whole suite (`pre-commit run --all-files`). trufflehog scans staged file contents and fails only on credentials that verify live (the stock git-history variant scans no commits at commit time). The tree was formatted once to the new gates (docs, workflows, Nix, shell scripts).
 - **`msks image` catalog commands (#65).** The CLI now manages the image catalog without curl: `msks image ls` prints one line per image (reference, short hash, default designation, kernel facts; `--json` for the raw listing), `msks image import <path>` registers a daemon-side archive and prints the imported reference (the help states the daemon reads the path — nothing is uploaded), `msks image rm <ref>` removes by any catalog reference form (`name:version`, bare name, `name@hash`, full hash, or a unique hash prefix) and surfaces the 409 naming a workspace that boots the image, and `msks image info <ref>` prints one image's full record. See `docs/cli.md`.
 
-- **`msks:jscpd` token-clone gate (#71).** The jscpd scanner (5.0.16, a pinned per-platform prebuilt binary fetched from npm — linux x64/arm64 gnu and macOS arm64/x64; unsupported platforms fail at eval time — ported from klangk #2904) joins the dev environment as both a report (`devenv tasks run msks:jscpd`) and a pre-commit gate: `scripts/jscpd-gate.sh` is the single definition of the invocation (tracked sources in `src/msks/msks`, `--min-tokens 70`), shared with the `msks:xenon` pattern. A commit fails when any exact clone of ≥ 70 tokens exists among those sources; the backend baselines clean (0 clones), so the gate starts from zero.
+- **`msks-jscpd` token-clone gate (#71).** The jscpd scanner (5.0.16, a pinned per-platform prebuilt binary fetched from npm — linux x64/arm64 gnu and macOS arm64/x64; unsupported platforms fail at eval time — ported from klangk #2904) joins the dev environment as both a report (`msks-jscpd`) and a pre-commit gate: `scripts/jscpd-gate.sh` is the single definition of the invocation (tracked sources in `src/msks/msks`, `--min-tokens 70`), shared with the `msks-xenon` pattern. A commit fails when any exact clone of ≥ 70 tokens exists among those sources; the backend baselines clean (0 clones), so the gate starts from zero.
 
 - **Workspace egress networking, on by default (#52).** Workspaces are networked from creation: each boots with a virtio-net NIC onto a per-VM tap inside the appliance, takes its address, gateway, and the daemon's resolver over DHCP from a per-workspace /30 of `MSKSD_EGRESS_SUBNET` (the slice recorded on the row, so the address is stable across restarts), resolves through the daemon's UDP forwarder, and NATs out the appliance uplink through a per-VM nftables table (forward: the guest's source out the uplink and established replies back, all else drops; input: DHCP and the resolver only, so guests cannot reach the appliance's own services) — create with `"egress": false` (`msks create ws --no-egress`) to boot NIC-less. The plumbing arms while `MSKSD_EGRESS_ENABLED=true` and the daemon holds `CAP_NET_ADMIN`; `scripts/appliance-setup.sh` wires the host side (forwarding + NAT for the appliance bridge) as its documented privileged step. The guest overlay ships the DHCP client (systemd-networkd unit + resolved stub); on k8s, create refuses egress until the NetworkPolicy parity (#69). Consent gating also arrives with #69. See `docs/networking.md`.
 
@@ -225,12 +225,28 @@ no`, `PermitRootLogin prohibit-password`) pinned by a config dropin,
   the daemon land in the same place). Existing state does not
   migrate: move the directory you want to keep (the appliance state
   disk holds workspaces and tokens) or rebuild (`devenv processes
-up -d`, `msks:dev-ready`), then delete the old dirs — they are no
+up -d`, `msks-dev-ready`), then delete the old dirs — they are no
   longer gitignored. The devenv shell also prunes its own stale
   one-shot wrappers (`.devenv/shell-*.sh` older than an hour)
   automatically.
 
 ### Changed
+
+- **Plain scripts instead of dependency-free devenv tasks (#166).**
+  Every msks devenv task without `after`/`before` ordering is now a
+  plain script on the devenv shell's PATH (`msks-build-guest`,
+  `msks-appliance-build`, `msks-appliance-up`/`-down`,
+  `msks-preflight`, and the rest) — run it from a devenv shell
+  directly or `devenv --quiet -O dotenv.enable:bool false shell --
+<name>` from outside; `msks:uv-sync` remains the one task. The
+  appliance process now runs its build script directly, so `devenv
+processes up` shows one devenv startup instead of two, and the
+  build re-runs every start with the nix cache making unchanged
+  inputs a seconds-long no-op — healing stale or half-deleted
+  artifacts (#160) instead of skipping them. The pinned nixpkgs
+  source is exported as `MSKS_GUEST_NIXPKGS` to every devenv
+  context, and the build and lifecycle scripts print their start and
+  outcome.
 
 - **Minted identity keys default to `ed25519` (#138).** The
   client mint (`--key-type`, `msks create`) and the daemon mint
@@ -308,20 +324,20 @@ up -d`, `msks:dev-ready`), then delete the old dirs — they are no
   (`scripts/perf-appliance.py`, see `docs/boot-speed.md`). An
   appliance built from current `main` cannot boot at all — #46's init
   change broke the image's `/init` shebang — so rebuild with
-  `msks:appliance-build` when updating.
+  `msks-appliance-build` when updating.
 
 - **The workspace image ships cloud-init (#41).** The image is built from Debian's `genericcloud` cloud image instead of the cloud-init-free `nocloud` variant: cloud-init and its python3 runtime arrive with the base (~130M larger; the appliance state disk grows to 8G to keep fitting two images), and two dropins pin NoCloud as the only datasource and keep cloud-init off the guest's networking. The interactive boot budget is unchanged (vsock shell ~3.0s p50); existing workspaces keep the images they were created with — rebuild the appliance and recreate workspaces to move them onto the new image.
 
 - **Workspace stop is now a clean poweroff (#14).** The local backend's stop presses the ACPI power button (`vm.power-button`) and the guest's systemd-logind runs a full shutdown before the VMM exits. The endpoint stop used before was cloud-hypervisor v52's hard stop: the guest was never notified, and with persistent disks every stop dropped the writes still sitting in the guest's page cache.
-- **The workspace guest is Debian 13 trixie (#30).** The rootfs comes from Debian's official nocloud cloud image (pinned by dated URL + sha512): systemd as PID 1, apt (present but inert while the root is read-only), and Debian's own kernel direct-booted. `msks:build-guest`, the manifest contract, and the smoke path are unchanged; the busybox guest is gone. See the README for build details, timings, and the setuid/ownership notes.
+- **The workspace guest is Debian 13 trixie (#30).** The rootfs comes from Debian's official nocloud cloud image (pinned by dated URL + sha512): systemd as PID 1, apt (present but inert while the root is read-only), and Debian's own kernel direct-booted. `msks-build-guest`, the manifest contract, and the smoke path are unchanged; the busybox guest is gone. See the README for build details, timings, and the setuid/ownership notes.
 
-- **The appliance runs under the devenv process manager (#25).** `processes.appliance` — one supervised process owning both the VM and its store-share daemon — replaces the daemonizing `msks:appliance-up` task: crash-restart, `devenv processes logs`, and clean graceful teardown (ACPI-first TERM trap) come from the supervisor. `devenv processes up -d` / `down` are the supported lifecycle (the `msks:appliance-up`/`-down` tasks remain as thin wrappers), `scripts/appliance-down.sh` is gone, and the smoke test drives and asserts the supervised lifecycle. Background semantics verified live: detached `up -d` survives shells, double-up and double-down are no-ops, a `kill -9` VMM restarts under the supervisor, and manager-daemon death (processes keep running unsupervised) has a documented manual recovery.
+- **The appliance runs under the devenv process manager (#25).** `processes.appliance` — one supervised process owning both the VM and its store-share daemon — replaces the daemonizing `msks-appliance-up` task: crash-restart, `devenv processes logs`, and clean graceful teardown (ACPI-first TERM trap) come from the supervisor. `devenv processes up -d` / `down` are the supported lifecycle (the `msks-appliance-up`/`-down` tasks remain as thin wrappers), `scripts/appliance-down.sh` is gone, and the smoke test drives and asserts the supervised lifecycle. Background semantics verified live: detached `up -d` survives shells, double-up and double-down are no-ops, a `kill -9` VMM restarts under the supervisor, and manager-daemon death (processes keep running unsupervised) has a documented manual recovery.
 
-- **The msksd appliance (`msks:appliance-build`/`msks:appliance-up`/`msks:appliance-down`, #10).** The daemon now ships as a bootable appliance: a pure-nixpkgs direct-kernel-boot image (kernel, busybox init, module tree with nested-KVM + virtiofs support) whose heavy runtime — the nix-built msksd closure and the workspace VMM — resolves through a read-only virtiofs share of the host's `/nix/store`, so workspace assets built by `msks:build-guest` flow in with zero copying. The host supervisor is the devenv itself (bridge/tap via one documented `sudo`, virtiofsd and cloud-hypervisor from the pinned shell) — any Linux distro with nix + KVM, no NixOS anywhere. Verified end-to-end: appliance boots, serves the API over HTTPS (TOFU fingerprint on its serial log), and runs a workspace microvm under nested KVM driven through the API.
+- **The msksd appliance (`msks-appliance-build`/`msks-appliance-up`/`msks-appliance-down`, #10).** The daemon now ships as a bootable appliance: a pure-nixpkgs direct-kernel-boot image (kernel, busybox init, module tree with nested-KVM + virtiofs support) whose heavy runtime — the nix-built msksd closure and the workspace VMM — resolves through a read-only virtiofs share of the host's `/nix/store`, so workspace assets built by `msks-build-guest` flow in with zero copying. The host supervisor is the devenv itself (bridge/tap via one documented `sudo`, virtiofsd and cloud-hypervisor from the pinned shell) — any Linux distro with nix + KVM, no NixOS anywhere. Verified end-to-end: appliance boots, serves the API over HTTPS (TOFU fingerprint on its serial log), and runs a workspace microvm under nested KVM driven through the API.
 - **Appliance hardening fixes found by the e2e and the fresh-eyes review (#10).** The local driver now honors the absent-VM contract on stop/kill (a stale api socket behind a dead VMM reported ECONNREFUSED and delete-after-stop 500'd), the rootfs disk is declared `readonly` + `image_type: Raw` in `vm.create` (v52's autodetection otherwise disables sector-0 writes, and O_RDWR on the read-only store share fails), and `tls._write` loops `os.write` (a short write through virtio-backed storage left a truncated CA key).
 
 - **The `msksd` daemon and its `/api/v1` API (#8).** msksd now serves versioned endpoints over one HTTPS+WSS listener — public health, hashed bearer-token auth with revocation (`MSKSD_BOOTSTRAP_TOKEN` seeds the first credential), workspace create/list/status/start/stop/delete driving cloud-hypervisor through the microvm seam, and a websocket event channel for lifecycle transitions. TLS is operator-provided (`MSKSD_TLS_CERT`/`KEY`) or a self-signed CA generated on first run whose fingerprint is logged for trust-on-first-use pinning; `--no-tls` serves plain HTTP for development. State lives in an SQLite database under the state dir (`MSKSD_STATE_DIR`), managed by Alembic migrations.
-- **Nix-built guest assets (`msks:build-guest`, `msks:demo-vm`, `msks:build-runner-image`).** The devenv now produces everything needed to boot a microvm — kernel, initrd, read-only ext4 rootfs into the guest state dir (`.devenv/state/guest/`), plus the k8s vm-runner container archive — from the nixpkgs revision devenv itself pins, on any Linux host with nix; the manual-download flow is gone. Boot tests pick the built artifacts up automatically (explicit `MSKSD_TEST_VMLINUX`/`MSKSD_TEST_ROOTFS`/`MSKSD_TEST_INITRD` variables keep precedence) and skip themselves when the guest was never built or `/dev/kvm` is unusable. `msks:demo-vm` boots one interactive VM from the artifacts with `ch-remote` ready (#5).
+- **Nix-built guest assets (`msks-build-guest`, `msks-demo-vm`, `msks-build-runner-image`).** The devenv now produces everything needed to boot a microvm — kernel, initrd, read-only ext4 rootfs into the guest state dir (`.devenv/state/guest/`), plus the k8s vm-runner container archive — from the nixpkgs revision devenv itself pins, on any Linux host with nix; the manual-download flow is gone. Boot tests pick the built artifacts up automatically (explicit `MSKSD_TEST_VMLINUX`/`MSKSD_TEST_ROOTFS`/`MSKSD_TEST_INITRD` variables keep precedence) and skip themselves when the guest was never built or `/dev/kvm` is unusable. `msks-demo-vm` boots one interactive VM from the artifacts with `ch-remote` ready (#5).
 
 - **`msksd --reload` (development, #144).** The daemon gains a
   development flag that watches the msks package tree it runs from
@@ -415,4 +431,4 @@ up -d`, `msks:dev-ready`), then delete the old dirs — they are no
   keeps the image it was created with, so rebuild the appliance,
   then delete existing workspaces and the old image from the
   catalog — new workspaces then bind the new image.
-- **`devenv shell` no longer runs the pre-commit suite at shell entry (#32).** A devenv 2.3.x scheduler regression pulled `devenv:git-hooks:run` into the shell's task graph, so a failing hook (e.g. the xenon complexity gate) aborted shell entry before it opened — with no way to use the shell to fix the failure. The suite still runs on `git commit` and as the `msks:xenon` task.
+- **`devenv shell` no longer runs the pre-commit suite at shell entry (#32).** A devenv 2.3.x scheduler regression pulled `devenv:git-hooks:run` into the shell's task graph, so a failing hook (e.g. the xenon complexity gate) aborted shell entry before it opened — with no way to use the shell to fix the failure. The suite still runs on `git commit` and as the `msks-xenon` task.

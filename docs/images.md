@@ -135,7 +135,7 @@ None ]` (the seed disk answers immediately — no EC2 or OpenStack
 ### The shipped builder
 
 ```bash
-devenv tasks run msks:build-guest
+msks-build-guest
 ```
 
 builds the default image (`workspace-debian-13.6.tar`) from a

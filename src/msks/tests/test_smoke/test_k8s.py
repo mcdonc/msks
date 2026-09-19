@@ -23,7 +23,7 @@ async def test_k8s_pod_lifecycle() -> None:
         k8s=K8sSettings(
             kubeconfig=KUBECONFIG,
             namespace=os.environ.get("MSKSD_TEST_NAMESPACE", "default"),
-            # The image devenv task `msks:build-runner-image` builds and
+            # The image the msks-build-runner-image script builds and
             # `k3s ctr images import` loads; conftest.py exposes it via
             # MSKSD_TEST_RUNNER_IMAGE once the archive exists. The image
             # owns the guest it boots, so the spec's host-side artifact

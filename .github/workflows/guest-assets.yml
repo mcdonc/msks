@@ -8,7 +8,7 @@
 # independent of both lint and the unit tests.
 #
 # Needs none of the test-run plumbing (no TMPDIR pin, no coverage
-# env): just the devenv shell and the msks:build-guest task.
+# env): just the devenv shell and the msks-build-guest script.
 #
 # Path-filtered: runs only when the guest inputs change — the nix
 # expressions, the build script, the devenv files that pin nixpkgs
@@ -74,7 +74,7 @@ jobs:
       - name: Build guest assets
         run: >-
           devenv --quiet -O dotenv.enable:bool false shell --
-          devenv tasks run msks:build-guest
+          msks-build-guest
 
       # The real-artifact pinning test: the ''-escape RepoTag bug
       # shipped precisely because this test skipped everywhere CI

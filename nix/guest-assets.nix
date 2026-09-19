@@ -41,9 +41,10 @@
 # VM runs as root today, so nothing regresses; restoring them is
 # #36-adjacent follow-up material.
 #
-# Evaluate through the devenv tasks (they pin nixpkgs to the
-# devenv.lock revision); `nix-build nix/guest.nix -A guest` with plain
-# NIX_PATH also works when the pinned channel is acceptable.
+# Evaluate through the msks-build-guest / msks-build-runner-image
+# scripts (they pin nixpkgs to the devenv.lock revision);
+# `nix-build nix/guest.nix -A guest` with plain NIX_PATH also works
+# when the pinned channel is acceptable.
 {
   lib,
   pkgs,

@@ -21,7 +21,7 @@ Usage (from the repo root, inside the devenv shell):
 
 Runs on the local backend with the built guest assets (the guest
 state dir — .devenv/state/guest by default — via
-``devenv tasks run msks:build-guest``) and /dev/kvm. Exits nonzero if
+``msks-build-guest``) and /dev/kvm. Exits nonzero if
 any run fails to reach the prompt.
 """
 
@@ -352,7 +352,7 @@ async def main() -> int:
     assets = load_guest_assets()
     if assets is None:
         print(
-            "guest assets not built: devenv tasks run msks:build-guest",
+            "guest assets not built: msks-build-guest",
             file=sys.stderr,
         )
         return 2

@@ -85,7 +85,7 @@ jobs:
       - name: Build appliance and guest assets
         run: >-
           devenv --quiet -O dotenv.enable:bool false shell --
-          devenv tasks run msks:appliance-build msks:build-guest
+          bash -c 'msks-appliance-build && msks-build-guest'
 
       # The proving smoke, exactly the documented dev-host
       # invocation, with one CI-specific guard: the test's skip
@@ -161,7 +161,7 @@ jobs:
         if: always()
         run: |
           devenv --quiet -O dotenv.enable:bool false shell -- bash -c '
-          devenv tasks run msks:appliance-down || true
+          msks-appliance-down || true
           pkill -f "cloud-hypervisor --api-socket.*.devenv/state/appliance/api.sock" || true
           pkill -f "virtiofsd --socket-path.*.devenv/state/appliance" || true
           rm -f .devenv/state/appliance/api.sock .devenv/state/appliance/vmm-sock \

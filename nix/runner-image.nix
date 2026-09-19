@@ -5,7 +5,7 @@
 # variables the backend's pod template sets (see spec_env in
 # src/msks/msks/microvm/k8s.py). The image carries the same
 # cloud-hypervisor the devenv shell pins and the same guest assets
-# `msks:build-guest` produces, so local and k8s backends boot
+# `msks-build-guest` produces, so local and k8s backends boot
 # identical guests.
 {
   lib,

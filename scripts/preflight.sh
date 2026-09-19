@@ -71,11 +71,11 @@ while IFS= read -r f; do
   pyfiles+=("$f")
 done < <(git ls-files --cached --others --exclude-standard '*.py')
 
-# The gated suite and covgaps need the venv's pytest/coverage: inside
-# `devenv shell` plain `python` is the venv interpreter, but `devenv
-# tasks run` executes tasks without the venv on PATH (the nix python
-# ships neither package), so resolve it explicitly and keep plain
-# `python` as the fallback for direct runs.
+# The gated suite and covgaps need the venv's pytest/coverage:
+# resolve the interpreter explicitly so the run works however this
+# script is invoked (inside `devenv shell` plain `python` is the venv
+# interpreter; a bare nix python ships neither package), keeping
+# plain `python` as the fallback.
 venv_python=.devenv/state/venv/bin/python
 if [ ! -x "$venv_python" ]; then
   venv_python=python

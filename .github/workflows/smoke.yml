@@ -107,7 +107,7 @@ jobs:
       - name: Build guest assets
         run: >-
           devenv --quiet -O dotenv.enable:bool false shell --
-          devenv tasks run msks:build-guest
+          msks-build-guest
 
       # The smoke suite never counts toward the coverage gate (the
       # faked-transport unit suites own the 100%); serial (-n auto
