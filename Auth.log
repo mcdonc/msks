@@ -1,0 +1,8 @@
+debug1: OpenSSH_10.5p1, OpenSSL 3.6.3 9 Jun 2026
+debug1: Reading configuration data /home/chrism/.ssh/config
+debug1: /home/chrism/.ssh/config line 85: Applying options for *
+debug1: Reading configuration data /etc/ssh/ssh_config
+debug1: Reading configuration data /nix/store/a3d8zp1c9k6z7dwd2hxybrn6sc6p5y34-libvirt-12.2.0/etc/ssh/ssh_config.d/30-libvirt-ssh-proxy.conf
+debug1: /etc/ssh/ssh_config line 4: Applying options for *
+debug1: Reading configuration data /nix/store/khnfirshq5j299s6sfj0laxj0vr7gaa6-systemd-260.2/lib/systemd/ssh_config.d/20-systemd-ssh-proxy.conf
+Pseudo-terminal will not be allocated because stdin is not a terminal.
