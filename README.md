@@ -206,6 +206,14 @@ the same manager (`devenv processes up -d` / `down`). No bare-host
 msksd process exists — `devenv processes list` shows only the
 appliance.
 
+**A running appliance serves the daemon its image was built with
+(#158).** The image builds at every `devenv processes up`: after a
+pull or a source edit, the start builds the new image (minutes
+from a cold store, ~20s warm) and boots it. A stop and start is
+also how a fix merged to main reaches a running appliance —
+between restarts the daemon keeps serving the image it started
+with, so `msks` behavior stays that of the build inside the VM.
+
 **The client environment presets to the appliance (#146)**:
 `MSKSC_URL` (`https://192.168.77.2:8660`), `MSKSC_TOKEN` (the
 appliance's bootstrap token), and `MSKSC_CAFILE`
