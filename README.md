@@ -213,6 +213,30 @@ the same manager (`devenv processes up -d` / `down`). No bare-host
 msksd process exists — `devenv processes list` shows only the
 appliance.
 
+**The foreground run stops on Ctrl-C (#164):**
+
+```bash
+devenv --quiet -O dotenv.enable:bool false shell -- bash scripts/appliance-foreground.sh
+```
+
+That command stays attached in the terminal (logs stream, Ctrl-C
+or SIGTERM stops the appliance) and is the right shape for a
+development session. A bare `devenv processes up --no-tui` typed
+by hand does the same job in only one of its two shapes: with no
+manager running it owns the manager itself and stops the appliance
+on Ctrl-C, but with a detached manager already running (an earlier
+`up -d`, `msks:appliance-up`, or the host's systemd unit) it is
+only a view over that manager, and Ctrl-C detaches — the manager
+and the appliance keep running and serving, and the documented
+recovery is a separate `devenv processes down`. The wrapper owns
+the signal in both shapes: it forwards the interrupt to the devenv
+view exactly once, waits for its own graceful stop, and stops a
+surviving detached manager through the same `down` path, so the
+prompt returns with the manager, virtiofsd, the VMM, and the guest
+all gone (the run script's ACPI-first teardown runs either way).
+A second Ctrl-C while the stop is in flight forces devenv's
+impatient exit — a hard kill of the tree.
+
 **A running appliance serves the daemon its image was built with
 (#158).** The image builds at every `devenv processes up`: after a
 pull or a source edit, the start builds the new image (minutes

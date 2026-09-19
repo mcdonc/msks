@@ -8,6 +8,18 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **Foreground appliance runner (`scripts/appliance-foreground.sh`)
+  (#164).** `devenv --quiet -O dotenv.enable:bool false shell -- bash
+scripts/appliance-foreground.sh` runs the appliance attached to the
+  terminal, and Ctrl-C or SIGTERM stops it through the same graceful
+  path `devenv processes down` takes (ACPI-first teardown inside the
+  90s grace; the prompt returns with the manager, virtiofsd, the VMM,
+  and the guest all gone). A bare foreground `devenv processes up
+--no-tui` keeps a detached manager and its appliance serving after
+  Ctrl-C when one was already running — the wrapper owns the signal
+  in both the cold-start and the attach shapes (see the README's
+  appliance section).
+
 - **`devenv processes up` converges to a working appliance, loudly
   (#160).** The daemon reports the image it booted from in
   `/health` (an `msksd.image` kernel-cmdline pair), a devenv shell
