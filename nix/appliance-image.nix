@@ -60,6 +60,14 @@ let
   # hash in guest-assets.nix (#30, #41).
   inherit (guest) debianImage;
 
+  # The inode-metadata walker (#169, #179): the appliance extracts
+  # the same base image the same unprivileged way, so its tree
+  # records and restores the same manifest — the appliance's root
+  # is read-only and dpkg never runs there, but the image stays
+  # faithful to the base instead of silently flattening ownership
+  # (a future writable-root debugging session gets a stock Debian).
+  inherit (guest) inodeMeta;
+
   # Debian's GENERIC kernel flavor, the same pin the workspace guest
   # boots (#96 — the pin and its comments live in guest-assets.nix,
   # one deb fetch serves both images). The generic flavor carries
@@ -774,12 +782,19 @@ let
         dd if=debian.raw of=root.part bs=512 skip=$((offset / 512)) status=none
 
         # ext4 -> tree (ownership noise from rdump is expected
-        # unprivileged; the fakeroot pack fixes ownership later).
+        # unprivileged; the metadata walk right below hands the
+        # pack stage what it restores).
         debugfs -R "rdump / $root" root.part 2>/dev/null || true
         rm -rf "$root"/lost+found
         for top in bin usr etc var lib boot; do
           test -d "$root/$top"
         done
+
+        # Every source inode's mode/uid/gid before the tree diverges
+        # (#169, #179 — same walker, same pins, same base image as
+        # the workspace guest). The fakeroot pack stage applies it.
+        mkdir -p "$out"
+        python3 ${inodeMeta} walk root.part "$out"/inode-metadata
 
         # The msks overlay (units, masks, identity, the boot script).
         # The image's read-only regular files the overlay replaces
@@ -788,6 +803,9 @@ let
         # /var/log/journal leaves too: against the read-only root it
         # would only trick journald into a persistent start it cannot
         # write — the state disk's staged directory is the real one.
+        # It is a setgid directory (gid 999, systemd-journal), so
+        # the deletion is declared to the pack stage as an expected
+        # special-mode absence.
         rm -rf "$root"/var/log/journal
         rm -f "$root"/etc/machine-id
         cp -a --no-preserve=ownership ${applianceOverlay}/. "$root"/
@@ -913,16 +931,25 @@ let
   # anything — unprivileged and host-independent. One fakeroot
   # session owns the tree and builds the image (rdump landed
   # everything build-user owned; the faked chown/chmod are what
-  # mke2fs -d bakes in).
+  # mke2fs -d bakes in). The pack applies the inode-metadata
+  # manifest on top of the root:root baseline (#169, #179): the
+  # appliance's tree diverges from the base by overlay, mask, and
+  # kernel swap, and only those paths keep the baseline — every
+  # path the base shipped comes back with its own mode and owner.
   packScript = pkgs.writeText "msks-appliance-pack.sh" ''
     set -eu
     tree="''${PACK_TREE:?}"
     img="''${PACK_IMG:?}"
     blocks="''${PACK_BLOCKS:?}"
     fake_epoch="''${PACK_FAKE_EPOCH:?}"
+    meta="''${PACK_META:?}"
+    applier="''${PACK_APPLIER:?}"
+    # Word-split intended: a fixed list of space-separated paths.
+    expected_absent="''${PACK_EXPECTED_ABSENT:-}"
     chown -R 0:0 "$tree"
     chmod 0640 "$tree"/etc/shadow "$tree"/etc/gshadow
     chmod 0600 "$tree"/etc/ssh/ssh_host_*_key 2>/dev/null || true
+    python3 "$applier" apply "$meta" "$tree" $expected_absent
     E2FSPROGS_FAKE_TIME="$fake_epoch" mke2fs -q -t ext4 -b 4096 -I 256 \
       -L msks-rootfs \
       -E hash_seed=00000000-0000-0000-0000-000000000001 \
@@ -933,11 +960,12 @@ let
   rootfs =
     pkgs.runCommand "msks-appliance-rootfs"
       {
-        inherit applianceRoot packScript;
+        inherit applianceRoot packScript inodeMeta;
         nativeBuildInputs = [
           pkgs.e2fsprogs
           pkgs.fakeroot
           pkgs.gnutar
+          (pkgs.python3.withPackages (ps: [ ]))
         ];
         fakeEpoch = 1262304000;
       }
@@ -954,6 +982,9 @@ let
           PACK_IMG="$out/rootfs.ext4" \
           PACK_BLOCKS=$(( $(cat "$applianceRoot"/tree-blocks) + 65536 )) \
           PACK_FAKE_EPOCH="$fakeEpoch" \
+          PACK_META="$applianceRoot/inode-metadata" \
+          PACK_APPLIER="${inodeMeta}" \
+          PACK_EXPECTED_ABSENT="/var/log/journal" \
           fakeroot -- /bin/sh -e "$packScript"
       '';
 

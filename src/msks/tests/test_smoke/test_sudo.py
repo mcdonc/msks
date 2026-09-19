@@ -1,10 +1,10 @@
 """The workspace user's sudo (#169): setuid bits survive the build.
 
 The image build extracts the Debian root unprivileged, which drops
-every setuid/setgid bit; the build records the source image's
-special modes and the fakeroot pack stage bakes them back (see
-nix/guest-assets.nix). This smoke pins the result in a real boot:
-the binary's mode (04755, root-owned — the pairing sudo demands
+the setuid/setgid bits and flattens ownership; the build records the
+source image's inode metadata and the fakeroot pack stage bakes it
+back (see nix/guest-assets.nix). This smoke pins the result in a real
+boot: the binary's mode (04755, root-owned — the pairing sudo demands
 before anything else) and the behavior as the msks user, whose
 sudoers grant (#169) makes a successful elevation the observable
 outcome. With the bits lost, sudo refuses to run at all — the
