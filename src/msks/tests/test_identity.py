@@ -63,6 +63,12 @@ def test_seed_script_plants_both_users_and_the_trust_store() -> None:
     assert "/root/.ssh/authorized_keys" in script
     assert "/home/msks/.ssh/authorized_keys" in script
     assert "chown msks:msks" in script
+    # The home comes from the seed too (#171): created owned by the
+    # user, populated from skel once (the guard), .ssh private.
+    assert "install -d -m 0755 -o msks -g msks /home/msks" in script
+    assert "cp -a /etc/skel/. /home/msks/" in script
+    assert "chown -R msks:msks /home/msks" in script
+    assert "install -d -m 0700 -o msks -g msks /home/msks/.ssh" in script
     # Idempotent shape: the append only runs when grep misses.
     assert script.count("|| printf") == 3
     assert script.count(">> /root/.ssh/authorized_keys") == 1

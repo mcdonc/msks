@@ -6,6 +6,8 @@ import uuid
 from pathlib import Path
 
 from msks.app import build_app
+from msks.client import consoleauth
+from msks.identity import mint
 from msks.microvm import VmSpec
 from msks.settings import (
     Settings,
@@ -27,17 +29,26 @@ from test_smoke import (
 
 @needs_local
 async def test_local_console_identity_drop() -> None:
-    """A shell as the image's workspace user (#63): the helper drops
-    from root to uid 1000, creates the home on the persistent volume,
-    and execs a login shell whose identity the command output proves
-    (id -u is guest-computed, so the marker cannot come from the
-    echo). Root sessions keep working alongside it."""
+    """A shell as the image's workspace user (#63): the minted
+    identity's seed makes the home on the persistent volume (#171),
+    the helper drops from root to uid 1000, and execs a login shell
+    whose identity the command output proves (id -u is
+    guest-computed, so the marker cannot come from the echo). Root
+    sessions keep working alongside it."""
     state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
     settings = Settings(vmm=VmmSettings(state_dir=state_dir))
     app = build_app(settings)
     microvm = app.state.microvm
     wid = f"smoke-{uuid.uuid4().hex[:8]}"
     serial_log = state_dir / "vms" / wid / "serial.log"
+    # The mint a create performs (#111), replayed by hand so the
+    # launch stays direct: the public half rides the cidata seed and
+    # its script makes the home (#171); the private half signs the
+    # console challenge (#123) in-process, as the client would.
+    private_pem, public = mint("ed25519")
+    signer, _public = consoleauth.signer_for_key(
+        {"public_key": public, "private_key": private_pem}, wid
+    )
     try:
         await microvm.launch(
             VmSpec(
@@ -49,25 +60,26 @@ async def test_local_console_identity_drop() -> None:
                 root_mib=2048,
                 home_mib=256,
                 egress=False,
+                ssh_pubkey=public,
             )
         )
         await await_guest_up(serial_log)
-        # Seed the workspace user's dotfiles from skel as root: the
-        # helper creates a bare home, and bash without rc files
-        # prints no recognizable prompt.
+        # The identity seed made the home before any console connect
+        # (#171): populated from /etc/skel and owned by the user —
+        # and cloud-init created no `debian` account alongside the
+        # shipped msks one. run_in_console's retries absorb
+        # cloud-final still finishing the seed after the serial
+        # prompt appears.
         await run_in_console(
             microvm,
             wid,
-            "cp -r /etc/skel/. /home/msks/ && echo S-$((6*7))",
+            "test -f /home/msks/.profile "
+            '&& test "$(stat -c %U:%G /home/msks)" = msks:msks '
+            "&& test ! -e /home/debian "
+            "&& ! grep -q '^debian:' /etc/passwd "
+            "&& echo S-$((6*7))",
             "S-42",
-            app=app,
-        )
-        await run_in_console(
-            microvm,
-            wid,
-            "chown -R msks:msks /home/msks && echo O-$((6*7))",
-            "O-42",
-            app=app,
+            signer=signer,
         )
         # The real drop: uid 1000, the persistent home, and root
         # alongside.
@@ -77,7 +89,7 @@ async def test_local_console_identity_drop() -> None:
             "echo I-$(id -u)",
             "I-1000",
             user="msks",
-            app=app,
+            signer=signer,
         )
         await run_in_console(
             microvm,
@@ -85,14 +97,14 @@ async def test_local_console_identity_drop() -> None:
             "echo H-$(pwd)",
             "H-/home/msks",
             user="msks",
-            app=app,
+            signer=signer,
         )
         await run_in_console(
             microvm,
             wid,
             "echo R-$(id -u)",
             "R-0",
-            app=app,
+            signer=signer,
         )
         await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
     except BaseException:
