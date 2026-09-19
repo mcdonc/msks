@@ -12,6 +12,13 @@ set -euo pipefail
 root="${DEVENV_ROOT:?not running inside the devenv shell}"
 nixpkgs="${MSKS_GUEST_NIXPKGS:?devenv must pass MSKS_GUEST_NIXPKGS}"
 app_dir="${MSKS_APPLIANCE_DIR:-$root/.devenv/state/appliance}"
+# A relative MSKS_APPLIANCE_DIR resolves below the repo root,
+# matching the Python-side resolution: a CWD-relative read would
+# depend on where the shell was opened.
+case "$app_dir" in
+/*) ;;
+*) app_dir="$root/$app_dir" ;;
+esac
 
 out="$(
   nix-build --no-out-link -I nixpkgs="$nixpkgs" \

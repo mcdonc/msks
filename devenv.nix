@@ -303,6 +303,13 @@ in
       exec = ''
         root="$DEVENV_ROOT"
         state="''${MSKSD_STATE_DIR:-$root/.devenv/state/msksd}"
+        # A relative override resolves below the repo root (the
+        # Python-side resolution; a CWD-relative read would depend on
+        # where the shell was opened).
+        case "$state" in
+        /*) ;;
+        *) state="$root/$state" ;;
+        esac
         mkdir -p "$state"
         out=$(
           nix-build --no-out-link -I nixpkgs=${pkgs.path} \
@@ -339,6 +346,12 @@ in
       exec = ''
         root="$DEVENV_ROOT"
         state="''${MSKSD_STATE_DIR:-$root/.devenv/state/msksd}"
+        # A relative override resolves below the repo root (see
+        # msks:build-guest-archive's case block).
+        case "$state" in
+        /*) ;;
+        *) state="$root/$state" ;;
+        esac
         mkdir -p "$state"
         if [ ! -s "$state/bootstrap-token" ]; then
           # 256 bits of urandom, hex: the same shape the appliance's
@@ -423,6 +436,12 @@ in
     appliance = {
       exec = ''
         app_dir="''${MSKS_APPLIANCE_DIR:-$DEVENV_ROOT/.devenv/state/appliance}"
+        # A relative override resolves below the repo root (the
+        # tasks' case blocks).
+        case "$app_dir" in
+        /*) ;;
+        *) app_dir="$DEVENV_ROOT/$app_dir" ;;
+        esac
         # Artifacts as a conditional side effect: the build task
         # no-ops through execIfModified when nothing feeding the
         # image changed, and rebuilds (minutes from a cold store,
@@ -711,6 +730,13 @@ in
     # exported before entering the shell survives; otherwise the
     # preset wins (unset it inside the shell to override).
     app_dir="''${MSKS_APPLIANCE_DIR:-$DEVENV_ROOT/.devenv/state/appliance}"
+    # A relative override resolves below the repo root — the
+    # exported MSKSC_CAFILE must be absolute, or the client would
+    # resolve it against its own CWD.
+    case "$app_dir" in
+    /*) ;;
+    *) app_dir="$DEVENV_ROOT/$app_dir" ;;
+    esac
     if [ -s "$app_dir/bootstrap-token" ]; then
       export MSKSC_TOKEN="$(cat "$app_dir/bootstrap-token")"
     fi

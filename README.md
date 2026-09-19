@@ -155,11 +155,11 @@ MSKSC_URL=https://127.0.0.1:8660 MSKSC_CAFILE=$PWD/.devenv/state/msksd/msks-ca.p
 ```
 
 The state lives in `.devenv/state/msksd/` (TLS CA, bootstrap token,
-sqlite catalog, workspace volumes; the dir honors `MSKSD_STATE_DIR` —
-export it before `msks:dev-ready` to relocate it, and the tasks and
-the daemon converge on the same place). Gitignored but NOT
-disposable-clean — `git clean -xfd` deletes all of it. Workspaces
-without egress are
+sqlite catalog, workspace volumes). The dir honors `MSKSD_STATE_DIR`
+— export it before `msks:dev-ready` to relocate it; both the
+convergence tasks and the daemon read it, so one export moves both.
+Gitignored but NOT disposable-clean — `git clean -xfd` deletes all
+of it. Workspaces without egress are
 fully served — vsock console, user-data seeds, stop/start
 persistence. Egress (and `msks ssh`, whose forwards ride the egress
 NIC) holds `CAP_NET_ADMIN` (#101): that is the appliance's job. A

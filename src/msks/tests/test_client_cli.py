@@ -42,6 +42,10 @@ def mock(handler) -> httpx.MockTransport:
 def client_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MSKSC_URL", "https://daemon")
     monkeypatch.setenv("MSKSC_TOKEN", "tok")
+    # The ambient devenv shell presets MSKSC_EXPECTED_IMAGE once the
+    # checkout has appliance state — without this, every client test
+    # would depend on where (and whether) an appliance was built.
+    monkeypatch.delenv("MSKSC_EXPECTED_IMAGE", raising=False)
 
 
 KEY_BODY = {
@@ -211,6 +215,21 @@ def test_cmd_ls_stays_silent_when_images_match(
         )
     )
     assert capsys.readouterr().err == ""
+
+
+def test_cmd_ls_ignores_a_malformed_health_document(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A /health that answers a non-mapping (a wrong host, a
+    proxy) never tracebacks the listing: the probe is best-effort,
+    the notice simply stays off. Found live: a tree with built
+    appliance state presets MSKSC_EXPECTED_IMAGE, so the probe
+    fires for every `msks ls` from a devenv shell."""
+    client_env(monkeypatch)
+    monkeypatch.setenv("MSKSC_EXPECTED_IMAGE", NEW_IMAGE)
+    rc = cli.cmd_ls(transport=mock(lambda req: httpx.Response(200, json=ROWS)))
+    assert rc == 0
+    assert "alpha" in capsys.readouterr().out
 
 
 def test_cmd_ls_skips_the_health_probe_without_an_expected_image(

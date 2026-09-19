@@ -67,7 +67,9 @@ its pidfile and sockets; if the script dies without the trap
 firing (SIGKILL), recovery is manual:
 `pkill -f 'cloud-hypervisor --api-socket <repo>/.devenv/state/appliance/api.sock'`
 (plus the matching `virtiofsd --socket-path` pattern) and removing
-the stale sockets under `.devenv/state/appliance/`.
+the stale sockets under `.devenv/state/appliance/`. An orphan
+booted by a pre-#156 checkout keeps its sockets under the old
+`<repo>/.appliance/` path — pkill those with the old path instead.
 
 - `devenv processes up -d` starts the manager detached — it survives
   the shell that launched it, and a second `up -d` is a no-op.

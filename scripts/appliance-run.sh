@@ -21,6 +21,13 @@ set -euo pipefail
 
 root="${DEVENV_ROOT:?not running inside the devenv shell}"
 app_dir="${MSKS_APPLIANCE_DIR:-$root/.devenv/state/appliance}"
+# A relative MSKS_APPLIANCE_DIR resolves below the repo root,
+# matching the Python-side resolution: a CWD-relative read would
+# depend on where the shell was opened.
+case "$app_dir" in
+/*) ;;
+*) app_dir="$root/$app_dir" ;;
+esac
 guest_ip="192.168.77.2"
 
 # Idempotent prerequisites (artifacts, state, token) — MUST run
@@ -84,7 +91,7 @@ base_cmdline="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).
 # would report that, and the comparison would silently no-op (#160
 # review).
 if [ ! -e "$app_dir/image" ]; then
-  echo "msks: $app_dir/image is missing; rebuild with: devenv tasks run msks:appliance-build" >&2
+  echo "msks: $app_dir/image is missing; rebuild with: MSKS_APPLIANCE_DIR=$app_dir devenv tasks run msks:appliance-build" >&2
   exit 1
 fi
 booted_image="$(readlink -f "$app_dir/image")"

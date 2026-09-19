@@ -12,6 +12,13 @@ set -euo pipefail
 root="${DEVENV_ROOT:?not running inside the devenv shell}"
 nixpkgs="${MSKS_GUEST_NIXPKGS:?devenv must pass MSKS_GUEST_NIXPKGS}"
 guest_dir="${MSKS_GUEST_DIR:-$root/.devenv/state/guest}"
+# A relative MSKS_GUEST_DIR resolves below the repo root, matching
+# the Python-side resolution (guestassets.guest_dir): a CWD-relative
+# read would depend on where the shell was opened.
+case "$guest_dir" in
+/*) ;;
+*) guest_dir="$root/$guest_dir" ;;
+esac
 image="msks-vm-runner:dev"
 
 out="$(

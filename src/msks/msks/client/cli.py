@@ -59,9 +59,12 @@ def stale_image_notice(expected: str, health: dict | None) -> str | None:
     builds (unset outside a devenv
     shell, or before the first build), and the daemon's ``/health``
     carries the image it booted (``None`` on a daemon predating the
-    ``msksd.image`` cmdline pair). An unknown side stays silent.
+    ``msksd.image`` cmdline pair). An unknown side stays silent —
+    including a /health that answers something other than a mapping
+    (a wrong host, a proxy): the probe is best-effort and must never
+    turn the listing into a traceback.
     """
-    image = (health or {}).get("image")
+    image = health.get("image") if isinstance(health, dict) else None
     if not expected or not image or image == expected:
         return None
     return (

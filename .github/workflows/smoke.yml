@@ -119,16 +119,25 @@ jobs:
       # than a dev host's KVM guest (#64): give each phase of the
       # persistence test's four boot cycles generous ceilings. The
       # dev-host defaults live in the test module.
+      # The closing grep is the nightly-l3 guard pattern: the smoke
+      # tests skip — not fail — when a prerequisite is missing, and
+      # a run that quietly skipped everything would report green
+      # while proving nothing (exactly the self-provisioning path a
+      # state-dir regression would break).
       - name: Smoke tests
         env:
           TMPDIR: /tmp
           MSKSD_TEST_GUEST_UP_TIMEOUT_S: "180"
           MSKSD_TEST_CONSOLE_TIMEOUT_S: "120"
           MSKSD_TEST_SHUTDOWN_TIMEOUT_S: "180"
-        run: >-
-          devenv --quiet -O dotenv.enable:bool false shell --
-          python -m pytest src/msks/tests/test_smoke/
-          -q -p no:cacheprovider --no-cov
+        run: |
+          set -o pipefail
+          TMPDIR=/tmp devenv --quiet -O dotenv.enable:bool false shell -- \
+            python -m pytest src/msks/tests/test_smoke/ \
+            -q -rs -p no:cacheprovider --no-cov 2>&1 \
+            | tee /tmp/smoke-pytest.log
+          ! grep -qE '^SKIPPED.*test_boot_lifecycle' /tmp/smoke-pytest.log \
+            || { echo 'the local boots skipped — assets or /dev/kvm regressed'; exit 1; }
 
       # The egress smokes need root and the runner's FORWARD chain
       # handed to the daemon's own nft tables. This step also guards

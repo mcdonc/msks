@@ -50,23 +50,24 @@ KUBECONFIG = os.environ.get("MSKSD_TEST_KUBECONFIG")
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
-def _state_dir(env: str, name: str) -> Path:
+def state_dir(env: str, name: str) -> Path:
     """A devenv state dir below the repo, honoring its env override.
 
     #156: the build/run state lives under `.devenv/state/` —
     `MSKS_GUEST_DIR` / `MSKS_APPLIANCE_DIR` relocate the two this
-    suite touches (the same resolution every build/run script
-    applies).
+    suite touches (a relative override resolves below the repo
+    root, the same resolution every build/run script applies).
     """
     override = os.environ.get(env)
     if override:
-        return Path(override)
+        path = Path(override)
+        return path if path.is_absolute() else REPO_ROOT / path
     return REPO_ROOT / ".devenv" / "state" / name
 
 
 #: The guest asset dir and the appliance state dir (#156).
-GUEST_DIR = _state_dir("MSKS_GUEST_DIR", "guest")
-APPLIANCE_DIR = _state_dir("MSKS_APPLIANCE_DIR", "appliance")
+GUEST_DIR = state_dir("MSKS_GUEST_DIR", "guest")
+APPLIANCE_DIR = state_dir("MSKS_APPLIANCE_DIR", "appliance")
 
 client = AsyncClient(verify=False, timeout=10.0)
 
