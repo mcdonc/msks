@@ -416,6 +416,14 @@ let
       fi
 
       umount /run/msks-mnt
+      # Grow an undersized filesystem into the device (#180): the
+      # host setup script grows the state-disk FILE to the template's
+      # size, and this converges the ext4 to match — a disk formatted
+      # at the device's size makes this a fast no-op. Best-effort: a
+      # failed grow is loud (console and journal) and retries next
+      # boot, which beats failing the unit over free space.
+      resize2fs /dev/vdb \
+        || echo "msks-state-prepare: resize2fs failed; retrying next boot"
       rm -rf /run/msks-mnt /run/msks-blank 2>/dev/null || true
     '';
   };
@@ -911,6 +919,7 @@ let
         test -x "$root"/sbin/init
         test -x "$root"/sbin/mkfs.ext4
         test -x "$root"/sbin/e2label
+        test -x "$root"/sbin/resize2fs
         test -x "$root"/usr/local/sbin/msks-boot
         test -x "$root"/usr/local/sbin/msks-state-prepare
         test -d "$root"/var/lib/systemd
@@ -1005,11 +1014,19 @@ let
       ''
         set -eu
         mkdir -p "$out"
-        # Room for two images (the cloud-init-bearing genericcloud
-        # base lands at ~1.5G rootfs plus ~1.5G retained archive
-        # each, #41) with the database, tokens, workspace
-        # overlays/volumes, and the journal under it.
-        truncate -s 8G "$out/state.ext4"
+        # Sized from the capacity model (#180): two imported images
+        # (~1.5G rootfs plus ~1.5G retained archive each, #41) left
+        # ~2G of the old 8G template — under what ONE workspace's
+        # `apt install npm` writes into its overlay and /home volume,
+        # and the host-side write failures surfaced inside the guest
+        # as raw virtio-blk EIO. 40G carries the images with ~5x
+        # headroom for workspace overlays, volumes, the database,
+        # tokens, and the journal. The file stays sparse: the size is
+        # a ceiling the guest's writes fill in, not an allocation. A
+        # template growth reaches existing installs in place (the
+        # host setup script grows the file, msks-state-prepare
+        # resizes the filesystem).
+        truncate -s 40G "$out/state.ext4"
         # The staging var/: the run/lock symlinks must predate the
         # /var bind mount, the journal directory must exist before
         # journald's flush step looks for it (Debian creates it at

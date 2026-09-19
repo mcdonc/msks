@@ -68,7 +68,7 @@ async def test_appliance_boot_and_workspace() -> None:
     marker_text = f"pre-101 daemon state {uuid.uuid4().hex[:8]}\n"
     legacy_dir = tempfile.TemporaryDirectory(prefix="msks-legacy-state")
     state_disk = Path(legacy_dir.name) / "state.ext4"
-    # Sparse copy: the template is an 8 GiB image with large holes,
+    # Sparse copy: the template is a 40 GiB image with large holes,
     # and a dense copy would ENOSPC a tmpfs-backed TMPDIR (the same
     # care read_appliance_journal takes).
     copy = subprocess.run(

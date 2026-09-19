@@ -245,6 +245,15 @@ up -d`, `msks-dev-ready`), then delete the old dirs — they are no
 
 ### Changed
 
+- **The appliance state disk grows to 40G (#180).** The template
+  was a fixed 8G, and two imported images left under 2G of it — an
+  `apt install` inside a workspace then filled the disk, and the
+  host-side write failures surfaced in the guest as raw virtio-blk
+  `Input/output error` storms. The new template carries the images
+  with ~5x headroom for workspace overlays and volumes; existing
+  disks grow in place on the appliance's next start (the host
+  extends the sparse file, the guest's state preparation runs
+  `resize2fs`). `docs/storage.md` documents the capacity model.
 - **Appliance process console output (#176).** A requested stop
   (Ctrl-C, `devenv processes down`) ends with a calm final line,
   `appliance stopped`. Unexpected VMM exits state that the
