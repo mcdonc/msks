@@ -232,6 +232,17 @@ up -d`, `msks-dev-ready`), then delete the old dirs — they are no
 
 ### Changed
 
+- **Appliance process console output (#176).** A requested stop
+  (Ctrl-C, `devenv processes down`) now ends with `appliance stopped
+(SIGTERM)` — the stop completing — instead of the crash-shaped
+  `VMM exited (rc=143); the supervisor decides what happens next`;
+  unexpected VMM exits state that the supervisor restarts them and
+  name `devenv processes logs appliance`. The serving line repeats
+  the appliance URL beside the image's short name (the full store
+  path stays on the build line), and on a first boot the booting
+  line explains the certificate fingerprint cross-check (`grep
+'CA fingerprint' …/serial.log`) instead of naming the serial log
+  without explanation.
 - **Plain scripts instead of dependency-free devenv tasks (#166).**
   Every msks devenv task without `after`/`before` ordering is now a
   plain script on the devenv shell's PATH (`msks-build-guest`,
