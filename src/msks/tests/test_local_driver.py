@@ -51,8 +51,19 @@ def env(tmp_path: Path):
     # identity-checked liveness reads /proc/<pid>/cmdline, and an
     # exec'd sleep erases the stub (and --api-socket) from it. The
     # shebang keeps the stub's own path in the cmdline, exactly like
-    # the real binary spawn.
-    stub.write_text("#!/usr/bin/env python3\nimport time\ntime.sleep(600)\n")
+    # the real binary spawn. With MSKS_STUB_READY set the stub also
+    # touches that path once userland runs -- spawn_stub_vmm waits
+    # for it, because a shebang exec chain satisfies the /proc
+    # identity check mid-chain (env phase) and then briefly reads
+    # EMPTY at the next exec transition (#154 r2).
+    stub.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os, pathlib, time\n"
+        'ready = os.environ.get("MSKS_STUB_READY")\n'
+        "if ready:\n"
+        "    pathlib.Path(ready).touch()\n"
+        "time.sleep(600)\n"
+    )
     stub.chmod(0o755)
     qemu_stub = tmp_path / "qemu-img"
     qemu_stub.write_text(
@@ -428,10 +439,12 @@ async def test_shutdown_timeout_when_vmm_ignores_sigterm(
     # A stub that traps SIGTERM: the guest powers off, the VMM refuses to die.
     app, state_dir, _ = env
     stubborn = tmp_path / "ch-stubborn"
+    ready = tmp_path / "stubborn-ready"
     stubborn.write_text(
         "#!/usr/bin/env python3\n"
         "import signal, time\n"
         "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        f"open({str(ready)!r}, 'w').close()\n"
         "time.sleep(600)\n"
     )
     stubborn.chmod(0o755)
@@ -444,6 +457,15 @@ async def test_shutdown_timeout_when_vmm_ignores_sigterm(
     try:
         await app.state.microvm.launch(spec(tmp_path))
         proc = app.state.microvm.local._procs[WID]
+        # Wait out interpreter startup: the handler must be installed
+        # before shutdown's SIGTERM, or the stub dies to it (the race
+        # flaked ~50% of -n auto runs; #154 review round 2).
+        for _ in range(100):
+            if ready.exists():
+                break
+            await asyncio.sleep(0.05)
+        else:
+            pytest.fail("stubborn stub never became ready")
         with pytest.raises(
             MicrovmTimeoutError, match="did not exit after SIGTERM"
         ):
@@ -780,6 +802,7 @@ async def test_console_refused_handshake(env, tmp_path, monkeypatch) -> None:
     try:
         with pytest.raises(MicrovmError, match="handshake refused"):
             await app.state.microvm.console(WID)
+        assert stub_vm.returncode is None, "stub died mid-test"
     finally:
         server.close()
         await server.wait_closed()
@@ -816,7 +839,7 @@ async def test_console_silent_server_times_out(env, monkeypatch) -> None:
     """A wedged CH that never answers the handshake fails with the
     named cause instead of hanging."""
     app, state_dir, _ = env
-    app.state.settings.vmm.vsock_wait_timeout_s = 0.2
+    app.state.settings.vmm.vsock_wait_timeout_s = 1.0
     vm_dir = state_dir / "vms" / WID
     vm_dir.mkdir(parents=True, exist_ok=True)
     stub_vm = await spawn_stub_vmm(app)
@@ -837,7 +860,7 @@ async def test_console_silent_server_times_out(env, monkeypatch) -> None:
     def accept(reader, writer):
         handlers.append(asyncio.create_task(silent(reader, writer)))
 
-    monkeypatch.setattr(local_mod, "VSOCK_REPLY_S", 0.1)
+    monkeypatch.setattr(local_mod, "VSOCK_REPLY_S", 0.3)
     server = await asyncio.start_unix_server(
         accept, str(vm_dir / "vsock.sock")
     )
@@ -846,6 +869,7 @@ async def test_console_silent_server_times_out(env, monkeypatch) -> None:
             MicrovmError, match="handshake reply never arrived"
         ):
             await app.state.microvm.console(WID)
+        assert stub_vm.returncode is None, "stub died mid-test"
     finally:
         stub_vm.kill()
         await stub_vm.wait()
@@ -893,6 +917,7 @@ async def test_console_stream_dies_mid_handshake(env, monkeypatch) -> None:
     try:
         with pytest.raises(MicrovmError, match="handshake"):
             await app.state.microvm.console(WID)
+        assert stub_vm.returncode is None, "stub died mid-test"
     finally:
         stub_vm.kill()
         await stub_vm.wait()
@@ -1234,17 +1259,101 @@ async def test_handshake_without_user_sends_no_prelude(tmp_path: Path) -> None:
     writer.close()
 
 
-async def spawn_stub_vmm(app) -> asyncio.subprocess.Process:
+async def spawn_stub_vmm(
+    app, workspace_id: str = WID
+) -> asyncio.subprocess.Process:
     """A process that #151's identity check accepts as OUR VMM.
 
     The liveness checks read /proc/<pid>/cmdline and require the
-    configured VMM binary there; spawning the fixture stub itself
-    gives a killable process whose cmdline carries exactly that.
-    Bare `sleep` reads as a foreign process and takes the dead-VMM
-    path (which never signals it).
+    configured VMM binary and this workspace's --api-socket
+    argument there; spawning the fixture stub itself with the same
+    argv the driver uses gives a killable process whose identity
+    matches exactly. Bare `sleep` reads as a foreign process and
+    takes the dead-VMM path (which never signals it).
+
+    The stub announces userland via MSKS_STUB_READY, and only that
+    announcement releases this helper: a `#!/usr/bin/env python3`
+    shebang runs an exec CHAIN whose env phase carries the same
+    stub and --api-socket fields (identity confirms mid-chain), and
+    the next exec transition briefly reads an EMPTY cmdline --
+    sampled in that window, liveness read as "no live VMM" and
+    flaked the console tests under load (#154 r2).
     """
     binary = app.state.settings.vmm.cloud_hypervisor
-    return await asyncio.create_subprocess_exec(str(binary))
+    vm_dir = app.state.microvm.local._dir(workspace_id)
+    vm_dir.mkdir(parents=True, exist_ok=True)
+    ready = vm_dir / f"stub-ready-{os.getpid()}"
+    proc = await asyncio.create_subprocess_exec(
+        str(binary),
+        "--api-socket",
+        str(vm_dir / "api.sock"),
+        env={**os.environ, "MSKS_STUB_READY": str(ready)},
+    )
+    for _ in range(200):
+        if ready.exists():
+            return proc
+        assert proc.returncode is None, "stub exited before ready"
+        await asyncio.sleep(0.05)
+    proc.kill()
+    await proc.wait()
+    pytest.fail("stub VMM never became ready")
+
+
+async def test_kill_never_signals_a_foreign_pid(env, tmp_path: Path) -> None:
+    """The identity check's security property, pinned (#154 r2): a
+    recycled pidfile pid owned by some innocent process is never
+    signaled -- kill() reports success and leaves it alive."""
+    app, state_dir, _ = env
+    vm_dir = state_dir / "vms" / WID
+    vm_dir.mkdir(parents=True)
+    foreign = await asyncio.create_subprocess_exec("sleep", "600")
+    (vm_dir / "ch.pid").write_text(str(foreign.pid))
+    try:
+        await app.state.microvm.kill(WID)  # must NOT touch it
+        assert foreign.returncode is None
+        os.kill(foreign.pid, 0)  # alive and well
+    finally:
+        foreign.kill()
+        await foreign.wait()
+
+
+async def test_pid_alive_names_a_foreign_owner(env, monkeypatch) -> None:
+    """kill(0) EPERM on a FOREIGN pid reads as dead -- mixed-uid
+    hosts recycle pids too; silence, not an error (#154 r2)."""
+    app, _, _ = env
+    driver = app.state.microvm.local
+    foreign = await asyncio.create_subprocess_exec("sleep", "600")
+
+    def eperm(pid: int, sig: int) -> None:
+        raise PermissionError(1, "not yours")
+
+    monkeypatch.setattr(local_mod.os, "kill", eperm)
+    try:
+        assert not driver._pid_alive(foreign.pid, WID)
+    finally:
+        monkeypatch.undo()  # before proc cleanup: it signals too
+        foreign.kill()
+        await foreign.wait()
+
+
+async def test_pid_alive_names_our_eperm_vmm(env, monkeypatch) -> None:
+    """kill(0) EPERM on OUR VMM is named, not silent: the operator
+    learns the pid is owned by another user (#154 r2)."""
+    app, _, _ = env
+    driver = app.state.microvm.local
+    stub_vm = await spawn_stub_vmm(app)
+
+    def eperm(pid: int, sig: int) -> None:
+        raise PermissionError(1, "not yours")
+
+    monkeypatch.setattr(local_mod.os, "kill", eperm)
+    try:
+        with pytest.raises(MicrovmError, match="owned by another user"):
+            driver._pid_alive(stub_vm.pid, WID)
+    finally:
+        monkeypatch.undo()
+        stub_vm.kill()
+        await stub_vm.wait()
 
 
 def bind_then_abandon(path: Path) -> None:
@@ -1296,9 +1405,14 @@ async def test_launch_names_a_sweep_obstacle_it_cannot_remove(
     vm_dir = state_dir / "vms" / WID
     vm_dir.mkdir(parents=True, exist_ok=True)
     (vm_dir / "api.sock").mkdir()
+    (vm_dir / "ch.pid").mkdir()
     with pytest.raises(
         MicrovmError, match="cannot remove stale socket.*remove it by hand"
     ):
+        await app.state.microvm.launch(spec(tmp_path))
+    # The pidfile obstacle names itself the same way.
+    (vm_dir / "api.sock").rmdir()
+    with pytest.raises(MicrovmError, match="cannot remove stale pidfile"):
         await app.state.microvm.launch(spec(tmp_path))
 
 
