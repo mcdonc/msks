@@ -122,11 +122,21 @@ jobs:
       # cancellation too — the sequence is long enough that the job
       # wall can cut it mid-probe, and that cut is exactly when the
       # evidence matters.
+      #
+      # include-hidden-files: the state tree lives under .devenv/,
+      # and upload-artifact v4.4+ excludes dot-dirs by default —
+      # even paths named explicitly — so without this the upload is
+      # silently empty (if-no-files-found: ignore would mask it;
+      # the pre-#156 .appliance/ paths were silently excluded the
+      # same way). The three logs are boot/debug output: the serial
+      # log includes the kernel command line, which carries the
+      # bootstrap token — same exposure the .appliance upload had.
       - name: Collect smoke state on failure
         if: failure() || cancelled()
         uses: actions/upload-artifact@v4
         with:
           name: nightly-l3-failure-evidence
+          include-hidden-files: true
           path: |
             .devenv/state/appliance/serial.log
             .devenv/state/appliance/cloud-hypervisor.log
