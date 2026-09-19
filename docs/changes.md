@@ -303,6 +303,16 @@ no`, `PermitRootLogin prohibit-password`) pinned by a config dropin,
 
 ### Fixed
 
+- **Failed starts keep an actionable status (#158).** A `vm.boot`
+  failure reaps the half-created VMM and the watcher's dead-socket
+  probe consults the identity check, so the workspace reports
+  `stopped` — not the incident's `unknown`, which a bare pid check
+  satisfied with a recycled pid — and the next `msks start`
+  retries. The incident's exact shape, recycled-pid trigger
+  included, is pinned by tests; the README now states that a
+  running appliance serves the daemon its image was built with,
+  and a stop/start lands a merged fix.
+
 - **Stale workspace sockets no longer break start (#151).** A VMM
   killed without cleanup (host crash, appliance hard stop) left
   `api.sock`/`vsock.sock` behind under `vms/<id>/`; the next start

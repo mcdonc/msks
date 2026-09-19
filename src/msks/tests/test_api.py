@@ -473,6 +473,32 @@ async def test_microvm_error_maps_to_503(client) -> None:
     assert response.json()["detail"] == "boom"
 
 
+async def test_failed_start_leaves_the_row_startable(client) -> None:
+    """A 503 start does not corrupt the row (#158): the workspace
+    keeps its prior status -- ``stopped`` -- so the next client
+    boot retries instead of meeting a status that matches neither
+    the disk nor the VM.
+    """
+    http, _app, stub = client
+    await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-f", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    await http.post("/api/v1/workspaces/ws-f/stop", headers=auth())
+    row = await http.get("/api/v1/workspaces/ws-f", headers=auth())
+    assert row.json()["status"] == "stopped"
+
+    async def explode(spec):
+        raise MicrovmError("boom")
+
+    stub.launch = explode
+    response = await http.post("/api/v1/workspaces/ws-f/start", headers=auth())
+    assert response.status_code == 503
+    row = await http.get("/api/v1/workspaces/ws-f", headers=auth())
+    assert row.json()["status"] == "stopped"
+
+
 async def test_delete_falls_back_to_kill(client) -> None:
     http, _app, stub = client
     await http.post(

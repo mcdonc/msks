@@ -223,6 +223,76 @@ async def test_launch_puts_create_then_boot(env, fake, tmp_path: Path) -> None:
     await app.state.microvm.kill(WID)  # reap the stub VMM
 
 
+async def test_failed_boot_lands_stopped_even_with_a_recycled_pid(
+    env, tmp_path: Path
+) -> None:
+    """The #158 wrinkle, pinned dead on the post-#154 daemon.
+
+    The incident: ``vm.boot`` failed (vsock ``AddrInUse``), and
+    the workspace reported ``unknown`` -- a status matching
+    neither the disk nor the VM -- because the dead-socket probe's
+    liveness check was a bare pid test a recycled pid satisfied.
+    Now the failed launch reaps its spawn and the probe consults
+    the identity check: a dead socket plus a pidfile naming an
+    innocent process reports ``stopped``, the status the next
+    ``msks start`` retries from.
+    """
+    app, state_dir, _ = env
+    driver = app.state.microvm.local
+    vm_dir = state_dir / "vms" / WID
+    vm_dir.mkdir(parents=True, exist_ok=True)
+    server = FakeCH(
+        state_dir / "vms" / WID / "api.sock",
+        responses={
+            ("PUT", "/api/v1/vm.boot"): (
+                500,
+                '["Error from API","The VM could not boot",'
+                '"Error from device manager",'
+                '"Cannot create virtio-vsock backend",'
+                '"Error binding to the host-side Unix socket",'
+                '"Address already in use (os error 98)"]',
+            )
+        },
+    )
+    await server.start()
+    try:
+        with pytest.raises(MicrovmError, match="The VM could not boot"):
+            await app.state.microvm.launch(spec(tmp_path))
+        # The failed launch reaped its spawn: registered nowhere,
+        # no zombie left under the pidfile.
+        assert WID not in driver._procs
+        pid = int((vm_dir / "ch.pid").read_text())
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+    finally:
+        await server.stop()
+    # The pre-#154 ``unknown`` trigger, verbatim: a dead socket
+    # file at the name (Python 3.14's asyncio unlinks the server's
+    # socket on close, so the residue is re-created the way a
+    # hard-killed VMM leaves it) plus a pidfile naming a live,
+    # innocent process.
+    innocent = await asyncio.create_subprocess_exec("sleep", "600")
+    (vm_dir / "ch.pid").write_text(str(innocent.pid))
+    try:
+        bind_then_abandon(vm_dir / "api.sock")
+        info = await app.state.microvm.info(WID)
+        assert info.status is VmStatus.STOPPED
+        assert info.pid == innocent.pid
+    finally:
+        innocent.kill()
+        await innocent.wait()
+    # Recovery is a plain start: fresh API server, fresh spawn,
+    # and the boot lands running.
+    (vm_dir / "api.sock").unlink()
+    fresh = FakeCH(state_dir / "vms" / WID / "api.sock")
+    await fresh.start()
+    try:
+        await app.state.microvm.launch(spec(tmp_path))
+        assert (await app.state.microvm.info(WID)).status is VmStatus.RUNNING
+    finally:
+        await fresh.stop()
+
+
 async def test_launch_error_maps_and_reaps_process(
     env, tmp_path: Path
 ) -> None:
