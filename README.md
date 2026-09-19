@@ -70,10 +70,10 @@ goal).
 Root writes persist through the per-workspace overlay (#14), and
 `/home` is the workspace's own ext4 volume; `apt` reaches the
 upstream through the workspace's egress NIC — the appliance serves
-egress (#52), a host-run dev daemon does not. The extraction runs
-under fakeroot so the image is root-owned with sane password-file
-modes, and the setuid binaries the workspace user's sudo needs ride
-the same fakeroot session as uid-0 inodes (#169).
+egress (#52), a host-run dev daemon does not. The repack runs under
+fakeroot so the image is root-owned with sane password-file modes,
+and the setuid binaries the workspace user's sudo needs ride the
+same fakeroot session as uid-0 inodes (#169).
 Stopping a workspace presses the ACPI power button
 (`vm.power-button`): the guest's systemd-logind runs the clean
 poweroff that flushes its persistent disks (#14).

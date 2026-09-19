@@ -39,8 +39,8 @@
 # Extraction is unprivileged — debugfs rdump, no mount — and rdump
 # drops setuid/setgid bits, so the build records the source image's
 # own special modes at dump time and the fakeroot pack stage applies
-# them with uid-0 ownership (#169): the msks user's sudo (#63)
-# depends on the pairing.
+# them with uid-0 ownership (#169): the msks user (#63) needs working
+# sudo, and sudo's elevation depends on that pairing.
 #
 # Evaluate through the msks-build-guest / msks-build-runner-image
 # scripts (they pin nixpkgs to the devenv.lock revision);
@@ -607,19 +607,17 @@ let
                     f"debugfs exited {proc.returncode}: {proc.stderr}"
                 )
             entries = {}
+            raw_lines = {}
             current = None
             for line in proc.stdout.splitlines():
                 if line.startswith(MARKER):
                     current = line[len(MARKER) :].strip('"')
                     entries[current] = []
-                elif line.startswith("debugfs: "):
-                    # A debugfs error (unbalanced quotes, lookup
-                    # failure) aborts the walk — exiting silently
-                    # would drop the whole subtree from the manifest,
-                    # and the set could drift on an image pin update
-                    # without a trace.
-                    raise SystemExit(f"debugfs: {line}")
+                    raw_lines[current] = 0
                 elif line.startswith("/") and current is not None:
+                    # Counted before the ./.. filter: an empty
+                    # directory still lists itself and its parent.
+                    raw_lines[current] += 1
                     parts = line.rstrip("/").split("/")
                     if (
                         len(parts) < 6
@@ -633,6 +631,19 @@ let
                     name = parts[5]
                     if name not in (".", ".."):
                         entries[current].append((name, mode))
+            # debugfs errors never reach stdout and never set the
+            # exit code — a failed listing (an unbalanced quote from
+            # an exotic name, a lookup drift) echoes only the command
+            # line, while every real listing emits at least . and ..
+            # A marker with zero raw entry lines therefore aborted
+            # nowhere and would have dropped the whole subtree from
+            # the manifest; abort here with stderr attached instead.
+            for path, count in raw_lines.items():
+                if count == 0:
+                    raise SystemExit(
+                        f"ls -p produced no entries for {path!r}: "
+                        f"{proc.stderr.strip()}"
+                    )
             next_pending = []
             for path, dir_entries in entries.items():
                 prefix = "" if path == "/" else path
@@ -655,7 +666,8 @@ let
         if "/usr/bin/sudo" not in setuid:
             raise SystemExit(
                 "/usr/bin/sudo is not setuid in the source image; "
-                "the debugfs walk parse must have broken"
+                "the debugfs walk parse must have broken, or the "
+                "source image changed"
             )
         with open(manifest, "w") as out:
             for path, perm in special:
