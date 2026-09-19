@@ -62,7 +62,7 @@ def socket_stale(path: Path) -> bool:
     return False
 
 
-def _has_socket_arg(fields: list[bytes], sock: Path) -> bool:
+def has_socket_arg(fields: list[bytes], sock: Path) -> bool:
     want_sock = os.fsencode(str(sock))
     return any(
         a == b"--api-socket" and b == want_sock
@@ -82,7 +82,7 @@ def cmdline_is_vmm(cmdline: bytes, binary: str, sock: Path) -> bool:
     """
     fields = [f for f in cmdline.split(b"\0") if f]
     want_binary = os.fsencode(binary)
-    return any(f == want_binary for f in fields) and _has_socket_arg(
+    return any(f == want_binary for f in fields) and has_socket_arg(
         fields, sock
     )
 

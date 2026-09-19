@@ -7,6 +7,7 @@ Running -> VMM SIGTERM).
 """
 
 import asyncio
+import itertools
 import os
 import shutil
 import socket
@@ -804,6 +805,8 @@ async def test_console_refused_handshake(env, tmp_path, monkeypatch) -> None:
             await app.state.microvm.console(WID)
         assert stub_vm.returncode is None, "stub died mid-test"
     finally:
+        stub_vm.kill()
+        await stub_vm.wait()
         server.close()
         await server.wait_closed()
 
@@ -1282,7 +1285,7 @@ async def spawn_stub_vmm(
     binary = app.state.settings.vmm.cloud_hypervisor
     vm_dir = app.state.microvm.local._dir(workspace_id)
     vm_dir.mkdir(parents=True, exist_ok=True)
-    ready = vm_dir / f"stub-ready-{os.getpid()}"
+    ready = vm_dir / f"stub-ready-{os.getpid()}-{next(_stub_seq)}"
     proc = await asyncio.create_subprocess_exec(
         str(binary),
         "--api-socket",
@@ -1297,6 +1300,9 @@ async def spawn_stub_vmm(
     proc.kill()
     await proc.wait()
     pytest.fail("stub VMM never became ready")
+
+
+_stub_seq = itertools.count()
 
 
 async def test_kill_never_signals_a_foreign_pid(env, tmp_path: Path) -> None:
@@ -1384,13 +1390,13 @@ async def test_launch_sweeps_stale_sockets(env, fake, tmp_path: Path) -> None:
     assert (vm_dir / "api.sock").exists()  # the fake's live listener
     stale = vm_dir / "vsock.sock"
     bind_then_abandon(stale)
-    live_before = (vm_dir / "api.sock").resolve()
+    inode_before = (vm_dir / "api.sock").stat().st_ino
     await app.state.microvm.launch(spec(tmp_path))
     assert not stale.exists()  # swept; nothing recreated it
     # The pidfile is rewritten by the live launch; the fake's live
     # socket keeps its very inode -- the sweep never touched it.
     assert (vm_dir / "ch.pid").read_text().strip().isdigit()
-    assert (vm_dir / "api.sock").resolve() == live_before
+    assert (vm_dir / "api.sock").stat().st_ino == inode_before
     info = await app.state.microvm.info(WID)
     assert info.status is VmStatus.RUNNING
 
@@ -1414,6 +1420,61 @@ async def test_launch_names_a_sweep_obstacle_it_cannot_remove(
     (vm_dir / "api.sock").rmdir()
     with pytest.raises(MicrovmError, match="cannot remove stale pidfile"):
         await app.state.microvm.launch(spec(tmp_path))
+
+
+def test_socket_stale_sweeps_a_dangling_symlink(tmp_path: Path) -> None:
+    """lexists, not exists: a dangling symlink at the socket name is
+    residue too -- it refuses the bind as surely as a file (#154
+    r3)."""
+    from msks.microvm.local import socket_stale
+
+    target = tmp_path / "gone.sock"
+    link = tmp_path / "api.sock"
+    link.symlink_to(target)  # target never exists: the link dangles
+    assert socket_stale(link)
+
+
+def test_cmdline_is_vmm_matrix(tmp_path: Path) -> None:
+    """The identity check's adversarial matrix (#154 r2/r3): exact-
+    field binary match plus this workspace's --api-socket pair."""
+    from msks.microvm.local import cmdline_is_vmm
+
+    sock = tmp_path / "vms" / "ws" / "api.sock"
+    ours = b"cloud-hypervisor\0--api-socket\0" + os.fsencode(str(sock)) + b"\0"
+    assert cmdline_is_vmm(ours, "cloud-hypervisor", sock)
+    # Shebang chain: interpreter argv[0], binary rides as argv[1].
+    chain = (
+        b"/usr/bin/env\0cloud-hypervisor\0--api-socket\0"
+        + os.fsencode(str(sock))
+        + b"\0"
+    )
+    assert cmdline_is_vmm(chain, "cloud-hypervisor", sock)
+    # The F-a lookalikes: substring and bare-name-without-socket.
+    assert not cmdline_is_vmm(
+        b"grep\0cloud-hypervisor\0/var/log/syslog\0",
+        "cloud-hypervisor",
+        sock,
+    )
+    assert not cmdline_is_vmm(
+        b"cloud-hypervisor-v2\0--api-socket\0"
+        + os.fsencode(str(sock))
+        + b"\0",
+        "cloud-hypervisor",
+        sock,
+    )
+    # Another workspace's socket is not ours.
+    other = tmp_path / "vms" / "other" / "api.sock"
+    assert not cmdline_is_vmm(
+        b"cloud-hypervisor\0--api-socket\0" + os.fsencode(str(other)) + b"\0",
+        "cloud-hypervisor",
+        sock,
+    )
+    # Empty cmdline (an exec window) proves nothing.
+    assert not cmdline_is_vmm(b"", "cloud-hypervisor", sock)
+    # A --api-socket flag at argv end with no value cannot pair.
+    assert not cmdline_is_vmm(
+        b"cloud-hypervisor\0--api-socket", "cloud-hypervisor", sock
+    )
 
 
 def test_socket_stale_contract(tmp_path: Path) -> None:

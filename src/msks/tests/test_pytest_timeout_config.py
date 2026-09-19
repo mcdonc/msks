@@ -30,7 +30,10 @@ def test_timeout_marker_is_registered() -> None:
 
 def test_smoke_conftest_lifts_the_ceiling() -> None:
     """The smoke conftest owns the marker-level override hook that
-    pytest-timeout honors above the ini/addopts default."""
+    pytest-timeout honors above the ini/addopts default -- and the
+    hook marks ONLY items from its own directory (#154 r3: the
+    filter is load-bearing; without it every unit test in a
+    full-tree run would run at the smoke ceiling)."""
     spec = importlib.util.spec_from_file_location(
         "smoke_conftest", SMOKE_CONFTEST
     )
@@ -38,3 +41,20 @@ def test_smoke_conftest_lifts_the_ceiling() -> None:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     assert callable(module.pytest_collection_modifyitems)
+
+    class Item:
+        def __init__(self, path: Path):
+            self.path = path
+            self.marks: list = []
+
+        def add_marker(self, mark) -> None:
+            self.marks.append(mark)
+
+    here = SMOKE_CONFTEST.parent
+    smoke_item = Item(here / "test_appliance.py")
+    unit_item = Item(here.parent / "test_local_driver.py")
+    lookalike = Item(here.parent / "test_smoke_harness.py")
+    module.pytest_collection_modifyitems([smoke_item, unit_item, lookalike])
+    assert smoke_item.marks, "smoke items must get the override"
+    assert not unit_item.marks, "unit items must keep the 30s ceiling"
+    assert not lookalike.marks, "a test_smoke_* FILE is not the dir"
