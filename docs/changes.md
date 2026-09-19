@@ -8,6 +8,14 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **`msks ssh -- -A` forwards the operator's agent (#174).** A
+  command-line `-A` (or `-o ForwardAgent=yes`) now names the agent
+  behind `SSH_AUTH_SOCK` explicitly, so `ssh-add -l` and
+  `git push` inside the workspace use the operator's keys — no
+  `Host msks-*` ssh-config block needed. The workspace identity
+  stays the session's authentication credential; the guest
+  receives the operator's keys and nothing else.
+
 - **`devenv processes up` converges to a working appliance, loudly
   (#160).** The daemon reports the image it booted from in
   `/health` (an `msksd.image` kernel-cmdline pair), a devenv shell

@@ -400,7 +400,9 @@ identity retires to a first-boot enrollment credential. The
 ProxyCommand runs `msks` in the user's environment,
 so `MSKSC_URL`, `MSKSC_TOKEN`, and `MSKSC_CAFILE` must be set there;
 `ssh -l root msks-devbox` is the recovery login, and `-A` forwards
-the operator's own agent into the workspace.
+the operator's own agent into the workspace — as does
+`msks ssh -- -A` (#174), which rewrites the request onto the same
+socket without the alias block.
 
 ### The client-minted default (no escrow)
 
@@ -544,12 +546,13 @@ remote behaves as anywhere else (the workspace has its own
 
 Two msks-specific details:
 
-- `msks ssh`, the one-command login, forwards its own transient
-  agent — the one holding the minted workspace identity. That
-  agent carries no credentials for your remotes. To push with
-  your own keys, use a plain `ssh -A`: the alias form above, or
-  the forward port directly
-  (`ssh -A -i ~/.cache/msks/msks-devbox.key -p 2201 msks@127.0.0.1`).
+- `msks ssh my-workspace -- -A`, the one-command login with
+  forwarding, forwards your agent too (#174): the command rewrites
+  the request onto the socket `SSH_AUTH_SOCK` names, the same agent
+  the alias form above forwards — no ssh-config block needed. The
+  plain alias (`ssh -A msks-devbox`) and the forward port directly
+  (`ssh -A -i ~/.cache/msks/msks-devbox.key -p 2201 msks@127.0.0.1`)
+  work as always.
 - With the alias's ControlMaster, the agent arrives only on the
   connection that creates the master. If you connected earlier
   without `-A`, close the master first — `ssh -O exit msks-devbox`

@@ -348,13 +348,32 @@ def test_agent_ends_the_connection_on_truncation() -> None:
 # --- stock ssh against a local sshd, through the agent ---
 
 
+# --- the operator's agent in the environment ---
+
+
+def test_environment_agent_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
+    assert agent.environment_agent() is None
+
+
+def test_environment_agent_present(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("SSH_AUTH_SOCK", str(tmp_path / "agent.sock"))
+    assert agent.environment_agent() is None  # not there yet
+    (tmp_path / "agent.sock").write_bytes(b"")
+    assert agent.environment_agent() == str(tmp_path / "agent.sock")
+
+
 @needs_sshd
 @pytest.mark.parametrize("pem", [PEM, ECDSA_PEM], ids=["ed25519", "ecdsa"])
 def test_ssh_logs_in_through_the_agent(pem: str, tmp_path: Path) -> None:
     """The semantics ``msks ssh`` depends on, proven against the
     real client: ssh authenticates from an IdentityAgent listing
     alone (no identity file), under IdentitiesOnly, and ``-A``
-    forwards that same agent into the session. Parametrized over
+    forwards that same agent into the session — the stock-ssh
+    behavior :func:`ssh.forward_agent_args` rewrites command-line
+    forwarding away from, onto the operator's agent. Parametrized over
     two mint types, ecdsa (P-256, #138's former default) and
     ed25519 (the current default) — with -F
     /dev/null, whose absence lets a host ssh_config drop ECDSA from
@@ -386,10 +405,11 @@ def test_ssh_logs_in_through_the_agent(pem: str, tmp_path: Path) -> None:
         f"PidFile {tmp_path / 'sshd.pid'}\n",
     )
     sshd_stderr = tmp_path / "sshd.log"
+    sshd_log = open(sshd_stderr, "ab")
     sshd = subprocess.Popen(
         [SSHD_BIN, "-D", "-e", "-f", str(config)],
         stdout=subprocess.DEVNULL,
-        stderr=open(sshd_stderr, "ab"),
+        stderr=sshd_log,
     )
     try:
         wait_listening(port, evidence=sshd_stderr)
@@ -436,6 +456,7 @@ def test_ssh_logs_in_through_the_agent(pem: str, tmp_path: Path) -> None:
     finally:
         sshd.terminate()
         sshd.wait(timeout=10)
+        sshd_log.close()
 
 
 def free_port() -> int:
@@ -628,9 +649,9 @@ def test_wants_user(args: list[str], names: bool) -> None:
 
 
 def test_build_args_injects_the_default_user() -> None:
-    argv = ssh.build_args("alpha", "/agent.sock", "/id.pub", "/kh", ["-A"])
+    argv = ssh.build_args("alpha", "/agent.sock", "/id.pub", "/kh", ["-T"])
     assert argv[0] == "ssh"
-    assert argv[1] == "-A"  # passthrough options come first...
+    assert argv[1] == "-T"  # passthrough options come first...
     assert argv[2:4] == ["-o", ssh.proxy_command("alpha")]
     assert argv[4:14] == [
         "-o",
@@ -683,10 +704,155 @@ def test_build_args_lets_an_explicit_override_win() -> None:
 
 def test_build_args_carries_a_remote_command_after_the_host() -> None:
     argv = ssh.build_args(
-        "alpha", "/agent.sock", "/id.pub", "/kh", ["-A", "--", "uname", "-a"]
+        "alpha", "/agent.sock", "/id.pub", "/kh", ["-v", "--", "uname", "-a"]
     )
-    assert argv[0:2] == ["ssh", "-A"]
+    assert argv[0:2] == ["ssh", "-v"]
     assert argv[-3:] == ["alpha", "uname", "-a"]
+
+
+# --- agent forwarding onto the operator's agent (#174) ---
+
+
+@pytest.fixture
+def agent_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    """An SSH_AUTH_SOCK naming an existing socket — the operator's
+    agent, exactly as the environment sees one."""
+    sock = tmp_path / "agent.sock"
+    sock.touch()
+    monkeypatch.setenv("SSH_AUTH_SOCK", str(sock))
+    return str(sock)
+
+
+PAIR_CASES = [
+    (["-A"], []),
+    (["-o", "ForwardAgent=yes"], []),
+    (["-oForwardAgent=yes"], []),  # the inline -o spelling
+    (["-o", "forwardagent=YES"], []),  # keywords are caseless
+    (["-o", "ForwardAgent SSH_AUTH_SOCK"], []),  # space-separated
+    (["-A", "-o", "User=root"], ["-o", "User=root"]),
+]
+
+
+@pytest.mark.parametrize(("raw", "rest"), PAIR_CASES)
+def test_forward_agent_args_rewrites_request_forms(
+    agent_env: str, raw: list[str], rest: list[str]
+) -> None:
+    """Every command-line form that asks for agent forwarding names
+    the operator's socket afterwards (``-o`` value spellings included
+    — inline, separate, caseless, space-separated)."""
+    assert ssh.forward_agent_args(list(raw)) == [
+        "-o",
+        f"ForwardAgent={agent_env}",
+        *rest,
+    ]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        ["-o", "ForwardAgent=no"],
+        ["-o", "ForwardAgent=/other/sock"],  # an explicit socket
+        ["-oForwardAgent=/other/sock"],
+        ["-a"],  # the disabling short flag
+        ["-l", "root"],
+        ["-T"],
+        [],
+    ],
+)
+def test_forward_agent_args_passes_the_rest_through(raw: list[str]) -> None:
+    """A disabling no, an operator's own socket path, and every
+    unrelated option pass through untouched — with no agent
+    resolved on the way."""
+    assert ssh.forward_agent_args(list(raw)) == raw
+
+
+def test_forward_agent_args_consumes_a_separate_option_value(
+    agent_env: str,
+) -> None:
+    # The value beside a separate -o belongs to the option; rewriting
+    # must consume it, not copy it twice.
+    assert ssh.forward_agent_args(["-o", "ForwardAgent=yes", "-T"]) == [
+        "-o",
+        f"ForwardAgent={agent_env}",
+        "-T",
+    ]
+
+
+def test_forward_agent_args_needs_no_agent_when_not_asked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A session without forwarding runs with no agent in sight.
+    monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
+    assert ssh.forward_agent_args(["-T"]) == ["-T"]
+
+
+@pytest.mark.parametrize("raw", [["-A"], ["-o", "ForwardAgent=yes"]])
+def test_forward_agent_args_names_a_missing_agent(
+    monkeypatch: pytest.MonkeyPatch, raw: list[str]
+) -> None:
+    monkeypatch.setenv("SSH_AUTH_SOCK", "/no/such/agent.sock")
+    with pytest.raises(SystemExit, match="no live agent"):
+        ssh.forward_agent_args(list(raw))
+
+
+def test_forward_agent_args_names_an_unset_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
+    with pytest.raises(SystemExit, match=r"SSH_AUTH_SOCK \(unset\)"):
+        ssh.forward_agent_args(["-A"])
+
+
+def test_build_args_points_forwarding_at_the_operators_agent(
+    agent_env: str,
+) -> None:
+    argv = ssh.build_args("alpha", "/agent.sock", "/id.pub", "/kh", ["-A"])
+    assert argv[1:3] == ["-o", f"ForwardAgent={agent_env}"]
+    assert "-A" not in argv
+    # The session agent stays the authentication path — the
+    # workspace identity authenticates and reaches the guest as
+    # nothing else.
+    assert "-o" in argv and "IdentityAgent=/agent.sock" in " ".join(argv)
+
+
+def test_build_args_keeps_an_explicit_forwardagent_socket(
+    agent_env: str,
+) -> None:
+    argv = ssh.build_args(
+        "alpha", "/agent.sock", "/id.pub", "/kh", ["-o", "ForwardAgent=/own"]
+    )
+    assert "ForwardAgent=/own" in " ".join(argv)
+    assert agent_env not in " ".join(argv)
+
+
+def test_probe_args_carries_the_sessions_forwarding(
+    agent_env: str,
+) -> None:
+    argv = probe_argv_of(["-A"])
+    assert argv[2:4] == ["-o", f"ForwardAgent={agent_env}"]
+    assert argv[argv.index("alpha") + 1 :] == ["true"]
+
+
+def test_probe_args_keeps_an_inline_forwardagent_socket() -> None:
+    # An operator's own socket in the inline spelling reaches the
+    # probe in the same spelling ssh parsed it in.
+    argv = probe_argv_of(["-oForwardAgent=/own.sock"])
+    assert "-oForwardAgent=/own.sock" in argv
+    assert argv[argv.index("alpha") + 1 :] == ["true"]
+
+
+def test_probe_args_without_forwarding_carries_none() -> None:
+    assert "ForwardAgent" not in " ".join(probe_argv_of([]))
+
+
+def test_probe_args_skips_a_dangling_login_before_agent_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # ssh refuses a dangling -l before it would dial — the wait is
+    # skipped without resolving any agent.
+    monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
+    assert probe_argv_of(["-l"]) is None
+    assert probe_argv_of(["-l", "-A"]) is None
 
 
 def test_build_args_treats_a_leading_plain_word_as_the_command() -> None:

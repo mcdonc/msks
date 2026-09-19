@@ -18,7 +18,7 @@ are the shell's, and the caller keeps pumping them.
 
 import asyncio
 
-from . import ssh, sshsig
+from . import agent, ssh, sshsig
 from .rest import fetch_ssh_key
 
 #: The challenge's arrival window from websocket connect. The daemon
@@ -81,7 +81,7 @@ def signer_for_key(key: dict, workspace_id: str):
     try:
         return console_signer(ssh.resolve_private(key, workspace_id)), public
     except SystemExit:
-        agent_path = sshsig.environment_agent()
+        agent_path = agent.environment_agent()
         if agent_path is None:
             raise
         return agent_signer(agent_path, public), public

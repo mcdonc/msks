@@ -21,7 +21,6 @@ which the guest re-armors and hands to ``ssh-keygen -Y verify``.
 
 import base64
 import hashlib
-import os
 import socket
 import struct
 
@@ -281,12 +280,3 @@ def sign_via_agent(
         )
     finally:
         client.close()
-
-
-def environment_agent() -> str | None:
-    """The agent socket the operator's environment names, when it
-    names one and it exists."""
-    path = os.environ.get("SSH_AUTH_SOCK", "")
-    if path and os.path.exists(path):
-        return path
-    return None

@@ -18,11 +18,15 @@ there.
 
 The session logs in as the image's workspace user by default;
 ``-l root`` in the passthrough args is the recovery login. Agent
-forwarding (``msks ssh <ws> -- -A``) forwards the session agent —
-the guest can sign as the workspace identity; forwarding the
-operator's own agent (git credentials for ``git push`` from inside)
-is the alias path's job, where the operator's real ``SSH_AUTH_SOCK``
-rides untouched (see ``docs/networking.md``). Everything after the
+forwarding asked for on the command line — ``msks ssh <ws> -- -A``
+— forwards the operator's agent, the one ``SSH_AUTH_SOCK`` names
+(:func:`forward_agent_args` rewrites the request onto that socket
+explicitly, because ssh would otherwise forward the transient
+session agent ``IdentityAgent`` points at); the workspace identity
+stays an authentication credential and reaches the guest as
+nothing else. An explicit ``-o ForwardAgent=<path>`` in the
+passthrough keeps its own socket, and forwarding set by an ssh
+config file keeps the stock meaning (the transient agent). Everything after the
 workspace id (or after ``--``) is passed to ssh verbatim; ssh's own
 ``--`` inside it separates options from a remote command
 (``msks ssh <ws> -- -A -- uname -a``).
@@ -279,6 +283,100 @@ def names_user(value: str) -> bool:
     return lowered.startswith("user=") or lowered.startswith("user ")
 
 
+def operator_agent_socket() -> str:
+    """The operator's agent socket, for forwarding into the guest —
+    the one the operator's environment names
+    (:func:`msks.client.agent.environment_agent`).
+
+    Forwarding was asked for on the command line, so an environment
+    that names no live agent is an error here: ssh would otherwise
+    forward the session's transient agent, and the operator's keys —
+    the whole point of ``-A`` — would quietly not be there.
+    """
+    socket = agent.environment_agent()
+    if socket is None:
+        named = os.environ.get("SSH_AUTH_SOCK", "") or "unset"
+        raise SystemExit(
+            "msks ssh: -A forwards the operator's agent, and "
+            f"SSH_AUTH_SOCK ({named}) names no live agent — start "
+            "one (ssh-agent, or the desktop agent) or drop -A"
+        )
+    return socket
+
+
+def forward_agent_value(value: str) -> str | None:
+    """The forwarding target an ssh ``-o`` value names, when it is a
+    ForwardAgent setting. ssh_config keywords and the values yes/no
+    are case-insensitive; an explicit socket path is returned as
+    written."""
+    for sep in ("=", " "):
+        if value.lower().startswith("forwardagent" + sep):
+            return value[len("forwardagent") + 1 :]
+    return None
+
+
+def requests_forwarding(index: int, arg: str, options: list[str]) -> bool:
+    """Whether the option at ``index`` asks for agent forwarding in a
+    form msks rewrites: bare ``-A``, or a ForwardAgent setting whose
+    target is ``yes``/``SSH_AUTH_SOCK`` in either ``-o`` spelling."""
+    if arg == "-A":
+        return True
+    value = option_value(index, arg, options)
+    target = forward_agent_value(value) if value is not None else None
+    return target is not None and target.lower() in (
+        "yes",
+        "ssh_auth_sock",
+    )
+
+
+def forward_agent_args(options: list[str]) -> list[str]:
+    """The passthrough's ssh options with every command-line agent
+    forwarding request pointed at the operator's agent socket.
+
+    This session authenticates through the transient workspace agent
+    (``IdentityAgent``), and ssh forwards *that* socket when asked to
+    forward at all — so a plain ``-A`` or ``-o ForwardAgent=yes``,
+    which reads "my agent" to the operator, is rewritten into the
+    explicit form ``-o ForwardAgent=<path>``: the operator's socket,
+    named here at launch. The workspace identity stays an
+    authentication credential; the guest receives the operator's
+    real keys and nothing else. A request that already names a
+    socket is left untouched — ssh takes the first obtained value
+    for a repeated option, and the operator's own spelling wins as
+    with stock ssh. #123's own-key sessions authenticate through the
+    operator's agent or an identity file; the rewrite then points
+    forwarding at the same socket ssh already forwards, and this
+    pass reads as a no-op.
+    """
+    rewritten: list[str] = []
+    index = 0
+    while index < len(options):
+        arg = options[index]
+        if requests_forwarding(index, arg, options):
+            rewritten += ["-o", f"ForwardAgent={operator_agent_socket()}"]
+            # A separate -o value was consumed as this option's own.
+            index += 2 if arg == "-o" else 1
+            continue
+        rewritten.append(arg)
+        index += 1
+    return rewritten
+
+
+def forward_agent_option(options: list[str]) -> list[str]:
+    """ssh argv tokens for the first ForwardAgent setting among the
+    options — the one setting from the passthrough the first-boot
+    probe carries, so it dials with the session's forwarding (and
+    resolves the operator's agent, or names its absence) exactly as
+    the session will."""
+    for index, arg in enumerate(options):
+        value = option_value(index, arg, options)
+        if value is not None and forward_agent_value(value) is not None:
+            if arg == "-o":
+                return [arg, options[index + 1]]
+            return [arg]
+    return []
+
+
 def config_quote(value: str) -> str:
     """Double-quote a value for an ``-o`` option when it carries
     whitespace: double quotes are honored everywhere ssh parses
@@ -348,6 +446,7 @@ def build_args(
     one key and nothing else.
     """
     options, command = split_command(passthrough)
+    options = forward_agent_args(options)
     argv = [
         "ssh",
         *options,
@@ -374,8 +473,9 @@ def probe_args(
     passthrough: list[str],
 ) -> list[str] | None:
     """The readiness probe's argv: msks's own transport and agent
-    settings, the session's login user, and a throwaway ``true`` as
-    the remote command — the passthrough contributes nothing else.
+    settings, the session's login user and agent-forwarding setting,
+    and a throwaway ``true`` as the remote command — the passthrough
+    contributes nothing else.
 
     The probe asks one question — does the guest accept the
     identity yet, as the user the session will log in as — so it
@@ -387,7 +487,11 @@ def probe_args(
     ``-fN`` reach the same states spelling-free), and
     ``RemoteCommand`` makes ssh refuse a command-line command
     outright — none of them can stall or distort the probe when
-    none of them is in it. ``true`` runs no user command, so a
+    none of them is in it. Agent forwarding is the one carried
+    setting: the probe dials as the session will, so it asks sshd
+    to open the agent channel for the probe just as for the session
+    (:func:`forward_agent_option` picks that one setting out of the
+    rewritten passthrough). ``true`` runs no user command, so a
     retried probe cannot run anything twice, and ``-q`` keeps
     ssh's own per-attempt chatter quiet (the notice and the
     forward's refusal line are what a retry prints).
@@ -401,10 +505,15 @@ def probe_args(
     user = probe_user(options)
     if wants_user(options) and not user:
         return None
+    # After the refusal check: a session ssh rejects outright names
+    # no agent to resolve — its own usage error is the answer.
+    options = forward_agent_args(options)
+    forwarded = forward_agent_option(options)
     argv = [
         "ssh",
         "-q",
         *user,
+        *forwarded,
         *session_options(
             workspace_id, agent_socket, identity_pub, known_hosts
         ),

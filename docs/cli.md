@@ -530,7 +530,7 @@ identity staged in memory (#112) — one command, no key steps:
 ```bash
 msks ssh my-workspace              # as the msks workspace user
 msks ssh my-workspace -- -l root   # the recovery login
-msks ssh my-workspace -- -A        # forward the session agent (the workspace identity)
+msks ssh my-workspace -- -A        # forward your agent ($SSH_AUTH_SOCK)
 msks ssh my-workspace -- -L 8080:localhost:80
 ```
 
@@ -546,7 +546,8 @@ throwaway `true` as the remote command, retried for up to 30s with
 a one-line notice between attempts) and opens the real session —
 interactive or one-shot — once the guest accepts the workspace
 key; a remote command runs exactly once either way. The probe
-carries only the session's login user — msks's own transport, its
+carries only the session's login user and agent-forwarding setting —
+msks's own transport, its
 quiet flag, and a `true` command — so a session's tunnels and
 other ssh options cannot hold the wait open or alter it; the
 session itself keeps every option. For
@@ -568,6 +569,23 @@ persist across stop/start on the workspace's
 overlay, so the first-connection entry keeps matching. (The alias block keeps
 its own known_hosts under `~/.cache/msks/msks-<ws>/` — the two
 paths record the same host key independently.)
+
+Agent forwarding asked for on the command line (`-A`, or
+`-o ForwardAgent=yes`) forwards **your** agent — the socket
+`SSH_AUTH_SOCK` names (#174): `ssh-add -l` inside the workspace
+lists the same keys as on the host, and `git push git@github.com`,
+`ssh`, and friends sign with the host's credentials. The session
+authenticates through a transient in-process agent (above), and
+stock ssh would forward _that_ one when asked to forward at all —
+so msks rewrites the request into `ForwardAgent=<your socket>`,
+an explicit path (OpenSSH 8.1+); the workspace identity stays an
+authentication credential and reaches the guest as nothing else.
+A request that already names a socket
+(`-o ForwardAgent=/path/to/sock`) keeps its own. `-A` with no
+live agent behind `SSH_AUTH_SOCK` exits with one line naming it.
+Forwarding set by an ssh config file keeps the stock meaning
+under this command — it forwards the session agent; the command
+line is where your agent is named.
 
 Everything after the workspace id (the `--` is optional — any
 argument ssh would take works verbatim) is passed to ssh. A
