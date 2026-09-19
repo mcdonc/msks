@@ -364,6 +364,18 @@ processes up` shows one devenv startup instead of two, and the
   throwaway `true` command, retried up to 30s) before opening the
   real session, which runs exactly once either way.
 
+- **Workspace `sudo` works — the guest image keeps the setuid bits
+  (#169).** The image build extracts the Debian root unprivileged,
+  which dropped every setuid/setgid bit (`sudo`, `su`, `mount`, …);
+  the `msks` workspace user hit sudo's refusal — "must be owned by
+  uid 0 and have the setuid bit set". The build now restores the
+  bits from the source image's own inode modes, and the image
+  grants the `msks` user passwordless sudo (the locked password
+  makes NOPASSWD the only form that can run), so `sudo apt update`
+  works over a workspace console or ssh. Workspaces created from an
+  older image keep their old backing rootfs until recreated
+  (`msks rm`, then `msks create`).
+
 - **Failed starts keep an actionable status (#158).** A `vm.boot`
   failure reaps the half-created VMM and the watcher's dead-socket
   probe consults the identity check, so the workspace reports

@@ -36,10 +36,11 @@
 #                             from (#14); guests mount it rw.
 #   $out/guest-manifest.json - artifact names + the boot cmdline.
 #
-# Known extraction limitation: unprivileged debugfs rdump cannot
-# restore setuid bits (su, mount show -rwxr-xr-x). Everything in the
-# VM runs as root today, so nothing regresses; restoring them is
-# #36-adjacent follow-up material.
+# Extraction is unprivileged — debugfs rdump, no mount — and rdump
+# drops setuid/setgid bits, so the build records the source image's
+# own special modes at dump time and the fakeroot pack stage applies
+# them with uid-0 ownership (#169): the msks user (#63) needs working
+# sudo, and sudo's elevation depends on that pairing.
 #
 # Evaluate through the msks-build-guest / msks-build-runner-image
 # scripts (they pin nixpkgs to the devenv.lock revision);
@@ -219,7 +220,8 @@ let
   # stack a workspace running msksd itself needs (#82), a stable
   # hostname, the DHCP client an egress workspace (#52) brings up,
   # the sshd posture + rsync the TCP service plane rides (#110),
-  # and the console helper binary.
+  # the sudoers grant behind the workspace user's sudo (#169), and
+  # the console helper binary.
   # Debian's socat 1.8.x is built WITH_VSOCK, so nothing is
   # cross-compiled in.
   guestOverlay = pkgs.runCommand "msks-guest-overlay" { } ''
@@ -228,6 +230,7 @@ let
       $out/home \
       $out/usr/bin \
       $out/etc/cloud/cloud.cfg.d \
+      $out/etc/sudoers.d \
       $out/etc/ssh/sshd_config.d \
       $out/etc/systemd/system/serial-getty@ttyS0.service.d \
       $out/etc/systemd/system/ssh.service.d \
@@ -270,6 +273,20 @@ let
       'KbdInteractiveAuthentication no' \
       'PermitRootLogin prohibit-password' \
       > $out/etc/ssh/sshd_config.d/00-msks.conf
+
+    # The workspace user's sudo (#169): passwordless root for the
+    # msks user — the single-user dev VM's standard cloud posture
+    # (Debian's own default cloud user carries the same grant). The
+    # password is locked by design (the console helper and ssh keys
+    # are the road in), so NOPASSWD is the only form that can ever
+    # run. The pack stage sets the 0440 sudoers mode: the store
+    # rewrites the built file's group bits (0440 lands 0444), and
+    # the tar hop's chmod -R u+w would widen it again before
+    # mke2fs packs the tree.
+    printf '%s\n' \
+      '# msks (#169): the workspace user administers this VM.' \
+      'msks ALL=(ALL) NOPASSWD:ALL' \
+      > $out/etc/sudoers.d/msks
 
     # Host keys come from the image's own sshd-keygen.service (wanted
     # by ssh.service, ConditionFirstBoot): ssh-keygen -A writes them
@@ -550,6 +567,151 @@ let
     print(root["start"] * table.get("sectorsize", 512))
   '';
 
+  # The setuid/setgid restoration data (#169): unprivileged rdump
+  # drops the bits (its mode_xlate() table carries only the nine rwx
+  # bits, so the chmod after extraction never sees them), and the
+  # build sandbox is a user namespace where the kernel refuses to
+  # set them back for real. `walk` records every special-bit inode
+  # of the source image into a manifest; the fakeroot pack stage
+  # runs `apply` on it — fakeroot records the chmods without
+  # touching the kernel, and mke2fs -d bakes them into the image
+  # alongside the faked uid-0 ownership. A separate file (not
+  # inline) for the same de-indentation reason as partitionOffset
+  # above.
+  specialModes = pkgs.writeText "msks-special-modes.py" ''
+    import os
+    import subprocess
+    import sys
+
+    MARKER = "debugfs: ls -p "
+
+
+    def walk(image, workdir):
+        """Return [(path, perm)] for every inode whose mode carries
+        setuid, setgid, or sticky, breadth-first through debugfs batch
+        listings."""
+        pending = ["/"]
+        special = []
+        while pending:
+            cmds = os.path.join(workdir, "ls-cmds")
+            with open(cmds, "w") as batch:
+                for path in pending:
+                    batch.write(f'ls -p "{path}"\n')
+            proc = subprocess.run(
+                ["debugfs", "-f", cmds, image],
+                capture_output=True,
+                text=True,
+            )
+            if proc.returncode != 0:
+                raise SystemExit(
+                    f"debugfs exited {proc.returncode}: {proc.stderr}"
+                )
+            entries = {}
+            raw_lines = {}
+            current = None
+            for line in proc.stdout.splitlines():
+                if line.startswith(MARKER):
+                    current = line[len(MARKER) :].strip('"')
+                    entries[current] = []
+                    raw_lines[current] = 0
+                elif line.startswith("/") and current is not None:
+                    # Counted before the ./.. filter: an empty
+                    # directory still lists itself and its parent.
+                    raw_lines[current] += 1
+                    parts = line.rstrip("/").split("/")
+                    if (
+                        len(parts) < 6
+                        or parts[0] != ""
+                        or not all(p.isdigit() for p in parts[1:5])
+                    ):
+                        raise SystemExit(
+                            f"unparsable ls -p line: {line!r}"
+                        )
+                    mode = int(parts[2], 8)
+                    name = parts[5]
+                    if name not in (".", ".."):
+                        entries[current].append((name, mode))
+            # debugfs errors never reach stdout and never set the
+            # exit code — a failed listing (an unbalanced quote from
+            # an exotic name, a lookup drift) echoes only the command
+            # line, while every real listing emits at least . and ..
+            # A marker with zero raw entry lines therefore aborted
+            # nowhere and would have dropped the whole subtree from
+            # the manifest; abort here with stderr attached instead.
+            for path, count in raw_lines.items():
+                if count == 0:
+                    raise SystemExit(
+                        f"ls -p produced no entries for {path!r}: "
+                        f"{proc.stderr.strip()}"
+                    )
+            next_pending = []
+            for path, dir_entries in entries.items():
+                prefix = "" if path == "/" else path
+                for name, mode in dir_entries:
+                    child = prefix + "/" + name
+                    if (mode & 0o170000) == 0o040000:
+                        next_pending.append(child)
+                    if mode & 0o7000:
+                        special.append((child, mode & 0o7777))
+            pending = sorted(set(next_pending))
+        return special
+
+
+    def do_walk(image, manifest):
+        special = walk(image, os.path.dirname(os.path.abspath(image)))
+        setuid = {path for path, perm in special if perm & 0o4000}
+        # #169 exists because sudo broke: pin the binary itself, not
+        # just "some setuid survived" — a parse regression that
+        # keeps any other setuid file would otherwise pass.
+        if "/usr/bin/sudo" not in setuid:
+            raise SystemExit(
+                "/usr/bin/sudo is not setuid in the source image; "
+                "the debugfs walk parse must have broken, or the "
+                "source image changed"
+            )
+        with open(manifest, "w") as out:
+            for path, perm in special:
+                out.write(f"{perm:04o} {path}\n")
+        print(
+            f"recorded {len(special)} special modes "
+            f"({len(setuid)} setuid)"
+        )
+
+
+    def do_apply(manifest, tree):
+        applied = 0
+        with open(manifest) as entries:
+            for line in entries:
+                mode_s, path = line.split(" ", 1)
+                path = path.rstrip("\n")
+                if not os.path.lexists(tree + path):
+                    raise SystemExit(
+                        f"special-mode path absent from the tree: {path}"
+                    )
+                os.chmod(tree + path, int(mode_s, 8))
+                applied += 1
+        if not applied:
+            raise SystemExit("empty special-mode manifest")
+        print(f"applied {applied} special modes")
+
+
+    def main():
+        usage = f"usage: {sys.argv[0]} walk <image> <manifest> | apply <manifest> <tree>"
+        if len(sys.argv) != 4:
+            raise SystemExit(usage)
+        command, one, two = sys.argv[1:]
+        if command == "walk":
+            do_walk(one, two)
+        elif command == "apply":
+            do_apply(one, two)
+        else:
+            raise SystemExit(usage)
+
+
+    if __name__ == "__main__":
+        main()
+  '';
+
   # The Debian root tree: convert the qcow2 to raw, slice the root
   # partition out (offset from the partition table, not hardcoded),
   # dump the ext4 contents with debugfs (unprivileged — no mount),
@@ -587,8 +749,9 @@ let
         dd if=debian.raw of=root.part bs=512 skip=$((offset / 512)) status=none
 
         # ext4 -> tree (ownership errors are expected unprivileged: the
-        # files land owned by the build user; see the header note about
-        # setuid).
+        # files land owned by the build user, and the setuid/setgid
+        # bits drop — recorded right below for the pack stage to
+        # apply).
         debugfs -R "rdump / $root" root.part 2>/dev/null || true
         rm -rf "$root"/lost+found
         # rdump's stderr mixes benign ownership noise with real errors,
@@ -596,6 +759,17 @@ let
         for top in bin usr etc var lib boot; do
           test -d "$root/$top"
         done
+
+        # Record the setuid/setgid set rdump dropped (#169): the
+        # source image's own inode modes are the authority — sudo,
+        # su, mount and the rest come back as the distro ships
+        # them, and an image pin update cannot drift the set. The
+        # bits cannot be set back on this tree (the build sandbox
+        # is a user namespace; the kernel refuses), so they ride a
+        # manifest to the fakeroot pack stage, which applies them
+        # alongside the faked uid-0 ownership.
+        mkdir -p "$out"
+        python3 ${specialModes} walk root.part "$out"/special-modes
 
         # The msks overlay.
         cp -a --no-preserve=ownership ${guestOverlay}/. "$root"/
@@ -848,16 +1022,23 @@ let
   # would be nobody:nogroup). Under fakeroot the chown/chmod are
   # recorded, not performed, and mke2fs -d's stat() reads the faked
   # root ownership. This also restores sane permissions on the
-  # password files; setuid bits stay lost (rdump cannot preserve
-  # them, and everything runs as root today).
+  # password files and the sudoers dropin's 0440 (the tar hop's
+  # u+w pass had widened both), and applies debianRoot's
+  # special-mode manifest (#169): the faked chmods put sudo and its
+  # setuid kin back as uid-0 inodes, the pairing sudo's elevation
+  # depends on.
   packScript = pkgs.writeText "msks-rootfs-pack.sh" ''
     set -eu
     tree="''${PACK_TREE:?}"
     img="''${PACK_IMG:?}"
     blocks="''${PACK_BLOCKS:?}"
     fake_epoch="''${PACK_FAKE_EPOCH:?}"
+    modes="''${PACK_MODES:?}"
+    applier="''${PACK_APPLIER:?}"
     chown -R 0:0 "$tree"
     chmod 0640 "$tree"/etc/shadow "$tree"/etc/gshadow
+    chmod 0440 "$tree"/etc/sudoers.d/msks
+    python3 "$applier" apply "$modes" "$tree"
     E2FSPROGS_FAKE_TIME="$fake_epoch" mke2fs -q -t ext4 -b 4096 -I 256 \
       -L msks-rootfs \
       -E hash_seed=00000000-0000-0000-0000-000000000000 \
@@ -868,11 +1049,12 @@ let
   rootfs =
     pkgs.runCommand "msks-guest-rootfs"
       {
-        inherit debianRoot packScript;
+        inherit debianRoot packScript specialModes;
         nativeBuildInputs = [
           pkgs.e2fsprogs
           pkgs.fakeroot
           pkgs.gnutar
+          pkgs.python3
         ];
         fakeEpoch = 1262304000;
       }
@@ -898,6 +1080,8 @@ let
           PACK_IMG="$out/rootfs.ext4" \
           PACK_BLOCKS=$(( $(cat "$debianRoot"/tree-blocks) + 262144 )) \
           PACK_FAKE_EPOCH="$fakeEpoch" \
+          PACK_MODES="$debianRoot/special-modes" \
+          PACK_APPLIER="${specialModes}" \
           fakeroot -- /bin/sh -e "$packScript"
       '';
 
