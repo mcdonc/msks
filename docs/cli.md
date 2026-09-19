@@ -546,9 +546,10 @@ throwaway `true` as the remote command, retried for up to 30s with
 a one-line notice between attempts) and opens the real session —
 interactive or one-shot — once the guest accepts the workspace
 key; a remote command runs exactly once either way. The probe
-carries the session's login user and drops its tunnel-only options
-(`-N`, `-W`, `SessionType`/`RemoteCommand`) — a tunnel session gets
-the same wait as an interactive one. For
+carries only the session's login user — msks's own transport, its
+quiet flag, and a `true` command — so a session's tunnels and
+other ssh options cannot hold the wait open or alter it; the
+session itself keeps every option. For
 a daemon-minted workspace the private half arrives over that API;
 for a client-minted one (#121, the create default) the API serves
 the public half and the private half comes from the local data root

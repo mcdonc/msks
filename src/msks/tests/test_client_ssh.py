@@ -816,6 +816,33 @@ def test_run_workspace_ssh_names_a_missing_binary(
         )  # the real agent stops around the failure
 
 
+def test_run_workspace_ssh_names_a_missing_binary_from_the_wait(
+    monkeypatch: pytest.MonkeyPatch, client_env: None, tmp_path: Path
+) -> None:
+    # The booted path probes before the session: a missing ssh is
+    # the same one-line exit there, not a traceback from the probe.
+    async def fake_prepare(*args, **kwargs) -> tuple[dict, bool]:
+        return KEY, True
+
+    monkeypatch.setattr(ssh, "prepare", fake_prepare)
+    monkeypatch.setattr(
+        ssh, "known_hosts_path", lambda ws, base=None: str(tmp_path)
+    )
+
+    @contextmanager
+    def fake_serve(private, comment):
+        yield FakeAgent()
+
+    monkeypatch.setattr(ssh.agent, "serve", fake_serve)
+
+    def missing(argv, **kwargs):
+        raise FileNotFoundError("ssh")
+
+    monkeypatch.setattr(ssh.subprocess, "run", missing)
+    with pytest.raises(SystemExit, match="ssh not found"):
+        ssh.run_workspace_ssh("alpha", [])
+
+
 # --- the first-boot wait (#168) ---
 
 
@@ -826,7 +853,7 @@ def probe_argv_of(passthrough: list[str]) -> list[str]:
     )
 
 
-def test_probe_args_carries_the_options_and_a_true_command() -> None:
+def test_probe_args_carries_the_user_and_a_true_command() -> None:
     argv = probe_argv_of(["-l", "root"])
     assert argv[0] == "ssh"
     assert "-q" in argv  # the probe keeps its attempts to one line
@@ -843,44 +870,56 @@ def test_probe_args_never_carries_a_command_form_passthrough() -> None:
     assert "uname" not in argv
 
 
-def test_probe_args_drops_options_that_suppress_its_command() -> None:
-    # -N holds the connection open running nothing; -W replaces the
-    # session with a never-ending stdio forward; SessionType=none and
-    # RemoteCommand bar or replace a command-line command. The probe
-    # drops them; the session keeps them (pinned below).
+def test_probe_args_drops_all_session_luggage() -> None:
+    # Tunnels, forwards, verbosity — bundled spellings included —
+    # and RemoteCommand cannot reach the probe: -N and
+    # SessionType=none would hold it open running nothing, -W never
+    # ends on its own, and RemoteCommand refuses a command-line
+    # command outright. The session keeps every one (pinned below).
     passthrough = [
-        "-N",
-        "-W",
-        "localhost:22",
-        "-o",
-        "SessionType=none",
-        "-oRemoteCommand=sleep 600",
+        "-fN",
         "-L",
         "8080:localhost:80",
+        "-W",
+        "localhost:22",
+        "-oRemoteCommand=sleep 600",
+        "-v",
         "-l",
         "root",
     ]
     argv = probe_argv_of(passthrough)
     tail = argv[argv.index("alpha") + 1 :]
     assert tail == ["true"]
-    for dropped in ("-N", "-W", "localhost:22", "SessionType=none"):
-        assert dropped not in argv
+    for word in (
+        "-fN",
+        "-L",
+        "8080:localhost:80",
+        "-W",
+        "localhost:22",
+        "-v",
+    ):
+        assert word not in argv
     assert "RemoteCommand" not in " ".join(argv)
-    assert "-L" in argv and "8080:localhost:80" in argv
+    # The login user is the one setting the probe keeps.
     assert "-l" in argv and "root" in argv
     session = ssh.build_args(
         "alpha", "/faked/agent.sock", "/faked/identity.pub", "/kh", passthrough
     )
-    assert "-N" in session and "-W" in session
+    assert "-fN" in session and "-W" in session
     assert "-oRemoteCommand=sleep 600" in session
 
 
-def test_probe_options_keep_the_pairless_tail() -> None:
-    # A dangling -o at the end (its value missing) and unknown flags
-    # pass through untouched — ssh's own error for the shape is the
-    # clear one, for the session and the probe alike.
-    kept = ssh.probe_options(["-o", "-A", "-v"])
-    assert kept == ["-o", "-A", "-v"]
+def test_probe_user_extracts_each_user_form() -> None:
+    # -l with its value, split and inline -o User=..., both kept;
+    # a dangling -l (an option where its value would be) stays out
+    # so the probe logs in as the default user while ssh's own
+    # usage error answers the session.
+    assert ssh.probe_user(["-l", "root"]) == ["-l", "root"]
+    assert ssh.probe_user(["-o", "User=root"]) == ["-o", "User=root"]
+    assert ssh.probe_user(["-oUser=root"]) == ["-oUser=root"]
+    assert ssh.probe_user(["-o", "User=robot"]) == ["-o", "User=robot"]
+    assert ssh.probe_user(["-l", "-A"]) == []
+    assert ssh.probe_user(["-A", "-T"]) == []
 
 
 def test_probe_args_keeps_a_defaulted_user_from_double_injection() -> None:

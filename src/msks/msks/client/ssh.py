@@ -291,6 +291,34 @@ def proxy_command(workspace_id: str) -> str:
     )
 
 
+def session_options(
+    workspace_id: str,
+    agent_socket: str,
+    identity_pub: str,
+    known_hosts: str,
+) -> list[str]:
+    """The transport, host-key, and agent options every msks ssh
+    invocation carries — the session and the first-boot probe
+    alike: the forward as ProxyCommand, the per-workspace
+    known_hosts under ``accept-new``, and the identity named by its
+    public half and served from the transient agent under
+    ``IdentitiesOnly``."""
+    return [
+        "-o",
+        proxy_command(workspace_id),
+        "-o",
+        f"UserKnownHostsFile={config_quote(known_hosts)}",
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+        "-o",
+        "IdentitiesOnly=yes",
+        "-o",
+        f"IdentityAgent={config_quote(agent_socket)}",
+        "-i",
+        identity_pub,
+    ]
+
+
 def build_args(
     workspace_id: str,
     agent_socket: str,
@@ -312,18 +340,12 @@ def build_args(
     one key and nothing else.
     """
     options, command = split_command(passthrough)
-    argv = ["ssh", *options, "-o", proxy_command(workspace_id)]
-    argv += [
-        "-o",
-        f"UserKnownHostsFile={config_quote(known_hosts)}",
-        "-o",
-        "StrictHostKeyChecking=accept-new",
-        "-o",
-        "IdentitiesOnly=yes",
-        "-o",
-        f"IdentityAgent={config_quote(agent_socket)}",
-        "-i",
-        identity_pub,
+    argv = [
+        "ssh",
+        *options,
+        *session_options(
+            workspace_id, agent_socket, identity_pub, known_hosts
+        ),
     ]
     if not wants_user(options):
         argv += ["-l", DEFAULT_USER]
@@ -343,86 +365,76 @@ def probe_args(
     known_hosts: str,
     passthrough: list[str],
 ) -> list[str]:
-    """The readiness probe's argv: the session's own options — the
-    ones a probe can carry — with a throwaway ``true`` as the remote
-    command, run quietly.
+    """The readiness probe's argv: msks's own transport and agent
+    settings, the session's login user, and a throwaway ``true`` as
+    the remote command — the passthrough contributes nothing else.
 
-    The probe shares the real session's transport, host-key, agent,
-    and login-user settings — it authenticates exactly as the real
-    session will — so its exit code is the readiness answer: 0 once
-    the guest authenticates the workspace identity, nonzero while
-    the guest is still booting or the seed has yet to land. ``true``
-    runs no user command, so a retried probe cannot run anything
-    twice; ``-q`` keeps each attempt to msks's own notice line.
+    The probe asks one question — does the guest accept the
+    identity yet — so it carries exactly the settings that shape
+    that answer. The session's own luggage stays with the session:
+    ``-N``/``SessionType=none`` make ssh ignore a command and hold
+    the connection open, ``-W`` and the ``-L``/``-R``/``-D``
+    forwards stretch a probe into a tunnel (bundled short flags
+    like ``-fN`` reach the same states spelling-free), and
+    ``RemoteCommand`` makes ssh refuse a command-line command
+    outright — none of them can stall or distort the probe when
+    none of them is in it. ``true`` runs no user command, so a
+    retried probe cannot run anything twice; ``-q`` keeps each
+    attempt to msks's own notice line.
     """
     options, _ = split_command(passthrough)
-    return build_args(
-        workspace_id,
-        agent_socket,
-        identity_pub,
-        known_hosts,
-        ["-q", *probe_options(options), "--", "true"],
-    )
+    argv = [
+        "ssh",
+        "-q",
+        *probe_user(options),
+        *session_options(
+            workspace_id, agent_socket, identity_pub, known_hosts
+        ),
+    ]
+    if not wants_user(options):
+        argv += ["-l", DEFAULT_USER]
+    return argv + [workspace_id, "true"]
 
 
-#: The ssh flags a probe must drop, mapped to how many argv slots
-#: each consumes (``-W`` carries its host:port value as a second
-#: argument): both hold the connection open with the probe's
-#: ``true`` ignored or replaced.
-HOLD_OPEN_FLAGS = {"-N": 1, "-W": 2}
+def probe_user(options: list[str]) -> list[str]:
+    """The passthrough fragments that name the login user: ``-l``
+    with its value, and ``-o User=...`` in both spellings.
 
-
-def probe_options(options: list[str]) -> list[str]:
-    """The session options a probe can carry: every one but those
-    that suppress or bar its remote command.
-
-    ``-N`` and ``SessionType=none`` make ssh ignore the command and
-    hold the connection open (a tunnel session's probe would never
-    answer); ``-W`` replaces the session with a stdio forward that
-    never ends on its own; ``RemoteCommand`` makes ssh refuse a
-    command-line command outright. Dropping them leaves a probe
-    whose exit code answers the one question asked — did the guest
-    accept the identity — while the session behind it keeps every
-    option intact.
+    A guest can admit some users and refuse others (an operator's
+    ``AllowUsers``, a hardened ``PermitRootLogin``), so the probe
+    asks as the user the session will log in as — the one session
+    setting that changes the answer to its question.
     """
-    kept: list[str] = []
-    index = 0
-    while index < len(options):
-        skip = probe_skip(options, index)
-        if skip:
-            index += skip
-            continue
-        kept.append(options[index])
-        index += 1
-    return kept
+    fragments: list[str] = []
+    for index, arg in enumerate(options):
+        fragments += user_pair(index, arg, options)
+    return fragments
 
 
-def probe_skip(options: list[str], index: int) -> int:
-    """How many arguments at ``index`` the probe drops: 0 to keep
-    the argument, 1 for a flag or inline option that bars the
-    command, 2 for a split option and its value."""
-    arg = options[index]
-    if arg in HOLD_OPEN_FLAGS:
-        return HOLD_OPEN_FLAGS[arg]
-    return option_skip(arg, option_value(index, arg, options))
+def user_pair(index: int, arg: str, options: list[str]) -> list[str]:
+    """The passthrough fragments at ``index`` that name the login
+    user: ``-l`` with its value, or an ``-o User=...`` in either
+    spelling — an empty pair when the argument names no user."""
+    value = option_value(index, arg, options)
+    if value is not None and names_user(value):
+        return inline_user_pair(arg, value)
+    if arg == "-l" and next_arg_names_user(options, index):
+        return [arg, options[index + 1]]
+    return []
 
 
-def option_skip(arg: str, value: str | None) -> int:
-    """How many argv slots a dropped ``-o`` option takes: the split
-    form (``-o`` beside its value) is two, the inline form
-    (``-oValue``) is one."""
-    if value is None or not suppresses_probe_command(value):
-        return 0
-    return 2 if arg == "-o" else 1
+def inline_user_pair(arg: str, value: str) -> list[str]:
+    """The ``-o User=...`` fragments: the split spelling is two
+    arguments, the inline ``-oValue`` spelling is one."""
+    return [arg, value] if arg == "-o" else [arg]
 
 
-def suppresses_probe_command(value: str) -> bool:
-    """Whether an ``-o`` value names ``SessionType`` or
-    ``RemoteCommand`` — the two keywords that replace or bar a
-    command-line command (ssh_config keywords are case-insensitive,
-    so the comparison is too)."""
-    lowered = value.lower()
-    return lowered.startswith(("sessiontype", "remotecommand"))
+def next_arg_names_user(options: list[str], index: int) -> bool:
+    """Whether the argument after a ``-l`` can be its value — a
+    plain word names the user; an option flag means the ``-l`` was
+    dangling, and ssh's own usage error for the session is the
+    clearer report."""
+    return index + 1 < len(options) and not options[index + 1].startswith("-")
 
 
 def wait_for_identity(
@@ -431,29 +443,43 @@ def wait_for_identity(
     """Retry the probe until the guest accepts the login or the
     deadline passes (#168).
 
-    Each attempt is bounded by the time the deadline leaves — a
-    stalled connection (a wedged forward, a guest that accepts the
-    TCP session and stalls) is one more not-ready answer, not a
-    hang — and the whole wait stays inside the deadline plus one
-    pause. A deadline that passes leaves the failure to the real
-    session: ssh's own message names the refusal, and the probe's
-    notices have already said what was being waited for.
+    Each attempt is bounded by the time the deadline leaves, so a
+    stalled connection is one more not-ready answer, not a hang,
+    and the whole wait stays inside the deadline plus one pause. A
+    deadline that passes leaves the failure to the real session:
+    ssh's own message names the refusal, and the probe's notices
+    have already said what was being waited for.
     """
     while True:
         now = time.monotonic()
         if now >= deadline:
             return
-        try:
-            completed = subprocess.run(probe_argv, timeout=deadline - now)
-            if completed.returncode == 0:
-                return
-        except subprocess.TimeoutExpired:
-            pass
-        print(
-            f"msks: {workspace_id} is not accepting the login yet; retrying",
-            file=sys.stderr,
-        )
+        if probe_attempt(probe_argv, deadline - now):
+            return
         time.sleep(SSH_RETRY_PAUSE_S)
+        if time.monotonic() < deadline:
+            print(
+                f"msks: {workspace_id} is not accepting the login yet; "
+                "retrying",
+                file=sys.stderr,
+            )
+
+
+def probe_attempt(probe_argv: list[str], budget: float) -> bool:
+    """One probe attempt: True when the guest accepted the login.
+
+    A stalled connection is one more not-ready answer — bounded by
+    the budget the deadline leaves the attempt — and an ssh missing
+    from PATH is the session's own named error, raised here so the
+    wait reports it before the session ever runs.
+    """
+    try:
+        completed = subprocess.run(probe_argv, timeout=budget)
+    except subprocess.TimeoutExpired:
+        return False
+    except FileNotFoundError:
+        raise SystemExit("msks ssh: ssh not found on PATH") from None
+    return completed.returncode == 0
 
 
 def run_workspace_ssh(
