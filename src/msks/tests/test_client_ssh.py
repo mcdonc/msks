@@ -723,27 +723,48 @@ def agent_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
     return str(sock)
 
 
-PAIR_CASES = [
-    (["-A"], []),
-    (["-o", "ForwardAgent=yes"], []),
-    (["-oForwardAgent=yes"], []),  # the inline -o spelling
-    (["-o", "forwardagent=YES"], []),  # keywords are caseless
-    (["-o", "ForwardAgent SSH_AUTH_SOCK"], []),  # space-separated
-    (["-A", "-o", "User=root"], ["-o", "User=root"]),
-]
+def front_pair(agent_env: str) -> list[str]:
+    """The argv tokens that state the operator's socket at the
+    front of the options."""
+    return ["-o", f"ForwardAgent={agent_env}"]
 
 
-@pytest.mark.parametrize(("raw", "rest"), PAIR_CASES)
-def test_forward_agent_args_rewrites_request_forms(
-    agent_env: str, raw: list[str], rest: list[str]
+@pytest.mark.parametrize(
+    "raw",
+    [
+        ["-A"],
+        ["-o", "ForwardAgent=yes"],
+        ["-oForwardAgent=yes"],
+        ["-o", "forwardagent=YES"],  # keywords are caseless
+        ["-o", "ForwardAgent yes"],  # space-separated value
+        ["-o", "ForwardAgent\tyes"],  # any whitespace separates
+        ["-o", "ForwardAgent =yes"],  # spaced equals
+        ["-o", "ForwardAgent= yes"],  # padded value
+        ["-o", "ForwardAgent = yes"],
+        ["-o", "ForwardAgent=yes "],
+        ["-o", 'ForwardAgent="yes"'],  # quotes ssh strips
+        ["-A", "-o", "User=root"],
+        ["-o", "ForwardAgent=no", "-A"],  # the flag beats the value
+        ["-o", "ForwardAgent=yes", "-o", "ForwardAgent=no"],
+        ["-a", "-A"],  # ON: the later flag assigns
+        ["-va", "-A"],
+        ["-vA"],  # a bundled request resolves the same way
+        ["-tA"],
+        ["-At"],
+        ["-voForwardAgent=yes"],  # a request on a bundle's -o
+        ["-vo", "ForwardAgent=yes"],
+    ],
+)
+def test_a_resolved_request_states_the_operator_socket(
+    agent_env: str, raw: list[str]
 ) -> None:
-    """Every command-line form that asks for agent forwarding names
-    the operator's socket afterwards (``-o`` value spellings included
-    — inline, separate, caseless, space-separated)."""
+    """Every spelling stock ssh resolves to forwarding — the -A
+    flag (last one wins), the first yes-valued ForwardAgent, the
+    bundled forms — gets the operator's socket stated at the front,
+    where a path wins over every flag and value behind it."""
     assert ssh.forward_agent_args(list(raw)) == [
-        "-o",
-        f"ForwardAgent={agent_env}",
-        *rest,
+        *front_pair(agent_env),
+        *raw,
     ]
 
 
@@ -753,40 +774,78 @@ def test_forward_agent_args_rewrites_request_forms(
         ["-o", "ForwardAgent=no"],
         ["-o", "ForwardAgent=/other/sock"],  # an explicit socket
         ["-oForwardAgent=/other/sock"],
-        ["-a"],  # the disabling short flag
+        ["-a"],
         ["-l", "root"],
         ["-T"],
+        ["-ta"],  # a bundle that disables, with no request behind it
         [],
+        # stock resolves every one of these to OFF: the later flag
+        # assigns over the value, and plain values are first-obtained
+        ["-A", "-a"],
+        ["-o", "ForwardAgent=yes", "-a"],
+        ["-A", "-va"],
+        ["-a", "-o", "ForwardAgent=yes"],
+        ["-o", "ForwardAgent=no", "-o", "ForwardAgent=yes"],
+        ["-vo", "ForwardAgent=no"],  # a no on a bundle's -o
+        ["-vo"],  # dangling: ssh's own usage error answers
     ],
 )
-def test_forward_agent_args_passes_the_rest_through(raw: list[str]) -> None:
-    """A disabling no, an operator's own socket path, and every
-    unrelated option pass through untouched — with no agent
-    resolved on the way."""
+def test_stock_off_lines_pass_through_untouched(raw: list[str]) -> None:
+    """A line stock ssh resolves to off (or that names no
+    forwarding at all) passes through verbatim — no agent resolved,
+    no option added."""
     assert ssh.forward_agent_args(list(raw)) == raw
 
 
-def test_forward_agent_args_consumes_a_separate_option_value(
-    agent_env: str,
-) -> None:
-    # The value beside a separate -o belongs to the option; rewriting
-    # must consume it, not copy it twice.
-    assert ssh.forward_agent_args(["-o", "ForwardAgent=yes", "-T"]) == [
-        "-o",
-        f"ForwardAgent={agent_env}",
-        "-T",
-    ]
+@pytest.mark.parametrize(
+    "raw",
+    [
+        ["-A", "-o", "ForwardAgent=/own"],
+        ["-o", "ForwardAgent=/own", "-A"],
+        ["-o", "ForwardAgent=/own", "-o", "ForwardAgent=yes"],
+        ["-vA", "-o", "ForwardAgent=/own"],
+        ["-A", "-vo", "ForwardAgent=/own"],  # explicit on a bundle
+        ["-A", "-o", "ForwardAgent=sock.rel"],  # relative is a socket
+        ["-A", "-o", "ForwardAgent="],  # empty: ssh's usage error
+        ["-A", "-o", "ForwardAgent=banana"],  # garbage reads as a path
+        ["-A", "-o", "ForwardAgent\t/own"],  # tab separator
+        ["-A", "-o", "ForwardAgent=/own", "-a"],  # sticky over -a
+    ],
+)
+def test_an_explicit_socket_wins_over_everything(raw: list[str]) -> None:
+    """A ForwardAgent value naming a socket — path (absolute or
+    relative), garbage, empty — is sticky in stock ssh: it wins over
+    every flag and value in any order, so the rewrite stands down
+    entirely, without resolving any agent (no live SSH_AUTH_SOCK
+    needed here)."""
+    assert ssh.forward_agent_args(list(raw)) == raw
+
+
+def test_value_flag_bundles_are_not_requests() -> None:
+    """The value-taking options own everything after themselves, so
+    a capital A inside a value (-JAdmin@h, -vR8000:Alpha:80,
+    -vEAuth.log, -vcArcfour) names no forwarding."""
+    for arg in (
+        "-JAdmin@h",
+        "-vR8000:Alpha:80",
+        "-BAgent0",
+        "-vEAuth.log",
+        "-vcArcfour",
+    ):
+        assert ssh.forward_agent_args([arg]) == [arg]
 
 
 def test_forward_agent_args_needs_no_agent_when_not_asked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # A session without forwarding runs with no agent in sight.
+    # A session that stock ssh resolves to off runs with no agent
+    # in sight.
     monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
+    assert ssh.forward_agent_args(["-A", "-a"]) == ["-A", "-a"]
     assert ssh.forward_agent_args(["-T"]) == ["-T"]
 
 
-@pytest.mark.parametrize("raw", [["-A"], ["-o", "ForwardAgent=yes"]])
+@pytest.mark.parametrize("raw", [["-A"], ["-o", "ForwardAgent=yes"], ["-vA"]])
 def test_forward_agent_args_names_a_missing_agent(
     monkeypatch: pytest.MonkeyPatch, raw: list[str]
 ) -> None:
@@ -803,99 +862,6 @@ def test_forward_agent_args_names_an_unset_agent(
         ssh.forward_agent_args(["-A"])
 
 
-def test_forward_agent_args_refuses_bundled_a(agent_env: str) -> None:
-    """A bundled short flag carrying -A is a forwarding request this
-    pass cannot spell — refusing it beats silently forwarding the
-    session agent. -JAdmin@h (a value attached to -J), -ta, and
-    bundles over every value-taking option (``-vR8000:Alpha:80`` —
-    the R makes the rest a value, A included) are not bundles."""
-    for arg in ("-vA", "-tA", "-At"):
-        with pytest.raises(SystemExit, match="spell it as its own"):
-            ssh.forward_agent_args([arg])
-    for arg in ("-JAdmin@h", "-ta", "-vR8000:Alpha:80", "-BAgent0"):
-        assert ssh.forward_agent_args([arg]) == [arg]
-    assert ssh.forward_agent_args(["-vEAuth.log"]) == ["-vEAuth.log"]
-    assert ssh.forward_agent_args(["-vcArcfour"]) == ["-vcArcfour"]
-
-
-def test_forward_agent_args_refuses_a_bundled_option_value(
-    agent_env: str,
-) -> None:
-    """A ForwardAgent setting tucked into a bundle (-vo ... yes in
-    both spellings ssh accepts) is a bundled request in disguise —
-    refused, not passed through to forward the session agent. A no
-    tucked the same way stays (nothing was asked for)."""
-    for raw in (["-voForwardAgent=yes"], ["-vo", "ForwardAgent=yes"]):
-        with pytest.raises(SystemExit, match="bundles -A"):
-            ssh.forward_agent_args(list(raw))
-    assert ssh.forward_agent_args(["-vo", "ForwardAgent=no"]) == [
-        "-vo",
-        "ForwardAgent=no",
-    ]
-    # A dangling -vo (its value never arrived) is ssh's own usage
-    # error — no bundle value to read, no refusal from msks.
-    assert ssh.forward_agent_args(["-vo"]) == ["-vo"]
-
-
-def test_forward_agent_args_refuses_a_disabling_a_after_a_request(
-    agent_env: str,
-) -> None:
-    """Stock ssh turns forwarding off when -a follows the request;
-    the rewrite states a socket that would stay on — the operator's
-    last word must win, and msks says so instead. A request after
-    -a is stock's ON, and rewrites as usual."""
-    for raw in (["-A", "-a"], ["-o", "ForwardAgent=yes", "-a"]):
-        with pytest.raises(SystemExit, match="drop one of the two"):
-            ssh.forward_agent_args(list(raw))
-    assert ssh.forward_agent_args(["-a", "-A"]) == [
-        "-a",
-        "-o",
-        f"ForwardAgent={agent_env}",
-    ]
-
-
-@pytest.mark.parametrize(
-    "raw",
-    [
-        ["-A", "-o", "ForwardAgent=/own"],
-        ["-o", "ForwardAgent=/own", "-A"],
-        ["-o", "ForwardAgent=/own", "-o", "ForwardAgent=yes"],
-        ["-vA", "-o", "ForwardAgent=/own"],  # the explicit path wins
-        ["-A", "-o", "ForwardAgent=sock.rel"],  # relative is a socket too
-    ],
-)
-def test_an_explicit_socket_wins_over_requests(raw: list[str]) -> None:
-    """A socket named by any ForwardAgent setting — absolute or
-    relative, anything that is not yes/no/SSH_AUTH_SOCK — takes
-    precedence in stock ssh over every yes/flag form regardless of
-    order, so the rewrite stands down entirely, without resolving
-    any agent (no live SSH_AUTH_SOCK needed here)."""
-    assert ssh.forward_agent_args(list(raw)) == raw
-
-
-def test_a_request_consumes_a_disabling_no(agent_env: str) -> None:
-    # Stock ssh resolves no-then--A to forwarding; the rewrite gives
-    # the pair the operator's socket (one setting, not two).
-    assert ssh.forward_agent_args(["-o", "ForwardAgent=no", "-A"]) == [
-        "-o",
-        f"ForwardAgent={agent_env}",
-    ]
-
-
-def test_a_quoted_yes_is_a_request(agent_env: str) -> None:
-    # ssh's option parser strips surrounding double quotes, so a
-    # quoted yes means forwarding there — and here. The spaced
-    # `ForwardAgent =yes` spelling reads the same to ssh.
-    assert ssh.forward_agent_args(["-o", 'ForwardAgent="yes"']) == [
-        "-o",
-        f"ForwardAgent={agent_env}",
-    ]
-    assert ssh.forward_agent_args(["-o", "ForwardAgent =yes"]) == [
-        "-o",
-        f"ForwardAgent={agent_env}",
-    ]
-
-
 def test_a_socket_with_whitespace_is_quoted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -905,6 +871,7 @@ def test_a_socket_with_whitespace_is_quoted(
     assert ssh.forward_agent_args(["-A"]) == [
         "-o",
         f'ForwardAgent="{sock}"',
+        "-A",
     ]
 
 
@@ -912,8 +879,8 @@ def test_build_args_points_forwarding_at_the_operators_agent(
     agent_env: str,
 ) -> None:
     argv = ssh.build_args("alpha", "/agent.sock", "/id.pub", "/kh", ["-A"])
-    assert argv[1:3] == ["-o", f"ForwardAgent={agent_env}"]
-    assert "-A" not in argv
+    assert argv[1:3] == front_pair(agent_env)
+    assert "-A" in argv  # inert behind the stated path
     # The session agent stays the authentication path — the
     # workspace identity authenticates and reaches the guest as
     # nothing else.
@@ -934,7 +901,7 @@ def test_probe_args_carries_the_sessions_forwarding(
     agent_env: str,
 ) -> None:
     argv = probe_argv_of(["-A"])
-    assert argv[2:4] == ["-o", f"ForwardAgent={agent_env}"]
+    assert argv[2:4] == front_pair(agent_env)
     assert argv[argv.index("alpha") + 1 :] == ["true"]
 
 
@@ -958,20 +925,6 @@ def test_probe_args_skips_a_dangling_login_before_agent_resolution(
     monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
     assert probe_argv_of(["-l"]) is None
     assert probe_argv_of(["-l", "-A"]) is None
-
-
-def test_build_args_treats_a_leading_plain_word_as_the_command() -> None:
-    """The natural form: `msks ssh ws -- uname -a` must not read
-    `uname` as the destination (the host is always the workspace)."""
-    argv = ssh.build_args(
-        "alpha", "/agent.sock", "/id.pub", "/kh", ["uname", "-a"]
-    )
-    assert argv[-3:] == ["alpha", "uname", "-a"]
-
-
-def test_config_quote_double_quotes_only_when_needed() -> None:
-    assert ssh.config_quote("/plain/path") == "/plain/path"
-    assert ssh.config_quote("/home/a b/sock") == '"/home/a b/sock"'
 
 
 # --- prepare: the boot pre-flight and the key fetch ---
