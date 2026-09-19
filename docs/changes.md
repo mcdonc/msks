@@ -303,6 +303,19 @@ no`, `PermitRootLogin prohibit-password`) pinned by a config dropin,
 
 ### Fixed
 
+- **Stale workspace sockets no longer break start (#151).** A VMM
+  killed without cleanup (host crash, appliance hard stop) left
+  `api.sock`/`vsock.sock` behind under `vms/<id>/`; the next start
+  died binding them and surfaced a misleading
+  unreachable-API/ENOENT 503. The start path now sweeps refused
+  sockets (a live listener is never unlinked), removes the stale
+  `ch.pid` (a recycled pid after a host reboot no longer blocks
+  starts with "already exists"), and a VMM that dies at spawn names
+  its own cause in the error (the tail of its ch.log) instead of a
+  bare exit code. VMM liveness is identity-checked against
+  `/proc/<pid>/cmdline`: a pid that is not this workspace's VMM is
+  never signaled, and one owned by another user is named in the
+  error instead of silently reported stopped.
 - **Legacy CA crash-loop on leaf remint (#148).** A CA minted before
   the strict-clean change parses but carries no Subject Key
   Identifier; the leaf remint that a host change triggers read the

@@ -23,6 +23,7 @@ dev = [
   "pytest",
   "pytest-asyncio",
   "pytest-cov",
+  "pytest-timeout",
   "pytest-testmon",
   "pytest-xdist",
 ]
@@ -50,7 +51,15 @@ filterwarnings = [
 # Coverage rides in addopts so the plain CI invocation (`python -m pytest
 # src/msks/tests -v -n auto`) is the gated one; scoped runs pass
 # --no-cov (see the `testmon` devenv task).
-addopts = "--cov=msks --cov-branch --cov-report=term-missing -ra"
+# The per-test ceiling (#157): a suite that stalls at a test fails
+# there, named, within seconds of the ceiling -- instead of a wall of
+# dots ending in silence while the CI budget burns (the #151 incident:
+# 25/69 tests in 600s, all "passing"). 30s is generous against a
+# healthy local average near 1s; the smoke suite (real appliance
+# boots) carries its own ceiling via its conftest. --durations=10
+# names the slowest tests on EVERY run, before a second diagnostic
+# run has to be paid for.
+addopts = "--cov=msks --cov-branch --cov-report=term-missing -ra --timeout=30 --durations=10"
 asyncio_mode = "auto"
 testpaths = ["src/msks/tests"]
 

@@ -22,6 +22,7 @@ import contextlib
 import os
 import shutil
 import signal
+import socket
 from pathlib import Path
 
 from .. import persist
@@ -32,6 +33,58 @@ from .spec import VmInfo, VmSpec, VmStatus
 
 # Bound on the OK reply once the handshake bytes are sent.
 VSOCK_REPLY_S = 5.0
+
+
+def socket_stale(path: Path) -> bool:
+    """Whether a unix socket path exists with nothing listening (#151).
+
+    Only the two refusal errors count as stale: a full accept
+    backlog answers connect with EAGAIN/BlockingIOError and a
+    slow-to-accept listener with a timeout -- both mean LIVE, and
+    unlinking them would cut a serving VMM off at the name. The
+    refused/no-such-file pair alone is dead residue: the file a
+    hard-killed VMM left, or a non-socket path squatting on the name.
+    """
+    if not os.path.lexists(path):
+        # lexists, not exists: a dangling symlink at the name is
+        # residue too -- it refuses the bind as surely as a file.
+        return False
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        probe.settimeout(0.5)
+        probe.connect(str(path))
+    except ConnectionRefusedError, FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    finally:
+        probe.close()
+    return False
+
+
+def has_socket_arg(fields: list[bytes], sock: Path) -> bool:
+    want_sock = os.fsencode(str(sock))
+    return any(
+        a == b"--api-socket" and b == want_sock
+        for a, b in zip(fields, fields[1:])
+    )
+
+
+def cmdline_is_vmm(cmdline: bytes, binary: str, sock: Path) -> bool:
+    """Whether a /proc cmdline is OUR VMM for the workspace (#151).
+
+    Exact-field equality, not substring: `grep cloud-hypervisor` as
+    a recycled pidfile pid must not read as our VMM. A bare argv
+    field match is allowed because a shebang script's argv[0] is
+    the interpreter (the test stub rides as argv[1]) while a real
+    ELF VMM carries the binary as argv[0]; the per-workspace
+    --api-socket requirement is what seals lookalikes either way.
+    """
+    fields = [f for f in cmdline.split(b"\0") if f]
+    want_binary = os.fsencode(binary)
+    return any(f == want_binary for f in fields) and has_socket_arg(
+        fields, sock
+    )
 
 
 class _VsockRetry(Exception):
@@ -340,6 +393,7 @@ class LocalCloudHypervisor(MicrovmDriver):
         self._ensure_launchable(spec.workspace_id, vm_dir)
         self._check_socket_path(vm_dir / "api.sock")
         vm_dir.mkdir(parents=True, exist_ok=True)
+        self._sweep_stale_sockets(vm_dir)
         # Egress (#52): the tap must exist before the VMM opens it,
         # so the attachment arms first — and unwinds on any failure
         # below, leaving no half-open plumbing behind.
@@ -349,6 +403,44 @@ class LocalCloudHypervisor(MicrovmDriver):
         except BaseException:
             await self._net_detach(spec.workspace_id)
             raise
+
+    def _sweep_stale_sockets(self, vm_dir: Path) -> None:
+        """Remove residue a hard kill left behind (#151).
+
+        A VMM killed without cleanup (host crash, appliance hard
+        stop) leaves ``api.sock`` and ``vsock.sock`` in place; the
+        next spawn then dies binding them -- the VMM at
+        ``CreateApiServerSocket: AddrInUse`` before a byte of
+        serial, vm.boot at ``Error binding to the host-side Unix
+        socket`` -- and the operator sees a misleading
+        unreachable-API/ENOENT 503. Only refused sockets are swept
+        (socket_stale: a full backlog or a slow accept means LIVE
+        and is never unlinked -- cutting off a serving VMM would be
+        worse than the residue; the test fake pre-binds exactly such
+        a socket and rides this same path).
+        """
+        for name in ("api.sock", "vsock.sock", "ch.pid"):
+            self._sweep_one_residue(vm_dir, name)
+
+    def _sweep_one_residue(self, vm_dir: Path, name: str) -> None:
+        if name == "ch.pid":
+            # Definitionally stale here: _ensure_launchable already
+            # proved no live VMM owns this workspace, and a recycled
+            # pid would otherwise block starts (or worse, aim kill
+            # at an innocent process) after a host reboot.
+            self._unlink_residue(vm_dir / name, "pidfile")
+            return
+        if socket_stale(vm_dir / name):
+            self._unlink_residue(vm_dir / name, "socket")
+
+    def _unlink_residue(self, path: Path, kind: str) -> None:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            raise MicrovmError(
+                f"cannot remove stale {kind} {path} "
+                f"({exc}); remove it by hand and retry"
+            ) from exc
 
     async def _boot(self, spec: VmSpec, vmm, vm_dir: Path, attachment) -> None:
         """Spawn the VMM and boot the VM (artifacts healed first, #14)."""
@@ -365,7 +457,10 @@ class LocalCloudHypervisor(MicrovmDriver):
         (vm_dir / "ch.pid").write_text(str(proc.pid))
         try:
             await self._wait_ready(
-                socket_path, proc, vmm.socket_wait_timeout_s
+                socket_path,
+                proc,
+                vmm.socket_wait_timeout_s,
+                vm_dir / "ch.log",
             )
             await self._configure_and_boot(
                 spec,
@@ -410,7 +505,7 @@ class LocalCloudHypervisor(MicrovmDriver):
 
     def _ensure_launchable(self, workspace_id: str, vm_dir: Path) -> None:
         if workspace_id in self._procs or self._pid_alive(
-            self._pid(workspace_id)
+            self._pid(workspace_id), workspace_id
         ):
             raise MicrovmError(
                 f"VM {workspace_id} already exists; shutdown or cleanup first"
@@ -509,21 +604,40 @@ class LocalCloudHypervisor(MicrovmDriver):
             await asyncio.sleep(POLL_INTERVAL_S)
 
     async def _wait_ready(
-        self, socket_path: Path, proc, timeout_s: float
+        self, socket_path: Path, proc, timeout_s: float, log_path: Path
     ) -> None:
         deadline = asyncio.get_running_loop().time() + timeout_s
         while not socket_path.exists():
             if proc.returncode is not None:
                 raise MicrovmError(
                     f"cloud-hypervisor exited with {proc.returncode} "
-                    f"before serving {socket_path} (see its log)"
+                    f"before serving "
+                    f"{socket_path}{self._log_tail(log_path)}"
                 )
             if asyncio.get_running_loop().time() >= deadline:
                 raise MicrovmTimeoutError(
                     f"cloud-hypervisor API socket never appeared: "
-                    f"{socket_path}"
+                    f"{socket_path}{self._log_tail(log_path)}"
                 )
             await asyncio.sleep(POLL_INTERVAL_S)
+
+    @staticmethod
+    def _log_tail(log_path: Path, limit: int = 400) -> str:
+        """The VMM's own last words for an operator error (#151).
+
+        A VMM that dies at spawn has usually said why (a socket bind
+        refusal, a bad flag); naming it in the 503 beats pointing at
+        a log the operator must go dig up -- the ENOENT variant of
+        #151 hid a CreateApiServerSocket AddrInUse behind
+        "unreachable API".
+        """
+        try:
+            text = log_path.read_text(errors="replace").strip()
+        except OSError:
+            return " (log unreadable)"
+        if not text:
+            return " (log empty)"
+        return f"; last log line: {text[-limit:].splitlines()[-1]}"
 
     async def info(self, workspace_id: str) -> VmInfo:
         vm_dir = self._dir(workspace_id)
@@ -540,7 +654,9 @@ class LocalCloudHypervisor(MicrovmDriver):
             document = await api.info()
         except MicrovmError:
             status = (
-                VmStatus.UNKNOWN if self._pid_alive(pid) else VmStatus.STOPPED
+                VmStatus.UNKNOWN
+                if self._pid_alive(pid, workspace_id)
+                else VmStatus.STOPPED
             )
             return VmInfo(workspace_id, status, pid)
         finally:
@@ -553,13 +669,51 @@ class LocalCloudHypervisor(MicrovmDriver):
             return int(pid_file.read_text().strip())
         return None
 
-    def _pid_alive(self, pid: int | None) -> bool:
+    def _pid_alive(self, pid: int | None, workspace_id: str) -> bool:
+        """Whether the pid is a live VMM of OUR binary (#151).
+
+        Bare pid liveness is not identity: after a host reboot pids
+        restart low, and a recycled pid used to refuse every start
+        ("VM already exists") -- or aim SIGKILL at an innocent
+        process. The identity is per-workspace: the command line
+        must carry the configured binary and this workspace's
+        --api-socket path.
+        """
         if pid is None:
             return False
-        with contextlib.suppress(ProcessLookupError):
+        try:
             os.kill(pid, 0)
-            return True
-        return False
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return self._pid_alive_denied(pid, workspace_id)
+        return self._pid_is_vmm(pid, workspace_id)
+
+    def _pid_alive_denied(self, pid: int, workspace_id: str) -> bool:
+        """kill(0) said EPERM: alive but not ours to signal.
+
+        procfs is world-readable without hidepid: a
+        owned-by-another-uid VMM of ours is named, anything foreign
+        reads as dead (mixed-uid hosts recycle pids too).
+        """
+        if not self._pid_is_vmm(pid, workspace_id):
+            return False
+        raise MicrovmError(
+            f"workspace {workspace_id}: VMM pid {pid} is "
+            f"owned by another user and cannot be stopped"
+        )
+
+    def _pid_is_vmm(self, pid: int, workspace_id: str) -> bool:
+        binary = self._settings().vmm.cloud_hypervisor
+        sock = self._dir(workspace_id) / "api.sock"
+        try:
+            cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
+        except OSError:  # pragma: no cover
+            # An alive pid whose procfs entry cannot be read (a
+            # kill(0)-vs-read race, or a hidepid procfs mount) is
+            # not provably ours.
+            return False
+        return cmdline_is_vmm(cmdline, binary, sock)
 
     async def shutdown(
         self, workspace_id: str, timeout_s: float | None = None
@@ -651,14 +805,14 @@ class LocalCloudHypervisor(MicrovmDriver):
         proc = self._procs.get(workspace_id)
         if proc is not None:
             return proc.returncode is None
-        return pid is not None and self._pid_alive(pid)
+        return pid is not None and self._pid_alive(pid, workspace_id)
 
     async def _terminate(self, workspace_id: str, deadline: float) -> None:
         """SIGTERM the VMM daemon and wait for exit (guest already down)."""
         proc = self._procs.pop(workspace_id, None)
         if proc is None:
             pid = self._pid(workspace_id)
-            if pid is not None and self._pid_alive(pid):
+            if pid is not None and self._pid_alive(pid, workspace_id):
                 os.kill(pid, signal.SIGTERM)
             return
         with contextlib.suppress(ProcessLookupError):
@@ -692,7 +846,7 @@ class LocalCloudHypervisor(MicrovmDriver):
             await self._net_detach(workspace_id)
             return
         pid = self._pid(workspace_id)
-        if pid is None or not self._pid_alive(pid):
+        if pid is None or not self._pid_alive(pid, workspace_id):
             # Already dead (or never started): killing an absent VM is
             # success — the absent-VM contract shutdown honors too.
             await self._net_detach(workspace_id)
