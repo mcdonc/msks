@@ -72,6 +72,21 @@ if [ ! -f "$state_disk" ]; then
   cp -L "$app_dir/image/state.ext4" "$state_disk"
   chmod 0644 "$state_disk"
 fi
+# A template growth reaches existing installs (#180): the seed above
+# covers only a missing disk, so a smaller existing one grows to the
+# template's size here. The comparison only ever grows a disk — one
+# already larger than the template keeps its size — and the truncate
+# costs metadata on a sparse file; the guest's writes, not this
+# step, spend the host disk. The guest's state preparation then runs
+# resize2fs to grow the ext4 into the device.
+template="$app_dir/image/state.ext4"
+if [ -f "$template" ]; then
+  target="$(stat -c %s "$template")"
+  current="$(stat -c %s "$state_disk")"
+  if [ "$current" -lt "$target" ]; then
+    truncate -s "$target" "$state_disk"
+  fi
+fi
 
 # --- the bootstrap token ------------------------------------------------
 if [ ! -f "$app_dir/bootstrap-token" ]; then

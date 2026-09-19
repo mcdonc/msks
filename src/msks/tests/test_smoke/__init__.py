@@ -422,7 +422,7 @@ def read_appliance_journal(state_disk: Path) -> list[str] | None:
     host-readable evidence. A hard-stopped VM (a crash, or the
     supervisor's grace expiring) leaves the ext4 mid-transaction —
     debugfs refuses such a filesystem — so the read runs on a SPARSE
-    copy (`cp --sparse=always`: the state disk is an 8 GiB file with
+    copy (`cp --sparse=always`: the state disk is a 40 GiB file with
     large holes, and a dense copy would ENOSPC a tmpfs-backed
     TMPDIR) repaired by e2fsck (the journal replays; unprivileged,
     no loop mount), then debugfs rdump + journalctl --directory.

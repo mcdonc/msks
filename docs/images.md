@@ -258,8 +258,10 @@ curl -H "authorization: Bearer $TOKEN" \
 ```
 
 - Storage: one image costs roughly twice its rootfs size on the
-  state disk (the retained archive plus the unpacked boot cache).
-  The appliance's state disk is sized for two images.
+  state disk (the retained archive plus the unpacked boot cache),
+  and the appliance's 40G state disk carries those beside the
+  workspace overlays and volumes — `docs/storage.md` has the
+  capacity model.
 
 - An image with workspaces still booting it cannot be removed
   (`DELETE /api/v1/images/{hash}` answers 409 naming the workspace);
