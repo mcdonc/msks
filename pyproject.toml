@@ -15,6 +15,14 @@ dependencies = [
   "aiosqlite>=0.20",
   "uvicorn[standard]>=0.32",
   "websockets>=14",
+  # Egress consent's NFQUEUE binding (#69): consent is the normal
+  # posture for workspaces, so the binding ships with every
+  # install. It links libnetfilter_queue — devenv carries the
+  # library for dev/CI shells, and nix/msks-pkg.nix builds the
+  # binding into the appliance closure; the import stays guarded so
+  # an exotic install without the library fails closed at attach
+  # with a named refusal, never silently.
+  "netfilterqueue>=0.9",
 ]
 
 [dependency-groups]

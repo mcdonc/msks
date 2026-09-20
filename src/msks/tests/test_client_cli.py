@@ -2312,3 +2312,469 @@ def test_cmd_resize_notes_the_root_boot_fill(
     out = capsys.readouterr().out
     assert rc == 0
     assert "next boot" not in out
+
+
+# --- egress consent commands (#69) ------------------------------------
+
+
+def test_egress_rules_renders(monkeypatch, capsys) -> None:
+    client_env(monkeypatch)
+    rules = {
+        "workspace_id": "ws1",
+        "mode": "interactive",
+        "allow_list": [".debian.org"],
+        "allowed": [
+            {
+                "id": "a" * 8,
+                "dest_host": "api.example",
+                "dest_port": 443,
+                "duration": "forever",
+            }
+        ],
+        "denied": [
+            {
+                "id": "b" * 8,
+                "dest_host": "203.0.113.7",
+                "dest_port": 0,
+                "duration": "5m",
+            }
+        ],
+    }
+    rc = cli.main(
+        ["egress", "rules", "ws1"],
+        transport=mock(lambda req: httpx.Response(200, json=rules)),
+    )
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "mode interactive" in out
+    assert "allowlist: .debian.org" in out
+    assert "allowed api.example:443" in out
+    assert "denied  203.0.113.7" in out
+
+
+def test_egress_requests_filter_and_decide(monkeypatch, capsys) -> None:
+    client_env(monkeypatch)
+    seen = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["path"] = req.url.path
+        seen["body"] = json.loads(req.read()) if req.content else None
+        return httpx.Response(
+            200,
+            json={
+                "id": "req",
+                "verdict": {"decision": "allow", "duration": "5m"},
+            },
+        )
+
+    rows = [
+        {
+            "id": "c" * 8,
+            "dest_host": "db.internal",
+            "dest_port": 5432,
+            "decision": "pending",
+            "duration": None,
+            "requested_at": 1700000000.0,
+        }
+    ]
+
+    def list_handler(req: httpx.Request) -> httpx.Response:
+        seen["path"] = req.url.path + (
+            "?" + str(req.url.params) if req.url.params else ""
+        )
+        return httpx.Response(200, json=rows)
+
+    rc = cli.main(
+        ["egress", "requests", "ws1", "--decision", "pending"],
+        transport=mock(list_handler),
+    )
+    assert rc == 0
+    assert seen["path"].endswith("egress/requests?decision=pending")
+    assert "db.internal:5432" in capsys.readouterr().out
+
+    rc = cli.main(
+        ["egress", "decide", "ws1", "cccc", "allow", "--duration", "5m"],
+        transport=mock(handler),
+    )
+    assert rc == 0
+    assert seen["path"].endswith("/egress/requests/cccc")
+    assert seen["body"] == {"decision": "allow", "duration": "5m"}
+    assert "allow" in capsys.readouterr().out
+
+
+def test_egress_decide_rejects_bad_values(monkeypatch) -> None:
+    from msks.client import egress as egress_mod
+
+    client_env(monkeypatch)
+    with pytest.raises(SystemExit, match="allow or deny"):
+        asyncio.run(egress_mod.run_decide("ws1", "r", "maybe", "once"))
+    with pytest.raises(SystemExit, match="duration"):
+        asyncio.run(egress_mod.run_decide("ws1", "r", "allow", "2h"))
+
+
+def test_egress_revoke(monkeypatch, capsys) -> None:
+    client_env(monkeypatch)
+    seen = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["method"] = req.method
+        seen["path"] = req.url.path
+        return httpx.Response(200, json={"id": "r", "revoked": True})
+
+    rc = cli.main(["egress", "revoke", "ws1", "cccc"], transport=mock(handler))
+    assert rc == 0
+    assert seen["method"] == "DELETE"
+    assert seen["path"].endswith("/egress/requests/cccc")
+    assert "revoked" in capsys.readouterr().out
+
+
+def test_create_carries_the_consent_flags(monkeypatch) -> None:
+    client_env(monkeypatch)
+    seen = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(req.read())
+        return httpx.Response(201, json={"id": "ws1"})
+
+    rc = cli.main(
+        [
+            "create",
+            "ws1",
+            "--kernel",
+            "/k",
+            "--rootfs",
+            "/r",
+            "--egress-mode",
+            "static",
+            "--allow",
+            ".debian.org",
+            "--allow",
+            "10.0.0.0/8:443",
+            "--daemon-mint",
+        ],
+        transport=mock(handler),
+    )
+    assert rc == 0
+    assert seen["body"]["egress_mode"] == "static"
+    assert seen["body"]["egress_allowlist"] == [
+        ".debian.org",
+        "10.0.0.0/8:443",
+    ]
+
+
+async def test_handle_frame_prints_and_prompts(capsys, monkeypatch) -> None:
+    from msks.client import egress as eg
+
+    await eg.handle_frame(
+        {
+            "event": "egress.request",
+            "data": {
+                "request": {
+                    "id": "d" * 8,
+                    "dest_host": "api.example",
+                    "dest_port": 443,
+                    "decision": "pending",
+                    "requested_at": 1.0,
+                }
+            },
+        },
+        decide=False,
+        duration="once",
+        url="https://x",
+        token="t",
+    )
+    assert "api.example:443" in capsys.readouterr().out
+    await eg.handle_frame(
+        {
+            "event": "egress.resolved",
+            "data": {"request_id": "d" * 8, "decision": "allowed"},
+        },
+        decide=False,
+        duration="once",
+        url="https://x",
+        token="t",
+    )
+    assert "resolved: allowed" in capsys.readouterr().out
+
+
+async def test_maybe_decide_posts_the_verdict(monkeypatch) -> None:
+    """The --decide prompt posts an allow on y, nothing on n."""
+    from msks.client import egress as eg
+
+    posted = {}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+    async def fake_request(client, method, path, body=None):
+        posted["method"] = method
+        posted["path"] = path
+        posted["body"] = body
+
+    monkeypatch.setattr(eg, "api_client", lambda *_a, **_k: FakeClient())
+    monkeypatch.setattr(eg, "request", fake_request)
+    row = {
+        "id": "d" * 8,
+        "workspace_id": "ws1",
+        "dest_host": "api.example",
+        "dest_port": 443,
+    }
+
+    async def answer(prompt):
+        return "y"
+
+    async def no(prompt):
+        return "n"
+
+    real_to_thread = asyncio.to_thread
+    monkeypatch.setattr(
+        eg.asyncio,
+        "to_thread",
+        lambda fn, *a: answer(None) if fn is input else real_to_thread(fn, *a),
+    )
+    await eg.maybe_decide(row, "once", "https://x", "t")
+    assert posted["method"] == "POST"
+    assert posted["path"].endswith("/egress/requests/" + "d" * 8)
+    assert posted["body"] == {"decision": "allow", "duration": "once"}
+
+    posted.clear()
+    monkeypatch.setattr(eg.asyncio, "to_thread", lambda fn, *a: no(None))
+    await eg.maybe_decide(row, "once", "https://x", "t")
+    assert posted == {}
+
+
+def test_events_url_shapes_the_query() -> None:
+    from msks.client.egress import events_url
+
+    assert (
+        events_url("https://d:8660", "tok")
+        == "wss://d:8660/api/v1/events?token=tok"
+    )
+    assert (
+        events_url("http://d:8660/", "a b")
+        == "ws://d:8660/api/v1/events?token=a+b"
+    )
+
+
+# --- egress watch: the decider stream (#69) -------------------------------
+
+
+class FakeWS:
+    """One websocket connection yielding scripted frames."""
+
+    def __init__(self, frames: list[str]) -> None:
+        self.frames = frames
+        self.sent: list[str] = []
+
+    async def send(self, text: str) -> None:
+        self.sent.append(text)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self.frames:
+            raise StopAsyncIteration
+        return self.frames.pop(0)
+
+
+class FakeConnect:
+    """The websockets.connect surface: scripted connections, then
+    done."""
+
+    def __init__(self, connections: list[FakeWS]) -> None:
+        self.connections = connections
+
+    def __call__(self, **_kwargs):
+        self.kwargs = _kwargs
+        return self
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self.connections:
+            raise StopAsyncIteration
+        return self.connections.pop(0)
+
+
+def test_egress_requests_without_a_filter(monkeypatch, capsys) -> None:
+    client_env(monkeypatch)
+    rows = [
+        {
+            "id": "e" * 8,
+            "dest_host": "any.example",
+            "dest_port": 0,
+            "decision": "expired",
+            "duration": "once",
+            "requested_at": 1700000000.0,
+        }
+    ]
+    rc = cli.main(
+        ["egress", "requests", "ws1"],
+        transport=mock(lambda req: httpx.Response(200, json=rows)),
+    )
+    assert rc == 0
+    assert "any.example" in capsys.readouterr().out
+
+
+def test_events_url_handles_a_bare_host() -> None:
+    from msks.client.egress import events_url
+
+    assert events_url("bare.example", "t") == (
+        "wss://bare.example/api/v1/events?token=t"
+    )
+
+
+async def test_run_watch_registers_and_streams(monkeypatch, capsys) -> None:
+    """The watch loop: announce on connect, print frames, and
+    reconnect when the server closes a connection."""
+    from msks.client import egress as eg
+
+    ws1 = FakeWS(
+        [
+            json.dumps(
+                {
+                    "event": "egress.request",
+                    "data": {
+                        "request": {
+                            "id": "r1",
+                            "workspace_id": "ws1",
+                            "dest_host": "api.example",
+                            "dest_port": 443,
+                            "decision": "pending",
+                            "requested_at": 1.0,
+                        }
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "event": "egress.rules",
+                    "data": {
+                        "workspace_id": "ws1",
+                        "mode": "interactive",
+                        "allow_list": [],
+                        "allowed": [],
+                        "denied": [],
+                    },
+                }
+            ),
+        ]
+    )
+    ws2 = FakeWS([])
+    connect = FakeConnect([ws1, ws2])
+    monkeypatch.setattr(eg.websockets, "connect", connect)
+    monkeypatch.setattr(eg, "env_token", lambda: "tok")
+    monkeypatch.setattr(eg, "env_url", lambda: "https://d:8660")
+    rc = await eg.run_watch("ws1", decide=False, duration="once")
+    assert rc == 0
+    assert ws1.sent == [
+        json.dumps({"type": "egress.decider", "workspace": "ws1"})
+    ]
+    # The connection kwargs took the events URL and TLS context.
+    assert connect.kwargs["uri"].endswith("events?token=tok")
+    assert connect.kwargs["ssl"] is not None
+    out = capsys.readouterr().out
+    assert "api.example:443" in out
+    assert "mode interactive" in out
+
+
+async def test_watch_one_without_a_workspace_streams_anonymously(
+    monkeypatch, capsys
+) -> None:
+    from msks.client import egress as eg
+
+    ws = FakeWS(
+        [
+            json.dumps(
+                {
+                    "event": "egress.resolved",
+                    "data": {"request_id": "r2", "decision": "denied"},
+                }
+            )
+        ]
+    )
+    connect = FakeConnect([ws])
+    monkeypatch.setattr(eg.websockets, "connect", connect)
+    monkeypatch.setattr(eg, "env_token", lambda: "tok")
+    monkeypatch.setattr(eg, "env_url", lambda: "http://d:8660")
+    rc = await eg.run_watch(None, decide=False, duration="once")
+    assert rc == 0
+    assert ws.sent == []  # never announced: not a decider
+    assert connect.kwargs["ssl"] is None  # a plain-ws daemon
+    assert "resolved: denied" in capsys.readouterr().out
+
+
+async def test_handle_frame_prompts_on_decide(monkeypatch, capsys) -> None:
+    from msks.client import egress as eg
+
+    prompted = []
+
+    async def fake_maybe(row, duration, url, token):
+        prompted.append((row["dest_host"], duration))
+
+    monkeypatch.setattr(eg, "maybe_decide", fake_maybe)
+    frame = {
+        "event": "egress.request",
+        "data": {
+            "request": {
+                "id": "r9",
+                "dest_host": "ask.example",
+                "dest_port": 443,
+                "decision": "pending",
+                "requested_at": 1.0,
+            }
+        },
+    }
+    await eg.handle_frame(
+        frame, decide=True, duration="15m", url="https://x", token="t"
+    )
+    assert prompted == [("ask.example", "15m")]
+    assert "ask.example:443" in capsys.readouterr().out
+
+
+async def test_run_watch_reconnects_after_a_closed_connection(
+    monkeypatch,
+) -> None:
+    from msks.client import egress as eg
+
+    class ClosingWS:
+        def __init__(self) -> None:
+            self.sent = []
+
+        async def send(self, _text) -> None:
+            pass
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise eg.websockets.ConnectionClosed(None, None)
+
+    ws = ClosingWS()
+    connect = FakeConnect([ws])
+    monkeypatch.setattr(eg.websockets, "connect", connect)
+    monkeypatch.setattr(eg, "env_token", lambda: "tok")
+    monkeypatch.setattr(eg, "env_url", lambda: "https://d")
+    # The reconnect loop spins on the closed connection until the
+    # connect iterator ends; both connections consumed = the arm ran.
+    rc = await eg.run_watch("ws1", decide=False, duration="once")
+    assert rc == 0
+
+
+async def test_handle_frame_ignores_unknown_events(capsys) -> None:
+    from msks.client import egress as eg
+
+    await eg.handle_frame(
+        {"event": "workspace.status", "data": {}},
+        decide=False,
+        duration="once",
+        url="https://x",
+        token="t",
+    )
+    assert capsys.readouterr().out == ""

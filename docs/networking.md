@@ -9,10 +9,11 @@ curl -X POST .../api/v1/workspaces \
   -d '{"id": "ws1", "egress": true}'        # or: msks create ws1 --egress
 ```
 
-This chapter covers the plumbing: the NIC, the tap, DHCP, DNS, and
-NAT. Per-flow consent — holding the first packet of each new
-connection for an allow/deny decision over the decider channel —
-arrives with #69 and tightens the same per-VM chain.
+This chapter covers the plumbing — the NIC, the tap, DHCP, DNS,
+and NAT — and the consent layer that gates it: the
+[Egress consent](#egress-consent-69) section describes holding the
+first packet of each new connection for an allow/deny decision
+over the decider channel, built on the same per-VM chain.
 
 ## The path
 
@@ -66,10 +67,101 @@ tap:
   listener among them — so guest root cannot port-scan the
   appliance.
 
-What the chain deliberately permits today: the _destination_ of a
+What the chain deliberately permits depends on the workspace's
+consent mode (next section): in `allow` mode the _destination_ of a
 guest-initiated connection is unconstrained — any host reachable
-through the appliance uplink is reachable, until the per-flow
-consent gates of #69 decide each new connection.
+through the appliance uplink is reachable; in `static` and
+`interactive` modes every new flow passes a destination gate first.
+
+## Egress consent (#69)
+
+A workspace picks its consent posture at create time
+(`msks create --egress-mode`, immutable like the rest of the
+create-time facts), and the posture decides where each new outbound
+connection is decided:
+
+- **`allow` (the create default).** New flows pass. The daemon's
+  resolver records each off-allowlist name the guest looks up, as an
+  audit row, and that is the whole of it — the #52 behavior plus the
+  naming-layer audit.
+- **`static`.** The workspace's allowlist (repeatable
+  `--allow SPEC` at create) is the policy. Allowlisted names resolve
+  through the daemon's resolver and their addresses are pinned as
+  allowed in the kernel chain for the answer's TTL, so
+  `apt update` against `--allow .deb.debian.org` completes with no
+  prompt and no hold. An off-list name answers NXDOMAIN — the guest
+  learns nothing, and the lookup cannot serve as a resolution
+  oracle or an exfil channel — and the denial is recorded as an
+  audit row. Address-range entries (`10.0.0.0/8`, `203.0.113.7:5432`)
+  accept in the chain directly.
+- **`interactive`.** The first packet of every new flow queues to
+  the workspace's own NFQUEUE number inside the appliance kernel
+  and msksd holds it until a decider answers:
+
+  ```text
+  workspace VM ──virtio-net──► tap ──► per-VM nftables chain
+                                    │  ESTABLISHED → accept (conntrack)
+                                    │  allowlist / prior verdicts → accept
+                                    │  NEW → NFQUEUE ──► msksd consent engine
+                                    │                        │ verdict
+                                    │                        ▼
+                                    │             accept + pin / drop + RST
+                                    ▼                        / expire
+                                  NAT → appliance uplink
+  ```
+
+  A decider is any authenticated client that announced itself on
+  the events websocket (`msks egress watch <workspace>`): holds
+  wait only while at least one decider is connected, and the
+  connection itself is the decider's liveness. Without a decider an
+  off-list connect fails fast — no prompt, no hang. The prompt names
+  the DNS name (`api.anthropic.com:443`), because the resolver is
+  the one the DHCP lease hands the guest and it remembers which
+  name resolved to which address; a destination given by address (a
+  Postgres host) prompts with the address itself and keys its
+  verdict on the address.
+
+**Verdicts and durations.** `msks egress decide` records
+`allow`/`deny` with a duration — `once` (this connection only; a
+reconnect re-prompts), `5m`, `15m`, `tilrestart` (until the VM
+stops; the default), `forever` (the workspace's lifetime — replayed
+at every boot). An allow pins the destination in the kernel for its
+duration and covers the _name_, so a CDN-rotated address of an
+allowed host resolves and passes without re-prompting. A deny
+answers the SYN and its retransmits with a TCP RST — the guest's
+`connect()` fails immediately instead of hanging on the kernel's
+retransmit timer. `msks egress revoke` undoes an in-effect verdict
+at once: the pinned rules clear, the destination's live connections
+die with their conntrack entries, and new connections gate again.
+Every row — request, verdict, expiry, revocation — lands in the
+consent table with its provenance, pruned past
+`MSKSD_EGRESS_CONSENT_RETENTION_DAYS` and the per-workspace
+`MSKSD_EGRESS_CONSENT_ROW_CAP`; with `MSKSD_AUDIT_HMAC_KEY` set
+each row also carries an HMAC-SHA256 tag over its columns.
+
+**The naming layer owns DNS.** Ports 53 and 853 toward anywhere but
+the daemon's own resolver drop in the per-VM chain, in every mode,
+so the guest cannot route around the resolver that names its
+prompts. Plain-IP egress to a DoH endpoint on 443 is enforced like
+any other flow — in `static`/`interactive` it meets the same
+destination gate.
+
+**Fail-closed, by construction.** The queue rule carries no bypass:
+a queue with no listener (msksd down, the consumer not yet bound)
+and a full queue both _drop_ — the opposite default of a
+sidecar-in-netns design, which inherits the namespace's plumbing
+only while its process lives. Each workspace owns its queue number
+(derived from its address-pool slice), so one workspace flooding
+SYNs delays only its own verdicts. And the whole mechanism — taps,
+chains, queues, the resolver, the verdict table — lives in the
+appliance's kernel and msksd's userspace: guest root sees none of
+it (no syscall, no `/proc`, no signal target).
+
+**Local-only semantics.** Per-flow holds are the local backend's
+enforcement; the consent API itself (requests, verdicts, durations,
+revocation, audit) is enforcement-agnostic, so a future backend can
+drive a different mechanism from the same model. On k8s, egress
+workspaces refuse at create until that lands (see below).
 
 ## What runs where
 
@@ -570,18 +662,22 @@ Two msks-specific details:
   — then reconnect with `-A`, or wait out the ControlPersist
   window.
 
-What the network allows: a workspace with egress reaches any
-off-appliance destination without a grant — remotes, package
-mirrors, any host reachable through the uplink. Guest-initiated
-connections aimed at the appliance itself stay dropped (only DHCP
-and the resolver answer it); per-destination consent gates (#69)
-narrow guest-initiated egress later. The end-to-end proof is the
-`test_local_egress_git_out` smoke (`MSKSD_TEST_EGRESS=1` locally,
-and part of CI's KVM workflow): it installs git in the guest over
-the egress path and pushes a commit — over a test-widened input
-pin, since the appliance itself stays unreachable from the guest
-by design — using only a key that arrived through the forward as a
-forwarded agent.
+What the network allows depends on the workspace's consent mode:
+`allow` reaches any off-appliance destination without a grant —
+remotes, package mirrors, any host reachable through the uplink —
+while `static` and `interactive` gate each destination first (the
+[Egress consent](#egress-consent-69) section covers the semantics).
+Guest-initiated connections aimed at the appliance itself stay
+dropped in every mode (only DHCP and the resolver answer it). The
+end-to-end proofs are the `test_local_egress_git_out` smoke
+(`MSKSD_TEST_EGRESS=1` locally, and part of CI's KVM workflow) —
+it installs git in the guest over a plain `allow` egress path and
+pushes a commit, over a test-widened input pin, since the
+appliance itself stays unreachable from the guest by design, using
+only a key that arrived through the forward as a forwarded agent —
+and the `test_local_egress_consent_*` smokes, which drive a hold,
+a verdict, and the fail-closed denials through the real kernel
+path.
 
 ### Cryptographic agility (a future FIPS posture)
 
@@ -609,9 +705,9 @@ list.
 
 Egress is a local-backend feature today. On k8s the runner pod
 refuses the netns privilege the enforcement needs, so an egress
-workspace fails its boot with the cause named — k8s workspaces boot
-with `"egress": false` until then; the NetworkPolicy parity work is
-tracked in #69. The no-NIC posture works everywhere.
+workspace refuses at create with the cause named — k8s workspaces
+boot with `"egress": false` until the parity work lands. The
+no-NIC posture works everywhere.
 
 ## Lifecycle
 

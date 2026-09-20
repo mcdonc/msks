@@ -143,9 +143,22 @@ in
       python3 = pkgs.python314;
     })
     (python314Packages.radon) # complexity introspection (radon cc)
+    # egress consent's NFQUEUE binding (#69): the C libraries the
+    # netfilterqueue wheel links (the queue library and its
+    # nfnetlink substrate), present so `uv sync` builds it in every
+    # dev/CI shell — the binding is a base dependency and the flags
+    # below point its build and import at these store paths.
+    libnetfilter_queue
+    libnfnetlink
   ];
 
   env.UV_PYTHON = config.languages.python.package;
+  # The wheel build (CFLAGS/LDFLAGS) and the runtime import
+  # (LD_LIBRARY_PATH) both resolve against the nix store — each
+  # library carries its .so and headers in one output.
+  env.CFLAGS = "-I${pkgs.libnetfilter_queue}/include -I${pkgs.libnfnetlink}/include";
+  env.LDFLAGS = "-L${pkgs.libnetfilter_queue}/lib -L${pkgs.libnfnetlink}/lib";
+  env.LD_LIBRARY_PATH = "${pkgs.libnetfilter_queue}/lib:${pkgs.libnfnetlink}/lib";
 
   # The nixpkgs source the devenv lock pins — the revision every
   # guest/appliance build compiles against. Exported to every devenv

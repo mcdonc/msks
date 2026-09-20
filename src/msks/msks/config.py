@@ -91,6 +91,7 @@ SETTING_ENV_VARS: tuple[str, ...] = (
     "MSKSD_EVENT_POLL_S",
     "MSKSD_BOOTSTRAP_TOKEN",
     "MSKSD_ACCESS_LOG",
+    "MSKSD_AUDIT_HMAC_KEY",
     # K8sSettings — the Kubernetes runner driver.
     "MSKSD_K8S_NAMESPACE",
     "MSKSD_K8S_RUNNER_IMAGE",
@@ -107,6 +108,14 @@ SETTING_ENV_VARS: tuple[str, ...] = (
     "MSKSD_NFT_TOOL",
     "MSKSD_EGRESS_LEASE_S",
     "MSKSD_EGRESS_DNS_TIMEOUT_S",
+    # Egress consent (#69).
+    "MSKSD_EGRESS_MODE",
+    "MSKSD_EGRESS_CONSENT_TIMEOUT_S",
+    "MSKSD_EGRESS_CONSENT_RATE_LIMIT",
+    "MSKSD_EGRESS_CONSENT_RETENTION_DAYS",
+    "MSKSD_EGRESS_CONSENT_ROW_CAP",
+    "MSKSD_EGRESS_QUEUE_BASE",
+    "MSKSD_CONNTRACK_TOOL",
 )
 
 # The key↔variable mapping, derived by the one rule. ``state_dir``

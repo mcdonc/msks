@@ -1,6 +1,7 @@
 """The Model state object: every database operation msksd performs."""
 
 import hashlib
+import json
 import secrets
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ..microvm.spec import VmSpec
 from .db import Base, engine_for, sessionmaker_for, tighten_db_mode
+from .egress_consent import EgressConsentModel
 from .tokens import Token
 from .workspaces import WORKSPACE_STATUSES, Workspace
 
@@ -48,6 +50,9 @@ class Model:
     def __init__(self, app) -> None:
         self.app = app
         self._engine: AsyncEngine | None = None
+        # The consent submodel (#69): same ownership rule (caches
+        # only app), reached as ``app.state.model.egress_consent``.
+        self.egress_consent = EgressConsentModel(app)
 
     def _db_path(self) -> Path:
         return self.app.state.settings.server.db_path
@@ -305,7 +310,9 @@ class Model:
             }
 
     async def delete_workspace(self, workspace_id: str) -> bool:
-        """Remove a workspace row; False when absent."""
+        """Remove a workspace row and its consent rows; False when
+        absent."""
+        await self.egress_consent.delete_for_workspace(workspace_id)
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
             row = await session.get(Workspace, workspace_id)
@@ -336,6 +343,10 @@ def workspace_fields(
         "root_mib": spec.root_mib,
         "home_mib": spec.home_mib,
         "egress": spec.egress,
+        "egress_mode": spec.egress_mode,
+        "egress_allowlist": json.dumps(spec.egress_allowlist)
+        if spec.egress_allowlist
+        else None,
         "user_data": spec.user_data,
         "ssh_pubkey": spec.ssh_pubkey,
         "ssh_privkey": ssh_privkey,
@@ -359,6 +370,10 @@ def workspace_dict(row: Workspace) -> dict:
         "home_mib": row.home_mib,
         "egress": row.egress,
         "egress_slice": row.egress_slice,
+        "egress_mode": row.egress_mode or "allow",
+        "egress_allowlist": json.loads(row.egress_allowlist)
+        if row.egress_allowlist
+        else [],
         "user_data": row.user_data,
         "ssh_pubkey": row.ssh_pubkey,
         "status": row.status,

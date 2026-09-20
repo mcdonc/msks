@@ -28,12 +28,14 @@ from sqlalchemy.exc import IntegrityError
 from starlette.requests import ClientDisconnect
 
 from .. import __version__, imagestore, persist, storage
+from ..consent.specs import EGRESS_MODES, parse_allowlist
 from ..identity import mint, normalize_public_key
 from ..imagestore import ImageError
 from ..microvm.errors import MicrovmError
 from ..microvm.spec import VmSpec, VmStatus
+from ..model.egress_consent import DECISIONS
 from .auth import require_token
-from .events import EventHub, relay
+from .events import relay
 from .watcher import watch_loop
 
 
@@ -58,6 +60,13 @@ class WorkspaceResize(BaseModel):
 
     root_mib: int | None = Field(default=None, ge=256, le=65536)
     home_mib: int | None = Field(default=None, ge=64, le=65536)
+
+
+class EgressDecide(BaseModel):
+    """A decider's verdict on a held request (#69)."""
+
+    decision: str  # "allow" | "deny"
+    duration: str = "tilrestart"  # once | 5m | 15m | tilrestart | forever
 
 
 class ImageImport(BaseModel):
@@ -95,6 +104,18 @@ class WorkspaceCreate(BaseModel):
     # per-VM tap in the appliance — the default. "egress": false opts
     # into the no-NIC posture.
     egress: bool = True
+    # The consent mode and static allowlist (#69), fixed at create.
+    # ``egress_mode`` picks the enforcement posture: ``allow``
+    # (default — new flows pass, off-list names are recorded),
+    # ``static`` (the allowlist only; off-list names never resolve),
+    # ``interactive`` (each new flow's first packet holds until a
+    # decider allows or denies it). The allowlist is specs:
+    # ``host``/``host:port`` names (a leading ``.`` includes
+    # subdomains, ``*.`` matches subdomains only) gate at the
+    # daemon's resolver; ``cidr[:port]`` address specs accept in the
+    # per-VM chain.
+    egress_mode: str = "allow"
+    egress_allowlist: list[str] | None = Field(default=None, max_length=256)
     # First-boot provisioning (#41): a shell script (leading "#!") or
     # cloud-config YAML — cloud-init runs both — delivered on the
     # workspace's read-only cidata seed disk, composed beside the
@@ -438,6 +459,8 @@ def spec_for(row: dict) -> VmSpec:
         root_mib=row["root_mib"],
         home_mib=row["home_mib"],
         egress=bool(row.get("egress", False)),
+        egress_mode=row.get("egress_mode") or "allow",
+        egress_allowlist=tuple(row.get("egress_allowlist") or ()),
         user_data=row.get("user_data"),
         ssh_pubkey=row.get("ssh_pubkey"),
     )
@@ -738,8 +761,12 @@ async def _workspace_or_404(app, workspace_id: str) -> dict:
 
 
 def build_api(app) -> FastAPI:
-    """The FastAPI application bound to one msks App."""
-    hub = EventHub()
+    """The FastAPI application bound to one msks App.
+
+    The hub lives on ``app.state`` (#69) — the consent engine
+    publishes verdict frames to it before the api exists.
+    """
+    hub = app.state.hub
     app.state.create_locks: dict[str, asyncio.Lock] = {}
     app.state.home_locks: dict[str, asyncio.Lock] = {}
 
@@ -751,6 +778,7 @@ def build_api(app) -> FastAPI:
             await app.state.model.bootstrap_token()
             bootstrap_default_image(app)
             await app.state.net.start()
+            await app.state.consent.start()
             watcher = asyncio.create_task(watch_loop(app, hub))
             api.state.watcher = watcher
             yield
@@ -766,6 +794,7 @@ def build_api(app) -> FastAPI:
                     with contextlib.suppress(asyncio.CancelledError):
                         await watcher
             finally:
+                await app.state.consent.stop()
                 await app.state.net.stop()
                 await app.state.model.close()
 
@@ -863,6 +892,20 @@ def build_api(app) -> FastAPI:
                 ),
             )
         boot = resolve_boot(app, body)
+        # The consent posture (#69), fixed at create with the rest of
+        # the egress facts: an unknown mode or an invalid spec is a
+        # named 400 here, not a first-boot surprise.
+        try:
+            if body.egress_mode not in EGRESS_MODES:
+                raise ValueError(
+                    f"egress_mode must be one of {list(EGRESS_MODES)}, "
+                    f"got {body.egress_mode!r}"
+                )
+            specs = parse_allowlist(body.egress_allowlist or [])
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        boot["egress_mode"] = body.egress_mode
+        boot["egress_allowlist"] = specs
         # The identity (#111) mints before the artifacts: its public
         # half rides the seed (an artifact), its private half goes
         # straight into the row. The k8s backend builds no seed
@@ -1564,10 +1607,97 @@ def build_api(app) -> FastAPI:
             return
         await socket.accept()
         queue = hub.subscribe()
+        client_id = id(queue)
         try:
-            await pump_until_disconnect(socket, queue)
+            receiver = asyncio.create_task(
+                decider_loop(app, socket, client_id)
+            )
+            sender = asyncio.create_task(relay(queue, socket.send))
+            done, pending = await asyncio.wait(
+                {receiver, sender}, return_when=asyncio.FIRST_COMPLETED
+            )
+            for task in pending:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
         finally:
+            # The socket closing ends any decider authority this
+            # client held (#69): interactivity follows the socket.
+            app.state.deciders.deregister(client_id)
             hub.unsubscribe(queue)
+
+    # --- egress consent (#69) ------------------------------------------------
+
+    @api.get(
+        "/api/v1/workspaces/{workspace_id}/egress",
+        dependencies=[Depends(require_token)],
+    )
+    async def get_egress(workspace_id: str) -> dict:
+        """The rule-management view: mode, static allowlist, and the
+        in-effect verdicts."""
+        await _workspace_or_404(app, workspace_id)
+        frame = await app.state.consent.rules_frame(workspace_id)
+        return frame or {"workspace_id": workspace_id}
+
+    @api.get(
+        "/api/v1/workspaces/{workspace_id}/egress/requests",
+        dependencies=[Depends(require_token)],
+    )
+    async def list_egress_requests(
+        workspace_id: str, decision: str | None = None
+    ) -> list[dict]:
+        """The consent rows (audit trail), newest first; the
+        ``decision`` query filters one lifecycle state."""
+        await _workspace_or_404(app, workspace_id)
+        if decision is not None and decision not in DECISIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"decision must be one of {list(DECISIONS)}",
+            )
+        return await app.state.model.egress_consent.list_requests(
+            workspace_id, decision
+        )
+
+    @api.post(
+        "/api/v1/workspaces/{workspace_id}/egress/requests/{request_id}",
+        dependencies=[Depends(require_token)],
+    )
+    async def decide_egress(
+        workspace_id: str, request_id: str, body: EgressDecide
+    ) -> dict:
+        """A decider's verdict on a held request (#69): the held
+        SYN releases on allow, refuses fast on deny; the duration
+        sets how long enforcement honors the verdict."""
+        await _workspace_or_404(app, workspace_id)
+        verdict = await app.state.consent.resolve(
+            request_id,
+            "allowed" if body.decision == "allow" else "denied",
+            "token",
+            body.duration,
+        )
+        if verdict is None:
+            raise HTTPException(
+                status_code=404,
+                detail="no held request with that id",
+            )
+        return {"id": request_id, "verdict": verdict}
+
+    @api.delete(
+        "/api/v1/workspaces/{workspace_id}/egress/requests/{request_id}",
+        dependencies=[Depends(require_token)],
+    )
+    async def revoke_egress(workspace_id: str, request_id: str) -> dict:
+        """Undo an in-effect verdict (#69): the row flips to
+        revoked, its flow rules and tracked connections clear, and
+        the destination gates again at the next connection."""
+        await _workspace_or_404(app, workspace_id)
+        row = await app.state.consent.revoke(request_id, "token")
+        if row is None:
+            raise HTTPException(
+                status_code=404,
+                detail="no in-effect verdict with that id",
+            )
+        return {"id": request_id, "revoked": True}
 
     return api
 
@@ -1768,22 +1898,57 @@ async def _stream_to_ws(reader, socket: WebSocket, on_output=None) -> None:
         await socket.send_bytes(data)
 
 
-async def pump_until_disconnect(socket: WebSocket, queue) -> None:
-    """Deliver events until the client disconnects (or the relay ends)."""
-    receiver = asyncio.create_task(wait_for_disconnect(socket))
-    sender = asyncio.create_task(relay(queue, socket.send))
-    done, pending = await asyncio.wait(
-        {receiver, sender}, return_when=asyncio.FIRST_COMPLETED
-    )
-    for task in pending:
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+async def decider_loop(app, socket: WebSocket, client_id: int) -> None:
+    """Read client control frames until disconnect (#69).
+
+    A client announces itself as a consent decider with
+    ``{"type": "egress.decider", "workspace": "<id>"}``; the
+    registration lands it this workspace's pending holds and rules
+    view directly (before the hub broadcast could), and its socket
+    staying open is its liveness. Any other inbound frame is
+    ignored — the relay task owns delivery.
+    """
+    while (message := await next_frame(socket)) is not False:
+        if message is not None:
+            await register_decider(app, socket, client_id, message)
 
 
-async def wait_for_disconnect(socket: WebSocket) -> None:
-    """None on disconnect; the relay task owns delivery meanwhile."""
+async def next_frame(socket: WebSocket) -> dict | None | bool:
+    """The next inbound frame: a decoded decider frame, None for
+    an ignored message, or False when the socket closed (the
+    loop's stop signal)."""
     try:
-        await socket.receive()
-    except WebSocketDisconnect:
+        raw = await socket.receive_text()
+    except WebSocketDisconnect, RuntimeError:
+        return False
+    return decode_frame(raw)
+
+
+async def register_decider(app, socket, client_id: int, message: dict):
+    """One ``egress.decider`` frame: register the socket as this
+    workspace's decider and land it the pending snapshot and rules
+    view directly (before any hub broadcast could)."""
+    workspace = message.get("workspace")
+    if not isinstance(workspace, str):
+        return
+    if await app.state.model.get_workspace(workspace) is None:
+        return
+    app.state.deciders.register(client_id, workspace)
+    for pending in await app.state.consent.snapshot(workspace):
+        await socket.send_json({"event": "egress.request", "data": pending})
+    rules = await app.state.consent.rules_frame(workspace)
+    if rules is not None:
+        await socket.send_json({"event": "egress.rules", "data": rules})
+
+
+def decode_frame(raw: str) -> dict | None:
+    """A JSON object frame, or None for anything else."""
+    try:
+        message = json.loads(raw)
+    except ValueError:
         return None
+    if not isinstance(message, dict) or message.get("type") != (
+        "egress.decider"
+    ):
+        return None
+    return message

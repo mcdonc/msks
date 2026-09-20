@@ -33,6 +33,11 @@ class VmSpec:
     # no-NIC posture (the one every backend serves with zero net
     # machinery).
     egress: bool = True
+    # The consent mode and static allowlist (#69), fixed at create:
+    # the mode picks the chain shape and the resolver gate; the
+    # specs are name specs (resolver) and address specs (chain).
+    egress_mode: str = "allow"
+    egress_allowlist: tuple[str, ...] = ()
     # First-boot provisioning payload (#41): a shell script (leading
     # ``#!``) or cloud-config YAML, delivered on a per-workspace seed
     # disk labeled ``cidata`` — composed beside the minted identity's

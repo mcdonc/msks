@@ -69,6 +69,19 @@ class Workspace(Base):
     # restarts keep the same address, even past digest collisions
     # between workspace ids.
     egress_slice: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # The egress consent mode (#69): ``allow`` (the default — new
+    # flows pass, off-list names are recorded), ``static`` (the
+    # allowlist only; off-list names never resolve), or
+    # ``interactive`` (each new flow's first packet holds for a
+    # decider verdict). Create-time and immutable, like the specs.
+    egress_mode: Mapped[str] = mapped_column(
+        String, default="allow", server_default="allow"
+    )
+    # The static allowlist as a JSON array of specs (#69):
+    # ``host``/``host:port``/``.host``/``*.host`` names gate at the
+    # daemon's resolver; CIDR and IP-literal specs accept in the
+    # per-VM chain. NULL is an empty allowlist.
+    egress_allowlist: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String, default="created")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(

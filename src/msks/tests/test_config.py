@@ -425,6 +425,29 @@ KEY_CASES = [
     ("nft_tool", "/nftt", "net.nft_tool", "/nftt"),
     ("egress_lease_s", 120, "net.lease_s", 120),
     ("egress_dns_timeout_s", 4.5, "net.dns_timeout_s", 4.5),
+    ("egress_mode", "interactive", "net.egress_mode", "interactive"),
+    (
+        "egress_consent_timeout_s",
+        90.0,
+        "net.consent_timeout_s",
+        90.0,
+    ),
+    (
+        "egress_consent_rate_limit",
+        4,
+        "net.consent_rate_limit",
+        4,
+    ),
+    (
+        "egress_consent_retention_days",
+        7,
+        "net.consent_retention_days",
+        7,
+    ),
+    ("egress_consent_row_cap", 50, "net.consent_row_cap", 50),
+    ("egress_queue_base", 2048, "net.queue_base", 2048),
+    ("conntrack_tool", "/ct", "net.conntrack_tool", "/ct"),
+    ("audit_hmac_key", "k1", "server.audit_hmac_key", "k1"),
     ("ssh_key_type", "ed25519", "vmm.ssh_key_type", "ed25519"),
 ]
 

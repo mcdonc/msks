@@ -571,6 +571,46 @@ a NIC to forward to — a workspace created `--no-egress` is refused
 with the reason naming it. `forward.opened` and `forward.closed`
 events appear on the daemon's events channel for every session.
 
+## `msks egress`
+
+Egress consent (#69): decide, watch, and inspect a workspace's
+outbound-destination verdicts. A workspace in `interactive` mode
+holds each new outbound connection's first packet until a decider
+allows or denies it; `static` workspaces allow only their
+create-time allowlist; `allow` workspaces (the create default)
+record off-list destinations and pass them.
+
+```text
+msks egress rules ws-dev          # the mode, allowlist, and in-effect verdicts
+msks egress requests ws-dev       # the consent rows (audit trail), newest first
+msks egress requests ws-dev --decision pending
+msks egress decide ws-dev <request-id> allow --duration 5m
+msks egress decide ws-dev <request-id> deny --duration forever
+msks egress revoke ws-dev <request-id>
+msks egress watch ws-dev          # stream frames; registers this client as
+                                  # a decider (holds wait only while one is
+                                  # connected)
+msks egress watch ws-dev --decide --duration forever
+                                  # the same, prompting y/n per request
+```
+
+`decide` and `revoke` name the request by the id `watch` and
+`requests` print (the full id, copy-pasteable). Durations: `once` (this connection only — a
+reconnect re-prompts), `5m`, `15m`, `tilrestart` (until the
+workspace VM stops; the default), `forever` (the workspace's
+lifetime — replayed at every boot). `revoke` undoes an in-effect
+verdict immediately: the flow rules and the destination's live
+connections drop, and new connections gate again.
+
+The create-time posture (`msks create --egress-mode`, `--allow`)
+is fixed with the workspace: `--egress-mode allow|static|interactive`,
+and repeatable `--allow SPEC` entries — a bare host matches the
+apex only, `.host` includes subdomains, `*.host` matches subdomains
+only, `host:port` scopes a port, and `10.0.0.0/8[:port]` names an
+address range. Name entries gate at the daemon's resolver (the one
+the DHCP lease hands the guest); address entries accept in the
+per-VM kernel chain. Switching mode means recreating the workspace.
+
 ## `msks key`
 
 The workspace's minted ssh identity (#111): every workspace a

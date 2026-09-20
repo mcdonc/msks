@@ -24,6 +24,7 @@ class FakeService:
         self.kwargs = kwargs
         self.started = False
         self.stopped = False
+        self._names = {}
 
     async def start(self, sock=None) -> None:
         self.started = True
@@ -33,6 +34,23 @@ class FakeService:
 
     async def serve(self) -> None:
         await asyncio.sleep(3600)  # cancelled by teardown
+
+    # The naming memory (#69): the forwarder surface the consent
+    # seam reads, kept in the same fake so gated-mode attaches get
+    # it too.
+    def remember(self, name, records) -> None:
+        self._names = {ip: name for ip, _ttl in records}
+
+    def host_for(self, ip):
+        return self._names.get(ip)
+
+    def ips_for(self, host):
+        return [ip for ip, name in self._names.items() if name == host]
+
+    def forget(self, host):
+        self._names = {
+            ip: name for ip, name in self._names.items() if name != host
+        }
 
 
 @pytest.fixture
@@ -497,3 +515,299 @@ async def test_forward_stream_bounds_each_attempt_by_the_deadline(
     with pytest.raises(MicrovmError, match="unavailable"):
         await manager.forward_stream("ws-a", 22)
     assert SilentDialer.calls == 1
+
+
+# --- consent wiring (#69) ---------------------------------------------
+
+
+class FakeConsumer:
+    """The NFQUEUE consumer surface, recorded."""
+
+    def __init__(self, workspace_id, queue_num, net) -> None:
+        self.workspace_id = workspace_id
+        self.queue_num = queue_num
+        self.started = False
+        self.stopped = False
+
+    def start(self) -> None:
+        self.started = True
+
+    def stop(self) -> None:
+        self.stopped = True
+
+
+@pytest.fixture
+async def gated_app(tmp_path: Path, monkeypatch):
+    """The net app, with an injectable consumer factory."""
+    ip_log = tmp_path / "ip.log"
+    nft_log = tmp_path / "nft.log"
+    settings = Settings(
+        net=NetSettings(
+            enabled=True,
+            ip_tool=str(stub_ip(tmp_path, ip_log)),
+            nft_tool=str(stub_nft(tmp_path, nft_log)),
+            dns_upstream="10.9.9.9",
+        ),
+        server=ServerSettings(db_path=tmp_path / "gated.db"),
+    )
+    app = build_app(settings)
+    monkeypatch.setattr(
+        manager_mod, "verify_forwarding", lambda path=None: None
+    )
+    consumers: list[FakeConsumer] = []
+
+    def factory(workspace_id, queue_num, net):
+        consumer = FakeConsumer(workspace_id, queue_num, net)
+        consumers.append(consumer)
+        return consumer
+
+    manager = NetManager(
+        app,
+        dhcp_factory=FakeService,
+        dns_factory=FakeService,
+        consumer_factory=factory,
+    )
+    app.state.net = manager
+    app.state.model.migrate()
+    await app.state.model.create_workspace(
+        VmSpec(
+            workspace_id="ws-i",
+            kernel=Path("/k"),
+            rootfs=Path("/r"),
+            egress_mode="interactive",
+        )
+    )
+    try:
+        yield app, consumers, nft_log
+    finally:
+        await manager.stop()
+        await app.state.model.close()
+
+
+def interactive_policy():
+    from msks.consent.specs import EgressPolicy
+
+    return EgressPolicy("ws-i", "interactive", ())
+
+
+async def test_interactive_attach_binds_the_queue_before_the_chain(
+    gated_app,
+) -> None:
+    app, consumers, nft_log = gated_app
+    await app.state.net.start()
+    attachment = await app.state.net.attach(
+        "ws-i", want=True, policy=interactive_policy()
+    )
+    assert consumers and consumers[0].started
+    assert consumers[0].queue_num == app.state.settings.net.queue_base + (
+        attachment.slice
+    )
+    # The ruleset names the same queue number.
+    applied = nft_log.with_name(nft_log.name + ".stdin").read_text()
+    assert f"queue num {consumers[0].queue_num}" in applied
+    # Detach unbinds the consumer and clears tilrestart verdicts.
+    await app.state.net.detach("ws-i")
+    assert consumers[0].stopped
+
+
+async def test_allow_attach_runs_no_consumer(gated_app) -> None:
+    app, consumers, _nft_log = gated_app
+    await app.state.net.start()
+    from msks.consent.specs import EgressPolicy
+
+    await app.state.net.attach(
+        "ws-i", want=True, policy=EgressPolicy("ws-i", "allow", ())
+    )
+    assert consumers == []
+
+
+async def test_queue_for_refuses_pools_past_the_queue_range(
+    net_app,
+) -> None:
+    app, _ip, _nft = net_app
+    await app.state.net.start()
+    app.state.settings.net.queue_base = 65530
+    with pytest.raises(MicrovmError, match="pool too large"):
+        app.state.net.queue_for(100)
+
+
+async def test_consent_helpers_pin_through_the_chain(gated_app) -> None:
+    app, _consumers, nft_log = gated_app
+    await app.state.net.start()
+    await app.state.net.attach("ws-i", want=True, policy=interactive_policy())
+    await app.state.net.consent_allow("ws-i", "10.1.2.3", None, 60)
+    await app.state.net.consent_reject("ws-i", "10.1.2.3", 443, 5)
+    # A detached workspace pins nothing (no table to pin into).
+    await app.state.net.consent_allow("ws-missing", "10.9.9.9", None, 60)
+    lines = log_lines(nft_log)
+    assert any(
+        "add element inet" in line and "allows_any" in line for line in lines
+    )
+    assert any(
+        "add element inet" in line and "rejects" in line for line in lines
+    )
+
+
+async def test_host_for_reads_the_services_naming(gated_app) -> None:
+    app, _consumers, _nft_log = gated_app
+    await app.state.net.start()
+    await app.state.net.attach("ws-i", want=True, policy=interactive_policy())
+    services = app.state.net._services["ws-i"]
+    assert app.state.net.host_for("ws-i", "10.2.3.4") is None
+    services.dns.remember("api.example", [("10.2.3.4", 60)])
+    assert app.state.net.host_for("ws-i", "10.2.3.4") == "api.example"
+
+
+async def test_replay_forever_pins_address_verdicts(gated_app) -> None:
+    app, _consumers, nft_log = gated_app
+    await app.state.net.start()
+    from msks.model.egress_consent import DECISION_ALLOWED
+
+    model = app.state.model.egress_consent
+    allow = await model.create_request("ws-i", "203.0.113.7", 443)
+    await model.decide(allow["id"], DECISION_ALLOWED, "token", "forever")
+    denied = await model.create_request("ws-i", "198.51.100.9", 443)
+    await model.decide(denied["id"], "denied", "token", "forever")
+    named = await model.create_request("ws-i", "api.example", 443)
+    await model.decide(named["id"], DECISION_ALLOWED, "token", "forever")
+    await app.state.net.attach("ws-i", want=True, policy=interactive_policy())
+    lines = log_lines(nft_log)
+    allows = [line for line in lines if "allows" in line]
+    rejects = [line for line in lines if "rejects" in line]
+    assert any("203.0.113.7 . 443" in line for line in allows)
+    assert any("198.51.100.9 . 443" in line for line in rejects)
+    # The named verdict pins nothing here (the resolver gate reads
+    # its row live).
+    assert not any("api.example" in line for line in lines)
+
+
+async def test_clear_consent_dest_forgets_names_and_drops_flows(
+    gated_app,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    app, _consumers, _nft_log = gated_app
+    await app.state.net.start()
+    await app.state.net.attach("ws-i", want=True, policy=interactive_policy())
+    services = app.state.net._services["ws-i"]
+    services.dns.remember("api.example", [("203.0.113.7", 300)])
+    # A conntrack stub that records its invocation.
+    ct_log = tmp_path / "ct.log"
+    ct = tmp_path / "conntrack"
+    ct.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + str(ct_log) + "\nexit 0\n"
+    )
+    ct.chmod(0o755)
+    app.state.settings.net.conntrack_tool = str(ct)
+    await app.state.net.clear_consent_dest("ws-i", "api.example", 443)
+    assert services.dns.ips_for("api.example") == []
+    guest = app.state.net._attachments["ws-i"].guest_ip
+    assert log_lines(ct_log) == [
+        f"-D -s {guest} -d 203.0.113.7",
+    ]
+    # A literal-IP verdict clears through the host itself.
+    await app.state.net.clear_consent_dest("ws-i", "198.51.100.4", 0)
+    assert f"-D -s {guest} -d 198.51.100.4" in log_lines(ct_log)
+    # No attachment: nothing to clear, nothing raised.
+    await app.state.net.clear_consent_dest("ws-missing", "x", 0)
+
+
+async def test_drop_flows_survives_a_missing_tool(gated_app) -> None:
+    """A conntrack tool that is absent logs and moves on — the rule
+    clear already happened, so the revoke still lands."""
+    app, _consumers, _nft_log = gated_app
+    await app.state.net.start()
+    await app.state.net.attach("ws-i", want=True, policy=interactive_policy())
+    app.state.settings.net.conntrack_tool = "/nonexistent/conntrack"
+    attachment = app.state.net._attachments["ws-i"]
+    await app.state.net.drop_flows("ws-i", attachment.guest_ip, "10.9.9.9")
+
+
+async def test_build_failure_stops_the_consumer(
+    gated_app, monkeypatch
+) -> None:
+    """A chain install that fails after the queue bound unwinds the
+    consumer too — no queue stays answered-but-orphaned."""
+    app, consumers, _nft_log = gated_app
+    await app.state.net.start()
+
+    async def failing_install(*_args, **_kw):
+        raise MicrovmError("nft apply failed")
+
+    monkeypatch.setattr(manager_mod.nft, "install_vm", failing_install)
+    with pytest.raises(MicrovmError, match="nft apply failed"):
+        await app.state.net.attach(
+            "ws-i", want=True, policy=interactive_policy()
+        )
+    assert consumers[0].stopped
+    assert "ws-i" not in app.state.net._attachments
+
+
+async def test_replay_survives_a_read_failure(gated_app, monkeypatch) -> None:
+    app, _consumers, _nft_log = gated_app
+    await app.state.net.start()
+
+    async def explode(*_args, **_kw):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(
+        app.state.model.egress_consent, "forever_rows", explode
+    )
+    await app.state.net.attach("ws-i", want=True, policy=interactive_policy())
+    # The attach itself succeeded; only the replay skipped.
+
+
+async def test_replay_pins_a_ported_deny(gated_app) -> None:
+    app, _consumers, nft_log = gated_app
+    await app.state.net.start()
+    model = app.state.model.egress_consent
+    row = await model.create_request("ws-i", "198.51.100.9", 8443)
+    await model.decide(row["id"], "denied", "token", "forever")
+    await app.state.net.attach("ws-i", want=True, policy=interactive_policy())
+    assert any(
+        "198.51.100.9 . 8443" in line and "rejects" in line
+        for line in log_lines(nft_log)
+    )
+
+
+async def test_consent_reject_skips_detached_workspaces(gated_app) -> None:
+    app, _consumers, nft_log = gated_app
+    await app.state.net.start()
+    nft_log.read_text()  # drain
+    open(nft_log, "w").close()
+    await app.state.net.consent_reject("ws-missing", "10.0.0.1", 443, 10)
+    assert log_lines(nft_log) == []
+
+
+async def test_host_for_without_services(gated_app) -> None:
+    app, _consumers, _nft_log = gated_app
+    await app.state.net.start()
+    assert app.state.net.host_for("ws-missing", "10.0.0.1") is None
+
+
+async def test_dest_addresses_without_a_services_record(gated_app) -> None:
+    """The race window between attach and services registration:
+    a literal host still clears through itself."""
+    app, _consumers, _nft_log = gated_app
+    await app.state.net.start()
+    assert app.state.net.dest_addresses("ws-i", "203.0.113.7") == [
+        "203.0.113.7"
+    ]
+
+
+async def test_replay_row_skips_portless_denies(gated_app) -> None:
+    """A forever deny given by address without a port pins nothing:
+    an RST needs a port; the row still blocks the name at the
+    resolver."""
+    app, _consumers, nft_log = gated_app
+    await app.state.net.start()
+    open(nft_log, "w").close()
+    await app.state.net.replay_row(
+        "ws-i",
+        {
+            "dest_host": "198.51.100.9",
+            "dest_port": 0,
+            "decision": "denied",
+        },
+    )
+    assert log_lines(nft_log) == []

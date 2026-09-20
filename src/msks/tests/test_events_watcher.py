@@ -12,7 +12,7 @@ from msks.microvm import MicrovmError, VmSpec
 from msks.microvm.spec import VmInfo, VmStatus
 from msks.server import events
 from msks.server import watcher as watcher_mod
-from msks.server.api import build_api, wait_for_disconnect
+from msks.server.api import build_api, decider_loop
 from msks.server.events import EventHub, close_all, relay
 from msks.server.watcher import scan_once, scan_workspace, watch_loop
 from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
@@ -133,7 +133,10 @@ async def test_wait_for_disconnect_returns_on_disconnect() -> None:
         async def receive(self):
             raise WebSocketDisconnect(code=1000)
 
-    assert await wait_for_disconnect(DisconnectingSocket()) is None
+        async def receive_text(self):
+            raise WebSocketDisconnect(code=1000)
+
+    assert await decider_loop(None, DisconnectingSocket(), 1) is None
 
 
 def test_websocket_rejects_bad_token(tmp_path: Path) -> None:
@@ -369,3 +372,45 @@ async def test_resize_publishes_the_event(tmp_path: Path) -> None:
     assert published is not None
     assert published["data"]["home_mib"] == 128
     assert published["data"]["changes"]
+
+
+async def test_watch_loop_sweeps_consent_on_its_deadline(
+    tmp_path: Path,
+) -> None:
+    """The retention sweep rides the watch loop on its own wall
+    clock (hourly); a deadline already past sweeps on the first
+    pass."""
+    api, app, _stub = api_with_stub(tmp_path)
+    app.state.settings.server.event_poll_s = 0.01
+    watcher_mod.PRUNE_INTERVAL_S = -1.0  # the deadline is always due
+    swept = []
+
+    async def fake_prune(now=None):
+        swept.append(True)
+        return 2
+
+    app.state.model.egress_consent.prune = fake_prune
+    async with api.router.lifespan_context(api):
+        await asyncio.sleep(0.1)
+    watcher_mod.PRUNE_INTERVAL_S = 3600.0
+    assert swept
+
+
+async def test_sweep_consent_logs_deletions(tmp_path: Path) -> None:
+    api, app, _stub = api_with_stub(tmp_path)
+
+    async def fake_prune(now=None):
+        return 3
+
+    app.state.model.egress_consent.prune = fake_prune
+    await watcher_mod.sweep_consent(app)  # logged, not raised
+
+
+async def test_sweep_consent_quiet_when_nothing_pruned(tmp_path: Path) -> None:
+    api, app, _stub = api_with_stub(tmp_path)
+
+    async def fake_prune(now=None):
+        return 0
+
+    app.state.model.egress_consent.prune = fake_prune
+    await watcher_mod.sweep_consent(app)
