@@ -74,6 +74,8 @@ SETTING_ENV_VARS: tuple[str, ...] = (
     "MSKSD_DEFAULT_IMAGE",
     "MSKSD_QEMU_IMG",
     "MSKSD_MKFS_EXT4",
+    "MSKSD_RESIZE2FS",
+    "MSKSD_E2FSCK",
     "MSKSD_MKISOFS",
     "MSKSD_HOST_NAME",
     "MSKSD_ROOT_MIB",
@@ -439,6 +441,8 @@ def render_template() -> str:
 #                           # designated default on first boot
 # qemu_img: qemu-img        # builds the root overlay
 # mkfs_ext4: mkfs.ext4      # builds the /home volume
+# resize2fs: resize2fs      # moves a /home volume's size (#184)
+# e2fsck: e2fsck            # quiets the volume before a resize (#184)
 # mkisofs: mkisofs          # builds the user_data seed disk
 # host_name: ""             # the host recorded as owning created
 #                           # workspaces; empty -> the hostname

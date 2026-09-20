@@ -217,3 +217,11 @@ def test_storage_floor_mib_must_be_positive(
     monkeypatch.setenv("MSKSD_STORAGE_FLOOR_MIB", "0")
     with pytest.raises(ValueError, match="MSKSD_STORAGE_FLOOR_MIB"):
         Settings.from_env()
+
+
+def test_resize_tool_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MSKSD_RESIZE2FS", "/opt/resize2fs")
+    monkeypatch.setenv("MSKSD_E2FSCK", "/opt/e2fsck")
+    settings = Settings.from_env()
+    assert settings.vmm.resize2fs == "/opt/resize2fs"
+    assert settings.vmm.e2fsck == "/opt/e2fsck"

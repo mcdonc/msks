@@ -9,6 +9,8 @@ error mapping) without the real binaries.
 
 import os
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -44,6 +46,9 @@ def write_qemu_stub(directory: Path, record: Path) -> Path:
         '      case "$1" in -f|-F|-b) shift 2 ;; *) break ;; esac\n'
         "    done\n"
         '    : > "$1"\n'
+        "    ;;\n"
+        "  resize)\n"
+        '    truncate -s "$3" "$2"\n'
         "    ;;\n"
         "esac\n"
     )
@@ -533,3 +538,146 @@ async def test_import_home_volume_keeps_short_zero_tail_sparse(tools) -> None:
     home = persist.home_volume_path(settings.state_dir, WID)
     assert home.stat().st_size == len(image)
     assert home.read_bytes() == image
+
+
+# --- Home-volume resize and overlay growth (#184) ---
+
+REAL_TOOLS = all(
+    shutil.which(tool) is not None
+    for tool in ("mkfs.ext4", "e2fsck", "resize2fs", "dumpe2fs")
+)
+
+realtools = pytest.mark.skipif(
+    not REAL_TOOLS, reason="mkfs.ext4/e2fsck/resize2fs/dumpe2fs not on PATH"
+)
+
+
+async def make_real_volume(path: Path, mib: int) -> Path:
+    """A genuinely formatted ext4 volume (the resize pair's input)."""
+    with path.open("wb") as handle:
+        handle.truncate(mib * persist.MIB)
+    await persist.run_tool(
+        ["mkfs.ext4", "-q", "-F", "-L", "msks-home", str(path)],
+        "mkfs of the test volume",
+    )
+    return path
+
+
+def block_count(path: Path) -> int:
+    """The filesystem's block count, straight from dumpe2fs."""
+    out = subprocess.run(
+        ["dumpe2fs", "-h", str(path)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    for line in out.stdout.splitlines():
+        if line.startswith("Block count:"):
+            return int(line.split(":")[1])
+    raise AssertionError("dumpe2fs printed no block count")
+
+
+@realtools
+async def test_resize_home_volume_grows(tmp_path: Path) -> None:
+    settings = VmmSettings(state_dir=tmp_path)
+    home = await make_real_volume(tmp_path / "home.ext4", 64)
+    before = block_count(home)
+    assert await persist.resize_home_volume(home, 128, settings) == "grew"
+    assert home.stat().st_size == 128 * persist.MIB
+    assert block_count(home) > before
+
+
+@realtools
+async def test_resize_home_volume_shrinks(tmp_path: Path) -> None:
+    settings = VmmSettings(state_dir=tmp_path)
+    home = await make_real_volume(tmp_path / "home.ext4", 128)
+    before = block_count(home)
+    assert await persist.resize_home_volume(home, 64, settings) == "shrank"
+    assert home.stat().st_size == 64 * persist.MIB
+    assert block_count(home) < before
+
+
+async def test_resize_home_volume_names_a_refused_shrink(
+    tmp_path: Path,
+) -> None:
+    """resize2fs's own refusal (an fs too full to shrink) surfaces as
+    a named MicrovmError the route maps to a 409."""
+    failing = tmp_path / "resize2fs"
+    failing.write_text("#!/bin/sh\necho 'new size too small' >&2\nexit 1\n")
+    failing.chmod(0o755)
+    settings = VmmSettings(
+        state_dir=tmp_path,
+        resize2fs=str(failing),
+        e2fsck=str(write_e2fsck_stub(tmp_path)),
+    )
+    home = tmp_path / "home.ext4"
+    with home.open("wb") as handle:
+        handle.truncate(128 * persist.MIB)
+    with pytest.raises(MicrovmError, match="resize2fs"):
+        await persist.resize_home_volume(home, 64, settings)
+    # The file kept its size: the shrink truncates only after the
+    # filesystem agreed.
+    assert home.stat().st_size == 128 * persist.MIB
+
+
+async def test_grow_overlay_resizes_the_qcow2(tools) -> None:
+    """qemu-img resize carries the grow; the stub records and sizes."""
+    settings, _record, _base = tools
+    overlay = tmp_overlay(settings)
+    assert await persist.grow_overlay(overlay, 20480, settings) is None
+    assert overlay.stat().st_size == 20480 * persist.MIB
+
+
+def tmp_overlay(settings) -> Path:
+    """An overlay file at its state-dir path (the grow's target)."""
+    overlay = persist.overlay_path(settings.state_dir, WID)
+    overlay.parent.mkdir(parents=True, exist_ok=True)
+    overlay.write_bytes(b"")
+    return overlay
+
+
+def write_e2fsck_stub(directory: Path) -> Path:
+    """An always-clean e2fsck stand-in (records nothing)."""
+    stub = directory / "e2fsck"
+    stub.write_text("#!/bin/sh\nexit 0\n")
+    stub.chmod(0o755)
+    return stub
+
+
+async def test_resize_accepts_a_corrected_volume(tmp_path: Path) -> None:
+    """e2fsck's exit-code bitmask: 1 and 2 mean errors corrected, not
+    failure — a hard-stopped workspace's volume corrects on the first
+    resize and the resize proceeds (#187 review)."""
+    e2fsck = tmp_path / "e2fsck"
+    e2fsck.write_text("#!/bin/sh\nexit 1\n")
+    e2fsck.chmod(0o755)
+    resize2fs = tmp_path / "resize2fs"
+    resize2fs.write_text("#!/bin/sh\nexit 0\n")
+    resize2fs.chmod(0o755)
+    settings = VmmSettings(
+        state_dir=tmp_path,
+        resize2fs=str(resize2fs),
+        e2fsck=str(e2fsck),
+    )
+    home = tmp_path / "home.ext4"
+    with home.open("wb") as handle:
+        handle.truncate(64 * persist.MIB)
+    assert await persist.resize_home_volume(home, 128, settings) == "grew"
+
+
+async def test_resize_names_an_uncorrectable_volume(tmp_path: Path) -> None:
+    """e2fsck exit 4 (uncorrectable) is a real failure: a named
+    MicrovmError, not a silent pass."""
+    e2fsck = tmp_path / "e2fsck"
+    e2fsck.write_text("#!/bin/sh\necho 'uncorrectable' >&2\nexit 4\n")
+    e2fsck.chmod(0o755)
+    settings = VmmSettings(
+        state_dir=tmp_path,
+        resize2fs=str(tmp_path / "absent"),
+        e2fsck=str(e2fsck),
+    )
+    home = tmp_path / "home.ext4"
+    with home.open("wb") as handle:
+        handle.truncate(64 * persist.MIB)
+    with pytest.raises(MicrovmError, match="e2fsck"):
+        await persist.resize_home_volume(home, 128, settings)

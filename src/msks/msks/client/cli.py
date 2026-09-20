@@ -1,6 +1,6 @@
 """The ``msks`` CLI: ``ls``, ``create``, ``start``, ``stop``, ``rm``,
-``console``, ``forward``, ``ssh``, ``key``, ``storage``, the ``image``
-catalog subcommands, and the ``home`` volume moves.
+``resize``, ``console``, ``forward``, ``ssh``, ``key``, ``storage``,
+the ``image`` catalog subcommands, and the ``home`` volume moves.
 
 Every command speaks the daemon's REST surface with the same client
 conventions (#21): ``MSKSC_URL`` for the daemon, ``MSKSC_TOKEN`` for
@@ -550,6 +550,40 @@ def cmd_storage(
     return 0
 
 
+def cmd_resize(
+    workspace_id: str,
+    body: dict,
+    transport=None,
+) -> int:
+    """``msks resize``: move a stopped workspace's sizes (#184)."""
+    row = asyncio.run(
+        api_call(
+            "POST",
+            env_url(),
+            env_token(),
+            f"/api/v1/workspaces/{workspace_id}/resize",
+            json_body=body,
+            transport=transport,
+        )
+    )
+    print(resize_message(row, body))
+    return 0
+
+
+def resize_message(row: dict, body: dict) -> str:
+    """The result line: the new sizes, with the boot note only when
+    the root actually moved (the daemon's ``changes`` list says so,
+    not the request's flags) — home bytes moved at once on the host;
+    only the root's guest-side fill waits for the next boot."""
+    line = (
+        f"resized {row['id']}: root {row['root_mib']} MiB, "
+        f"home {row['home_mib']} MiB"
+    )
+    if any(change.startswith("root") for change in row.get("changes", [])):
+        line += " (the guest fills the larger root on its next boot)"
+    return line
+
+
 def format_image(row: dict) -> str:
     """One catalog line: ref, short hash, default flag, kernel."""
     flag = "default" if row["default"] else "-"
@@ -1039,6 +1073,20 @@ def build_parser() -> argparse.ArgumentParser:
     starter.add_argument("workspace_id", help="the workspace to boot")
     stopper = sub.add_parser("stop", help="power a workspace off")
     stopper.add_argument("workspace_id", help="the workspace to stop")
+    resizer = sub.add_parser(
+        "resize", help="grow (or shrink) a stopped workspace's disks (#184)"
+    )
+    resizer.add_argument("workspace_id", help="the workspace to resize")
+    resizer.add_argument(
+        "--home-mib",
+        type=int,
+        help="new /home volume size, MiB (grows or shrinks)",
+    )
+    resizer.add_argument(
+        "--root-mib",
+        type=int,
+        help="new root overlay size, MiB (grows only)",
+    )
     remover = sub.add_parser("rm", help="delete workspaces and their data")
     remover.add_argument(
         "workspace_ids", nargs="+", help="the workspaces to delete, in order"
@@ -1250,6 +1298,23 @@ def checked_pubkey_line(text: str) -> str:
     return line
 
 
+def run_resize(args: argparse.Namespace, transport) -> int:
+    """Compose the request body, refusing the empty one locally."""
+    body = {
+        key: value
+        for key, value in (
+            ("home_mib", args.home_mib),
+            ("root_mib", args.root_mib),
+        )
+        if value is not None
+    }
+    if not body:
+        raise SystemExit(
+            "msks: nothing to resize: pass --home-mib, --root-mib, or both"
+        )
+    return cmd_resize(args.workspace_id, body, transport)
+
+
 def run_create(args: argparse.Namespace, transport) -> int:
     """Resolve the identity mode once — the resolver may read stdin
     (``--pubkey -``) or reject a flag pairing, so it runs a single
@@ -1279,6 +1344,7 @@ def command_table(args: argparse.Namespace, transport) -> dict:
         "create": lambda: run_create(args, transport),
         "start": lambda: cmd_start(args.workspace_id, transport=transport),
         "stop": lambda: cmd_stop(args.workspace_id, transport=transport),
+        "resize": lambda: run_resize(args, transport),
         "rm": lambda: cmd_rm(args.workspace_ids, transport=transport),
         "console": lambda: run_workspace_shell(args.workspace_id, args.user),
         "forward": lambda: run_workspace_forward(

@@ -294,11 +294,15 @@ async def create_seed(spec: VmSpec, settings) -> None:
         shutil.rmtree(stage, ignore_errors=True)
 
 
-async def base_info(base: Path, qemu_img: str) -> tuple[int, str]:
-    """The base image's ``(virtual size, format)`` from qemu-img info."""
+async def base_info(
+    base: Path, qemu_img: str, what: str = "the base image"
+) -> tuple[int, str]:
+    """An image's ``(virtual size, format)`` from qemu-img info —
+    ``what`` names the artifact in a failure's message (the resize
+    route probes overlays, not base images)."""
     output = await run_tool(
         [qemu_img, "info", "--output=json", str(base)],
-        "qemu-img info on the base image",
+        f"qemu-img info on {what}",
     )
     try:
         document = json.loads(output)
@@ -310,7 +314,10 @@ async def base_info(base: Path, qemu_img: str) -> tuple[int, str]:
 
 
 async def run_tool(
-    argv: list[str], what: str, cwd: Path | None = None
+    argv: list[str],
+    what: str,
+    cwd: Path | None = None,
+    ok_returncodes: tuple[int, ...] = (),
 ) -> bytes:
     """Run one host tool; a failure becomes a named operator error.
 
@@ -318,7 +325,10 @@ async def run_tool(
     parsed as JSON, and a chatty warning line ahead of the document
     must not turn into a spurious parse failure. ``cwd`` serves the
     seed build (mkisofs takes the payload paths relative to its
-    staging directory).
+    staging directory). ``ok_returncodes`` widens success past 0 —
+    e2fsck's exit code is a bitmask where 1 and 2 mean "errors
+    corrected" (a corrected volume is the tool doing its job), and
+    4 and up are the failures.
     """
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -331,10 +341,87 @@ async def run_tool(
     except FileNotFoundError as exc:
         raise MicrovmError(f"{what}: tool not found: {argv[0]}") from exc
     output, err = await proc.communicate()
-    if proc.returncode != 0:
+    if proc.returncode not in ok_returncodes + (0,):
         detail = (output + err).decode(errors="replace").strip()[:400]
         raise MicrovmError(f"{what} failed ({proc.returncode}): {detail}")
     return output
+
+
+async def volume_check(target: Path, settings) -> None:
+    """Quiet the home volume's journal before a move (#184).
+
+    e2fsck runs with ``-fy`` and the exit-code mask that accepts its
+    "errors corrected" bits — a volume a hard stop left dirty is
+    corrected here, corrections being that tool's job. A failure past
+    the mask (4 and up: uncorrectable, operational, usage) raises and
+    is the daemon's to answer (503), never a client-fixable shrink
+    refusal.
+    """
+    await run_tool(
+        [settings.e2fsck, "-fy", str(target)],
+        "e2fsck on the home volume",
+        ok_returncodes=(1, 2),
+    )
+
+
+def volume_direction(target: Path, home_mib: int) -> str:
+    """ "grew" or "shrank" by the FILE's size, not any row's — the
+    volume file is the truth an import may have swapped in at any
+    size (#187 review round 2)."""
+    if home_mib * MIB > target.stat().st_size:
+        return "grew"
+    return "shrank"
+
+
+async def volume_move(target: Path, home_mib: int, settings) -> str:
+    """Move the home volume's filesystem to ``home_mib`` MiB and the
+    file with it; returns the executed direction.
+
+    A grow truncates the file up and lets resize2fs expand onto the
+    new bytes; a shrink asks resize2fs to contract first (it refuses
+    below the filesystem's used blocks) and truncates the file down
+    only after the filesystem agreed.
+    """
+    if volume_direction(target, home_mib) == "grew":
+        with target.open("r+b") as handle:
+            handle.truncate(home_mib * MIB)
+        await run_tool(
+            [settings.resize2fs, str(target)],
+            "resize2fs (grow) on the home volume",
+        )
+        return "grew"
+    await run_tool(
+        [settings.resize2fs, str(target), f"{home_mib}M"],
+        "resize2fs (shrink) on the home volume",
+    )
+    with target.open("r+b") as handle:
+        handle.truncate(home_mib * MIB)
+    return "shrank"
+
+
+async def resize_home_volume(target: Path, home_mib: int, settings) -> str:
+    """Check, then move: the composition the direct callers use.
+
+    The route calls :func:`volume_check` and :func:`volume_move`
+    separately so an e2fsck failure keeps its 503 while a refused
+    shrink maps to the client-fixable 409."""
+    await volume_check(target, settings)
+    return await volume_move(target, home_mib, settings)
+
+
+async def grow_overlay(overlay: Path, root_mib: int, settings) -> None:
+    """Extend the qcow2 overlay's virtual size (#184).
+
+    Grow only: the guest's partition table and root filesystem sit
+    inside, and only the guest can move them down (the boot's
+    cloud-init growpart fills a grown device for free, nothing
+    shrinks one). qemu-img itself refuses shrinking qcow2 with a
+    snapshot, so the route refuses first with the honest message.
+    """
+    await run_tool(
+        [settings.qemu_img, "resize", str(overlay), str(root_mib * MIB)],
+        "qemu-img resize of the root overlay",
+    )
 
 
 def remove_overlay(state_dir: Path, workspace_id: str) -> bool:

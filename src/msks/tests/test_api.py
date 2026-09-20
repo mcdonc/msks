@@ -1266,3 +1266,627 @@ async def test_home_import_refused_by_content_length(
     )
     assert refused.status_code == 507
     assert "incoming bytes" in refused.json()["detail"]
+
+
+async def plant_volume(app, workspace_id: str, mib: int) -> None:
+    """A genuinely formatted home volume under the state dir."""
+    import subprocess as sp
+
+    home = (
+        app.state.settings.vmm.state_dir / "volumes" / f"{workspace_id}.ext4"
+    )
+    home.parent.mkdir(parents=True, exist_ok=True)
+    with home.open("wb") as handle:
+        handle.truncate(mib * 1024 * 1024)
+    sp.run(["mkfs.ext4", "-q", "-F", "-L", "msks-home", str(home)], check=True)
+
+
+async def plant_qcow2(app, workspace_id: str, mib: int) -> None:
+    """A genuinely formatted qcow2 overlay under the state dir."""
+    import subprocess as sp
+
+    overlay = (
+        app.state.settings.vmm.state_dir / "vms" / workspace_id / "root.qcow2"
+    )
+    overlay.parent.mkdir(parents=True, exist_ok=True)
+    sp.run(
+        ["qemu-img", "create", "-f", "qcow2", str(overlay), f"{mib}M"],
+        check=True,
+    )
+
+
+async def test_resize_grows_the_home_volume(client) -> None:
+    http, app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-rs", "kernel": "/k", "rootfs": "/r", "home_mib": 64},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    await plant_volume(app, "ws-rs", 64)
+    resized = await http.post(
+        "/api/v1/workspaces/ws-rs/resize",
+        json={"home_mib": 128},
+        headers=auth(),
+    )
+    assert resized.status_code == 200
+    body = resized.json()
+    assert body["home_mib"] == 128
+    volume = app.state.settings.vmm.state_dir / "volumes" / "ws-rs.ext4"
+    assert volume.stat().st_size == 128 * 1024 * 1024
+
+
+async def test_resize_shrinks_the_home_volume(client) -> None:
+    http, app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-sh", "kernel": "/k", "rootfs": "/r", "home_mib": 128},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    await plant_volume(app, "ws-sh", 128)
+    resized = await http.post(
+        "/api/v1/workspaces/ws-sh/resize",
+        json={"home_mib": 64},
+        headers=auth(),
+    )
+    assert resized.status_code == 200
+    volume = app.state.settings.vmm.state_dir / "volumes" / "ws-sh.ext4"
+    assert volume.stat().st_size == 64 * 1024 * 1024
+
+
+async def test_resize_grows_the_overlay(client) -> None:
+    import json as json_mod
+    import subprocess as sp
+
+    http, app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-ov", "kernel": "/k", "rootfs": "/r", "root_mib": 256},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    await plant_qcow2(app, "ws-ov", 256)
+    resized = await http.post(
+        "/api/v1/workspaces/ws-ov/resize",
+        json={"root_mib": 512},
+        headers=auth(),
+    )
+    assert resized.status_code == 200
+    assert resized.json()["root_mib"] == 512
+    overlay = app.state.settings.vmm.state_dir / "vms" / "ws-ov" / "root.qcow2"
+    info = sp.run(
+        ["qemu-img", "info", "--output=json", str(overlay)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert json_mod.loads(info.stdout)["virtual-size"] == 512 * 1024 * 1024
+
+
+async def test_resize_refuses_a_running_workspace(client) -> None:
+    http, app, stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-run", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    await app.state.model.set_status("ws-run", "running")
+    refused = await http.post(
+        "/api/v1/workspaces/ws-run/resize",
+        json={"home_mib": 128},
+        headers=auth(),
+    )
+    assert refused.status_code == 409
+    assert "stop it before" in refused.json()["detail"]
+
+
+async def test_resize_refuses_overlay_shrink(client) -> None:
+    http, app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-nos",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "root_mib": 512,
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    await plant_qcow2(app, "ws-nos", 512)
+    refused = await http.post(
+        "/api/v1/workspaces/ws-nos/resize",
+        json={"root_mib": 256},
+        headers=auth(),
+    )
+    assert refused.status_code == 400
+    assert "only grows" in refused.json()["detail"]
+
+
+async def test_resize_is_idempotent_on_identical_sizes(client) -> None:
+    http, app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-noop", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    empty = await http.post(
+        "/api/v1/workspaces/ws-noop/resize", json={}, headers=auth()
+    )
+    assert empty.status_code == 400
+    assert "nothing to resize" in empty.json()["detail"]
+    await plant_volume(app, "ws-noop", 2048)
+    same = await http.post(
+        "/api/v1/workspaces/ws-noop/resize",
+        json={"home_mib": 2048},
+        headers=auth(),
+    )
+    assert same.status_code == 200
+    assert same.json()["changes"] == []
+    assert same.json()["home_mib"] == 2048
+
+
+async def test_resize_refused_on_k8s(client, monkeypatch) -> None:
+    http, app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-k8s-rs",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "egress": False,
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    monkeypatch.setattr(app.state.settings.vmm, "driver", "k8s")
+    refused = await http.post(
+        "/api/v1/workspaces/ws-k8s-rs/resize",
+        json={"home_mib": 128},
+        headers=auth(),
+    )
+    assert refused.status_code == 400
+    assert "not served by the k8s backend" in refused.json()["detail"]
+
+
+async def test_resize_without_a_volume_updates_the_row(client) -> None:
+    """The heal contract: a missing volume means the next start
+    rebuilds a blank one at the new size — the row is the truth."""
+    http, _app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-heal", "kernel": "/k", "rootfs": "/r", "home_mib": 64},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    resized = await http.post(
+        "/api/v1/workspaces/ws-heal/resize",
+        json={"home_mib": 128},
+        headers=auth(),
+    )
+    assert resized.status_code == 200
+    assert resized.json()["home_mib"] == 128
+
+
+async def test_resize_maps_a_refused_shrink_to_409(client, tmp_path) -> None:
+    """resize2fs's refusal (an fs too full) reaches the caller as a
+    named 409 with the remediation spelled out."""
+    http, app, _stub = client
+    failing = tmp_path / "resize2fs"
+    failing.write_text("#!/bin/sh\necho 'new size too small' >&2\nexit 1\n")
+    failing.chmod(0o755)
+    app.state.settings.vmm.resize2fs = str(failing)
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-full",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "home_mib": 128,
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    await plant_volume(app, "ws-full", 128)
+    refused = await http.post(
+        "/api/v1/workspaces/ws-full/resize",
+        json={"home_mib": 64},
+        headers=auth(),
+    )
+    assert refused.status_code == 409
+    assert "the shrink refused" in refused.json()["detail"]
+    assert "shrink less" in refused.json()["detail"]
+
+
+async def test_resize_root_without_an_overlay_updates_the_row(client) -> None:
+    """The heal contract for the overlay: a missing file means the
+    next start builds it at the new size — the row is the truth."""
+    http, _app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-nov", "kernel": "/k", "rootfs": "/r", "root_mib": 256},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    resized = await http.post(
+        "/api/v1/workspaces/ws-nov/resize",
+        json={"root_mib": 512},
+        headers=auth(),
+    )
+    assert resized.status_code == 200
+    assert resized.json()["root_mib"] == 512
+
+
+async def test_resize_names_a_vanished_row(client, monkeypatch) -> None:
+    """A row that vanishes under the move-lock answers 404, not a
+    None crash."""
+    http, app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-gone", "kernel": "/k", "rootfs": "/r", "home_mib": 64},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    real_get = app.state.model.get_workspace
+    calls = {"n": 0}
+
+    async def vanishing(workspace_id):
+        # The guard calls see the row; the final read answers None —
+        # the delete won the race between them.
+        calls["n"] += 1
+        if calls["n"] > 2:
+            return None
+        return await real_get(workspace_id)
+
+    monkeypatch.setattr(app.state.model, "get_workspace", vanishing)
+    resized = await http.post(
+        "/api/v1/workspaces/ws-gone/resize",
+        json={"home_mib": 128},
+        headers=auth(),
+    )
+    assert resized.status_code == 404
+
+
+async def test_resize_refuses_below_the_overlays_virtual_size(client) -> None:
+    """The file is the truth, not the row: create clamps the overlay
+    to the base image's size, so a request above the row can still be
+    below the overlay — answer the grow-only 400, not a qemu-img 503
+    (#187 review)."""
+    import subprocess as sp
+
+    http, app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-clamp",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "root_mib": 256,
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    overlay = (
+        app.state.settings.vmm.state_dir / "vms" / "ws-clamp" / "root.qcow2"
+    )
+    overlay.parent.mkdir(parents=True, exist_ok=True)
+    sp.run(
+        ["qemu-img", "create", "-f", "qcow2", str(overlay), "512M"],
+        check=True,
+    )
+    refused = await http.post(
+        "/api/v1/workspaces/ws-clamp/resize",
+        json={"root_mib": 384},
+        headers=auth(),
+    )
+    assert refused.status_code == 400
+    assert "512 MiB" in refused.json()["detail"]
+    assert "only grows" in refused.json()["detail"]
+
+
+async def test_resize_combined_failure_leaves_nothing_moved(client) -> None:
+    """The overlay grow runs first: its failure strands no half-moved
+    home side, and the row keeps its old sizes."""
+    http, app, _stub = client
+    failing_qemu = app.state.settings.vmm.state_dir / "qemu-img-fail"
+    failing_qemu.parent.mkdir(parents=True, exist_ok=True)
+    failing_qemu.write_text("#!/bin/sh\nexit 1\n")
+    failing_qemu.chmod(0o755)
+    app.state.settings.vmm.qemu_img = str(failing_qemu)
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-combined",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "root_mib": 256,
+            "home_mib": 64,
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    await plant_volume(app, "ws-combined", 64)
+    overlay = (
+        app.state.settings.vmm.state_dir / "vms" / "ws-combined" / "root.qcow2"
+    )
+    overlay.parent.mkdir(parents=True, exist_ok=True)
+    overlay.write_bytes(b"")
+    failed = await http.post(
+        "/api/v1/workspaces/ws-combined/resize",
+        json={"root_mib": 512, "home_mib": 128},
+        headers=auth(),
+    )
+    assert failed.status_code == 503
+    row = await app.state.model.get_workspace("ws-combined")
+    assert row["root_mib"] == 256
+    assert row["home_mib"] == 64
+    volume = app.state.settings.vmm.state_dir / "volumes" / "ws-combined.ext4"
+    assert volume.stat().st_size == 64 * 1024 * 1024
+
+
+async def test_resize_refuses_a_foreign_host(client, monkeypatch) -> None:
+    """The placement refusal every artifact route shares: artifacts
+    on another host never move from here."""
+    http, app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-foreign",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "home_mib": 64,
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    monkeypatch.setattr(app.state.settings.vmm, "host_name", "hv-elsewhere")
+    refused = await http.post(
+        "/api/v1/workspaces/ws-foreign/resize",
+        json={"home_mib": 128},
+        headers=auth(),
+    )
+    assert refused.status_code == 409
+    assert "lives on host" in refused.json()["detail"]
+
+
+async def test_resize_refuses_a_corrupt_overlay(client) -> None:
+    """A zero-length or garbage overlay probes as raw/0 bytes — a
+    grow would silently truncate garbage into a false 200. The route
+    names the corrupt file as the 503 it is (#187 review round 2)."""
+    http, app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-corrupt",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "root_mib": 256,
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    overlay = (
+        app.state.settings.vmm.state_dir / "vms" / "ws-corrupt" / "root.qcow2"
+    )
+    overlay.parent.mkdir(parents=True, exist_ok=True)
+    overlay.write_bytes(b"")
+    refused = await http.post(
+        "/api/v1/workspaces/ws-corrupt/resize",
+        json={"root_mib": 512},
+        headers=auth(),
+    )
+    assert refused.status_code == 503
+    assert "not a readable qcow2" in refused.json()["detail"]
+
+
+async def test_resize_maps_an_e2fsck_operational_failure_to_503(
+    client, tmp_path
+) -> None:
+    """e2fsck exit 8 (operational error) is a daemon fault even on a
+    row-classified shrink: it keeps its 503, never the client-fixable
+    409 (#187 review round 2)."""
+    http, app, _stub = client
+    e2fsck = tmp_path / "e2fsck8"
+    e2fsck.write_text("#!/bin/sh\necho 'I/O error' >&2\nexit 8\n")
+    e2fsck.chmod(0o755)
+    app.state.settings.vmm.e2fsck = str(e2fsck)
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-op",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "home_mib": 128,
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    await plant_volume(app, "ws-op", 128)
+    failed = await http.post(
+        "/api/v1/workspaces/ws-op/resize",
+        json={"home_mib": 64},
+        headers=auth(),
+    )
+    assert failed.status_code == 503
+    assert "e2fsck" in failed.json()["detail"]
+    assert "free data" not in failed.json()["detail"]
+
+
+async def test_resize_maps_a_grow_failure_to_503(client, tmp_path) -> None:
+    """A grow-direction tool failure stays the daemon's 503 (the
+    client-fixable 409 belongs to executed shrinks alone)."""
+    http, app, _stub = client
+    failing = tmp_path / "resize2fs"
+    failing.write_text("#!/bin/sh\necho 'no room' >&2\nexit 1\n")
+    failing.chmod(0o755)
+    app.state.settings.vmm.resize2fs = str(failing)
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-grow",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "home_mib": 64,
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    await plant_volume(app, "ws-grow", 64)
+    failed = await http.post(
+        "/api/v1/workspaces/ws-grow/resize",
+        json={"home_mib": 128},
+        headers=auth(),
+    )
+    assert failed.status_code == 503
+    assert "free data" not in failed.json()["detail"]
+
+
+async def test_resize_follows_the_file_not_the_row(client) -> None:
+    """A home import can swap the volume in above the row's size: the
+    move classifies by the file (a shrink here), and a matching
+    request reconciles the row to the file's truth (#187 review
+    round 2)."""
+    http, app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-big",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "home_mib": 64,
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    # The imported volume: 128 MiB under a 64 MiB row.
+    await plant_volume(app, "ws-big", 128)
+    reconciled = await http.post(
+        "/api/v1/workspaces/ws-big/resize",
+        json={"home_mib": 96},
+        headers=auth(),
+    )
+    assert reconciled.status_code == 200
+    body = reconciled.json()
+    assert body["home_mib"] == 96
+    assert body["changes"] == ["home shrank to 96 MiB"]
+    volume = app.state.settings.vmm.state_dir / "volumes" / "ws-big.ext4"
+    assert volume.stat().st_size == 96 * 1024 * 1024
+    # A second identical resize is a no-op: the row now agrees with
+    # the file, and the heal path records nothing.
+    again = await http.post(
+        "/api/v1/workspaces/ws-big/resize",
+        json={"home_mib": 96},
+        headers=auth(),
+    )
+    assert again.status_code == 200
+    assert again.json()["changes"] == []
+
+
+async def test_resize_combined_success_reports_each_side(client) -> None:
+    """A combined resize reports what moved, root first."""
+    http, app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-both",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "root_mib": 256,
+            "home_mib": 128,
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    await plant_volume(app, "ws-both", 128)
+    await plant_qcow2(app, "ws-both", 256)
+    resized = await http.post(
+        "/api/v1/workspaces/ws-both/resize",
+        json={"root_mib": 512, "home_mib": 64},
+        headers=auth(),
+    )
+    assert resized.status_code == 200
+    body = resized.json()
+    assert body["root_mib"] == 512
+    assert body["home_mib"] == 64
+    assert body["changes"] == ["root grew to 512 MiB", "home shrank to 64 MiB"]
+
+
+async def test_resize_row_catches_up_to_the_overlay(client) -> None:
+    """A request equal to the overlay's virtual size moves nothing —
+    only the row catches up (the file was already there, above it)."""
+    http, app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-catch",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "root_mib": 256,
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    await plant_qcow2(app, "ws-catch", 512)
+    caught = await http.post(
+        "/api/v1/workspaces/ws-catch/resize",
+        json={"root_mib": 512},
+        headers=auth(),
+    )
+    assert caught.status_code == 200
+    assert caught.json()["root_mib"] == 512
+    assert caught.json()["changes"] == []
+
+
+async def test_resize_identical_on_both_sides_is_a_noop(client) -> None:
+    """Naming both sides at their current values moves nothing and
+    records nothing — the honest idempotent 200."""
+    http, _app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-quiet", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    row = created.json()
+    again = await http.post(
+        "/api/v1/workspaces/ws-quiet/resize",
+        json={"root_mib": row["root_mib"], "home_mib": row["home_mib"]},
+        headers=auth(),
+    )
+    assert again.status_code == 200
+    assert again.json()["changes"] == []
+
+
+async def test_resize_names_a_vanished_volume(client, monkeypatch) -> None:
+    """A volume that vanishes between the check and the move answers
+    a named 503, not a bare 500."""
+    from msks.server import api as api_module
+
+    http, app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-van",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "home_mib": 64,
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    await plant_volume(app, "ws-van", 64)
+
+    async def vanish(target, home_mib, settings):
+        raise FileNotFoundError(str(target))
+
+    monkeypatch.setattr(api_module.persist, "volume_move", vanish)
+    failed = await http.post(
+        "/api/v1/workspaces/ws-van/resize",
+        json={"home_mib": 128},
+        headers=auth(),
+    )
+    assert failed.status_code == 503
+    assert "unreachable mid-resize" in failed.json()["detail"]

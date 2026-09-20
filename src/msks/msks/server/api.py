@@ -49,6 +49,17 @@ WORKSPACE_ID_PATTERN = r"^[a-z0-9][a-z0-9-]*$"
 USER_DATA_MAX = 65536
 
 
+class WorkspaceResize(BaseModel):
+    """A resize request (#184): the new sizes, either side optional.
+
+    The bounds match create — a resize is the create-time sizing
+    revisited, so the same floors and ceilings hold.
+    """
+
+    root_mib: int | None = Field(default=None, ge=256, le=65536)
+    home_mib: int | None = Field(default=None, ge=64, le=65536)
+
+
 class ImageImport(BaseModel):
     """An import request: a host-side path to a container-image tar.
 
@@ -1088,10 +1099,11 @@ def build_api(app) -> FastAPI:
             "private_key": key["private_key"],
         }
 
-    # The #41 immutability contract, said out loud: workspaces are
-    # create-time objects (user_data above all), and a mutation
-    # attempt gets a named error instead of a bare 405 from the
-    # router's method table.
+    # The #41 immutability contract, said out loud: the create-time
+    # shape (user_data above all) never changes — a mutation attempt
+    # gets a named error instead of a bare 405 from the router's
+    # method table. Sizes are the one exception (#184): they move
+    # through the resize route below.
     @api.put(
         "/api/v1/workspaces/{workspace_id}",
         dependencies=[Depends(require_token)],
@@ -1106,10 +1118,176 @@ def build_api(app) -> FastAPI:
             status_code=405,
             detail=(
                 "workspaces cannot be modified after create (user_data is "
-                "create-time); delete the workspace and recreate it to change "
-                "anything"
+                "create-time; sizes move through "
+                f"POST /api/v1/workspaces/{workspace_id}/resize); delete "
+                "the workspace and recreate it to change anything else"
             ),
         )
+
+    @api.post(
+        "/api/v1/workspaces/{workspace_id}/resize",
+        dependencies=[Depends(require_token)],
+    )
+    async def resize_workspace(
+        workspace_id: str, body: WorkspaceResize
+    ) -> dict:
+        """Move a stopped workspace's sizes (#184): the home volume
+        grows or shrinks, the overlay grows.
+
+        The same guards a home-volume move carries: free lifecycle
+        statuses, the placement check, the move-lock against a
+        concurrent boot, and the live seam re-check. The floor never
+        speaks here — a resize writes MiBs of filesystem metadata,
+        and a shrink gives bytes back.
+        """
+        row = await _workspace_or_404(app, workspace_id)
+        if app.state.settings.vmm.driver == "k8s":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "resizing is not served by the k8s backend (the "
+                    "workspace lives on a claim the cluster sizes; grow "
+                    "the claim through your storage class)"
+                ),
+            )
+        if mismatch := host_mismatch(app, row):
+            raise HTTPException(status_code=409, detail=mismatch)
+        if body.root_mib is None and body.home_mib is None:
+            raise HTTPException(
+                status_code=400,
+                detail="nothing to resize: name root_mib, home_mib, or both",
+            )
+        async with move_lock(app, workspace_id):
+            row = await rechecked_row(app, workspace_id)
+            vmm = app.state.settings.vmm
+            state_dir = vmm.state_dir
+            home = persist.home_volume_path(state_dir, workspace_id)
+            overlay = persist.overlay_path(state_dir, workspace_id)
+            moved: list[str] = []
+            if body.root_mib is not None:
+                # The files are the truth, not the row: create clamps
+                # the overlay to the base image's size, and a home
+                # import can swap the volume in at any size. Root
+                # grows only — its partition table and filesystem
+                # belong to the guest. (#187.)
+                if overlay.is_file():
+                    virtual_b, image_format = await persist.base_info(
+                        overlay, vmm.qemu_img, "the root overlay"
+                    )
+                    if image_format != "qcow2" or virtual_b == 0:
+                        # qemu-img probes format, and a corrupt or
+                        # truncated overlay answers "raw, 0 bytes" —
+                        # a grow would silently truncate garbage. Name
+                        # the corrupt file instead of moving it.
+                        raise HTTPException(
+                            status_code=503,
+                            detail=(
+                                f"the root overlay for {workspace_id} is "
+                                "not a readable qcow2 image (qemu-img "
+                                f"reports {image_format}, {virtual_b} "
+                                "bytes) — restore it with msks rm and a "
+                                "fresh create, or a factory reset"
+                            ),
+                        )
+                    ceiling_mib = virtual_b // (1024 * 1024)
+                    if body.root_mib < ceiling_mib:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                "the root overlay only grows; this one is "
+                                f"{ceiling_mib} MiB and the request asked "
+                                f"for {body.root_mib} MiB — msks rm and a "
+                                "fresh create, or factory reset, reclaim a "
+                                "root instead"
+                            ),
+                        )
+                    if body.root_mib > ceiling_mib:
+                        await persist.grow_overlay(overlay, body.root_mib, vmm)
+                        moved.append(f"root grew to {body.root_mib} MiB")
+                    # Equal to the file: only the row catches up.
+                    await app.state.model.set_sizes(
+                        workspace_id, body.root_mib, None
+                    )
+                elif body.root_mib != row["root_mib"]:
+                    # The heal contract: no file, a new size — the row
+                    # records it and the next start builds the blank
+                    # overlay at it.
+                    moved.append(f"root grew to {body.root_mib} MiB")
+                    await app.state.model.set_sizes(
+                        workspace_id, body.root_mib, None
+                    )
+            if body.home_mib is not None:
+                if home.is_file():
+                    if home.stat().st_size != body.home_mib * 1024 * 1024:
+                        # e2fsck failures stay the daemon's 503; only
+                        # the executed shrink's refusal is the
+                        # client's to fix (data must move out of the
+                        # tail).
+                        await persist.volume_check(home, vmm)
+                        executed_shrink = (
+                            persist.volume_direction(home, body.home_mib)
+                            == "shrank"
+                        )
+                        try:
+                            direction = await persist.volume_move(
+                                home, body.home_mib, vmm
+                            )
+                        except MicrovmError as exc:
+                            if not executed_shrink:
+                                raise
+                            raise HTTPException(
+                                status_code=409,
+                                detail=(
+                                    f"the shrink refused: {exc}; free data "
+                                    "in the workspace's /home (or shrink "
+                                    "less) and retry"
+                                ),
+                            ) from None
+                        except OSError as exc:
+                            # The volume vanished between the check
+                            # and the move (an out-of-band rm): a
+                            # named 503, not a bare 500.
+                            raise HTTPException(
+                                status_code=503,
+                                detail=(
+                                    f"the home volume for {workspace_id} "
+                                    f"became unreachable mid-resize: {exc}"
+                                ),
+                            ) from None
+                        moved.append(
+                            f"home {direction} to {body.home_mib} MiB"
+                        )
+                    # The row follows the file, whichever moved.
+                    await app.state.model.set_sizes(
+                        workspace_id, None, body.home_mib
+                    )
+                elif body.home_mib != row["home_mib"]:
+                    # The heal contract, the overlay's twin.
+                    moved.append(f"home to {body.home_mib} MiB (fresh)")
+                    await app.state.model.set_sizes(
+                        workspace_id, None, body.home_mib
+                    )
+            updated = await app.state.model.get_workspace(workspace_id)
+            if updated is None:
+                # The row vanished under the move-lock (a concurrent
+                # delete won it): answer 404, not a None crash.
+                raise HTTPException(
+                    status_code=404, detail="no such workspace"
+                )
+            # Nothing moved and nothing needs recording: idempotent,
+            # with no event to announce.
+            if not moved:
+                return {**updated, "changes": []}
+            await hub.publish(
+                "workspace.resized",
+                {
+                    "id": workspace_id,
+                    "root_mib": updated["root_mib"],
+                    "home_mib": updated["home_mib"],
+                    "changes": moved,
+                },
+            )
+            return {**updated, "changes": moved}
 
     @api.post(
         "/api/v1/workspaces/{workspace_id}/start",
