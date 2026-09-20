@@ -62,7 +62,12 @@ appliance` manage it, with a 90s shutdown grace covering the run
 script's ACPI-first teardown (60s window for a nested workspace's
 stop cycle — shorter windows lost page-cache-only sqlite commits,
 observed live). The `msks-appliance-up`/`-down` scripts are detached
-wrappers over the same manager. The run script's EXIT trap owns
+wrappers over the same manager. `msks-appliance-shell` (#189) takes
+over the appliance for a debug console: it stops the manager, runs
+the run script itself with the serial on a pty and the state-disk
+`debug-shell` marker seeded, and on detach stops the appliance and
+removes the marker — do not `devenv processes up` while a session
+runs. The run script's EXIT trap owns
 its pidfile and sockets; if the script dies without the trap
 firing (SIGKILL), recovery is manual:
 `pkill -f 'cloud-hypervisor --api-socket <repo>/.devenv/state/appliance/api.sock'`

@@ -104,6 +104,31 @@ booted_image="$(readlink -f "$app_dir/image")"
 # the OS OOM-kills the VMM (seen live, #77) — 6 GiB carries a
 # workspace with headroom. An operator can shrink it back.
 : "${MSKS_APPLIANCE_MEM_MIB:=6144}"
+# The serial console backend (#189): File by default — the serial
+# log is the recovery surface (the TOFU fingerprint fallback, the
+# boot markers, the failure paths below point at it). Set
+# MSKS_APPLIANCE_CONSOLE=pty for a host pty instead: cloud-
+# hypervisor records the pty path where `ch-remote info` reports it
+# (config.serial.file), and the guest's msks-debug-shell.service
+# (behind the state-disk debug-shell marker) serves an interactive
+# root shell on it — msks-appliance-shell drives this whole path.
+# An empty value (or file) keeps the default; anything but those
+# two names is a typo, and a typo here would silently cost the
+# serial log — refuse it.
+serial_config="{\"mode\": \"File\", \"file\": \"$app_dir/serial.log\"}"
+serial_note="$app_dir/serial.log"
+case "${MSKS_APPLIANCE_CONSOLE:-}" in
+"") ;;
+file) ;;
+pty)
+  serial_config='{"mode": "Pty"}'
+  serial_note="the pty console (MSKS_APPLIANCE_CONSOLE=pty)"
+  ;;
+*)
+  echo "msks: MSKS_APPLIANCE_CONSOLE must be 'pty' or 'file' (got '$MSKS_APPLIANCE_CONSOLE')" >&2
+  exit 1
+  ;;
+esac
 # The live dev-tree share (#144): set to any nonempty value and the
 # run script shares this checkout ($DEVENV_ROOT) read-only into the
 # guest as a second virtiofs tag (devtree), and tells the guest
@@ -217,7 +242,7 @@ boot_vm() {
   "net": [
     {"tap": "mskstap0", "mac": "52:54:00:00:00:01"}
   ],
-  "serial": {"mode": "File", "file": "$app_dir/serial.log"},
+  "serial": $serial_config,
   "console": {"mode": "Off"}
 }
 JSON
@@ -347,9 +372,9 @@ if [ -z "$served" ]; then
     exit 0
   fi
   if [ -n "$vmm_died" ]; then
-    echo "msks: appliance VMM exited before serving — cloud-hypervisor.log: $app_dir/cloud-hypervisor.log, serial: $app_dir/serial.log" >&2
+    echo "msks: appliance VMM exited before serving — cloud-hypervisor.log: $app_dir/cloud-hypervisor.log, serial: $serial_note" >&2
   else
-    echo "msks: appliance guest never served https://$guest_ip:8660 within ${MSKS_APPLIANCE_SERVE_TIMEOUT_S}s — serial log: $app_dir/serial.log" >&2
+    echo "msks: appliance guest never served https://$guest_ip:8660 within ${MSKS_APPLIANCE_SERVE_TIMEOUT_S}s — serial: $serial_note" >&2
   fi
   exit 1
 fi
@@ -443,6 +468,6 @@ if [ -n "${stopping:-}" ]; then
 elif [ "$rc" -eq 0 ]; then
   echo "msks: appliance VMM exited cleanly (rc=0); it stays stopped — restart it with: devenv processes restart appliance"
 else
-  echo "msks: appliance VMM exited unexpectedly — rc=$rc$sig; the supervisor restarts it — cloud-hypervisor.log: $app_dir/cloud-hypervisor.log, serial: $app_dir/serial.log" >&2
+  echo "msks: appliance VMM exited unexpectedly — rc=$rc$sig; the supervisor restarts it — cloud-hypervisor.log: $app_dir/cloud-hypervisor.log, serial: $serial_note" >&2
 fi
 exit "$rc"

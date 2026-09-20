@@ -274,15 +274,24 @@ let
         | sed 's/^/msks appliance: daemon /'
 
       # Debug escape hatch: a /state/debug-shell marker (seeded onto
-      # the state disk from the host) backgrounds the daemon, puts the
-      # diagnostics on the serial log, and HOLDS the unit open — the
-      # console is file-mode serial (an interactive shell needs the
-      # serial switched to Pty mode in scripts/appliance-run.sh), and
-      # an exiting msks-boot would just restart-loop under
-      # Restart=always.
-      if [ -e /state/debug-shell ]; then
-        ( sleep 2; exec "${msks}/bin/msksd" --config /run/msksd/msksd.yaml ) &
-        echo "msks appliance: DEBUG SHELL on console"
+      # the state disk from the host) prints the diagnostics block to
+      # the serial console and lets the daemon start NORMALLY below —
+      # msks-debug-shell.service (its own root unit, gated on the
+      # same marker) serves the interactive root shell, so this
+      # script no longer backgrounds the daemon and holds the unit
+      # with sleep infinity (#189). With the host serial in Pty mode
+      # (msks-appliance-shell) the console shows DIAG and the shell
+      # prompt; in File mode the DIAG block lands in serial.log and
+      # the shell unit reads EOF and exits quietly. The /run guard
+      # prints DIAG once per BOOT: msksd.service restarts re-exec
+      # this script, and a crash-looping daemon would reprint the
+      # block on every retry (seen live in the #189 console test).
+      # /tmp (tmpfs) is the per-boot location this service user may
+      # write that systemd does NOT wipe on a unit restart — the
+      # unit's RuntimeDirectory is removed at every stop.
+      if [ -e /state/debug-shell ] && [ ! -e /tmp/msks-debug-diag ]; then
+        touch /tmp/msks-debug-diag
+        echo "msks appliance: DEBUG: root shell on the console (msks-debug-shell.service)"
         echo "=== DIAG ==="
         id
         ls -l /dev/kvm 2>&1 || echo "NO /dev/kvm node"
@@ -300,7 +309,6 @@ let
           echo "--- diag.sh end ---"
         fi
         echo "=== DIAG-END ==="
-        exec sleep infinity
       fi
       # The dev-tree daemon (#144): the host shared its live
       # checkout (tag devtree -> /run/msks-dev-tree, mounted by
@@ -625,6 +633,44 @@ let
           'StandardOutput=journal+console' \
           > $out/etc/systemd/system/msks-dev-tree.service
 
+        # The debug root shell (#189): the same host-seeded marker
+        # that prints msks-boot's DIAG block also gates this unit,
+        # which runs as ROOT (msksd.service's tree is the unprivileged
+        # service user) and puts an interactive shell on the serial
+        # console — /dev/console is ttyS0 (the kernel cmdline names
+        # it), and the host run script's MSKS_APPLIANCE_CONSOLE=pty
+        # boot exposes that tty as a host pty msks-appliance-shell
+        # attaches to. The stock serial getty reads the same tty —
+        # two readers race every input byte (seen live: the login
+        # prompt swallowed the first command) — so the unit
+        # conflicts it away while the shell runs (both template
+        # names: the base enables serial-getty; getty@ is the other
+        # instantiation) and After orders the stop before the start.
+        # The shell reads EOF immediately when the host serial is
+        # File mode: it exits 0, the unit ends cleanly (Restart is
+        # the default off), and the boot proceeds normally — the
+        # DIAG block in serial.log is all a file-mode boot shows.
+        # Runs beside msksd, not after it: a broken daemon is
+        # exactly what this shell exists to debug.
+        printf '%s\n' \
+          '[Unit]' \
+          'Description=msks debug root shell on the serial console (state-disk marker)' \
+          'Documentation=https://github.com/mcdonc/msks' \
+          'ConditionPathExists=/state/debug-shell' \
+          'Conflicts=serial-getty@ttyS0.service getty@ttyS0.service' \
+          'After=state.mount serial-getty@ttyS0.service getty@ttyS0.service' \
+          ''' \
+          '[Service]' \
+          'ExecStart=/bin/sh -c "exec /bin/sh -i </dev/console >/dev/console 2>&1"' \
+          'StandardOutput=journal+console' \
+          'StandardError=journal+console' \
+          ''' \
+          '[Install]' \
+          'WantedBy=multi-user.target' \
+          > $out/etc/systemd/system/msks-debug-shell.service
+        ln -s ../msks-debug-shell.service \
+          $out/etc/systemd/system/multi-user.target.wants/msks-debug-shell.service
+
         # The state disk converges before it mounts: the preparation
         # script (see msksStatePrepare) waits for the disk, labels or
         # formats it, and on every boot merges the var/ staging tree
@@ -941,6 +987,8 @@ let
         test -x "$root"/usr/local/sbin/msks-state-prepare
         test -d "$root"/var/lib/systemd
         test -f "$root"/etc/systemd/system/msksd.service
+        test -f "$root"/etc/systemd/system/msks-debug-shell.service
+        test -L "$root"/etc/systemd/system/multi-user.target.wants/msks-debug-shell.service
         test -f "$root"/usr/lib/modules/"$kver"/modules.dep
         grep -q '^msksd:.*:.*:/state/msksd:' "$root"/etc/passwd
         grep -q '^kvm:' "$root"/etc/group
