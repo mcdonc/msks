@@ -332,13 +332,20 @@ How it fits together (#10, #25, #92):
 - Nested KVM: `kvm_intel`/`kvm_amd` load in the guest and workspace
   VMs run on the appliance's `/dev/kvm` (verified: a workspace boots,
   runs, and stops inside, driven through the API).
-- Debug hatch: seed a `debug-shell` marker onto the state disk
-  (`debugfs -w -R "write <file> debug-shell" .devenv/state/appliance/state.ext4`)
-  and the init backgrounds the daemon, prints a one-way diagnostics
-  dump (kvm modules, `/dev/kvm`, VMM binary, store visibility) to the
-  serial log, runs `/state/diag.sh` if present, and leaves a shell on
-  the console — readable interactively when the serial console is
-  attached to a terminal instead of the log file.
+- Debug hatch (`msks-appliance-shell`, #189): one command from a
+  devenv shell for a root shell on the appliance console. It stops
+  the appliance, seeds the `debug-shell` marker onto the state
+  disk, boots with the serial console on a host pty
+  (`MSKS_APPLIANCE_CONSOLE=pty`), and attaches with socat (detach
+  with `Ctrl-]`). The guest prints the one-way diagnostics dump
+  (kvm modules, `/dev/kvm`, VMM binary, store visibility) to the
+  console, runs `/state/diag.sh` if present, and
+  `msks-debug-shell.service` — a root unit gated on the same
+  marker — serves the interactive shell. Detaching stops the
+  appliance and removes the marker, so the next
+  `msks-appliance-up` is a normal boot (File-mode serial,
+  `serial.log`); `msks-appliance-shell --off` performs that
+  teardown without a session.
 
 Known quirk worth knowing: cloud-hypervisor v52 rejects writes to
 sector 0 on disks without an explicit `image_type` (a QCOW2

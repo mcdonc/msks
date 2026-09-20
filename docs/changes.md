@@ -8,6 +8,15 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **`msks-appliance-shell` (#189).** One command from a devenv
+  shell for a root shell on the appliance console: it stops the
+  appliance, seeds the `debug-shell` marker onto the state disk,
+  boots with the serial console on a host pty, and attaches with
+  socat (detach with `Ctrl-]`). Detaching stops the appliance and
+  removes the marker, so the next start is a normal boot;
+  `--off` performs that teardown without a session. The run
+  script accepts `MSKS_APPLIANCE_CONSOLE=pty` for the same
+  console without the helper.
 - **`msks rsync` (#190).** Zero-setup file copies over the forward:
   `msks rsync <ws> -- -av ./site/ root@:/root/site/` boots the workspace
   when the daemon reports it as not running, stages the ssh

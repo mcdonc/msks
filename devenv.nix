@@ -421,6 +421,21 @@ in
     '';
   };
 
+  # The appliance debug console (#189): one command for a root
+  # shell on the appliance. It stops the appliance, seeds the
+  # debug-shell marker onto the state disk, boots with the serial
+  # console on a pty (MSKS_APPLIANCE_CONSOLE=pty — the guest's
+  # msks-debug-shell.service serves the shell behind the same
+  # marker), and attaches with socat. Detaching (Ctrl-]) stops the
+  # appliance and removes the marker, so msks-appliance-up next is a
+  # normal boot; --off performs that teardown without a session.
+  # While a session runs the script owns the appliance — the run
+  # script is its child, outside the process manager.
+  scripts.msks-appliance-shell = {
+    description = "Root shell on the appliance console (stops/reboots the appliance; detach with Ctrl-])";
+    exec = ''exec bash "$DEVENV_ROOT/scripts/appliance-shell.sh" "$@"'';
+  };
+
   # CI-identical full suite: -n auto is how CI runs it — never optional
   # (sysmon branch coverage under-counts in a single-process run; klangk
   # AGENTS.md has the full story). addopts in pyproject.toml carry the
