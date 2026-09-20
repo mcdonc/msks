@@ -122,25 +122,35 @@ def consent_sets(policy: EgressPolicy) -> str:
     return sets
 
 
-def consent_gates(tap: str, guest_ip: str, queue_num: int | None) -> str:
-    """The consent section of the egress chain (interactive only):
-    rejected destination ports answer a SYN with a TCP RST (a
-    dropped SYN alone leaves connect() hanging on the kernel's
-    retransmit timer — the RST is the fast refusal), allowed
-    destinations pass, and everything else NEW queues for a
-    verdict — the queue match carries ``ct state new``, so an
-    established flow's later packets never re-enter consent (a
-    ``once`` verdict guards the connection it released for the
-    connection's whole life, not the cache window). The queue
-    carries no ``bypass``: an unbound or full queue drops
+def allow_matches(tap: str, policy: EgressPolicy) -> str:
+    """The allow-set matches (gated modes): a destination pinned
+    by the resolver's allowlist learn or a verdict's enforcement
+    passes here — both static and interactive pin into the same
+    sets, so both modes must match them."""
+    if not policy.gated:
+        return ""
+    return (
+        f'    iifname "{tap}" ip daddr @allows_any accept\n'
+        f'    iifname "{tap}" ip daddr . tcp dport @allows_port accept\n'
+    )
+
+
+def queue_gate(tap: str, guest_ip: str, queue_num: int | None) -> str:
+    """The deny-match and hold queue (interactive only): rejected
+    destination ports answer a SYN with a TCP RST (a dropped SYN
+    alone leaves connect() hanging on the kernel's retransmit
+    timer — the RST is the fast refusal), and everything else NEW
+    queues for a verdict — the queue match carries ``ct state
+    new``, so an established flow's later packets never re-enter
+    consent (a ``once`` verdict guards the connection it released
+    for the connection's whole life, not the cache window). The
+    queue carries no ``bypass``: an unbound or full queue drops
     (fail-closed)."""
     if queue_num is None:
         return ""
     return (
         f'    iifname "{tap}" ip daddr . tcp dport @rejects '
         "reject with tcp reset\n"
-        f'    iifname "{tap}" ip daddr @allows_any accept\n'
-        f'    iifname "{tap}" ip daddr . tcp dport @allows_port accept\n'
         f'    iifname "{tap}" ip saddr {guest_ip} ct state new '
         f"queue num {queue_num}\n"
     )
@@ -196,7 +206,8 @@ def vm_ruleset(
         f"{dns_lockout_rules(tap)}"
         f"{established_accept(tap, mode)}"
         f"{ip_spec_rules(tap, mode.ip_specs)}"
-        f"{consent_gates(tap, guest_ip, queue_num)}"
+        f"{allow_matches(tap, mode)}"
+        f"{queue_gate(tap, guest_ip, queue_num)}"
         f'    iifname "{tap}" ip saddr {guest_ip} '
         f'oifname "{uplink}" {final}\n'
         f'    oifname "{tap}" drop\n'

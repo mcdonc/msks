@@ -193,18 +193,20 @@ def test_interactive_mode_queues_new_flows() -> None:
     egress = ruleset[
         ruleset.index("chain egress") : ruleset.index("chain ingress")
     ]
-    # Established beats the gates; the gates beat the queue; the
-    # queue beats the final drop.
+    # Established beats the gates; the allow matches beat the
+    # reject match (an allow pin outranks a lingering reject — the
+    # supersede rule); everything beats the queue and the final
+    # drop.
     assert egress.index("ct state established,related accept") < egress.index(
-        "@rejects"
-    )
-    assert egress.index("@rejects reject with tcp reset") < egress.index(
         "@allows_any accept"
     )
     assert egress.index("@allows_any accept") < egress.index(
         "@allows_port accept"
     )
-    assert egress.index("@allows_port accept") < egress.index("queue num")
+    assert egress.index("@allows_port accept") < egress.index("@rejects")
+    assert egress.index("@rejects reject with tcp reset") < egress.index(
+        "queue num"
+    )
     assert egress.index("queue num 1107") < egress.index('oifname "eth0" drop')
     # Only NEW flows queue: an established flow's later packets
     # never re-enter consent (once per flow, not per cache window).
