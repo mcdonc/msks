@@ -12,6 +12,7 @@ import json
 import os
 import ssl
 import sys
+import time
 from collections.abc import AsyncIterator
 from datetime import datetime
 from pathlib import Path
@@ -2136,16 +2137,8 @@ def test_image_lines_show_import_times() -> None:
             "bytes": 3 * 1024**3,
             "imported": "not a date",
         },
-        # A year-1 stamp parses on the daemon but has no local-time
-        # representation (#186 review round 2); a non-string is a
-        # daemon that sent JSON where a moment belongs. Both render
-        # a dash, not a traceback.
-        {
-            "name": "debian",
-            "version": "13.6",
-            "bytes": 3 * 1024**3,
-            "imported": "0001-01-01T00:00:01+00:00",
-        },
+        # A non-string is a daemon that sent JSON where a moment
+        # belongs: a dash, not a traceback.
         {
             "name": "debian",
             "version": "13.6",
@@ -2166,7 +2159,30 @@ def test_image_lines_show_import_times() -> None:
     assert lines[4] == f"{'debian:13.6':<24} {'-':<16} 3G"
     assert lines[5] == f"{'debian:13.6':<24} {'-':<16} 3G"
     assert lines[6] == f"{'debian:13.6':<24} {'-':<16} 3G"
-    assert lines[7] == f"{'debian:13.6':<24} {'-':<16} 3G"
+
+
+@pytest.fixture
+def western_zone():
+    """A UTC-4 host, POSIX-style (offset sign is positive-west),
+    whatever zone the runner itself sits in."""
+    old = os.environ.get("TZ")
+    os.environ["TZ"] = "GMT4"
+    time.tzset()
+    yield
+    if old is None:
+        os.environ.pop("TZ", None)
+    else:
+        os.environ["TZ"] = old
+    time.tzset()
+
+
+def test_imported_cell_degrades_extreme_stamps(western_zone) -> None:
+    """A year-1 stamp has no representation four hours west of UTC
+    (#186 review round 2): the cell degrades to a dash, never a
+    traceback. The zone is forced — a UTC runner would render the
+    stamp and hide the crash the western host sees."""
+    row = {"imported": "0001-01-01T00:00:01+00:00"}
+    assert cli.imported_cell(row) == "-"
 
 
 def test_image_lines_without_times_keep_two_columns() -> None:
