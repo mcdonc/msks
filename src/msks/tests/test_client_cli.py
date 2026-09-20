@@ -2015,3 +2015,122 @@ def test_home_import_reply_without_a_count_is_one_line(
             ["home", "import", "ws1", str(volume)],
             transport=mock(lambda req: httpx.Response(200, json={})),
         )
+
+
+STORAGE_BODY = {
+    "state": {
+        "total": 40 * 1024**3,
+        "used": int(23.4 * 1024**3),
+        "free": int(16.6 * 1024**3),
+        "pressure": "ok",
+        "floor_mib": 512,
+        "warn_pct": 90,
+    },
+    "workspaces": [
+        {
+            "id": "alpha",
+            "root_mib": 10240,
+            "home_mib": 2048,
+            "root_bytes": int(3.1 * 1024**3),
+            "home_bytes": 812 * 1024**2,
+        }
+    ],
+    "images": [
+        {
+            "hash": "a" * 64,
+            "name": "debian",
+            "version": "13",
+            "bytes": int(3.0 * 1024**3),
+        }
+    ],
+}
+
+
+def test_cmd_storage_renders_all_three_blocks(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``msks storage``: the budget line, the per-workspace cost table
+    against its ceilings, and the catalog costs (#184)."""
+    client_env(monkeypatch)
+    rc = cli.cmd_storage(
+        transport=mock(lambda req: httpx.Response(200, json=STORAGE_BODY))
+    )
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "state disk    used 23.4G of 40G" in out
+    assert "free 16.6G" in out
+    assert "pressure ok" in out
+    assert "root cost/ceiling" in out
+    assert "alpha" in out
+    assert "3.1G / 10G" in out
+    assert "812M / 2G" in out
+    assert "debian:13" in out
+
+
+def test_cmd_storage_narrows_to_one_workspace(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client_env(monkeypatch)
+    rc = cli.cmd_storage(
+        "alpha",
+        transport=mock(lambda req: httpx.Response(200, json=STORAGE_BODY)),
+    )
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "alpha" in out
+
+
+def test_cmd_storage_unknown_workspace_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client_env(monkeypatch)
+    with pytest.raises(SystemExit, match="no such workspace"):
+        cli.cmd_storage(
+            "ghost",
+            transport=mock(lambda req: httpx.Response(200, json=STORAGE_BODY)),
+        )
+
+
+def test_cmd_storage_json_is_verbatim(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client_env(monkeypatch)
+    rc = cli.cmd_storage(
+        as_json=True,
+        transport=mock(lambda req: httpx.Response(200, json=STORAGE_BODY)),
+    )
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert json.loads(out) == STORAGE_BODY
+
+
+def test_human_bytes_units() -> None:
+    """The storage tables' units: whole numbers when the decimal adds
+    nothing, one decimal when it carries information."""
+    assert cli.human_bytes(512 * 1024) == "512K"
+    assert cli.human_bytes(812 * 1024**2) == "812M"
+    assert cli.human_bytes(2048 * 1024**2) == "2G"
+    assert cli.human_bytes(int(3.1 * 1024**3)) == "3.1G"
+    assert cli.human_bytes(int(23.4 * 1024**3)) == "23.4G"
+    assert cli.human_bytes(40 * 1024**3) == "40G"
+
+
+def test_render_storage_empty_tables_collapse(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A daemon with no workspaces and no images prints the budget
+    line alone."""
+    report = {
+        "state": {
+            "total": 4 * 1024**3,
+            "used": 1024**3,
+            "free": 3 * 1024**3,
+            "pressure": "ok",
+            "floor_mib": 512,
+            "warn_pct": 90,
+        },
+        "workspaces": [],
+        "images": [],
+    }
+    text = cli.render_storage(report, as_json=False)
+    assert text == ("state disk    used 1G of 4G    free 3G    pressure ok")

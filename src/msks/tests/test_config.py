@@ -400,6 +400,8 @@ KEY_CASES = [
     ("host_name", "host-a", "vmm.host_name", "host-a"),
     ("root_mib", 4096, "vmm.root_mib", 4096),
     ("home_mib", 512, "vmm.home_mib", 512),
+    ("storage_warn_pct", 80, "vmm.storage_warn_pct", 80),
+    ("storage_floor_mib", 256, "vmm.storage_floor_mib", 256),
     ("host", "0.0.0.0", "server.host", "0.0.0.0"),
     ("port", 9000, "server.port", 9000),
     ("tls_cert", "/c.pem", "server.tls_cert", "/c.pem"),

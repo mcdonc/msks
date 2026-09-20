@@ -193,3 +193,27 @@ def test_mkisofs_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MSKSD_MKISOFS", "/opt/tools/mkisofs")
     settings = Settings.from_env()
     assert settings.vmm.mkisofs == "/opt/tools/mkisofs"
+
+
+def test_storage_threshold_env_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MSKSD_STORAGE_WARN_PCT", "80")
+    monkeypatch.setenv("MSKSD_STORAGE_FLOOR_MIB", "1024")
+    settings = Settings.from_env()
+    assert settings.vmm.storage_warn_pct == 80
+    assert settings.vmm.storage_floor_mib == 1024
+
+
+def test_storage_warn_pct_bounds(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MSKSD_STORAGE_WARN_PCT", "100")
+    with pytest.raises(ValueError, match="MSKSD_STORAGE_WARN_PCT"):
+        Settings.from_env()
+
+
+def test_storage_floor_mib_must_be_positive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MSKSD_STORAGE_FLOOR_MIB", "0")
+    with pytest.raises(ValueError, match="MSKSD_STORAGE_FLOOR_MIB"):
+        Settings.from_env()

@@ -1,6 +1,6 @@
 """The ``msks`` CLI: ``ls``, ``create``, ``start``, ``stop``, ``rm``,
-``console``, ``forward``, ``ssh``, ``key``, the ``image`` catalog
-subcommands, and the ``home`` volume moves.
+``console``, ``forward``, ``ssh``, ``key``, ``storage``, the ``image``
+catalog subcommands, and the ``home`` volume moves.
 
 Every command speaks the daemon's REST surface with the same client
 conventions (#21): ``MSKSC_URL`` for the daemon, ``MSKSC_TOKEN`` for
@@ -19,6 +19,7 @@ from pathlib import Path
 
 from ..identity import KEY_TYPES, mint
 from ..imagestore import is_hash_shape, version_key
+from ..storage import MIB
 from .console import run_workspace_shell
 from .forward import run_workspace_forward
 from .rest import (
@@ -400,6 +401,114 @@ HEX_DIGITS = set("0123456789abcdef")
 
 #: How many refs an error line spells out before "… (+N more)".
 CATALOG_REF_CAP = 8
+
+
+def human_bytes(count: int) -> str:
+    """Bytes in binary units: 512K, 812M, 23.4G — a whole number
+    whenever the decimal would add nothing (2G, 40G)."""
+    gib = count / 1024**3
+    if gib >= 1:
+        tenths = round(gib, 1)
+        if tenths == int(tenths):
+            return f"{int(tenths)}G"
+        return f"{tenths:.1f}G"
+    if count >= 1024**2:
+        return f"{round(count / 1024**2)}M"
+    return f"{max(count // 1024, 0)}K"
+
+
+def cost_pair(cost_bytes: int, ceiling_mib: int) -> str:
+    """One cost/ceiling cell: the blocks a workspace pays beside the
+    virtual size its guest sees as the quota."""
+    return f"{human_bytes(cost_bytes)} / {human_bytes(ceiling_mib * MIB)}"
+
+
+def state_line(state: dict) -> str:
+    """The budget line: what the state disk holds and how close it is
+    to the named pressure condition."""
+    return (
+        f"state disk    used {human_bytes(state['used'])} "
+        f"of {human_bytes(state['total'])}    "
+        f"free {human_bytes(state['free'])}    pressure {state['pressure']}"
+    )
+
+
+def render_storage(
+    report: dict, as_json: bool, workspace_id: str | None = None
+) -> str:
+    """The whole capacity report: budget line, per-workspace
+    cost/ceiling table, catalog costs — or one JSON document."""
+    if as_json:
+        return json.dumps(report, indent=2)
+    lines = [state_line(report["state"])]
+    lines.extend(workspace_lines(report["workspaces"], workspace_id))
+    lines.extend(image_lines(report["images"]))
+    return "\n".join(lines)
+
+
+def format_storage_row(ws: dict) -> str:
+    """One workspace line: id, both cost/ceiling cells, total cost."""
+    return (
+        f"{ws['id']:<24} "
+        f"{cost_pair(ws['root_bytes'], ws['root_mib']):<20} "
+        f"{cost_pair(ws['home_bytes'], ws['home_mib']):<20} "
+        f"{human_bytes(ws['root_bytes'] + ws['home_bytes'])}"
+    )
+
+
+def narrowed(workspaces: list[dict], workspace_id: str | None) -> list[dict]:
+    """The rows one table shows: every row, or the one id asked for."""
+    if workspace_id is None:
+        return workspaces
+    return [ws for ws in workspaces if ws["id"] == workspace_id]
+
+
+def workspace_lines(
+    workspaces: list[dict], workspace_id: str | None
+) -> list[str]:
+    """The per-workspace cost/ceiling table — empty when none match."""
+    matches = narrowed(workspaces, workspace_id)
+    if not matches:
+        return []
+    header = (
+        f"{'workspace':<24} {'root cost/ceiling':<20} "
+        f"{'home cost/ceiling':<20} cost"
+    )
+    return ["", header, *[format_storage_row(ws) for ws in matches]]
+
+
+def image_lines(images: list[dict]) -> list[str]:
+    """The catalog cost table — empty when the catalog is empty."""
+    if not images:
+        return []
+    lines = ["", f"{'image':<24} cost"]
+    for image in images:
+        ref = f"{image['name']}:{image['version']}"
+        lines.append(f"{ref:<24} {human_bytes(image['bytes'])}")
+    return lines
+
+
+def cmd_storage(
+    workspace_id: str | None = None,
+    as_json: bool = False,
+    transport=None,
+) -> int:
+    """``msks storage``: the state-disk budget and its consumers."""
+    report = asyncio.run(
+        api_call(
+            "GET",
+            env_url(),
+            env_token(),
+            "/api/v1/storage",
+            transport=transport,
+        )
+    )
+    if workspace_id is not None and not any(
+        ws["id"] == workspace_id for ws in report["workspaces"]
+    ):
+        raise SystemExit(f"msks: no such workspace: {workspace_id}")
+    print(render_storage(report, as_json, workspace_id))
+    return 0
 
 
 def format_image(row: dict) -> str:
@@ -807,6 +916,19 @@ def build_parser() -> argparse.ArgumentParser:
     listing.add_argument(
         "--json", action="store_true", help="one JSON document"
     )
+    storage_cmd = sub.add_parser(
+        "storage",
+        help="report the state-disk budget and per-workspace cost (#184)",
+    )
+    storage_cmd.add_argument(
+        "workspace",
+        nargs="?",
+        default=None,
+        help="narrow the workspace table to one id",
+    )
+    storage_cmd.add_argument(
+        "--json", action="store_true", help="one JSON document"
+    )
     create = sub.add_parser("create", help="create a workspace")
     create.add_argument(
         "workspace_id", help="the id to create (DNS-label charset)"
@@ -1112,6 +1234,9 @@ def command_table(args: argparse.Namespace, transport) -> dict:
     """One entry per subcommand: its zero-argument body."""
     return {
         "ls": lambda: cmd_ls(args.json, transport=transport),
+        "storage": lambda: cmd_storage(
+            args.workspace, args.json, transport=transport
+        ),
         "create": lambda: run_create(args, transport),
         "start": lambda: cmd_start(args.workspace_id, transport=transport),
         "stop": lambda: cmd_stop(args.workspace_id, transport=transport),

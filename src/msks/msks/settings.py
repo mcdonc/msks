@@ -147,6 +147,13 @@ class VmmSettings:
     host_name: str = field(default_factory=socket.gethostname)
     root_mib: int = 10240
     home_mib: int = 2048
+    # The state-disk pressure thresholds (#184): past the warn
+    # percentage used the watcher publishes a named warning, and at
+    # or below the floor's free bytes workspace creates answer 507
+    # — a named refusal where #180's EIO storm used to be the first
+    # signal.
+    storage_warn_pct: int = 90
+    storage_floor_mib: int = 512
     # The identity key type msksd mints at create (#111): Ed25519
     # is FIPS-approvable (FIPS 186-5) and accepted by ssh clients
     # restricted to the common ssh-ed25519,ssh-rsa set (#138);
@@ -157,69 +164,7 @@ class VmmSettings:
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> VmmSettings:
-        env = live_env(env)
-        driver = _env(env, "MSKSD_VMM_DRIVER", cls.driver)
-        if driver not in VALID_DRIVERS:
-            raise ValueError(
-                f"MSKSD_VMM_DRIVER must be one of {VALID_DRIVERS}, "
-                f"got {driver!r}"
-            )
-        # Zero is the documented off switch for the stall close; a
-        # negative window would close healthy sessions.
-        stall_timeout_s = _env_float(
-            env, "MSKSD_CONSOLE_STALL_TIMEOUT_S", cls.console_stall_timeout_s
-        )
-        if stall_timeout_s < 0:
-            raise ValueError(
-                "MSKSD_CONSOLE_STALL_TIMEOUT_S must be zero or positive, "
-                f"got {stall_timeout_s}"
-            )
-        # The same shape as the stall window: zero is a valid
-        # fail-fast deadline, a negative one is a configuration error.
-        forward_wait_s = _env_float(
-            env, "MSKSD_FORWARD_WAIT_TIMEOUT_S", cls.forward_wait_timeout_s
-        )
-        if forward_wait_s < 0:
-            raise ValueError(
-                "MSKSD_FORWARD_WAIT_TIMEOUT_S must be zero or positive, "
-                f"got {forward_wait_s}"
-            )
-        move_wait_s = move_wait_seconds(env)
-        return cls(
-            driver=driver,
-            cloud_hypervisor=_env(
-                env, "MSKSD_CLOUD_HYPERVISOR", cls.cloud_hypervisor
-            ),
-            state_dir=Path(
-                _env(env, "MSKSD_STATE_DIR", str(cls().state_dir))
-            ).expanduser(),
-            socket_wait_timeout_s=_env_float(
-                env, "MSKSD_SOCKET_WAIT_TIMEOUT_S", 10.0
-            ),
-            request_timeout_s=_env_float(env, "MSKSD_REQUEST_TIMEOUT_S", 5.0),
-            shutdown_timeout_s=_env_float(
-                env, "MSKSD_SHUTDOWN_TIMEOUT_S", 20.0
-            ),
-            vsock_shell_port=_parse_int(
-                env, "MSKSD_VSOCK_SHELL_PORT", cls.vsock_shell_port
-            ),
-            vsock_wait_timeout_s=_env_float(
-                env, "MSKSD_VSOCK_WAIT_TIMEOUT_S", cls.vsock_wait_timeout_s
-            ),
-            forward_wait_timeout_s=forward_wait_s,
-            console_stall_timeout_s=stall_timeout_s,
-            move_wait_timeout_s=move_wait_s,
-            default_image=_env(env, "MSKSD_DEFAULT_IMAGE", cls.default_image),
-            qemu_img=_env(env, "MSKSD_QEMU_IMG", cls.qemu_img),
-            mkfs_ext4=_env(env, "MSKSD_MKFS_EXT4", cls.mkfs_ext4),
-            mkisofs=_env(env, "MSKSD_MKISOFS", cls.mkisofs),
-            host_name=_env(env, "MSKSD_HOST_NAME", cls().host_name),
-            root_mib=_parse_positive_int(env, "MSKSD_ROOT_MIB", cls.root_mib),
-            home_mib=_parse_positive_int(env, "MSKSD_HOME_MIB", cls.home_mib),
-            ssh_key_type=parse_key_type(
-                env, "MSKSD_SSH_KEY_TYPE", cls.ssh_key_type
-            ),
-        )
+        return vmm_settings_from_env(cls, live_env(env))
 
 
 @dataclass
@@ -331,6 +276,85 @@ class Settings:
             server=ServerSettings.from_env(env),
             net=NetSettings.from_env(env),
         )
+
+
+def storage_warn_pct(env: Mapping[str, str], name: str, default: int) -> int:
+    """The state-disk warn line (#184): 1–99, a named error outside."""
+    value = _parse_int(env, name, default)
+    if not 1 <= value <= 99:
+        raise ValueError(f"{name} must sit between 1 and 99, got {value}")
+    return value
+
+
+def vmm_settings_from_env(
+    cls: type[VmmSettings], env: Mapping[str, str]
+) -> VmmSettings:
+    """Build VmmSettings from the environment (helper: keeps the
+    class block itself at xenon rank A, like its siblings)."""
+    driver = _env(env, "MSKSD_VMM_DRIVER", cls.driver)
+    if driver not in VALID_DRIVERS:
+        raise ValueError(
+            f"MSKSD_VMM_DRIVER must be one of {VALID_DRIVERS}, got {driver!r}"
+        )
+    # Zero is the documented off switch for the stall close; a
+    # negative window would close healthy sessions.
+    stall_timeout_s = _env_float(
+        env, "MSKSD_CONSOLE_STALL_TIMEOUT_S", cls.console_stall_timeout_s
+    )
+    if stall_timeout_s < 0:
+        raise ValueError(
+            "MSKSD_CONSOLE_STALL_TIMEOUT_S must be zero or positive, "
+            f"got {stall_timeout_s}"
+        )
+    # The same shape as the stall window: zero is a valid
+    # fail-fast deadline, a negative one is a configuration error.
+    forward_wait_s = _env_float(
+        env, "MSKSD_FORWARD_WAIT_TIMEOUT_S", cls.forward_wait_timeout_s
+    )
+    if forward_wait_s < 0:
+        raise ValueError(
+            "MSKSD_FORWARD_WAIT_TIMEOUT_S must be zero or positive, "
+            f"got {forward_wait_s}"
+        )
+    return cls(
+        driver=driver,
+        cloud_hypervisor=_env(
+            env, "MSKSD_CLOUD_HYPERVISOR", cls.cloud_hypervisor
+        ),
+        state_dir=Path(
+            _env(env, "MSKSD_STATE_DIR", str(cls().state_dir))
+        ).expanduser(),
+        socket_wait_timeout_s=_env_float(
+            env, "MSKSD_SOCKET_WAIT_TIMEOUT_S", 10.0
+        ),
+        request_timeout_s=_env_float(env, "MSKSD_REQUEST_TIMEOUT_S", 5.0),
+        shutdown_timeout_s=_env_float(env, "MSKSD_SHUTDOWN_TIMEOUT_S", 20.0),
+        vsock_shell_port=_parse_int(
+            env, "MSKSD_VSOCK_SHELL_PORT", cls.vsock_shell_port
+        ),
+        vsock_wait_timeout_s=_env_float(
+            env, "MSKSD_VSOCK_WAIT_TIMEOUT_S", cls.vsock_wait_timeout_s
+        ),
+        forward_wait_timeout_s=forward_wait_s,
+        console_stall_timeout_s=stall_timeout_s,
+        move_wait_timeout_s=move_wait_seconds(env),
+        default_image=_env(env, "MSKSD_DEFAULT_IMAGE", cls.default_image),
+        qemu_img=_env(env, "MSKSD_QEMU_IMG", cls.qemu_img),
+        mkfs_ext4=_env(env, "MSKSD_MKFS_EXT4", cls.mkfs_ext4),
+        mkisofs=_env(env, "MSKSD_MKISOFS", cls.mkisofs),
+        host_name=_env(env, "MSKSD_HOST_NAME", cls().host_name),
+        root_mib=_parse_positive_int(env, "MSKSD_ROOT_MIB", cls.root_mib),
+        home_mib=_parse_positive_int(env, "MSKSD_HOME_MIB", cls.home_mib),
+        storage_warn_pct=storage_warn_pct(
+            env, "MSKSD_STORAGE_WARN_PCT", cls.storage_warn_pct
+        ),
+        storage_floor_mib=_parse_positive_int(
+            env, "MSKSD_STORAGE_FLOOR_MIB", cls.storage_floor_mib
+        ),
+        ssh_key_type=parse_key_type(
+            env, "MSKSD_SSH_KEY_TYPE", cls.ssh_key_type
+        ),
+    )
 
 
 def parse_key_type(env: Mapping[str, str], name: str, default: str) -> str:

@@ -1022,3 +1022,229 @@ async def test_create_refuses_user_data_on_k8s(client, monkeypatch) -> None:
     )
     assert refused.status_code == 400
     assert "without user_data" in refused.json()["detail"]
+
+
+async def test_storage_report_lists_consumers(client) -> None:
+    """GET /api/v1/storage names the budget and every workspace's
+    cost against its ceilings (#184)."""
+    http, app, _stub = client
+    app.state.settings.vmm.state_dir.mkdir(parents=True, exist_ok=True)
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-st", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    report = await http.get("/api/v1/storage", headers=auth())
+    assert report.status_code == 200
+    body = report.json()
+    assert body["state"]["pressure"] in ("ok", "warn", "critical", "unknown")
+    assert body["state"]["total"] >= 0
+    assert (
+        body["state"]["floor_mib"] == app.state.settings.vmm.storage_floor_mib
+    )
+    assert body["state"]["warn_pct"] == app.state.settings.vmm.storage_warn_pct
+    ws = next(row for row in body["workspaces"] if row["id"] == "ws-st")
+    assert ws["root_mib"] == app.state.settings.vmm.root_mib
+    assert ws["home_mib"] == app.state.settings.vmm.home_mib
+    assert isinstance(ws["root_bytes"], int)
+    assert isinstance(ws["home_bytes"], int)
+    assert body["images"] == []
+
+
+async def test_storage_report_requires_a_token(client) -> None:
+    http, _app, _stub = client
+    refused = await http.get("/api/v1/storage")
+    assert refused.status_code in (401, 403)
+
+
+async def test_create_refused_below_the_storage_floor(
+    client, monkeypatch
+) -> None:
+    """A state disk at critical pressure answers a named 507 (#184)
+    instead of accepting a create whose artifacts would wedge it."""
+    http, app, _stub = client
+    app.state.settings.vmm.state_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        app.state.settings.vmm,
+        "storage_floor_mib",
+        (1 << 50) // (1024 * 1024),
+    )
+    refused = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-full", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert refused.status_code == 507
+    detail = refused.json()["detail"]
+    assert "MSKSD_STORAGE_FLOOR_MIB" in detail
+    assert "state disk" in detail
+    # Nothing was created and nothing was left behind.
+    listed = await http.get("/api/v1/workspaces", headers=auth())
+    assert listed.json() == []
+
+
+async def test_storage_report_refused_on_k8s(client, monkeypatch) -> None:
+    """The report describes the local backend's artifact files; k8s
+    keeps them on per-workspace claims and gets a named refusal."""
+    http, app, _stub = client
+    monkeypatch.setattr(app.state.settings.vmm, "driver", "k8s")
+    refused = await http.get("/api/v1/storage", headers=auth())
+    assert refused.status_code == 400
+    assert "not served by the k8s backend" in refused.json()["detail"]
+
+
+async def test_create_not_refused_below_floor_on_k8s(
+    client, monkeypatch
+) -> None:
+    """A k8s create at a critical local filesystem proceeds: the
+    artifacts live on per-workspace claims, not this state disk."""
+    http, app, _stub = client
+    app.state.settings.vmm.state_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(app.state.settings.vmm, "driver", "k8s")
+    monkeypatch.setattr(
+        app.state.settings.vmm,
+        "storage_floor_mib",
+        (1 << 50) // (1024 * 1024),
+    )
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-k8s-floor",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "egress": False,
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 201
+
+
+async def test_image_import_refused_below_the_storage_floor(
+    client, monkeypatch
+) -> None:
+    """An image import copies a whole archive and unpacks its cache:
+    the floor refuses it with the same named 507 as a create."""
+    http, app, _stub = client
+    app.state.settings.vmm.state_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        app.state.settings.vmm,
+        "storage_floor_mib",
+        (1 << 50) // (1024 * 1024),
+    )
+    refused = await http.post(
+        "/api/v1/images", json={"source": "/x.tar"}, headers=auth()
+    )
+    assert refused.status_code == 507
+    assert "before importing images" in refused.json()["detail"]
+
+
+async def test_home_import_refused_below_the_storage_floor(
+    client, monkeypatch
+) -> None:
+    """A home-volume import streams a whole volume at the state disk:
+    the floor refuses it before the body installs anything."""
+    http, app, _stub = client
+    app.state.settings.vmm.state_dir.mkdir(parents=True, exist_ok=True)
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-home-floor", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    monkeypatch.setattr(
+        app.state.settings.vmm,
+        "storage_floor_mib",
+        (1 << 50) // (1024 * 1024),
+    )
+    refused = await http.put(
+        "/api/v1/workspaces/ws-home-floor/home",
+        content=b"\x53\xef",
+        headers=auth(),
+    )
+    assert refused.status_code == 507
+    assert "before importing a home volume" in refused.json()["detail"]
+
+
+async def test_image_import_refused_by_incoming_size(
+    client, monkeypatch, tmp_path
+) -> None:
+    """Free space above the floor still refuses an import whose
+    incoming bytes cannot fit: the archive is counted twice (the
+    retained copy plus its unpacked cache)."""
+    from msks.server import api as api_module
+
+    http, app, _stub = client
+    app.state.settings.vmm.state_dir.mkdir(parents=True, exist_ok=True)
+    archive = tmp_path / "big.tar"
+    with archive.open("wb") as handle:
+        handle.truncate(100 * 1024 * 1024)  # sparse: only st_size matters
+    monkeypatch.setattr(
+        api_module.storage,
+        "state_usage",
+        lambda path: {
+            "total": 40 * 1024**3,
+            "used": int(39.4 * 1024**3),
+            "free": 600 * 1024**2,
+        },
+    )
+    # 600 MiB free clears the 512 MiB floor, but the import needs
+    # 512 + 2x100 = 712 MiB: the named 507 names the incoming bytes.
+    refused = await http.post(
+        "/api/v1/images", json={"source": str(archive)}, headers=auth()
+    )
+    assert refused.status_code == 507
+    assert "incoming bytes" in refused.json()["detail"]
+
+
+async def test_image_import_floor_applies_on_k8s(client, monkeypatch) -> None:
+    """The image catalog lives on the daemon's state disk on every
+    backend: a k8s daemon below its floor answers the same 507."""
+    http, app, _stub = client
+    app.state.settings.vmm.state_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(app.state.settings.vmm, "driver", "k8s")
+    monkeypatch.setattr(
+        app.state.settings.vmm,
+        "storage_floor_mib",
+        (1 << 50) // (1024 * 1024),
+    )
+    refused = await http.post(
+        "/api/v1/images", json={"source": "/x.tar"}, headers=auth()
+    )
+    assert refused.status_code == 507
+    assert "before importing images" in refused.json()["detail"]
+
+
+async def test_home_import_refused_by_content_length(
+    client, monkeypatch
+) -> None:
+    """A sized upload is admitted only when free space covers the
+    floor plus the body's bytes."""
+    from msks.server import api as api_module
+
+    http, app, _stub = client
+    app.state.settings.vmm.state_dir.mkdir(parents=True, exist_ok=True)
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-cl", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    monkeypatch.setattr(
+        api_module.storage,
+        "state_usage",
+        lambda path: {
+            "total": 40 * 1024**3,
+            "used": int(39.4 * 1024**3),
+            "free": 600 * 1024**2,
+        },
+    )
+    # 600 MiB free clears the 512 MiB floor; the 100 MiB body's
+    # Content-Length does not fit above it.
+    refused = await http.put(
+        "/api/v1/workspaces/ws-cl/home",
+        content=b"x" * (100 * 1024 * 1024),
+        headers=auth(),
+    )
+    assert refused.status_code == 507
+    assert "incoming bytes" in refused.json()["detail"]

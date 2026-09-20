@@ -128,7 +128,7 @@ the file itself carries them all at one level.
 | `port`            | `MSKSD_PORT`            | int    | `8660`      | The listener's port.                                                                                                                                                           |
 | `tls_cert`        | `MSKSD_TLS_CERT`        | string | _(unset)_   | Path to the operator-provided TLS certificate. Both cert and key unset: a self-signed CA is generated on first run and its fingerprint printed for trust-on-first-use pinning. |
 | `tls_key`         | `MSKSD_TLS_KEY`         | string | _(unset)_   | Path to the operator-provided TLS key.                                                                                                                                         |
-| `event_poll_s`    | `MSKSD_EVENT_POLL_S`    | float  | `1.0`       | Seconds between workspace status scans (read at loop start; a running daemon applies a change at restart).                                                                     |
+| `event_poll_s`    | `MSKSD_EVENT_POLL_S`    | float  | `1.0`       | Seconds between watcher scans — workspace status reconciles and the state-disk pressure probe (#184) — read at loop start; a running daemon applies a change at restart.       |
 | `bootstrap_token` | `MSKSD_BOOTSTRAP_TOKEN` | string | _(unset)_   | Seeds the first bearer token at first boot.                                                                                                                                    |
 | `access_log`      | `MSKSD_ACCESS_LOG`      | bool   | `false`     | Writes uvicorn's access log. Off by default: the events websocket carries its token in the query string, which the access log would persist.                                   |
 
@@ -154,6 +154,8 @@ the file itself carries them all at one level.
 | `host_name`               | `MSKSD_HOST_NAME`               | string | _(the hostname)_       | The host name recorded as owning locally-created workspaces.                                                                                                                                                                                                    |
 | `root_mib`                | `MSKSD_ROOT_MIB`                | int    | `10240`                | Default workspace root overlay size, MiB (a per-create request overrides).                                                                                                                                                                                      |
 | `home_mib`                | `MSKSD_HOME_MIB`                | int    | `2048`                 | Default workspace `/home` volume size, MiB (a per-create request overrides).                                                                                                                                                                                    |
+| `storage_warn_pct`        | `MSKSD_STORAGE_WARN_PCT`        | int    | `90`                   | State-disk percentage used that moves pressure to `warn` (#184); 1–99.                                                                                                                                                                                          |
+| `storage_floor_mib`       | `MSKSD_STORAGE_FLOOR_MIB`       | int    | `512`                  | Free state-disk MiB below which pressure is `critical` and workspace creates, image imports, and home-volume imports answer `507` (#184).                                                                                                                       |
 | `ssh_key_type`            | `MSKSD_SSH_KEY_TYPE`            | string | `ed25519`              | The identity type minted at create (#111): `ed25519` (the default, #138 — FIPS-approvable, and accepted by ssh clients restricted to the common `ssh-ed25519,ssh-rsa` set), `ecdsa` (P-256), or `rsa` (3072-bit).                                               |
 
 ### The Kubernetes runner driver
@@ -199,7 +201,9 @@ reload naming a new one changes nothing:
   state dir live — moving it mid-run would orphan running
   workspaces, so the daemon latches the startup value)
 - `default_image` (imported into the catalog once, at first boot)
-- the workspace status scan's `event_poll_s` (sampled at loop start)
+- the watcher scan's `event_poll_s` (sampled at loop start): both the
+  workspace status reconcile and the state-disk pressure probe
+  (#184) ride it
 - the egress machinery's startup inputs: `egress_enabled` (the
   subsystem latches its state when the daemon boots) and the base
   NAT masquerade's `egress_uplink` (per-workspace firewall rules

@@ -15,7 +15,7 @@ from msks.server import watcher as watcher_mod
 from msks.server.api import build_api, wait_for_disconnect
 from msks.server.events import EventHub, close_all, relay
 from msks.server.watcher import scan_once, scan_workspace, watch_loop
-from msks.settings import NetSettings, ServerSettings, Settings
+from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
 from test_api import TOKEN, StubMicrovm, auth
 
 
@@ -235,3 +235,84 @@ async def test_watch_loop_logs_scan_failure(tmp_path: Path) -> None:
             await task
         except asyncio.CancelledError:
             pass
+
+
+async def test_scan_storage_publishes_pressure_changes(tmp_path: Path) -> None:
+    """The state-disk probe is edge-triggered (#184): a pressure
+    change publishes once, a steady state publishes nothing, and the
+    floor can move the pressure back the other way."""
+    from msks.server.watcher import scan_storage
+
+    settings = Settings(
+        vmm=VmmSettings(state_dir=tmp_path),
+        net=NetSettings(enabled=False),
+        server=ServerSettings(
+            db_path=tmp_path / "pressure.db",
+            bootstrap_token=TOKEN,
+            event_poll_s=10.0,
+        ),
+    )
+    app = build_app(settings)
+    hub = EventHub()
+    queue = hub.subscribe()
+    # tmp_path sits on a real filesystem with plenty free: warn past
+    # any percentage once the warn line is 1.
+    app.state.settings.vmm.storage_warn_pct = 1
+    assert await scan_storage(app, hub) is True
+    message = json.loads(queue.get_nowait())
+    assert message["event"] == "storage.pressure"
+    assert message["data"]["pressure"] == "warn"
+    assert message["data"]["free"] > 0
+    # Steady state: no second publish.
+    assert await scan_storage(app, hub) is False
+    assert queue.empty()
+    # An absurd floor drags it to critical — one more publish. (A
+    # mere terabyte is not absurd enough: the host tmp filesystem
+    # can carry more free than that.)
+    app.state.settings.vmm.storage_floor_mib = (1 << 50) // (1024 * 1024)
+    assert await scan_storage(app, hub) is True
+    assert json.loads(queue.get_nowait())["data"]["pressure"] == "critical"
+
+
+async def test_scan_storage_skips_the_k8s_driver(tmp_path: Path) -> None:
+    """k8s artifacts live on per-workspace claims; the daemon's own
+    filesystem never speaks for them (#184 review)."""
+    from msks.server.watcher import scan_storage
+
+    settings = Settings(
+        vmm=VmmSettings(state_dir=tmp_path, driver="k8s"),
+        net=NetSettings(enabled=False),
+        server=ServerSettings(
+            db_path=tmp_path / "k8s.db",
+            bootstrap_token=TOKEN,
+            event_poll_s=10.0,
+        ),
+    )
+    app = build_app(settings)
+    hub = EventHub()
+    assert await scan_storage(app, hub) is False
+    assert getattr(app.state, "storage_pressure", None) is None
+
+
+async def test_scan_storage_publishes_a_baseline(tmp_path: Path) -> None:
+    """A fresh daemon announces its first known pressure (ok counts):
+    an operator watching the event stream sees the daemon's starting
+    condition without waiting for a transition."""
+    from msks.server.watcher import scan_storage
+
+    settings = Settings(
+        vmm=VmmSettings(state_dir=tmp_path),
+        net=NetSettings(enabled=False),
+        server=ServerSettings(
+            db_path=tmp_path / "baseline.db",
+            bootstrap_token=TOKEN,
+            event_poll_s=10.0,
+        ),
+    )
+    app = build_app(settings)
+    hub = EventHub()
+    queue = hub.subscribe()
+    assert await scan_storage(app, hub) is True
+    message = json.loads(queue.get_nowait())
+    assert message["event"] == "storage.pressure"
+    assert message["data"]["pressure"] in ("ok", "warn")

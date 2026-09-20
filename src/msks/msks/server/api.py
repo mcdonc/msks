@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from starlette.requests import ClientDisconnect
 
-from .. import __version__, imagestore, persist
+from .. import __version__, imagestore, persist, storage
 from ..identity import mint, normalize_public_key
 from ..imagestore import ImageError
 from ..microvm.errors import MicrovmError
@@ -801,6 +801,12 @@ def build_api(app) -> FastAPI:
     async def create_workspace_locked(body: WorkspaceCreate) -> Response:
         if await app.state.model.get_workspace(body.id) is not None:
             raise HTTPException(status_code=409, detail="workspace exists")
+        # The state-disk floor (#184): a create below it is the #180
+        # failure mode in the making, so it answers a named 507 with
+        # the reclaim path spelled out instead of wedging later.
+        refusal = storage.create_refusal(app.state.settings.vmm)
+        if refusal is not None:
+            raise HTTPException(status_code=507, detail=refusal)
         if body.egress and app.state.settings.vmm.driver == "k8s":
             # Refuse at create, not first boot: a workspace that can
             # never start (egress is the create default) traps the id
@@ -914,6 +920,41 @@ def build_api(app) -> FastAPI:
             media_type="application/json",
         )
 
+    @api.get("/api/v1/storage", dependencies=[Depends(require_token)])
+    async def get_storage() -> dict:
+        """The capacity report (#184): the state-disk budget, each
+        workspace's cost against its ceilings, and the catalog's.
+
+        Computed on demand from one ``statvfs`` and a handful of
+        ``lstat``s — the watcher's pressure probe, not this endpoint,
+        is what watches the thresholds between requests. The report
+        describes the local backend's artifact files; the k8s
+        backend keeps them on per-workspace claims the cluster
+        places, and this daemon's filesystem says nothing about
+        them — the named refusal below follows the home-volume
+        routes' precedent.
+        """
+        if app.state.settings.vmm.driver == "k8s":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "the capacity report is not served by the k8s "
+                    "backend (workspaces live on per-workspace claims "
+                    "the cluster places)"
+                ),
+            )
+        vmm = app.state.settings.vmm
+        rows = await app.state.model.list_workspaces()
+        images = await asyncio.to_thread(imagestore.list_images, vmm.state_dir)
+        return await asyncio.to_thread(
+            storage.storage_report,
+            vmm.state_dir,
+            vmm.storage_warn_pct,
+            vmm.storage_floor_mib,
+            rows,
+            images,
+        )
+
     @api.get("/api/v1/images", dependencies=[Depends(require_token)])
     async def list_images() -> list[dict]:
         state_dir = app.state.settings.vmm.state_dir
@@ -938,6 +979,19 @@ def build_api(app) -> FastAPI:
 
     @api.post("/api/v1/images", dependencies=[Depends(require_token)])
     async def import_image(body: ImageImport) -> Response:
+        # The floor (#184): an import retains the archive **and**
+        # unpacks its boot cache — the incoming bytes are counted
+        # twice, and the check runs on every backend: the catalog
+        # lives on this daemon's state disk even under k8s, whose
+        # workspace artifacts live on cluster-placed claims.
+        incoming_b = 0
+        with contextlib.suppress(OSError):
+            incoming_b = 2 * Path(body.source).stat().st_size
+        refusal = storage.floor_refusal(
+            app.state.settings.vmm, "importing images", incoming_b
+        )
+        if refusal is not None:
+            raise HTTPException(status_code=507, detail=refusal)
         state_dir = app.state.settings.vmm.state_dir
         try:
             record = await asyncio.to_thread(
@@ -1153,6 +1207,20 @@ def build_api(app) -> FastAPI:
         guard = home_volume_guard(app, row)
         if guard is not None:
             raise HTTPException(*guard)
+        # The floor (#184): an import streams a whole volume at the
+        # state disk. The client's Content-Length sizes it when sent
+        # (a chunked upload carries none and gets the floor alone);
+        # the check runs before the body starts, so a refused import
+        # installs nothing.
+        incoming_b = 0
+        length = request.headers.get("content-length", "")
+        if length.isdigit():
+            incoming_b = int(length)
+        refusal = storage.create_refusal(
+            app.state.settings.vmm, "importing a home volume", incoming_b
+        )
+        if refusal is not None:
+            raise HTTPException(status_code=507, detail=refusal)
         async with move_lock(app, workspace_id):
             return await locked_import(app, hub, workspace_id, request)
 

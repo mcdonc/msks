@@ -9,6 +9,7 @@ watcher honest across driver restarts and both backends.
 import asyncio
 import logging
 
+from .. import storage
 from ..microvm.spec import VmStatus
 from .events import EventHub
 
@@ -65,18 +66,81 @@ async def publish_transition(
     return True
 
 
-async def watch_loop(app, hub: EventHub) -> None:
-    """The background task: scan, sleep, repeat — surviving seam errors.
+async def publish_pressure(
+    hub: EventHub, previous: str | None, pressure: str, usage: dict | None
+) -> bool:
+    """Announce one pressure transition; False when this is the
+    silent first sight of an unprobeable disk.
 
-    One raising ``info()`` (a restarted VMM, a stale socket) must not
-    end the loop: statuses would freeze silently until daemon restart.
+    A daemon whose state dir does not exist yet starts at ``unknown``
+    without an event — there is no condition to announce — while a
+    later fall from a known pressure to ``unknown`` (the state dir
+    vanished underneath the daemon) announces like any condition.
+    """
+    if previous is None and pressure == "unknown":
+        return False
+    await hub.publish(
+        "storage.pressure",
+        {
+            "pressure": pressure,
+            **(usage or {"total": 0, "used": 0, "free": 0}),
+        },
+    )
+    return True
+
+
+def pressure_warning(pressure: str, usage: dict | None, vmm) -> str | None:
+    """The named log line for a disk past its thresholds, or None."""
+    if pressure not in ("warn", "critical"):
+        return None
+    free_mib = max((usage or {}).get("free", 0) // storage.MIB, 0)
+    return (
+        f"state disk pressure is {pressure}: {free_mib} MiB free "
+        f"(warn past {vmm.storage_warn_pct}% used, floor "
+        f"{vmm.storage_floor_mib} MiB); msks storage names the consumers"
+    )
+
+
+async def scan_storage(app, hub: EventHub) -> bool:
+    """Probe the state disk once; publish on a pressure change (#184).
+
+    Edge-triggered, like every watcher publish: a steady ``warn`` logs
+    and announces once, not every poll. Recovery to ``ok`` announces
+    too (an operator watching the event stream sees the all-clear).
+    The probe serves the local backend only: on k8s the artifacts
+    live on per-workspace claims the cluster places, and this
+    daemon's filesystem says nothing about them.
+    """
+    vmm = app.state.settings.vmm
+    if vmm.driver != "local":
+        return False
+    usage = await asyncio.to_thread(storage.state_usage, vmm.state_dir)
+    pressure = storage.pressure_for(
+        usage, vmm.storage_warn_pct, vmm.storage_floor_mib
+    )
+    previous = getattr(app.state, "storage_pressure", None)
+    if pressure == previous:
+        return False
+    app.state.storage_pressure = pressure
+    announced = await publish_pressure(hub, previous, pressure, usage)
+    if notice := pressure_warning(pressure, usage, vmm):
+        LOG.warning("%s", notice)
+    return announced
+
+
+async def watch_loop(app, hub: EventHub) -> None:
+    """The background task: scan, sleep, repeat — surviving seam
+    errors.
+
+    One raising probe (a restarted VMM, a stale socket, an
+    unstatvfs-able state dir) must not end the loop: statuses and
+    pressure would freeze silently until daemon restart.
     """
     interval = app.state.settings.server.event_poll_s
     while True:
         try:
             await scan_once(app, hub)
+            await scan_storage(app, hub)
         except Exception:
-            LOG.exception(
-                "workspace status scan failed; retrying next interval"
-            )
+            LOG.exception("watcher scan failed; retrying next interval")
         await asyncio.sleep(interval)
