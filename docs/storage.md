@@ -140,13 +140,19 @@ VM (the ext4 journal lags the host's view of it).
 The watcher probes the state disk every `MSKSD_EVENT_POLL_S` and
 publishes a `storage.pressure` event on each change (a steady
 condition announces once), with a named log line at `warn` and
-`critical`. Below the floor, workspace creates answer `507`
-naming the floor and the reclaim path — `msks storage` names the
-consumers, `msks rm` and `msks image rm` remove them — instead of
-accepting a create whose artifacts and first boot would wedge the
-disk. Existing workspaces keep running below the floor; their own
-writes can still fill the disk, so a `warn` line is the cue to
-reclaim before they do.
+`critical`. Below the floor, workspace creates, image imports, and
+home-volume imports answer `507` naming the floor and the reclaim
+path — `msks storage` names the consumers, `msks rm` and
+`msks image rm` remove them — instead of accepting a write whose
+bytes would wedge the disk. Existing workspaces keep running below
+the floor; their own writes can still fill the disk, so a `warn`
+line is the cue to reclaim before they do.
+
+The report, the probe, and the floor serve the local backend: the
+k8s backend keeps artifacts on per-workspace claims the cluster
+places, and the daemon's own filesystem says nothing about them
+(`GET /api/v1/storage` answers a named `400` there, following the
+home-volume routes' precedent).
 
 `GET /api/v1/storage` serves the same document the CLI renders,
 and `msks storage <id>` narrows the workspace table to one

@@ -72,13 +72,19 @@ def pressure_for(usage: dict | None, warn_pct: int, floor_mib: int) -> str:
     return "ok"
 
 
-def create_refusal(vmm) -> str | None:
-    """The named create refusal when the state disk sits at critical.
+def create_refusal(vmm, action: str = "creating workspaces") -> str | None:
+    """The named refusal when the state disk sits at critical.
 
-    A create's blank artifacts and first boot write hundreds of MiB;
-    letting one through below the floor is how a state disk ends up
-    full with a wedged guest on it. None means proceed.
+    A create's blank artifacts and first boot write hundreds of MiB,
+    and an import writes whole images — letting either through below
+    the floor is how a state disk ends up full with a wedged guest
+    on it. ``action`` names the refused write in the message. None
+    means proceed. The k8s backend keeps its artifacts on
+    per-workspace claims the cluster places, so this daemon-side
+    floor never speaks for it.
     """
+    if vmm.driver != "local":
+        return None
     usage = state_usage(vmm.state_dir)
     if (
         pressure_for(usage, vmm.storage_warn_pct, vmm.storage_floor_mib)
@@ -91,7 +97,7 @@ def create_refusal(vmm) -> str | None:
         f"MSKSD_STORAGE_FLOOR_MIB floor ({vmm.storage_floor_mib} MiB); "
         "reclaim space (msks storage names the consumers; msks rm and "
         "msks image rm remove them) or raise the floor before "
-        "creating workspaces"
+        f"{action}"
     )
 
 
@@ -132,6 +138,17 @@ def workspace_costs(state_dir: Path, workspace_id: str) -> dict:
     }
 
 
+def image_cost(state_dir: Path, image) -> int:
+    """One catalog entry's cost: its cache directory **and** the
+    retained archive beside it — the whole thing `msks image rm`
+    removes, so the number the reclaim decision sees is the number
+    the reclaim actually frees."""
+    images = state_dir / "images"
+    return tree_cost(images / image.hash) + file_cost(
+        images / f"archive-{image.hash}.tar"
+    )
+
+
 def storage_report(
     state_dir: Path, warn_pct: int, floor_mib: int, rows: list, images
 ) -> dict:
@@ -164,7 +181,7 @@ def storage_report(
                 "hash": image.hash,
                 "name": image.name,
                 "version": image.version,
-                "bytes": tree_cost(Path(state_dir) / "images" / image.hash),
+                "bytes": image_cost(Path(state_dir), image),
             }
             for image in images
         ],

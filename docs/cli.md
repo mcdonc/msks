@@ -119,9 +119,12 @@ debian:13                3.0G
 - **pressure** names the state-disk condition: `warn` past
   `MSKSD_STORAGE_WARN_PCT` (default 90) percent used, `critical` at
   or below `MSKSD_STORAGE_FLOOR_MIB` (default 512) free. Past
-  `critical`, workspace creates answer a named `507` until space
-  comes back (`msks storage` names the consumers; `msks rm` and
-  `msks image rm` remove them).
+  `critical`, workspace creates, image imports, and home-volume
+  imports answer a named `507` until space comes back (`msks
+storage` names the consumers; `msks rm` and `msks image rm`
+  remove them). The report and the floor serve the local backend;
+  the k8s backend's artifacts live on per-workspace claims, and the
+  endpoint answers a named `400` there.
 
 `msks storage <id>` narrows the workspace table to one workspace.
 `--json` prints the API's `GET /api/v1/storage` document verbatim

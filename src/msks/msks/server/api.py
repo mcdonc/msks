@@ -927,8 +927,22 @@ def build_api(app) -> FastAPI:
 
         Computed on demand from one ``statvfs`` and a handful of
         ``lstat``s — the watcher's pressure probe, not this endpoint,
-        is what watches the thresholds between requests.
+        is what watches the thresholds between requests. The report
+        describes the local backend's artifact files; the k8s
+        backend keeps them on per-workspace claims the cluster
+        places, and this daemon's filesystem says nothing about
+        them — the named refusal below follows the home-volume
+        routes' precedent.
         """
+        if app.state.settings.vmm.driver == "k8s":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "the capacity report is not served by the k8s "
+                    "backend (workspaces live on per-workspace claims "
+                    "the cluster places)"
+                ),
+            )
         vmm = app.state.settings.vmm
         rows = await app.state.model.list_workspaces()
         images = imagestore.list_images(vmm.state_dir)
@@ -965,6 +979,14 @@ def build_api(app) -> FastAPI:
 
     @api.post("/api/v1/images", dependencies=[Depends(require_token)])
     async def import_image(body: ImageImport) -> Response:
+        # The floor (#184): an import copies the archive and unpacks
+        # its boot cache — whole images of writes the floor exists to
+        # keep off a disk that cannot hold them.
+        refusal = storage.create_refusal(
+            app.state.settings.vmm, "importing images"
+        )
+        if refusal is not None:
+            raise HTTPException(status_code=507, detail=refusal)
         state_dir = app.state.settings.vmm.state_dir
         try:
             record = await asyncio.to_thread(
@@ -1180,6 +1202,14 @@ def build_api(app) -> FastAPI:
         guard = home_volume_guard(app, row)
         if guard is not None:
             raise HTTPException(*guard)
+        # The floor (#184): an import streams a whole volume's bytes
+        # at the state disk; the check runs before the body starts
+        # so a refused import installs nothing.
+        refusal = storage.create_refusal(
+            app.state.settings.vmm, "importing a home volume"
+        )
+        if refusal is not None:
+            raise HTTPException(status_code=507, detail=refusal)
         async with move_lock(app, workspace_id):
             return await locked_import(app, hub, workspace_id, request)
 

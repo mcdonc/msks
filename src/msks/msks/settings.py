@@ -164,7 +164,7 @@ class VmmSettings:
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> VmmSettings:
-        return _vmm_settings_from_env(cls, live_env(env))
+        return vmm_settings_from_env(cls, live_env(env))
 
 
 @dataclass
@@ -286,7 +286,7 @@ def storage_warn_pct(env: Mapping[str, str], name: str, default: int) -> int:
     return value
 
 
-def _vmm_settings_from_env(
+def vmm_settings_from_env(
     cls: type[VmmSettings], env: Mapping[str, str]
 ) -> VmmSettings:
     """Build VmmSettings from the environment (helper: keeps the

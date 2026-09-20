@@ -13,10 +13,9 @@ tagged `vX.Y.Z`.
   `pressure` condition), each workspace's cost beside its size
   ceiling, and each catalog image's cost. The watcher publishes a
   `storage.pressure` event on every change with a named log line,
-  and workspace creates answer `507` at or below
-  `MSKSD_STORAGE_FLOOR_MIB` (default 512 MiB; the warn line sits at
-  `MSKSD_STORAGE_WARN_PCT`, default 90) instead of filling the disk
-  until guests see I/O errors.
+  and workspace creates, image imports, and home-volume imports
+  answer `507` at or below `MSKSD_STORAGE_FLOOR_MIB` (default
+  512 MiB; the warn line sits at `MSKSD_STORAGE_WARN_PCT`, default 90) instead of filling the disk until guests see I/O errors.
 - **`msks ssh -- -A` forwards the operator's agent (#174).** A
   command-line `-A` (or `-o ForwardAgent=yes`) now names the agent
   behind `SSH_AUTH_SOCK` explicitly, so `ssh-add -l` and

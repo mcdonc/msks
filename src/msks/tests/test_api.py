@@ -1082,3 +1082,85 @@ async def test_create_refused_below_the_storage_floor(
     # Nothing was created and nothing was left behind.
     listed = await http.get("/api/v1/workspaces", headers=auth())
     assert listed.json() == []
+
+
+async def test_storage_report_refused_on_k8s(client, monkeypatch) -> None:
+    """The report describes the local backend's artifact files; k8s
+    keeps them on per-workspace claims and gets a named refusal."""
+    http, app, _stub = client
+    monkeypatch.setattr(app.state.settings.vmm, "driver", "k8s")
+    refused = await http.get("/api/v1/storage", headers=auth())
+    assert refused.status_code == 400
+    assert "not served by the k8s backend" in refused.json()["detail"]
+
+
+async def test_create_not_refused_below_floor_on_k8s(
+    client, monkeypatch
+) -> None:
+    """A k8s create at a critical local filesystem proceeds: the
+    artifacts live on per-workspace claims, not this state disk."""
+    http, app, _stub = client
+    app.state.settings.vmm.state_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(app.state.settings.vmm, "driver", "k8s")
+    monkeypatch.setattr(
+        app.state.settings.vmm,
+        "storage_floor_mib",
+        (1 << 50) // (1024 * 1024),
+    )
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-k8s-floor",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "egress": False,
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 201
+
+
+async def test_image_import_refused_below_the_storage_floor(
+    client, monkeypatch
+) -> None:
+    """An image import copies a whole archive and unpacks its cache:
+    the floor refuses it with the same named 507 as a create."""
+    http, app, _stub = client
+    app.state.settings.vmm.state_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        app.state.settings.vmm,
+        "storage_floor_mib",
+        (1 << 50) // (1024 * 1024),
+    )
+    refused = await http.post(
+        "/api/v1/images", json={"source": "/x.tar"}, headers=auth()
+    )
+    assert refused.status_code == 507
+    assert "before importing images" in refused.json()["detail"]
+
+
+async def test_home_import_refused_below_the_storage_floor(
+    client, monkeypatch
+) -> None:
+    """A home-volume import streams a whole volume at the state disk:
+    the floor refuses it before the body installs anything."""
+    http, app, _stub = client
+    app.state.settings.vmm.state_dir.mkdir(parents=True, exist_ok=True)
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-home-floor", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    monkeypatch.setattr(
+        app.state.settings.vmm,
+        "storage_floor_mib",
+        (1 << 50) // (1024 * 1024),
+    )
+    refused = await http.put(
+        "/api/v1/workspaces/ws-home-floor/home",
+        content=b"\x53\xef",
+        headers=auth(),
+    )
+    assert refused.status_code == 507
+    assert "before importing a home volume" in refused.json()["detail"]

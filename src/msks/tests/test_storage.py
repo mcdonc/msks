@@ -179,3 +179,33 @@ def test_storage_report_assembles_all_three_blocks(tmp_path: Path) -> None:
     report = storage.storage_report(tmp_path, 90, 512, rows, [])
     assert report["workspaces"][1]["root_bytes"] == 0
     assert report["workspaces"][1]["home_bytes"] == 0
+
+
+def test_image_cost_counts_the_retained_archive(tmp_path: Path) -> None:
+    """One catalog entry's cost is the whole thing ``msks image rm``
+    removes: the cache directory plus the retained archive beside
+    it (#184 review — the reclaim decision sees the freed number)."""
+    images = tmp_path / "images"
+    cache = images / ("a" * 64)
+    cache.mkdir(parents=True)
+    (cache / "kernel").write_bytes(b"k" * 65536)
+    archive = images / f"archive-{'a' * 64}.tar"
+    archive.write_bytes(b"t" * 65536)
+    image = FakeImage("a" * 64, "debian", "13")
+    assert storage.image_cost(tmp_path, image) == (
+        storage.file_cost(cache / "kernel") + storage.file_cost(archive)
+    )
+
+
+def test_create_refusal_is_local_driver_only(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The k8s backend keeps artifacts on per-workspace claims; a
+    critical local filesystem never refuses its creates."""
+    monkeypatch.setattr(
+        storage,
+        "state_usage",
+        lambda path: {"total": 0, "used": 0, "free": 0},
+    )
+    vmm = VmmSettings(state_dir=tmp_path, driver="k8s")
+    assert storage.create_refusal(vmm) is None

@@ -19,6 +19,7 @@ from pathlib import Path
 
 from ..identity import KEY_TYPES, mint
 from ..imagestore import is_hash_shape, version_key
+from ..storage import MIB
 from .console import run_workspace_shell
 from .forward import run_workspace_forward
 from .rest import (
@@ -400,9 +401,6 @@ HEX_DIGITS = set("0123456789abcdef")
 
 #: How many refs an error line spells out before "… (+N more)".
 CATALOG_REF_CAP = 8
-
-
-MIB = 1024 * 1024
 
 
 def human_bytes(count: int) -> str:
