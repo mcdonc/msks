@@ -323,17 +323,6 @@ class DnsForwarder:
         for ip, ttl in records:
             self._names[ip] = (name, pairing_floor(self, ip, ttl, expire))
 
-
-def pairing_floor(forwarder, ip: str, ttl: int, floor: float) -> float:
-    """One pairing's expiry: the answer's TTL (floored), never
-    shortened below a prior pairing's."""
-    if ttl > NAME_TTL_FLOOR:
-        floor = time.time() + ttl
-    prior = forwarder._names.get(ip)
-    if prior is not None and prior[1] > floor:
-        return prior[1]  # a re-resolve never shortens
-    return floor
-
     # --- the relay ---------------------------------------------------------
 
     async def _relay(
@@ -450,3 +439,14 @@ def pairing_floor(forwarder, ip: str, ttl: int, floor: float) -> float:
         if len(self._cache) >= CACHE_MAX:
             self._cache.clear()
         self._cache[key] = (answer, expire)
+
+
+def pairing_floor(forwarder, ip: str, ttl: int, floor: float) -> float:
+    """One pairing's expiry: the answer's TTL (floored), never
+    shortened below a prior pairing's."""
+    if ttl > NAME_TTL_FLOOR:
+        floor = time.time() + ttl
+    prior = forwarder._names.get(ip)
+    if prior is not None and prior[1] > floor:
+        return prior[1]  # a re-resolve never shortens
+    return floor
