@@ -945,7 +945,7 @@ def build_api(app) -> FastAPI:
             )
         vmm = app.state.settings.vmm
         rows = await app.state.model.list_workspaces()
-        images = imagestore.list_images(vmm.state_dir)
+        images = await asyncio.to_thread(imagestore.list_images, vmm.state_dir)
         return await asyncio.to_thread(
             storage.storage_report,
             vmm.state_dir,
@@ -979,11 +979,16 @@ def build_api(app) -> FastAPI:
 
     @api.post("/api/v1/images", dependencies=[Depends(require_token)])
     async def import_image(body: ImageImport) -> Response:
-        # The floor (#184): an import copies the archive and unpacks
-        # its boot cache — whole images of writes the floor exists to
-        # keep off a disk that cannot hold them.
-        refusal = storage.create_refusal(
-            app.state.settings.vmm, "importing images"
+        # The floor (#184): an import retains the archive **and**
+        # unpacks its boot cache — the incoming bytes are counted
+        # twice, and the check runs on every backend: the catalog
+        # lives on this daemon's state disk even under k8s, whose
+        # workspace artifacts live on cluster-placed claims.
+        incoming_b = 0
+        with contextlib.suppress(OSError):
+            incoming_b = 2 * Path(body.source).stat().st_size
+        refusal = storage.floor_refusal(
+            app.state.settings.vmm, "importing images", incoming_b
         )
         if refusal is not None:
             raise HTTPException(status_code=507, detail=refusal)
@@ -1202,11 +1207,17 @@ def build_api(app) -> FastAPI:
         guard = home_volume_guard(app, row)
         if guard is not None:
             raise HTTPException(*guard)
-        # The floor (#184): an import streams a whole volume's bytes
-        # at the state disk; the check runs before the body starts
-        # so a refused import installs nothing.
+        # The floor (#184): an import streams a whole volume at the
+        # state disk. The client's Content-Length sizes it when sent
+        # (a chunked upload carries none and gets the floor alone);
+        # the check runs before the body starts, so a refused import
+        # installs nothing.
+        incoming_b = 0
+        length = request.headers.get("content-length", "")
+        if length.isdigit():
+            incoming_b = int(length)
         refusal = storage.create_refusal(
-            app.state.settings.vmm, "importing a home volume"
+            app.state.settings.vmm, "importing a home volume", incoming_b
         )
         if refusal is not None:
             raise HTTPException(status_code=507, detail=refusal)

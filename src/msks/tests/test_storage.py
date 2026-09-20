@@ -51,9 +51,17 @@ def test_pressure_floor_outranks_the_percentage() -> None:
         "used": 50 * storage.MIB,
         "free": 50 * storage.MIB,
     }
-    # At the floor exactly: critical, not warn (50% used).
-    assert storage.pressure_for(usage, 90, 50) == "critical"
-    # One byte above the floor and below the warn line: ok.
+    # One byte below the floor: critical, not warn (50% used).
+    below_floor = {
+        **usage,
+        "free": 50 * storage.MIB - 1,
+        "used": 50 * storage.MIB + 1,
+    }
+    assert storage.pressure_for(below_floor, 90, 50) == "critical"
+    # At the floor exactly and below the warn line: ok — the floor
+    # is the refusal point, and sitting on it admits the next write.
+    assert storage.pressure_for(usage, 90, 50) == "ok"
+    # Above the floor and below the warn line: ok.
     roomy = {**usage, "free": usage["free"] + 1, "used": usage["used"] - 1}
     assert storage.pressure_for(roomy, 90, 50) == "ok"
 
@@ -71,6 +79,13 @@ def test_pressure_warn_at_the_percentage() -> None:
         "free": 11 * storage.MIB,
     }
     assert storage.pressure_for(below, 90, 1) == "ok"
+    # Exactly at the warn line is `warn` (at-or-past, the docs' word).
+    at_line = {
+        "total": 100 * storage.MIB,
+        "used": 90 * storage.MIB,
+        "free": 10 * storage.MIB,
+    }
+    assert storage.pressure_for(at_line, 90, 1) == "warn"
 
 
 def test_pressure_unknown_when_unprobeable() -> None:
@@ -209,3 +224,56 @@ def test_create_refusal_is_local_driver_only(
     )
     vmm = VmmSettings(state_dir=tmp_path, driver="k8s")
     assert storage.create_refusal(vmm) is None
+
+
+def test_floor_refusal_sizes_the_incoming_write(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An import is admitted only when free space covers the floor
+    plus the write's own bytes — the archive counted twice (#184
+    review round 2: 600 MiB free once admitted a multi-GiB import)."""
+    monkeypatch.setattr(
+        storage,
+        "state_usage",
+        lambda path: {
+            "total": 40 * 1024 * storage.MIB,
+            "used": int(39.4 * 1024 * storage.MIB),
+            "free": 600 * storage.MIB,
+        },
+    )
+    vmm = VmmSettings(state_dir=tmp_path, storage_floor_mib=512)
+    # The floor alone fits: a create is admitted.
+    assert storage.floor_refusal(vmm, "creating workspaces") is None
+    # A 100 MiB archive (counted twice) needs 512 + 200 MiB: refused.
+    refusal = storage.floor_refusal(
+        vmm, "importing images", 2 * 100 * storage.MIB
+    )
+    assert refusal is not None
+    assert "600 MiB free" in refusal
+    assert "incoming bytes" in refusal
+    # The remediation names the direction that actually escapes the
+    # refusal: lower, never raise.
+    assert "lower the floor" in refusal
+    assert "raise the floor" not in refusal
+
+
+def test_create_refusal_wording_pins_the_escape(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """At critical, raising the floor refuses more writes, not fewer:
+    the message must say lower."""
+    monkeypatch.setattr(
+        storage,
+        "state_usage",
+        lambda path: {
+            "total": 40 * 1024 * storage.MIB,
+            "used": int(39.9 * 1024 * storage.MIB),
+            "free": 100 * storage.MIB,
+        },
+    )
+    vmm = VmmSettings(state_dir=tmp_path, storage_floor_mib=512)
+    refusal = storage.create_refusal(vmm)
+    assert refusal is not None
+    assert "100 MiB free" in refusal
+    assert "lower the floor" in refusal
+    assert "raise the floor" not in refusal

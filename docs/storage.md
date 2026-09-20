@@ -139,12 +139,20 @@ VM (the ext4 journal lags the host's view of it).
 
 The watcher probes the state disk every `MSKSD_EVENT_POLL_S` and
 publishes a `storage.pressure` event on each change (a steady
-condition announces once), with a named log line at `warn` and
+condition announces once, with the daemon's first known pressure
+announced as a baseline), with a named log line at `warn` and
 `critical`. Below the floor, workspace creates, image imports, and
 home-volume imports answer `507` naming the floor and the reclaim
 path — `msks storage` names the consumers, `msks rm` and
-`msks image rm` remove them — instead of accepting a write whose
-bytes would wedge the disk. Existing workspaces keep running below
+`msks image rm` remove them, and lowering
+`MSKSD_STORAGE_FLOOR_MIB` admits writes at less headroom if that
+is the deployment's choice (raising the floor refuses more, not
+fewer). Imports are sized when the size is knowable: an image
+import must fit the floor plus twice the archive's bytes (the
+retained copy plus its unpacked cache), and a home-volume import
+must fit the floor plus the upload's `Content-Length` when the
+client sent one — a chunked upload carries no length and gets the
+floor alone. Existing workspaces keep running below
 the floor; their own writes can still fill the disk, so a `warn`
 line is the cue to reclaim before they do.
 
@@ -310,7 +318,7 @@ boot. Deleting the workspace releases the pin.
 | `MSKSD_ROOT_MIB`                  | `10240`      | Default overlay (root) size for new workspaces, MiB.                                                              |
 | `MSKSD_HOME_MIB`                  | `2048`       | Default `/home` volume size, MiB.                                                                                 |
 | `MSKSD_STORAGE_WARN_PCT`          | `90`         | State-disk percentage used that moves pressure to `warn` (#184).                                                  |
-| `MSKSD_STORAGE_FLOOR_MIB`         | `512`        | Free state-disk MiB at or below which pressure is `critical` and creates answer `507` (#184).                     |
+| `MSKSD_STORAGE_FLOOR_MIB`         | `512`        | Free state-disk MiB below which pressure is `critical` and writes answer `507` (#184).                            |
 | `MSKSD_QEMU_IMG`                  | `qemu-img`   | The `qemu-img` binary that creates overlays.                                                                      |
 | `MSKSD_MKFS_EXT4`                 | `mkfs.ext4`  | The mkfs that formats `/home` volumes.                                                                            |
 | `MSKSD_MKISOFS`                   | `mkisofs`    | The mkisofs (genisoimage) that builds `cidata` seed disks (#41).                                                  |

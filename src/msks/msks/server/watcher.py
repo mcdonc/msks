@@ -142,7 +142,5 @@ async def watch_loop(app, hub: EventHub) -> None:
             await scan_once(app, hub)
             await scan_storage(app, hub)
         except Exception:
-            LOG.exception(
-                "workspace status scan failed; retrying next interval"
-            )
+            LOG.exception("watcher scan failed; retrying next interval")
         await asyncio.sleep(interval)

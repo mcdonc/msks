@@ -116,15 +116,21 @@ debian:13                3.0G
 - **ceiling** is the size fixed at create; the guest sees it as its
   quota and its user can watch it fill with `df` inside the
   workspace.
-- **pressure** names the state-disk condition: `warn` past
-  `MSKSD_STORAGE_WARN_PCT` (default 90) percent used, `critical` at
-  or below `MSKSD_STORAGE_FLOOR_MIB` (default 512) free. Past
-  `critical`, workspace creates, image imports, and home-volume
+- **pressure** names the state-disk condition: `warn` at or past
+  `MSKSD_STORAGE_WARN_PCT` (default 90) percent used, `critical`
+  below `MSKSD_STORAGE_FLOOR_MIB` (default 512) free. Below the
+  floor, workspace creates, image imports, and home-volume
   imports answer a named `507` until space comes back (`msks
 storage` names the consumers; `msks rm` and `msks image rm`
-  remove them). The report and the floor serve the local backend;
-  the k8s backend's artifacts live on per-workspace claims, and the
-  endpoint answers a named `400` there.
+  remove them; the message's other escape is _lowering_ the floor —
+  raising it refuses more, not fewer). Imports are sized when the
+  size is knowable: the image archive is counted twice (retained
+  copy plus unpacked cache), and a home upload with a
+  `Content-Length` must fit above the floor. The report and the
+  floor serve the local backend; the k8s backend's artifacts live
+  on per-workspace claims, and the endpoint answers a named `400`
+  there (image imports keep the floor on both backends — the
+  catalog lives on the daemon's state disk either way).
 
 `msks storage <id>` narrows the workspace table to one workspace.
 `--json` prints the API's `GET /api/v1/storage` document verbatim

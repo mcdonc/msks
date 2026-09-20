@@ -65,40 +65,65 @@ def pressure_for(usage: dict | None, warn_pct: int, floor_mib: int) -> str:
     """
     if usage is None or usage["total"] <= 0:
         return "unknown"
-    if usage["free"] <= floor_mib * MIB:
+    if usage["free"] < floor_mib * MIB:
         return "critical"
     if usage["used"] * 100 >= usage["total"] * warn_pct:
         return "warn"
     return "ok"
 
 
-def create_refusal(vmm, action: str = "creating workspaces") -> str | None:
-    """The named refusal when the state disk sits at critical.
+def floor_refusal(vmm, action: str, incoming_b: int = 0) -> str | None:
+    """The named refusal when a write cannot fit: the floor plus
+    the write's own incoming bytes.
 
-    A create's blank artifacts and first boot write hundreds of MiB,
-    and an import writes whole images — letting either through below
-    the floor is how a state disk ends up full with a wedged guest
-    on it. ``action`` names the refused write in the message. None
-    means proceed. The k8s backend keeps its artifacts on
-    per-workspace claims the cluster places, so this daemon-side
-    floor never speaks for it.
+    ``incoming_b`` sizes the write being refused: an image import
+    carries the archive twice over (the retained copy plus its
+    unpacked cache), a home-volume import carries the upload's
+    length when the client sent one, and a create carries nothing
+    (its blank artifacts are sparse — the floor alone is the guard).
+    None means proceed. The escape hatches are honest ones: reclaim
+    space, or **lower** the floor — raising it only refuses more.
+    """
+    usage = state_usage(vmm.state_dir)
+    if usage is None:
+        return None
+    need_b = vmm.storage_floor_mib * MIB + incoming_b
+    if usage["free"] >= need_b:
+        return None
+    free_mib = max(usage["free"] // MIB, 0)
+    need_mib = need_b // MIB
+    why = (
+        f"the MSKSD_STORAGE_FLOOR_MIB floor ({vmm.storage_floor_mib} MiB)"
+        if incoming_b == 0
+        else (
+            f"the MSKSD_STORAGE_FLOOR_MIB floor ({vmm.storage_floor_mib} "
+            f"MiB) plus {incoming_b // MIB} MiB of incoming bytes"
+        )
+    )
+    return (
+        f"the state disk has {free_mib} MiB free, below the {need_mib} "
+        f"MiB this write needs ({why}); reclaim space (msks storage "
+        "names the consumers; msks rm and msks image rm remove them) "
+        f"or lower the floor if you accept less headroom before {action}"
+    )
+
+
+def create_refusal(
+    vmm, action: str = "creating workspaces", incoming_b: int = 0
+) -> str | None:
+    """The floor refusal for writes whose artifacts are local-backend
+    facts (#184).
+
+    A workspace's overlay and home volume live on per-workspace
+    claims under the k8s backend — the cluster places and sizes
+    them — so their writes never consult this daemon's state disk.
+    The image catalog is the exception: it lives on this daemon's
+    state disk on every backend, and its import route checks
+    :func:`floor_refusal` directly.
     """
     if vmm.driver != "local":
         return None
-    usage = state_usage(vmm.state_dir)
-    if (
-        pressure_for(usage, vmm.storage_warn_pct, vmm.storage_floor_mib)
-        != "critical"
-    ):
-        return None
-    free_mib = max(usage["free"] // MIB, 0)
-    return (
-        f"the state disk has {free_mib} MiB free, at or below the "
-        f"MSKSD_STORAGE_FLOOR_MIB floor ({vmm.storage_floor_mib} MiB); "
-        "reclaim space (msks storage names the consumers; msks rm and "
-        "msks image rm remove them) or raise the floor before "
-        f"{action}"
-    )
+    return floor_refusal(vmm, action, incoming_b)
 
 
 def file_cost(path: Path) -> int:

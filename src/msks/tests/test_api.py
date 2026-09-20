@@ -1164,3 +1164,87 @@ async def test_home_import_refused_below_the_storage_floor(
     )
     assert refused.status_code == 507
     assert "before importing a home volume" in refused.json()["detail"]
+
+
+async def test_image_import_refused_by_incoming_size(
+    client, monkeypatch, tmp_path
+) -> None:
+    """Free space above the floor still refuses an import whose
+    incoming bytes cannot fit: the archive is counted twice (the
+    retained copy plus its unpacked cache)."""
+    from msks.server import api as api_module
+
+    http, app, _stub = client
+    app.state.settings.vmm.state_dir.mkdir(parents=True, exist_ok=True)
+    archive = tmp_path / "big.tar"
+    with archive.open("wb") as handle:
+        handle.truncate(100 * 1024 * 1024)  # sparse: only st_size matters
+    monkeypatch.setattr(
+        api_module.storage,
+        "state_usage",
+        lambda path: {
+            "total": 40 * 1024**3,
+            "used": int(39.4 * 1024**3),
+            "free": 600 * 1024**2,
+        },
+    )
+    # 600 MiB free clears the 512 MiB floor, but the import needs
+    # 512 + 2x100 = 712 MiB: the named 507 names the incoming bytes.
+    refused = await http.post(
+        "/api/v1/images", json={"source": str(archive)}, headers=auth()
+    )
+    assert refused.status_code == 507
+    assert "incoming bytes" in refused.json()["detail"]
+
+
+async def test_image_import_floor_applies_on_k8s(client, monkeypatch) -> None:
+    """The image catalog lives on the daemon's state disk on every
+    backend: a k8s daemon below its floor answers the same 507."""
+    http, app, _stub = client
+    app.state.settings.vmm.state_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(app.state.settings.vmm, "driver", "k8s")
+    monkeypatch.setattr(
+        app.state.settings.vmm,
+        "storage_floor_mib",
+        (1 << 50) // (1024 * 1024),
+    )
+    refused = await http.post(
+        "/api/v1/images", json={"source": "/x.tar"}, headers=auth()
+    )
+    assert refused.status_code == 507
+    assert "before importing images" in refused.json()["detail"]
+
+
+async def test_home_import_refused_by_content_length(
+    client, monkeypatch
+) -> None:
+    """A sized upload is admitted only when free space covers the
+    floor plus the body's bytes."""
+    from msks.server import api as api_module
+
+    http, app, _stub = client
+    app.state.settings.vmm.state_dir.mkdir(parents=True, exist_ok=True)
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-cl", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    monkeypatch.setattr(
+        api_module.storage,
+        "state_usage",
+        lambda path: {
+            "total": 40 * 1024**3,
+            "used": int(39.4 * 1024**3),
+            "free": 600 * 1024**2,
+        },
+    )
+    # 600 MiB free clears the 512 MiB floor; the 100 MiB body's
+    # Content-Length does not fit above it.
+    refused = await http.put(
+        "/api/v1/workspaces/ws-cl/home",
+        content=b"x" * (100 * 1024 * 1024),
+        headers=auth(),
+    )
+    assert refused.status_code == 507
+    assert "incoming bytes" in refused.json()["detail"]
