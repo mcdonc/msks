@@ -2232,6 +2232,12 @@ RESIZED_ROW = {
     "id": "ws1",
     "root_mib": 10240,
     "home_mib": 4096,
+    "changes": ["home grew to 4096 MiB"],
+}
+
+RESIZED_ROW_WITH_ROOT = {
+    **RESIZED_ROW,
+    "changes": ["root grew to 10240 MiB", "home grew to 4096 MiB"],
 }
 
 
@@ -2289,8 +2295,20 @@ def test_cmd_resize_notes_the_root_boot_fill(
     rc = cli.cmd_resize(
         "ws1",
         {"root_mib": 20480, "home_mib": 4096},
-        transport=mock(lambda req: httpx.Response(200, json=RESIZED_ROW)),
+        transport=mock(
+            lambda req: httpx.Response(200, json=RESIZED_ROW_WITH_ROOT)
+        ),
     )
     out = capsys.readouterr().out
     assert rc == 0
     assert "fills the larger root on its next boot" in out
+    # A root flag whose root did not move never claims the boot fill:
+    # the daemon's changes list decides, not the request's flags.
+    rc = cli.cmd_resize(
+        "ws1",
+        {"root_mib": 10240, "home_mib": 4096},
+        transport=mock(lambda req: httpx.Response(200, json=RESIZED_ROW)),
+    )
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "next boot" not in out

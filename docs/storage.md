@@ -103,11 +103,18 @@ Create is not the only time sizes move: `POST
 
 A resize carries the home-volume moves' guards (free lifecycle
 statuses, the placement check, the move-lock against a concurrent
-boot) and the row follows: `msks ls --json` and `msks storage`
-report the new ceiling immediately, the bytes move at once on the
-host, and a workspace whose volume file is absent simply records
-the new size — the next start's artifact heal builds the blank
-volume at it. The k8s backend answers a named `400`: the workspace
+boot). The artifact files are the truth each side moves: the grow
+gate reads the overlay's actual virtual size (create clamps it to
+the base image, and a corrupt overlay — one qemu-img probes as raw
+or empty — answers a named `503` instead of being truncated), and
+the home move classifies grow-vs-shrink by the volume file, so a
+volume imported above its row's size reconciles through the same
+request. The row follows each side as it moves (`msks ls --json`
+and `msks storage` report the new ceiling immediately, the bytes
+move at once on the host), a workspace whose artifact file is
+absent simply records the new size — the next start's artifact heal
+builds the blank artifact at it — and a request naming sizes the
+files already have answers an idempotent `200` that moves nothing. The k8s backend answers a named `400`: the workspace
 lives on a claim the cluster sizes, so growth goes through the
 storage class. A completed resize is announced on the events
 channel (`workspace.resized`, with the new sizes).

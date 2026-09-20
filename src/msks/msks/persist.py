@@ -294,11 +294,15 @@ async def create_seed(spec: VmSpec, settings) -> None:
         shutil.rmtree(stage, ignore_errors=True)
 
 
-async def base_info(base: Path, qemu_img: str) -> tuple[int, str]:
-    """The base image's ``(virtual size, format)`` from qemu-img info."""
+async def base_info(
+    base: Path, qemu_img: str, what: str = "the base image"
+) -> tuple[int, str]:
+    """An image's ``(virtual size, format)`` from qemu-img info —
+    ``what`` names the artifact in a failure's message (the resize
+    route probes overlays, not base images)."""
     output = await run_tool(
         [qemu_img, "info", "--output=json", str(base)],
-        "qemu-img info on the base image",
+        f"qemu-img info on {what}",
     )
     try:
         document = json.loads(output)
@@ -343,30 +347,44 @@ async def run_tool(
     return output
 
 
-async def resize_home_volume(target: Path, home_mib: int, settings) -> str:
-    """Grow or shrink the home volume to ``home_mib`` MiB (#184).
+async def volume_check(target: Path, settings) -> None:
+    """Quiet the home volume's journal before a move (#184).
 
-    The file and the filesystem inside move together: a grow
-    truncates the file up and lets resize2fs expand the ext4 onto
-    the new bytes; a shrink asks resize2fs to contract first (it
-    refuses below the filesystem's used blocks — the caller maps
-    that refusal to a named 409) and truncates the file down only
-    after the filesystem agreed. e2fsck runs before either
-    direction with the journal quiesced: the VM is stopped (the
-    route's guard), and a clean fs is resize2fs's precondition —
-    the same convergence #183's state-disk grow performs at boot.
-    Returns "grew"/"shrank" for the route's message and event.
+    e2fsck runs with ``-fy`` and the exit-code mask that accepts its
+    "errors corrected" bits — a volume a hard stop left dirty is
+    corrected here, corrections being that tool's job. A failure past
+    the mask (4 and up: uncorrectable, operational, usage) raises and
+    is the daemon's to answer (503), never a client-fixable shrink
+    refusal.
     """
-    current_b = target.stat().st_size
-    wanted_b = home_mib * MIB
     await run_tool(
         [settings.e2fsck, "-fy", str(target)],
         "e2fsck on the home volume",
-        ok_returncodes=(1, 2),  # the bitmask's "errors corrected" bits
+        ok_returncodes=(1, 2),
     )
-    if wanted_b > current_b:
+
+
+def volume_direction(target: Path, home_mib: int) -> str:
+    """ "grew" or "shrank" by the FILE's size, not any row's — the
+    volume file is the truth an import may have swapped in at any
+    size (#187 review round 2)."""
+    if home_mib * MIB > target.stat().st_size:
+        return "grew"
+    return "shrank"
+
+
+async def volume_move(target: Path, home_mib: int, settings) -> str:
+    """Move the home volume's filesystem to ``home_mib`` MiB and the
+    file with it; returns the executed direction.
+
+    A grow truncates the file up and lets resize2fs expand onto the
+    new bytes; a shrink asks resize2fs to contract first (it refuses
+    below the filesystem's used blocks) and truncates the file down
+    only after the filesystem agreed.
+    """
+    if volume_direction(target, home_mib) == "grew":
         with target.open("r+b") as handle:
-            handle.truncate(wanted_b)
+            handle.truncate(home_mib * MIB)
         await run_tool(
             [settings.resize2fs, str(target)],
             "resize2fs (grow) on the home volume",
@@ -377,8 +395,18 @@ async def resize_home_volume(target: Path, home_mib: int, settings) -> str:
         "resize2fs (shrink) on the home volume",
     )
     with target.open("r+b") as handle:
-        handle.truncate(wanted_b)
+        handle.truncate(home_mib * MIB)
     return "shrank"
+
+
+async def resize_home_volume(target: Path, home_mib: int, settings) -> str:
+    """Check, then move: the composition the direct callers use.
+
+    The route calls :func:`volume_check` and :func:`volume_move`
+    separately so an e2fsck failure keeps its 503 while a refused
+    shrink maps to the client-fixable 409."""
+    await volume_check(target, settings)
+    return await volume_move(target, home_mib, settings)
 
 
 async def grow_overlay(overlay: Path, root_mib: int, settings) -> None:

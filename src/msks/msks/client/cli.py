@@ -571,14 +571,15 @@ def cmd_resize(
 
 
 def resize_message(row: dict, body: dict) -> str:
-    """The result line: the new sizes, with the boot note only where
-    it applies — home bytes moved at once on the host; only the
-    root's guest-side fill waits for the next boot."""
+    """The result line: the new sizes, with the boot note only when
+    the root actually moved (the daemon's ``changes`` list says so,
+    not the request's flags) — home bytes moved at once on the host;
+    only the root's guest-side fill waits for the next boot."""
     line = (
         f"resized {row['id']}: root {row['root_mib']} MiB, "
         f"home {row['home_mib']} MiB"
     )
-    if "root_mib" in body:
+    if any(change.startswith("root") for change in row.get("changes", [])):
         line += " (the guest fills the larger root on its next boot)"
     return line
 

@@ -1157,16 +1157,6 @@ def build_api(app) -> FastAPI:
                 status_code=400,
                 detail="nothing to resize: name root_mib, home_mib, or both",
             )
-        if (body.root_mib is None or body.root_mib == row["root_mib"]) and (
-            body.home_mib is None or body.home_mib == row["home_mib"]
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"workspace {workspace_id} is already at those sizes "
-                    f"(root {row['root_mib']} MiB, home {row['home_mib']} MiB)"
-                ),
-            )
         async with move_lock(app, workspace_id):
             row = await rechecked_row(app, workspace_id)
             vmm = app.state.settings.vmm
@@ -1174,51 +1164,77 @@ def build_api(app) -> FastAPI:
             home = persist.home_volume_path(state_dir, workspace_id)
             overlay = persist.overlay_path(state_dir, workspace_id)
             moved: list[str] = []
-            if body.root_mib is not None and body.root_mib != row["root_mib"]:
-                # The grow-only rule measured against the truth: the
-                # overlay file when it exists (create clamps it to
-                # the base image's size, so it can sit above the row),
-                # the row otherwise (the heal path builds at the
-                # row's size). Its partition table and filesystem
-                # belong to the guest — only the guest can move a
-                # root down. (#187 review.)
-                ceiling_mib = row["root_mib"]
+            if body.root_mib is not None:
+                # The files are the truth, not the row: create clamps
+                # the overlay to the base image's size, and a home
+                # import can swap the volume in at any size. Root
+                # grows only — its partition table and filesystem
+                # belong to the guest. (#187.)
                 if overlay.is_file():
-                    virtual_b, _format = await persist.base_info(
-                        overlay, vmm.qemu_img
+                    virtual_b, image_format = await persist.base_info(
+                        overlay, vmm.qemu_img, "the root overlay"
                     )
+                    if image_format != "qcow2" or virtual_b == 0:
+                        # qemu-img probes format, and a corrupt or
+                        # truncated overlay answers "raw, 0 bytes" —
+                        # a grow would silently truncate garbage. Name
+                        # the corrupt file instead of moving it.
+                        raise HTTPException(
+                            status_code=503,
+                            detail=(
+                                f"the root overlay for {workspace_id} is "
+                                "not a readable qcow2 image (qemu-img "
+                                f"reports {image_format}, {virtual_b} "
+                                "bytes) — restore it with msks rm and a "
+                                "fresh create, or a factory reset"
+                            ),
+                        )
                     ceiling_mib = virtual_b // (1024 * 1024)
-                if body.root_mib <= ceiling_mib:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=(
-                            "the root overlay only grows; this one is "
-                            f"{ceiling_mib} MiB and the request asked "
-                            f"for {body.root_mib} MiB — msks rm and a "
-                            "fresh create, or factory reset, reclaim a "
-                            "root instead"
-                        ),
+                    if body.root_mib < ceiling_mib:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                "the root overlay only grows; this one is "
+                                f"{ceiling_mib} MiB and the request asked "
+                                f"for {body.root_mib} MiB — msks rm and a "
+                                "fresh create, or factory reset, reclaim a "
+                                "root instead"
+                            ),
+                        )
+                    if body.root_mib > ceiling_mib:
+                        await persist.grow_overlay(overlay, body.root_mib, vmm)
+                        moved.append(f"root grew to {body.root_mib} MiB")
+                    # Equal to the file: only the row catches up.
+                    await app.state.model.set_sizes(
+                        workspace_id, body.root_mib, None
                     )
-                if overlay.is_file():
-                    await persist.grow_overlay(overlay, body.root_mib, vmm)
-                # A missing overlay is the heal contract, not an
-                # error: the next start builds it at the row's size.
-                moved.append(f"root grew to {body.root_mib} MiB")
-                await app.state.model.set_sizes(
-                    workspace_id, body.root_mib, None
-                )
-            if body.home_mib is not None and body.home_mib != row["home_mib"]:
+                elif body.root_mib != row["root_mib"]:
+                    # The heal contract: no file, a new size — the row
+                    # records it and the next start builds the blank
+                    # overlay at it.
+                    moved.append(f"root grew to {body.root_mib} MiB")
+                    await app.state.model.set_sizes(
+                        workspace_id, body.root_mib, None
+                    )
+            if body.home_mib is not None:
                 if home.is_file():
-                    if body.home_mib < row["home_mib"]:
-                        # Only a shrink's refusal is the client's to
-                        # fix (data must move out of the tail); a
-                        # grow-side tool failure is a daemon fault
-                        # and keeps its 503.
+                    if home.stat().st_size != body.home_mib * 1024 * 1024:
+                        # e2fsck failures stay the daemon's 503; only
+                        # the executed shrink's refusal is the
+                        # client's to fix (data must move out of the
+                        # tail).
+                        await persist.volume_check(home, vmm)
+                        executed_shrink = (
+                            persist.volume_direction(home, body.home_mib)
+                            == "shrank"
+                        )
                         try:
-                            direction = await persist.resize_home_volume(
+                            direction = await persist.volume_move(
                                 home, body.home_mib, vmm
                             )
                         except MicrovmError as exc:
+                            if not executed_shrink:
+                                raise
                             raise HTTPException(
                                 status_code=409,
                                 detail=(
@@ -1227,17 +1243,30 @@ def build_api(app) -> FastAPI:
                                     "less) and retry"
                                 ),
                             ) from None
-                    else:
-                        direction = await persist.resize_home_volume(
-                            home, body.home_mib, vmm
+                        except OSError as exc:
+                            # The volume vanished between the check
+                            # and the move (an out-of-band rm): a
+                            # named 503, not a bare 500.
+                            raise HTTPException(
+                                status_code=503,
+                                detail=(
+                                    f"the home volume for {workspace_id} "
+                                    f"became unreachable mid-resize: {exc}"
+                                ),
+                            ) from None
+                        moved.append(
+                            f"home {direction} to {body.home_mib} MiB"
                         )
-                    moved.append(f"home {direction} to {body.home_mib} MiB")
-                # A missing volume heals the same way the overlay
-                # does: the row records the size, the next start
-                # builds the blank artifact at it.
-                await app.state.model.set_sizes(
-                    workspace_id, None, body.home_mib
-                )
+                    # The row follows the file, whichever moved.
+                    await app.state.model.set_sizes(
+                        workspace_id, None, body.home_mib
+                    )
+                elif body.home_mib != row["home_mib"]:
+                    # The heal contract, the overlay's twin.
+                    moved.append(f"home to {body.home_mib} MiB (fresh)")
+                    await app.state.model.set_sizes(
+                        workspace_id, None, body.home_mib
+                    )
             updated = await app.state.model.get_workspace(workspace_id)
             if updated is None:
                 # The row vanished under the move-lock (a concurrent
@@ -1245,6 +1274,10 @@ def build_api(app) -> FastAPI:
                 raise HTTPException(
                     status_code=404, detail="no such workspace"
                 )
+            # Nothing moved and nothing needs recording: idempotent,
+            # with no event to announce.
+            if not moved:
+                return {**updated, "changes": []}
             await hub.publish(
                 "workspace.resized",
                 {
@@ -1254,7 +1287,7 @@ def build_api(app) -> FastAPI:
                     "changes": moved,
                 },
             )
-            return updated
+            return {**updated, "changes": moved}
 
     @api.post(
         "/api/v1/workspaces/{workspace_id}/start",
