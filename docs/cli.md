@@ -13,6 +13,7 @@ msks create ws                # make a workspace
 msks console ws               # boot it if needed, then work inside it
 msks forward ws 22            # bridge a guest TCP port to stdio
 msks key ws                   # fetch the workspace's minted ssh identity
+msks rsync ws -- -av ./src/ root@:/src/  # copy files over the forward
 msks home export ws           # download its /home volume (backup, seed)
 msks start ws                 # boot it without attaching
 msks stop ws                  # power it off
@@ -700,6 +701,68 @@ be on the ssh child's PATH), and it inherits your environment:
 `MSKSC_CAFILE` must be set where ssh runs (see the
 networking chapter's alias workflow for the `Host msks-*`
 configuration that hides all of this).
+
+## `msks rsync`
+
+Stock rsync against a workspace over the forward, with the minted
+identity staged in memory (#190) — one command does the whole
+setup itself: the workspace boots when needed, the identity
+stages in memory, and the copy opens its own forward:
+
+```bash
+msks rsync my-workspace -- -av ./site/ root@:/root/site/    # push
+msks rsync my-workspace -- -av root@:/root/out.tar ./out.tar  # pull
+msks rsync my-workspace -- -aP ./src/ :src/                   # as msks
+```
+
+Everything after the workspace id (the `--` is optional) is given
+to rsync; msks parses no rsync flags. The one shaping pass is
+the empty host: a path whose host is empty (`:/root/site/`, or
+`root@:/root/site/`) targets the workspace this command names,
+its host filled in as the copy runs. The direction — push or
+pull — comes entirely from the rsync arguments, and the login
+user comes from the paths the same way: `root@:/root/site/`
+logs in as root, a bare `:src/` as the `msks` workspace user
+(whose home is the persistent `/home` volume — the shape for
+copies under your own account). A path that names a host keeps
+it, and the transport is the proxy either way, so the name never
+resolves. `::module` paths are rsync's daemon protocol against
+port 873 — the workspace image runs no rsync daemon (sshd stays
+its one inbound service), so that form is left as typed and
+fails as rsync's own error.
+
+A word that starts with a colon reaches this fill even when it
+is the split-apart value of an rsync option (`--filter :rules`),
+because msks does not parse rsync's flags to tell the two apart:
+that spelling uses the attached form (`--filter=:rules`), which
+msks never touches.
+
+The command boots the workspace first when the daemon reports it
+as not running (the same notices as `msks console`), fetches the
+identity over the authenticated API, and runs the host `rsync`
+with the same transport `msks ssh` uses: the forward websocket as
+the ssh ProxyCommand (each rsync connection opens its own), the
+per-workspace `known_hosts` under `accept-new`, and the identity
+staged in a transient in-process ssh-agent — the private half
+exists only in memory, rsync's ssh children name it by its public
+half and sign through the agent socket, and the command writes no
+key file. Daemon-minted (#111) and client-minted (#121, the
+create default) identities both work; a `--pubkey` workspace
+(#132) exits with the line naming where the private half lives.
+A session that booted its workspace waits out the guest's first
+boot exactly as `msks ssh` does (#168): a probe login retries
+behind the identity seed (up to 30s, one line between attempts),
+and the copy runs once the guest accepts the workspace key.
+
+The login user is the image's `msks` workspace user by default,
+stated as a generated per-session ssh config — so rsync's own
+`user@` path spelling overrides it (`root@:/root/site/` logs in
+as root). An explicit `-e` in the passthrough replaces msks's
+remote shell entirely (rsync takes the last `-e`, and the
+empty-host fill keeps pointing at the workspace id your own
+transport must then reach), the same override shape ssh
+passthrough options have. The host prerequisites are `ssh` and
+`rsync`; the exit code is rsync's own.
 
 ## Errors, exit codes, and timeouts
 

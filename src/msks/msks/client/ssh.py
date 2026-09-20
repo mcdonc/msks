@@ -47,6 +47,7 @@ import shlex
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
@@ -721,10 +722,16 @@ def next_arg_names_user(options: list[str], index: int) -> bool:
 
 
 def wait_for_identity(
-    workspace_id: str, probe_argv: list[str], deadline: float
+    workspace_id: str,
+    probe_argv: list[str],
+    deadline: float,
+    command: str = "msks ssh",
 ) -> None:
     """Retry the probe until the guest accepts the login or the
     deadline passes (#168).
+
+    ``command`` names the calling command for its missing-ssh line
+    (``msks rsync`` probes through here too, #190).
 
     Each attempt is bounded by the time the deadline leaves, so a
     stalled connection is one more not-ready answer, not a hang,
@@ -737,7 +744,7 @@ def wait_for_identity(
         now = time.monotonic()
         if now >= deadline:
             return
-        if probe_attempt(probe_argv, deadline - now):
+        if probe_attempt(probe_argv, deadline - now, command):
             return
         time.sleep(SSH_RETRY_PAUSE_S)
         if time.monotonic() < deadline:
@@ -748,7 +755,9 @@ def wait_for_identity(
             )
 
 
-def probe_attempt(probe_argv: list[str], budget: float) -> bool:
+def probe_attempt(
+    probe_argv: list[str], budget: float, command: str = "msks ssh"
+) -> bool:
     """One probe attempt: True when the guest accepted the login.
 
     A stalled connection is one more not-ready answer — bounded by
@@ -761,15 +770,19 @@ def probe_attempt(probe_argv: list[str], budget: float) -> bool:
     except subprocess.TimeoutExpired:
         return False
     except FileNotFoundError:
-        raise SystemExit("msks ssh: ssh not found on PATH") from None
+        raise SystemExit(f"{command}: ssh not found on PATH") from None
     return completed.returncode == 0
 
 
-def run_workspace_ssh(
-    workspace_id: str, passthrough: list[str], transport=None
-) -> int:
-    """One ssh session, from boot pre-flight to ssh's own exit code."""
-    passthrough = passthrough_args(passthrough)
+@contextmanager
+def staged_session(workspace_id: str, transport=None):
+    """The pre-flight every ssh-transport command runs: the client
+    environment, the boot-if-needed probe wait's inputs, and the
+    workspace identity served from the transient agent
+    (:mod:`msks.client.agent`). Yields ``(booted, served)`` — whether
+    this session booted the workspace (the #168 wait runs only
+    then), and the served agent holding the private half in memory.
+    ``msks ssh`` (#112) and ``msks rsync`` (#190) share it."""
     token = env_token()
     url = env_url()
     ssl_ctx = ssl_context()
@@ -778,6 +791,25 @@ def run_workspace_ssh(
     )
     private = agent.load_private(resolve_private(key, workspace_id))
     with agent.serve(private, identity_comment(key)) as served:
+        yield booted, served
+
+
+def exec_child(argv: list[str], missing_line: str) -> int:
+    """Run a command's child process to its exit code; a binary
+    missing from PATH is the calling command's one-line exit
+    (``missing_line`` names it), not a traceback."""
+    try:
+        return subprocess.run(argv).returncode
+    except FileNotFoundError:
+        raise SystemExit(missing_line) from None
+
+
+def run_workspace_ssh(
+    workspace_id: str, passthrough: list[str], transport=None
+) -> int:
+    """One ssh session, from boot pre-flight to ssh's own exit code."""
+    passthrough = passthrough_args(passthrough)
+    with staged_session(workspace_id, transport) as (booted, served):
         known_hosts = known_hosts_path(workspace_id)
         if booted:
             probe_argv = probe_args(
@@ -800,8 +832,4 @@ def run_workspace_ssh(
             known_hosts,
             passthrough,
         )
-        try:
-            completed = subprocess.run(argv)
-        except FileNotFoundError:
-            raise SystemExit("msks ssh: ssh not found on PATH") from None
-    return completed.returncode
+        return exec_child(argv, "msks ssh: ssh not found on PATH")

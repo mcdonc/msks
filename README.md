@@ -494,7 +494,9 @@ msks home export dev - | gzip > dev-home.ext4.gz   # whole-home backup
 ```
 
 — while day-to-day code in and out rides the workspace's own egress
-(git remotes, substitutes) and the forward seam (rsync, ssh).
+(git remotes, substitutes) and the forward seam (`msks ssh`, and
+`msks rsync dev -- -av ./src/ :src/` for file copies, with no
+setup beyond the client environment).
 Outbound, the push carries its own credentials: logging in through
 the forward with `-A` delivers the operator's ssh agent into the
 workspace, so a `git push` from inside authenticates to any remote
