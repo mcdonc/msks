@@ -206,6 +206,11 @@ def storage_report(
                 "hash": image.hash,
                 "name": image.name,
                 "version": image.version,
+                "imported": (
+                    image.imported.isoformat()
+                    if image.imported is not None
+                    else None
+                ),
                 "bytes": image_cost(Path(state_dir), image),
             }
             for image in images

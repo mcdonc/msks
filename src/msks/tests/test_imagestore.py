@@ -3,10 +3,12 @@
 import asyncio
 import gzip
 import json
+import os
 import shutil
 import tarfile
 import threading
 import uuid
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 
@@ -15,6 +17,7 @@ from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 from msks.app import build_app
 from msks.imagestore import (
+    IMPORTED_STAMP,
     ImageError,
     default_image,
     import_archive,
@@ -114,6 +117,76 @@ def test_resolve_forms(tmp_path: Path) -> None:
     assert by_hash is not None
     assert resolve("nope", tmp_path) is None
     assert resolve("debian:99", tmp_path) is None
+
+
+def test_import_stamps_and_refreshes_the_time(tmp_path: Path) -> None:
+    """The cache carries an ``imported`` stamp (#186); the stamp —
+    not the wall clock — is the record's truth, and a re-import
+    moves it forward with the cache it swaps in."""
+    archive = tmp_path / "a.tar"
+    build_containerdisk(archive)
+    record = import_archive(archive, tmp_path)
+    assert record.imported is not None
+    assert record.imported.tzinfo is not None
+    recent = datetime.now(UTC) - timedelta(hours=1)
+    assert record.imported > recent
+    assert list_images(tmp_path)[0].imported == record.imported
+    # An old stamp reads back as itself.
+    old = datetime(2020, 1, 1, tzinfo=UTC)
+    (tmp_path / "images" / record.hash / IMPORTED_STAMP).write_text(
+        old.isoformat() + "\n"
+    )
+    assert list_images(tmp_path)[0].imported == old
+    # A re-import refreshes the stamp along with the cache.
+    reimported = import_archive(archive, tmp_path)
+    assert reimported.imported > old
+
+
+def test_import_time_falls_back_to_the_cache_mtime(tmp_path: Path) -> None:
+    """A cache that predates stamps (#186) — the stamp file gone or
+    mangled — still reports a time: the directory's own."""
+    archive = tmp_path / "a.tar"
+    build_containerdisk(archive)
+    record = import_archive(archive, tmp_path)
+    cache = tmp_path / "images" / record.hash
+    stamp = cache / IMPORTED_STAMP
+    mtime = datetime(2019, 5, 4, tzinfo=UTC)
+    stamp.unlink()
+    os.utime(cache, (mtime.timestamp(), mtime.timestamp()))
+    assert list_images(tmp_path)[0].imported == mtime
+    # A stamp too mangled to parse falls back the same way (the
+    # write itself bumps the directory's mtime, so re-pin it).
+    stamp.write_text("not a date\n")
+    os.utime(cache, (mtime.timestamp(), mtime.timestamp()))
+    assert list_images(tmp_path)[0].imported == mtime
+
+
+def test_same_reference_entries_order_by_import_time(tmp_path: Path) -> None:
+    """Rebuilt archives pile up under one reference (#186); the
+    listing orders them oldest-first, never by directory-listing
+    order."""
+    base = datetime(2026, 9, 1, tzinfo=UTC)
+    hashes = []
+    for i in range(3):
+        archive = tmp_path / f"i{i}.tar"
+        build_containerdisk(
+            archive,
+            members={
+                "boot/vmlinuz": f"kernel-{i}".encode(),
+                "boot/initrd.img": b"initrd-bytes",
+                "disk/rootfs.ext4": b"rootfs-bytes",
+            },
+        )
+        hashes.append(import_archive(archive, tmp_path).hash)
+    # Stamp the first import newest and the last oldest: import
+    # time, not directory order, decides the listing.
+    for i, digest in enumerate(hashes):
+        when = base + timedelta(days=2 - i)
+        (tmp_path / "images" / digest / IMPORTED_STAMP).write_text(
+            when.isoformat() + "\n"
+        )
+    listed = list_images(tmp_path)
+    assert [r.hash for r in listed] == [hashes[2], hashes[1], hashes[0]]
 
 
 def test_default_selection(tmp_path: Path) -> None:

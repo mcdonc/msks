@@ -105,14 +105,19 @@ workspace                root cost/ceiling    home cost/ceiling    cost
 ws4                      3.1G / 10G           812M / 2G            3.9G
 scratch                  61M / 10G            12M / 2G             73M
 
-image                    cost
-debian:13                3.0G
+image                    imported             cost
+debian:13                2026-09-21 16:03     3.0G
+debian:13                2026-08-02 09:11     3.0G
 ```
 
 - **cost** is the disk blocks the artifact occupies on the state
   disk — an idle artifact costs its content, not its ceiling (the
   files are sparse), and an overlay's cost rides a little above
   what the guest's own `df` shows for its root (qcow2 bookkeeping).
+- **imported** is when the image archive came in, local time to
+  the minute (#186) — entries that share a reference (a rebuilt
+  image imported again) read as distinct through it; the listing
+  orders them oldest-first.
 - **ceiling** is the size fixed at create; the guest sees it as its
   quota and its user can watch it fill with `df` inside the
   workspace.

@@ -1025,10 +1025,12 @@ async def test_create_refuses_user_data_on_k8s(client, monkeypatch) -> None:
 
 
 async def test_storage_report_lists_consumers(client) -> None:
-    """GET /api/v1/storage names the budget and every workspace's
-    cost against its ceilings (#184)."""
+    """GET /api/v1/storage names the budget, every workspace's cost
+    against its ceilings, and the catalog's (#184) — each image with
+    its import time beside its cost (#186)."""
     http, app, _stub = client
-    app.state.settings.vmm.state_dir.mkdir(parents=True, exist_ok=True)
+    state_dir = app.state.settings.vmm.state_dir
+    state_dir.mkdir(parents=True, exist_ok=True)
     created = await http.post(
         "/api/v1/workspaces",
         json={"id": "ws-st", "kernel": "/k", "rootfs": "/r"},
@@ -1050,6 +1052,22 @@ async def test_storage_report_lists_consumers(client) -> None:
     assert isinstance(ws["root_bytes"], int)
     assert isinstance(ws["home_bytes"], int)
     assert body["images"] == []
+    # A catalog entry carries its import time (#186): an ISO-8601
+    # moment an aware parser reads back.
+    from datetime import datetime
+
+    from test_imagestore import build_containerdisk
+
+    archive = state_dir / "ws-storage.tar"
+    build_containerdisk(archive)
+    imported = await http.post(
+        "/api/v1/images", json={"source": str(archive)}, headers=auth()
+    )
+    assert imported.status_code == 201, imported.text
+    report = await http.get("/api/v1/storage", headers=auth())
+    entry = report.json()["images"][0]
+    when = datetime.fromisoformat(entry["imported"])
+    assert when.tzinfo is not None
 
 
 async def test_storage_report_requires_a_token(client) -> None:

@@ -15,6 +15,7 @@ import json
 import os
 import sys
 from collections.abc import AsyncIterator
+from datetime import datetime
 from pathlib import Path
 
 from ..identity import KEY_TYPES, mint
@@ -477,15 +478,45 @@ def workspace_lines(
     return ["", header, *[format_storage_row(ws) for ws in matches]]
 
 
+def imported_cell(image: dict) -> str:
+    """One import-time cell: local time to the minute, or ``-``
+    when the daemon predates stamps (#186)."""
+    stamp = image.get("imported")
+    if not stamp:
+        return "-"
+    return (
+        datetime.fromisoformat(stamp).astimezone().strftime("%Y-%m-%d %H:%M")
+    )
+
+
+def image_row(image: dict, stamped: bool) -> str:
+    """One catalog line: ref, its import time when the report
+    carries one (#186), and the cost."""
+    ref = f"{image['name']}:{image['version']}"
+    if stamped:
+        return (
+            f"{ref:<24} {imported_cell(image):<16} "
+            f"{human_bytes(image['bytes'])}"
+        )
+    return f"{ref:<24} {human_bytes(image['bytes'])}"
+
+
 def image_lines(images: list[dict]) -> list[str]:
-    """The catalog cost table — empty when the catalog is empty."""
+    """The catalog cost table — empty when the catalog is empty.
+
+    Rows that carry their import time (#186) show it, so entries
+    sharing a reference read as distinct; a daemon predating
+    stamps keeps the two-column table.
+    """
     if not images:
         return []
-    lines = ["", f"{'image':<24} cost"]
-    for image in images:
-        ref = f"{image['name']}:{image['version']}"
-        lines.append(f"{ref:<24} {human_bytes(image['bytes'])}")
-    return lines
+    stamped = any(image.get("imported") for image in images)
+    header = (
+        f"{'image':<24} {'imported':<16} cost"
+        if stamped
+        else f"{'image':<24} cost"
+    )
+    return ["", header, *[image_row(image, stamped) for image in images]]
 
 
 def cmd_storage(

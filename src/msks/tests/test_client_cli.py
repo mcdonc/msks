@@ -13,6 +13,7 @@ import os
 import ssl
 import sys
 from collections.abc import AsyncIterator
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -2102,6 +2103,55 @@ def test_cmd_storage_json_is_verbatim(
     out = capsys.readouterr().out
     assert rc == 0
     assert json.loads(out) == STORAGE_BODY
+
+
+def test_image_lines_show_import_times() -> None:
+    """Same-reference rows read as distinct through their import
+    times (#186), rendered in the operator's local time; a row
+    without a time renders a dash in its place."""
+    when = datetime.fromisoformat("2026-09-21T14:03:00+00:00")
+    rows = [
+        {
+            "name": "debian",
+            "version": "13.6",
+            "bytes": 3 * 1024**3,
+            "imported": "2026-09-21T14:03:00+00:00",
+        },
+        {
+            "name": "debian",
+            "version": "13.6",
+            "bytes": 3 * 1024**3,
+            "imported": "2026-08-01T09:00:00+00:00",
+        },
+        {
+            "name": "debian",
+            "version": "13.6",
+            "bytes": 3 * 1024**3,
+            "imported": None,
+        },
+    ]
+    lines = cli.image_lines(rows)
+    assert lines[1] == f"{'image':<24} {'imported':<16} cost"
+    expect = when.astimezone().strftime("%Y-%m-%d %H:%M")
+    older = (
+        datetime.fromisoformat("2026-08-01T09:00:00+00:00")
+        .astimezone()
+        .strftime("%Y-%m-%d %H:%M")
+    )
+    assert lines[2] == f"{'debian:13.6':<24} {expect:<16} 3G"
+    assert lines[3] == f"{'debian:13.6':<24} {older:<16} 3G"
+    assert lines[4] == f"{'debian:13.6':<24} {'-':<16} 3G"
+
+
+def test_image_lines_without_times_keep_two_columns() -> None:
+    """A daemon predating stamps (#186) still gets its table — the
+    two-column shape, without a column of dashes."""
+    rows = [{"name": "debian", "version": "13", "bytes": int(3.0 * 1024**3)}]
+    assert cli.image_lines(rows) == [
+        "",
+        f"{'image':<24} cost",
+        f"{'debian:13':<24} 3G",
+    ]
 
 
 def test_human_bytes_units() -> None:

@@ -1,5 +1,6 @@
 """State-disk capacity reporting (#184): budget, cost, pressure."""
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -27,10 +28,17 @@ def seed_state_dir(root: Path) -> Path:
 class FakeImage:
     """The imagestore record shape the report reads."""
 
-    def __init__(self, digest: str, name: str, version: str) -> None:
+    def __init__(
+        self,
+        digest: str,
+        name: str,
+        version: str,
+        imported: datetime | None = None,
+    ) -> None:
         self.hash = digest
         self.name = name
         self.version = version
+        self.imported = imported
 
 
 def test_state_usage_reports_the_filesystem(tmp_path: Path) -> None:
@@ -194,6 +202,20 @@ def test_storage_report_assembles_all_three_blocks(tmp_path: Path) -> None:
     report = storage.storage_report(tmp_path, 90, 512, rows, [])
     assert report["workspaces"][1]["root_bytes"] == 0
     assert report["workspaces"][1]["home_bytes"] == 0
+
+
+def test_storage_report_carries_the_import_time(tmp_path: Path) -> None:
+    """The report passes each image's import time through (#186):
+    ISO-8601 beside the hash, or None when the record has none."""
+    seed_state_dir(tmp_path)
+    when = datetime(2026, 9, 21, 14, 3, tzinfo=UTC)
+    images = [FakeImage("a" * 64, "debian", "13", imported=when)]
+    report = storage.storage_report(tmp_path, 90, 512, [], images)
+    assert report["images"][0]["imported"] == when.isoformat()
+    unstamped = storage.storage_report(
+        tmp_path, 90, 512, [], [FakeImage("a" * 64, "debian", "13")]
+    )
+    assert unstamped["images"][0]["imported"] is None
 
 
 def test_image_cost_counts_the_retained_archive(tmp_path: Path) -> None:
