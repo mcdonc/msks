@@ -44,5 +44,9 @@ async def delete_flows(tool: str, source_ip: str, dest_ip: str) -> None:
             f"conntrack delete for {source_ip} -> {dest_ip}: "
             f"tool not found: {tool}"
         ) from None
-    with contextlib.suppress(asyncio.TimeoutError):
+    try:
         await asyncio.wait_for(proc.communicate(), timeout=10.0)
+    except TimeoutError:
+        proc.kill()
+        with contextlib.suppress(ProcessLookupError):
+            await proc.wait()

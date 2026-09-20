@@ -111,10 +111,11 @@ connection is decided:
   ```
 
   A decider is any authenticated client that announced itself on
-  the events websocket (`msks egress watch <workspace>`): holds
-  wait only while at least one decider is connected, and the
-  connection itself is the decider's liveness. Without a decider an
-  off-list connect fails fast — no prompt, no hang. The prompt names
+  the events websocket (`msks egress watch <workspace>`): new holds
+  wait for a decider only while at least one is connected (the
+  connection itself is the decider's liveness — a hold created
+  before the last decider left still runs its timeout). Without a
+  decider an off-list connect fails fast — no prompt, no hang. The prompt names
   the DNS name (`api.anthropic.com:443`), because the resolver is
   the one the DHCP lease hands the guest and it remembers which
   name resolved to which address; a destination given by address (a

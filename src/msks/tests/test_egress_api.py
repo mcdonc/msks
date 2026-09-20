@@ -34,14 +34,14 @@ async def consent_client(tmp_path: Path):
 
 
 async def create_workspace(
-    http, workspace_id: str, mode: str, allowlist: list[str] | None = None
+    http,
+    workspace_id: str,
+    mode: str | None,
+    allowlist: list[str] | None = None,
 ) -> dict:
-    body = {
-        "id": workspace_id,
-        "kernel": "/k",
-        "rootfs": "/r",
-        "egress_mode": mode,
-    }
+    body = {"id": workspace_id, "kernel": "/k", "rootfs": "/r"}
+    if mode is not None:
+        body["egress_mode"] = mode
     if allowlist is not None:
         body["egress_allowlist"] = allowlist
     reply = await http.post("/api/v1/workspaces", json=body, headers=auth())
@@ -580,3 +580,107 @@ async def test_register_decider_when_rules_read_fails(tmp_path: Path) -> None:
         app, socket, client_id=1, message={"workspace": "ws-rr"}
     )
     assert socket.sent == []  # nothing held; rules skipped
+
+
+async def test_decide_validates_and_binds_the_workspace(
+    consent_client,
+) -> None:
+    """Invalid verdict fields answer a 400 (not a silent deny that
+    strands the row), and a request id belonging to another
+    workspace answers a 404."""
+    import httpx
+
+    api, app, _stub = consent_client
+    transport = httpx.ASGITransport(app=api)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://test"
+    ) as http:
+        await create_workspace(http, "ws-va", "interactive")
+        await create_workspace(http, "ws-vb", "interactive")
+        engine = app.state.consent
+        app.state.deciders.register(1, "ws-va")
+        future = await engine.hold("ws-va", "api.example", 443)
+        row = (
+            await app.state.model.egress_consent.list_requests(
+                "ws-va", decision="pending"
+            )
+        )[0]
+        # Bad decision token and bad duration both 400.
+        for body in (
+            {"decision": "maybe", "duration": "5m"},
+            {"decision": "allow", "duration": "2h"},
+        ):
+            reply = await http.post(
+                f"/api/v1/workspaces/ws-va/egress/requests/{row['id']}",
+                json=body,
+                headers=auth(),
+            )
+            assert reply.status_code == 400, reply.text
+        # The other workspace's path answers 404 and decides
+        # nothing (the hold survives).
+        reply = await http.post(
+            f"/api/v1/workspaces/ws-vb/egress/requests/{row['id']}",
+            json={"decision": "deny", "duration": "once"},
+            headers=auth(),
+        )
+        assert reply.status_code == 404
+        assert not future.done()
+        reply = await http.post(
+            f"/api/v1/workspaces/ws-va/egress/requests/{row['id']}",
+            json={"decision": "allow", "duration": "once"},
+            headers=auth(),
+        )
+        assert reply.status_code == 200
+        # Revoke through the wrong workspace refuses too.
+        reply = await http.delete(
+            f"/api/v1/workspaces/ws-vb/egress/requests/{row['id']}",
+            headers=auth(),
+        )
+        assert reply.status_code == 404
+
+
+async def test_create_defaults_the_mode_from_the_setting(
+    consent_client,
+) -> None:
+    """MSKSD_EGRESS_MODE is the fleet default create falls back to
+    when the request names no mode."""
+    import httpx
+
+    api, app, _stub = consent_client
+    app.state.settings.net.egress_mode = "static"
+    transport = httpx.ASGITransport(app=api)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://test"
+    ) as http:
+        row = await create_workspace(http, "ws-fleet", None)
+        assert row["egress_mode"] == "static"  # the fleet default
+        # An explicit request still wins over the fleet default.
+        reply = await http.post(
+            "/api/v1/workspaces",
+            json={
+                "id": "ws-explicit",
+                "kernel": "/k",
+                "rootfs": "/r",
+                "egress_mode": "interactive",
+            },
+            headers=auth(),
+        )
+        assert reply.json()["egress_mode"] == "interactive"
+
+
+async def test_requests_limit_bounds_the_page(consent_client) -> None:
+    import httpx
+
+    api, app, _stub = consent_client
+    transport = httpx.ASGITransport(app=api)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://test"
+    ) as http:
+        await create_workspace(http, "ws-lim", "static")
+        for i in range(3):
+            await app.state.consent.hold("ws-lim", f"h{i}.example", 80)
+        reply = await http.get(
+            "/api/v1/workspaces/ws-lim/egress/requests?limit=2",
+            headers=auth(),
+        )
+        assert len(reply.json()) == 2

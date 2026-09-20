@@ -595,7 +595,10 @@ msks egress watch ws-dev --decide --duration forever
 ```
 
 `decide` and `revoke` name the request by the id `watch` and
-`requests` print (the full id, copy-pasteable). Durations: `once` (this connection only — a
+`requests` print (the full id, copy-pasteable); both act only on
+the named workspace's requests. A portless destination (a
+non-TCP/UDP flow) prompts as `host (all ports)` — an allow opens
+every port on the host for the duration. Durations: `once` (this connection only — a
 reconnect re-prompts), `5m`, `15m`, `tilrestart` (until the
 workspace VM stops; the default), `forever` (the workspace's
 lifetime — replayed at every boot). `revoke` undoes an in-effect

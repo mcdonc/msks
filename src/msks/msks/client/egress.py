@@ -23,11 +23,14 @@ def events_url(base_url: str, token: str) -> str:
 
 
 def dest_label(row: dict) -> str:
-    """One destination as the operator reads it."""
+    """One destination as the operator reads it. A portless
+    destination (a non-TCP/UDP flow) reads as all-ports — an allow
+    for it opens every port on the host for the duration, and the
+    label says so."""
     host = row["dest_host"]
-    return (
-        host if row["dest_port"] in (0, None) else f"{host}:{row['dest_port']}"
-    )
+    if row["dest_port"] in (0, None):
+        return f"{host} (all ports)"
+    return f"{host}:{row['dest_port']}"
 
 
 def request_line(request: dict) -> str:
@@ -187,17 +190,17 @@ async def handle_frame(
 
 
 async def maybe_decide(row: dict, duration: str, url: str, token: str) -> None:
-    """The y/n prompt for a pending request (``--decide``)."""
+    """The y/n prompt for a pending request (``--decide``): y
+    allows for the duration; anything else denies now — the held
+    connection fails fast instead of waiting out the timeout."""
     answer = await asyncio.to_thread(input, f"allow {dest_label(row)}? [y/N] ")
-    answer = answer.strip().lower()
-    if answer not in ("y", "yes"):
-        return
+    decision = "allow" if answer.strip().lower() in ("y", "yes") else "deny"
     async with api_client(url, token) as client:
         await request(
             client,
             "POST",
             f"/api/v1/workspaces/{row['workspace_id']}/egress/requests/"
             f"{row['id']}",
-            {"decision": "allow", "duration": duration},
+            {"decision": decision, "duration": duration},
         )
-    print(f"{row['id']} allowed", flush=True)
+    print(f"{row['id']} {decision}d", flush=True)

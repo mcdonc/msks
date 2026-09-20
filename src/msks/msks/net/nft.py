@@ -95,23 +95,31 @@ def ip_spec_rules(tap: str, specs: tuple[IpSpec, ...]) -> str:
 
 
 def consent_sets(policy: EgressPolicy) -> str:
-    """The per-VM consent sets (interactive only): all-ports allows,
-    port-scoped allows, and TCP rejects, each element carrying its
-    own kernel-side timeout — verdict durations are enforced by the
-    kernel, not a userspace sweeper."""
-    if not policy.interactive:
+    """The per-VM consent sets (gated modes): all-ports allows and
+    port-scoped allows — a static workspace's allowlisted names pin
+    their resolved addresses into the same sets an interactive
+    verdict does, so both modes share one enforcement shape. The
+    rejects set is deny-verdict machinery and ships only with the
+    queue. Each element carries its own kernel-side timeout —
+    verdict durations are enforced by the kernel, not a userspace
+    sweeper."""
+    if not policy.gated:
         return ""
-    return (
+    sets = (
         "  set allows_any {\n"
         "    type ipv4_addr; flags timeout;\n"
         "  }\n"
         "  set allows_port {\n"
         "    type ipv4_addr . inet_service; flags timeout;\n"
         "  }\n"
-        "  set rejects {\n"
-        "    type ipv4_addr . inet_service; flags timeout;\n"
-        "  }\n"
     )
+    if policy.interactive:
+        sets += (
+            "  set rejects {\n"
+            "    type ipv4_addr . inet_service; flags timeout;\n"
+            "  }\n"
+        )
+    return sets
 
 
 def consent_gates(tap: str, guest_ip: str, queue_num: int | None) -> str:
@@ -119,9 +127,13 @@ def consent_gates(tap: str, guest_ip: str, queue_num: int | None) -> str:
     rejected destination ports answer a SYN with a TCP RST (a
     dropped SYN alone leaves connect() hanging on the kernel's
     retransmit timer — the RST is the fast refusal), allowed
-    destinations pass, and everything else new queues for a
-    verdict. The queue carries no ``bypass``: an unbound or full
-    queue drops (fail-closed)."""
+    destinations pass, and everything else NEW queues for a
+    verdict — the queue match carries ``ct state new``, so an
+    established flow's later packets never re-enter consent (a
+    ``once`` verdict guards the connection it released for the
+    connection's whole life, not the cache window). The queue
+    carries no ``bypass``: an unbound or full queue drops
+    (fail-closed)."""
     if queue_num is None:
         return ""
     return (
@@ -129,9 +141,20 @@ def consent_gates(tap: str, guest_ip: str, queue_num: int | None) -> str:
         "reject with tcp reset\n"
         f'    iifname "{tap}" ip daddr @allows_any accept\n'
         f'    iifname "{tap}" ip daddr . tcp dport @allows_port accept\n'
-        f'    iifname "{tap}" ip saddr {guest_ip} '
+        f'    iifname "{tap}" ip saddr {guest_ip} ct state new '
         f"queue num {queue_num}\n"
     )
+
+
+def established_accept(tap: str, policy: EgressPolicy) -> str:
+    """The outbound established accept (gated modes): a flow that
+    passed the gates once (its SYN carried a verdict, or it hit a
+    pin) keeps flowing for the connection's life — consent is once
+    per flow, and the queue match's ``ct state new`` sends only new
+    flows to it."""
+    if not policy.gated:
+        return ""
+    return f'    iifname "{tap}" ct state established,related accept\n'
 
 
 def vm_ruleset(
@@ -171,6 +194,7 @@ def vm_ruleset(
         "    type filter hook forward priority filter; policy accept;\n"
         f'    oifname "{tap}" ct state established,related accept\n'
         f"{dns_lockout_rules(tap)}"
+        f"{established_accept(tap, mode)}"
         f"{ip_spec_rules(tap, mode.ip_specs)}"
         f"{consent_gates(tap, guest_ip, queue_num)}"
         f'    iifname "{tap}" ip saddr {guest_ip} '

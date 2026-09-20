@@ -1,5 +1,7 @@
 """Conntrack eviction for consent revocation (#69)."""
 
+import asyncio
+
 import pytest
 from msks.microvm.errors import MicrovmError
 from msks.net import conntrack
@@ -21,3 +23,14 @@ async def test_delete_flows_names_a_missing_tool(tmp_path) -> None:
         await conntrack.delete_flows(
             str(tmp_path / "absent"), "172.31.0.1", "10.0.0.9"
         )
+
+
+async def test_delete_flows_kills_a_hung_tool(tmp_path) -> None:
+    """A conntrack that never exits is killed at the deadline — the
+    revoke is not held hostage by a wedged subprocess."""
+    tool = tmp_path / "hung-conntrack"
+    tool.write_text("#!/bin/sh\nsleep 60\n")
+    tool.chmod(0o755)
+    await asyncio.wait_for(
+        conntrack.delete_flows(str(tool), "172.31.0.1", "10.0.0.9"), 15.0
+    )

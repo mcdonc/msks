@@ -322,8 +322,13 @@ class FlowConsumer:
             # The engine's own gate never raises (it fail-closes),
             # but a bug there must not eat the packet: deny.
             verdict = {"decision": "deny", "reason": "error"}
-        await self.apply_verdict(pkt, flow, dst, dport, verdict)
-        self._inflight.discard(flow)
+        try:
+            await self.apply_verdict(pkt, flow, dst, dport, verdict)
+        finally:
+            # Always discard, even if enforcement raised: a stuck
+            # key would silently drop that flow's retransmits
+            # forever.
+            self._inflight.discard(flow)
 
     async def apply_verdict(
         self,

@@ -2544,7 +2544,8 @@ async def test_maybe_decide_posts_the_verdict(monkeypatch) -> None:
     posted.clear()
     monkeypatch.setattr(eg.asyncio, "to_thread", lambda fn, *a: no(None))
     await eg.maybe_decide(row, "once", "https://x", "t")
-    assert posted == {}
+    # Anything but y/yes denies now (fail-fast), not silence.
+    assert posted["body"] == {"decision": "deny", "duration": "once"}
 
 
 def test_events_url_shapes_the_query() -> None:
@@ -2778,3 +2779,47 @@ async def test_handle_frame_ignores_unknown_events(capsys) -> None:
         token="t",
     )
     assert capsys.readouterr().out == ""
+
+
+async def test_maybe_decide_denies_on_a_no(monkeypatch) -> None:
+    """The --decide prompt sends a deny for anything but y/yes: the
+    held connection fails fast instead of waiting out the timeout."""
+    from msks.client import egress as eg
+
+    posted = {}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+    async def fake_request(client, method, path, body=None):
+        posted["body"] = body
+
+    monkeypatch.setattr(eg, "api_client", lambda *_a, **_k: FakeClient())
+    monkeypatch.setattr(eg, "request", fake_request)
+    row = {
+        "id": "n" * 8,
+        "workspace_id": "ws1",
+        "dest_host": "no.example",
+        "dest_port": 443,
+    }
+
+    async def no(prompt):
+        return "n"
+
+    real_to_thread = asyncio.to_thread
+    monkeypatch.setattr(
+        eg.asyncio,
+        "to_thread",
+        lambda fn, *a: no(None) if fn is input else real_to_thread(fn, *a),
+    )
+    await eg.maybe_decide(row, "once", "https://x", "t")
+    assert posted["body"] == {"decision": "deny", "duration": "once"}
+    # The all-ports label for a portless destination.
+    assert (
+        eg.dest_label({"dest_host": "raw.example", "dest_port": 0})
+        == "raw.example (all ports)"
+    )

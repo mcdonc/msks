@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 from msks.app import build_app
+from msks.consent import coordinator as coordinator_mod
 from msks.consent.coordinator import duration_ttl
 from msks.consent.specs import MODE_ALLOW, MODE_INTERACTIVE, MODE_STATIC
 from msks.microvm import VmSpec
@@ -517,19 +518,9 @@ async def test_stop_tolerates_a_vanished_hold(engine_app) -> None:
     app.state.deciders.register(1, "ws-interactive")
     first = await engine.hold("ws-interactive", "a.example", 443)
     second = await engine.hold("ws-interactive", "b.example", 443)
-    request_ids = list(engine._holds)
-    real_cancel = engine.cancel_hold_task
-
-    async def cancel_and_steal(task):
-        # The racing timeout: the OTHER hold pops while the first is
-        # being reaped.
-        engine._holds.pop(request_ids[1], None)
-        await real_cancel(task)
-
-    engine.cancel_hold_task = cancel_and_steal
     await engine.stop()
     assert (await verdict_of(first))["reason"] == "shutdown"
-    assert not second.done()  # stolen by the racing timeout
+    assert (await verdict_of(second))["reason"] == "shutdown"
 
 
 async def test_finish_twice_keeps_the_first_verdict(engine_app) -> None:
@@ -549,3 +540,89 @@ async def test_finish_twice_keeps_the_first_verdict(engine_app) -> None:
 async def test_broadcast_rules_skips_missing_workspaces(engine_app) -> None:
     app, _frames, _queue = engine_app
     await app.state.consent.broadcast_rules("missing-ws")
+
+
+async def test_stop_fail_closes_before_reaping(engine_app) -> None:
+    """The fail-close lands before the timeout task is reaped, so a
+    cancel inside the timeout's own fail-close cannot strand the
+    future."""
+    app, _frames, _queue = engine_app
+    engine = app.state.consent
+    app.state.deciders.register(1, "ws-interactive")
+    future = await engine.hold("ws-interactive", "s.example", 443)
+    await engine.stop()
+    assert future.done() and future.result()["decision"] == "deny"
+
+
+async def test_stop_and_stop_workspace_skip_vanished_holds(engine_app) -> None:
+    """A hold popped between the loop's snapshot and its reap (the
+    racing-timeout shape) skips the task cancel instead of crashing
+    — in both stop paths."""
+    app, _frames, _queue = engine_app
+    engine = app.state.consent
+    app.state.deciders.register(1, "ws-interactive")
+    first = await engine.hold("ws-interactive", "a.example", 443)
+    second = await engine.hold("ws-interactive", "b.example", 443)
+    second_id = (
+        second
+        and (
+            await app.state.model.egress_consent.list_requests(
+                "ws-interactive", decision="pending"
+            )
+        )[0]["id"]
+    )
+    real_owner = coordinator_mod.hold_owner
+
+    def owner_and_steal(holds, request_id):
+        owner, task = real_owner(holds, request_id)
+        if task is not None and request_id == second_id:
+            holds.pop(request_id, None)  # the racing timeout wins it
+            return owner, None
+        return owner, task
+
+    coordinator_mod.hold_owner = owner_and_steal
+    await engine.stop()
+    coordinator_mod.hold_owner = real_owner
+    assert (await verdict_of(first))["reason"] == "shutdown"
+    # The stolen hold's future: the racing timeout owns it now; the
+    # stop loop skipped it (no cancel of an unknown task).
+
+    # The workspace-stop path skips foreign holds' ids entirely,
+    # and its own vanished holds (the steal shape) skip the cancel.
+    engine2 = app.state.consent
+    app.state.deciders.register(2, "ws-interactive")
+    kept = await engine2.hold("ws-interactive", "k.example", 443)
+    stolen = await engine2.hold("ws-interactive", "v.example", 443)
+    stolen_id = (
+        await app.state.model.egress_consent.list_requests(
+            "ws-interactive", decision="pending"
+        )
+    )[-1]["id"]
+    engine2._holds["foreign"] = {
+        "future": asyncio.get_running_loop().create_future(),
+        "workspace_id": "ws-elsewhere",
+        "task": asyncio.create_task(asyncio.sleep(3600)),
+    }
+
+    def steal_vanished(holds, request_id):
+        owner, task = real_owner(holds, request_id)
+        if task is not None and request_id == stolen_id:
+            holds.pop(request_id, None)
+            return owner, None
+        return owner, task
+
+    coordinator_mod.hold_owner = steal_vanished
+    await engine2.on_workspace_stop("ws-interactive")
+    coordinator_mod.hold_owner = real_owner
+    assert "foreign" in engine2._holds
+    assert (await verdict_of(kept))["reason"] == "stopped"
+    engine2._holds["foreign"]["task"].cancel()
+    del engine2._holds["foreign"]
+    del stolen
+
+
+def test_hold_owner_answers_the_vanished_arm() -> None:
+    """A hold popped between the snapshot and the capture reads as
+    (None, None) — the callers' skip signal."""
+    holds: dict = {}
+    assert coordinator_mod.hold_owner(holds, "missing") == (None, None)

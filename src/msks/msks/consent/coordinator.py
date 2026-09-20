@@ -118,9 +118,25 @@ def built_verdict(
     )
 
 
+def hold_owner(
+    holds: dict, request_id: str
+) -> tuple[str | None, asyncio.Task | None]:
+    """``(workspace_id, timeout task)`` captured before a fail-close
+    pops the hold — the pop happens inside fail_close, and the task
+    must still be reaped after it. ``(None, None)`` when the hold
+    vanished (a racing timeout won it)."""
+    hold = holds.get(request_id)
+    if hold is None:
+        return None, None
+    return hold["workspace_id"], hold["task"]
+
+
 class SessionMemory:
     """Per-workspace name-keyed verdict memory (klangk's session
-    allows/denies), loop-only, lazily pruned."""
+    allows/denies). Loop-only; expired entries stop matching on
+    their TTL check and die wholesale with the workspace stop
+    (``clear``) — the volume is one entry per consented
+    destination, so lazy matching is the whole lifecycle."""
 
     def __init__(self) -> None:
         # (host, port-or-None) -> expire epoch, per workspace.
@@ -270,12 +286,17 @@ class ConsentEngine:
             logger.info("consent: expired %d orphaned pending row(s)", reaped)
 
     async def stop(self) -> None:
-        """Fail-close every in-flight hold (daemon shutdown)."""
+        """Fail-close every in-flight hold (daemon shutdown).
+
+        The fail-close runs before the timeout task is reaped: a
+        cancel landing inside the timeout's own fail_close (between
+        its pop and its future resolve) would otherwise strand the
+        future — pop-first here makes the timeout's arm a no-op."""
         for request_id in list(self._holds):
-            hold = self._holds.get(request_id)
-            if hold is not None:
-                await self.cancel_hold_task(hold["task"])
+            _owner, task = hold_owner(self._holds, request_id)
             await self.fail_close(request_id, reason="shutdown")
+            if task is not None:
+                await self.cancel_hold_task(task)
 
     async def cancel_hold_task(self, task: asyncio.Task) -> None:
         """Cancel and reap a hold's timeout task: the cancel is
@@ -296,10 +317,11 @@ class ConsentEngine:
         ``tilrestart`` verdicts go with them, and any hold the
         workspace still has fail-closes."""
         for request_id in list(self._holds):
-            hold = self._holds.get(request_id)
-            if hold is not None and hold["workspace_id"] == workspace_id:
-                await self.cancel_hold_task(hold["task"])
-                await self.fail_close(request_id, reason="stopped")
+            owner, task = hold_owner(self._holds, request_id)
+            if task is None or owner != workspace_id:
+                continue  # vanished, or another workspace's hold
+            await self.fail_close(request_id, reason="stopped")
+            await self.cancel_hold_task(task)
         self.session.clear(workspace_id)
         await self.model.clear_tilrestart(workspace_id)
 
@@ -450,7 +472,16 @@ class ConsentEngine:
             # row already says it — instead of fail-closing a
             # decision that landed.
             self.finish(hold, verdict)
-            if row is not None:
+            if row is None:
+                # No committed decision backs this hold — the row
+                # was not pending (a racing timeout won it) or the
+                # decide write failed. Expire it now: with the hold
+                # popped and its timeout cancelled, nothing else
+                # would, and a pending row wedges the destination's
+                # dedup slot until the startup reaper.
+                with contextlib.suppress(Exception):
+                    await self.model.expire_pending(request_id)
+            else:
                 await self.remember_verdict(
                     hold["workspace_id"],
                     row["dest_host"],

@@ -206,6 +206,9 @@ def test_interactive_mode_queues_new_flows() -> None:
     )
     assert egress.index("@allows_port accept") < egress.index("queue num")
     assert egress.index("queue num 1107") < egress.index('oifname "eth0" drop')
+    # Only NEW flows queue: an established flow's later packets
+    # never re-enter consent (once per flow, not per cache window).
+    assert "ct state new queue num 1107" in ruleset
     # No bypass flag: an unbound or full queue drops (fail-closed).
     assert "queue bypass" not in ruleset
     # The timeout-bearing sets exist.

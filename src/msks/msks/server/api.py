@@ -17,6 +17,7 @@ from fastapi import (
     Depends,
     FastAPI,
     HTTPException,
+    Query,
     Request,
     WebSocket,
     WebSocketDisconnect,
@@ -33,7 +34,7 @@ from ..identity import mint, normalize_public_key
 from ..imagestore import ImageError
 from ..microvm.errors import MicrovmError
 from ..microvm.spec import VmSpec, VmStatus
-from ..model.egress_consent import DECISIONS
+from ..model.egress_consent import DECISIONS, DURATIONS
 from .auth import require_token
 from .events import relay
 from .watcher import watch_loop
@@ -114,7 +115,7 @@ class WorkspaceCreate(BaseModel):
     # subdomains, ``*.`` matches subdomains only) gate at the
     # daemon's resolver; ``cidr[:port]`` address specs accept in the
     # per-VM chain.
-    egress_mode: str = "allow"
+    egress_mode: str | None = None
     egress_allowlist: list[str] | None = Field(default=None, max_length=256)
     # First-boot provisioning (#41): a shell script (leading "#!") or
     # cloud-config YAML — cloud-init runs both — delivered on the
@@ -895,16 +896,21 @@ def build_api(app) -> FastAPI:
         # The consent posture (#69), fixed at create with the rest of
         # the egress facts: an unknown mode or an invalid spec is a
         # named 400 here, not a first-boot surprise.
+        mode = (
+            body.egress_mode
+            if body.egress_mode is not None
+            else app.state.settings.net.egress_mode
+        )
         try:
-            if body.egress_mode not in EGRESS_MODES:
+            if mode not in EGRESS_MODES:
                 raise ValueError(
                     f"egress_mode must be one of {list(EGRESS_MODES)}, "
-                    f"got {body.egress_mode!r}"
+                    f"got {mode!r}"
                 )
             specs = parse_allowlist(body.egress_allowlist or [])
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
-        boot["egress_mode"] = body.egress_mode
+        boot["egress_mode"] = mode
         boot["egress_allowlist"] = specs
         # The identity (#111) mints before the artifacts: its public
         # half rides the seed (an artifact), its private half goes
@@ -1644,10 +1650,13 @@ def build_api(app) -> FastAPI:
         dependencies=[Depends(require_token)],
     )
     async def list_egress_requests(
-        workspace_id: str, decision: str | None = None
+        workspace_id: str,
+        decision: str | None = None,
+        limit: int = Query(default=100, ge=1, le=1000),
     ) -> list[dict]:
         """The consent rows (audit trail), newest first; the
-        ``decision`` query filters one lifecycle state."""
+        ``decision`` query filters one lifecycle state and
+        ``limit`` bounds the page (1..1000, newest first)."""
         await _workspace_or_404(app, workspace_id)
         if decision is not None and decision not in DECISIONS:
             raise HTTPException(
@@ -1655,7 +1664,7 @@ def build_api(app) -> FastAPI:
                 detail=f"decision must be one of {list(DECISIONS)}",
             )
         return await app.state.model.egress_consent.list_requests(
-            workspace_id, decision
+            workspace_id, decision, limit
         )
 
     @api.post(
@@ -1669,6 +1678,9 @@ def build_api(app) -> FastAPI:
         SYN releases on allow, refuses fast on deny; the duration
         sets how long enforcement honors the verdict."""
         await _workspace_or_404(app, workspace_id)
+        refusal = await verdict_refusal(app, workspace_id, request_id, body)
+        if refusal is not None:
+            raise HTTPException(*refusal)
         verdict = await app.state.consent.resolve(
             request_id,
             "allowed" if body.decision == "allow" else "denied",
@@ -1691,6 +1703,12 @@ def build_api(app) -> FastAPI:
         revoked, its flow rules and tracked connections clear, and
         the destination gates again at the next connection."""
         await _workspace_or_404(app, workspace_id)
+        row = await app.state.model.egress_consent.get_request(request_id)
+        if row is None or row["workspace_id"] != workspace_id:
+            raise HTTPException(
+                status_code=404,
+                detail="no consent request with that id for that workspace",
+            )
         row = await app.state.consent.revoke(request_id, "token")
         if row is None:
             raise HTTPException(
@@ -1700,6 +1718,21 @@ def build_api(app) -> FastAPI:
         return {"id": request_id, "revoked": True}
 
     return api
+
+
+async def verdict_refusal(app, workspace_id, request_id, body) -> tuple | None:
+    """(status, detail) when a decide request is malformed or names
+    another workspace's hold — validated here so an invalid value
+    answers a 400 (and a foreign hold a 404) instead of silently
+    denying the held SYN and stranding its row."""
+    if body.decision not in ("allow", "deny"):
+        return 400, f"decision must be allow or deny, got {body.decision!r}"
+    if body.duration not in DURATIONS:
+        return 400, f"duration must be one of {list(DURATIONS)}"
+    row = await app.state.model.egress_consent.get_request(request_id)
+    if row is None or row["workspace_id"] != workspace_id:
+        return 404, "no consent request with that id for that workspace"
+    return None
 
 
 def noop() -> None:
