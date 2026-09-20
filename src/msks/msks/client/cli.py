@@ -40,6 +40,7 @@ from .rest import (
 )
 from .rsync import run_workspace_rsync
 from .ssh import data_dir, run_workspace_ssh
+from .tui.consent_app import run_consent_tui
 
 
 def format_workspace(row: dict) -> str:
@@ -1488,6 +1489,7 @@ def command_table(args: argparse.Namespace, transport) -> dict:
 def egress_command_table(args: argparse.Namespace, transport) -> dict:
     """One entry per ``egress`` subcommand."""
     return {
+        "tui": lambda: run_consent_tui(args.workspace_id),
         "rules": lambda: asyncio.run(
             egress_mod.run_rules(args.workspace_id, transport=transport)
         ),

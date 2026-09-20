@@ -4,6 +4,7 @@ import asyncio
 import json
 
 import websockets
+from msks.client import cli
 from msks.client.tui import consent_app
 from msks.client.tui.consent_app import (
     ConsentDeciderApp,
@@ -484,3 +485,90 @@ async def test_repaint_survives_render_bugs(monkeypatch) -> None:
 
     monkeypatch.setattr(app, "repaint", broken)
     app.safe_repaint()  # swallowed: the transport never tears down
+
+
+def test_the_tui_subcommand_dispatches(monkeypatch) -> None:
+    """`msks egress tui <ws>` reaches run_consent_tui (the subparser
+    alone once left the command table without the key — a KeyError
+    traceback to the user)."""
+    launched = []
+
+    def fake_run(ws):
+        launched.append(ws)
+        return 0
+
+    monkeypatch.setattr(cli, "run_consent_tui", fake_run)
+    rc = cli.main(["egress", "tui", "ws-dev"])
+    assert rc == 0
+    assert launched == ["ws-dev"]
+
+
+async def test_a_verdict_failure_through_the_rest_seam(monkeypatch) -> None:
+    """The REST seam reports failures as SystemExit (one readable
+    line); a flash, not a dead app — the common case is the hold
+    timing out mid-deliberation and the daemon answering 404."""
+    factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
+    app, seams = make_app(factory)
+
+    async def gone(*_args):
+        raise SystemExit("msks: 404: no held request with that id")
+
+    app._decide = gone
+    async with app.run_test() as pilot:
+        await wait_for(lambda: app.query_one("#requests").children)
+        await pilot.press("a")
+        await wait_for(lambda: "decide failed" in status_line(app))
+        assert "404" in status_line(app)
+        app.action_quit_screen()
+
+
+async def test_the_rules_screen_refreshes_on_frames(monkeypatch) -> None:
+    """A fresh egress.rules frame repaints the open rules screen:
+    a revoked row leaves on the frame, countdowns tick."""
+
+    factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
+    app, seams = make_app(factory)
+    async with app.run_test() as pilot:
+        await pilot.press("r")
+        await wait_for(
+            lambda: len(app.screen.query_one("#rule-rows").children) == 2
+        )
+        # Revoke succeeds; the frame drops the row; the screen
+        # repaints without backing out.
+        await pilot.press("x")
+        await wait_for(lambda: len(seams["revoked"]) == 1)
+        app.controller.apply_frame(
+            json.dumps(
+                {
+                    "event": "egress.rules",
+                    "data": {
+                        "workspace_id": "ws",
+                        "mode": "interactive",
+                        "allow_list": [".debian.org"],
+                        "allowed": [],
+                        "denied": [],
+                    },
+                }
+            )
+        )
+        app.safe_repaint()
+        await wait_for(
+            lambda: len(app.screen.query_one("#rule-rows").children) == 0
+        )
+        app.action_quit_screen()
+
+
+async def test_verdict_keys_do_not_bleed_from_the_rules_screen() -> None:
+    factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
+    app, seams = make_app(factory)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: app.query_one("#requests").children)
+        await pilot.press("r")
+        await wait_for(lambda: type(app.screen).__name__ == "RulesScreen")
+        await pilot.press("a")
+        await pilot.press("d")
+        await pilot.press("A")
+        await pilot.press("D")
+        await pilot.pause()
+        assert seams["decided"] == []  # nothing decided behind the screen
+        app.action_quit_screen()

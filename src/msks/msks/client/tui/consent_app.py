@@ -202,7 +202,18 @@ class RulesScreen(Screen):
         Binding("r", "back", "Back"),
         Binding("escape", "back", "Back", show=False),
         Binding("q", "back", "Back", show=False),
+        # Shadows: the app-level verdict keys must not decide the
+        # hidden queue's focused hold from here — a/d/A/D are queue
+        # actions, and bubbling them would silently allow or deny a
+        # live connection behind this screen.
+        Binding("a", "noop", show=False),
+        Binding("A", "noop", show=False),
+        Binding("d", "noop", show=False),
+        Binding("D", "noop", show=False),
     ]
+
+    def action_noop(self) -> None:
+        """Swallow a queue-action key pressed on the rules screen."""
 
     def __init__(self, controller: ConsentController, revoke) -> None:
         super().__init__()
@@ -307,7 +318,7 @@ class ConsentDeciderApp(App):
         self.run_worker(
             self.ws_loop, exclusive=True, group="ws", exit_on_error=False
         )
-        self.set_interval(1.0, self.repaint)
+        self.set_interval(1.0, self.safe_repaint)
 
     # -- the websocket worker ---------------------------------------------
 
@@ -411,22 +422,27 @@ class ConsentDeciderApp(App):
     async def send_verdict(
         self, request_id: str, decision: str, duration: str
     ) -> None:
-        """One decide through the seam, with the flash on failure."""
+        """One decide through the seam, with the flash on failure. The
+        REST layer reports failures as SystemExit (one readable
+        line); catching it too is what makes a lost race — the hold
+        timed out mid-deliberation, the daemon answers 404 — a flash
+        instead of a dead app."""
         try:
             await self._decide(
                 self.workspace_id, request_id, decision, duration
             )
-        except Exception as exc:
+        except (Exception, SystemExit) as exc:
             self.flash(f"decide failed: {exc}")
 
     def action_rules(self) -> None:
         self.push_screen(RulesScreen(self.controller, self.revoke_rule))
 
     async def revoke_rule(self, request_id: str) -> None:
-        """Revoke through the seam; a failure flashes on the app."""
+        """Revoke through the seam; a failure flashes on the app
+        (SystemExit included — the REST seam's error surface)."""
         try:
             await self._revoke(self.workspace_id, request_id)
-        except Exception as exc:
+        except (Exception, SystemExit) as exc:
             self.flash(f"revoke failed: {exc}")
 
     def action_quit_screen(self) -> None:
@@ -450,9 +466,25 @@ class ConsentDeciderApp(App):
             pass
 
     def repaint(self) -> None:
-        """Sync the queue rows and the status line to state."""
+        """Sync the queue rows and the status line to state, and keep
+        the rules screen live when it is the active screen (its
+        countdowns tick, a fresh frame shows up — the port of
+        klangk's per-tick rules refresh)."""
+        self.refresh_rules_screen()
         self.sync_rows()
         self.update_status()
+
+    def refresh_rules_screen(self) -> None:
+        """Repaint the rules screen when it is on top."""
+        screen = self.screen
+        if isinstance(screen, RulesScreen):
+            screen.refresh_rows()
+
+    def empty_line(self) -> str:
+        """The empty-queue line, honest about the connection state."""
+        if self._conn_state == CONNECTED:
+            return "No held requests — connected, waiting."
+        return f"No held requests — {self._conn_state}."
 
     def sync_rows(self) -> None:
         """Sync the queue without a rebuild: drop resolved rows,
@@ -466,6 +498,7 @@ class ConsentDeciderApp(App):
             self.sync_one_row(rows, existing.get(request.id), request)
         ensure_focus(rows)
         self.query_one("#empty", Static).display = not ordered
+        self.query_one("#empty", Static).update(self.empty_line())
 
     def sync_one_row(self, rows: ListView, item, request) -> None:
         """Append a new row or repaint a survivor's countdown."""
