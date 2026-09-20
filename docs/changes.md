@@ -8,6 +8,17 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **`msks egress tui` (#195).** The consent decider TUI: a textual app
+  that registers as the workspace's decider, shows held requests with
+  countdowns (`a`/`d` verdicts, `A`/`D` duration picker), and adds a
+  rules screen with revocation — over the frames and endpoints #69
+  serves, reconnecting with backoff (reset after each healthy
+  connection). Countdowns follow the deadline the daemon carries on
+  each request frame, and a registration the daemon rejects (an
+  unknown workspace) exits with the reason instead of waiting. The
+  `watch`/`decide`/`revoke` subcommands remain the scripting
+  surface. See [docs/cli.md](cli.md#msks-egress).
+
 - **`msks-appliance-shell` (#189).** One command from a devenv
   shell for a root shell on the appliance console: it stops the
   appliance, seeds the `debug-shell` marker onto the state disk,
@@ -28,6 +39,28 @@ tagged `vX.Y.Z`.
   paths' own `user@` spelling; a `--pubkey` workspace exits
   naming the recovery for its private half. See
   [docs/cli.md](cli.md#msks-rsync).
+- **Egress consent (#69).** Workspaces pick a consent posture at
+  create (`--egress-mode allow|static|interactive` plus repeatable
+  `--allow` specs; `allow` is the default and preserves the current
+  unrestricted egress). `static` resolves and reaches only the
+  allowlist (off-list names answer NXDOMAIN and are recorded);
+  `interactive` holds each new connection's first packet in the
+  appliance kernel until a decider answers over the events channel —
+  `msks egress watch/decide/revoke/rules/requests` drive the whole
+  verdict lifecycle (`once`/`5m`/`15m`/`tilrestart`/`forever`), with
+  revocation also dropping a destination's live connections. Ports
+  53/853 drop toward anything but the daemon's resolver (the naming
+  layer), verdicts pin names not just addresses, and the queue
+  fails closed (msksd down or a full queue drops). New settings
+  `MSKSD_EGRESS_MODE`, `MSKSD_EGRESS_CONSENT_TIMEOUT_S`,
+  `MSKSD_EGRESS_CONSENT_RATE_LIMIT`,
+  `MSKSD_EGRESS_CONSENT_RETENTION_DAYS`,
+  `MSKSD_EGRESS_CONSENT_ROW_CAP`, `MSKSD_EGRESS_QUEUE_BASE`,
+  `MSKSD_CONNTRACK_TOOL`, and `MSKSD_AUDIT_HMAC_KEY` (consent rows
+  carry HMAC tags when it is set). See
+  [docs/networking.md](networking.md#egress-consent-69) and
+  [docs/cli.md](cli.md#msks-egress).
+
 - **`msks storage` image import times (#186).** Each catalog row
   in the image cost table shows when the archive came in (local
   time to the minute) and the `GET /api/v1/storage` image entries

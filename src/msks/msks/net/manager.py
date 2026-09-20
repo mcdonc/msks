@@ -16,14 +16,21 @@ without egress never touch any of this.
 
 import asyncio
 import contextlib
+import logging
 from dataclasses import dataclass
 from ipaddress import IPv4Network
 from pathlib import Path
 
+from ..consent.coordinator import LONG_TTL_S
+from ..consent.specs import EgressPolicy, is_ipv4
 from ..microvm.errors import MicrovmError
-from . import alloc, dns, nft, taps
+from ..model.egress_consent import DECISION_ALLOWED
+from . import alloc, conntrack, dns, nft, taps
 from .dhcp import DhcpServer
-from .dns import DnsForwarder
+from .dns import DnsForwarder, ResolverGate
+from .nfq import FlowConsumer
+
+logger = logging.getLogger(__name__)
 
 FORWARDING = Path("/proc/sys/net/ipv4/ip_forward")
 SYSCTL_KEY = "net.ipv4.ip_forward"
@@ -91,11 +98,20 @@ class NetAttachment:
 
 @dataclass
 class NetServices:
-    """One workspace's live DHCP + DNS tasks."""
+    """One workspace's live DHCP + DNS (+ consent consumer) tasks."""
 
     dhcp: DhcpServer
     dns: DnsForwarder
     tasks: list[asyncio.Task]
+    consumer: FlowConsumer | None = None
+
+    def stop_consumer(self) -> None:
+        """Unbind the consent queue first: an unbound queue drops
+        (fail-closed), so no packet passes while the table waits
+        for its own delete."""
+        if self.consumer is not None:
+            self.consumer.stop()
+            self.consumer = None
 
 
 def verify_forwarding(path: Path = FORWARDING) -> None:
@@ -131,10 +147,12 @@ class NetManager:
         dhcp_factory=DhcpServer,
         dns_factory=DnsForwarder,
         dialer=None,
+        consumer_factory=FlowConsumer,
     ) -> None:
         self.app = app
         self._dhcp_factory = dhcp_factory
         self._dns_factory = dns_factory
+        self._consumer_factory = consumer_factory
         # The guest-dial seam for the forward websocket (#109): the
         # default dials real TCP; the tests inject one that answers
         # from a listener they control (fake_ch has no NIC).
@@ -169,7 +187,11 @@ class NetManager:
         self._state = "init"
 
     async def attach(
-        self, workspace_id: str, *, want: bool
+        self,
+        workspace_id: str,
+        *,
+        want: bool,
+        policy: EgressPolicy | None = None,
     ) -> NetAttachment | None:
         """Arm one workspace's egress; None when it asked for none.
 
@@ -183,7 +205,9 @@ class NetManager:
         existing = self._attachments.get(workspace_id)
         if existing is not None:
             return existing
-        attachment = await self._build(workspace_id)
+        attachment = await self._build(
+            workspace_id, policy or EgressPolicy(workspace_id, "allow", ())
+        )
         return attachment
 
     async def forward_stream(self, workspace_id: str, port: int):
@@ -241,16 +265,22 @@ class NetManager:
 
         Releasing the slice keeps the workspace on its own /30 across
         stop/start cycles — the address derives from it, and nothing
-        else remembers the pairing. The plumbing subprocesses run
-        before the service sockets close, so a closed-socket fd number
-        is never reused by a fresh subprocess pipe underneath a stale
-        selector entry.
+        else remembers the pairing. The consent stop hook runs first
+        (holds fail-close while the table still exists to receive
+        their drops), the consumer unbinds before the table delete
+        (an unbound queue drops — fail-closed), and the plumbing
+        subprocesses run before the service sockets close, so a
+        closed-socket fd number is never reused by a fresh
+        subprocess pipe underneath a stale selector entry.
         """
         attachment = self._attachments.pop(workspace_id, None)
         services = self._services.pop(workspace_id, None)
         self.close_forwards(workspace_id)
         if attachment is None:
             return
+        await self.app.state.consent.on_workspace_stop(workspace_id)
+        if services is not None:
+            services.stop_consumer()
         settings = self.app.state.settings
         await nft.delete_vm_table(settings, workspace_id)
         await taps.remove_tap(attachment.tap, settings)
@@ -309,10 +339,152 @@ class NetManager:
                 return candidate
         raise MicrovmError("egress address pool exhausted")
 
-    async def _build(self, workspace_id: str) -> NetAttachment:
-        """Create tap + chain + services for one workspace."""
+    def queue_for(self, slice_: int) -> int:
+        """The per-VM NFQUEUE number for a pool slice (#69): one
+        workspace's SYN flood is a self-DoS only — it cannot starve
+        another workspace's verdicts. A queue number is 16 bits, so
+        a pool too large for the base refuses by name."""
+        queue = self.app.state.settings.net.queue_base + slice_
+        if queue > nft.QUEUE_MAX:
+            raise MicrovmError(
+                "egress pool too large for consent queues: slice "
+                f"{slice_} maps to queue {queue} past "
+                f"{nft.QUEUE_MAX}; shrink MSKSD_EGRESS_SUBNET or "
+                "lower MSKSD_EGRESS_QUEUE_BASE"
+            )
+        return queue
+
+    # --- consent enforcement helpers (#69) ---------------------------------
+
+    async def consent_allow(
+        self, workspace_id: str, ip: str, port: int | None, ttl_s: float
+    ) -> None:
+        """Pin one destination as allowed (the verdict/DNS-learn
+        path). A workspace without a live attachment has no table
+        to pin into — nothing to enforce, nothing to do."""
+        if workspace_id in self._attachments:
+            await nft.allow_element(
+                self.app.state.settings, workspace_id, ip, port, ttl_s
+            )
+
+    async def consent_reject(
+        self, workspace_id: str, ip: str, port: int, ttl_s: float
+    ) -> None:
+        """Pin one destination port for RST-refusal (the deny
+        path)."""
+        if workspace_id in self._attachments:
+            await nft.reject_element(
+                self.app.state.settings, workspace_id, ip, port, ttl_s
+            )
+
+    async def clear_consent_dest(
+        self, workspace_id: str, host: str, port: int
+    ) -> None:
+        """Revocation's enforcement clear: drop the flow elements
+        and the tracked connections for one verdict's destination —
+        every address its name resolved to (the naming memory),
+        plus the host itself when the verdict was given by address.
+        New connections re-gate; established ones die with their
+        conntrack entries (klangk never needed this — its sidecar's
+        netns died with the container)."""
+        attachment = self._attachments.get(workspace_id)
+        if attachment is None:
+            return
+        for ip in self.dest_addresses(workspace_id, host):
+            await nft.clear_elements(
+                self.app.state.settings,
+                workspace_id,
+                ip,
+                None if port == 0 else port,
+            )
+            await self.drop_flows(workspace_id, attachment.guest_ip, ip)
+
+    def dest_addresses(self, workspace_id: str, host: str) -> list[str]:
+        """The addresses a verdict's destination covers: the
+        name's live pairings from the forwarder's memory, plus the
+        host itself for an address-literal verdict. The name's
+        pairings are forgotten as a side effect."""
+        services = self._services.get(workspace_id)
+        targets: list[str] = []
+        if services is not None:
+            targets = services.dns.ips_for(host)
+            services.dns.forget(host)
+        if is_ipv4(host):
+            targets.append(host)
+        return list(dict.fromkeys(targets))
+
+    async def drop_flows(
+        self, workspace_id: str, guest_ip: str, ip: str
+    ) -> None:
+        """Delete the guest's tracked connections to one address
+        (best-effort: the tool is a setting; a missing entry or a
+        missing tool logs, never fails the revoke)."""
+        tool = self.app.state.settings.net.conntrack_tool
+        try:
+            await conntrack.delete_flows(tool, guest_ip, ip)
+        except (MicrovmError, TimeoutError) as exc:
+            logger.warning(
+                "consent revoke for %s: conntrack clear to %s skipped (%s)",
+                workspace_id,
+                ip,
+                exc,
+            )
+
+    def host_for(self, workspace_id: str, ip: str) -> str | None:
+        """The DNS name that resolved to an address (the prompts'
+        naming), if this workspace's forwarder remembers one."""
+        services = self._services.get(workspace_id)
+        if services is None:
+            return None
+        return services.dns.host_for(ip)
+
+    async def replay_forever(self, workspace_id: str) -> None:
+        """Pin a fresh boot's durable verdicts: every in-effect
+        ``forever`` allow/deny given by *address* re-pins its flow
+        element (name-keyed verdicts need nothing here — the
+        resolver gate reads their rows live). Best-effort: a missed
+        pin re-prompts, which is the correct fallback, not a leak."""
+        rows = await self.forever_rows_quietly(workspace_id)
+        for row in rows:
+            await self.replay_row(workspace_id, row)
+
+    async def forever_rows_quietly(self, workspace_id: str) -> list[dict]:
+        """The workspace's forever verdicts, or [] when the read
+        fails (a missed pin re-prompts — the correct fallback, not
+        a leak)."""
+        try:
+            return await self.app.state.model.egress_consent.forever_rows(
+                workspace_id
+            )
+        except Exception:
+            logger.exception(
+                "consent replay for %s failed; verdicts re-prompt",
+                workspace_id,
+            )
+            return []
+
+    async def replay_row(self, workspace_id: str, row: dict) -> None:
+        """Re-pin one forever verdict given by address."""
+        if not is_ipv4(row["dest_host"]):
+            return  # a name: the resolver gate reads its row live
+        port = None if row["dest_port"] == 0 else row["dest_port"]
+        if row["decision"] == DECISION_ALLOWED:
+            await self.consent_allow(
+                workspace_id, row["dest_host"], port, LONG_TTL_S
+            )
+        elif port is not None:
+            await self.consent_reject(
+                workspace_id, row["dest_host"], port, LONG_TTL_S
+            )
+
+    async def _build(
+        self, workspace_id: str, policy: EgressPolicy
+    ) -> NetAttachment:
+        """Create tap + chain + services (+ consent queue) for one
+        workspace."""
         settings = self.app.state.settings
         slice_ = await self.claim_slice(workspace_id)
+        consumer = None
         try:
             net = alloc.slice_net(settings.net.pool, slice_)
             attachment = NetAttachment(
@@ -323,27 +495,52 @@ class NetManager:
                 tap_ip=str(alloc.tap_addr(net)),
                 slice=slice_,
             )
-            await taps.create_tap(
-                attachment.tap,
-                f"{attachment.tap_ip}/{alloc.SLICE_PREFIX}",
-                settings,
-            )
-            await nft.install_vm(
-                settings,
-                workspace_id,
-                attachment.tap,
-                attachment.guest_ip,
-                attachment.tap_ip,
-            )
-            await self._start_services(attachment)
+            queue_num = None
+            if policy.interactive:
+                queue_num = self.queue_for(slice_)
+                # Bind the queue BEFORE the chain references it: an
+                # unbound queue drops, and a boot that cannot bind
+                # (no netfilterqueue binding) refuses outright with
+                # a named error rather than running a queue nothing
+                # answers.
+                consumer = self._consumer_factory(
+                    workspace_id, queue_num, self
+                )
+                consumer.start()
+            try:
+                await taps.create_tap(
+                    attachment.tap,
+                    f"{attachment.tap_ip}/{alloc.SLICE_PREFIX}",
+                    settings,
+                )
+                await nft.install_vm(
+                    settings,
+                    workspace_id,
+                    attachment.tap,
+                    attachment.guest_ip,
+                    attachment.tap_ip,
+                    policy=policy,
+                    queue_num=queue_num,
+                )
+            except BaseException:
+                if consumer is not None:
+                    consumer.stop()
+                raise
+            await self._start_services(attachment, policy, consumer)
             self._attachments[workspace_id] = attachment
+            await self.replay_forever(workspace_id)
             return attachment
         except BaseException:
             self._used_slices.discard(slice_)
             await self._unwind(workspace_id)
             raise
 
-    async def _start_services(self, attachment: NetAttachment) -> None:
+    async def _start_services(
+        self,
+        attachment: NetAttachment,
+        policy: EgressPolicy,
+        consumer: FlowConsumer | None = None,
+    ) -> None:
         """Bring up DHCP + DNS on the tap and start serving.
 
         The services record registers before anything starts, so a
@@ -358,13 +555,22 @@ class NetManager:
             settings.lease_s,
             device=attachment.tap,
         )
+        gate = ResolverGate(
+            policy,
+            self.app.state.consent,
+            self.app.state.model.egress_consent,
+            self,
+        )
         forwarder = self._dns_factory(
             self.dns_upstream(),
             settings.dns_timeout_s,
             bind=(attachment.tap_ip, dns.DNS_PORT),
             client_ip=attachment.guest_ip,
+            gate=gate,
         )
-        services = NetServices(dhcp=dhcp_server, dns=forwarder, tasks=[])
+        services = NetServices(
+            dhcp=dhcp_server, dns=forwarder, tasks=[], consumer=consumer
+        )
         self._services[attachment.workspace_id] = services
         try:
             await dhcp_server.start()
@@ -415,9 +621,11 @@ class NetManager:
 async def stop_services(services: NetServices) -> None:
     """Stop one workspace's service tasks and sockets.
 
-    The cancelled tasks are gathered so their cleanup (including
-    pending reader removal) lands before the caller moves on.
+    The consumer unbinds first (fail-closed), then the cancelled
+    tasks are gathered so their cleanup (including pending reader
+    removal) lands before the caller moves on.
     """
+    services.stop_consumer()
     for task in services.tasks:
         task.cancel()
     if services.tasks:

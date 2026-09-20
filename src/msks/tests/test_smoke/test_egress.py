@@ -920,3 +920,250 @@ async def test_local_egress_git_out() -> None:
         with contextlib.suppress(OSError):
             forwarding.write_text(forwarding_was)
         shutil.rmtree(state_dir, ignore_errors=True)
+
+
+# --- egress consent (#69) --------------------------------------------------
+#
+# The consent halves over the real kernel path: the per-VM chain's
+# queue gate, the DNS naming layer, and verdict application. The
+# decider itself is driven in-process (the WSS/REST decider legs have
+# their own unit suites) — what only this smoke can prove is that a
+# held SYN really holds, that an allow really releases it, and that
+# the naming layer really names.
+
+
+async def boot_consent_workspace(
+    settings: Settings, state_dir: Path, mode: str, allowlist: tuple[str, ...]
+):
+    """Create + boot one consent workspace; returns the app, spec."""
+    app = build_app(settings)
+    app.state.model.migrate()
+    wid = f"smoke-{uuid.uuid4().hex[:8]}"
+    serial_log = state_dir / "vms" / wid / "serial.log"
+    spec = VmSpec(
+        workspace_id=wid,
+        kernel=Path(VMLINUX),
+        rootfs=Path(ROOTFS),
+        initrd=Path(INITRD) if INITRD else None,
+        cmdline=CMDLINE or "console=hvc0 root=/dev/vda rw",
+        egress=True,
+        egress_mode=mode,
+        egress_allowlist=allowlist,
+    )
+    await app.state.net.start()
+    await app.state.model.create_workspace(spec)
+    await app.state.microvm.launch(spec)
+    await await_guest_up(serial_log)
+    return app, wid, serial_log
+
+
+async def shutdown_workspace(app, wid: str) -> None:
+    microvm = app.state.microvm
+    try:
+        await microvm.shutdown(wid, timeout_s=60)
+    finally:
+        with contextlib.suppress(Exception):
+            await microvm.cleanup(wid)
+
+
+async def pending_request(app, wid: str, host: str) -> dict:
+    """Poll until a pending hold for one destination lands."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 15.0
+    while loop.time() < deadline:
+        rows = await app.state.model.egress_consent.list_requests(
+            wid, decision="pending"
+        )
+        for row in rows:
+            if row["dest_host"] == host:
+                return row
+        await asyncio.sleep(0.2)
+    raise AssertionError(f"no pending consent request for {host!r}")
+
+
+@needs_egress
+@needs_local
+async def test_local_egress_consent_interactive() -> None:
+    """Hold, prompt, verdict, release — and the fail-closed denials.
+
+    Legs, in order: an allowlisted name connects with no prompt (the
+    chain accepts its learned address); an off-list HTTPS connect
+    holds until a decider allows it (the prompt names the DNS name,
+    not the IP — the naming layer); a denied destination fails fast
+    (the RST element); a raw-IP connect prompts with the IP itself;
+    and a foreign resolver on :53 drops (the naming-layer lockout).
+    """
+    nft_tool = os.environ.get("MSKSD_TEST_NFT") or shutil.which("nft") or "nft"
+    ip_tool = os.environ.get("MSKSD_TEST_IP") or shutil.which("ip") or "ip"
+    state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
+    settings = Settings(
+        vmm=VmmSettings(state_dir=state_dir),
+        net=NetSettings(
+            enabled=True,
+            uplink=default_route_iface(),
+            ip_tool=ip_tool,
+            nft_tool=nft_tool,
+            # A hold that nothing answers expires inside the test's
+            # budget, not the kernel's two-minute retransmit.
+            consent_timeout_s=20.0,
+        ),
+        server=ServerSettings(db_path=state_dir / "smoke.db"),
+    )
+    forwarding = Path("/proc/sys/net/ipv4/ip_forward")
+    forwarding_was = forwarding.read_text()
+    forwarding.write_text("1")
+    app = None
+    wid = None
+    try:
+        app, wid, _serial = await boot_consent_workspace(
+            settings, state_dir, "interactive", (".deb.debian.org",)
+        )
+        microvm = app.state.microvm
+        engine = app.state.consent
+        engine.app.state.deciders.register(1, wid)
+
+        # Allowlisted: no prompt — the resolver learns the address
+        # and the chain accepts it.
+        await run_in_console(
+            microvm,
+            wid,
+            "timeout 5 bash -c '</dev/tcp/deb.debian.org/80' "
+            "&& echo ALLOW-$((6*7))",
+            "ALLOW-42",
+            app=app,
+        )
+        rows = await app.state.model.egress_consent.list_requests(wid)
+        assert rows == []  # nothing prompted
+
+        # Off-list HTTPS: the SYN holds, the prompt names the name,
+        # and an allow releases it.
+        console_task = asyncio.create_task(
+            run_in_console(
+                microvm,
+                wid,
+                "timeout 25 bash -c '</dev/tcp/example.com/443' "
+                "&& echo HOLD-$((6*7))",
+                "HOLD-42",
+                app=app,
+            )
+        )
+        request = await pending_request(app, wid, "example.com")
+        assert request["dest_port"] == 443
+        verdict = await engine.resolve(request["id"], "allowed", "smoke", "5m")
+        assert verdict["decision"] == "allow"
+        await console_task
+
+        # Denied: the RST element answers the retransmit — the
+        # connect refuses fast instead of hanging on the timer.
+        deny_task = asyncio.create_task(
+            run_in_console(
+                microvm,
+                wid,
+                "timeout 15 bash -c '</dev/tcp/example.org/443' "
+                "&& echo DENY-$((2+2)) || echo DENY-$((6*7))",
+                "DENY-42",
+                app=app,
+            )
+        )
+        request = await pending_request(app, wid, "example.org")
+        await engine.resolve(request["id"], "denied", "smoke", "once")
+        await deny_task
+
+        # A raw-IP connect prompts with the address itself (a
+        # Postgres-style destination, no DNS involved).
+        raw_task = asyncio.create_task(
+            run_in_console(
+                microvm,
+                wid,
+                "timeout 25 bash -c '</dev/tcp/1.1.1.1/443' "
+                "&& echo RAW-$((6*7))",
+                "RAW-42",
+                app=app,
+            )
+        )
+        request = await pending_request(app, wid, "1.1.1.1")
+        await engine.resolve(request["id"], "allowed", "smoke", "once")
+        await raw_task
+
+        # The naming-layer lockout: a foreign resolver's :53 drops.
+        await run_in_console(
+            microvm,
+            wid,
+            "timeout 5 bash -c '</dev/tcp/8.8.8.8/53' "
+            "&& echo LOCK-$((2+2)) || echo LOCK-$((6*7))",
+            "LOCK-42",
+            app=app,
+        )
+        await shutdown_workspace(app, wid)
+    except BaseException:
+        if app is not None and wid is not None:
+            with contextlib.suppress(Exception):
+                await app.state.microvm.kill(wid)
+        raise
+    finally:
+        with contextlib.suppress(OSError):
+            forwarding.write_text(forwarding_was)
+        shutil.rmtree(state_dir, ignore_errors=True)
+
+
+@needs_egress
+@needs_local
+async def test_local_egress_consent_static() -> None:
+    """Static mode: the allowlist resolves and connects; an off-list
+    name never resolves (NXDOMAIN — no resolution oracle); the
+    denial is recorded for the audit trail."""
+    nft_tool = os.environ.get("MSKSD_TEST_NFT") or shutil.which("nft") or "nft"
+    ip_tool = os.environ.get("MSKSD_TEST_IP") or shutil.which("ip") or "ip"
+    state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
+    settings = Settings(
+        vmm=VmmSettings(state_dir=state_dir),
+        net=NetSettings(
+            enabled=True,
+            uplink=default_route_iface(),
+            ip_tool=ip_tool,
+            nft_tool=nft_tool,
+        ),
+        server=ServerSettings(db_path=state_dir / "smoke.db"),
+    )
+    forwarding = Path("/proc/sys/net/ipv4/ip_forward")
+    forwarding_was = forwarding.read_text()
+    forwarding.write_text("1")
+    app = None
+    wid = None
+    try:
+        app, wid, _serial = await boot_consent_workspace(
+            settings, state_dir, "static", (".deb.debian.org",)
+        )
+        microvm = app.state.microvm
+        await run_in_console(
+            microvm,
+            wid,
+            "timeout 5 bash -c '</dev/tcp/deb.debian.org/80' "
+            "&& echo STATIC-$((6*7))",
+            "STATIC-42",
+            app=app,
+        )
+        # Off-list: NXDOMAIN (getent finds nothing), and the row
+        # records the policy denial.
+        await run_in_console(
+            microvm,
+            wid,
+            "getent hosts off-list.example && echo OFF-$((2+2)) "
+            "|| echo OFF-$((6*7))",
+            "OFF-42",
+            app=app,
+        )
+        rows = await app.state.model.egress_consent.list_requests(wid)
+        assert [row["dest_host"] for row in rows] == ["off-list.example"]
+        assert rows[0]["decision"] == "denied"
+        assert rows[0]["decided_by"] is None  # policy, not a human
+        await shutdown_workspace(app, wid)
+    except BaseException:
+        if app is not None and wid is not None:
+            with contextlib.suppress(Exception):
+                await app.state.microvm.kill(wid)
+        raise
+    finally:
+        with contextlib.suppress(OSError):
+            forwarding.write_text(forwarding_was)
+        shutil.rmtree(state_dir, ignore_errors=True)

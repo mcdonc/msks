@@ -49,7 +49,9 @@ let
   # and the manifest below: the path resolves inside the appliance
   # through the virtiofs store share, and the manifest reference
   # keeps it realized on the host.
-  msks = pkgs.python314.pkgs.callPackage ./msks-pkg.nix { };
+  msks = pkgs.python314.pkgs.callPackage ./msks-pkg.nix {
+    netfilterqueue = pkgs.python314.pkgs.callPackage ./netfilterqueue-pkg.nix { };
+  };
 
   # The workspace guest build: the source of the Debian image pin (the
   # same base — one fetch, one hash, deduped by the store) and of the

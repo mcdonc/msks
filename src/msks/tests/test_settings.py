@@ -225,3 +225,52 @@ def test_resize_tool_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = Settings.from_env()
     assert settings.vmm.resize2fs == "/opt/resize2fs"
     assert settings.vmm.e2fsck == "/opt/e2fsck"
+
+
+# --- egress consent settings (#69) ------------------------------------
+
+
+def test_consent_settings_defaults_and_env() -> None:
+    from msks.settings import NetSettings
+
+    default = NetSettings()
+    assert default.egress_mode == "allow"
+    assert default.consent_timeout_s == 120.0
+    assert default.consent_rate_limit == 8
+    assert default.consent_retention_days == 30
+    assert default.consent_row_cap == 1000
+    assert default.queue_base == 1024
+    assert default.conntrack_tool == "conntrack"
+
+    from msks.settings import Settings
+
+    tuned = Settings.from_env(
+        {
+            "MSKSD_EGRESS_MODE": "interactive",
+            "MSKSD_EGRESS_CONSENT_TIMEOUT_S": "45",
+            "MSKSD_EGRESS_CONSENT_RATE_LIMIT": "0",
+            "MSKSD_EGRESS_CONSENT_RETENTION_DAYS": "7",
+            "MSKSD_EGRESS_CONSENT_ROW_CAP": "50",
+            "MSKSD_EGRESS_QUEUE_BASE": "2048",
+            "MSKSD_CONNTRACK_TOOL": "/usr/sbin/conntrack",
+            "MSKSD_AUDIT_HMAC_KEY": "k1",
+        }
+    )
+    assert tuned.net.egress_mode == "interactive"
+    assert tuned.net.consent_timeout_s == 45.0
+    assert tuned.net.consent_rate_limit == 0  # the cap's off switch
+    assert tuned.net.consent_retention_days == 7
+    assert tuned.net.consent_row_cap == 50
+    assert tuned.net.queue_base == 2048
+    assert tuned.net.conntrack_tool == "/usr/sbin/conntrack"
+    assert tuned.server.audit_hmac_key == "k1"
+
+
+def test_consent_settings_name_bad_values() -> None:
+    import pytest
+    from msks.settings import Settings
+
+    with pytest.raises(ValueError, match="MSKSD_EGRESS_MODE"):
+        Settings.from_env({"MSKSD_EGRESS_MODE": "sloppy"})
+    with pytest.raises(ValueError, match="MSKSD_EGRESS_CONSENT_TIMEOUT_S"):
+        Settings.from_env({"MSKSD_EGRESS_CONSENT_TIMEOUT_S": "0"})

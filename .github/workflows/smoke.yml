@@ -200,6 +200,8 @@ jobs:
           MSKSD_TEST_GIT_OUT_TIMEOUT_S=900
           PATH=\"\$PATH\" HOME=/root
           python -m pytest src/msks/tests/test_smoke/test_egress.py::test_local_egress_boot
+          src/msks/tests/test_smoke/test_egress.py::test_local_egress_consent_static
+          src/msks/tests/test_smoke/test_egress.py::test_local_egress_consent_interactive
           src/msks/tests/test_smoke/test_ssh_forward.py::test_local_sshd_and_rsync
           src/msks/tests/test_smoke/test_egress.py::test_local_egress_git_out
           src/msks/tests/test_smoke/test_identity.py::test_local_minted_identity

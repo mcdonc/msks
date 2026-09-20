@@ -7,9 +7,12 @@ klangk ownership rule. Settings are read live at call time
 propagates without per-subsystem reconfiguration.
 """
 
+from .consent.coordinator import ConsentEngine
+from .consent.deciders import DeciderRegistry
 from .microvm import Microvm
 from .model import Model
 from .net import NetManager
+from .server.events import EventHub
 from .settings import Settings
 
 
@@ -21,6 +24,12 @@ class AppState:
         self.microvm: Microvm | None = None
         self.model: Model | None = None
         self.net: NetManager | None = None
+        # The consent engine + decider registry (#69): built with the
+        # app so every subsystem (net, api, watcher) can reach them;
+        # the hub is shared with the api's events websocket.
+        self.consent: ConsentEngine | None = None
+        self.deciders: DeciderRegistry | None = None
+        self.hub: EventHub | None = None
 
 
 class App:
@@ -31,6 +40,9 @@ class App:
         self.state.microvm = Microvm(self)
         self.state.model = Model(self)
         self.state.net = NetManager(self)
+        self.state.consent = ConsentEngine(self)
+        self.state.deciders = DeciderRegistry()
+        self.state.hub = EventHub()
 
 
 def build_app(settings: Settings | None = None) -> App:

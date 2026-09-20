@@ -26,6 +26,7 @@ import socket
 from pathlib import Path
 
 from .. import persist
+from ..consent.specs import EgressPolicy
 from .chapi import API_ROOT, CloudHypervisorApi
 from .driver import MicrovmDriver
 from .errors import MicrovmError, MicrovmTimeoutError
@@ -481,9 +482,14 @@ class LocalCloudHypervisor(MicrovmDriver):
             raise
 
     async def _net_attach(self, spec: VmSpec):
-        """Arm the workspace's egress plumbing when it asked for it."""
+        """Arm the workspace's egress plumbing when it asked for it,
+        under its consent policy (#69 — mode and specs from the
+        spec, which the create path validated)."""
+        policy = EgressPolicy(
+            spec.workspace_id, spec.egress_mode, spec.egress_allowlist
+        )
         return await self.app.state.net.attach(
-            spec.workspace_id, want=spec.egress
+            spec.workspace_id, want=spec.egress, policy=policy
         )
 
     async def _net_detach(self, workspace_id: str) -> None:

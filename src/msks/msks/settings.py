@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from ipaddress import IPv4Network
 from pathlib import Path
 
+from .consent.specs import EGRESS_MODES, MODE_ALLOW
 from .identity import KEY_TYPES
 
 VALID_DRIVERS = ("local", "k8s")
@@ -191,6 +192,11 @@ class ServerSettings:
     # Off by default: the events websocket carries its token in the
     # query string, which uvicorn's access log would persist.
     access_log: bool = False
+    # HMAC key for consent audit tags (#69): opt-in integrity
+    # protection — unset stores no tags, set tags every consent
+    # row at write time (read live, so a reload applies to later
+    # rows only).
+    audit_hmac_key: str | None = None
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> ServerSettings:
@@ -259,6 +265,29 @@ class NetSettings:
     nft_tool: str = "nft"
     lease_s: int = 3600
     dns_timeout_s: float = 3.0
+    # --- egress consent (#69) ----------------------------------------------
+    # The mode workspaces get at create when the request names none
+    # (the fleet default). ``allow`` keeps #52's posture: new flows
+    # pass, off-list names are recorded.
+    egress_mode: str = MODE_ALLOW
+    # How long a held SYN waits for a decider before the hold
+    # expires to a deny. The kernel's own SYN retransmit budget is
+    # ~127 s, so the default answers inside it.
+    consent_timeout_s: float = 120.0
+    # The per-workspace pending-hold cap (the prompt-spam bound);
+    # 0 disables it (unlimited holds).
+    consent_rate_limit: int = 8
+    # Retention for consent rows: days and a per-workspace row cap;
+    # 0 disables either bound.
+    consent_retention_days: int = 30
+    consent_row_cap: int = 1000
+    # The base per-VM NFQUEUE numbers derive from (base + pool
+    # slice); a slice past the 16-bit queue range refuses by name
+    # at attach.
+    queue_base: int = 1024
+    # The conntrack tool revocation uses to kill a revoked
+    # destination's established flows.
+    conntrack_tool: str = "conntrack"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> NetSettings:
@@ -408,6 +437,15 @@ def _net_settings_from_env(
         raise ValueError(
             f"MSKSD_EGRESS_DNS_TIMEOUT_S must be positive, got {timeout}"
         )
+    mode = egress_mode(env, "MSKSD_EGRESS_MODE", default.egress_mode)
+    consent_timeout = _env_float(
+        env, "MSKSD_EGRESS_CONSENT_TIMEOUT_S", default.consent_timeout_s
+    )
+    if consent_timeout <= 0:
+        raise ValueError(
+            "MSKSD_EGRESS_CONSENT_TIMEOUT_S must be positive, "
+            f"got {consent_timeout}"
+        )
     return cls(
         enabled=_env(env, "MSKSD_EGRESS_ENABLED", str(default.enabled)).lower()
         == "true",
@@ -418,7 +456,38 @@ def _net_settings_from_env(
         nft_tool=_env(env, "MSKSD_NFT_TOOL", default.nft_tool),
         lease_s=lease,
         dns_timeout_s=timeout,
+        egress_mode=mode,
+        consent_timeout_s=consent_timeout,
+        consent_rate_limit=_parse_int(
+            env, "MSKSD_EGRESS_CONSENT_RATE_LIMIT", default.consent_rate_limit
+        ),
+        consent_retention_days=_parse_int(
+            env,
+            "MSKSD_EGRESS_CONSENT_RETENTION_DAYS",
+            default.consent_retention_days,
+        ),
+        consent_row_cap=_parse_int(
+            env, "MSKSD_EGRESS_CONSENT_ROW_CAP", default.consent_row_cap
+        ),
+        queue_base=_parse_int(
+            env, "MSKSD_EGRESS_QUEUE_BASE", default.queue_base
+        ),
+        conntrack_tool=_env(
+            env, "MSKSD_CONNTRACK_TOOL", default.conntrack_tool
+        ),
     )
+
+
+def egress_mode(env: Mapping[str, str], name: str, default: str) -> str:
+    """One of the three egress modes (#69): a named error
+    otherwise, so a typo fails at settings load, not at first
+    boot."""
+    value = _env(env, name, default)
+    if value not in EGRESS_MODES:
+        raise ValueError(
+            f"{name} must be one of {list(EGRESS_MODES)}, got {value!r}"
+        )
+    return value
 
 
 def _server_settings_from_env(
@@ -435,11 +504,21 @@ def _server_settings_from_env(
     return cls(
         host=_env(env, "MSKSD_HOST", cls.host),
         port=_parse_int(env, "MSKSD_PORT", cls.port),
-        tls_cert=_env(env, "MSKSD_TLS_CERT", "") or None,
-        tls_key=_env(env, "MSKSD_TLS_KEY", "") or None,
+        tls_cert=optional_env(env, "MSKSD_TLS_CERT"),
+        tls_key=optional_env(env, "MSKSD_TLS_KEY"),
         db_path=state / "msks.db",
         event_poll_s=poll,
-        bootstrap_token=_env(env, "MSKSD_BOOTSTRAP_TOKEN", "") or None,
-        access_log=_env(env, "MSKSD_ACCESS_LOG", str(cls.access_log)).lower()
-        == "true",
+        bootstrap_token=optional_env(env, "MSKSD_BOOTSTRAP_TOKEN"),
+        access_log=flag_env(env, "MSKSD_ACCESS_LOG", cls.access_log),
+        audit_hmac_key=optional_env(env, "MSKSD_AUDIT_HMAC_KEY"),
     )
+
+
+def optional_env(env: Mapping[str, str], name: str) -> str | None:
+    """An environment value that is None when unset or empty."""
+    return _env(env, name, "") or None
+
+
+def flag_env(env: Mapping[str, str], name: str, default: bool) -> bool:
+    """A boolean flag spelled ``true``/anything-else."""
+    return _env(env, name, str(default)).lower() == "true"

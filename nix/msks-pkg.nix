@@ -21,6 +21,9 @@
   cryptography,
   alembic,
   websockets,
+  # The NFQUEUE binding (#69), built from the sdist against
+  # nixpkgs' libnetfilter_queue (nix/netfilterqueue-pkg.nix).
+  netfilterqueue,
 }:
 
 let
@@ -65,6 +68,7 @@ buildPythonPackage {
     cryptography
     alembic
     websockets
+    netfilterqueue
   ];
 
   # No nix-side test run: the appliance smoke test exercises the real

@@ -8,12 +8,18 @@ watcher honest across driver restarts and both backends.
 
 import asyncio
 import logging
+import time
 
 from .. import storage
 from ..microvm.spec import VmStatus
 from .events import EventHub
 
 LOG = logging.getLogger(__name__)
+
+#: The consent retention sweep (#69): hour-scale housekeeping, so
+#: an hour between sweeps is plenty. The deadline is wall-clock,
+#: tracked next to the poll loop instead of inside it.
+PRUNE_INTERVAL_S = 3600.0
 
 SEAM_TO_MODEL_STATUS = {
     VmStatus.ABSENT: "absent",
@@ -134,13 +140,27 @@ async def watch_loop(app, hub: EventHub) -> None:
 
     One raising probe (a restarted VMM, a stale socket, an
     unstatvfs-able state dir) must not end the loop: statuses and
-    pressure would freeze silently until daemon restart.
+    pressure would freeze silently until daemon restart. The
+    consent retention sweep rides the same loop on its own
+    wall-clock deadline (#69).
     """
     interval = app.state.settings.server.event_poll_s
+    next_prune = time.monotonic() + PRUNE_INTERVAL_S
     while True:
         try:
             await scan_once(app, hub)
             await scan_storage(app, hub)
+            if time.monotonic() >= next_prune:
+                next_prune = time.monotonic() + PRUNE_INTERVAL_S
+                await sweep_consent(app)
         except Exception:
             LOG.exception("watcher scan failed; retrying next interval")
         await asyncio.sleep(interval)
+
+
+async def sweep_consent(app) -> None:
+    """Prune the consent table past retention/cap (#69); a failure
+    defers to the next sweep (housekeeping, not correctness)."""
+    deleted = await app.state.model.egress_consent.prune()
+    if deleted:
+        LOG.info("consent: pruned %d row(s) past retention/cap", deleted)

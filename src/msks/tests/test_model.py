@@ -368,3 +368,38 @@ async def test_set_sizes_updates_named_columns(app_for) -> None:
     assert row["root_mib"] == 20480
     assert row["home_mib"] == 8192
     assert not await app.state.model.set_sizes("ghost", None, 64)
+
+
+async def test_workspace_row_carries_the_consent_posture(app_for) -> None:
+    """The mode and specs round-trip through the row (#69), and a
+    workspace delete cascades its consent rows."""
+    app = app_for()
+    await app.state.model.create_all()
+    from msks.model.egress_consent import DECISION_ALLOWED
+
+    await app.state.model.create_workspace(
+        spec(
+            "ws-consent",
+            egress_mode="static",
+            egress_allowlist=(".debian.org", "10.0.0.0/8:443"),
+        )
+    )
+    row = await app.state.model.get_workspace("ws-consent")
+    assert row["egress_mode"] == "static"
+    assert row["egress_allowlist"] == [".debian.org", "10.0.0.0/8:443"]
+    # A legacy spec (no posture) stores the #52 defaults.
+    await app.state.model.create_workspace(spec("ws-plain"))
+    plain = await app.state.model.get_workspace("ws-plain")
+    assert plain["egress_mode"] == "allow"
+    assert plain["egress_allowlist"] == []
+    # Delete cascades the consent rows.
+    request = await app.state.model.egress_consent.create_request(
+        "ws-consent", "x.example", 443
+    )
+    await app.state.model.egress_consent.decide(
+        request["id"], DECISION_ALLOWED, "token", "once"
+    )
+    assert await app.state.model.delete_workspace("ws-consent")
+    assert (
+        await app.state.model.egress_consent.list_requests("ws-consent") == []
+    )

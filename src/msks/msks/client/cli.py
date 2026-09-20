@@ -22,6 +22,7 @@ from pathlib import Path
 from ..identity import KEY_TYPES, mint
 from ..imagestore import is_hash_shape, version_key
 from ..storage import MIB
+from . import egress as egress_mod
 from .console import run_workspace_shell
 from .forward import run_workspace_forward
 from .rest import (
@@ -39,6 +40,7 @@ from .rest import (
 )
 from .rsync import run_workspace_rsync
 from .ssh import data_dir, run_workspace_ssh
+from .tui.consent_app import run_consent_tui
 
 
 def format_workspace(row: dict) -> str:
@@ -975,9 +977,21 @@ def create_body(args: argparse.Namespace) -> dict:
     body = {name: value for name, value in fields.items() if value is not None}
     if args.egress is not None:
         body["egress"] = args.egress
+    body.update(consent_fields(args))
     if args.user_data is not None:
         body["user_data"] = read_user_data(args.user_data)
     return body
+
+
+def consent_fields(args: argparse.Namespace) -> dict:
+    """The egress-consent create fields the operator set (#69):
+    the mode and the repeated allowlist entries."""
+    fields = {}
+    if getattr(args, "egress_mode", None) is not None:
+        fields["egress_mode"] = args.egress_mode
+    if getattr(args, "allow", None):
+        fields["egress_allowlist"] = args.allow
+    return fields
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1037,6 +1051,24 @@ def build_parser() -> argparse.ArgumentParser:
         "(#52; the default is yes — use --no-egress to boot NIC-less)",
     )
     create.add_argument(
+        "--egress-mode",
+        choices=("allow", "static", "interactive"),
+        help="the consent posture (#69): allow (the default — new "
+        "flows pass, off-list names are recorded), static (the "
+        "allowlist only; off-list names never resolve), interactive "
+        "(each new flow's first packet holds until a decider allows "
+        "or denies it)",
+    )
+    create.add_argument(
+        "--allow",
+        action="append",
+        metavar="SPEC",
+        help="a static allowlist entry (#69), repeatable: host, "
+        "host:port, .host (subdomains included), *.host (subdomains "
+        "only), or cidr[:port]. Names gate at the daemon's resolver; "
+        "address specs accept in the per-VM chain",
+    )
+    create.add_argument(
         "--user-data",
         metavar="FILE",
         help="first-boot provisioning payload (a shell script or "
@@ -1070,6 +1102,70 @@ def build_parser() -> argparse.ArgumentParser:
     )
     create.add_argument(
         "--start", action="store_true", help="boot the workspace immediately"
+    )
+    egress_cmd = sub.add_parser(
+        "egress",
+        help="egress consent: decide, watch, and inspect (#69)",
+    )
+    egress_sub = egress_cmd.add_subparsers(
+        dest="egress_command", required=True
+    )
+    egress_rules = egress_sub.add_parser(
+        "rules", help="the in-effect verdicts for a workspace"
+    )
+    egress_rules.add_argument("workspace_id")
+    egress_requests = egress_sub.add_parser(
+        "requests", help="the consent rows (audit trail)"
+    )
+    egress_requests.add_argument("workspace_id")
+    egress_requests.add_argument(
+        "--decision",
+        choices=("pending", "allowed", "denied", "expired", "revoked"),
+        default=None,
+        help="filter one lifecycle state",
+    )
+    egress_decide = egress_sub.add_parser(
+        "decide", help="give a verdict on a held request"
+    )
+    egress_decide.add_argument("workspace_id")
+    egress_decide.add_argument("request_id")
+    egress_decide.add_argument("decision", choices=("allow", "deny"))
+    egress_decide.add_argument(
+        "--duration",
+        choices=("once", "5m", "15m", "tilrestart", "forever"),
+        default="tilrestart",
+        help="how long enforcement honors the verdict",
+    )
+    egress_revoke = egress_sub.add_parser(
+        "revoke", help="undo an in-effect verdict"
+    )
+    egress_revoke.add_argument("workspace_id")
+    egress_revoke.add_argument("request_id")
+    egress_tui = egress_sub.add_parser(
+        "tui",
+        help="the consent decider TUI (#195): live holds, verdicts, rules",
+    )
+    egress_tui.add_argument("workspace_id", help="decide for this workspace")
+    egress_watch = egress_sub.add_parser(
+        "watch", help="stream egress frames as lines; registers as a decider"
+    )
+    egress_watch.add_argument(
+        "workspace_id",
+        nargs="?",
+        default=None,
+        help="decide for this workspace (hold SYNs only while a "
+        "decider is connected)",
+    )
+    egress_watch.add_argument(
+        "--decide",
+        action="store_true",
+        help="prompt y/n for each pending request",
+    )
+    egress_watch.add_argument(
+        "--duration",
+        choices=("once", "5m", "15m", "tilrestart", "forever"),
+        default="tilrestart",
+        help="the duration a --decide allow applies",
     )
     starter = sub.add_parser("start", help="boot a created workspace")
     starter.add_argument("workspace_id", help="the workspace to boot")
@@ -1378,12 +1474,47 @@ def command_table(args: argparse.Namespace, transport) -> dict:
         "rsync": lambda: run_workspace_rsync(
             args.workspace_id, args.passthrough, transport=transport
         ),
+        "egress": lambda: egress_command_table(args, transport)[
+            args.egress_command
+        ](),
         "image": lambda: image_command_table(args, transport)[
             args.image_command
         ](),
         "home": lambda: home_command_table(args, transport)[
             args.home_command
         ](),
+    }
+
+
+def egress_command_table(args: argparse.Namespace, transport) -> dict:
+    """One entry per ``egress`` subcommand."""
+    return {
+        "tui": lambda: run_consent_tui(args.workspace_id),
+        "rules": lambda: asyncio.run(
+            egress_mod.run_rules(args.workspace_id, transport=transport)
+        ),
+        "requests": lambda: asyncio.run(
+            egress_mod.run_requests(
+                args.workspace_id, args.decision, transport=transport
+            )
+        ),
+        "decide": lambda: asyncio.run(
+            egress_mod.run_decide(
+                args.workspace_id,
+                args.request_id,
+                args.decision,
+                args.duration,
+                transport=transport,
+            )
+        ),
+        "revoke": lambda: asyncio.run(
+            egress_mod.run_revoke(
+                args.workspace_id, args.request_id, transport=transport
+            )
+        ),
+        "watch": lambda: asyncio.run(
+            egress_mod.run_watch(args.workspace_id, args.decide, args.duration)
+        ),
     }
 
 
