@@ -23,6 +23,7 @@ dependencies = [
   # an exotic install without the library fails closed at attach
   # with a named refusal, never silently.
   "netfilterqueue>=0.9",
+  "textual>=8.2.8",
 ]
 
 [dependency-groups]

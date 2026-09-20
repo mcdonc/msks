@@ -1140,8 +1140,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     egress_revoke.add_argument("workspace_id")
     egress_revoke.add_argument("request_id")
+    egress_tui = egress_sub.add_parser(
+        "tui",
+        help="the consent decider TUI (#195): live holds, verdicts, rules",
+    )
+    egress_tui.add_argument("workspace_id", help="decide for this workspace")
     egress_watch = egress_sub.add_parser(
-        "watch", help="stream egress frames; registers as a decider"
+        "watch", help="stream egress frames as lines; registers as a decider"
     )
     egress_watch.add_argument(
         "workspace_id",
