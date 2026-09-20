@@ -4,7 +4,7 @@ import json
 
 import pytest
 from msks.client.tui import consent
-from msks.client.tui.consent import ConsentController
+from msks.client.tui.consent import REJECTED, ConsentController
 
 
 def frame(event: str, data: dict) -> str:
@@ -151,6 +151,39 @@ def test_ordered_and_countdowns() -> None:
     )
     clock[0] += 1000.0
     assert controller.remaining(controller.ordered()[0]) == 0.0  # clamped
+
+
+def test_countdowns_follow_the_frames_deadline() -> None:
+    """The frame's expires_at (the daemon's settings-driven
+    deadline) wins over the local hold_timeout fallback."""
+    clock = [150.0]
+    controller = ConsentController(hold_timeout=120.0, clock=lambda: clock[0])
+    shorter = json.loads(request_frame("deadline"))
+    shorter["data"]["request"]["expires_at"] = 180.0
+    controller.apply_frame(json.dumps(shorter))
+    assert controller.remaining(controller.ordered()[0]) == pytest.approx(
+        30.0, abs=0.01
+    )  # 180 - 150, not requested_at + 120
+
+
+def test_decider_rejection_frame() -> None:
+    """An egress.decider_rejected frame reports the reason (the app
+    exits on it instead of waiting forever)."""
+    controller = ConsentController()
+    outcome, payload = controller.apply_frame(
+        json.dumps(
+            {
+                "event": "egress.decider_rejected",
+                "data": {"reason": "unknown workspace"},
+            }
+        )
+    )
+    assert outcome == REJECTED
+    assert payload == "unknown workspace"
+    # A junk arm stays ignored.
+    assert controller.apply_frame(
+        json.dumps({"event": "egress.decider_rejected", "data": "junk"})
+    ) == (REJECTED, None)
 
 
 def test_rule_countdowns() -> None:

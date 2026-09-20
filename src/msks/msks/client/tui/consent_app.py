@@ -29,6 +29,7 @@ from rich.markup import escape
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
+from textual.css.query import NoMatches
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Footer, ListItem, ListView, OptionList, Static
 
@@ -37,6 +38,7 @@ from ..rest import api_call, env_token, env_url, ssl_context
 from .consent import (
     DURATION_DEFAULT,
     DURATIONS,
+    REJECTED,
     ConsentController,
     ConsentRequest,
     EgressRules,
@@ -121,7 +123,7 @@ def rule_rows(rules: EgressRules | None) -> list:
     return [*rules.allowed, *rules.denied]
 
 
-def rules_rows(screen) -> str | None:
+def focused_rule_or_none(screen) -> str | None:
     """The rules list's focused rule id, or None while absent (a
     rebuild's swap window) or nothing focused."""
     try:
@@ -164,9 +166,10 @@ def focus_by_id(rows: ListView, target: str | None) -> None:
     ensure_focus(rows)
 
 
-def focused_rule_id(rows: ListView) -> str | None:
-    """The focused rule row's id, or None when nothing is focused."""
-    child = rows.highlighted_child
+def focused_rule_id(rows: ListView | None) -> str | None:
+    """The focused rule row's id, or None when nothing is focused
+    (a None rows is a rebuild's swap window)."""
+    child = rows.highlighted_child if rows is not None else None
     return getattr(child, "rule_id", None)
 
 
@@ -233,7 +236,8 @@ class DurationScreen(ModalScreen[str | None]):
         async — the deciding runs as a task, so the modal closes
         without waiting on it)."""
         self.dismiss()
-        asyncio.create_task(self.picked(duration))
+        # Referenced: an unreferenced task can be collected mid-await.
+        self._pick_task = asyncio.create_task(self.picked(duration))
 
 
 class RulesScreen(Screen):
@@ -292,17 +296,21 @@ class RulesScreen(Screen):
 
         async def flight() -> None:
             try:
-                while True:
+                while self.app.is_running:
                     self._refresh_pending = False
                     await self.rebuild_rows()
                     if not self._refresh_pending:
                         return
             except Exception:
-                logger.exception("rules rebuild failed")
+                # Teardown unmounts the tree under a mid-swap flight;
+                # that is not a bug worth a traceback after exit.
+                if self.app.is_running:
+                    logger.exception("rules rebuild failed")
             finally:
                 self._refresh_scheduled = False
 
-        asyncio.create_task(flight())
+        # Referenced: an unreferenced task can be collected mid-await.
+        self._refresh_task = asyncio.create_task(flight())
 
     async def rebuild_rows(self) -> None:
         """Repaint from the controller's rules snapshot with a
@@ -314,7 +322,11 @@ class RulesScreen(Screen):
         rules = self.controller.rules
         self.query_one("#allowlist", Static).update(allowlist_text(rules))
         body = self.query_one("#rules-body", Vertical)
-        old = self.query_one("#rule-rows", ListView)
+        old = None
+        try:
+            old = self.query_one("#rule-rows", ListView)
+        except NoMatches:
+            pass  # a died-mid-swap rebuild: mount the fresh list anew
         focused = focused_rule_id(old)
         items = []
         for rule in rule_rows(rules):
@@ -324,7 +336,8 @@ class RulesScreen(Screen):
             item.rule_id = rule.id
             items.append(item)
         fresh = ListView(*items, id="rule-rows")
-        await old.remove()  # frees the id before the fresh list mounts
+        if old is not None:
+            await old.remove()  # frees the id before the fresh list mounts
         await body.mount(fresh)
         fresh.focus()
         focus_rule_by_id(fresh, focused)  # after mount: index sticks
@@ -335,7 +348,7 @@ class RulesScreen(Screen):
         optimistically (a still-enforced rule must not hide). A key
         pressed inside a rebuild's swap window reads as nothing
         focused."""
-        rule_id = rules_rows(self)
+        rule_id = focused_rule_or_none(self)
         if rule_id is not None:
             await self.revoke(rule_id)
 
@@ -413,38 +426,43 @@ class ConsentDeciderApp(App):
         """Connect, register, pump; reconnect until stopped."""
         attempt = 0
         while not self._stop:
-            refused = await self.pump_one()
+            connected, refused = await self.pump_one()
             if self._stop:
                 return
             if refused:
                 await asyncio.sleep(REFUSED_RETRY_INTERVAL)
                 self.safe_repaint()
                 continue
-            attempt += 1
+            # A connection that reached serve_connection was healthy:
+            # the next drop starts the backoff ladder over instead of
+            # climbing it for a lifetime of cumulative disconnects.
+            attempt = 0 if connected else attempt + 1
             await asyncio.sleep(backoff(self.reconnect_delays, attempt))
             self.safe_repaint()
 
-    async def pump_one(self) -> bool:
-        """One connection's lifetime; True when the close was an auth
-        refusal (retry slowly) rather than a drop (backoff)."""
+    async def pump_one(self) -> tuple[bool, bool]:
+        """One connection's lifetime; ``(connected, refused)`` —
+        whether the dial succeeded (resetting the backoff ladder on
+        the next drop) and whether the close was an auth refusal
+        (retry slowly) rather than a drop (backoff)."""
         try:
             ws = await self._ws_factory().__aenter__()
         except Exception as exc:
             self.on_disconnect()
             self.flash_once(f"connect failed: {exc}")
-            return False
+            return False, False
         try:
             await self.serve_connection(ws)
         except websockets.ConnectionClosed as exc:
             refused = refused_close(exc)
             self.on_disconnect(refused)
-            return refused
+            return True, refused
         except Exception:
             self.on_disconnect(False)
-            return False
+            return True, False
         finally:
             await close_ws(ws)
-        return False
+        return True, False
 
     async def serve_connection(self, ws) -> None:
         """Register, then feed every frame to the controller; render
@@ -455,7 +473,15 @@ class ConsentDeciderApp(App):
         self.controller.reset()
         self.safe_repaint()
         async for raw in ws:
-            self.controller.apply_frame(raw)
+            outcome, payload = self.controller.apply_frame(raw)
+            if outcome == REJECTED:
+                # The daemon refused the registration (an unknown
+                # workspace): waiting would be promptless forever.
+                reason = payload or "registration rejected"
+                self.on_disconnect(True)
+                self.flash_once(f"registration rejected: {reason}")
+                self._stop = True
+                return
             self.safe_repaint()
 
     def flash_once(self, message: str) -> None:
@@ -513,9 +539,10 @@ class ConsentDeciderApp(App):
         async def picked(duration: str | None) -> None:
             if duration is None:
                 return
-            if request_id not in self.controller.pending:
-                self.flash("hold already resolved")
-                return
+            # Sent unconditionally: after a reconnect the local
+            # pending set is fresh (empty) while the hold may still
+            # be live server-side — the server is the source of
+            # truth and 404s ids that truly resolved.
             await self.send_verdict(request_id, decision, duration)
 
         return picked
@@ -535,8 +562,10 @@ class ConsentDeciderApp(App):
         rows = self.queue_rows()
         child = rows.highlighted_child if rows is not None else None
         request_id = getattr(child, "request_id", None)
-        if request_id is not None:
-            await self.send_verdict(request_id, decision, duration)
+        if request_id is None:
+            self.flash("no hold focused")
+            return
+        await self.send_verdict(request_id, decision, duration)
 
     async def send_verdict(
         self, request_id: str, decision: str, duration: str
@@ -615,15 +644,21 @@ class ConsentDeciderApp(App):
         under the highlight; a fresh list keeps the destructive
         keys' target derivable from children that are all real.
         Same-set ticks repaint survivors' countdowns in place
-        (no flicker, no index motion)."""
-        rows = self.query_one("#requests", ListView)
+        (no flicker, no index motion). A missing list (a rebuild
+        died mid-swap) schedules a rebuild — the queue self-heals
+        instead of wedging blank."""
+        try:
+            rows = self.query_one("#requests", ListView)
+        except NoMatches:
+            self.schedule_rebuild()
+            return
         ordered = self.controller.ordered()
         if row_ids(rows) != {request.id for request in ordered}:
             # The rebuild awaits the old list's removal and the new
             # one's mount, so it runs as a task, one flight at a
             # time; a tick while it is in flight sees the membership
             # still differ and re-arms after it lands.
-            self.schedule_rebuild(focused_request_id(rows))
+            self.schedule_rebuild()
             return
         self.repaint_countdowns(rows, ordered)
         self.query_one("#empty", Static).display = not ordered
@@ -641,7 +676,7 @@ class ConsentDeciderApp(App):
                     dest_line(request, self.controller.remaining(request))
                 )
 
-    def schedule_rebuild(self, focused: str | None) -> None:
+    def schedule_rebuild(self) -> None:
         """Arm one queue rebuild; single flight, with a re-arm when a
         request lands mid-flight (the in-progress rebuild already
         captured the old membership — the re-arm applies the new one
@@ -653,34 +688,42 @@ class ConsentDeciderApp(App):
 
         async def flight() -> None:
             try:
-                while True:
+                while self.is_running:
                     self._rebuild_pending = False
-                    await self.rebuild_queue(
-                        self.controller.ordered(), focused
-                    )
+                    await self.rebuild_queue(self.controller.ordered())
                     if not self._rebuild_pending:
                         return
             except Exception:
-                # A dead rebuild must never wedge the queue in the
-                # swap window (no #requests at all): logged, and the
-                # flag clears so the next tick re-arms.
-                logger.exception("queue rebuild failed")
+                # Teardown unmounts the tree under a mid-swap flight;
+                # that is not a bug worth a traceback after exit.
+                if self.is_running:
+                    logger.exception("queue rebuild failed")
             finally:
                 self._rebuild_scheduled = False
 
-        asyncio.create_task(flight())
+        # Referenced: an unreferenced task can be collected mid-await.
+        self._flight_task = asyncio.create_task(flight())
 
-    async def rebuild_queue(
-        self, ordered: list[ConsentRequest], focused: str | None
-    ) -> None:
+    async def rebuild_queue(self, ordered: list[ConsentRequest]) -> None:
         """Swap in a freshly-built queue list (its mount awaited),
         restoring focus by id (the top when the focused hold left)
-        so `a`/`d` never retarget through a shifted index."""
+        so `a`/`d` never retarget through a shifted index. Focus is
+        read from the live list here, at rebuild time — never
+        captured at arm time — so a re-armed iteration restores the
+        focus the operator set since, not a stale one. A missing old
+        list (a rebuild died mid-swap) is fine: the fresh list
+        mounts anew, the queue self-heals."""
         queue = self.query_one("#queue", Vertical)
-        old = self.query_one("#requests", ListView)
+        old = None
+        try:
+            old = self.query_one("#requests", ListView)
+        except NoMatches:
+            pass
+        focused = focused_request_id(old)
         items = [self.render_item(request) for request in ordered]
         fresh = ListView(*items, id="requests")
-        await old.remove()  # frees the id before the fresh list mounts
+        if old is not None:
+            await old.remove()  # frees the id before the fresh list mounts
         await queue.mount(fresh)
         fresh.focus()
         focus_by_id(fresh, focused)  # after mount: index sticks

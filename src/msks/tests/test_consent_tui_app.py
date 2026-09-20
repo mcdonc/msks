@@ -439,7 +439,7 @@ async def test_connect_failures_and_clean_closes() -> None:
     # An unreachable daemon: the entry failure reconnects (False).
     app, _ = make_app(FakeFactory([]))
     app._ws_factory = lambda: RaisingEnter()
-    assert await app.pump_one() is False
+    assert await app.pump_one() == (False, False)  # never connected
     # A send that blows up mid-handshake: generic arm, reconnect.
     boom = FakeWS()
     boom_sent = {"go": True}
@@ -452,13 +452,13 @@ async def test_connect_failures_and_clean_closes() -> None:
     boom.send = bad_send
     app2, _ = make_app(FakeFactory([]))
     app2._ws_factory = lambda: Entering(boom)
-    assert await app2.pump_one() is False
-    # A clean server close ends the connection (False, not refused).
+    assert await app2.pump_one() == (True, False)  # connected, dropped
+    # A clean server close ends the connection (not refused).
     clean = FakeWS()
     await clean.close()
     app3, _ = make_app(FakeFactory([]))
     app3._ws_factory = lambda: Entering(clean)
-    assert await app3.pump_one() is False
+    assert await app3.pump_one() == (True, False)
 
     # close() swallowing a dead peer.
     class DeadClose(FakeWS):
@@ -472,16 +472,24 @@ async def test_ws_loop_cycles_until_stopped(monkeypatch) -> None:
     app, _ = make_app(FakeFactory([]))
     outcomes = iter([True, False])
     stop_after_clean = {"clean": False}
+    ladder = {"attempt": None}
 
-    async def scripted_pump() -> bool:
+    async def scripted_pump() -> tuple[bool, bool]:
         outcome = next(outcomes)
         if outcome is False:
             stop_after_clean["clean"] = True
             app._stop = True
-        return outcome
+        return False, outcome
+
+    real_backoff = consent_app.backoff
+
+    def spying_backoff(delays, attempt):
+        ladder["attempt"] = attempt
+        return real_backoff(delays, attempt)
 
     monkeypatch.setattr(app, "pump_one", scripted_pump)
     monkeypatch.setattr(consent_app, "REFUSED_RETRY_INTERVAL", 0.01)
+    monkeypatch.setattr(consent_app, "backoff", spying_backoff)
     await app.ws_loop()  # refused -> continue -> clean -> stop-return
     assert stop_after_clean["clean"]
     # Pre-stopped: the loop never pumps.
@@ -489,9 +497,9 @@ async def test_ws_loop_cycles_until_stopped(monkeypatch) -> None:
     app2._stop = True
     pumps = {"n": 0}
 
-    async def counting() -> bool:
+    async def counting() -> tuple[bool, bool]:
         pumps["n"] += 1
-        return False
+        return False, False
 
     monkeypatch.setattr(app2, "pump_one", counting)
     await app2.ws_loop()
@@ -825,8 +833,11 @@ async def test_the_picker_decides_the_hold_it_opened_on() -> None:
         app.safe_repaint()
         await pilot.pause()
         await pilot.press("enter")
-        await wait_for(lambda: "already resolved" in status_line(app))
-        assert seams["decided"] == []  # nothing decided, nobody harmed
+        # The verdict goes to the hold the picker OPENED on — the
+        # resolved r1, never retargeted to r2. The server is the
+        # source of truth for staleness (it 404s resolved ids).
+        await wait_for(lambda: len(seams["decided"]) == 1)
+        assert seams["decided"][0][1] == "r1"
         app.action_quit_screen()
 
 
@@ -914,13 +925,13 @@ async def test_schedule_rebuild_pending_rearm() -> None:
         await wait_for(lambda: queue_children(app) == 1)
         calls = []
 
-        async def counting(rows, focused):
+        async def counting(ordered):
             calls.append(1)
             if len(calls) == 1:  # a request lands mid-first-rebuild
-                app.schedule_rebuild(focused)
+                app.schedule_rebuild()
 
         app.rebuild_queue = counting
-        app.schedule_rebuild(None)
+        app.schedule_rebuild()
         await pilot.pause()
         await pilot.pause()
         assert len(calls) == 2
@@ -974,11 +985,11 @@ async def test_a_dying_rebuild_logs_and_re_arms() -> None:
         await wait_for(lambda: queue_children(app) == 1)
 
         # Make the next rebuild blow up, arm it, and let it die.
-        async def boom(rows, focused):
+        async def boom(ordered):
             raise RuntimeError("swap exploded")
 
         app.rebuild_queue = boom
-        app.schedule_rebuild(None)
+        app.schedule_rebuild()
         await pilot.pause()
         assert app._rebuild_scheduled is False  # finally: cleared
         # A dying rules rebuild clears its flag too.
@@ -1037,3 +1048,217 @@ async def test_paint_rows_skips_a_row_that_left_mid_tick() -> None:
             rows, [Ghost(), live]
         )  # ghost skipped, live repainted
         app.action_quit_screen()
+
+
+async def test_a_mid_swap_death_self_heals_on_the_next_tick() -> None:
+    """The pass-4 wedge: a rebuild dying between the old list's
+    removal and the fresh one's mount left no #requests, and every
+    later tick died on the missing query — a blank UI until restart.
+    Now the missing list schedules a rebuild and the queue comes
+    back."""
+    factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
+    app, _ = make_app(factory)
+    async with app.run_test():
+        await wait_for(lambda: queue_children(app) == 1)
+
+        async def die_mid_swap(ordered):
+            old = app.query_one("#requests")
+            await old.remove()  # the swap window opens…
+            raise RuntimeError("died before the mount")
+
+        app.rebuild_queue = die_mid_swap
+        app.schedule_rebuild()
+        await wait_for(lambda: queue_children(app) == -1)  # gone
+        # The real rebuild_queue returns for the next tick.
+        del app.rebuild_queue
+        from msks.client.tui.consent_app import ConsentDeciderApp
+
+        app.rebuild_queue = ConsentDeciderApp.rebuild_queue.__get__(app)
+        app.safe_repaint()  # a tick
+        await wait_for(lambda: queue_children(app) == 1)  # healed
+        app.action_quit_screen()
+
+
+async def test_registration_rejection_exits() -> None:
+    """An egress.decider_rejected frame stops the loop and flashes
+    the reason — no silent promptless wait on a typo'd workspace."""
+    factory = FakeFactory([FakeWS([]), FakeWS([])])
+    app, _ = make_app(factory)
+    async with app.run_test():
+        await wait_for(lambda: len(factory.made) == 1)
+        factory.made[0].push(
+            json.dumps(
+                {
+                    "event": "egress.decider_rejected",
+                    "data": {"reason": "unknown workspace"},
+                }
+            )
+        )
+        await wait_for(lambda: app._stop is True)
+        await wait_for(
+            lambda: (
+                "registration rejected: unknown workspace" in status_line(app)
+            )
+        )
+        app.action_quit_screen()
+
+
+async def test_backoff_resets_after_a_healthy_connection() -> None:
+    """A connection that reached serve_connection was healthy: the
+    drop after it starts the backoff ladder over (attempt 0), it
+    does not climb for a lifetime of cumulative disconnects."""
+    app, _ = make_app(FakeFactory([]))
+    outcomes = iter([(False, True), (True, False), (False, False)])
+    ladder = {"attempt": None, "n": 0}
+
+    async def scripted_pump() -> tuple[bool, bool]:
+        outcome = next(outcomes)
+        if outcome == (False, False):  # after the reset's backoff
+            app._stop = True
+        return outcome
+
+    import msks.client.tui.consent_app as consent_app_mod
+
+    real_backoff = consent_app_mod.backoff
+
+    def spying_backoff(delays, attempt):
+        ladder["n"] += 1
+        ladder["attempt"] = attempt
+        return real_backoff(delays, attempt)
+
+    from unittest.mock import patch
+
+    with (
+        patch.object(app, "pump_one", scripted_pump),
+        patch.object(consent_app_mod, "REFUSED_RETRY_INTERVAL", 0.01),
+        patch.object(consent_app_mod, "backoff", spying_backoff),
+    ):
+        await app.ws_loop()
+    # The refusal sleeps its fixed interval (no backoff call); the
+    # healthy connection's drop then backs off from attempt 0 — the
+    # ladder restarted, not climbed to the cap.
+    assert ladder["n"] == 1 and ladder["attempt"] == 0
+
+
+async def test_rules_rebuild_self_heals_without_an_old_list() -> None:
+    """The rules twin of the queue's mid-swap heal: a rebuild with no
+    #rule-rows to remove (a died-mid-swap predecessor) mounts the
+    fresh list anew."""
+    factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
+    app, _ = make_app(factory)
+    async with app.run_test() as pilot:
+        await pilot.press("r")
+        await wait_for(lambda: rules_children(app) == 2)
+        screen = app.screen
+
+        async def die_mid_swap():
+            old = screen.query_one("#rule-rows")
+            await old.remove()
+            raise RuntimeError("died before the mount")
+
+        screen.rebuild_rows = die_mid_swap
+        screen.schedule_refresh()
+        await wait_for(lambda: rules_children(app) == -1)  # gone
+        from msks.client.tui.consent_app import RulesScreen
+
+        screen.rebuild_rows = RulesScreen.rebuild_rows.__get__(screen)
+        screen.schedule_refresh()
+        await wait_for(lambda: rules_children(app) == 2)  # healed
+        app.action_quit_screen()
+
+
+def test_schedule_rebuild_on_a_stopped_app_is_a_noop() -> None:
+    """A rebuild armed after (or during) teardown runs zero loop
+    iterations and clears its flag — no zombie flight, no
+    traceback."""
+
+    async def scenario() -> None:
+        factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
+        app, _ = make_app(factory)  # never run_test: not running
+        app.schedule_rebuild()
+        await asyncio.sleep(0.05)  # the flight lands in the finally
+        assert app._rebuild_scheduled is False
+
+    asyncio.run(scenario())
+
+
+async def test_a_rules_flight_settling_after_teardown() -> None:
+    """The rules flight when the app has stopped: the while check
+    exits with zero iterations (no zombie flight), and a rebuild
+    that raises anyway logs nothing — teardown unmounted the tree
+    under it, which is not a bug."""
+
+    from msks.client.tui.consent_app import RulesScreen
+
+    class StoppedApp:
+        is_running = False
+
+    class FlippingApp:
+        """Reads running once (the loop check) then stopped (the
+        except check): teardown happened mid-flight."""
+
+        def __init__(self):
+            self.reads = 0
+
+        @property
+        def is_running(self):
+            self.reads += 1
+            return self.reads == 1
+
+    state: dict = {"app": StoppedApp()}
+
+    def app_prop(_self):
+        return state["app"]
+
+    factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
+    app, _ = make_app(factory)
+    async with app.run_test() as pilot:
+        await pilot.press("r")
+        await wait_for(lambda: rules_children(app) == 2)
+        screen = app.screen
+        real_app_prop = RulesScreen.app
+        # A stopped app, patched in for exactly one scheduler slice
+        # per flight (the flight's own first step) — never long
+        # enough for a render to see the stub.
+        RulesScreen.app = property(app_prop)
+        screen.schedule_refresh()  # stopped: zero iterations
+        await asyncio.sleep(0)  # the flight runs to its finally
+        RulesScreen.app = real_app_prop
+        assert screen._refresh_scheduled is False
+
+        async def dying():
+            raise RuntimeError("died after teardown")
+
+        flip = FlippingApp()
+        state["app"] = flip
+        RulesScreen.app = property(app_prop)  # re-patch for this arm
+        screen.rebuild_rows = dying
+        screen.schedule_refresh()  # raises into a quiet except
+        await asyncio.sleep(0)  # the flight runs to its finally
+        await asyncio.sleep(0)  # …and the except arm settles
+        RulesScreen.app = real_app_prop
+        assert screen._refresh_scheduled is False
+        assert flip.reads == 2  # while (True), except (False)
+        app.action_quit_screen()
+
+
+async def test_a_flight_dying_at_teardown_stays_quiet() -> None:
+    """A rebuild that raises after the app stopped logs nothing (the
+    except arm's is_running check): teardown unmounts the tree under
+    a mid-swap flight and that is not a bug."""
+    factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
+    app, _ = make_app(factory)
+    async with app.run_test():
+        await wait_for(lambda: queue_children(app) == 1)
+        gate = asyncio.Event()
+
+        async def gated(ordered):
+            await gate.wait()
+            raise RuntimeError("died after teardown")
+
+        app.rebuild_queue = gated
+        app.schedule_rebuild()  # the flight parks inside the gate
+    # The app stopped (the with-block exited); release the flight.
+    gate.set()
+    await asyncio.sleep(0.05)
+    assert app._rebuild_scheduled is False

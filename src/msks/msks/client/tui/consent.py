@@ -22,6 +22,7 @@ from dataclasses import dataclass
 ADDED = "added"  # a held request arrived; payload = ConsentRequest
 RESOLVED = "resolved"  # a request left; payload = (request_id, decision)
 RULES = "rules"  # refreshed in-effect verdicts; payload = EgressRules
+REJECTED = "rejected"  # the daemon refused the registration; payload = reason
 IGNORED = "ignore"  # malformed / unknown frame; state untouched
 
 #: The durations a decider can pick, display order; the default is
@@ -57,6 +58,7 @@ class ConsentRequest:
     dest_host: str
     dest_port: int
     requested_at: float
+    expires_at: float | None = None  # the frame's honest deadline
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +97,7 @@ def parse_request(obj: object) -> ConsentRequest | None:
         dest_host=str(obj.get("dest_host") or ""),
         dest_port=port_field(obj.get("dest_port")),
         requested_at=numeric_field(obj.get("requested_at")) or 0.0,
+        expires_at=numeric_field(obj.get("expires_at")),
     )
 
 
@@ -192,6 +195,14 @@ class ConsentController:
         self.pending: dict[str, ConsentRequest] = {}
         self.rules: EgressRules | None = None
 
+    #: event name -> data applier (apply_frame dispatches through it)
+    APPLIERS = {
+        "egress.request": "apply_request",
+        "egress.resolved": "apply_resolved",
+        "egress.rules": "apply_rules",
+        "egress.decider_rejected": "apply_rejection",
+    }
+
     def apply_frame(self, raw: str) -> tuple[str, object]:
         """Parse and apply one inbound frame; ``(outcome, payload)``
         (see the outcome constants). Malformed input is ignored with
@@ -199,14 +210,16 @@ class ConsentController:
         msg = decode_frame(raw)
         if msg is None:
             return IGNORED, None
-        event = msg.get("event")
-        if event == "egress.request":
-            return self.apply_request(msg.get("data"))
-        if event == "egress.resolved":
-            return self.apply_resolved(msg.get("data"))
-        if event == "egress.rules":
-            return self.apply_rules(msg.get("data"))
-        return IGNORED, None
+        applier = self.APPLIERS.get(msg.get("event"))
+        if applier is None:
+            return IGNORED, None
+        return getattr(self, applier)(msg.get("data"))
+
+    def apply_rejection(self, data: object) -> tuple[str, object]:
+        """One ``egress.decider_rejected`` frame's data: the reason
+        the daemon refused the registration."""
+        reason = data.get("reason") if isinstance(data, dict) else None
+        return REJECTED, reason if isinstance(reason, str) else None
 
     def apply_request(self, data: object) -> tuple[str, object]:
         """One ``egress.request`` frame's data: add the hold."""
@@ -244,10 +257,14 @@ class ConsentController:
 
     def remaining(self, request: ConsentRequest) -> float:
         """Seconds until this hold's timeout expires to deny
-        (clamped at 0)."""
-        return max(
-            0.0, request.requested_at + self.hold_timeout - self._clock()
-        )
+        (clamped at 0). The frame's ``expires_at`` (the daemon's
+        settings-driven deadline) wins when present; the local
+        ``hold_timeout`` is only the fallback for frames without
+        one."""
+        deadline = request.expires_at
+        if deadline is None:
+            deadline = request.requested_at + self.hold_timeout
+        return max(0.0, deadline - self._clock())
 
     def rule_remaining(self, rule: ConsentRule) -> float | None:
         """Seconds left on a timed verdict, or None when it has no
