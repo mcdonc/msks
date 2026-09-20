@@ -428,11 +428,13 @@ class ConsentEngine:
             "workspace_id": request["workspace_id"],
             "task": task,
         }
+        frame = dict(public_row(request))
+        frame["expires_at"] = request["requested_at"] + self.timeout_s
         self.publish(
             "egress.request",
             {
                 "workspace_id": request["workspace_id"],
-                "request": public_row(request),
+                "request": frame,
             },
         )
         logger.info(
@@ -724,12 +726,17 @@ class ConsentEngine:
         rows = await self.model.list_requests(
             workspace_id, decision=DECISION_PENDING
         )
-        return [
-            {
-                "type": "egress.request",
-                "workspace_id": workspace_id,
-                "request": public_row(row),
-            }
-            for row in rows
-            if row["id"] in self._holds
-        ]
+        frames = []
+        for row in rows:
+            if row["id"] not in self._holds:
+                continue
+            frame = dict(public_row(row))
+            frame["expires_at"] = row["requested_at"] + self.timeout_s
+            frames.append(
+                {
+                    "type": "egress.request",
+                    "workspace_id": workspace_id,
+                    "request": frame,
+                }
+            )
+        return frames

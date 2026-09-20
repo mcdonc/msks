@@ -117,6 +117,16 @@ async def test_interactive_holds_prompts_and_resolves(engine_app) -> None:
     await drain(queue)
     requests = [f for e, f in frames if e == "egress.request"]
     assert requests and requests[0]["request"]["dest_host"] == "api.example"
+    # The frame carries the hold's honest deadline (settings-driven,
+    # not a client guess) for the decider's countdown.
+    req = requests[0]["request"]
+    assert (
+        abs(
+            req["expires_at"]
+            - (req["requested_at"] + app.state.settings.net.consent_timeout_s)
+        )
+        < 1e-6
+    )
     verdict = await app.state.consent.resolve(
         requests[0]["request"]["id"], DECISION_ALLOWED, "token", "5m"
     )
@@ -285,6 +295,9 @@ async def test_rules_frame_and_snapshot(engine_app) -> None:
     future = await engine.hold("ws-interactive", "api.example", 443)
     snap = await engine.snapshot("ws-interactive")
     assert [s["request"]["dest_host"] for s in snap] == ["api.example"]
+    assert all(
+        "expires_at" in s["request"] for s in snap
+    )  # the replay is as honest as the live frame
     rows = await app.state.model.egress_consent.list_requests(
         "ws-interactive", decision="pending"
     )
