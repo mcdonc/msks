@@ -205,11 +205,12 @@ def deadline_passed(expires_at: str | None, now: datetime) -> bool:
 
 
 async def retire_expired(app, hub: EventHub, row: dict) -> None:
-    """One expired placeholder: audit, drop, clean the store,
-    announce."""
+    """One expired placeholder: drop, audit, clean the store,
+    announce (audit after the drop: a persistently failing delete
+    cannot stack one audit row per watch interval)."""
     model = app.state.model
-    await model.record_audit("expiry", row)
     await model.delete_placeholder(row["id"])
+    await model.record_audit("expiry", row)
     try:
         await app.state.secrets.delete(row["backend_ref"])
     except Exception:  # noqa: BLE001 - inert leftover, logged below

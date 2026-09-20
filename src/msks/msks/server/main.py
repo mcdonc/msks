@@ -103,6 +103,10 @@ def reload_settings(app, config: str | None) -> None:
         return
     keep_startup_bound(app.state.settings, settings)
     app.state.settings = settings
+    # A provider or root swap invalidates every cached value: the
+    # next read re-fetches from the new settings' store instead of
+    # serving the old provider's bytes until a restart.
+    app.state.secrets.cache_clear()
 
 
 def keep_startup_bound(old: Settings, new: Settings) -> None:

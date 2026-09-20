@@ -59,9 +59,11 @@ class SecretMint(BaseModel):
     """
 
     workspace_id: str
-    name: str
-    dests: list[str]
-    secret: str
+    name: str = Field(min_length=1, max_length=128)
+    dests: list[str] = Field(min_length=1, max_length=32)
+    # The same cap user_data carries: far more than any token or
+    # key, small enough that a runaway upload fails validation.
+    secret: str = Field(min_length=1, max_length=65536)
     ttl_s: int | None = Field(default=None, ge=1)
 
 
@@ -916,10 +918,8 @@ def build_api(app) -> FastAPI:
                 )
             if entry not in seen:
                 seen.append(entry)
-        if not seen:
-            raise HTTPException(
-                status_code=422, detail="at least one dest is required"
-            )
+        # An empty list never reaches here: pydantic's min_length=1
+        # on the request model rejects it at validation.
         return seen
 
     @api.post("/api/v1/secrets", dependencies=[Depends(require_token)])
@@ -932,6 +932,8 @@ def build_api(app) -> FastAPI:
                     "without a leading digit"
                 ),
             )
+        if not body.secret.strip():
+            raise HTTPException(status_code=422, detail="the secret is empty")
         dests = validated_dests(body.dests)
         if await app.state.model.get_workspace(body.workspace_id) is None:
             raise HTTPException(status_code=404, detail="no such workspace")
@@ -947,22 +949,33 @@ def build_api(app) -> FastAPI:
                 ),
             )
         ref = backend_ref(body.workspace_id, body.name)
+        if await app.state.model.placeholder_by_ref(ref) is not None:
+            # Distinct labels can sanitize to one ref; the collision
+            # is answered before anything touches the shared store
+            # entry (a 409 here keeps manifest and value intact).
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"{body.workspace_id}/{body.name} collides with an"
+                    f" existing placeholder on backend ref {ref};"
+                    " pick another name"
+                ),
+            )
         expires = (
             datetime.now(UTC) + timedelta(seconds=body.ttl_s)
             if body.ttl_s is not None
             else None
         )
         # The manifest must declare the ref before the CLI can write
-        # it: project rows-plus-this-ref (no duplicate when the ref
-        # is already declared), then write the value.
+        # it: project rows-plus-this-ref (keyed by ref, so a
+        # colliding pair cannot double-declare), then write.
         refs = await app.state.model.placeholder_refs()
-        projected = (ref, f"{body.workspace_id}/{body.name}")
-        if projected not in refs:
-            refs.append(projected)
+        if all(existing != ref for existing, _ in refs):
+            refs.append((ref, f"{body.workspace_id}/{body.name}"))
         await sync_store_manifest(refs)
-        # Store first: a row without its backend value would swap
-        # empty on the wire; an orphaned value (row insert fails) is
-        # inert and retried by the next mint.
+        # Value before row: a row without its backend value would
+        # swap empty on the wire; an orphaned value (row insert
+        # fails) is inert.
         try:
             await app.state.secrets.write(ref, body.secret)
         except SecretStoreError as exc:
@@ -978,12 +991,13 @@ def build_api(app) -> FastAPI:
                 expires,
             )
         except IntegrityError:
-            # The value stays: in a real race the winner's row owns
-            # it, and an orphaned value (a write that lost its row)
-            # is inert and retried by the next mint.
             raise HTTPException(
                 status_code=409, detail="placeholder name collision"
             ) from None
+        # Re-write after the insert: in a same-label race both sides
+        # wrote the ref before inserting, and whichever write landed
+        # last would otherwise own the row the winner certified.
+        await app.state.secrets.write(ref, body.secret)
         await app.state.model.record_audit("mint", row)
         await sync_store_manifest()
         # The sentinel appears in exactly one response: this one.
@@ -1017,6 +1031,10 @@ def build_api(app) -> FastAPI:
         expires = datetime.now(UTC) + timedelta(seconds=body.ttl_s)
         await app.state.model.renew_placeholder(placeholder_id, expires)
         row = await app.state.model.get_placeholder(placeholder_id)
+        if row is None:
+            # The expiry sweep can retire the row between the two
+            # reads; a renew that lost its row answers 404, not 500.
+            raise HTTPException(status_code=404, detail="no such placeholder")
         return placeholder_view(row, sentinel=False)
 
     @api.delete(

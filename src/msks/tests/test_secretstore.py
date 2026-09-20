@@ -278,3 +278,16 @@ async def test_a_failing_command_carries_stderr(tmp_path) -> None:
     store.sync_manifest([("MSKS_WS_X", "ws/x")])
     with pytest.raises(SecretStoreError, match="unknown error"):
         await store.read("MSKS_WS_X")
+
+
+async def test_check_never_touches_a_real_placeholder(tmp_path) -> None:
+    """The probe ref is lowercase, unreachable by construction: a
+    workspace literally named `store` with a placeholder `probe`
+    keeps its value across a health check."""
+    store = store_for(tmp_path)
+    store.sync_manifest([("MSKS_STORE_PROBE", "store/probe")])
+    await store.write("MSKS_STORE_PROBE", "THE-REAL-SECRET")
+    assert await store.check() == {"provider": "file", "ok": True}
+    assert await store.read("MSKS_STORE_PROBE") == "THE-REAL-SECRET"
+    stored = tmp_path / "store" / "msks" / "default" / "MSKS_STORE_PROBE"
+    assert stored.read_text() == "THE-REAL-SECRET"

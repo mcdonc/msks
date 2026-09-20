@@ -32,9 +32,17 @@ def upgrade() -> None:
     op.create_index(
         "ix_placeholders_workspace_id", "placeholders", ["workspace_id"]
     )
-    op.create_index("ix_placeholders_sentinel", "placeholders", ["sentinel"])
     op.create_index(
-        "ix_placeholders_backend_ref", "placeholders", ["backend_ref"]
+        "ix_placeholders_sentinel",
+        "placeholders",
+        ["sentinel"],
+        unique=True,
+    )
+    op.create_index(
+        "ix_placeholders_backend_ref",
+        "placeholders",
+        ["backend_ref"],
+        unique=True,
     )
     op.create_table(
         "secret_audit",

@@ -49,12 +49,12 @@ setting** — where the bytes live is a configuration choice, not
 code, so moving from a local file to at-rest encryption or a managed
 vault changes no msks code:
 
-| Provider | Setting value    | Where the secret lives                                                                        | The credential the daemon holds                                                                               |
-| -------- | ---------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `file`   | `file` (default) | One file per secret under the store root (`<state_dir>/secrets`), filesystem permissions only | none                                                                                                          |
-| `age`    | `age`            | One age-encrypted file under the store root                                                   | an age identity file in the state dir                                                                         |
-| `awssm`  | `awssm`          | AWS Secrets Manager, under the `secretspec/msks/` name prefix                                 | the AWS SDK credential chain — on AWS-hosted appliances an instance profile role, no stored credential at all |
-| `bws`    | `bws`            | A Bitwarden Secrets Manager project                                                           | a machine-account access token (`BWS_ACCESS_TOKEN`) in the daemon's environment                               |
+| Provider | Setting value    | Where the secret lives                                                                                                | The credential the daemon holds                                                                               |
+| -------- | ---------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `file`   | `file` (default) | One file per secret under the store root (`<state_dir>/secrets`), filesystem permissions only                         | none                                                                                                          |
+| `age`    | `age`            | One age-encrypted file under the store root; the identity lives outside it, so a copy of the root alone is ciphertext | an age identity file beside the state dir                                                                     |
+| `awssm`  | `awssm`          | AWS Secrets Manager, under the `secretspec/msks/` name prefix                                                         | the AWS SDK credential chain — on AWS-hosted appliances an instance profile role, no stored credential at all |
+| `bws`    | `bws`            | A Bitwarden Secrets Manager project                                                                                   | a machine-account access token (`BWS_ACCESS_TOKEN`) in the daemon's environment                               |
 
 Plain Bitwarden Password Manager (`bw`) keeps its session only
 while an operator holds it unlocked, so it serves interactive use;

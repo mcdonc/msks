@@ -2088,8 +2088,11 @@ async def test_revoke_unknown_placeholder_is_a_404(client) -> None:
 
 
 async def test_mint_survives_the_insert_race(client, monkeypatch) -> None:
-    """Two mints racing past the pre-check: the loser's row insert
-    answers 409 and its store value is cleaned up."""
+    """Two same-label mints racing past both pre-checks: the
+    loser's row insert answers 409 on the unique index, and the
+    winner's certified value owns the store entry (the winner
+    re-writes after its insert, so a last-write by the loser
+    cannot stand)."""
     http, app, _stub = client
     await seed_workspace(app)
     first = await http.post(
@@ -2101,7 +2104,13 @@ async def test_mint_survives_the_insert_race(client, monkeypatch) -> None:
     async def blind(workspace_id, name):
         return None if name == "github_api" else await real(workspace_id, name)
 
+    async def blind_by_ref(ref):
+        # The race slips past both pre-checks; the unique index on
+        # backend_ref is the backstop the loser then hits.
+        return None
+
     monkeypatch.setattr(app.state.model, "placeholder_for", blind)
+    monkeypatch.setattr(app.state.model, "placeholder_by_ref", blind_by_ref)
     raced = await http.post(
         "/api/v1/secrets", json=mint_body(), headers=auth()
     )
@@ -2126,3 +2135,93 @@ async def test_mint_dedupes_repeated_dests(client) -> None:
     )
     assert response.status_code == 201
     assert response.json()["dests"] == ["api.github.com"]
+
+
+async def test_mint_answers_409_on_a_ref_collision(client) -> None:
+    """Labels that sanitize to one ref (foo vs FOO on one workspace)
+    collide on the backend ref: the second mint answers 409 BEFORE
+    anything touches the manifest or the shared store entry."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    first = await http.post(
+        "/api/v1/secrets",
+        json=mint_body(name="foo", secret="first-secret"),
+        headers=auth(),
+    )
+    assert first.status_code == 201
+    second = await http.post(
+        "/api/v1/secrets",
+        json=mint_body(name="FOO", secret="second-secret"),
+        headers=auth(),
+    )
+    assert second.status_code == 409
+    assert "collides" in second.json()["detail"]
+    # The winner's value and the manifest are intact.
+    root = app.state.settings.secret_store.root
+    stored = root / "msks" / "default" / "MSKS_WS_SEC_FOO"
+    assert stored.read_text() == "first-secret"
+    manifest = (root / "secretspec.toml").read_text()
+    assert manifest.count("MSKS_WS_SEC_FOO") == 1
+
+
+async def test_mint_refuses_a_whitespace_secret(client) -> None:
+    http, app, _stub = client
+    await seed_workspace(app)
+    response = await http.post(
+        "/api/v1/secrets", json=mint_body(secret="  \n"), headers=auth()
+    )
+    assert response.status_code == 422
+    assert "empty" in response.json()["detail"]
+
+
+async def test_renew_loses_gracefully_to_the_expiry_sweep(
+    client, monkeypatch
+) -> None:
+    """A renew racing the sweep answers 404, not a 500 from a None
+    row."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    row = (
+        await http.post("/api/v1/secrets", json=mint_body(), headers=auth())
+    ).json()
+    real = app.state.model.get_placeholder
+    fetched: list[int] = []
+
+    async def vanishing(placeholder_id):
+        fetched.append(placeholder_id)
+        if len(fetched) == 2:  # the re-fetch after the renew write
+            return None  # the sweep retired the row in between
+        return await real(placeholder_id)
+
+    monkeypatch.setattr(app.state.model, "get_placeholder", vanishing)
+    response = await http.post(
+        f"/api/v1/secrets/{row['id']}/renew",
+        json={"ttl_s": 60},
+        headers=auth(),
+    )
+    assert response.status_code == 404
+
+
+async def test_migrated_schema_keeps_the_unique_indexes(client) -> None:
+    """The daemon's real DB comes up through migrate(), not
+    create_all(): the uniqueness the collision story relies on must
+    exist in the MIGRATED schema, not only the ORM's."""
+    import sqlite3
+
+    http, app, _stub = client
+    db = str(app.state.settings.server.db_path)
+    conn = sqlite3.connect(db)
+    try:
+        sql = {
+            row[0]
+            for row in conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='index'"
+            )
+            if row[0] is not None  # auto-indexes carry no SQL text
+        }
+    finally:
+        conn.close()  # `with connect(...)` commits, never closes
+    assert any("ix_placeholders_sentinel" in s and "UNIQUE" in s for s in sql)
+    assert any(
+        "ix_placeholders_backend_ref" in s and "UNIQUE" in s for s in sql
+    )

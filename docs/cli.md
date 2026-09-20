@@ -487,7 +487,8 @@ msks secret revoke myws --name github_api
 msks secret check                       # the store answers writes
 ```
 
-`--secret-file` takes a path or `-` for a pipe; the secret is
+`--secret-file` takes a path or `-` for a pipe (the value is
+whitespace-stripped at both ends); the secret is
 never accepted as a command-line argument (argv lands in process
 lists and shell history), and an empty file is refused before any
 network roundtrip. `--dest` repeats and binds the swap: an exact

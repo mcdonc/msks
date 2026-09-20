@@ -30,6 +30,8 @@ re-fetches by backend ref on first use.
 """
 
 import asyncio
+import contextlib
+import itertools
 import json
 import os
 import re
@@ -47,6 +49,18 @@ MANIFEST_NAME = "secretspec.toml"
 #: The audit/ref identifier rule SecretSpec enforces on names:
 #: letters, numbers, and underscores, no leading digit.
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+#: A probe ref no minted placeholder can ever own: backend_ref
+#: uppercases every emitted ref and lowercase survives sanitization
+#: untouched, so a lowercase probe name is unreachable by
+#: construction (a workspace literally named ``store`` with a
+#: placeholder ``probe`` mints MSKS_STORE_PROBE, not this).
+PROBE_REF = "msks_store_probe"
+
+#: A process-wide counter for unique manifest temp names: two
+#: concurrent syncs (both off the event loop) must never share a
+#: temp path.
+_TMP_COUNTER = itertools.count()
 
 
 class SecretStoreError(Exception):
@@ -152,6 +166,13 @@ def awssm_uri(s) -> str:
     return uri
 
 
+def write_private(path: Path, body: str) -> None:
+    """Create/replace *path* 0600 in one step (no mode dance)."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(body)
+
+
 def cli_error(operation: str, err: bytes) -> SecretStoreError:
     """A non-zero exit as an error, carrying the stderr's last line."""
     detail = err.decode(errors="replace").strip().splitlines()
@@ -196,6 +217,11 @@ class SecretStore:
         # ref -> value; the interceptor's swap path reads this.
         self._cache: dict[str, str] = {}
 
+    def cache_clear(self) -> None:
+        """Drop every cached value (a SIGHUP settings swap; the next
+        read re-fetches from the new settings' store)."""
+        self._cache.clear()
+
     @property
     def settings(self):
         return self.app.state.settings.secret_store
@@ -224,13 +250,12 @@ class SecretStore:
             pass
         root = self.settings.root
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        # Atomic replace: a temp file (0600) renamed over the live
-        # manifest, so a concurrent read never sees a half write and
-        # the mode is right on every sync, not just the first.
-        tmp = root / (MANIFEST_NAME + ".tmp")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(body)
+        # Atomic replace from a UNIQUE temp file (0600): two
+        # concurrent syncs never share a temp path, a concurrent
+        # read never sees a half write, and the mode is right on
+        # every sync, not just the first.
+        tmp = root / f"{MANIFEST_NAME}.{os.getpid()}.{next(_TMP_COUNTER)}.tmp"
+        write_private(tmp, body)
         os.replace(tmp, path)
 
     # --- subprocess plumbing ----------------------------------------
@@ -284,18 +309,22 @@ class SecretStore:
 
         A green run means the provider URI is reachable and writable
         before the first mint — a typo'd setting fails here, loudly,
-        instead of at first use. The probe runs against a throwaway
-        manifest under the store root (its declaration is temporary;
-        the synced manifest is untouched), and its value lands in —
-        and is removed from — the real provider.
+        instead of at first use. The probe ref is unreachable by any
+        minted placeholder (lowercase; backend_ref uppercases), the
+        probe manifest is 0600 like the synced one (it carries the
+        provider URI), and its value lands in — and is removed from
+        — the real provider. A cleanup failure after a failed probe
+        is suppressed so the ORIGINAL error is the one raised; a
+        cleanup failure after a green probe propagates (residue is
+        inert, but the operator should hear about it).
         """
-        ref = "MSKS_STORE_PROBE"
+        ref = f"{PROBE_REF}_{pysecrets.token_hex(4)}"
         token = SENTINEL_PREFIX + pysecrets.token_urlsafe(8)
         uri = provider_uri(self)
         root = self.settings.root
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
         probe = root / "probe.toml"
-        probe.write_text(render_manifest(uri, [(ref, "store probe")]))
+        write_private(probe, render_manifest(uri, [(ref, "store probe")]))
         try:
             await self.run(
                 ["set", "--provider", uri, ref],
@@ -305,7 +334,11 @@ class SecretStore:
             out = await self.run(["get", ref], manifest=probe)
             if out.decode(errors="replace").removesuffix("\n") != token:
                 raise SecretStoreError("check", "probe value mismatch")
-        finally:
-            await self.run(["delete", ref], manifest=probe)
+        except SecretStoreError:
+            with contextlib.suppress(SecretStoreError):
+                await self.run(["delete", ref], manifest=probe)
             probe.unlink(missing_ok=True)
+            raise
+        await self.run(["delete", ref], manifest=probe)
+        probe.unlink(missing_ok=True)
         return {"provider": self.settings.provider, "ok": True}

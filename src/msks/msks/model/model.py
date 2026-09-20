@@ -381,6 +381,21 @@ class Model:
             )
             return None if row is None else placeholder_dict(row)
 
+    async def placeholder_by_ref(self, ref: str) -> dict | None:
+        """The placeholder owning a backend ref, None when none does.
+
+        Distinct (workspace, name) pairs can sanitize to the same
+        ref (``foo``/``FOO`` on one workspace; ``a-b``/``a``+``b_c``
+        across two) — a mint answers 409 here instead of corrupting
+        the shared store entry.
+        """
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            row = await session.scalar(
+                select(Placeholder).where(Placeholder.backend_ref == ref)
+            )
+            return None if row is None else placeholder_dict(row)
+
     async def placeholder_refs(self) -> list[tuple[str, str]]:
         """Every (backend_ref, description) pair — the manifest body."""
         maker = sessionmaker_for(self.engine())
