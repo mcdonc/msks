@@ -367,11 +367,16 @@ the guest accepts the workspace key (#168): a probe login retries
 behind the first boot's identity seeding, so the first attempt
 lands as a session instead of `Permission denied (publickey)`.
 
-`msks rsync` (#190) is the copy form of the same login:
-`msks rsync devbox -- -aP src/ :src/` runs the host rsync over
-the forward with the identity staged in memory, so file copies in
-either direction need no ssh-config alias and no key file on
-disk (see the CLI chapter's `msks rsync` section).
+The same login works as the workspace user —
+`ssh -i ... -p 2201 msks@127.0.0.1` — whose home rides the
+persistent `/home` volume.
+
+`msks rsync` (#190) is the copy form of the same seam: it runs
+the host rsync over the forward with the identity staged in
+memory and the copy opening its own forward
+(`msks rsync devbox -- -aP src/ :src/`, the `msks` user's home;
+`root@:/root/x` for root-owned paths) — see the CLI chapter's
+`msks rsync` section.
 
 The user's own ssh config carries the same workflow for plain `ssh`
 invocations — one wildcard block serves every workspace:

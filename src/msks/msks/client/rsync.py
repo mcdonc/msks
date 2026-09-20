@@ -20,15 +20,18 @@ same probe login ``msks ssh`` runs.
 Everything after the workspace id (or after ``--``) is passed to
 rsync verbatim; msks parses no rsync flags. The one shaping pass
 is the empty host: rsync's single-colon syntax lets the host name
-sit before the colon, and a path that names none (``:/root/site``,
+sit before the colon, and a path that names none (``:src``,
 ``root@:/root/site``) targets the workspace this command names —
 filled in as the host, so the push and pull forms read
-``msks rsync my-workspace -- -av ./site/ :/root/site/``. The
-direction comes entirely from the rsync arguments. A path that
-names a host keeps it (the transport is the proxy, so the name
-never resolves); ``::`` (rsync's daemon protocol) is left as
-typed, and the workspace image listens with no rsync daemon —
-sshd stays the guest's one inbound service (#110).
+``msks rsync my-workspace -- -av ./site/ root@:/root/site/``
+(the ``root@`` spelling matters for root-owned paths: the guest's
+``/root`` is root's alone, and the default login — the image's
+``msks`` workspace user — writes under that user's persistent
+``/home``). The direction comes entirely from the rsync
+arguments. A path that names a host keeps it (the transport is
+the proxy, so the name never resolves); ``::`` (rsync's daemon
+protocol) is left as typed, and the workspace image runs no rsync
+daemon — sshd stays the guest's one inbound service (#110).
 
 The login user defaults to the image's workspace user the same way
 ``msks ssh`` injects ``-l msks`` — but rsync itself appends
@@ -182,14 +185,20 @@ def require_args(passthrough: list[str]) -> None:
         raise SystemExit(
             "msks rsync: pass the rsync arguments after the "
             "workspace id, e.g. msks rsync alpha -- -av "
-            "./site/ :/root/site/"
+            "./site/ root@:/root/site/"
         )
 
 
 def run_workspace_rsync(
     workspace_id: str, passthrough: list[str], transport=None
 ) -> int:
-    """One rsync run, from boot pre-flight to rsync's own exit code."""
+    """One rsync run, from boot pre-flight to rsync's own exit code.
+
+    The first-boot probe dials as the DEFAULT user even when the
+    copy logs in as another (``root@:`` paths): the guest's seed
+    writes both users' ``authorized_keys`` in one cloud-init run,
+    so the default user's acceptance is the seed's arrival either
+    way."""
     passthrough = passthrough_args(passthrough)
     require_args(passthrough)
     with staged_session(workspace_id, transport) as (booted, served):

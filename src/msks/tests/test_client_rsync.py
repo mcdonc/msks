@@ -23,6 +23,7 @@ from test_client_ssh import (
     KEY,
     KEYGEN_BIN,
     PEM,
+    SSH_BIN,
     SSHD_BIN,
     free_port,
     needs_sshd,
@@ -348,6 +349,134 @@ def test_cli_dispatch_reaches_the_rsync_body(
     )
     assert cli.dispatch(args) == 5
     assert calls == [("alpha", ["-av", ":/d/", "./d/"])]
+
+
+# --- the precedence the design rides on (ssh -G, stock parsing) ---
+
+
+def ssh_g(config_path: str, *extra: str) -> dict[str, str]:
+    """ssh's resolved configuration for a destination, as a
+    keyword→value map (``ssh -G`` answers the parse the real
+    connection would use)."""
+    done = subprocess.run(
+        [SSH_BIN, "-G", "-F", config_path, *extra, "alpha"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert done.returncode == 0, done.stderr
+    return {
+        line.split(None, 1)[0]: line.split(None, 1)[1]
+        for line in done.stdout.splitlines()
+        if len(line.split(None, 1)) == 2
+    }
+
+
+@needs_rsync
+def test_the_config_user_is_a_default_the_command_line_overrides(
+    tmp_path: Path,
+) -> None:
+    """The two stock-ssh behaviors the ``root@:`` spelling rides
+    on, pinned: the generated config's ``User`` is the resolved
+    default, and rsync's appended ``-l user`` (its ``user@host:``
+    translation) overrides it. Also the translated, quoted config
+    lines parse — a whitespace-carrying ``UserKnownHostsFile`` and
+    ``ProxyCommand`` survive ``ssh``'s own config parser whole."""
+    with agent.serve(agent.load_private(PEM), "") as served:
+        options = ssh.session_options(
+            "alpha",
+            served.server_address,
+            served.identity_path,
+            str(tmp_path / "known hosts"),
+        )
+        cfg = tmp_path / "ssh_config"
+        cfg.write_text(
+            "\n".join(rsync.config_directives(options, "msks")) + "\n",
+            encoding="utf-8",
+        )
+        resolved = ssh_g(str(cfg))
+        assert resolved["user"] == "msks"
+        assert resolved["userknownhostsfile"] == str(tmp_path / "known hosts")
+        assert (
+            resolved["proxycommand"]
+            == (ssh.proxy_command("alpha").partition("=")[2])
+        )
+        assert resolved["identityfile"].splitlines()[0] == (
+            served.identity_path
+        )
+        # rsync appends -l user after the -e words for user@host:
+        # paths — the command line wins over the config default.
+        assert ssh_g(str(cfg), "-l", "root")["user"] == "root"
+
+
+@needs_rsync
+def test_stock_rsync_shapes_the_remote_shell_argv(tmp_path: Path) -> None:
+    """rsync's own argument shaping, pinned against the real
+    binary with a stand-in remote shell: ``user@host:`` appends
+    ``-l user`` and the host AFTER the ``-e`` words, the empty
+    host passes an EMPTY host word (ssh would parse rsync's first
+    remote-command word as its destination — why msks fills it),
+    the last ``-e`` wins, and the ``-e`` value is word-split
+    honoring double quotes — the one quoting level the design
+    allows."""
+    argv_log = tmp_path / "rsh-argv.txt"
+    standin = tmp_path / "ssh"
+    standin.write_text(
+        '#!/bin/sh\nprintf "%s\\n" "$@" > ' + shlex_quote(str(argv_log)) + "\n"
+    )
+    standin.chmod(0o755)
+    spaced = tmp_path / "ssh cfg"
+    spaced.write_text("")
+    source = tmp_path / "f"
+    source.write_text("x")
+
+    def recorded(*call: str) -> list[str]:
+        argv_log.write_text("")
+        done = subprocess.run(
+            [RSYNC_BIN, *call], capture_output=True, timeout=30
+        )
+        assert done.returncode != 0 or argv_log.read_text(), done
+        return argv_log.read_text().splitlines()
+
+    argv = recorded(
+        "-e", f'{standin} -F "{spaced}"', str(source), "root@alpha:/x"
+    )
+    assert argv[:2] == ["-F", str(spaced)]  # one word, quotes honored
+    assert argv[2:5] == ["-l", "root", "alpha"]
+    assert argv[5] == "rsync" and "--server" in argv
+    assert recorded("-e", f"{standin}", str(source), ":/x")[:2] == [
+        "",
+        "rsync",
+    ]
+    # ^ the empty host passes an EMPTY host word — ssh would then
+    # parse rsync's first remote-command word as its destination,
+    # which is why msks fills the host
+    later = tmp_path / "later-shell"
+    later.write_text("#!/bin/sh\nexit 42\n")
+    later.chmod(0o755)
+    argv_log.write_text("")
+    done = subprocess.run(
+        [
+            RSYNC_BIN,
+            "-e",
+            f"{standin}",
+            "-e",
+            str(later),
+            str(source),
+            "alpha:/x",
+        ],
+        capture_output=True,
+        timeout=30,
+    )
+    # rc 42 is the later shell's own exit status — the LAST -e ran
+    # and the first one never did (its log stayed empty).
+    assert done.returncode == 42 and not argv_log.read_text()
+
+
+def shlex_quote(value: str) -> str:
+    """A path safe inside the stand-in's own double-quoted shell
+    string."""
+    return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
 # --- stock rsync against a local sshd, through the agent ---
