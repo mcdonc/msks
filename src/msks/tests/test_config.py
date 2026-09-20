@@ -402,6 +402,8 @@ KEY_CASES = [
     ("home_mib", 512, "vmm.home_mib", 512),
     ("storage_warn_pct", 80, "vmm.storage_warn_pct", 80),
     ("storage_floor_mib", 256, "vmm.storage_floor_mib", 256),
+    ("resize2fs", "/r2fs", "vmm.resize2fs", "/r2fs"),
+    ("e2fsck", "/fsck", "vmm.e2fsck", "/fsck"),
     ("host", "0.0.0.0", "server.host", "0.0.0.0"),
     ("port", 9000, "server.port", 9000),
     ("tls_cert", "/c.pem", "server.tls_cert", "/c.pem"),

@@ -137,6 +137,12 @@ class VmmSettings:
     # them, the host that owns them, and their default sizes.
     qemu_img: str = "qemu-img"
     mkfs_ext4: str = "mkfs.ext4"
+    # The #184 resize pair: e2fsck quiets the home volume's journal
+    # before resize2fs moves it (both directions). The appliance
+    # ships both (#183's state-disk grow pins them in its root
+    # image); a bare-host daemon points these at its own e2fsprogs.
+    resize2fs: str = "resize2fs"
+    e2fsck: str = "e2fsck"
     # The tool that builds the #41 seed disk: a small iso9660 image
     # labeled ``cidata`` carrying the workspace's user_data. mkisofs
     # is genisoimage (same tool): cdrtools and every distro's
@@ -341,6 +347,8 @@ def vmm_settings_from_env(
         default_image=_env(env, "MSKSD_DEFAULT_IMAGE", cls.default_image),
         qemu_img=_env(env, "MSKSD_QEMU_IMG", cls.qemu_img),
         mkfs_ext4=_env(env, "MSKSD_MKFS_EXT4", cls.mkfs_ext4),
+        resize2fs=_env(env, "MSKSD_RESIZE2FS", cls.resize2fs),
+        e2fsck=_env(env, "MSKSD_E2FSCK", cls.e2fsck),
         mkisofs=_env(env, "MSKSD_MKISOFS", cls.mkisofs),
         host_name=_env(env, "MSKSD_HOST_NAME", cls().host_name),
         root_mib=_parse_positive_int(env, "MSKSD_ROOT_MIB", cls.root_mib),

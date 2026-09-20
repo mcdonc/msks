@@ -16,6 +16,15 @@ tagged `vX.Y.Z`.
   orders them oldest-first. Re-importing the same archive
   refreshes the time. See
   [docs/storage.md](storage.md#capacity-reporting).
+- **`msks resize` and `POST /api/v1/workspaces/{id}/resize` (#184).**
+  A stopped workspace's disk sizes move after create: the `/home`
+  volume grows or shrinks (`e2fsck` quiets the journal, `resize2fs`
+  moves the filesystem, a shrink below used blocks answers a named
+  `409`), and the root overlay grows with the next start's
+  cloud-init filling the larger device. The row, `msks ls --json`,
+  and `msks storage` report the new ceiling immediately, and a
+  completed resize announces `workspace.resized`. New settings
+  `MSKSD_RESIZE2FS` and `MSKSD_E2FSCK` name the tools.
 - **`msks storage` and `GET /api/v1/storage` (#184).** The daemon
   reports the state-disk budget (`used`/`free` with a named
   `pressure` condition), each workspace's cost beside its size

@@ -342,3 +342,29 @@ async def test_database_file_is_private(app_for, tmp_path: Path) -> None:
     app = app_for(db_path=db_path)
     app.state.model.migrate()
     assert db_path.stat().st_mode & 0o777 == 0o600
+
+
+async def test_set_sizes_updates_named_columns(app_for) -> None:
+    app = app_for()
+    await app.state.model.create_all()
+    await app.state.model.create_workspace(
+        VmSpec(
+            workspace_id="ws-size",
+            kernel=Path("/k"),
+            rootfs=Path("/r"),
+            root_mib=10240,
+            home_mib=2048,
+        )
+    )
+    assert await app.state.model.set_sizes(
+        "ws-size", root_mib=20480, home_mib=4096
+    )
+    row = await app.state.model.get_workspace("ws-size")
+    assert row["root_mib"] == 20480
+    assert row["home_mib"] == 4096
+    # One side alone keeps the other.
+    assert await app.state.model.set_sizes("ws-size", None, 8192)
+    row = await app.state.model.get_workspace("ws-size")
+    assert row["root_mib"] == 20480
+    assert row["home_mib"] == 8192
+    assert not await app.state.model.set_sizes("ghost", None, 64)

@@ -73,13 +73,40 @@ adopting the predecessor's data. Clear the files and create again.
 
 ## Sizing
 
-Both sizes are fixed at workspace create and configurable three
+Both sizes are set at workspace create and configurable three
 ways: per request (`root_mib` / `home_mib` on workspace create),
 per daemon (`MSKSD_ROOT_MIB`, default 10240, and `MSKSD_HOME_MIB`,
 default 2048), and per image (the catalog's manifest carries the
 cmdline the guest boots, which pairs with the sizes). The overlay's
 virtual size never drops below its base image's size — a smaller
 disk would truncate the base filesystem.
+
+Create is not the only time sizes move: `POST
+/api/v1/workspaces/{id}/resize` (`msks resize`) revisits them on a
+**stopped** workspace (#184):
+
+- the **/home volume** grows or shrinks. The daemon quiets the
+  filesystem's journal with `e2fsck -fy`, then `resize2fs` moves it
+  and the file follows (a grow truncates up first; a shrink
+  truncates down only after the filesystem agreed — `resize2fs`
+  refuses to shrink below the blocks in use, and that refusal
+  reaches the caller as a named `409` telling the operator to free
+  data in the workspace or shrink less).
+- the **root overlay** grows only — its partition table and root
+  filesystem belong to the guest, and the boot's cloud-init
+  `growpart` fills the larger device on the next start for free;
+  shrinking it is a factory reset, not a resize.
+
+A resize carries the home-volume moves' guards (free lifecycle
+statuses, the placement check, the move-lock against a concurrent
+boot) and the row follows: `msks ls --json` and `msks storage`
+report the new ceiling immediately, the bytes move at once on the
+host, and a workspace whose volume file is absent simply records
+the new size — the next start's artifact heal builds the blank
+volume at it. The k8s backend answers a named `400`: the workspace
+lives on a claim the cluster sizes, so growth goes through the
+storage class. A completed resize is announced on the events
+channel (`workspace.resized`, with the new sizes).
 
 ## The appliance state disk
 
@@ -328,6 +355,8 @@ boot. Deleting the workspace releases the pin.
 | `MSKSD_STORAGE_FLOOR_MIB`         | `512`        | Free state-disk MiB below which pressure is `critical` and writes answer `507` (#184).                            |
 | `MSKSD_QEMU_IMG`                  | `qemu-img`   | The `qemu-img` binary that creates overlays.                                                                      |
 | `MSKSD_MKFS_EXT4`                 | `mkfs.ext4`  | The mkfs that formats `/home` volumes.                                                                            |
+| `MSKSD_RESIZE2FS`                 | `resize2fs`  | The resize2fs that moves `/home` volumes (#184).                                                                  |
+| `MSKSD_E2FSCK`                    | `e2fsck`     | The e2fsck that quiets a volume before a resize (#184).                                                           |
 | `MSKSD_MKISOFS`                   | `mkisofs`    | The mkisofs (genisoimage) that builds `cidata` seed disks (#41).                                                  |
 | `MSKSD_HOST_NAME`                 | the hostname | The host recorded as owning locally-created artifacts.                                                            |
 | `MSKSD_SHUTDOWN_TIMEOUT_S`        | `20`         | How long `stop` waits for the guest's clean poweroff before the fallback kill; a stop answers within this bound.  |

@@ -2226,3 +2226,54 @@ def test_render_storage_empty_tables_collapse(
     }
     text = cli.render_storage(report, as_json=False)
     assert text == ("state disk    used 1G of 4G    free 3G    pressure ok")
+
+
+RESIZED_ROW = {
+    "id": "ws1",
+    "root_mib": 10240,
+    "home_mib": 4096,
+}
+
+
+def test_cmd_resize_prints_the_new_sizes(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client_env(monkeypatch)
+    rc = cli.cmd_resize(
+        "ws1",
+        {"home_mib": 4096},
+        transport=mock(lambda req: httpx.Response(200, json=RESIZED_ROW)),
+    )
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "resized ws1" in out
+    assert "home 4096 MiB" in out
+
+
+def test_run_resize_refuses_an_empty_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client_env(monkeypatch)
+    args = cli.build_parser().parse_args(["resize", "ws1"])
+    with pytest.raises(SystemExit, match="nothing to resize"):
+        cli.run_resize(args, mock(lambda req: httpx.Response(200, json={})))
+
+
+def test_resize_command_wires_flags(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client_env(monkeypatch)
+    seen = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["path"] = req.url.path
+        seen["body"] = json.loads(req.read())
+        return httpx.Response(200, json=RESIZED_ROW)
+
+    rc = cli.main(
+        ["resize", "ws1", "--home-mib", "4096"],
+        transport=mock(handler),
+    )
+    assert rc == 0
+    assert seen["path"] == "/api/v1/workspaces/ws1/resize"
+    assert seen["body"] == {"home_mib": 4096}

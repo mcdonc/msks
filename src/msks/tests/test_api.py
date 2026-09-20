@@ -1266,3 +1266,301 @@ async def test_home_import_refused_by_content_length(
     )
     assert refused.status_code == 507
     assert "incoming bytes" in refused.json()["detail"]
+
+
+async def plant_volume(app, workspace_id: str, mib: int) -> None:
+    """A genuinely formatted home volume under the state dir."""
+    import subprocess as sp
+
+    home = (
+        app.state.settings.vmm.state_dir / "volumes" / f"{workspace_id}.ext4"
+    )
+    home.parent.mkdir(parents=True, exist_ok=True)
+    with home.open("wb") as handle:
+        handle.truncate(mib * 1024 * 1024)
+    sp.run(["mkfs.ext4", "-q", "-F", "-L", "msks-home", str(home)], check=True)
+
+
+async def plant_qcow2(app, workspace_id: str, mib: int) -> None:
+    """A genuinely formatted qcow2 overlay under the state dir."""
+    import subprocess as sp
+
+    overlay = (
+        app.state.settings.vmm.state_dir / "vms" / workspace_id / "root.qcow2"
+    )
+    overlay.parent.mkdir(parents=True, exist_ok=True)
+    sp.run(
+        ["qemu-img", "create", "-f", "qcow2", str(overlay), f"{mib}M"],
+        check=True,
+    )
+
+
+async def test_resize_grows_the_home_volume(client) -> None:
+    http, app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-rs", "kernel": "/k", "rootfs": "/r", "home_mib": 64},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    await plant_volume(app, "ws-rs", 64)
+    resized = await http.post(
+        "/api/v1/workspaces/ws-rs/resize",
+        json={"home_mib": 128},
+        headers=auth(),
+    )
+    assert resized.status_code == 200
+    body = resized.json()
+    assert body["home_mib"] == 128
+    volume = app.state.settings.vmm.state_dir / "volumes" / "ws-rs.ext4"
+    assert volume.stat().st_size == 128 * 1024 * 1024
+
+
+async def test_resize_shrinks_the_home_volume(client) -> None:
+    http, app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-sh", "kernel": "/k", "rootfs": "/r", "home_mib": 128},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    await plant_volume(app, "ws-sh", 128)
+    resized = await http.post(
+        "/api/v1/workspaces/ws-sh/resize",
+        json={"home_mib": 64},
+        headers=auth(),
+    )
+    assert resized.status_code == 200
+    volume = app.state.settings.vmm.state_dir / "volumes" / "ws-sh.ext4"
+    assert volume.stat().st_size == 64 * 1024 * 1024
+
+
+async def test_resize_grows_the_overlay(client) -> None:
+    import json as json_mod
+    import subprocess as sp
+
+    http, app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-ov", "kernel": "/k", "rootfs": "/r", "root_mib": 256},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    await plant_qcow2(app, "ws-ov", 256)
+    resized = await http.post(
+        "/api/v1/workspaces/ws-ov/resize",
+        json={"root_mib": 512},
+        headers=auth(),
+    )
+    assert resized.status_code == 200
+    assert resized.json()["root_mib"] == 512
+    overlay = app.state.settings.vmm.state_dir / "vms" / "ws-ov" / "root.qcow2"
+    info = sp.run(
+        ["qemu-img", "info", "--output=json", str(overlay)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert json_mod.loads(info.stdout)["virtual-size"] == 512 * 1024 * 1024
+
+
+async def test_resize_refuses_a_running_workspace(client) -> None:
+    http, app, stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-run", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    await app.state.model.set_status("ws-run", "running")
+    refused = await http.post(
+        "/api/v1/workspaces/ws-run/resize",
+        json={"home_mib": 128},
+        headers=auth(),
+    )
+    assert refused.status_code == 409
+    assert "stop it before" in refused.json()["detail"]
+
+
+async def test_resize_refuses_overlay_shrink(client) -> None:
+    http, _app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-nos", "kernel": "/k", "rootfs": "/r", "root_mib": 512},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    refused = await http.post(
+        "/api/v1/workspaces/ws-nos/resize",
+        json={"root_mib": 256},
+        headers=auth(),
+    )
+    assert refused.status_code == 400
+    assert "only grows" in refused.json()["detail"]
+
+
+async def test_resize_refuses_noop_and_empty(client) -> None:
+    http, _app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-noop", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    empty = await http.post(
+        "/api/v1/workspaces/ws-noop/resize", json={}, headers=auth()
+    )
+    assert empty.status_code == 400
+    assert "nothing to resize" in empty.json()["detail"]
+    same = await http.post(
+        "/api/v1/workspaces/ws-noop/resize",
+        json={"home_mib": 2048},
+        headers=auth(),
+    )
+    assert same.status_code == 400
+    assert "already at those sizes" in same.json()["detail"]
+
+
+async def test_resize_refused_on_k8s(client, monkeypatch) -> None:
+    http, app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-k8s-rs",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "egress": False,
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    monkeypatch.setattr(app.state.settings.vmm, "driver", "k8s")
+    refused = await http.post(
+        "/api/v1/workspaces/ws-k8s-rs/resize",
+        json={"home_mib": 128},
+        headers=auth(),
+    )
+    assert refused.status_code == 400
+    assert "not served by the k8s backend" in refused.json()["detail"]
+
+
+async def test_resize_without_a_volume_updates_the_row(client) -> None:
+    """The heal contract: a missing volume means the next start
+    rebuilds a blank one at the new size — the row is the truth."""
+    http, _app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-heal", "kernel": "/k", "rootfs": "/r", "home_mib": 64},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    resized = await http.post(
+        "/api/v1/workspaces/ws-heal/resize",
+        json={"home_mib": 128},
+        headers=auth(),
+    )
+    assert resized.status_code == 200
+    assert resized.json()["home_mib"] == 128
+
+
+async def test_resize_maps_a_refused_shrink_to_409(client, tmp_path) -> None:
+    """resize2fs's refusal (an fs too full) reaches the caller as a
+    named 409 with the remediation spelled out."""
+    http, app, _stub = client
+    failing = tmp_path / "resize2fs"
+    failing.write_text("#!/bin/sh\necho 'new size too small' >&2\nexit 1\n")
+    failing.chmod(0o755)
+    e2fsck = tmp_path / "e2fsck"
+    e2fsck.write_text("#!/bin/sh\nexit 0\n")
+    e2fsck.chmod(0o755)
+    app.state.settings.vmm.resize2fs = str(failing)
+    app.state.settings.vmm.e2fsck = str(e2fsck)
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-full",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "home_mib": 128,
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    volume = app.state.settings.vmm.state_dir / "volumes" / "ws-full.ext4"
+    volume.parent.mkdir(parents=True, exist_ok=True)
+    volume.write_bytes(b"")
+    refused = await http.post(
+        "/api/v1/workspaces/ws-full/resize",
+        json={"home_mib": 64},
+        headers=auth(),
+    )
+    assert refused.status_code == 409
+    assert "resize2fs refused" in refused.json()["detail"]
+    assert "shrink less" in refused.json()["detail"]
+
+
+async def test_resize_root_without_an_overlay_updates_the_row(client) -> None:
+    """The heal contract for the overlay: a missing file means the
+    next start builds it at the new size — the row is the truth."""
+    http, _app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-nov", "kernel": "/k", "rootfs": "/r", "root_mib": 256},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    resized = await http.post(
+        "/api/v1/workspaces/ws-nov/resize",
+        json={"root_mib": 512},
+        headers=auth(),
+    )
+    assert resized.status_code == 200
+    assert resized.json()["root_mib"] == 512
+
+
+async def test_resize_names_a_vanished_row(client, monkeypatch) -> None:
+    """A row that vanishes under the move-lock answers 404, not a
+    None crash."""
+    http, _app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-gone", "kernel": "/k", "rootfs": "/r", "home_mib": 64},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+
+    async def vanished(*args, **kwargs) -> bool:
+        return False
+
+    monkeypatch.setattr(_app.state.model, "set_sizes", vanished)
+    resized = await http.post(
+        "/api/v1/workspaces/ws-gone/resize",
+        json={"home_mib": 128},
+        headers=auth(),
+    )
+    assert resized.status_code == 404
+
+
+async def test_resize_refuses_a_foreign_host(client, monkeypatch) -> None:
+    """The placement refusal every artifact route shares: artifacts
+    on another host never move from here."""
+    http, app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-foreign",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "home_mib": 64,
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    monkeypatch.setattr(app.state.settings.vmm, "host_name", "hv-elsewhere")
+    refused = await http.post(
+        "/api/v1/workspaces/ws-foreign/resize",
+        json={"home_mib": 128},
+        headers=auth(),
+    )
+    assert refused.status_code == 409
+    assert "lives on host" in refused.json()["detail"]

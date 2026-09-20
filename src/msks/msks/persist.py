@@ -337,6 +337,58 @@ async def run_tool(
     return output
 
 
+async def resize_home_volume(target: Path, home_mib: int, settings) -> str:
+    """Grow or shrink the home volume to ``home_mib`` MiB (#184).
+
+    The file and the filesystem inside move together: a grow
+    truncates the file up and lets resize2fs expand the ext4 onto
+    the new bytes; a shrink asks resize2fs to contract first (it
+    refuses below the filesystem's used blocks — the caller maps
+    that refusal to a named 409) and truncates the file down only
+    after the filesystem agreed. e2fsck runs before either
+    direction with the journal quiesced: the VM is stopped (the
+    route's guard), and a clean fs is resize2fs's precondition —
+    the same convergence #183's state-disk grow performs at boot.
+    Returns "grew"/"shrank" for the route's message and event.
+    """
+    current_b = target.stat().st_size
+    wanted_b = home_mib * MIB
+    await run_tool(
+        [settings.e2fsck, "-fy", str(target)],
+        "e2fsck on the home volume",
+    )
+    if wanted_b > current_b:
+        with target.open("r+b") as handle:
+            handle.truncate(wanted_b)
+        await run_tool(
+            [settings.resize2fs, str(target)],
+            "resize2fs (grow) on the home volume",
+        )
+        return "grew"
+    await run_tool(
+        [settings.resize2fs, str(target), f"{home_mib}M"],
+        "resize2fs (shrink) on the home volume",
+    )
+    with target.open("r+b") as handle:
+        handle.truncate(wanted_b)
+    return "shrank"
+
+
+async def grow_overlay(overlay: Path, root_mib: int, settings) -> None:
+    """Extend the qcow2 overlay's virtual size (#184).
+
+    Grow only: the guest's partition table and root filesystem sit
+    inside, and only the guest can move them down (the boot's
+    cloud-init growpart fills a grown device for free, nothing
+    shrinks one). qemu-img itself refuses shrinking qcow2 with a
+    snapshot, so the route refuses first with the honest message.
+    """
+    await run_tool(
+        [settings.qemu_img, "resize", str(overlay), str(root_mib * MIB)],
+        "qemu-img resize of the root overlay",
+    )
+
+
 def remove_overlay(state_dir: Path, workspace_id: str) -> bool:
     """Delete the root overlay; False when there was none to delete."""
     overlay = overlay_path(state_dir, workspace_id)

@@ -49,6 +49,17 @@ WORKSPACE_ID_PATTERN = r"^[a-z0-9][a-z0-9-]*$"
 USER_DATA_MAX = 65536
 
 
+class WorkspaceResize(BaseModel):
+    """A resize request (#184): the new sizes, either side optional.
+
+    The bounds match create — a resize is the create-time sizing
+    revisited, so the same floors and ceilings hold.
+    """
+
+    root_mib: int | None = Field(default=None, ge=256, le=65536)
+    home_mib: int | None = Field(default=None, ge=64, le=65536)
+
+
 class ImageImport(BaseModel):
     """An import request: a host-side path to a container-image tar.
 
@@ -1088,10 +1099,11 @@ def build_api(app) -> FastAPI:
             "private_key": key["private_key"],
         }
 
-    # The #41 immutability contract, said out loud: workspaces are
-    # create-time objects (user_data above all), and a mutation
-    # attempt gets a named error instead of a bare 405 from the
-    # router's method table.
+    # The #41 immutability contract, said out loud: the create-time
+    # shape (user_data above all) never changes — a mutation attempt
+    # gets a named error instead of a bare 405 from the router's
+    # method table. Sizes are the one exception (#184): they move
+    # through the resize route below.
     @api.put(
         "/api/v1/workspaces/{workspace_id}",
         dependencies=[Depends(require_token)],
@@ -1106,10 +1118,113 @@ def build_api(app) -> FastAPI:
             status_code=405,
             detail=(
                 "workspaces cannot be modified after create (user_data is "
-                "create-time); delete the workspace and recreate it to change "
-                "anything"
+                "create-time; sizes move through "
+                f"POST /api/v1/workspaces/{workspace_id}/resize); delete "
+                "the workspace and recreate it to change anything else"
             ),
         )
+
+    @api.post(
+        "/api/v1/workspaces/{workspace_id}/resize",
+        dependencies=[Depends(require_token)],
+    )
+    async def resize_workspace(
+        workspace_id: str, body: WorkspaceResize
+    ) -> dict:
+        """Move a stopped workspace's sizes (#184): the home volume
+        grows or shrinks, the overlay grows.
+
+        The same guards a home-volume move carries: free lifecycle
+        statuses, the placement check, the move-lock against a
+        concurrent boot, and the live seam re-check. The floor never
+        speaks here — a resize writes MiBs of filesystem metadata,
+        and a shrink gives bytes back.
+        """
+        row = await _workspace_or_404(app, workspace_id)
+        if app.state.settings.vmm.driver == "k8s":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "resizing is not served by the k8s backend (the "
+                    "workspace lives on a claim the cluster sizes; grow "
+                    "the claim through your storage class)"
+                ),
+            )
+        if mismatch := host_mismatch(app, row):
+            raise HTTPException(status_code=409, detail=mismatch)
+        if body.root_mib is None and body.home_mib is None:
+            raise HTTPException(
+                status_code=400,
+                detail="nothing to resize: name root_mib, home_mib, or both",
+            )
+        if (body.root_mib is None or body.root_mib == row["root_mib"]) and (
+            body.home_mib is None or body.home_mib == row["home_mib"]
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"workspace {workspace_id} is already at those sizes "
+                    f"(root {row['root_mib']} MiB, home {row['home_mib']} MiB)"
+                ),
+            )
+        if body.root_mib is not None and body.root_mib < row["root_mib"]:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "the root overlay only grows (its partition table and "
+                    "filesystem belong to the guest); msks rm and a fresh "
+                    "create, or factory reset, reclaim a root instead"
+                ),
+            )
+        async with move_lock(app, workspace_id):
+            row = await rechecked_row(app, workspace_id)
+            state_dir = app.state.settings.vmm.state_dir
+            home = persist.home_volume_path(state_dir, workspace_id)
+            overlay = persist.overlay_path(state_dir, workspace_id)
+            moved: list[str] = []
+            if body.home_mib is not None and body.home_mib != row["home_mib"]:
+                if not home.is_file():
+                    # The heal contract, not a surprise 404: a start
+                    # rebuilds a blank volume at the new size.
+                    pass
+                else:
+                    try:
+                        direction = await persist.resize_home_volume(
+                            home, body.home_mib, app.state.settings.vmm
+                        )
+                    except MicrovmError as exc:
+                        raise HTTPException(
+                            status_code=409,
+                            detail=(
+                                f"resize2fs refused: {exc}; free data in "
+                                "the workspace's /home (or shrink less) "
+                                "and retry"
+                            ),
+                        ) from None
+                    moved.append(f"home {direction} to {body.home_mib} MiB")
+            if body.root_mib is not None and body.root_mib != row["root_mib"]:
+                if overlay.is_file():
+                    await persist.grow_overlay(
+                        overlay, body.root_mib, app.state.settings.vmm
+                    )
+                    moved.append(f"root grew to {body.root_mib} MiB")
+            if not await app.state.model.set_sizes(
+                workspace_id, body.root_mib, body.home_mib
+            ):
+                raise HTTPException(
+                    status_code=404, detail="no such workspace"
+                )
+            updated = await app.state.model.get_workspace(workspace_id)
+            await hub.publish(
+                "workspace.resized",
+                {
+                    "id": workspace_id,
+                    "root_mib": updated["root_mib"],
+                    "home_mib": updated["home_mib"],
+                    "changes": moved,
+                },
+            )
+            return updated
 
     @api.post(
         "/api/v1/workspaces/{workspace_id}/start",

@@ -244,6 +244,32 @@ class Model:
             await session.commit()
             return result.rowcount > 0
 
+    async def set_sizes(
+        self, workspace_id: str, root_mib: int | None, home_mib: int | None
+    ) -> bool:
+        """Record resized artifact sizes (#184); False when absent.
+
+        A ``None`` keeps the column — the route passes only the side
+        the request named."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            result = await session.execute(
+                update(Workspace)
+                .where(Workspace.id == workspace_id)
+                .values(
+                    **{
+                        column: value
+                        for column, value in (
+                            ("root_mib", root_mib),
+                            ("home_mib", home_mib),
+                        )
+                        if value is not None
+                    }
+                )
+            )
+            await session.commit()
+            return result.rowcount > 0
+
     async def egress_slice(self, workspace_id: str) -> int | None:
         """The workspace's recorded egress pool slice, None when never
         attached (#70 review)."""
