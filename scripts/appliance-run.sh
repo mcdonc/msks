@@ -56,6 +56,16 @@ appliance_exit() {
   kill "${booter:-}" 2>/dev/null || true
   kill "${vfpid:-}" 2>/dev/null || true
   kill "${devvfpid:-}" 2>/dev/null || true
+  # The VMM too: the serve gate below can exit 1 while the guest
+  # still runs, and an orphaned cloud-hypervisor keeps the state
+  # disk attached behind an api.sock this trap is about to unlink —
+  # the next start's double-up probe would then pass and boot a
+  # SECOND VMM onto the same raw ext4 (#189 review). TERM is a hard
+  # poweroff for a guest that never served — that is the only path
+  # that reaches here with the VMM alive; every other exit already
+  # reaped it in `wait "$chpid"` (kill on a reaped pid fails,
+  # harmlessly).
+  kill "${chpid:-}" 2>/dev/null || true
   # virtiofsd leaves its pidfile behind even on graceful exit; the
   # run pidfile goes too, so a stopped appliance reports stopped.
   rm -f "$app_dir/api.sock" "$app_dir/vmm-sock" "$app_dir/vmm-sock.pid" \
@@ -116,12 +126,14 @@ booted_image="$(readlink -f "$app_dir/image")"
 # two names is a typo, and a typo here would silently cost the
 # serial log — refuse it.
 serial_config="{\"mode\": \"File\", \"file\": \"$app_dir/serial.log\"}"
+serial_mode="file"
 serial_note="$app_dir/serial.log"
 case "${MSKS_APPLIANCE_CONSOLE:-}" in
 "") ;;
 file) ;;
 pty)
   serial_config='{"mode": "Pty"}'
+  serial_mode=pty
   serial_note="the pty console (MSKS_APPLIANCE_CONSOLE=pty)"
   ;;
 *)
@@ -129,6 +141,19 @@ pty)
   exit 1
   ;;
 esac
+
+# A stale debug-shell marker with the console in File mode (#189
+# review): File-mode serial has no input path, so the guest's
+# msks-debug-shell.service spends the boot blocked on a read that
+# never delivers — the root shell is unreachable. Name it loudly,
+# with the way out, instead of letting a SIGKILL'd helper session
+# (or a host crash) leave every later boot quietly degraded. A
+# read-only debugfs stat on the still-unattached disk, before the
+# VMM exists: ~10ms, and no journal to replay yet.
+if [ "$serial_mode" = file ] &&
+  debugfs -R "stat /debug-shell" "$state_disk" >/dev/null 2>&1; then
+  echo "msks: the state disk carries a debug-shell marker, but the File-mode console cannot host its shell — run: msks-appliance-shell --off (or open a session with: msks-appliance-shell)" >&2
+fi
 # The live dev-tree share (#144): set to any nonempty value and the
 # run script shares this checkout ($DEVENV_ROOT) read-only into the
 # guest as a second virtiofs tag (devtree), and tells the guest

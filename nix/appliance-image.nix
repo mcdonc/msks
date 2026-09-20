@@ -643,15 +643,24 @@ let
         # attaches to. The stock serial getty reads the same tty —
         # two readers race every input byte (seen live: the login
         # prompt swallowed the first command) — so the unit
-        # conflicts it away while the shell runs (both template
-        # names: the base enables serial-getty; getty@ is the other
-        # instantiation) and After orders the stop before the start.
-        # The shell reads EOF immediately when the host serial is
-        # File mode: it exits 0, the unit ends cleanly (Restart is
-        # the default off), and the boot proceeds normally — the
-        # DIAG block in serial.log is all a file-mode boot shows.
-        # Runs beside msksd, not after it: a broken daemon is
-        # exactly what this shell exists to debug.
+        # conflicts it away while the shell runs. Both template
+        # names: the base statically enables getty@tty1 only, and
+        # systemd-getty-generator instantiates serial-getty@ttyS0
+        # from console= at boot; After orders any stop before the
+        # shell's start.
+        #
+        # In File mode (no marker-driven pty boot) the shell BLOCKS:
+        # cloud-hypervisor's File backend serves no input path, so
+        # the read never delivers and never EOFs — the unit simply
+        # runs until shutdown, with the getty conflicted away and
+        # the DIAG block in serial.log as the only trace. The
+        # interactive shell (dash) ignores SIGTERM, so shutdown
+        # stops the unit with SIGKILL after one second — the shell
+        # holds no state, and without this a marker-boot guest
+        # would stall the ACPI window for Debian's 90s default and
+        # die mid-shutdown with a dirty state-disk journal (#189
+        # review). Runs beside msksd, not after it: a broken daemon
+        # is exactly what this shell exists to debug.
         printf '%s\n' \
           '[Unit]' \
           'Description=msks debug root shell on the serial console (state-disk marker)' \
@@ -662,6 +671,7 @@ let
           ''' \
           '[Service]' \
           'ExecStart=/bin/sh -c "exec /bin/sh -i </dev/console >/dev/console 2>&1"' \
+          'TimeoutStopSec=1' \
           'StandardOutput=journal+console' \
           'StandardError=journal+console' \
           ''' \

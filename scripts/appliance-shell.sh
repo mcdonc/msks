@@ -13,7 +13,9 @@
 #      teardown),
 #   2. seeds the /state/debug-shell marker onto the state disk with
 #      debugfs (writes to a mounted ext4 corrupt it, so the stop is
-#      a prerequisite, not a courtesy),
+#      a prerequisite, not a courtesy — and e2fsck runs first: a
+#      hard-killed guest leaves a dirty journal, and a debugfs write
+#      into journaled metadata can be undone by the next replay),
 #   3. boots the appliance with MSKS_APPLIANCE_CONSOLE=pty: the run
 #      script asks cloud-hypervisor for a host pty as the serial
 #      backend, and the guest's msks-debug-shell.service (gated on
@@ -29,7 +31,10 @@
 #
 # While a session runs, THIS script owns the appliance: the run
 # script runs as its child, outside the process manager. Do not
-# `devenv processes up` concurrently.
+# `devenv processes up` concurrently. A lock file in the appliance
+# state dir refuses a second concurrent session outright: two
+# sessions race for the same state disk, and the loser's teardown
+# would un-mark the winner's boot.
 set -euo pipefail
 
 root="${DEVENV_ROOT:?not running inside the devenv shell}"
@@ -50,19 +55,58 @@ usage: msks-appliance-shell [--off]
 EOF
 }
 
+# --- VMM liveness ---------------------------------------------------------
+# The run script's EXIT trap unlinks api.sock even on paths where
+# the VMM process lives on (a serve-gate failure exits 1 with the
+# guest still running), so the socket alone is not a liveness
+# oracle. The process table is: the VMM's cmdline names this
+# appliance's api-socket path forever — the same pattern AGENTS.md's
+# recovery recipe matches. (pgrep excludes itself; this script's own
+# cmdline never contains the pattern.)
+vmm_pids() {
+  pgrep -f "cloud-hypervisor --api-socket $app_dir/api.sock" 2>/dev/null || true
+}
+
+# Bounded wait for the VMM to die; TERM then KILL escalation for a
+# survivor (a guest that ignored ACPI and its own TERM).
+wait_vmm_dead() {
+  local phase pid pids
+  for phase in term kill; do
+    pids=$(vmm_pids)
+    [ -z "$pids" ] && return 0
+    for pid in $pids; do
+      if [ "$phase" = term ]; then
+        kill -TERM "$pid" 2>/dev/null || true
+      else
+        kill -KILL "$pid" 2>/dev/null || true
+      fi
+    done
+    for _ in $(seq 1 150); do
+      [ -z "$(vmm_pids)" ] && return 0
+      sleep 0.2
+    done
+  done
+  echo "msks: a cloud-hypervisor for $app_dir survived TERM and KILL; recover with the pkill recipe in AGENTS.md" >&2
+  return 1
+}
+
 # --- stop whatever is running --------------------------------------------
 stop_appliance() {
   # The manager first (it would restart a TERM'd run script); the
-  # 1-exit "no manager is running" is the common case, not failure.
+  # 1-exit "no process manager is running" is the common case, not
+  # failure.
   devenv processes down >/dev/null 2>&1 || true
   # A hand-run instance (this script's own, or a manual one): TERM
   # runs its graceful trap — ACPI poweroff inside its 60s window,
   # then the hard stop. The run.pid the EXIT trap removes is the
-  # liveness signal: gone means the run script (and its VMM) is down.
+  # liveness signal: gone means the run script is down. The cmdline
+  # check refuses to TERM a recycled pid that happens to hold the
+  # number (run.pid can outlive its process by arbitrary time).
   if [ -f "$app_dir/run.pid" ]; then
     local pid
     pid=$(cat "$app_dir/run.pid")
-    if kill -0 "$pid" 2>/dev/null; then
+    if kill -0 "$pid" 2>/dev/null &&
+      grep -aq "appliance-run.sh" "/proc/$pid/cmdline" 2>/dev/null; then
       echo "msks: stopping the running appliance (graceful ACPI)"
       kill -TERM "$pid" 2>/dev/null || true
       for _ in $(seq 1 475); do
@@ -71,46 +115,77 @@ stop_appliance() {
       done
     fi
   fi
-  # A still-present api.sock names a VMM that refused to die (a
-  # SIGKILL'd run script leaves one): refuse to seed a disk a live
-  # guest has mounted — the AGENTS.md recovery recipe is the fix.
-  if [ -S "$app_dir/api.sock" ]; then
-    echo "msks: $app_dir/api.sock still exists — the VMM never stopped; recover with the pkill recipe in AGENTS.md before seeding" >&2
-    return 1
-  fi
+  # A VMM that outlived its run script (a serve-gate exit, a SIGKILL'd
+  # script): TERM/KILL it before anything touches the state disk.
+  wait_vmm_dead || return 1
 }
 
 # --- the marker -----------------------------------------------------------
+# Both debugfs writes (seed and rm) are metadata writes into the
+# ext4: refuse when the journal is unreplayable, replay it when it
+# is merely dirty — a hard-killed guest leaves the second case, and
+# a journal replay on the NEXT boot could otherwise undo this
+# script's dirent (0/1/2 = clean/fixed/fixed-reboot; 4 = refused).
+disk_replay_journal() {
+  set +e
+  e2fsck -fp "$state_disk" >/dev/null 2>&1
+  local rc
+  rc=$?
+  set -e
+  if [ "$rc" -ge 4 ]; then
+    echo "msks: e2fsck cannot clean $state_disk (rc=$rc); fix the state disk before seeding" >&2
+    return 1
+  fi
+  return 0
+}
+
 marker_remove() {
+  disk_replay_journal || return 1
   debugfs -w -R "rm /debug-shell" "$state_disk" >/dev/null 2>&1 || true
 }
 
 marker_seed() {
+  disk_replay_journal || return 1
   local tmp
   tmp=$(mktemp)
   echo "seeded $(date -u +%Y-%m-%dT%H:%M:%SZ) by msks-appliance-shell" >"$tmp"
   # rm first: debugfs write refuses an existing name, and a re-run
   # of this script is exactly that case.
-  marker_remove
-  debugfs -w -R "write $tmp debug-shell" "$state_disk" >/dev/null
+  debugfs -w -R "rm /debug-shell" "$state_disk" >/dev/null 2>&1 || true
+  debugfs -w -R "write $tmp debug-shell" "$state_disk" >/dev/null 2>&1 || {
+    echo "msks: seeding the debug-shell marker onto $state_disk failed" >&2
+    rm -f "$tmp"
+    return 1
+  }
   rm -f "$tmp"
 }
 
 # --- the session teardown -------------------------------------------------
-# Deliberately after every variable it reads exists; INT/TERM/EXIT
-# all funnel here. unset guards keep a pre-boot failure (runpid
-# empty) from killing the wrong pid.
+# INT/TERM/EXIT all funnel here. The run script's own exit is NOT
+# proof the VMM died (its trap TERMs the VMM but does not wait for
+# it), so teardown finishes with the same process-table check the
+# stop path uses — and the marker removal replays the journal for
+# the same reason the seed does.
 session_teardown() {
   trap - INT TERM EXIT
   if [ -n "${runpid:-}" ]; then
     kill -TERM "$runpid" 2>/dev/null || true
+    # A zombie child (exited, unreaped) shows stat Z; anything else
+    # after the bounded window gets KILLed — the run script's TERM
+    # trap always exits, but this script must never block on a
+    # wedged child (a bare `wait` would, indefinitely — seen in the
+    # stub harness: a TERM handler that returned without exiting).
     for _ in $(seq 1 475); do
-      [ "$(cat "$app_dir/run.pid" 2>/dev/null || true)" != "$runpid" ] && break
+      case "$(ps -p "$runpid" -o stat= 2>/dev/null)" in
+      "" | Z*) break ;;
+      esac
       sleep 0.2
     done
+    kill -KILL "$runpid" 2>/dev/null || true
     wait "$runpid" 2>/dev/null || true
   fi
-  marker_remove
+  wait_vmm_dead || true
+  marker_remove || true
   echo "msks: appliance stopped, debug-shell marker removed — the next start (msks-appliance-up) is a normal boot"
 }
 
@@ -134,6 +209,16 @@ if [ ! -e "$app_dir/image" ]; then
   exit 1
 fi
 
+# --- one session at a time ------------------------------------------------
+# The whole stop -> seed -> boot -> attach -> teardown flow sits
+# behind the lock: two sessions race for the same state disk (two
+# seeds, two VMMs), and the loser's teardown un-marks the winner.
+exec 9>>"$app_dir/.shell.lock"
+if ! flock -n 9; then
+  echo "msks: another msks-appliance-shell owns $app_dir" >&2
+  exit 1
+fi
+
 # --- --off: teardown only -------------------------------------------------
 if [ "${1:-}" = "--off" ]; then
   stop_appliance
@@ -146,7 +231,7 @@ fi
 stop_appliance
 marker_seed
 
-# The run script's own output (build markers, boot chorography,
+# The run script's own output (build markers, boot choreography,
 # failure causes) lands here; the console itself rides the pty.
 console_out="$app_dir/console.out"
 echo "msks: booting the appliance with the console on a pty (debug-shell marker seeded)"
@@ -159,10 +244,17 @@ trap session_teardown INT TERM EXIT
 # cloud-hypervisor writes the pty path into the VM config's
 # serial.file when the mode is Pty (vmm/src/console_devices.rs), and
 # ch-remote info reports the config — the only supported way to
-# learn it. The socket appears ~1s after the VMM starts; the config
-# carries the path from vm.create on.
+# learn it. Two latches keep the loop honest about who is alive:
+#   - saw_pid: run.pid equals our run script's pid once its setup
+#     finished (setup runs BEFORE the pidfile write, so the first
+#     polls legitimately see no pidfile at all — an unlatched
+#     comparison would false-break on iteration one). Only a
+#     divergence AFTER the latch means the run script died.
+#   - saw_sock: the api socket appearing and vanishing means the VMM
+#     itself died mid-boot.
 pty=""
 saw_sock=""
+saw_pid=""
 for _ in $(seq 1 600); do
   if [ -S "$app_dir/api.sock" ]; then
     saw_sock=1
@@ -182,8 +274,11 @@ if serial.get("mode") == "Pty":
   elif [ -n "$saw_sock" ]; then
     # The socket came and went: the VMM died mid-boot.
     break
-  elif [ "$(cat "$app_dir/run.pid" 2>/dev/null || true)" != "$runpid" ]; then
-    # The run script exited before the VMM ever started.
+  elif [ "$(cat "$app_dir/run.pid" 2>/dev/null || true)" = "$runpid" ]; then
+    saw_pid=1
+  elif [ -n "$saw_pid" ]; then
+    # The run script owned the appliance and exited before the VMM
+    # ever served a config.
     break
   fi
   sleep 0.2
