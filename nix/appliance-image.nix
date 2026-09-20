@@ -50,6 +50,7 @@ let
   # through the virtiofs store share, and the manifest reference
   # keeps it realized on the host.
   msks = pkgs.python314.pkgs.callPackage ./msks-pkg.nix {
+    textual = pkgs.python314.pkgs.callPackage ./textual-pkg.nix { };
     netfilterqueue = pkgs.python314.pkgs.callPackage ./netfilterqueue-pkg.nix { };
   };
 
