@@ -115,8 +115,9 @@ state disk    used 23.4G of 40G    free 16.6G    pressure ok
 workspace                root cost/ceiling    home cost/ceiling    cost
 ws4                      3.1G / 10G           812M / 2G            3.9G
 
-image                    cost
-debian:13                3.0G
+image                    imported         cost
+debian:13                2026-09-21 12:03 3G
+debian:13                2026-08-02 05:11 3G
 ```
 
 - **The budget line** is the daemon's own `statvfs` on the state
@@ -132,6 +133,12 @@ debian:13                3.0G
   its ceiling until the guest fills it.
 - **Ceiling** is the size fixed at create (`root_mib` /
   `home_mib`) — the quota the guest's `df` shows its user.
+- **Imported** is when the archive came in, local time to the
+  minute (#186). Rebuilding an image and importing it again adds a
+  second entry under the same reference; the time tells the
+  entries apart, and the short hash `msks image ls` shows names
+  the one `msks image rm` removes. Re-importing the same archive
+  refreshes the time.
 
 The fullness a workspace user feels is their own `df` inside the
 workspace; the daemon never guesses at it from outside a running

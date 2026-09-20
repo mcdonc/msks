@@ -7,7 +7,8 @@ whose root carries ``boot/vmlinuz``, ``boot/initrd.img``,
 lives under ``<state_dir>/images``:
 
 - ``<sha256>/`` — the per-hash boot-file cache: the unpacked kernel,
-  initrd, rootfs, and the image manifest. Workspace launches read
+  initrd, rootfs, the image manifest, and an ``imported`` stamp
+  (when the archive last came in, #186). Workspace launches read
   only these; nothing unpacks on the launch path.
 - ``archive-<sha256>.tar`` — the imported archive itself (the
   artifact users copy around and export).
@@ -28,7 +29,18 @@ import tarfile
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
+
+#: The cache file that carries an entry's import time (#186): one
+#: ISO-8601 line, rewritten by every import (a re-import refreshes
+#: the stamp along with the cache it swaps in).
+IMPORTED_STAMP = "imported"
+
+#: The floor of import-time ordering: entries whose time is
+#: unreadable sort deterministically — first, before every
+#: stamped entry.
+EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 BOOT_MEMBERS = {
     "kernel": "boot/vmlinuz",
@@ -56,6 +68,10 @@ class ImageRecord:
     kernel: Path
     initrd: Path
     rootfs: Path
+    #: When the entry last came in (#186): the stamp the import
+    #: writes, or the cache's filesystem time for entries that
+    #: predate stamps. Sorts same-reference entries oldest-first.
+    imported: datetime | None = None
     # The image's declared first-boot provisioner (#41): None (the
     # field is absent) or one of PROVISIONERS.
     provisioner: str | None = None
@@ -247,6 +263,8 @@ def import_archive(path: Path, state_dir: Path) -> ImageRecord:
             member(layer, staging / "initrd", BOOT_MEMBERS["initrd"])
             member(layer, staging / "rootfs.ext4", BOOT_MEMBERS["rootfs"])
             (staging / "image.json").write_text(json.dumps(manifest))
+            now = datetime.now(UTC)
+            (staging / IMPORTED_STAMP).write_text(now.isoformat() + "\n")
             # Concurrent imports of the same archive race here; each
             # swap is idempotent because every attempt's content is
             # identical (same digest).
@@ -266,7 +284,7 @@ def import_archive(path: Path, state_dir: Path) -> ImageRecord:
         # The private copy IS the retained archive; POSIX rename
         # replaces a concurrent winner's identical file atomically.
         source_copy.rename(root / f"archive-{digest}.tar")
-        return record_from(cache, digest, manifest)
+        return record_from(cache, digest, manifest, imported=now)
     finally:
         # The private copy is either renamed into place or discarded.
         with contextlib.suppress(FileNotFoundError):
@@ -289,7 +307,12 @@ def warm_import(path: Path, state_dir: Path) -> ImageRecord | None:
     return None
 
 
-def record_from(cache: Path, digest: str, manifest: dict) -> ImageRecord:
+def record_from(
+    cache: Path,
+    digest: str,
+    manifest: dict,
+    imported: datetime | None = None,
+) -> ImageRecord:
     return ImageRecord(
         hash=digest,
         name=manifest["name"],
@@ -306,7 +329,29 @@ def record_from(cache: Path, digest: str, manifest: dict) -> ImageRecord:
         initrd=cache / "initrd",
         rootfs=cache / "rootfs.ext4",
         provisioner=provisioner_of(manifest),
+        imported=imported,
     )
+
+
+def imported_at(cache: Path) -> datetime | None:
+    """When the cache last came in (#186): the stamp the import
+    writes, or the directory's own modification time for entries
+    that predate stamps (a re-import swaps in a fresh directory,
+    so its mtime is the import time). A stamp without an offset is
+    read as UTC — a hand-written naive stamp must not crash the
+    listing's aware ordering."""
+    with contextlib.suppress(OSError, ValueError):
+        parsed = datetime.fromisoformat(
+            (cache / IMPORTED_STAMP).read_text().strip()
+        )
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed
+    with contextlib.suppress(OSError):
+        return datetime.fromtimestamp(cache.stat().st_mtime, tz=UTC)
+    # A cache removed between the manifest read and the stat —
+    # a rename race the suite cannot arrange.
+    return None  # pragma: no cover
 
 
 def load_record(cache: Path) -> ImageRecord | None:
@@ -315,7 +360,9 @@ def load_record(cache: Path) -> ImageRecord | None:
         return None
     try:
         manifest = json.loads(manifest_path.read_text())
-        record = record_from(cache, cache.name, manifest)
+        record = record_from(
+            cache, cache.name, manifest, imported=imported_at(cache)
+        )
     except json.JSONDecodeError, TypeError, KeyError, ValueError, ImageError:
         # A corrupt entry is an invisible image, not a daemon crash;
         # re-importing the archive repairs it.
@@ -362,14 +409,18 @@ def cache_entries(root: Path) -> list[Path]:
 
 
 def list_images(state_dir: Path) -> list[ImageRecord]:
-    """Every complete cache entry, sorted by reference."""
+    """Every complete cache entry, sorted by reference — then by
+    import time, so entries sharing a reference order oldest-first
+    (#186) and never fall back to directory-listing order."""
     root = images_dir(state_dir)
     records = [
         record
         for entry in cache_entries(root)
         if (record := load_record(entry)) is not None
     ]
-    return sorted(records, key=lambda r: (r.name, r.version))
+    return sorted(
+        records, key=lambda r: (r.name, r.version, r.imported or EPOCH)
+    )
 
 
 def resolve_hash(ref: str, images: list) -> ImageRecord | None:

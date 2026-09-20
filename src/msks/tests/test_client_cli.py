@@ -12,7 +12,9 @@ import json
 import os
 import ssl
 import sys
+import time
 from collections.abc import AsyncIterator
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -2102,6 +2104,96 @@ def test_cmd_storage_json_is_verbatim(
     out = capsys.readouterr().out
     assert rc == 0
     assert json.loads(out) == STORAGE_BODY
+
+
+def test_image_lines_show_import_times() -> None:
+    """Same-reference rows read as distinct through their import
+    times (#186), rendered in the operator's local time; a row
+    without a time — or one the clock cannot parse — renders a
+    dash in its place."""
+    when = datetime.fromisoformat("2026-09-21T14:03:00+00:00")
+    rows = [
+        {
+            "name": "debian",
+            "version": "13.6",
+            "bytes": 3 * 1024**3,
+            "imported": "2026-09-21T14:03:00+00:00",
+        },
+        {
+            "name": "debian",
+            "version": "13.6",
+            "bytes": 3 * 1024**3,
+            "imported": "2026-08-01T09:00:00+00:00",
+        },
+        {
+            "name": "debian",
+            "version": "13.6",
+            "bytes": 3 * 1024**3,
+            "imported": None,
+        },
+        {
+            "name": "debian",
+            "version": "13.6",
+            "bytes": 3 * 1024**3,
+            "imported": "not a date",
+        },
+        # A non-string is a daemon that sent JSON where a moment
+        # belongs: a dash, not a traceback.
+        {
+            "name": "debian",
+            "version": "13.6",
+            "bytes": 3 * 1024**3,
+            "imported": 12345,
+        },
+    ]
+    lines = cli.image_lines(rows)
+    assert lines[1] == f"{'image':<24} {'imported':<16} cost"
+    expect = when.astimezone().strftime("%Y-%m-%d %H:%M")
+    older = (
+        datetime.fromisoformat("2026-08-01T09:00:00+00:00")
+        .astimezone()
+        .strftime("%Y-%m-%d %H:%M")
+    )
+    assert lines[2] == f"{'debian:13.6':<24} {expect:<16} 3G"
+    assert lines[3] == f"{'debian:13.6':<24} {older:<16} 3G"
+    assert lines[4] == f"{'debian:13.6':<24} {'-':<16} 3G"
+    assert lines[5] == f"{'debian:13.6':<24} {'-':<16} 3G"
+    assert lines[6] == f"{'debian:13.6':<24} {'-':<16} 3G"
+
+
+@pytest.fixture
+def western_zone():
+    """A UTC-4 host, POSIX-style (offset sign is positive-west),
+    whatever zone the runner itself sits in."""
+    old = os.environ.get("TZ")
+    os.environ["TZ"] = "GMT4"
+    time.tzset()
+    yield
+    if old is None:
+        os.environ.pop("TZ", None)
+    else:
+        os.environ["TZ"] = old
+    time.tzset()
+
+
+def test_imported_cell_degrades_extreme_stamps(western_zone) -> None:
+    """A year-1 stamp has no representation four hours west of UTC
+    (#186 review round 2): the cell degrades to a dash, never a
+    traceback. The zone is forced — a UTC runner would render the
+    stamp and hide the crash the western host sees."""
+    row = {"imported": "0001-01-01T00:00:01+00:00"}
+    assert cli.imported_cell(row) == "-"
+
+
+def test_image_lines_without_times_keep_two_columns() -> None:
+    """A daemon predating stamps (#186) still gets its table — the
+    two-column shape, without a column of dashes."""
+    rows = [{"name": "debian", "version": "13", "bytes": int(3.0 * 1024**3)}]
+    assert cli.image_lines(rows) == [
+        "",
+        f"{'image':<24} cost",
+        f"{'debian:13':<24} 3G",
+    ]
 
 
 def test_human_bytes_units() -> None:

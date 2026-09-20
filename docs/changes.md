@@ -8,6 +8,14 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **`msks storage` image import times (#186).** Each catalog row
+  in the image cost table shows when the archive came in (local
+  time to the minute) and the `GET /api/v1/storage` image entries
+  carry the time beside the hash, so entries sharing a reference
+  (a rebuilt image imported again) read as distinct; the table
+  orders them oldest-first. Re-importing the same archive
+  refreshes the time. See
+  [docs/storage.md](storage.md#capacity-reporting).
 - **`msks storage` and `GET /api/v1/storage` (#184).** The daemon
   reports the state-disk budget (`used`/`free` with a named
   `pressure` condition), each workspace's cost beside its size
