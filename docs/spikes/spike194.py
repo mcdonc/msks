@@ -7,8 +7,11 @@ Proves, with printed evidence:
      ws-a, label-anchored suffix for ws-b).
   3. Splice tier: destinations outside every allowlist are relayed
      undecrypted (the origin's real cert reaches the client).
-  4. Revocation with the workspace still armed by a second mapping:
-     the revoked sentinel passes through decrypted but unrewritten.
+  4. Off-allowlist sighting (entry exists, its allowlist misses the
+     host while another placeholder covers it): decrypted, unrewritten,
+     audit event. Revocation with the workspace still armed by a
+     second mapping: the revoked sentinel passes through decrypted but
+     unrewritten.
   5. Benchmark: direct vs spliced vs MITM (10 MiB, best of 3).
 
 Run in ONE devenv shell invocation (the uv-sync task strips
@@ -53,6 +56,10 @@ BIG = 10 * 1024 * 1024
 
 API = "api.127.0.0.1.sslip.io"  # allowlisted destination
 OTHER = "other.127.0.0.1.sslip.io"  # not allowlisted
+# A second host on origin-b, covered ONLY by ws-a's second placeholder
+# — makes the off-allowlist sighting reachable: SENTINEL (dests=API)
+# toward OTHER2 is intercepted (SENTINEL2 covers it) yet never swapped.
+OTHER2 = "other2.127.0.0.1.sslip.io"
 ORIGIN_A_PORT = 19443
 ORIGIN_B_PORT = 19444
 PROXY_PORT = 19800
@@ -108,7 +115,11 @@ class Interceptor:
     def request(self, flow):
         addr = flow.client_conn.peername[0]
         auth = flow.request.headers.get("authorization", "")
-        qs = str(dict(flow.request.query))
+        # Detection must see duplicate query keys: dict() collapses
+        # ?k=1&k=<sentinel> to the first value and the sentinel leaks
+        # raw through a decrypted, allowlisted flow.
+        items = list(flow.request.query.items(multi=True))
+        qs = "".join(f"{k}{v}" for k, v in items)
         host = flow.request.host  # hostname without port
         # Swap binding is PER PLACEHOLDER: the sentinel being carried
         # must be its own entry whose allowlist covers this host. A
@@ -126,11 +137,18 @@ class Interceptor:
                 flow.request.headers["authorization"] = auth.replace(
                     sentinel, entry["secret"]
                 )
-            for k, v in flow.request.query.items():
-                if sentinel in v:
-                    flow.request.query[k] = v.replace(
-                        sentinel, entry["secret"]
+            if any(sentinel in k or sentinel in v for k, v in items):
+                # Assign the full pair list (duplicates preserved); a
+                # plain string assignment is not accepted here. Values
+                # are URL-safe in this harness; production encodes
+                # properly (#199).
+                flow.request.query = [
+                    (
+                        k.replace(sentinel, entry["secret"]),
+                        v.replace(sentinel, entry["secret"]),
                     )
+                    for k, v in items
+                ]
             AUDIT.append(("swap", addr, host))
             return
 
@@ -182,9 +200,10 @@ async def handle_origin(reader, writer):
         writer.close()
 
 
-def mint_origin_cert(path_pem, path_key, host):
+def mint_origin_cert(path_pem, path_key, hosts):
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     now = datetime.now(UTC)
+    host = hosts[0]
     cert = (
         x509.CertificateBuilder()
         .subject_name(
@@ -198,7 +217,8 @@ def mint_origin_cert(path_pem, path_key, host):
         .not_valid_before(now)
         .not_valid_after(now + timedelta(days=1))
         .add_extension(
-            x509.SubjectAlternativeName([x509.DNSName(host)]), critical=False
+            x509.SubjectAlternativeName([x509.DNSName(h) for h in hosts]),
+            critical=False,
         )
         .sign(key, hashes.SHA256())
     )
@@ -247,12 +267,12 @@ async def get(url, *extra, body=True):
 async def amain(tmp):
     # Origins (real TLS, self-signed per host).
     servers = []
-    for port, name, host in [
-        (ORIGIN_A_PORT, "origin-a", API),
-        (ORIGIN_B_PORT, "origin-b", OTHER),
+    for port, name, hosts in [
+        (ORIGIN_A_PORT, "origin-a", [API]),
+        (ORIGIN_B_PORT, "origin-b", [OTHER, OTHER2]),
     ]:
         pem, key = tmp / f"{name}.pem", tmp / f"{name}.key"
-        mint_origin_cert(pem, key, host)
+        mint_origin_cert(pem, key, hosts)
         sctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         sctx.load_cert_chain(pem, key)
         servers.append(
@@ -271,7 +291,10 @@ async def amain(tmp):
     # ws-b matches by label-anchored suffix instead of exact host —
     # exercising the second half of the allowlist grammar.
     mappings["127.0.0.3"][SENTINEL]["dests"] = [".127.0.0.1.sslip.io"]
-    mappings["127.0.0.2"][SENTINEL2] = {"secret": SECRET2, "dests": [API]}
+    mappings["127.0.0.2"][SENTINEL2] = {
+        "secret": SECRET2,
+        "dests": [API, OTHER2],
+    }
 
     opts = options.Options(
         listen_host="127.0.0.1",
@@ -347,7 +370,27 @@ async def amain(tmp):
     )
     print("    expected: 200 with origin-b's REAL cert (undecrypted relay)")
 
-    print("\n=== 4. revocation (ws-a stays armed via the 2nd placeholder)")
+    print(
+        "\n=== 4a. off-allowlist sighting (entry exists, host outside"
+        " ITS allowlist)"
+    )
+    print(
+        await get(
+            f"https://{OTHER2}:{ORIGIN_B_PORT}/echo",
+            "--interface",
+            "127.0.0.2",
+            "--cacert",
+            str(ca_a),
+            *auth,
+            *prox,
+        )
+    )
+    print(
+        "    expected: 200, decrypted (SENTINEL2 covers OTHER2), raw"
+        " sentinel in the echo; audit shows off-allowlist-sighting"
+    )
+
+    print("\n=== 4b. revocation (ws-a stays armed via the 2nd placeholder)")
     mappings["127.0.0.2"].pop(SENTINEL, None)
     print(
         await get(
@@ -371,6 +414,31 @@ async def amain(tmp):
         print("  ", e)
 
     print("\n=== 6. benchmark: 10 MiB, best of 3")
+    # Echo latency baselines (best of 3, ms) so the holdback verdict
+    # has a direct leg to compare against.
+    for nm, url, extra in [
+        (
+            "direct",
+            f"https://{API}:{ORIGIN_A_PORT}/echo",
+            ["--cacert", str(tmp / "origin-a.pem")],
+        ),
+        (
+            "spliced",
+            f"https://{OTHER}:{ORIGIN_B_PORT}/echo",
+            ["--interface", "127.0.0.2", "--cacert", str(ob), *prox],
+        ),
+        (
+            "mitm",
+            f"https://{API}:{ORIGIN_A_PORT}/echo",
+            ["--interface", "127.0.0.2", "--cacert", str(ca_a), *prox],
+        ),
+    ]:
+        lat = []
+        for _ in range(3):
+            t0 = time.monotonic()
+            await get(url, *extra)
+            lat.append((time.monotonic() - t0) * 1000)
+        print(f"  echo {nm:7s} best {min(lat):5.0f} ms")
     # Test 4 revoked ws-a's mapping; re-arm it for the MITM leg.
     mappings["127.0.0.2"][SENTINEL] = {"secret": SECRET, "dests": [API]}
     bench = {
