@@ -626,3 +626,16 @@ def test_hold_owner_answers_the_vanished_arm() -> None:
     (None, None) — the callers' skip signal."""
     holds: dict = {}
     assert coordinator_mod.hold_owner(holds, "missing") == (None, None)
+
+
+async def test_hold_on_a_missing_workspace_denies(engine_app) -> None:
+    """A workspace row that vanished under the hold denies — a
+    missing row is not consent (fail-closed, not the allow-mode
+    default)."""
+    app, _frames, _queue = engine_app
+    engine = app.state.consent
+    future = await engine.hold("ghost-ws", "x.example", 443)
+    verdict = await verdict_of(future)
+    assert verdict["decision"] == "deny"
+    assert verdict["reason"] == "gone"
+    assert await app.state.model.egress_consent.list_requests("ghost-ws") == []

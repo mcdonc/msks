@@ -557,3 +557,67 @@ async def test_stop_without_a_registered_loop(
     flow._loop = None  # the registration never landed
     flow.stop()
     FakeFd.close_all()
+
+
+async def test_enforcement_failure_denies_and_logs(
+    consumer_app, monkeypatch, caplog
+) -> None:
+    """An nft failure while applying a verdict denies the held SYN
+    (logged), never strands it in the queue."""
+    import logging
+
+    app, net = consumer_app
+
+    async def boom(*_args, **_kw):
+        raise RuntimeError("table gone")
+
+    monkeypatch.setattr(net, "consent_allow", boom)
+    flow = consumer(app, net)
+    app.state.deciders.register(1, "ws")
+    pkt = FakePkt(syn_packet())
+    flow.on_packet(pkt)
+    row = await pending_row(app)
+    with caplog.at_level(logging.ERROR):
+        await app.state.consent.resolve(row["id"], "allowed", "t", "5m")
+    await flow_quiesce(flow)
+    assert pkt.verdict == "drop"
+    assert any("applying a verdict" in r.message for r in caplog.records)
+
+
+async def test_a_cached_deny_refreshes_the_rst_pin(consumer_app) -> None:
+    """A retry hitting the verdict cache after the original RST pin
+    lapsed still fails fast: the cache re-pins before dropping."""
+    app, net = consumer_app
+    flow = consumer(app, net)
+    import time as time_mod
+
+    flow._verdicts[(40000, "203.0.113.7", 443)] = (
+        "deny",
+        time_mod.time() + 60,
+    )
+    pkt = FakePkt(syn_packet())
+    flow.on_packet(pkt)
+    assert pkt.verdict == "drop"
+    await flow_quiesce(flow)
+    assert net.rejects and net.rejects[-1][1] == "203.0.113.7"
+    assert net.rejects[-1][3] <= nfq.ONCE_REJECT_S
+
+
+async def test_a_cached_portless_deny_drops_without_a_pin(
+    consumer_app,
+) -> None:
+    """A cached deny for a portless flow re-drops with no RST pin —
+    an RST needs a port."""
+    app, net = consumer_app
+    flow = consumer(app, app.state.net)
+    import time as time_mod
+
+    flow._verdicts[(44000, "203.0.113.7", 0)] = (
+        "deny",
+        time_mod.time() + 60,
+    )
+    pkt = FakePkt(syn_packet(dport=0, sport=44000))
+    flow.on_packet(pkt)
+    assert pkt.verdict == "drop"
+    await flow_quiesce(flow)
+    assert net.rejects == []

@@ -51,6 +51,13 @@ NAME_TTL_FLOOR = 30.0
 # cache: a flood must not grow the cache unboundedly).
 CACHE_MAX = 512
 
+# The naming-memory bound: one entry per resolved address, cleared
+# wholesale past the bound — a guest resolving rotating wildcard
+# names must not grow the daemon's memory for the workspace's
+# life. The cost of a clear is prompt naming (addresses fall back
+# to keying by IP until re-resolved), never enforcement.
+NAMES_MAX = 4096
+
 # A cached answer's floor TTL: a 0-TTL answer still serves the
 # millisecond-scale repeats a resolver retry storm makes.
 CACHE_TTL_FLOOR = 5.0
@@ -295,21 +302,37 @@ class DnsForwarder:
         ]
 
     def forget(self, host: str) -> None:
-        """Drop a name's pairings (revocation)."""
+        """Drop a name's pairings and its cached answers
+        (revocation): a revoke must not keep serving the name the
+        verdict it undid. The answer cache has no name index, so it
+        clears wholesale — revokes are rare and the next query
+        repopulates it."""
         self._names = {
             ip: entry for ip, entry in self._names.items() if entry[0] != host
         }
+        self._cache.clear()
 
     def remember(self, name: str, records: list[tuple[str, int]]) -> None:
         """Record one answer's name→address pairings, floored so a
-        0-TTL answer cannot unname a destination mid-flight."""
+        0-TTL answer cannot unname a destination mid-flight. The
+        bound clears wholesale: a flood of unique names must not
+        grow this dict for the workspace's life."""
+        if len(self._names) >= NAMES_MAX:
+            self._names.clear()
         expire = time.time() + NAME_TTL_FLOOR
         for ip, ttl in records:
-            prior = self._names.get(ip)
-            floor = expire if ttl <= NAME_TTL_FLOOR else time.time() + ttl
-            if prior is not None and prior[1] > floor:
-                floor = prior[1]  # a re-resolve never shortens
-            self._names[ip] = (name, floor)
+            self._names[ip] = (name, pairing_floor(self, ip, ttl, expire))
+
+
+def pairing_floor(forwarder, ip: str, ttl: int, floor: float) -> float:
+    """One pairing's expiry: the answer's TTL (floored), never
+    shortened below a prior pairing's."""
+    if ttl > NAME_TTL_FLOOR:
+        floor = time.time() + ttl
+    prior = forwarder._names.get(ip)
+    if prior is not None and prior[1] > floor:
+        return prior[1]  # a re-resolve never shortens
+    return floor
 
     # --- the relay ---------------------------------------------------------
 
@@ -334,15 +357,21 @@ class DnsForwarder:
     async def relay_gated(
         self, sock: socket.socket, query: bytes, client: tuple[str, int]
     ) -> None:
-        """One gated query: malformed drops, cached answers from
-        the cache, fresh ones through the full gate."""
+        """One gated query: malformed drops, then the gate decides
+        — classify runs BEFORE the cache, so a fresh deny (a forever
+        row, a session memory) overrides a cached positive answer —
+        and a cache hit answers without the upstream round-trip."""
         parsed = dnsmsg.parse_query(query)
         if parsed is None or not parsed.name:
             return  # malformed: dropped (fail-closed)
+        decision = await self._gate.classify(parsed.name)
+        if decision.action == NXDOMAIN:
+            sendto(sock, dnsmsg.nxdomain_for(query), client)
+            return
         if (cached := self.cache_get(parsed)) is not None:
             sendto(sock, dnsmsg.rewrite_id(cached, parsed.id), client)
             return
-        await self.gated_exchange(sock, query, parsed, client)
+        await self.gated_exchange(sock, query, parsed, client, decision)
 
     async def gated_exchange(
         self,
@@ -350,13 +379,10 @@ class DnsForwarder:
         query: bytes,
         parsed: dnsmsg.Question,
         client: tuple[str, int],
+        decision: QueryDecision,
     ) -> None:
-        """One gated query: classify, forward, learn/record, cache,
-        answer."""
-        decision = await self._gate.classify(parsed.name)
-        if decision.action == NXDOMAIN:
-            sendto(sock, dnsmsg.nxdomain_for(query), client)
-            return
+        """A fresh gated query (the classify already ran): forward,
+        learn/record, cache, answer."""
         answer = await self.exchange(query)
         if answer is None:
             return

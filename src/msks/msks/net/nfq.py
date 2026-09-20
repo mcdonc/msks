@@ -186,7 +186,7 @@ class FlowConsumer:
         now = time.time()
         cached = self.cached_verdict(flow, now)
         if cached is not None:
-            self.apply_cached(pkt, cached)
+            self.apply_cached(pkt, cached, dst, dport)
             return
         if flow in self._inflight:
             # A retransmit of a SYN still being held: the in-flight
@@ -199,9 +199,7 @@ class FlowConsumer:
             return
         pkt.retain()
         self._inflight.add(flow)
-        task = asyncio.create_task(self.decide(pkt, flow, dst, dport))
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        self.spawn(self.decide(pkt, flow, dst, dport))
 
     def cached_verdict(
         self, flow: tuple[int, str, int], now: float
@@ -212,17 +210,30 @@ class FlowConsumer:
             return cached
         return None
 
-    def apply_cached(self, pkt, cached: tuple[str, float]) -> None:
-        """Reuse a decided connection's verdict for its retransmit."""
+    def apply_cached(
+        self, pkt, cached: tuple[str, float], dst: str, dport: int
+    ) -> None:
+        """Reuse a decided connection's verdict for its retransmit.
+        A cached deny also refreshes the fail-fast RST pin: the
+        original pin may have lapsed inside the cache window, and a
+        retry that only drops hangs on the kernel's retransmit
+        timer — the exact hang the RST exists to prevent."""
         if cached[0] == "allow":
             pkt.accept()
-        else:
-            pkt.drop()
+            return
+        if dport:
+            self.spawn(
+                self._net.consent_reject(
+                    self.workspace_id, dst, dport, ONCE_REJECT_S
+                )
+            )
+        pkt.drop()
 
     def spawn(self, coro) -> None:
-        """Fire-and-forget an enforcement step (a rule pin from the
-        packet callback, which must not await); errors are logged,
-        and the strong ref keeps the task alive to that point."""
+        """Track one background task (the held SYN's decide task, or
+        a fire-and-forget rule pin from the packet callback, which
+        must not await); errors are logged, and the strong ref
+        keeps the task alive to that point."""
         task = asyncio.create_task(coro)
         self._tasks.add(task)
 
@@ -324,6 +335,16 @@ class FlowConsumer:
             verdict = {"decision": "deny", "reason": "error"}
         try:
             await self.apply_verdict(pkt, flow, dst, dport, verdict)
+        except Exception:
+            # An enforcement failure (a racing table teardown, a
+            # transient nft error) must not eat the retained packet
+            # either: deny it now and say so.
+            logger.exception(
+                "nfq: applying a verdict for %s:%s failed; dropping",
+                dst,
+                dport,
+            )
+            pkt.drop()
         finally:
             # Always discard, even if enforcement raised: a stuck
             # key would silently drop that flow's retransmits

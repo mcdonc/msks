@@ -354,3 +354,85 @@ async def test_gated_exchange_when_upstream_times_out(gated) -> None:
         forwarder.stop()
         client.close()
         dead.close()
+
+
+def test_naming_memory_bound_clears() -> None:
+    """A flood of unique names cannot grow the memory without
+    bound: past NAMES_MAX the dict clears wholesale (prompt naming
+    degrades, enforcement never does)."""
+    forwarder = dns.DnsForwarder(("127.0.0.1", 53))
+    for i in range(dns.NAMES_MAX):
+        forwarder.remember(
+            f"h{i}.example", [(f"10.{i // 256}.{i % 256}.1", 60)]
+        )
+    assert len(forwarder._names) >= dns.NAMES_MAX
+    forwarder.remember("overflow.example", [("10.9.9.9", 60)])
+    assert forwarder._names == {
+        "10.9.9.9": ("overflow.example", forwarder._names["10.9.9.9"][1])
+    }
+
+
+async def test_a_fresh_deny_overrides_a_cached_answer(gated) -> None:
+    """Classify runs before the cache: a forever deny lands and the
+    next query answers NXDOMAIN even though a positive answer is
+    still cached."""
+    import socket
+
+    app, net = gated
+    from msks.model.egress_consent import DECISION_DENIED
+
+    upstream = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    upstream.bind(("127.0.0.1", 0))
+    upstream.setblocking(False)
+    gate = gate_for(app, net, "ws-interactive", MODE_INTERACTIVE)
+    forwarder = dns.DnsForwarder(
+        upstream.getsockname(),
+        1.0,
+        bind=("127.0.0.1", 0),
+        client_ip="127.0.0.1",
+        gate=gate,
+    )
+    await forwarder.start()
+    client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    client.bind(("127.0.0.1", 0))
+    client.settimeout(2.0)
+    serve = asyncio.create_task(forwarder.serve())
+
+    async def answer_once():
+        loop = asyncio.get_running_loop()
+        data, peer = await loop.sock_recvfrom(upstream, 65535)
+        parsed = dnsmsg.parse_query(data)
+        upstream.sendto(answer_for(parsed.name, "203.0.113.7"), peer)
+
+    async def ask(name: str) -> bytes:
+        await asyncio.to_thread(
+            client.sendto, query_for(name), forwarder._sock.getsockname()
+        )
+        reply, _addr = await asyncio.to_thread(client.recvfrom, 65535)
+        return bytes(reply)
+
+    try:
+        relay = asyncio.create_task(answer_once())
+        reply = await ask("cachable.example")
+        await asyncio.wait_for(relay, 2.0)
+        assert reply[2:4] == b"\x81\x80"
+        assert forwarder.cache_get(
+            dnsmsg.parse_query(query_for("cachable.example"))
+        )
+        # A forever deny for that name: the cached answer must lose.
+        row = await app.state.model.egress_consent.create_request(
+            "ws-interactive", "cachable.example", 443
+        )
+        await app.state.model.egress_consent.decide(
+            row["id"], DECISION_DENIED, "token", "forever"
+        )
+        nxdomain = await ask("cachable.example")
+        assert nxdomain[2:4] == b"\x81\x83"
+        # And forget() (revocation) empties the answer cache.
+        forwarder.forget("cachable.example")
+        assert forwarder._cache == {}
+    finally:
+        serve.cancel()
+        forwarder.stop()
+        client.close()
+        upstream.close()

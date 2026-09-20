@@ -349,8 +349,18 @@ class ConsentEngine:
         """
         try:
             row = await self.app.state.model.get_workspace(workspace_id)
-            mode = (row or {}).get("egress_mode") or MODE_ALLOW
-            return await self.mode_verdict(mode, workspace_id, host, port)
+            if row is None:
+                # The workspace vanished under the hold: fail
+                # closed, not open — a missing row is not consent.
+                return completed_verdict(
+                    {"decision": VERDICT_DENY, "reason": "gone"}
+                )
+            return await self.mode_verdict(
+                row.get("egress_mode") or MODE_ALLOW,
+                workspace_id,
+                host,
+                port,
+            )
         except Exception:
             # A model failure must not strand the held SYN: the
             # consumer awaits this future; answer deny.
