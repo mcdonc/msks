@@ -175,6 +175,15 @@ def test_static_mode_drops_unmatched_new_traffic() -> None:
         'iifname "msks-tap" ip daddr 203.0.113.7/32 tcp dport 5432'
         " accept" in ruleset
     )
+    # The allow-set matches must render in the static shape too, and
+    # ahead of the terminal drop: a name-spec allowlist entry pins
+    # through them (the KVM smoke caught their absence once — the
+    # resolver pinned into sets nothing matched).
+    assert "ip daddr @allows_any accept" in ruleset
+    assert "ip daddr . tcp dport @allows_port accept" in ruleset
+    assert ruleset.index("ip daddr @allows_any accept") < ruleset.index(
+        'oifname "eth0" drop'
+    )
     # The default for unmatched new traffic is the drop.
     assert 'oifname "eth0" drop' in ruleset
     assert 'oifname "eth0" accept' not in ruleset

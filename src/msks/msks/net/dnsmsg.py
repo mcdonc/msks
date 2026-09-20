@@ -163,13 +163,18 @@ def join_labels(labels: list[bytes]) -> str:
 
 
 def parse_query(wire: bytes) -> Question | None:
-    """The first question of a query datagram, or None when the
-    message is too short, headerless, or carries no decodable
-    question."""
+    """The question of a query datagram, or None when the message is
+    too short, headerless, carries no decodable question, or asks
+    more than one. Exactly one question is the resolver mainstream;
+    anything else is refused unread — the daemon decides names, so a
+    multi-question datagram (an allowlisted name packed beside an
+    off-list one) must not relay verbatim past the gate (#193
+    review: the gate's own trust boundary, whatever the upstream
+    would do with it)."""
     if len(wire) < HEADER_LEN:
         return None
     qdcount = int.from_bytes(wire[4:6], "big")
-    if qdcount < 1:
+    if qdcount != 1:
         return None
     name, after = decode_name(wire, HEADER_LEN)
     if not name or after + 4 > len(wire):

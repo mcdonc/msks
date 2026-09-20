@@ -181,3 +181,13 @@ def test_read_rr_stops_inside_truncated_fixed_fields() -> None:
     good = answer("x.example", [("10.0.0.1", 60)])
     cut = good[: len(good) - 6]  # into the rdata tail + fixed block
     assert dnsmsg.parse_a_records(cut) == []
+
+
+def test_multi_question_queries_are_refused() -> None:
+    """The gate classifies one name; a datagram asking two must not
+    relay verbatim past it (the daemon decides names, not the
+    upstream)."""
+    q1 = query("allowlisted.example")
+    q2 = query("evil.example")
+    packed = q1[:6] + b"\x00\x02" + q1[12:] + q2[12:]
+    assert dnsmsg.parse_query(packed) is None

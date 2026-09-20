@@ -436,3 +436,48 @@ async def test_a_fresh_deny_overrides_a_cached_answer(gated) -> None:
         forwarder.stop()
         client.close()
         upstream.close()
+
+
+async def test_multi_question_queries_drop_silently(gated) -> None:
+    """A two-question datagram is dropped unread: no upstream
+    round-trip, no answer, no pin (fail-closed)."""
+    import struct
+
+    app, net = gated
+    import socket
+
+    upstream = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    upstream.bind(("127.0.0.1", 0))
+    upstream.setblocking(False)
+    gate = gate_for(app, net, "ws-static", MODE_STATIC, (".debian.org",))
+    forwarder = dns.DnsForwarder(
+        upstream.getsockname(),
+        1.0,
+        bind=("127.0.0.1", 0),
+        client_ip="127.0.0.1",
+        gate=gate,
+    )
+    await forwarder.start()
+    client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    client.bind(("127.0.0.1", 0))
+    client.settimeout(0.3)
+    serve = asyncio.create_task(forwarder.serve())
+    two = (
+        query_for("deb.debian.org")[:6]
+        + b"\x00\x02"
+        + query_for("deb.debian.org")[12:]
+        + query_for("evil.example")[12:]
+    )
+    del struct
+    try:
+        await asyncio.to_thread(
+            client.sendto, two, forwarder._sock.getsockname()
+        )
+        with pytest.raises(TimeoutError):
+            await asyncio.to_thread(client.recvfrom, 65535)
+        assert net.pins == []
+    finally:
+        serve.cancel()
+        forwarder.stop()
+        client.close()
+        upstream.close()
