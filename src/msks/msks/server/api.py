@@ -1965,6 +1965,14 @@ async def register_decider(app, socket, client_id: int, message: dict):
     if not isinstance(workspace, str):
         return
     if await app.state.model.get_workspace(workspace) is None:
+        # Say so: a decider pointed at a typo'd workspace would
+        # otherwise wait on a silent, promptless connection.
+        await socket.send_json(
+            {
+                "event": "egress.decider_rejected",
+                "data": {"reason": "unknown workspace"},
+            }
+        )
         return
     app.state.deciders.register(client_id, workspace)
     for pending in await app.state.consent.snapshot(workspace):

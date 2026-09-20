@@ -253,9 +253,15 @@ def test_events_decider_registration_and_frames(tmp_path: Path) -> None:
             rules = json.loads(ws.receive_text())
             assert rules["event"] == "egress.rules"
             assert rules["data"]["mode"] == "interactive"
-            # Unknown workspaces and junk frames are ignored.
+            # An unknown workspace is rejected (not silently
+            # ignored): drain that frame here so the live-hold read
+            # below sees the request, not the rejection.
             ws.send_text(
                 json.dumps({"type": "egress.decider", "workspace": "ghost"})
+            )
+            assert (
+                json.loads(ws.receive_text())["event"]
+                == "egress.decider_rejected"
             )
             ws.send_text("not json")
             ws.send_text(json.dumps({"type": "other"}))
@@ -365,8 +371,10 @@ def test_decider_frames_reach_the_snapshot_and_ignore_junk(
                 requests[0]["data"]["request"]["dest_host"] == "held.example"
             )
             assert frames[-1]["event"] == "egress.rules"
-            # Junk arms: no workspace key, a non-string, an unknown
-            # workspace — all ignored without closing the socket.
+            # Junk arms: no workspace key, a non-string — ignored
+            # without closing the socket; an unknown workspace is
+            # told it was rejected (a typo'd decider must not wait
+            # on a silent, promptless connection).
             ws.send_text(json.dumps({"type": "egress.decider"}))
             ws.send_text(
                 json.dumps({"type": "egress.decider", "workspace": 1234})
@@ -374,6 +382,9 @@ def test_decider_frames_reach_the_snapshot_and_ignore_junk(
             ws.send_text(
                 json.dumps({"type": "egress.decider", "workspace": "ghost"})
             )
+            rejected = json.loads(ws.receive_text())
+            assert rejected["event"] == "egress.decider_rejected"
+            assert rejected["data"]["reason"] == "unknown workspace"
         thread.join(5.0)
 
 
@@ -531,12 +542,14 @@ async def test_register_decider_lands_the_snapshot_directly(
     events = [payload["event"] for payload in socket.sent]
     assert events == ["egress.request", "egress.rules"]
     assert socket.sent[0]["data"]["request"]["dest_host"] == "held.example"
-    # A no-op registration adds nothing.
+    # An unknown workspace is told so (one rejection frame) — never
+    # registered.
     empty = RecordingSocket()
     await api_mod.register_decider(
         app, empty, client_id=1, message={"workspace": "ghost"}
     )
-    assert empty.sent == []
+    assert [f["event"] for f in empty.sent] == ["egress.decider_rejected"]
+    assert not app.state.deciders.has_decider("ghost")
 
 
 async def test_register_decider_when_rules_read_fails(tmp_path: Path) -> None:
