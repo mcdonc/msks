@@ -105,9 +105,9 @@ workspace                root cost/ceiling    home cost/ceiling    cost
 ws4                      3.1G / 10G           812M / 2G            3.9G
 scratch                  61M / 10G            12M / 2G             73M
 
-image                    imported             cost
-debian:13                2026-09-21 16:03     3.0G
-debian:13                2026-08-02 09:11     3.0G
+image                    imported         cost
+debian:13                2026-09-21 12:03 3G
+debian:13                2026-08-02 05:11 3G
 ```
 
 - **cost** is the disk blocks the artifact occupies on the state

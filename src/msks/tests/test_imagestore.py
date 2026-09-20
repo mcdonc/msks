@@ -119,6 +119,16 @@ def test_resolve_forms(tmp_path: Path) -> None:
     assert resolve("debian:99", tmp_path) is None
 
 
+def rebuilt_members(i: int) -> dict:
+    """Member bytes that vary per build: same reference, distinct
+    content hashes — the rebuilt-archive shape (#186)."""
+    return {
+        "boot/vmlinuz": f"kernel-{i}".encode(),
+        "boot/initrd.img": b"initrd-bytes",
+        "disk/rootfs.ext4": b"rootfs-bytes",
+    }
+
+
 def test_import_stamps_and_refreshes_the_time(tmp_path: Path) -> None:
     """The cache carries an ``imported`` stamp (#186); the stamp —
     not the wall clock — is the record's truth, and a re-import
@@ -169,14 +179,7 @@ def test_same_reference_entries_order_by_import_time(tmp_path: Path) -> None:
     hashes = []
     for i in range(3):
         archive = tmp_path / f"i{i}.tar"
-        build_containerdisk(
-            archive,
-            members={
-                "boot/vmlinuz": f"kernel-{i}".encode(),
-                "boot/initrd.img": b"initrd-bytes",
-                "disk/rootfs.ext4": b"rootfs-bytes",
-            },
-        )
+        build_containerdisk(archive, members=rebuilt_members(i))
         hashes.append(import_archive(archive, tmp_path).hash)
     # Stamp the first import newest and the last oldest: import
     # time, not directory order, decides the listing.
@@ -187,6 +190,26 @@ def test_same_reference_entries_order_by_import_time(tmp_path: Path) -> None:
         )
     listed = list_images(tmp_path)
     assert [r.hash for r in listed] == [hashes[2], hashes[1], hashes[0]]
+
+
+def test_naive_stamp_reads_as_utc(tmp_path: Path) -> None:
+    """A hand-written stamp without an offset reads as UTC (#186
+    review): two entries sharing a reference still order — the
+    aware comparison never meets a naive stamp."""
+    a, b = tmp_path / "a.tar", tmp_path / "b.tar"
+    build_containerdisk(a, members=rebuilt_members(0))
+    build_containerdisk(b, members=rebuilt_members(1))
+    first = import_archive(a, tmp_path)
+    second = import_archive(b, tmp_path)
+    (tmp_path / "images" / first.hash / IMPORTED_STAMP).write_text(
+        "2020-01-01T00:00:00\n"
+    )
+    (tmp_path / "images" / second.hash / IMPORTED_STAMP).write_text(
+        "2021-06-01T00:00:00+00:00\n"
+    )
+    listed = list_images(tmp_path)
+    assert [r.hash for r in listed] == [first.hash, second.hash]
+    assert listed[0].imported == datetime(2020, 1, 1, tzinfo=UTC)
 
 
 def test_default_selection(tmp_path: Path) -> None:

@@ -332,16 +332,25 @@ def record_from(
     )
 
 
-def imported_at(cache: Path) -> datetime:
+def imported_at(cache: Path) -> datetime | None:
     """When the cache last came in (#186): the stamp the import
     writes, or the directory's own modification time for entries
     that predate stamps (a re-import swaps in a fresh directory,
-    so its mtime is the import time)."""
+    so its mtime is the import time). A stamp without an offset is
+    read as UTC — a hand-written naive stamp must not crash the
+    listing's aware ordering."""
     with contextlib.suppress(OSError, ValueError):
-        return datetime.fromisoformat(
+        parsed = datetime.fromisoformat(
             (cache / IMPORTED_STAMP).read_text().strip()
         )
-    return datetime.fromtimestamp(cache.stat().st_mtime, tz=UTC)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed
+    with contextlib.suppress(OSError):
+        return datetime.fromtimestamp(cache.stat().st_mtime, tz=UTC)
+    # A cache removed between the manifest read and the stat —
+    # a rename race the suite cannot arrange.
+    return None  # pragma: no cover
 
 
 def load_record(cache: Path) -> ImageRecord | None:

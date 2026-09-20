@@ -2108,7 +2108,8 @@ def test_cmd_storage_json_is_verbatim(
 def test_image_lines_show_import_times() -> None:
     """Same-reference rows read as distinct through their import
     times (#186), rendered in the operator's local time; a row
-    without a time renders a dash in its place."""
+    without a time — or one the clock cannot parse — renders a
+    dash in its place."""
     when = datetime.fromisoformat("2026-09-21T14:03:00+00:00")
     rows = [
         {
@@ -2129,6 +2130,12 @@ def test_image_lines_show_import_times() -> None:
             "bytes": 3 * 1024**3,
             "imported": None,
         },
+        {
+            "name": "debian",
+            "version": "13.6",
+            "bytes": 3 * 1024**3,
+            "imported": "not a date",
+        },
     ]
     lines = cli.image_lines(rows)
     assert lines[1] == f"{'image':<24} {'imported':<16} cost"
@@ -2141,6 +2148,7 @@ def test_image_lines_show_import_times() -> None:
     assert lines[2] == f"{'debian:13.6':<24} {expect:<16} 3G"
     assert lines[3] == f"{'debian:13.6':<24} {older:<16} 3G"
     assert lines[4] == f"{'debian:13.6':<24} {'-':<16} 3G"
+    assert lines[5] == f"{'debian:13.6':<24} {'-':<16} 3G"
 
 
 def test_image_lines_without_times_keep_two_columns() -> None:

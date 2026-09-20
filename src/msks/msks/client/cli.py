@@ -480,13 +480,18 @@ def workspace_lines(
 
 def imported_cell(image: dict) -> str:
     """One import-time cell: local time to the minute, or ``-``
-    when the daemon predates stamps (#186)."""
+    when the daemon predates stamps (#186) or sends a moment the
+    clock cannot parse."""
     stamp = image.get("imported")
     if not stamp:
         return "-"
-    return (
-        datetime.fromisoformat(stamp).astimezone().strftime("%Y-%m-%d %H:%M")
-    )
+    with contextlib.suppress(ValueError):
+        return (
+            datetime.fromisoformat(stamp)
+            .astimezone()
+            .strftime("%Y-%m-%d %H:%M")
+        )
+    return "-"
 
 
 def image_row(image: dict, stamped: bool) -> str:
