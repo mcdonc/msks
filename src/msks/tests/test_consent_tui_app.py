@@ -3,6 +3,7 @@
 import asyncio
 import json
 
+import pytest
 import websockets
 from msks.client import cli
 from msks.client.tui import consent_app
@@ -445,7 +446,7 @@ async def test_the_seams_and_entry_point(monkeypatch, capsys) -> None:
     os.environ.setdefault("MSKSC_TOKEN", "t")
     calls: list[tuple] = []
 
-    async def fake_api(method, url, token, path, json_body=None):
+    async def fake_api(method, url, token, path, json_body=None, **_kw):
         calls.append((method, path, json_body))
         return {"id": "r", "ok": True}
 
@@ -572,3 +573,106 @@ async def test_verdict_keys_do_not_bleed_from_the_rules_screen() -> None:
         await pilot.pause()
         assert seams["decided"] == []  # nothing decided behind the screen
         app.action_quit_screen()
+
+
+async def test_rules_refresh_preserves_the_focused_rule() -> None:
+    """A per-tick repaint must not move `x`'s target: the focused
+    rule id survives the clear+rebuild."""
+    factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
+    app, seams = make_app(factory)
+    async with app.run_test() as pilot:
+        await pilot.press("r")
+        await wait_for(
+            lambda: len(app.screen.query_one("#rule-rows").children) == 2
+        )
+        await pilot.press("down")  # d1, the denied row
+        await pilot.pause()
+        from msks.client.tui.consent_app import focused_rule_id
+
+        assert focused_rule_id(app.screen.query_one("#rule-rows")) == "d1"
+        app.safe_repaint()  # the tick's repaint
+        await wait_for(
+            lambda: focused_rule_id(app.screen.query_one("#rule-rows")) == "d1"
+        )
+        await pilot.press("x")
+        await wait_for(lambda: len(seams["revoked"]) == 1)
+        assert seams["revoked"] == [("ws-dev", "d1")]  # the right rule
+        app.action_quit_screen()
+
+
+async def test_the_picker_decides_the_hold_it_opened_on() -> None:
+    """The focused row resolving mid-pick must not redirect Enter's
+    verdict to the neighbor that inherits focus."""
+    factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
+    app, seams = make_app(factory)
+    factory.made and None
+    async with app.run_test() as pilot:
+        await wait_for(lambda: app.query_one("#requests").children)
+        factory.made[0].push(request_frame("r2"))
+        await wait_for(lambda: len(app.controller.pending) == 2)
+        await pilot.press("A")
+        await wait_for(lambda: type(app.screen).__name__ == "DurationScreen")
+        # The hold the picker opened on resolves mid-pick.
+        app.controller.apply_frame(
+            json.dumps(
+                {
+                    "event": "egress.resolved",
+                    "data": {"request_id": "r1", "decision": "allowed"},
+                }
+            )
+        )
+        app.safe_repaint()
+        await pilot.pause()
+        await pilot.press("enter")
+        await wait_for(lambda: "already resolved" in status_line(app))
+        assert seams["decided"] == []  # nothing decided, nobody harmed
+        app.action_quit_screen()
+
+
+def test_run_consent_tui_fails_cleanly_without_a_token(
+    monkeypatch, capsys
+) -> None:
+    """A missing MSKSC_TOKEN exits before the screen draws — the
+    one readable line every sibling prints, not a teardown."""
+
+    monkeypatch.delenv("MSKSC_TOKEN", raising=False)
+    monkeypatch.delenv("MSKSC_URL", raising=False)
+    monkeypatch.setenv("MSKSC_URL", "https://d")
+    with pytest.raises(SystemExit, match="MSKSC_TOKEN"):
+        consent_app.run_consent_tui("ws-dev")
+
+
+async def test_a_connect_failure_names_itself_once() -> None:
+    """The first dial failure flashes its cause; identical retries
+    stay quiet."""
+    app, _ = make_app(FakeFactory([]))
+    calls = {"n": 0}
+
+    class Failing:
+        async def __aenter__(self):
+            calls["n"] += 1
+            raise OSError("dial refused")
+
+        async def __aexit__(self, *exc):
+            return None
+
+    app._ws_factory = lambda: Failing()
+    async with app.run_test() as pilot:
+        await wait_for(lambda: calls["n"] >= 2)
+        await pilot.pause()
+        assert "connect failed: dial refused" in status_line(app)
+        assert calls["n"] >= 2  # retried; the identical cause stays quiet
+        app.action_quit_screen()
+
+
+def test_ws_connect_kwargs_and_shared_ssl(monkeypatch) -> None:
+    from msks.client.tui.consent_app import ws_connect_kwargs
+
+    kwargs = ws_connect_kwargs("https://d:1", "tok", "ctx")
+    assert kwargs["uri"].endswith("events?token=tok")
+    assert kwargs["ssl"] == "ctx"
+    plain = ws_connect_kwargs("http://d:1", "tok", "ctx")
+    assert plain["ssl"] is None
+    monkeypatch.setattr(consent_app, "_SHARED_SSL", [None])
+    first = consent_app.shared_ssl()
+    assert consent_app.shared_ssl() is first  # one build, then cached

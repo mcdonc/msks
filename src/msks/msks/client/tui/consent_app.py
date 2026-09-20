@@ -31,8 +31,8 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Footer, ListItem, ListView, OptionList, Static
 
-from ..egress import connect_args
-from ..rest import api_call, env_token, env_url
+from ..egress import events_url
+from ..rest import api_call, env_token, env_url, ssl_context
 from .consent import (
     DURATION_DEFAULT,
     DURATIONS,
@@ -99,10 +99,15 @@ def rule_line(rule, remaining: float | None) -> str:
 
 
 def allowlist_text(rules: EgressRules | None) -> str:
-    """The rules screen's header: mode + static allowlist."""
+    """The rules screen's header: mode + static allowlist (entries
+    escaped — operator-supplied strings render literally)."""
     if rules is None:
         return "no rules snapshot yet"
-    entries = ", ".join(rules.allow_list) if rules.allow_list else "(empty)"
+    entries = (
+        ", ".join(escape(entry) for entry in rules.allow_list)
+        if rules.allow_list
+        else "(empty)"
+    )
     return f"mode {rules.mode}   allowlist: {entries}"
 
 
@@ -131,6 +136,17 @@ def ensure_focus(rows: ListView) -> None:
     a hold is always decidable from the keyboard."""
     if rows.index is None and rows.children:
         rows.index = 0
+
+
+def restore_focus(rows: ListView, rule_id: str | None) -> None:
+    """After a rebuild, re-highlight the row the user had focused
+    (the top when it left or was never set) — a repaint must never
+    move the target of a destructive key."""
+    for position, child in enumerate(rows.children):
+        if getattr(child, "rule_id", None) == rule_id and rule_id:
+            rows.index = position
+            return
+    ensure_focus(rows)
 
 
 def drop_stale_rows(rows: ListView, current_ids: set) -> None:
@@ -233,10 +249,15 @@ class RulesScreen(Screen):
         self.refresh_rows()
 
     def refresh_rows(self) -> None:
-        """Repaint the rows from the controller's rules snapshot."""
+        """Repaint the rows from the controller's rules snapshot,
+        preserving the focused rule: a clear+rebuild resets the
+        highlight to the top, and `x` a second later would revoke the
+        wrong rule (the first allow) — the id is captured before the
+        clear and restored after."""
         rules = self.controller.rules
         self.query_one("#allowlist", Static).update(allowlist_text(rules))
         rows = self.query_one("#rule-rows", ListView)
+        focused = focused_rule_id(rows)
         rows.clear()
         for rule in rule_rows(rules):
             item = ListItem(
@@ -244,7 +265,7 @@ class RulesScreen(Screen):
             )
             item.rule_id = rule.id
             rows.append(item)
-        ensure_focus(rows)
+        restore_focus(rows, focused)
 
     async def action_revoke(self) -> None:
         """Revoke the focused rule through the injected seam; the row
@@ -302,6 +323,7 @@ class ConsentDeciderApp(App):
         self._stop = False
         self._flash_msg = ""
         self._flash_until = 0.0
+        self._last_conn_error = ""
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -342,8 +364,9 @@ class ConsentDeciderApp(App):
         refusal (retry slowly) rather than a drop (backoff)."""
         try:
             ws = await self._ws_factory().__aenter__()
-        except Exception:
+        except Exception as exc:
             self.on_disconnect()
+            self.flash_once(f"connect failed: {exc}")
             return False
         try:
             await self.serve_connection(ws)
@@ -371,6 +394,14 @@ class ConsentDeciderApp(App):
             self.controller.apply_frame(raw)
             self.safe_repaint()
 
+    def flash_once(self, message: str) -> None:
+        """Flash a connect failure when its text changes: the first
+        failure (and each new cause) names itself once, retries stay
+        quiet."""
+        if message != self._last_conn_error:
+            self._last_conn_error = message
+            self.flash(message)
+
     def on_disconnect(self, refused: bool = False) -> None:
         """Record the drop (the next loop pass reconnects); an auth
         refusal holds the refused label through its slow retry —
@@ -395,19 +426,30 @@ class ConsentDeciderApp(App):
         await self.pick_duration("deny")
 
     async def pick_duration(self, decision: str) -> None:
-        """Open the duration picker; a picked duration decides the
-        focused hold, a cancel decides nothing. The picker reports
-        its pick through a callback (push_screen_wait demands a
-        worker context actions do not have)."""
-        await self.push_screen(DurationScreen(self.finish_pick(decision)))
+        """Open the duration picker for the FOCUSED hold; a picked
+        duration decides that hold, a cancel decides nothing. The
+        request id is captured here: the focused row can change (or
+        resolve) while the picker is open, and Enter must not land
+        the verdict on whatever holds focus when the pick arrives.
+        The picker reports through a callback (push_screen_wait
+        demands a worker context actions do not have)."""
+        child = self.query_one("#requests", ListView).highlighted_child
+        request_id = getattr(child, "request_id", None)
+        await self.push_screen(
+            DurationScreen(self.finish_pick(decision, request_id))
+        )
 
-    def finish_pick(self, decision: str):
+    def finish_pick(self, decision: str, request_id: str | None):
         """The callback the picker calls with the picked duration
         (or None on cancel)."""
 
         async def picked(duration: str | None) -> None:
-            if duration is not None:
-                await self.decide_focused(decision, duration)
+            if duration is None:
+                return
+            if request_id not in self.controller.pending:
+                self.flash("hold already resolved")
+                return
+            await self.send_verdict(request_id, decision, duration)
 
         return picked
 
@@ -540,36 +582,71 @@ async def close_ws(ws) -> None:
 
 # --- default seams (the real socket and REST calls) ---------------------
 
+_SHARED_SSL: list = [None]
+
+
+def shared_ssl():
+    """The one TLS context for the app's lifetime: building it
+    prints the TOFU warning when MSKSC_CAFILE is unset, and building
+    it per verdict or per reconnect would spray that warning across
+    the live screen."""
+    if _SHARED_SSL[0] is None:
+        _SHARED_SSL[0] = ssl_context()
+    return _SHARED_SSL[0]
+
+
+def ws_connect_kwargs(url: str, token: str, ssl_ctx) -> dict:
+    """The events connection's kwargs (a plain-ws URL takes no ssl
+    argument) — built on the shared context, not a fresh one."""
+    return {
+        "uri": events_url(url, token),
+        "ssl": None if url.startswith("http://") else ssl_ctx,
+        "max_size": 2**22,
+    }
+
 
 def default_ws_factory():
     """The events websocket connection (the decider's stream)."""
-    return websockets.connect(**connect_args(env_url(), env_token()))
+    return websockets.connect(
+        **ws_connect_kwargs(env_url(), env_token(), shared_ssl())
+    )
 
 
 async def rest_decide(
     workspace_id: str, request_id: str, decision: str, duration: str
 ) -> dict:
-    """One verdict through the REST endpoint."""
+    """One verdict through the REST endpoint (the shared TLS
+    context — no per-verdict TOFU warning)."""
     return await api_call(
         "POST",
         env_url(),
         env_token(),
         f"/api/v1/workspaces/{workspace_id}/egress/requests/{request_id}",
         json_body={"decision": decision, "duration": duration},
+        ssl_ctx=shared_ssl(),
     )
 
 
 async def rest_revoke(workspace_id: str, request_id: str) -> dict:
-    """One revoke through the REST endpoint."""
+    """One revoke through the REST endpoint (shared context)."""
     return await api_call(
         "DELETE",
         env_url(),
         env_token(),
         f"/api/v1/workspaces/{workspace_id}/egress/requests/{request_id}",
+        ssl_ctx=shared_ssl(),
     )
 
 
 def run_consent_tui(workspace_id: str) -> int:
-    """``msks egress tui <workspace>``: launch the decider app."""
+    """``msks egress tui <workspace>``: launch the decider app. The
+    env and TLS context are read before the app starts (a missing
+    token exits with the one readable line every sibling command
+    prints, not a SystemExit tearing down a half-drawn screen — and
+    the TOFU warning prints once here, before the screen owns the
+    terminal)."""
+    env_url()
+    env_token()
+    shared_ssl()  # the TOFU warning (when it prints) lands here, once
     ConsentDeciderApp(workspace_id).run()
     return 0
