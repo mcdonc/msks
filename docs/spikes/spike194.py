@@ -2,15 +2,23 @@
 
 Proves, with printed evidence:
   1. One master, per-workspace CA dispatched by client address.
-  2. Sentinel swap in the Authorization header, only when the
-     destination matches the allowlist.
+  2. Sentinel swap in the Authorization header and the query string,
+     only when the destination matches the allowlist (exact host for
+     ws-a, label-anchored suffix for ws-b).
   3. Splice tier: destinations outside every allowlist are relayed
      undecrypted (the origin's real cert reaches the client).
-  4. Revocation: mapping removed -> the next request carries the
-     sentinel unchanged.
-  5. Benchmark: direct vs spliced vs MITM (10 MB, best of 3).
+  4. Revocation with the workspace still armed by a second mapping:
+     the revoked sentinel passes through decrypted but unrewritten.
+  5. Benchmark: direct vs spliced vs MITM (10 MiB, best of 3).
 
-Run in a devenv shell after: uv pip install mitmproxy
+Run in ONE devenv shell invocation (the uv-sync task strips
+mitmproxy from the venv on every shell entry, and public DNS is
+required proxy-side — the origins are reached through
+*.127.0.0.1.sslip.io):
+
+    devenv shell -- bash -c \
+      'uv pip install -q --python .devenv/state/venv/bin/python \
+       mitmproxy && python docs/spikes/spike194.py'
 """
 
 import asyncio
@@ -30,13 +38,17 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from mitmproxy import certs, options, tls
-from mitmproxy.addons.tlsconfig import _default_ciphers
 from mitmproxy.master import Master
 from mitmproxy.net import tls as net_tls
 from OpenSSL import SSL
 
 SENTINEL = "mskssec1_" + secrets.token_urlsafe(32)
 SECRET = "real-secret-" + secrets.token_urlsafe(12)
+# A second, independent placeholder for ws-a so test 4 can revoke the
+# first while the workspace stays armed — proving the decrypted-but-
+# unrewritten path the production semantics call for.
+SENTINEL2 = "mskssec1_" + secrets.token_urlsafe(32)
+SECRET2 = "real-secret-2-" + secrets.token_urlsafe(12)
 BIG = 10 * 1024 * 1024
 
 API = "api.127.0.0.1.sslip.io"  # allowlisted destination
@@ -71,15 +83,16 @@ class Interceptor:
             return  # fall through to the default addon
         sni = data.context.client.sni or "localhost"
         entry = store.get_cert(sni, [x509.DNSName(sni)], None, None)
-        # mitmproxy always sets a cipher list (its curated default) —
-        # an empty list is a hard OpenSSL error, and the platform-default
-        # path does not exist. Spike finding for the FIPS posture note.
-        cipher_list = tuple(_default_ciphers(net_tls.Version.TLS1_2))
+        # cipher_list=None keeps the platform (OpenSSL) defaults — the
+        # set_cipher_list call is skipped entirely. An EMPTY tuple is a
+        # hard OpenSSL error ("no cipher match"), and mitmproxy's own
+        # contexts never take the None path — _default_ciphers() always
+        # returns its curated list. FIPS posture note in the doc.
         ssl_ctx = net_tls.create_client_proxy_context(
             method=net_tls.Method.TLS_SERVER_METHOD,
             min_version=net_tls.Version.TLS1_2,
             max_version=net_tls.Version.UNBOUNDED,
-            cipher_list=cipher_list,
+            cipher_list=None,
             ecdh_curve=None,
             chain_file=entry.chain_file,
             request_client_cert=False,
@@ -95,30 +108,45 @@ class Interceptor:
     def request(self, flow):
         addr = flow.client_conn.peername[0]
         auth = flow.request.headers.get("authorization", "")
+        qs = str(dict(flow.request.query))
         host = flow.request.host  # hostname without port
-        if SENTINEL not in auth + str(dict(flow.request.query)):
+        # Swap binding is PER PLACEHOLDER: the sentinel being carried
+        # must be its own entry whose allowlist covers this host. A
+        # revoked sentinel (no entry) passes decrypted and unrewritten;
+        # a carried sentinel whose own allowlist misses the host is the
+        # off-allowlist sighting, even when another placeholder covers
+        # the destination.
+        for sentinel, entry in self.mappings.get(addr, {}).items():
+            if sentinel not in auth + qs:
+                continue
+            if not self.host_matches(host, entry["dests"]):
+                AUDIT.append(("off-allowlist-sighting", addr, host))
+                return
+            if sentinel in auth:
+                flow.request.headers["authorization"] = auth.replace(
+                    sentinel, entry["secret"]
+                )
+            for k, v in flow.request.query.items():
+                if sentinel in v:
+                    flow.request.query[k] = v.replace(
+                        sentinel, entry["secret"]
+                    )
+            AUDIT.append(("swap", addr, host))
             return
-        entry = self.match(addr, host)
-        if entry is None:
-            AUDIT.append(("off-allowlist-sighting", addr, host))
-            return
-        if SENTINEL in auth:
-            flow.request.headers["authorization"] = auth.replace(
-                SENTINEL, entry["secret"]
-            )
-        for k, v in flow.request.query.items():
-            if SENTINEL in v:
-                flow.request.query[k] = v.replace(SENTINEL, entry["secret"])
-        AUDIT.append(("swap", addr, host))
 
     def match(self, addr, host):
+        """Any placeholder of this workspace covering the host? (hello)"""
         for entry in self.mappings.get(addr, {}).values():
-            for dest in entry["dests"]:
-                if host == dest or (
-                    dest.startswith(".") and host.endswith(dest)
-                ):
-                    return entry
+            if self.host_matches(host, entry["dests"]):
+                return entry
         return None
+
+    @staticmethod
+    def host_matches(host, dests):
+        for dest in dests:
+            if host == dest or (dest.startswith(".") and host.endswith(dest)):
+                return True
+        return False
 
 
 async def handle_origin(reader, writer):
@@ -240,11 +268,18 @@ async def amain(tmp):
         d.mkdir()
         stores[addr] = certs.CertStore.from_store(str(d), "msks-" + name, 2048)
         mappings[addr] = {SENTINEL: {"secret": SECRET, "dests": [API]}}
+    # ws-b matches by label-anchored suffix instead of exact host —
+    # exercising the second half of the allowlist grammar.
+    mappings["127.0.0.3"][SENTINEL]["dests"] = [".127.0.0.1.sslip.io"]
+    mappings["127.0.0.2"][SENTINEL2] = {"secret": SECRET2, "dests": [API]}
 
     opts = options.Options(
         listen_host="127.0.0.1",
         listen_port=PROXY_PORT,
         mode=["regular"],
+        # mitmproxy's own store lives under confdir — pointed at the
+        # scratch dir so the harness never creates ~/.mitmproxy.
+        confdir=str(tmp / "mitmproxy-conf"),
     )
     master = Master(opts)
     from mitmproxy.addons import default_addons
@@ -293,7 +328,10 @@ async def amain(tmp):
             *prox,
         )
     )
-    print("    expected: 200 — the leaf is signed by ws-b's own CA")
+    print(
+        "    expected: 200 — ws-b's allowlist is the suffix form;"
+        " the leaf is signed by ws-b's own CA"
+    )
 
     print("\n=== 3. splice (ws-a -> " + OTHER + ", not allowlisted)")
     print(
@@ -309,7 +347,7 @@ async def amain(tmp):
     )
     print("    expected: 200 with origin-b's REAL cert (undecrypted relay)")
 
-    print("\n=== 4. revocation")
+    print("\n=== 4. revocation (ws-a stays armed via the 2nd placeholder)")
     mappings["127.0.0.2"].pop(SENTINEL, None)
     print(
         await get(
@@ -322,13 +360,17 @@ async def amain(tmp):
             *prox,
         )
     )
-    print("    expected: 200 but saw-auth still carries the sentinel")
+    print(
+        "    expected: 200, decrypted, and saw-auth still carries the"
+        " raw sentinel (its own entry is gone; SENTINEL2 still arms"
+        " the workspace, so the flow is intercepted, not spliced)"
+    )
 
     print("\n=== 5. audit log")
     for e in AUDIT:
         print("  ", e)
 
-    print("\n=== 6. benchmark: 10 MB, best of 3")
+    print("\n=== 6. benchmark: 10 MiB, best of 3")
     # Test 4 revoked ws-a's mapping; re-arm it for the MITM leg.
     mappings["127.0.0.2"][SENTINEL] = {"secret": SECRET, "dests": [API]}
     bench = {
@@ -340,9 +382,18 @@ async def amain(tmp):
             f"https://{OTHER}:{ORIGIN_B_PORT}/big",
             ["--interface", "127.0.0.2", "--cacert", str(ob), *prox],
         ),
+        # The sentinel header rides along so this row measures the
+        # full decrypt + rewrite + re-encrypt path, not decrypt alone.
         "mitm": (
             f"https://{API}:{ORIGIN_A_PORT}/big",
-            ["--interface", "127.0.0.2", "--cacert", str(ca_a), *prox],
+            [
+                "--interface",
+                "127.0.0.2",
+                "--cacert",
+                str(ca_a),
+                *auth,
+                *prox,
+            ],
         ),
     }
     for name, (url, extra) in bench.items():
@@ -355,8 +406,8 @@ async def amain(tmp):
             sizes.append(out)
         best = min(times)
         print(
-            f"  {name:8s} best {best:6.2f}s = {BIG / best / 1e6:6.1f} MB/s"
-            f"  sizes={sizes} runs={[f'{t:.2f}' for t in times]}"
+            f"  {name:8s} best {best:6.2f}s = {BIG / best / 2**20:6.1f}"
+            f" MiB/s  sizes={sizes} runs={[f'{t:.2f}' for t in times]}"
         )
 
     proxy.cancel()

@@ -29,13 +29,13 @@ Consequences:
   keeps the recorded decision: succeed with a warning, HTTPS toward
   allowlisted destinations fails visibly until the next boot.
 - The CA stays inert until interception arms: trust-store presence
-  grants nothing without the nft redirect, so an armed-less workspace
-  carrying its CA is safe.
+  grants nothing without the nft redirect, so a workspace that carries
+  its CA but has no placeholders is safe.
 
 The candidate "agent-channel import" mechanism is dropped: the seed
 needs nothing new.
 
-### 2. mitmproxy gates — all pass, with one posture finding
+### 2. mitmproxy gates — all pass, with two posture findings
 
 Ran on Python 3.14.7 with prebuilt wheels (`mitmproxy 12.2.3`,
 `mitmproxy-rs 0.12.11`, `mitmproxy-linux 0.12.11`):
@@ -49,49 +49,70 @@ Ran on Python 3.14.7 with prebuilt wheels (`mitmproxy 12.2.3`,
   The addon's `tls_start_client` hook builds its own
   `SSL.Connection` from a per-workspace `CertStore`
   (`certs.CertStore.from_store`) and the `tlsconfig` addon hands off
-  when it finds a user-provided `ssl_conn`. Three integration facts the
+  when it finds a user-provided `ssl_conn`. Four integration facts the
   harness established (each cost a debugging round — record them):
   1. The interceptor addon must register **before** the default addons;
      hook dispatch follows registration order and the default context
      lands first otherwise.
   2. The hook must call `set_accept_state()` itself — the proxy layer
      never does.
-  3. `cipher_list` must be non-empty; an empty list is a hard OpenSSL
-     error (`no cipher match`), and mitmproxy has **no "platform
-     defaults" path** — `_default_ciphers()` always returns its curated
-     list. This is the FIPS finding below.
-- **FIPS posture — deviation found**: mitmproxy sets a hardcoded cipher
-  list on every client- and server-facing context (`addons/tlsconfig.py:
-_default_ciphers`; the `ciphers_client`/`ciphers_server` options being
-  unset does _not_ leave OpenSSL defaults in force, it selects
-  mitmproxy's list). TLS floor defaults to TLS 1.2, floor and list are
-  per-connection overridable via options. The project rule ("pin
-  nothing; algorithm selection belongs to the platform") therefore does
-  not hold automatically under mitmproxy. Disposition for the
-  implementation issue: accept the curated list as the platform-behavior
-  baseline for v1, keep `ciphers_client`/`ciphers_server` unset in msks
-  config (the FIPS certification effort later sets them as a setting,
-  never in code — the same posture the ssh directives follow).
+  3. `cipher_list` accepts `None` (platform/OpenSSL defaults; the
+     `set_cipher_list` call is skipped) but rejects an empty tuple — a
+     hard OpenSSL error (`no cipher match`). mitmproxy's **own**
+     contexts never take the `None` path: `_default_ciphers()` always
+     returns its curated list, so `ciphers_*` options being unset means
+     "mitmproxy's list", never "platform defaults". The addon's
+     override path is the one place platform defaults are reachable.
+  4. The harness dispatches by client `peername` address because the
+     stand-ins share one listener; production keys on the accepting
+     per-tap listener instead (#199). The dispatch lookup is the one
+     piece of addon logic that does not carry over verbatim.
+- **FIPS posture — finding, scoped**: contexts the interceptor builds
+  itself run with platform defaults (`cipher_list=None`, verified live
+  in the harness). Contexts mitmproxy builds itself — including every
+  proxy→upstream connection (`tls_start_server`) — carry the curated
+  list, and no option reaches the platform-default path there.
+  Disposition: the interceptor passes `None` on the client-facing side
+  (posture holds where we build); the upstream side either accepts the
+  curated list for v1 or overrides `tls_start_server` the same way —
+  decided in #199, with any override a setting, never code (the same
+  posture the ssh directives follow).
+- **Key-type posture — finding**: `CertStore.from_store` mints an
+  RSA-2048 CA (`create_ca` is RSA-only), so the harness's CAs are RSA
+  where the #111/#138 posture defaults Ed25519. The `CertStore`
+  constructor accepts a supplied CA, so #200 mints the Ed25519 CA
+  itself and hands it to the store — recorded as a requirement there,
+  not a deviation to accept.
 - **Splice tier**: `tls_clienthello` + `ignore_connection = True`
   relays undecrypted. The harness proves the guest-visible property:
   a client that trusts only the origin's real CA completes the
   connection, and the sentinel inside that flow arrives at the origin
   unchanged — detection of off-allowlist sightings stays limited to
-  decrypted flows exactly as decision A recorded (the harness
-  inadvertently re-demonstrated the blind spot: no audit event fires
-  for the sentinel carried inside a spliced flow).
+  decrypted flows, exactly as the recorded detection decision on #194
+  (parsed flows only) says. The harness re-demonstrated the blind spot:
+  no audit event fires for the sentinel carried inside a spliced flow.
 - **Performance** (single event loop, proxy and origin in one process,
   loopback; relative numbers are the signal):
 
-  | path           | best of 3, 10 MB | MB/s | vs direct |
-  | -------------- | ---------------- | ---- | --------- |
-  | direct         | 0.10 s           | 104  | 1.00      |
-  | spliced relay  | 0.12 s           | 90   | 0.86      |
-  | MITM + rewrite | 0.14 s           | 73   | 0.70      |
+  | path           | best of 3, 10 MiB | MiB/s | vs direct |
+  | -------------- | ----------------- | ----- | --------- |
+  | direct         | 0.10 s            | 102   | 1.00      |
+  | spliced relay  | 0.12 s            | 81    | 0.79      |
+  | MITM + rewrite | 0.16 s            | 64    | 0.63      |
 
-  Echo request latencies: 18 ms spliced, 30–90 ms MITM (first hit
-  includes leaf minting). A workspace's real traffic is small API
-  calls; both tiers clear that bar with wide margin.
+  The MITM row carries the sentinel, so it measures the full
+  decrypt + rewrite + re-encrypt path. Echo request latencies: 18 ms
+  spliced, 30–140 ms MITM (first hit includes leaf minting).
+
+  **Verdict against the issue's gate** ("holdback ≈ 0 on non-matching
+  flows"): latency holds back ~0 for the first byte; throughput on bulk
+  transfers holds back ~21% through the splice. For the workspace
+  traffic profile this feature serves — small API calls — the gate
+  passes with wide margin (the 10 MiB body is far outside that
+  profile). A deployment that pushes bulk transfers through armed
+  workspaces pays the relay cost, and the mitigation is selective
+  steering (redirect only flows toward destinations with placeholders)
+  — noted as an option inside #199, not scheduled.
 
 ### 3–8. Already decided on the issue
 
@@ -99,36 +120,51 @@ Process topology (one master, per-tap dispatch), sentinel format
 (`mskssec1_` + 32 bytes base64url), query-string rewrite (in), TLS
 floors, lifetime (unbounded default, `--ttl` opt-in), allowlist grammar
 (exact + label-anchored suffix), residual risks (accepted) — see the
-issue for the recorded wording; the harness implements and confirms
-each.
+issue for the recorded wording. The harness implements and confirms the
+subset those decisions exercise: per-tap-style dispatch, the sentinel
+swap (headers + query, per-placeholder allowlist binding, exact and
+suffix matching), the splice tier, revocation while still armed, and
+the audit trail. Lifetime/TTL expiry, TLS-floor probes, and sentinel
+validation remain in the implementation issues.
 
 ## Harness evidence summary
 
-`python docs/spikes/spike194.py` (devenv shell; installs mitmproxy into
-the venv first) reproduces, against two loopback source addresses
-standing in for two workspaces:
+One devenv shell invocation (the uv-sync task strips mitmproxy from the
+venv on every shell entry) and public DNS (the proxy resolves the
+origin names itself, via `*.127.0.0.1.sslip.io`):
+
+```bash
+devenv shell -- bash -c \
+  'uv pip install -q --python .devenv/state/venv/bin/python \
+   mitmproxy && python docs/spikes/spike194.py'
+```
+
+Two loopback source addresses stand in for two workspaces; ports
+19443/19444/19800 are hardcoded; the scratch dir (CA keys, mitmproxy
+confdir, origin certs) prints at the end and is left in place for
+inspection. The harness points mitmproxy's confdir at the scratch dir,
+so nothing touches `~/.mitmproxy`. Reproduced output:
 
 1. ws-a request with the sentinel in `Authorization` and in
    `?api_key=` toward the allowlisted host → the origin sees the real
    secret in both places; the workspace never holds it.
-2. ws-b's connection receives a leaf from ws-b's own CA — validated by
-   a client that trusts only that CA.
+2. ws-b's connection — matched by the suffix allowlist — receives a
+   leaf from ws-b's own CA, validated by a client that trusts only that
+   CA.
 3. The same workspace toward a host outside every allowlist →
    undecrypted relay; the origin's real certificate reaches the client
    and the sentinel arrives unreplaced.
-4. Mapping revoked → the next request toward the allowlisted host is
-   relayed unreplaced (in production: the upstream answers 401; in the
-   harness the origin is self-signed so the failure surfaces at TLS).
+4. Revocation while a second placeholder still arms the workspace →
+   the revoked sentinel passes through decrypted but unrewritten; the
+   origin answers and the echo shows the raw sentinel (in production
+   the upstream answers 401).
 5. Audit trail: `swap` events per workspace address, `splice` events
    per connection.
 
-## Follow-up issues to file from this doc
+## Follow-up issues filed from this doc
 
-1. Secret store + mint/revoke/renew API and CLI (placeholder rows,
-   TTL predicate, audit events).
-2. Interceptor embedding: nft arm/disarm per active placeholder,
-   mitmproxy in-process with the per-tap dispatch addon, sentinel
-   rewrite (headers + query), splice tier.
-3. CA at create + cidata seed composition (+ seed rebuild for stopped
-   pre-existing workspaces; warning path for running ones).
-4. Audit events into the event stream and the TUI.
+[#198](https://github.com/mcdonc/msks/issues/198) secret store + API +
+CLI · [#199](https://github.com/mcdonc/msks/issues/199) interceptor
+embedding · [#200](https://github.com/mcdonc/msks/issues/200) CA at
+create + seed composition ·
+[#201](https://github.com/mcdonc/msks/issues/201) audit events + TUI.
