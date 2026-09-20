@@ -103,6 +103,55 @@ next start — the host extends the file to the template's size, and
 the appliance's state preparation grows the filesystem to match. A
 disk already larger than the template keeps its size.
 
+## Capacity reporting
+
+`msks storage` answers the operator's three capacity questions,
+each from its own source of truth (#184):
+
+```text
+$ msks storage
+state disk    used 23.4G of 40G    free 16.6G    pressure ok
+
+workspace                root cost/ceiling    home cost/ceiling    cost
+ws4                      3.1G / 10G           812M / 2G            3.9G
+
+image                    cost
+debian:13                3.0G
+```
+
+- **The budget line** is the daemon's own `statvfs` on the state
+  disk — the number that predicts what a full state disk causes
+  (guest-side I/O errors on every workspace). `pressure` names the
+  condition: `warn` past `MSKSD_STORAGE_WARN_PCT` (default 90)
+  percent used, `critical` at or below `MSKSD_STORAGE_FLOOR_MIB`
+  (default 512) free, `ok` otherwise.
+- **Cost** is the disk blocks an artifact occupies — the sparse
+  files' real footprint, never their nominal size. An overlay's
+  cost sits a little above the root filesystem usage the guest's
+  own `df` reports (qcow2 bookkeeping rides along) and stays below
+  its ceiling until the guest fills it.
+- **Ceiling** is the size fixed at create (`root_mib` /
+  `home_mib`) — the quota the guest's `df` shows its user.
+
+The fullness a workspace user feels is their own `df` inside the
+workspace; the daemon never guesses at it from outside a running
+VM (the ext4 journal lags the host's view of it).
+
+The watcher probes the state disk every `MSKSD_EVENT_POLL_S` and
+publishes a `storage.pressure` event on each change (a steady
+condition announces once), with a named log line at `warn` and
+`critical`. Below the floor, workspace creates answer `507`
+naming the floor and the reclaim path — `msks storage` names the
+consumers, `msks rm` and `msks image rm` remove them — instead of
+accepting a create whose artifacts and first boot would wedge the
+disk. Existing workspaces keep running below the floor; their own
+writes can still fill the disk, so a `warn` line is the cue to
+reclaim before they do.
+
+`GET /api/v1/storage` serves the same document the CLI renders,
+and `msks storage <id>` narrows the workspace table to one
+workspace.
+
 ## Factory reset
 
 `POST /api/v1/workspaces/{id}/reset` deletes only the overlay. The
@@ -254,6 +303,8 @@ boot. Deleting the workspace releases the pin.
 | --------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------- |
 | `MSKSD_ROOT_MIB`                  | `10240`      | Default overlay (root) size for new workspaces, MiB.                                                              |
 | `MSKSD_HOME_MIB`                  | `2048`       | Default `/home` volume size, MiB.                                                                                 |
+| `MSKSD_STORAGE_WARN_PCT`          | `90`         | State-disk percentage used that moves pressure to `warn` (#184).                                                  |
+| `MSKSD_STORAGE_FLOOR_MIB`         | `512`        | Free state-disk MiB at or below which pressure is `critical` and creates answer `507` (#184).                     |
 | `MSKSD_QEMU_IMG`                  | `qemu-img`   | The `qemu-img` binary that creates overlays.                                                                      |
 | `MSKSD_MKFS_EXT4`                 | `mkfs.ext4`  | The mkfs that formats `/home` volumes.                                                                            |
 | `MSKSD_MKISOFS`                   | `mkisofs`    | The mkisofs (genisoimage) that builds `cidata` seed disks (#41).                                                  |

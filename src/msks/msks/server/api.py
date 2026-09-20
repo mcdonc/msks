@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from starlette.requests import ClientDisconnect
 
-from .. import __version__, imagestore, persist
+from .. import __version__, imagestore, persist, storage
 from ..identity import mint, normalize_public_key
 from ..imagestore import ImageError
 from ..microvm.errors import MicrovmError
@@ -801,6 +801,12 @@ def build_api(app) -> FastAPI:
     async def create_workspace_locked(body: WorkspaceCreate) -> Response:
         if await app.state.model.get_workspace(body.id) is not None:
             raise HTTPException(status_code=409, detail="workspace exists")
+        # The state-disk floor (#184): a create below it is the #180
+        # failure mode in the making, so it answers a named 507 with
+        # the reclaim path spelled out instead of wedging later.
+        refusal = storage.create_refusal(app.state.settings.vmm)
+        if refusal is not None:
+            raise HTTPException(status_code=507, detail=refusal)
         if body.egress and app.state.settings.vmm.driver == "k8s":
             # Refuse at create, not first boot: a workspace that can
             # never start (egress is the create default) traps the id
@@ -912,6 +918,27 @@ def build_api(app) -> FastAPI:
             status_code=201,
             content=json.dumps(row),
             media_type="application/json",
+        )
+
+    @api.get("/api/v1/storage", dependencies=[Depends(require_token)])
+    async def get_storage() -> dict:
+        """The capacity report (#184): the state-disk budget, each
+        workspace's cost against its ceilings, and the catalog's.
+
+        Computed on demand from one ``statvfs`` and a handful of
+        ``lstat``s — the watcher's pressure probe, not this endpoint,
+        is what watches the thresholds between requests.
+        """
+        vmm = app.state.settings.vmm
+        rows = await app.state.model.list_workspaces()
+        images = imagestore.list_images(vmm.state_dir)
+        return await asyncio.to_thread(
+            storage.storage_report,
+            vmm.state_dir,
+            vmm.storage_warn_pct,
+            vmm.storage_floor_mib,
+            rows,
+            images,
         )
 
     @api.get("/api/v1/images", dependencies=[Depends(require_token)])

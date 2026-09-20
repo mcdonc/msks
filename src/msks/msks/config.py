@@ -78,6 +78,8 @@ SETTING_ENV_VARS: tuple[str, ...] = (
     "MSKSD_HOST_NAME",
     "MSKSD_ROOT_MIB",
     "MSKSD_HOME_MIB",
+    "MSKSD_STORAGE_WARN_PCT",
+    "MSKSD_STORAGE_FLOOR_MIB",
     "MSKSD_SSH_KEY_TYPE",
     # ServerSettings — the API listener.
     "MSKSD_HOST",
@@ -442,6 +444,10 @@ def render_template() -> str:
 #                           # workspaces; empty -> the hostname
 # root_mib: 10240           # default root overlay size (MiB)
 # home_mib: 2048            # default /home volume size (MiB)
+# storage_warn_pct: 90      # state-disk percent used that moves
+#                           # pressure to warn (#184)
+# storage_floor_mib: 512    # free state-disk MiB below which
+#                           # creates answer 507 (#184)
 # ssh_key_type: ed25519     # the identity type minted at create
 #                           # (#111): ed25519 (the FIPS-approvable
 #                           # default, #138; accepted by ssh clients

@@ -1022,3 +1022,63 @@ async def test_create_refuses_user_data_on_k8s(client, monkeypatch) -> None:
     )
     assert refused.status_code == 400
     assert "without user_data" in refused.json()["detail"]
+
+
+async def test_storage_report_lists_consumers(client) -> None:
+    """GET /api/v1/storage names the budget and every workspace's
+    cost against its ceilings (#184)."""
+    http, app, _stub = client
+    app.state.settings.vmm.state_dir.mkdir(parents=True, exist_ok=True)
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-st", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    report = await http.get("/api/v1/storage", headers=auth())
+    assert report.status_code == 200
+    body = report.json()
+    assert body["state"]["pressure"] in ("ok", "warn", "critical", "unknown")
+    assert body["state"]["total"] >= 0
+    assert (
+        body["state"]["floor_mib"] == app.state.settings.vmm.storage_floor_mib
+    )
+    assert body["state"]["warn_pct"] == app.state.settings.vmm.storage_warn_pct
+    ws = next(row for row in body["workspaces"] if row["id"] == "ws-st")
+    assert ws["root_mib"] == app.state.settings.vmm.root_mib
+    assert ws["home_mib"] == app.state.settings.vmm.home_mib
+    assert isinstance(ws["root_bytes"], int)
+    assert isinstance(ws["home_bytes"], int)
+    assert body["images"] == []
+
+
+async def test_storage_report_requires_a_token(client) -> None:
+    http, _app, _stub = client
+    refused = await http.get("/api/v1/storage")
+    assert refused.status_code in (401, 403)
+
+
+async def test_create_refused_below_the_storage_floor(
+    client, monkeypatch
+) -> None:
+    """A state disk at critical pressure answers a named 507 (#184)
+    instead of accepting a create whose artifacts would wedge it."""
+    http, app, _stub = client
+    app.state.settings.vmm.state_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        app.state.settings.vmm,
+        "storage_floor_mib",
+        (1 << 50) // (1024 * 1024),
+    )
+    refused = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-full", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert refused.status_code == 507
+    detail = refused.json()["detail"]
+    assert "MSKSD_STORAGE_FLOOR_MIB" in detail
+    assert "state disk" in detail
+    # Nothing was created and nothing was left behind.
+    listed = await http.get("/api/v1/workspaces", headers=auth())
+    assert listed.json() == []

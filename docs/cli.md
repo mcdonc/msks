@@ -91,6 +91,43 @@ msks ls --json | jq -r '.[] | select(.status == "running") | .id'
 A daemon with zero workspaces prints nothing (an empty table) and an
 empty JSON array under `--json`.
 
+## `msks storage`
+
+Reports the state-disk budget and its consumers (#184) — the budget
+line, each workspace's cost beside its ceiling, and each catalog
+image's cost:
+
+```text
+$ msks storage
+state disk    used 23.4G of 40G    free 16.6G    pressure ok
+
+workspace                root cost/ceiling    home cost/ceiling    cost
+ws4                      3.1G / 10G           812M / 2G            3.9G
+scratch                  61M / 10G            12M / 2G             73M
+
+image                    cost
+debian:13                3.0G
+```
+
+- **cost** is the disk blocks the artifact occupies on the state
+  disk — an idle artifact costs its content, not its ceiling (the
+  files are sparse), and an overlay's cost rides a little above
+  what the guest's own `df` shows for its root (qcow2 bookkeeping).
+- **ceiling** is the size fixed at create; the guest sees it as its
+  quota and its user can watch it fill with `df` inside the
+  workspace.
+- **pressure** names the state-disk condition: `warn` past
+  `MSKSD_STORAGE_WARN_PCT` (default 90) percent used, `critical` at
+  or below `MSKSD_STORAGE_FLOOR_MIB` (default 512) free. Past
+  `critical`, workspace creates answer a named `507` until space
+  comes back (`msks storage` names the consumers; `msks rm` and
+  `msks image rm` remove them).
+
+`msks storage <id>` narrows the workspace table to one workspace.
+`--json` prints the API's `GET /api/v1/storage` document verbatim
+(state block, per-workspace rows, catalog rows). The events channel
+carries a `storage.pressure` event whenever the pressure changes.
+
 ## `msks create`
 
 POSTs the API's create body. The positional id follows the daemon's
