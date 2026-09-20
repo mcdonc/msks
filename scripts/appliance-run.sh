@@ -63,8 +63,8 @@ appliance_exit() {
   # SECOND VMM onto the same raw ext4 (#189 review). TERM is a hard
   # poweroff for a guest that never served — that is the only path
   # that reaches here with the VMM alive; every other exit already
-  # reaped it in `wait "$chpid"` (kill on a reaped pid fails,
-  # harmlessly).
+  # reaped it in `wait "$chpid"` (and the reap clears chpid below,
+  # so this kill cannot reach a recycled pid either).
   kill "${chpid:-}" 2>/dev/null || true
   # virtiofsd leaves its pidfile behind even on graceful exit; the
   # run pidfile goes too, so a stopped appliance reports stopped.
@@ -469,6 +469,11 @@ fi
 # prints — the exit status still reaches the supervisor either way.
 rc=0
 wait "$chpid" || rc=$?
+# The reap releases the pid for reuse; clear it so the EXIT trap's
+# TERM above can never reach an innocent recycled pid (the
+# post-reap kill would otherwise be a live round against the pid
+# space, microscopic odds — closed outright instead).
+chpid=""
 wait "$booter" 2>/dev/null || true
 # Name the exit for the console reader. A requested stop ends
 # calmly: the line says "stopped", full stop — the choreography

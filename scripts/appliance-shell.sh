@@ -62,9 +62,20 @@ EOF
 # oracle. The process table is: the VMM's cmdline names this
 # appliance's api-socket path forever — the same pattern AGENTS.md's
 # recovery recipe matches. (pgrep excludes itself; this script's own
-# cmdline never contains the pattern.)
+# cmdline never contains the pattern.) rc 1 (no match) is the good
+# case; anything above it — a missing pgrep, a regex the relocated
+# MSKS_APPLIANCE_DIR broke — must NOT read as "no VMM": that would
+# green-light a debugfs write into a disk a live guest still holds.
 vmm_pids() {
-  pgrep -f "cloud-hypervisor --api-socket $app_dir/api.sock" 2>/dev/null || true
+  local out rc
+  rc=0
+  out=$(pgrep -f "cloud-hypervisor --api-socket $app_dir/api.sock" 2>/dev/null) || rc=$?
+  if [ "$rc" -gt 1 ]; then
+    echo "msks: pgrep failed (rc=$rc) — cannot verify the VMM is down; refusing to touch $state_disk" >&2
+    return 1
+  fi
+  [ -n "$out" ] && printf '%s\n' "$out"
+  return 0
 }
 
 # Bounded wait for the VMM to die; TERM then KILL escalation for a
@@ -72,7 +83,7 @@ vmm_pids() {
 wait_vmm_dead() {
   local phase pid pids
   for phase in term kill; do
-    pids=$(vmm_pids)
+    pids=$(vmm_pids) || return 1
     [ -z "$pids" ] && return 0
     for pid in $pids; do
       if [ "$phase" = term ]; then
@@ -82,7 +93,8 @@ wait_vmm_dead() {
       fi
     done
     for _ in $(seq 1 150); do
-      [ -z "$(vmm_pids)" ] && return 0
+      pids=$(vmm_pids) || return 1
+      [ -z "$pids" ] && return 0
       sleep 0.2
     done
   done
@@ -118,6 +130,13 @@ stop_appliance() {
   # A VMM that outlived its run script (a serve-gate exit, a SIGKILL'd
   # script): TERM/KILL it before anything touches the state disk.
   wait_vmm_dead || return 1
+  # And its socket file: a SIGKILL'd session leaves one behind (no
+  # trap fires to remove it), and the pty-discovery loop below
+  # watches this path — a stale socket would latch its "socket came
+  # and went" branch when the fresh run script removes it, reading a
+  # healthy boot as a dead VMM. Nothing owns it now (verified
+  # above), so removing it is safe.
+  rm -f "$app_dir/api.sock"
 }
 
 # --- the marker -----------------------------------------------------------
@@ -127,9 +146,15 @@ stop_appliance() {
 # a journal replay on the NEXT boot could otherwise undo this
 # script's dirent (0/1/2 = clean/fixed/fixed-reboot; 4 = refused).
 disk_replay_journal() {
+  # rc declared BEFORE the call: `local rc` is itself a command
+  # and resets $?, so a declaration between the call and the capture
+  # would read 0 unconditionally — the gate could never refuse
+  # (caught in the #191 second review; shellcheck has no rule for
+  # the pattern).
+  local rc
+  rc=0
   set +e
   e2fsck -fp "$state_disk" >/dev/null 2>&1
-  local rc
   rc=$?
   set -e
   if [ "$rc" -ge 4 ]; then
@@ -167,7 +192,7 @@ marker_seed() {
 # stop path uses — and the marker removal replays the journal for
 # the same reason the seed does.
 session_teardown() {
-  trap - INT TERM EXIT
+  trap - INT TERM HUP EXIT
   if [ -n "${runpid:-}" ]; then
     kill -TERM "$runpid" 2>/dev/null || true
     # A zombie child (exited, unreaped) shows stat Z; anything else
@@ -185,11 +210,22 @@ session_teardown() {
     wait "$runpid" 2>/dev/null || true
   fi
   wait_vmm_dead || true
-  marker_remove || true
-  echo "msks: appliance stopped, debug-shell marker removed — the next start (msks-appliance-up) is a normal boot"
+  # The teardown reports the marker honestly: a refusal from
+  # e2fsck leaves it in place, and a false "removed" would hide the
+  # one thing the next boot warns about.
+  if marker_remove; then
+    echo "msks: appliance stopped, debug-shell marker removed — the next start (msks-appliance-up) is a normal boot" || true
+  else
+    echo "msks: appliance stopped, but the marker REMOVAL FAILED (e2fsck refused the state disk) — the next boot warns; msks-appliance-shell --off retries" >&2 || true
+    exit 1
+  fi
 }
 
 # --- argument parsing -----------------------------------------------------
+if [ "$#" -gt 1 ]; then
+  usage
+  exit 2
+fi
 case "${1:-}" in
 "") ;;
 --off) ;;
@@ -238,7 +274,7 @@ echo "msks: booting the appliance with the console on a pty (debug-shell marker 
 MSKS_APPLIANCE_CONSOLE=pty bash "$root/scripts/appliance-run.sh" \
   >"$console_out" 2>&1 &
 runpid=$!
-trap session_teardown INT TERM EXIT
+trap session_teardown INT TERM HUP EXIT
 
 # --- find the pty ---------------------------------------------------------
 # cloud-hypervisor writes the pty path into the VM config's
@@ -256,6 +292,16 @@ pty=""
 saw_sock=""
 saw_pid=""
 for _ in $(seq 1 600); do
+  # The run script itself dying exits the loop fast — a setup
+  # failure (missing artifacts, a double-up refusal) kills it
+  # BEFORE run.pid is ever written, and neither latch below would
+  # fire: the loop would burn its full 120s before tailing the
+  # correct diagnosis. A zombie child (exited, unreaped) shows
+  # stat Z. Once the pty is found the break inside the socket
+  # branch wins, so this never races a healthy attach.
+  case "$(ps -p "$runpid" -o stat= 2>/dev/null)" in
+  "" | Z*) break ;;
+  esac
   if [ -S "$app_dir/api.sock" ]; then
     saw_sock=1
     info=$(ch-remote --api-socket "$app_dir/api.sock" info 2>/dev/null || true)
