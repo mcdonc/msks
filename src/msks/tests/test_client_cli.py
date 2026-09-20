@@ -2136,6 +2136,22 @@ def test_image_lines_show_import_times() -> None:
             "bytes": 3 * 1024**3,
             "imported": "not a date",
         },
+        # A year-1 stamp parses on the daemon but has no local-time
+        # representation (#186 review round 2); a non-string is a
+        # daemon that sent JSON where a moment belongs. Both render
+        # a dash, not a traceback.
+        {
+            "name": "debian",
+            "version": "13.6",
+            "bytes": 3 * 1024**3,
+            "imported": "0001-01-01T00:00:01+00:00",
+        },
+        {
+            "name": "debian",
+            "version": "13.6",
+            "bytes": 3 * 1024**3,
+            "imported": 12345,
+        },
     ]
     lines = cli.image_lines(rows)
     assert lines[1] == f"{'image':<24} {'imported':<16} cost"
@@ -2149,6 +2165,8 @@ def test_image_lines_show_import_times() -> None:
     assert lines[3] == f"{'debian:13.6':<24} {older:<16} 3G"
     assert lines[4] == f"{'debian:13.6':<24} {'-':<16} 3G"
     assert lines[5] == f"{'debian:13.6':<24} {'-':<16} 3G"
+    assert lines[6] == f"{'debian:13.6':<24} {'-':<16} 3G"
+    assert lines[7] == f"{'debian:13.6':<24} {'-':<16} 3G"
 
 
 def test_image_lines_without_times_keep_two_columns() -> None:

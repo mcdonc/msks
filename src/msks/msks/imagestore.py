@@ -38,7 +38,8 @@ from pathlib import Path
 IMPORTED_STAMP = "imported"
 
 #: The floor of import-time ordering: entries whose time is
-#: unreadable still sort deterministically after stamped ones.
+#: unreadable sort deterministically — first, before every
+#: stamped entry.
 EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 BOOT_MEMBERS = {

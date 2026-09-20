@@ -481,11 +481,14 @@ def workspace_lines(
 def imported_cell(image: dict) -> str:
     """One import-time cell: local time to the minute, or ``-``
     when the daemon predates stamps (#186) or sends a moment the
-    clock cannot parse."""
+    clock cannot parse or place."""
     stamp = image.get("imported")
     if not stamp:
         return "-"
-    with contextlib.suppress(ValueError):
+    # OverflowError rides extreme stamps: a year-1 moment has no
+    # representation in some local zones. TypeError covers a
+    # daemon sending a non-string.
+    with contextlib.suppress(ValueError, TypeError, OverflowError):
         return (
             datetime.fromisoformat(stamp)
             .astimezone()
