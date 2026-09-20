@@ -573,7 +573,7 @@ events appear on the daemon's events channel for every session.
 
 ## `msks egress`
 
-Egress consent (#69): decide, watch, and inspect a workspace's
+Egress consent (#69, #195): decide, watch, and inspect a workspace's
 outbound-destination verdicts. A workspace in `interactive` mode
 holds each new outbound connection's first packet until a decider
 allows or denies it; `static` workspaces allow only their
@@ -581,6 +581,7 @@ create-time allowlist; `allow` workspaces (the create default)
 record off-list destinations and pass them.
 
 ```text
+msks egress tui ws-dev            # THE decider: a live TUI (see below)
 msks egress rules ws-dev          # the mode, allowlist, and in-effect verdicts
 msks egress requests ws-dev       # the consent rows (audit trail), newest first
 msks egress requests ws-dev --decision pending
@@ -604,6 +605,29 @@ workspace VM stops; the default), `forever` (the workspace's
 lifetime — replayed at every boot). `revoke` undoes an in-effect
 verdict immediately: the flow rules and the destination's live
 connections drop, and new connections gate again.
+
+### `msks egress tui` — the decider's screen
+
+The TUI is the interface a human decides from: it registers this
+client as the workspace's decider (holds wait only while one is
+connected), shows every held request with its countdown, and sends
+verdicts through the same endpoints the subcommands use. Keys:
+
+- `a` / `d` — allow or deny the focused hold for the default
+  duration (`tilrestart`); `A` / `D` open the duration picker
+  (`once / 5m / 15m / tilrestart / forever`).
+- `↑`/`↓` move the queue; `r` flips to the rules screen (the
+  in-effect verdicts with countdowns, and `x` to revoke the focused
+  rule — the row leaves on the daemon's refreshed frame, never
+  optimistically); `r` or `Escape` returns.
+- `q` quits. A dropped connection reconnects with backoff and
+  re-registers (the snapshot re-lands); while disconnected the
+  status line says so — the daemon fail-closes new connects, and
+  in-flight holds run their timeout.
+
+The protocol state (frame parsing, countdowns) is pure and
+unit-tested; the `watch`/`decide`/`revoke` subcommands remain the
+scripting surface (`watch` prints frames as lines).
 
 The create-time posture (`msks create --egress-mode`, `--allow`)
 is fixed with the workspace: `--egress-mode allow|static|interactive`,

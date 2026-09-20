@@ -40,6 +40,7 @@ from .rest import (
 )
 from .rsync import run_workspace_rsync
 from .ssh import data_dir, run_workspace_ssh
+from .tui.consent_app import run_consent_tui
 
 
 def format_workspace(row: dict) -> str:
@@ -1140,8 +1141,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     egress_revoke.add_argument("workspace_id")
     egress_revoke.add_argument("request_id")
+    egress_tui = egress_sub.add_parser(
+        "tui",
+        help="the consent decider TUI (#195): live holds, verdicts, rules",
+    )
+    egress_tui.add_argument("workspace_id", help="decide for this workspace")
     egress_watch = egress_sub.add_parser(
-        "watch", help="stream egress frames; registers as a decider"
+        "watch", help="stream egress frames as lines; registers as a decider"
     )
     egress_watch.add_argument(
         "workspace_id",
@@ -1483,6 +1489,7 @@ def command_table(args: argparse.Namespace, transport) -> dict:
 def egress_command_table(args: argparse.Namespace, transport) -> dict:
     """One entry per ``egress`` subcommand."""
     return {
+        "tui": lambda: run_consent_tui(args.workspace_id),
         "rules": lambda: asyncio.run(
             egress_mod.run_rules(args.workspace_id, transport=transport)
         ),

@@ -8,6 +8,17 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **`msks egress tui` (#195).** The consent decider TUI: a textual app
+  that registers as the workspace's decider, shows held requests with
+  countdowns (`a`/`d` verdicts, `A`/`D` duration picker), and adds a
+  rules screen with revocation — over the frames and endpoints #69
+  serves, reconnecting with backoff (reset after each healthy
+  connection). Countdowns follow the deadline the daemon carries on
+  each request frame, and a registration the daemon rejects (an
+  unknown workspace) exits with the reason instead of waiting. The
+  `watch`/`decide`/`revoke` subcommands remain the scripting
+  surface. See [docs/cli.md](cli.md#msks-egress).
+
 - **`msks-appliance-shell` (#189).** One command from a devenv
   shell for a root shell on the appliance console: it stops the
   appliance, seeds the `debug-shell` marker onto the state disk,
