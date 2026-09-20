@@ -21,6 +21,7 @@ line names the state rather than implying silence.
 
 import asyncio
 import json
+import logging
 import time
 
 import websockets
@@ -60,6 +61,8 @@ AUTH_CLOSE_CODE = 4401
 CONNECTED = "connected"
 RECONNECTING = "reconnecting"
 REFUSED = "refused — bad token?"
+
+logger = logging.getLogger(__name__)
 
 
 def registration_frame(workspace_id: str) -> str:
@@ -118,11 +121,47 @@ def rule_rows(rules: EgressRules | None) -> list:
     return [*rules.allowed, *rules.denied]
 
 
+def rules_rows(screen) -> str | None:
+    """The rules list's focused rule id, or None while absent (a
+    rebuild's swap window) or nothing focused."""
+    try:
+        return focused_rule_id(screen.query_one("#rule-rows", ListView))
+    except Exception:
+        return None
+
+
 def row_map(rows: ListView) -> dict:
     """The list's rows keyed by their request id."""
     return {
         getattr(child, "request_id", None): child for child in rows.children
     }
+
+
+def row_ids(rows: ListView) -> set:
+    """The ids of the rows currently in the list."""
+    return {
+        getattr(child, "request_id", None)
+        for child in rows.children
+        if getattr(child, "request_id", None) is not None
+    }
+
+
+def focused_request_id(rows: ListView | None) -> str | None:
+    """The focused queue row's id, or None when nothing is focused
+    (a None rows is a rebuild's swap window)."""
+    child = rows.highlighted_child if rows is not None else None
+    return getattr(child, "request_id", None)
+
+
+def focus_by_id(rows: ListView, target: str | None) -> None:
+    """Highlight the row carrying *target* (the top when it is
+    absent or None) — positions come from a freshly-built list, so
+    every child under the index is real."""
+    for position, child in enumerate(rows.children):
+        if target is not None and getattr(child, "request_id", None) == target:
+            rows.index = position
+            return
+    ensure_focus(rows)
 
 
 def focused_rule_id(rows: ListView) -> str | None:
@@ -138,24 +177,15 @@ def ensure_focus(rows: ListView) -> None:
         rows.index = 0
 
 
-def restore_focus(rows: ListView, rule_id: str | None) -> None:
-    """After a rebuild, re-highlight the row the user had focused
-    (the top when it left or was never set) — a repaint must never
-    move the target of a destructive key."""
+def focus_rule_by_id(rows: ListView, rule_id: str | None) -> None:
+    """Highlight the rule row carrying *rule_id* (the top when it
+    left or was never set) — a repaint must never move the target of
+    a destructive key."""
     for position, child in enumerate(rows.children):
-        if getattr(child, "rule_id", None) == rule_id and rule_id:
+        if rule_id is not None and getattr(child, "rule_id", None) == rule_id:
             rows.index = position
             return
     ensure_focus(rows)
-
-
-def drop_stale_rows(rows: ListView, current_ids: set) -> None:
-    """Remove rows whose request left (survivors untouched — no
-    flicker)."""
-    for child in list(rows.children):
-        rid = getattr(child, "request_id", None)
-        if rid is not None and rid not in current_ids:
-            child.remove()
 
 
 def refused_close(exc: websockets.ConnectionClosed) -> bool:
@@ -235,9 +265,11 @@ class RulesScreen(Screen):
         super().__init__()
         self.controller = controller
         self.revoke = revoke
+        self._refresh_scheduled = False
+        self._refresh_pending = False
 
     def compose(self) -> ComposeResult:
-        with Vertical():
+        with Vertical(id="rules-body"):
             yield Static(id="allowlist")
             yield ListView(id="rule-rows")
         yield Footer()
@@ -246,32 +278,64 @@ class RulesScreen(Screen):
         self.query_one("#rule-rows", ListView).focus()
 
     def on_show(self) -> None:
-        self.refresh_rows()
+        self.schedule_refresh()
 
-    def refresh_rows(self) -> None:
-        """Repaint the rows from the controller's rules snapshot,
-        preserving the focused rule: a clear+rebuild resets the
-        highlight to the top, and `x` a second later would revoke the
-        wrong rule (the first allow) — the id is captured before the
-        clear and restored after."""
+    def schedule_refresh(self) -> None:
+        """Arm one rows rebuild; single flight, with a re-arm when a
+        frame lands mid-flight (the in-progress rebuild already
+        captured the old snapshot — the re-arm applies the new one
+        the moment it lands)."""
+        if self._refresh_scheduled:
+            self._refresh_pending = True
+            return
+        self._refresh_scheduled = True
+
+        async def flight() -> None:
+            try:
+                while True:
+                    self._refresh_pending = False
+                    await self.rebuild_rows()
+                    if not self._refresh_pending:
+                        return
+            except Exception:
+                logger.exception("rules rebuild failed")
+            finally:
+                self._refresh_scheduled = False
+
+        asyncio.create_task(flight())
+
+    async def rebuild_rows(self) -> None:
+        """Repaint from the controller's rules snapshot with a
+        freshly-built list, preserving the focused rule by id (the
+        top when it left): a mutating ListView carries
+        asynchronously-pruned stale children that shift indexes, so
+        positions must come from children that are all real —
+        `x` must never retarget through a shifted index."""
         rules = self.controller.rules
         self.query_one("#allowlist", Static).update(allowlist_text(rules))
-        rows = self.query_one("#rule-rows", ListView)
-        focused = focused_rule_id(rows)
-        rows.clear()
+        body = self.query_one("#rules-body", Vertical)
+        old = self.query_one("#rule-rows", ListView)
+        focused = focused_rule_id(old)
+        items = []
         for rule in rule_rows(rules):
             item = ListItem(
                 Static(rule_line(rule, self.controller.rule_remaining(rule)))
             )
             item.rule_id = rule.id
-            rows.append(item)
-        restore_focus(rows, focused)
+            items.append(item)
+        fresh = ListView(*items, id="rule-rows")
+        await old.remove()  # frees the id before the fresh list mounts
+        await body.mount(fresh)
+        fresh.focus()
+        focus_rule_by_id(fresh, focused)  # after mount: index sticks
 
     async def action_revoke(self) -> None:
         """Revoke the focused rule through the injected seam; the row
         leaves on the refreshed ``egress.rules`` frame, never
-        optimistically (a still-enforced rule must not hide)."""
-        rule_id = focused_rule_id(self.query_one("#rule-rows", ListView))
+        optimistically (a still-enforced rule must not hide). A key
+        pressed inside a rebuild's swap window reads as nothing
+        focused."""
+        rule_id = rules_rows(self)
         if rule_id is not None:
             await self.revoke(rule_id)
 
@@ -318,12 +382,13 @@ class ConsentDeciderApp(App):
         self._ws_factory = ws_factory or default_ws_factory
         self._decide = decide or rest_decide
         self._revoke = revoke or rest_revoke
-        self._ws = None
         self._conn_state = RECONNECTING
         self._stop = False
         self._flash_msg = ""
         self._flash_until = 0.0
         self._last_conn_error = ""
+        self._rebuild_scheduled = False
+        self._rebuild_pending = False
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -385,7 +450,6 @@ class ConsentDeciderApp(App):
         """Register, then feed every frame to the controller; render
         exceptions are isolated so a UI bug never tears down the
         transport."""
-        self._ws = ws
         self._conn_state = CONNECTED
         await ws.send(registration_frame(self.workspace_id))
         self.controller.reset()
@@ -395,9 +459,11 @@ class ConsentDeciderApp(App):
             self.safe_repaint()
 
     def flash_once(self, message: str) -> None:
-        """Flash a connect failure when its text changes: the first
-        failure (and each new cause) names itself once, retries stay
-        quiet."""
+        """Flash a connect failure when its text changes: byte-identical
+        retries stay quiet; a cause that flips back and forth (a
+        restarting daemon alternating refusal with TLS failure)
+        re-names itself on each transition — bounded by the reconnect
+        backoff, visible for the flash TTL."""
         if message != self._last_conn_error:
             self._last_conn_error = message
             self.flash(message)
@@ -407,7 +473,6 @@ class ConsentDeciderApp(App):
         refusal holds the refused label through its slow retry —
         the slow retry sleeps long enough that the label must land
         here, not after it."""
-        self._ws = None
         self._conn_state = REFUSED if refused else RECONNECTING
         self.safe_repaint()
 
@@ -433,8 +498,10 @@ class ConsentDeciderApp(App):
         the verdict on whatever holds focus when the pick arrives.
         The picker reports through a callback (push_screen_wait
         demands a worker context actions do not have)."""
-        child = self.query_one("#requests", ListView).highlighted_child
-        request_id = getattr(child, "request_id", None)
+        request_id = focused_request_id(self.queue_rows())
+        if request_id is None:
+            self.flash("no hold focused")
+            return
         await self.push_screen(
             DurationScreen(self.finish_pick(decision, request_id))
         )
@@ -453,10 +520,20 @@ class ConsentDeciderApp(App):
 
         return picked
 
+    def queue_rows(self) -> ListView | None:
+        """The queue list, or None during a rebuild's swap window (the
+        old list removed, the fresh one not yet mounted)."""
+        try:
+            return self.query_one("#requests", ListView)
+        except Exception:
+            return None
+
     async def decide_focused(self, decision: str, duration: str) -> None:
         """Send the verdict for the focused hold through the seam; a
-        failure flashes, never crashes the app."""
-        child = self.query_one("#requests", ListView).highlighted_child
+        failure flashes, never crashes the app. A key pressed inside
+        a rebuild's swap window reads as nothing focused."""
+        rows = self.queue_rows()
+        child = rows.highlighted_child if rows is not None else None
         request_id = getattr(child, "request_id", None)
         if request_id is not None:
             await self.send_verdict(request_id, decision, duration)
@@ -517,10 +594,12 @@ class ConsentDeciderApp(App):
         self.update_status()
 
     def refresh_rules_screen(self) -> None:
-        """Repaint the rules screen when it is on top."""
+        """Repaint the rules screen when it is on top (the rebuild
+        awaits widget mounts, so it runs as a task, one flight at a
+        time)."""
         screen = self.screen
         if isinstance(screen, RulesScreen):
-            screen.refresh_rows()
+            screen.schedule_refresh()
 
     def empty_line(self) -> str:
         """The empty-queue line, honest about the connection state."""
@@ -529,27 +608,84 @@ class ConsentDeciderApp(App):
         return f"No held requests — {self._conn_state}."
 
     def sync_rows(self) -> None:
-        """Sync the queue without a rebuild: drop resolved rows,
-        repaint survivors' countdowns in place, append new ones
-        (order is stable, so nothing reorders)."""
+        """Sync the queue to state. A membership change (a hold
+        resolved, a new one arrived) rebuilds the list fresh —
+        Textual prunes removed children asynchronously, so mutating
+        a live ListView leaves stale copies that shift every index
+        under the highlight; a fresh list keeps the destructive
+        keys' target derivable from children that are all real.
+        Same-set ticks repaint survivors' countdowns in place
+        (no flicker, no index motion)."""
         rows = self.query_one("#requests", ListView)
         ordered = self.controller.ordered()
-        drop_stale_rows(rows, {request.id for request in ordered})
-        existing = row_map(rows)
-        for request in ordered:
-            self.sync_one_row(rows, existing.get(request.id), request)
-        ensure_focus(rows)
+        if row_ids(rows) != {request.id for request in ordered}:
+            # The rebuild awaits the old list's removal and the new
+            # one's mount, so it runs as a task, one flight at a
+            # time; a tick while it is in flight sees the membership
+            # still differ and re-arms after it lands.
+            self.schedule_rebuild(focused_request_id(rows))
+            return
+        self.repaint_countdowns(rows, ordered)
         self.query_one("#empty", Static).display = not ordered
         self.query_one("#empty", Static).update(self.empty_line())
 
-    def sync_one_row(self, rows: ListView, item, request) -> None:
-        """Append a new row or repaint a survivor's countdown."""
-        if item is None:
-            rows.append(self.render_item(request))
+    def repaint_countdowns(
+        self, rows: ListView, ordered: list[ConsentRequest]
+    ) -> None:
+        """Repaint each survivor's countdown in place."""
+        existing = row_map(rows)
+        for request in ordered:
+            item = existing.get(request.id)
+            if item is not None:
+                item.query_one(Static).update(
+                    dest_line(request, self.controller.remaining(request))
+                )
+
+    def schedule_rebuild(self, focused: str | None) -> None:
+        """Arm one queue rebuild; single flight, with a re-arm when a
+        request lands mid-flight (the in-progress rebuild already
+        captured the old membership — the re-arm applies the new one
+        the moment it lands, rather than waiting a tick)."""
+        if self._rebuild_scheduled:
+            self._rebuild_pending = True
             return
-        item.query_one(Static).update(
-            dest_line(request, self.controller.remaining(request))
-        )
+        self._rebuild_scheduled = True
+
+        async def flight() -> None:
+            try:
+                while True:
+                    self._rebuild_pending = False
+                    await self.rebuild_queue(
+                        self.controller.ordered(), focused
+                    )
+                    if not self._rebuild_pending:
+                        return
+            except Exception:
+                # A dead rebuild must never wedge the queue in the
+                # swap window (no #requests at all): logged, and the
+                # flag clears so the next tick re-arms.
+                logger.exception("queue rebuild failed")
+            finally:
+                self._rebuild_scheduled = False
+
+        asyncio.create_task(flight())
+
+    async def rebuild_queue(
+        self, ordered: list[ConsentRequest], focused: str | None
+    ) -> None:
+        """Swap in a freshly-built queue list (its mount awaited),
+        restoring focus by id (the top when the focused hold left)
+        so `a`/`d` never retarget through a shifted index."""
+        queue = self.query_one("#queue", Vertical)
+        old = self.query_one("#requests", ListView)
+        items = [self.render_item(request) for request in ordered]
+        fresh = ListView(*items, id="requests")
+        await old.remove()  # frees the id before the fresh list mounts
+        await queue.mount(fresh)
+        fresh.focus()
+        focus_by_id(fresh, focused)  # after mount: index sticks
+        self.query_one("#empty", Static).display = not ordered
+        self.query_one("#empty", Static).update(self.empty_line())
 
     def render_item(self, request: ConsentRequest) -> ListItem:
         """One queue row."""

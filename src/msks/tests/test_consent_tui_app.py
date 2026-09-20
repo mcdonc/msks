@@ -126,6 +126,43 @@ def held_row(app, index: int) -> str:
     return str(rows.children[index].query_one(Static).content)
 
 
+def queue_children(app) -> int:
+    """The queue's row count; -1 inside a rebuild's swap window."""
+    try:
+        return len(app.query_one("#requests").children)
+    except Exception:
+        return -1
+
+
+def rules_children(app) -> int:
+    """The rules screen's row count; -1 inside a rebuild's swap
+    window (or when the rules screen is not on top)."""
+    try:
+        return len(app.screen.query_one("#rule-rows").children)
+    except Exception:
+        return -1
+
+
+def focused_request_id_or_none(app) -> str | None:
+    """The queue's focused id, or None in a swap window."""
+    try:
+        from msks.client.tui.consent_app import focused_request_id
+
+        return focused_request_id(app.query_one("#requests"))
+    except Exception:
+        return None
+
+
+def rules_focus(app) -> str | None:
+    """The focused rule id, or None during a swap window."""
+    try:
+        from msks.client.tui.consent_app import focused_rule_id
+
+        return focused_rule_id(app.screen.query_one("#rule-rows"))
+    except Exception:
+        return None
+
+
 def status_line(app) -> str:
     return str(app.query_one("#status").content)
 
@@ -138,6 +175,20 @@ async def wait_for(condition, tries: int = 200, delay: float = 0.02) -> None:
             return
         await asyncio.sleep(delay)
     raise AssertionError("condition never landed")
+
+
+async def press_until(pilot, key: str, landed, tries: int = 40) -> None:
+    """Press a key until its effect lands — an action pressed inside
+    a rebuild's swap window no-ops (by design), so the tests retry."""
+    for _ in range(tries):
+        await pilot.press(key)
+        try:
+            if landed():
+                return
+        except Exception:
+            pass
+        await asyncio.sleep(0.05)
+    raise AssertionError(f"{key!r} never took effect")
 
 
 async def test_the_queue_lifecycle() -> None:
@@ -154,7 +205,7 @@ async def test_the_queue_lifecycle() -> None:
     )
     app, seams = make_app(factory)
     async with app.run_test() as pilot:
-        await wait_for(lambda: len(app.query_one("#requests").children) == 2)
+        await wait_for(lambda: queue_children(app) == 2)
         await pilot.pause()
         assert "api.example:443" in held_row(app, 0)
         assert "raw.example (all ports)" in held_row(app, 1)
@@ -174,10 +225,10 @@ async def test_the_queue_lifecycle() -> None:
             )
         )
         app.safe_repaint()
-        await wait_for(lambda: len(app.query_one("#requests").children) == 1)
-        # d denies the survivor.
-        await pilot.press("d")
-        await wait_for(lambda: len(seams["decided"]) == 2)
+        await wait_for(lambda: queue_children(app) == 1)
+        # d denies the survivor (retried: the press can land in the
+        # rebuild's swap window right after the resolve).
+        await press_until(pilot, "d", lambda: len(seams["decided"]) == 2)
         assert seams["decided"][-1] == ("ws-dev", "r2", "deny", "tilrestart")
         app.action_quit_screen()
     assert factory.made[0].sent and factory.made[0].closed
@@ -196,9 +247,10 @@ async def test_the_duration_picker() -> None:
         assert seams["decided"] == [("ws-dev", "r1", "allow", "5m")]
         # D + Escape cancels: nothing more decided.
         factory.made[0].push(request_frame("r3"))
-        await wait_for(lambda: len(app.controller.pending) == 2)
-        await pilot.press("D")
-        await wait_for(lambda: type(app.screen).__name__ == "DurationScreen")
+        await wait_for(lambda: queue_children(app) == 2)
+        await press_until(
+            pilot, "D", lambda: type(app.screen).__name__ == "DurationScreen"
+        )
         await pilot.press("escape")
         await pilot.pause()
         assert len(seams["decided"]) == 1
@@ -212,16 +264,23 @@ async def test_the_rules_screen_revokes() -> None:
         await pilot.pause()
         await pilot.press("r")
         await wait_for(lambda: type(app.screen).__name__ == "RulesScreen")
-        await wait_for(
-            lambda: len(app.screen.query_one("#rule-rows").children) == 2
-        )
+        await wait_for(lambda: rules_children(app) == 2)
+        await wait_for(lambda: rules_children(app) >= 0)
         header = str(app.screen.query_one("#allowlist").content)
         assert "mode interactive" in header
         assert ".debian.org" in header
-        rows = app.screen.query_one("#rule-rows")
-        assert len(rows.children) == 2
-        assert "allowed" in str(rows.children[0].query_one(Static).content)
-        assert "forever" in str(rows.children[1].query_one(Static).content)
+        await wait_for(lambda: rules_children(app) == 2)
+
+        def rule_text(i: int) -> str:
+            return str(
+                app.screen.query_one("#rule-rows")
+                .children[i]
+                .query_one(Static)
+                .content
+            )
+
+        await wait_for(lambda: "allowed" in rule_text(0))
+        assert "forever" in rule_text(1)
         # x revokes the focused rule (allowed, first).
         await pilot.press("x")
         await wait_for(lambda: len(seams["revoked"]) == 1)
@@ -516,10 +575,163 @@ async def test_a_verdict_failure_through_the_rest_seam(monkeypatch) -> None:
 
     app._decide = gone
     async with app.run_test() as pilot:
-        await wait_for(lambda: app.query_one("#requests").children)
-        await pilot.press("a")
-        await wait_for(lambda: "decide failed" in status_line(app))
+        await wait_for(lambda: queue_children(app) == 1)
+        await press_until(
+            pilot, "a", lambda: "decide failed" in status_line(app)
+        )
         assert "404" in status_line(app)
+        app.action_quit_screen()
+
+
+async def test_a_resolved_hold_above_focus_never_retargets() -> None:
+    """The destructive-key retarget the third review proved: a hold
+    resolving ABOVE the focused one shifts every index; with the
+    fresh-list rebuild the focused id keeps the verdict on the row
+    the operator sees lit."""
+    from msks.client.tui.consent_app import focused_request_id
+
+    factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
+    app, seams = make_app(factory)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: queue_children(app) == 1)
+        factory.made[0].push(request_frame("r2"))
+        factory.made[0].push(request_frame("r3"))
+        await wait_for(lambda: queue_children(app) == 3)
+        await pilot.press("down")  # r2
+        await pilot.pause()
+        rows = app.query_one("#requests")
+        assert focused_request_id(rows) == "r2"
+        # r1 (above) resolves: the rebuild must keep r2 focused.
+        app.controller.apply_frame(
+            json.dumps(
+                {
+                    "event": "egress.resolved",
+                    "data": {"request_id": "r1", "decision": "expired"},
+                }
+            )
+        )
+        app.safe_repaint()
+        # The rebuild is async: the row count lands first, the
+        # restored focus a beat later — wait on the focus itself.
+        await wait_for(
+            lambda: (
+                queue_children(app) == 2
+                and focused_request_id_or_none(app) == "r2"
+            )
+        )
+        await press_until(pilot, "a", lambda: len(seams["decided"]) == 1)
+        assert seams["decided"] == [("ws-dev", "r2", "allow", "tilrestart")]
+        app.action_quit_screen()
+
+
+async def test_the_focused_hold_leaving_falls_to_a_live_target() -> None:
+    """The focused hold resolving must not leave the keys inert or
+    aimed at a phantom: the rebuild falls back to the top."""
+
+    factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
+    app, seams = make_app(factory)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: app.query_one("#requests").children)
+        factory.made[0].push(request_frame("r2"))
+        await wait_for(lambda: len(app.controller.pending) == 2)
+        app.controller.apply_frame(
+            json.dumps(
+                {
+                    "event": "egress.resolved",
+                    "data": {"request_id": "r1", "decision": "expired"},
+                }
+            )
+        )
+        app.safe_repaint()
+        await wait_for(
+            lambda: (
+                queue_children(app) == 1
+                and focused_request_id_or_none(app) == "r2"
+            )
+        )
+        await press_until(pilot, "d", lambda: len(seams["decided"]) == 1)
+        assert seams["decided"][0][1] == "r2"
+        app.action_quit_screen()
+
+
+async def test_rules_refresh_survives_a_shifted_snapshot() -> None:
+    """The rules rebuild pins the shifted case the third review
+    proved (a row above the focus leaving): the focused id keeps `x`
+    on the rule the operator sees, and a focused rule that left
+    falls to the top."""
+    factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
+    app, seams = make_app(factory)
+    async with app.run_test() as pilot:
+        await pilot.press("r")
+        await wait_for(lambda: rules_children(app) == 2)
+        await pilot.press("down")  # d1
+        await pilot.pause()
+        assert rules_focus(app) == "d1"
+        # a1 revoked + a new deny e1: d1 shifts to the top.
+        app.controller.apply_frame(
+            json.dumps(
+                {
+                    "event": "egress.rules",
+                    "data": {
+                        "workspace_id": "ws",
+                        "mode": "interactive",
+                        "allow_list": [],
+                        "allowed": [],
+                        "denied": [
+                            {
+                                "id": "d1",
+                                "dest_host": "203.0.113.7",
+                                "dest_port": 0,
+                                "decision": "denied",
+                                "duration": "forever",
+                                "decided_at": 201.0,
+                                "decided_by": "token",
+                            },
+                            {
+                                "id": "e1",
+                                "dest_host": "198.51.100.9",
+                                "dest_port": 8443,
+                                "decision": "denied",
+                                "duration": "5m",
+                                "decided_at": 205.0,
+                                "decided_by": "token",
+                            },
+                        ],
+                    },
+                }
+            )
+        )
+        app.safe_repaint()
+        await wait_for(lambda: rules_focus(app) == "d1")
+        await press_until(pilot, "x", lambda: len(seams["revoked"]) == 1)
+        assert seams["revoked"] == [("ws-dev", "d1")]  # still the right rule
+        # And the focused rule leaving falls to the top.
+        app.controller.apply_frame(
+            json.dumps(
+                {
+                    "event": "egress.rules",
+                    "data": {
+                        "workspace_id": "ws",
+                        "mode": "interactive",
+                        "allow_list": [],
+                        "allowed": [],
+                        "denied": [
+                            {
+                                "id": "e1",
+                                "dest_host": "198.51.100.9",
+                                "dest_port": 8443,
+                                "decision": "denied",
+                                "duration": "5m",
+                                "decided_at": 205.0,
+                                "decided_by": "token",
+                            }
+                        ],
+                    },
+                }
+            )
+        )
+        app.safe_repaint()
+        await wait_for(lambda: rules_focus(app) == "e1")
         app.action_quit_screen()
 
 
@@ -531,9 +743,7 @@ async def test_the_rules_screen_refreshes_on_frames(monkeypatch) -> None:
     app, seams = make_app(factory)
     async with app.run_test() as pilot:
         await pilot.press("r")
-        await wait_for(
-            lambda: len(app.screen.query_one("#rule-rows").children) == 2
-        )
+        await wait_for(lambda: rules_children(app) == 2)
         # Revoke succeeds; the frame drops the row; the screen
         # repaints without backing out.
         await pilot.press("x")
@@ -553,9 +763,7 @@ async def test_the_rules_screen_refreshes_on_frames(monkeypatch) -> None:
             )
         )
         app.safe_repaint()
-        await wait_for(
-            lambda: len(app.screen.query_one("#rule-rows").children) == 0
-        )
+        await wait_for(lambda: rules_children(app) == 0)
         app.action_quit_screen()
 
 
@@ -582,20 +790,13 @@ async def test_rules_refresh_preserves_the_focused_rule() -> None:
     app, seams = make_app(factory)
     async with app.run_test() as pilot:
         await pilot.press("r")
-        await wait_for(
-            lambda: len(app.screen.query_one("#rule-rows").children) == 2
-        )
+        await wait_for(lambda: rules_children(app) == 2)
         await pilot.press("down")  # d1, the denied row
         await pilot.pause()
-        from msks.client.tui.consent_app import focused_rule_id
-
-        assert focused_rule_id(app.screen.query_one("#rule-rows")) == "d1"
+        assert rules_focus(app) == "d1"
         app.safe_repaint()  # the tick's repaint
-        await wait_for(
-            lambda: focused_rule_id(app.screen.query_one("#rule-rows")) == "d1"
-        )
-        await pilot.press("x")
-        await wait_for(lambda: len(seams["revoked"]) == 1)
+        await wait_for(lambda: rules_focus(app) == "d1")
+        await press_until(pilot, "x", lambda: len(seams["revoked"]) == 1)
         assert seams["revoked"] == [("ws-dev", "d1")]  # the right rule
         app.action_quit_screen()
 
@@ -605,13 +806,13 @@ async def test_the_picker_decides_the_hold_it_opened_on() -> None:
     verdict to the neighbor that inherits focus."""
     factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
     app, seams = make_app(factory)
-    factory.made and None
     async with app.run_test() as pilot:
-        await wait_for(lambda: app.query_one("#requests").children)
+        await wait_for(lambda: queue_children(app) == 1)
         factory.made[0].push(request_frame("r2"))
-        await wait_for(lambda: len(app.controller.pending) == 2)
-        await pilot.press("A")
-        await wait_for(lambda: type(app.screen).__name__ == "DurationScreen")
+        await wait_for(lambda: queue_children(app) == 2)
+        await press_until(
+            pilot, "A", lambda: type(app.screen).__name__ == "DurationScreen"
+        )
         # The hold the picker opened on resolves mid-pick.
         app.controller.apply_frame(
             json.dumps(
@@ -676,3 +877,163 @@ def test_ws_connect_kwargs_and_shared_ssl(monkeypatch) -> None:
     monkeypatch.setattr(consent_app, "_SHARED_SSL", [None])
     first = consent_app.shared_ssl()
     assert consent_app.shared_ssl() is first  # one build, then cached
+
+
+async def test_rebuild_re_arms_when_frames_land_mid_flight() -> None:
+    """A frame arriving while a rebuild is in flight is applied the
+    moment that flight lands (the pending re-arm), not on the next
+    tick."""
+    factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
+    app, _ = make_app(factory)
+    async with app.run_test() as pilot:
+        await pilot.press("r")
+        await wait_for(lambda: rules_children(app) == 2)
+        screen = app.screen
+        calls = []
+
+        async def counting():
+            calls.append(1)
+            if len(calls) == 1:  # a frame lands mid-first-rebuild
+                screen.schedule_refresh()
+
+        screen.rebuild_rows = counting
+        screen.schedule_refresh()
+        await pilot.pause()
+        await pilot.pause()
+        assert len(calls) == 2  # the re-arm looped, then settled
+        assert screen._refresh_scheduled is False
+        app.action_quit_screen()
+
+
+async def test_schedule_rebuild_pending_rearm() -> None:
+    """The queue's rebuild re-arms the same way: a request landing
+    mid-rebuild loops the flight instead of waiting a tick."""
+    factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
+    app, _ = make_app(factory)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: queue_children(app) == 1)
+        calls = []
+
+        async def counting(rows, focused):
+            calls.append(1)
+            if len(calls) == 1:  # a request lands mid-first-rebuild
+                app.schedule_rebuild(focused)
+
+        app.rebuild_queue = counting
+        app.schedule_rebuild(None)
+        await pilot.pause()
+        await pilot.pause()
+        assert len(calls) == 2
+        assert app._rebuild_scheduled is False
+        app.action_quit_screen()
+
+
+async def test_queue_rows_returns_none_in_a_swap_window() -> None:
+    """queue_rows reads a mid-swap window as no list (None), the
+    queue paths' signal for "nothing focused right now"."""
+    factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
+    app, _ = make_app(factory)
+    async with app.run_test():
+        await wait_for(lambda: queue_children(app) == 1)
+        real_query = app.query_one
+
+        def boom(*a, **k):
+            raise RuntimeError("swap window")
+
+        app.query_one = boom
+        assert app.queue_rows() is None
+        app.query_one = real_query
+        assert app.queue_rows() is not None
+        app.action_quit_screen()
+
+
+async def test_action_revoke_in_a_swap_window() -> None:
+    """x pressed while the rules list is mid-swap revokes nothing and
+    raises nothing."""
+    factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
+    app, seams = make_app(factory)
+    async with app.run_test() as pilot:
+        await pilot.press("r")
+        await wait_for(lambda: rules_children(app) == 2)
+        screen = app.screen
+        # Simulate the swap window: the query for #rule-rows fails.
+        screen.query_one = lambda *a, **k: (_ for _ in ()).throw(
+            RuntimeError("swap window")
+        )
+        await screen.action_revoke()
+        assert seams["revoked"] == []
+        app.action_quit_screen()
+
+
+async def test_a_dying_rebuild_logs_and_re_arms() -> None:
+    """A rebuild that raises mid-swap is logged and never wedges the
+    single-flight flag: the next tick re-arms."""
+    factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
+    app, _ = make_app(factory)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: queue_children(app) == 1)
+
+        # Make the next rebuild blow up, arm it, and let it die.
+        async def boom(rows, focused):
+            raise RuntimeError("swap exploded")
+
+        app.rebuild_queue = boom
+        app.schedule_rebuild(None)
+        await pilot.pause()
+        assert app._rebuild_scheduled is False  # finally: cleared
+        # A dying rules rebuild clears its flag too.
+        factory_rules = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
+        app2, _ = make_app(factory_rules)
+        async with app2.run_test() as pilot2:
+            await pilot2.press("r")
+            await wait_for(lambda: rules_children(app2) == 2)
+            screen = app2.screen
+
+            async def rules_boom():
+                raise RuntimeError("rules swap exploded")
+
+            screen.rebuild_rows = rules_boom
+            screen.schedule_refresh()
+            await pilot2.pause()
+            assert screen._refresh_scheduled is False
+            app2.action_quit_screen()
+        app.action_quit_screen()
+
+
+async def test_pick_duration_and_decide_in_a_swap_window() -> None:
+    """A key pressed while the queue list is mid-swap reads as
+    nothing focused: the picker flashes instead of deciding the
+    neighbor."""
+
+    factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
+    app, seams = make_app(factory)
+    async with app.run_test():
+        await wait_for(lambda: queue_children(app) == 1)
+        # Simulate the swap window: no list to read focus from.
+        app.queue_rows = lambda: None
+        await app.action_allow_duration()
+        assert type(app.screen).__name__ != "DurationScreen"
+        assert "no hold focused" in status_line(app)
+        await app.decide_focused("allow", "forever")  # also nothing focused
+        assert "no hold focused" in status_line(app)
+        assert seams["decided"] == []
+        app.action_quit_screen()
+
+
+async def test_paint_rows_skips_a_row_that_left_mid_tick() -> None:
+    """The in-place repaint (same-set tick) skips an ordered request
+    whose row is already gone — the loop moves to the next item."""
+
+    class Ghost:
+        id = "gone"
+
+    factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
+    app, _ = make_app(factory)
+    async with app.run_test():
+        await wait_for(lambda: queue_children(app) == 1)
+        rows = app.query_one("#requests")
+        live = app.controller.ordered()[0]
+        app.repaint_countdowns(
+            rows, [Ghost(), live]
+        )  # ghost skipped, live repainted
+        app.action_quit_screen()
