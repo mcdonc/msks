@@ -1495,7 +1495,7 @@ async def test_resize_maps_a_refused_shrink_to_409(client, tmp_path) -> None:
         headers=auth(),
     )
     assert refused.status_code == 409
-    assert "resize2fs refused" in refused.json()["detail"]
+    assert "the shrink refused" in refused.json()["detail"]
     assert "shrink less" in refused.json()["detail"]
 
 
@@ -1521,24 +1521,108 @@ async def test_resize_root_without_an_overlay_updates_the_row(client) -> None:
 async def test_resize_names_a_vanished_row(client, monkeypatch) -> None:
     """A row that vanishes under the move-lock answers 404, not a
     None crash."""
-    http, _app, _stub = client
+    http, app, _stub = client
     created = await http.post(
         "/api/v1/workspaces",
         json={"id": "ws-gone", "kernel": "/k", "rootfs": "/r", "home_mib": 64},
         headers=auth(),
     )
     assert created.status_code == 201
+    real_get = app.state.model.get_workspace
+    calls = {"n": 0}
 
-    async def vanished(*args, **kwargs) -> bool:
-        return False
+    async def vanishing(workspace_id):
+        # The guard calls see the row; the final read answers None —
+        # the delete won the race between them.
+        calls["n"] += 1
+        if calls["n"] > 2:
+            return None
+        return await real_get(workspace_id)
 
-    monkeypatch.setattr(_app.state.model, "set_sizes", vanished)
+    monkeypatch.setattr(app.state.model, "get_workspace", vanishing)
     resized = await http.post(
         "/api/v1/workspaces/ws-gone/resize",
         json={"home_mib": 128},
         headers=auth(),
     )
     assert resized.status_code == 404
+
+
+async def test_resize_refuses_below_the_overlays_virtual_size(client) -> None:
+    """The file is the truth, not the row: create clamps the overlay
+    to the base image's size, so a request above the row can still be
+    below the overlay — answer the grow-only 400, not a qemu-img 503
+    (#187 review)."""
+    import subprocess as sp
+
+    http, app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-clamp",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "root_mib": 256,
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    overlay = (
+        app.state.settings.vmm.state_dir / "vms" / "ws-clamp" / "root.qcow2"
+    )
+    overlay.parent.mkdir(parents=True, exist_ok=True)
+    sp.run(
+        ["qemu-img", "create", "-f", "qcow2", str(overlay), "512M"],
+        check=True,
+    )
+    refused = await http.post(
+        "/api/v1/workspaces/ws-clamp/resize",
+        json={"root_mib": 384},
+        headers=auth(),
+    )
+    assert refused.status_code == 400
+    assert "512 MiB" in refused.json()["detail"]
+    assert "only grows" in refused.json()["detail"]
+
+
+async def test_resize_combined_failure_leaves_nothing_moved(client) -> None:
+    """The overlay grow runs first: its failure strands no half-moved
+    home side, and the row keeps its old sizes."""
+    http, app, _stub = client
+    failing_qemu = app.state.settings.vmm.state_dir / "qemu-img-fail"
+    failing_qemu.parent.mkdir(parents=True, exist_ok=True)
+    failing_qemu.write_text("#!/bin/sh\nexit 1\n")
+    failing_qemu.chmod(0o755)
+    app.state.settings.vmm.qemu_img = str(failing_qemu)
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-combined",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "root_mib": 256,
+            "home_mib": 64,
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    await plant_volume(app, "ws-combined", 64)
+    overlay = (
+        app.state.settings.vmm.state_dir / "vms" / "ws-combined" / "root.qcow2"
+    )
+    overlay.parent.mkdir(parents=True, exist_ok=True)
+    overlay.write_bytes(b"")
+    failed = await http.post(
+        "/api/v1/workspaces/ws-combined/resize",
+        json={"root_mib": 512, "home_mib": 128},
+        headers=auth(),
+    )
+    assert failed.status_code == 503
+    row = await app.state.model.get_workspace("ws-combined")
+    assert row["root_mib"] == 256
+    assert row["home_mib"] == 64
+    volume = app.state.settings.vmm.state_dir / "volumes" / "ws-combined.ext4"
+    assert volume.stat().st_size == 64 * 1024 * 1024
 
 
 async def test_resize_refuses_a_foreign_host(client, monkeypatch) -> None:

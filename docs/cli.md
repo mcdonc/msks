@@ -282,7 +282,7 @@ its guest sees as quotas — through `POST
 
 ```text
 $ msks resize ws4 --home-mib 4096
-resized ws4: root 10240 MiB, home 4096 MiB (starts apply at the next boot)
+resized ws4: root 10240 MiB, home 4096 MiB
 ```
 
 - `--home-mib` grows or shrinks the `/home` volume. The daemon
@@ -290,9 +290,12 @@ resized ws4: root 10240 MiB, home 4096 MiB (starts apply at the next boot)
   would cut into used blocks answers a named `409` (free data in
   the workspace or shrink less).
 - `--root-mib` grows the root overlay only; the next start's
-  cloud-init fills the larger device for free. Shrinking the root
-  stays unsupported — `msks rm` and a fresh create, or a factory
-  reset, reclaim a root instead.
+  cloud-init fills the larger device for free (the command's output
+  says so when the root moved — a home resize's bytes are already in
+  place). The grow-only rule is measured against the overlay's actual
+  virtual size, which sits above the row when create clamped it to
+  the base image. Shrinking the root stays unsupported — `msks rm`
+  and a fresh create, or a factory reset, reclaim a root instead.
 
 The workspace must be in a free lifecycle state (`created`,
 `stopped`, `absent`) — a running or paused workspace answers `409`.

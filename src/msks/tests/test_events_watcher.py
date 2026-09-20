@@ -316,3 +316,56 @@ async def test_scan_storage_publishes_a_baseline(tmp_path: Path) -> None:
     message = json.loads(queue.get_nowait())
     assert message["event"] == "storage.pressure"
     assert message["data"]["pressure"] in ("ok", "warn")
+
+
+async def test_resize_publishes_the_event(tmp_path: Path) -> None:
+    """A completed resize announces workspace.resized with the new
+    sizes and a non-empty change list (#187 review: the payload was
+    unpinned)."""
+    import httpx
+
+    api, app, _stub = api_with_stub(tmp_path)
+    async with api.router.lifespan_context(api):
+        import subprocess as sp
+
+        volume = app.state.settings.vmm.state_dir / "volumes" / "ws-evt.ext4"
+        volume.parent.mkdir(parents=True, exist_ok=True)
+        with volume.open("wb") as handle:
+            handle.truncate(64 * 1024 * 1024)
+        sp.run(
+            ["mkfs.ext4", "-q", "-F", "-L", "msks-home", str(volume)],
+            check=True,
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=api), base_url="https://t"
+        ) as http:
+            created = await http.post(
+                "/api/v1/workspaces",
+                json={
+                    "id": "ws-evt",
+                    "kernel": "/k",
+                    "rootfs": "/r",
+                    "home_mib": 64,
+                },
+                headers=auth(),
+            )
+            assert created.status_code == 201
+            queue = api.state.hub.subscribe()
+            try:
+                resized = await http.post(
+                    "/api/v1/workspaces/ws-evt/resize",
+                    json={"home_mib": 128},
+                    headers=auth(),
+                )
+                assert resized.status_code == 200
+                published = None
+                for _ in range(20):
+                    message = json.loads(queue.get_nowait())
+                    if message["event"] == "workspace.resized":
+                        published = message
+                        break
+            finally:
+                api.state.hub.unsubscribe(queue)
+    assert published is not None
+    assert published["data"]["home_mib"] == 128
+    assert published["data"]["changes"]

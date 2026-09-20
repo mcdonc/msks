@@ -1167,54 +1167,84 @@ def build_api(app) -> FastAPI:
                     f"(root {row['root_mib']} MiB, home {row['home_mib']} MiB)"
                 ),
             )
-        if body.root_mib is not None and body.root_mib < row["root_mib"]:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "the root overlay only grows (its partition table and "
-                    "filesystem belong to the guest); msks rm and a fresh "
-                    "create, or factory reset, reclaim a root instead"
-                ),
-            )
         async with move_lock(app, workspace_id):
             row = await rechecked_row(app, workspace_id)
-            state_dir = app.state.settings.vmm.state_dir
+            vmm = app.state.settings.vmm
+            state_dir = vmm.state_dir
             home = persist.home_volume_path(state_dir, workspace_id)
             overlay = persist.overlay_path(state_dir, workspace_id)
             moved: list[str] = []
-            if body.home_mib is not None and body.home_mib != row["home_mib"]:
-                if not home.is_file():
-                    # The heal contract, not a surprise 404: a start
-                    # rebuilds a blank volume at the new size.
-                    pass
-                else:
-                    try:
-                        direction = await persist.resize_home_volume(
-                            home, body.home_mib, app.state.settings.vmm
-                        )
-                    except MicrovmError as exc:
-                        raise HTTPException(
-                            status_code=409,
-                            detail=(
-                                f"resize2fs refused: {exc}; free data in "
-                                "the workspace's /home (or shrink less) "
-                                "and retry"
-                            ),
-                        ) from None
-                    moved.append(f"home {direction} to {body.home_mib} MiB")
             if body.root_mib is not None and body.root_mib != row["root_mib"]:
+                # The grow-only rule measured against the truth: the
+                # overlay file when it exists (create clamps it to
+                # the base image's size, so it can sit above the row),
+                # the row otherwise (the heal path builds at the
+                # row's size). Its partition table and filesystem
+                # belong to the guest — only the guest can move a
+                # root down. (#187 review.)
+                ceiling_mib = row["root_mib"]
                 if overlay.is_file():
-                    await persist.grow_overlay(
-                        overlay, body.root_mib, app.state.settings.vmm
+                    virtual_b, _format = await persist.base_info(
+                        overlay, vmm.qemu_img
                     )
-                    moved.append(f"root grew to {body.root_mib} MiB")
-            if not await app.state.model.set_sizes(
-                workspace_id, body.root_mib, body.home_mib
-            ):
+                    ceiling_mib = virtual_b // (1024 * 1024)
+                if body.root_mib <= ceiling_mib:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "the root overlay only grows; this one is "
+                            f"{ceiling_mib} MiB and the request asked "
+                            f"for {body.root_mib} MiB — msks rm and a "
+                            "fresh create, or factory reset, reclaim a "
+                            "root instead"
+                        ),
+                    )
+                if overlay.is_file():
+                    await persist.grow_overlay(overlay, body.root_mib, vmm)
+                # A missing overlay is the heal contract, not an
+                # error: the next start builds it at the row's size.
+                moved.append(f"root grew to {body.root_mib} MiB")
+                await app.state.model.set_sizes(
+                    workspace_id, body.root_mib, None
+                )
+            if body.home_mib is not None and body.home_mib != row["home_mib"]:
+                if home.is_file():
+                    if body.home_mib < row["home_mib"]:
+                        # Only a shrink's refusal is the client's to
+                        # fix (data must move out of the tail); a
+                        # grow-side tool failure is a daemon fault
+                        # and keeps its 503.
+                        try:
+                            direction = await persist.resize_home_volume(
+                                home, body.home_mib, vmm
+                            )
+                        except MicrovmError as exc:
+                            raise HTTPException(
+                                status_code=409,
+                                detail=(
+                                    f"the shrink refused: {exc}; free data "
+                                    "in the workspace's /home (or shrink "
+                                    "less) and retry"
+                                ),
+                            ) from None
+                    else:
+                        direction = await persist.resize_home_volume(
+                            home, body.home_mib, vmm
+                        )
+                    moved.append(f"home {direction} to {body.home_mib} MiB")
+                # A missing volume heals the same way the overlay
+                # does: the row records the size, the next start
+                # builds the blank artifact at it.
+                await app.state.model.set_sizes(
+                    workspace_id, None, body.home_mib
+                )
+            updated = await app.state.model.get_workspace(workspace_id)
+            if updated is None:
+                # The row vanished under the move-lock (a concurrent
+                # delete won it): answer 404, not a None crash.
                 raise HTTPException(
                     status_code=404, detail="no such workspace"
                 )
-            updated = await app.state.model.get_workspace(workspace_id)
             await hub.publish(
                 "workspace.resized",
                 {

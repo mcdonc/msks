@@ -566,11 +566,21 @@ def cmd_resize(
             transport=transport,
         )
     )
-    print(
-        f"resized {row['id']}: root {row['root_mib']} MiB, "
-        f"home {row['home_mib']} MiB (starts apply at the next boot)"
-    )
+    print(resize_message(row, body))
     return 0
+
+
+def resize_message(row: dict, body: dict) -> str:
+    """The result line: the new sizes, with the boot note only where
+    it applies — home bytes moved at once on the host; only the
+    root's guest-side fill waits for the next boot."""
+    line = (
+        f"resized {row['id']}: root {row['root_mib']} MiB, "
+        f"home {row['home_mib']} MiB"
+    )
+    if "root_mib" in body:
+        line += " (the guest fills the larger root on its next boot)"
+    return line
 
 
 def format_image(row: dict) -> str:

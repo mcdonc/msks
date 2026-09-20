@@ -2248,6 +2248,7 @@ def test_cmd_resize_prints_the_new_sizes(
     assert rc == 0
     assert "resized ws1" in out
     assert "home 4096 MiB" in out
+    assert "next boot" not in out  # a home resize moved the bytes already
 
 
 def test_run_resize_refuses_an_empty_body(
@@ -2277,3 +2278,19 @@ def test_resize_command_wires_flags(
     assert rc == 0
     assert seen["path"] == "/api/v1/workspaces/ws1/resize"
     assert seen["body"] == {"home_mib": 4096}
+
+
+def test_cmd_resize_notes_the_root_boot_fill(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Only the root's guest-side fill waits for a boot; a home-only
+    resize never claims it does (#187 review)."""
+    client_env(monkeypatch)
+    rc = cli.cmd_resize(
+        "ws1",
+        {"root_mib": 20480, "home_mib": 4096},
+        transport=mock(lambda req: httpx.Response(200, json=RESIZED_ROW)),
+    )
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "fills the larger root on its next boot" in out

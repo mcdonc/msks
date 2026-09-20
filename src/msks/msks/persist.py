@@ -310,7 +310,10 @@ async def base_info(base: Path, qemu_img: str) -> tuple[int, str]:
 
 
 async def run_tool(
-    argv: list[str], what: str, cwd: Path | None = None
+    argv: list[str],
+    what: str,
+    cwd: Path | None = None,
+    ok_returncodes: tuple[int, ...] = (),
 ) -> bytes:
     """Run one host tool; a failure becomes a named operator error.
 
@@ -318,7 +321,10 @@ async def run_tool(
     parsed as JSON, and a chatty warning line ahead of the document
     must not turn into a spurious parse failure. ``cwd`` serves the
     seed build (mkisofs takes the payload paths relative to its
-    staging directory).
+    staging directory). ``ok_returncodes`` widens success past 0 —
+    e2fsck's exit code is a bitmask where 1 and 2 mean "errors
+    corrected" (a corrected volume is the tool doing its job), and
+    4 and up are the failures.
     """
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -331,7 +337,7 @@ async def run_tool(
     except FileNotFoundError as exc:
         raise MicrovmError(f"{what}: tool not found: {argv[0]}") from exc
     output, err = await proc.communicate()
-    if proc.returncode != 0:
+    if proc.returncode not in ok_returncodes + (0,):
         detail = (output + err).decode(errors="replace").strip()[:400]
         raise MicrovmError(f"{what} failed ({proc.returncode}): {detail}")
     return output
@@ -356,6 +362,7 @@ async def resize_home_volume(target: Path, home_mib: int, settings) -> str:
     await run_tool(
         [settings.e2fsck, "-fy", str(target)],
         "e2fsck on the home volume",
+        ok_returncodes=(1, 2),  # the bitmask's "errors corrected" bits
     )
     if wanted_b > current_b:
         with target.open("r+b") as handle:

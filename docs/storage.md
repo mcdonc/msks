@@ -86,13 +86,17 @@ Create is not the only time sizes move: `POST
 **stopped** workspace (#184):
 
 - the **/home volume** grows or shrinks. The daemon quiets the
-  filesystem's journal with `e2fsck -fy`, then `resize2fs` moves it
-  and the file follows (a grow truncates up first; a shrink
-  truncates down only after the filesystem agreed — `resize2fs`
-  refuses to shrink below the blocks in use, and that refusal
-  reaches the caller as a named `409` telling the operator to free
-  data in the workspace or shrink less).
-- the **root overlay** grows only — its partition table and root
+  filesystem's journal with `e2fsck -fy` — a volume a hard stop left
+  dirty is corrected here, corrections being that tool's job, not an
+  error — then `resize2fs` moves it and the file follows (a grow
+  truncates up first; a shrink truncates down only after the
+  filesystem agreed — `resize2fs` refuses to shrink below the blocks
+  in use, and that refusal reaches the caller as a named `409`
+  telling the operator to free data in the workspace or shrink
+  less).
+- the **root overlay** grows only, measured against the overlay's
+  actual virtual size (create clamps it to the base image's size, so
+  it can sit above the row) — its partition table and root
   filesystem belong to the guest, and the boot's cloud-init
   `growpart` fills the larger device on the next start for free;
   shrinking it is a factory reset, not a resize.

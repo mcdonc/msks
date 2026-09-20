@@ -642,3 +642,42 @@ def write_e2fsck_stub(directory: Path) -> Path:
     stub.write_text("#!/bin/sh\nexit 0\n")
     stub.chmod(0o755)
     return stub
+
+
+async def test_resize_accepts_a_corrected_volume(tmp_path: Path) -> None:
+    """e2fsck's exit-code bitmask: 1 and 2 mean errors corrected, not
+    failure — a hard-stopped workspace's volume corrects on the first
+    resize and the resize proceeds (#187 review)."""
+    e2fsck = tmp_path / "e2fsck"
+    e2fsck.write_text("#!/bin/sh\nexit 1\n")
+    e2fsck.chmod(0o755)
+    resize2fs = tmp_path / "resize2fs"
+    resize2fs.write_text("#!/bin/sh\nexit 0\n")
+    resize2fs.chmod(0o755)
+    settings = VmmSettings(
+        state_dir=tmp_path,
+        resize2fs=str(resize2fs),
+        e2fsck=str(e2fsck),
+    )
+    home = tmp_path / "home.ext4"
+    with home.open("wb") as handle:
+        handle.truncate(64 * persist.MIB)
+    assert await persist.resize_home_volume(home, 128, settings) == "grew"
+
+
+async def test_resize_names_an_uncorrectable_volume(tmp_path: Path) -> None:
+    """e2fsck exit 4 (uncorrectable) is a real failure: a named
+    MicrovmError, not a silent pass."""
+    e2fsck = tmp_path / "e2fsck"
+    e2fsck.write_text("#!/bin/sh\necho 'uncorrectable' >&2\nexit 4\n")
+    e2fsck.chmod(0o755)
+    settings = VmmSettings(
+        state_dir=tmp_path,
+        resize2fs=str(tmp_path / "absent"),
+        e2fsck=str(e2fsck),
+    )
+    home = tmp_path / "home.ext4"
+    with home.open("wb") as handle:
+        handle.truncate(64 * persist.MIB)
+    with pytest.raises(MicrovmError, match="e2fsck"):
+        await persist.resize_home_volume(home, 128, settings)
