@@ -449,6 +449,55 @@ KEY_CASES = [
     ("conntrack_tool", "/ct", "net.conntrack_tool", "/ct"),
     ("audit_hmac_key", "k1", "server.audit_hmac_key", "k1"),
     ("ssh_key_type", "ed25519", "vmm.ssh_key_type", "ed25519"),
+    (
+        "secret_store_provider",
+        "file",
+        "secret_store.provider",
+        "file",
+    ),
+    (
+        "secret_store_root",
+        "/srv/msks-secrets",
+        "secret_store.root",
+        Path("/srv/msks-secrets"),
+    ),
+    (
+        "secret_store_age_identity",
+        "/etc/msksd/age.key",
+        "secret_store.age_identity",
+        "/etc/msksd/age.key",
+    ),
+    (
+        "secret_store_region",
+        "eu-west-1",
+        "secret_store.region",
+        "eu-west-1",
+    ),
+    ("secret_store_profile", "prod", "secret_store.profile", "prod"),
+    (
+        "secret_store_prefix",
+        "myteam",
+        "secret_store.prefix",
+        "myteam",
+    ),
+    (
+        "secret_store_project",
+        "uuid-42",
+        "secret_store.project",
+        "uuid-42",
+    ),
+    (
+        "secret_store_cli",
+        "/usr/local/bin/secretspec",
+        "secret_store.cli",
+        "/usr/local/bin/secretspec",
+    ),
+    (
+        "secret_store_timeout_s",
+        45.0,
+        "secret_store.timeout_s",
+        45.0,
+    ),
 ]
 
 

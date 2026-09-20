@@ -10,7 +10,13 @@ from msks.microvm.errors import MicrovmError, MicrovmTimeoutError
 from msks.microvm.spec import VmInfo, VmSpec, VmStatus
 from msks.server import api as api_mod
 from msks.server.api import build_api
-from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
+from msks.settings import (
+    NetSettings,
+    SecretStoreSettings,
+    ServerSettings,
+    Settings,
+    VmmSettings,
+)
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 TOKEN = "test-token"
@@ -71,6 +77,7 @@ async def client(tmp_path: Path):
             bootstrap_token=TOKEN,
             event_poll_s=10.0,
         ),
+        secret_store=SecretStoreSettings(root=tmp_path / "store"),
     )
     app = build_app(settings)
     stub = StubMicrovm()
@@ -1890,3 +1897,232 @@ async def test_resize_names_a_vanished_volume(client, monkeypatch) -> None:
     )
     assert failed.status_code == 503
     assert "unreachable mid-resize" in failed.json()["detail"]
+
+
+# --- secrets (#198) ------------------------------------------------------
+
+
+async def seed_workspace(app, workspace_id: str = "ws-sec") -> None:
+    """A workspace row for minting against."""
+    await app.state.model.create_workspace(
+        VmSpec(workspace_id=workspace_id, kernel=Path("/k"), rootfs=Path("/r"))
+    )
+
+
+def mint_body(**overrides) -> dict:
+    body = {
+        "workspace_id": "ws-sec",
+        "name": "github_api",
+        "dests": ["api.github.com"],
+        "secret": "ghp-real-token",
+    }
+    body.update(overrides)
+    return body
+
+
+async def test_mint_stores_and_answers_the_sentinel_once(client) -> None:
+    http, app, _stub = client
+    await seed_workspace(app)
+    response = await http.post(
+        "/api/v1/secrets", json=mint_body(), headers=auth()
+    )
+    assert response.status_code == 201
+    row = response.json()
+    assert row["sentinel"].startswith("mskssec1_")
+    assert "secret" not in row
+    assert row["dests"] == ["api.github.com"]
+    # The real value landed in the store, under the derived ref.
+    stored = (
+        app.state.settings.secret_store.root
+        / "msks"
+        / "default"
+        / "MSKS_WS_SEC_GITHUB_API"
+    )
+    assert stored.read_text() == "ghp-real-token"
+    assert (
+        "MSKS_WS_SEC_GITHUB_API"
+        in (
+            app.state.settings.secret_store.root / "secretspec.toml"
+        ).read_text()
+    )
+    # Mint is the only view that ever carries the sentinel.
+    listing = await http.get("/api/v1/secrets", headers=auth())
+    assert "sentinel" not in listing.json()[0]
+    audit = await http.get("/api/v1/secrets/audit", headers=auth())
+    assert audit.json()[0]["kind"] == "mint"
+    assert audit.json()[0]["dests"] == ["api.github.com"]
+
+
+async def test_mint_validates_name_dests_and_workspace(client) -> None:
+    http, app, _stub = client
+    await seed_workspace(app)
+    bad_name = await http.post(
+        "/api/v1/secrets", json=mint_body(name="1abc"), headers=auth()
+    )
+    assert bad_name.status_code == 422
+    bad_dest = await http.post(
+        "/api/v1/secrets",
+        json=mint_body(dests=["ht!tp://x"]),
+        headers=auth(),
+    )
+    assert bad_dest.status_code == 422
+    assert "dest" in bad_dest.json()["detail"]
+    no_dests = await http.post(
+        "/api/v1/secrets", json=mint_body(dests=[]), headers=auth()
+    )
+    assert no_dests.status_code == 422
+    unknown = await http.post(
+        "/api/v1/secrets",
+        json=mint_body(workspace_id="nope"),
+        headers=auth(),
+    )
+    assert unknown.status_code == 404
+
+
+async def test_mint_rejects_a_duplicate_label(client) -> None:
+    http, app, _stub = client
+    await seed_workspace(app)
+    first = await http.post(
+        "/api/v1/secrets", json=mint_body(), headers=auth()
+    )
+    assert first.status_code == 201
+    again = await http.post(
+        "/api/v1/secrets", json=mint_body(), headers=auth()
+    )
+    assert again.status_code == 409
+
+
+async def test_mint_reports_an_unreachable_store(client) -> None:
+    http, app, _stub = client
+    await seed_workspace(app)
+    app.state.settings.secret_store.cli = "/nonexistent/secretspec"
+    failed = await http.post(
+        "/api/v1/secrets", json=mint_body(), headers=auth()
+    )
+    assert failed.status_code == 503
+    assert "secret store" in failed.json()["detail"]
+
+
+async def test_renew_extends_in_place(client) -> None:
+    http, app, _stub = client
+    await seed_workspace(app)
+    row = (
+        await http.post("/api/v1/secrets", json=mint_body(), headers=auth())
+    ).json()
+    renewed = await http.post(
+        f"/api/v1/secrets/{row['id']}/renew",
+        json={"ttl_s": 3600},
+        headers=auth(),
+    )
+    assert renewed.status_code == 200
+    assert renewed.json()["expires_at"] is not None
+    missing = await http.post(
+        "/api/v1/secrets/999/renew", json={"ttl_s": 60}, headers=auth()
+    )
+    assert missing.status_code == 404
+
+
+async def test_revoke_cleans_row_store_and_manifest(client) -> None:
+    http, app, _stub = client
+    await seed_workspace(app)
+    row = (
+        await http.post("/api/v1/secrets", json=mint_body(), headers=auth())
+    ).json()
+    revoked = await http.delete(f"/api/v1/secrets/{row['id']}", headers=auth())
+    assert revoked.status_code == 200
+    assert revoked.json()["store_cleaned"] is True
+    listing = await http.get("/api/v1/secrets", headers=auth())
+    assert listing.json() == []
+    root = app.state.settings.secret_store.root
+    assert (
+        "MSKS_WS_SEC_GITHUB_API" not in (root / "secretspec.toml").read_text()
+    )
+    assert not (root / "msks" / "default" / "MSKS_WS_SEC_GITHUB_API").exists()
+    audit = await http.get("/api/v1/secrets/audit", headers=auth())
+    kinds = [event["kind"] for event in audit.json()]
+    assert kinds == ["revoke", "mint"]
+
+
+async def test_revoke_survives_a_failing_store_cleanup(client) -> None:
+    """The row dies first: a leftover value is inert, and the
+    response says it was left behind."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    row = (
+        await http.post("/api/v1/secrets", json=mint_body(), headers=auth())
+    ).json()
+    app.state.settings.secret_store.cli = "/nonexistent/secretspec"
+    revoked = await http.delete(f"/api/v1/secrets/{row['id']}", headers=auth())
+    assert revoked.status_code == 200
+    assert revoked.json()["store_cleaned"] is False
+    listing = await http.get("/api/v1/secrets", headers=auth())
+    assert listing.json() == []
+
+
+async def test_store_check_endpoint(client) -> None:
+    http, _app, _stub = client
+    ok = await http.post("/api/v1/secrets/check", headers=auth())
+    assert ok.status_code == 200
+    assert ok.json() == {"provider": "file", "ok": True}
+
+
+async def test_store_check_names_a_broken_store(client) -> None:
+    http, app, _stub = client
+    app.state.settings.secret_store.cli = "/nonexistent/secretspec"
+    failed = await http.post("/api/v1/secrets/check", headers=auth())
+    assert failed.status_code == 503
+
+
+async def test_secret_routes_require_a_token(client) -> None:
+    http, _app, _stub = client
+    assert (await http.get("/api/v1/secrets")).status_code == 401
+    assert (
+        await http.post("/api/v1/secrets", json=mint_body())
+    ).status_code == 401
+
+
+async def test_revoke_unknown_placeholder_is_a_404(client) -> None:
+    http, _app, _stub = client
+    response = await http.delete("/api/v1/secrets/999", headers=auth())
+    assert response.status_code == 404
+
+
+async def test_mint_survives_the_insert_race(client, monkeypatch) -> None:
+    """Two mints racing past the pre-check: the loser's row insert
+    answers 409 and its store value is cleaned up."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    first = await http.post(
+        "/api/v1/secrets", json=mint_body(), headers=auth()
+    )
+    assert first.status_code == 201
+    real = app.state.model.placeholder_for
+
+    async def blind(workspace_id, name):
+        return None if name == "github_api" else await real(workspace_id, name)
+
+    monkeypatch.setattr(app.state.model, "placeholder_for", blind)
+    raced = await http.post(
+        "/api/v1/secrets", json=mint_body(), headers=auth()
+    )
+    assert raced.status_code == 409
+    assert "collision" in raced.json()["detail"]
+    # The winner's value survives the loser's collision: the row
+    # owns it, and the loser's write was the same bytes anyway.
+    root = app.state.settings.secret_store.root
+    stored = root / "msks" / "default" / "MSKS_WS_SEC_GITHUB_API"
+    assert stored.read_text() == "ghp-real-token"
+    listing = await http.get("/api/v1/secrets", headers=auth())
+    assert len(listing.json()) == 1
+
+
+async def test_mint_dedupes_repeated_dests(client) -> None:
+    http, app, _stub = client
+    await seed_workspace(app)
+    response = await http.post(
+        "/api/v1/secrets",
+        json=mint_body(dests=["API.GitHub.com", "api.github.com"]),
+        headers=auth(),
+    )
+    assert response.status_code == 201
+    assert response.json()["dests"] == ["api.github.com"]

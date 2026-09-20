@@ -65,6 +65,41 @@ let
       install -Dm555 -t $out/bin package/bin/jscpd
     '';
   };
+  # The secretspec CLI (#198): the SecretSpec Python SDK's native
+  # ABI exposes only resolve/report — every write path (set/delete)
+  # lives in the CLI — so the secret store shells out to the binary,
+  # the house pattern for external tools (MSKSD_SECRET_STORE_CLI
+  # names it at runtime). Pinned to the v0.20.0 release tarballs
+  # (cargo-dist builds; same fetchurl-pinning as jscpd above) for
+  # the two linux arches; other platforms fail at eval time. 0.20
+  # reads `set` values from piped stdin (text-trimmed), so secrets
+  # ride stdin, never argv; the exact-bytes `--from-file` flag lands
+  # in 0.21+ and the pin can move then.
+  secretspec = pkgs.stdenv.mkDerivation {
+    pname = "secretspec";
+    version = "0.20.0";
+    src = pkgs.fetchurl {
+      url =
+        if pkgs.stdenv.isx86_64 then
+          "https://github.com/cachix/secretspec/releases/download/v0.20.0/secretspec-x86_64-unknown-linux-gnu.tar.xz"
+        else if pkgs.stdenv.isAarch64 then
+          "https://github.com/cachix/secretspec/releases/download/v0.20.0/secretspec-aarch64-unknown-linux-gnu.tar.xz"
+        else
+          throw "secretspec: no prebuilt binary for ${pkgs.stdenv.hostPlatform.system}";
+      hash =
+        if pkgs.stdenv.isx86_64 then
+          "sha256-NNNMFIxGXICd9UdSYWmClb2RF+UnfWeT7HlwJtQmIRQ="
+        else
+          "sha256-Jbg9vHuFG7NA84QaGdBGoWOQKfGRhY4LPxHi67YjNvI=";
+    };
+    sourceRoot = ".";
+    dontConfigure = true;
+    dontBuild = true;
+    dontStrip = true;
+    installPhase = ''
+      install -Dm555 -t $out/bin secretspec-*/secretspec
+    '';
+  };
 in
 {
   # msks dev environment: Python 3.14 + cloud-hypervisor toolchain (#2).
@@ -130,6 +165,7 @@ in
     # the documented ssh workflow (#112) run over `msks forward`
     qemu # qemu-img for rootfs conversion during guest-image experiments
     rsync # host-side rsync over the forward (#110's sync path)
+    secretspec # the #198 secret store's CLI (pinned release binary)
     virtiofsd # the appliance's read-only /nix/store share (#10)
     ruff
     socat # AF_UNIX <-> pty/stdio plumbing for CH socket debugging

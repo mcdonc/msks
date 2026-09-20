@@ -11,6 +11,7 @@ import json
 import os
 import re
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from fastapi import (
@@ -35,6 +36,12 @@ from ..imagestore import ImageError
 from ..microvm.errors import MicrovmError
 from ..microvm.spec import VmSpec, VmStatus
 from ..model.egress_consent import DECISIONS, DURATIONS
+from ..secretstore import (
+    SecretStoreError,
+    backend_ref,
+    new_sentinel,
+    valid_name,
+)
 from .auth import require_token
 from .events import relay
 from .watcher import watch_loop
@@ -42,6 +49,35 @@ from .watcher import watch_loop
 
 class TokenCreate(BaseModel):
     name: str = "api"
+
+
+class SecretMint(BaseModel):
+    """A mint request (#198): one placeholder for one workspace.
+
+    The real secret rides the request body (the client read it from
+    a file or stdin); it is never echoed in a response.
+    """
+
+    workspace_id: str
+    name: str
+    dests: list[str]
+    secret: str
+    ttl_s: int | None = Field(default=None, ge=1)
+
+
+class SecretRenew(BaseModel):
+    """A renew request: the new lifetime in seconds from now."""
+
+    ttl_s: int = Field(ge=1)
+
+
+#: One destination allowlist entry: an exact hostname or a
+#: label-anchored suffix (``.example.com`` matches every host under
+#: example.com and never ``notexample.com``) — the forms the #194
+#: spike's matcher binds.
+DEST_PATTERN = re.compile(
+    r"^\.?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$"
+)
 
 
 WORKSPACE_ID_PATTERN = r"^[a-z0-9][a-z0-9-]*$"
@@ -761,6 +797,25 @@ async def _workspace_or_404(app, workspace_id: str) -> dict:
     return row
 
 
+def placeholder_view(row: dict, sentinel: bool = True) -> dict:
+    """The API-facing view of a placeholder row (#198).
+
+    The sentinel appears only when *sentinel* is set — mint's 201
+    carries it exactly once; every later view omits it.
+    """
+    view = {
+        "id": row["id"],
+        "workspace_id": row["workspace_id"],
+        "name": row["name"],
+        "dests": row["dests"],
+        "created_at": row["created_at"],
+        "expires_at": row["expires_at"],
+    }
+    if sentinel:
+        view["sentinel"] = row["sentinel"]
+    return view
+
+
 def build_api(app) -> FastAPI:
     """The FastAPI application bound to one msks App.
 
@@ -833,6 +888,162 @@ def build_api(app) -> FastAPI:
         if not await app.state.model.revoke_token(token_id):
             raise HTTPException(status_code=404, detail="no such token")
         return {"revoked": token_id}
+
+    # --- secrets (#198) -----------------------------------------------
+
+    async def sync_store_manifest(refs=None) -> None:
+        """Re-render the store manifest off the live placeholder rows
+        (off the event loop — it is file IO); *refs* overrides the
+        projected list — mint passes rows-plus-the-new-ref so the
+        manifest exists before the first store write.
+        """
+        if refs is None:
+            refs = await app.state.model.placeholder_refs()
+        await asyncio.to_thread(app.state.secrets.sync_manifest, refs)
+
+    def validated_dests(dests: list[str]) -> list[str]:
+        """Lowercased, de-duplicated, pattern-checked destinations."""
+        seen = []
+        for dest in dests:
+            entry = dest.lower().rstrip(".")
+            if not DEST_PATTERN.match(entry):
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"dest {dest!r} must be an exact hostname or a "
+                        "label-anchored suffix like .example.com"
+                    ),
+                )
+            if entry not in seen:
+                seen.append(entry)
+        if not seen:
+            raise HTTPException(
+                status_code=422, detail="at least one dest is required"
+            )
+        return seen
+
+    @api.post("/api/v1/secrets", dependencies=[Depends(require_token)])
+    async def mint_secret(body: SecretMint) -> Response:
+        if not valid_name(body.name):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "name must be letters, numbers, or underscores "
+                    "without a leading digit"
+                ),
+            )
+        dests = validated_dests(body.dests)
+        if await app.state.model.get_workspace(body.workspace_id) is None:
+            raise HTTPException(status_code=404, detail="no such workspace")
+        if (
+            await app.state.model.placeholder_for(body.workspace_id, body.name)
+            is not None
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"workspace {body.workspace_id} already has a "
+                    f"placeholder named {body.name}"
+                ),
+            )
+        ref = backend_ref(body.workspace_id, body.name)
+        expires = (
+            datetime.now(UTC) + timedelta(seconds=body.ttl_s)
+            if body.ttl_s is not None
+            else None
+        )
+        # The manifest must declare the ref before the CLI can write
+        # it: project rows-plus-this-ref (no duplicate when the ref
+        # is already declared), then write the value.
+        refs = await app.state.model.placeholder_refs()
+        projected = (ref, f"{body.workspace_id}/{body.name}")
+        if projected not in refs:
+            refs.append(projected)
+        await sync_store_manifest(refs)
+        # Store first: a row without its backend value would swap
+        # empty on the wire; an orphaned value (row insert fails) is
+        # inert and retried by the next mint.
+        try:
+            await app.state.secrets.write(ref, body.secret)
+        except SecretStoreError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from None
+        sentinel = new_sentinel()
+        try:
+            row = await app.state.model.create_placeholder(
+                body.workspace_id,
+                body.name,
+                sentinel,
+                dests,
+                ref,
+                expires,
+            )
+        except IntegrityError:
+            # The value stays: in a real race the winner's row owns
+            # it, and an orphaned value (a write that lost its row)
+            # is inert and retried by the next mint.
+            raise HTTPException(
+                status_code=409, detail="placeholder name collision"
+            ) from None
+        await app.state.model.record_audit("mint", row)
+        await sync_store_manifest()
+        # The sentinel appears in exactly one response: this one.
+        return Response(
+            status_code=201,
+            content=json.dumps(placeholder_view(row)),
+            media_type="application/json",
+        )
+
+    @api.get("/api/v1/secrets", dependencies=[Depends(require_token)])
+    async def list_secrets() -> list[dict]:
+        return [
+            placeholder_view(row, sentinel=False)
+            for row in await app.state.model.list_placeholders()
+        ]
+
+    @api.post("/api/v1/secrets/check", dependencies=[Depends(require_token)])
+    async def check_secret_store() -> dict:
+        try:
+            return await app.state.secrets.check()
+        except SecretStoreError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from None
+
+    @api.post(
+        "/api/v1/secrets/{placeholder_id}/renew",
+        dependencies=[Depends(require_token)],
+    )
+    async def renew_secret(placeholder_id: int, body: SecretRenew) -> dict:
+        if await app.state.model.get_placeholder(placeholder_id) is None:
+            raise HTTPException(status_code=404, detail="no such placeholder")
+        expires = datetime.now(UTC) + timedelta(seconds=body.ttl_s)
+        await app.state.model.renew_placeholder(placeholder_id, expires)
+        row = await app.state.model.get_placeholder(placeholder_id)
+        return placeholder_view(row, sentinel=False)
+
+    @api.delete(
+        "/api/v1/secrets/{placeholder_id}",
+        dependencies=[Depends(require_token)],
+    )
+    async def revoke_secret(placeholder_id: int) -> dict:
+        row = await app.state.model.get_placeholder(placeholder_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="no such placeholder")
+        # Row first: revocation takes effect on the next request,
+        # whatever the store cleanup then does.
+        await app.state.model.delete_placeholder(placeholder_id)
+        cleaned = True
+        try:
+            await app.state.secrets.delete(row["backend_ref"])
+        except SecretStoreError:
+            # The row is gone, so the leftover value is inert; the
+            # operator sees it in the response and can re-run check.
+            cleaned = False
+        await app.state.model.record_audit("revoke", row)
+        await sync_store_manifest()
+        return {"revoked": placeholder_id, "store_cleaned": cleaned}
+
+    @api.get("/api/v1/secrets/audit", dependencies=[Depends(require_token)])
+    async def list_secret_audit() -> list[dict]:
+        return await app.state.model.list_audit()
 
     @api.post("/api/v1/workspaces", dependencies=[Depends(require_token)])
     async def create_workspace(body: WorkspaceCreate) -> Response:

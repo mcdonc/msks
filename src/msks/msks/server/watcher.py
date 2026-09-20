@@ -9,6 +9,7 @@ watcher honest across driver restarts and both backends.
 import asyncio
 import logging
 import time
+from datetime import UTC, datetime
 
 from .. import storage
 from ..microvm.spec import VmStatus
@@ -153,6 +154,7 @@ async def watch_loop(app, hub: EventHub) -> None:
             if time.monotonic() >= next_prune:
                 next_prune = time.monotonic() + PRUNE_INTERVAL_S
                 await sweep_consent(app)
+            await sweep_expired_placeholders(app, hub)
         except Exception:
             LOG.exception("watcher scan failed; retrying next interval")
         await asyncio.sleep(interval)
@@ -164,3 +166,60 @@ async def sweep_consent(app) -> None:
     deleted = await app.state.model.egress_consent.prune()
     if deleted:
         LOG.info("consent: pruned %d row(s) past retention/cap", deleted)
+
+
+async def sweep_expired_placeholders(app, hub: EventHub) -> int:
+    """Retire placeholders past their deadline (#198): audit, remove,
+    re-sync the store manifest, announce.
+
+    Expiry rides the same per-request predicate as revocation, so a
+    row past its deadline stops swapping immediately — this sweep is
+    the cleanup half: it records the expiry event (destinations and
+    timestamp), drops the row, deletes the backend value, and strips
+    its declaration from the manifest. A failing store delete never
+    keeps the row: the value left behind is inert without it.
+    """
+    model = app.state.model
+    now = datetime.now(UTC)
+    rows = [
+        row
+        for row in await model.list_placeholders()
+        if deadline_passed(row["expires_at"], now)
+    ]
+    for row in rows:
+        await retire_expired(app, hub, row)
+    if rows:
+        refs = await model.placeholder_refs()
+        await asyncio.to_thread(app.state.secrets.sync_manifest, refs)
+    return len(rows)
+
+
+def deadline_passed(expires_at: str | None, now: datetime) -> bool:
+    """Whether a placeholder's deadline is past. The stored deadline
+    is naive UTC on the sqlite round-trip (the dialect strips
+    tzinfo at bind); replace() unconditionally normalizes."""
+    if expires_at is None:
+        return False
+    deadline = datetime.fromisoformat(expires_at).replace(tzinfo=UTC)
+    return deadline <= now
+
+
+async def retire_expired(app, hub: EventHub, row: dict) -> None:
+    """One expired placeholder: audit, drop, clean the store,
+    announce."""
+    model = app.state.model
+    await model.record_audit("expiry", row)
+    await model.delete_placeholder(row["id"])
+    try:
+        await app.state.secrets.delete(row["backend_ref"])
+    except Exception:  # noqa: BLE001 - inert leftover, logged below
+        LOG.warning(
+            "expired placeholder %s/%s: store value left behind at %s",
+            row["workspace_id"],
+            row["name"],
+            row["backend_ref"],
+        )
+    await hub.publish(
+        "secret.expiry",
+        {"workspace_id": row["workspace_id"], "name": row["name"]},
+    )

@@ -414,3 +414,159 @@ async def test_sweep_consent_quiet_when_nothing_pruned(tmp_path: Path) -> None:
 
     app.state.model.egress_consent.prune = fake_prune
     await watcher_mod.sweep_consent(app)
+
+
+# --- placeholder expiry sweep (#198) --------------------------------------
+
+
+from datetime import UTC, datetime, timedelta  # noqa: E402
+
+from msks.secretstore import backend_ref, new_sentinel  # noqa: E402
+from msks.server.watcher import sweep_expired_placeholders  # noqa: E402
+from msks.settings import SecretStoreSettings  # noqa: E402
+
+
+async def seed_placeholder(
+    app, workspace_id: str, name: str, expires_at=None
+) -> dict:
+    """A placeholder row plus the manifest declaration beside it."""
+    await app.state.model.create_workspace(
+        VmSpec(workspace_id=workspace_id, kernel=Path("/k"), rootfs=Path("/r"))
+    )
+    row = await app.state.model.create_placeholder(
+        workspace_id,
+        name,
+        new_sentinel(),
+        ["api.example.com"],
+        backend_ref(workspace_id, name),
+        expires_at,
+    )
+    return row
+
+
+def sweep_app(tmp_path: Path):
+    """An app whose secret store sits on the real file provider."""
+    settings = Settings(
+        net=NetSettings(enabled=False),
+        server=ServerSettings(
+            db_path=tmp_path / "sweep.db",
+            bootstrap_token=TOKEN,
+            # A slow poll keeps the background watch loop out of the
+            # manual sweep's way (the api fixture's 10.0, same reason).
+            event_poll_s=10.0,
+        ),
+        secret_store=SecretStoreSettings(root=tmp_path / "store"),
+    )
+    app = build_app(settings)
+    # A stubbed seam lets the watch loop's first pass finish during
+    # lifespan startup (the real seam's socket probes would delay it
+    # into the test body, racing the manual sweep).
+    app.state.microvm = StubMicrovm()
+    return build_api(app), app
+
+
+async def test_sweep_retires_expired_and_keeps_live_rows(tmp_path) -> None:
+    """An expired row is audited, removed, and its store value and
+    manifest declaration cleaned; a live row and an unbounded row
+    survive."""
+    api, app = sweep_app(tmp_path)
+    async with api.router.lifespan_context(api):
+        # The watch loop's first pass can interleave with the test
+        # body at any await; these tests drive the sweep by hand, so
+        # the background task is cancelled up front.
+        api.state.watcher.cancel()
+        past = await seed_placeholder(
+            app, "ws-a", "expired", datetime.now(UTC) - timedelta(seconds=1)
+        )
+        live = await seed_placeholder(
+            app, "ws-b", "live", datetime.now(UTC) + timedelta(hours=1)
+        )
+        forever = await seed_placeholder(app, "ws-c", "forever")
+        refs = await app.state.model.placeholder_refs()
+        app.state.secrets.sync_manifest(refs)
+        for row in (past, live, forever):
+            await app.state.secrets.write(row["backend_ref"], "value")
+        hub = api.state.hub
+        queue = hub.subscribe()
+        swept = await sweep_expired_placeholders(app, hub)
+        assert swept == 1
+        rows = await app.state.model.list_placeholders()
+        assert {row["name"] for row in rows} == {"live", "forever"}
+        audit = await app.state.model.list_audit()
+        assert [event["kind"] for event in audit] == ["expiry"]
+        assert audit[0]["name"] == "expired"
+        assert audit[0]["dests"] == ["api.example.com"]
+        manifest = (tmp_path / "store" / "secretspec.toml").read_text()
+        assert "MSKS_WS_A_EXPIRED" not in manifest
+        assert "MSKS_WS_B_LIVE" in manifest
+        stored = tmp_path / "store" / "msks" / "default"
+        assert not (stored / "MSKS_WS_A_EXPIRED").exists()
+        assert (stored / "MSKS_WS_B_LIVE").exists()
+        event = json.loads(queue.get_nowait())
+        assert event["event"] == "secret.expiry"
+        assert event["data"] == {"workspace_id": "ws-a", "name": "expired"}
+
+
+async def test_sweep_survives_a_failing_store_delete(tmp_path) -> None:
+    """The row still retires when the store cannot clean up: the
+    leftover value is inert, and the sweep still re-syncs the
+    manifest."""
+    api, app = sweep_app(tmp_path)
+    async with api.router.lifespan_context(api):
+        # The watch loop's first pass can interleave with the test
+        # body at any await; these tests drive the sweep by hand, so
+        # the background task is cancelled up front.
+        api.state.watcher.cancel()
+        await seed_placeholder(
+            app, "ws-a", "expired", datetime.now(UTC) - timedelta(seconds=1)
+        )
+        refs = await app.state.model.placeholder_refs()
+        app.state.secrets.sync_manifest(refs)
+        app.state.settings.secret_store.cli = "/nonexistent/secretspec"
+        swept = await sweep_expired_placeholders(app, api.state.hub)
+        assert swept == 1
+        assert await app.state.model.list_placeholders() == []
+        audit = await app.state.model.list_audit()
+        assert audit[0]["kind"] == "expiry"
+
+
+async def test_placeholder_predicate_honors_expiry(tmp_path) -> None:
+    """The per-request predicate: present-and-unexpired swaps; a
+    past deadline does not (the naive-UTC round-trip included)."""
+    api, app = sweep_app(tmp_path)
+    async with api.router.lifespan_context(api):
+        # The watch loop's first pass can interleave with the test
+        # body at any await; these tests drive the sweep by hand, so
+        # the background task is cancelled up front.
+        api.state.watcher.cancel()
+        past = await seed_placeholder(
+            app, "ws-a", "expired", datetime.now(UTC) - timedelta(hours=1)
+        )
+        live = await seed_placeholder(
+            app, "ws-b", "live", datetime.now(UTC) + timedelta(hours=1)
+        )
+        forever = await seed_placeholder(app, "ws-c", "forever")
+        model = app.state.model
+        assert await model.placeholder_valid(past["sentinel"]) is False
+        assert await model.placeholder_valid(live["sentinel"]) is True
+        assert await model.placeholder_valid(forever["sentinel"]) is True
+        assert await model.placeholder_valid("mskssec1_unknown") is False
+
+
+async def test_record_audit_rejects_unknown_kinds(tmp_path) -> None:
+    api, app = sweep_app(tmp_path)
+    async with api.router.lifespan_context(api):
+        # The watch loop's first pass can interleave with the test
+        # body at any await; these tests drive the sweep by hand, so
+        # the background task is cancelled up front.
+        api.state.watcher.cancel()
+        row = await seed_placeholder(app, "ws-a", "x")
+        with pytest.raises(ValueError, match="unknown audit kind"):
+            await app.state.model.record_audit("leak", row)
+
+
+async def test_delete_unknown_placeholder_is_false(tmp_path) -> None:
+    api, app = sweep_app(tmp_path)
+    async with api.router.lifespan_context(api):
+        api.state.watcher.cancel()
+        assert await app.state.model.delete_placeholder(999) is False

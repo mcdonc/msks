@@ -116,6 +116,16 @@ SETTING_ENV_VARS: tuple[str, ...] = (
     "MSKSD_EGRESS_CONSENT_ROW_CAP",
     "MSKSD_EGRESS_QUEUE_BASE",
     "MSKSD_CONNTRACK_TOOL",
+    # SecretStoreSettings — the placeholder secret store (#198).
+    "MSKSD_SECRET_STORE_PROVIDER",
+    "MSKSD_SECRET_STORE_ROOT",
+    "MSKSD_SECRET_STORE_AGE_IDENTITY",
+    "MSKSD_SECRET_STORE_REGION",
+    "MSKSD_SECRET_STORE_PROFILE",
+    "MSKSD_SECRET_STORE_PREFIX",
+    "MSKSD_SECRET_STORE_PROJECT",
+    "MSKSD_SECRET_STORE_CLI",
+    "MSKSD_SECRET_STORE_TIMEOUT_S",
 )
 
 # The key↔variable mapping, derived by the one rule. ``state_dir``
@@ -494,6 +504,23 @@ def render_template() -> str:
 # egress_lease_s: 3600      # DHCP lease seconds
 # egress_dns_timeout_s: 3.0 # seconds waiting on the upstream
 #                           # resolver
+#
+# --- The placeholder secret store (#198) ---
+# secret_store_provider: file  # file | age | awssm | bws — where
+#                           # real secrets live behind the
+#                           # placeholder swap (docs/secrets.md)
+# secret_store_root: ""     # the store's root; empty ->
+#                           # <state_dir>/secrets
+# secret_store_age_identity: ""  # the age identity file (required
+#                           # when the provider is age)
+# secret_store_region: ""   # awssm region (required when the
+#                           # provider is awssm)
+# secret_store_profile: ""  # optional AWS profile name
+# secret_store_prefix: ""   # optional awssm name prefix
+# secret_store_project: ""  # bws project UUID (required when the
+#                           # provider is bws)
+# secret_store_cli: secretspec  # the SecretSpec CLI binary
+# secret_store_timeout_s: 30.0  # seconds per store call
 """
 
 

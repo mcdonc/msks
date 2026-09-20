@@ -12,6 +12,7 @@ from .consent.deciders import DeciderRegistry
 from .microvm import Microvm
 from .model import Model
 from .net import NetManager
+from .secretstore import SecretStore
 from .server.events import EventHub
 from .settings import Settings
 
@@ -30,6 +31,7 @@ class AppState:
         self.consent: ConsentEngine | None = None
         self.deciders: DeciderRegistry | None = None
         self.hub: EventHub | None = None
+        self.secrets: SecretStore | None = None
 
 
 class App:
@@ -43,6 +45,7 @@ class App:
         self.state.consent = ConsentEngine(self)
         self.state.deciders = DeciderRegistry()
         self.state.hub = EventHub()
+        self.state.secrets = SecretStore(self)
 
 
 def build_app(settings: Settings | None = None) -> App:

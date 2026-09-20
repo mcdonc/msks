@@ -3,6 +3,7 @@
 import hashlib
 import json
 import secrets
+from datetime import UTC
 from pathlib import Path
 
 from alembic import command
@@ -14,8 +15,9 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ..microvm.spec import VmSpec
-from .db import Base, engine_for, sessionmaker_for, tighten_db_mode
+from .db import Base, engine_for, sessionmaker_for, tighten_db_mode, utcnow
 from .egress_consent import EgressConsentModel
+from .secrets import AUDIT_KINDS, Placeholder, SecretAudit
 from .tokens import Token
 from .workspaces import WORKSPACE_STATUSES, Workspace
 
@@ -322,6 +324,151 @@ class Model:
             await session.commit()
             return True
 
+    # --- placeholders (#198) ------------------------------------------
+
+    async def create_placeholder(
+        self,
+        workspace_id: str,
+        name: str,
+        sentinel: str,
+        dests: list[str],
+        backend_ref: str,
+        expires_at=None,
+    ) -> dict:
+        """Insert a placeholder row; raises IntegrityError on a
+        (workspace, name) or backend-ref collision."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            row = Placeholder(
+                workspace_id=workspace_id,
+                name=name,
+                sentinel=sentinel,
+                dests=json.dumps(dests),
+                backend_ref=backend_ref,
+                expires_at=expires_at,
+            )
+            session.add(row)
+            await session.commit()
+            return placeholder_dict(row)
+
+    async def list_placeholders(self) -> list[dict]:
+        """All placeholder rows, insertion order."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            rows = await session.scalars(
+                select(Placeholder).order_by(Placeholder.id)
+            )
+            return [placeholder_dict(row) for row in rows]
+
+    async def get_placeholder(self, placeholder_id: int) -> dict | None:
+        """One placeholder row as a dict, None when absent."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            row = await session.get(Placeholder, placeholder_id)
+            return None if row is None else placeholder_dict(row)
+
+    async def placeholder_for(
+        self, workspace_id: str, name: str
+    ) -> dict | None:
+        """The workspace's placeholder by label, None when absent."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            row = await session.scalar(
+                select(Placeholder).where(
+                    Placeholder.workspace_id == workspace_id,
+                    Placeholder.name == name,
+                )
+            )
+            return None if row is None else placeholder_dict(row)
+
+    async def placeholder_refs(self) -> list[tuple[str, str]]:
+        """Every (backend_ref, description) pair — the manifest body."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            rows = await session.scalars(
+                select(Placeholder).order_by(Placeholder.id)
+            )
+            return [
+                (row.backend_ref, f"{row.workspace_id}/{row.name}")
+                for row in rows
+            ]
+
+    async def renew_placeholder(self, placeholder_id: int, expires_at) -> bool:
+        """Set a new expiry deadline; False when absent."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            result = await session.execute(
+                update(Placeholder)
+                .where(Placeholder.id == placeholder_id)
+                .values(expires_at=expires_at)
+            )
+            await session.commit()
+            return result.rowcount > 0
+
+    async def delete_placeholder(self, placeholder_id: int) -> bool:
+        """Remove a placeholder row; False when absent."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            row = await session.get(Placeholder, placeholder_id)
+            if row is None:
+                return False
+            await session.delete(row)
+            await session.commit()
+            return True
+
+    async def placeholder_valid(self, sentinel: str) -> bool:
+        """The per-request predicate (#199's swap gate): a row exists
+        for the sentinel and its expiry is in the future (or unset).
+        The stored deadline is naive UTC on the sqlite round-trip —
+        normalized here before the comparison.
+        """
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            row = await session.scalar(
+                select(Placeholder).where(Placeholder.sentinel == sentinel)
+            )
+            if row is None:
+                return False
+            if row.expires_at is None:
+                return True
+            # Stored deadlines are naive UTC (the sqlite dialect
+            # strips tzinfo at bind); replace() unconditionally
+            # normalizes without a branch.
+            return row.expires_at.replace(tzinfo=UTC) > utcnow()
+
+    # --- secret audit (#198) -----------------------------------------
+
+    async def record_audit(self, kind: str, row: dict) -> None:
+        """Append one lifecycle event for a placeholder row."""
+        if kind not in AUDIT_KINDS:
+            raise ValueError(f"unknown audit kind: {kind!r}")
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            session.add(
+                SecretAudit(
+                    kind=kind,
+                    workspace_id=row["workspace_id"],
+                    name=row["name"],
+                    dests=(
+                        json.dumps(row["dests"])
+                        if isinstance(row["dests"], list)
+                        else row["dests"]
+                    ),
+                )
+            )
+            await session.commit()
+
+    async def list_audit(self, limit: int = 100) -> list[dict]:
+        """The newest audit events first (operator view)."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            rows = await session.scalars(
+                select(SecretAudit)
+                .order_by(SecretAudit.id.desc())
+                .limit(limit)
+            )
+            return [audit_dict(row) for row in rows]
+
 
 def workspace_fields(
     spec: VmSpec,
@@ -351,6 +498,38 @@ def workspace_fields(
         "ssh_pubkey": spec.ssh_pubkey,
         "ssh_privkey": ssh_privkey,
         "status": "created",
+    }
+
+
+def placeholder_dict(row: Placeholder) -> dict:
+    """The API-facing dict for a placeholder row.
+
+    The sentinel is included — mint's response prints it once — but
+    list views built from these dicts drop it ("never shown again").
+    """
+    return {
+        "id": row.id,
+        "workspace_id": row.workspace_id,
+        "name": row.name,
+        "sentinel": row.sentinel,
+        "dests": json.loads(row.dests),
+        "backend_ref": row.backend_ref,
+        "created_at": row.created_at.isoformat(),
+        "expires_at": (
+            None if row.expires_at is None else row.expires_at.isoformat()
+        ),
+    }
+
+
+def audit_dict(row: SecretAudit) -> dict:
+    """The API-facing dict for an audit row."""
+    return {
+        "id": row.id,
+        "kind": row.kind,
+        "workspace_id": row.workspace_id,
+        "name": row.name,
+        "dests": json.loads(row.dests),
+        "created_at": row.created_at.isoformat(),
     }
 
 

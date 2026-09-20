@@ -192,6 +192,25 @@ the file itself carries them all at one level.
 | `conntrack_tool`                | `MSKSD_CONNTRACK_TOOL`                | string | `conntrack`     | The tool revocation uses to drop a revoked destination's established connections.                                                                  |
 | `audit_hmac_key`                | `MSKSD_AUDIT_HMAC_KEY`                | string | _(unset)_       | When set, every consent row is written with an HMAC-SHA256 tag over its data columns (tamper-evident audit); unset stores no tags.                 |
 
+### The placeholder secret store
+
+Where the real secrets behind placeholder tokens live ([secrets
+chapter](secrets.md) for the flow and worked provider examples).
+Values validate at load: each provider's required key is named in
+the error when absent.
+
+| Key                         | Environment variable              | Type   | Default               | What it does                                                                                |
+| --------------------------- | --------------------------------- | ------ | --------------------- | ------------------------------------------------------------------------------------------- |
+| `secret_store_provider`     | `MSKSD_SECRET_STORE_PROVIDER`     | string | `file`                | The SecretSpec provider secrets are stored in: `file`, `age`, `awssm`, or `bws`.            |
+| `secret_store_root`         | `MSKSD_SECRET_STORE_ROOT`         | string | `<state_dir>/secrets` | The store's root: the per-secret tree for `file`, the encrypted file's directory for `age`. |
+| `secret_store_age_identity` | `MSKSD_SECRET_STORE_AGE_IDENTITY` | string | _(unset)_             | The age identity file; required when the provider is `age`.                                 |
+| `secret_store_region`       | `MSKSD_SECRET_STORE_REGION`       | string | _(unset)_             | The AWS region; required when the provider is `awssm`.                                      |
+| `secret_store_profile`      | `MSKSD_SECRET_STORE_PROFILE`      | string | _(unset)_             | An AWS credentials profile for `awssm`.                                                     |
+| `secret_store_prefix`       | `MSKSD_SECRET_STORE_PREFIX`       | string | _(unset)_             | A secret-name prefix for `awssm` (default `secretspec/msks/`).                              |
+| `secret_store_project`      | `MSKSD_SECRET_STORE_PROJECT`      | string | _(unset)_             | The Bitwarden Secrets Manager project UUID; required when the provider is `bws`.            |
+| `secret_store_cli`          | `MSKSD_SECRET_STORE_CLI`          | string | `secretspec`          | Path to the SecretSpec CLI the store drives.                                                |
+| `secret_store_timeout_s`    | `MSKSD_SECRET_STORE_TIMEOUT_S`    | float  | `30.0`                | Seconds one store operation may run.                                                        |
+
 ## SIGHUP reload
 
 Send `SIGHUP` to a running `msksd` and it re-reads the config file
