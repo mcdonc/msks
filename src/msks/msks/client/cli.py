@@ -1,6 +1,7 @@
 """The ``msks`` CLI: ``ls``, ``create``, ``start``, ``stop``, ``rm``,
-``resize``, ``console``, ``forward``, ``ssh``, ``key``, ``storage``,
-the ``image`` catalog subcommands, and the ``home`` volume moves.
+``resize``, ``console``, ``forward``, ``ssh``, ``rsync``, ``key``,
+``storage``, the ``image`` catalog subcommands, and the ``home``
+volume moves.
 
 Every command speaks the daemon's REST surface with the same client
 conventions (#21): ``MSKSC_URL`` for the daemon, ``MSKSC_TOKEN`` for
@@ -36,6 +37,7 @@ from .rest import (
 from .rest import (
     fetch_ssh_key as rest_fetch_ssh_key,
 )
+from .rsync import run_workspace_rsync
 from .ssh import data_dir, run_workspace_ssh
 
 
@@ -1145,6 +1147,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="arguments passed to ssh verbatim ('-l root' is the recovery "
         "login; '-A' forwards your agent, $SSH_AUTH_SOCK)",
     )
+    rsync_cmd = sub.add_parser(
+        "rsync",
+        help=(
+            "rsync files to and from a workspace over the forward, "
+            "identity staged in memory"
+        ),
+    )
+    rsync_cmd.add_argument(
+        "workspace_id", help="the workspace to copy against"
+    )
+    rsync_cmd.add_argument(
+        "passthrough",
+        nargs=argparse.REMAINDER,
+        metavar="ARGS",
+        help="arguments passed to rsync verbatim; an empty-host path "
+        "(:/remote/path, user@:/remote/path) targets this workspace",
+    )
     image = sub.add_parser(
         "image", help="manage the daemon's image catalog (#65)"
     )
@@ -1354,6 +1373,9 @@ def command_table(args: argparse.Namespace, transport) -> dict:
             args.workspace_id, args.private, args.out, transport=transport
         ),
         "ssh": lambda: run_workspace_ssh(
+            args.workspace_id, args.passthrough, transport=transport
+        ),
+        "rsync": lambda: run_workspace_rsync(
             args.workspace_id, args.passthrough, transport=transport
         ),
         "image": lambda: image_command_table(args, transport)[

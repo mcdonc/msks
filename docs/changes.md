@@ -8,6 +8,15 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **`msks rsync` (#190).** Zero-setup file copies over the forward:
+  `msks rsync <ws> -- -av ./site/ :/root/site/` boots the workspace
+  when the daemon reports it as not running, stages the ssh
+  identity in memory the way `msks ssh` does, and runs the host
+  rsync through the forward seam — push and pull, with no
+  ssh-config alias and no key file on disk. A path with an empty
+  host (`:/root/site/`) targets the workspace the command names; a
+  `--pubkey` workspace exits naming where its private half lives.
+  See [docs/cli.md](cli.md#msks-rsync).
 - **`msks storage` image import times (#186).** Each catalog row
   in the image cost table shows when the archive came in (local
   time to the minute) and the `GET /api/v1/storage` image entries
