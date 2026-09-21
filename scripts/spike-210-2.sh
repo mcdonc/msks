@@ -48,9 +48,12 @@ echo "spike210: artifacts at $image"
 volume="$state_dir/store-volume.img"
 if [ ! -e "$volume" ]; then
   # cp preserves the store path's read-only mode; the volume is the
-  # appliance's WRITABLE store state, so restore write access.
-  cp --reflink=auto "$volume_pristine" "$volume"
-  chmod u+w "$volume"
+  # appliance's WRITABLE store state. Copy to a temp name and move
+  # into place so a killed run cannot leave a truncated or read-only
+  # volume behind for every later boot.
+  cp --reflink=auto "$volume_pristine" "$volume.tmp"
+  chmod u+w "$volume.tmp"
+  mv -f "$volume.tmp" "$volume"
 fi
 
 run_dir="$state_dir/run"
@@ -151,6 +154,10 @@ for _ in $(seq 1 $((timeout_s * 10))); do
     ok=1
     break
   fi
+  if grep -q "SPIKE2-FAILED" "$run_dir/serial.log" 2>/dev/null; then
+    # The probes themselves reported a failure; fall to the tail below.
+    break
+  fi
   if ! kill -0 "$ch_pid" 2>/dev/null; then
     # A deliberate stop (on_signal) exits the script here and now; a
     # VM death this loop observes is a real crash.
@@ -162,15 +169,18 @@ for _ in $(seq 1 $((timeout_s * 10))); do
 done
 
 boot_t1=$(date +%s.%N)
-if [ "$ok" = 1 ]; then
-  echo "spike210: boot-to-probes-done: $(awk -v a="$boot_t1" -v b="$boot_t0" 'BEGIN { printf "%.1f", a - b }')s (vm.boot to SPIKE2-READY)"
-  echo "spike210: systemd's own breakdown (boot-to-multi-user):"
-  grep -E "Startup finished" "$run_dir/serial.log" || true
+# The probe lines reach the serial log through journald's kmsg
+# forwarding, so each carries a "[time] comm[pid]:" prefix — grep for
+# the message, not a line start.
+probe_results=$(grep -E "spike2-probe-start\[[0-9]+\]: PROBE " "$run_dir/serial.log" || true)
+if [ "$ok" = 1 ] && ! printf '%s\n' "$probe_results" | grep -qE "FAILED|MISSING|VIOLATION"; then
+  echo "spike210: boot-to-probes-done: $(awk -v a="$boot_t1" -v b="$boot_t0" 'BEGIN { printf "%.1f", a - b }')s (vm.boot to SPIKE2-READY; the probe service holds multi-user.target, so this is boot-to-multi-user)"
   echo "spike210: probe results:"
-  grep -E "^PROBE " "$run_dir/serial.log" || true
+  printf '%s\n' "$probe_results" | sed 's/^\[[^]]*\] //' || true
   echo "spike210: run again to exercise the persistence probe (the store volume is kept at $volume)"
 else
-  echo "spike210: FAILED — serial log tail:" >&2
+  echo "spike210: FAILED — probe output / serial tail:" >&2
+  printf '%s\n' "$probe_results" >&2 || true
   tail -40 "$run_dir/serial.log" >&2 || true
   exit 1
 fi

@@ -42,7 +42,7 @@ persistence probe, because the store volume persists across runs.
   `read-only-local-store` experimental features enabled. The store
   URI the probes exercise:
 
-  ```
+  ```text
   local-overlay://?real=/nix/store
     &lower-store=local?root=/nix/.ro-store&read-only=true   # nested, percent-encoded
     &upper-layer=/nix/.upper-volume/store
@@ -52,29 +52,38 @@ persistence probe, because the store volume persists across runs.
 
 ## Evidence (from the booted system, first and second boots)
 
-| Probe                                      | Result                                                                                                         |
-| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| merged store is the overlay (mount line)   | rw overlay at /nix/store, lowerdir the erofs store, upperdir/workdir the volume                                |
-| read through the **lower database**        | toplevel resolves via `path-info` with no load step, no daemon                                                 |
-| store write lands only in upper            | `nix-store --add` object appears in `nix-var`'s store layer, absent from the erofs, registered in the upper db |
-| existing lower path registers without copy | `copy --from` of the toplevel: upper layer listing byte-identical before/after                                 |
-| GC stays upper-scoped                      | rooted upper path survives `nix store gc`; toplevel still resolvable after                                     |
-| persistence across reboots                 | second boot resolves the first boot's written path from the upper database alone                               |
+| Probe                                      | Result                                                                                                                                                                                                     |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| merged store is the overlay (mount line)   | rw overlay at /nix/store, lowerdir the erofs store, upperdir/workdir the volume                                                                                                                            |
+| read through the **lower database**        | toplevel resolves via `path-info` with no load step (client-side store URIs; the nix-daemon unit ships in the closure but nothing in these runs speaks to it — the daemon wiring is production work, #212) |
+| store write lands only in upper            | `nix-store --add` object appears in `nix-var`'s store layer, absent from the erofs, registered in the upper db                                                                                             |
+| existing lower path registers without copy | `copy --from` of the toplevel: upper layer listing byte-identical before/after                                                                                                                             |
+| GC stays upper-scoped                      | rooted upper path survives `nix store gc`; toplevel still resolvable after                                                                                                                                 |
+| persistence across reboots                 | second boot resolves the first boot's written path from the upper database alone                                                                                                                           |
 
 ## Numbers (reference host, warm host page cache)
 
-| Measurement                                  | Value                                                                              |
-| -------------------------------------------- | ---------------------------------------------------------------------------------- |
-| boot-to-probes-done (vm.boot → SPIKE2-READY) | 9.0–10.3s (7 runs; the probes themselves cost ~1.5s, so boot-to-multi-user is ~8s) |
-| NixOS system toplevel closure (with nix)     | 929.4 MiB                                                                          |
-| embedded base erofs image                    | 920.0 MiB                                                                          |
-| initrd                                       | 23.5 MiB                                                                           |
-| store volume (pristine)                      | 512 MiB (effectively empty)                                                        |
+| Measurement                                                                                                                                                                        | Value                           |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| boot-to-multi-user (vm.boot → SPIKE2-READY; the probe service is wanted by multi-user.target, so it sits inside the boot transaction and the marker fires as the target completes) | 9.0–10.3s (8 runs this session) |
+| NixOS system toplevel closure (with nix)                                                                                                                                           | 929.4 MiB                       |
+| embedded base erofs image                                                                                                                                                          | 920.0 MiB                       |
+| initrd                                                                                                                                                                             | 23.5 MiB                        |
+| store volume (pristine)                                                                                                                                                            | 512 MiB (effectively empty)     |
 
-Boot sits **under** spike 1's ro-share shape (11.7–11.8s) — the erofs
+Boot sits **under** spike 1's ro-share shape (11.7–11.8s, same epoch:
+vm.boot to a marker that fires as multi-user completes) — the erofs
 lower reads locally from disk instead of crossing virtiofs. The
 shipped artifact set grows to: kernel, initrd, the erofs base, and a
 template volume — within the 1.1–1.6G estimate recorded on #205.
+
+Two honesty notes on the numbers: the probe service itself delays
+multi-user by roughly a second (several nix invocations run before
+the marker prints), so a probe-free appliance boots a bit faster than
+the range above; and a `nix store gc` pass over the upper layer
+prints a nonsense "36.7 PiB freed" — an upstream display underflow
+when registration-only rows are deleted, visible in the gc probe's
+evidence.
 
 ## Landmines found (all handled in the harness; each is a decision the production config inherits)
 
