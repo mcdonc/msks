@@ -21,6 +21,10 @@
   cryptography,
   alembic,
   websockets,
+  # The consent decider TUI framework (#195), pinned to the
+  # >=8.2.8 floor pyproject declares — nixpkgs' 8.2.6 predates the
+  # ListView focus semantics it relies on (nix/textual-pkg.nix).
+  textual,
   # The NFQUEUE binding (#69), built from the sdist against
   # nixpkgs' libnetfilter_queue (nix/netfilterqueue-pkg.nix).
   netfilterqueue,
@@ -68,6 +72,7 @@ buildPythonPackage {
     cryptography
     alembic
     websockets
+    textual
     netfilterqueue
   ];
 

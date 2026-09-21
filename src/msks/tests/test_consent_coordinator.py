@@ -490,6 +490,10 @@ async def test_start_with_nothing_to_reap_is_quiet(engine_app) -> None:
 async def test_stop_skips_other_workspaces_holds(engine_app) -> None:
     app, _frames, _queue = engine_app
     engine = app.state.consent
+    # The stop path must win the race with the hold timer, so the
+    # timer is parked out of the way (the fixture's 0.05s fires on
+    # its own under CI load — a flake, not a behavior).
+    app.state.settings.net.consent_timeout_s = 30.0
     app.state.deciders.register(1, "ws-interactive")
     mine = await engine.hold("ws-interactive", "mine.example", 443)
     theirs = object()  # a hold registered for a workspace not stopped
@@ -528,6 +532,10 @@ async def test_stop_tolerates_a_vanished_hold(engine_app) -> None:
     snapshot and its iteration is skipped, not crashed on."""
     app, _frames, _queue = engine_app
     engine = app.state.consent
+    # Park the hold timer: shutdown must resolve both holds, and a
+    # 0.05s timer beats the stop loop under CI load (a flake, not
+    # the behavior under test).
+    app.state.settings.net.consent_timeout_s = 30.0
     app.state.deciders.register(1, "ws-interactive")
     first = await engine.hold("ws-interactive", "a.example", 443)
     second = await engine.hold("ws-interactive", "b.example", 443)
@@ -561,6 +569,9 @@ async def test_stop_fail_closes_before_reaping(engine_app) -> None:
     future."""
     app, _frames, _queue = engine_app
     engine = app.state.consent
+    # Park the hold timer: the reaping under test is stop()'s, and a
+    # 0.05s timer beating the loop is a flake, not the behavior.
+    app.state.settings.net.consent_timeout_s = 30.0
     app.state.deciders.register(1, "ws-interactive")
     future = await engine.hold("ws-interactive", "s.example", 443)
     await engine.stop()
@@ -573,23 +584,27 @@ async def test_stop_and_stop_workspace_skip_vanished_holds(engine_app) -> None:
     — in both stop paths."""
     app, _frames, _queue = engine_app
     engine = app.state.consent
+    # Park the hold timer: the racing-timeout shape is SIMULATED by
+    # the steal hook below, so a real 0.05s timer firing under CI
+    # load only adds a second, unsimulated race (the flake).
+    app.state.settings.net.consent_timeout_s = 30.0
     app.state.deciders.register(1, "ws-interactive")
     first = await engine.hold("ws-interactive", "a.example", 443)
     second = await engine.hold("ws-interactive", "b.example", 443)
-    second_id = (
-        second
-        and (
-            await app.state.model.egress_consent.list_requests(
-                "ws-interactive", decision="pending"
-            )
-        )[0]["id"]
+    pending = await app.state.model.egress_consent.list_requests(
+        "ws-interactive", decision="pending"
+    )
+    second_id = next(
+        row["id"] for row in pending if row["dest_host"] == "b.example"
     )
     real_owner = coordinator_mod.hold_owner
+    stolen_tasks: list[asyncio.Task] = []
 
     def owner_and_steal(holds, request_id):
         owner, task = real_owner(holds, request_id)
         if task is not None and request_id == second_id:
             holds.pop(request_id, None)  # the racing timeout wins it
+            stolen_tasks.append(task)
             return owner, None
         return owner, task
 
@@ -597,8 +612,11 @@ async def test_stop_and_stop_workspace_skip_vanished_holds(engine_app) -> None:
     await engine.stop()
     coordinator_mod.hold_owner = real_owner
     assert (await verdict_of(first))["reason"] == "shutdown"
-    # The stolen hold's future: the racing timeout owns it now; the
-    # stop loop skipped it (no cancel of an unknown task).
+    # The stolen hold's future stays pending: the hook pops the
+    # hold without resolving it (a real racing timeout would
+    # fail-close it), and the stop loop skips what it no longer
+    # sees — the test reaps only its task, below.
+    assert not second.done()
 
     # The workspace-stop path skips foreign holds' ids entirely,
     # and its own vanished holds (the steal shape) skip the cancel.
@@ -606,11 +624,12 @@ async def test_stop_and_stop_workspace_skip_vanished_holds(engine_app) -> None:
     app.state.deciders.register(2, "ws-interactive")
     kept = await engine2.hold("ws-interactive", "k.example", 443)
     stolen = await engine2.hold("ws-interactive", "v.example", 443)
-    stolen_id = (
-        await app.state.model.egress_consent.list_requests(
-            "ws-interactive", decision="pending"
-        )
-    )[-1]["id"]
+    pending = await app.state.model.egress_consent.list_requests(
+        "ws-interactive", decision="pending"
+    )
+    stolen_id = next(
+        row["id"] for row in pending if row["dest_host"] == "v.example"
+    )
     engine2._holds["foreign"] = {
         "future": asyncio.get_running_loop().create_future(),
         "workspace_id": "ws-elsewhere",
@@ -621,6 +640,7 @@ async def test_stop_and_stop_workspace_skip_vanished_holds(engine_app) -> None:
         owner, task = real_owner(holds, request_id)
         if task is not None and request_id == stolen_id:
             holds.pop(request_id, None)
+            stolen_tasks.append(task)
             return owner, None
         return owner, task
 
@@ -629,9 +649,16 @@ async def test_stop_and_stop_workspace_skip_vanished_holds(engine_app) -> None:
     coordinator_mod.hold_owner = real_owner
     assert "foreign" in engine2._holds
     assert (await verdict_of(kept))["reason"] == "stopped"
+    # Same simulated shape as stop()'s above: the vanish arm skipped
+    # the stolen hold, so its future stays pending.
+    assert not stolen.done()
     engine2._holds["foreign"]["task"].cancel()
     del engine2._holds["foreign"]
-    del stolen
+    # The stop loops skipped the stolen tasks by design; this test
+    # owns their reaping so none outlives the loop (with the timer
+    # parked they would sleep past teardown otherwise).
+    for task in stolen_tasks:
+        await engine.cancel_hold_task(task)
 
 
 def test_hold_owner_answers_the_vanished_arm() -> None:

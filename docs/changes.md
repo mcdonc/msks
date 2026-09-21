@@ -474,6 +474,14 @@ processes up` shows one devenv startup instead of two, and the
 
 ### Fixed
 
+- **The appliance builds again after the consent TUI landed
+  (#203).** The appliance's nix package set shipped without
+  `textual`: the msks wheel build failed its runtime dependency
+  check, and the supervised appliance restart-looped on every
+  start. `nix/textual-pkg.nix` builds the pinned 8.2.8 wheel into
+  the closure, and a new test keeps `nix/msks-pkg.nix` mirroring
+  `[project.dependencies]` — the next dependency addition fails a
+  unit test instead of the appliance boot.
 - **Guest and appliance images keep the base image's file
   ownership (#179).** `apt` inside a workspace now sees the
   stock Debian metadata the base image ships: `mandb`'s cache is
