@@ -21,7 +21,21 @@ case "$app_dir" in
 *) app_dir="$root/$app_dir" ;;
 esac
 
-for f in vmlinux initrd rootfs.ext4; do
+# The artifact set follows the image's mode (#212): the Debian
+# appliance ships a rootfs disk; the NixOS appliance direct-boots
+# kernel+initrd+cmdline, and the deployed shape adds the erofs base
+# and its store volume.
+mode="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("mode", "debian"))' "$app_dir/appliance-manifest.json" 2>/dev/null || echo debian)"
+case "$mode" in
+debian) required="vmlinux initrd rootfs.ext4" ;;
+dev) required="vmlinux initrd" ;;
+deployed) required="vmlinux initrd base-store.erofs store-volume.img" ;;
+*)
+  echo "msks: unknown appliance mode '$mode' in $app_dir/appliance-manifest.json" >&2
+  exit 1
+  ;;
+esac
+for f in $required; do
   [ -f "$app_dir/$f" ] || {
     # The plain build task run may SKIP (execIfModified keys
     # unchanged — the up task's four-artifact guard in devenv.nix

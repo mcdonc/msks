@@ -87,6 +87,12 @@ default_image="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))
 # egress nftables rules name the uplink eth0; a locally-hardcoded base
 # here drifted from it once and silently broke forwarded egress (#101).
 base_cmdline="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("cmdline", ""))' "$app_dir/appliance-manifest.json")"
+# The image's store shape (#212): debian boots the rootfs disk with
+# the host store shared over virtiofs; the NixOS dev shape shares the
+# same store and boots kernel+initrd+cmdline with no rootfs disk; the
+# NixOS deployed shape carries the store on disk (erofs base + store
+# volume) and shares nothing.
+appliance_mode="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("mode", "debian"))' "$app_dir/appliance-manifest.json")"
 # The fallback serves only a stale pre-#101 manifest (no cmdline
 # key), and mirrors the manifest's CURRENT value — net.ifnames=0
 # included — so the drift this indirection exists to prevent cannot
@@ -195,30 +201,64 @@ if [ -n "$MSKS_DEV_TREE" ]; then
 fi
 
 # --- the store share (virtiofsd, unprivileged) --------------------------
-rm -f "$app_dir/vmm-sock"
-virtiofsd \
-  --socket-path "$app_dir/vmm-sock" \
-  --shared-dir /nix/store \
-  --readonly \
-  --sandbox none \
-  --cache auto \
-  >"$app_dir/virtiofsd.log" 2>&1 &
-vfpid=$!
-for _ in $(seq 1 100); do
-  [ -S "$app_dir/vmm-sock" ] && break
-  kill -0 "$vfpid" 2>/dev/null || {
-    echo "msks: virtiofsd exited before serving (see $app_dir/virtiofsd.log)" >&2
+# Dev shapes only: the deployed appliance's store is on disk and
+# there is nothing to share. mskstap0 is the shared NIC either way.
+share_store=1
+case "$appliance_mode" in
+deployed) share_store= ;;
+debian | dev) ;;
+*)
+  echo "msks: unknown appliance mode '$appliance_mode' in $app_dir/appliance-manifest.json" >&2
+  exit 1
+  ;;
+esac
+if [ -n "$share_store" ]; then
+  rm -f "$app_dir/vmm-sock"
+  virtiofsd \
+    --socket-path "$app_dir/vmm-sock" \
+    --shared-dir /nix/store \
+    --readonly \
+    --sandbox none \
+    --cache auto \
+    >"$app_dir/virtiofsd.log" 2>&1 &
+  vfpid=$!
+  for _ in $(seq 1 100); do
+    [ -S "$app_dir/vmm-sock" ] && break
+    kill -0 "$vfpid" 2>/dev/null || {
+      echo "msks: virtiofsd exited before serving (see $app_dir/virtiofsd.log)" >&2
+      exit 1
+    }
+    sleep 0.1
+  done
+  [ -S "$app_dir/vmm-sock" ] || {
+    echo "msks: virtiofsd socket never appeared" >&2
     exit 1
   }
-  sleep 0.1
-done
-[ -S "$app_dir/vmm-sock" ] || {
-  echo "msks: virtiofsd socket never appeared" >&2
-  exit 1
-}
+fi
 
 # --- the appliance VM ----------------------------------------------------
 rm -f "$app_dir/api.sock"
+
+# The disk set follows the mode: the rootfs disk is the Debian
+# appliance's; the NixOS appliance direct-boots (no rootfs), and the
+# deployed shape adds the erofs base (read-only) and the store
+# volume. Every disk carries an explicit image_type: v52's raw-image
+# autodetection breaks guests writing an ext4 superblock (sector 0).
+# The deployed letters are PINNED to the config's expectations
+# (nix/appliance-config.nix): vda erofs, vdb store volume, vdc state
+# — the payload order below is that order.
+case "$appliance_mode" in
+debian)
+  disks=$(printf '    {"path": "%s/rootfs.ext4", "readonly": true, "image_type": "Raw"},\n    {"path": "%s", "image_type": "Raw"}' "$app_dir" "$state_disk")
+  ;;
+dev)
+  disks=$(printf '    {"path": "%s", "image_type": "Raw"}' "$state_disk")
+  ;;
+deployed)
+  disks=$(printf '    {"path": "%s/base-store.erofs", "readonly": true, "image_type": "Raw"},\n    {"path": "%s", "image_type": "Raw"},\n    {"path": "%s", "image_type": "Raw"}' \
+    "$app_dir" "${MSKS_APPLIANCE_STORE_VOLUME:-$app_dir/store-volume.img}" "$state_disk")
+  ;;
+esac
 
 # The VM is created and booted through the REST API rather than CLI
 # payload flags: vm.create accepts the full disk schema (image_type),
@@ -257,12 +297,15 @@ boot_vm() {
     "cmdline": "$base_cmdline msksd.bootstrap_token=$bootstrap_token msksd.default_image=$default_image msksd.image=$booted_image$dev_cmdline $MSKS_APPLIANCE_CMDLINE_EXTRA"
   },
   "disks": [
-    {"path": "$app_dir/rootfs.ext4", "readonly": true, "image_type": "Raw"},
-    {"path": "$state_disk", "image_type": "Raw"}
+$disks
   ],
-  "fs": [
-    {"tag": "store", "socket": "$app_dir/vmm-sock",
-     "num_queues": 1, "queue_size": 1024}$dev_fs
+  "fs": [$(
+    if [ -n "$share_store" ]; then
+      printf '\n    {"tag": "store", "socket": "%s",\n     "num_queues": 1, "queue_size": 1024}%s' "$app_dir/vmm-sock" "$dev_fs"
+    else
+      printf '%s' "$dev_fs"
+    fi
+  )
   ],
   "net": [
     {"tap": "mskstap0", "mac": "52:54:00:00:00:01"}
