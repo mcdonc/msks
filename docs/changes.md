@@ -475,13 +475,11 @@ processes up` shows one devenv startup instead of two, and the
 ### Fixed
 
 - **The appliance builds again after the consent TUI landed
-  (#203).** #196 added `textual` to `pyproject.toml` without its nix
-  mirror: the appliance's msks wheel build failed its runtime
-  dependency check (`textual not installed`), and the supervised
-  appliance restart-looped to `restart rate limit exceeded` on every
-  start. `nix/textual-pkg.nix` builds the pinned 8.2.8 wheel into the
-  closure (nixpkgs' 8.2.6 predates the ListView focus semantics the
-  TUI relies on), and a new test keeps `nix/msks-pkg.nix` mirroring
+  (#203).** The appliance's nix package set shipped without
+  `textual`: the msks wheel build failed its runtime dependency
+  check, and the supervised appliance restart-looped on every
+  start. `nix/textual-pkg.nix` builds the pinned 8.2.8 wheel into
+  the closure, and a new test keeps `nix/msks-pkg.nix` mirroring
   `[project.dependencies]` — the next dependency addition fails a
   unit test instead of the appliance boot.
 - **Guest and appliance images keep the base image's file

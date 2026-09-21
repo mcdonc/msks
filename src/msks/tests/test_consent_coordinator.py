@@ -591,13 +591,11 @@ async def test_stop_and_stop_workspace_skip_vanished_holds(engine_app) -> None:
     app.state.deciders.register(1, "ws-interactive")
     first = await engine.hold("ws-interactive", "a.example", 443)
     second = await engine.hold("ws-interactive", "b.example", 443)
-    second_id = (
-        second
-        and (
-            await app.state.model.egress_consent.list_requests(
-                "ws-interactive", decision="pending"
-            )
-        )[0]["id"]
+    pending = await app.state.model.egress_consent.list_requests(
+        "ws-interactive", decision="pending"
+    )
+    second_id = next(
+        row["id"] for row in pending if row["dest_host"] == "b.example"
     )
     real_owner = coordinator_mod.hold_owner
     stolen_tasks: list[asyncio.Task] = []
@@ -614,8 +612,11 @@ async def test_stop_and_stop_workspace_skip_vanished_holds(engine_app) -> None:
     await engine.stop()
     coordinator_mod.hold_owner = real_owner
     assert (await verdict_of(first))["reason"] == "shutdown"
-    # The stolen hold's future: the racing timeout owns it now; the
-    # stop loop skipped it (no cancel of an unknown task).
+    # The stolen hold's future stays pending: the hook pops the
+    # hold without resolving it (a real racing timeout would
+    # fail-close it), and the stop loop skips what it no longer
+    # sees — the test reaps only its task, below.
+    assert not second.done()
 
     # The workspace-stop path skips foreign holds' ids entirely,
     # and its own vanished holds (the steal shape) skip the cancel.
@@ -623,11 +624,12 @@ async def test_stop_and_stop_workspace_skip_vanished_holds(engine_app) -> None:
     app.state.deciders.register(2, "ws-interactive")
     kept = await engine2.hold("ws-interactive", "k.example", 443)
     stolen = await engine2.hold("ws-interactive", "v.example", 443)
-    stolen_id = (
-        await app.state.model.egress_consent.list_requests(
-            "ws-interactive", decision="pending"
-        )
-    )[-1]["id"]
+    pending = await app.state.model.egress_consent.list_requests(
+        "ws-interactive", decision="pending"
+    )
+    stolen_id = next(
+        row["id"] for row in pending if row["dest_host"] == "v.example"
+    )
     engine2._holds["foreign"] = {
         "future": asyncio.get_running_loop().create_future(),
         "workspace_id": "ws-elsewhere",
@@ -647,6 +649,9 @@ async def test_stop_and_stop_workspace_skip_vanished_holds(engine_app) -> None:
     coordinator_mod.hold_owner = real_owner
     assert "foreign" in engine2._holds
     assert (await verdict_of(kept))["reason"] == "stopped"
+    # Same simulated shape as stop()'s above: the vanish arm skipped
+    # the stolen hold, so its future stays pending.
+    assert not stolen.done()
     engine2._holds["foreign"]["task"].cancel()
     del engine2._holds["foreign"]
     # The stop loops skipped the stolen tasks by design; this test
@@ -654,7 +659,6 @@ async def test_stop_and_stop_workspace_skip_vanished_holds(engine_app) -> None:
     # parked they would sleep past teardown otherwise).
     for task in stolen_tasks:
         await engine.cancel_hold_task(task)
-    del stolen
 
 
 def test_hold_owner_answers_the_vanished_arm() -> None:

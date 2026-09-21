@@ -26,7 +26,13 @@ def strip_comments(block: str) -> str:
 
 def dependency_names() -> set[str]:
     deps = tomllib.loads(PYPROJECT.read_text())["project"]["dependencies"]
-    return {re.split(r"[><=!;\[]", d)[0].strip().lower() for d in deps}
+    return {re.split(r"[><=~!;\[]", d)[0].strip().lower() for d in deps}
+
+
+def version_tuple(text: str) -> tuple[int, ...]:
+    """`"8.2.8"` → `(8, 2, 8)`: numeric compare, so `8.2.10` sorts
+    above `8.2.9` where the strings compare below it."""
+    return tuple(int(part) for part in text.split("."))
 
 
 def nix_dependency_block() -> str:
@@ -80,14 +86,23 @@ def test_the_hand_pinned_textual_floor_covers_pyproject() -> None:
         for d in tomllib.loads(PYPROJECT.read_text())["project"][
             "dependencies"
         ]
-        if d.startswith("textual")
+        if re.split(r"[><=~!;\[]", d)[0].strip().lower() == "textual"
     )
-    floor = specifier.split(">=")[1].strip()
-    pin = re.search(r'version = "([^"]+)"', TEXTUAL_PKG.read_text())
+    floor = re.search(r">=\s*(\d+(?:\.\d+)*)", specifier)
+    assert floor is not None, (
+        f"pyproject's textual specifier {specifier!r} declares no "
+        f">= floor for nix/textual-pkg.nix to cover"
+    )
+    pin = re.search(
+        r'version = "([^"]+)"', strip_comments(TEXTUAL_PKG.read_text())
+    )
     assert pin is not None, "nix/textual-pkg.nix lost its version pin"
-    assert pin.group(1) >= floor, (
-        f"pyproject wants textual>={floor}; nix/textual-pkg.nix pins "
-        f"{pin.group(1)} — bump the pin (wheel URL, hash, and "
-        f"propagatedBuildInputs from the new METADATA) or the TUI "
-        f"runs on a textual older than its declared floor"
+    pin_v = version_tuple(pin.group(1))
+    floor_v = version_tuple(floor.group(1))
+    assert pin_v >= floor_v, (
+        f"pyproject wants textual>={floor.group(1)}; "
+        f"nix/textual-pkg.nix pins {pin.group(1)} — bump the pin "
+        f"(wheel URL, hash, and propagatedBuildInputs from the new "
+        f"METADATA) or the TUI runs on a textual older than its "
+        f"declared floor"
     )
