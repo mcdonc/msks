@@ -9,7 +9,10 @@ disks at all?
 
 **Answer: yes, and it is fast.** The harness is `nix/spike-205-1.nix`
 (the evaluation) and `scripts/spike-205-1.sh` (build, boot, measure).
-Run it from a devenv shell: `bash scripts/spike-205-1.sh`.
+Run it from a devenv shell: `bash scripts/spike-205-1.sh`. The first
+evaluation fetches the pinned microvm.nix tarball and needs
+`experimental-features = flakes` in the host nix.conf (the devenv
+shell's nix carries it); later builds are cached.
 
 ## What booted
 
@@ -29,11 +32,11 @@ Run it from a devenv shell: `bash scripts/spike-205-1.sh`.
 
 ## Numbers (reference host, warm host page cache)
 
-| Measurement                                   | Value                           |
-| --------------------------------------------- | ------------------------------- |
-| boot-to-ready (vm.boot → SPIKE1-READY marker) | 11.7–12.4s (4 runs, p50 ~11.9s) |
-| NixOS system toplevel closure                 | 923.7 MiB                       |
-| initrd                                        | 22.3 MiB                        |
+| Measurement                                   | Value               |
+| --------------------------------------------- | ------------------- |
+| boot-to-ready (vm.boot → SPIKE1-READY marker) | 11.7–11.8s (4 runs) |
+| NixOS system toplevel closure                 | 699.5 MiB           |
+| initrd                                        | 21.2 MiB            |
 
 Context for the budget on the issue: the Debian appliance's warm p50
 boot-to-API is ~27.5s, of which ~25s is msksd's Python closure
@@ -46,21 +49,32 @@ were warm in the host page cache from the build; a cold-host first
 boot pays more, exactly as the Debian appliance's does (its ~15s fully
 warm vs ~27.5s cold-share numbers in `docs/boot-speed.md`).
 
-The 923.7 MiB toplevel is a lean config (no docs, no sshd, no nix
-daemon) — inside the 1.1–1.6G estimate recorded on the issue, and the
-dev artifact set stays tiny: the spike's out dir is a kernel, an
-initrd, and a cmdline file. No rootfs is needed at all in dev mode.
+The closure carries a full systemd, a getty, and udev at 699.5 MiB —
+inside the 1.1–1.6G estimate recorded on the issue (the estimate
+assumed nix itself inside the closure; see landmine 5). The dev
+artifact set stays tiny: a kernel, an initrd, a cmdline file, and the
+toplevel path. The dev mode needs no rootfs at all — the root is a
+tmpfs and `/etc` materializes through activation.
 
 ## Evidence for the no-database design
 
-The system booted to multi-user with zero nix database, no
-`nix-daemon`, and no registered paths: nothing on the boot or
-activation path consults the db. Every store path resolved through the
-share. This is the core fact the issue's dev-mode design rests on, now
-demonstrated against our own pin and VMM rather than inferred from
-microvm.nix's usage.
+The system booted to multi-user with no nix database anywhere on the
+machine: `nix.enable = false` keeps nix out of the closure (verified:
+`nix path-info -r` on the toplevel lists no nix package), and
+`microvm.registerClosure = false` keeps microvm.nix's boot-time
+`nix-store --load-db` step and `regInfo=` kernel parameter out
+(verified: the artifact cmdline ends at `init=…`). Nothing on the boot
+or activation path constructs, loads, or consults a database — every
+store path resolved through the share. This is the core fact the
+issue's dev-mode design rests on, demonstrated against our own pin and
+VMM.
 
-## Landmines found (all fixed in the harness)
+Scope of the claim: the spike proves the **boot and activation path**
+needs no database. It did not run any nix command inside the guest —
+the deployed mode (spike 2) is exactly the one that does, and that is
+where the two-database `local-overlay-store` design applies.
+
+## Landmines found (all fixed or recorded in the harness)
 
 1. **vhost-user needs shared memory.** `vm.create` without
    `memory.shared=true` succeeds; `vm.boot` returns 500. The
@@ -76,6 +90,17 @@ microvm.nix's usage.
    space-separated string word-splits under `printf '%s\n'`, writing
    one parameter per line and breaking JSON payloads downstream. Quote
    interpolations in generated scripts.
+5. **microvm.nix registers the closure into a fresh nix db at every
+   boot, by default.** `microvm.registerClosure` defaults on and is
+   gated by `nix.enable`: the guest gets `regInfo=` on its kernel
+   command line and a stage-2 `nix-store --load-db < registration`
+   step — 4491 paths in this spike's first builds — and nix itself
+   rides the closure (~224 MiB of the first build's 923.7 MiB
+   toplevel). The first four measurements (11.7–12.4s) ran with that
+   load-db pass inside them; the numbers above are re-measured with
+   both options off, and the pass cost under a second against a tmpfs
+   db — but a production config lifting microvm.nix's wiring must
+   decide this deliberately, not inherit it silently.
 
 ## Not answered here (spike 2 and 3)
 

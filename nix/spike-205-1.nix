@@ -44,6 +44,13 @@ let
           # The host store serves everything; nothing is packed to disk.
           storeOnDisk = false;
           writableStoreOverlay = null;
+          # microvm.nix registers the system closure into a fresh
+          # tmpfs nix db at every boot by default (regInfo= on the
+          # cmdline + a `nix-store --load-db` step in stage 2). The
+          # spike measures the shape WITHOUT any database, so the
+          # registration stays off — the first measurements silently
+          # included a 4491-path load-db pass (landmine 5 in the doc).
+          registerClosure = false;
           shares = [
             {
               proto = "virtiofs";
@@ -56,9 +63,10 @@ let
           interfaces = [ ];
         };
 
-        # Serial console (systemd-getty-generator instantiates a getty
-        # from console=; the ready marker below is the real success
-        # signal, the getty is for interactive poking).
+        # Serial console, for boot status on the serial log. The
+        # spike's success marker below is the real signal; serial runs
+        # in File mode, so there is no input path to poke through
+        # interactively.
         boot.kernelParams = [ "console=ttyS0" ];
 
         # The spike's success marker: one line on the serial console
@@ -77,10 +85,12 @@ let
           };
         };
 
-        # A lean closure: no docs, no store GC, no nix daemon (the
-        # store is read-only and nothing manages it from inside).
+        # A lean closure: no docs, no sshd, and no nix at all — the
+        # store is read-only and nothing inside manages it (this also
+        # gates microvm.nix's regInfo cmdline parameter; see the
+        # registerClosure comment above).
         documentation.enable = false;
-        nix.gc.automatic = false;
+        nix.enable = false;
         services.openssh.enable = false;
 
         system.stateVersion = lib.trivial.release;
@@ -93,21 +103,18 @@ let
   # The artifact set the boot script consumes, mirroring the
   # appliance manifest's shape (kernel, initrd, cmdline) without the
   # disks a diskless spike does not have.
-  spike =
-    pkgs.runCommand "msks-spike-205-1"
-      {
-        nativeBuildInputs = [ pkgs.python3 ];
-      }
-      ''
-        set -eu
-        mkdir -p "$out"
-        cp -L "${cfg.system.build.kernel}/bzImage" "$out/vmlinux"
-        cp -L "${cfg.system.build.initialRamdisk}/initrd" "$out/initrd"
-        printf '%s\n' "${
-          pkgs.lib.concatStringsSep " " (cfg.microvm.kernelParams ++ [ "console=ttyS0" ])
-        }" > "$out/cmdline"
-        printf '%s\n' "${toplevel}" > "$out/toplevel"
-      '';
+  spike = pkgs.runCommand "msks-spike-205-1" { } ''
+    set -eu
+    mkdir -p "$out"
+    cp -L "${cfg.system.build.kernel}/bzImage" "$out/vmlinux"
+    cp -L "${cfg.system.build.initialRamdisk}/initrd" "$out/initrd"
+    # boot.kernelParams already carries console=ttyS0 and
+    # microvm.kernelParams includes boot.kernelParams, so no
+    # append is needed here.
+    printf '%s\n' "${pkgs.lib.concatStringsSep " " cfg.microvm.kernelParams}" \
+      > "$out/cmdline"
+    printf '%s\n' "${toplevel}" > "$out/toplevel"
+  '';
 in
 {
   inherit spike toplevel;
