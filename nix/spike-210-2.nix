@@ -129,6 +129,8 @@ let
     nix='${pkgs.nix}/bin/nix'
     nixstore='${pkgs.nix}/bin/nix-store'
     say() { printf 'PROBE %s\n' "$*"; }
+    fail=0
+    bad() { printf 'PROBE %s\n' "$*"; fail=1; }
     # The booted system, resolved at runtime: embedding the toplevel
     # at build time would recurse (this service is part of the
     # toplevel's own unit graph).
@@ -139,18 +141,19 @@ let
     say "topology: $(grep -c ' /nix/.upper-volume ' /proc/mounts) volume mount(s): $(grep 'upper-volume' /proc/mounts | tr '\n' ';')"
     say "upper-layer-ls: $(ls /nix/.upper-volume/store 2>&1 | tr '\n' ' ')"
 
-    # 1. The merged store is an overlayfs with exactly the built layers.
+    # 1. The merged store is an overlayfs with exactly the built layers
+    # (two mount lines exist: the rw overlay and stage 2's ro bind of it).
     m=$(grep ' /nix/store ' /proc/mounts || true)
     case "$m" in
-      *"overlay"*) say "mount: $m" ;;
-      *) say "mount: MISSING ($m)" ;;
+      *"overlay"*) while read -r line; do say "mount: $line"; done <<< "$m" ;;
+      *) bad "mount: MISSING ($m)" ;;
     esac
 
     # 2. Reads resolve through the lower database (no load, no daemon).
     if out=$($nix --store "$OV" path-info "$TL" 2>/dev/null); then
       say "lower-db-read: $out"
     else
-      say "lower-db-read: FAILED ($out)"
+      bad "lower-db-read: FAILED ($out)"
     fi
 
     marker=/nix/.upper-volume/spike2-marker
@@ -161,31 +164,42 @@ let
       if out=$($nix --store "$OV" path-info "$h" 2>/dev/null); then
         say "persistence: $out"
       else
-        say "persistence: FAILED ($out)"
+        bad "persistence: FAILED ($out)"
       fi
     else
       # 3b. A store write lands ONLY in the upper layer and registers
       # only in the upper database.
-      h=$($nixstore --store "$OV" --add /etc/hostname 2>&1) || {
-        say "write: FAILED ($h)"; printf 'SPIKE2-READY\n'; exit 0; }
+      # stdout is the added path; a warning on stderr would corrupt it.
       # The added object may be a symlink (nix-store --add archives
-      # /etc/hostname's symlink as-is), so test existence, not -d.
-      if [ -e "/nix/.upper-volume/store/$(basename "$h")" ]; then
-        say "write-upperdir: $h"
-      else
-        say "write-upperdir: MISSING in upper layer ($h)"
+      # /etc/hostname's symlink as-is), so existence, not -d, is the
+      # check below.
+      h=$($nixstore --store "$OV" --add /etc/hostname 2>/dev/null) || h=""
+      case "$h" in
+        /nix/store/*-*) ;;
+        *)
+          # Re-run with stderr for the message, then continue.
+          bad "write: FAILED ($($nixstore --store "$OV" --add /etc/hostname 2>&1))"
+          h=""
+          ;;
+      esac
+      if [ -n "$h" ]; then
+        if [ -e "/nix/.upper-volume/store/$(basename "$h")" ]; then
+          say "write-upperdir: $h"
+        else
+          bad "write-upperdir: MISSING in upper layer ($h)"
+        fi
+        if [ -e "/nix/.ro-store/nix/store/$(basename "$h")" ]; then
+          bad "not-in-lower: VIOLATION (path leaked into the erofs)"
+        else
+          say "not-in-lower: confirmed"
+        fi
+        if out=$($nix --store "$OV" path-info "$h" 2>/dev/null); then
+          say "upper-db-registered: $out"
+        else
+          bad "upper-db-registered: FAILED ($out)"
+        fi
+        echo "$h" > "$marker"
       fi
-      if [ -e "/nix/.ro-store/nix/store/$(basename "$h")" ]; then
-        say "not-in-lower: VIOLATION (path leaked into the erofs)"
-      else
-        say "not-in-lower: confirmed"
-      fi
-      if out=$($nix --store "$OV" path-info "$h" 2>/dev/null); then
-        say "upper-db-registered: $out"
-      else
-        say "upper-db-registered: FAILED ($out)"
-      fi
-      echo "$h" > "$marker"
     fi
 
     # 4. Registering a path the lower store already holds copies no
@@ -194,12 +208,12 @@ let
     if out=$($nix --store "$OV" copy --from 'local?root=/nix/.ro-store&read-only=true' "$TL" 2>&1); then
       after=$(ls /nix/.upper-volume/store | sort)
       if [ "$before" = "$after" ]; then
-        say "lower-reg-no-copy: confirmed"
+        say "lower-reg-no-copy: confirmed (the upper-db rows the gc later deletes are the registration evidence)"
       else
-        say "lower-reg-no-copy: COPIED (upper layer grew)"
+        bad "lower-reg-no-copy: COPIED (upper layer grew)"
       fi
     else
-      say "lower-reg-no-copy: FAILED ($out)"
+      bad "lower-reg-no-copy: FAILED ($out)"
     fi
 
     # 5. Garbage collection stays upper-scoped: a rooted upper path
@@ -208,21 +222,26 @@ let
     [ -e /nix/.upper-volume/nix-var/gcroots/spike2 ] \
       || ln -s "$(cat "$marker" 2>/dev/null || echo /nix/store)" \
         /nix/.upper-volume/nix-var/gcroots/spike2
+    rooted=$(readlink -f /nix/.upper-volume/nix-var/gcroots/spike2 2>/dev/null || true)
     if out=$(timeout 120 $nix --store "$OV" store gc 2>&1); then
-      h2=$(cat "$marker" 2>/dev/null || true)
-      if [ -n "$h2" ] && $nix --store "$OV" path-info "$h2" >/dev/null 2>&1; then
-        say "gc-upper-scoped: rooted upper path survived"
+      if [ -n "$rooted" ] && $nix --store "$OV" path-info "$rooted" >/dev/null 2>&1; then
+        say "gc-upper-scoped: rooted upper path survived ($rooted)"
       else
-        say "gc-upper-scoped: ran but dropped the rooted path ($out)"
+        bad "gc-upper-scoped: ran but dropped the rooted path ($rooted)"
       fi
       $nix --store "$OV" path-info "$TL" >/dev/null 2>&1 \
         && say "gc-lower-intact: toplevel still resolvable" \
-        || say "gc-lower-intact: FAILED"
+        || bad "gc-lower-intact: FAILED"
     else
-      say "gc-upper-scoped: FAILED ($out)"
+      bad "gc-upper-scoped: FAILED ($out)"
     fi
 
-    printf 'SPIKE2-READY\n'
+    if [ "$fail" = 0 ]; then
+      printf 'SPIKE2-READY\n'
+    else
+      printf 'SPIKE2-FAILED\n'
+      exit 1
+    fi
   '';
 
   spike = pkgs.runCommand "msks-spike-210-2" { } ''
@@ -269,7 +288,12 @@ let
       }
       ''
         set -eu
-        mkfs.erofs -T 0 -L nix-store "$out" "${baseStore}"
+        # Root ownership is forced: the image packs whatever the build
+        # sandbox produced, and the guest must not inherit build-user
+        # ownership (microvm.nix's squashfs path passes --all-root for
+        # the same reason).
+        mkfs.erofs --force-uid=0 --force-gid=0 -T 0 -L nix-store \
+          "$out" "${baseStore}"
       '';
 
   # The pristine store volume: ext4 carrying the (empty) overlayfs
