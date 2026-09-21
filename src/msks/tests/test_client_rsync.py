@@ -468,9 +468,13 @@ def test_stock_rsync_shapes_the_remote_shell_argv(tmp_path: Path) -> None:
         capture_output=True,
         timeout=30,
     )
-    # rc 42 is the later shell's own exit status — the LAST -e ran
-    # and the first one never did (its log stayed empty).
-    assert done.returncode == 42 and not argv_log.read_text()
+    # The exit status is whichever side of rsync's internal race
+    # wins: 42, the later shell's own status, when rsync reaps the
+    # child first; 12, rsync's protocol-stream error, when it sees
+    # the closed pipe first (both observed on 3.5.0, ~2% the
+    # latter locally). Either way the LAST -e ran and the first
+    # one never did — its log stayed empty.
+    assert done.returncode in (42, 12) and not argv_log.read_text()
 
 
 def shlex_quote(value: str) -> str:
