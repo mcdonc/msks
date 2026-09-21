@@ -465,6 +465,39 @@ it into each fresh one). Inside a workspace with egress, git and
 rsync over the forward (`docs/networking.md`) carry day-to-day
 code; the volume moves are for the whole `/home` at once.
 
+## `msks secret`
+
+Placeholder secrets (#198): mint a sentinel for one workspace, and
+the daemon keeps the real secret in its store — the workspace never
+holds it (the full story, including where the real secret lives per
+provider, is [docs/secrets.md](secrets.md)):
+
+```bash
+# from a password manager, nothing touches disk
+op read 'op://Vault/github/credential' \
+  | msks secret mint myws --name github_api \
+      --dest api.github.com --secret-file -
+
+msks secret mint myws --name pypi --dest .pypi.org --dest pypi.org \
+  --ttl 86400 --secret-file ./token   # suffix + exact, one day
+
+msks secret ls                          # placeholders, never sentinels
+msks secret renew myws --name pypi --ttl 86400
+msks secret revoke myws --name github_api
+msks secret check                       # the store answers writes
+```
+
+`--secret-file` takes a path or `-` for a pipe (the value is
+whitespace-stripped at both ends); the secret is
+never accepted as a command-line argument (argv lands in process
+lists and shell history), and an empty file is refused before any
+network roundtrip. `--dest` repeats and binds the swap: an exact
+host (`api.github.com`) or a suffix that covers every host under a
+domain (`.github.com`). The mint prints the sentinel exactly once —
+every later view omits it, so a lost sentinel is re-minted, not
+recalled. `revoke` takes effect on the next request; `renew`
+extends a `--ttl` lifetime in place with the sentinel unchanged.
+
 ## `msks console`
 
 An interactive shell inside a workspace, over the daemon's console

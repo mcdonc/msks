@@ -784,6 +784,188 @@ def match_refs(matches: list[dict]) -> str:
     )
 
 
+def read_secret(path: str) -> str:
+    """The #198 payload: a file's contents, or stdin for ``-``.
+
+    Whitespace-stripped at both ends — a token file's trailing
+    newline (or a password manager's) is not part of the secret —
+    and never accepted as a command-line argument, which lands in
+    process lists and shell history.
+    """
+    try:
+        if path == "-":
+            if sys.stdin.isatty():
+                raise SystemExit(
+                    "msks: --secret-file - expects the secret on stdin "
+                    "(pipe it in; it is never read interactively)"
+                )
+            text = sys.stdin.read()
+        else:
+            text = Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise SystemExit(
+            f"msks: cannot read secret file {path}: {exc}"
+        ) from None
+    value = text.strip()
+    if not value:
+        raise SystemExit("msks: the secret file is empty")
+    return value
+
+
+async def find_placeholder(
+    url: str, token: str, workspace_id: str, name: str, transport
+) -> dict:
+    """The (workspace, name) pair's row, or a named exit."""
+    rows = await api_call(
+        "GET", url, token, "/api/v1/secrets", transport=transport
+    )
+    for row in rows:
+        if row["workspace_id"] == workspace_id and row["name"] == name:
+            return row
+    raise SystemExit(
+        f"msks: no placeholder {name} on workspace {workspace_id}"
+    )
+
+
+def cmd_secret_mint(
+    workspace_id: str,
+    name: str,
+    dests: list[str],
+    ttl: int | None,
+    secret_file: str,
+    transport=None,
+) -> int:
+    """``msks secret mint``: one step; prints the sentinel once."""
+    secret = read_secret(secret_file)
+    body = {
+        "workspace_id": workspace_id,
+        "name": name,
+        "dests": dests,
+        "secret": secret,
+    }
+    if ttl is not None:
+        body["ttl_s"] = ttl
+    row = asyncio.run(
+        api_call(
+            "POST",
+            env_url(),
+            env_token(),
+            "/api/v1/secrets",
+            json_body=body,
+            transport=transport,
+        )
+    )
+    print(f"minted {workspace_id}/{name} for {', '.join(row['dests'])}")
+    print(f"sentinel (shown once): {row['sentinel']}")
+    return 0
+
+
+def cmd_secret_ls(as_json: bool = False, transport=None) -> int:
+    """``msks secret ls``: every placeholder, no sentinels."""
+    rows = asyncio.run(
+        api_call(
+            "GET",
+            env_url(),
+            env_token(),
+            "/api/v1/secrets",
+            transport=transport,
+        )
+    )
+    if as_json:
+        print(json.dumps(rows, indent=2))
+        return 0
+    for row in rows:
+        expires = row["expires_at"] or "never"
+        print(
+            f"{row['id']:>4}  {row['workspace_id']}/{row['name']}  "
+            f"{', '.join(row['dests'])}  expires {expires}"
+        )
+    return 0
+
+
+def cmd_secret_revoke(workspace_id: str, name: str, transport=None) -> int:
+    """``msks secret revoke``: effective on the next request."""
+    url, token = env_url(), env_token()
+    row = asyncio.run(
+        find_placeholder(url, token, workspace_id, name, transport)
+    )
+    result = asyncio.run(
+        api_call(
+            "DELETE",
+            url,
+            token,
+            f"/api/v1/secrets/{row['id']}",
+            transport=transport,
+        )
+    )
+    suffix = (
+        ""
+        if result.get("store_cleaned", True)
+        else (" (store value left behind; msks secret check reports it)")
+    )
+    print(f"revoked {workspace_id}/{name}{suffix}")
+    return 0
+
+
+def cmd_secret_renew(
+    workspace_id: str, name: str, ttl: int, transport=None
+) -> int:
+    """``msks secret renew``: extends in place, sentinel unchanged."""
+    url, token = env_url(), env_token()
+    row = asyncio.run(
+        find_placeholder(url, token, workspace_id, name, transport)
+    )
+    updated = asyncio.run(
+        api_call(
+            "POST",
+            url,
+            token,
+            f"/api/v1/secrets/{row['id']}/renew",
+            json_body={"ttl_s": ttl},
+            transport=transport,
+        )
+    )
+    print(f"renewed {workspace_id}/{name}; expires {updated['expires_at']}")
+    return 0
+
+
+def cmd_secret_check(transport=None) -> int:
+    """``msks secret check``: the configured store answers writes."""
+    result = asyncio.run(
+        api_call(
+            "POST",
+            env_url(),
+            env_token(),
+            "/api/v1/secrets/check",
+            transport=transport,
+        )
+    )
+    print(f"secret store ({result['provider']}): ok")
+    return 0
+
+
+def secret_command_table(args: argparse.Namespace, transport) -> dict:
+    """One entry per ``secret`` subcommand."""
+    return {
+        "mint": lambda: cmd_secret_mint(
+            args.workspace_id,
+            args.name,
+            args.dests,
+            args.ttl,
+            args.secret_file,
+            transport=transport,
+        ),
+        "ls": lambda: cmd_secret_ls(args.json, transport=transport),
+        "revoke": lambda: cmd_secret_revoke(
+            args.workspace_id, args.name, transport=transport
+        ),
+        "renew": lambda: cmd_secret_renew(
+            args.workspace_id, args.name, args.ttl, transport=transport
+        ),
+        "check": lambda: cmd_secret_check(transport=transport),
+    }
+
+
 def cmd_image_ls(as_json: bool = False, transport=None) -> int:
     """``msks image ls``: the whole catalog, default marked."""
     rows = asyncio.run(fetch_images(env_url(), env_token(), transport))
@@ -1318,6 +1500,73 @@ def build_parser() -> argparse.ArgumentParser:
     home_import.add_argument(
         "file", help="the ext4 volume image to upload; - reads stdin"
     )
+    secret = sub.add_parser(
+        "secret",
+        help="placeholder secrets: mint, list, revoke, renew, check",
+    )
+    secret_sub = secret.add_subparsers(dest="secret_command", required=True)
+    secret_mint = secret_sub.add_parser(
+        "mint", help="mint a placeholder for one workspace"
+    )
+    secret_mint.add_argument(
+        "workspace_id", help="the workspace the placeholder binds to"
+    )
+    secret_mint.add_argument(
+        "--name", required=True, help="the placeholder's label"
+    )
+    secret_mint.add_argument(
+        "--dest",
+        required=True,
+        action="append",
+        dest="dests",
+        metavar="HOST",
+        help=(
+            "an allowlist destination: an exact host "
+            "(api.github.com) or a suffix (.github.com); repeatable"
+        ),
+    )
+    secret_mint.add_argument(
+        "--ttl",
+        type=int,
+        metavar="SECONDS",
+        help="the placeholder's lifetime (default: unbounded)",
+    )
+    secret_mint.add_argument(
+        "--secret-file",
+        required=True,
+        metavar="PATH",
+        help=(
+            "the file holding the real secret; - reads stdin "
+            "(pipe it from a password manager)"
+        ),
+    )
+    secret_ls = secret_sub.add_parser(
+        "ls", help="list placeholders (sentinels are never listed)"
+    )
+    secret_ls.add_argument(
+        "--json", action="store_true", help="one JSON document"
+    )
+    secret_revoke = secret_sub.add_parser(
+        "revoke", help="revoke a placeholder (effective next request)"
+    )
+    secret_revoke.add_argument("workspace_id")
+    secret_revoke.add_argument("--name", required=True)
+    secret_renew = secret_sub.add_parser(
+        "renew", help="extend a placeholder's lifetime in place"
+    )
+    secret_renew.add_argument("workspace_id")
+    secret_renew.add_argument("--name", required=True)
+    secret_renew.add_argument(
+        "--ttl",
+        required=True,
+        type=int,
+        metavar="SECONDS",
+        help="the new lifetime from now",
+    )
+    secret_sub.add_parser(
+        "check",
+        help="verify the configured secret store answers writes",
+    )
     return parser
 
 
@@ -1482,6 +1731,9 @@ def command_table(args: argparse.Namespace, transport) -> dict:
         ](),
         "home": lambda: home_command_table(args, transport)[
             args.home_command
+        ](),
+        "secret": lambda: secret_command_table(args, transport)[
+            args.secret_command
         ](),
     }
 

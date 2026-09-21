@@ -30,6 +30,10 @@ from .identity import KEY_TYPES
 
 VALID_DRIVERS = ("local", "k8s")
 
+#: The secret-store providers v1 wires (#198): the SecretSpec CLI
+#: URIs the daemon knows how to build from settings.
+VALID_SECRET_PROVIDERS = ("file", "age", "awssm", "bws")
+
 
 def live_env(env: Mapping[str, str] | None) -> Mapping[str, str]:
     """The env to read: an explicit mapping, or the live environment."""
@@ -295,6 +299,40 @@ class NetSettings:
 
 
 @dataclass
+class SecretStoreSettings:
+    """The placeholder secret store (#198).
+
+    Real secrets live behind SecretSpec; the provider is a setting,
+    not code, so at-rest encryption (``age``) or a managed vault
+    (``awssm``, ``bws``) is a configuration change. The store is
+    driven through the ``secretspec`` CLI (its Python SDK exposes
+    only the resolve path — every write lives in the CLI), with a
+    generated manifest under *root*; values ride stdin, never
+    argv. Provider credentials are deliberately not settings:
+    each provider reads its own chain from the daemon's process
+    environment (the AWS SDK chain, ``BWS_ACCESS_TOKEN``).
+    """
+
+    provider: str = "file"
+    # None means <state_dir>/secrets (derived at parse time, like
+    # the server's db_path).
+    root: Path | None = None
+    age_identity: str | None = None
+    region: str | None = None
+    profile: str | None = None
+    prefix: str | None = None
+    project: str | None = None
+    cli: str = "secretspec"
+    timeout_s: float = 30.0
+
+    @classmethod
+    def from_env(
+        cls, env: Mapping[str, str] | None = None
+    ) -> SecretStoreSettings:
+        return secret_store_settings_from_env(cls, live_env(env))
+
+
+@dataclass
 class Settings:
     """The live-swappable settings root msksd subsystems read."""
 
@@ -302,6 +340,9 @@ class Settings:
     k8s: K8sSettings = field(default_factory=K8sSettings)
     server: ServerSettings = field(default_factory=ServerSettings)
     net: NetSettings = field(default_factory=NetSettings)
+    secret_store: SecretStoreSettings = field(
+        default_factory=SecretStoreSettings
+    )
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
@@ -310,6 +351,7 @@ class Settings:
             k8s=K8sSettings.from_env(env),
             server=ServerSettings.from_env(env),
             net=NetSettings.from_env(env),
+            secret_store=SecretStoreSettings.from_env(env),
         )
 
 
@@ -403,6 +445,75 @@ def parse_key_type(env: Mapping[str, str], name: str, default: str) -> str:
             f"{name} must be one of {sorted(KEY_TYPES)}, got {value!r}"
         )
     return value
+
+
+def secret_store_settings_from_env(
+    cls: type[SecretStoreSettings], env: Mapping[str, str]
+) -> SecretStoreSettings:
+    """Build SecretStoreSettings from the environment (helper: keeps
+    the class block itself at xenon rank A, like its siblings)."""
+    provider = _env(env, "MSKSD_SECRET_STORE_PROVIDER", cls.provider)
+    if provider not in VALID_SECRET_PROVIDERS:
+        raise ValueError(
+            f"MSKSD_SECRET_STORE_PROVIDER must be one of "
+            f"{VALID_SECRET_PROVIDERS}, got {provider!r}"
+        )
+    # Per-provider required keys: checked in one named error at
+    # load, so a typo'd or half-written config fails before the
+    # first mint, not at it.
+    check_provider_keys(provider, env)
+    timeout = _env_float(env, "MSKSD_SECRET_STORE_TIMEOUT_S", cls.timeout_s)
+    if timeout <= 0:
+        raise ValueError(
+            f"MSKSD_SECRET_STORE_TIMEOUT_S must be positive, got {timeout}"
+        )
+    state = Path(
+        _env(env, "MSKSD_STATE_DIR", str(VmmSettings().state_dir))
+    ).expanduser()
+    root = _env(env, "MSKSD_SECRET_STORE_ROOT", "")
+    return cls(
+        provider=provider,
+        root=Path(root).expanduser() if root else state / "secrets",
+        **secret_store_options(env),
+        timeout_s=timeout,
+    )
+
+
+def secret_store_options(env: Mapping[str, str]) -> dict:
+    """The optional per-provider fields, straight off the env."""
+    pairs = {
+        "age_identity": "MSKSD_SECRET_STORE_AGE_IDENTITY",
+        "region": "MSKSD_SECRET_STORE_REGION",
+        "profile": "MSKSD_SECRET_STORE_PROFILE",
+        "prefix": "MSKSD_SECRET_STORE_PREFIX",
+        "project": "MSKSD_SECRET_STORE_PROJECT",
+    }
+    options = {
+        field: _env(env, name, "") or None for field, name in pairs.items()
+    }
+    options["cli"] = _env(
+        env, "MSKSD_SECRET_STORE_CLI", SecretStoreSettings.cli
+    )
+    return options
+
+
+#: Per-provider required keys (#198): named at settings load so a
+#: typo'd or half-written config fails before the first mint.
+PROVIDER_REQUIRED_KEYS = {
+    "age": "MSKSD_SECRET_STORE_AGE_IDENTITY",
+    "awssm": "MSKSD_SECRET_STORE_REGION",
+    "bws": "MSKSD_SECRET_STORE_PROJECT",
+}
+
+
+def check_provider_keys(provider: str, env: Mapping[str, str]) -> None:
+    """Refuse a provider whose required key is absent."""
+    name = PROVIDER_REQUIRED_KEYS.get(provider)
+    if name is not None and not env.get(name):
+        raise ValueError(
+            f"{name} is required when "
+            f"MSKSD_SECRET_STORE_PROVIDER is {provider!r}"
+        )
 
 
 def _parse_subnet(

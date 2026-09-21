@@ -2823,3 +2823,301 @@ async def test_maybe_decide_denies_on_a_no(monkeypatch) -> None:
         eg.dest_label({"dest_host": "raw.example", "dest_port": 0})
         == "raw.example (all ports)"
     )
+
+
+# --- secret commands (#198) -----------------------------------------------
+
+
+def secret_rows() -> list[dict]:
+    return [
+        {
+            "id": 3,
+            "workspace_id": "ws-sec",
+            "name": "github_api",
+            "dests": ["api.github.com"],
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "expires_at": None,
+        }
+    ]
+
+
+def test_cmd_secret_mint_posts_and_prints_the_sentinel_once(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """mint reads the secret from a file, posts it in the body, and
+    prints the sentinel exactly once."""
+    client_env(monkeypatch)
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(
+            201, json={**secret_rows()[0], "sentinel": "mskssec1_abc"}
+        )
+
+    secret_file = tmp_path / "token"
+    secret_file.write_text("ghp-real-token\n")
+    code = cli.main(
+        [
+            "secret",
+            "mint",
+            "ws-sec",
+            "--name",
+            "github_api",
+            "--dest",
+            "api.github.com",
+            "--secret-file",
+            str(secret_file),
+        ],
+        transport=mock(handler),
+    )
+    assert code == 0
+    assert seen["path"] == "/api/v1/secrets"
+    assert seen["body"]["secret"] == "ghp-real-token"
+    assert "ttl_s" not in seen["body"]
+    out = capsys.readouterr().out
+    assert "mskssec1_abc" in out
+    assert out.count("mskssec1_abc") == 1
+
+
+def test_cmd_secret_mint_reads_stdin_and_sends_ttl(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--secret-file -`` consumes piped stdin; ``--ttl`` rides the
+    body."""
+    client_env(monkeypatch)
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(
+            201, json={**secret_rows()[0], "sentinel": "mskssec1_x"}
+        )
+
+    monkeypatch.setattr(sys.stdin, "read", lambda: "piped-token\n")
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
+    code = cli.main(
+        [
+            "secret",
+            "mint",
+            "ws-sec",
+            "--name",
+            "github_api",
+            "--dest",
+            ".github.com",
+            "--ttl",
+            "3600",
+            "--secret-file",
+            "-",
+        ],
+        transport=mock(handler),
+    )
+    assert code == 0
+    assert seen["body"]["secret"] == "piped-token"
+    assert seen["body"]["ttl_s"] == 3600
+    assert seen["body"]["dests"] == [".github.com"]
+
+
+def test_cmd_secret_mint_refuses_a_tty_stdin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No pipe, no hang: a terminal stdin is a named error."""
+    client_env(monkeypatch)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True, raising=False)
+    with pytest.raises(SystemExit, match="expects the secret on stdin"):
+        cli.main(
+            [
+                "secret",
+                "mint",
+                "ws-sec",
+                "--name",
+                "x",
+                "--dest",
+                "a.com",
+                "--secret-file",
+                "-",
+            ],
+            transport=mock(lambda request: httpx.Response(201, json={})),
+        )
+
+
+def test_cmd_secret_mint_refuses_an_empty_secret(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An empty file fails before any network roundtrip."""
+    client_env(monkeypatch)
+    empty = tmp_path / "empty"
+    empty.write_text("  \n")
+    with pytest.raises(SystemExit, match="empty"):
+        cli.main(
+            [
+                "secret",
+                "mint",
+                "ws-sec",
+                "--name",
+                "x",
+                "--dest",
+                "a.com",
+                "--secret-file",
+                str(empty),
+            ],
+            transport=mock(lambda request: httpx.Response(201, json={})),
+        )
+
+
+def test_cmd_secret_ls_lists_without_sentinels(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client_env(monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/secrets"
+        return httpx.Response(200, json=secret_rows())
+
+    code = cli.main(["secret", "ls"], transport=mock(handler))
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "ws-sec/github_api" in out
+    assert "api.github.com" in out
+    assert "never" in out
+    assert "mskssec1_" not in out
+
+
+def test_cmd_secret_revoke_and_renew_resolve_the_label(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """revoke/renew address (workspace, name); the CLI resolves the
+    id through the listing first."""
+    client_env(monkeypatch)
+    calls: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path))
+        if request.method == "DELETE":
+            return httpx.Response(
+                200, json={"revoked": 3, "store_cleaned": True}
+            )
+        if request.url.path.endswith("/renew"):
+            return httpx.Response(
+                200,
+                json={**secret_rows()[0], "expires_at": "2027-01-01"},
+            )
+        return httpx.Response(200, json=secret_rows())
+
+    code = cli.main(
+        ["secret", "revoke", "ws-sec", "--name", "github_api"],
+        transport=mock(handler),
+    )
+    assert code == 0
+    assert ("DELETE", "/api/v1/secrets/3") in calls
+    assert "left behind" not in capsys.readouterr().out
+
+    code = cli.main(
+        [
+            "secret",
+            "renew",
+            "ws-sec",
+            "--name",
+            "github_api",
+            "--ttl",
+            "60",
+        ],
+        transport=mock(handler),
+    )
+    assert code == 0
+    assert ("POST", "/api/v1/secrets/3/renew") in calls
+    assert "2027-01-01" in capsys.readouterr().out
+
+
+def test_cmd_secret_revoke_reports_a_leftover_value(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client_env(monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "DELETE":
+            return httpx.Response(
+                200, json={"revoked": 3, "store_cleaned": False}
+            )
+        return httpx.Response(200, json=secret_rows())
+
+    code = cli.main(
+        ["secret", "revoke", "ws-sec", "--name", "github_api"],
+        transport=mock(handler),
+    )
+    assert code == 0
+    assert "left behind" in capsys.readouterr().out
+
+
+def test_cmd_secret_check(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client_env(monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/api/v1/secrets/check"
+        return httpx.Response(200, json={"provider": "file", "ok": True})
+
+    code = cli.main(["secret", "check"], transport=mock(handler))
+    assert code == 0
+    assert "secret store (file): ok" in capsys.readouterr().out
+
+
+def test_cmd_secret_ls_json(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``--json`` answers one document."""
+    client_env(monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=secret_rows())
+
+    code = cli.main(["secret", "ls", "--json"], transport=mock(handler))
+    assert code == 0
+    assert json.loads(capsys.readouterr().out) == secret_rows()
+
+
+def test_cmd_secret_revoke_names_a_missing_label(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unknown (workspace, name) pair exits naming it."""
+    client_env(monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # A listing that neither starts with nor holds the match: the
+        # scan walks every row before naming the absence.
+        other = {**secret_rows()[0], "workspace_id": "ws-other"}
+        return httpx.Response(200, json=[other])
+
+    with pytest.raises(SystemExit, match="no placeholder missing_api"):
+        cli.main(
+            ["secret", "revoke", "ws-sec", "--name", "missing_api"],
+            transport=mock(handler),
+        )
+
+
+def test_cmd_secret_mint_names_an_unreadable_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A missing secret file fails before any network roundtrip."""
+    client_env(monkeypatch)
+    with pytest.raises(SystemExit, match="cannot read secret file"):
+        cli.main(
+            [
+                "secret",
+                "mint",
+                "ws-sec",
+                "--name",
+                "x",
+                "--dest",
+                "a.com",
+                "--secret-file",
+                str(tmp_path / "absent"),
+            ],
+            transport=mock(lambda request: httpx.Response(201, json={})),
+        )

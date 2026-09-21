@@ -449,6 +449,55 @@ KEY_CASES = [
     ("conntrack_tool", "/ct", "net.conntrack_tool", "/ct"),
     ("audit_hmac_key", "k1", "server.audit_hmac_key", "k1"),
     ("ssh_key_type", "ed25519", "vmm.ssh_key_type", "ed25519"),
+    (
+        "secret_store_provider",
+        "file",
+        "secret_store.provider",
+        "file",
+    ),
+    (
+        "secret_store_root",
+        "/srv/msks-secrets",
+        "secret_store.root",
+        Path("/srv/msks-secrets"),
+    ),
+    (
+        "secret_store_age_identity",
+        "/etc/msksd/age.key",
+        "secret_store.age_identity",
+        "/etc/msksd/age.key",
+    ),
+    (
+        "secret_store_region",
+        "eu-west-1",
+        "secret_store.region",
+        "eu-west-1",
+    ),
+    ("secret_store_profile", "prod", "secret_store.profile", "prod"),
+    (
+        "secret_store_prefix",
+        "myteam",
+        "secret_store.prefix",
+        "myteam",
+    ),
+    (
+        "secret_store_project",
+        "uuid-42",
+        "secret_store.project",
+        "uuid-42",
+    ),
+    (
+        "secret_store_cli",
+        "/usr/local/bin/secretspec",
+        "secret_store.cli",
+        "/usr/local/bin/secretspec",
+    ),
+    (
+        "secret_store_timeout_s",
+        45.0,
+        "secret_store.timeout_s",
+        45.0,
+    ),
 ]
 
 
@@ -693,3 +742,38 @@ def test_settings_from_env_still_reads_plain_environment(
 ) -> None:
     monkeypatch.setenv("MSKSD_PORT", "9006")
     assert Settings.from_env().server.port == 9006
+
+
+def test_reload_latches_the_secret_store_location(tmp_path) -> None:
+    """A SIGHUP naming a new secret-store provider or root changes
+    nothing: the manifest and values were never migrated, so the
+    store keeps its startup location until a restart (the same
+    reasoning as vmm.state_dir). Connection details (region, the age
+    identity path) reload live — and the value cache empties either
+    way so the next read re-fetches."""
+    app = app_with_file(
+        tmp_path,
+        {
+            "secret_store_provider": "age",
+            "secret_store_age_identity": "/old/key",
+            "secret_store_root": str(tmp_path / "old-root"),
+        },
+    )
+    write_config(
+        tmp_path,
+        "\n".join(
+            [
+                "secret_store_provider: file",
+                f"secret_store_root: {tmp_path}/new-root",
+                "secret_store_age_identity: /new/key",
+            ]
+        )
+        + "\n",
+    )
+    app.state.secrets._cache["MSKS_X"] = "stale"
+    main_mod.reload_settings(app, str(tmp_path / "msksd.yaml"))
+    store = app.state.settings.secret_store
+    assert store.provider == "age"  # latched
+    assert str(store.root) == str(tmp_path / "old-root")  # latched
+    assert store.age_identity == "/new/key"  # connection detail: live
+    assert app.state.secrets._cache == {}  # the swap emptied the cache

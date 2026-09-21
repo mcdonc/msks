@@ -19,6 +19,17 @@ tagged `vX.Y.Z`.
   `watch`/`decide`/`revoke` subcommands remain the scripting
   surface. See [docs/cli.md](cli.md#msks-egress).
 
+- **Placeholder secret store, `msks secret` commands (#198).**
+  Mint a sentinel for a workspace (`msks secret mint <ws> --name
+<label> --dest <hosts> --secret-file <path>|-`) and the real
+  secret lives in a SecretSpec-backed store, provider as a setting
+  (`secret_store_provider`: `file` default, `age` for at-rest
+  encryption, `awssm`, `bws`), never in the workspace; `ls`,
+  `renew --ttl`, `revoke`, and `check` round out the surface.
+  Secrets ride stdin or a file, never argv; each lifecycle event
+  (mint, revoke, expiry) lands in the audit table. See
+  [docs/secrets.md](secrets.md), the [key reference](config.md),
+  and [cli.md](cli.md#msks-secret).
 - **`msks-appliance-shell` (#189).** One command from a devenv
   shell for a root shell on the appliance console: it stops the
   appliance, seeds the `debug-shell` marker onto the state disk,

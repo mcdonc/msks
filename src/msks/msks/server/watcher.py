@@ -9,6 +9,7 @@ watcher honest across driver restarts and both backends.
 import asyncio
 import logging
 import time
+from datetime import UTC, datetime
 
 from .. import storage
 from ..microvm.spec import VmStatus
@@ -153,6 +154,7 @@ async def watch_loop(app, hub: EventHub) -> None:
             if time.monotonic() >= next_prune:
                 next_prune = time.monotonic() + PRUNE_INTERVAL_S
                 await sweep_consent(app)
+            await sweep_expired_placeholders(app, hub)
         except Exception:
             LOG.exception("watcher scan failed; retrying next interval")
         await asyncio.sleep(interval)
@@ -164,3 +166,75 @@ async def sweep_consent(app) -> None:
     deleted = await app.state.model.egress_consent.prune()
     if deleted:
         LOG.info("consent: pruned %d row(s) past retention/cap", deleted)
+
+
+async def sweep_expired_placeholders(app, hub: EventHub) -> int:
+    """Retire placeholders past their deadline (#198): audit, remove,
+    re-sync the store manifest, announce.
+
+    Expiry rides the same per-request predicate as revocation, so a
+    row past its deadline stops swapping immediately — this sweep is
+    the cleanup half. Each retirement can cost a store call up to
+    ``secret_store_timeout_s``, so one pass retires at most
+    :data:`SWEEP_CAP` rows and leaves the rest to the next pass —
+    the watcher's other duties (status transitions, pressure, the
+    consent prune) stay responsive through a bulk expiry. A failing
+    store delete never keeps the row: the value left behind is
+    inert without it.
+    """
+    model = app.state.model
+    now = datetime.now(UTC)
+    expired = [
+        row
+        for row in await model.list_placeholders()
+        if deadline_passed(row["expires_at"], now)
+    ][:SWEEP_CAP]
+    if not expired:
+        return 0
+    async with app.state.store_lock:
+        for row in expired:
+            await retire_expired(app, hub, row)
+        refs = await model.placeholder_refs()
+        await asyncio.to_thread(app.state.secrets.sync_manifest, refs)
+    return len(expired)
+
+
+#: Rows one watcher pass may retire (#198): each can hold the store
+#: lock for a CLI call, so the cap bounds the loop's worst-case
+#: stall; the remainder retires on the next pass.
+SWEEP_CAP = 16
+
+
+def deadline_passed(expires_at: str | None, now: datetime) -> bool:
+    """Whether a placeholder's deadline is past. The stored deadline
+    is naive UTC on the sqlite round-trip (the dialect strips
+    tzinfo at bind); replace() unconditionally normalizes."""
+    if expires_at is None:
+        return False
+    deadline = datetime.fromisoformat(expires_at).replace(tzinfo=UTC)
+    return deadline <= now
+
+
+async def retire_expired(app, hub: EventHub, row: dict) -> None:
+    """One expired placeholder: drop, audit, clean the store,
+    announce. The audit follows the drop (a persistently failing
+    delete cannot stack one audit row per watch interval) — the
+    accepted trade-off is that a raising audit loses the event with
+    the row already gone.
+    """
+    model = app.state.model
+    await model.delete_placeholder(row["id"])
+    await model.record_audit("expiry", row)
+    try:
+        await app.state.secrets.delete(row["backend_ref"])
+    except Exception:  # noqa: BLE001 - inert leftover, logged below
+        LOG.warning(
+            "expired placeholder %s/%s: store value left behind at %s",
+            row["workspace_id"],
+            row["name"],
+            row["backend_ref"],
+        )
+    await hub.publish(
+        "secret.expiry",
+        {"workspace_id": row["workspace_id"], "name": row["name"]},
+    )
