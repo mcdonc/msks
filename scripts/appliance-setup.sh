@@ -29,7 +29,7 @@ mode="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("mod
 case "$mode" in
 debian) required="vmlinux initrd rootfs.ext4" ;;
 dev) required="vmlinux initrd" ;;
-deployed) required="vmlinux initrd base-store.erofs store-volume.img" ;;
+deployed) required="vmlinux initrd base-store.erofs ${MSKS_APPLIANCE_STORE_VOLUME:-$app_dir/store-volume.img}" ;;
 *)
   echo "msks: unknown appliance mode '$mode' in $app_dir/appliance-manifest.json" >&2
   exit 1
@@ -84,7 +84,7 @@ fi
 # NixOS build keeps its 40G sparse template in the store rather than
 # the artifact output).
 state_disk="${MSKSD_APPLIANCE_STATE:-$app_dir/state.ext4}"
-state_template="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("stateDisk", ""))' "$app_dir/appliance-manifest.json")"
+state_template="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("stateDisk", ""))' "$app_dir/appliance-manifest.json" 2>/dev/null || echo "")"
 mkdir -p "$(dirname "$state_disk")"
 if [ ! -f "$state_disk" ] && [ -n "$state_template" ]; then
   cp -L --sparse=always "$state_template" "$state_disk"

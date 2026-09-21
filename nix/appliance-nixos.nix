@@ -9,16 +9,18 @@
 #                     contract the run script reads)
 #   $out/toplevel   - the system toplevel store path, one line
 #                     (same status: convenience, not the contract)
-#   $out/state.ext4 - the blank persistent-state disk template (the
-#                     same 40G sparse template the Debian appliance
-#                     ships, the same capacity model)
+# The seed-once resources — the 40G sparse state template (the same
+# capacity model the Debian appliance ships) and the deployed store
+# volume — deliberately do NOT ride $out: a built output is hashed
+# byte-for-byte over its apparent size (sparse holes included), and a
+# 40G template inside $out cost ~4.5 minutes of daemon time per
+# rebuild. Their store paths ride the manifest (stateDisk,
+# storeVolume); build-appliance.sh seeds each target once per
+# install.
 #   $out/base-store.erofs   - deployed mode only: the system closure
 #                     AND its nix database as an erofs image (spike
 #                     2's recipe — the db baked in, no boot-time
 #                     load-db pass)
-#   $out/store-volume.ext4  - deployed mode only: the pristine ext4
-#                     volume carrying the overlayfs upper layer, the
-#                     workdir, and the upper store's state directory
 #   $out/appliance-manifest.json - the artifact contract the run
 #                     script reads (mode, network plan, store paths)
 #
@@ -115,8 +117,8 @@ let
   # (empty) overlayfs upper layer (store/), the workdir (work/), and
   # the upper store's state directory (nix-var/). 4G in production —
   # updates copy only missing paths (spike 3's measurements: a
-  # package pull cost ~3.4 MiB), and the manifest records the size so
-  # the host can grow it. e2fsck after mkfs -d: the journal is left
+  # package pull cost ~3.4 MiB). e2fsck after mkfs -d: the journal is
+  # left
   # flagged for recovery and a read-only stage-1 mount would abort.
   storeVolume =
     pkgs.runCommand "msks-appliance-nixos-volume"

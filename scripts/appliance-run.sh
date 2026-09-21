@@ -305,7 +305,7 @@ $disks
     else
       # dev_fs carries a leading comma for the share case; alone in
       # the array it must arrive bare.
-      printf '%s' "''${dev_fs#,}"
+      printf '%s' "${dev_fs#,}"
     fi
   )
   ],

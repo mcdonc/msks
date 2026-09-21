@@ -275,10 +275,17 @@ let
     dir=$(dirname "$profile")
     keep=$(ls -1v "$dir" | grep -E '^system-[0-9]+-link$' | tail -3)
     old=""
+    current=$(readlink -f /run/current-system)
     for link in $(ls -1v "$dir" | grep -E '^system-[0-9]+-link$'); do
       case "$keep" in
       *"$link"*) ;;
       *)
+        # Never the running generation: after a fallback rollback the
+        # booted system sits below the newest links, and
+        # delete-generations ABORTS the whole batch when current is in
+        # it (nothing deleted, the unit fails, Persistent=true
+        # retries it at every boot).
+        [ "$(readlink -f "$dir/$link")" = "$current" ] && continue
         gen=''${link#system-}
         gen=''${gen%-link}
         old="$old $gen"
@@ -359,9 +366,8 @@ in
 
     boot.kernelParams = [
       "console=ttyS0"
-      # NixOS's predictable-name default off: the egress nftables
-      # rules name eth0 (the module adds this too; keep one source).
-      "net.ifnames=0"
+      # net.ifnames=0 arrives via microvm.nix's kernelParams (the
+      # egress nftables rules name eth0); not repeated here.
       # The appliance's machine identity, build-stable (the same
       # stable id the Debian appliance baked into /etc/machine-id —
       # the NixOS root is tmpfs, so the identity rides the cmdline;
@@ -397,9 +403,10 @@ in
 
     # The persistent state disk (#10, unchanged from the Debian
     # appliance): labeled ext4 at /state, /var a bind from it (the
-    # journal and logind state ride the disk; the root is a tmpfs),
-    # and /etc/machine-id bound from it — the NixOS root is tmpfs, so
-    # the appliance's identity lives on state.
+    # journal and logind state ride the disk; the root is a tmpfs).
+    # The appliance's machine identity is build-stable through
+    # systemd.machine_id= on the kernel cmdline (see
+    # boot.kernelParams) — it does not ride the state disk.
     fileSystems."/state" = {
       device = "/dev/disk/by-label/msks-state";
       fsType = "ext4";
@@ -471,14 +478,15 @@ in
     # attaches to the restarted journald and reaches the disk.
     #
     # The cost, stated plainly: records from BEFORE the restart ride
-    # the detached mount and are gone, and PID 1's unit-lifecycle
-    # records ("Started <unit>.service") never re-attach afterwards —
-    # PID 1's /dev/log datagram socket does not follow a journald
-    # restart. Daemon and service stdout/stderr streams (managed by
-    # PID 1) reconnect and persist. The no-restart alternative
-    # (volatile-until-flush) was built and measured three ways against
-    # this tmpfs-root shape; the flush never landed on the disk — the
-    # restart is the design that demonstrably persists.
+    # the detached mount and are gone — the state disk's journal
+    # begins at the restart. Everything after persists, PID 1's
+    # unit-lifecycle records included (this systemd re-attaches PID
+    # 1's /dev/log to the restarted journald; verified live — the
+    # "Started msksd appliance daemon." record lands on the state
+    # disk). The no-restart alternative (volatile-until-flush) was
+    # built and measured three ways against this tmpfs-root shape;
+    # the flush never landed on the disk — the restart is the design
+    # that demonstrably persists.
     systemd.services.msks-journal-persist = {
       description = "msks re-run tmpfiles against the mounted /var and restart journald onto it";
       after = [
@@ -565,8 +573,8 @@ in
     # The state disk converges before it mounts (the Debian
     # appliance's msks-state-format.service, NixOS-declared): the
     # prepare script above waits for the disk, labels or formats it,
-    # converges var/ staging and the daemon home, seeds the
-    # machine-id, and grows an undersized filesystem. Ordered before
+    # converges var/ staging, the ssh host-key directory, and the
+    # daemon home, and grows an undersized filesystem. Ordered before
     # the fstab-generated state.mount by name, with
     # DefaultDependencies=no — a unit with default dependencies is
     # After=basic.target and cannot run this early without an
