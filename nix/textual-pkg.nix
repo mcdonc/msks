@@ -8,6 +8,15 @@
 # extensions — against nixpkgs' own rich/pygments/… so the daemon
 # closure stays on the platform's package set wherever the floor
 # allows it.
+#
+# Bump workflow: move the version above, fetch the new wheel's
+# files.pythonhosted.org URL from uv.lock, take its hash
+# (nix will print the real one on mismatch), and diff the wheel's
+# METADATA Requires-Dist against propagatedBuildInputs — a base
+# entry the new wheel adds needs a hand-edit here, or the runtime
+# check fails only at appliance build time (#203's blast radius).
+# test_appliance_pkg.py fails when pyproject's floor moves past
+# this pin.
 {
   lib,
   buildPythonPackage,

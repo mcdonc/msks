@@ -15,6 +15,13 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 MSKS_PKG = REPO_ROOT / "nix" / "msks-pkg.nix"
+TEXTUAL_PKG = REPO_ROOT / "nix" / "textual-pkg.nix"
+
+
+def strip_comments(block: str) -> str:
+    """Drop `# …` tails so a bracket or name inside a comment cannot
+    confuse the parses below."""
+    return "\n".join(line.split("#", 1)[0] for line in block.splitlines())
 
 
 def dependency_names() -> set[str]:
@@ -24,7 +31,7 @@ def dependency_names() -> set[str]:
 
 def nix_dependency_block() -> str:
     """The lines of msks-pkg.nix's dependencies list, sans brackets."""
-    nix = MSKS_PKG.read_text()
+    nix = strip_comments(MSKS_PKG.read_text())
     start = nix.index("dependencies = [")
     body = nix[start + len("dependencies = [") : nix.index("]", start)]
     return body
@@ -58,4 +65,29 @@ def test_no_extra_nix_dependencies_beyond_pyproject() -> None:
     assert not extra, (
         f"nix/msks-pkg.nix dependencies pyproject does not declare: "
         f"{sorted(extra)}"
+    )
+
+
+def test_the_hand_pinned_textual_floor_covers_pyproject() -> None:
+    """pyproject's textual floor stays within what textual-pkg.nix
+    pins. textual is the one dependency this repo builds by hand from
+    an exact wheel, so a floor bump in pyproject that the nix pin
+    misses cannot fail the runtime check (8.2.9 required, 8.2.8
+    shipped) and no smoke covers the TUI focus semantics the floor
+    exists for — this test is that net."""
+    specifier = next(
+        d
+        for d in tomllib.loads(PYPROJECT.read_text())["project"][
+            "dependencies"
+        ]
+        if d.startswith("textual")
+    )
+    floor = specifier.split(">=")[1].strip()
+    pin = re.search(r'version = "([^"]+)"', TEXTUAL_PKG.read_text())
+    assert pin is not None, "nix/textual-pkg.nix lost its version pin"
+    assert pin.group(1) >= floor, (
+        f"pyproject wants textual>={floor}; nix/textual-pkg.nix pins "
+        f"{pin.group(1)} — bump the pin (wheel URL, hash, and "
+        f"propagatedBuildInputs from the new METADATA) or the TUI "
+        f"runs on a textual older than its declared floor"
     )
