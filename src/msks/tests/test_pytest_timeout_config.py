@@ -43,18 +43,33 @@ def test_smoke_conftest_lifts_the_ceiling() -> None:
     assert callable(module.pytest_collection_modifyitems)
 
     class Item:
-        def __init__(self, path: Path):
+        def __init__(self, path: Path, markers=None):
             self.path = path
             self.marks: list = []
+            self._markers = list(markers or [])
 
         def add_marker(self, mark) -> None:
             self.marks.append(mark)
+
+        def get_closest_marker(self, name: str):
+            found = [m for m in self._markers if m.name == name]
+            return found[-1] if found else None
 
     here = SMOKE_CONFTEST.parent
     smoke_item = Item(here / "test_appliance.py")
     unit_item = Item(here.parent / "test_local_driver.py")
     lookalike = Item(here.parent / "test_smoke_harness.py")
-    module.pytest_collection_modifyitems([smoke_item, unit_item, lookalike])
+    budgeted = Item(
+        here / "test_appliance.py",
+        [pytest.mark.timeout(4000)],  # noqa: PT023 - a bare marker
+    )
+    module.pytest_collection_modifyitems(
+        [smoke_item, unit_item, lookalike, budgeted]
+    )
     assert smoke_item.marks, "smoke items must get the override"
     assert not unit_item.marks, "unit items must keep the 30s ceiling"
     assert not lookalike.marks, "a test_smoke_* FILE is not the dir"
+    assert not budgeted.marks, (
+        "an item carrying its own timeout budget keeps it — the "
+        "opt-in dev bootstrap runs past the 30-minute ceiling"
+    )

@@ -1969,7 +1969,7 @@ async def verdict_refusal(app, workspace_id, request_id, body) -> tuple | None:
     return None
 
 
-def noop() -> None:
+def noop(*_observed) -> None:
     """The observer a plain forward passes: nothing to observe."""
     return None
 
@@ -1987,7 +1987,12 @@ async def pump_streams(
     nothing outlives the bridge writing into a closed stream.
     ``on_input`` and ``on_output`` observe the traffic in flight —
     the console's echo watchdog (#103) arms and disarms its deadline
-    through them; a plain forward passes none.
+    through them, and the console's refusal scan (#217) reads the
+    guest bytes through ``on_output``; a plain forward passes none.
+    Returns which side ended the session — ``"stream"`` for a guest
+    EOF (or stream error), ``"socket"`` for a client disconnect —
+    so the console bridge can close the websocket protocol-clean
+    instead of returning out of the handler (#217).
     """
     to_guest = asyncio.create_task(
         _ws_to_stream(socket, writer, on_input or noop)
@@ -2000,7 +2005,9 @@ async def pump_streams(
     except asyncio.CancelledError:
         await cancel_tasks((to_guest, to_client))
         raise
+    ended = "stream" if to_client in done else "socket"
     await settle(done, pending)
+    return ended
 
 
 async def cancel_tasks(tasks) -> None:
@@ -2025,6 +2032,41 @@ async def settle(done, pending) -> None:
             task.result()
 
 
+class _RefusalScan:
+    """The #123 refusal line in guest output (``MSKS ERR ...``).
+
+    A guest whose console helper rejects the session says so with
+    one line and exits; without this scan the refusal reaches the
+    client as transport death — the stream EOF ends the bridge
+    with no websocket close at all (#217). The scan matches the
+    line at a line start across read splits (the tail buffer spans
+    chunk boundaries); matched, the bridge closes the websocket
+    with :data:`CONSOLE_AUTH_REFUSED_CLOSE_CODE` and the guest's
+    own text as the reason.
+    """
+
+    def __init__(self) -> None:
+        self.text: str | None = None
+        self.matched = asyncio.Event()
+        self._tail = b""
+
+    def feed(self, data: bytes) -> None:
+        """One relayed guest chunk; records the refusal once."""
+        if self.text is not None:
+            return
+        self._tail = (self._tail + data)[-256:]
+        found = re.search(rb"(?:^|\n)(MSKS ERR[^\n]*)", self._tail)
+        if found is not None:
+            self.text = found.group(1).decode(errors="replace").strip()
+            self.matched.set()
+
+
+#: Close code for a console the guest refused (#123, #217): the
+#: helper's ``MSKS ERR`` line names the reason in the close frame,
+#: so a client can tell refusal apart from transport death.
+CONSOLE_AUTH_REFUSED_CLOSE_CODE = 4403
+
+
 async def bridge_console(
     socket: WebSocket, reader, writer, stall_timeout_s: float = 60.0
 ) -> None:
@@ -2036,8 +2078,20 @@ async def bridge_console(
     the bridge closes the websocket with 4502 instead of hanging open
     and silent. An idle session (no input in flight) never trips it,
     and ``stall_timeout_s <= 0`` switches the watchdog off.
+
+    Every ending is protocol-clean (#217): a refused session closes
+    with 4403 and the guest's refusal text, a guest stream that ends
+    (the helper exits, the shell logs out) closes with 1000, and only
+    a client disconnect ends without a close frame — the client is
+    gone; there is nothing to tell.
     """
     clock = _StallClock()
+    refusal = _RefusalScan()
+
+    def on_output(data: bytes) -> None:
+        clock.disarm()
+        refusal.feed(data)
+
     watchdog = asyncio.create_task(_echo_watchdog(socket, clock))
     pump = asyncio.create_task(
         pump_streams(
@@ -2045,12 +2099,17 @@ async def bridge_console(
             reader,
             writer,
             on_input=lambda: clock.arm(stall_timeout_s),
-            on_output=clock.disarm,
+            on_output=on_output,
         )
     )
+    refused = asyncio.create_task(refusal.matched.wait())
     done, pending = await asyncio.wait(
-        {pump, watchdog}, return_when=asyncio.FIRST_COMPLETED
+        {pump, watchdog, refused}, return_when=asyncio.FIRST_COMPLETED
     )
+    ended = None
+    if pump in done:
+        with contextlib.suppress(Exception):
+            ended = pump.result()
     for task in pending:
         task.cancel()
     for task in pending:
@@ -2059,6 +2118,31 @@ async def bridge_console(
     for task in done:
         with contextlib.suppress(Exception):
             task.result()
+    await close_console_session(socket, ended, refusal)
+
+
+async def close_console_session(socket, ended: str | None, refusal) -> None:
+    """The bridge's protocol-clean ending (#217).
+
+    A matched refusal closes with
+    :data:`CONSOLE_AUTH_REFUSED_CLOSE_CODE` and the guest's text; a
+    guest stream that ended (shell exit, helper shutdown) closes
+    with 1000; a client disconnect (``ended == "socket"``) and a
+    watchdog close (``ended is None`` — the watchdog already closed
+    4502) end silently. The suppress covers the races where the
+    close already happened or the client vanished mid-close.
+    """
+    if refusal.text is not None:
+        with contextlib.suppress(Exception):
+            await socket.close(
+                code=CONSOLE_AUTH_REFUSED_CLOSE_CODE,
+                reason=close_reason(refusal.text),
+            )
+    elif ended == "stream":
+        with contextlib.suppress(Exception):
+            await socket.close(
+                code=1000, reason=close_reason("console closed")
+            )
 
 
 class _StallClock:
@@ -2159,9 +2243,10 @@ async def _stream_to_ws(reader, socket: WebSocket, on_output=None) -> None:
         if not data:
             return
         # Any stream byte proves the stream alive (the console's
-        # watchdog disarm, #103).
+        # watchdog disarm, #103; the refusal scan reads the same
+        # chunk, #217).
         if on_output is not None:
-            on_output()
+            on_output(data)
         await socket.send_bytes(data)
 
 

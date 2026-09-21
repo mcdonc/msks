@@ -8,7 +8,7 @@ from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 from msks.app import build_app
 from msks.microvm import MicrovmError
-from msks.server.api import bridge_console, build_api
+from msks.server.api import _RefusalScan, bridge_console, build_api
 from msks.settings import NetSettings, ServerSettings, Settings
 from test_api import TOKEN, StubMicrovm, auth
 
@@ -144,6 +144,7 @@ def test_console_bridges_bytes_both_ways(console_api) -> None:
 async def test_bridge_ends_when_guest_eof(tmp_path) -> None:
     class Socket:
         sent: list[bytes] = []
+        closed: tuple[int, str] | None = None
 
         async def receive(self):
             # A client that never sends: the guest EOF must end it.
@@ -151,6 +152,9 @@ async def test_bridge_ends_when_guest_eof(tmp_path) -> None:
 
         async def send_bytes(self, data: bytes) -> None:
             self.sent.append(data)
+
+        async def close(self, code: int = 1000, reason: str = "") -> None:
+            self.closed = (code, reason)
 
     reader = asyncio.StreamReader()
     reader.feed_data(b"tail\n")
@@ -173,6 +177,78 @@ async def test_bridge_ends_when_guest_eof(tmp_path) -> None:
             return
 
     await asyncio.wait_for(bridge_console(Socket(), reader, Writer()), 5)
+
+
+async def test_bridge_closes_cleanly_on_guest_eof() -> None:
+    """#217: a guest stream that ends (shell exit, helper shutdown)
+    closes the websocket with 1000 — protocol-clean, not transport
+    death with no close frame."""
+    socket = _StallSocket()
+    reader = asyncio.StreamReader()
+    reader.feed_data(b"logout\n")
+    reader.feed_eof()
+    await asyncio.wait_for(bridge_console(socket, reader, _SilentWriter()), 5)
+    assert socket.closed is not None
+    code, reason = socket.closed
+    assert code == 1000, reason
+    assert "console closed" in reason
+
+
+class _RefusalSocket:
+    """A websocket fake that never disconnects: the refusal close
+    must come from the scan, not a side effect of the client going."""
+
+    def __init__(self) -> None:
+        self.closed: tuple[int, str] | None = None
+
+    async def receive(self):
+        await asyncio.sleep(3600)
+
+    async def send_bytes(self, data: bytes) -> None:
+        return
+
+    async def close(self, code: int = 1000, reason: str = "") -> None:
+        self.closed = (code, reason)
+
+
+async def test_bridge_closes_with_named_code_on_auth_refusal() -> None:
+    """#217: the #123 refusal line closes the websocket with 4403
+    and the guest's text as the reason — even when the stream stays
+    open (the scan wakes the bridge on its own)."""
+    socket = _RefusalSocket()
+    reader = asyncio.StreamReader()
+    reader.feed_data(b"banner\r\nMSKS ERR auth\r\n")
+    # Deliberately NO feed_eof: the close must not wait on the
+    # guest's exit.
+    await asyncio.wait_for(bridge_console(socket, reader, _SilentWriter()), 5)
+    assert socket.closed is not None
+    code, reason = socket.closed
+    assert code == 4403, reason
+    assert "MSKS ERR auth" in reason
+
+
+async def test_refusal_scan_ignores_bytes_after_the_match() -> None:
+    """Post-match chunks are dropped: the scan records the refusal
+    once and never re-arms (the bridge closes on the first one)."""
+    scan = _RefusalScan()
+    scan.feed(b"MSKS ERR auth\r\n")
+    assert scan.text == "MSKS ERR auth"
+    scan.feed(b"more bytes\r\n")
+    assert scan.text == "MSKS ERR auth"
+
+
+async def test_bridge_refusal_scan_spans_chunk_splits() -> None:
+    """The refusal line can arrive split across relayed reads; the
+    scan's tail buffer must reassemble it."""
+    socket = _RefusalSocket()
+    reader = asyncio.StreamReader()
+    reader.feed_data(b"junk\r\nMSKS E")
+    reader.feed_data(b"RR auth\r\n")
+    await asyncio.wait_for(bridge_console(socket, reader, _SilentWriter()), 5)
+    assert socket.closed is not None
+    code, reason = socket.closed
+    assert code == 4403, reason
+    assert "MSKS ERR auth" in reason
 
 
 class _StallSocket:
@@ -253,9 +329,10 @@ async def test_bridge_answered_input_then_idle_stays_open() -> None:
         bridge_console(socket, reader, writer, stall_timeout_s=0.5), 10
     )
     await race
-    assert socket.closed is None, (
-        "an answered-then-idle session must not close"
-    )
+    # The idle window passed without the stall close; the helper's
+    # EOF afterwards ends the session cleanly (1000, #217) — what
+    # must NOT happen is the 4502 stall close.
+    assert socket.closed is None or socket.closed[0] == 1000, socket.closed
 
 
 class _ChatteringSocket(_StallSocket):
@@ -329,7 +406,10 @@ async def test_bridge_rearm_wakes_the_sleeping_watchdog() -> None:
         bridge_console(socket, reader, writer, stall_timeout_s=0.5), 10
     )
     await race
-    assert socket.closed is None
+    # The subject is the re-arm wake; the race's trailing EOF ends
+    # the session cleanly (1000, #217). What must not happen is the
+    # 4502 stall close.
+    assert socket.closed is None or socket.closed[0] == 1000, socket.closed
 
 
 async def test_bridge_zero_stall_timeout_disables_the_watchdog() -> None:
@@ -348,7 +428,10 @@ async def test_bridge_zero_stall_timeout_disables_the_watchdog() -> None:
         bridge_console(socket, reader, writer, stall_timeout_s=0), 5
     )
     await race
-    assert socket.closed is None, "a zero window must disable the close"
+    # The off switch held (no 4502); the race's EOF ends cleanly.
+    assert socket.closed is None or socket.closed[0] == 1000, (
+        "a zero window must disable the stall close"
+    )
 
 
 def _make_prelude_image(tmp_path, hash_name: str = "a" * 64) -> str:
