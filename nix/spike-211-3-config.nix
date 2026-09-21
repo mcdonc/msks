@@ -122,6 +122,12 @@ in
   };
 
   nix.enable = true;
+  # nix.enable wires nix-daemon.socket into sockets.target: the socket
+  # listens from boot, and any local connect starts the root daemon —
+  # serving a plain-local-store view of /nix/store, the exact
+  # re-send-whole-closure footgun the SetEnv default avoids. The
+  # update path needs no daemon, so the socket never listens.
+  systemd.sockets.nix-daemon.wantedBy = lib.mkForce [ ];
   nix.settings.experimental-features = [
     "nix-command"
     "flakes"

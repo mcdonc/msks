@@ -32,7 +32,7 @@ mkdir -p "$state_dir"
 
 boot_timeout_s="${MSKS_SPIKE211_BOOT_TIMEOUT_S:-60}"
 case "$boot_timeout_s" in
-'' | *[!0-9]*)
+'' | 0 | *[!0-9]*)
   echo "spike211: MSKS_SPIKE211_BOOT_TIMEOUT_S must be a positive integer (got '$boot_timeout_s')" >&2
   exit 1
   ;;
@@ -60,8 +60,10 @@ ip link show mskstap0 >/dev/null 2>&1 || {
   echo "spike211: mskstap0 is missing (operator-installed tap for the appliance bridge)" >&2
   exit 1
 }
-if pgrep -x cloud-hypervisor >/dev/null; then
-  echo "spike211: a cloud-hypervisor is already running — this spike needs the bridge exclusively" >&2
+# -x cannot match: the kernel truncates comm to 15 chars and the name
+# is 16. Match the full command line instead.
+if pgrep -f 'cloud-hypervisor --api-socket' >/dev/null 2>&1; then
+  echo "spike211: a cloud-hypervisor is already running — this spike needs the bridge exclusively (the msks appliance holds 192.168.77.2 when up)" >&2
   exit 1
 fi
 if [ ! -e "$state_dir/spike3-key" ]; then
@@ -194,7 +196,12 @@ JSON
   curl -sS --fail-with-body --unix-socket "$run_dir/api.sock" -X PUT \
     http://localhost/api/v1/vm.boot >/dev/null
   ok=0
-  for _ in $(seq 1 $((boot_timeout_s * 2))); do
+  # A wall-clock deadline, not a poll count: a connection-refused
+  # failure answers instantly, but a packet-dropping one stretches
+  # each ConnectTimeout to 5s and a poll-count budget would silently
+  # overshoot.
+  deadline=$(($(date +%s) + boot_timeout_s))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
     if ssh_guest true 2>/dev/null; then
       ok=1
       break
@@ -212,7 +219,7 @@ JSON
 }
 
 boot_or_die() {
-  local name="$1"
+  local name="$1" marker
   if ! boot_gen "$state_dir/boot-cache/$name/kernel" \
     "$state_dir/boot-cache/$name/initrd" \
     "$(cat "$state_dir/boot-cache/$name/cmdline")"; then
@@ -220,7 +227,14 @@ boot_or_die() {
     tail -20 "$run_dir/serial.log" >&2 || true
     exit 1
   fi
-  echo "spike211: gen $name boot-to-ssh: ${BOOT_T}s, marker: $(ssh_guest cat /etc/spike3-generation)"
+  # The marker must say what we booted: a wrong-generation boot (stale
+  # cache, profile lag) is a failure, not a curiosity.
+  marker=$(ssh_guest cat /etc/spike3-generation)
+  if [ "$marker" != "$name" ]; then
+    echo "spike211: booted artifacts for generation $name but the running system says '$marker' — wrong generation" >&2
+    exit 1
+  fi
+  echo "spike211: gen $name boot-to-ssh: ${BOOT_T}s, marker: $marker"
 }
 
 # pull_current_gen NAME — read the appliance-side system profile over
@@ -247,7 +261,15 @@ pull_current_gen() {
 }
 
 upper_bytes() {
-  ssh_guest "du -sb /nix/.upper-volume/store | cut -f1"
+  local out
+  out=$(ssh_guest "du -sb /nix/.upper-volume/store | cut -f1") || return 1
+  case "$out" in
+  '' | *[!0-9]*)
+    echo "spike211: upper-layer size read back '$out' instead of a number" >&2
+    return 1
+    ;;
+  esac
+  printf '%s\n' "$out"
 }
 
 # rebuild GEN — nixos-rebuild boot --target-host; sets REBUILD_T.
@@ -274,7 +296,7 @@ UPPER_BYTES=""
 update_cycle() {
   local gen="$1" prev="$2" bytes
   rebuild "$gen"
-  bytes=$(upper_bytes)
+  bytes=$(upper_bytes) || exit 1
   echo "spike211: gen $gen: nixos-rebuild ${REBUILD_T}s, delta copy $((bytes - prev)) bytes (${bytes} total)"
   pull_current_gen "$gen"
   cleanup
@@ -289,9 +311,14 @@ if ! boot_gen "$image/vmlinux" "$image/initrd" "$(cat "$image/cmdline")"; then
   tail -20 "$run_dir/serial.log" >&2 || true
   exit 1
 fi
-echo "spike211: gen A boot-to-ssh: ${BOOT_T}s, marker: $(ssh_guest cat /etc/spike3-generation)"
+marker_A=$(ssh_guest cat /etc/spike3-generation)
+if [ "$marker_A" != A ]; then
+  echo "spike211: generation A booted but marker says '$marker_A'" >&2
+  exit 1
+fi
+echo "spike211: gen A boot-to-ssh: ${BOOT_T}s, marker: $marker_A"
 pull_current_gen A
-bytes_A=$(upper_bytes)
+bytes_A=$(upper_bytes) || exit 1
 echo "spike211: upper-layer baseline (generation A ships in the base image): ${bytes_A} bytes"
 
 # --- phase 2: marker-only update (generation B) ----------------------------
@@ -301,6 +328,10 @@ last_good=B
 # --- phase 3: package-pulling update (generation C) ------------------------
 update_cycle C "$UPPER_BYTES"
 last_good=C
+if ! ssh_guest hello >/dev/null 2>&1; then
+  echo "spike211: gen C: hello is not runnable — the package update did not land" >&2
+  exit 1
+fi
 echo "spike211: gen C hello: $(ssh_guest hello | head -1)"
 echo "spike211: generations retained on the volume: $(ssh_guest 'ls -d /nix/var/nix/profiles/system-*-link | wc -l')"
 

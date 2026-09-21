@@ -63,11 +63,12 @@ boot` points it) and its `system-*-link` siblings live on the store
 | fallback: boot the last good generation → ssh, marker C | 10.1s       | —                             |
 
 For scale, a **full image rebuild** for the same marker-only change —
-rebuilding the 929 MiB base store tree plus the erofs pack — takes
-**83s** of host build time before any VM restart, and the delta path
-moved 0.2 MiB. The comparison the issue asked for: an update that
-changes only configuration costs ~15s and kilobytes through ssh; one
-that pulls a small package costs ~37s and the package's closure; a
+rebuilding the 932 MiB base store tree plus the erofs pack — takes
+**70–85s of host build time** (83s in the recorded run; 69.7s in an
+independent repack of a never-built generation on the same host)
+before any VM restart, and the delta path moved 0.2 MiB. The comparison the issue asked for: an update that
+changes only configuration costs ~20s and kilobytes through ssh; one
+that pulls a small package costs ~21s and the package's closure; a
 full repack costs minutes and a fresh appliance image.
 
 Generation retention: each `boot` switch adds a `system-N-link` on
@@ -85,12 +86,16 @@ here); the decision belongs to #212.
 
 - sshd listens on the bridge address only — one port, one address,
   key-only root, one key. Password auth off.
-- No nix-daemon: the unix socket exists only if something starts the
-  daemon, and nothing does; store access happens in-session under
-  `NIX_REMOTE` with the overlay's own permissions.
+- No nix-daemon: `nix.enable` would wire `nix-daemon.socket` into
+  `sockets.target` — the socket listens from boot (world-connectable,
+  `srw-rw-rw-`) and any local connect starts the root daemon serving
+  the plain-local-store view. The config disables the socket
+  (`systemd.sockets.nix-daemon.wantedBy = []`); store access happens
+  in-session under `NIX_REMOTE` with the overlay's own permissions.
 - The broken-generation demonstration doubles as the surface check:
-  sshd bound to a non-bridge address made the machine unreachable —
-  the constraint is real, not advisory.
+  sshd configured for an address the bridge never routes fails to
+  bind at activation, and the machine boots to a login prompt with no
+  way in — the constraint is real, not advisory.
 
 ## Landmines found (all handled in the harness)
 
