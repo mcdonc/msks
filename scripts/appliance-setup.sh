@@ -21,7 +21,21 @@ case "$app_dir" in
 *) app_dir="$root/$app_dir" ;;
 esac
 
-for f in vmlinux initrd rootfs.ext4; do
+# The artifact set follows the image's mode (#212): the Debian
+# appliance ships a rootfs disk; the NixOS appliance direct-boots
+# kernel+initrd+cmdline, and the deployed shape adds the erofs base
+# and its store volume.
+mode="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("mode", "debian"))' "$app_dir/appliance-manifest.json" 2>/dev/null || echo debian)"
+case "$mode" in
+debian) required="vmlinux initrd rootfs.ext4" ;;
+dev) required="vmlinux initrd" ;;
+deployed) required="vmlinux initrd base-store.erofs ${MSKS_APPLIANCE_STORE_VOLUME:-$app_dir/store-volume.img}" ;;
+*)
+  echo "msks: unknown appliance mode '$mode' in $app_dir/appliance-manifest.json" >&2
+  exit 1
+  ;;
+esac
+for f in $required; do
   [ -f "$app_dir/$f" ] || {
     # The plain build task run may SKIP (execIfModified keys
     # unchanged — the up task's four-artifact guard in devenv.nix
@@ -65,11 +79,15 @@ fi
 
 # --- persistent state ---------------------------------------------------
 # MSKSD_APPLIANCE_STATE can relocate the state disk (e.g. /run for
-# ephemeral dev state); the template seeds it once per install.
+# ephemeral dev state); the template seeds it once per install. The
+# template's path rides the manifest (both builds record it — the
+# NixOS build keeps its 40G sparse template in the store rather than
+# the artifact output).
 state_disk="${MSKSD_APPLIANCE_STATE:-$app_dir/state.ext4}"
+state_template="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("stateDisk", ""))' "$app_dir/appliance-manifest.json" 2>/dev/null || echo "")"
 mkdir -p "$(dirname "$state_disk")"
-if [ ! -f "$state_disk" ]; then
-  cp -L "$app_dir/image/state.ext4" "$state_disk"
+if [ ! -f "$state_disk" ] && [ -n "$state_template" ]; then
+  cp -L --sparse=always "$state_template" "$state_disk"
   chmod 0644 "$state_disk"
 fi
 # A template growth reaches existing installs (#180): the seed above
@@ -79,9 +97,8 @@ fi
 # costs metadata on a sparse file; the guest's writes, not this
 # step, spend the host disk. The guest's state preparation then runs
 # resize2fs to grow the ext4 into the device.
-template="$app_dir/image/state.ext4"
-if [ -f "$template" ]; then
-  target="$(stat -c %s "$template")"
+if [ -n "$state_template" ] && [ -f "$state_disk" ]; then
+  target="$(stat -c %s "$state_template")"
   current="$(stat -c %s "$state_disk")"
   if [ "$current" -lt "$target" ]; then
     truncate -s "$target" "$state_disk"

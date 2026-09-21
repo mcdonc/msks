@@ -15,6 +15,21 @@ set -euo pipefail
 
 root="${DEVENV_ROOT:?not running inside the devenv shell}"
 nixpkgs="${MSKS_GUEST_NIXPKGS:?devenv must pass MSKS_GUEST_NIXPKGS}"
+
+# Which appliance build (#212): the Debian repack (still the default
+# until parity flips it) or the NixOS system. The NixOS build's store
+# shape rides MSKS_APPLIANCE_MODE (dev: the host store over virtiofs;
+# deployed: the erofs base + store volume) and defaults to dev — the
+# shape a checkout boots for development.
+build="${MSKS_APPLIANCE_BUILD:-debian}"
+case "$build" in
+debian) ;;
+nixos) ;;
+*)
+  echo "msks: MSKS_APPLIANCE_BUILD must be 'debian' or 'nixos' (got '$build')" >&2
+  exit 1
+  ;;
+esac
 app_dir="${MSKS_APPLIANCE_DIR:-$root/.devenv/state/appliance}"
 # A relative MSKS_APPLIANCE_DIR resolves below the repo root,
 # matching the Python-side resolution: a CWD-relative read would
@@ -37,37 +52,76 @@ previous="$(readlink -f "$app_dir/image" 2>/dev/null || true)"
 # succeeds avoids an unrooted window where a store GC could collect
 # the closure a RUNNING appliance still resolves through.
 echo "msks: ensuring appliance assets in $app_dir (idempotent — unchanged inputs are a cached no-op)"
-out="$(
-  nix-build -I nixpkgs="$nixpkgs" \
-    "$root/nix/appliance.nix" -A appliance -o "$app_dir/image"
-)"
+if [ "$build" = nixos ]; then
+  out="$(
+    MSKS_APPLIANCE_MODE="${MSKS_APPLIANCE_MODE:-dev}" \
+      nix-build -I nixpkgs="$nixpkgs" \
+      "$root/nix/appliance-nixos.nix" -o "$app_dir/image"
+  )"
+else
+  out="$(
+    nix-build -I nixpkgs="$nixpkgs" \
+      "$root/nix/appliance.nix" -A appliance -o "$app_dir/image"
+  )"
+fi
 
-if [ "$previous" != "$out" ] ||
-  [ ! -f "$app_dir/vmlinux" ] ||
-  [ ! -f "$app_dir/initrd" ] ||
-  [ ! -f "$app_dir/rootfs.ext4" ] ||
-  [ ! -f "$app_dir/appliance-manifest.json" ]; then
-  # Copy only what changed: rootfs.ext4 is ~0.9 GB, and a no-change
-  # reboot must not rewrite it (page cache, disk wear). The missing-
-  # artifact checks heal a deleted or half-deleted state dir (#160).
-  # temp+mv is atomic: an interrupted copy leaves the complete old
-  # file or no file — a truncated rootfs would pass -f forever while
-  # the gate above protects it (verified by review round 2).
-  for name in vmlinux initrd rootfs.ext4 appliance-manifest.json; do
-    cp -L "$out/$name" "$app_dir/.$name.tmp"
-    chmod 0644 "$app_dir/.$name.tmp"
-    mv -f "$app_dir/.$name.tmp" "$app_dir/$name"
+# The artifact set is mode-derived: the Debian build ships a rootfs
+# disk; the NixOS build direct-boots kernel+initrd+cmdline, and the
+# deployed shape adds the erofs base and the store-volume template.
+image_mode="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("mode", "debian"))' "$app_dir/image/appliance-manifest.json" 2>/dev/null || echo debian)"
+case "$build:$image_mode" in
+debian:*) artifacts="vmlinux initrd rootfs.ext4 appliance-manifest.json" ;;
+nixos:dev) artifacts="vmlinux initrd appliance-manifest.json" ;;
+nixos:deployed) artifacts="vmlinux initrd base-store.erofs appliance-manifest.json" ;;
+*)
+  echo "msks: unknown appliance image mode in $app_dir/image/appliance-manifest.json" >&2
+  exit 1
+  ;;
+esac
+
+missing=""
+for name in $artifacts; do
+  [ -f "$app_dir/$name" ] || missing="$missing $name"
+done
+if [ "$previous" != "$out" ] || [ -n "$missing" ]; then
+  # Copy only what changed, cmp-gated per artifact: the big ones
+  # (vmlinux, initrd, base-store.erofs) are byte-stable across
+  # config-only edits, and a no-change reboot must not rewrite them
+  # (page cache, disk wear). The missing-artifact checks heal a
+  # deleted or half-deleted state dir (#160); temp+mv is atomic: an
+  # interrupted copy leaves the complete old file or no file — a
+  # truncated rootfs would pass -f forever while the gate above
+  # protects it.
+  for name in $artifacts; do
+    if [ ! -e "$out/$name" ]; then
+      echo "msks: build output is missing $name" >&2
+      exit 1
+    fi
+    if ! cmp -s "$out/$name" "$app_dir/$name"; then
+      cp -L "$out/$name" "$app_dir/.$name.tmp"
+      chmod 0644 "$app_dir/.$name.tmp"
+      mv -f "$app_dir/.$name.tmp" "$app_dir/$name"
+    fi
   done
 fi
-# The state disk is NOT an artifact: a rebuild must never clobber live
-# appliance state. Seed it once from the template; the
-# appliance's msks-state-format.service (blank, foreign, and existing
-# disks all converge) handle the rest.
-if [ ! -f "$app_dir/state.ext4" ]; then
-  cp -L "$out/state.ext4" "$app_dir/.state.ext4.tmp"
-  chmod 0644 "$app_dir/.state.ext4.tmp"
-  mv -f "$app_dir/.state.ext4.tmp" "$app_dir/state.ext4"
-fi
+# The seed-once resources (the state template; the deployed store
+# volume — generation storage a rebuild must never replace) live in
+# the STORE, not the artifact output: a 40G sparse template inside
+# $out costs the daemon a full byte-for-byte hash of its apparent
+# size at every rebuild (sparse holes included). Their paths ride the
+# manifest; each seeds its target once per install.
+seed_once() {
+  src_key="$1"
+  dst="$2"
+  src="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2], ""))' "$app_dir/image/appliance-manifest.json" "$src_key")"
+  if [ -n "$src" ] && [ ! -f "$dst" ]; then
+    cp -L --sparse=always "$src" "$dst.tmp"
+    chmod 0644 "$dst.tmp"
+    mv -f "$dst.tmp" "$dst"
+  fi
+}
+seed_once stateDisk "$app_dir/state.ext4"
+seed_once storeVolume "${MSKS_APPLIANCE_STORE_VOLUME:-$app_dir/store-volume.img}"
 if [ "$previous" = "$out" ]; then
   echo "msks: appliance assets up to date in $app_dir (image $out)"
 else

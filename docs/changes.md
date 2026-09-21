@@ -18,6 +18,15 @@ tagged `vX.Y.Z`.
   unknown workspace) exits with the reason instead of waiting. The
   `watch`/`decide`/`revoke` subcommands remain the scripting
   surface. See [docs/cli.md](cli.md#msks-egress).
+- **`MSKS_APPLIANCE_BUILD` / `MSKS_APPLIANCE_MODE` (#212).** Build the
+  msksd appliance as a NixOS system beside the Debian repack: one
+  configuration, two store shapes. `MSKS_APPLIANCE_BUILD=nixos` with
+  the usual `msks-appliance-build` entry point selects it; the
+  default shape (`dev`) shares the host store over virtiofs exactly
+  as the Debian appliance does, and `MSKS_APPLIANCE_MODE=deployed`
+  packs the store on disk (erofs base + store volume) with sshd on
+  the bridge as the update channel. The Debian build stays the
+  default until the parity flip.
 
 - **Placeholder secret store, `msks secret` commands (#198).**
   Mint a sentinel for a workspace (`msks secret mint <ws> --name
