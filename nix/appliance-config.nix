@@ -283,8 +283,8 @@ let
         # Never the running generation: after a fallback rollback the
         # booted system sits below the newest links, and
         # delete-generations ABORTS the whole batch when current is in
-        # it (nothing deleted, the unit fails, Persistent=true
-        # retries it at every boot).
+        # it (nothing deleted, the unit fails, and the timer's
+        # catch-up re-fires it after every missed window while off).
         [ "$(readlink -f "$dir/$link")" = "$current" ] && continue
         gen=''${link#system-}
         gen=''${gen%-link}
@@ -725,9 +725,10 @@ in
     # address only, root over keys only, and every session pointed at
     # the overlay store by default (NIX_REMOTE via SetEnv — an
     # explicit assignment in a remote command overrides it, root-only
-    # surface). The authorized key arrives through NIX_PATH (the
-    # update script seeds it); an absent entry leaves root locked out
-    # over ssh, the safe default. Dev mode keeps sshd off entirely —
+    # surface). The authorized key arrives through an
+    # `appliance-update-key` NIX_PATH entry the update path (or the
+    # operator, by hand) provides; an absent entry leaves root locked
+    # out over ssh, the safe default. Dev mode keeps sshd off entirely —
     # the store is the host's, there is nothing to update over ssh.
     services.openssh = lib.mkIf (mode == "deployed") {
       enable = true;
@@ -822,6 +823,8 @@ in
         Persistent = true;
       };
     };
-    system.stateVersion = lib.trivial.release;
+    # A literal, not lib.trivial.release: a devenv.lock bump must not
+    # silently move it (stateVersion gates NixOS defaults).
+    system.stateVersion = "26.05";
   };
 }

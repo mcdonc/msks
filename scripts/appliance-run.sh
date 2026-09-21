@@ -156,8 +156,11 @@ esac
 # (or a host crash) leave every later boot quietly degraded. A
 # read-only debugfs stat on the still-unattached disk, before the
 # VMM exists: ~10ms, and no journal to replay yet.
+# debugfs exits 0 even on a miss ("File not found by ext2_lookup" on
+# stderr, empty stdout), so the probe matches non-empty stdout, not
+# the exit code — else every marker-less disk prints the warning.
 if [ "$serial_mode" = file ] &&
-  debugfs -R "stat /debug-shell" "$state_disk" >/dev/null 2>&1; then
+  debugfs -R "stat /debug-shell" "$state_disk" 2>/dev/null | grep -q .; then
   echo "msks: the state disk carries a debug-shell marker, but the File-mode console cannot host its shell — run: msks-appliance-shell --off (or open a session with: msks-appliance-shell)" >&2
 fi
 # The live dev-tree share (#144): set to any nonempty value and the

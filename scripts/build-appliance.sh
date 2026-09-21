@@ -84,16 +84,14 @@ for name in $artifacts; do
   [ -f "$app_dir/$name" ] || missing="$missing $name"
 done
 if [ "$previous" != "$out" ] || [ -n "$missing" ]; then
-  # Copy only what changed: rootfs.ext4 is ~0.9 GB, and a no-change
-  # reboot must not rewrite it (page cache, disk wear). The missing-
-  # artifact checks heal a deleted or half-deleted state dir (#160).
-  # temp+mv is atomic: an interrupted copy leaves the complete old
-  # file or no file — a truncated rootfs would pass -f forever while
-  # the gate above protects it (verified by review round 2).
-  # Copy only what changed: cmp-gated per artifact. The big ones
-  # (vmlinux, initrd, base-store.erofs, state.ext4) are byte-stable
-  # across config-only edits, and a rebuild that rewrote them all
-  # would pay for bytes the boot never reads differently.
+  # Copy only what changed, cmp-gated per artifact: the big ones
+  # (vmlinux, initrd, base-store.erofs) are byte-stable across
+  # config-only edits, and a no-change reboot must not rewrite them
+  # (page cache, disk wear). The missing-artifact checks heal a
+  # deleted or half-deleted state dir (#160); temp+mv is atomic: an
+  # interrupted copy leaves the complete old file or no file — a
+  # truncated rootfs would pass -f forever while the gate above
+  # protects it.
   for name in $artifacts; do
     if [ ! -e "$out/$name" ]; then
       echo "msks: build output is missing $name" >&2
@@ -123,16 +121,7 @@ seed_once() {
   fi
 }
 seed_once stateDisk "$app_dir/state.ext4"
-seed_once storeVolume "$app_dir/store-volume.img"
-# The state disk is NOT an artifact: a rebuild must never clobber live
-# appliance state. Seed it once from the template; the
-# appliance's msks-state-format.service (blank, foreign, and existing
-# disks all converge) handle the rest.
-if [ ! -f "$app_dir/state.ext4" ]; then
-  cp -L "$out/state.ext4" "$app_dir/.state.ext4.tmp"
-  chmod 0644 "$app_dir/.state.ext4.tmp"
-  mv -f "$app_dir/.state.ext4.tmp" "$app_dir/state.ext4"
-fi
+seed_once storeVolume "${MSKS_APPLIANCE_STORE_VOLUME:-$app_dir/store-volume.img}"
 if [ "$previous" = "$out" ]; then
   echo "msks: appliance assets up to date in $app_dir (image $out)"
 else
