@@ -4,8 +4,11 @@
 #
 #   $out/vmlinux    - the nixpkgs kernel (bzImage; direct boot)
 #   $out/initrd     - NixOS's generated initial ramdisk
-#   $out/cmdline    - the full kernel command line (init= included)
+#   $out/cmdline    - the full kernel command line (init= included;
+#                     diagnostic convenience — the manifest is the
+#                     contract the run script reads)
 #   $out/toplevel   - the system toplevel store path, one line
+#                     (same status: convenience, not the contract)
 #   $out/state.ext4 - the blank persistent-state disk template (the
 #                     same 40G sparse template the Debian appliance
 #                     ships, the same capacity model)

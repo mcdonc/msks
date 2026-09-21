@@ -303,7 +303,9 @@ $disks
     if [ -n "$share_store" ]; then
       printf '\n    {"tag": "store", "socket": "%s",\n     "num_queues": 1, "queue_size": 1024}%s' "$app_dir/vmm-sock" "$dev_fs"
     else
-      printf '%s' "$dev_fs"
+      # dev_fs carries a leading comma for the share case; alone in
+      # the array it must arrive bare.
+      printf '%s' "''${dev_fs#,}"
     fi
   )
   ],

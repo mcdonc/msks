@@ -323,6 +323,16 @@ How it fits together (#10, #25, #92):
   and delivered on the kernel cmdline (`msksd.bootstrap_token=...`):
   the host file is the single source of truth, and rotation means
   editing it and restarting the processes.
+- A **NixOS build of the same appliance** exists alongside the Debian
+  one (#212, pre-parity): `MSKS_APPLIANCE_BUILD=nixos` with the same
+  `msks-appliance-build` entry point builds it against the same
+  pinned nixpkgs — one configuration (`nix/appliance-config.nix`),
+  two store shapes. The default shape shares the host store over
+  virtiofs exactly as above (`MSKS_APPLIANCE_MODE=dev`, the default
+  for that build); `MSKS_APPLIANCE_MODE=deployed` packs the store on
+  disk (an erofs base carrying the closure and its database, plus an
+  ext4 store volume) and runs sshd on the bridge as the update
+  channel. The Debian build stays the default until the parity flip.
 - Networking: a private L2 bridge (`msksbr0`/`mskstap0`, static
   192.168.77.0/24 plan) — the API is simply reachable at the guest
   IP, no port forwarding.

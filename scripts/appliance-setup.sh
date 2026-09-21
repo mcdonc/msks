@@ -79,11 +79,15 @@ fi
 
 # --- persistent state ---------------------------------------------------
 # MSKSD_APPLIANCE_STATE can relocate the state disk (e.g. /run for
-# ephemeral dev state); the template seeds it once per install.
+# ephemeral dev state); the template seeds it once per install. The
+# template's path rides the manifest (both builds record it — the
+# NixOS build keeps its 40G sparse template in the store rather than
+# the artifact output).
 state_disk="${MSKSD_APPLIANCE_STATE:-$app_dir/state.ext4}"
+state_template="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("stateDisk", ""))' "$app_dir/appliance-manifest.json")"
 mkdir -p "$(dirname "$state_disk")"
-if [ ! -f "$state_disk" ]; then
-  cp -L "$app_dir/image/state.ext4" "$state_disk"
+if [ ! -f "$state_disk" ] && [ -n "$state_template" ]; then
+  cp -L --sparse=always "$state_template" "$state_disk"
   chmod 0644 "$state_disk"
 fi
 # A template growth reaches existing installs (#180): the seed above
@@ -93,9 +97,8 @@ fi
 # costs metadata on a sparse file; the guest's writes, not this
 # step, spend the host disk. The guest's state preparation then runs
 # resize2fs to grow the ext4 into the device.
-template="$app_dir/image/state.ext4"
-if [ -f "$template" ]; then
-  target="$(stat -c %s "$template")"
+if [ -n "$state_template" ] && [ -f "$state_disk" ]; then
+  target="$(stat -c %s "$state_template")"
   current="$(stat -c %s "$state_disk")"
   if [ "$current" -lt "$target" ]; then
     truncate -s "$target" "$state_disk"

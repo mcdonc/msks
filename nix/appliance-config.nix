@@ -22,6 +22,13 @@
 # build exports MSKS_APPLIANCE_MODE=dev. Everything else in this file
 # is mode-independent or branches on this one value.
 #
+# Hazard, stated plainly: the evaluating shell's environment picks
+# the shape. An operator who leaves MSKS_APPLIANCE_MODE=dev exported
+# (the natural state after a dev build) and later runs the deployed
+# update path — evaluated on the host — silently builds a dev-shaped
+# system that cannot boot on the appliance. Unset it (or export
+# MSKS_APPLIANCE_MODE=deployed) before any update-path evaluation.
+#
 # The unit contract is carried verbatim from the Debian appliance
 # (nix/appliance-image.nix): the msksd service user with its two
 # ambient capabilities, the kernel-cmdline settings bridge, the
@@ -168,11 +175,12 @@ let
 
   # The state-disk converge script — the Debian appliance's
   # msks-state-prepare carried over (blank, foreign, and existing
-  # disks all converge), with two NixOS-era changes: the machine-id
-  # seed (the root is tmpfs; the appliance's identity lives on the
-  # state disk, and /etc/machine-id binds from it), and the raw
-  # device letter, which the boot payload pins per mode (dev: vda,
-  # the only disk; deployed: vdc — erofs vda, store volume vdb).
+  # disks all converge), with one NixOS-era change: the raw device
+  # letter, which the boot payload pins per mode (dev: vda, the only
+  # disk; deployed: vdc — erofs vda, store volume vdb). The
+  # appliance's machine identity is NOT seeded here: it is
+  # build-stable through systemd.machine_id= on the kernel cmdline
+  # (see boot.kernelParams).
   stateDiskDevice = if mode == "dev" then "/dev/vda" else "/dev/vdc";
 
   msksStatePrepare = pkgs.writeTextFile {
@@ -208,6 +216,11 @@ let
       mkdir -p /run/msks-mnt/var/log/journal
       ln -sfn /run /run/msks-mnt/var/run
       ln -sfn /run/lock /run/msks-mnt/var/lock
+
+      # sshd's persistent host-key directory (deployed mode): the
+      # root is tmpfs, so the keys live on state.
+      mkdir -p /run/msks-mnt/ssh
+      chmod 0700 /run/msks-mnt/ssh
 
       # The daemon's /state/msksd home: the state dir, database, and
       # TLS keys are service-user-owned; the daemon is not root and
@@ -403,22 +416,22 @@ in
       options = [ "bind" ];
       # NOT an initrd filesystem (mkForce over NixOS's journald-driven
       # inference): in stage 1 the bind's source cannot exist yet
-      # (state converges in stage 2), and the initrd's fallback tmpfs
-      # at /sysroot/var satisfies var.mount forever — the journal
-      # would stay volatile. Journald starts volatile instead and the
-      # flush step persists it once /var is the real bind.
+      # (state converges in stage 2), and the initrd's tmpfs at
+      # /sysroot/var satisfies var.mount forever — the journal would
+      # stay volatile. The bind really lands only because nothing is
+      # mounted at /var by the time stage 2 wants it; the journal
+      # choreography below handles what journald opened before it.
       neededForBoot = lib.mkForce false;
     };
-
-    # The initrd leaves a tmpfs at /var (the store-on-share shape
-    # boots with a tmpfs root, and stage 1 mounts /var writable before
-    # switch_root). That tmpfs satisfies var.mount, so the real bind
-    # never happens and the journal stays volatile. This oneshot
-    # removes the inherited mount — only when it IS the empty tmpfs
-    # and the bind's source is ready — so var.mount lands the state
-    # disk's var/ over /var at local-fs time.
+    # The initrd leaves a tmpfs at /var (stage 1 mounts /sysroot/var
+    # writable for its own logging and the mount carries across
+    # switch_root). That tmpfs SATISFIES var.mount — systemd sees /var
+    # already mounted and never runs the bind — so it must go first.
+    # Lazy: journald holds files open on it (volatile so far); its
+    # records ride the detached mount and the journal-persist unit
+    # below re-homes journald onto the real /var.
     systemd.services.msks-var-unshadow = {
-      description = "msks remove the initrd's /var tmpfs so the state bind lands";
+      description = "msks detach the initrd's /var tmpfs so the state bind lands";
       unitConfig.DefaultDependencies = false;
       after = [
         "msks-state-format.service"
@@ -441,9 +454,6 @@ in
       script = ''
         vartype=$(awk '$2 == "/var" { print $3 }' /proc/mounts)
         if [ "$vartype" = tmpfs ] && [ -d /state/var ]; then
-          # Lazy: journald (volatile so far) holds files open on the
-          # tmpfs — its records pre-switch ride the detached mount,
-          # and the post-mount flush step persists everything after.
           umount -l /var
           echo "msks-var-unshadow: detached the initrd's /var tmpfs; the state bind mounts next"
         fi
@@ -451,19 +461,32 @@ in
       '';
     };
 
-    # journald opened its output on the (now detached) initrd tmpfs
-    # and the flush step ran in the initrd, before the bind existed —
-    # without this nudge it appends into the detached mount forever
-    # and the journal stays volatile despite the real /var. The flush
-    # varlink call re-evaluates the storage and moves the boot's
-    # records onto the state disk.
+    # The /var bind lands late (state converges in stage 2), so two
+    # things need a nudge after it: tmpfiles (rules applied before
+    # the bind — sshd's /var/empty is the one that bites — landed on
+    # the shadowed mount and vanished), and journald itself (it
+    # opened its output against the earlier mount). This unit re-runs
+    # tmpfiles idempotently and restarts journald onto the state
+    # disk, ordered BEFORE msksd so the daemon's whole lifetime
+    # attaches to the restarted journald and reaches the disk.
+    #
+    # The cost, stated plainly: records from BEFORE the restart ride
+    # the detached mount and are gone, and PID 1's unit-lifecycle
+    # records ("Started <unit>.service") never re-attach afterwards —
+    # PID 1's /dev/log datagram socket does not follow a journald
+    # restart. Daemon and service stdout/stderr streams (managed by
+    # PID 1) reconnect and persist. The no-restart alternative
+    # (volatile-until-flush) was built and measured three ways against
+    # this tmpfs-root shape; the flush never landed on the disk — the
+    # restart is the design that demonstrably persists.
     systemd.services.msks-journal-persist = {
-      description = "msks flush the journal onto the state disk (/var bind)";
+      description = "msks re-run tmpfiles against the mounted /var and restart journald onto it";
       after = [
+        "msks-var-unshadow.service"
         "var.mount"
         "local-fs.target"
-        "msks-var-unshadow.service"
       ];
+      before = [ "msksd.service" ];
       wantedBy = [ "multi-user.target" ];
       serviceConfig = {
         Type = "oneshot";
@@ -472,30 +495,21 @@ in
       };
       path = [ pkgs.systemd ];
       script = ''
-        # tmpfiles ran against the initrd's /var tmpfs and its work
-        # detached with it; re-run it against the real bind
-        # (idempotent — recreates sshd's /var/empty and any other
-        # rule the shadow ate).
         systemd-tmpfiles --create
-        # --flush alone moves /run/log/journal (journald never wrote
-        # there — it believes itself persistent); the restart makes
-        # journald re-open its output paths against the now-real /var
-        # and keep the boot's records flowing onto the state disk.
         systemctl restart systemd-journald.service
-        echo "msks-journal-persist: journald restarted onto the bind; usage: $(journalctl --disk-usage 2>/dev/null || true)"
       '';
     };
 
-    # The journal rides /var on the state disk (NixOS's journald
-    # defaults to Storage=persistent; a Storage=auto dropin here would
-    # override it and, against a late-mounted /var, leave journald
-    # volatile for the boot). Bounded: journald rotates its files at
-    # SystemMaxUse — the journal cannot eat the state disk.
+    # The journal rides /var on the state disk, bounded: journald
+    # rotates its files at SystemMaxUse — the journal cannot eat the
+    # state disk.
     services.journald.extraConfig = ''
       SystemMaxUse=512M
       MaxRetentionSec=1month
     '';
 
+    networking.hostName = "msksd-appliance";
+    networking.extraHosts = "127.0.1.1 msksd-appliance";
     networking.usePredictableInterfaceNames = false;
     networking.firewall.enable = false;
     networking.useDHCP = false;
@@ -652,8 +666,15 @@ in
         "msks-state-format.service"
         "msks-kvm.service"
         "systemd-networkd.service"
+        # Before the daemon: its records must attach to the restarted
+        # journald (#218 review — unordered, the attach was a coin
+        # flip per boot).
+        "msks-journal-persist.service"
       ];
-      wants = [ "msks-dev-tree.service" ];
+      wants = [
+        "msks-dev-tree.service"
+        "msks-journal-persist.service"
+      ];
       wantedBy = [ "multi-user.target" ];
       unitConfig.StartLimitIntervalSec = 0;
       serviceConfig = {
@@ -678,6 +699,11 @@ in
     # or pokes the network for nothing:
     systemd.services.systemd-networkd-wait-online.enable = false;
     services.logrotate.enable = false;
+    # The Debian appliance's diet masked both: timesyncd phones a
+    # public NTP pool from an appliance with no clock need and adds
+    # a mid-boot clock jump; fstrim timers nothing on this layout.
+    services.timesyncd.enable = false;
+    systemd.timers.fstrim.enable = false;
     documentation.enable = false;
 
     # Dev mode runs nothing nix-shaped inside: the store is the
@@ -697,6 +723,16 @@ in
     # the store is the host's, there is nothing to update over ssh.
     services.openssh = lib.mkIf (mode == "deployed") {
       enable = true;
+      # Host keys persist on the state disk: the /etc default is
+      # tmpfs, and keys that rotate per reboot break the ssh update
+      # channel's host verification (or train operators to accept
+      # every rotation — the posture the key-only rule exists for).
+      hostKeys = [
+        {
+          path = "/state/ssh/ssh_host_ed25519_key";
+          type = "ed25519";
+        }
+      ];
       listenAddresses = [
         {
           addr = net.address;
