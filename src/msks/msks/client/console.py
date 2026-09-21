@@ -280,6 +280,7 @@ async def open_session(
 CLOSE_CODE_REASONS = {
     4400: "console refused (unknown user or bad request)",
     4401: "authentication failed (bad token?)",
+    4403: "console refused by the guest (auth)",
     4404: "no such workspace",
     4501: "console unavailable (is the workspace running?)",
     4502: (

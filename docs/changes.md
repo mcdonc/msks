@@ -483,6 +483,17 @@ processes up` shows one devenv startup instead of two, and the
 
 ### Fixed
 
+- **Console websocket closes protocol-clean (#217).** The console
+  bridge now ends every session with a close frame instead of
+  dropping the TCP: a guest that refuses the console signature
+  closes with 4403 and the guest's `MSKS ERR` text as the reason
+  (watched until the helper's AUTH OK verdict, so a logged ERR line
+  in later shell output is not one), a guest stream that ends
+  (shell exit) closes with 1000, and only a client disconnect ends
+  without one. Clients can tell refusal apart from transport death;
+  the appliance e2e's recovery step answers the #123 challenge the
+  respawned console helper serves.
+
 - **The appliance builds again after the consent TUI landed
   (#203).** The appliance's nix package set shipped without
   `textual`: the msks wheel build failed its runtime dependency
