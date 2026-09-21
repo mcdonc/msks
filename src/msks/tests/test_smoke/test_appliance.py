@@ -247,6 +247,12 @@ async def test_appliance_boot_and_workspace() -> None:
     def step(label: str) -> None:
         steps.mark(label)
 
+    # The previous boot's serial log and token persist in the dir;
+    # without this, a failed await_api quotes the OLD boot's tail
+    # and await_token hands back the OLD token instantly.
+    for stale in ("serial.log", "bootstrap-token"):
+        (app_dir / stale).unlink(missing_ok=True)
+
     status = None
     token = headers = None
     up = None
@@ -519,7 +525,14 @@ async def test_appliance_boot_and_workspace() -> None:
                 "console never recovered after the guest socat was killed"
             )
 
+            # A fresh read of the workspace after the kill and the
+            # recovery connects (the previous `response` predates the
+            # kill): the respawn-and-reconnect cycle left it running.
+            response = await client.get(
+                f"{base}/workspaces/{wid}", headers=headers
+            )
             assert response.status_code == 200, response.text
+            assert response.json().get("status") == "running", response.text
 
             # Lifecycle calls may legally take the daemon's full graceful
             # window (MSKSD_SHUTDOWN_TIMEOUT_S, 20s default, plus the
@@ -739,6 +752,9 @@ async def test_appliance_dev_workspace_bootstrap() -> None:
     def step(label: str) -> None:
         steps.mark(label)
 
+    for stale in ("serial.log", "bootstrap-token"):
+        (app_dir / stale).unlink(missing_ok=True)
+
     headers = None
     try:
         with appliance_env():
@@ -847,10 +863,6 @@ async def test_appliance_dev_workspace_bootstrap() -> None:
                 f"{base}/workspaces/{dev_wid}", headers=headers, timeout=60.0
             )
             assert response.status_code == 200, response.text
-            down = msks_script("msks-appliance-down", timeout=300)
-            assert down.returncode == 0, (
-                f"msks-appliance-down failed:\n{down.stdout}\n{down.stderr}"
-            )
         assert not (app_dir / "api.sock").exists()
     finally:
         if headers is not None:
@@ -860,3 +872,12 @@ async def test_appliance_dev_workspace_bootstrap() -> None:
                     headers=headers,
                     timeout=60.0,
                 )
+            # The down runs on EVERY exit: a mid-test failure (the
+            # seed stalling, the venv missing) must not leave a
+            # running appliance against the dir's real state disk —
+            # the next run's guard would then silently skip, and the
+            # failure would mask itself.
+            down = msks_script("msks-appliance-down", timeout=300)
+            assert down.returncode == 0, (
+                f"msks-appliance-down failed:\n{down.stdout}\n{down.stderr}"
+            )

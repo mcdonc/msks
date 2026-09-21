@@ -1976,7 +1976,7 @@ def noop(*_observed) -> None:
 
 async def pump_streams(
     socket: WebSocket, reader, writer, *, on_input=None, on_output=None
-) -> None:
+) -> str:
     """Pump raw bytes between a websocket and a byte stream.
 
     Two tasks, no queue: backpressure is websocket/TCP flow control
@@ -2032,38 +2032,80 @@ async def settle(done, pending) -> None:
             task.result()
 
 
+def scan_guest_protocol(
+    tail: bytes, at_start: bool
+) -> tuple[bool, str | None]:
+    """(auth_ok, refusal_text) for the buffered guest output.
+
+    The helper's protocol lines read at a line start; ``at_start``
+    is true only while the buffer still holds the stream's first
+    bytes (a slid tail makes every buffer start mid-stream). AUTH
+    OK wins over a refusal in the same buffer: authenticated output
+    is not a refusal even inside one read.
+    """
+    anchor = rb"(?:\A|\n)" if at_start else rb"\n"
+    if re.search(anchor + rb"AUTH OK", tail):
+        return True, None
+    found = re.search(anchor + rb"(MSKS ERR[^\n]*)", tail)
+    if found is not None:
+        return False, found.group(1).decode(errors="replace").strip()
+    return False, None
+
+
 class _RefusalScan:
     """The #123 refusal line in guest output (``MSKS ERR ...``).
 
     A guest whose console helper rejects the session says so with
     one line and exits; without this scan the refusal reaches the
     client as transport death — the stream EOF ends the bridge
-    with no websocket close at all (#217). The scan matches the
-    line at a line start across read splits (the tail buffer spans
-    chunk boundaries); matched, the bridge closes the websocket
-    with :data:`CONSOLE_AUTH_REFUSED_CLOSE_CODE` and the guest's
-    own text as the reason.
+    with no websocket close at all (#217).
+
+    The scan watches ALL guest output until the helper's ``AUTH
+    OK`` line (the refusal can trail echoed input and split reads,
+    so it cannot simply watch the first bytes) and then stands
+    down — a logged or printed ``MSKS ERR`` line in post-auth
+    shell output must not read as a refusal. The ``^`` anchor is
+    trusted only while the stream's first bytes are still in the
+    tail: once the tail slides, a mid-stream chunk boundary is
+    indistinguishable from a line start. Matched, the bridge
+    closes the websocket with
+    :data:`CONSOLE_AUTH_REFUSED_CLOSE_CODE` and the guest's own
+    text as the reason.
     """
 
     def __init__(self) -> None:
         self.text: str | None = None
         self.matched = asyncio.Event()
         self._tail = b""
+        self._at_start = True
+        self._armed = True
+
+    def _append(self, data: bytes) -> None:
+        """Grow the bounded tail; note when the stream's start slid
+        out of it (the buffer start stops meaning a line start)."""
+        self._tail = (self._tail + data)[-256:]
+        if len(self._tail) < len(data):
+            self._at_start = False
 
     def feed(self, data: bytes) -> None:
         """One relayed guest chunk; records the refusal once."""
-        if self.text is not None:
+        if self.text is not None or not self._armed:
             return
-        self._tail = (self._tail + data)[-256:]
-        found = re.search(rb"(?:^|\n)(MSKS ERR[^\n]*)", self._tail)
-        if found is not None:
-            self.text = found.group(1).decode(errors="replace").strip()
+        self._append(data)
+        auth_ok, refusal = scan_guest_protocol(self._tail, self._at_start)
+        if auth_ok:
+            # Authenticated: shell output from here on, not protocol.
+            self._armed = False
+        elif refusal is not None:
+            self.text = refusal
             self.matched.set()
 
 
 #: Close code for a console the guest refused (#123, #217): the
 #: helper's ``MSKS ERR`` line names the reason in the close frame,
-#: so a client can tell refusal apart from transport death.
+#: so a client can tell refusal apart from transport death. The
+#: forward endpoint carries its own, unrelated 4403 ("not
+#: permitted") in a separate table — the two must not merge.
 CONSOLE_AUTH_REFUSED_CLOSE_CODE = 4403
 
 
@@ -2124,13 +2166,14 @@ async def bridge_console(
 async def close_console_session(socket, ended: str | None, refusal) -> None:
     """The bridge's protocol-clean ending (#217).
 
-    A matched refusal closes with
-    :data:`CONSOLE_AUTH_REFUSED_CLOSE_CODE` and the guest's text; a
-    guest stream that ended (shell exit, helper shutdown) closes
-    with 1000; a client disconnect (``ended == "socket"``) and a
-    watchdog close (``ended is None`` — the watchdog already closed
-    4502) end silently. The suppress covers the races where the
-    close already happened or the client vanished mid-close.
+    Refusal first: a matched refusal closes with
+    :data:`CONSOLE_AUTH_REFUSED_CLOSE_CODE` and the guest's text —
+    even if the watchdog also fired. Then a guest stream that ended
+    (shell exit, helper shutdown) closes with 1000. A client
+    disconnect (``ended == "socket"``) and a watchdog close
+    (``ended is None``, the watchdog having already closed 4502)
+    attempt nothing. The suppress covers the races where the close
+    already happened or the client vanished mid-close.
     """
     if refusal.text is not None:
         with contextlib.suppress(Exception):

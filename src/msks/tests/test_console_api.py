@@ -227,6 +227,42 @@ async def test_bridge_closes_with_named_code_on_auth_refusal() -> None:
     assert "MSKS ERR auth" in reason
 
 
+async def test_refusal_scan_distrusts_buffer_start_after_slide() -> None:
+    """Once the bounded tail slides, the buffer's first byte is a
+    mid-stream position: a refusal line arriving WITHOUT a leading
+    newline (cut exactly at a chunk boundary) does not read as a
+    line start."""
+    scan = _RefusalScan()
+    scan.feed(b"x" * 300)  # the tail slid; the stream start is gone
+    assert scan._at_start is False
+    scan.feed(b"MSKS ERR auth\r\n")
+    assert scan.text is None
+    assert not scan.matched.is_set()
+
+
+async def test_refusal_scan_stands_down_after_auth_ok() -> None:
+    """The gate: once the helper says AUTH OK, later `MSKS ERR` text
+    in shell output (a log catted, journalctl) is not a refusal."""
+    scan = _RefusalScan()
+    scan.feed(b"AUTH OK\r\n")
+    scan.feed(b"$ cat helper.log\r\nMSKS ERR auth\r\n")
+    assert scan.text is None
+    assert not scan.matched.is_set()
+
+
+async def test_bridge_stays_open_after_auth_ok_despite_err_text() -> None:
+    """The same gate end-to-end: a logged refusal line AFTER auth is
+    shell output; the session keeps its stream (EOF ends it, with
+    the normal 1000 — not the 4403 refusal)."""
+    socket = _RefusalSocket()
+    reader = asyncio.StreamReader()
+    reader.feed_data(b"AUTH OK\r\nMSKS ERR auth\r\n")
+    reader.feed_eof()
+    await asyncio.wait_for(bridge_console(socket, reader, _SilentWriter()), 5)
+    assert socket.closed is not None
+    assert socket.closed[0] == 1000, socket.closed
+
+
 async def test_refusal_scan_ignores_bytes_after_the_match() -> None:
     """Post-match chunks are dropped: the scan records the refusal
     once and never re-arms (the bridge closes on the first one)."""
