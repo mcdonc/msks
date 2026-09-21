@@ -893,14 +893,18 @@ def build_api(app) -> FastAPI:
 
     # --- secrets (#198) -----------------------------------------------
 
-    async def sync_store_manifest(refs=None) -> None:
+    # One lock around every placeholder-mutating sequence (mint,
+    # revoke, expiry sweep): the refs-query → manifest-write pair is
+    # a TOCTOU otherwise — a stale snapshot landing last would strip
+    # a live declaration, and a same-label mint race could leave an
+    # uncertified value behind a 201-certified row. Store operations
+    # are rare, so one global lock costs nothing.
+    app.state.store_lock = asyncio.Lock()
+
+    async def sync_store_manifest() -> None:
         """Re-render the store manifest off the live placeholder rows
-        (off the event loop — it is file IO); *refs* overrides the
-        projected list — mint passes rows-plus-the-new-ref so the
-        manifest exists before the first store write.
-        """
-        if refs is None:
-            refs = await app.state.model.placeholder_refs()
+        (off the event loop — it is file IO)."""
+        refs = await app.state.model.placeholder_refs()
         await asyncio.to_thread(app.state.secrets.sync_manifest, refs)
 
     def validated_dests(dests: list[str]) -> list[str]:
@@ -966,40 +970,39 @@ def build_api(app) -> FastAPI:
             if body.ttl_s is not None
             else None
         )
-        # The manifest must declare the ref before the CLI can write
-        # it: project rows-plus-this-ref (keyed by ref, so a
-        # colliding pair cannot double-declare), then write.
-        refs = await app.state.model.placeholder_refs()
-        if all(existing != ref for existing, _ in refs):
-            refs.append((ref, f"{body.workspace_id}/{body.name}"))
-        await sync_store_manifest(refs)
-        # Value before row: a row without its backend value would
-        # swap empty on the wire; an orphaned value (row insert
-        # fails) is inert.
-        try:
-            await app.state.secrets.write(ref, body.secret)
-        except SecretStoreError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from None
         sentinel = new_sentinel()
-        try:
-            row = await app.state.model.create_placeholder(
-                body.workspace_id,
-                body.name,
-                sentinel,
-                dests,
-                ref,
-                expires,
-            )
-        except IntegrityError:
-            raise HTTPException(
-                status_code=409, detail="placeholder name collision"
-            ) from None
-        # Re-write after the insert: in a same-label race both sides
-        # wrote the ref before inserting, and whichever write landed
-        # last would otherwise own the row the winner certified.
-        await app.state.secrets.write(ref, body.secret)
-        await app.state.model.record_audit("mint", row)
-        await sync_store_manifest()
+        async with app.state.store_lock:
+            # Row before value, all under the store lock: an
+            # uncertified byte can never land behind a ref a winning
+            # row does not own — a losing same-label mint 409s on the
+            # insert (or the pre-checks) and never touches the store,
+            # and a failed write rolls its own row back.
+            try:
+                row = await app.state.model.create_placeholder(
+                    body.workspace_id,
+                    body.name,
+                    sentinel,
+                    dests,
+                    ref,
+                    expires,
+                )
+            except IntegrityError:
+                raise HTTPException(
+                    status_code=409, detail="placeholder name collision"
+                ) from None
+            # The manifest must declare the ref before the CLI can
+            # write it; the row is in, so the live-rows sync carries
+            # it.
+            await sync_store_manifest()
+            try:
+                await app.state.secrets.write(ref, body.secret)
+            except SecretStoreError as exc:
+                # Roll the row back: a placeholder whose value never
+                # landed would swap empty on the wire.
+                await app.state.model.delete_placeholder(row["id"])
+                await sync_store_manifest()
+                raise HTTPException(status_code=503, detail=str(exc)) from None
+            await app.state.model.record_audit("mint", row)
         # The sentinel appears in exactly one response: this one.
         return Response(
             status_code=201,
@@ -1045,18 +1048,20 @@ def build_api(app) -> FastAPI:
         row = await app.state.model.get_placeholder(placeholder_id)
         if row is None:
             raise HTTPException(status_code=404, detail="no such placeholder")
-        # Row first: revocation takes effect on the next request,
-        # whatever the store cleanup then does.
-        await app.state.model.delete_placeholder(placeholder_id)
         cleaned = True
-        try:
-            await app.state.secrets.delete(row["backend_ref"])
-        except SecretStoreError:
-            # The row is gone, so the leftover value is inert; the
-            # operator sees it in the response and can re-run check.
-            cleaned = False
-        await app.state.model.record_audit("revoke", row)
-        await sync_store_manifest()
+        async with app.state.store_lock:
+            # Row first: revocation takes effect on the next request,
+            # whatever the store cleanup then does.
+            await app.state.model.delete_placeholder(placeholder_id)
+            try:
+                await app.state.secrets.delete(row["backend_ref"])
+            except SecretStoreError:
+                # The row is gone, so the leftover value is inert; the
+                # operator sees it in the response and can re-run
+                # check.
+                cleaned = False
+            await app.state.model.record_audit("revoke", row)
+            await sync_store_manifest()
         return {"revoked": placeholder_id, "store_cleaned": cleaned}
 
     @api.get("/api/v1/secrets/audit", dependencies=[Depends(require_token)])

@@ -289,19 +289,22 @@ class SecretStore:
     async def read(self, ref: str) -> str:
         """Fetch one secret by ref (cached after the first fetch).
 
-        0.20's ``get`` appends one newline when stdout is a pipe;
-        it is stripped here so the value round-trips.
+        The live provider URI rides the call (as every operation's
+        does), so a connection-detail reload applies without a
+        manifest re-sync; the manifest carries declarations, not
+        routing. 0.20's ``get`` appends one newline when stdout is
+        a pipe; it is stripped here so the value round-trips.
         """
         if ref in self._cache:
             return self._cache[ref]
-        out = await self.run(["get", ref])
+        out = await self.run(["get", "--provider", provider_uri(self), ref])
         value = out.decode(errors="replace").removesuffix("\n")
         self._cache[ref] = value
         return value
 
     async def delete(self, ref: str) -> None:
         """Remove one secret's stored value (revoke's store half)."""
-        await self.run(["delete", ref])
+        await self.run(["delete", "--provider", provider_uri(self), ref])
         self._cache.pop(ref, None)
 
     async def check(self) -> dict:
@@ -331,7 +334,9 @@ class SecretStore:
                 stdin=token.encode(),
                 manifest=probe,
             )
-            out = await self.run(["get", ref], manifest=probe)
+            out = await self.run(
+                ["get", "--provider", uri, ref], manifest=probe
+            )
             if out.decode(errors="replace").removesuffix("\n") != token:
                 raise SecretStoreError("check", "probe value mismatch")
         except SecretStoreError:

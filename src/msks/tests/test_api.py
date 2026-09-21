@@ -2111,16 +2111,22 @@ async def test_mint_survives_the_insert_race(client, monkeypatch) -> None:
 
     monkeypatch.setattr(app.state.model, "placeholder_for", blind)
     monkeypatch.setattr(app.state.model, "placeholder_by_ref", blind_by_ref)
+    # The loser carries DIFFERENT bytes: nothing it sends may ever
+    # reach the store behind the winner's certified row.
     raced = await http.post(
-        "/api/v1/secrets", json=mint_body(), headers=auth()
+        "/api/v1/secrets",
+        json=mint_body(secret="LOSER-UNCERTIFIED"),
+        headers=auth(),
     )
     assert raced.status_code == 409
     assert "collision" in raced.json()["detail"]
-    # The winner's value survives the loser's collision: the row
-    # owns it, and the loser's write was the same bytes anyway.
     root = app.state.settings.secret_store.root
     stored = root / "msks" / "default" / "MSKS_WS_SEC_GITHUB_API"
     assert stored.read_text() == "ghp-real-token"
+    assert (
+        await app.state.secrets.read("MSKS_WS_SEC_GITHUB_API")
+        == "ghp-real-token"
+    )
     listing = await http.get("/api/v1/secrets", headers=auth())
     assert len(listing.json()) == 1
 
@@ -2225,3 +2231,28 @@ async def test_migrated_schema_keeps_the_unique_indexes(client) -> None:
     assert any(
         "ix_placeholders_backend_ref" in s and "UNIQUE" in s for s in sql
     )
+
+
+async def test_concurrent_mints_leave_one_intact_manifest(client) -> None:
+    """Two different-label mints in flight at once: the store lock
+    serializes their refs-snapshot → manifest-write pairs, so the
+    manifest ends declaring both — never a stale snapshot's one."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    first = http.post(
+        "/api/v1/secrets",
+        json=mint_body(name="alpha", dests=["a.example.com"]),
+        headers=auth(),
+    )
+    second = http.post(
+        "/api/v1/secrets",
+        json=mint_body(name="beta", dests=["b.example.com"]),
+        headers=auth(),
+    )
+    done = await asyncio.gather(first, second)
+    assert {response.status_code for response in done} == {201}
+    manifest = (
+        app.state.settings.secret_store.root / "secretspec.toml"
+    ).read_text()
+    assert "MSKS_WS_SEC_ALPHA" in manifest
+    assert "MSKS_WS_SEC_BETA" in manifest

@@ -174,24 +174,35 @@ async def sweep_expired_placeholders(app, hub: EventHub) -> int:
 
     Expiry rides the same per-request predicate as revocation, so a
     row past its deadline stops swapping immediately — this sweep is
-    the cleanup half: it records the expiry event (destinations and
-    timestamp), drops the row, deletes the backend value, and strips
-    its declaration from the manifest. A failing store delete never
-    keeps the row: the value left behind is inert without it.
+    the cleanup half. Each retirement can cost a store call up to
+    ``secret_store_timeout_s``, so one pass retires at most
+    :data:`SWEEP_CAP` rows and leaves the rest to the next pass —
+    the watcher's other duties (status transitions, pressure, the
+    consent prune) stay responsive through a bulk expiry. A failing
+    store delete never keeps the row: the value left behind is
+    inert without it.
     """
     model = app.state.model
     now = datetime.now(UTC)
-    rows = [
+    expired = [
         row
         for row in await model.list_placeholders()
         if deadline_passed(row["expires_at"], now)
-    ]
-    for row in rows:
-        await retire_expired(app, hub, row)
-    if rows:
+    ][:SWEEP_CAP]
+    if not expired:
+        return 0
+    async with app.state.store_lock:
+        for row in expired:
+            await retire_expired(app, hub, row)
         refs = await model.placeholder_refs()
         await asyncio.to_thread(app.state.secrets.sync_manifest, refs)
-    return len(rows)
+    return len(expired)
+
+
+#: Rows one watcher pass may retire (#198): each can hold the store
+#: lock for a CLI call, so the cap bounds the loop's worst-case
+#: stall; the remainder retires on the next pass.
+SWEEP_CAP = 16
 
 
 def deadline_passed(expires_at: str | None, now: datetime) -> bool:
@@ -206,8 +217,11 @@ def deadline_passed(expires_at: str | None, now: datetime) -> bool:
 
 async def retire_expired(app, hub: EventHub, row: dict) -> None:
     """One expired placeholder: drop, audit, clean the store,
-    announce (audit after the drop: a persistently failing delete
-    cannot stack one audit row per watch interval)."""
+    announce. The audit follows the drop (a persistently failing
+    delete cannot stack one audit row per watch interval) — the
+    accepted trade-off is that a raising audit loses the event with
+    the row already gone.
+    """
     model = app.state.model
     await model.delete_placeholder(row["id"])
     await model.record_audit("expiry", row)

@@ -742,3 +742,38 @@ def test_settings_from_env_still_reads_plain_environment(
 ) -> None:
     monkeypatch.setenv("MSKSD_PORT", "9006")
     assert Settings.from_env().server.port == 9006
+
+
+def test_reload_latches_the_secret_store_location(tmp_path) -> None:
+    """A SIGHUP naming a new secret-store provider or root changes
+    nothing: the manifest and values were never migrated, so the
+    store keeps its startup location until a restart (the same
+    reasoning as vmm.state_dir). Connection details (region, the age
+    identity path) reload live — and the value cache empties either
+    way so the next read re-fetches."""
+    app = app_with_file(
+        tmp_path,
+        {
+            "secret_store_provider": "age",
+            "secret_store_age_identity": "/old/key",
+            "secret_store_root": str(tmp_path / "old-root"),
+        },
+    )
+    write_config(
+        tmp_path,
+        "\n".join(
+            [
+                "secret_store_provider: file",
+                f"secret_store_root: {tmp_path}/new-root",
+                "secret_store_age_identity: /new/key",
+            ]
+        )
+        + "\n",
+    )
+    app.state.secrets._cache["MSKS_X"] = "stale"
+    main_mod.reload_settings(app, str(tmp_path / "msksd.yaml"))
+    store = app.state.settings.secret_store
+    assert store.provider == "age"  # latched
+    assert str(store.root) == str(tmp_path / "old-root")  # latched
+    assert store.age_identity == "/new/key"  # connection detail: live
+    assert app.state.secrets._cache == {}  # the swap emptied the cache

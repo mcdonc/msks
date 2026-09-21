@@ -570,3 +570,23 @@ async def test_delete_unknown_placeholder_is_false(tmp_path) -> None:
     async with api.router.lifespan_context(api):
         api.state.watcher.cancel()
         assert await app.state.model.delete_placeholder(999) is False
+
+
+async def test_sweep_caps_retirements_per_pass(tmp_path, monkeypatch) -> None:
+    """A bulk expiry retires at most SWEEP_CAP rows per pass: the
+    watcher's other duties keep their cadence through a slow store."""
+    api, app = sweep_app(tmp_path)
+    async with api.router.lifespan_context(api):
+        api.state.watcher.cancel()
+        monkeypatch.setattr(watcher_mod, "SWEEP_CAP", 1)
+        past = datetime.now(UTC) - timedelta(seconds=1)
+        await seed_placeholder(app, "ws-a", "one", past)
+        await seed_placeholder(app, "ws-b", "two", past)
+        first = await sweep_expired_placeholders(app, api.state.hub)
+        assert first == 1
+        assert len(await app.state.model.list_placeholders()) == 1
+        second = await sweep_expired_placeholders(app, api.state.hub)
+        assert second == 1
+        assert await app.state.model.list_placeholders() == []
+        kinds = [event["kind"] for event in await app.state.model.list_audit()]
+        assert kinds == ["expiry", "expiry"]
