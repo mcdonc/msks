@@ -101,11 +101,16 @@ let
   );
 
   # The capability set per enabled path: egress work keeps
-  # CAP_NET_ADMIN (taps, per-VM nftables chains, NAT); a privileged
-  # port adds CAP_NET_BIND_SERVICE. Ambient so the tools and the VMM
-  # the daemon execs keep them.
+  # CAP_NET_ADMIN (taps, per-VM nftables chains, NAT) and
+  # CAP_NET_BIND_SERVICE (the egress stack binds DHCP 67 and DNS 53
+  # — verified live: dropping it fails workspace start with EPERM);
+  # an API port below 1024 adds CAP_NET_BIND_SERVICE without egress.
+  # Ambient so the tools and the VMM the daemon execs keep them.
   capabilities =
-    lib.optionals cfg.egress.enable [ "CAP_NET_ADMIN" ]
+    lib.optionals cfg.egress.enable [
+      "CAP_NET_ADMIN"
+      "CAP_NET_BIND_SERVICE"
+    ]
     ++ lib.optional (cfg.port < 1024) "CAP_NET_BIND_SERVICE";
 in
 {
@@ -139,7 +144,7 @@ in
     port = lib.mkOption {
       type = lib.types.port;
       default = 8660;
-      description = "The port the API's HTTPS listener binds (a privileged port adds CAP_NET_BIND_SERVICE).";
+      description = "The port the API's HTTPS listener binds (a port below 1024 keeps CAP_NET_BIND_SERVICE even with egress off).";
     };
 
     stateDir = lib.mkOption {

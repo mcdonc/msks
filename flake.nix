@@ -83,7 +83,8 @@
               *) echo "fail: egress branch lost CAP_NET_ADMIN"; exit 1 ;;
             esac
             case "$capsOff" in
-              *CAP_NET_ADMIN*) echo "fail: vsock-only branch kept CAP_NET_ADMIN"; exit 1 ;;
+              *CAP_NET_ADMIN*|*CAP_NET_BIND_SERVICE*)
+                echo "fail: vsock-only branch kept an egress capability"; exit 1 ;;
               *) ;;
             esac
             test "$tunOn" = "true" || { echo "fail: egress branch missing the tun module"; exit 1; }
