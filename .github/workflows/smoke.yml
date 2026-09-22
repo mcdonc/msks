@@ -163,7 +163,9 @@ jobs:
       # resolver, NAT'd TCP, input-chain containment), sshd+rsync
       # through the forward, git-out (#81: substitutes in over
       # egress, then a push whose credential rode the forward as a
-      # forwarded agent), and the minted identity. HOME=/root because
+      # forwarded agent), the minted identity, and the daemon e2e
+      # (#234: the full path against the real msksd process — TLS,
+      # REST, the #123 console websocket, graceful SIGTERM). HOME=/root because
       # sudo -i semantics do not apply to `sudo -n env`; TMPDIR=/tmp
       # for the AF_UNIX path-depth reason as ci.yml; the devenv PATH
       # rides along so the tests resolve ip/nft and the scratch
@@ -192,6 +194,7 @@ jobs:
           src/msks/tests/test_smoke/test_identity.py::test_local_minted_identity
           src/msks/tests/test_smoke/test_identity.py::test_local_client_minted_identity
           src/msks/tests/test_smoke/test_identity.py::test_local_operator_pubkey
+          src/msks/tests/test_smoke/test_daemon_e2e.py::test_daemon_e2e_full_path
           -q -p no:cacheprovider --no-cov"
 
       # The failing boot's own evidence, kept by the tests' failure
