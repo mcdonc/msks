@@ -1290,6 +1290,10 @@ def build_api(app) -> FastAPI:
         guesses the algorithm. A client-minted workspace (#121)
         answers ``private_key: null`` — the daemon never held that
         half; it lives on the client that created the workspace.
+        ``created_at`` (#245) stamps the workspace *instance* — the
+        client keys its host-key cache on it, so a workspace
+        recreated under the same name cannot collide with the
+        first instance's cached host keys.
         """
         key = await app.state.model.get_ssh_key(workspace_id)
         if key is None:
@@ -1304,6 +1308,7 @@ def build_api(app) -> FastAPI:
             "type": key["public_key"].split()[0],
             "public_key": key["public_key"],
             "private_key": key["private_key"],
+            "created_at": key["created_at"],
         }
 
     # The #41 immutability contract, said out loud: the create-time
