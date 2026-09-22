@@ -311,14 +311,23 @@ def test_decider_frames_reach_the_snapshot_and_ignore_junk(
     app = build_app(settings)
     app.state.microvm = StubMicrovm()
     api = build_api(app)
+    # The workspace's minted id (#246): consent state and decider
+    # registration key on it, so the off-thread hold and the
+    # socket's registration must agree on the same instance key.
+    ids: dict[str, str] = {}
+    # Set once the off-thread hold is registered in the database —
+    # the socket's registration snapshot then sees it without
+    # racing the insert.
+    held = threading.Event()
 
     def hold_off_thread() -> None:
         import asyncio
 
         async def run() -> None:
             engine = app.state.consent
-            app.state.deciders.register(99, "ws-snap")
-            await engine.hold("ws-snap", "held.example", 443)
+            app.state.deciders.register(99, ids["wid"])
+            await engine.hold(ids["wid"], "held.example", 443)
+            held.set()
             # Leave the hold registered long enough for the test's
             # socket to register and receive the snapshot under
             # parallel-suite load.
@@ -326,7 +335,7 @@ def test_decider_frames_reach_the_snapshot_and_ignore_junk(
             # Fail the hold closed before the loop ends: its timeout
             # task must not be torn down mid-sleep by run()'s exit.
             rows = await app.state.model.egress_consent.list_requests(
-                "ws-snap", decision="pending"
+                ids["wid"], decision="pending"
             )
             for row in rows:
                 await engine.fail_close(row["id"], reason="thread-done")
@@ -346,15 +355,11 @@ def test_decider_frames_reach_the_snapshot_and_ignore_junk(
             headers=auth(),
         )
         assert reply.status_code == 201
+        ids["wid"] = reply.json()["id"]
         # Seed a pending hold through another decider's registration.
         thread = threading.Thread(target=hold_off_thread)
         thread.start()
-        import time as _t
-
-        for _ in range(200):
-            if app.state.deciders.has_decider("ws-snap"):
-                break
-            _t.sleep(0.01)
+        assert held.wait(timeout=10.0), "the off-thread hold never landed"
         with client.websocket_connect(f"/api/v1/events?token={TOKEN}") as ws:
             ws.send_text(
                 json.dumps({"type": "egress.decider", "workspace": "ws-snap"})
