@@ -82,6 +82,9 @@ async def test_local_minted_identity() -> None:
     app = build_app(settings)
     microvm = app.state.microvm
     wid = f"ident-{uuid.uuid4().hex[:8]}"
+    # The minted id lands here after the create (#246); the typed
+    # name is the pre-create fallback (nothing exists to clean).
+    vm_id = wid
     serial_log = state_dir / "vms" / wid / "serial.log"
     workdir = state_dir / "ident-work"
     workdir.mkdir(parents=True)
@@ -236,14 +239,14 @@ async def test_local_minted_identity() -> None:
         # relative to sshd never matters.
         await run_in_console(
             microvm,
-            wid,
+            vm_id,
             "cloud-init status --wait",
             "done",
             app=app,
         )
         await run_in_console(
             microvm,
-            wid,
+            vm_id,
             "i=0; while [ $i -lt 30 ] "
             "&& ! { systemctl is-active msks-wait-address >/dev/null 2>&1 "
             "&& systemctl is-active ssh >/dev/null 2>&1; }; "
@@ -346,7 +349,7 @@ async def test_local_minted_identity() -> None:
         )
         await run_in_console(
             microvm,
-            wid,
+            vm_id,
             f"grep -qxF '{minted}' /root/.ssh/authorized_keys "
             f"&& grep -qxF '{minted}' /home/msks/.ssh/authorized_keys "
             "&& stat -c %a /home/msks/.ssh/authorized_keys "
@@ -362,7 +365,7 @@ async def test_local_minted_identity() -> None:
         # composed document ran whole through cloud-init.
         await run_in_console(
             microvm,
-            wid,
+            vm_id,
             "cat /root/payload",
             payload_marker,
             app=app,
@@ -561,13 +564,13 @@ async def test_local_minted_identity() -> None:
         )
         assert "BACK-msks-42" in relogin.stdout, relogin.stdout
 
-        await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
-        final = await microvm.info(wid)
+        await microvm.shutdown(vm_id, timeout_s=SHUTDOWN_TIMEOUT_S)
+        final = await microvm.info(vm_id)
         assert final.status.value in ("stopped", "absent")
     except BaseException:
-        collect_failure_evidence(state_dir, wid, serial_log)
+        collect_failure_evidence(state_dir, vm_id, serial_log)
         with contextlib.suppress(Exception):
-            await microvm.kill(wid)
+            await microvm.kill(vm_id)
         raise
     finally:
         for proc in forwards:
@@ -580,7 +583,7 @@ async def test_local_minted_identity() -> None:
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(asyncio.shield(api_task), timeout=10)
         with contextlib.suppress(Exception):
-            await microvm.cleanup(wid)
+            await microvm.cleanup(vm_id)
         with contextlib.suppress(OSError):
             forwarding.write_text(forwarding_was)
         shutil.rmtree(state_dir, ignore_errors=True)
@@ -620,6 +623,9 @@ async def test_local_client_minted_identity() -> None:
     app = build_app(settings)
     microvm = app.state.microvm
     wid = f"cmint-{uuid.uuid4().hex[:8]}"
+    # The minted id lands here after the create (#246); the typed
+    # name is the pre-create fallback (nothing exists to clean).
+    vm_id = wid
     serial_log = state_dir / "vms" / wid / "serial.log"
     workdir = state_dir / "cmint-work"
     workdir.mkdir(parents=True)
@@ -733,14 +739,14 @@ async def test_local_client_minted_identity() -> None:
         await await_guest_up(serial_log)
         await run_in_console(
             microvm,
-            wid,
+            vm_id,
             "cloud-init status --wait",
             "done",
             app=app,
         )
         await run_in_console(
             microvm,
-            wid,
+            vm_id,
             "i=0; while [ $i -lt 30 ] "
             "&& ! { systemctl is-active msks-wait-address >/dev/null 2>&1 "
             "&& systemctl is-active ssh >/dev/null 2>&1; }; "
@@ -752,7 +758,7 @@ async def test_local_client_minted_identity() -> None:
         )
         await run_in_console(
             microvm,
-            wid,
+            vm_id,
             f"grep -qxF '{pub}' /root/.ssh/authorized_keys "
             f"&& grep -qxF '{pub}' /home/msks/.ssh/authorized_keys "
             f"&& echo AK-$((6*7))",
@@ -770,7 +776,7 @@ async def test_local_client_minted_identity() -> None:
         signers_key = " ".join(pub.split()[:2])
         await run_in_console(
             microvm,
-            wid,
+            vm_id,
             f"grep -qxF '{wid} {signers_key}' "
             "/etc/msks/console.allowed_signers "
             f"&& echo AS-$((6*7))",
@@ -778,7 +784,7 @@ async def test_local_client_minted_identity() -> None:
             app=app,
         )
         attacker_reader, attacker_writer = await microvm.console(
-            wid, user="root"
+            vm_id, user="root"
         )
         try:
             challenge = await asyncio.wait_for(attacker_reader.readline(), 30)
@@ -824,13 +830,13 @@ async def test_local_client_minted_identity() -> None:
         assert login.returncode == 0, f"{login.stdout}\n{login.stderr}"
         assert "CMINT-alice-42" in login.stdout, login.stdout
 
-        await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
-        final = await microvm.info(wid)
+        await microvm.shutdown(vm_id, timeout_s=SHUTDOWN_TIMEOUT_S)
+        final = await microvm.info(vm_id)
         assert final.status.value in ("stopped", "absent")
     except BaseException:
-        collect_failure_evidence(state_dir, wid, serial_log)
+        collect_failure_evidence(state_dir, vm_id, serial_log)
         with contextlib.suppress(Exception):
-            await microvm.kill(wid)
+            await microvm.kill(vm_id)
         raise
     finally:
         if api_task is not None:
@@ -838,7 +844,7 @@ async def test_local_client_minted_identity() -> None:
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(asyncio.shield(api_task), timeout=10)
         with contextlib.suppress(Exception):
-            await microvm.cleanup(wid)
+            await microvm.cleanup(vm_id)
         with contextlib.suppress(OSError):
             forwarding.write_text(forwarding_was)
         os.environ.pop("XDG_DATA_HOME", None)
@@ -879,6 +885,9 @@ async def test_local_operator_pubkey() -> None:
     app = build_app(settings)
     microvm = app.state.microvm
     wid = f"opkey-{uuid.uuid4().hex[:8]}"
+    # The minted id lands here after the create (#246); the typed
+    # name is the pre-create fallback (nothing exists to clean).
+    vm_id = wid
     serial_log = state_dir / "vms" / wid / "serial.log"
     workdir = state_dir / "opkey-work"
     workdir.mkdir(parents=True)
@@ -1016,7 +1025,7 @@ async def test_local_operator_pubkey() -> None:
         await await_guest_up(serial_log)
         await run_in_console(
             microvm,
-            wid,
+            vm_id,
             "cloud-init status --wait",
             "done",
             app=app,
@@ -1024,7 +1033,7 @@ async def test_local_operator_pubkey() -> None:
         )
         await run_in_console(
             microvm,
-            wid,
+            vm_id,
             "i=0; while [ $i -lt 30 ] "
             "&& ! { systemctl is-active msks-wait-address >/dev/null 2>&1 "
             "&& systemctl is-active ssh >/dev/null 2>&1; }; "
@@ -1037,7 +1046,7 @@ async def test_local_operator_pubkey() -> None:
         )
         await run_in_console(
             microvm,
-            wid,
+            vm_id,
             f"grep -qxF '{pub}' /root/.ssh/authorized_keys "
             f"&& grep -qxF '{pub}' /home/msks/.ssh/authorized_keys "
             f"&& echo AK-$((6*7))",
@@ -1105,13 +1114,13 @@ async def test_local_operator_pubkey() -> None:
         assert "not on this client" in sugar.stderr
         assert "supplied" in sugar.stderr
 
-        await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
-        final = await microvm.info(wid)
+        await microvm.shutdown(vm_id, timeout_s=SHUTDOWN_TIMEOUT_S)
+        final = await microvm.info(vm_id)
         assert final.status.value in ("stopped", "absent")
     except BaseException:
-        collect_failure_evidence(state_dir, wid, serial_log)
+        collect_failure_evidence(state_dir, vm_id, serial_log)
         with contextlib.suppress(Exception):
-            await microvm.kill(wid)
+            await microvm.kill(vm_id)
         raise
     finally:
         for proc in forwards:
@@ -1124,7 +1133,7 @@ async def test_local_operator_pubkey() -> None:
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(asyncio.shield(api_task), timeout=10)
         with contextlib.suppress(Exception):
-            await microvm.cleanup(wid)
+            await microvm.cleanup(vm_id)
         with contextlib.suppress(OSError):
             forwarding.write_text(forwarding_was)
         shutil.rmtree(state_dir, ignore_errors=True)
