@@ -334,7 +334,13 @@ alias; ControlMaster shares one forward connection across
 concurrent invocations. The alias block names its identity with
 `IdentityFile` — create it once with `msks key devbox --out
 ~/.cache/msks/msks-devbox.key` (mode 0600, the private half fetched
-over the authenticated API). `msks ssh` is the command form that
+over the authenticated API). Those paths are the client cache
+root's defaults and stay where the block writes them: OpenSSH
+reads its own config, so `MSKSC_CACHE_DIR` (the variable the
+devenv shell presets for its command forms, #251) moves only the
+`msks ssh`/`msks rsync` state — a relocated cache takes the alias
+block's paths with it only when you edit the block to match.
+`msks ssh` is the command form that
 carries the identity per-session from memory instead — plain `ssh`
 invocations against the alias need the file. For a client-minted
 workspace (#121, the create default) that file is the client-held
@@ -368,7 +374,7 @@ daemon-minted mode above.
 
 The private half is written mode 0600 under the client data root
 after the create succeeds — `~/.local/share/msks/<id>/identity`,
-honoring `XDG_DATA_HOME` — and `msks ssh` reads it from there when
+honoring `XDG_DATA_HOME` or `MSKSC_DATA_DIR` — and `msks ssh` reads it from there when
 the API serves the public half alone (checking the stored half
 against the served public line, so a stale copy fails as one named
 line, not ssh's opaque `Permission denied`). Losing the file loses ssh

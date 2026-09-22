@@ -653,6 +653,24 @@ in
     if [ -s "$state/msks-ca.pem" ]; then
       export MSKSC_CAFILE="$state/msks-ca.pem"
     fi
+    # Per-checkout client state (#251): the client's host-key cache
+    # and minted identities default to the user's XDG roots, which
+    # every checkout shares — a stale entry one tree wrote, another
+    # tree reads (the #251 failure shape: an unstamped known_hosts
+    # from an older tree refuses a newer tree's ssh). Both variables
+    # name the msks root itself; the client creates what it needs
+    # below them. Unlike the daemon-material presets above (the
+    # preset wins), these are directories with nothing to wait for,
+    # so a non-empty value exported before entering the shell
+    # survives (an empty one counts as unset, the same rule the
+    # client applies) and the per-worktree default fills the rest.
+    # Workspaces created before this preset keep their minted
+    # halves under the old root; their identities move with the
+    # worktree's state — deleting the worktree deletes them along
+    # with the daemon catalog they belong to.
+    : "''${MSKSC_CACHE_DIR:=$DEVENV_ROOT/.devenv/state/msksc/cache}"
+    : "''${MSKSC_DATA_DIR:=$DEVENV_ROOT/.devenv/state/msksc/data}"
+    export MSKSC_CACHE_DIR MSKSC_DATA_DIR
     # Tidy the state tree (#156): every `devenv shell --` /
     # `devenv tasks run` invocation writes a one-shot wrapper
     # (shell-<hash>.sh, ~150KB) at the top of .devenv/ and leaves it

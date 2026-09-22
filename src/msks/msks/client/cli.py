@@ -1314,8 +1314,8 @@ def build_parser() -> argparse.ArgumentParser:
         "escrow both halves (#111) instead of the client mint — the "
         "create default (#121) mints on this client, sends the public "
         "half only, and keeps the private half (mode 0600 under the "
-        "client data root, ~/.local/share/msks/<id>/identity, where "
-        "msks ssh finds it)",
+        "client data root — `~/.local/share/msks/<id>/identity`, or "
+        "that root under MSKSC_DATA_DIR — where msks ssh finds it)",
     )
     create.add_argument(
         "--pubkey",

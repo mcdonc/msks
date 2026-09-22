@@ -107,21 +107,62 @@ async def prepare(
     return key, booted
 
 
+def env_state_dir(variable: str) -> Path | None:
+    """One state-root variable's value, normalized or refused.
+
+    `MSKSC_CACHE_DIR` and `MSKSC_DATA_DIR` name their root directly
+    (#251). A leading ``~`` expands (the XDG fallback branches do
+    the same); a relative value names a different directory from
+    every working directory, which is exactly what a state root
+    must not do, so it is refused with the one-line fix rather
+    than honored. An empty value counts as unset — the same rule
+    the shell preset applies.
+    """
+    value = os.environ.get(variable, "")
+    if not value:
+        return None
+    root = Path(value).expanduser()
+    if not root.is_absolute():
+        raise SystemExit(
+            f"msks: {variable} must name an absolute path (got "
+            f"'{value}'); unset it or pass an absolute path"
+        )
+    return root
+
+
 def cache_dir() -> Path:
-    """The client cache root: XDG_CACHE_HOME or ~/.cache, under msks."""
+    """The client cache root: `MSKSC_CACHE_DIR` when set, else
+    XDG_CACHE_HOME or ~/.cache, under msks.
+
+    The variable names the root itself — the per-workspace
+    directories are created below it — so a checkout (the devenv
+    shell points it at the worktree's own state, #251) or an
+    operator takes the whole cache out of the shared XDG tree.
+    """
+    override = env_state_dir("MSKSC_CACHE_DIR")
+    if override is not None:
+        return override
     base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
     return Path(base) / "msks"
 
 
 def data_dir() -> Path:
-    """The client data root: XDG_DATA_HOME or ~/.local/share, under msks.
+    """The client data root: `MSKSC_DATA_DIR` when set, else
+    XDG_DATA_HOME or ~/.local/share, under msks.
 
     Distinct from :func:`cache_dir` on purpose: the cache is
     disposable by convention (``~/.cache`` may be swept at any
     time), while the client-minted private half (#121) is the
     workspace's only copy — losing it loses ssh — so it lives with
-    data that survives cache cleanup.
+    data that survives cache cleanup. The two override variables
+    stay separate for the same reason (#251): the cache can point
+    at a per-checkout, disposable location while the identities
+    stay somewhere durable — one root for both would couple their
+    lifetimes.
     """
+    override = env_state_dir("MSKSC_DATA_DIR")
+    if override is not None:
+        return override
     base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser(
         "~/.local/share"
     )
@@ -161,11 +202,12 @@ def resolve_private(key: dict, workspace_id: str) -> str:
             f"client — the daemon holds none, and {path} is not "
             f"readable: {exc}\n"
             "The key was minted on another client (the file lives at "
-            "that path on that machine), or it is a key you supplied "
-            "at create — log in with it directly (ssh -i, or the "
-            "Host msks-* alias), or run the console from the client "
-            "that holds the current key: both console and ssh now "
-            "need this half."
+            "that path on that machine), on this client under a "
+            "different state root (MSKSC_DATA_DIR relocates it), or it "
+            "is a key you supplied at create — log in with it "
+            "directly (ssh -i, or the Host msks-* alias), or run the "
+            "console from the client that holds the current key: both "
+            "console and ssh now need this half."
         ) from exc
     except ValueError as exc:
         raise SystemExit(

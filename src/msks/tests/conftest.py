@@ -1,5 +1,7 @@
 import os
 
+import pytest
+
 from msks import guestassets
 
 # Use the sysmon coverage engine — on Python 3.14 sys.monitoring measures
@@ -19,3 +21,16 @@ for _name, _value in guestassets.smoke_env_defaults(
     guestassets.load_guest_assets(),
 ).items():
     os.environ.setdefault(_name, _value)
+
+
+@pytest.fixture(autouse=True)
+def msksc_client_dirs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the devenv shell's client-state preset out of the suite.
+
+    The shell presets MSKSC_CACHE_DIR and MSKSC_DATA_DIR at the
+    worktree's own state (#251); tests exercise the documented
+    defaults (the XDG roots) and their own explicit overrides, so
+    the ambient preset never picks the root for them.
+    """
+    monkeypatch.delenv("MSKSC_CACHE_DIR", raising=False)
+    monkeypatch.delenv("MSKSC_DATA_DIR", raising=False)
