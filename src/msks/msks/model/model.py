@@ -229,9 +229,10 @@ class Model:
         """One workspace row by reference — its immutable id or its
         unique name (#246) — None when neither matches.
 
-        Id first: a minted id never collides with a name, but a
-        pre-#246 row's id doubles as its name, and the id is the
-        canonical reference every keyed surface uses.
+        Id first: the create route keeps live ids and live names in
+        one disjoint namespace, so the order is a canonical
+        preference, not a tiebreak — and a pre-#246 row's label IS
+        its id, so its operators' muscle memory lands here too.
         """
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
