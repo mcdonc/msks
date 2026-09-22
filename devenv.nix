@@ -161,6 +161,7 @@ in
     # that block the egress forward path the nft rules accept (#75/#52)
     jscpd # token-clone scanner (#71), pinned rust binary (see above)
     nftables # egress chains/NAT for the #52 smoke path
+    conntrack-tools # the consent-revocation tool the daemon execs (net/conntrack.py, #52)
     openssh # host-side ssh client: the forward-path smoke (#110) and
     # the documented ssh workflow (#112) run over `msks forward`
     qemu # qemu-img for rootfs conversion during guest-image experiments
@@ -204,16 +205,15 @@ in
   # script, or a hand-run script from a debugging shell.
   env.MSKS_GUEST_NIXPKGS = pkgs.path;
 
-  # The msks client (#21) targets the APPLIANCE (#146) by default,
+  # The msks client (#21) targets the DEV DAEMON (#231) by default,
   # so `msks ls` / `msks ssh` work from any devenv shell with no
-  # exports. The token and CA are resolved per shell in enterShell
-  # (below), from the appliance state dir — `.devenv/state/appliance`
-  # by default, relocated with MSKS_APPLIANCE_DIR. Until the
-  # appliance's first boot the token and CA files do not exist, so
-  # those presets stay unset (a value exported before entering the
-  # shell survives), the client warns it does not verify, and the
-  # TOFU fingerprint on the serial log covers the first connect.
-  env.MSKSC_URL = "https://192.168.77.2:8660";
+  # exports. The URL, token, and CA all resolve per shell in
+  # enterShell, from the daemon's state dir — the API port included,
+  # which the msksd process seeds into that dir (each worktree its
+  # own stable port). Until the daemon's first boot those files do
+  # not exist, so the presets stay unset (a value exported before
+  # entering the shell survives) and the client warns it does not
+  # verify on first connect.
 
   tasks = {
     # WORKAROUND (klangk pattern): devenv's uv sync gate only hashes the
@@ -246,22 +246,43 @@ in
     };
   };
 
-  # The bare-host daemon by HAND (#146): no managed process — run
-  # `msksd` from a devenv shell when the appliance is not wanted
-  # (no KVM, API/client-only work). The `msks-dev-ready` script
-  # converges a workable state under the daemon state dir first (token,
-  # default image; .devenv/state/msksd by default, MSKSD_STATE_DIR
-  # relocates it); egress stays off (that is the appliance's job, #101) and the
-  # client env presets target the appliance, so point the client at
-  # the bare daemon with explicit exports (README has the recipe).
+  # The deployment-host daemon, dev shape (#231): msksd runs
+  # FIRST-LEVEL on this host — cloud-hypervisor on the real /dev/kvm,
+  # per-VM taps, the egress consent stack in this kernel — no
+  # appliance VM. Lifecycle: `msks-dev-up` / `msks-dev-down`
+  # (scripts/dev-daemon.sh, wrapped as devenv scripts below) — no
+  # devenv process manager: its detached daemon intermittently never
+  # came up on this devenv (empty daemon.log, "Daemon failed to
+  # start within 120s") while the CLI kept spawning new ones; the
+  # script is one daemon, one pidfile, one log, under the worktree
+  # state dir. The two ambient caps arrive through the host's
+  # capability wrapper (security.wrappers.msks-caps): net_admin for
+  # per-VM taps and nftables chains, net_bind_service for the egress
+  # stack's DHCP 67 and DNS 53 — the wrapper is the whole grant
+  # (devenv's linux.capabilities broker was tried and dropped: a root
+  # helper on a rotating store path plus wildcard sudoers for the
+  # same grant). More than one worktree runs its own instance: each
+  # seeds a stable API port into its own state dir, and the egress
+  # subnet derives from the port so concurrent instances allocate
+  # disjoint /30 pools.
   processes = {
-    # The appliance is THE process (#146): `devenv processes up`
-    # boots the deployed shape — egress, the bridge, nested
-    # workspaces, and (with MSKS_DEV_TREE set) the live dev tree of
-    # #144 — and the client env below presets to it. The bare-host
-    # msksd is no longer a managed process at all; run it by hand
-    # when the appliance is not wanted (README has the one-liner).
+    # The dev-mode daemon as a managed foreground process (#231):
+    # `devenv processes up` (no -d) runs it attached; the manager
+    # supervises restarts and owns the graceful stop (grace below).
+    # The exec IS the msks-dev script — same seeding, same wrapper
+    # chain, one source of truth.
+    msksd = {
+      exec = ''exec bash "$DEVENV_ROOT/scripts/dev-daemon.sh"'';
+      # A workspace's stop cycle needs its window — the same
+      # data-loss lesson the appliance's grace encodes (#146).
+      shutdown.grace = 90;
+    };
+
+    # The appliance process (#146), demoted: the dev-mode daemon is
+    # msks-dev-up (#231), and the appliance stays explicitly-
+    # startable (`devenv up -d appliance`) until #232 removes it.
     appliance = {
+      start.enable = false;
       exec = ''
         # One startup, one build, one boot (#166): the build script runs
         # directly — no nested `devenv tasks run` CLI (whose own
@@ -339,6 +360,15 @@ in
   scripts.msks-build-runner-image = {
     description = "Build the k8s vm-runner container image archive into the guest state dir (.devenv/state/guest; MSKS_GUEST_DIR relocates it)";
     exec = ''exec bash "$DEVENV_ROOT/scripts/build-runner-image.sh" "$@"'';
+  };
+
+  # The dev-mode daemon, foreground (#231): `msks-dev` in a kept-
+  # open terminal (scripts/dev-daemon.sh); Ctrl-C stops it. No
+  # process manager, no backgrounding — see the block comment at
+  # `processes = {` above and the script's header for the history.
+  scripts.msks-dev = {
+    description = "Run the deployment-host dev daemon in the foreground (msksd through the msks-caps wrapper; Ctrl-C stops)";
+    exec = ''exec bash "$DEVENV_ROOT/scripts/dev-daemon.sh"'';
   };
 
   scripts.msks-demo-vm = {
@@ -715,37 +745,32 @@ in
     *.lock
     .devenv/
     PRETTIER
-    # The client presets (#146, #156): resolved here, per shell
-    # entry, from the appliance state dir — ".devenv/state/appliance"
-    # by default; MSKS_APPLIANCE_DIR relocates it (every appliance
-    # script resolves the same way, so the presets follow). Per-shell
-    # resolution, not env.*: the token file rotates, the CA
-    # materializes after the appliance's first boot (the run script
-    # extracts the guest's msks-ca.pem from the state disk), and a
-    # rebuild swaps the image symlink without re-evaluating nix —
-    # baked presets would go stale on all three. A file that does
-    # not exist yet leaves its variable untouched, so a value
-    # exported before entering the shell survives; otherwise the
-    # preset wins (unset it inside the shell to override).
-    app_dir="''${MSKS_APPLIANCE_DIR:-$DEVENV_ROOT/.devenv/state/appliance}"
+    # The client presets (#231): resolved here, per shell entry,
+    # from the DEV DAEMON's state dir — ".devenv/state/msksd" by
+    # default; MSKS_DEV_STATE relocates it (the msksd process seeds
+    # the same directory). Per-shell resolution, not env.*: the
+    # token rotates, the CA materializes after the daemon's first
+    # boot. A file that does not exist yet leaves its variable
+    # untouched, so a value exported before entering the shell
+    # survives; otherwise the preset wins (unset it inside the
+    # shell to override).
+    state="''${MSKS_DEV_STATE:-$DEVENV_ROOT/.devenv/state/msksd}"
     # A relative override resolves below the repo root — the
     # exported MSKSC_CAFILE must be absolute, or the client would
     # resolve it against its own CWD.
-    case "$app_dir" in
+    case "$state" in
     /*) ;;
-    *) app_dir="$DEVENV_ROOT/$app_dir" ;;
+    *) state="$DEVENV_ROOT/$state" ;;
     esac
-    if [ -s "$app_dir/bootstrap-token" ]; then
-      export MSKSC_TOKEN="$(cat "$app_dir/bootstrap-token")"
+    if [ -s "$state/bootstrap-token" ]; then
+      export MSKSC_TOKEN="$(cat "$state/bootstrap-token")"
     fi
-    if [ -s "$app_dir/msks-ca.pem" ]; then
-      export MSKSC_CAFILE="$app_dir/msks-ca.pem"
+    if [ -s "$state/port" ]; then
+      export MSKSC_URL="https://127.0.0.1:$(cat "$state/port")"
     fi
-    # The appliance-image drift check (#160): what THIS checkout's
-    # appliance state dir points at — `msks ls` compares it with the
-    # running daemon's reported image (its /health) and names the
-    # drift with the fix.
-    export MSKSC_EXPECTED_IMAGE="$(readlink -f "$app_dir/image" 2>/dev/null || true)"
+    if [ -s "$state/msks-ca.pem" ]; then
+      export MSKSC_CAFILE="$state/msks-ca.pem"
+    fi
     # Tidy the state tree (#156): every `devenv shell --` /
     # `devenv tasks run` invocation writes a one-shot wrapper
     # (shell-<hash>.sh, ~150KB) at the top of .devenv/ and leaves it
