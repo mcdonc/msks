@@ -527,13 +527,14 @@ async def test_local_minted_identity() -> None:
                 with contextlib.suppress(ProcessLookupError):
                     os.kill(int(agent_vars["SSH_AGENT_PID"]), 15)
         # The logins recorded the guest's host key in the msks
-        # cache, keyed by the workspace INSTANCE (#245: <id>.<stamp>,
-        # not the bare name) — pinning the shape that keeps a
-        # recreated workspace from refusing its own first-boot keys.
-        entries = list((ssh_cache / "msks").glob(f"{wid}.*/known_hosts"))
+        # cache, keyed by the workspace INSTANCE (#246: the minted
+        # id — with the #245 stamp as the daemon-side fallback shape
+        # only) — pinning the shape that keeps a recreated workspace
+        # from refusing its own first-boot keys.
+        entries = list((ssh_cache / "msks").glob(f"{vm_id}*/known_hosts"))
         assert entries, (
             f"no instance-keyed known_hosts under {ssh_cache / 'msks'} "
-            f"for {wid}"
+            f"for {vm_id}"
         )
         assert not (ssh_cache / "msks" / wid).exists()
 
@@ -777,7 +778,7 @@ async def test_local_client_minted_identity() -> None:
         await run_in_console(
             microvm,
             vm_id,
-            f"grep -qxF '{wid} {signers_key}' "
+            f"grep -qxF '{vm_id} {signers_key}' "
             "/etc/msks/console.allowed_signers "
             f"&& echo AS-$((6*7))",
             "AS-42",
