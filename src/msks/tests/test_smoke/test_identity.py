@@ -314,6 +314,8 @@ async def test_local_minted_identity() -> None:
             "--user-data",
             str(payload_path),
             "--daemon-mint",
+            "--user",
+            "alice",
         )
         assert created.returncode == 0, created.stderr
 
@@ -341,8 +343,12 @@ async def test_local_minted_identity() -> None:
             wid,
             f"grep -qxF '{minted}' /root/.ssh/authorized_keys "
             f"&& grep -qxF '{minted}' /home/msks/.ssh/authorized_keys "
-            f"&& stat -c %a /home/msks/.ssh/authorized_keys "
-            f"&& echo AK-$((6*7))",
+            "&& stat -c %a /home/msks/.ssh/authorized_keys "
+            f"&& grep -qxF '{minted}' /home/alice/.ssh/authorized_keys "
+            '&& [ "$(stat -c %a /home/alice/.ssh/authorized_keys)" = 600 ] '
+            '&& [ "$(stat -c %a /etc/sudoers.d/alice)" = 440 ] '
+            '&& [ "$(id -u alice)" -ge 1000 ] '
+            "&& echo AK-$((6*7))",
             "AK-42",
             app=app,
         )
@@ -356,7 +362,9 @@ async def test_local_minted_identity() -> None:
             app=app,
         )
 
-        # Logins: root and the workspace user, the minted key alone.
+        # Logins: root, the image's workspace user, and the
+        # workspace's recorded login user (#248 — seeded at first
+        # boot by the create's --user), the minted key alone.
         forward_port = free_port()
         start_forward(forward_port)
         await await_forward_listener(forward_port)
@@ -374,15 +382,23 @@ async def test_local_minted_identity() -> None:
             f"forward logs:\n{forward_evidence()}"
         )
         assert "msks-42" in user_login.stdout, user_login.stdout
+        named_login = await run_ssh(
+            forward_port, "alice", 'echo "NL-$(whoami)-$((6*7))"'
+        )
+        assert named_login.returncode == 0, (
+            f"{named_login.stdout}\n{named_login.stderr}\n"
+            f"forward logs:\n{forward_evidence()}"
+        )
+        assert "NL-alice-42" in named_login.stdout, named_login.stdout
 
         # msks ssh (#112): the same login as one command — identity
         # fetched and served from the transient agent, the forward as
-        # ProxyCommand,
-        # the msks user by default and root via -l. -F /dev/null in
-        # the passthrough keeps the harness hermetic (the #110
-        # lesson: a host ssh_config can carry options this build
-        # rejects); XDG_CACHE_HOME keeps the per-workspace known_hosts
-        # inside the workdir.
+        # ProxyCommand, the workspace's recorded login user (#248:
+        # alice, the create's --user) by default and root via -l.
+        # -F /dev/null in the passthrough keeps the harness hermetic
+        # (the #110 lesson: a host ssh_config can carry options this
+        # build rejects); XDG_CACHE_HOME keeps the per-workspace
+        # known_hosts inside the workdir.
         ssh_cache = workdir / "ssh-cache"
         ssh_env = dict(cli_env, XDG_CACHE_HOME=str(ssh_cache))
 
@@ -420,7 +436,7 @@ async def test_local_minted_identity() -> None:
         assert sugar_login.returncode == 0, (
             f"{sugar_login.stdout}\n{sugar_login.stderr}"
         )
-        assert "SSHU-msks-42" in sugar_login.stdout, sugar_login.stdout
+        assert "SSHU-alice-42" in sugar_login.stdout, sugar_login.stdout
         root_login = await run_msks_ssh(
             "-l", "root", command="echo SSHR-$(id -u)-$((6*7))"
         )
@@ -673,6 +689,8 @@ async def test_local_client_minted_identity() -> None:
             ROOTFS,
             *(["--cmdline", CMDLINE] if CMDLINE else []),
             "--egress",
+            "--user",
+            "alice",
         )
         assert created.returncode == 0, created.stderr
         assert identity.exists()
@@ -767,7 +785,8 @@ async def test_local_client_minted_identity() -> None:
 
         # ``msks ssh`` from the local cache alone: the API serves the
         # public half, the private half comes from the file the create
-        # wrote, and the login runs as the workspace user.
+        # wrote, and the login runs as the workspace's recorded login
+        # user (#248 — alice, the create's --user).
         login = await asyncio.to_thread(
             subprocess.run,
             [
@@ -792,7 +811,7 @@ async def test_local_client_minted_identity() -> None:
             timeout=SSH_CMD_TIMEOUT_S,
         )
         assert login.returncode == 0, f"{login.stdout}\n{login.stderr}"
-        assert "CMINT-msks-42" in login.stdout, login.stdout
+        assert "CMINT-alice-42" in login.stdout, login.stdout
 
         await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
         final = await microvm.info(wid)
