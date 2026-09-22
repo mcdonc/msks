@@ -35,7 +35,10 @@ class ConsoleStub(StubMicrovm):
         self.console_calls.append((workspace_id, user, rows, cols, term))
         if workspace_id in self.refusals:
             raise MicrovmError("no live vsock socket")
-        path = self._tmp_path / f"{workspace_id}.sock"
+        # The socket name shortens the workspace id: the daemon-minted
+        # ids (#246) are 32 hex chars, and a deep xdist tmp dir plus
+        # that name can push the AF_UNIX path past its 108-byte limit.
+        path = self._tmp_path / f"{workspace_id[:8]}.sock"
 
         async def echo(reader, writer):
             while True:
