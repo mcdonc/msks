@@ -244,6 +244,16 @@ flag — rewrite before merging.
 
 ## Changelog (`docs/changes.md`)
 
+**Entries are frozen for the duration of the #229 deployment-host
+rework.** While #229's sub-issues are in flight, leave
+`docs/changes.md` untouched: the parallel branches all append to the
+same `## \[Unreleased]` section, so every landing produces a conflict
+to resolve by hand, and per-PR entries written mid-rework describe a
+tree the rework is about to delete. When the rework lands, cut a
+single `Changed` entry covering the whole arc (appliance removed,
+deployment-host module added, k8s retired) in the PR that closes
+issue #229. The rules below govern entries outside the freeze.
+
 `docs/changes.md` is the single source of truth for human-authored release notes,
 formatted as [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 headings escape the opening bracket (`## \[Unreleased]`, `## \[v1.2.3] - date`)
