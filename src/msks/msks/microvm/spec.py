@@ -10,9 +10,12 @@ class VmSpec:
     """The backend-neutral description of one workspace VM.
 
     Kernel/initrd/rootfs are host paths today (local backend), so
-    the spec carries no placement knowledge. ``rootfs`` names the
-    *base* image: the VM boots the per-workspace overlay backed by it
-    (#14), and the overlay path is derived from the workspace id.
+    the spec carries no placement knowledge. ``workspace_id`` is
+    the workspace's immutable, daemon-minted instance id (#246);
+    ``rootfs`` names the *base* image: the VM boots the
+    per-workspace overlay backed by it (#14), and the overlay path
+    is derived from the workspace id. The operator-chosen name
+    never reaches this layer.
     """
 
     workspace_id: str

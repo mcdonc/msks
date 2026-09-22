@@ -887,7 +887,7 @@ async def test_image_delete_with_reference_guard(tmp_path) -> None:
         assert "malformed image hash" in malformed.json()["detail"]
         guarded = client.delete(f"/api/v1/images/{digest}", headers=headers)
         assert guarded.status_code == 409
-        assert "ws-keep" in guarded.json()["detail"]
+        assert made.json()["id"] in guarded.json()["detail"]
         assert (
             client.delete(
                 f"/api/v1/images/{'f' * 64}", headers=headers

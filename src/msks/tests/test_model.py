@@ -60,10 +60,119 @@ async def test_create_and_get_workspace(app_for) -> None:
     await app.state.model.create_all()
     row = await app.state.model.create_workspace(spec(initrd="/i"))
     assert row["id"] == "ws1"
+    assert row["name"] is None
     assert row["status"] == "created"
     assert row["initrd"] == "/i"
     fetched = await app.state.model.get_workspace("ws1")
     assert fetched["cpus"] == 2
+
+
+async def test_workspace_name_roundtrip_and_ref_resolution(app_for) -> None:
+    """The #246 split: the name rides the row, and a lookup by name
+    resolves the same row a lookup by id does — the id stays the
+    canonical key every other surface uses."""
+    app = app_for()
+    await app.state.model.create_all()
+    row = await app.state.model.create_workspace(spec("abc123"), name="ws")
+    assert (row["id"], row["name"]) == ("abc123", "ws")
+    by_id = await app.state.model.get_workspace("abc123")
+    by_name = await app.state.model.get_workspace("ws")
+    assert by_id == by_name
+    assert by_id["id"] == "abc123"
+
+
+async def test_workspace_names_are_unique(app_for) -> None:
+    """Two workspaces cannot share a label (#246): the second insert
+    answers the unique index's IntegrityError."""
+    from sqlalchemy.exc import IntegrityError
+
+    app = app_for()
+    await app.state.model.create_all()
+    await app.state.model.create_workspace(spec("one"), name="ws")
+    assert (await app.state.model.get_workspace("ws"))["id"] == "one"
+    with pytest.raises(IntegrityError):
+        await app.state.model.create_workspace(spec("two"), name="ws")
+
+
+async def test_migration_gives_legacy_rows_a_null_name(
+    tmp_path: Path, app_for
+) -> None:
+    """A database stamped before #246 upgrades in place: every row
+    keeps its operator-chosen id (its label IS its id, so ref
+    resolution addresses it unchanged), the name column arrives
+    NULL, and the column carries its unique constraint — a second
+    row cannot take a name the first one owns."""
+    from sqlalchemy.exc import IntegrityError
+
+    app = app_for()
+    db_path = tmp_path / "t.db"
+    config = alembic_config(db_path)
+    command.upgrade(config, "0009")
+    engine = sa.create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as conn:
+            workspaces = sa.Table(
+                "workspaces", sa.MetaData(), autoload_with=conn
+            )
+            assert "name" not in workspaces.columns
+            conn.execute(
+                workspaces.insert().values(
+                    id="legacy",
+                    kernel="/k",
+                    initrd=None,
+                    rootfs="/r",
+                    cmdline="c",
+                    cpus=1,
+                    mem_mib=256,
+                    status="stopped",
+                    created_at=datetime(2026, 1, 1),
+                    updated_at=datetime(2026, 1, 1),
+                )
+            )
+    finally:
+        engine.dispose()
+    app.state.model.migrate()
+    row = await app.state.model.get_workspace("legacy")
+    assert (row["id"], row["name"]) == ("legacy", None)
+    # The unique constraint rode along on the single ALTER: a second
+    # row cannot claim the first one's name.
+    await app.state.model.create_workspace(spec("new"), name="taken")
+    with pytest.raises(IntegrityError):
+        await app.state.model.create_workspace(spec("new2"), name="taken")
+
+
+def test_migration_is_one_atomic_statement() -> None:
+    """The #246 review pin: 0010 must rebuild the table once — the
+    column and its unique constraint inside the same batch (one
+    transaction) — so a torn migration (DDL committed, stamp lost)
+    leaves both or neither, and the daemon's stamp-past healing
+    cannot lose the constraint. A bare add_column + create_index
+    pair would tear between the two; a backfill UPDATE would be
+    unrepairable for the same reason."""
+    import ast
+
+    source = Path(
+        "src/msks/msks/migrations/versions/0010_workspace_name.py"
+    ).read_text()
+    tree = ast.parse(source)
+    upgrade = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef)
+        and node.name == "upgrade"
+    )
+    calls = [
+        node.func.attr
+        for node in ast.walk(upgrade)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    ]
+    assert "batch_alter_table" in calls and "add_column" in calls
+    # The pair a torn migration could lose half of, and the data
+    # step it could lose whole — none of them may appear.
+    assert "create_index" not in calls
+    assert "execute" not in calls
+    assert "unique=True" in source
+    assert "UPDATE" not in source  # no backfill step to tear
 
 
 async def test_create_and_fetch_minted_identity(app_for) -> None:
@@ -82,6 +191,8 @@ async def test_create_and_fetch_minted_identity(app_for) -> None:
     assert "ssh_privkey" not in row
     key = await app.state.model.get_ssh_key("ws1")
     assert key == {
+        "id": "ws1",  # the immutable id, for client caches (#246)
+        "name": None,
         "public_key": pub,
         "private_key": private_pem,
         "created_at": key["created_at"],  # the instance stamp (#245)
@@ -100,6 +211,8 @@ async def test_get_ssh_key_without_identity_and_absent(app_for) -> None:
     await app.state.model.create_workspace(spec())
     key = await app.state.model.get_ssh_key("ws1")
     assert key == {
+        "id": "ws1",
+        "name": None,
         "public_key": None,
         "private_key": None,
         "created_at": key["created_at"],

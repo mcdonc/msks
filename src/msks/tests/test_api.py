@@ -168,9 +168,14 @@ async def test_workspace_lifecycle(client) -> None:
     )
     assert created.status_code == 201
     assert created.json()["status"] == "created"
+    # The #246 split: the label becomes the row's name, and the
+    # daemon mints the immutable id the artifacts key on.
+    wid = created.json()["id"]
+    assert wid != "ws-a"
+    assert created.json()["name"] == "ws-a"
     # Created with the workspace (#14): the artifacts are prepared at
     # create, and the row records its host and artifact sizes.
-    assert ("prepare", "ws-a") in stub.calls
+    assert ("prepare", wid) in stub.calls
     assert created.json()["host"]
     assert created.json()["root_mib"] == 10240
     assert created.json()["home_mib"] == 2048
@@ -182,15 +187,20 @@ async def test_workspace_lifecycle(client) -> None:
     assert dup.status_code == 409
     started = await http.post("/api/v1/workspaces/ws-a/start", headers=auth())
     assert started.json()["status"] == "running"
-    assert ("launch", "ws-a") in stub.calls
+    assert started.json()["id"] == wid
+    assert ("launch", wid) in stub.calls
     listed = await http.get("/api/v1/workspaces", headers=auth())
-    assert [row["id"] for row in listed.json()] == ["ws-a"]
+    assert [row["id"] for row in listed.json()] == [wid]
+    assert [row["name"] for row in listed.json()] == ["ws-a"]
     one = await http.get("/api/v1/workspaces/ws-a", headers=auth())
     assert one.json()["cpus"] == 2
+    # The immutable id addresses the same workspace (#246).
+    by_id = await http.get(f"/api/v1/workspaces/{wid}", headers=auth())
+    assert by_id.json()["id"] == wid
     stopped = await http.post("/api/v1/workspaces/ws-a/stop", headers=auth())
     assert stopped.json()["status"] == "stopped"
     # Stop keeps the data (#14): no cleanup, no reset.
-    assert ("cleanup", "ws-a") not in stub.calls
+    assert ("cleanup", wid) not in stub.calls
     deleted = await http.delete("/api/v1/workspaces/ws-a", headers=auth())
     assert deleted.status_code == 200
     missing = await http.get("/api/v1/workspaces/ws-a", headers=auth())
@@ -199,6 +209,162 @@ async def test_workspace_lifecycle(client) -> None:
         "/api/v1/workspaces/ghost/start", headers=auth()
     )
     assert start_missing.status_code == 404
+
+
+async def test_create_accepts_the_new_name_field(client) -> None:
+    """The #246 create shape: ``name`` is the label; the daemon
+    mints the immutable id. The legacy ``id`` spelling means the
+    same thing, and the two may be sent together only when they
+    agree."""
+    http, _app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"name": "ws-new", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    assert created.json()["name"] == "ws-new"
+    assert created.json()["id"]
+    legacy = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-old-spelling", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert legacy.status_code == 201
+    assert legacy.json()["name"] == "ws-old-spelling"
+    agreeing = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "name": "ws-both",
+            "id": "ws-both",
+            "kernel": "/k",
+            "rootfs": "/r",
+        },
+        headers=auth(),
+    )
+    assert agreeing.status_code == 201
+    disagreeing = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "name": "ws-a",
+            "id": "ws-b",
+            "kernel": "/k",
+            "rootfs": "/r",
+        },
+        headers=auth(),
+    )
+    assert disagreeing.status_code == 400
+    assert "disagree" in disagreeing.json()["detail"]
+
+
+async def test_create_without_a_name_mints_an_id_only_workspace(
+    client,
+) -> None:
+    """A nameless create (#246): the API accepts it, the row carries
+    no label, and the id is the only reference."""
+    http, _app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    wid = created.json()["id"]
+    assert created.json()["name"] is None
+    by_id = await http.get(f"/api/v1/workspaces/{wid}", headers=auth())
+    assert by_id.status_code == 200
+    # The minted id is 10 hex digits (5 random bytes) — path-safe by
+    # construction and short enough to copy from a listing.
+    assert len(wid) == 10
+    assert all(ch in "0123456789abcdef" for ch in wid)
+
+
+async def test_minted_id_rerolls_past_live_collisions(
+    client, monkeypatch
+) -> None:
+    """The 10-hex mint re-rolls while a candidate already answers on
+    the daemon (#246): a live workspace's id AND its name both block
+    — ref resolution prefers the id, so a workspace named like
+    another's id would be shadowed by it."""
+    from msks.server import api as api_module
+
+    http, app, _stub = client
+    await app.state.model.create_workspace(
+        VmSpec(workspace_id="deadbeef01", kernel="/k", rootfs="/r")
+    )
+    await app.state.model.create_workspace(
+        VmSpec(workspace_id="other", kernel="/k", rootfs="/r"),
+        name="cafe1234",
+    )
+    rolled = iter(("deadbeef01", "cafe1234", "0123abcd56"))
+    monkeypatch.setattr(
+        api_module.secrets, "token_hex", lambda _: next(rolled)
+    )
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"name": "fresh", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["id"] == "0123abcd56"
+
+
+async def test_recreated_name_is_a_new_instance(client) -> None:
+    """The #246 acceptance: delete a workspace, create another under
+    the same name, and nothing from the first instance is
+    reachable or collideable — a different id, different artifact
+    paths, and a key endpoint that stamps the new instance."""
+    http, app, _stub = client
+    state_dir = app.state.settings.vmm.state_dir
+    first = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-again", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert first.status_code == 201
+    first_id = first.json()["id"]
+    first_key = (
+        await http.get("/api/v1/workspaces/ws-again/ssh-key", headers=auth())
+    ).json()
+    await http.delete("/api/v1/workspaces/ws-again", headers=auth())
+    second = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-again", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert second.status_code == 201
+    second_id = second.json()["id"]
+    assert second_id != first_id
+    assert second.json()["name"] == "ws-again"
+    # Every keyed surface follows the id: the artifact directories
+    # are distinct, and the key endpoint serves the second instance's
+    # identity and stamp.
+    assert (state_dir / "vms" / first_id) != (state_dir / "vms" / second_id)
+    second_key = (
+        await http.get("/api/v1/workspaces/ws-again/ssh-key", headers=auth())
+    ).json()
+    assert second_key["id"] == second_id
+    assert second_key["created_at"] != first_key["created_at"]
+    assert second_key["public_key"] != first_key["public_key"]
+
+
+async def test_workspace_ref_resolution_prefers_the_id(client) -> None:
+    """A workspace is addressable by id and by its unique name
+    (#246); the id is the canonical answer in every response."""
+    http, _app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-ref", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    wid = created.json()["id"]
+    by_name = await http.get("/api/v1/workspaces/ws-ref", headers=auth())
+    by_id = await http.get(f"/api/v1/workspaces/{wid}", headers=auth())
+    assert by_name.json() == by_id.json()
+    assert by_name.json()["id"] == wid
+    key = await http.get("/api/v1/workspaces/ws-ref/ssh-key", headers=auth())
+    assert key.json()["workspace"] == wid
+    assert key.json()["name"] == "ws-ref"
 
 
 async def test_create_mints_identity(client) -> None:
@@ -216,8 +382,9 @@ async def test_create_mints_identity(client) -> None:
     )
     assert created.status_code == 201
     assert created.json()["ssh_pubkey"].startswith(f"{KEY_TYPES['ed25519']} ")
-    assert created.json()["ssh_pubkey"].endswith("msksd:ws-id")
-    spec_seen = stub.seen_specs["ws-id"]
+    wid = created.json()["id"]
+    assert created.json()["ssh_pubkey"].endswith(f"msksd:{wid}")
+    spec_seen = stub.seen_specs[wid]
     assert spec_seen.ssh_pubkey == created.json()["ssh_pubkey"]
     key = await http.get("/api/v1/workspaces/ws-id/ssh-key", headers=auth())
     assert key.status_code == 200
@@ -286,7 +453,7 @@ async def test_create_with_client_supplied_pubkey(client) -> None:
     assert "operator@laptop" not in row["ssh_pubkey"]
     # The seed carries it (the spec the seam saw) and the row holds
     # no private half.
-    assert stub.seen_specs["ws-cm"].ssh_pubkey == row["ssh_pubkey"]
+    assert stub.seen_specs[row["id"]].ssh_pubkey == row["ssh_pubkey"]
     key = await http.get("/api/v1/workspaces/ws-cm/ssh-key", headers=auth())
     assert key.status_code == 200
     body = key.json()
@@ -337,7 +504,10 @@ async def test_create_accepts_any_supplied_pubkey_type(client) -> None:
         assert created.status_code == 201, created.json()
         assert created.json()["ssh_pubkey"].startswith(f"{line.split()[0]} ")
         assert created.json()["ssh_pubkey"].endswith(f"msks-client:{wid}")
-        assert stub.seen_specs[wid].ssh_pubkey == created.json()["ssh_pubkey"]
+        assert (
+            stub.seen_specs[created.json()["id"]].ssh_pubkey
+            == created.json()["ssh_pubkey"]
+        )
         key = await http.get(
             f"/api/v1/workspaces/{wid}/ssh-key", headers=auth()
         )
@@ -407,7 +577,7 @@ async def test_concurrent_same_id_creates_serialize(
     # The winner's row carries exactly one identity, served whole.
     key = await http.get("/api/v1/workspaces/ws-race/ssh-key", headers=auth())
     assert key.status_code == 200
-    assert key.json()["public_key"].endswith("msksd:ws-race")
+    assert key.json()["public_key"].endswith(f"msksd:{key.json()['id']}")
 
 
 async def test_create_with_bad_key_type_setting_is_500(
@@ -506,7 +676,7 @@ async def test_failed_start_leaves_the_row_startable(client) -> None:
 
 async def test_delete_falls_back_to_kill(client) -> None:
     http, _app, stub = client
-    await http.post(
+    created = await http.post(
         "/api/v1/workspaces",
         json={"id": "ws-k", "kernel": "/k", "rootfs": "/r"},
         headers=auth(),
@@ -518,13 +688,13 @@ async def test_delete_falls_back_to_kill(client) -> None:
     stub.shutdown = wedged
     response = await http.delete("/api/v1/workspaces/ws-k", headers=auth())
     assert response.status_code == 200
-    assert ("kill", "ws-k") in stub.calls
+    assert ("kill", created.json()["id"]) in stub.calls
 
 
 async def test_create_race_maps_to_409(client, monkeypatch) -> None:
     http, app, stub = client
 
-    async def lose(spec, image_hash=None, host=None, ssh_privkey=None):
+    async def lose(spec, **kwargs):
         raise IntegrityError("stmt", {}, Exception("unique"))
 
     monkeypatch.setattr(app.state.model, "create_workspace", lose)
@@ -537,29 +707,27 @@ async def test_create_race_maps_to_409(client, monkeypatch) -> None:
     # The winner's row now owns whatever blank artifacts sit at the
     # id's paths — the loser cleans nothing (that would break the
     # row-exists-⇒-artifacts-exist invariant).
-    assert ("cleanup", "ws-race") not in stub.calls
+    assert not any(call[0] == "cleanup" for call in stub.calls)
 
 
 async def test_create_race_after_prepare_answers_409(
     client, monkeypatch
 ) -> None:
-    """A racer that won between the 404 check and a strict-prepare
-    refusal turns the 503 into the honest 409."""
+    """A racer that won between the name pre-check and a
+    strict-prepare refusal turns the 503 into the honest 409."""
     http, app, _stub = client
-    real_get = app.state.model.get_workspace
     checks = 0
 
-    async def first_look_then_real(workspace_id):
+    async def first_free_then_row(ref):
         nonlocal checks
         checks += 1
-        if checks == 1:
-            return None  # the 404 pre-check: no workspace yet
-        return await real_get(workspace_id)  # the racer has since won
+        if checks <= 2:
+            # The pre-check (free), then the mint's candidate probe
+            # (free) — before the racer wins the name.
+            return None
+        return {"id": "racer"}  # the racer has since won it
 
-    monkeypatch.setattr(app.state.model, "get_workspace", first_look_then_real)
-    await app.state.model.create_workspace(
-        VmSpec(workspace_id="ws-lost", kernel=Path("/k"), rootfs=Path("/r"))
-    )
+    monkeypatch.setattr(app.state.model, "get_workspace", first_free_then_row)
     _stub.fail_prepare = True
     response = await http.post(
         "/api/v1/workspaces",
@@ -568,6 +736,28 @@ async def test_create_race_after_prepare_answers_409(
     )
     assert response.status_code == 409
     assert response.json()["detail"] == "workspace exists"
+
+
+async def test_create_refuses_a_name_equal_to_a_live_id(client) -> None:
+    """One ref namespace (#246): a name equal to a live workspace's
+    id is refused at create — ref resolution prefers the id, so such
+    a workspace would be silently shadowed (every command with its
+    name aiming at the other workspace, rm included)."""
+    http, _app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "real", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    live_id = created.json()["id"]
+    shadow = await http.post(
+        "/api/v1/workspaces",
+        json={"id": live_id, "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert shadow.status_code == 409
+    assert shadow.json()["detail"] == "workspace exists"
 
 
 async def test_prepare_failure_leaves_no_trace(client) -> None:
@@ -617,11 +807,12 @@ async def test_start_on_foreign_host_is_rejected(client) -> None:
     )
     assert created.status_code == 201
     recorded_host = created.json()["host"]
+    wid = created.json()["id"]
     app.state.settings.vmm.host_name = "some-other-host"
     response = await http.post("/api/v1/workspaces/ws-x/start", headers=auth())
     assert response.status_code == 409
     assert (
-        f"home volume for workspace ws-x lives on host {recorded_host}"
+        f"home volume for workspace {wid} lives on host {recorded_host}"
         in response.json()["detail"]
     )
     # A pre-#14 row without a host is adopted: the artifacts are
@@ -638,26 +829,27 @@ async def test_start_on_foreign_host_is_rejected(client) -> None:
 
 async def test_reset_stops_then_drops_overlay_only(client) -> None:
     http, _app, stub = client
-    await http.post(
+    created = await http.post(
         "/api/v1/workspaces",
         json={"id": "ws-r", "kernel": "/k", "rootfs": "/r"},
         headers=auth(),
     )
+    wid = created.json()["id"]
     await http.post("/api/v1/workspaces/ws-r/start", headers=auth())
     response = await http.post("/api/v1/workspaces/ws-r/reset", headers=auth())
     assert response.status_code == 200
-    assert response.json() == {"id": "ws-r", "status": "created"}
+    assert response.json() == {"id": wid, "status": "created"}
     calls = stub.calls
-    assert ("reset", "ws-r") in calls
+    assert ("reset", wid) in calls
     # Reset stops the VM (the overlay is the running root device) and
     # removes none of the persistent data itself.
-    assert calls.index(("shutdown", "ws-r")) < calls.index(("reset", "ws-r"))
-    assert ("cleanup", "ws-r") not in calls
+    assert calls.index(("shutdown", wid)) < calls.index(("reset", wid))
+    assert ("cleanup", wid) not in calls
 
 
 async def test_reset_falls_back_to_kill(client) -> None:
     http, _app, stub = client
-    await http.post(
+    created = await http.post(
         "/api/v1/workspaces",
         json={"id": "ws-w", "kernel": "/k", "rootfs": "/r"},
         headers=auth(),
@@ -669,7 +861,7 @@ async def test_reset_falls_back_to_kill(client) -> None:
     stub.shutdown = wedged
     response = await http.post("/api/v1/workspaces/ws-w/reset", headers=auth())
     assert response.status_code == 200
-    assert ("kill", "ws-w") in stub.calls
+    assert ("kill", created.json()["id"]) in stub.calls
 
 
 async def test_reset_missing_workspace_is_404(client) -> None:
@@ -756,7 +948,7 @@ async def test_image_pinned_by_workspace_artifacts(client) -> None:
     assert created.json()["image_hash"] == digest
     blocked = await http.delete(f"/api/v1/images/{digest}", headers=auth())
     assert blocked.status_code == 409
-    assert "ws-img" in blocked.json()["detail"]
+    assert created.json()["id"] in blocked.json()["detail"]
     deleted = await http.delete("/api/v1/workspaces/ws-img", headers=auth())
     assert deleted.status_code == 200
     released = await http.delete(f"/api/v1/images/{digest}", headers=auth())
@@ -825,7 +1017,7 @@ async def test_create_with_user_data_reaches_the_row(client) -> None:
     )
     assert created.status_code == 201, created.text
     assert created.json()["user_data"] == payload
-    assert stub.seen_specs["ws-ud"].user_data == payload
+    assert stub.seen_specs[created.json()["id"]].user_data == payload
     fetched = await http.get("/api/v1/workspaces/ws-ud", headers=auth())
     assert fetched.json()["user_data"] == payload
 
@@ -843,7 +1035,7 @@ async def test_create_with_user_reaches_the_row_and_spec(client) -> None:
     )
     assert created.status_code == 201, created.text
     assert created.json()["login_user"] == "alice"
-    assert stub.seen_specs["ws-u"].login_user == "alice"
+    assert stub.seen_specs[created.json()["id"]].login_user == "alice"
     key = await http.get("/api/v1/workspaces/ws-u/ssh-key", headers=auth())
     assert key.status_code == 200
     assert key.json()["user"] == "alice"
@@ -1025,7 +1217,8 @@ async def test_storage_report_lists_consumers(client) -> None:
         body["state"]["floor_mib"] == app.state.settings.vmm.storage_floor_mib
     )
     assert body["state"]["warn_pct"] == app.state.settings.vmm.storage_warn_pct
-    ws = next(row for row in body["workspaces"] if row["id"] == "ws-st")
+    ws = next(row for row in body["workspaces"] if row["name"] == "ws-st")
+    assert ws["id"] == created.json()["id"]
     assert ws["root_mib"] == app.state.settings.vmm.root_mib
     assert ws["home_mib"] == app.state.settings.vmm.home_mib
     assert isinstance(ws["root_bytes"], int)
@@ -1228,7 +1421,8 @@ async def test_resize_grows_the_home_volume(client) -> None:
         headers=auth(),
     )
     assert created.status_code == 201
-    await plant_volume(app, "ws-rs", 64)
+    wid = created.json()["id"]
+    await plant_volume(app, wid, 64)
     resized = await http.post(
         "/api/v1/workspaces/ws-rs/resize",
         json={"home_mib": 128},
@@ -1237,7 +1431,7 @@ async def test_resize_grows_the_home_volume(client) -> None:
     assert resized.status_code == 200
     body = resized.json()
     assert body["home_mib"] == 128
-    volume = app.state.settings.vmm.state_dir / "volumes" / "ws-rs.ext4"
+    volume = app.state.settings.vmm.state_dir / "volumes" / f"{wid}.ext4"
     assert volume.stat().st_size == 128 * 1024 * 1024
 
 
@@ -1249,14 +1443,15 @@ async def test_resize_shrinks_the_home_volume(client) -> None:
         headers=auth(),
     )
     assert created.status_code == 201
-    await plant_volume(app, "ws-sh", 128)
+    wid = created.json()["id"]
+    await plant_volume(app, wid, 128)
     resized = await http.post(
         "/api/v1/workspaces/ws-sh/resize",
         json={"home_mib": 64},
         headers=auth(),
     )
     assert resized.status_code == 200
-    volume = app.state.settings.vmm.state_dir / "volumes" / "ws-sh.ext4"
+    volume = app.state.settings.vmm.state_dir / "volumes" / f"{wid}.ext4"
     assert volume.stat().st_size == 64 * 1024 * 1024
 
 
@@ -1271,7 +1466,8 @@ async def test_resize_grows_the_overlay(client) -> None:
         headers=auth(),
     )
     assert created.status_code == 201
-    await plant_qcow2(app, "ws-ov", 256)
+    wid = created.json()["id"]
+    await plant_qcow2(app, wid, 256)
     resized = await http.post(
         "/api/v1/workspaces/ws-ov/resize",
         json={"root_mib": 512},
@@ -1279,7 +1475,7 @@ async def test_resize_grows_the_overlay(client) -> None:
     )
     assert resized.status_code == 200
     assert resized.json()["root_mib"] == 512
-    overlay = app.state.settings.vmm.state_dir / "vms" / "ws-ov" / "root.qcow2"
+    overlay = app.state.settings.vmm.state_dir / "vms" / wid / "root.qcow2"
     info = sp.run(
         ["qemu-img", "info", "--output=json", str(overlay)],
         capture_output=True,
@@ -1297,7 +1493,8 @@ async def test_resize_refuses_a_running_workspace(client) -> None:
         headers=auth(),
     )
     assert created.status_code == 201
-    await app.state.model.set_status("ws-run", "running")
+    wid = created.json()["id"]
+    await app.state.model.set_status(wid, "running")
     refused = await http.post(
         "/api/v1/workspaces/ws-run/resize",
         json={"home_mib": 128},
@@ -1320,7 +1517,8 @@ async def test_resize_refuses_overlay_shrink(client) -> None:
         headers=auth(),
     )
     assert created.status_code == 201
-    await plant_qcow2(app, "ws-nos", 512)
+    wid = created.json()["id"]
+    await plant_qcow2(app, wid, 512)
     refused = await http.post(
         "/api/v1/workspaces/ws-nos/resize",
         json={"root_mib": 256},
@@ -1338,12 +1536,13 @@ async def test_resize_is_idempotent_on_identical_sizes(client) -> None:
         headers=auth(),
     )
     assert created.status_code == 201
+    wid = created.json()["id"]
     empty = await http.post(
         "/api/v1/workspaces/ws-noop/resize", json={}, headers=auth()
     )
     assert empty.status_code == 400
     assert "nothing to resize" in empty.json()["detail"]
-    await plant_volume(app, "ws-noop", 2048)
+    await plant_volume(app, wid, 2048)
     same = await http.post(
         "/api/v1/workspaces/ws-noop/resize",
         json={"home_mib": 2048},
@@ -1392,7 +1591,8 @@ async def test_resize_maps_a_refused_shrink_to_409(client, tmp_path) -> None:
         headers=auth(),
     )
     assert created.status_code == 201
-    await plant_volume(app, "ws-full", 128)
+    wid = created.json()["id"]
+    await plant_volume(app, wid, 128)
     refused = await http.post(
         "/api/v1/workspaces/ws-full/resize",
         json={"home_mib": 64},
@@ -1471,9 +1671,8 @@ async def test_resize_refuses_below_the_overlays_virtual_size(client) -> None:
         headers=auth(),
     )
     assert created.status_code == 201
-    overlay = (
-        app.state.settings.vmm.state_dir / "vms" / "ws-clamp" / "root.qcow2"
-    )
+    wid = created.json()["id"]
+    overlay = app.state.settings.vmm.state_dir / "vms" / wid / "root.qcow2"
     overlay.parent.mkdir(parents=True, exist_ok=True)
     sp.run(
         ["qemu-img", "create", "-f", "qcow2", str(overlay), "512M"],
@@ -1510,10 +1709,9 @@ async def test_resize_combined_failure_leaves_nothing_moved(client) -> None:
         headers=auth(),
     )
     assert created.status_code == 201
-    await plant_volume(app, "ws-combined", 64)
-    overlay = (
-        app.state.settings.vmm.state_dir / "vms" / "ws-combined" / "root.qcow2"
-    )
+    wid = created.json()["id"]
+    await plant_volume(app, wid, 64)
+    overlay = app.state.settings.vmm.state_dir / "vms" / wid / "root.qcow2"
     overlay.parent.mkdir(parents=True, exist_ok=True)
     overlay.write_bytes(b"")
     failed = await http.post(
@@ -1522,10 +1720,10 @@ async def test_resize_combined_failure_leaves_nothing_moved(client) -> None:
         headers=auth(),
     )
     assert failed.status_code == 503
-    row = await app.state.model.get_workspace("ws-combined")
+    row = await app.state.model.get_workspace(wid)
     assert row["root_mib"] == 256
     assert row["home_mib"] == 64
-    volume = app.state.settings.vmm.state_dir / "volumes" / "ws-combined.ext4"
+    volume = app.state.settings.vmm.state_dir / "volumes" / f"{wid}.ext4"
     assert volume.stat().st_size == 64 * 1024 * 1024
 
 
@@ -1570,9 +1768,8 @@ async def test_resize_refuses_a_corrupt_overlay(client) -> None:
         headers=auth(),
     )
     assert created.status_code == 201
-    overlay = (
-        app.state.settings.vmm.state_dir / "vms" / "ws-corrupt" / "root.qcow2"
-    )
+    wid = created.json()["id"]
+    overlay = app.state.settings.vmm.state_dir / "vms" / wid / "root.qcow2"
     overlay.parent.mkdir(parents=True, exist_ok=True)
     overlay.write_bytes(b"")
     refused = await http.post(
@@ -1606,7 +1803,8 @@ async def test_resize_maps_an_e2fsck_operational_failure_to_503(
         headers=auth(),
     )
     assert created.status_code == 201
-    await plant_volume(app, "ws-op", 128)
+    wid = created.json()["id"]
+    await plant_volume(app, wid, 128)
     failed = await http.post(
         "/api/v1/workspaces/ws-op/resize",
         json={"home_mib": 64},
@@ -1636,7 +1834,8 @@ async def test_resize_maps_a_grow_failure_to_503(client, tmp_path) -> None:
         headers=auth(),
     )
     assert created.status_code == 201
-    await plant_volume(app, "ws-grow", 64)
+    wid = created.json()["id"]
+    await plant_volume(app, wid, 64)
     failed = await http.post(
         "/api/v1/workspaces/ws-grow/resize",
         json={"home_mib": 128},
@@ -1663,8 +1862,9 @@ async def test_resize_follows_the_file_not_the_row(client) -> None:
         headers=auth(),
     )
     assert created.status_code == 201
+    wid = created.json()["id"]
     # The imported volume: 128 MiB under a 64 MiB row.
-    await plant_volume(app, "ws-big", 128)
+    await plant_volume(app, wid, 128)
     reconciled = await http.post(
         "/api/v1/workspaces/ws-big/resize",
         json={"home_mib": 96},
@@ -1674,7 +1874,7 @@ async def test_resize_follows_the_file_not_the_row(client) -> None:
     body = reconciled.json()
     assert body["home_mib"] == 96
     assert body["changes"] == ["home shrank to 96 MiB"]
-    volume = app.state.settings.vmm.state_dir / "volumes" / "ws-big.ext4"
+    volume = app.state.settings.vmm.state_dir / "volumes" / f"{wid}.ext4"
     assert volume.stat().st_size == 96 * 1024 * 1024
     # A second identical resize is a no-op: the row now agrees with
     # the file, and the heal path records nothing.
@@ -1702,8 +1902,9 @@ async def test_resize_combined_success_reports_each_side(client) -> None:
         headers=auth(),
     )
     assert created.status_code == 201
-    await plant_volume(app, "ws-both", 128)
-    await plant_qcow2(app, "ws-both", 256)
+    wid = created.json()["id"]
+    await plant_volume(app, wid, 128)
+    await plant_qcow2(app, wid, 256)
     resized = await http.post(
         "/api/v1/workspaces/ws-both/resize",
         json={"root_mib": 512, "home_mib": 64},
@@ -1731,7 +1932,8 @@ async def test_resize_row_catches_up_to_the_overlay(client) -> None:
         headers=auth(),
     )
     assert created.status_code == 201
-    await plant_qcow2(app, "ws-catch", 512)
+    wid = created.json()["id"]
+    await plant_qcow2(app, wid, 512)
     caught = await http.post(
         "/api/v1/workspaces/ws-catch/resize",
         json={"root_mib": 512},
@@ -1779,7 +1981,8 @@ async def test_resize_names_a_vanished_volume(client, monkeypatch) -> None:
         headers=auth(),
     )
     assert created.status_code == 201
-    await plant_volume(app, "ws-van", 64)
+    wid = created.json()["id"]
+    await plant_volume(app, wid, 64)
 
     async def vanish(target, home_mib, settings):
         raise FileNotFoundError(str(target))

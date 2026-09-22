@@ -28,6 +28,7 @@ CONSOLE_ATTEMPTS from this module's namespace for those pins to bite.
 import asyncio
 import contextlib
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -98,6 +99,21 @@ SHUTDOWN_TIMEOUT_S = float(
 #: slow nested-KVM boot. One wedged session must not fail the test;
 #: each retry opens a fresh shell on an already-further-along boot.
 CONSOLE_ATTEMPTS = int(os.environ.get("MSKSD_TEST_CONSOLE_ATTEMPTS", "3"))
+
+
+def created_id(result) -> str:
+    """The daemon-minted id from a CLI create's confirmation line
+    (#246): ``created <name> (id <10-hex-digits>)``.
+
+    The smoke suites key artifacts (the serial log, the client data
+    root) on the immutable id the daemon mints — the typed name
+    addresses the workspace but never names its directories."""
+    match = re.search(r"created \S+ \(id ([0-9a-f]+)\)", result.stdout)
+    if match is None:
+        raise AssertionError(
+            f"no minted id in the create output: {result.stdout!r}"
+        )
+    return match.group(1)
 
 
 def serial_tail(serial_log: Path, limit: int = 2000) -> str:

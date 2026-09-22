@@ -171,9 +171,18 @@ def data_dir() -> Path:
 
 def client_identity_path(workspace_id: str, base: Path | None = None) -> Path:
     """Where a client-minted private half lives (#121): the data
-    root's per-workspace directory."""
+    root's per-workspace directory, keyed on the workspace's
+    immutable id (#246) — a workspace recreated under the same
+    name is a different id and keeps a different file."""
     root = (base if base is not None else data_dir()) / workspace_id
     return root / "identity"
+
+
+def identity_dir(key: dict, ref: str) -> str:
+    """The directory key for a workspace's client-side files: the
+    row's immutable id when the daemon serves it (#246), else the
+    typed reference (a daemon one version behind)."""
+    return key.get("id") or ref
 
 
 def resolve_private(key: dict, workspace_id: str) -> str:
@@ -192,7 +201,7 @@ def resolve_private(key: dict, workspace_id: str) -> str:
     """
     if key["private_key"] is not None:
         return key["private_key"]
-    path = client_identity_path(workspace_id)
+    path = client_identity_path(identity_dir(key, workspace_id))
     try:
         pem = path.read_text(encoding="utf-8")
         private = agent.load_private(pem)
@@ -256,6 +265,18 @@ def instance_token(key: dict) -> str | None:
     return hashlib.sha1(created_at.encode()).hexdigest()[:8]
 
 
+def cache_key(key: dict, ref: str) -> tuple[str, str | None]:
+    """The host-key cache's directory key: the workspace's immutable
+    id when the daemon serves it (#246 — the id names the instance,
+    so two workspaces created under one name never share a cache),
+    else the typed reference with the #245 created_at stamp
+    separating instances (a daemon one version behind).
+    """
+    if key.get("id"):
+        return key["id"], None
+    return ref, instance_token(key)
+
+
 def known_hosts_path(
     workspace_id: str, base: Path | None = None, instance: str | None = None
 ) -> str:
@@ -263,14 +284,15 @@ def known_hosts_path(
 
     Host keys persist across stop/start on the workspace's overlay
     (#110), so one accept-new entry per workspace keeps matching.
-    ``instance`` (the workspace instance's stamp, #245) separates
-    the caches of two workspaces created under one name: a
-    recreated instance presents fresh first-boot host keys, and a
-    name-keyed cache would refuse the change under ``accept-new``
-    forever — the #245 failure. Without the stamp (an older
-    daemon), the path keeps its name-keyed shape. An unusable cache
-    (the path taken by a file, an unwritable directory) is
-    operator-shaped: one line, not a traceback.
+    The directory keys on the workspace instance (#246): a current
+    daemon serves the workspace's immutable id with the identity
+    and the cache lives under that — a recreated workspace is a new
+    id and starts with a fresh cache instead of refusing its own
+    first-boot host keys. The #245 ``instance`` stamp keeps the
+    same separation for daemons that serve no id (the fallback keys
+    on the typed reference). An unusable cache (the path taken by
+    a file, an unwritable directory) is operator-shaped: one line,
+    not a traceback.
     """
     directory = f"{workspace_id}.{instance}" if instance else workspace_id
     root = (base if base is not None else cache_dir()) / directory
@@ -897,11 +919,11 @@ def staged_session(workspace_id: str, transport=None):
     """The pre-flight every ssh-transport command runs: the client
     environment, the boot-if-needed probe wait's inputs, and the
     workspace identity served from the transient agent
-    (:mod:`msks.client.agent`). Yields ``(booted, served,
-    instance, user)`` — whether this session booted the workspace
+    (:mod:`msks.client.agent). Yields ``(booted, served,
+    known_hosts, user)`` — whether this session booted the workspace
     (the #168 wait runs only then), the served agent holding the
-    private half in memory, the workspace instance's host-key
-    cache stamp (#245), and the workspace's login user (#248).
+    private half in memory, the per-instance known_hosts path
+    (#246), and the workspace's login user (#248).
     ``msks ssh`` (#112) and ``msks rsync`` (#190) share it."""
     token = env_token()
     url = env_url()
@@ -911,10 +933,11 @@ def staged_session(workspace_id: str, transport=None):
     )
     private = agent.load_private(resolve_private(key, workspace_id))
     with agent.serve(private, identity_comment(key)) as served:
+        cache_ref, instance = cache_key(key, workspace_id)
         yield (
             booted,
             served,
-            instance_token(key),
+            known_hosts_path(cache_ref, instance=instance),
             workspace_user(key),
         )
 
@@ -937,10 +960,9 @@ def run_workspace_ssh(
     with staged_session(workspace_id, transport) as (
         booted,
         served,
-        token,
+        known_hosts,
         user,
     ):
-        known_hosts = known_hosts_path(workspace_id, instance=token)
         if booted:
             probe_argv = probe_args(
                 workspace_id,

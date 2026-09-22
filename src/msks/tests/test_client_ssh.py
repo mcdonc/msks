@@ -511,6 +511,24 @@ def test_known_hosts_path_separates_workspace_instances(
     assert ssh.instance_token({"created_at": None}) is None
 
 
+def test_cache_key_uses_the_immutable_id_when_served(tmp_path: Path) -> None:
+    """#246: a daemon that serves the workspace's id keys the
+    host-key cache on it — the id names the instance, so two
+    workspaces created under one name never share a cache and no
+    created_at suffix is needed. A daemon without the field keeps
+    the #245 typed-ref-plus-stamp shape."""
+    keyed = ssh.cache_key(
+        {"id": "1a2b3c4d5e6f7890", "created_at": "2026-10-04"}, "ws"
+    )
+    assert keyed == ("1a2b3c4d5e6f7890", None)
+    stamp = ssh.instance_token({"created_at": "2026-10-04 10:00:00"})
+    legacy = ssh.cache_key({"created_at": "2026-10-04 10:00:00"}, "ws")
+    assert legacy == ("ws", stamp)
+    one = ssh.known_hosts_path(keyed[0], base=tmp_path, instance=keyed[1])
+    other = ssh.known_hosts_path("ws", base=tmp_path, instance=stamp)
+    assert one != other
+
+
 def test_known_hosts_path_names_an_unusable_cache(tmp_path: Path) -> None:
     taken = tmp_path / "alpha"
     taken.write_text("a file where the cache dir should be")
@@ -524,6 +542,13 @@ def test_client_identity_path_lives_under_the_data_root(
     assert ssh.client_identity_path("alpha", base=tmp_path) == (
         tmp_path / "alpha" / "identity"
     )
+
+
+def test_identity_dir_keys_on_the_served_id() -> None:
+    """#246: the identity directory keys on the row's immutable id
+    when the daemon serves it, else the typed reference."""
+    assert ssh.identity_dir({"id": "1a2b3c4d"}, "ws") == "1a2b3c4d"
+    assert ssh.identity_dir({}, "ws") == "ws"
 
 
 def test_resolve_private_prefers_the_daemon_half() -> None:

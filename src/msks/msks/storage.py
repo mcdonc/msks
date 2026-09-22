@@ -187,6 +187,7 @@ def storage_report(
         "workspaces": [
             {
                 "id": row["id"],
+                "name": row.get("name"),
                 "root_mib": row["root_mib"],
                 "home_mib": row["home_mib"],
                 **workspace_costs(state_dir, row["id"]),

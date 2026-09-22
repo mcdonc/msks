@@ -10,6 +10,7 @@ import contextlib
 import json
 import os
 import re
+import secrets
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -59,7 +60,9 @@ class TokenCreate(BaseModel):
 class SecretMint(BaseModel):
     """A mint request (#198): one placeholder for one workspace.
 
-    The real secret rides the request body (the client read it from
+    ``workspace_id`` names the workspace by id or name (#246) — the
+    placeholder itself binds to the row's immutable id. The real
+    secret rides the request body (the client read it from
     a file or stdin); it is never echoed in a response.
     """
 
@@ -125,9 +128,23 @@ class ImageImport(BaseModel):
 
 
 class WorkspaceCreate(BaseModel):
-    # The id becomes a path component under state_dir/vms/ — the
-    # charset keeps it safe (no traversal, no invalid names).
-    id: str = Field(min_length=1, max_length=64, pattern=WORKSPACE_ID_PATTERN)
+    # The workspace's name (#246): the operator-chosen label the CLI
+    # addresses the workspace by — the same DNS-label charset the
+    # id carried before the split (it still lands in display
+    # surfaces, never in artifact paths). Optional: a nameless
+    # workspace is addressable by its minted id only.
+    name: str | None = Field(
+        default=None, min_length=1, max_length=64, pattern=WORKSPACE_ID_PATTERN
+    )
+    # The pre-#246 spelling of the same field: a client one version
+    # behind keeps creating (the daemon treats its ``id`` as the
+    # name and mints the id either way). Note the same client's
+    # ``msks ssh`` on such a workspace must address it by the minted
+    # id: its client-minted identity file lands under the id, and
+    # the old client looks it up under whatever reference it typed.
+    id: str | None = Field(
+        default=None, min_length=1, max_length=64, pattern=WORKSPACE_ID_PATTERN
+    )
     # Either a catalog reference (image: "name:version", "name", or
     # hash — the default image when omitted) or explicit boot
     # artifacts (kernel/rootfs paths; the pre-catalog shape the
@@ -255,6 +272,46 @@ def image_record(app, body: WorkspaceCreate):
     return imagestore.default_image(state_dir)
 
 
+def create_name(body: WorkspaceCreate) -> str | None:
+    """The create's label (#246): ``name``, the legacy ``id``
+    spelling of it, or None for a nameless workspace.
+
+    Both fields carry the same constraints, so a client one version
+    behind keeps working (its ``id`` is treated as the name); sending
+    both is accepted when they agree and refused when they differ —
+    two different labels for one workspace is a client bug, not a
+    coin flip.
+    """
+    if body.name is not None and body.id is not None:
+        if body.name != body.id:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "name and id disagree; send one (id is the "
+                    "pre-#246 spelling of name)"
+                ),
+            )
+        return body.name
+    return body.name if body.name is not None else body.id
+
+
+async def mint_workspace_id(model) -> str:
+    """One fresh #246 instance id: 10 hex digits (5 random bytes).
+
+    Short enough to read and copy from a listing, long enough that
+    collisions need ~1M live workspaces to become likely — and the
+    mint re-rolls while a candidate already answers on this daemon
+    (an id AND a name block it: ref resolution prefers the id, so a
+    workspace named like another's id would be shadowed by it). The
+    insert's primary-key index is the backstop for a same-id race
+    between two creates of different names.
+    """
+    while True:
+        candidate = secrets.token_hex(5)
+        if await model.get_workspace(candidate) is None:
+            return candidate
+
+
 def validated_user_data(body: WorkspaceCreate) -> str | None:
     """The #41 payload: present-and-nonempty.
 
@@ -271,14 +328,16 @@ def validated_user_data(body: WorkspaceCreate) -> str | None:
     return body.user_data
 
 
-def resolve_boot(app, body: WorkspaceCreate) -> dict:
+def resolve_boot(app, body: WorkspaceCreate, workspace_id: str) -> dict:
     """Fill kernel/initrd/rootfs/cmdline from the image catalog.
 
     Explicit fields win over the image; the image wins over the
     default; nothing resolves at all is a client error. The result
     also carries the #14 facts: the catalog hash the overlay will
     bind to (None for explicit boot artifacts) and the artifact
-    sizes.
+    sizes. ``workspace_id`` is the daemon-minted instance id
+    (#246) — the artifact paths derive from it, never from the
+    operator's label.
     """
     record = image_record(app, body)
     kernel, rootfs = boot_pair(body, record)
@@ -287,7 +346,7 @@ def resolve_boot(app, body: WorkspaceCreate) -> dict:
             status_code=400, detail="kernel and rootfs come together"
         )
     return {
-        "id": body.id,
+        "id": workspace_id,
         "kernel": kernel,
         "initrd": default_initrd(body, record),
         "rootfs": rootfs,
@@ -782,22 +841,25 @@ async def locked_import(
     )
 
 
-async def serialize_create(app, workspace_id: str):
-    """Serialize same-id creates end to end (#111).
+async def serialize_create(app, key: str):
+    """Serialize same-name creates end to end (#111, #246).
 
     The minted identity makes every create racer-specific — two
-    concurrent creates of one id would each mint their own key, and
-    the artifact installs are last-rename-wins, so the loser's seed
-    could outlive its 409 under the winner's row: a workspace whose
-    key never logs in. One lock per workspace id, held from the
-    exists-check through the row insert, keeps the pair (row, seed)
-    from one mint; the loser sees the winner's row and answers 409.
+    concurrent creates of one name would each mint their own key,
+    and the artifact installs are last-rename-wins, so the loser's
+    seed could outlive its 409 under the winner's row: a workspace
+    whose key never logs in. One lock per workspace name, held
+    from the exists-check through the row insert, keeps the pair
+    (row, seed) from one mint; the loser sees the winner's row and
+    answers 409.
     """
-    lock = app.state.create_locks.setdefault(workspace_id, asyncio.Lock())
+    lock = app.state.create_locks.setdefault(key, asyncio.Lock())
     return lock
 
 
 async def _workspace_or_404(app, workspace_id: str) -> dict:
+    """The workspace a route's ref names — its immutable id or its
+    unique name (#246) — or the 404."""
     row = await app.state.model.get_workspace(workspace_id)
     if row is None:
         raise HTTPException(status_code=404, detail="no such workspace")
@@ -944,20 +1006,24 @@ def build_api(app) -> FastAPI:
         if not body.secret.strip():
             raise HTTPException(status_code=422, detail="the secret is empty")
         dests = validated_dests(body.dests)
-        if await app.state.model.get_workspace(body.workspace_id) is None:
+        row = await app.state.model.get_workspace(body.workspace_id)
+        if row is None:
             raise HTTPException(status_code=404, detail="no such workspace")
+        # The ref (name or id, #246) resolved: the placeholder row
+        # binds to the workspace's immutable id.
+        workspace_id = row["id"]
         if (
-            await app.state.model.placeholder_for(body.workspace_id, body.name)
+            await app.state.model.placeholder_for(workspace_id, body.name)
             is not None
         ):
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    f"workspace {body.workspace_id} already has a "
+                    f"workspace {workspace_id} already has a "
                     f"placeholder named {body.name}"
                 ),
             )
-        ref = backend_ref(body.workspace_id, body.name)
+        ref = backend_ref(workspace_id, body.name)
         if await app.state.model.placeholder_by_ref(ref) is not None:
             # Distinct labels can sanitize to one ref; the collision
             # is answered before anything touches the shared store
@@ -965,7 +1031,7 @@ def build_api(app) -> FastAPI:
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    f"{body.workspace_id}/{body.name} collides with an"
+                    f"{workspace_id}/{body.name} collides with an"
                     f" existing placeholder on backend ref {ref};"
                     " pick another name"
                 ),
@@ -984,7 +1050,7 @@ def build_api(app) -> FastAPI:
             # and a failed write rolls its own row back.
             try:
                 row = await app.state.model.create_placeholder(
-                    body.workspace_id,
+                    workspace_id,
                     body.name,
                     sentinel,
                     dests,
@@ -1075,19 +1141,41 @@ def build_api(app) -> FastAPI:
 
     @api.post("/api/v1/workspaces", dependencies=[Depends(require_token)])
     async def create_workspace(body: WorkspaceCreate) -> Response:
-        async with await serialize_create(app, body.id):
-            return await create_workspace_locked(body)
+        name = create_name(body)
+        if name is None:
+            # A nameless create shares nothing keyable with another
+            # create (the id mint and the primary-key index are the
+            # whole race story), so it takes no create lock.
+            return await create_workspace_locked(body, name)
+        async with await serialize_create(app, name):
+            return await create_workspace_locked(body, name)
 
-    async def create_workspace_locked(body: WorkspaceCreate) -> Response:
-        if await app.state.model.get_workspace(body.id) is not None:
+    async def create_workspace_locked(
+        body: WorkspaceCreate, name: str | None
+    ) -> Response:
+        # The ref namespace is one namespace (#246): a name another
+        # workspace already owns, OR another workspace's id, is
+        # refused — ref resolution prefers the id, so a workspace
+        # named like a live id would be silently shadowed by it
+        # (every command with that name would aim at the other
+        # workspace). get_workspace answers for both spellings.
+        if name is not None and (
+            await app.state.model.get_workspace(name) is not None
+        ):
             raise HTTPException(status_code=409, detail="workspace exists")
+        # The #246 instance id: minted by the daemon, immutable, and
+        # never reused while its workspace lives — artifact paths,
+        # caches, and every keyed surface derive from it, so a
+        # workspace recreated under the same name is a different id
+        # and cannot collide with the first instance anywhere.
+        workspace_id = await mint_workspace_id(app.state.model)
         # The state-disk floor (#184): a create below it is the #180
         # failure mode in the making, so it answers a named 507 with
         # the reclaim path spelled out instead of wedging later.
         refusal = storage.create_refusal(app.state.settings.vmm)
         if refusal is not None:
             raise HTTPException(status_code=507, detail=refusal)
-        boot = resolve_boot(app, body)
+        boot = resolve_boot(app, body, workspace_id)
         # The consent posture (#69), fixed at create with the rest of
         # the egress facts: an unknown mode or an invalid spec is a
         # named 400 here, not a first-boot surprise.
@@ -1127,7 +1215,8 @@ def build_api(app) -> FastAPI:
                 algo, key_body = normalize_public_key(body.ssh_pubkey)
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from None
-            boot["ssh_pubkey"] = f"{algo} {key_body} msks-client:{body.id}"
+            comment = name or workspace_id
+            boot["ssh_pubkey"] = f"{algo} {key_body} msks-client:{comment}"
         else:
             try:
                 private_key, public_key = await asyncio.to_thread(
@@ -1135,7 +1224,7 @@ def build_api(app) -> FastAPI:
                 )
             except ValueError as exc:
                 raise HTTPException(status_code=500, detail=str(exc)) from None
-            boot["ssh_pubkey"] = f"{public_key} msksd:{body.id}"
+            boot["ssh_pubkey"] = f"{public_key} msksd:{workspace_id}"
         # The persistent artifacts (#14) come before the row: a refused
         # create (a leftover artifact from a previous workspace of this
         # id) answers 503 with nothing written and nothing removed, and
@@ -1143,10 +1232,12 @@ def build_api(app) -> FastAPI:
         try:
             await app.state.microvm.prepare(spec_for(boot))
         except MicrovmError:
-            # A racer may have won this id between the 404 check and
+            # A racer may have won this name between the pre-check and
             # the strict prepare — its artifacts are the "leftover",
             # and the honest answer is the 409, not a removal plea.
-            if await app.state.model.get_workspace(body.id) is not None:
+            if name is not None and (
+                await app.state.model.get_workspace(name) is not None
+            ):
                 raise HTTPException(
                     status_code=409, detail="workspace exists"
                 ) from None
@@ -1157,12 +1248,16 @@ def build_api(app) -> FastAPI:
                 image_hash=boot["image_hash"],
                 host=owner_host(app),
                 ssh_privkey=private_key,
+                name=name,
             )
         except IntegrityError:
             # The insert lost the race. The winner's row owns whatever
             # blank artifacts sit at this id's paths now (ours and its
             # are indistinguishable), so nothing is cleaned up — the
             # row-exists-⇒-artifacts-exist invariant must not break.
+            # The collision is the name index in practice; a same-id
+            # mint race between two different names (~2⁻²⁰) answers
+            # the same 409, and a retried create succeeds.
             raise HTTPException(
                 status_code=409, detail="workspace exists"
             ) from None
@@ -1308,10 +1403,11 @@ def build_api(app) -> FastAPI:
         guesses the algorithm. A client-minted workspace (#121)
         answers ``private_key: null`` — the daemon never held that
         half; it lives on the client that created the workspace.
-        ``created_at`` (#245) stamps the workspace *instance* — the
-        client keys its host-key cache on it, so a workspace
-        recreated under the same name cannot collide with the
-        first instance's cached host keys. ``user`` (#248) is the
+        ``created_at`` (#245) stamps the workspace *instance*, and
+        ``id``/``name`` (#246) carry its immutable identity — the
+        client keys its caches on the id, so a workspace recreated
+        under the same name cannot collide with the first
+        instance's cached host keys. ``user`` (#248) is the
         workspace's recorded login user — the default ``msks ssh``
         and ``msks console`` log in as — answered as the image's own
         account for a row created before per-workspace users, so
@@ -1326,7 +1422,9 @@ def build_api(app) -> FastAPI:
                 detail=f"workspace {workspace_id} has no minted identity",
             )
         return {
-            "workspace": workspace_id,
+            "workspace": key["id"],
+            "id": key["id"],
+            "name": key["name"],
             "type": key["public_key"].split()[0],
             "public_key": key["public_key"],
             "private_key": key["private_key"],
@@ -1376,6 +1474,9 @@ def build_api(app) -> FastAPI:
         and a shrink gives bytes back.
         """
         row = await _workspace_or_404(app, workspace_id)
+        # The ref (name or id) resolved: everything keyed below uses
+        # the row's immutable id (#246).
+        workspace_id = row["id"]
         if mismatch := host_mismatch(app, row):
             raise HTTPException(status_code=409, detail=mismatch)
         if body.root_mib is None and body.home_mib is None:
@@ -1521,6 +1622,7 @@ def build_api(app) -> FastAPI:
     )
     async def start_workspace(workspace_id: str) -> dict:
         row = await _workspace_or_404(app, workspace_id)
+        workspace_id = row["id"]
         mismatch = host_mismatch(app, row)
         if mismatch is not None:
             # Placement is a fact about the artifacts, not a
@@ -1547,6 +1649,7 @@ def build_api(app) -> FastAPI:
     )
     async def stop_workspace(workspace_id: str) -> dict:
         row = await _workspace_or_404(app, workspace_id)
+        workspace_id = row["id"]
         if mismatch := host_mismatch(app, row):
             # A stop from a non-owning host cannot reach the VMM; a
             # local no-op would mark a running VM stopped.
@@ -1562,6 +1665,7 @@ def build_api(app) -> FastAPI:
     async def reset_workspace(workspace_id: str) -> dict:
         """Factory reset: a pristine root, the same /home (#14)."""
         row = await _workspace_or_404(app, workspace_id)
+        workspace_id = row["id"]
         if mismatch := host_mismatch(app, row):
             # The overlay lives on its owning host; resetting it from
             # here would no-op on this host's (absent) file and lie
@@ -1590,6 +1694,7 @@ def build_api(app) -> FastAPI:
         """Stream the workspace's /home volume out (#80): the volume
         file's bytes, verbatim."""
         row = await _workspace_or_404(app, workspace_id)
+        workspace_id = row["id"]
         guard = home_volume_guard(app, row)
         if guard is not None:
             raise HTTPException(*guard)
@@ -1608,6 +1713,7 @@ def build_api(app) -> FastAPI:
         (#80): the uploaded ext4 image lands atomically — a failed or
         refused upload leaves the old volume in place."""
         row = await _workspace_or_404(app, workspace_id)
+        workspace_id = row["id"]
         guard = home_volume_guard(app, row)
         if guard is not None:
             raise HTTPException(*guard)
@@ -1634,6 +1740,7 @@ def build_api(app) -> FastAPI:
     )
     async def delete_workspace(workspace_id: str) -> dict:
         row = await _workspace_or_404(app, workspace_id)
+        workspace_id = row["id"]
         if mismatch := host_mismatch(app, row):
             # Deleting the row from a non-owning host would orphan a
             # possibly-running VM: every route 404s without the row.
@@ -1672,6 +1779,9 @@ def build_api(app) -> FastAPI:
         if row is None:
             await socket.close(code=4404)
             return
+        # The ref (name or id, #246) resolved: the vsock dial and
+        # every keyed surface below use the row's immutable id.
+        workspace_id = row["id"]
         # Identity negotiation (#63): the daemon validates the request
         # against the image's served users before anything reaches the
         # guest, and only prelude images carry the user and window
@@ -1736,6 +1846,7 @@ def build_api(app) -> FastAPI:
         if row is None:
             await socket.close(code=4404)
             return
+        workspace_id = row["id"]
         target_port, problem = forward_port(port)
         if problem is not None:
             await socket.close(code=4400, reason=close_reason(problem))
@@ -1823,7 +1934,8 @@ def build_api(app) -> FastAPI:
     async def get_egress(workspace_id: str) -> dict:
         """The rule-management view: mode, static allowlist, and the
         in-effect verdicts."""
-        await _workspace_or_404(app, workspace_id)
+        row = await _workspace_or_404(app, workspace_id)
+        workspace_id = row["id"]
         frame = await app.state.consent.rules_frame(workspace_id)
         return frame or {"workspace_id": workspace_id}
 
@@ -1839,7 +1951,8 @@ def build_api(app) -> FastAPI:
         """The consent rows (audit trail), newest first; the
         ``decision`` query filters one lifecycle state and
         ``limit`` bounds the page (1..1000, newest first)."""
-        await _workspace_or_404(app, workspace_id)
+        row = await _workspace_or_404(app, workspace_id)
+        workspace_id = row["id"]
         if decision is not None and decision not in DECISIONS:
             raise HTTPException(
                 status_code=400,
@@ -1859,7 +1972,8 @@ def build_api(app) -> FastAPI:
         """A decider's verdict on a held request (#69): the held
         SYN releases on allow, refuses fast on deny; the duration
         sets how long enforcement honors the verdict."""
-        await _workspace_or_404(app, workspace_id)
+        row = await _workspace_or_404(app, workspace_id)
+        workspace_id = row["id"]
         refusal = await verdict_refusal(app, workspace_id, request_id, body)
         if refusal is not None:
             raise HTTPException(*refusal)
@@ -1884,7 +1998,8 @@ def build_api(app) -> FastAPI:
         """Undo an in-effect verdict (#69): the row flips to
         revoked, its flow rules and tracked connections clear, and
         the destination gates again at the next connection."""
-        await _workspace_or_404(app, workspace_id)
+        row = await _workspace_or_404(app, workspace_id)
+        workspace_id = row["id"]
         row = await app.state.model.egress_consent.get_request(request_id)
         if row is None or row["workspace_id"] != workspace_id:
             raise HTTPException(
@@ -2274,7 +2389,8 @@ async def register_decider(app, socket, client_id: int, message: dict):
     workspace = message.get("workspace")
     if not isinstance(workspace, str):
         return
-    if await app.state.model.get_workspace(workspace) is None:
+    row = await app.state.model.get_workspace(workspace)
+    if row is None:
         # Say so: a decider pointed at a typo'd workspace would
         # otherwise wait on a silent, promptless connection.
         await socket.send_json(
@@ -2284,6 +2400,9 @@ async def register_decider(app, socket, client_id: int, message: dict):
             }
         )
         return
+    # The frame names the workspace by id or name (#246); consent
+    # state keys on the row's immutable id.
+    workspace = row["id"]
     app.state.deciders.register(client_id, workspace)
     for pending in await app.state.consent.snapshot(workspace):
         await socket.send_json({"event": "egress.request", "data": pending})

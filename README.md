@@ -223,8 +223,13 @@ devenv --quiet -O dotenv.enable:bool false shell -- msks ls
 devenv --quiet -O dotenv.enable:bool false shell -- msks create my-workspace --start
 ```
 
-`msks ls` prints one line per workspace (id, status, image hash,
-host); `--json` prints one JSON document for scripting. `msks create`
+`msks ls` prints one line per workspace (name, id, status, image
+hash, host); `--json` prints one JSON document for scripting. A
+workspace carries two identity fields (#246): the name you choose at
+create — the label every command addresses it by — and the id the
+daemon mints, immutable and never reused, keying the artifact paths
+and the client caches; either reference reaches the same workspace.
+`msks create`
 POSTs the same body the API accepts — `--image` picks a catalog
 reference, `--cpus`/`--mem-mib`/`--root-mib`/`--home-mib` size the VM,
 `--user-data` attaches a first-boot provisioning script (#41, a
@@ -232,13 +237,13 @@ cidata seed disk the guest's provisioner runs once), and explicit
 `--kernel`/`--rootfs` (with optional `--initrd`,
 `--cmdline`) bypass the catalog. `--start` boots the workspace right
 after creating it, so `msks create ws --start` then `msks console ws`
-is the two-step path from nothing to a shell; `msks start <id>` boots
-an existing workspace later, `msks stop <id>` powers one off (a
+is the two-step path from nothing to a shell; `msks start <ws>` boots
+an existing workspace later, `msks stop <ws>` powers one off (a
 graceful, deadline-bounded shutdown; the data survives), `msks rm
-<id>…` deletes one or more workspaces together with their persistent
-root overlay and `/home` volume, `msks console <id>` boots one itself
+<ws>…` deletes one or more workspaces together with their persistent
+root overlay and `/home` volume, `msks console <ws>` boots one itself
 when the daemon reports it as not running (a notice prints on
-stderr while the boot runs), and `msks home export/import <id>`
+stderr while the boot runs), and `msks home export/import <ws>`
 moves the whole `/home` volume through the daemon for backup,
 migration, and seeding (#80). All commands use the same
 `MSKSC_URL`/`MSKSC_TOKEN`/`MSKSC_CAFILE` environment as `msks console`;
