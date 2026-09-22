@@ -92,6 +92,19 @@ class _VsockRetry(Exception):
     """A retryable console bring-up state, carrying its human cause."""
 
 
+class _UserRetry(Exception):
+    """The guest refused the login user (#248) — retried like a
+    boot-state refusal, because the daemon's own gate already
+    admitted the name (the image's console users or the row's
+    login_user) and the refusal is usually transient: a freshly
+    booted guest refuses until the first-boot seed creates the
+    account. The one permanent shape — a name that landed on a
+    system account the image ships — answers the same way; the
+    error the retry deadline raises names both causes without
+    distinguishing them (the daemon cannot see the guest's
+    passwd)."""
+
+
 async def vsock_attempt(socket_path: Path, port: int):
     """One connect+CONNECT attempt against the vsock unix socket.
 
@@ -185,6 +198,19 @@ async def negotiate_prelude(
     if line.startswith(b"MSKS ERR "):
         reason = line[len(b"MSKS ERR ") :].decode(errors="replace")
         writer.close()
+        if reason == "user":
+            # The helper's absent-or-system account refusal: the
+            # seed that provisions the login user lands with the
+            # same boot (cloud-init), so the caller retries within
+            # its vsock deadline rather than refusing a first-boot
+            # console. The message fits the websocket close-reason
+            # budget (123 bytes) at the charset's longest name —
+            # close_reason truncates at 120, and a refusal cut
+            # mid-sentence names nothing.
+            raise _UserRetry(
+                f"console refused user {user!r}: the image serves no "
+                "such account, or its seed has not run yet"
+            )
         raise MicrovmError(f"console refused user {user!r}: {reason}")
     writer.close()
     raise MicrovmError(f"console prelude reply unrecognized: {line[:80]!r}")
@@ -331,6 +357,19 @@ def map_ch_state(state: str | None) -> VmStatus:
     if state is None:
         return VmStatus.UNKNOWN
     return CH_STATE_TO_STATUS.get(state, VmStatus.UNKNOWN)
+
+
+def console_retry_error(workspace_id: str, retry: Exception) -> MicrovmError:
+    """The named error for a console retry whose deadline passed, by
+    what was being retried: a bring-up state (socket, handshake)
+    names the VM's availability; a login-user refusal (#248) keeps
+    its own message — the guest never grew such an account within
+    the wait."""
+    if isinstance(retry, _UserRetry):
+        return MicrovmError(str(retry))
+    return MicrovmError(
+        f"console unavailable for {workspace_id} (is the VM running?): {retry}"
+    )
 
 
 class LocalCloudHypervisor(MicrovmDriver):
@@ -577,14 +616,16 @@ class LocalCloudHypervisor(MicrovmDriver):
     ):
         """(reader, writer): one interactive stream into the VM.
 
-        A freshly booted workspace refuses the console twice over, in
+        A freshly booted workspace refuses the console three ways, in
         order: the unix socket appears only when the GUEST's driver
         activates the device (seconds after vm.boot reported success),
-        and even then the first CONNECT can meet a guest kernel whose
+        even then the first CONNECT can meet a guest kernel whose
         shell server has not called listen() yet — the kernel answers
-        RST and cloud-hypervisor closes the unix stream. The whole
-        connect+handshake is retried under one deadline; a dead VMM
-        fails fast instead of waiting it out.
+        RST and cloud-hypervisor closes the unix stream — and a
+        workspace with a seeded login user (#248) can reach the
+        helper before the first-boot seed created the account. The
+        whole connect+handshake is retried under one deadline; a dead
+        VMM fails fast instead of waiting it out.
         """
         socket_path = self._dir(workspace_id) / "vsock.sock"
         settings = self._settings().vmm
@@ -601,12 +642,9 @@ class LocalCloudHypervisor(MicrovmDriver):
                 return await _vsock_handshake(
                     socket_path, port, user, rows, cols, term
                 )
-            except _VsockRetry as retry:
+            except (_VsockRetry, _UserRetry) as retry:
                 if asyncio.get_running_loop().time() >= deadline:
-                    raise MicrovmError(
-                        f"console unavailable for {workspace_id} "
-                        f"(is the VM running?): {retry}"
-                    ) from retry
+                    raise console_retry_error(workspace_id, retry) from retry
             await asyncio.sleep(POLL_INTERVAL_S)
 
     async def _wait_ready(

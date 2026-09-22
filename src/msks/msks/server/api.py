@@ -31,7 +31,12 @@ from starlette.requests import ClientDisconnect
 
 from .. import __version__, imagestore, persist, storage
 from ..consent.specs import EGRESS_MODES, parse_allowlist
-from ..identity import mint, normalize_public_key
+from ..identity import (
+    LEGACY_LOGIN_USER,
+    LOGIN_NAME_RE,
+    mint,
+    normalize_public_key,
+)
 from ..imagestore import ImageError
 from ..microvm.errors import MicrovmError
 from ..microvm.spec import VmSpec, VmStatus
@@ -167,6 +172,14 @@ class WorkspaceCreate(BaseModel):
     # public half only — no private half ever reaches it. Absent →
     # the daemon mints both halves itself (#111).
     ssh_pubkey: str | None = Field(default=None, max_length=16384)
+    # The workspace's login user (#248): recorded on the row, seeded
+    # into the guest at first boot (the account and its authorized_keys
+    # when the image does not ship it), and served back as the
+    # client's default login. Create-time and immutable, like the
+    # specs. Absent → the workspace keeps the image's own login user
+    # (the pre-#248 posture); the client fills its invoking user's
+    # name before the request ever leaves.
+    user: str | None = Field(default=None, pattern=LOGIN_NAME_RE.pattern)
 
 
 #: The daemon's boot cmdline — a deployment names the
@@ -284,6 +297,7 @@ def resolve_boot(app, body: WorkspaceCreate) -> dict:
         "image_hash": bound_image_hash(body, record),
         "egress": body.egress,
         "user_data": validated_user_data(body),
+        "login_user": body.user,
         **artifact_sizes(app, body),
     }
 
@@ -291,9 +305,12 @@ def resolve_boot(app, body: WorkspaceCreate) -> dict:
 #: The console protocol the daemon negotiates (#63); manifest-keyed.
 CONSOLE_PROTOCOL_PRELUDE = "prelude-v1"
 
-#: The wire charset for a console user name — the same shape the guest
-#: helper's prelude accepts, checked before anything is forwarded.
-USER_NAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+#: The wire charset for a console user name — the same shape the
+#: guest helper's prelude accepts, checked before anything is
+#: forwarded. The login name's charset is the same one (#248's
+#: create field, the seed's interpolation guard): one pattern, the
+#: helper's own rule.
+USER_NAME_RE = LOGIN_NAME_RE
 
 #: The wire charset for a TERM value: printable ASCII minus space
 #: (every terminfo name fits), matching the guest helper's check.
@@ -501,6 +518,7 @@ def spec_for(row: dict) -> VmSpec:
         egress_allowlist=tuple(row.get("egress_allowlist") or ()),
         user_data=row.get("user_data"),
         ssh_pubkey=row.get("ssh_pubkey"),
+        login_user=row.get("login_user"),
     )
 
 
@@ -1293,7 +1311,11 @@ def build_api(app) -> FastAPI:
         ``created_at`` (#245) stamps the workspace *instance* — the
         client keys its host-key cache on it, so a workspace
         recreated under the same name cannot collide with the
-        first instance's cached host keys.
+        first instance's cached host keys. ``user`` (#248) is the
+        workspace's recorded login user — the default ``msks ssh``
+        and ``msks console`` log in as — answered as the image's own
+        account for a row created before per-workspace users, so
+        every workspace serves one.
         """
         key = await app.state.model.get_ssh_key(workspace_id)
         if key is None:
@@ -1309,6 +1331,7 @@ def build_api(app) -> FastAPI:
             "public_key": key["public_key"],
             "private_key": key["private_key"],
             "created_at": key["created_at"],
+            "user": key["login_user"] or LEGACY_LOGIN_USER,
         }
 
     # The #41 immutability contract, said out loud: the create-time
@@ -1661,7 +1684,12 @@ def build_api(app) -> FastAPI:
         if unreadable is not None:
             await socket.close(code=4501, reason=close_reason(unreadable))
             return
-        if user not in served:
+        # The workspace's recorded login user (#248) is served beside
+        # the image's own console users: the first-boot seed
+        # provisions the account, and the guest helper serves every
+        # regular account passwd names — the manifest lists what the
+        # IMAGE ships, the row adds what THIS workspace seeds.
+        if user not in served and user != row.get("login_user"):
             refusal = f"console user {user!r} is not served"
             await socket.close(code=4400, reason=close_reason(refusal))
             return

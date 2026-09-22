@@ -297,10 +297,12 @@ class Model:
             return result.rowcount > 0
 
     async def get_ssh_key(self, workspace_id: str) -> dict | None:
-        """The workspace's minted identity halves (#111), or None
-        when the workspace does not exist. A row without an identity
-        (a pre-#111 workspace) returns halves of None — the caller
-        distinguishes row-missing from identity-missing."""
+        """The workspace's minted identity halves (#111) and login
+        user (#248), or None when the workspace does not exist. A
+        row without an identity (a pre-#111 workspace) returns
+        halves of None — the caller distinguishes row-missing from
+        identity-missing — and a row without a login user (a
+        pre-#248 one) returns None for it the same way."""
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
             row = await session.get(Workspace, workspace_id)
@@ -315,6 +317,9 @@ class Model:
                 # with a fresh cache instead of refusing its own
                 # first-boot host keys.
                 "created_at": str(row.created_at),
+                # The workspace's recorded login user (#248); None on
+                # a row created before per-workspace users.
+                "login_user": row.login_user,
             }
 
     async def delete_workspace(self, workspace_id: str) -> bool:
@@ -518,6 +523,7 @@ def workspace_fields(
         "user_data": spec.user_data,
         "ssh_pubkey": spec.ssh_pubkey,
         "ssh_privkey": ssh_privkey,
+        "login_user": spec.login_user,
         "status": "created",
     }
 
@@ -576,6 +582,7 @@ def workspace_dict(row: Workspace) -> dict:
         else [],
         "user_data": row.user_data,
         "ssh_pubkey": row.ssh_pubkey,
+        "login_user": row.login_user,
         "status": row.status,
         "created_at": row.created_at.isoformat(),
     }

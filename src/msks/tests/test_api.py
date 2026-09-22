@@ -830,6 +830,67 @@ async def test_create_with_user_data_reaches_the_row(client) -> None:
     assert fetched.json()["user_data"] == payload
 
 
+async def test_create_with_user_reaches_the_row_and_spec(client) -> None:
+    """The login user (#248) rides the create into the row and the
+    seam's spec — the spec is what the seed builds from, so the
+    account reaches the guest's first boot — and the key endpoint
+    serves it back as the client's default login."""
+    http, _app, stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-u", "kernel": "/k", "rootfs": "/r", "user": "alice"},
+        headers=auth(),
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["login_user"] == "alice"
+    assert stub.seen_specs["ws-u"].login_user == "alice"
+    key = await http.get("/api/v1/workspaces/ws-u/ssh-key", headers=auth())
+    assert key.status_code == 200
+    assert key.json()["user"] == "alice"
+
+
+async def test_create_rejects_a_login_name_off_the_charset(client) -> None:
+    """A user the guest could never carry is a named 422 at create
+    — not a first-boot surprise. The crafted shapes pin the guard
+    the charset exists for: a quote-bearing name must never reach
+    the seed script's quoted assignment."""
+    http, _app, _stub = client
+    for bad in (
+        "Alice",
+        "alice'; rm -rf /; '",
+        'alice\nprintf "pwned"',
+        "alice ",
+        "x" * 33,
+    ):
+        created = await http.post(
+            "/api/v1/workspaces",
+            json={"id": "ws-bad", "kernel": "/k", "rootfs": "/r", "user": bad},
+            headers=auth(),
+        )
+        assert created.status_code == 422, bad
+
+
+async def test_ssh_key_serves_the_legacy_user_for_old_rows(client) -> None:
+    """A row created before per-workspace users (#248) answers the
+    image's own login user, so every workspace serves one name and
+    the client never falls back on its own."""
+    http, app, _stub = client
+    await app.state.model.create_workspace(
+        VmSpec(
+            workspace_id="ws-old",
+            kernel="/k",
+            rootfs="/r",
+            ssh_pubkey="ssh-ed25519 AAAA msksd:ws-old",
+        ),
+        ssh_privkey="-----BEGIN OPENSSH PRIVATE KEY-----\n...\n",
+    )
+    row = await app.state.model.get_workspace("ws-old")
+    assert row["login_user"] is None
+    key = await http.get("/api/v1/workspaces/ws-old/ssh-key", headers=auth())
+    assert key.status_code == 200
+    assert key.json()["user"] == "msks"
+
+
 async def test_create_rejects_empty_user_data(client) -> None:
     http, _app, _stub = client
     empty = await http.post(

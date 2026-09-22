@@ -264,7 +264,10 @@ async def create_seed(spec: VmSpec, settings) -> None:
     try:
         (stage / "user-data").write_text(
             compose_user_data(
-                spec.user_data, spec.ssh_pubkey, spec.workspace_id
+                spec.user_data,
+                spec.ssh_pubkey,
+                spec.workspace_id,
+                spec.login_user,
             ),
             encoding="utf-8",
         )

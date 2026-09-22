@@ -1,6 +1,8 @@
 """The minted workspace identity (#111): mint, seed script, compose."""
 
 import base64
+import os
+import subprocess
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -79,6 +81,226 @@ def test_seed_script_plants_both_users_and_the_trust_store() -> None:
     assert "/etc/msks/console.allowed_signers" in script
     assert '"$wsid" "$1" "$2" >> "$signers"' in script
     assert 'chmod 0600 "$signers"' in script
+    # No login user named: the shipped accounts are the whole
+    # provisioning, and no useradd runs (#248).
+    assert "useradd" not in script
+
+
+def test_seed_script_provisions_a_named_login_user() -> None:
+    """A login user the image does not ship (#248) is created at
+    first boot: the account (only when missing), the #171 home
+    shape, its authorized_keys, and the #169 passwordless-sudo
+    grant — the same posture the msks account carries."""
+    script = seed_script(PUBLIC, "ws-id", "alice")
+    assert "luser='alice'" in script
+    # The account is made only when passwd names it — a
+    # re-provision or an operator-premade account keeps its uid.
+    assert 'luid=$(getent passwd "$luser" 2>/dev/null | cut -d: -f3)' in script
+    assert 'if [ -z "$luid" ]; then' in script
+    assert 'useradd -m -s /bin/bash "$luser"' in script
+    # The home and key, in the same shape the msks user gets;
+    # ownership rides the chown colon form, which works whatever
+    # the account's primary group is named.
+    assert 'install -d -m 0755 "/home/$luser"' in script
+    assert 'cp -a /etc/skel/. "/home/$luser/" || true' in script
+    assert 'install -d -m 0700 "/home/$luser/.ssh"' in script
+    assert script.count('>> "/home/$luser/.ssh/authorized_keys"') == 1
+    assert 'chown -R "$luser:" "/home/$luser"' in script
+    assert 'chmod 0600 "/home/$luser/.ssh/authorized_keys"' in script
+    # The sudo grant, root-owned at the sudoers mode.
+    assert "printf '%s ALL=(ALL) NOPASSWD:ALL\\n' \"$luser\" " in script
+    assert 'chmod 0440 "/etc/sudoers.d/$luser"' in script
+    # The root, msks, and signers lines ride along unchanged.
+    assert script.count("grep -qxF") == 4
+    assert 'chmod 0600 "$signers"' in script
+
+
+def test_seed_script_skips_a_system_account_name() -> None:
+    """A name that lands on a system account the image ships
+    (Debian's base-passwd carries charset-valid names like
+    ``sync``) seeds nothing: the console helper refuses those
+    accounts on its own rule, and a sudoers grant against one
+    would be a privilege write with no login behind it — the block
+    says so on stderr, the provisioning sits behind a guard, and
+    the rest of the script (the signers store included) still
+    runs."""
+    script = seed_script(PUBLIC, "ws-id", "sync")
+    assert 'elif [ "$luid" -lt 1000 ] && [ "$luid" -ne 0 ]; then' in script
+    assert "names a system account" in script
+    assert "seed_user=no" in script
+    assert 'if [ "$seed_user" = yes ]; then' in script
+    guarded = script.split('if [ "$seed_user" = yes ]; then')[1]
+    assert "sudoers.d" in guarded
+    # The signers block stays outside the guard — a skipped login
+    # user never costs the console challenge its trust store.
+    assert script.index('chmod 0600 "$signers"') > script.index(
+        'if [ "$seed_user" = yes ]; then'
+    )
+
+
+def sandboxed(script: str, sandbox) -> str:
+    """The seed with every filesystem path pointed into
+    ``sandbox`` — the logic (the guard above all) runs unchanged."""
+    return (
+        script.replace("/home/", f"{sandbox}/home/")
+        .replace("/root", f"{sandbox}/root")
+        .replace("/etc/sudoers.d", f"{sandbox}/sudoers.d")
+        .replace("/etc/msks", f"{sandbox}/msks")
+        .replace("/etc/skel", f"{sandbox}/skel")
+    )
+
+
+def run_seed(sandbox, guest_passwd_line: str, useradd_fails: bool = False):
+    """Execute the sandboxed seed under stubbed guest tools.
+
+    ``getent`` answers the passwd line the scenario wants, and
+    only for the name the script queries (empty for a name the
+    guest does not know); ``useradd`` and ``chown`` log instead of
+    touching the host's accounts — the caller can make ``useradd``
+    fail to exercise the seed's tolerance; ``install`` mkdirs its
+    last non-flag argument, ignoring the ownership flags only root
+    could apply. Everything else — the shell, cut, grep, printf,
+    cp, touch, chmod — runs for real against the sandbox.
+    """
+    stubs = sandbox / "bin"
+    stubs.mkdir(exist_ok=True)
+    log = sandbox / "stub.log"
+    stubs.joinpath("getent").write_text(
+        "#!/bin/sh\n"
+        '[ "$2" = "$GUEST_NAME" ] && [ -n "$GUEST_PASSWD_LINE" ] '
+        '&& echo "$GUEST_PASSWD_LINE" || exit 2\n'
+    )
+    verdict = "exit 1" if useradd_fails else "exit 0"
+    stubs.joinpath("useradd").write_text(
+        f'#!/bin/sh\necho "useradd $*" >> "{log}"\n{verdict}\n'
+    )
+    stubs.joinpath("chown").write_text(
+        f'#!/bin/sh\necho "chown $*" >> "{log}"\n'
+    )
+    stubs.joinpath("install").write_text(
+        "#!/bin/sh\n"
+        f'echo "install $*" >> "{log}"\n'
+        "for arg; do case $arg in -*) ;; *) dir=$arg ;; esac; done\n"
+        'exec mkdir -p "$dir"\n'
+    )
+    for stub in stubs.iterdir():
+        stub.chmod(0o755)
+    env = {
+        "PATH": f"{stubs}:{os.environ['PATH']}",
+        "GUEST_NAME": "alice",
+        "GUEST_PASSWD_LINE": guest_passwd_line,
+    }
+    return subprocess.run(
+        [
+            "sh",
+            "-c",
+            sandboxed(seed_script(PUBLIC, "ws-id", "alice"), sandbox),
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+def prepare_sandbox(tmp_path):
+    """The sandbox tree the rewritten paths land in."""
+    for member in ("root", "sudoers.d", "msks", "skel"):
+        (tmp_path / member).mkdir()
+    (tmp_path / "skel" / ".profile").write_text("# skel\n")
+    return tmp_path
+
+
+def test_seed_script_executes_provisioning(tmp_path) -> None:
+    """The guard's executable pin, missing-account shape: useradd
+    runs, the key lands in the named user's authorized_keys at mode
+    0600, and the sudoers entry lands at 0440 — the whole block
+    exits clean under ``set -eu``."""
+    sandbox = prepare_sandbox(tmp_path)
+    done = run_seed(sandbox, guest_passwd_line="")
+    assert done.returncode == 0, done.stderr
+    assert "useradd -m -s /bin/bash alice" in (
+        sandbox.joinpath("stub.log").read_text()
+    )
+    keys = sandbox / "home" / "alice" / ".ssh" / "authorized_keys"
+    assert keys.read_text().strip() == PUBLIC
+    assert keys.stat().st_mode & 0o777 == 0o600
+    sudoers = sandbox / "sudoers.d" / "alice"
+    assert sudoers.read_text() == "alice ALL=(ALL) NOPASSWD:ALL\n"
+    assert sudoers.stat().st_mode & 0o777 == 0o440
+
+
+def test_seed_script_executes_the_skip_for_a_system_uid(tmp_path) -> None:
+    """The guard's executable pin, system-account shape: a passwd
+    entry under uid 1000 seeds nothing for the name the script
+    targets (no home, no sudoers grant — the paths the seeded
+    shape WOULD write) while the rest of the script — root's keys,
+    the msks home, the signers store — still lands."""
+    sandbox = prepare_sandbox(tmp_path)
+    done = run_seed(
+        sandbox,
+        guest_passwd_line="sync:x:15:15:sync:/home/sync:/usr/sbin/nologin",
+    )
+    assert done.returncode == 0, done.stderr
+    assert "names a system account" in done.stderr
+    log = sandbox.joinpath("stub.log").read_text()
+    assert "useradd" not in log
+    # The script targets alice in every scenario (run_seed renders
+    # her name): the skip must keep HER seeded paths absent — the
+    # seeded shape below writes exactly these.
+    assert not (sandbox / "home" / "alice").exists()
+    assert not (sandbox / "sudoers.d" / "alice").exists()
+    # The rest of the seed still ran.
+    assert (sandbox / "root" / ".ssh" / "authorized_keys").read_text()
+    assert (sandbox / "home" / "msks" / ".ssh" / "authorized_keys").exists()
+    assert (sandbox / "msks" / "console.allowed_signers").exists()
+
+
+def test_seed_script_tolerates_a_failed_useradd(tmp_path) -> None:
+    """A useradd that fails stands the seeding down without
+    aborting the script: the block sits before the signers store
+    under ``set -eu``, and an abort would plant the keys but never
+    the console challenge's trust store — a guest whose helper
+    reads a missing store serves no challenge at all (#123's
+    opt-in shape)."""
+    sandbox = prepare_sandbox(tmp_path)
+    done = run_seed(sandbox, guest_passwd_line="", useradd_fails=True)
+    assert done.returncode == 0, done.stderr
+    assert "could not be created" in done.stderr
+    assert not (sandbox / "home" / "alice").exists()
+    assert not (sandbox / "sudoers.d" / "alice").exists()
+    # The trust store still landed.
+    assert (sandbox / "msks" / "console.allowed_signers").exists()
+
+
+def test_seed_script_executes_the_keep_for_a_regular_uid(tmp_path) -> None:
+    """The guard's executable pin, existing-regular-account shape:
+    uid 1000 keeps its account (no useradd) and takes the
+    provisioning."""
+    sandbox = prepare_sandbox(tmp_path)
+    done = run_seed(
+        sandbox,
+        guest_passwd_line="alice:x:1000:1000:Alice:/home/alice:/bin/bash",
+    )
+    assert done.returncode == 0, done.stderr
+    assert "useradd" not in sandbox.joinpath("stub.log").read_text()
+    sudoers = sandbox / "sudoers.d" / "alice"
+    assert sudoers.read_text() == "alice ALL=(ALL) NOPASSWD:ALL\n"
+    assert sudoers.stat().st_mode & 0o777 == 0o440
+    assert (
+        sandbox / "home" / "alice" / ".ssh" / "authorized_keys"
+    ).read_text().strip() == PUBLIC
+
+
+def test_seed_script_skips_provisioning_for_shipped_users() -> None:
+    """The image already ships root and the msks account: naming
+    either as the login user records it on the row and seeds
+    nothing new — no useradd, no second sudoers entry."""
+    for shipped in ("root", "msks"):
+        script = seed_script(PUBLIC, "ws-id", shipped)
+        assert "useradd" not in script
+        assert "sudoers.d" not in script
+        assert script == seed_script(PUBLIC, "ws-id")
 
 
 def test_compose_without_key_is_verbatim() -> None:
@@ -93,6 +315,15 @@ def test_compose_without_payload_is_the_script() -> None:
     alone, one plain document."""
     assert compose_user_data(None, PUBLIC, "ws-id") == seed_script(
         PUBLIC, "ws-id"
+    )
+
+
+def test_compose_carries_the_login_user_into_the_script() -> None:
+    """The login user rides the composed document the same way it
+    rides the bare script (#248): the seed the guest runs is the
+    one for THIS workspace's user."""
+    assert compose_user_data(None, PUBLIC, "ws-id", "alice") == seed_script(
+        PUBLIC, "ws-id", "alice"
     )
 
 

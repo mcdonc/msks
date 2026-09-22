@@ -910,9 +910,11 @@ let
         # (#171), and the console helper creates a bare one if a
         # session ever precedes the seed — and bash as the shell.
         # cloud-init's own account creation stays off (the
-        # 99-msks-users.cfg dropin), so this entry is the whole
-        # account list the guest ever gets beyond the image's
-        # system users.
+        # 99-msks-users.cfg dropin), so this entry and the image's
+        # system users are the whole account list the guest boots
+        # with — the workspace's login user (#248), when it names
+        # another account, is useradd-ed by the identity seed on
+        # first boot.
         grep -q '^msks:' "$root"/etc/passwd || printf '%s\n' \
           'msks:x:1000:1000:msks workspace user:/home/msks:/bin/bash' \
           >> "$root"/etc/passwd

@@ -12,6 +12,7 @@ interactive console command lives in :mod:`msks.client.console`.
 import argparse
 import asyncio
 import contextlib
+import getpass
 import json
 import os
 import sys
@@ -19,7 +20,7 @@ from collections.abc import AsyncIterator
 from datetime import datetime
 from pathlib import Path
 
-from ..identity import KEY_TYPES, mint
+from ..identity import KEY_TYPES, LOGIN_NAME_RE, mint
 from ..imagestore import is_hash_shape, version_key
 from ..storage import MIB
 from . import egress as egress_mod
@@ -1141,6 +1142,38 @@ def read_user_data(path: str) -> str:
         ) from None
 
 
+def invoking_user() -> str:
+    """The create ``--user`` default (#248): the name of the user
+    running msks — the workspace seeds this account as its own, so
+    a bare create lands the operator's account, not a shared one.
+
+    The name must fit the login-name charset (the same wire shape
+    the guest accepts); a username that does not (a capitalized or
+    accented one) is a named refusal pointing at ``--user``, not a
+    cryptic daemon-side pattern error.
+    """
+    try:
+        name = getpass.getuser()
+    except OSError as exc:
+        raise SystemExit(
+            f"msks: cannot determine the invoking user's name ({exc}); "
+            "pass --user <name>"
+        ) from exc
+    return checked_login_name(name, "your username")
+
+
+def checked_login_name(name: str, what: str) -> str:
+    """One login name the guest can carry, or the named refusal."""
+    if LOGIN_NAME_RE.fullmatch(name) is None:
+        raise SystemExit(
+            f"msks: {what} ({name!r}) is not a valid login name — "
+            "lowercase letters, digits, dashes, and underscores, "
+            "starting with a lowercase letter or underscore, at most "
+            "32 characters; pass --user <name>"
+        )
+    return name
+
+
 def create_body(args: argparse.Namespace) -> dict:
     """The POST body: only the fields the operator set."""
     fields = {
@@ -1161,7 +1194,17 @@ def create_body(args: argparse.Namespace) -> dict:
     body.update(consent_fields(args))
     if args.user_data is not None:
         body["user_data"] = read_user_data(args.user_data)
+    body["user"] = create_user(args)
     return body
+
+
+def create_user(args: argparse.Namespace) -> str:
+    """The workspace's login user (#248): the explicit ``--user``, or
+    the invoking user's name — checked before the wire so a bad name
+    is one local line, not the daemon's pattern error."""
+    if args.user is not None:
+        return checked_login_name(args.user, "--user")
+    return invoking_user()
 
 
 def consent_fields(args: argparse.Namespace) -> dict:
@@ -1255,6 +1298,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="first-boot provisioning payload (a shell script or "
         "cloud-config) delivered on the workspace's cidata seed disk "
         "(#41); - reads stdin. Create-time only",
+    )
+    create.add_argument(
+        "--user",
+        metavar="NAME",
+        help="the workspace's login user (#248): seeded into the guest "
+        "at first boot (the account, its home, authorized_keys, and "
+        "the workspace-user sudo grant) and used as the default login "
+        "for msks ssh, rsync, and console (default: your username)",
     )
     create.add_argument(
         "--daemon-mint",
@@ -1375,8 +1426,9 @@ def build_parser() -> argparse.ArgumentParser:
     console.add_argument("workspace_id", help="the workspace to attach to")
     console.add_argument(
         "--user",
-        default="root",
-        help="shell user: root or the image's workspace user (default: root)",
+        default=None,
+        help="shell user (default: the workspace's login user, #248; "
+        "--user root is the recovery shell)",
     )
     forward = sub.add_parser(
         "forward", help="bridge a workspace TCP port to stdio or a local port"

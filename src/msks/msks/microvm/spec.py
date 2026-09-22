@@ -49,6 +49,13 @@ class VmSpec:
     # payload. None is a workspace without a minted identity (a
     # pre-#111 row).
     ssh_pubkey: str | None = None
+    # The workspace's login user (#248): recorded at create and
+    # seeded into the guest at first boot (the account, its home,
+    # authorized_keys, and the workspace-user sudo grant) when it
+    # names an account the image does not ship. None is a workspace
+    # created before per-workspace users — its login user is the
+    # image's own (LEGACY_LOGIN_USER).
+    login_user: str | None = None
 
 
 class VmStatus(StrEnum):

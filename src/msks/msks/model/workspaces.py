@@ -64,6 +64,12 @@ class Workspace(Base):
     # minted, no key fetch serves it.
     ssh_pubkey: Mapped[str | None] = mapped_column(Text, nullable=True)
     ssh_privkey: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The workspace's login user (#248): create-time and immutable,
+    # like the specs. The seed provisions the account at first boot
+    # when the image does not ship it; the key endpoint serves it as
+    # the client's default login. NULL on a pre-#248 row — the
+    # workspace's login user is the image's own msks account.
+    login_user: Mapped[str | None] = mapped_column(String, nullable=True)
     # The pool slice the workspace's /30 derives from (#70 review):
     # recorded at first attach so stop/start cycles and daemon
     # restarts keep the same address, even past digest collisions

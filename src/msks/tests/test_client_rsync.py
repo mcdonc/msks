@@ -123,10 +123,10 @@ def test_write_ssh_config_carries_user_and_transport(tmp_path: Path) -> None:
         options = ssh.session_options(
             "alpha", served.server_address, served.identity_path, "/kh"
         )
-        path = rsync.write_ssh_config(served, options)
+        path = rsync.write_ssh_config(served, options, "alice")
         assert path == str(Path(served.identity_path).parent / "ssh_config")
         lines = Path(path).read_text(encoding="utf-8").splitlines()
-        assert lines[0] == f"User {ssh.DEFAULT_USER}"
+        assert lines[0] == "User alice"
         assert ssh.proxy_command("alpha").partition("=")[2] in " ".join(lines)
         assert any(line.startswith("IdentityAgent ") for line in lines)
         assert any(line.startswith("IdentityFile ") for line in lines)

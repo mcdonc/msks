@@ -164,12 +164,36 @@ below generate theirs):
 | `--daemon-mint` | —                       | Hand the identity to the daemon instead of the client mint (#121); see below |
 | `--pubkey`      | `ssh_pubkey` (verbatim) | Use a public key you already own as the identity (#132); `-` reads stdin     |
 | `--key-type`    | —                       | The client mint's key type: `ed25519` (the default), `ecdsa`, or `rsa`       |
+| `--user`        | `user`                  | The workspace's login user (#248); default: your username                    |
 
 Only the flags you pass are sent — unset flags let the daemon apply
 its own defaults. An `--image` reference resolves against the
 daemon's image catalog (`docs/images.md`); explicit `--kernel` and
 `--rootfs` bypass it. Size ranges are enforced server-side; a value
 outside them comes back as a validation error (below).
+
+`--user NAME` records the workspace's login user (#248): the
+name rides the row, and the guest's first boot seeds the account
+— `useradd -m`, a home on the persistent `/home` volume populated
+from `/etc/skel`, the workspace identity in its `authorized_keys`,
+and the same passwordless-sudo grant the image's own workspace
+user carries. `msks ssh`, `msks rsync`, and `msks console` then use
+the recorded name as their default login, so a workspace answers
+the same identity for every operator that reaches it. Without
+`--user` the create fills the invoking user's name — a bare create
+lands your own account. The name must fit the login-name charset
+(lowercase letters, digits, dashes, underscores; a lowercase
+letter or underscore first; at most 32 characters); a username
+that does not (a capitalized one) is refused with a line pointing
+at `--user`. Naming `root` or the image's `msks` account keeps the
+shipped account and seeds nothing new. A name that lands on a
+system account the image already ships (Debian carries
+charset-valid names like `sync` and `man`) seeds nothing either —
+the first boot says so in its log, and the login stays with the
+accounts the guest already serves; pick a name the image uses
+for no one. Create-time and immutable,
+like `user_data`: a workspace created before #248 keeps the
+image's `msks` user as its login.
 
 `--start` boots the workspace right after creating it:
 
@@ -506,16 +530,20 @@ msks: my-workspace running
 (workspace prompt)
 ```
 
-The session runs as **root** by default. `--user` requests another
-identity — the image's workspace user — and the guest helper
-negotiates it in-band (#63): a user the image does not serve is
-refused by name before any shell starts, and the session's terminal
+The session runs as the workspace's **login user** by default
+(#248 — the name `msks create --user` recorded; the image's own
+`msks` account for a workspace created before #248).
+`--user root` is the recovery shell, and `--user` accepts any
+name the workspace serves — the image's console users or its
+recorded login user, which the first-boot seed provisions. A user
+neither serves is refused by name before any shell starts, and
+the session's terminal
 geometry rides the same request (the guest pty matches the client's
 size at attach):
 
 ```text
-$ msks console my-workspace --user msks
-(workspace prompt, as the workspace user)
+$ msks console my-workspace --user root
+(workspace prompt, as root)
 ```
 
 The guest pty keeps the size it was given at attach for the
@@ -671,7 +699,7 @@ The workspace's minted ssh identity (#111): every workspace a
 local-backend daemon creates carries
 a keypair msksd created at create-time, whose public half the
 guest's first boot planted into `authorized_keys` for root and the
-`msks` workspace user. The fetch takes the same
+workspace's login user. The fetch takes the same
 `MSKSC_URL`/`MSKSC_TOKEN`/`MSKSC_CAFILE` environment as every other
 command:
 
@@ -703,7 +731,7 @@ Stock ssh into a workspace over the forward, with the minted
 identity staged in memory (#112) — one command, no key steps:
 
 ```bash
-msks ssh my-workspace              # as the msks workspace user
+msks ssh my-workspace              # as the workspace's login user
 msks ssh my-workspace -- -l root   # the recovery login
 msks ssh my-workspace -- -A        # forward your agent ($SSH_AUTH_SOCK)
 msks ssh my-workspace -- -L 8080:localhost:80
@@ -784,8 +812,11 @@ belong to the alias path, whose identity is a key file. Explicit
 passthrough options override the injected defaults (your own
 `UserKnownHostsFile`, a different `ProxyCommand`) exactly as with
 stock ssh: ssh takes the first value a repeated option receives,
-and the passthrough comes first. The login user is the image's
-`msks` workspace user by default; ssh arguments that name a user
+and the passthrough comes first. The login user is the
+workspace's recorded login user (#248 — the create-time `--user`,
+defaulting to the creating operator's name; the image's `msks`
+account for a workspace created before #248); ssh arguments that
+name a user
 (`-l root`, `-o User=root`) override it. The host argument ssh
 sees is the workspace id itself — the transport is the proxy, so
 the name never resolves. The ProxyCommand runs this very
@@ -816,7 +847,7 @@ the empty host: a path whose host is empty (`:/root/site/`, or
 its host filled in as the copy runs. The direction — push or
 pull — comes entirely from the rsync arguments, and the login
 user comes from the paths the same way: `root@:/root/site/`
-logs in as root, a bare `:src/` as the `msks` workspace user
+logs in as root, a bare `:src/` as the workspace's login user
 (whose home is the persistent `/home` volume — the shape for
 copies under your own account). A path that names a host keeps
 it, and the transport is the proxy either way, so the name never
@@ -848,7 +879,7 @@ boot exactly as `msks ssh` does (#168): a probe login retries
 behind the identity seed (up to 30s, one line between attempts),
 and the copy runs once the guest accepts the workspace key.
 
-The login user is the image's `msks` workspace user by default,
+The login user is the workspace's recorded login user (#248),
 stated as a generated per-session ssh config — so rsync's own
 `user@` path spelling overrides it (`root@:/root/site/` logs in
 as root). An explicit `-e` in the passthrough replaces msks's

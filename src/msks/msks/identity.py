@@ -48,6 +48,21 @@ RSA_BITS = 3072
 #: the string and run as shell code in the guest's first boot.
 LABEL_PATTERN = re.compile(r"[a-z0-9@.\-]+")
 
+#: The workspace's login-user charset (#248): the same wire shape
+#: the console's user line accepts (the guest helper's own check,
+#: mirrored by the daemon's console validation) and the create
+#: body's `user` field enforces. It is also what keeps the
+#: interpolated login name inside `seed_script`'s quoted
+#: assignments, the same job LABEL_PATTERN does for algorithms.
+LOGIN_NAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+
+#: The login user the image ships beside root (#63): served as the
+#: workspace's login user for rows created before per-workspace
+#: users existed (#248) — those guests hold only root and this
+#: account — and the client's fallback against a daemon that
+#: predates the field.
+LEGACY_LOGIN_USER = "msks"
+
 
 def normalize_public_key(line: str) -> tuple[str, str]:
     """Validate one supplied public key line: ``(algo, body)``.
@@ -127,10 +142,14 @@ def mint(key_type: str) -> tuple[str, str]:
     return private_pem, public
 
 
-def seed_script(public_key: str, workspace_id: str) -> str:
+def seed_script(
+    public_key: str, workspace_id: str, login_user: str | None = None
+) -> str:
     """The seeding payload's script half: authorized_keys for root
     and the msks workspace user (#63) plus the console helper's
-    allowed_signers (#123), written idempotently.
+    allowed_signers (#123), written idempotently — and the
+    workspace's login user (#248) provisioned the same way when it
+    names an account the image does not ship.
 
     The same mkdir/chmod/append shape #110's smoke planted by hand,
     now the daemon's own first-boot step. The msks user's home rides
@@ -143,6 +162,16 @@ def seed_script(public_key: str, workspace_id: str) -> str:
     user's files), and a key already present is left alone, so a
     re-provision cannot duplicate lines.
 
+    A login user the image does not ship (anything but root and the
+    msks account) is created here (#248): ``useradd -m`` makes the
+    account and its home, the key lands in its authorized_keys, and
+    a sudoers entry carries the same passwordless-root grant the
+    msks user holds (#169) — the operator's own account gets the
+    workspace-user posture, not a second-class one. The console
+    helper needs no provisioning of its own: it serves every
+    regular account passwd names, and the daemon's console gate
+    admits the row's recorded user.
+
     The allowed_signers file is the console challenge's trust store
     (#123): the guest helper's ``ssh-keygen -Y verify`` checks the
     client's signature against it, principal-bound to this
@@ -150,7 +179,7 @@ def seed_script(public_key: str, workspace_id: str) -> str:
     signature; it can answer for neither. ssh and console share the
     key: what authorized_keys accepts, allowed_signers accepts.
     """
-    return (
+    script = (
         "#!/bin/sh\n"
         "# msks (#111, #123): the workspace identity — authorized_keys\n"
         "# for root and the msks user, and the console helper's\n"
@@ -185,6 +214,10 @@ def seed_script(public_key: str, workspace_id: str) -> str:
         "|| printf '%s\\n' \"$key\" >> /home/msks/.ssh/authorized_keys\n"
         "chown msks:msks /home/msks/.ssh/authorized_keys\n"
         "chmod 0600 /home/msks/.ssh/authorized_keys\n"
+    )
+    if login_user not in (None, "root", "msks"):
+        script += named_user_block(login_user)
+    script += (
         # The signers line: the workspace id principal, then the
         # key's own two fields (an authorized_keys comment is not
         # signers syntax). Splitting with globbing off — the key's
@@ -199,6 +232,76 @@ def seed_script(public_key: str, workspace_id: str) -> str:
         'chown root:root "$signers"\n'
         'chmod 0600 "$signers"\n'
     )
+    return script
+
+
+def named_user_block(login_user: str) -> str:
+    """The seed lines that provision a login user the image does
+    not ship (#248): the account (created only when missing, so a
+    re-provision or an operator-premade account keeps its uid), its
+    home in the #171 shape, its authorized_keys, and the #169
+    passwordless-sudo grant — skipped, with a line on stderr, when
+    the name lands on a system account the image ships.
+
+    Ownership rides ``chown user:`` (the colon form names the
+    account's login group) rather than install's -o/-g, so an
+    account whose primary group is not its own name — one the
+    operator's user_data made — still takes its files. The name is
+    LOGIN_NAME_RE-validated before it ever reaches this string.
+
+    A name that lands on an account the image already ships with a
+    system uid (1-999: Debian's base-passwd carries charset-valid
+    names like ``sync`` and ``man``) seeds nothing: the console
+    helper refuses those accounts by its own rule, and a sudoers
+    grant against one would be a privilege write with no login
+    behind it. The block says so on stderr (cloud-init's output
+    log, the serial console) and the rest of the script — the
+    signers store included — still runs.
+
+    A ``useradd`` that fails gets the same tolerance, for the same
+    reason the skeleton copy does: the block sits before the
+    signers store under ``set -eu``, so an abort here would plant
+    the keys but never the console challenge's trust store — and a
+    guest whose helper reads a missing store serves no challenge
+    at all (#123's opt-in shape). The failure (useradd's own
+    stderr and the line above) lands in the cloud-init log, and
+    the seeding stands down.
+    """
+    return "\n".join(
+        [
+            f"luser='{login_user}'",
+            "seed_user=yes",
+            'luid=$(getent passwd "$luser" 2>/dev/null | cut -d: -f3)',
+            'if [ -z "$luid" ]; then',
+            'if ! useradd -m -s /bin/bash "$luser"; then',
+            'printf "msks: login user %s could not be created; '
+            'msks will not seed it\\n" "$luser" >&2',
+            "seed_user=no",
+            "fi",
+            'elif [ "$luid" -lt 1000 ] && [ "$luid" -ne 0 ]; then',
+            'printf "msks: login user %s names a system account, '
+            'uid %s; msks will not seed it\\n" "$luser" "$luid" >&2',
+            "seed_user=no",
+            "fi",
+            'if [ "$seed_user" = yes ]; then',
+            'install -d -m 0755 "/home/$luser"',
+            'if [ ! -e "/home/$luser/.profile" ]; then',
+            'cp -a /etc/skel/. "/home/$luser/" || true',
+            "fi",
+            'install -d -m 0700 "/home/$luser/.ssh"',
+            'touch "/home/$luser/.ssh/authorized_keys"',
+            'grep -qxF "$key" "/home/$luser/.ssh/authorized_keys" '
+            "|| printf '%s\\n' \"$key\" "
+            '>> "/home/$luser/.ssh/authorized_keys"',
+            'chown -R "$luser:" "/home/$luser"',
+            'chmod 0600 "/home/$luser/.ssh/authorized_keys"',
+            "printf '%s ALL=(ALL) NOPASSWD:ALL\\n' \"$luser\" "
+            '> "/etc/sudoers.d/$luser"',
+            'chmod 0440 "/etc/sudoers.d/$luser"',
+            "fi",
+            "",
+        ]
+    )
 
 
 #: The multipart boundary for a seed that carries both the identity
@@ -212,6 +315,7 @@ def compose_user_data(
     operator_payload: str | None,
     public_key: str | None,
     workspace_id: str = "",
+    login_user: str | None = None,
 ) -> str:
     """The seed's user-data document: what cidata actually carries.
 
@@ -225,7 +329,7 @@ def compose_user_data(
     """
     if public_key is None:
         return operator_payload
-    script = seed_script(public_key, workspace_id)
+    script = seed_script(public_key, workspace_id, login_user)
     if operator_payload is None:
         return script
     boundary = unique_boundary(operator_payload, script)

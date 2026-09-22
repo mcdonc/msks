@@ -31,6 +31,7 @@ from urllib.parse import quote, quote_plus
 
 import websockets
 
+from ..identity import LEGACY_LOGIN_USER
 from . import consoleauth
 from .rest import (  # noqa: F401
     DEFAULT_URL,
@@ -38,6 +39,7 @@ from .rest import (  # noqa: F401
     env_token,
     env_url,
     ssl_context,
+    workspace_row,
 )
 
 # Re-exported for the tests and for callers that expect the client's
@@ -282,11 +284,28 @@ CLOSE_CODE_REASONS = {
     4401: "authentication failed (bad token?)",
     4403: "console refused by the guest (auth)",
     4404: "no such workspace",
-    4501: "console unavailable (is the workspace running?)",
+    # The daemon's own message names the real cause (a refused
+    # user, a dead VMM, a wedged stream); the parenthetical hint
+    # speaks only when it carried none.
+    4501: "console unavailable",
     4502: (
         "console stalled (guest stream wedged; reconnect for a fresh session)"
     ),
 }
+
+#: The 4501 hint, shown only when the daemon's close carried no
+#: reason to say more.
+UNAVAILABLE_HINT = " (is the workspace running?)"
+
+
+def close_label(code: int, reason: str) -> str:
+    """The label for one close code, its hint applied: the 4501
+    is-the-workspace-running hint rides only when the daemon's
+    reason said nothing — beside a specific refusal it would read
+    as the cause itself (#248 review)."""
+    if code == 4501 and not reason:
+        return CLOSE_CODE_REASONS[code] + UNAVAILABLE_HINT
+    return CLOSE_CODE_REASONS[code]
 
 
 def _report_close(closed: websockets.ConnectionClosed) -> None:
@@ -298,8 +317,9 @@ def _report_close(closed: websockets.ConnectionClosed) -> None:
     if closed.rcvd is None or closed.rcvd.code not in CLOSE_CODE_REASONS:
         return
     reason = closed.rcvd.reason.strip()
+    label = close_label(closed.rcvd.code, reason)
     detail = f": {reason}" if reason else ""
-    raise SystemExit(f"msks: {CLOSE_CODE_REASONS[closed.rcvd.code]}{detail}")
+    raise SystemExit(f"msks: {label}{detail}")
 
 
 class _StdinPipe:
@@ -335,8 +355,29 @@ def restore(old, had: bool) -> None:
         termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old)
 
 
-def run_workspace_shell(workspace_id: str, user: str = "root") -> int:
+def console_login_user(
+    workspace_id: str, url: str, token: str, ssl_ctx
+) -> str:
+    """The console's default login user (#248): the workspace row's
+    recorded user, falling back the way the identity fetch does for
+    a row (or daemon) created before per-workspace users — so the
+    console and ``msks ssh`` answer the same name for the same
+    workspace.
+
+    The row (not the identity fetch) is the source on purpose: a
+    workspace predating the minted identity entirely still has a
+    row, and its console must keep working.
+    """
+    row = asyncio.run(workspace_row(workspace_id, url, token, ssl_ctx))
+    return row.get("login_user") or LEGACY_LOGIN_USER
+
+
+def run_workspace_shell(workspace_id: str, user: str | None = None) -> int:
     """One interactive shell session, from tty setup to restore.
+
+    ``user`` is the requested console user; None (the ``msks
+    console`` default) resolves to the workspace's recorded login
+    user — ``--user root`` stays the recovery shell.
 
     Argument dispatch (``msks console`` vs the other subcommands) lives
     in :mod:`msks.client.cli`; this is the console command's body.
@@ -344,17 +385,20 @@ def run_workspace_shell(workspace_id: str, user: str = "root") -> int:
     require_tty()
     token = env_token()
     url = env_url()
+    # One TLS context serves the whole command — the login-user
+    # fetch below included — so its unverified-mode warning prints
+    # once. It is built BEFORE raw mode: setraw clears OPOST, so a
+    # plain \n printed mid-session would leave the cursor
+    # mid-column; the pre-flight calls that follow share the same
+    # reason (their notices land on stderr before the tty goes
+    # raw).
+    ssl_ctx = ssl_context()
+    if user is None:
+        user = console_login_user(workspace_id, url, token, ssl_ctx)
     try:
         old = termios.tcgetattr(sys.stdin.fileno())
     except termios.error:
         old = None
-    # The TLS context (and its unverified-mode warning) is built
-    # BEFORE raw mode: setraw clears OPOST, so a plain \n printed
-    # mid-session would leave the cursor mid-column.
-    ssl_ctx = ssl_context()
-    # Same reason for the pre-flight REST call: a not-running
-    # workspace is booted here, with its notices on stderr, before
-    # the tty goes raw.
     asyncio.run(ensure_running(workspace_id, url, token, ssl_ctx=ssl_ctx))
     size = tty_size(sys.stdin.fileno())
     # The client's terminal type rides the request (#63): the login
