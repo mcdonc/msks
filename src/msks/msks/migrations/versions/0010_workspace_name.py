@@ -15,16 +15,24 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # The label half of the #246 identity split: every existing row
-    # keeps its operator-chosen id as the immutable id AND takes it
-    # as its name, so paths, caches, and keyed surfaces stay put —
-    # new creates mint a random UUID id and carry the operator's
-    # label here instead.
-    op.add_column("workspaces", sa.Column("name", sa.String(), nullable=True))
-    op.execute("UPDATE workspaces SET name = id")
-    op.create_index("ix_workspaces_name", "workspaces", ["name"], unique=True)
+    # One transaction, one shape (#246 review): batch mode rebuilds
+    # the table with the column AND its unique constraint inside the
+    # same CREATE — a torn migration (DDL committed, stamp lost)
+    # leaves both or neither, so the daemon's stamp-past healing can
+    # never accept the column without the uniqueness backstop. A bare
+    # add_column + create_index pair would tear between the two, and
+    # sqlite refuses ADD COLUMN ... UNIQUE outright.
+    #
+    # No backfill on purpose: pre-#246 rows keep their operator-chosen
+    # id as the id and a NULL name — their label IS their id, so ref
+    # resolution addresses them unchanged, and a NULL name is a legal
+    # state (nameless creates) the migration need not distinguish.
+    with op.batch_alter_table("workspaces") as batch:
+        batch.add_column(
+            sa.Column("name", sa.String(), nullable=True, unique=True)
+        )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_workspaces_name", table_name="workspaces")
-    op.drop_column("workspaces", "name")
+    with op.batch_alter_table("workspaces") as batch:
+        batch.drop_column("name")

@@ -107,8 +107,8 @@ with a fresh host-key cache of its own.
 
 Every command that takes a workspace accepts either reference —
 `msks console ws` and `msks console 1a2b3c4d5e` reach the same
-workspace. The name is the everyday reference; the id is the one
-no live workspace will ever answer to.
+workspace. The name is the everyday reference; the id is the
+reference no other workspace shares.
 
 ## `msks ls`
 
@@ -124,9 +124,11 @@ scratch        77eedd0199   created   -              hv-1
 
 The status column speaks the daemon's lifecycle vocabulary —
 `created` (row exists, never booted), `starting`, `running`,
-`paused`, `stopped`, `unknown`, `absent`. A `-` in the image column
-means the workspace boots explicit kernel/rootfs paths instead of
-a catalog image.
+`paused`, `stopped`, `unknown`, `absent`. A `-` in the name column
+is a workspace without a label — created nameless through the API,
+or before the id/name split — addressed by its id alone. A `-` in
+the image column means the workspace boots explicit kernel/rootfs
+paths instead of a catalog image.
 
 `--json` replaces the table with one JSON document — the API's
 workspace rows verbatim (id, name, kernel, initrd, rootfs, cmdline,

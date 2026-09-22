@@ -243,15 +243,6 @@ class Model:
             )
             return None if row is None else workspace_dict(row)
 
-    async def name_taken(self, name: str) -> bool:
-        """Whether a workspace already owns the label (#246)."""
-        maker = sessionmaker_for(self.engine())
-        async with maker() as session:
-            row = await session.scalar(
-                select(Workspace).where(Workspace.name == name)
-            )
-            return row is not None
-
     async def list_workspaces(self) -> list[dict]:
         """All workspace rows, oldest first."""
         maker = sessionmaker_for(self.engine())

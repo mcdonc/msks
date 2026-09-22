@@ -89,18 +89,21 @@ async def test_workspace_names_are_unique(app_for) -> None:
     app = app_for()
     await app.state.model.create_all()
     await app.state.model.create_workspace(spec("one"), name="ws")
-    assert await app.state.model.name_taken("ws")
+    assert (await app.state.model.get_workspace("ws"))["id"] == "one"
     with pytest.raises(IntegrityError):
         await app.state.model.create_workspace(spec("two"), name="ws")
 
 
-async def test_migration_backfills_names_from_ids(
+async def test_migration_gives_legacy_rows_a_null_name(
     tmp_path: Path, app_for
 ) -> None:
-    """A database stamped before #246 upgrades in place: every row's
-    operator-chosen id becomes its name too, so the label the
-    operator typed keeps addressing the workspace and no path or
-    cache moves."""
+    """A database stamped before #246 upgrades in place: every row
+    keeps its operator-chosen id (its label IS its id, so ref
+    resolution addresses it unchanged), the name column arrives
+    NULL, and the column carries its unique constraint — a second
+    row cannot take a name the first one owns."""
+    from sqlalchemy.exc import IntegrityError
+
     app = app_for()
     db_path = tmp_path / "t.db"
     config = alembic_config(db_path)
@@ -130,13 +133,46 @@ async def test_migration_backfills_names_from_ids(
         engine.dispose()
     app.state.model.migrate()
     row = await app.state.model.get_workspace("legacy")
-    assert (row["id"], row["name"]) == ("legacy", "legacy")
-    # The name column carries a unique index: a second row cannot
-    # take the same label.
-    from sqlalchemy.exc import IntegrityError
-
+    assert (row["id"], row["name"]) == ("legacy", None)
+    # The unique constraint rode along on the single ALTER: a second
+    # row cannot claim the first one's name.
+    await app.state.model.create_workspace(spec("new"), name="taken")
     with pytest.raises(IntegrityError):
-        await app.state.model.create_workspace(spec("new"), name="legacy")
+        await app.state.model.create_workspace(spec("new2"), name="taken")
+
+
+def test_migration_is_one_atomic_statement() -> None:
+    """The #246 review pin: 0010 must rebuild the table once — the
+    column and its unique constraint inside the same batch (one
+    transaction) — so a torn migration (DDL committed, stamp lost)
+    leaves both or neither, and the daemon's stamp-past healing
+    cannot lose the constraint. A bare add_column + create_index
+    pair would tear between the two; a backfill UPDATE would be
+    unrepairable for the same reason."""
+    import ast
+
+    source = Path(
+        "src/msks/msks/migrations/versions/0010_workspace_name.py"
+    ).read_text()
+    tree = ast.parse(source)
+    upgrade = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef)
+        and node.name == "upgrade"
+    )
+    calls = [
+        node.func.attr
+        for node in ast.walk(upgrade)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    ]
+    assert "batch_alter_table" in calls and "add_column" in calls
+    # The pair a torn migration could lose half of, and the data
+    # step it could lose whole — none of them may appear.
+    assert "create_index" not in calls
+    assert "execute" not in calls
+    assert "unique=True" in source
+    assert "UPDATE" not in source  # no backfill step to tear
 
 
 async def test_create_and_fetch_minted_identity(app_for) -> None:

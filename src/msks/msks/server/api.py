@@ -136,9 +136,12 @@ class WorkspaceCreate(BaseModel):
     name: str | None = Field(
         default=None, min_length=1, max_length=64, pattern=WORKSPACE_ID_PATTERN
     )
-    # The pre-#246 spelling of the same field, still accepted so a
-    # client one version behind keeps working: the daemon treats it
-    # as the name and mints the id either way.
+    # The pre-#246 spelling of the same field: a client one version
+    # behind keeps creating (the daemon treats its ``id`` as the
+    # name and mints the id either way). Note the same client's
+    # ``msks ssh`` on such a workspace must address it by the minted
+    # id: its client-minted identity file lands under the id, and
+    # the old client looks it up under whatever reference it typed.
     id: str | None = Field(
         default=None, min_length=1, max_length=64, pattern=WORKSPACE_ID_PATTERN
     )
@@ -1139,13 +1142,26 @@ def build_api(app) -> FastAPI:
     @api.post("/api/v1/workspaces", dependencies=[Depends(require_token)])
     async def create_workspace(body: WorkspaceCreate) -> Response:
         name = create_name(body)
-        async with await serialize_create(app, name or ""):
+        if name is None:
+            # A nameless create shares nothing keyable with another
+            # create (the id mint and the primary-key index are the
+            # whole race story), so it takes no create lock.
+            return await create_workspace_locked(body, name)
+        async with await serialize_create(app, name):
             return await create_workspace_locked(body, name)
 
     async def create_workspace_locked(
         body: WorkspaceCreate, name: str | None
     ) -> Response:
-        if name is not None and await app.state.model.name_taken(name):
+        # The ref namespace is one namespace (#246): a name another
+        # workspace already owns, OR another workspace's id, is
+        # refused — ref resolution prefers the id, so a workspace
+        # named like a live id would be silently shadowed by it
+        # (every command with that name would aim at the other
+        # workspace). get_workspace answers for both spellings.
+        if name is not None and (
+            await app.state.model.get_workspace(name) is not None
+        ):
             raise HTTPException(status_code=409, detail="workspace exists")
         # The #246 instance id: minted by the daemon, immutable, and
         # never reused while its workspace lives — artifact paths,
@@ -1216,10 +1232,12 @@ def build_api(app) -> FastAPI:
         try:
             await app.state.microvm.prepare(spec_for(boot))
         except MicrovmError:
-            # A racer may have won this name between the 404 check and
+            # A racer may have won this name between the pre-check and
             # the strict prepare — its artifacts are the "leftover",
             # and the honest answer is the 409, not a removal plea.
-            if name is not None and await app.state.model.name_taken(name):
+            if name is not None and (
+                await app.state.model.get_workspace(name) is not None
+            ):
                 raise HTTPException(
                     status_code=409, detail="workspace exists"
                 ) from None
@@ -1237,6 +1255,9 @@ def build_api(app) -> FastAPI:
             # blank artifacts sit at this id's paths now (ours and its
             # are indistinguishable), so nothing is cleaned up — the
             # row-exists-⇒-artifacts-exist invariant must not break.
+            # The collision is the name index in practice; a same-id
+            # mint race between two different names (~2⁻²⁰) answers
+            # the same 409, and a retried create succeeds.
             raise HTTPException(
                 status_code=409, detail="workspace exists"
             ) from None

@@ -716,17 +716,18 @@ async def test_create_race_after_prepare_answers_409(
     """A racer that won between the name pre-check and a
     strict-prepare refusal turns the 503 into the honest 409."""
     http, app, _stub = client
-    real_taken = app.state.model.name_taken
     checks = 0
 
-    async def first_free_then_taken(name):
+    async def first_free_then_row(ref):
         nonlocal checks
         checks += 1
-        if checks == 1:
-            return False  # the pre-check: the name is free
-        return True  # the racer has since won the name
+        if checks <= 2:
+            # The pre-check (free), then the mint's candidate probe
+            # (free) — before the racer wins the name.
+            return None
+        return {"id": "racer"}  # the racer has since won it
 
-    monkeypatch.setattr(app.state.model, "name_taken", first_free_then_taken)
+    monkeypatch.setattr(app.state.model, "get_workspace", first_free_then_row)
     _stub.fail_prepare = True
     response = await http.post(
         "/api/v1/workspaces",
@@ -735,7 +736,28 @@ async def test_create_race_after_prepare_answers_409(
     )
     assert response.status_code == 409
     assert response.json()["detail"] == "workspace exists"
-    assert real_taken  # the seam stayed reachable for later callers
+
+
+async def test_create_refuses_a_name_equal_to_a_live_id(client) -> None:
+    """One ref namespace (#246): a name equal to a live workspace's
+    id is refused at create — ref resolution prefers the id, so such
+    a workspace would be silently shadowed (every command with its
+    name aiming at the other workspace, rm included)."""
+    http, _app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "real", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    live_id = created.json()["id"]
+    shadow = await http.post(
+        "/api/v1/workspaces",
+        json={"id": live_id, "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert shadow.status_code == 409
+    assert shadow.json()["detail"] == "workspace exists"
 
 
 async def test_prepare_failure_leaves_no_trace(client) -> None:
