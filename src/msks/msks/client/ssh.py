@@ -42,6 +42,7 @@ then runs exactly once.
 """
 
 import asyncio
+import hashlib
 import os
 import shlex
 import subprocess
@@ -198,15 +199,40 @@ def derived_public(private) -> list[str]:
     return line.split()[:2]
 
 
-def known_hosts_path(workspace_id: str, base: Path | None = None) -> str:
+def instance_token(key: dict) -> str | None:
+    """The workspace instance's compact stamp (#245), or None.
+
+    The daemon returns ``created_at`` with the identity; hashing it
+    keeps the cache directory short while still naming the
+    instance — two workspaces created under one name stamp
+    differently, so each instance gets its own host-key cache. A
+    key without the field (an older daemon, a test fixture) yields
+    None and the caller falls back to the name-keyed path.
+    """
+    created_at = key.get("created_at")
+    if not created_at:
+        return None
+    return hashlib.sha1(created_at.encode()).hexdigest()[:8]
+
+
+def known_hosts_path(
+    workspace_id: str, base: Path | None = None, instance: str | None = None
+) -> str:
     """The per-workspace known_hosts file, its directory created.
 
     Host keys persist across stop/start on the workspace's overlay
     (#110), so one accept-new entry per workspace keeps matching.
-    An unusable cache (the path taken by a file, an unwritable
-    directory) is operator-shaped: one line, not a traceback.
+    ``instance`` (the workspace instance's stamp, #245) separates
+    the caches of two workspaces created under one name: a
+    recreated instance presents fresh first-boot host keys, and a
+    name-keyed cache would refuse the change under ``accept-new``
+    forever — the #245 failure. Without the stamp (an older
+    daemon), the path keeps its name-keyed shape. An unusable cache
+    (the path taken by a file, an unwritable directory) is
+    operator-shaped: one line, not a traceback.
     """
-    root = (base if base is not None else cache_dir()) / workspace_id
+    directory = f"{workspace_id}.{instance}" if instance else workspace_id
+    root = (base if base is not None else cache_dir()) / directory
     try:
         root.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -739,13 +765,25 @@ def wait_for_identity(
     deadline that passes leaves the failure to the real session:
     ssh's own message names the refusal, and the probe's notices
     have already said what was being waited for.
+
+    ssh's own stderr rides along (#245): a *permanent* refusal —
+    the host-key mismatch of a recreated workspace, a permission
+    denial — printed nothing here before, and the retry notice
+    read as "the guest is slow" while the session could never
+    succeed. Each distinct stderr the probe captures is printed
+    once (:func:`report_probe_stderr`); an unchanged answer
+    repeats silently, so a slow first boot stays as quiet as it
+    ever was.
     """
+    last_stderr: str | None = None
     while True:
         now = time.monotonic()
         if now >= deadline:
             return
-        if probe_attempt(probe_argv, deadline - now, command):
+        failure = probe_attempt(probe_argv, deadline - now, command)
+        if failure is None:
             return
+        last_stderr = report_probe_stderr(failure, last_stderr, command)
         time.sleep(SSH_RETRY_PAUSE_S)
         if time.monotonic() < deadline:
             print(
@@ -755,10 +793,26 @@ def wait_for_identity(
             )
 
 
+def report_probe_stderr(
+    failure: str, last_stderr: str | None, command: str
+) -> str:
+    """Print a probe failure's ssh stderr when it differs from the
+    last one, and return it as the new last-seen answer (#245).
+
+    Deduped on purpose: a slow first boot fails the same quiet way
+    for many attempts, and only a *changed* answer carries news.
+    """
+    if failure and failure != last_stderr:
+        for line in failure.splitlines():
+            print(f"msks: {command} probe: {line}", file=sys.stderr)
+    return failure
+
+
 def probe_attempt(
     probe_argv: list[str], budget: float, command: str = "msks ssh"
-) -> bool:
-    """One probe attempt: True when the guest accepted the login.
+) -> str | None:
+    """One probe attempt: None when the guest accepted the login,
+    else the probe's captured stderr (possibly empty).
 
     A stalled connection is one more not-ready answer — bounded by
     the budget the deadline leaves the attempt — and an ssh missing
@@ -766,12 +820,16 @@ def probe_attempt(
     wait reports it before the session ever runs.
     """
     try:
-        completed = subprocess.run(probe_argv, timeout=budget)
+        completed = subprocess.run(
+            probe_argv, timeout=budget, capture_output=True, text=True
+        )
     except subprocess.TimeoutExpired:
-        return False
+        return ""
     except FileNotFoundError:
         raise SystemExit(f"{command}: ssh not found on PATH") from None
-    return completed.returncode == 0
+    if completed.returncode == 0:
+        return None
+    return (completed.stderr or "").strip()
 
 
 @contextmanager
@@ -791,7 +849,7 @@ def staged_session(workspace_id: str, transport=None):
     )
     private = agent.load_private(resolve_private(key, workspace_id))
     with agent.serve(private, identity_comment(key)) as served:
-        yield booted, served
+        yield booted, served, instance_token(key)
 
 
 def exec_child(argv: list[str], missing_line: str) -> int:
@@ -809,8 +867,8 @@ def run_workspace_ssh(
 ) -> int:
     """One ssh session, from boot pre-flight to ssh's own exit code."""
     passthrough = passthrough_args(passthrough)
-    with staged_session(workspace_id, transport) as (booted, served):
-        known_hosts = known_hosts_path(workspace_id)
+    with staged_session(workspace_id, transport) as (booted, served, token):
+        known_hosts = known_hosts_path(workspace_id, instance=token)
         if booted:
             probe_argv = probe_args(
                 workspace_id,

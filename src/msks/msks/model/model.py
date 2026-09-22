@@ -309,6 +309,12 @@ class Model:
             return {
                 "public_key": row.ssh_pubkey,
                 "private_key": row.ssh_privkey,
+                # The workspace instance's stamp (#245): the client
+                # keys its host-key cache on it, so a recreated
+                # workspace (the same name, a new instance) starts
+                # with a fresh cache instead of refusing its own
+                # first-boot host keys.
+                "created_at": str(row.created_at),
             }
 
     async def delete_workspace(self, workspace_id: str) -> bool:

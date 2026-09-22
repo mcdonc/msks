@@ -501,8 +501,16 @@ async def test_local_minted_identity() -> None:
             if "SSH_AGENT_PID" in agent_vars:
                 with contextlib.suppress(ProcessLookupError):
                     os.kill(int(agent_vars["SSH_AGENT_PID"]), 15)
-        # The logins recorded the guest's host key in the msks cache.
-        assert (ssh_cache / "msks" / wid / "known_hosts").exists()
+        # The logins recorded the guest's host key in the msks
+        # cache, keyed by the workspace INSTANCE (#245: <id>.<stamp>,
+        # not the bare name) — pinning the shape that keeps a
+        # recreated workspace from refusing its own first-boot keys.
+        entries = list((ssh_cache / "msks").glob(f"{wid}.*/known_hosts"))
+        assert entries, (
+            f"no instance-keyed known_hosts under {ssh_cache / 'msks'} "
+            f"for {wid}"
+        )
+        assert not (ssh_cache / "msks" / wid).exists()
 
         # stop/start: the row serves the same identity again — the
         # halves persist on the workspace, not in any process — and

@@ -491,6 +491,25 @@ def test_known_hosts_path_creates_its_directory(tmp_path: Path) -> None:
     assert (tmp_path / "alpha").is_dir()
 
 
+def test_known_hosts_path_separates_workspace_instances(
+    tmp_path: Path,
+) -> None:
+    """#245: two workspaces created under one name cache their host
+    keys apart — a recreated instance presents fresh first-boot
+    keys, and the name-keyed cache refused the change forever."""
+    first = ssh.instance_token({"created_at": "2026-09-22 10:12:24"})
+    second = ssh.instance_token({"created_at": "2026-09-23 09:00:00"})
+    assert first and second and first != second
+    one = ssh.known_hosts_path("ws", base=tmp_path, instance=first)
+    two = ssh.known_hosts_path("ws", base=tmp_path, instance=second)
+    legacy = ssh.known_hosts_path("ws", base=tmp_path)
+    assert one != two and one != legacy
+    assert one.endswith(f"/ws.{first}/known_hosts")
+    # A key without the stamp (an older daemon) keeps the legacy path.
+    assert ssh.instance_token({}) is None
+    assert ssh.instance_token({"created_at": None}) is None
+
+
 def test_known_hosts_path_names_an_unusable_cache(tmp_path: Path) -> None:
     taken = tmp_path / "alpha"
     taken.write_text("a file where the cache dir should be")
@@ -993,7 +1012,9 @@ def test_run_workspace_ssh_runs_ssh_and_stops_the_agent(
     stopped: list = []
     monkeypatch.setattr(ssh, "prepare", fake_prepare)
     monkeypatch.setattr(
-        ssh, "known_hosts_path", lambda ws, base=None: str(tmp_path)
+        ssh,
+        "known_hosts_path",
+        lambda ws, base=None, instance=None: str(tmp_path),
     )
 
     @contextmanager
@@ -1008,7 +1029,7 @@ def test_run_workspace_ssh_runs_ssh_and_stops_the_agent(
 
     def fake_run(argv, **kwargs) -> SimpleNamespace:
         calls.append({"argv": argv})
-        return SimpleNamespace(returncode=7)
+        return SimpleNamespace(returncode=7, stderr="")
 
     monkeypatch.setattr(ssh.subprocess, "run", fake_run)
     rc = ssh.run_workspace_ssh("alpha", ["-l", "root"])
@@ -1029,7 +1050,9 @@ def test_run_workspace_ssh_names_a_missing_binary(
 
     monkeypatch.setattr(ssh, "prepare", fake_prepare)
     monkeypatch.setattr(
-        ssh, "known_hosts_path", lambda ws, base=None: str(tmp_path)
+        ssh,
+        "known_hosts_path",
+        lambda ws, base=None, instance=None: str(tmp_path),
     )
 
     def missing(argv, **kwargs):
@@ -1052,7 +1075,9 @@ def test_run_workspace_ssh_names_a_missing_binary_from_the_wait(
 
     monkeypatch.setattr(ssh, "prepare", fake_prepare)
     monkeypatch.setattr(
-        ssh, "known_hosts_path", lambda ws, base=None: str(tmp_path)
+        ssh,
+        "known_hosts_path",
+        lambda ws, base=None, instance=None: str(tmp_path),
     )
 
     @contextmanager
@@ -1207,7 +1232,9 @@ def test_run_workspace_ssh_waits_out_a_first_boot(
 
     monkeypatch.setattr(ssh, "prepare", fake_prepare)
     monkeypatch.setattr(
-        ssh, "known_hosts_path", lambda ws, base=None: str(tmp_path)
+        ssh,
+        "known_hosts_path",
+        lambda ws, base=None, instance=None: str(tmp_path),
     )
     monkeypatch.setattr(ssh.time, "monotonic", fake_monotonic)
     monkeypatch.setattr(ssh.time, "sleep", fast_sleep)
@@ -1223,7 +1250,7 @@ def test_run_workspace_ssh_waits_out_a_first_boot(
     def fake_run(argv, **kwargs) -> SimpleNamespace:
         commands.append(argv)
         clock["now"] += 1.0
-        return SimpleNamespace(returncode=next(codes))
+        return SimpleNamespace(returncode=next(codes), stderr="")
 
     monkeypatch.setattr(ssh.subprocess, "run", fake_run)
     rc = ssh.run_workspace_ssh("alpha", [])
@@ -1247,7 +1274,9 @@ def test_run_workspace_ssh_treats_a_stalled_probe_as_not_ready(
 
     monkeypatch.setattr(ssh, "prepare", fake_prepare)
     monkeypatch.setattr(
-        ssh, "known_hosts_path", lambda ws, base=None: str(tmp_path)
+        ssh,
+        "known_hosts_path",
+        lambda ws, base=None, instance=None: str(tmp_path),
     )
     clock = {"now": 0.0}
 
@@ -1268,7 +1297,7 @@ def test_run_workspace_ssh_treats_a_stalled_probe_as_not_ready(
     monkeypatch.setattr(ssh.agent, "serve", fake_serve)
     timeouts: list[float] = []
 
-    def stalled_then_ready(argv, timeout=None):
+    def stalled_then_ready(argv, timeout=None, **kwargs):
         clock["now"] += 1.0
         if timeout is not None:
             timeouts.append(timeout)
@@ -1277,8 +1306,8 @@ def test_run_workspace_ssh_treats_a_stalled_probe_as_not_ready(
             # by the time the deadline leaves, not by the stall.
             raise subprocess.TimeoutExpired(cmd="ssh", timeout=timeout)
         if argv[-1] == "true":
-            return SimpleNamespace(returncode=0)
-        return SimpleNamespace(returncode=7)
+            return SimpleNamespace(returncode=0, stderr="")
+        return SimpleNamespace(returncode=7, stderr="")
 
     monkeypatch.setattr(ssh.subprocess, "run", stalled_then_ready)
     monkeypatch.setattr(ssh, "SSH_SEED_WAIT_S", 30.0)
@@ -1301,7 +1330,9 @@ def test_run_workspace_ssh_stops_waiting_at_the_deadline(
 
     monkeypatch.setattr(ssh, "prepare", fake_prepare)
     monkeypatch.setattr(
-        ssh, "known_hosts_path", lambda ws, base=None: str(tmp_path)
+        ssh,
+        "known_hosts_path",
+        lambda ws, base=None, instance=None: str(tmp_path),
     )
     clock = {"now": 0.0}
 
@@ -1327,7 +1358,9 @@ def test_run_workspace_ssh_stops_waiting_at_the_deadline(
         clock["now"] += 1.0
         # The probe never succeeds; the real session runs regardless
         # and stands or falls on its own.
-        return SimpleNamespace(returncode=0 if argv[-1] != "true" else 255)
+        return SimpleNamespace(
+            returncode=0 if argv[-1] != "true" else 255, stderr=""
+        )
 
     monkeypatch.setattr(ssh.subprocess, "run", fake_run)
     monkeypatch.setattr(ssh, "SSH_SEED_WAIT_S", 3.0)
@@ -1347,7 +1380,9 @@ def test_run_workspace_ssh_skips_the_wait_when_not_booted(
 
     monkeypatch.setattr(ssh, "prepare", fake_prepare)
     monkeypatch.setattr(
-        ssh, "known_hosts_path", lambda ws, base=None: str(tmp_path)
+        ssh,
+        "known_hosts_path",
+        lambda ws, base=None, instance=None: str(tmp_path),
     )
 
     @contextmanager
@@ -1359,7 +1394,7 @@ def test_run_workspace_ssh_skips_the_wait_when_not_booted(
 
     def fake_run(argv, **kwargs) -> SimpleNamespace:
         commands.append(argv)
-        return SimpleNamespace(returncode=255)
+        return SimpleNamespace(returncode=255, stderr="")
 
     monkeypatch.setattr(ssh.subprocess, "run", fake_run)
     rc = ssh.run_workspace_ssh("alpha", [])
@@ -1377,7 +1412,9 @@ def test_run_workspace_ssh_skips_the_wait_when_no_probe_exists(
 
     monkeypatch.setattr(ssh, "prepare", fake_prepare)
     monkeypatch.setattr(
-        ssh, "known_hosts_path", lambda ws, base=None: str(tmp_path)
+        ssh,
+        "known_hosts_path",
+        lambda ws, base=None, instance=None: str(tmp_path),
     )
 
     @contextmanager
@@ -1389,7 +1426,7 @@ def test_run_workspace_ssh_skips_the_wait_when_no_probe_exists(
 
     def fake_run(argv, **kwargs) -> SimpleNamespace:
         commands.append(argv)
-        return SimpleNamespace(returncode=255)
+        return SimpleNamespace(returncode=255, stderr="")
 
     monkeypatch.setattr(ssh.subprocess, "run", fake_run)
     rc = ssh.run_workspace_ssh("alpha", ["-l"])
@@ -1421,3 +1458,35 @@ def test_cli_dispatch_reaches_the_ssh_body(
     args = cli.build_parser().parse_args(["ssh", "alpha", "-A"])
     assert cli.dispatch(args) == 5
     assert calls == [("alpha", ["-A"])]
+
+
+def test_wait_for_identity_surfaces_distinct_probe_stderr(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#245: a permanent refusal (the host-key mismatch of a
+    recreated workspace) rides the retry loop's notices — printed
+    once per distinct answer, not drowned as "not ready"."""
+    answers = iter(
+        [
+            "Host key verification failed.",
+            "Host key verification failed.",
+            "Permission denied (publickey).",
+        ]
+    )
+    clock = {"now": 0.0}
+    monkeypatch.setattr(ssh.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(
+        ssh.time, "sleep", lambda s: clock.update(now=clock["now"] + s)
+    )
+
+    def probe(argv, timeout=None, **kwargs):
+        clock["now"] += 1.0
+        return SimpleNamespace(returncode=255, stderr=next(answers) + "\n")
+
+    monkeypatch.setattr(ssh.subprocess, "run", probe)
+    # Budget for three probes: each probe ticks 1s, each pause 1s.
+    ssh.wait_for_identity("ws", ["ssh"], clock["now"] + 4.5)
+    err = capsys.readouterr().err
+    assert err.count("Host key verification failed.") == 1
+    assert err.count("Permission denied (publickey).") == 1
+    assert err.count("msks ssh probe:") == 2  # deduped, then the new one

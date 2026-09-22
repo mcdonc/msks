@@ -79,7 +79,12 @@ async def test_create_and_fetch_minted_identity(app_for) -> None:
     assert row["ssh_pubkey"] == pub
     assert "ssh_privkey" not in row
     key = await app.state.model.get_ssh_key("ws1")
-    assert key == {"public_key": pub, "private_key": private_pem}
+    assert key == {
+        "public_key": pub,
+        "private_key": private_pem,
+        "created_at": key["created_at"],  # the instance stamp (#245)
+    }
+    assert key["created_at"]  # present, non-empty, per-instance
 
 
 async def test_get_ssh_key_without_identity_and_absent(app_for) -> None:
@@ -90,7 +95,11 @@ async def test_get_ssh_key_without_identity_and_absent(app_for) -> None:
     await app.state.model.create_all()
     await app.state.model.create_workspace(spec())
     key = await app.state.model.get_ssh_key("ws1")
-    assert key == {"public_key": None, "private_key": None}
+    assert key == {
+        "public_key": None,
+        "private_key": None,
+        "created_at": key["created_at"],
+    }
     assert await app.state.model.get_ssh_key("nope") is None
 
 

@@ -201,8 +201,12 @@ def run_workspace_rsync(
     way."""
     passthrough = passthrough_args(passthrough)
     require_args(passthrough)
-    with staged_session(workspace_id, transport) as (booted, served):
-        known_hosts = known_hosts_path(workspace_id)
+    with staged_session(workspace_id, transport) as (
+        booted,
+        served,
+        token,
+    ):
+        known_hosts = known_hosts_path(workspace_id, instance=token)
         config_path = write_ssh_config(
             served,
             session_options(

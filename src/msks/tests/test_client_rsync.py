@@ -195,7 +195,9 @@ def wired(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[list[str]]:
 
     monkeypatch.setattr(ssh, "prepare", fake_prepare)
     monkeypatch.setattr(
-        rsync, "known_hosts_path", lambda ws, base=None: str(tmp_path)
+        rsync,
+        "known_hosts_path",
+        lambda ws, base=None, instance=None: str(tmp_path),
     )
     monkeypatch.setattr(ssh.agent, "serve", fake_agent_serve(tmp_path))
     commands: list[list[str]] = []
@@ -204,7 +206,7 @@ def wired(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[list[str]]:
         "run",
         lambda argv, **kwargs: (
             commands.append(argv),
-            SimpleNamespace(returncode=7),
+            SimpleNamespace(returncode=7, stderr=""),
         )[1],
     )
     return commands
@@ -254,7 +256,9 @@ def test_run_workspace_rsync_waits_out_a_first_boot(
 
     monkeypatch.setattr(ssh, "prepare", fake_prepare)
     monkeypatch.setattr(
-        rsync, "known_hosts_path", lambda ws, base=None: str(tmp_path)
+        rsync,
+        "known_hosts_path",
+        lambda ws, base=None, instance=None: str(tmp_path),
     )
     monkeypatch.setattr(ssh.agent, "serve", fake_agent_serve(tmp_path))
     clock = {"now": 0.0}
@@ -270,7 +274,7 @@ def test_run_workspace_rsync_waits_out_a_first_boot(
     def fake_run(argv, **kwargs) -> SimpleNamespace:
         commands.append(argv)
         clock["now"] += 1.0
-        return SimpleNamespace(returncode=next(codes))
+        return SimpleNamespace(returncode=next(codes), stderr="")
 
     monkeypatch.setattr(ssh.subprocess, "run", fake_run)
     rc = rsync.run_workspace_rsync("alpha", ["-av", "./s/", ":/d/"])
@@ -307,11 +311,13 @@ def test_run_workspace_rsync_names_a_missing_ssh_from_the_wait(
 
     monkeypatch.setattr(ssh, "prepare", fake_prepare)
     monkeypatch.setattr(
-        rsync, "known_hosts_path", lambda ws, base=None: str(tmp_path)
+        rsync,
+        "known_hosts_path",
+        lambda ws, base=None, instance=None: str(tmp_path),
     )
     monkeypatch.setattr(ssh.agent, "serve", fake_agent_serve(tmp_path))
 
-    def probe_only(argv, timeout=None):
+    def probe_only(argv, timeout=None, **kwargs):
         if argv[0] == "ssh":
             raise FileNotFoundError("ssh")
         raise AssertionError("rsync ran before the probe")
