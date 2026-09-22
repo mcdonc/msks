@@ -17,7 +17,9 @@
       };
       msksd = pkgs.python314.pkgs.callPackage ./nix/msks-pkg.nix {
         textual = pkgs.python314.pkgs.callPackage ./nix/textual-pkg.nix { };
-        netfilterqueue = pkgs.python314.pkgs.callPackage ./nix/netfilterqueue-pkg.nix { };
+        netfilterqueue =
+          pkgs.python314.pkgs.callPackage ./nix/netfilterqueue-pkg.nix
+            { };
       };
     in
     {
