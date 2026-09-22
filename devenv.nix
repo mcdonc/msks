@@ -246,8 +246,8 @@ in
 
   # The deployment-host daemon, dev shape (#231): msksd runs
   # FIRST-LEVEL on this host — cloud-hypervisor on the real /dev/kvm,
-  # per-VM taps, the egress consent stack in this kernel — no
-  # appliance VM. Lifecycle: `devenv processes up` (the managed
+  # with per-VM taps and the egress consent stack in this kernel.
+  # Lifecycle: `devenv processes up` (the managed
   # FOREGROUND process below — attached, Ctrl-C stops) or `msks-dev`
   # (the same script by hand); scripts/dev-daemon.sh is the one
   # source of truth both exec. The detached daemon mode also works;

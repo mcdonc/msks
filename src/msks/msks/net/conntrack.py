@@ -8,7 +8,7 @@ tool — the piece a same-netns sidecar never needed (its rules and
 its conntrack died together with the namespace), and a per-VM-tap
 design does.
 
-Best-effort by design: the tool is a setting (the deployment image
+Best-effort by design: the tool is a setting (the msksd package
 ships it; a dev shell may not), and a missing entry is success —
 the rule clear already happened, so the only flows that survive a
 failed delete are ones conntrack no longer tracks anyway.

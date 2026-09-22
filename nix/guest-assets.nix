@@ -414,7 +414,7 @@ let
     # host CPU, and a modules-load.d entry that fails leaves
     # systemd-modules-load.service failed (a degraded boot) — the
     # oneshot service below picks the flavor and swallows a host
-    # without nested virt, exactly as a deployment host's does.
+    # without nested virt.
     printf '%s\n' \
       '# msks: the inner-egress stack (#82); KVM loads via its unit.' \
       'tun' \
@@ -426,9 +426,8 @@ let
       'nf_conntrack' \
       > $out/etc/modules-load.d/msks-egress.conf
 
-    # The nested-KVM module for inner workspace VMs (#82), a
-    # deployment-shaped unit: which flavor loads
-    # depends on the host CPU, so a shell picks, and a workspace
+    # The nested-KVM module for inner workspace VMs (#82): which
+    # flavor loads depends on the host CPU, so a shell picks, and a workspace
     # booted where vmx does not reach (a host without nested virt)
     # still boots — the unit stays active (exited) and /dev/kvm
     # simply never appears. udev makes the node when a module

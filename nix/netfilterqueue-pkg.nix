@@ -1,4 +1,4 @@
-# The netfilterqueue python binding for the appliance closure (#69).
+# The netfilterqueue python binding for the msksd closure (#69).
 #
 # nixpkgs does not carry it, so it is built here from the PyPI sdist
 # against nixpkgs' libnetfilter_queue + libnfnetlink — the same pair

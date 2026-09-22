@@ -171,7 +171,7 @@ def route(req: httpx.Request) -> httpx.Response:
     return httpx.Response(200, json=ROWS)
 
 
-def test_cmd_ls_names_a_stale_appliance_image(
+def test_cmd_ls_names_a_stale_image(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The drift notice (#160): the daemon serves a different image
