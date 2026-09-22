@@ -72,10 +72,9 @@ def health_image(health: object) -> str | None:
 def stale_image_notice(expected: str, health: object) -> str | None:
     """The one-line drift notice for ``msks ls`` (#160), or None.
 
-    Both sides must be known: ``MSKSC_EXPECTED_IMAGE`` names what
-    this checkout's appliance state dir (``.devenv/state/appliance``)
-    builds (unset outside a devenv
-    shell, or before the first build), and the daemon's ``/health``
+    Both sides must be known: ``MSKSC_EXPECTED_IMAGE`` names the
+    image this checkout's appliance run boots (the appliance's shells
+    preset it; unset in dev-daemon shells), and the daemon's ``/health``
     carries the image it booted (``None`` on a daemon predating the
     ``msksd.image`` cmdline pair). An unknown side stays silent —
     including a /health that answers something other than a mapping
