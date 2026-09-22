@@ -272,8 +272,9 @@ msks key myws --out ./myws.key   # the private half, mode 0600
 
 The key type is the daemon's setting (`ssh_key_type` /
 `MSKSD_SSH_KEY_TYPE`): Ed25519 by default, `ecdsa` (P-256) and
-`rsa` (3072-bit) selectable. The identity is minted at create. With the identity materialized, the usual
-client shapes work over the forward:
+`rsa` (3072-bit) selectable. The identity is minted at create. With
+the identity materialized, the usual client shapes work over the
+forward:
 
 ```bash
 msks key myws --out ~/.cache/msks/myws.key
@@ -541,7 +542,8 @@ list.
 ## Backend support
 
 Egress is a local-backend feature; the consent API itself is
-enforcement-agnostic (see above), so a future backend can drive a
+enforcement-agnostic (see “Local-only semantics” under [Egress
+consent](#egress-consent-69)), so a future backend can drive a
 different mechanism from the same model. The no-NIC posture works
 everywhere: a workspace created with `"egress": false` presents no
 NIC whatever runs it.

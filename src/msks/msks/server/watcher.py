@@ -3,7 +3,7 @@
 Every ``event_poll_s`` the watcher compares each workspace row's last
 recorded status against the live driver view; a difference is written
 back and published on the event hub. Polling (not callbacks) keeps the
-watcher honest across driver restarts and both backends.
+watcher honest across driver restarts.
 """
 
 import asyncio

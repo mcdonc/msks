@@ -1,7 +1,8 @@
 # Guest-asset build (#17, split out of ci.yml).
 #
 # The nix-heavy derivation check from #5's ubuntu-latest criterion:
-# a cold checkout must still build the kernel/initrd/rootfs, so the guest-asset expressions cannot silently rot. The
+# a cold checkout must still build the kernel/initrd/rootfs, so the
+# guest-asset expressions cannot silently rot. The
 # artifacts are not consumed on the runner — CH smoke needs KVM —
 # which is exactly why this reports as its own check: slow and
 # independent of both lint and the unit tests.
