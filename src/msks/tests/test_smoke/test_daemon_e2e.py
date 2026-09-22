@@ -18,6 +18,7 @@ import base64
 import contextlib
 import os
 import shutil
+import signal
 import ssl
 import subprocess
 import sys
@@ -344,8 +345,20 @@ async def test_daemon_e2e_full_path() -> None:
         finally:
             out_file.close()
             err_file.close()
-        assert rc == 0, (
+        # Uvicorn's graceful SIGTERM ends the process BY the signal
+        # (it re-raises the captured signum after the lifespan
+        # teardown), so rc == -15 here is the clean shape — the
+        # graceful-path proof is the lifespan's own "Application
+        # shutdown complete" line, which covers the net stack's
+        # teardown and the sqlite close. A daemon that died before
+        # serving, or hung and took the kill, fails above instead.
+        assert rc in (0, -signal.SIGTERM), (
             f"msksd exited {rc} on SIGTERM (not the graceful path)\n"
+            + daemon_log_tail(state_dir)
+        )
+        err_text = (state_dir / "daemon.err").read_text(errors="replace")
+        assert "Application shutdown complete" in err_text, (
+            "msksd exited without completing the lifespan shutdown\n"
             + daemon_log_tail(state_dir)
         )
         shutil.rmtree(state_dir, ignore_errors=True)
