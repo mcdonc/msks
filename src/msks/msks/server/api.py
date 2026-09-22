@@ -120,9 +120,8 @@ class ImageImport(BaseModel):
 
 
 class WorkspaceCreate(BaseModel):
-    # The id becomes a path component under state_dir/vms/ and a pod
-    # name on k8s — the charset keeps both safe (no traversal, no
-    # invalid names) and stays DNS-label-compatible.
+    # The id becomes a path component under state_dir/vms/ — the
+    # charset keeps it safe (no traversal, no invalid names).
     id: str = Field(min_length=1, max_length=64, pattern=WORKSPACE_ID_PATTERN)
     # Either a catalog reference (image: "name:version", "name", or
     # hash — the default image when omitted) or explicit boot
@@ -508,14 +507,11 @@ def spec_for(row: dict) -> VmSpec:
 def owner_host(app) -> str | None:
     """The host recorded as owning a new workspace's artifacts.
 
-    Placement is a local-backend fact: the artifacts are files on one
-    host. On k8s the artifacts live in a per-workspace claim the
-    cluster places, so no host is recorded and the placement check
-    stays out of the way ("None adopts this daemon", below).
+    Placement is a fact of the local backend: the artifacts are
+    files on one host, and that host's name is recorded at create
+    (#14) so only it may boot the workspace.
     """
-    if app.state.settings.vmm.driver == "local":
-        return app.state.settings.vmm.host_name
-    return None
+    return app.state.settings.vmm.host_name
 
 
 def host_mismatch(app, row: dict) -> str | None:
@@ -547,19 +543,10 @@ HOME_FREE_STATUSES = ("created", "stopped", "absent")
 def home_volume_guard(app, row: dict) -> tuple[int, str] | None:
     """(status, refusal) when this daemon cannot move the volume.
 
-    The k8s backend answers a named refusal — the volume lives
-    inside the runner pod's PVC, which only the pod's container
-    reaches, so the byte streams this endpoint serves have nothing
-    to read or write (#80 is the local backend's mechanism). On
-    the local backend, placement (the artifacts live on one host)
-    and a possibly-live attachment are the two facts that block a
-    move: the free statuses are named, everything else refuses.
+    Placement (the artifacts live on one host) and a possibly-live
+    attachment are the two facts that block a move: the free
+    statuses are named, everything else refuses.
     """
-    if app.state.settings.vmm.driver == "k8s":
-        return 400, (
-            "home volume export/import is not served by the k8s backend "
-            "(the volume lives inside the runner pod's PVC)"
-        )
     mismatch = host_mismatch(app, row)
     if mismatch is not None:
         return 409, mismatch
@@ -1082,50 +1069,6 @@ def build_api(app) -> FastAPI:
         refusal = storage.create_refusal(app.state.settings.vmm)
         if refusal is not None:
             raise HTTPException(status_code=507, detail=refusal)
-        if body.egress and app.state.settings.vmm.driver == "k8s":
-            # Refuse at create, not first boot: a workspace that can
-            # never start (egress is the create default) traps the id
-            # until delete+recreate (#70 review).
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "egress is not served by the k8s backend yet "
-                    "(NetworkPolicy parity is #69); create with "
-                    '"egress": false'
-                ),
-            )
-        if (
-            body.user_data is not None
-            and app.state.settings.vmm.driver == "k8s"
-        ):
-            # Same shape as the egress refusal: the runner pod does not
-            # build seed disks yet (it ignores even the overlay/home
-            # env vars, #14), so a user_data workspace would store a
-            # payload nothing ever runs.
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "user_data is not served by the k8s backend yet (the "
-                    "runner pod does not build seed disks); create the "
-                    "workspace without user_data"
-                ),
-            )
-        if (
-            body.ssh_pubkey is not None
-            and app.state.settings.vmm.driver == "k8s"
-        ):
-            # The same shape as the user_data refusal: the runner pod
-            # builds no seed disks, so a client-supplied key would
-            # store a line nothing ever plants.
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "a client-supplied ssh key is not served by the k8s "
-                    "backend yet (the runner pod builds no seed disks); "
-                    "create the workspace without ssh_pubkey (the msks "
-                    "CLI's --daemon-mint)"
-                ),
-            )
         boot = resolve_boot(app, body)
         # The consent posture (#69), fixed at create with the rest of
         # the egress facts: an unknown mode or an invalid spec is a
@@ -1148,11 +1091,8 @@ def build_api(app) -> FastAPI:
         boot["egress_allowlist"] = specs
         # The identity (#111) mints before the artifacts: its public
         # half rides the seed (an artifact), its private half goes
-        # straight into the row. The k8s backend builds no seed
-        # disks, so it mints nothing — a k8s workspace keeps the
-        # pre-#111 shape (the key endpoint answers the no-identity
-        # 404), exactly like its user_data refusal. A bad key type on
-        # a directly-built Settings is a daemon fault, not a client
+        # straight into the row. A bad key type on a
+        # directly-built Settings is a daemon fault, not a client
         # error. Keygen is CPU-bound (RSA 3072 especially): off the
         # loop, like every other tool call the routes make.
         #
@@ -1170,7 +1110,7 @@ def build_api(app) -> FastAPI:
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from None
             boot["ssh_pubkey"] = f"{algo} {key_body} msks-client:{body.id}"
-        elif app.state.settings.vmm.driver == "local":
+        else:
             try:
                 private_key, public_key = await asyncio.to_thread(
                     mint, app.state.settings.vmm.ssh_key_type
@@ -1221,22 +1161,8 @@ def build_api(app) -> FastAPI:
 
         Computed on demand from one ``statvfs`` and a handful of
         ``lstat``s — the watcher's pressure probe, not this endpoint,
-        is what watches the thresholds between requests. The report
-        describes the local backend's artifact files; the k8s
-        backend keeps them on per-workspace claims the cluster
-        places, and this daemon's filesystem says nothing about
-        them — the named refusal below follows the home-volume
-        routes' precedent.
+        is what watches the thresholds between requests.
         """
-        if app.state.settings.vmm.driver == "k8s":
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "the capacity report is not served by the k8s "
-                    "backend (workspaces live on per-workspace claims "
-                    "the cluster places)"
-                ),
-            )
         vmm = app.state.settings.vmm
         rows = await app.state.model.list_workspaces()
         images = await asyncio.to_thread(imagestore.list_images, vmm.state_dir)
@@ -1275,9 +1201,7 @@ def build_api(app) -> FastAPI:
     async def import_image(body: ImageImport) -> Response:
         # The floor (#184): an import retains the archive **and**
         # unpacks its boot cache — the incoming bytes are counted
-        # twice, and the check runs on every backend: the catalog
-        # lives on this daemon's state disk even under k8s, whose
-        # workspace artifacts live on cluster-placed claims.
+        # twice.
         incoming_b = 0
         with contextlib.suppress(OSError):
             incoming_b = 2 * Path(body.source).stat().st_size
@@ -1424,15 +1348,6 @@ def build_api(app) -> FastAPI:
         and a shrink gives bytes back.
         """
         row = await _workspace_or_404(app, workspace_id)
-        if app.state.settings.vmm.driver == "k8s":
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "resizing is not served by the k8s backend (the "
-                    "workspace lives on a claim the cluster sizes; grow "
-                    "the claim through your storage class)"
-                ),
-            )
         if mismatch := host_mismatch(app, row):
             raise HTTPException(status_code=409, detail=mismatch)
         if body.root_mib is None and body.home_mib is None:

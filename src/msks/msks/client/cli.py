@@ -1264,8 +1264,7 @@ def build_parser() -> argparse.ArgumentParser:
         "create default (#121) mints on this client, sends the public "
         "half only, and keeps the private half (mode 0600 under the "
         "client data root, ~/.local/share/msks/<id>/identity, where "
-        "msks ssh finds it). The k8s backend serves no identity and "
-        "needs this flag",
+        "msks ssh finds it)",
     )
     create.add_argument(
         "--pubkey",
@@ -1585,11 +1584,11 @@ def create_identity(args: argparse.Namespace) -> tuple[str | None, str | None]:
 
     The client mint is the default (#121): absent flags mint locally
     (ed25519, the same FIPS-approvable default the daemon mints).
-    ``--daemon-mint`` hands the identity to the daemon (escrow on the
-    local backend; the k8s backend serves no identity either way).
-    ``--pubkey`` supplies an operator key (#132) — any well-formed
-    type, no mint, nothing written client-side. The three modes are
-    exclusive (:func:`check_identity_conflicts` names the pairings).
+    ``--daemon-mint`` hands the identity to the daemon (escrow on
+    the daemon). ``--pubkey`` supplies an operator key (#132) — any
+    well-formed type, no mint, nothing written client-side. The
+    three modes are exclusive
+    (:func:`check_identity_conflicts` names the pairings).
     """
     check_identity_conflicts(args)
     if args.daemon_mint:

@@ -365,31 +365,6 @@ async def test_create_rejects_a_malformed_pubkey(client) -> None:
     assert missing.status_code == 404
 
 
-async def test_k8s_refuses_client_supplied_pubkey(client) -> None:
-    """The same refusal shape as user_data: the runner pod builds no
-    seed disks, so a client-supplied key would store a line nothing
-    ever plants."""
-    from msks.identity import mint
-
-    http, app, _stub = client
-    app.state.settings.vmm.driver = "k8s"
-    _private, public = mint("ecdsa")
-    created = await http.post(
-        "/api/v1/workspaces",
-        json={
-            "id": "ws-k8s-cm",
-            "kernel": "/k",
-            "rootfs": "/r",
-            "egress": False,
-            "ssh_pubkey": public,
-        },
-        headers=auth(),
-    )
-    assert created.status_code == 400
-    assert "not served by the k8s backend" in created.json()["detail"]
-    app.state.settings.vmm.driver = "local"
-
-
 async def test_concurrent_same_id_creates_serialize(
     client, monkeypatch
 ) -> None:
@@ -757,29 +732,6 @@ async def test_delete_on_foreign_host_is_409(client) -> None:
     assert still.status_code == 200
 
 
-async def test_k8s_create_records_no_host(client, monkeypatch) -> None:
-    """Placement is a local-backend fact: on the k8s driver the row
-    records no host, so any daemon in the cluster may start it."""
-    http, app, _stub = client
-    app.state.settings.vmm.driver = "k8s"
-    response = await http.post(
-        "/api/v1/workspaces",
-        json={"id": "ws-k8s", "kernel": "/k", "rootfs": "/r", "egress": False},
-        headers=auth(),
-    )
-    assert response.status_code == 201
-    assert response.json()["host"] is None
-    # No minted identity on the k8s backend (#111): the runner pod
-    # builds no seed, so nothing would ever plant the key — the key
-    # endpoint answers the no-identity 404 instead of serving a key
-    # no guest will accept.
-    assert response.json()["ssh_pubkey"] is None
-    key = await http.get("/api/v1/workspaces/ws-k8s/ssh-key", headers=auth())
-    assert key.status_code == 404
-    assert "no minted identity" in key.json()["detail"]
-    app.state.settings.vmm.driver = "local"
-
-
 async def test_image_pinned_by_workspace_artifacts(client) -> None:
     """An image with live workspaces cannot be removed (#14): the
     overlay backs it; deleting the workspace releases the pin."""
@@ -854,27 +806,6 @@ async def test_create_records_egress(client) -> None:
         headers=auth(),
     )
     assert quiet.json()["egress"] is False
-
-
-async def test_create_refuses_egress_on_k8s(client, monkeypatch) -> None:
-    """Egress is the create default, so the k8s backend refuses at
-    CREATE (#70 review) — not at first boot, which would trap the id
-    until delete+recreate."""
-    http, app, _stub = client
-    monkeypatch.setattr(app.state.settings.vmm, "driver", "k8s")
-    refused = await http.post(
-        "/api/v1/workspaces",
-        json={"id": "ws-k8s", "kernel": "/k", "rootfs": "/r", "egress": True},
-        headers=auth(),
-    )
-    assert refused.status_code == 400
-    assert 'egress": false' in refused.json()["detail"]
-    quiet = await http.post(
-        "/api/v1/workspaces",
-        json={"id": "ws-k8s", "kernel": "/k", "rootfs": "/r", "egress": False},
-        headers=auth(),
-    )
-    assert quiet.status_code == 201
 
 
 async def test_create_with_user_data_reaches_the_row(client) -> None:
@@ -1011,26 +942,6 @@ async def test_workspace_mutation_is_refused_with_a_named_error(
     assert missing.status_code == 404
 
 
-async def test_create_refuses_user_data_on_k8s(client, monkeypatch) -> None:
-    """The k8s runner does not build seed disks yet: refuse at create
-    (the egress shape) instead of storing a payload nothing runs."""
-    http, app, _stub = client
-    monkeypatch.setattr(app.state.settings.vmm, "driver", "k8s")
-    refused = await http.post(
-        "/api/v1/workspaces",
-        json={
-            "id": "ws-k8s-ud",
-            "kernel": "/k",
-            "rootfs": "/r",
-            "egress": False,
-            "user_data": "#!/bin/sh\ntrue\n",
-        },
-        headers=auth(),
-    )
-    assert refused.status_code == 400
-    assert "without user_data" in refused.json()["detail"]
-
-
 async def test_storage_report_lists_consumers(client) -> None:
     """GET /api/v1/storage names the budget, every workspace's cost
     against its ceilings, and the catalog's (#184) — each image with
@@ -1109,42 +1020,6 @@ async def test_create_refused_below_the_storage_floor(
     assert listed.json() == []
 
 
-async def test_storage_report_refused_on_k8s(client, monkeypatch) -> None:
-    """The report describes the local backend's artifact files; k8s
-    keeps them on per-workspace claims and gets a named refusal."""
-    http, app, _stub = client
-    monkeypatch.setattr(app.state.settings.vmm, "driver", "k8s")
-    refused = await http.get("/api/v1/storage", headers=auth())
-    assert refused.status_code == 400
-    assert "not served by the k8s backend" in refused.json()["detail"]
-
-
-async def test_create_not_refused_below_floor_on_k8s(
-    client, monkeypatch
-) -> None:
-    """A k8s create at a critical local filesystem proceeds: the
-    artifacts live on per-workspace claims, not this state disk."""
-    http, app, _stub = client
-    app.state.settings.vmm.state_dir.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(app.state.settings.vmm, "driver", "k8s")
-    monkeypatch.setattr(
-        app.state.settings.vmm,
-        "storage_floor_mib",
-        (1 << 50) // (1024 * 1024),
-    )
-    created = await http.post(
-        "/api/v1/workspaces",
-        json={
-            "id": "ws-k8s-floor",
-            "kernel": "/k",
-            "rootfs": "/r",
-            "egress": False,
-        },
-        headers=auth(),
-    )
-    assert created.status_code == 201
-
-
 async def test_image_import_refused_below_the_storage_floor(
     client, monkeypatch
 ) -> None:
@@ -1220,24 +1095,6 @@ async def test_image_import_refused_by_incoming_size(
     )
     assert refused.status_code == 507
     assert "incoming bytes" in refused.json()["detail"]
-
-
-async def test_image_import_floor_applies_on_k8s(client, monkeypatch) -> None:
-    """The image catalog lives on the daemon's state disk on every
-    backend: a k8s daemon below its floor answers the same 507."""
-    http, app, _stub = client
-    app.state.settings.vmm.state_dir.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(app.state.settings.vmm, "driver", "k8s")
-    monkeypatch.setattr(
-        app.state.settings.vmm,
-        "storage_floor_mib",
-        (1 << 50) // (1024 * 1024),
-    )
-    refused = await http.post(
-        "/api/v1/images", json={"source": "/x.tar"}, headers=auth()
-    )
-    assert refused.status_code == 507
-    assert "before importing images" in refused.json()["detail"]
 
 
 async def test_home_import_refused_by_content_length(
@@ -1434,29 +1291,6 @@ async def test_resize_is_idempotent_on_identical_sizes(client) -> None:
     assert same.status_code == 200
     assert same.json()["changes"] == []
     assert same.json()["home_mib"] == 2048
-
-
-async def test_resize_refused_on_k8s(client, monkeypatch) -> None:
-    http, app, _stub = client
-    created = await http.post(
-        "/api/v1/workspaces",
-        json={
-            "id": "ws-k8s-rs",
-            "kernel": "/k",
-            "rootfs": "/r",
-            "egress": False,
-        },
-        headers=auth(),
-    )
-    assert created.status_code == 201
-    monkeypatch.setattr(app.state.settings.vmm, "driver", "k8s")
-    refused = await http.post(
-        "/api/v1/workspaces/ws-k8s-rs/resize",
-        json={"home_mib": 128},
-        headers=auth(),
-    )
-    assert refused.status_code == 400
-    assert "not served by the k8s backend" in refused.json()["detail"]
 
 
 async def test_resize_without_a_volume_updates_the_row(client) -> None:

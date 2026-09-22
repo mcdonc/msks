@@ -315,11 +315,6 @@ in
     exec = ''exec bash "$DEVENV_ROOT/scripts/build-guest.sh" "$@"'';
   };
 
-  scripts.msks-build-runner-image = {
-    description = "Build the k8s vm-runner container image archive into the guest state dir (.devenv/state/guest; MSKS_GUEST_DIR relocates it)";
-    exec = ''exec bash "$DEVENV_ROOT/scripts/build-runner-image.sh" "$@"'';
-  };
-
   # The dev-mode daemon by hand (#231): `msks-dev` runs the same
   # script the msksd process above execs, in a kept-open terminal;
   # Ctrl-C stops it. See the block comment at `processes = {` above.

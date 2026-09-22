@@ -80,7 +80,7 @@ Stopping a workspace presses the ACPI power button
 poweroff that flushes its persistent disks (#14).
 
 Every step of the build runs inside the repo on any Linux host with
-nix (the k8s vm-runner container archive comes from the same tree):
+nix:
 
 ```bash
 devenv --quiet -O dotenv.enable:bool false shell -- msks-build-guest
@@ -102,7 +102,7 @@ Boot tests self-provision: when `.devenv/state/guest/` holds built
 artifacts and
 `/dev/kvm` is usable, the smoke tests find them without any exported
 variables (`MSKSD_TEST_VMLINUX` / `MSKSD_TEST_INITRD` /
-`MSKSD_TEST_ROOTFS` / `MSKSD_TEST_CMDLINE` / `MSKSD_TEST_RUNNER_IMAGE`
+`MSKSD_TEST_ROOTFS` / `MSKSD_TEST_CMDLINE`
 keep precedence when you do export them). When the
 artifacts were never built, or `/dev/kvm` is missing or not accessible
 to your user (add yourself to the `kvm` group,
@@ -276,9 +276,8 @@ Egress arms while `MSKSD_EGRESS_ENABLED=true` and the daemon holds
 `nix/module.nix` does the same for a deployment host. A daemon that
 cannot arm the plumbing still serves everything else, and an egress
 workspace refuses to boot with the cause named (boot those with
-`--no-egress`). On k8s, create with `"egress": false` — the backend
-refuses egress creates until the NetworkPolicy parity lands (#69).
-Per-flow consent (allow/deny holds on each new connection) is #69.
+`--no-egress`). Per-flow consent (allow/deny holds on each new
+connection) is #69.
 See `docs/networking.md` for the full reference.
 
 ### Developing msks inside a workspace (#77)
@@ -411,17 +410,3 @@ Transport (#21), in the preferred vsock-first shape:
   dir on first serve). Without it the client proceeds with
   certificate verification off and says so on stderr — the CA
   fingerprint the daemon logs at startup is the cross-check.
-
-### k8s (k3s) smoke path
-
-The vm-runner container image comes from the same pinned nixpkgs as
-the local backend's cloud-hypervisor:
-
-```bash
-devenv --quiet -O dotenv.enable:bool false shell -- msks-build-runner-image
-sudo k3s ctr images import .devenv/state/guest/msks-vm-runner.docker.tar.gz
-```
-
-The k8s smoke tests reference the imported `msks-vm-runner:dev` image
-automatically once the archive is built; they skip when
-`MSKSD_TEST_KUBECONFIG` does not point at a cluster kubeconfig.

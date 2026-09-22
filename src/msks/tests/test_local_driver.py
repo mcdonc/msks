@@ -570,8 +570,7 @@ async def test_kill_via_pidfile(env, tmp_path: Path) -> None:
 
 async def test_kill_unknown_workspace_is_success(env) -> None:
     # Killing an absent VM is success (the absent-VM contract): a
-    # never-started workspace must stay deletable, like the k8s
-    # backend guarantees since the round-2 review.
+    # never-started workspace must stay deletable.
     app, _, _ = env
     await app.state.microvm.kill("ghost")
 
@@ -738,11 +737,9 @@ async def test_reset_refuses_a_running_vm(env, fake, tmp_path: Path) -> None:
     await app.state.microvm.kill(WID)
 
 
-async def test_driver_switch_and_validation(env) -> None:
+async def test_driver_resolution_and_validation(env) -> None:
     app, _, _ = env
     assert app.state.microvm.driver is app.state.microvm.local
-    app.state.settings.vmm.driver = "k8s"
-    assert app.state.microvm.driver is app.state.microvm.k8s
     app.state.settings.vmm.driver = "bogus"
     with pytest.raises(MicrovmError, match="unknown vmm driver"):
         app.state.microvm.driver

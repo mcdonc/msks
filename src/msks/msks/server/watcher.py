@@ -3,7 +3,7 @@
 Every ``event_poll_s`` the watcher compares each workspace row's last
 recorded status against the live driver view; a difference is written
 back and published on the event hub. Polling (not callbacks) keeps the
-watcher honest across driver restarts and both backends.
+watcher honest across driver restarts.
 """
 
 import asyncio
@@ -114,13 +114,8 @@ async def scan_storage(app, hub: EventHub) -> bool:
     Edge-triggered, like every watcher publish: a steady ``warn`` logs
     and announces once, not every poll. Recovery to ``ok`` announces
     too (an operator watching the event stream sees the all-clear).
-    The probe serves the local backend only: on k8s the artifacts
-    live on per-workspace claims the cluster places, and this
-    daemon's filesystem says nothing about them.
     """
     vmm = app.state.settings.vmm
-    if vmm.driver != "local":
-        return False
     usage = await asyncio.to_thread(storage.state_usage, vmm.state_dir)
     pressure = storage.pressure_for(
         usage, vmm.storage_warn_pct, vmm.storage_floor_mib

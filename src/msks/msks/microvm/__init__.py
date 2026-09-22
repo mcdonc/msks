@@ -2,19 +2,16 @@
 
 ``Microvm(app)`` is the single object workspace code talks to. It owns
 no VM logic itself — it dispatches to the driver named by the live
-setting ``settings.vmm.driver`` (``local`` or ``k8s``), so switching a
-deployment between a same-host cloud-hypervisor backend and a
-Kubernetes runner backend changes no code above this seam.
+setting ``settings.vmm.driver``, so swapping the backend that runs
+workspaces changes no code above this seam.
 """
 
 from .driver import MicrovmDriver
 from .errors import MicrovmError, MicrovmTimeoutError
-from .k8s import KubernetesRunner
 from .local import LocalCloudHypervisor
 from .spec import VmInfo, VmSpec
 
 __all__ = [
-    "KubernetesRunner",
     "LocalCloudHypervisor",
     "MicrovmDriver",
     "MicrovmError",
@@ -31,7 +28,6 @@ class Microvm:
     def __init__(self, app) -> None:
         self.app = app
         self.local = LocalCloudHypervisor(app)
-        self.k8s = KubernetesRunner(app)
 
     @property
     def driver(self) -> MicrovmDriver:
@@ -39,8 +35,6 @@ class Microvm:
         name = self.app.state.settings.vmm.driver
         if name == "local":
             return self.local
-        if name == "k8s":
-            return self.k8s
         raise MicrovmError(f"unknown vmm driver: {name!r}")
 
     async def prepare(self, spec: VmSpec) -> None:

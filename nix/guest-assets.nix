@@ -48,10 +48,10 @@
 # ships no xattrs that matter (spot-checked), and the hardlink
 # flattening is deliberate (see the root.tar comment below).
 #
-# Evaluate through the msks-build-guest / msks-build-runner-image
-# scripts (they pin nixpkgs to the devenv.lock revision);
-# `nix-build nix/guest.nix -A guest` with plain NIX_PATH also works
-# when the pinned channel is acceptable.
+# Evaluate through the msks-build-guest script (it pins nixpkgs
+# to the devenv.lock revision); `nix-build nix/guest.nix -A guest`
+# with plain NIX_PATH also works when the pinned channel is
+# acceptable.
 {
   lib,
   pkgs,
@@ -1221,9 +1221,7 @@ let
   # The canonical image artifact (#40): a container-image tar
   # (`podman load` compatible) in the containerDisk convention — one
   # layer carrying boot/ (kernel, initrd) and disk/ (rootfs.ext4,
-  # image.json schema 2). Importable with podman/skopeo/plain tar,
-  # and consumable as a containerDisk by the k8s backend later
-  # (#15).
+  # image.json schema 2). Importable with podman/skopeo/plain tar.
   bootTree =
     pkgs.runCommand "msks-image-boot-tree"
       {

@@ -8,10 +8,6 @@
   and msks.guestassets); the stock nixpkgs kernel also needs the initrd
   (MSKSD_TEST_INITRD) and the cmdline the manifest carries
   (MSKSD_TEST_CMDLINE) to reach userspace.
-- k8s: boots the runner image's guest in a pod when MSKSD_TEST_KUBECONFIG
-  points at a cluster kubeconfig (k3s in dev); skipped otherwise. The
-  runner image owns the guest artifacts, so the pod needs a KVM-capable
-  node and the imported image, nothing from this host.
 
 These never count toward the coverage gate (the package is fully
 covered by the faked-transport unit suites).
@@ -19,7 +15,7 @@ covered by the faked-transport unit suites).
 This module is the suite's shared harness: the env-tunable constants,
 the skip markers, and the helpers every area module uses. The tests
 live in one module per area beside this one — test_boot_lifecycle,
-test_user_data, test_k8s, test_console, test_egress,
+test_user_data, test_console, test_egress,
 test_dev_workspace, test_ssh_forward, and test_identity — and
 import what they need from here. The harness
 lives in the package `__init__` itself rather than a harness.py the
@@ -44,7 +40,6 @@ VMLINUX = os.environ.get("MSKSD_TEST_VMLINUX")
 INITRD = os.environ.get("MSKSD_TEST_INITRD")
 ROOTFS = os.environ.get("MSKSD_TEST_ROOTFS")
 CMDLINE = os.environ.get("MSKSD_TEST_CMDLINE")
-KUBECONFIG = os.environ.get("MSKSD_TEST_KUBECONFIG")
 # The package __init__ sits one level below the old flat module.
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
@@ -72,9 +67,6 @@ client = AsyncClient(verify=False, timeout=10.0)
 needs_local = pytest.mark.skipif(
     not VMLINUX or not ROOTFS or not os.access("/dev/kvm", os.W_OK),
     reason="set MSKSD_TEST_VMLINUX/MSKSD_TEST_ROOTFS with /dev/kvm access",
-)
-needs_k8s = pytest.mark.skipif(
-    not KUBECONFIG, reason="set MSKSD_TEST_KUBECONFIG"
 )
 
 #: The serial autologin's root-shell prompt: the last line the
@@ -380,33 +372,6 @@ async def run_in_console(
                 f"stalled ({exc}); retrying in a fresh session",
                 flush=True,
             )
-
-
-async def await_pod_running(
-    microvm, workspace_id: str, timeout_s: float = 120.0
-) -> None:
-    """Block until the runner pod reports the VM as running.
-
-    A crash-looping or never-scheduled pod (bad image, no /dev/kvm on
-    the node) never reaches ``running``; fail with the observed status
-    instead of letting a ``starting`` snapshot pass.
-    """
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout_s
-    while loop.time() < deadline:
-        status = (await microvm.info(workspace_id)).status.value
-        if status == "running":
-            return
-        if status in ("stopped", "absent"):
-            raise AssertionError(
-                f"runner pod for {workspace_id!r} went {status!r} before "
-                "running — check the image import and the node's /dev/kvm"
-            )
-        await asyncio.sleep(1.0)
-    raise AssertionError(
-        f"runner pod for {workspace_id!r} stayed {status!r} for {timeout_s}s "
-        "— check the image import and the node's /dev/kvm"
-    )
 
 
 EGRESS = os.environ.get("MSKSD_TEST_EGRESS")

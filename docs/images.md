@@ -368,6 +368,3 @@ The rules worth knowing:
   boot-complete, not the shell. `cloud-init status --wait` (or the
   serial log) says when provisioning finished; a factory reset
   re-runs the payload from the same seed.
-- **The k8s backend does not serve `user_data` yet** — the runner pod
-  does not build seed disks; create refuses the combination by name
-  (the same shape as its egress refusal).
