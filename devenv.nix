@@ -661,8 +661,13 @@ in
     # name the msks root itself; the client creates what it needs
     # below them. Unlike the daemon-material presets above (the
     # preset wins), these are directories with nothing to wait for,
-    # so a value exported before entering the shell survives and the
-    # per-worktree default fills only the unset one.
+    # so a non-empty value exported before entering the shell
+    # survives (an empty one counts as unset, the same rule the
+    # client applies) and the per-worktree default fills the rest.
+    # Workspaces created before this preset keep their minted
+    # halves under the old root; their identities move with the
+    # worktree's state — deleting the worktree deletes them along
+    # with the daemon catalog they belong to.
     : "''${MSKSC_CACHE_DIR:=$DEVENV_ROOT/.devenv/state/msksc/cache}"
     : "''${MSKSC_DATA_DIR:=$DEVENV_ROOT/.devenv/state/msksc/data}"
     export MSKSC_CACHE_DIR MSKSC_DATA_DIR

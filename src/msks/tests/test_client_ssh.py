@@ -629,6 +629,41 @@ def test_data_dir_honors_msksc_dir(monkeypatch: pytest.MonkeyPatch) -> None:
     assert ssh.data_dir() == Path("/tmp/durable-identities")
 
 
+def test_cache_dir_expands_a_home_relative_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A leading ``~`` expands, matching the XDG fallback branches
+    (#251): `~/state` names a home directory, not a literal
+    ``~/state`` under the CWD."""
+    monkeypatch.setenv("MSKSC_CACHE_DIR", "~/state/cache")
+    assert ssh.cache_dir() == Path.home() / "state" / "cache"
+
+
+def test_data_dir_refuses_a_relative_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A relative root names a different directory from every
+    working directory — the one thing a state root must not do —
+    so it is one named line, not a silent CWD-dependent location
+    (#251)."""
+    monkeypatch.setenv("MSKSC_DATA_DIR", "rel/identities")
+    with pytest.raises(SystemExit, match="MSKSC_DATA_DIR"):
+        ssh.data_dir()
+
+
+@pytest.mark.parametrize("variable", ["MSKSC_CACHE_DIR", "MSKSC_DATA_DIR"])
+def test_state_dir_empty_counts_as_unset(
+    monkeypatch: pytest.MonkeyPatch, variable: str
+) -> None:
+    """An empty value is the unset state — the same rule the
+    shell preset applies — so the XDG root answers (#251)."""
+    monkeypatch.setenv("XDG_CACHE_HOME", "/tmp/xdg-cache")
+    monkeypatch.setenv("XDG_DATA_HOME", "/tmp/xdg-data")
+    monkeypatch.setenv(variable, "")
+    assert ssh.cache_dir() == Path("/tmp/xdg-cache/msks")
+    assert ssh.data_dir() == Path("/tmp/xdg-data/msks")
+
+
 # --- passthrough handling ---
 
 

@@ -32,7 +32,7 @@ namespace — a box that runs both can export each side independently.
 | `MSKSC_TOKEN`          | A daemon bearer token (see tokens below)                                                                                          | — (required)             |
 | `MSKSC_CAFILE`         | A PEM file to verify the daemon's TLS certificate                                                                                 | unverified with warning  |
 | `MSKSC_EXPECTED_IMAGE` | An image reference the operator sets; `msks ls` compares it with the image the daemon reports in `/health` and names drift (#160) | unset (no check)         |
-| `MSKSC_CACHE_DIR`      | The directory per-workspace host-key caches live under (#251); it names the root itself, not an XDG base                          | `~/.cache/msks`          |
+| `MSKSC_CACHE_DIR`      | The directory per-workspace host-key caches live under (#251); the per-workspace directories are created below it                 | `~/.cache/msks`          |
 | `MSKSC_DATA_DIR`       | The directory client-minted workspace identities live under (#251); same naming rule                                              | `~/.local/share/msks`    |
 
 The two directory variables are separate because their contents
@@ -43,6 +43,11 @@ workspace. Pointing the cache at a per-project, disposable
 location and the identities at somewhere durable is the intended
 use; one variable for both would tie their lifetimes together.
 
+Each names its directory directly — the per-workspace directories
+are created below it — and takes an absolute path (a relative
+value is refused with a line naming the fix; a leading `~`
+expands; an empty value counts as unset).
+
 A missing `MSKSC_TOKEN` is an error before any network activity: the
 client names the variable and exits. Tokens come from the daemon:
 `POST /api/v1/tokens` mints one, and the devenv environment presets
@@ -52,8 +57,14 @@ served once, a fresh devenv shell needs no exports. The same shell
 presets the two directory variables at the worktree's own
 `.devenv/state/msksc/` (cache under `cache/`, identities under
 `data/`), so each checkout's client state stays its own — one
-tree's cache entry is never read by another (#251); a value
-exported before entering the shell survives the preset.
+tree's cache entry is never read by another (#251); a non-empty
+value exported before entering the shell survives the preset, and
+an empty one counts as unset. Workspaces created before the preset
+keep their minted halves under the previous root
+(`~/.local/share/msks/<id>/`): inside a devenv shell, either move
+that workspace's directory under the worktree's
+`.devenv/state/msksc/data/` or unset `MSKSC_DATA_DIR` — the ssh
+error names the path it looked in.
 
 ```bash
 msks ls        # presets: https://127.0.0.1:8660, the worktree's
@@ -738,7 +749,8 @@ A client-minted workspace (#121, the `msks create` default) serves
 its public half; its private half never reached the daemon, so
 `--private` and `--out` exit with an error naming where that half
 lives — the client data root of the client that created the
-workspace (`~/.local/share/msks/<id>/identity`).
+workspace (`~/.local/share/msks/<id>/identity`, or that root under
+`MSKSC_DATA_DIR`).
 
 ## `msks ssh`
 
@@ -772,7 +784,8 @@ session itself keeps every option. For
 a daemon-minted workspace the private half arrives over that API;
 for a client-minted one (#121, the create default) the API serves
 the public half and the private half comes from the local data root
-(`~/.local/share/msks/<id>/identity`, written at create) — a
+(`~/.local/share/msks/<id>/identity` under the default root,
+`MSKSC_DATA_DIR` when it is set; written at create) — a
 missing, stale, or corrupt file exits with one line naming the path
 and the recovery. Either way the session writes no new copy of the
 private half anywhere: a transient in-process ssh-agent holds it in
@@ -781,8 +794,9 @@ memory for the session, ssh names the identity by its public half
 daemon-minted half arrives over the API and goes away with the
 process, and a client-minted half is read from its one file and
 left exactly there. Host keys land in a per-workspace
-`known_hosts` under the msks cache root (XDG_CACHE_HOME, else
-`~/.cache/msks`, then `<ws>/known_hosts`) under `accept-new`; they
+`known_hosts` under the msks cache root — `MSKSC_CACHE_DIR` when
+it is set, else `XDG_CACHE_HOME` or `~/.cache/msks`, then
+`<ws>/known_hosts` — under `accept-new`; they
 persist across stop/start on the workspace's
 overlay, so the first-connection entry keeps matching. (The alias block keeps
 its own known_hosts under `~/.cache/msks/msks-<ws>/` — the two
