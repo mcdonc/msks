@@ -128,9 +128,10 @@ no web frontend yet.
 The deployment host for development is keithmoon, a bare-metal NixOS
 machine. Its configuration includes the msks flake's module; the test
 loop is include-the-module-and-rebuild: new msks code and
-configuration land through the host's rebuild, workspaces reconcile
-with the rebuild (#235), and a bad build rolls back through the
-host's NixOS generations. Host-specific configuration stays out of
+configuration land through the host's rebuild, running workspaces
+are unaffected by a rebuild (declared shapes become instantiable;
+retired ones go off the menu, #237), and a bad build rolls back
+through the host's NixOS generations. Host-specific configuration stays out of
 the repo — the module carries the msks-owned parts, the host's own
 files carry everything else. Work that needs no host (the unit
 suite, client work) runs from a checkout as before; the bare-host
@@ -164,10 +165,9 @@ without egress.
 9. **Deployment-host model (#229)** — the rework in flight: the
    flake and its NixOS module (#231), host networking and kernel
    configuration as Nix (#233), the retained debian guest image
-   running under the new setup (#234), VM lifecycle reconciliation
-   driven by rebuilds (#235), the workspace-accounting inventory
-   against microvm.nix (#237), the appliance removal (#232), and
-   the Kubernetes removal (#236).
+   running under the new setup (#234), the workspace-accounting
+   inventory against microvm.nix (#237), the appliance removal
+   (#232), and the Kubernetes removal (#236).
 
 Later / optional: pre-warmed VMs via snapshot/restore, a web
 frontend if ever wanted.
