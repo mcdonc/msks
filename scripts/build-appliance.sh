@@ -53,10 +53,26 @@ if [ "$build" = nixos ] && [ "${MSKS_APPLIANCE_MODE:-dev}" = deployed ]; then
     # mktemp, not a fixed .tmp name: two concurrent deployed builds
     # would race on the same pair (#221 review).
     keytmp=$(mktemp "$app_dir/.update-key.XXXXXX")
+    # mktemp CREATED the file to reserve the unique name, and
+    # ssh-keygen -f refuses an existing path (it asks to overwrite,
+    # and </dev/null answers EOF): free the name and let keygen own
+    # the create (found live on the first fresh seed, #222). A
+    # keygen failure cleans its own temp names — the state dir does
+    # not accumulate hidden halves from failing attempts.
+    rm -f "$keytmp"
     ssh-keygen -q -t ed25519 -N '' -C "msks-appliance-update" \
-      -f "$keytmp" </dev/null
-    mv -f "$keytmp" "$app_dir/update-key"
+      -f "$keytmp" </dev/null || {
+      rm -f "$keytmp" "$keytmp.pub"
+      exit 1
+    }
+    # The public half lands first: a crash between the two moves
+    # leaves a .pub without its private half, which the seed-once
+    # guard and the derive check below both heal on the next build
+    # (no update-key means a fresh pair). The reverse order would
+    # strand a private half whose missing .pub fails the build until
+    # an operator intervenes.
     mv -f "$keytmp.pub" "$app_dir/update-key.pub"
+    mv -f "$keytmp" "$app_dir/update-key"
   fi
   # Presence alone is not integrity: a swapped .pub strands every
   # later update (authorized_keys baked the .pub at build time), so

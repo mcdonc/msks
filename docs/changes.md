@@ -493,6 +493,19 @@ processes up` shows one devenv startup instead of two, and the
 
 ### Fixed
 
+- **`msks-appliance-build` fresh deployed builds (#222).** The first
+  deployed build into a new appliance dir died seeding the update
+  key: `mktemp` reserved the key path and `ssh-keygen` refuses to
+  write an existing file, so keygen exited instead of creating the
+  key. The seed now frees the reserved name and lets ssh-keygen own
+  the create; appliance dirs that already hold a key are unaffected.
+- **`msks-appliance-update` second run (#222).** The update lock's
+  exit trap removed the lock directory while the pid file still
+  sat inside it, so the removal always failed and every update
+  left a stale lock that refused the next update until an operator
+  deleted it. The trap now removes the pid file first; the lock
+  releases on exit as intended.
+
 - **Console websocket closes protocol-clean (#217).** The console
   bridge now ends every session with a close frame instead of
   dropping the TCP: a guest that refuses the console signature

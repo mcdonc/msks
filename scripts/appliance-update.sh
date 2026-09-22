@@ -68,7 +68,14 @@ if ! mkdir "$update_lock" 2>/dev/null; then
   die "another msks-appliance-update holds $update_lock (started $(cat "$update_lock/pid" 2>/dev/null || echo '?'))"
 fi
 echo $$ >"$update_lock/pid"
-trap 'rmdir "$update_lock" 2>/dev/null || true' EXIT
+# The pid file lives INSIDE the lock dir, so rmdir alone can never
+# remove it — every run left a stale lock that blocked the next
+# update until removed by hand (found live, #222). Remove the
+# contents, then the dir — but only when the lock is still ours: an
+# operator may have removed a stalled run's stale lock and let a
+# second run take the name, and this trap must not release THAT
+# run's lock out from under it (the pid check names the owner).
+trap '[ "$(cat "$update_lock/pid" 2>/dev/null)" = "$$" ] && { rm -f "$update_lock/pid"; rmdir "$update_lock" 2>/dev/null; } || true' EXIT
 
 curl -sk --connect-timeout 2 "https://$guest_ip:8660/api/v1/health" >/dev/null 2>&1 ||
   die "the appliance is not serving https://$guest_ip:8660 — start it first: msks-appliance-up"
