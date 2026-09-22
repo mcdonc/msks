@@ -205,8 +205,10 @@ devenv --quiet -O dotenv.enable:bool false shell -- devenv processes down
 #### Updating the deployed appliance over ssh (#220)
 
 The NixOS appliance built with `MSKS_APPLIANCE_BUILD=nixos
-MSKS_APPLIANCE_MODE=deployed` updates over its bridge sshd — no
-image rebuild, no repack:
+MSKS_APPLIANCE_MODE=deployed` updates over its bridge sshd: the
+operator machine builds the new generation and copies only the
+changed store paths across (about 20s for a config change), and the
+appliance switches its own profile:
 
 ```bash
 msks-appliance-update          # rebuild + copy the delta over ssh, cache the generation

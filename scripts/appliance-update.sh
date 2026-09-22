@@ -60,8 +60,23 @@ mode="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("mod
 [ -f "$app_dir/update-key" ] ||
   die "$app_dir/update-key is missing — this image was built without an update key; rebuild with msks-appliance-build to seed one"
 
+# One update at a time: two concurrent runs would race on the pin,
+# the profile rewind, and the current/previous rotation (#221
+# review). mkdir is atomic; a stale lock names its owner.
+update_lock="$app_dir/update.lock"
+if ! mkdir "$update_lock" 2>/dev/null; then
+  die "another msks-appliance-update holds $update_lock (started $(cat "$update_lock/pid" 2>/dev/null || echo '?'))"
+fi
+echo $$ >"$update_lock/pid"
+trap 'rmdir "$update_lock" 2>/dev/null || true' EXIT
+
 curl -sk --connect-timeout 2 "https://$guest_ip:8660/api/v1/health" >/dev/null 2>&1 ||
   die "the appliance is not serving https://$guest_ip:8660 — start it first: msks-appliance-up"
+# The era record is a prerequisite, checked before any build: without
+# it the update cannot pin the generation's erofs (the pin block
+# below names the why).
+[ -f "$app_dir/boot-cache/booted-base.erofs" ] ||
+  die "no booted-base record at $app_dir/boot-cache/booted-base.erofs — boot the appliance once with the current scripts (msks-appliance-down && msks-appliance-up), then update"
 
 # nix-copy-closure and nixos-rebuild spawn their OWN ssh with the
 # default config: it would offer the invoking user's agent keys
@@ -93,13 +108,20 @@ WRAPPER
 chmod +x "$app_dir/update-bin/ssh"
 
 guest() {
-  if ! "$app_dir/update-bin/ssh" -o BatchMode=yes "root@$guest_ip" true 2>/dev/null; then
-    # A refused host key is the pin doing its job: rotation is worth
-    # an operator's eyes. The one legitimate re-pin is a reseeded
-    # state disk (host keys live there) — name it; anything else,
-    # investigate before deleting the pin.
-    die "ssh to $guest_ip failed (host key changed? the pin lives at $ssh_known_hosts — re-pin ONLY after reseeding the state disk: rm $ssh_known_hosts)"
-  fi
+  local probe
+  probe=$("$app_dir/update-bin/ssh" -o BatchMode=yes "root@$guest_ip" true 2>&1) ||
+    case "$probe" in
+    *"Host key verification failed"* | *"host key has changed"*)
+      # The pin doing its job: rotation is worth an operator's eyes.
+      # The one legitimate re-pin is a reseeded state disk (host keys
+      # live there); anything else, investigate before deleting the
+      # pin.
+      die "ssh to $guest_ip failed on the pinned host key — re-pin ONLY after reseeding the state disk: rm $ssh_known_hosts"
+      ;;
+    *)
+      die "ssh to $guest_ip failed (is the appliance serving?) — $probe"
+      ;;
+    esac
   "$app_dir/update-bin/ssh" "root@$guest_ip" "$@"
 }
 
@@ -159,14 +181,18 @@ mkdir -p "$gen_dir"
 # rebuild replaces <state>/base-store.erofs with a lower the older
 # generation's upper was never written against — those boots freeze
 # at switch-root (found live, #220). The pin comes from the run
-# script's booted-base record (what the RUNNING system booted with —
-# the upper's era), not from whatever <state>/base-store.erofs holds
-# right now.
+# script's booted-base record ONLY — what the RUNNING system booted
+# with, the upper's era. Without the record the era is unknowable
+# host-side, and pinning from <state>/base-store.erofs would freeze
+# the update's generation whenever the image was rebuilt since the
+# volume's era — refuse instead (a boot with the current scripts
+# writes the record at serve time).
 era_base="$app_dir/boot-cache/booted-base.erofs"
-[ -f "$era_base" ] || era_base="$app_dir/base-store.erofs"
 if [ -f "$era_base" ]; then
   ln -f "$era_base" "$gen_dir/base-store.erofs" 2>/dev/null ||
     cp -L "$era_base" "$gen_dir/base-store.erofs"
+else
+  die "no booted-base record at $era_base — boot the appliance once with the current scripts (msks-appliance-down && msks-appliance-up), then update: the record pins each generation's erofs to the era the volume's upper was written against"
 fi
 guest cat "$profile_path/kernel" >"$gen_dir/kernel"
 guest cat "$profile_path/initrd" >"$gen_dir/initrd"
@@ -189,6 +215,22 @@ ln -sfn "gen-$gen_num" "$app_dir/boot-cache/current"
 if [ -n "$prev" ] && [ "$prev" != "gen-$gen_num" ] && [ -d "$app_dir/boot-cache/$prev" ]; then
   ln -sfn "$prev" "$app_dir/boot-cache/previous"
 fi
+
+# Host-side trim mirroring the guest's keep-3 profile policy: the
+# current and previous generations stay (the fallback's target);
+# older gen dirs go. The erofs pins are hard links — deleting a dir
+# releases one link; the shared inode lives while current, previous,
+# or the booted-base record holds another (#221 review).
+keep_current="$(basename "$(readlink "$app_dir/boot-cache/current" 2>/dev/null)" 2>/dev/null || true)"
+keep_prev="$(basename "$(readlink "$app_dir/boot-cache/previous" 2>/dev/null)" 2>/dev/null || true)"
+for d in "$app_dir"/boot-cache/gen-*; do
+  [ -d "$d" ] || continue
+  n="$(basename "$d")"
+  case "$n" in
+  "$keep_current" | "$keep_prev") ;;
+  *) rm -rf "$d" ;;
+  esac
+done
 
 echo "msks: generation $gen_num cached ($profile_path)"
 echo "msks: activate with: msks-appliance-down && msks-appliance-up"

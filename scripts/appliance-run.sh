@@ -287,6 +287,15 @@ resolve_boot_source
 # The deployed letters are PINNED to the config's expectations
 # (nix/appliance-config.nix): vda erofs, vdb store volume, vdc state
 # — the payload order below is that order.
+# The store volume path resolves ONCE, exactly as appliance-setup.sh
+# resolves it (relative values land below the app dir, never the
+# invoking CWD — a CWD-relative attach would pass setup's check and
+# then hand the VMM a different file, #221 review).
+store_volume="${MSKS_APPLIANCE_STORE_VOLUME:-$app_dir/store-volume.img}"
+case "$store_volume" in
+/*) ;;
+*) store_volume="$app_dir/$store_volume" ;;
+esac
 case "$appliance_mode" in
 debian)
   disks=$(printf '    {"path": "%s/rootfs.ext4", "readonly": true, "image_type": "Raw"},\n    {"path": "%s", "image_type": "Raw"}' "$app_dir" "$state_disk")
@@ -298,7 +307,7 @@ deployed)
   # $boot_erofs: the cache's pinned base when a cached generation
   # boots (resolve_boot_source), the image's otherwise.
   disks=$(printf '    {"path": "%s", "readonly": true, "image_type": "Raw"},\n    {"path": "%s", "image_type": "Raw"},\n    {"path": "%s", "image_type": "Raw"}' \
-    "$boot_erofs" "${MSKS_APPLIANCE_STORE_VOLUME:-$app_dir/store-volume.img}" "$state_disk")
+    "$boot_erofs" "$store_volume" "$state_disk")
   ;;
 esac
 
@@ -516,6 +525,15 @@ if [ -z "$served" ] && [ -z "${stopping:-}" ]; then
     else
       rm -f "$app_dir/boot-cache/previous"
     fi
+    # Preserve the failed boot's serial evidence BEFORE the new VMM
+    # exists: cloud-hypervisor opens the serial file with truncate at
+    # vm.create (vmm/src/console_devices.rs), and the fallback's own
+    # message points AT that log as the record of why the generation
+    # failed (#221 review — the asymmetry with cloud-hypervisor.log,
+    # which the fallback spawn appends to, shows preservation was the
+    # intent).
+    mv -f "$app_dir/serial.log" \
+      "$app_dir/serial.log.fell-back-$(date +%s)" 2>/dev/null || true
     # Re-resolve against the moved links — boot_vm reads these
     # globals, and they still point at the broken generation.
     resolve_boot_source
@@ -538,6 +556,15 @@ if [ -z "$served" ] && [ -z "${stopping:-}" ]; then
     kill "$chpid" 2>/dev/null || true
     wait "$chpid" 2>/dev/null || true
     rm -f "$app_dir/api.sock" "$app_dir/vmm-sock" "$app_dir/vmm-sock.pid"
+    # A stop that landed while the old VMM died: honor it instead of
+    # booting a fallback nobody asked for — graceful pressed power on
+    # the dead socket above, and a freshly spawned VMM would run
+    # un-hit through the whole serve window before "stopped" (#221
+    # review).
+    if [ -n "${stopping:-}" ]; then
+      echo "msks: appliance stopped during boot"
+      exit 0
+    fi
     cloud-hypervisor \
       --api-socket "$app_dir/api.sock" \
       >>"$app_dir/cloud-hypervisor.log" 2>&1 &

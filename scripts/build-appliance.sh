@@ -50,15 +50,25 @@ update_key_ies=""
 if [ "$build" = nixos ] && [ "${MSKS_APPLIANCE_MODE:-dev}" = deployed ]; then
   mkdir -p "$app_dir"
   if [ ! -f "$app_dir/update-key" ]; then
+    # mktemp, not a fixed .tmp name: two concurrent deployed builds
+    # would race on the same pair (#221 review).
+    keytmp=$(mktemp "$app_dir/.update-key.XXXXXX")
     ssh-keygen -q -t ed25519 -N '' -C "msks-appliance-update" \
-      -f "$app_dir/update-key.tmp" </dev/null
-    mv -f "$app_dir/update-key.tmp" "$app_dir/update-key"
-    mv -f "$app_dir/update-key.tmp.pub" "$app_dir/update-key.pub"
+      -f "$keytmp" </dev/null
+    mv -f "$keytmp" "$app_dir/update-key"
+    mv -f "$keytmp.pub" "$app_dir/update-key.pub"
   fi
-  [ -f "$app_dir/update-key.pub" ] || {
-    echo "msks: $app_dir/update-key exists without its .pub — delete both and rebuild to reseed" >&2
+  # Presence alone is not integrity: a swapped .pub strands every
+  # later update (authorized_keys baked the .pub at build time), so
+  # the private key must derive the public one (#221 review).
+  derived=""
+  [ -f "$app_dir/update-key.pub" ] &&
+    derived=$(ssh-keygen -y -f "$app_dir/update-key" 2>/dev/null | awk '{print $1" "$2}') || derived=""
+  if [ -z "$derived" ] ||
+    [ "$derived" != "$(awk '{print $1" "$2}' "$app_dir/update-key.pub" 2>/dev/null)" ]; then
+    echo "msks: $app_dir/update-key and its .pub do not match — delete both and rebuild to reseed" >&2
     exit 1
-  }
+  fi
   update_key_ies="-I appliance-update-key=$app_dir/update-key.pub"
 fi
 # One build, two uses: the GC-root symlink IS the build — nix-build
@@ -150,7 +160,14 @@ seed_once() {
   fi
 }
 seed_once stateDisk "$app_dir/state.ext4"
-seed_once storeVolume "${MSKS_APPLIANCE_STORE_VOLUME:-$app_dir/store-volume.img}"
+# Same resolution the run and setup scripts apply: relative store
+# volume values land below the app dir (#221 review).
+store_volume_dst="${MSKS_APPLIANCE_STORE_VOLUME:-$app_dir/store-volume.img}"
+case "$store_volume_dst" in
+/*) ;;
+*) store_volume_dst="$app_dir/$store_volume_dst" ;;
+esac
+seed_once storeVolume "$store_volume_dst"
 if [ "$previous" = "$out" ]; then
   echo "msks: appliance assets up to date in $app_dir (image $out)"
 else
