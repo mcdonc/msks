@@ -14,7 +14,7 @@
 # then diff the wheel's METADATA Requires-Dist against
 # propagatedBuildInputs — a base entry the new wheel adds needs a
 # hand-edit here, or the runtime check fails only at package
-# build time (#203's blast radius). test_textual_pkg.py fails
+# build time (#203's blast radius). test_pkg_mirror.py fails
 # when pyproject's floor moves past this pin.
 {
   lib,

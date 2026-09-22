@@ -144,8 +144,8 @@ class FlowConsumer:
         if NetfilterQueue is None:
             raise MicrovmError(
                 f"consent for {self.workspace_id}: netfilterqueue is "
-                "not installed (the deployment image installs "
-                "msks[nfqueue]); refusing to run an unanswered queue"
+                "not installed (the deployment image ships the "
+                "binding); refusing to run an unanswered queue"
             )
         self._nfq = NetfilterQueue()
         self._nfq.bind(self.queue_num, self.on_packet)

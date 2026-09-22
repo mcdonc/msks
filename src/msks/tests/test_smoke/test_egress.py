@@ -145,9 +145,9 @@ async def test_local_egress_boot() -> None:
             "TCP-42",
             app=app,
         )
-        # Containment: the tap's input chain lets DHCP and DNS through
-        # and nothing else — the daemon's API (on the tap gateway)
-        # must refuse the guest root's connection attempt.
+        # Containment: the tap's input chain lets DHCP and DNS
+        # through and nothing else — every host-side service must
+        # refuse the guest root's connection attempt.
         await run_in_console(
             microvm,
             wid,

@@ -9,9 +9,9 @@
 # official genericcloud cloud image (#30, #41): real Debian with
 # PID 1, apt, Debian's own modules — and Debian's own socat (built
 # WITH_VSOCK) serving the vsock console. The kernel is Debian's
-# *generic* flavor of the same upstream version (#96) — the SAME
-# pin the appliance image boots, so one deb serves both and the
-# appliance's virtiofs/KVM needs drove the choice. The minimal
+# *generic* flavor of the same upstream version (#96) — it builds
+# virtio-pci in and carries the KVM modules, so one pin serves the
+# workspace guest and its nested-KVM workspaces. The minimal
 # initramfs msks builds carries the six modules the generic flavor
 # needs to mount the ext4 root (the cloud flavor #37 chose built
 # ext4 in; the ~2.5s it dodged was Debian's stock 34MB MODULES=most
@@ -90,9 +90,9 @@ let
   # it, an ro mount would block apt and provisioning state.
   kernelCmdline = "console=ttyS0 root=/dev/vda rootfstype=ext4 rw";
 
-  # Debian's GENERIC kernel flavor (#96), the same pin the
-  # appliance image boots — one deb fetch and one version pin serve
-  # both images; that sharing is the whole motivation (the flavor
+  # Debian's GENERIC kernel flavor (#96) — one deb fetch and one
+  # version pin serve the workspace guest and its nested-KVM
+  # workspaces; that sharing is the whole motivation (the flavor
   # difference itself costs the guest little: virtio-pci and
   # virtiofs are BUILT IN here, ext4 and virtio_blk are modules —
   # so the initramfs below loads six modules in dependency order,
@@ -406,15 +406,15 @@ let
       'virtio_net' \
       > $out/etc/modules-load.d/msks-net.conf
 
-    # The L3 recursion stack (#82): a workspace running msksd needs
-    # the same kernel modules the appliance loads — tun for the
+    # The nested-msks stack (#82): a workspace running msksd needs
+    # the same kernel modules a deployment host loads — tun for the
     # per-inner-workspace taps, the nftables/NAT set the daemon's
-    # rulesets name — so the image can be an appliance in miniature.
+    # rulesets name — so a workspace can host workspaces itself.
     # KVM does NOT ride this file: which flavor loads depends on the
     # host CPU, and a modules-load.d entry that fails leaves
     # systemd-modules-load.service failed (a degraded boot) — the
     # oneshot service below picks the flavor and swallows a host
-    # without nested virt, exactly as the appliance image does.
+    # without nested virt, exactly as a deployment host's does.
     printf '%s\n' \
       '# msks: the inner-egress stack (#82); KVM loads via its unit.' \
       'tun' \
@@ -426,8 +426,8 @@ let
       'nf_conntrack' \
       > $out/etc/modules-load.d/msks-egress.conf
 
-    # The nested-KVM module for inner workspace VMs (#82), the
-    # appliance's own unit verbatim in shape: which flavor loads
+    # The nested-KVM module for inner workspace VMs (#82), a
+    # deployment-shaped unit: which flavor loads
     # depends on the host CPU, so a shell picks, and a workspace
     # booted where vmx does not reach (a host without nested virt)
     # still boots — the unit stays active (exited) and /dev/kvm
@@ -714,10 +714,9 @@ let
     def do_apply(manifest, tree, expected_absent):
         """Restore the manifest's mode/uid/gid onto the packed tree,
         then assert the pins survived. expected_absent names
-        special-mode paths the build DELIBERATELY deleted (the
-        appliance drops /var/log/journal for the state disk's own
-        copy); any other special-mode absence is drift and fails the
-        build."""
+        special-mode paths the caller DELIBERATELY deleted; any
+        other special-mode absence is drift and fails the build
+        (no in-tree caller passes any today)."""
         restored = 0
         skipped = 0
         pins = {}
@@ -944,8 +943,8 @@ let
         # irqbypass, and ccp ride in as their dependencies) and the
         # egress stack (tun for per-inner-workspace taps plus the
         # nftables/NAT modules the daemon's rulesets need — the
-        # same list the appliance image loads, and what makes the
-        # image able to BE an appliance in miniature). button,
+        # same list a deployment host loads, and what lets the
+        # image host workspaces itself). button,
         # evdev, and isofs are modules in BOTH Debian flavors — the
         # old cloud image found them only because it shipped
         # Debian's whole tree, and the smoke tests caught button and
@@ -958,8 +957,8 @@ let
         # from the pinned deb and pinned at build time by comparing
         # the full tree's closure against the shipped tree's (the
         # assert below) — the set cannot drift from the kernel's
-        # own dependency facts (the #36 bug class). The appliance
-        # ships the whole tree; a workspace's ~25MB of cloud
+        # own dependency facts (the #36 bug class). A full install
+        # ships the whole tree; the workspace's ~25MB of cloud
         # modules becomes twenty-nine files (isofs's own cdrom
         # dependency included).
         runtimeModules="
@@ -1340,10 +1339,6 @@ pkgs.runCommand "msks-guest"
         genericKernel
         imageArchive
         ;
-      # The inode-metadata walker (#169, #179): the appliance build
-      # extracts the same base image the same unprivileged way, so
-      # it records and restores the same manifest.
-      inherit inodeMeta;
       inherit
         kernelCmdline
         vsockShellPort
@@ -1353,7 +1348,7 @@ pkgs.runCommand "msks-guest"
   ''
     set -eu
     mkdir -p "$out"
-    # The generic kernel (#96 — the appliance's pin) plus the
+    # The generic kernel (#96's pin) plus the
     # minimal initramfs; the version string names the flavor the
     # guest actually boots.
     vmlinuz=$(ls "${genericKernel}"/boot/vmlinuz-*)

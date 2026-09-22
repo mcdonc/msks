@@ -85,8 +85,8 @@ def stale_image_notice(expected: str, health: object) -> str | None:
         return None
     return (
         f"msks: daemon serves a different image: {Path(image).name}; "
-        f"this tree builds {Path(expected).name}; align them with: "
-        "devenv processes down, then devenv processes up -d"
+        f"the expected reference is {Path(expected).name}; align "
+        "them by restarting the daemon on the expected image"
     )
 
 

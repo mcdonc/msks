@@ -44,9 +44,8 @@ def mock(handler) -> httpx.MockTransport:
 def client_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MSKSC_URL", "https://daemon")
     monkeypatch.setenv("MSKSC_TOKEN", "tok")
-    # The ambient devenv shell presets MSKSC_EXPECTED_IMAGE once the
-    # checkout has daemon state — without this, every client test
-    # would depend on where (and whether) a daemon state dir exists.
+    # An operator may export MSKSC_EXPECTED_IMAGE by hand — without
+    # this, every client test would depend on ambient shell state.
     monkeypatch.delenv("MSKSC_EXPECTED_IMAGE", raising=False)
 
 
@@ -185,7 +184,7 @@ def test_cmd_ls_names_a_stale_appliance_image(
     err = capsys.readouterr().err
     assert "different image" in err
     assert Path(OLD_IMAGE).name in err and Path(NEW_IMAGE).name in err
-    assert "devenv processes down, then devenv processes up -d" in err
+    assert "restarting the daemon on the expected image" in err
 
     # The reverse drift (an older checkout beside a newer running
     # deployment — bisect, a worktree switch) uses the same wording.

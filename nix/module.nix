@@ -163,9 +163,9 @@ in
       description = ''
         A path string (pass /etc/msksd/env, not a store path — a
         path value would copy the secret into the store) to an
-        EnvironmentFile holding MSKSD_* variables the file-based
-        config cannot hold secrets above all: the
-        MSKSD_BOOTSTRAP_TOKEN seeding the first API credential).
+        EnvironmentFile holding MSKSD_* variables — secrets above
+        all: the MSKSD_BOOTSTRAP_TOKEN seeding the first API
+        credential — that the file-based config cannot hold.
         Environment overrides the generated settings file, and the
         unit does not start until the file exists — fail-closed for
         a secrets file.

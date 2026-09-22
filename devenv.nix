@@ -154,7 +154,7 @@ in
     cargo-llvm-cov
     cloud-hypervisor # VMM driven by the local backend (#1); ships ch-remote
     curl # unix-socket REST poking during CH debugging
-    e2fsprogs # debugfs: seed the bootstrap token onto the state disk
+    e2fsprogs # resize2fs/e2fsck: grow and check workspace volumes
     cdrtools # genisoimage: the #41 cidata seed disks (iso9660)
     iproute2 # taps and addresses for the dev daemon's workspaces
     iptables # diagnose foreign FORWARD drops (docker's policy on CI runners)

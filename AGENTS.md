@@ -60,7 +60,7 @@ msksd`, nothing else. The process exec runs
 seeds the worktree's daemon state (bootstrap token, API port, the
 port-derived egress subnet) and execs msksd through the host's
 `msks-caps` capability wrapper. `devenv processes up` runs it
-attached (foreground — the user never backgroundms it), and
+attached (foreground — the user never backgrounds it), and
 `devenv processes up/down/restart/logs msksd` manage the same
 process, with a 90s shutdown grace covering a running workspace's
 stop cycle. A state-dir `flock` refuses a second daemon on the same
