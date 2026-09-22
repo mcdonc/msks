@@ -111,18 +111,10 @@ def floor_refusal(vmm, action: str, incoming_b: int = 0) -> str | None:
 def create_refusal(
     vmm, action: str = "creating workspaces", incoming_b: int = 0
 ) -> str | None:
-    """The floor refusal for writes whose artifacts are local-backend
-    facts (#184).
-
-    A workspace's overlay and home volume live on per-workspace
-    claims under the k8s backend — the cluster places and sizes
-    them — so their writes never consult this daemon's state disk.
-    The image catalog is the exception: it lives on this daemon's
-    state disk on every backend, and its import route checks
-    :func:`floor_refusal` directly.
+    """The floor refusal for writes whose artifacts land on this
+    daemon's state disk (#184). The image catalog lives there too,
+    and its import route checks :func:`floor_refusal` directly.
     """
-    if vmm.driver != "local":
-        return None
     return floor_refusal(vmm, action, incoming_b)
 
 

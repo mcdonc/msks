@@ -157,7 +157,7 @@ def test_template_mentions_docs_and_rule() -> None:
     body = render_template()
     assert "docs/config.md" in body
     assert "MSKSD_PORT -> port" in body
-    for key in ("port:", "state_dir:", "k8s_namespace:", "egress_subnet:"):
+    for key in ("port:", "state_dir:", "egress_subnet:"):
         assert key in body
 
 
@@ -382,7 +382,7 @@ def test_layered_env_iterates_and_measures(
 # key, pinning the whole derived table end-to-end: the value written
 # to the file must appear on the loaded settings field.
 KEY_CASES = [
-    ("vmm_driver", "k8s", "vmm.driver", "k8s"),
+    ("vmm_driver", "local", "vmm.driver", "local"),
     ("cloud_hypervisor", "/ch", "vmm.cloud_hypervisor", "/ch"),
     ("state_dir", "/st", "vmm.state_dir", "/st"),
     ("socket_wait_timeout_s", 11.0, "vmm.socket_wait_timeout_s", 11.0),
@@ -411,12 +411,6 @@ KEY_CASES = [
     ("event_poll_s", 2.5, "server.event_poll_s", 2.5),
     ("bootstrap_token", "tok", "server.bootstrap_token", "tok"),
     ("access_log", True, "server.access_log", True),
-    ("k8s_namespace", "ns1", "k8s.namespace", "ns1"),
-    ("k8s_runner_image", "img:2", "k8s.runner_image", "img:2"),
-    ("kubeconfig", "/kc", "k8s.kubeconfig", "/kc"),
-    ("k8s_api_timeout_s", 9.0, "k8s.api_timeout_s", 9.0),
-    ("k8s_storage_class", "fast", "k8s.storage_class", "fast"),
-    ("k8s_workspace_storage_gib", 7, "k8s.workspace_storage_gib", 7),
     ("egress_enabled", True, "net.enabled", True),
     ("egress_subnet", "10.9.0.0/16", "net.pool", "10.9.0.0/16"),
     ("egress_uplink", "enp1s0", "net.uplink", "enp1s0"),

@@ -19,13 +19,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 MANIFEST_NAME = "guest-manifest.json"
-RUNNER_IMAGE_NAME = "runner-image.json"
 
 VMLINUX_ENV = "MSKSD_TEST_VMLINUX"
 INITRD_ENV = "MSKSD_TEST_INITRD"
 ROOTFS_ENV = "MSKSD_TEST_ROOTFS"
 CMDLINE_ENV = "MSKSD_TEST_CMDLINE"
-RUNNER_IMAGE_ENV = "MSKSD_TEST_RUNNER_IMAGE"
 
 #: Relocates the guest state dir (default ``<root>/.devenv/state/guest``).
 GUEST_DIR_ENV = "MSKS_GUEST_DIR"
@@ -159,21 +157,3 @@ def smoke_env_defaults(assets: GuestAssets | None) -> dict[str, str]:
 def _absolute(path: Path) -> Path:
     """The manifest artifact as an absolute, symlink-free path."""
     return path.resolve()
-
-
-def load_runner_image(root: Path | None = None) -> str | None:
-    """Image reference of the built vm-runner archive below ``root``, if any.
-
-    Written by ``msks-build-runner-image`` once the
-    container archive is ready to import on the k3s node.
-    """
-    base = root if root is not None else _root()
-    try:
-        raw = json.loads(
-            (guest_dir(base) / RUNNER_IMAGE_NAME).read_text(encoding="utf-8")
-        )
-    except OSError, ValueError:
-        return None
-    if not isinstance(raw, dict):
-        return None
-    return _as_str(raw.get("image"))

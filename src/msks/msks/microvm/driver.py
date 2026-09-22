@@ -21,9 +21,8 @@ class MicrovmDriver(abc.ABC):
         """Materialize the workspace's persistent artifacts (#14).
 
         Called at workspace create (and idempotently by launch on
-        backends that boot from local files): the local backend
-        creates the root overlay and home volume; the k8s backend
-        creates the per-workspace PVC that holds both."""
+        backends that boot from local files): the driver creates the
+        root overlay and home volume."""
 
     @abc.abstractmethod
     async def launch(self, spec: VmSpec) -> None:
@@ -37,10 +36,8 @@ class MicrovmDriver(abc.ABC):
     async def shutdown(
         self, workspace_id: str, timeout_s: float | None = None
     ) -> None:
-        """Ask the VM to power off. Backends bound to a local process
-        wait for the exit within the deadline and raise on timeout;
-        remote backends (k8s) request deletion with a grace period and
-        do not wait for it to complete."""
+        """Ask the VM to power off. The driver waits for the exit
+        within the deadline and raises on timeout."""
 
     @abc.abstractmethod
     async def kill(self, workspace_id: str) -> None:

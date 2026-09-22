@@ -19,6 +19,3 @@ for _name, _value in guestassets.smoke_env_defaults(
     guestassets.load_guest_assets(),
 ).items():
     os.environ.setdefault(_name, _value)
-_image = guestassets.load_runner_image()
-if _image is not None:
-    os.environ.setdefault(guestassets.RUNNER_IMAGE_ENV, _image)

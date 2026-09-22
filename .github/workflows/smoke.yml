@@ -17,10 +17,6 @@
 # so one workflow carries both again — a failure anywhere reds the
 # same check, and the unprivileged pass still shows in the step log.
 #
-# What stays out of this per-PR workflow, opt-in exactly as
-# before: the k8s smoke (needs a cluster). This workflow's
-# hosted-runner legs never touch it.
-#
 # Path-filtered to its real inputs: the guest/toolchain files (a
 # nixpkgs pin move lands through devenv.lock), everything under the
 # server package the boots exercise, and the tests themselves. That

@@ -92,13 +92,6 @@ SETTING_ENV_VARS: tuple[str, ...] = (
     "MSKSD_BOOTSTRAP_TOKEN",
     "MSKSD_ACCESS_LOG",
     "MSKSD_AUDIT_HMAC_KEY",
-    # K8sSettings — the Kubernetes runner driver.
-    "MSKSD_K8S_NAMESPACE",
-    "MSKSD_K8S_RUNNER_IMAGE",
-    "MSKSD_KUBECONFIG",
-    "MSKSD_K8S_API_TIMEOUT_S",
-    "MSKSD_K8S_STORAGE_CLASS",
-    "MSKSD_K8S_WORKSPACE_STORAGE_GIB",
     # NetSettings — per-workspace egress networking.
     "MSKSD_EGRESS_ENABLED",
     "MSKSD_EGRESS_SUBNET",
@@ -439,7 +432,7 @@ def render_template() -> str:
 #                           # would persist
 #
 # --- The local cloud-hypervisor driver ---
-# vmm_driver: local         # local | k8s
+# vmm_driver: local         # the backend that runs workspaces
 # state_dir: ~/.local/state/msksd  # the daemon's state: the sqlite
 #                           # database (<state_dir>/msks.db) and
 #                           # per-workspace artifacts
@@ -477,17 +470,6 @@ def render_template() -> str:
 #                           # restricted to the common
 #                           # ssh-ed25519,ssh-rsa set), ecdsa
 #                           # (P-256), or rsa
-#
-# --- The Kubernetes runner driver ---
-# k8s_namespace: msks       # the namespace workspaces run in
-# k8s_runner_image: registry.k8s.io/pause:3.10
-# kubeconfig: ""            # a kubeconfig path; empty -> the
-#                           # cluster's ambient configuration
-# k8s_api_timeout_s: 30.0   # seconds per Kubernetes API request
-# k8s_storage_class: ""     # the PVC storage class; empty -> the
-#                           # cluster's default
-# k8s_workspace_storage_gib: ""  # fixed PVC size (GiB); empty ->
-#                           # derived from the workspace's disks
 #
 # --- Per-workspace egress networking ---
 # egress_enabled: false     # arm per-workspace NICs, DHCP, NAT, and

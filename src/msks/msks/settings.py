@@ -3,7 +3,7 @@
 Env naming follows the house rule: the category word ``MSKSD``
 (daemon) concatenated onto the prefix with no underscore before it,
 then a single underscore before the field (``MSKSD_STATE_DIR``,
-``MSKSD_K8S_NAMESPACE``). All values are read live off
+``MSKSD_PORT``). All values are read live off
 ``app.state.settings`` — never materialized onto subsystems — so a
 runtime settings swap (SIGHUP) propagates without per-module
 ``reconfigure()`` calls.
@@ -28,7 +28,7 @@ from pathlib import Path
 from .consent.specs import EGRESS_MODES, MODE_ALLOW
 from .identity import KEY_TYPES
 
-VALID_DRIVERS = ("local", "k8s")
+VALID_DRIVERS = ("local",)
 
 #: The secret-store providers v1 wires (#198): the SecretSpec CLI
 #: URIs the daemon knows how to build from settings.
@@ -59,22 +59,6 @@ def _parse_positive_int(
     value = _parse_int(env, name, default)
     if value <= 0:
         raise ValueError(f"{name} must be positive, got {value}")
-    return value
-
-
-def _parse_optional_int(
-    env: Mapping[str, str], name: str, minimum: int
-) -> int | None:
-    """A positive-when-set integer: unset means "derive it"."""
-    raw = env.get(name)
-    if raw in (None, ""):
-        return None
-    try:
-        value = int(raw)
-    except ValueError:
-        raise ValueError(f"{name} must be a number, got {raw!r}") from None
-    if value < minimum:
-        raise ValueError(f"{name} must be at least {minimum}, got {value}")
     return value
 
 
@@ -208,37 +192,6 @@ class ServerSettings:
 
 
 @dataclass
-class K8sSettings:
-    """Kubernetes runner-driver settings."""
-
-    namespace: str = "msks"
-    runner_image: str = "registry.k8s.io/pause:3.10"
-    kubeconfig: str | None = None
-    api_timeout_s: float = 30.0
-    # Per-workspace claims (#14): the storage class the admin's
-    # cluster offers (unset asks the cluster's default) and each
-    # claim's size — one PVC holds the workspace's overlay and home
-    # volume files, so it needs room for both. Unset derives the
-    # size from the workspace's root_mib + home_mib at create.
-    storage_class: str | None = None
-    workspace_storage_gib: int | None = None
-
-    @classmethod
-    def from_env(cls, env: Mapping[str, str] | None = None) -> K8sSettings:
-        env = live_env(env)
-        return cls(
-            namespace=_env(env, "MSKSD_K8S_NAMESPACE", cls.namespace),
-            runner_image=_env(env, "MSKSD_K8S_RUNNER_IMAGE", cls.runner_image),
-            kubeconfig=_env(env, "MSKSD_KUBECONFIG", "") or None,
-            api_timeout_s=_env_float(env, "MSKSD_K8S_API_TIMEOUT_S", 30.0),
-            storage_class=_env(env, "MSKSD_K8S_STORAGE_CLASS", "") or None,
-            workspace_storage_gib=_parse_optional_int(
-                env, "MSKSD_K8S_WORKSPACE_STORAGE_GIB", minimum=1
-            ),
-        )
-
-
-@dataclass
 class NetSettings:
     """Guest egress networking (#52).
 
@@ -337,7 +290,6 @@ class Settings:
     """The live-swappable settings root msksd subsystems read."""
 
     vmm: VmmSettings = field(default_factory=VmmSettings)
-    k8s: K8sSettings = field(default_factory=K8sSettings)
     server: ServerSettings = field(default_factory=ServerSettings)
     net: NetSettings = field(default_factory=NetSettings)
     secret_store: SecretStoreSettings = field(
@@ -348,7 +300,6 @@ class Settings:
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
         return cls(
             vmm=VmmSettings.from_env(env),
-            k8s=K8sSettings.from_env(env),
             server=ServerSettings.from_env(env),
             net=NetSettings.from_env(env),
             secret_store=SecretStoreSettings.from_env(env),

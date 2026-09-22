@@ -277,26 +277,6 @@ async def test_scan_storage_publishes_pressure_changes(tmp_path: Path) -> None:
     assert json.loads(queue.get_nowait())["data"]["pressure"] == "critical"
 
 
-async def test_scan_storage_skips_the_k8s_driver(tmp_path: Path) -> None:
-    """k8s artifacts live on per-workspace claims; the daemon's own
-    filesystem never speaks for them (#184 review)."""
-    from msks.server.watcher import scan_storage
-
-    settings = Settings(
-        vmm=VmmSettings(state_dir=tmp_path, driver="k8s"),
-        net=NetSettings(enabled=False),
-        server=ServerSettings(
-            db_path=tmp_path / "k8s.db",
-            bootstrap_token=TOKEN,
-            event_poll_s=10.0,
-        ),
-    )
-    app = build_app(settings)
-    hub = EventHub()
-    assert await scan_storage(app, hub) is False
-    assert getattr(app.state, "storage_pressure", None) is None
-
-
 async def test_scan_storage_publishes_a_baseline(tmp_path: Path) -> None:
     """A fresh daemon announces its first known pressure (ok counts):
     an operator watching the event stream sees the daemon's starting

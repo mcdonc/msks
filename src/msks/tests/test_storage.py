@@ -234,20 +234,6 @@ def test_image_cost_counts_the_retained_archive(tmp_path: Path) -> None:
     )
 
 
-def test_create_refusal_is_local_driver_only(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """The k8s backend keeps artifacts on per-workspace claims; a
-    critical local filesystem never refuses its creates."""
-    monkeypatch.setattr(
-        storage,
-        "state_usage",
-        lambda path: {"total": 0, "used": 0, "free": 0},
-    )
-    vmm = VmmSettings(state_dir=tmp_path, driver="k8s")
-    assert storage.create_refusal(vmm) is None
-
-
 def test_floor_refusal_sizes_the_incoming_write(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

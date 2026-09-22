@@ -9,9 +9,8 @@ from pathlib import Path
 class VmSpec:
     """The backend-neutral description of one workspace VM.
 
-    Kernel/initrd/rootfs are host paths today (local backend) and are
-    passed through to the runner pod verbatim tomorrow (k8s backend),
-    so the spec carries no placement knowledge. ``rootfs`` names the
+    Kernel/initrd/rootfs are host paths today (local backend), so
+    the spec carries no placement knowledge. ``rootfs`` names the
     *base* image: the VM boots the per-workspace overlay backed by it
     (#14), and the overlay path is derived from the workspace id.
     """

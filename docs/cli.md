@@ -132,11 +132,7 @@ storage` names the consumers; `msks rm` and `msks image rm`
   raising it refuses more, not fewer). Imports are sized when the
   size is knowable: the image archive is counted twice (retained
   copy plus unpacked cache), and a home upload with a
-  `Content-Length` must fit above the floor. The report and the
-  floor serve the local backend; the k8s backend's artifacts live
-  on per-workspace claims, and the endpoint answers a named `400`
-  there (image imports keep the floor on both backends — the
-  catalog lives on the daemon's state disk either way).
+  `Content-Length` must fit above the floor.
 
 `msks storage <id>` narrows the workspace table to one workspace.
 `--json` prints the API's `GET /api/v1/storage` document verbatim
@@ -148,7 +144,7 @@ carries a `storage.pressure` event whenever the pressure changes.
 POSTs the API's create body. The positional id follows the daemon's
 workspace charset — lowercase letters, digits, and dashes, starting
 with a letter or digit, up to 64 chars (it becomes a directory name
-under the state dir and a pod name on k8s).
+under the state dir).
 
 Flags map onto the create request's fields (the identity flags
 below generate theirs):
@@ -247,8 +243,7 @@ exclusive: `--pubkey` conflicts with `--daemon-mint`, and
 `--daemon-mint` hands the identity to the daemon instead
 (#111): it mints the keypair at create and stores both halves with
 its state — the private half is then fetchable with `msks key
---private`. The k8s backend serves no identity in either mode, so
-creates against it need `--daemon-mint`.
+--private`.
 
 ## `msks start`
 
@@ -452,7 +447,7 @@ fresh-ws`.
 The daemon refuses — one line, exit 1 — a file that is not an ext4
 image (`msks: 400: the request body is not an ext4 image ...`), a
 workspace in the wrong state, and everything the API's refusals
-name (a foreign host, the k8s backend). An import keeps the
+name (a foreign host). An import keeps the
 workspace's existing volume until the upload completes and passes
 the ext4 check; a cut-off upload changes nothing.
 

@@ -42,7 +42,6 @@ and lowercased — one rule, no lookup table:
 | ------------------------ | ------------------ |
 | `MSKSD_PORT`             | `port`             |
 | `MSKSD_VSOCK_SHELL_PORT` | `vsock_shell_port` |
-| `MSKSD_K8S_NAMESPACE`    | `k8s_namespace`    |
 | `MSKSD_EGRESS_SUBNET`    | `egress_subnet`    |
 | `MSKSD_STATE_DIR`        | `state_dir`        |
 
@@ -97,7 +96,7 @@ variable name is simply never read.)
 Invalid values fail the same way whichever source they came from,
 and the error message names the `MSKSD_*` variable —
 `vmm_driver: firecracker` reports `MSKSD_VMM_DRIVER must be one of
-('local', 'k8s')`. Non-finite numbers (`.nan`, `.inf`) are rejected
+('local',)`. Non-finite numbers (`.nan`, `.inf`) are rejected
 from either source.
 
 ## Key reference
@@ -121,7 +120,7 @@ the file itself carries them all at one level.
 
 | Key                       | Environment variable            | Type   | Default                | What it does                                                                                                                                                                                                                                                    |
 | ------------------------- | ------------------------------- | ------ | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `vmm_driver`              | `MSKSD_VMM_DRIVER`              | string | `local`                | The backend that runs workspaces: `local` (cloud-hypervisor) or `k8s`.                                                                                                                                                                                          |
+| `vmm_driver`              | `MSKSD_VMM_DRIVER`              | string | `local`                | The backend that runs workspaces: `local` (cloud-hypervisor).                                                                                                                                                                                                   |
 | `state_dir`               | `MSKSD_STATE_DIR`               | string | `~/.local/state/msksd` | The daemon's state directory: the sqlite database (`<state_dir>/msks.db`) and per-workspace artifacts. `~` expands.                                                                                                                                             |
 | `cloud_hypervisor`        | `MSKSD_CLOUD_HYPERVISOR`        | string | `cloud-hypervisor`     | Path to the cloud-hypervisor binary the local driver execs.                                                                                                                                                                                                     |
 | `socket_wait_timeout_s`   | `MSKSD_SOCKET_WAIT_TIMEOUT_S`   | float  | `10.0`                 | Seconds the driver waits for the VMM's API socket at workspace start.                                                                                                                                                                                           |
@@ -144,17 +143,6 @@ the file itself carries them all at one level.
 | `storage_warn_pct`        | `MSKSD_STORAGE_WARN_PCT`        | int    | `90`                   | State-disk percentage used that moves pressure to `warn` (#184); 1–99.                                                                                                                                                                                          |
 | `storage_floor_mib`       | `MSKSD_STORAGE_FLOOR_MIB`       | int    | `512`                  | Free state-disk MiB below which pressure is `critical` and workspace creates, image imports, and home-volume imports answer `507` (#184).                                                                                                                       |
 | `ssh_key_type`            | `MSKSD_SSH_KEY_TYPE`            | string | `ed25519`              | The identity type minted at create (#111): `ed25519` (the default, #138 — FIPS-approvable, and accepted by ssh clients restricted to the common `ssh-ed25519,ssh-rsa` set), `ecdsa` (P-256), or `rsa` (3072-bit).                                               |
-
-### The Kubernetes runner driver
-
-| Key                         | Environment variable              | Type   | Default                      | What it does                                                                                        |
-| --------------------------- | --------------------------------- | ------ | ---------------------------- | --------------------------------------------------------------------------------------------------- |
-| `k8s_namespace`             | `MSKSD_K8S_NAMESPACE`             | string | `msks`                       | The namespace workspace pods and claims live in.                                                    |
-| `k8s_runner_image`          | `MSKSD_K8S_RUNNER_IMAGE`          | string | `registry.k8s.io/pause:3.10` | The pause image workspace pods carry.                                                               |
-| `kubeconfig`                | `MSKSD_KUBECONFIG`                | string | _(unset)_                    | A kubeconfig path for the cluster; unset uses the ambient cluster configuration.                    |
-| `k8s_api_timeout_s`         | `MSKSD_K8S_API_TIMEOUT_S`         | float  | `30.0`                       | Seconds per Kubernetes API request.                                                                 |
-| `k8s_storage_class`         | `MSKSD_K8S_STORAGE_CLASS`         | string | _(unset)_                    | The storage class for per-workspace PVCs; unset asks the cluster's default.                         |
-| `k8s_workspace_storage_gib` | `MSKSD_K8S_WORKSPACE_STORAGE_GIB` | int    | _(unset)_                    | A fixed per-workspace PVC size, GiB; unset derives the size from the workspace's root + home disks. |
 
 ### Per-workspace egress networking
 
@@ -202,7 +190,7 @@ Send `SIGHUP` to a running `msksd` and it re-reads the config file
 (and the environment) into its live settings. Subsystems read
 settings off the app's state at call time, so the swap propagates
 with no per-module reconfiguration — a changed `egress_subnet` or
-`k8s_namespace` applies to the next request that reads it.
+`host_name` applies to the next request that reads it.
 
 Several things keep their startup values until a restart — a
 reload naming a new one changes nothing:

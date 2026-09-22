@@ -3,9 +3,8 @@
 The byte-stream endpoints move a workspace's /home volume through
 the daemon: GET streams the volume file out (backup, migration,
 seeding), PUT replaces it atomically from the request body. The
-suite pins the refusal contract (a live VM, a foreign host, the k8s
-backend, a non-ext4 body, a cut-off upload) and the CLI surface on
-top.
+suite pins the refusal contract (a live VM, a foreign host, a
+non-ext4 body, a cut-off upload) and the CLI surface on top.
 """
 
 import asyncio
@@ -160,22 +159,6 @@ async def test_move_on_foreign_host_is_409(home_api) -> None:
         )
         assert response.status_code == 409
         assert "lives on host" in response.json()["detail"]
-
-
-async def test_move_refused_on_k8s(home_api, monkeypatch) -> None:
-    """The k8s volume lives inside the runner pod's PVC: the byte
-    streams have nothing to read or write there."""
-    await create_workspace(home_api, "ws-k8s")
-    monkeypatch.setattr(home_api.app.state.settings.vmm, "driver", "k8s")
-    for method in ("GET", "PUT"):
-        response = await home_api.http.request(
-            method,
-            "/api/v1/workspaces/ws-k8s/home",
-            content=IMAGE if method == "PUT" else None,
-            headers=auth(),
-        )
-        assert response.status_code == 400
-        assert "not served by the k8s backend" in response.json()["detail"]
 
 
 async def test_import_replaces_the_volume(home_api) -> None:

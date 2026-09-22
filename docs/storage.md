@@ -114,9 +114,7 @@ and `msks storage` report the new ceiling immediately, the bytes
 move at once on the host), a workspace whose artifact file is
 absent simply records the new size — the next start's artifact heal
 builds the blank artifact at it — and a request naming sizes the
-files already have answers an idempotent `200` that moves nothing. The k8s backend answers a named `400`: the workspace
-lives on a claim the cluster sizes, so growth goes through the
-storage class. A completed resize is announced on the events
+files already have answers an idempotent `200` that moves nothing. A completed resize is announced on the events
 channel (`workspace.resized`, with the new sizes).
 
 ## Capacity reporting
@@ -178,12 +176,6 @@ client sent one — a chunked upload carries no length and gets the
 floor alone. Existing workspaces keep running below
 the floor; their own writes can still fill the disk, so a `warn`
 line is the cue to reclaim before they do.
-
-The report, the probe, and the floor serve the local backend: the
-k8s backend keeps artifacts on per-workspace claims the cluster
-places, and the daemon's own filesystem says nothing about them
-(`GET /api/v1/storage` answers a named `400` there, following the
-home-volume routes' precedent).
 
 `GET /api/v1/storage` serves the same document the CLI renders,
 and `msks storage <id>` narrows the workspace table to one
@@ -258,9 +250,7 @@ import instead of racing it. A waiter gives up after
 `409` (a volume move is in flight) rather than hanging — a stalled
 export reader holds its lock as long as its connection lives. A
 foreign host answers the placement `409` every artifact route
-shares, and the k8s backend answers `400` — its volume lives
-inside the runner pod's PVC, which only the pod's container
-reaches.
+shares.
 
 An import whose filesystem size differs from the workspace's
 recorded `home_mib` mounts fine either way (an ext4 filesystem
@@ -289,42 +279,7 @@ a workspace whose artifacts live elsewhere happens from that host:
 this one refuses rather than orphan the files. A workspace runs on
 at most one host at a time — the row's placement is the authority
 locally, and the volume's single-writer semantics make a double
-attach impossible. The k8s backend records no host: the artifacts
-live in a per-workspace claim the cluster places, so any daemon in
-the cluster may run the workspace.
-
-## Kubernetes backend
-
-On the k8s backend both artifacts live on one per-workspace
-`PersistentVolumeClaim`:
-
-- created at workspace create (name `msks-ws-<workspace_id>`,
-  access mode `ReadWriteOnce`, size from
-  `MSKSD_K8S_WORKSPACE_STORAGE_GIB` — unset derives the claim from
-  the workspace's `root_mib` + `home_mib`, rounded up to GiB — and
-  storage class from `MSKSD_K8S_STORAGE_CLASS`, unset asks the
-  cluster's default class). Recreating a workspace of the same id
-  keeps the existing claim: a claim smaller than the new sizes
-  fails the create with a named error instead of failing the guest
-  with late ENOSPC;
-- mounted into the runner pod at
-  `/var/lib/msks/workspaces/<workspace_id>`, the container-side
-  analogue of the local backend's `<state_dir>/vms/<id>/`;
-- deleted with the workspace (the pod and the claim go together).
-
-`ReadWriteOnce` carries the placement rule on k8s: the volume
-attaches to one node, the pod schedules onto that node, and a second
-pod cannot attach the same volume — the cluster enforces what the
-local backend enforces with the row's host field. The PVC must hold
-both the overlay and the home volume, so size it for the sum (the
-derived default does); the qcow2 overlay and the sparse ext4 grow
-on demand. A start recreates a missing claim the same way the local
-backend heals missing artifact files.
-
-Factory reset on k8s needs the runner agent to delete the overlay
-file inside the PVC mount; until that lands, the API answers with
-a named error instead of dropping the whole claim (which would take
-`/home` with it).
+attach impossible.
 
 ## Image pinning
 
@@ -336,19 +291,17 @@ boot. Deleting the workspace releases the pin.
 
 ## Environment variables
 
-| Variable                          | Default      | Meaning                                                                                                           |
-| --------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------- |
-| `MSKSD_ROOT_MIB`                  | `10240`      | Default overlay (root) size for new workspaces, MiB.                                                              |
-| `MSKSD_HOME_MIB`                  | `2048`       | Default `/home` volume size, MiB.                                                                                 |
-| `MSKSD_STORAGE_WARN_PCT`          | `90`         | State-disk percentage used that moves pressure to `warn` (#184).                                                  |
-| `MSKSD_STORAGE_FLOOR_MIB`         | `512`        | Free state-disk MiB below which pressure is `critical` and writes answer `507` (#184).                            |
-| `MSKSD_QEMU_IMG`                  | `qemu-img`   | The `qemu-img` binary that creates overlays.                                                                      |
-| `MSKSD_MKFS_EXT4`                 | `mkfs.ext4`  | The mkfs that formats `/home` volumes.                                                                            |
-| `MSKSD_RESIZE2FS`                 | `resize2fs`  | The resize2fs that moves `/home` volumes (#184).                                                                  |
-| `MSKSD_E2FSCK`                    | `e2fsck`     | The e2fsck that quiets a volume before a resize (#184).                                                           |
-| `MSKSD_MKISOFS`                   | `mkisofs`    | The mkisofs (genisoimage) that builds `cidata` seed disks (#41).                                                  |
-| `MSKSD_HOST_NAME`                 | the hostname | The host recorded as owning locally-created artifacts.                                                            |
-| `MSKSD_SHUTDOWN_TIMEOUT_S`        | `20`         | How long `stop` waits for the guest's clean poweroff before the fallback kill; a stop answers within this bound.  |
-| `MSKSD_MOVE_WAIT_TIMEOUT_S`       | `120`        | How long a boot, delete, or volume move waits for the workspace's other volume move before answering a named 409. |
-| `MSKSD_K8S_STORAGE_CLASS`         | unset        | Storage class for per-workspace claims; unset asks the cluster's default.                                         |
-| `MSKSD_K8S_WORKSPACE_STORAGE_GIB` | unset        | Claim size in GiB; unset derives it from `root_mib` + `home_mib`.                                                 |
+| Variable                    | Default      | Meaning                                                                                                           |
+| --------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------- |
+| `MSKSD_ROOT_MIB`            | `10240`      | Default overlay (root) size for new workspaces, MiB.                                                              |
+| `MSKSD_HOME_MIB`            | `2048`       | Default `/home` volume size, MiB.                                                                                 |
+| `MSKSD_STORAGE_WARN_PCT`    | `90`         | State-disk percentage used that moves pressure to `warn` (#184).                                                  |
+| `MSKSD_STORAGE_FLOOR_MIB`   | `512`        | Free state-disk MiB below which pressure is `critical` and writes answer `507` (#184).                            |
+| `MSKSD_QEMU_IMG`            | `qemu-img`   | The `qemu-img` binary that creates overlays.                                                                      |
+| `MSKSD_MKFS_EXT4`           | `mkfs.ext4`  | The mkfs that formats `/home` volumes.                                                                            |
+| `MSKSD_RESIZE2FS`           | `resize2fs`  | The resize2fs that moves `/home` volumes (#184).                                                                  |
+| `MSKSD_E2FSCK`              | `e2fsck`     | The e2fsck that quiets a volume before a resize (#184).                                                           |
+| `MSKSD_MKISOFS`             | `mkisofs`    | The mkisofs (genisoimage) that builds `cidata` seed disks (#41).                                                  |
+| `MSKSD_HOST_NAME`           | the hostname | The host recorded as owning locally-created artifacts.                                                            |
+| `MSKSD_SHUTDOWN_TIMEOUT_S`  | `20`         | How long `stop` waits for the guest's clean poweroff before the fallback kill; a stop answers within this bound.  |
+| `MSKSD_MOVE_WAIT_TIMEOUT_S` | `120`        | How long a boot, delete, or volume move waits for the workspace's other volume move before answering a named 409. |

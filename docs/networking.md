@@ -161,8 +161,7 @@ it (no syscall, no `/proc`, no signal target).
 **Local-only semantics.** Per-flow holds are the local backend's
 enforcement; the consent API itself (requests, verdicts, durations,
 revocation, audit) is enforcement-agnostic, so a future backend can
-drive a different mechanism from the same model. On k8s, egress
-workspaces refuse at create until that lands (see below).
+drive a different mechanism from the same model.
 
 ## What runs where
 
@@ -273,10 +272,7 @@ msks key myws --out ./myws.key   # the private half, mode 0600
 
 The key type is the daemon's setting (`ssh_key_type` /
 `MSKSD_SSH_KEY_TYPE`): Ed25519 by default, `ecdsa` (P-256) and
-`rsa` (3072-bit) selectable. The identity is minted at create on the local
-backend — a workspace created there and later started by a daemon
-reconfigured for the k8s runner keeps its halves, and the runner
-plants nothing (the same posture as its `user_data`). With the identity materialized, the usual
+`rsa` (3072-bit) selectable. The identity is minted at create. With the identity materialized, the usual
 client shapes work over the forward:
 
 ```bash
@@ -365,8 +361,7 @@ agrees with its label, at any key type (#132) — and annotates it
 with its
 own provenance comment (`msks-client:<id>`, beside the minted
 mode's `msksd:<id>`). `--daemon-mint` opts back into the
-daemon-minted mode above; the k8s backend serves no identity in
-either mode, so creates against it pass `--daemon-mint`.
+daemon-minted mode above.
 
 The private half is written mode 0600 under the client data root
 after the create succeeds — `~/.local/share/msks/<id>/identity`,
@@ -545,11 +540,11 @@ list.
 
 ## Backend support
 
-Egress is a local-backend feature today. On k8s the runner pod
-refuses the netns privilege the enforcement needs, so an egress
-workspace refuses at create with the cause named — k8s workspaces
-boot with `"egress": false` until the parity work lands. The
-no-NIC posture works everywhere.
+Egress is a local-backend feature; the consent API itself is
+enforcement-agnostic (see above), so a future backend can drive a
+different mechanism from the same model. The no-NIC posture works
+everywhere: a workspace created with `"egress": false` presents no
+NIC whatever runs it.
 
 ## Lifecycle
 

@@ -726,11 +726,11 @@ class LocalCloudHypervisor(MicrovmDriver):
     ) -> None:
         """Stop one VM gracefully; an already-stopped VM is success.
 
-        The absent-VM contract every backend honors (see the k8s
-        driver): stopping a workspace whose VMM died — or that was
-        never started — must not wedge the caller. A stale api socket
-        (the file outlives a dead VMM) reports ECONNREFUSED rather
-        than ENOENT, so dead-behind-a-socket counts as stopped too.
+        The absent-VM contract: stopping a workspace whose VMM died
+        — or that was never started — must not wedge the caller. A
+        stale api socket (the file outlives a dead VMM) reports
+        ECONNREFUSED rather than ENOENT, so dead-behind-a-socket
+        counts as stopped too.
         """
         async with self._guard(workspace_id):
             await self._shutdown_locked(workspace_id, timeout_s)
