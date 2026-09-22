@@ -73,8 +73,8 @@ def stale_image_notice(expected: str, health: object) -> str | None:
     """The one-line drift notice for ``msks ls`` (#160), or None.
 
     Both sides must be known: ``MSKSC_EXPECTED_IMAGE`` names the
-    image this checkout's appliance run boots (the appliance's shells
-    preset it; unset in dev-daemon shells), and the daemon's ``/health``
+    image reference the operator sets (unset skips the check), and
+    the daemon's ``/health``
     carries the image it booted (``None`` on a daemon predating the
     ``msksd.image`` cmdline pair). An unknown side stays silent —
     including a /health that answers something other than a mapping
@@ -84,7 +84,7 @@ def stale_image_notice(expected: str, health: object) -> str | None:
     if not expected or not image or image == expected:
         return None
     return (
-        f"msks: appliance serves a different image: {Path(image).name}; "
+        f"msks: daemon serves a different image: {Path(image).name}; "
         f"this tree builds {Path(expected).name}; align them with: "
         "devenv processes down, then devenv processes up -d"
     )
@@ -1228,7 +1228,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--egress",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="boot with a virtio-net NIC onto a per-VM appliance tap "
+        help="boot with a virtio-net NIC onto a per-VM host tap "
         "(#52; the default is yes — use --no-egress to boot NIC-less)",
     )
     create.add_argument(

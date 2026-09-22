@@ -2,7 +2,7 @@
 
 Ported from klangk's ``consent/coordinator.py`` with the msks
 enforcement seam swapped in: a held SYN is a kernel NFQUEUE hold on
-the appliance's per-VM chain (not a sidecar relay), and verdict
+the host's per-VM chain (not a sidecar relay), and verdict
 enforcement (flow rules) is applied by the NFQUEUE consumer through
 NetManager — this module owns only the *decision*: rows, timeouts,
 session memory, and the frames deciders see.

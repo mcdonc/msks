@@ -48,7 +48,7 @@ class Workspace(Base):
     root_mib: Mapped[int] = mapped_column(Integer, default=10240)
     home_mib: Mapped[int] = mapped_column(Integer, default=2048)
     # Egress networking (#52): boots the VM with a virtio-net NIC
-    # onto a per-VM tap in the appliance. The default keeps the
+    # onto a per-VM host tap. The default keeps the
     # no-NIC posture.
     egress: Mapped[bool] = mapped_column(Boolean, default=True)
     # First-boot provisioning payload (#41): the operator's

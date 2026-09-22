@@ -75,7 +75,7 @@ async def test_local_dev_workspace_bootstrap() -> None:
         user_data=dev_workspace_seed(),
     )
     # The daemon verifies, never writes, ip_forward (#101 — the
-    # appliance ships it as a sysctl); the root harness owns the dev
+    # deployment ships it as a sysctl); the root harness owns the dev
     # host's setting for the run and restores what it found.
     forwarding = Path("/proc/sys/net/ipv4/ip_forward")
     forwarding_was = forwarding.read_text()

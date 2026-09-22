@@ -135,7 +135,7 @@ class VmmSettings:
     # valid fail-fast deadline.
     move_wait_timeout_s: float = 120.0
     # A host-side container-image tar imported into the catalog on first boot
-    # and designated default (the appliance points this at the built
+    # and designated default (the dev daemon points this at its state
     # image's store path through its cmdline bridge).
     default_image: str = ""
     # Per-workspace persistent artifacts (#14): the tools that make
@@ -143,7 +143,7 @@ class VmmSettings:
     qemu_img: str = "qemu-img"
     mkfs_ext4: str = "mkfs.ext4"
     # The #184 resize pair: e2fsck quiets the home volume's journal
-    # before resize2fs moves it (both directions). The appliance
+    # before resize2fs moves it (both directions). The deployment
     # ships both (#183's state-disk grow pins them in its root
     # image); a bare-host daemon points these at its own e2fsprogs.
     resize2fs: str = "resize2fs"
@@ -247,14 +247,14 @@ class NetSettings:
     the no-NIC posture on every backend. Enabled, the settings name
     the per-workspace /30 pool, the uplink the NAT masquerade hides
     behind, and the upstream the DNS forwarder relays to (unset
-    reads the appliance's own /etc/resolv.conf).
+    reads the host's own /etc/resolv.conf).
 
     The privilege contract (#101): a daemon serving egress holds
     exactly two ambient capabilities — ``CAP_NET_ADMIN`` (taps and
     their addresses, the nftables tables, and through exec
     inheritance the VMM opening its tap) and
     ``CAP_NET_BIND_SERVICE`` (DHCP 67, DNS 53) — and verifies,
-    never writes, ``net.ipv4.ip_forward``: the appliance ships it
+    never writes, ``net.ipv4.ip_forward``: the deployment host ships it
     as a boot-time sysctl, and a daemon that reads ``0`` refuses
     egress naming the sysctl key.
     """

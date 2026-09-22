@@ -112,7 +112,7 @@ class ImageImport(BaseModel):
     """An import request: a host-side path to a container-image tar.
 
     The daemon's filesystem must reach it (a store path via the
-    appliance's share, or a state-disk path) — the API deliberately
+    share, or a state-dir path) — the API deliberately
     does not accept uploads yet.
     """
 
@@ -140,7 +140,7 @@ class WorkspaceCreate(BaseModel):
     root_mib: int | None = Field(default=None, ge=256, le=65536)
     home_mib: int | None = Field(default=None, ge=64, le=65536)
     # Egress networking (#52): boots with a virtio-net NIC onto a
-    # per-VM tap in the appliance — the default. "egress": false opts
+    # per-VM host tap — the default. "egress": false opts
     # into the no-NIC posture.
     egress: bool = True
     # The consent mode and static allowlist (#69), fixed at create.
@@ -170,18 +170,18 @@ class WorkspaceCreate(BaseModel):
     ssh_pubkey: str | None = Field(default=None, max_length=16384)
 
 
-#: The daemon's boot cmdline — the appliance run script names the
+#: The daemon's boot cmdline — a deployment names the
 #: image it booted on it (``msksd.image=<store path>``), and
 #: :func:`cmdline_image` reports that in ``/health`` so a client
-#: can name drift between a running appliance and the tree's
+#: can name drift between a running daemon and the tree's
 #: current build (#160).
 CMDLINE = Path("/proc/cmdline")
 
 
 def cmdline_image() -> str | None:
-    """The appliance image this daemon booted from, when it says.
+    """The image this daemon booted from, when it says.
 
-    A bare ``msksd`` (no appliance) carries no ``msksd.image`` pair
+    A bare ``msksd`` carries no ``msksd.image`` pair
     and reports ``None``; clients treat that as "unknown" and skip
     the drift comparison.
     """
@@ -550,7 +550,7 @@ def home_volume_guard(app, row: dict) -> tuple[int, str] | None:
     The k8s backend answers a named refusal — the volume lives
     inside the runner pod's PVC, which only the pod's container
     reaches, so the byte streams this endpoint serves have nothing
-    to read or write (#80 is the local appliance's mechanism). On
+    to read or write (#80 is the local backend's mechanism). On
     the local backend, placement (the artifacts live on one host)
     and a possibly-live attachment are the two facts that block a
     move: the free statuses are named, everything else refuses.
@@ -1294,7 +1294,7 @@ def build_api(app) -> FastAPI:
         except (ImageError, OSError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
         # The first imported image becomes the default: a fresh
-        # appliance answers a bare workspace create immediately (the
+        # daemon answers a bare workspace create immediately (the
         # sole-entry fallback would resolve it, but the pointer keeps
         # the designation explicit and stable across later imports).
         if len(imagestore.list_images(state_dir)) == 1:

@@ -14,7 +14,7 @@ deny, timeout — then applies it:
   leaves the guest's ``connect()`` hanging on the kernel's ~127 s
   retransmit timer, and the RST is what makes the refusal fast.
   (klangk's sidecar forged the RST itself through a raw socket; the
-  appliance service user holds only CAP_NET_ADMIN and
+  daemon service user holds only CAP_NET_ADMIN and
   CAP_NET_BIND_SERVICE, so here the kernel forges it via the
   REJECT rule instead — same effect, no extra capability.)
 
@@ -28,7 +28,7 @@ per-connection: a new source port is a cache miss and re-prompts).
 
 ``netfilterqueue`` ships with every install (consent is the normal
 posture for workspaces): the devenv shells build it against
-nixpkgs' libnetfilter_queue/libnfnetlink, and the appliance closure
+nixpkgs' libnetfilter_queue/libnfnetlink, and the package closure
 builds it via ``nix/netfilterqueue-pkg.nix``. The import stays
 guarded — an exotic install without the library fails closed at
 bind time as a named refusal (the workspace boot refuses rather
@@ -56,7 +56,7 @@ try:
     from netfilterqueue import NetfilterQueue
 except ImportError:  # pragma: no cover — an install without the
     # library (the binding ships with every install; dev/CI shells
-    # and the appliance closure build it); the guard keeps that
+    # and the package closure build it); the guard keeps that
     # install fail-closed at bind time instead of crashing import.
     NetfilterQueue = None
 
@@ -144,7 +144,7 @@ class FlowConsumer:
         if NetfilterQueue is None:
             raise MicrovmError(
                 f"consent for {self.workspace_id}: netfilterqueue is "
-                "not installed (the appliance image installs "
+                "not installed (the deployment image installs "
                 "msks[nfqueue]); refusing to run an unanswered queue"
             )
         self._nfq = NetfilterQueue()

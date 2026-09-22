@@ -26,27 +26,12 @@ empty string is the unset form: the file value applies.
 | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `msksd`                              | Reads `$MSKSD_CONFIG_DIR/msksd.yaml` (default `~/.config/msksd/msksd.yaml`, honoring `$XDG_CONFIG_HOME`). A missing file is **generated** as a commented template pointing at this chapter — the first run writes the file so its location is discoverable, and the daemon then runs on environment variables and defaults. |
 | `msksd --config /path/to/msksd.yaml` | Reads exactly that file. A missing file is a startup error naming the path. Explicit paths are never auto-generated.                                                                                                                                                                                                        |
-| `msksd --config=none`                | Reads environment variables and built-in defaults only — the deployment shape for container runs that manage config out-of-band. The appliance generates its file instead (below).                                                                                                                                          |
+| `msksd --config=none`                | Reads environment variables and built-in defaults only — the dev daemon and deployment shapes manage config out-of-band.                                                                                                                                                                                                    |
 
 `MSKSD_CONFIG_DIR` is read before anything else and exists only as
 an environment variable: the config file cannot relocate the
 directory it lives in, so the tree root must be resolvable before
 the file is located.
-
-### The appliance
-
-The appliance writes `/run/msksd/msksd.yaml` — a
-service-user-owned `RuntimeDirectory` on the `/run` tmpfs — at
-every boot
-carrying the build's settings — the state dir, the listener's bind,
-and the store paths of the tools the daemon execs — and starts the
-daemon with `--config /run/msksd/msksd.yaml`. The file is regenerated at
-each boot because the tool paths it names belong to that build; a
-file that survived an appliance rebuild would point at dead store
-paths. Operator overrides keep riding the kernel cmdline bridge:
-every `msksd.<name>=<value>` pair on the appliance's cmdline becomes
-an `MSKSD_<NAME>` variable in the daemon's environment, which
-outranks the same key in the generated file.
 
 ## Key mapping
 
@@ -177,8 +162,8 @@ the file itself carries them all at one level.
 | ------------------------------- | ------------------------------------- | ------ | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `egress_enabled`                | `MSKSD_EGRESS_ENABLED`                | bool   | `false`         | Arms per-workspace NICs, DHCP, NAT egress, and the DNS forwarder at startup (needs `CAP_NET_ADMIN`); a running daemon applies a change at restart. |
 | `egress_subnet`                 | `MSKSD_EGRESS_SUBNET`                 | string | `172.31.0.0/16` | The IPv4 pool per-workspace /30 slices are carved from.                                                                                            |
-| `egress_uplink`                 | `MSKSD_EGRESS_UPLINK`                 | string | `eth0`          | The appliance interface egress is NAT-masqueraded out of (the base NAT table applies at startup; per-workspace rules read the live value).         |
-| `egress_dns_upstream`           | `MSKSD_EGRESS_DNS_UPSTREAM`           | string | _(unset)_       | The resolver the daemon's DNS forwarder relays to; unset reads the appliance's own `/etc/resolv.conf`.                                             |
+| `egress_uplink`                 | `MSKSD_EGRESS_UPLINK`                 | string | `eth0`          | The host interface egress is NAT-masqueraded out of (the base NAT table applies at startup; per-workspace rules read the live value).              |
+| `egress_dns_upstream`           | `MSKSD_EGRESS_DNS_UPSTREAM`           | string | _(unset)_       | The resolver the daemon's DNS forwarder relays to; unset reads the host's own `/etc/resolv.conf`.                                                  |
 | `ip_tool`                       | `MSKSD_IP_TOOL`                       | string | `ip`            | Path to the `ip` binary (taps and addresses).                                                                                                      |
 | `nft_tool`                      | `MSKSD_NFT_TOOL`                      | string | `nft`           | Path to the `nft` binary (per-VM firewall tables).                                                                                                 |
 | `egress_lease_s`                | `MSKSD_EGRESS_LEASE_S`                | int    | `3600`          | DHCP lease seconds offered to guests.                                                                                                              |

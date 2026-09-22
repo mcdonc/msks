@@ -4,7 +4,7 @@
 # the same trust model the appliance's egress machinery always had
 # inside its own kernel, now the host's.
 #
-# Source map: nix/appliance-config.nix — the appliance's NixOS
+# Source map: the retired nix/appliance-config.nix — the appliance's NixOS
 # configuration. What survives the hoist, carried verbatim unless
 # named below:
 #
@@ -22,7 +22,7 @@
 #   - the egress prerequisites: the kernel modules the daemon's
 #     rulesets and taps need, and host IP forwarding.
 #
-# What deliberately does not survive (the appliance removal sweep's
+# What deliberately does not survive (this module's
 # inventory, #232): the state-disk machinery, the store shapes and
 # shares, the in-guest update channel, the sshd bridge listener, the
 # nested-KVM module service, and the serial-console debug shell. The

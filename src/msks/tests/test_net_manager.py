@@ -269,7 +269,7 @@ async def test_dns_upstream_prefers_the_setting(net_app, monkeypatch) -> None:
 
 
 def test_verify_forwarding_accepts_a_routing_kernel(tmp_path: Path) -> None:
-    # The appliance's sysctl.d setting, as the daemon reads it.
+    # The deployment's sysctl.d setting, as the daemon reads it.
     sysctl = tmp_path / "ip_forward"
     sysctl.write_text("1\n")
     manager_mod.verify_forwarding(sysctl)  # no refusal

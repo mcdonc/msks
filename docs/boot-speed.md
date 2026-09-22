@@ -61,8 +61,10 @@ image that regresses any of them pays for it at every boot.
 ### A pinned kernel with a minimal path to root
 
 Debian's **generic kernel** flavor (`linux-image-*-amd64`, pinned
-by pool URL and hash in `nix/guest-assets.nix`) serves both the
-workspace guest and the appliance (#96 — one pin, one fetch). The
+by pool URL and hash in `nix/guest-assets.nix`) builds virtio-pci
+in and carries the KVM modules, so one flavor serves both the
+workspace guest and nested-KVM workspaces (#96 — one pin, one
+fetch). The
 property that matters is not built-ins but this: nothing sits
 between the kernel and the root mount. Debian's stock initramfs
 for the flavor is a 34 MiB `MODULES=most` archive that cost ~2.5s
@@ -120,7 +122,7 @@ build time, with the reason each removal is safe recorded there.
 ## The generic-kernel unification (#96)
 
 The workspace guest moved from Debian's cloud flavor to the
-**generic** flavor the appliance boots, measured on the reference
+**generic** flavor, measured on the reference
 host with `scripts/perf-boot.py --runs 5` (boot to first prompt,
 p50) and its guest-memory probe (MemTotal − MemAvailable at the
 first interactive prompt):
@@ -136,44 +138,4 @@ first interactive prompt):
 ¹ two sessions on the same host; the spread is host noise, not
 kernel — the six-module initrd's own cost sits inside it. The
 kernel-side delta is decompressing a 0.4 MiB-bigger vmlinuz
-(t_kernel +40 ms). The appliance artifact set is untouched
-(206 MiB rootfs.xz + 11.6 MiB vmlinux + 1.4 MiB initrd), and a
-bundle shipping both images shrinks by the archive delta
-(~19 MiB compressed).
-
-## The appliance
-
-The appliance's readiness number is boot-to-API: from
-`devenv processes up -d` to the first 200 from
-`GET /api/v1/health`
-on `https://192.168.77.2:8660` — measured with
-`scripts/perf-appliance.py` (`--runs 4 --fresh`), which also
-separates the first boot against a fresh state disk (image import,
-token generation) from the warm boots an operator's restart pays.
-
-```bash
-python scripts/perf-appliance.py --runs 4 --fresh
-```
-
-On the reference host, the trixie-based appliance (#92) measures a
-**warm p50 of ~27.5s** against the busybox-init image's ~25.2s: the
-~2.3s delta is systemd's bring-up (device coldplug, journald, the
-unit graph) plus the generic kernel's module set, and it buys
-service supervision, journald on the state disk, and the ACPI power
-button — while the dominant ~25s (msksd's Python closure resolving
-over the virtiofs store share, cold in the guest's page cache every
-boot) is unchanged between the two images. A cold first boot lands
-at ~29s against the old image's ~47s (the default-image import into
-the fresh state disk dominates that path; the old number was
-measured against fully cold host caches).
-
-What keeps the appliance boot honest: the same minimal-path-to-root
-rule as the workspace (the generic kernel builds
-virtio-pci and virtiofs in; the initramfs carries the six modules
-it lacks), cloud-init disabled (the kernel cmdline is the config
-channel), and the diet masks in `nix/appliance-image.nix` keeping
-AppArmor, unattended-upgrades, and the rest out of the critical
-path. The numbers above were measured against freshly built
-artifacts; a fully warm host page cache drops the warm boot to
-~15s — the dominant ~25s is msksd's closure reading cold off the
-virtiofs share on the first boots after a build.
+(t_kernel +40 ms).

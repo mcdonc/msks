@@ -24,7 +24,7 @@ from .workspaces import WORKSPACE_STATUSES, Workspace
 TOKEN_ENTROPY_BYTES = 32
 
 # Inside the package, so the wheel ships it: a pip-installed msksd
-# can run its migrations (the appliance build inherits this).
+# can run its migrations (the package build inherits this).
 MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "migrations"
 
 
@@ -90,7 +90,7 @@ class Model:
         alembic_version stamp (separate transactions): the next boot
         fails with "table already exists" (or, for an add_column
         re-run, "duplicate column name") and, unfixed, wedges the
-        appliance forever. Only a torn *head* is stamped past: the
+        deployed forever. Only a torn *head* is stamped past: the
         version row must be absent (the observed #10 shape: DDL done,
         stamp lost) or sit at head's parent, meaning the torn step is
         the last pending one. Any earlier gap — or a legitimate

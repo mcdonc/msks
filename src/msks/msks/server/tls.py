@@ -55,7 +55,7 @@ def _write(path: Path, data: bytes, mode: int) -> None:
             written = os.write(fd, view)
             view = view[written:]
         # These files are load-bearing across hard power cuts (the
-        # appliance's VMM can die without guest notice): flush the
+        # VMM can die without guest notice): flush the
         # data or the next boot reads a zero-length PEM and crash-loops.
         os.fsync(fd)
     finally:
@@ -244,7 +244,7 @@ def _ca_usable(ca_cert: Path, ca_key: Path) -> bool:
     minted before #141's strict-clean change) cannot sign the leaf
     the current mint code builds an AKI for — the remint raises and
     the unit crash-loops (#148, observed live on a long-lived state
-    disk after #146 changed the appliance's bind host). Such a CA is
+    disk after #146 changed the daemon's bind host). Such a CA is
     not usable: it is replaced wholesale, the same recovery as a
     missing pair.
     """

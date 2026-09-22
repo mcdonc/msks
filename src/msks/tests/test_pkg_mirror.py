@@ -1,11 +1,10 @@
-"""Guards over the appliance closure's nix mirror (#203).
+"""Guards over the msksd package's nix mirror (#203).
 
 `nix/msks-pkg.nix` hand-mirrors `[project.dependencies]`; when #196
-added textual the mirror drifted and the failure surfaced only as the
-supervised appliance's asset build restart-looping (the
-pythonRuntimeDepsCheckHook refuses the wheel). These checks compare
-the two lists by name so the next dependency addition fails a test
-instead of the appliance boot.
+added textual the mirror drifted and the failure surfaced only at
+package build time (the pythonRuntimeDepsCheckHook refuses the
+wheel). These checks compare the two lists by name so the next
+dependency addition fails a test instead of a build.
 """
 
 import re
@@ -45,7 +44,7 @@ def nix_dependency_block() -> str:
 
 def test_every_pyproject_dependency_is_in_the_nix_package() -> None:
     """Each [project.dependencies] name appears in msks-pkg.nix's
-    dependencies list — the mirror the appliance closure builds from."""
+    dependencies list — the mirror the package closure builds from."""
     have = {
         line.strip()
         for line in nix_dependency_block().splitlines()
@@ -54,7 +53,7 @@ def test_every_pyproject_dependency_is_in_the_nix_package() -> None:
     missing = dependency_names() - have
     assert not missing, (
         f"pyproject dependencies missing from nix/msks-pkg.nix: "
-        f"{sorted(missing)} — the appliance build fails its runtime "
+        f"{sorted(missing)} — the package build fails its runtime "
         f"deps check without them (#203)"
     )
 

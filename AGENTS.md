@@ -54,47 +54,35 @@ not process-compose. Consequences when debugging a managed stack:
 
 Background lifecycle semantics (all verified live):
 
-**The supervised process is the appliance (#146)** — `processes
-appliance`, nothing else: `devenv processes list` shows no bare-host
-msksd. The process exec builds conditionally then runs
-`scripts/appliance-run.sh`; `devenv processes up/down/restart/logs
-appliance` manage it, with a 90s shutdown grace covering the run
-script's ACPI-first teardown (60s window for a nested workspace's
-stop cycle — shorter windows lost page-cache-only sqlite commits,
-observed live). The `msks-appliance-up`/`-down` scripts are detached
-wrappers over the same manager. `msks-appliance-shell` (#189) takes
-over the appliance for a debug console: it stops the manager, runs
-the run script itself with the serial on a pty and the state-disk
-`debug-shell` marker seeded, and on detach stops the appliance and
-removes the marker — do not `devenv processes up` while a session
-runs. The run script's EXIT trap owns
-its pidfile and sockets; if the script dies without the trap
-firing (SIGKILL), recovery is manual:
-`pkill -f 'cloud-hypervisor --api-socket <repo>/.devenv/state/appliance/api.sock'`
-(plus the matching `virtiofsd --socket-path` pattern) and removing
-the stale sockets under `.devenv/state/appliance/`. An orphan
-booted by a pre-#156 checkout keeps its sockets under the old
-`<repo>/.appliance/` path — pkill those with the old path instead.
+**The supervised process is the dev-mode msksd (#231)** — `processes
+msksd`, nothing else. The process exec runs
+`scripts/dev-daemon.sh` (also the `msks-dev` hand entry point): it
+seeds the worktree's daemon state (bootstrap token, API port, the
+port-derived egress subnet) and execs msksd through the host's
+`msks-caps` capability wrapper. `devenv processes up` runs it
+attached (foreground — the user never backgroundms it), and
+`devenv processes up/down/restart/logs msksd` manage the same
+process, with a 90s shutdown grace covering a running workspace's
+stop cycle. A state-dir `flock` refuses a second daemon on the same
+catalog.
 
 - `devenv processes up -d` starts the manager detached — it survives
   the shell that launched it, and a second `up -d` is a no-op.
 - `devenv processes down` (from any fresh shell) stops gracefully:
-  the manager TERMs the appliance process, whose trap drives ACPI
-  poweroff through the CH API inside the 90s grace.
-- The client env presets to the appliance (`MSKSC_URL`/`TOKEN`/
-  `CAFILE` from the appliance state dir, `.devenv/state/appliance`
-  by default — `MSKS_APPLIANCE_DIR` relocates it); the run script
-  extracts the guest's CA cert into
-  `.devenv/state/appliance/msks-ca.pem` once the guest serves, so a
-  fresh shell verifies. A bare-host msksd is run BY HAND (see the
-  README section) — never a managed process.
-- A crashed run script crash-restarts under the supervisor; a
+  the manager TERMs the msksd process, whose shutdown path stops
+  running workspaces inside the 90s grace.
+- The client env presets to the dev daemon (`MSKSC_URL`/`TOKEN`/
+  `CAFILE` from the worktree's daemon state dir,
+  `.devenv/state/msksd` by default — `MSKSD_STATE_DIR` relocates
+  it, and the daemon writes `msks-ca.pem` there on first serve, so
+  a fresh shell verifies).
+- A crashed msksd crash-restarts under the supervisor; a
   repeatedly-failing process reaches `gave_up` after five restarts
   (`devenv processes logs` shows why).
-- If the manager daemon itself dies while the appliance runs, the
+- If the manager daemon itself dies while msksd runs, the
   per-process **scope guardian** (its config lives under
   `.devenv/run/processes/guardians/`) TERMs the whole process tree
-  with the process's grace — the appliance stops gracefully, it does
+  with the process's grace — the daemon stops gracefully, it does
   NOT keep running unsupervised (probe-verified on devenv 2.3.1 in a
   throwaway project: a SIGKILL'd manager took the tree down within
   seconds). `devenv processes down` afterwards reports "No process
@@ -250,7 +238,7 @@ rework.** While #229's sub-issues are in flight, leave
 same `## \[Unreleased]` section, so every landing produces a conflict
 to resolve by hand, and per-PR entries written mid-rework describe a
 tree the rework is about to delete. When the rework lands, cut a
-single `Changed` entry covering the whole arc (appliance removed,
+single `Changed` entry covering the whole arc (the appliance layer removed,
 deployment-host module added, k8s retired) in the PR that closes
 issue #229. The rules below govern entries outside the freeze.
 

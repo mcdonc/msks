@@ -467,7 +467,7 @@ async def test_workspace_validation(client) -> None:
 async def test_health_reports_the_booted_image(
     client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The daemon names the appliance image it booted from (#160):
+    """The daemon names the image it booted from (#160):
     the msksd.image pair off the kernel cmdline, None without one
     (a bare msksd, or a daemon predating the pair)."""
     http, _app, _stub = client

@@ -99,7 +99,7 @@ async def test_local_egress_boot() -> None:
         egress=True,
     )
     # The daemon verifies, never writes, ip_forward (#101 — the
-    # appliance ships it as a sysctl); the root harness owns the dev
+    # deployment ships it as a sysctl); the root harness owns the dev
     # host's setting for the run and restores what it found.
     forwarding = Path("/proc/sys/net/ipv4/ip_forward")
     forwarding_was = forwarding.read_text()
@@ -146,7 +146,7 @@ async def test_local_egress_boot() -> None:
             app=app,
         )
         # Containment: the tap's input chain lets DHCP and DNS through
-        # and nothing else — the appliance's API (on the tap gateway)
+        # and nothing else — the daemon's API (on the tap gateway)
         # must refuse the guest root's connection attempt.
         await run_in_console(
             microvm,
@@ -200,7 +200,7 @@ async def test_local_egress_git_out() -> None:
     through ``msks forward --local`` — the alias workflow's ``-A``
     path (#112) — never a key on the guest's disk. That push leg
     crosses a test-widened input pin: the daemon's own posture
-    drops guest traffic aimed at the appliance by design (#52 —
+    drops guest traffic aimed at the host by design (#52 —
     test_local_egress_boot pins the drop), and a hermetic runner
     has no off-host remote to receive the push, so the test pins
     exactly one widening (this workspace's git port) into its own

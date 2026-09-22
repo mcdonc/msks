@@ -4,7 +4,7 @@ uvloop — pulled in by ``uvicorn[standard]``, so present in the
 development venv the dev-tree and bare-host daemons run from — does
 not implement ``loop.sock_recvfrom``/``loop.sock_sendto`` (a plain
 ``NotImplementedError``, observed with uvloop 0.22 under python
-3.14). The nix-built appliance closure depends on plain ``uvicorn``
+3.14). The nix-built closure depends on plain ``uvicorn``
 without the extra, so the same code served DHCP and DNS there while
 silently dying on its first await under the venv: the receive task
 crashed inside ``serve()`` and the workspace guest never got a lease.

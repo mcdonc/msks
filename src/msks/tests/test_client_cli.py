@@ -45,8 +45,8 @@ def client_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MSKSC_URL", "https://daemon")
     monkeypatch.setenv("MSKSC_TOKEN", "tok")
     # The ambient devenv shell presets MSKSC_EXPECTED_IMAGE once the
-    # checkout has appliance state — without this, every client test
-    # would depend on where (and whether) an appliance was built.
+    # checkout has daemon state — without this, every client test
+    # would depend on where (and whether) a daemon state dir exists.
     monkeypatch.delenv("MSKSC_EXPECTED_IMAGE", raising=False)
 
 
@@ -166,7 +166,7 @@ NEW_IMAGE = "/nix/store/newwwww-msks-appliance"
 
 def route(req: httpx.Request) -> httpx.Response:
     """The ls route pair: workspaces plus a health that serves an
-    older image — the drifted-appliance shape #160 names."""
+    older image — the drifted-daemon shape #160 names."""
     if req.url.path == "/api/v1/health":
         return httpx.Response(200, json={"status": "ok", "image": OLD_IMAGE})
     return httpx.Response(200, json=ROWS)
@@ -188,7 +188,7 @@ def test_cmd_ls_names_a_stale_appliance_image(
     assert "devenv processes down, then devenv processes up -d" in err
 
     # The reverse drift (an older checkout beside a newer running
-    # appliance — bisect, a worktree switch) uses the same wording.
+    # deployment — bisect, a worktree switch) uses the same wording.
     monkeypatch.setenv(
         "MSKSC_EXPECTED_IMAGE", "/nix/store/ancient-msks-appliance"
     )
@@ -199,7 +199,7 @@ def test_cmd_ls_names_a_stale_appliance_image(
 def test_cmd_ls_stays_silent_when_images_match(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A current appliance (or a daemon that predates the image
+    """A current image (or a daemon that predates the image
     pair — `image: null`) prints the listing and nothing else."""
     client_env(monkeypatch)
     monkeypatch.setenv("MSKSC_EXPECTED_IMAGE", OLD_IMAGE)
@@ -225,7 +225,7 @@ def test_cmd_ls_ignores_a_malformed_health_document(
     """A /health that answers a non-mapping (a wrong host, a
     proxy) never tracebacks the listing: the probe is best-effort,
     the notice simply stays off. Found live: a tree with built
-    appliance state presets MSKSC_EXPECTED_IMAGE, so the probe
+    deployment presets MSKSC_EXPECTED_IMAGE, so the probe
     fires for every `msks ls` from a devenv shell."""
     client_env(monkeypatch)
     monkeypatch.setenv("MSKSC_EXPECTED_IMAGE", NEW_IMAGE)

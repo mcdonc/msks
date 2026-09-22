@@ -17,17 +17,9 @@
 # so one workflow carries both again — a failure anywhere reds the
 # same check, and the unprivileged pass still shows in the step log.
 #
-# What stays out of this per-PR workflow, all opt-in exactly as
-# before: the appliance smoke test (MSKSD_TEST_APPLIANCE — its
-# workspace boots inside the appliance VM, nested virt the runner
-# does not accelerate), the L3 recursion smoke (MSKSD_TEST_L3,
-# additionally gated on MSKSD_TEST_APPLIANCE; #82 — its inner
-# workspace boots nested-in-nested under the appliance, hours on a
-# runner), and the k8s smoke (needs a cluster). The L3 recursion
-# smoke has its own workflow (nightly-l3.yml, #135) for a
-# self-hosted runner where the depth exists — manual dispatch
-# until one registers; this workflow's hosted-runner legs never
-# touch it.
+# What stays out of this per-PR workflow, opt-in exactly as
+# before: the k8s smoke (needs a cluster). This workflow's
+# hosted-runner legs never touch it.
 #
 # Path-filtered to its real inputs: the guest/toolchain files (a
 # nixpkgs pin move lands through devenv.lock), everything under the
@@ -141,18 +133,11 @@ jobs:
 
       # The egress smokes need root and the runner's FORWARD chain
       # handed to the daemon's own nft tables. This step also guards
-      # the bare-host posture — msksd's net stack on a kernel it
-      # shares with other firewall owners — which the appliance does
-      # not exercise (msksd is the only firewall in its kernel) and
-      # which nothing ships today: retire the egress step if k8s
-      # workspace egress (#69) settles on pod networking, keep and
-      # promote it if it lands on host taps — the additive
-      # appliance-side coverage is #88. Either way the lesson it pins
-      # is the product lesson for that posture: an nft accept in the
+      # the dev-host posture — msksd's net stack on a kernel it
+      # shares with other firewall owners: an nft accept in the
       # daemon's own tables cannot override a foreign base chain's
       # drop — on a shared kernel, host firewall control must be taken
-      # explicitly, the way appliance-setup.sh takes it for the
-      # appliance bridge. Concretely here: the runner's docker leaves
+      # explicitly. Concretely here: the runner's docker leaves
       # FORWARD policy DROP for traffic not its own, so the step
       # prints whatever the image left behind, clears FORWARD, and
       # hands the forward hook to the daemon's own tables — the rules

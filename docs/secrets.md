@@ -49,12 +49,12 @@ setting** — where the bytes live is a configuration choice, not
 code, so moving from a local file to at-rest encryption or a managed
 vault changes no msks code:
 
-| Provider | Setting value    | Where the secret lives                                                                                                | The credential the daemon holds                                                                               |
-| -------- | ---------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `file`   | `file` (default) | One file per secret under the store root (`<state_dir>/secrets`), filesystem permissions only                         | none                                                                                                          |
-| `age`    | `age`            | One age-encrypted file under the store root; the identity lives outside it, so a copy of the root alone is ciphertext | an age identity file beside the state dir                                                                     |
-| `awssm`  | `awssm`          | AWS Secrets Manager, under the `secretspec/msks/` name prefix                                                         | the AWS SDK credential chain — on AWS-hosted appliances an instance profile role, no stored credential at all |
-| `bws`    | `bws`            | A Bitwarden Secrets Manager project                                                                                   | a machine-account access token (`BWS_ACCESS_TOKEN`) in the daemon's environment                               |
+| Provider | Setting value    | Where the secret lives                                                                                                | The credential the daemon holds                                                                   |
+| -------- | ---------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `file`   | `file` (default) | One file per secret under the store root (`<state_dir>/secrets`), filesystem permissions only                         | none                                                                                              |
+| `age`    | `age`            | One age-encrypted file under the store root; the identity lives outside it, so a copy of the root alone is ciphertext | an age identity file beside the state dir                                                         |
+| `awssm`  | `awssm`          | AWS Secrets Manager, under the `secretspec/msks/` name prefix                                                         | the AWS SDK credential chain — on AWS hosts an instance profile role, no stored credential at all |
+| `bws`    | `bws`            | A Bitwarden Secrets Manager project                                                                                   | a machine-account access token (`BWS_ACCESS_TOKEN`) in the daemon's environment                   |
 
 Plain Bitwarden Password Manager (`bw`) keeps its session only
 while an operator holds it unlocked, so it serves interactive use;
@@ -75,7 +75,7 @@ secret_store_provider: file
 ```
 
 `age` — at-rest encryption of the store (protects copies of the
-state dir; the identity file itself is the appliance's one bootstrap
+state dir; the identity file itself is the daemon's one bootstrap
 secret):
 
 ```yaml
@@ -108,12 +108,12 @@ The `file` provider stores plaintext bytes behind filesystem
 permissions — the same posture as every other secret-bearing
 artifact in the state dir (the database, the ssh identities). When
 that is not enough, `age` encrypts the store in place and `awssm` /
-`bws` move the bytes off the appliance entirely. All three are
+`bws` move the bytes off the daemon host entirely. All three are
 settings; msksd never picks an algorithm itself.
 
 ## The audit trail
 
-Mint, revoke, and expiry append a row to the appliance database:
+Mint, revoke, and expiry append a row to the daemon database:
 the placeholder's workspace, name, destination allowlist, and a
 timestamp. The secret value and the sentinel appear nowhere in the
 audit — the value is not msks's to log, and the sentinel is never

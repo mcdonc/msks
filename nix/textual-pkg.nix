@@ -1,4 +1,4 @@
-# The textual TUI framework for the appliance closure (#195/#203).
+# The textual TUI framework for the msksd closure (#195/#203).
 #
 # nixpkgs (nixos-26.05) carries 8.2.6, below the >=8.2.8 floor the
 # consent decider TUI declares: the ListView focus semantics the TUI
@@ -13,8 +13,8 @@
 # new wheel uv.lock pins (nix prints the real hash on mismatch),
 # then diff the wheel's METADATA Requires-Dist against
 # propagatedBuildInputs — a base entry the new wheel adds needs a
-# hand-edit here, or the runtime check fails only at appliance
-# build time (#203's blast radius). test_appliance_pkg.py fails
+# hand-edit here, or the runtime check fails only at package
+# build time (#203's blast radius). test_textual_pkg.py fails
 # when pyproject's floor moves past this pin.
 {
   lib,

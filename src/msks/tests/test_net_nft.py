@@ -42,8 +42,8 @@ def test_vm_ruleset_scopes_the_tap() -> None:
     assert 'oifname "msks-tap" drop' in ruleset
     assert 'iifname "msks-tap" drop' in ruleset
     # Input: the guest reaches exactly DHCP and the resolver —
-    # nothing else in the appliance — and the replies to connections
-    # the appliance itself opened into the guest (the forward's
+    # nothing else on the host — and the replies to connections
+    # the host itself opened into the guest (the forward's
     # dial, #109) return on their conntrack state; a guest-initiated
     # connection arrives state NEW and never matches it.
     assert "type filter hook input priority filter" in ruleset

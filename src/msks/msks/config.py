@@ -492,13 +492,13 @@ def render_template() -> str:
 # --- Per-workspace egress networking ---
 # egress_enabled: false     # arm per-workspace NICs, DHCP, NAT, and
 #                           # the DNS forwarder (applies at startup;
-#                           # the appliance turns this on)
+#                           # the deployment turns this on)
 # egress_subnet: 172.31.0.0/16  # the IPv4 pool per-workspace /30s
 #                           # are carved from
 # egress_uplink: eth0       # the interface egress is NATed out of
 #                           # (the base NAT table applies at startup)
 # egress_dns_upstream: ""   # the resolver to relay DNS to; empty ->
-#                           # the appliance's /etc/resolv.conf
+#                           # the host's /etc/resolv.conf
 # ip_tool: ip               # the ip binary
 # nft_tool: nft             # the nft binary
 # egress_lease_s: 3600      # DHCP lease seconds
