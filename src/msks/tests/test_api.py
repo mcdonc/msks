@@ -273,9 +273,40 @@ async def test_create_without_a_name_mints_an_id_only_workspace(
     assert created.json()["name"] is None
     by_id = await http.get(f"/api/v1/workspaces/{wid}", headers=auth())
     assert by_id.status_code == 200
-    # The minted id is hex (uuid4), safe as a path component.
-    assert len(wid) == 32
+    # The minted id is 10 hex digits (5 random bytes) — path-safe by
+    # construction and short enough to copy from a listing.
+    assert len(wid) == 10
     assert all(ch in "0123456789abcdef" for ch in wid)
+
+
+async def test_minted_id_rerolls_past_live_collisions(
+    client, monkeypatch
+) -> None:
+    """The 10-hex mint re-rolls while a candidate already answers on
+    the daemon (#246): a live workspace's id AND its name both block
+    — ref resolution prefers the id, so a workspace named like
+    another's id would be shadowed by it."""
+    from msks.server import api as api_module
+
+    http, app, _stub = client
+    await app.state.model.create_workspace(
+        VmSpec(workspace_id="deadbeef01", kernel="/k", rootfs="/r")
+    )
+    await app.state.model.create_workspace(
+        VmSpec(workspace_id="other", kernel="/k", rootfs="/r"),
+        name="cafe1234",
+    )
+    rolled = iter(("deadbeef01", "cafe1234", "0123abcd56"))
+    monkeypatch.setattr(
+        api_module.secrets, "token_hex", lambda _: next(rolled)
+    )
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"name": "fresh", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["id"] == "0123abcd56"
 
 
 async def test_recreated_name_is_a_new_instance(client) -> None:

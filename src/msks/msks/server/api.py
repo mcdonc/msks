@@ -10,7 +10,7 @@ import contextlib
 import json
 import os
 import re
-import uuid
+import secrets
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -290,6 +290,23 @@ def create_name(body: WorkspaceCreate) -> str | None:
             )
         return body.name
     return body.name if body.name is not None else body.id
+
+
+async def mint_workspace_id(model) -> str:
+    """One fresh #246 instance id: 10 hex digits (5 random bytes).
+
+    Short enough to read and copy from a listing, long enough that
+    collisions need ~1M live workspaces to become likely — and the
+    mint re-rolls while a candidate already answers on this daemon
+    (an id AND a name block it: ref resolution prefers the id, so a
+    workspace named like another's id would be shadowed by it). The
+    insert's primary-key index is the backstop for a same-id race
+    between two creates of different names.
+    """
+    while True:
+        candidate = secrets.token_hex(5)
+        if await model.get_workspace(candidate) is None:
+            return candidate
 
 
 def validated_user_data(body: WorkspaceCreate) -> str | None:
@@ -1131,11 +1148,11 @@ def build_api(app) -> FastAPI:
         if name is not None and await app.state.model.name_taken(name):
             raise HTTPException(status_code=409, detail="workspace exists")
         # The #246 instance id: minted by the daemon, immutable, and
-        # never reused — artifact paths, caches, and every keyed
-        # surface derive from it, so a workspace recreated under the
-        # same name is a different id and cannot collide with the
-        # first instance anywhere.
-        workspace_id = uuid.uuid4().hex
+        # never reused while its workspace lives — artifact paths,
+        # caches, and every keyed surface derive from it, so a
+        # workspace recreated under the same name is a different id
+        # and cannot collide with the first instance anywhere.
+        workspace_id = await mint_workspace_id(app.state.model)
         # The state-disk floor (#184): a create below it is the #180
         # failure mode in the making, so it answers a named 507 with
         # the reclaim path spelled out instead of wedging later.

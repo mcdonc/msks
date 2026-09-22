@@ -103,7 +103,7 @@ CONSOLE_ATTEMPTS = int(os.environ.get("MSKSD_TEST_CONSOLE_ATTEMPTS", "3"))
 
 def created_id(result) -> str:
     """The daemon-minted id from a CLI create's confirmation line
-    (#246): ``created <name> (id <uuid>)``.
+    (#246): ``created <name> (id <10-hex-digits>)``.
 
     The smoke suites key artifacts (the serial log, the client data
     root) on the immutable id the daemon mints — the typed name

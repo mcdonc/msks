@@ -49,7 +49,7 @@ def format_workspace(row: dict) -> str:
     image = (row.get("image_hash") or "-")[:12]
     host = row.get("host") or "-"
     name = row.get("name") or "-"
-    return f"{name:<20} {row['id']:<32} {row['status']:<9} {image:<13} {host}"
+    return f"{name:<20} {row['id']:<12} {row['status']:<9} {image:<13} {host}"
 
 
 def display_name(row: dict) -> str:

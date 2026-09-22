@@ -27,7 +27,8 @@ class Workspace(Base):
     """One workspace: identity + VM spec + observed lifecycle state.
 
     Identity is two fields (#246): ``id`` is the daemon-minted,
-    immutable instance id (a fresh random UUID per create, never
+    immutable instance id (10 fresh random hex digits per create,
+    never
     reused — every artifact path, cache, and keyed surface derives
     from it), and ``name`` is the operator-chosen label the CLI
     addresses workspaces by. A row minted before #246 keeps its

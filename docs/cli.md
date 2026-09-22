@@ -95,8 +95,10 @@ anything real.
 A workspace carries two identity fields. The **name** is the label
 you choose at create — the positional argument of every command,
 unique among the daemon's workspaces. The **id** is minted by the
-daemon at create (a random UUID), immutable, and never reused:
-every host-side surface — the artifact directories under the state
+daemon at create (10 hex digits — 5 random bytes, re-rolled until
+it answers to nothing on this daemon), immutable, and never reused
+while its workspace lives: every host-side surface — the artifact
+directories under the state
 dir, the catalog row, and the client-side caches — keys on the id.
 Deleting a workspace and creating another under the same name
 yields a different id with nothing of the first instance left to
@@ -104,9 +106,9 @@ collide: the second workspace's `msks ssh` works on the first try,
 with a fresh host-key cache of its own.
 
 Every command that takes a workspace accepts either reference —
-`msks console ws` and `msks console 1a2b3c…d` reach the same
+`msks console ws` and `msks console 1a2b3c4d5e` reach the same
 workspace. The name is the everyday reference; the id is the one
-no future workspace will ever answer to.
+no live workspace will ever answer to.
 
 ## `msks ls`
 
@@ -116,8 +118,8 @@ owning host.
 
 ```text
 $ msks ls
-my-workspace   9f2c41ab77de0011aabbccdd00112233   running   9f2c41ab77de   hv-1
-scratch        2233ccddeeff445566778899aabbccdd   created   -              hv-1
+my-workspace   1a2b3c4d5e   running   9f2c41ab77de   hv-1
+scratch        77eedd0199   created   -              hv-1
 ```
 
 The status column speaks the daemon's lifecycle vocabulary —
@@ -249,7 +251,7 @@ image's `msks` user as its login.
 
 ```bash
 $ msks create my-workspace --image debian:13 --start
-created my-workspace (id 9f2c41ab77de0011aabbccdd00112233)
+created my-workspace (id 9f2c41ab77)
 attach with: msks console my-workspace
 ```
 
@@ -260,9 +262,9 @@ attempted. A failed boot still leaves the workspace created — the
 error message says so and names the recovery command:
 
 ```text
-created my-workspace (id 9f2c41ab77de0011aabbccdd00112233)
+created my-workspace (id 9f2c41ab77)
 msks: 503: vmm launch failed
-msks: 9f2c41ab77de0011aabbccdd00112233 is created; boot it later with: msks start my-workspace
+msks: 9f2c41ab77 is created; boot it later with: msks start my-workspace
 ```
 
 Creating without `--start` prints the same line and exits; boot it
@@ -277,7 +279,7 @@ the create-time immutability). It composes with `--start`:
 
 ```bash
 $ printf '#!/bin/sh\napt-get update\n' | msks create ws --user-data - --start
-created ws (id 2233ccddeeff445566778899aabbccdd)
+created ws (id 77eedd0199)
 attach with: msks console ws
 ```
 
@@ -291,8 +293,8 @@ and `msks ssh` picks it up from there:
 
 ```bash
 $ msks create my-workspace --image debian:13 --start
-created my-workspace (id 9f2c41ab77de0011aabbccdd00112233)
-client identity (mode 0600): /home/you/.local/share/msks/9f2c41ab77de0011aabbccdd00112233/identity
+created my-workspace (id 9f2c41ab77)
+client identity (mode 0600): /home/you/.local/share/msks/9f2c41ab77/identity
 attach with: msks console my-workspace
 ```
 

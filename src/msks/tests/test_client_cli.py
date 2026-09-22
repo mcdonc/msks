@@ -28,14 +28,14 @@ from test_api import TOKEN, StubMicrovm
 
 ROWS = [
     {
-        "id": "1a" * 16,
+        "id": "1a2b3c4d",
         "name": "alpha",
         "status": "running",
         "image_hash": "a" * 64,
         "host": "hv1",
     },
     {
-        "id": "2b" * 16,
+        "id": "2b3c4d5e",
         "name": "beta",
         "status": "created",
         "image_hash": None,
@@ -167,7 +167,7 @@ def test_cmd_ls_formats_rows(
     # The #246 columns: the label beside the immutable id, which
     # addresses the workspace as surely as the name does.
     assert cli.format_workspace(ROWS[0]) == (
-        f"{ROWS[0]['name']:<20} {ROWS[0]['id']:<32} "
+        f"{ROWS[0]['name']:<20} {ROWS[0]['id']:<12} "
         f"running   {'a' * 12:<13} hv1"
     )
 
@@ -1214,7 +1214,7 @@ async def test_api_call_rm_deletes_a_running_workspace(api_transport) -> None:
         transport=transport,
     )
     wid = deleted["deleted"]
-    assert len(wid) == 32  # the minted id (#246)
+    assert len(wid) == 10  # the minted id (#246): 10 hex digits
     assert stub.calls.index(("shutdown", wid)) < stub.calls.index(
         ("cleanup", wid)
     )
