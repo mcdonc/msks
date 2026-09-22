@@ -12,8 +12,8 @@
 #
 # The real-VM smoke tests run in smoke.yml — the hosted runner's
 # /dev/kvm (changelog 2024-04-02) plus the built guest assets
-# (.devenv/state/guest) satisfy the local suite's gate (#64); the appliance and k8s smokes
-# stay dev-host opt-in. This workflow stays MSKSD_TEST_*-free by
+# (.devenv/state/guest) satisfy the local suite's gate (#64); the
+# k8s smokes stay dev-host opt-in. This workflow stays MSKSD_TEST_*-free by
 # design: coverage-gated units only.
 name: CI
 

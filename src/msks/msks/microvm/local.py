@@ -229,7 +229,7 @@ def vm_config(
     own cloud-hypervisor with its own socket, so a constant works.
 
     ``net`` adds the virtio-net device (#52): ``tap`` names the
-    per-VM interface the appliance already created and addressed (a
+    per-VM interface the daemon already created and addressed (a
     plain dict ``{"tap": ..., "mac": ...}`` from the net manager's
     attachment; v52 takes a one-element sequence), and ``mac`` pins
     the workspace's deterministic MAC.
@@ -408,7 +408,7 @@ class LocalCloudHypervisor(MicrovmDriver):
     def _sweep_stale_sockets(self, vm_dir: Path) -> None:
         """Remove residue a hard kill left behind (#151).
 
-        A VMM killed without cleanup (host crash, appliance hard
+        A VMM killed without cleanup (host crash, a hard
         stop) leaves ``api.sock`` and ``vsock.sock`` in place; the
         next spawn then dies binding them -- the VMM at
         ``CreateApiServerSocket: AddrInUse`` before a byte of

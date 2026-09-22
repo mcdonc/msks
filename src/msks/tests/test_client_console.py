@@ -1,7 +1,7 @@
 """Client unit tests: env/URL handling, tty guards, pump semantics.
 
 The interactive loop runs against fakes; the live path is the
-appliance smoke test's console drive.
+smoke suite's console drive.
 """
 
 import asyncio

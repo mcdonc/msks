@@ -18,12 +18,12 @@ over the decider channel, built on the same per-VM chain.
 ## The path
 
 ```text
-workspace VM ──virtio-net──► per-VM tap ──► per-VM nftables chain (appliance kernel)
+workspace VM ──virtio-net──► per-VM tap ──► per-VM nftables chain (host kernel)
                                               │  forward: guest source → uplink: accept;
                                               │  established replies back; all else drops
                                               │  input: only DHCP (67) and DNS (53) in
                                               ▼
-                                     NAT (masquerade) → appliance uplink
+                                     NAT (masquerade) → host uplink
 ```
 
 Each egress workspace owns a dedicated /30 carved from the
@@ -38,13 +38,13 @@ keep the same address.
 msksd is the only DHCP server and the only resolver the guest ever
 sees: the DHCP offer names the tap as gateway and as DNS server, and
 a small forwarder on the tap answers port 53 by relaying to the
-appliance's own upstream (`MSKSD_EGRESS_DNS_UPSTREAM`, or the first
-nameserver in the appliance's `/etc/resolv.conf`). The resolver
+host's own upstream (`MSKSD_EGRESS_DNS_UPSTREAM`, or the first
+nameserver in the host's `/etc/resolv.conf`). The resolver
 speaks UDP; TCP/53 has no listener, so a query needing TCP fallback
 (DNSSEC validation, very large RRsets) fails fast. The forwarder
 answers queries from its own guest only; anything else arriving on
 the tap is dropped unread, so a spoofed-source datagram cannot turn
-the appliance into a reflection amplifier. #69 grows the naming
+the daemon into a reflection amplifier. #69 grows the naming
 layer — query cache, name learning for prompts, and the lockout that
 keeps DNS from being routed around — behind that same offered
 resolver.
@@ -61,16 +61,16 @@ tap:
   what blocks one workspace from reaching another's tap), and
   inbound the guest never asked for — nothing outside initiates a
   connection into a workspace.
-- **Input.** The guest may reach exactly two ports in the appliance
+- **Input.** The guest may reach exactly two ports on the host
   through its tap: DHCP (67) and the resolver (53). Everything else
-  from the tap drops before the appliance's own services — the API
+  from the tap drops before the host's own services — the API
   listener among them — so guest root cannot port-scan the
-  appliance.
+  host.
 
 What the chain deliberately permits depends on the workspace's
 consent mode (next section): in `allow` mode the _destination_ of a
 guest-initiated connection is unconstrained — any host reachable
-through the appliance uplink is reachable; in `static` and
+through the host uplink is reachable; in `static` and
 `interactive` modes every new flow passes a destination gate first.
 
 ## Egress consent (#69)
@@ -95,7 +95,7 @@ connection is decided:
   audit row. Address-range entries (`10.0.0.0/8`, `203.0.113.7:5432`)
   accept in the chain directly.
 - **`interactive`.** The first packet of every new flow queues to
-  the workspace's own NFQUEUE number inside the appliance kernel
+  the workspace's own NFQUEUE number inside the host kernel
   and msksd holds it until a decider answers:
 
   ```text
@@ -107,7 +107,7 @@ connection is decided:
                                     │                        ▼
                                     │             accept + pin / drop + RST
                                     ▼                        / expire
-                                  NAT → appliance uplink
+                                  NAT → host uplink
   ```
 
   A decider is any authenticated client that announced itself on
@@ -155,7 +155,7 @@ only while its process lives. Each workspace owns its queue number
 (derived from its address-pool slice), so one workspace flooding
 SYNs delays only its own verdicts. And the whole mechanism — taps,
 chains, queues, the resolver, the verdict table — lives in the
-appliance's kernel and msksd's userspace: guest root sees none of
+host's kernel and msksd's userspace: guest root sees none of
 it (no syscall, no `/proc`, no signal target).
 
 **Local-only semantics.** Per-flow holds are the local backend's
@@ -166,7 +166,7 @@ workspaces refuse at create until that lands (see below).
 
 ## What runs where
 
-**Inside the appliance:** the tap, its address, the per-VM
+**On the host:** the tap, its address, the per-VM
 nftables table, the NAT masquerade on the uplink, the DHCP service,
 and the DNS forwarder — all owned by msksd, which runs as a
 dedicated service user holding exactly two ambient capabilities:
@@ -176,7 +176,7 @@ VMM opening its tap) and `CAP_NET_BIND_SERVICE` (the DHCP and DNS
 listeners, UDP 67 and 53). Nothing in the daemon's process tree
 runs as uid 0; `/dev/kvm` reaches the VMM through the `kvm` group.
 The host's firewall is never touched; containment stays inside the
-appliance by design.
+host by design.
 
 **Inside the guest:** nothing msks-specific. The image overlay ships
 a systemd-networkd DHCP unit (see [images.md](images.md)); the
@@ -190,41 +190,31 @@ every backend, and the one that needs zero enforcement machinery.
 
 ## Configuration
 
-| Variable                           | Default         | Meaning                                                         |
-| ---------------------------------- | --------------- | --------------------------------------------------------------- |
-| `MSKSD_EGRESS_ENABLED`             | `false`         | Arm the egress plumbing at daemon start (the appliance sets it) |
-| `MSKSD_EGRESS_SUBNET`              | `172.31.0.0/16` | The pool per-workspace /30s are carved from                     |
-| `MSKSD_EGRESS_UPLINK`              | `eth0`          | The appliance uplink NAT hides guests behind                    |
-| `MSKSD_EGRESS_DNS_UPSTREAM`        | resolv.conf     | Where the forwarder relays queries                              |
-| `MSKSD_EGRESS_LEASE_S`             | `3600`          | DHCP lease lifetime                                             |
-| `MSKSD_EGRESS_DNS_TIMEOUT_S`       | `3.0`           | How long the forwarder waits on the upstream                    |
-| `MSKSD_IP_TOOL` / `MSKSD_NFT_TOOL` | `ip` / `nft`    | The plumbing tools' paths                                       |
+| Variable                           | Default         | Meaning                                                                                 |
+| ---------------------------------- | --------------- | --------------------------------------------------------------------------------------- |
+| `MSKSD_EGRESS_ENABLED`             | `false`         | Arm the egress plumbing at daemon start (the dev daemon and the NixOS module enable it) |
+| `MSKSD_EGRESS_SUBNET`              | `172.31.0.0/16` | The pool per-workspace /30s are carved from                                             |
+| `MSKSD_EGRESS_UPLINK`              | `eth0`          | The host uplink NAT hides guests behind                                                 |
+| `MSKSD_EGRESS_DNS_UPSTREAM`        | resolv.conf     | Where the forwarder relays queries                                                      |
+| `MSKSD_EGRESS_LEASE_S`             | `3600`          | DHCP lease lifetime                                                                     |
+| `MSKSD_EGRESS_DNS_TIMEOUT_S`       | `3.0`           | How long the forwarder waits on the upstream                                            |
+| `MSKSD_IP_TOOL` / `MSKSD_NFT_TOOL` | `ip` / `nft`    | The plumbing tools' paths                                                               |
 
 Egress needs the daemon to hold `CAP_NET_ADMIN` and
-`CAP_NET_BIND_SERVICE` — the appliance grants exactly those two to
-its service user — and a kernel that routes: the appliance ships
+`CAP_NET_BIND_SERVICE` — the dev host's wrapper and the NixOS
+module grant exactly those two — and a kernel that routes: the
+host ships
 `net.ipv4.ip_forward=1` as a boot-time `sysctl.d` setting, the
 daemon verifies it at startup, and a daemon that reads `0` refuses
-every egress workspace with a cause naming the sysctl key. The
-appliance's own uplink needs the host side wired —
-`sudo bash scripts/appliance-host-setup.sh` performs that setup
-once, as root: a `sysctl.d` forwarding drop-in plus a systemd unit
-that re-arms the bridge, tap, and NAT rules at every host reboot,
-so starting the appliance needs no sudo (the per-start
-`appliance-setup.sh` verifies the install and names it when
-something is missing; re-run the installer if egress ever stops
-working — a firewall reload can drop its rules). The
-appliance pins its NIC to the kernel name `eth0`
-(its kernel cmdline carries `net.ifnames=0`), which is the default
-`MSKSD_EGRESS_UPLINK`, and sets `MSKSD_EGRESS_ENABLED=true`, so
-workspaces are networked there once the installer has run. An
+every egress workspace with a cause naming the sysctl key. The deployment host satisfies the routing kernel the daemon
+verifies: the NixOS module in `nix/module.nix` sets
+`net.ipv4.ip_forward=1`, names its own uplink through settings, and
+grants the daemon the two capabilities — a `nixos-rebuild switch`
+is the whole host setup. The dev host's wrapper carries the same
+grant for `msks-dev` (its uplink default names this dev host's
+interface). An
 operator who sets `MSKSD_EGRESS_ENABLED=false` arms nothing, and
 every egress workspace then refuses to boot with the cause named.
-When msksd cannot arm the plumbing (a dev-shell daemon, say), it
-stays up for everything else and every egress workspace **refuses
-to boot** with a named cause, rather than running with a half-open
-path — create those with `"egress": false` instead.
-
 The dev-host egress smoke (`MSKSD_TEST_EGRESS=1`) runs as root:
 ambient capabilities cannot be granted to an arbitrary shell, so
 the harness — which creates real taps, loads nftables rules, and
@@ -232,154 +222,6 @@ binds ports 67 and 53 — runs as full root and sets `ip_forward`
 itself for the duration of the run. That is the test's constraint,
 not the server's: the daemon needs only the two capabilities and an
 already-routing kernel.
-
-### The host-side network: portable installer or static config
-
-`sudo bash scripts/appliance-host-setup.sh` is the portable path:
-one run as root arms the bridge, tap, forwarding, and NAT rules, and
-installs the persistence — a `sysctl.d` drop-in plus
-`/etc/msks/host-net.sh` behind `msks-host-net.service`, which
-re-arms the state at every host boot. It works on any systemd host
-regardless of which network manager or firewall owns the rest of
-the stack. The appliance's per-start check (`appliance-setup.sh`)
-verifies the resulting state — bridge, tap, `ip_forward` — not the
-mechanism that produced it, so the static forms below satisfy it
-too.
-
-On a host where systemd-networkd manages the network and
-`nftables.service` owns the firewall, the same state is entirely
-declarative: files the OS itself applies, no boot script. The
-bridge and its address:
-
-```ini
-# /etc/systemd/network/90-msksbr0.netdev
-[NetDev]
-Name=msksbr0
-Kind=bridge
-
-# /etc/systemd/network/90-msksbr0.network
-[Match]
-Name=msksbr0
-[Network]
-Address=192.168.77.1/24
-```
-
-The tap — `Owner=` names the user who runs the appliance, which is
-what lets the unprivileged cloud-hypervisor open it (changing that
-user means editing the file; the installer refuses when the existing
-tap's owner differs and names the manual step, `ip link del
-mskstap0` followed by a re-run):
-
-```ini
-# /etc/systemd/network/90-mskstap0.netdev
-[NetDev]
-Name=mskstap0
-Kind=tap
-
-[Tap]
-Owner=chrism
-```
-
-Forwarding keeps the `sysctl.d` form — machine identity, the same
-contract as inside the appliance — rather than a per-link toggle:
-
-```ini
-# /etc/sysctl.d/90-msks-appliance.conf
-net.ipv4.ip_forward = 1
-```
-
-And the firewall/NAT table, loaded by the distro's
-`nftables.service` (add the table to the file that service reads,
-typically `/etc/nftables.conf`):
-
-```nft
-table ip msks-host {
-  chain forward_msks {
-    type filter hook forward priority filter; policy accept;
-    iifname "msksbr0" ct state new,established,related accept
-    oifname "msksbr0" ct state established,related accept
-  }
-  chain nat_msks {
-    type nat hook postrouting priority srcnat; policy accept;
-    ip saddr 192.168.77.0/24 oifname != "msksbr0" masquerade
-  }
-}
-```
-
-On NixOS, paste this into `configuration.nix` (or a module) — it is the
-installer, shape for shape: the same bridge, the same owner-held tap,
-the same forwarding sysctl, the same three firewall rules. Substitute
-the user who runs the appliance:
-
-```nix
-{ pkgs, ... }:
-
-let
-  # The user who runs the appliance; the tap is owned by it, which is
-  # what lets the unprivileged cloud-hypervisor open it.
-  applianceUser = "chrism";
-in
-{
-  # Host forwarding — the same machine-identity setting the appliance
-  # ships internally.
-  boot.kernel.sysctl."net.ipv4.ip_forward" = "1";
-
-  # Keep NetworkManager's hands off the appliance's devices (inert
-  # where NetworkManager is not enabled).
-  networking.networkmanager.unmanaged = [ "msksbr0" "mskstap0" ];
-
-  systemd.services.msks-host-net = {
-    description = "msks appliance host network (bridge, tap, NAT)";
-    wantedBy = [ "multi-user.target" ];
-    after = [ "systemd-modules-load.service" ];
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
-    };
-    path = with pkgs; [ iproute2 iptables ];
-    script = ''
-      set -e
-      if ! ip link show dev msksbr0 >/dev/null 2>&1; then
-        ip link add name msksbr0 type bridge
-        ip addr add 192.168.77.1/24 dev msksbr0
-        ip link set msksbr0 up
-      fi
-      if ! ip link show dev mskstap0 >/dev/null 2>&1; then
-        ip tuntap add mode tap user ${applianceUser} mskstap0
-        ip link set mskstap0 master msksbr0
-        ip link set mskstap0 up
-      fi
-      ipt_rule() { # ipt_rule <table> <chain> <rule args...>: add if absent
-        table="$1"
-        shift
-        iptables -t "$table" -C "$@" >/dev/null 2>&1 ||
-          iptables -t "$table" -A "$@"
-      }
-      ipt_rule filter FORWARD -i msksbr0 -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j ACCEPT
-      ipt_rule filter FORWARD -o msksbr0 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-      ipt_rule nat POSTROUTING -s 192.168.77.0/24 ! -o msksbr0 -j MASQUERADE
-    '';
-  };
-}
-```
-
-The MASQUERADE rule matches any outbound interface (`! -o msksbr0`),
-so it follows the default route across wifi↔eth switches; the whole
-unit is idempotent, so a rebuild or a `systemctl restart
-msks-host-net` re-arms anything a firewall reload dropped. Hosts that
-prefer the blessed NAT module can replace the three `ipt_rule` calls
-with `networking.nat.enable = true; networking.nat.internalInterfaces
-= [ "msksbr0" ]; networking.nat.externalInterface = "<default-route
-iface>";` (that module also sets `ip_forward` itself).
-
-Non-NixOS hosts whose firewall is firewalld, or whose network
-NetworkManager manages, keep the installer path: NetworkManager does
-not consume networkd's `.netdev` files, and a firewalld complete
-reload replaces the whole ruleset — foreign rules added once, by
-script or by file, do not survive it. Re-running the installer
-re-arms the state after such a reload (the NixOS unit above is
-immune on both counts: `networkmanager.unmanaged` claims the devices,
-and a rebuild re-runs the idempotent unit).
 
 ## Reaching guest services (the forward)
 
@@ -543,10 +385,9 @@ material gone. The key type is the client's choice at create
 (`--key-type`: `ed25519` by default, `ecdsa`, `rsa`), independent
 of the daemon's `MSKSD_SSH_KEY_TYPE` setting.
 
-This is the ssh half of the client-held-secrets posture: an
-appliance owner keeps every capability the console and forward
-grant, but no longer holds a private key that opens the workspace's
-ssh. The console challenge-response half is #123.
+This is the ssh half of the client-held-secrets posture: the
+daemon host keeps every capability the console and forward grant,
+but no longer holds a private key that opens the workspace's ssh. The console challenge-response half is #123.
 
 ### The console challenge
 
@@ -664,17 +505,17 @@ Two msks-specific details:
   window.
 
 What the network allows depends on the workspace's consent mode:
-`allow` reaches any off-appliance destination without a grant —
+`allow` reaches any destination beyond the host without a grant —
 remotes, package mirrors, any host reachable through the uplink —
 while `static` and `interactive` gate each destination first (the
 [Egress consent](#egress-consent-69) section covers the semantics).
-Guest-initiated connections aimed at the appliance itself stay
+Guest-initiated connections aimed at the host itself stay
 dropped in every mode (only DHCP and the resolver answer it). The
 end-to-end proofs are the `test_local_egress_git_out` smoke
 (`MSKSD_TEST_EGRESS=1` locally, and part of CI's KVM workflow) —
 it installs git in the guest over a plain `allow` egress path and
 pushes a commit, over a test-widened input pin, since the
-appliance itself stays unreachable from the guest by design, using
+host itself stays unreachable from the guest by design, using
 only a key that arrived through the forward as a forwarded agent —
 and the `test_local_egress_consent_*` smokes, which drive a hold,
 a verdict, and the fail-closed denials through the real kernel

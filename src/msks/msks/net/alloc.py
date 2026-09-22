@@ -50,7 +50,7 @@ def guest_addr(net: IPv4Network) -> IPv4Address:
 
 
 def tap_addr(net: IPv4Network) -> IPv4Address:
-    """The appliance-side tap address: the second host of the /30."""
+    """The host-side tap address: the second host of the /30."""
     return IPv4Address(int(net.network_address) + 2)
 
 

@@ -154,9 +154,9 @@ in
     cargo-llvm-cov
     cloud-hypervisor # VMM driven by the local backend (#1); ships ch-remote
     curl # unix-socket REST poking during CH debugging
-    e2fsprogs # debugfs: seed the bootstrap token onto the state disk
+    e2fsprogs # resize2fs/e2fsck: grow and check workspace volumes
     cdrtools # genisoimage: the #41 cidata seed disks (iso9660)
-    iproute2 # the appliance bridge/tap (supervisor scripts; host-agnostic)
+    iproute2 # taps and addresses for the dev daemon's workspaces
     iptables # diagnose foreign FORWARD drops (docker's policy on CI runners)
     # that block the egress forward path the nft rules accept (#75/#52)
     jscpd # token-clone scanner (#71), pinned rust binary (see above)
@@ -167,7 +167,6 @@ in
     qemu # qemu-img for rootfs conversion during guest-image experiments
     rsync # host-side rsync over the forward (#110's sync path)
     secretspec # the #198 secret store's CLI (pinned release binary)
-    virtiofsd # the appliance's read-only /nix/store share (#10)
     ruff
     socat # AF_UNIX <-> pty/stdio plumbing for CH socket debugging
     tcpdump # packet-level debugging of the egress path (tap vs uplink)
@@ -198,11 +197,10 @@ in
   env.LD_LIBRARY_PATH = "${pkgs.libnetfilter_queue}/lib:${pkgs.libnfnetlink}/lib";
 
   # The nixpkgs source the devenv lock pins — the revision every
-  # guest/appliance build compiles against. Exported to every devenv
-  # context (shells, processes, tasks, scripts), so the build scripts'
+  # guest build compiles against. Exported to every devenv context
+  # (shells, processes, tasks, scripts), so the build scripts'
   # MSKS_GUEST_NIXPKGS requirement holds however they are reached:
-  # the appliance process exec, the drift watcher inside the run
-  # script, or a hand-run script from a debugging shell.
+  # the msksd process exec or a hand-run script from a shell.
   env.MSKS_GUEST_NIXPKGS = pkgs.path;
 
   # The msks client (#21) targets the DEV DAEMON (#231) by default,
@@ -248,8 +246,8 @@ in
 
   # The deployment-host daemon, dev shape (#231): msksd runs
   # FIRST-LEVEL on this host — cloud-hypervisor on the real /dev/kvm,
-  # per-VM taps, the egress consent stack in this kernel — no
-  # appliance VM. Lifecycle: `devenv processes up` (the managed
+  # with per-VM taps and the egress consent stack in this kernel.
+  # Lifecycle: `devenv processes up` (the managed
   # FOREGROUND process below — attached, Ctrl-C stops) or `msks-dev`
   # (the same script by hand); scripts/dev-daemon.sh is the one
   # source of truth both exec. The detached daemon mode also works;
@@ -273,49 +271,8 @@ in
     # chain, one source of truth.
     msksd = {
       exec = ''exec bash "$DEVENV_ROOT/scripts/dev-daemon.sh"'';
-      # A workspace's stop cycle needs its window — the same
-      # data-loss lesson the appliance's grace encodes (#146).
-      shutdown.grace = 90;
-    };
-
-    # The appliance process (#146), demoted: the dev-mode daemon is
-    # the msksd process above (#231), and the appliance stays
-    # explicitly-startable (`devenv up appliance`) until #232
-    # removes it.
-    appliance = {
-      start.enable = false;
-      exec = ''
-        # One startup, one build, one boot (#166): the build script runs
-        # directly — no nested `devenv tasks run` CLI (whose own
-        # lock/shell evaluation doubled the startup output and cost a
-        # second, sometimes cold, devenv evaluation) and no task cache
-        # to go stale. The script is idempotent: unchanged inputs make
-        # it a quick no-op (a cached nix eval + build check, seconds), and
-        # a pull, an edit to the sources, or the nix expressions
-        # rebuilds the image (minutes from a cold store, ~20s warm) —
-        # `devenv processes up` is the whole update story. The build
-        # always re-runs and re-links the image GC root, so a deleted
-        # or bogus symlink heals on the next boot (#160), and the
-        # artifact copies run only when the image changed or an
-        # artifact is missing (rootfs.ext4 is ~0.9 GB — a no-change
-        # reboot must not rewrite it). MSKS_GUEST_NIXPKGS comes from env.* in
-        # devenv.nix — it feeds the initial build here, the drift
-        # watcher inside the run script, and hand-run debugging shells.
-        bash "$DEVENV_ROOT/scripts/build-appliance.sh"
-        exec bash "$DEVENV_ROOT/scripts/appliance-run.sh"
-      '';
-      # A persistent failure inside this exec (the build above all)
-      # crash-restarts up to the manager's default five attempts
-      # before gave_up — five consecutive multi-minute build tries
-      # where the task era failed once. The loud loop in
-      # `processes logs appliance` is the accepted diagnostic.
-      #
-      # The run script's stop choreography is ACPI-first with a
-      # 60s window (a workspace running inside the appliance needs
-      # its own nested stop cycle; a shorter window lost
-      # page-cache-only sqlite commits, observed live). The grace
-      # must cover that window plus margin, or a busy guest is
-      # hard-killed mid-poweroff — the data-loss class again.
+      # A workspace's stop cycle needs its window — the
+      # page-cache-only-commit data-loss lesson (#146).
       shutdown.grace = 90;
     };
   };
@@ -376,11 +333,6 @@ in
     exec = ''exec bash "$DEVENV_ROOT/scripts/demo-vm.sh" "$@"'';
   };
 
-  scripts.msks-appliance-build = {
-    description = "Build the msksd appliance image into the appliance state dir (.devenv/state/appliance; MSKS_APPLIANCE_DIR relocates it)";
-    exec = ''exec bash "$DEVENV_ROOT/scripts/build-appliance.sh" "$@"'';
-  };
-
   # The workspace image archive, alone (#141): the bare-host dev
   # daemon's default image. Same derivation tree as msks-build-guest
   # (pinned nixpkgs, guest-assets expression, the Rust
@@ -436,8 +388,8 @@ in
       mkdir -p "$state"
       MSKSD_STATE_DIR="$state" msks-build-guest-archive
       if [ ! -s "$state/bootstrap-token" ]; then
-        # 256 bits of urandom, hex: the same shape the appliance's
-        # setup seeds. Stable across restarts — the daemon inserts
+        # 256 bits of urandom, hex — the same shape the dev
+        # daemon's own seeding uses. Stable across restarts — the daemon inserts
         # it into its catalog once and keeps it valid. temp+rename:
         # a concurrent daemon start must never `cat` a half-written
         # token (the daemon would insert the truncated value as a
@@ -458,72 +410,6 @@ in
       fi
       echo "msks: dev state ready at $state (bootstrap-token + default-image -> $(readlink "$state/default-image"))"
     '';
-  };
-
-  # The appliance lifecycle scripts (#146): thin wrappers over the
-  # process manager, which owns the appliance process below — `up -d`
-  # detached (a second up while the manager lives is a no-op;
-  # environment surgery reaches the VM through the manager's
-  # inherited environment, verified live), `down` as the graceful
-  # stop. The host network (bridge, tap, forwarding, NAT) is
-  # installed once as root by scripts/appliance-host-setup.sh and
-  # re-armed at every host boot by its systemd unit;
-  # appliance-setup.sh only verifies it, so starting the appliance
-  # needs no sudo.
-  scripts.msks-appliance-up = {
-    description = "Start the appliance under the process manager, detached (idempotent build first)";
-    exec = ''
-      set -euo pipefail
-      # The lifecycle has ONE owner: the process manager (#146).
-      # This script is the detached entry point — the manager runs
-      # the appliance process (idempotent build, then the run
-      # script) in its own session; a second up is a no-op while
-      # the manager lives. Foreground alternative: `devenv
-      # processes up appliance`.
-      echo "msks: starting the appliance detached (idempotent build first, then the run script)"
-      exec devenv processes up -d
-    '';
-  };
-
-  scripts.msks-appliance-down = {
-    description = "Stop the appliance through the process manager (graceful ACPI)";
-    exec = ''
-      set -euo pipefail
-      # The manager TERMs the appliance process; the run script's
-      # ACPI-first trap owns the teardown inside the process's
-      # 90s shutdown grace. Exit codes: 0 stopped a live manager;
-      # 1 with "No process manager is running" when nothing is up
-      # (the first down also stops the manager, so a second down
-      # reports that — callers treat it as stopped).
-      echo "msks: stopping the appliance (graceful ACPI through the process manager)"
-      exec devenv processes down
-    '';
-  };
-
-  # The deployed update channel (#220): nixos-rebuild boot
-  # --target-host against the appliance's bridge sshd, then cache
-  # the new generation host-side so the next up boots it. The
-  # activation reboot stays the operator's call (the wrapper prints
-  # it): the update path never restarts a serving appliance on its
-  # own.
-  scripts.msks-appliance-update = {
-    description = "Update the deployed appliance over ssh and cache the new generation (reboot to activate)";
-    exec = ''exec bash "$DEVENV_ROOT/scripts/appliance-update.sh" "$@"'';
-  };
-
-  # The appliance debug console (#189): one command for a root
-  # shell on the appliance. It stops the appliance, seeds the
-  # debug-shell marker onto the state disk, boots with the serial
-  # console on a pty (MSKS_APPLIANCE_CONSOLE=pty — the guest's
-  # msks-debug-shell.service serves the shell behind the same
-  # marker), and attaches with socat. Detaching (Ctrl-]) stops the
-  # appliance and removes the marker, so msks-appliance-up next is a
-  # normal boot; --off performs that teardown without a session.
-  # While a session runs the script owns the appliance — the run
-  # script is its child, outside the process manager.
-  scripts.msks-appliance-shell = {
-    description = "Root shell on the appliance console (stops/reboots the appliance; detach with Ctrl-])";
-    exec = ''exec bash "$DEVENV_ROOT/scripts/appliance-shell.sh" "$@"'';
   };
 
   # CI-identical full suite: -n auto is how CI runs it — never optional

@@ -1,6 +1,6 @@
-"""The appliance DNS forwarder (#52), the consent naming layer (#69).
+"""The egress DNS forwarder (#52), the consent naming layer (#69).
 
-Each egress tap gets a forwarder bound to its appliance-side
+Each egress tap gets a forwarder bound to its host-side
 address on port 53: the resolver DHCP offers, and — with the DNS
 lockout in the per-VM chain — the only one the guest can reach.
 Without a consent policy the forwarder relays verbatim, exactly as

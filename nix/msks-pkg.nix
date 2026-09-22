@@ -1,11 +1,12 @@
-# The msks python package built by nixpkgs' python machinery, for the
-# appliance (#10): the daemon closure as store paths, resolved against
-# the same pinned nixpkgs that builds the guest assets.
+# The msks python package built by nixpkgs' python machinery (#10):
+# the daemon closure as store paths, resolved against the same
+# pinned nixpkgs that builds the guest assets.
 #
 # Version pinning is looser than uv.lock (nixpkgs carries its own
 # fastapi/uvicorn/sqlalchemy minor versions within the >= floors of
-# pyproject.toml); the appliance smoke test boots the real daemon
-# through the real API, so any drift that matters surfaces there.
+# pyproject.toml); test_pkg_mirror.py pins the dependency NAME set
+# against pyproject, so a missing dependency fails a test, not a
+# build. Nothing boots the nix-built daemon in CI today.
 {
   lib,
   buildPythonPackage,
@@ -33,7 +34,7 @@
 let
   # Only what hatchling reads: pyproject context at the root plus the
   # package tree. Keeps .devenv/worktree noise out of the hash
-  # so unrelated edits cannot rebuild the appliance closure.
+  # so unrelated edits cannot rebuild the package closure.
   src = lib.cleanSourceWith {
     src = ./..;
     filter =
@@ -76,8 +77,8 @@ buildPythonPackage {
     netfilterqueue
   ];
 
-  # No nix-side test run: the appliance smoke test exercises the real
-  # daemon; unit tests run in the devenv shell, not in this build.
+  # No nix-side test run: the unit suite runs in the devenv shell
+  # and CI, not in this build.
   doCheck = false;
 
   pythonRemoveDeps = [

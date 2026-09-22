@@ -158,7 +158,7 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             "development: watch the msks package source tree and "
             "restart the process when it changes (used by the "
-            "appliance dev-tree flow, #144)"
+            "dev-tree flow, #144)"
         ),
     )
     parser.add_argument(

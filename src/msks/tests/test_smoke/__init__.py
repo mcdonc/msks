@@ -19,9 +19,9 @@ covered by the faked-transport unit suites).
 This module is the suite's shared harness: the env-tunable constants,
 the skip markers, and the helpers every area module uses. The tests
 live in one module per area beside this one — test_boot_lifecycle,
-test_user_data, test_k8s, test_appliance, test_console, test_egress,
-test_dev_workspace, test_ssh_forward, test_identity, and
-test_l3_recursion — and import what they need from here. The harness
+test_user_data, test_k8s, test_console, test_egress,
+test_dev_workspace, test_ssh_forward, and test_identity — and
+import what they need from here. The harness
 lives in the package `__init__` itself rather than a harness.py the
 package would re-export because test_smoke_harness.py pins
 run_in_console's retry logic by monkeypatching attributes on
@@ -35,7 +35,6 @@ import os
 import shutil
 import socket
 import subprocess
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -54,9 +53,9 @@ def state_dir(env: str, name: str) -> Path:
     """A devenv state dir below the repo, honoring its env override.
 
     #156: the build/run state lives under `.devenv/state/` —
-    `MSKS_GUEST_DIR` / `MSKS_APPLIANCE_DIR` relocate the two this
-    suite touches (a relative override resolves below the repo
-    root, the same resolution every build/run script applies).
+    `MSKS_GUEST_DIR` relocates the one this suite touches (a
+    relative override resolves below the repo root, the same
+    resolution every build/run script applies).
     """
     override = os.environ.get(env)
     if override:
@@ -65,9 +64,8 @@ def state_dir(env: str, name: str) -> Path:
     return REPO_ROOT / ".devenv" / "state" / name
 
 
-#: The guest asset dir and the appliance state dir (#156).
+#: The guest asset dir (#156).
 GUEST_DIR = state_dir("MSKS_GUEST_DIR", "guest")
-APPLIANCE_DIR = state_dir("MSKS_APPLIANCE_DIR", "appliance")
 
 client = AsyncClient(verify=False, timeout=10.0)
 
@@ -408,183 +406,6 @@ async def await_pod_running(
     raise AssertionError(
         f"runner pod for {workspace_id!r} stayed {status!r} for {timeout_s}s "
         "— check the image import and the node's /dev/kvm"
-    )
-
-
-APPLIANCE = os.environ.get("MSKSD_TEST_APPLIANCE")
-
-
-def read_appliance_journal(state_disk: Path) -> list[str] | None:
-    """The appliance's persistent journal, read from the state disk.
-
-    The trixie appliance (#92) persists journald to the state disk
-    (/var is a bind mount from it); after teardown, the journal is
-    host-readable evidence. A hard-stopped VM (a crash, or the
-    supervisor's grace expiring) leaves the ext4 mid-transaction —
-    debugfs refuses such a filesystem — so the read runs on a SPARSE
-    copy (`cp --sparse=always`: the state disk is a 40 GiB file with
-    large holes, and a dense copy would ENOSPC a tmpfs-backed
-    TMPDIR) repaired by e2fsck (the journal replays; unprivileged,
-    no loop mount), then debugfs rdump + journalctl --directory.
-    Returns None when the host lacks the tools (the assertions that
-    need it then soften to a printed note instead of failing) and
-    [] when no intact journal file survived — the caller's "no
-    journal files" assertion. Archived-and-corrupted files
-    (``*.journal~``) are deliberately not counted: journalctl cannot
-    read them, and an empty intact set must fail, not pass vacuously.
-    A failed copy/extract/read raises instead: an extraction problem
-    must not masquerade as "no journal on the disk".
-    """
-    tools = ("journalctl", "debugfs", "e2fsck", "cp")
-    if any(shutil.which(t) is None for t in tools):
-        return None
-    with tempfile.TemporaryDirectory(prefix="msks-appliance-journal") as tmp:
-        repair = Path(tmp) / "state.ext4"
-        copy = subprocess.run(
-            ["cp", "--sparse=always", str(state_disk), str(repair)],
-            capture_output=True,
-            timeout=300,
-        )
-        assert copy.returncode == 0, (
-            f"sparse copy of the state disk failed:\n{copy.stderr}"
-        )
-        fsck = subprocess.run(
-            ["e2fsck", "-fy", str(repair)],
-            capture_output=True,
-            timeout=300,
-        )
-        # e2fsck's exit code is a bitmask (1 = errors corrected);
-        # anything above 2 means the copy could not be repaired.
-        assert fsck.returncode <= 2, (
-            f"e2fsck could not repair the state disk copy:\n{fsck.stdout}"
-        )
-        extract = Path(tmp) / "extract"
-        extract.mkdir()
-        dump = subprocess.run(
-            [
-                "debugfs",
-                "-R",
-                f"rdump /var/log/journal {extract}",
-                str(repair),
-            ],
-            capture_output=True,
-            timeout=120,
-        )
-        # rdump's stderr mixes benign unprivileged-ownership noise
-        # with real errors; the exit code separates them.
-        assert dump.returncode == 0, (
-            f"debugfs rdump of the journal directory failed:\n{dump.stderr}"
-        )
-        journal_dir = extract / "journal"
-        if not any(journal_dir.rglob("*.journal")):
-            return []
-        text = subprocess.run(
-            [
-                "journalctl",
-                "--directory",
-                str(journal_dir),
-                "--no-pager",
-                "-o",
-                "cat",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        assert text.returncode == 0, (
-            f"journalctl could not read the extracted journal:\n{text.stderr}"
-        )
-        return text.stdout.splitlines()
-
-
-def host_net_installed() -> bool:
-    """The one-time installer's footprint: the appliance's bridge.
-
-    The host network (bridge, tap, forwarding, NAT) is installed
-    once as root by scripts/appliance-host-setup.sh (#101); the
-    appliance itself starts unprivileged, so the gate is the
-    install's presence, not sudo.
-    """
-    try:
-        return (
-            subprocess.run(
-                ["ip", "link", "show", "dev", "msksbr0"],
-                capture_output=True,
-                timeout=10,
-            ).returncode
-            == 0
-        )
-    except OSError, subprocess.TimeoutExpired:
-        return False
-
-
-needs_appliance = pytest.mark.skipif(
-    not APPLIANCE
-    or not os.access("/dev/kvm", os.W_OK)
-    or not (APPLIANCE_DIR / "vmlinux").is_file()
-    or not host_net_installed(),
-    reason=(
-        "set MSKSD_TEST_APPLIANCE=1 with /dev/kvm, the one-time host "
-        "network (sudo bash scripts/appliance-host-setup.sh), and "
-        "msks-appliance-build + msks-build-guest"
-    ),
-)
-
-
-def seed_legacy_state_disk(state_disk: Path, marker_text: str) -> bool:
-    """Seed a pre-#101 (root-daemon) state disk shape (#101 review).
-
-    A legacy disk carries the daemon's entries at the /state TOP
-    level; first boot with the service-user daemon must converge
-    them into /state/msksd with service-user ownership — a missed
-    move silently rotates the TLS CA, so the convergence gets an
-    end-to-end check. debugfs writes root-owned inodes, exactly the
-    legacy ownership. Returns False when the host lacks debugfs
-    (the assertions then soften to a printed note, like the journal
-    read). The seeded entries are ones the running daemon tolerates:
-    volumes/ it never scans, msks-cert.host it rewrites.
-    """
-    if shutil.which("debugfs") is None:
-        return False
-    marker = state_disk.parent / "legacy-marker"
-    marker.write_text(marker_text)
-    for op in (
-        "mkdir /volumes",
-        f"write {marker} /volumes/legacy-marker",
-        f"write {marker} /msks-cert.host",
-    ):
-        seed = subprocess.run(
-            ["debugfs", "-w", "-R", op, str(state_disk)],
-            capture_output=True,
-            timeout=120,
-        )
-        assert seed.returncode == 0, f"seeding {op!r} failed: {seed.stderr}"
-    return True
-
-
-def msks_script(
-    script: str, timeout: int = 900
-) -> subprocess.CompletedProcess:
-    """Run one msks command script — the appliance lifecycle entry
-    points (#146).
-
-    The appliance is THE managed process: msks-appliance-up is the
-    detached start (`devenv processes up -d` — the manager owns the
-    build-then-run exec, crash restarts, and the graceful ACPI
-    teardown), msks-appliance-down is `devenv processes down`.
-    Environment surgery (state disk, cmdline extras, memory, the
-    #144 dev tree) reaches the VM exactly as before — the process
-    and its manager inherit this process's environment. The scripts
-    live on the devenv shell's PATH (#166); the suite itself runs
-    inside that shell, so a bare name resolves.
-    """
-    return subprocess.run(
-        ["bash", "-c", script],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        cwd=REPO_ROOT,
-        env={**os.environ, "DEVENV_TUI": "false"},
     )
 
 

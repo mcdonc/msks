@@ -2,7 +2,7 @@
 
 The `msks` command is a thin client for the daemon's `/api/v1` REST
 surface. It runs from any host that can reach the daemon — a dev box,
-a CI runner, the appliance itself — and every command authenticates
+a CI runner — and every command authenticates
 with the same bearer token the REST API uses.
 
 The command set covers the operator loop:
@@ -26,23 +26,23 @@ The client reads four environment variables. They are prefixed
 `MSKSC_` (client) to stay apart from the daemon's `MSKSD_*` (server)
 namespace — a box that runs both can export each side independently.
 
-| Variable               | Meaning                                                                                                                                    | Default                  |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------ |
-| `MSKSC_URL`            | The daemon's base URL                                                                                                                      | `https://127.0.0.1:8660` |
-| `MSKSC_TOKEN`          | A daemon bearer token (see tokens below)                                                                                                   | — (required)             |
-| `MSKSC_CAFILE`         | A PEM file to verify the daemon's TLS certificate                                                                                          | unverified with warning  |
-| `MSKSC_EXPECTED_IMAGE` | The image this checkout's appliance run boots (appliance shells preset it); `msks ls` compares it with the daemon's and names drift (#160) | unset (no check)         |
+| Variable               | Meaning                                                                                                                           | Default                  |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| `MSKSC_URL`            | The daemon's base URL                                                                                                             | `https://127.0.0.1:8660` |
+| `MSKSC_TOKEN`          | A daemon bearer token (see tokens below)                                                                                          | — (required)             |
+| `MSKSC_CAFILE`         | A PEM file to verify the daemon's TLS certificate                                                                                 | unverified with warning  |
+| `MSKSC_EXPECTED_IMAGE` | An image reference the operator sets; `msks ls` compares it with the image the daemon reports in `/health` and names drift (#160) | unset (no check)         |
 
 A missing `MSKSC_TOKEN` is an error before any network activity: the
 client names the variable and exits. Tokens come from the daemon:
 `POST /api/v1/tokens` mints one, and the devenv environment presets
-all three from the appliance's state dir,
-`.devenv/state/appliance/` (token + CA) — after the appliance's
-first `devenv processes up`, a fresh devenv shell needs no exports:
+all three from the worktree's dev-daemon state dir,
+`.devenv/state/msksd/` (token + CA) — once the dev daemon has
+served once, a fresh devenv shell needs no exports:
 
 ```bash
-msks ls        # presets: https://192.168.77.2:8660, the appliance's
-               # token, and .devenv/state/appliance/msks-ca.pem
+msks ls        # presets: https://127.0.0.1:8660, the worktree's
+               # token, and .devenv/state/msksd/msks-ca.pem
                # (verified TLS)
 ```
 
@@ -368,8 +368,7 @@ scripting.
 
 Registers an archive in the catalog (`POST /api/v1/images`). The
 path is a **daemon-side** path: the daemon reads the file from its
-own filesystem (an appliance reaches host files through its
-virtiofs share) — the command does not upload anything:
+own filesystem — the command does not upload anything:
 
 ```text
 $ msks image import /srv/images/debian-13.tar

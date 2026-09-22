@@ -1,6 +1,6 @@
 """The smoke suite runs under its own timeout ceiling (#157).
 
-Smoke tests boot real appliances and workspaces; a single run spends
+Smoke tests boot real VMs; a single run spends
 minutes in legitimate waiting. The unit ceiling (30s, from
 pyproject's addopts) would cut them off mid-boot, so every test
 collected from THIS directory gets the marker-level override

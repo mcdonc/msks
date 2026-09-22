@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The dev-mode daemon, foreground (#231): msksd runs FIRST-LEVEL on
 # this host — cloud-hypervisor on the real /dev/kvm, per-VM taps,
-# the egress consent stack in this kernel — no appliance VM. Two
+# the egress consent stack in this kernel. Two
 # equivalent ways to run it: `devenv processes up` (the managed
 # foreground process in devenv.nix, whose exec IS this script) or
 # `msks-dev` (the same script by hand in a kept-open terminal).

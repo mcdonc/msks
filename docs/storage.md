@@ -119,28 +119,6 @@ lives on a claim the cluster sizes, so growth goes through the
 storage class. A completed resize is announced on the events
 channel (`workspace.resized`, with the new sizes).
 
-## The appliance state disk
-
-Inside the appliance, every workspace artifact above lives on one
-ext4 state disk, beside the image catalog, the daemon database, the
-TLS material, and the journal (bounded at 512M). What consumes it:
-
-- one imported image costs roughly twice its rootfs size (the
-  retained archive plus the unpacked boot cache) — about 3G for the
-  Debian base the appliance ships with, and the catalog starts with
-  that image already imported;
-- each workspace's overlay grows with everything its guest writes to
-  the root filesystem — an `apt install npm` writes well over 1G —
-  and its `/home` volume grows with user data in the same way;
-- the database, the tokens, and the journal are megabytes-scale.
-
-The disk is a sparse file with a 40G ceiling: host disk is spent as
-the guest writes, and an idle disk costs its content. When the
-template grows across releases, an existing disk follows on its
-next start — the host extends the file to the template's size, and
-the appliance's state preparation grows the filesystem to match. A
-disk already larger than the template keeps its size.
-
 ## Capacity reporting
 
 `msks storage` answers the operator's three capacity questions,

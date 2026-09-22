@@ -56,11 +56,11 @@ def test_smoke_conftest_lifts_the_ceiling() -> None:
             return found[-1] if found else None
 
     here = SMOKE_CONFTEST.parent
-    smoke_item = Item(here / "test_appliance.py")
+    smoke_item = Item(here / "test_egress.py")
     unit_item = Item(here.parent / "test_local_driver.py")
     lookalike = Item(here.parent / "test_smoke_harness.py")
     budgeted = Item(
-        here / "test_appliance.py",
+        here / "test_egress.py",
         [pytest.mark.timeout(4000)],  # noqa: PT023 - a bare marker
     )
     module.pytest_collection_modifyitems(

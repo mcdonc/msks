@@ -3,7 +3,7 @@
 NetManager is the state object on ``app.state.net``. Enabled and
 privileged, ``start()`` arms the shared plumbing once (the NAT
 base table, after verifying the kernel's ip_forward sysctl — the
-appliance ships it as a boot-time setting, and the daemon never
+deployment ships it as a boot-time setting, and the daemon never
 writes it); every egress workspace boot then ``attach()``s
 — tap, per-VM chain, DHCP service, DNS forwarder — and every stop,
 kill, or delete ``detach()``es all of it.
@@ -77,7 +77,7 @@ NOT_READY_CAUSES = {
     ),
     "unavailable": (
         "the daemon could not arm egress (it needs CAP_NET_ADMIN and "
-        "CAP_NET_BIND_SERVICE — the appliance grants both, and only "
+        "CAP_NET_BIND_SERVICE — the deployment grants both, and only "
         "those, to its service user — plus " + SYSCTL_KEY + "=1 from "
         "sysctl.d; a dev-shell daemon has none of them)"
     ),
@@ -117,7 +117,7 @@ class NetServices:
 def verify_forwarding(path: Path = FORWARDING) -> None:
     """Refuse egress unless the kernel already routes packets (#101).
 
-    ``ip_forward`` is part of the machine's identity: the appliance
+    ``ip_forward`` is part of the machine's identity: the deployment
     ships ``net.ipv4.ip_forward=1`` as a boot-time sysctl.d setting,
     and the daemon — a service user without write access to
     /proc/sys — verifies it and fails closed. A daemon that finds
@@ -576,7 +576,7 @@ class NetManager:
             await dhcp_server.start()
             await forwarder.start()
         except OSError as exc:
-            # A refused bind (ports are the appliance's) is an
+            # A refused bind (the ports are privileged) is an
             # operator-shaped failure, not a raw 500.
             self._stop_started(services)
             raise MicrovmError(

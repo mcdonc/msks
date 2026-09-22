@@ -236,7 +236,7 @@ curl -X POST https://192.168.77.2:8660/api/v1/images \
 ```
 
 The `source` path is a path on the **daemon's** filesystem (the
-appliance reaches host files through its virtiofs share). The daemon
+daemon reads them from its state dir). The daemon
 copies it privately and hashes that copy, so a source file changing
 underneath the import cannot desync the recorded hash from the
 imported content, and importing the same content twice is idempotent.
@@ -246,7 +246,7 @@ Rules worth knowing:
 - The **first image imported becomes the default** — the one a bare
   workspace create uses — and keeps the designation while more
   images arrive; re-designating the default is future API work.
-- `MSKSD_DEFAULT_IMAGE` (set by the appliance from its built-in
+- `MSKSD_DEFAULT_IMAGE` (set by the dev daemon from its state dir's
   image) imports and designates at first boot; on later boots the
   daemon only re-checks the hash, not a full re-import.
 - Listing shows every registered image with its hash, name, version,
@@ -254,14 +254,13 @@ Rules worth knowing:
 
 ```bash
 curl -H "authorization: Bearer $TOKEN" \
-  https://192.168.77.2:8660/api/v1/images
+  https://127.0.0.1:8660/api/v1/images
 ```
 
 - Storage: one image costs roughly twice its rootfs size on the
-  state disk (the retained archive plus the unpacked boot cache),
-  and the appliance's 40G state disk carries those beside the
-  workspace overlays and volumes — `docs/storage.md` has the
-  capacity model.
+  daemon's state dir (the retained archive plus the unpacked boot
+  cache), carried beside the workspace overlays and volumes —
+  `docs/storage.md` has the capacity model.
 
 - An image with workspaces still booting it cannot be removed
   (`DELETE /api/v1/images/{hash}` answers 409 naming the workspace);

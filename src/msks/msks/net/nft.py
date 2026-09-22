@@ -4,10 +4,10 @@ Tables:
 
 - ``msks-egress`` — the shared base, installed once at daemon start:
   a postrouting NAT chain masquerading everything leaving the
-  configured uplink, so guest traffic appears as appliance traffic.
+  configured uplink, so guest traffic appears as host traffic.
 - ``msks-e-<digest>`` — one per egress workspace: the forward hook
   that gates that workspace's traffic and the input hook that pins
-  what the guest may reach inside the appliance. The chain shape
+  what the guest may reach on the host. The chain shape
   follows the workspace's egress mode (#69):
 
   - ``allow`` — the #52 posture plus the DNS lockout: established
@@ -60,7 +60,7 @@ QUEUE_MAX = 65535
 
 
 def base_ruleset(uplink: str) -> str:
-    """The shared NAT table: masquerade out the appliance uplink."""
+    """The shared NAT table: masquerade out the host uplink."""
     return (
         f"table inet {BASE_TABLE} {{\n"
         "  chain nat_out {\n"
@@ -186,11 +186,11 @@ def vm_ruleset(
       toward the tap (inbound that nothing inside asked for) drops —
       which is also what blocks guest-to-guest hops across taps.
     - ``ingress`` (input): the guest may reach exactly two ports on
-      the appliance through this tap — DHCP (67) and the resolver
-      (53) — and the replies to connections the appliance itself
+      the host through this tap — DHCP (67) and the resolver
+      (53) — and the replies to connections the host itself
       opened into the guest (the forward endpoint's dial, #109)
       return on their conntrack state. Everything else from the tap
-      drops before the appliance's own wildcard-bound services (the
+      drops before the host's own wildcard-bound services (the
       API among them): a guest-initiated connection arrives state
       NEW and does not match the established rule.
     """
@@ -225,7 +225,7 @@ def vm_ruleset(
         f'    iifname "{tap}" udp dport 67 accept\n'
         f'    iifname "{tap}" ip saddr {guest_ip} ip daddr {tap_ip} '
         f"udp dport 53 accept\n"
-        # The forward's dial is appliance-originated: its replies —
+        # The forward's dial is host-originated: its replies —
         # and only those, per conntrack — come home here (#109).
         f'    iifname "{tap}" ip saddr {guest_ip} '
         f"ct state established,related accept\n"

@@ -5,7 +5,7 @@ The consent engine names destinations by DNS name, so the forwarder
 the A records (with their TTLs) out of an answer, and forge an
 NXDOMAIN reply for an off-list name in static mode. A full resolver
 library is not needed for those three operations — and pulling one
-in would add a dependency the appliance image then carries.
+in would add a dependency the msksd package then carries.
 
 Every parser is total: malformed input returns ``None`` (or an
 empty list), never raises. A datagram the codec cannot read is

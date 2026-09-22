@@ -18,8 +18,8 @@ dependencies = [
   # Egress consent's NFQUEUE binding (#69): consent is the normal
   # posture for workspaces, so the binding ships with every
   # install. It links libnetfilter_queue — devenv carries the
-  # library for dev/CI shells, and nix/msks-pkg.nix builds the
-  # binding into the appliance closure; the import stays guarded so
+  # library for dev/CI shells, and nix/msks-pkg.nix ships the
+  # binding in the msksd package; the import stays guarded so
   # an exotic install without the library fails closed at attach
   # with a named refusal, never silently.
   "netfilterqueue>=0.9",
@@ -64,8 +64,8 @@ filterwarnings = [
 # there, named, within seconds of the ceiling -- instead of a wall of
 # dots ending in silence while the CI budget burns (the #151 incident:
 # 25/69 tests in 600s, all "passing"). 30s is generous against a
-# healthy local average near 1s; the smoke suite (real appliance
-# boots) carries its own ceiling via its conftest. --durations=10
+# healthy local average near 1s; the smoke suite (real VM boots)
+# carries its own ceiling via its conftest. --durations=10
 # names the slowest tests on EVERY run, before a second diagnostic
 # run has to be paid for.
 addopts = "--cov=msks --cov-branch --cov-report=term-missing -ra --timeout=30 --durations=10"

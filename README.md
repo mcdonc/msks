@@ -69,8 +69,9 @@ the serial login prompt at ~7.5-8.6s (#37 tracks the <5s interactive
 goal).
 Root writes persist through the per-workspace overlay (#14), and
 `/home` is the workspace's own ext4 volume; `apt` reaches the
-upstream through the workspace's egress NIC — the appliance serves
-egress (#52), a host-run dev daemon does not. The repack runs under
+upstream through the workspace's egress NIC — served by the
+daemon's consent stack whenever the daemon holds CAP_NET_ADMIN
+(#52). The repack runs under
 fakeroot so the image is root-owned with sane password-file modes,
 and the setuid binaries the workspace user's sudo needs ride the
 same fakeroot session as uid-0 inodes (#169).
@@ -172,231 +173,18 @@ path: the script anchors a relative value below the repo root while
 the daemon resolves one against its own CWD, so only an absolute
 value moves both to the same place.
 Gitignored but NOT disposable-clean — `git clean -xfd` deletes all
-of it. Workspaces without egress are
-fully served — vsock console, user-data seeds, stop/start
-persistence. Egress (and `msks ssh`, whose forwards ride the egress
-NIC) holds `CAP_NET_ADMIN` (#101): that is the appliance's job. A
-workspace created without `--no-egress` refuses to start here —
-the 503 names `MSKSD_EGRESS_ENABLED`, which is the appliance's
-setting; remove the workspace and recreate it with `--no-egress`,
-or use the appliance. Daemon edits restart with Ctrl-C and re-run
-(`--reload` restarts on tree change, #144).
-
-### The msksd appliance (explicitly started, pending #232)
-
-The daemon can still run as an appliance microvm — the deployed
-shape — via an explicit `devenv up appliance` (#146, demoted from
-the default by #231): egress
-networking, the guest network bridge, nested workspaces, and the
-dev tree all live here, and the client environment targets it by
-default. Requirements: any Linux with KVM + nested virtualization
-enabled, nix + devenv, and a one-time root setup of the host
-network:
-
-```bash
-sudo bash scripts/appliance-host-setup.sh
-```
-
-That installs the bridge, tap, host forwarding (`sysctl.d`), and NAT
-rules — with a systemd unit that re-arms them on every host reboot —
-and nothing needs sudo afterwards: the appliance runs as your own
-user (cloud-hypervisor, ch-remote, and virtiofsd all come from the
-devenv shell). Re-run the installer to re-arm after a firewall
-reload; an existing tap keeps its owner, and the installer names
-the one-step fix (`ip link del mskstap0`, then re-run) when the
-appliance moves to another user.
-
-```bash
-devenv --quiet -O dotenv.enable:bool false shell -- devenv processes up -d
-msks ls                                   # in a FRESH shell (see the note below)
-curl --cacert .devenv/state/appliance/msks-ca.pem https://192.168.77.2:8660/api/v1/health
-devenv --quiet -O dotenv.enable:bool false shell -- devenv processes down
-```
-
-#### Updating the deployed appliance over ssh (#220)
-
-The NixOS appliance built with `MSKS_APPLIANCE_BUILD=nixos
-MSKS_APPLIANCE_MODE=deployed` updates over its bridge sshd: the
-operator machine builds the new generation and copies only the
-changed store paths across (about 20s for a config change), and the
-appliance switches its own profile:
-
-```bash
-msks-appliance-update          # rebuild + copy the delta over ssh, cache the generation
-msks-appliance-down && msks-appliance-up   # activate: reboot into the new generation
-```
-
-The update seeds `<state>/update-key` once at build time and bakes
-its public half into root's authorized_keys (bridge-only, key-only
-sshd); `nixos-rebuild boot --target-host` copies only the store
-paths the appliance is missing, and the appliance-side system
-profile is the generation pointer. The next `up` boots the cached
-generation — and a generation that fails to serve falls back to the
-previous one (or the image's shipped artifacts) and says so on the
-console; `msks-appliance-update` rewinds the profile to what
-actually runs before building the next update on top of it.
-
-**The appliance is a demoted process (#146, #231 — start it
-explicitly)**: its exec runs
-the idempotent `scripts/build-appliance.sh` (a cached nix build when
-nothing changed, a rebuild after a pull or an edit — #166) and then
-`scripts/appliance-run.sh` under the supervisor — crash-restart,
-`devenv processes logs appliance`, and a graceful teardown whose
-90s grace covers the run script's ACPI-first stop (its 60s window
-holds a workspace's nested stop cycle; a shorter window lost
-page-cache-only sqlite commits, observed live). The
-`msks-appliance-up`/`-down` scripts are the detached wrappers over
-the same manager (`devenv processes up -d` / `down`). No bare-host
-msksd process exists — `devenv processes list` shows only the
-appliance.
-
-**A running appliance serves the daemon its image was built with
-(#158).** The image builds at every `devenv processes up`: after a
-pull or a source edit, the start builds the new image (minutes
-from a cold store, ~20s warm) and boots it. A stop and start is
-also how a fix merged to main reaches a running appliance —
-between restarts the daemon keeps serving the image it started
-with, so `msks` behavior stays that of the build inside the VM.
-
-**Appliance `up` converges loudly (#160).** The daemon names the
-image it boots from in `/health` (the `msksd.image` cmdline pair),
-and the appliance's run script presets
-`MSKSC_EXPECTED_IMAGE` to what this checkout
-builds — `msks ls` compares the two and, on drift, prints the
-running and expected images with the fix (`devenv processes down
-&& devenv processes up -d`). The run script also gates its own
-boot: `up` waits for the guest to serve `/health`
-(`MSKS_APPLIANCE_SERVE_TIMEOUT_S`, default 300s) and exits with
-the serial-log path when it never does, so a broken image reaches
-the supervisor's loud restart loop instead of idling as a "ready"
-appliance. With `MSKS_APPLIANCE_AUTO_RESTART=1` the appliance
-takes the update story on itself: every
-`MSKS_APPLIANCE_DRIFT_CHECK_S` (default 300) it compares images,
-and on drift — with no workspace in a live state — rebuilds and
-gracefully restarts into the fresh image; a live workspace holds
-the restart off until it stops. An in-flight image import (a
-multi-GB upload) creates no workspace row, so the restart can
-interrupt one — finish large imports before enabling a restart
-window, or run imports with the setting off.
-
-**The client environment presets to the appliance (#146)**:
-`MSKSC_URL` (`https://192.168.77.2:8660`), `MSKSC_TOKEN` (the
-appliance's bootstrap token), and `MSKSC_CAFILE`
-(`.devenv/state/appliance/msks-ca.pem`, extracted from the state disk
-by the run script once the guest serves). Until that file exists — the
-first boot — the client warns it does not verify; cross-check the
-TOFU fingerprint on `.devenv/state/appliance/serial.log`, then open a
-fresh devenv shell. The presets are read at shell-entry time, so a
-rotated token — or a replaced state disk, whose old CA stays in place
-until the new guest serves and the extraction refreshes it — needs a
-fresh shell too; that window self-heals on every boot.
-
-On a fresh checkout the presets start EMPTY — the token and CA do
-not exist until the appliance's first boot — so `msks` in that
-first shell names the missing env (curl above uses `-sk` plus the
-TOFU fingerprint on `.devenv/state/appliance/serial.log` until the CA
-file exists). Open a fresh devenv shell after the first boot; the client
-env is read at shell-entry time.
-
-**The dev tree (#144): daemon edits without appliance rebuilds.**
-`MSKS_DEV_TREE=1` with `processes up` shares this checkout
-read-only into the guest as a second virtiofs tag; the guest daemon
-then runs from the shared tree — the checkout's venv python (a
-nix-store interpreter, resolved through the store share) with the
-package imported straight off the share — under `--reload`:
-
-```bash
-MSKS_DEV_TREE=1 devenv --quiet -O dotenv.enable:bool false shell -- devenv processes up -d
-# edit src/msks/msks/... — the change is detected within ~1s (poll
-# cadence 0.5s; virtiofs carries no inotify events, so the daemon
-# polls the tree's fingerprint) and the restarted daemon serves
-# again in ~10-15s (interpreter start, imports, TLS, migrations)
-```
-
-The state disk, TLS pair, tokens, and egress networking keep
-serving across restarts and across switches between the dev-tree
-daemon and the store daemon — same state, same settings file, same
-unit. Appliance assembly drops out of the edit loop entirely: the
-conditional build keys from #140 fire only when the image itself
-changes (nix expressions, guest assets), which is what they were
-scoped for.
-Dependency changes (`uv`/`pyproject.toml`) are the one host-side
-step: re-enter the devenv shell (or `devenv test regenerate`), then
-the next daemon restart sees the refreshed venv. The share is
-read-only — the guest never writes the tree — and it carries the
-whole checkout: the appliance's own state dir,
-`.devenv/state/appliance/` (bootstrap token, state disk) and any
-bare-host daemon state (`.devenv/state/msksd/`) beside it are visible
-to the guest.
-Same trust domain as the daemon itself (the token already rides the
-kernel cmdline); a checkout you would not hand the appliance should
-not be shared.
-
-How it fits together (#10, #25, #92):
-
-- The image is Debian 13 (trixie) — the same genericcloud base the
-  workspace guest builds from, with Debian's **generic** kernel
-  (the cloud flavor the guest boots lacks virtiofs and the KVM
-  modules the appliance needs) and systemd units replacing the
-  shell-script init: journald persists to the state disk, logind
-  owns the ACPI power button, and msksd runs as a supervised unit
-  that restarts in place on a crash. (#30 has the guest's story;
-  #92 the appliance's.)
-- The heavy runtime (the nix-built msksd closure, the VMM for
-  workspace VMs, and the workspace assets from `msks-build-guest`)
-  rides a **read-only virtiofs share of the host `/nix/store`** —
-  read-only enforced by `virtiofsd --readonly`, not just the guest's
-  mount: the appliance runs the same store paths the host built, and
-  nothing is copied into the image. Two GC roots keep them realized:
-  `msks-appliance-build` roots the appliance's own closure,
-  `msks-build-guest` roots the workspace guest assets (which the
-  appliance references only through the share).
-- Persistent state (SQLite, workspace overlays, logs) is a second
-  disk under `.devenv/state/appliance/state.ext4` (relocatable via
-  `MSKSD_APPLIANCE_STATE`); rebuilds never clobber it.
-- The bootstrap token is generated into
-  `.devenv/state/appliance/bootstrap-token`
-  and delivered on the kernel cmdline (`msksd.bootstrap_token=...`):
-  the host file is the single source of truth, and rotation means
-  editing it and restarting the processes.
-- A **NixOS build of the same appliance** exists alongside the Debian
-  one (#212, pre-parity): `MSKS_APPLIANCE_BUILD=nixos` with the same
-  `msks-appliance-build` entry point builds it against the same
-  pinned nixpkgs — one configuration (`nix/appliance-config.nix`),
-  two store shapes. The default shape shares the host store over
-  virtiofs exactly as above (`MSKS_APPLIANCE_MODE=dev`, the default
-  for that build); `MSKS_APPLIANCE_MODE=deployed` packs the store on
-  disk (an erofs base carrying the closure and its database, plus an
-  ext4 store volume) and runs sshd on the bridge as the update
-  channel. The Debian build stays the default until the parity flip.
-- Networking: a private L2 bridge (`msksbr0`/`mskstap0`, static
-  192.168.77.0/24 plan) — the API is simply reachable at the guest
-  IP, no port forwarding.
-- The serial log restarts from empty on every VMM start: a
-  crash-restart replaces the previous boot's TOFU fingerprint with
-  the new boot's (reprinted within seconds).
-- Nested KVM: `kvm_intel`/`kvm_amd` load in the guest and workspace
-  VMs run on the appliance's `/dev/kvm` (verified: a workspace boots,
-  runs, and stops inside, driven through the API).
-- Debug hatch (`msks-appliance-shell`, #189): one command from a
-  devenv shell for a root shell on the appliance console. It stops
-  the appliance, seeds the `debug-shell` marker onto the state
-  disk, boots with the serial console on a host pty
-  (`MSKS_APPLIANCE_CONSOLE=pty`), and attaches with socat (detach
-  with `Ctrl-]`). The guest prints the one-way diagnostics dump
-  (kvm modules, `/dev/kvm`, VMM binary, store visibility) to the
-  console, runs `/state/diag.sh` if present, and
-  `msks-debug-shell.service` — a root unit gated on the same
-  marker — serves the interactive shell. Detaching stops the
-  appliance and removes the marker, so the next
-  `msks-appliance-up` is a normal boot (File-mode serial,
-  `serial.log`); `msks-appliance-shell --off` performs that
-  teardown without a session.
+of it. Egress (and `msks ssh`, whose forwards ride the egress NIC)
+needs `CAP_NET_ADMIN` (#101): the dev host's wrapper grants it, so
+egress workspaces run first-level; on a host without the grant a
+workspace created without `--no-egress` refuses to start — the 503
+names `MSKSD_EGRESS_ENABLED`, and the fix is `--no-egress` or the
+host config in `nix/module.nix`. Daemon edits restart with Ctrl-C
+and re-run (`--reload` restarts on tree change, #144).
 
 Known quirk worth knowing: cloud-hypervisor v52 rejects writes to
 sector 0 on disks without an explicit `image_type` (a QCOW2
 misdetection guard), which breaks any guest writing an ext4
-superblock — every disk the appliance and the daemon create declares
+superblock — every disk the daemon creates declares
 `image_type: Raw`.
 
 ### The image catalog (#40)
@@ -410,19 +198,20 @@ never unpack anything).
 curl -sk -H "authorization: Bearer $MSKSC_TOKEN" \
   -H 'content-type: application/json' \
   -d '{"source": "/nix/store/...-msks-guest/workspace-debian-13.6.tar"}' \
-  https://192.168.77.2:8660/api/v1/images        # import
+  https://127.0.0.1:8660/api/v1/images        # import
 curl -sk -H "authorization: Bearer $MSKSC_TOKEN" \
-  https://192.168.77.2:8660/api/v1/images        # list (name/version/hash/default)
+  https://127.0.0.1:8660/api/v1/images        # list (name/version/hash/default)
 ```
 
 A workspace create selects an image by reference — `"image":
 "debian:13.6"` (or a bare `name` for its newest version, or a hash);
 with no image and no explicit artifacts the designated **default**
 resolves. The first import becomes the default; `MSKSD_DEFAULT_IMAGE`
-points the daemon at an archive to import on first boot, and the
-appliance sets it to its built-in image through the kernel-cmdline
-bridge — a bare `POST /workspaces` works on a fresh appliance with
-nothing else built. Explicit `kernel`/`rootfs` fields still win over
+points the daemon at an archive to import on first boot, and the dev
+daemon seeds it from its state dir's `default-image` symlink
+(`msks-build-guest-archive` converges it) — a bare
+`POST /workspaces` works on a fresh daemon with nothing else
+imported. Explicit `kernel`/`rootfs` fields still win over
 the catalog (the shape the tests and dev flows use).
 
 ### The client CLI (`msks ls`, `msks create`, `msks start`, `msks stop`, `msks rm`) (#59, #66)
@@ -462,19 +251,19 @@ See `docs/cli.md` for the full command and environment reference.
 Workspaces are networked from creation — `msks create ws`, or a bare
 `"id"` on the API, boots with egress; `msks create ws --no-egress`
 (or `"egress": false`) boots NIC-less — and the whole path lives in
-the appliance:
+the daemon's own net stack:
 
 ```text
 workspace VM ──virtio-net──► per-VM tap ──► per-VM nftables chain
                                                 │  guest → uplink: accept
                                                 ▼
-                                     NAT (masquerade) → appliance uplink
+                                     NAT (masquerade) → host uplink
 ```
 
 The daemon is the guest's only DHCP server and resolver: each
 egress workspace gets a dedicated /30 from `MSKSD_EGRESS_SUBNET`, a
 DHCP offer naming the tap as gateway and resolver, a small DNS
-forwarder on that resolver, and NAT out the appliance uplink
+forwarder on that resolver, and NAT out the host's uplink
 (`MSKSD_EGRESS_UPLINK`). Everything derives deterministically from
 the workspace id, so stop/start cycles rebuild the same network;
 stop and delete tear the tap, chain, and services down again. The
@@ -483,10 +272,9 @@ resolved in the overlay); a workspace without egress presents no
 NIC, on every backend.
 
 Egress arms while `MSKSD_EGRESS_ENABLED=true` and the daemon holds
-`CAP_NET_ADMIN` — the appliance sets both, so workspaces are
-networked there once its setup script has wired the host side
-(forwarding + NAT for the appliance's bridge). A daemon that cannot
-arm the plumbing still serves everything else, and an egress
+`CAP_NET_ADMIN` — the dev host's wrapper grants the capability, and
+`nix/module.nix` does the same for a deployment host. A daemon that
+cannot arm the plumbing still serves everything else, and an egress
 workspace refuses to boot with the cause named (boot those with
 `--no-egress`). On k8s, create with `"egress": false` — the backend
 refuses egress creates until the NetworkPolicy parity lands (#69).
@@ -528,13 +316,12 @@ guest, off the seed's critical path: building them there exercises
 upstream toolchains for tens of minutes and gigabytes and tests
 nothing msks owns.
 
-The egress requirement is the appliance's: the seed's downloads
-(PyPI, uv's Python builds, the git remote) all ride the NIC the
-appliance serves. The end-to-end proof is the opt-in root smoke
-`test_local_dev_workspace_bootstrap` (`MSKSD_TEST_EGRESS=1`). A
-baked dev image — same substrate the guest and appliance build
-from — remains an optional cold-start accelerator on top of the
-seed, not a prerequisite.
+The seed's downloads (PyPI, uv's Python builds, the git remote)
+all ride the egress NIC the daemon serves. The end-to-end proof is
+the opt-in root smoke `test_local_dev_workspace_bootstrap`
+(`MSKSD_TEST_EGRESS=1`). A baked dev image — the same substrate the
+guest build uses — remains an optional cold-start accelerator on
+top of the seed, not a prerequisite.
 
 The workspace's whole `/home` also moves through the daemon (#80):
 `msks home export dev` streams the volume to the client's machine
@@ -559,94 +346,19 @@ over the egress NIC with nothing stored in the image or the seed
 See `docs/storage.md` for the byte-stream endpoints and their
 contract.
 
-### The full recursion: msksd inside a workspace (#82)
-
-The workspace image carries what a workspace needs to run msksd
-itself: the nested-KVM modules (`kvm`/`kvm-intel`/`kvm-amd`, loaded
-at boot by the image's own `msks-kvm.service` when the host exposes
-virt extensions through the appliance) and the inner-egress stack
-(`tun` plus the nftables/NAT set) — the same posture the appliance
-image ships, so a workspace can be an appliance in miniature. The
-L3 recursion seed layers the daemon on top of the dev bootstrap
-(#77): same first steps (uv, the checkout, `uv sync`), then
-cloud-hypervisor's pinned static binary and the daemon's
-workspace-side tools over egress, and msksd as a systemd unit —
-state on the persistent `/home` volume, egress armed behind the
-workspace's own NIC, and the nested-virt timeouts the recursion
-demands (`MSKSD_VSOCK_WAIT_TIMEOUT_S=75` and friends; the unit's
-comments record the tuning). The bootstrap token lands in
-`/root/.msks-inner/token`:
-
-```bash
-msks create l3 --egress --user-data scripts/l3-recursion.sh \
-  --mem-mib 4096 --home-mib 30720
-msks start l3   # first boot provisions, then msksd serves 8660 inside
-```
-
-The boot artifacts for the inner workspace are host-side build
-products — the one thing the seed cannot fetch. Push them over the
-forward plane (sparse, so the mostly-zero rootfs crosses as its real
-blocks) and create the inner workspace over them directly; the
-daemon builds the workspace's own overlay and volumes on top:
-
-```bash
-msks key l3 --out ~/.cache/msks/l3.key
-msks forward l3 22 --local 2201 &
-rsync -e 'ssh -i ~/.cache/msks/l3.key -p 2201' -aPS \
-    .devenv/state/guest/vmlinux .devenv/state/guest/initrd \
-    .devenv/state/guest/rootfs.ext4 \
-    root@127.0.0.1:/root/inner-artifacts/
-msks console l3   # then, inside the workspace:
-#   export MSKSC_URL=http://127.0.0.1:8660
-#   export MSKSC_TOKEN=$(cat /root/.msks-inner/token)
-#   /root/msks/.venv/bin/msks create inner1 --cpus 1 \
-#     --kernel /root/inner-artifacts/vmlinux \
-#     --initrd /root/inner-artifacts/initrd \
-#     --rootfs /root/inner-artifacts/rootfs.ext4 \
-#     --cmdline 'console=ttyS0 root=/dev/vda rootfstype=ext4 rw'
-#   /root/msks/.venv/bin/msks start inner1
-#   /root/msks/.venv/bin/msks console inner1
-```
-
-With `--cpus 1`, that is: the measured boundary on the reference
-host is that a 1-vCPU inner guest boots to its login prompt at two
-removes, while a 2-vCPU one hangs in early SMP bringup (the vCPU
-executes; the kernel never reaches its first serial byte — see #82's
-evidence for the full characterization). The console of the inner
-workspace then appears inside the console of the workspace:
-host → appliance → workspace → inner workspace.
-The end-to-end proof is the opt-in smoke `test_appliance_l3_recursion`
-(`MSKSD_TEST_L3=1` with the appliance built), which also pins the
-two facts the recursion rests on: Debian's generic kernel ships the
-KVM modules the image's closure carries, and vmx survives two
-removes of cloud-hypervisor's default CPU config — an inner guest
-that reaches its console is running on nested-in-nested KVM,
-because cloud-hypervisor boots VMs through `/dev/kvm` and has no
-software fallback.
-
-The proving smoke also runs in CI (#135):
-`nightly-l3.yml` runs `test_appliance_l3_recursion` on a
-self-hosted runner labeled `msks-l3` — the recursion needs two
-levels of nesting below the runner, one more than GitHub's hosted
-runners accelerate (verified empirically: a KVM guest booted on a
-hosted runner sees no vmx), so it runs where that depth exists.
-The runner's host needs what the manual run needs (`/dev/kvm`, the
-one-time `scripts/appliance-host-setup.sh` network install, and
-nix for both asset builds). The workflow is manual-dispatch only
-until such a runner registers — a schedule with no runner queues
-forever and signals nothing; arming the nightly is adding the
-trigger back.
-
 ### The workspace console (`msks console`) (#21)
 
-From any host that can reach the appliance, an interactive shell in
-a running workspace:
+An interactive shell in a running workspace, from any host that can
+reach the daemon:
 
 ```bash
-export MSKSC_URL=https://192.168.77.2:8660
-export MSKSC_TOKEN=$(cat .devenv/state/appliance/bootstrap-token)
 devenv --quiet -O dotenv.enable:bool false shell -- msks console my-workspace
 ```
+
+A devenv shell presets `MSKSC_URL`/`MSKSC_TOKEN`/`MSKSC_CAFILE`
+from the worktree's dev-daemon state; an outside shell exports the
+same trio by hand (the URL from the daemon's log line, the token
+and CA from `.devenv/state/msksd/`).
 
 The client speaks the daemon's console websocket
 (`/api/v1/workspaces/{id}/console`): TLS plus bearer token — the same
@@ -695,17 +407,10 @@ Transport (#21), in the preferred vsock-first shape:
   starts with a control-channel decision — a dedicated vsock
   control port, or another design that keeps the stream raw (#78).
 - `MSKSC_CAFILE` pins the daemon certificate for verification when
-  you have it (a directly-run msksd's CA, or the appliance CA
-  exported from its state disk:
-  `debugfs -R "dump /msks-ca.pem msks-ca.pem" .devenv/state/appliance/state.ext4`).
-  Without it the client proceeds with certificate verification off
-  and says so on stderr — the serial log's TOFU fingerprint is the
-  cross-check.
-- The appliance bridges every `msksd.<name>=<value>` pair on its
-  kernel cmdline into the daemon's environment as
-  `MSKSD_<NAME>`; the run script appends pairs from
-  `MSKS_APPLIANCE_CMDLINE_EXTRA` (e.g.
-  `msksd.vsock_wait_timeout_s=30` on slow nested-virt hosts).
+  you have it (the dev daemon writes `msks-ca.pem` into its state
+  dir on first serve). Without it the client proceeds with
+  certificate verification off and says so on stderr — the CA
+  fingerprint the daemon logs at startup is the cross-check.
 
 ### k8s (k3s) smoke path
 

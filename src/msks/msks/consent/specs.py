@@ -74,7 +74,7 @@ def strip_scope_sigil(spec: str) -> tuple[str, str]:
 def valid_cidr_spec(spec: str) -> bool:
     """Whether ``<ip>/<plen>[:port]`` is a valid IPv4 CIDR spec.
 
-    IPv6 is refused: the guest's only route is the appliance-side
+    IPv6 is refused: the guest's only route is the host-side
     /30, so a v6 destination is neither reachable nor enforceable —
     the same posture klangk took (#1936). Host bits are kept
     as-typed (nft masks them). A spec without a prefix length is

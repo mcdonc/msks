@@ -1,7 +1,7 @@
 """The per-workspace DHCP service (#52).
 
 msksd is the only DHCP server a workspace guest ever sees: each tap
-gets a server task that answers on the appliance-side address of the
+gets a server task that answers on the host-side address of the
 workspace's own /30, offering exactly that network's guest address,
 the tap as gateway, and the tap as resolver — the naming layer of
 #69 slots in behind this single offered resolver.

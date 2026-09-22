@@ -1,6 +1,6 @@
 """Development reload: watch the package tree, restart on change (#144).
 
-The appliance dev-tree flow runs the daemon from a live-shared source
+A daemon run from a live-shared source tree
 tree (the host repo over virtiofs). Watching that tree with inotify
 does not work — FUSE delivers no host-side change events — so this
 polls: every :data:`POLL_SECONDS` the tree's ``(mtime_ns, size)``

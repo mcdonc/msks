@@ -26,13 +26,12 @@ out="$(
     "$root/nix/guest.nix" -A guest
 )"
 
-# A GC root: the appliance references these paths only through the
-# virtiofs store share (nothing in its closure depends on them), so
-# without a root a garbage collect would ENOENT every workspace boot.
-rm -f "$guest_dir/guest-root"
+# No GC root: nothing reads these store paths live. The copy step
+# below is the consumer surface (demo-vm, the smoke tests, the
+# seed flows all boot from the guest_dir copies, which a garbage
+# collect never touches), and the daemon imports image archives
+# into its own catalog.
 echo "msks: building guest assets into $guest_dir (idempotent — unchanged inputs are a cached no-op)"
-nix-build -I nixpkgs="$nixpkgs" "$root/nix/guest.nix" -A guest \
-  -o "$guest_dir/guest-root"
 
 mkdir -p "$guest_dir"
 for name in vmlinux initrd rootfs.ext4 guest-manifest.json; do
