@@ -79,6 +79,48 @@ def test_seed_script_plants_both_users_and_the_trust_store() -> None:
     assert "/etc/msks/console.allowed_signers" in script
     assert '"$wsid" "$1" "$2" >> "$signers"' in script
     assert 'chmod 0600 "$signers"' in script
+    # No login user named: the shipped accounts are the whole
+    # provisioning, and no useradd runs (#248).
+    assert "useradd" not in script
+
+
+def test_seed_script_provisions_a_named_login_user() -> None:
+    """A login user the image does not ship (#248) is created at
+    first boot: the account (only when missing), the #171 home
+    shape, its authorized_keys, and the #169 passwordless-sudo
+    grant — the same posture the msks account carries."""
+    script = seed_script(PUBLIC, "ws-id", "alice")
+    assert "luser='alice'" in script
+    # The account is made only when passwd names it — a
+    # re-provision or an operator-premade account keeps its uid.
+    assert 'getent passwd "$luser" >/dev/null 2>&1 ' in script
+    assert '|| useradd -m -s /bin/bash "$luser"' in script
+    # The home and key, in the same shape the msks user gets;
+    # ownership rides the chown colon form, which works whatever
+    # the account's primary group is named.
+    assert 'install -d -m 0755 "/home/$luser"' in script
+    assert 'cp -a /etc/skel/. "/home/$luser/" || true' in script
+    assert 'install -d -m 0700 "/home/$luser/.ssh"' in script
+    assert script.count('>> "/home/$luser/.ssh/authorized_keys"') == 1
+    assert 'chown -R "$luser:" "/home/$luser"' in script
+    assert 'chmod 0600 "/home/$luser/.ssh/authorized_keys"' in script
+    # The sudo grant, root-owned at the sudoers mode.
+    assert "printf '%s ALL=(ALL) NOPASSWD:ALL\\n' \"$luser\" " in script
+    assert 'chmod 0440 "/etc/sudoers.d/$luser"' in script
+    # The root, msks, and signers lines ride along unchanged.
+    assert script.count("grep -qxF") == 4
+    assert 'chmod 0600 "$signers"' in script
+
+
+def test_seed_script_skips_provisioning_for_shipped_users() -> None:
+    """The image already ships root and the msks account: naming
+    either as the login user records it on the row and seeds
+    nothing new — no useradd, no second sudoers entry."""
+    for shipped in ("root", "msks"):
+        script = seed_script(PUBLIC, "ws-id", shipped)
+        assert "useradd" not in script
+        assert "sudoers.d" not in script
+        assert script == seed_script(PUBLIC, "ws-id")
 
 
 def test_compose_without_key_is_verbatim() -> None:
@@ -93,6 +135,15 @@ def test_compose_without_payload_is_the_script() -> None:
     alone, one plain document."""
     assert compose_user_data(None, PUBLIC, "ws-id") == seed_script(
         PUBLIC, "ws-id"
+    )
+
+
+def test_compose_carries_the_login_user_into_the_script() -> None:
+    """The login user rides the composed document the same way it
+    rides the bare script (#248): the seed the guest runs is the
+    one for THIS workspace's user."""
+    assert compose_user_data(None, PUBLIC, "ws-id", "alice") == seed_script(
+        PUBLIC, "ws-id", "alice"
     )
 
 

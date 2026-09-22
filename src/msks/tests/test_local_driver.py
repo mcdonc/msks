@@ -1220,7 +1220,7 @@ async def test_prelude_refusal_raises(tmp_path: Path) -> None:
         writer.write(b"OK 5\n")
         await writer.drain()
         assert await reader.readuntil(b"GO\n")
-        writer.write(b"MSKS ERR user\n")
+        writer.write(b"MSKS ERR auth\n")
         await writer.drain()
         writer.close()
 
@@ -1231,7 +1231,35 @@ async def test_prelude_refusal_raises(tmp_path: Path) -> None:
     finally:
         server.close()
         await server.wait_closed()
-    assert "refused user 'msks': user" in str(caught.value)
+    assert "refused user 'msks': auth" in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_prelude_user_refusal_is_retryable(tmp_path: Path) -> None:
+    """The helper's absent-account refusal (#248) reads as a
+    boot-state, not a verdict: the handshake raises the retryable
+    marker the console loop waits out, because the daemon's own
+    gate already admitted the name and the first-boot seed that
+    creates the account lands with the same boot."""
+    path = tmp_path / "guest.sock"
+
+    async def session(reader, writer):
+        await reader.readline()
+        writer.write(b"OK 5\n")
+        await writer.drain()
+        assert await reader.readuntil(b"GO\n")
+        writer.write(b"MSKS ERR user\n")
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_unix_server(session, str(path))
+    try:
+        with pytest.raises(local_mod._UserRetry) as caught:
+            await local_mod._vsock_handshake(path, 1023, user="alice")
+    finally:
+        server.close()
+        await server.wait_closed()
+    assert "first-boot seed" in str(caught.value)
 
 
 @pytest.mark.asyncio
@@ -1614,3 +1642,38 @@ def test_log_tail_shapes() -> None:
         assert LocalCloudHypervisor._log_tail(p) == " (log empty)"
         p.unlink()
         assert LocalCloudHypervisor._log_tail(p) == " (log unreadable)"
+
+
+@pytest.mark.asyncio
+async def test_console_user_refusal_expires_at_the_deadline(
+    env, monkeypatch
+) -> None:
+    """A guest that keeps refusing the login user past the vsock
+    deadline fails with the seed named (#248) — not the generic
+    is-the-VM-running line a bring-up failure carries."""
+    app, state_dir, _ = env
+    app.state.settings.vmm.vsock_wait_timeout_s = 0.1
+    vm_dir = state_dir / "vms" / WID
+    vm_dir.mkdir(parents=True, exist_ok=True)
+    stub_vm = await spawn_stub_vmm(app)
+    vm_dir.joinpath("ch.pid").write_text(str(stub_vm.pid))
+    path = vm_dir / "vsock.sock"
+
+    async def session(reader, writer):
+        await reader.readline()
+        writer.write(b"OK 5\n")
+        await writer.drain()
+        assert await reader.readuntil(b"GO\n")
+        writer.write(b"MSKS ERR user\n")
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_unix_server(session, str(path))
+    try:
+        with pytest.raises(MicrovmError, match="first-boot seed"):
+            await app.state.microvm.console(WID, user="alice")
+    finally:
+        server.close()
+        await server.wait_closed()
+        stub_vm.kill()
+        await stub_vm.wait()

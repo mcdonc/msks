@@ -528,6 +528,7 @@ def test_main_raw_mode_cycle(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MSKSC_TOKEN", "t")
     monkeypatch.setattr(console, "require_tty", lambda: None)
     monkeypatch.setattr(console, "ensure_running", preflight)
+    stub_login_user(monkeypatch, "root")
     restored: list = []
 
     async def fake_run(
@@ -559,6 +560,7 @@ def test_main_without_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MSKSC_TOKEN", "t")
     monkeypatch.setattr(console, "require_tty", lambda: None)
     monkeypatch.setattr(console, "ensure_running", async_noop)
+    stub_login_user(monkeypatch, "root")
     monkeypatch.setattr(
         console.termios,
         "tcgetattr",
@@ -586,6 +588,17 @@ def test_module_entry_runs(monkeypatch: pytest.MonkeyPatch) -> None:
             compile(source, cli.__file__, "exec"),
             {"__name__": "__main__", "__package__": "msks.client"},
         )
+
+
+def stub_login_user(monkeypatch: pytest.MonkeyPatch, user: str | None) -> None:
+    """Pin the workspace-row fetch behind the console's default-user
+    resolution (#248): ``user`` is the row's login_user (None for a
+    pre-#248 row, which must fall back to the legacy user)."""
+
+    async def fake_row(workspace_id, url, token, ssl_ctx=None, transport=None):
+        return {"id": workspace_id, "status": "running", "login_user": user}
+
+    monkeypatch.setattr(console, "workspace_row", fake_row)
 
 
 def _closed(code: int, reason: str = ""):
@@ -676,6 +689,7 @@ def test_run_workspace_shell_preflights_boot(
     monkeypatch.setenv("MSKSC_URL", "u")
     monkeypatch.setattr(console, "require_tty", lambda: None)
     monkeypatch.setattr(console, "ensure_running", fake_ensure)
+    stub_login_user(monkeypatch, "root")
     monkeypatch.setattr(console, "ssl_context", lambda: "ctx")
     monkeypatch.setattr(
         console.termios,
@@ -696,3 +710,96 @@ def test_run_workspace_shell_preflights_boot(
         "token": "t",
         "ssl": "ctx",
     }
+
+
+# --- the default login user (#248) ---
+
+
+def test_console_login_user_reads_the_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The console default is the workspace's recorded login user —
+    the same name ``msks ssh`` logs in as, read from the same row
+    the daemon serves the identity fetch from."""
+    stub_login_user(monkeypatch, "alice")
+    assert console.console_login_user("wid", "https://d", "tok", None) == (
+        "alice"
+    )
+
+
+def test_console_login_user_falls_back_to_the_legacy_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A row without a login user (a pre-#248 workspace) keeps the
+    image's own account — and a daemon predating the field serves
+    no key at all, answered the same way."""
+
+    async def row_without_field(workspace_id, url, token, ssl_ctx=None):
+        return {"id": workspace_id, "status": "running"}
+
+    monkeypatch.setattr(console, "workspace_row", row_without_field)
+    assert (
+        console.console_login_user("wid", "https://d", "tok", None) == "msks"
+    )
+
+
+def test_run_workspace_shell_defaults_to_the_recorded_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No --user: the session opens as the workspace's login user —
+    root stays the explicit recovery shell."""
+    monkeypatch.setattr(sys, "stdin", FdOnly())
+    monkeypatch.setenv("MSKSC_TOKEN", "t")
+    monkeypatch.setattr(console, "require_tty", lambda: None)
+    monkeypatch.setattr(console, "ensure_running", async_noop)
+    stub_login_user(monkeypatch, "alice")
+    monkeypatch.setattr(console, "ssl_context", lambda: "ctx")
+    monkeypatch.setattr(
+        console.termios,
+        "tcgetattr",
+        lambda fd: (_ for _ in ()).throw(termios.error()),
+    )
+    seen: dict = {}
+
+    async def fake_run(
+        wid, url, token, ssl_ctx, user=None, size=None, term=None
+    ):
+        seen["user"] = user
+        return 0
+
+    monkeypatch.setattr(console, "run_shell", fake_run)
+    assert console.run_workspace_shell("wid") == 0
+    assert seen["user"] == "alice"
+
+
+def test_run_workspace_shell_keeps_an_explicit_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--user root skips the resolution entirely: the recovery
+    shell never waits on a row fetch."""
+    monkeypatch.setattr(sys, "stdin", FdOnly())
+    monkeypatch.setenv("MSKSC_TOKEN", "t")
+    monkeypatch.setattr(console, "require_tty", lambda: None)
+    monkeypatch.setattr(console, "ensure_running", async_noop)
+
+    def no_fetch(*args, **kwargs):
+        raise AssertionError("an explicit user resolves nothing")
+
+    monkeypatch.setattr(console, "console_login_user", no_fetch)
+    monkeypatch.setattr(console, "ssl_context", lambda: "ctx")
+    monkeypatch.setattr(
+        console.termios,
+        "tcgetattr",
+        lambda fd: (_ for _ in ()).throw(termios.error()),
+    )
+    seen: dict = {}
+
+    async def fake_run(
+        wid, url, token, ssl_ctx, user=None, size=None, term=None
+    ):
+        seen["user"] = user
+        return 0
+
+    monkeypatch.setattr(console, "run_shell", fake_run)
+    assert console.run_workspace_shell("wid", "root") == 0
+    assert seen["user"] == "root"

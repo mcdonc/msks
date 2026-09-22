@@ -962,6 +962,9 @@ def test_main_create_dispatch(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     client_env(monkeypatch)
+    # The create default fills the invoking user's name (#248) —
+    # pinned here so the body assertion stays about the dispatch.
+    monkeypatch.setattr(cli.getpass, "getuser", lambda: "alice")
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -983,7 +986,12 @@ def test_main_create_dispatch(
         transport=mock(handler),
     )
     assert rc == 0
-    assert seen["body"] == {"id": "ws1", "image": "debian:13", "cpus": 4}
+    assert seen["body"] == {
+        "id": "ws1",
+        "image": "debian:13",
+        "cpus": 4,
+        "user": "alice",
+    }
     assert "created ws1" in capsys.readouterr().out
 
 
@@ -1768,6 +1776,7 @@ def test_create_user_data_reads_the_file(
     """--user-data FILE (#41) carries the file's bytes verbatim as the
     create body's user_data."""
     client_env(monkeypatch)
+    monkeypatch.setattr(cli.getpass, "getuser", lambda: "alice")
     payload = "#!/bin/sh\necho seeded > /root/stamp\n"
     source = tmp_path / "seed.sh"
     source.write_text(payload)
@@ -1782,7 +1791,7 @@ def test_create_user_data_reads_the_file(
         transport=mock(handler),
     )
     assert rc == 0
-    assert seen["body"] == {"id": "ws1", "user_data": payload}
+    assert seen["body"] == {"id": "ws1", "user_data": payload, "user": "alice"}
     assert "created ws1" in capsys.readouterr().out
 
 
@@ -3119,4 +3128,100 @@ def test_cmd_secret_mint_names_an_unreadable_file(
                 str(tmp_path / "absent"),
             ],
             transport=mock(lambda request: httpx.Response(201, json={})),
+        )
+
+
+# --- create --user (#248) ---
+
+
+def test_create_user_flag_rides_the_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit --user is the create body's user, verbatim."""
+    client_env(monkeypatch)
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(201, json={"id": "ws1", "status": "created"})
+
+    rc = cli.main(
+        ["create", "ws1", "--user", "alice", "--daemon-mint"],
+        transport=mock(handler),
+    )
+    assert rc == 0
+    assert seen["body"]["user"] == "alice"
+
+
+def test_create_defaults_the_user_to_the_invoking_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No --user: the body carries the invoking user's name — the
+    workspace seeds that account as its own."""
+    client_env(monkeypatch)
+    monkeypatch.setattr(cli.getpass, "getuser", lambda: "chrism")
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(201, json={"id": "ws1", "status": "created"})
+
+    rc = cli.main(["create", "ws1", "--daemon-mint"], transport=mock(handler))
+    assert rc == 0
+    assert seen["body"]["user"] == "chrism"
+
+
+def test_create_refuses_an_unusable_invoking_name(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A username the guest could never carry (a capitalized one) is
+    a named local refusal pointing at --user, before any wire."""
+    client_env(monkeypatch)
+    monkeypatch.setattr(cli.getpass, "getuser", lambda: "Chris")
+
+    def no_calls(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("the refusal must precede any request")
+
+    with pytest.raises(SystemExit, match="pass --user"):
+        cli.main(["create", "ws1", "--daemon-mint"], transport=mock(no_calls))
+
+
+def test_create_refuses_an_off_charset_user_locally(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit --user off the login-name charset fails with the
+    local line, not the daemon's pattern error."""
+    client_env(monkeypatch)
+    with pytest.raises(SystemExit, match="not a valid login name"):
+        cli.main(
+            [
+                "create",
+                "ws1",
+                "--user",
+                "not a name",
+                "--daemon-mint",
+            ],
+            transport=mock(
+                lambda req: httpx.Response(201, json={"id": "ws1"})
+            ),
+        )
+
+
+def test_create_refuses_when_no_invoking_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An environment that names no user (getpass finds nothing)
+    is a named refusal pointing at --user, not a traceback."""
+    client_env(monkeypatch)
+
+    def no_name() -> str:
+        raise OSError("no username in the environment")
+
+    monkeypatch.setattr(cli.getpass, "getuser", no_name)
+    with pytest.raises(SystemExit, match="pass --user"):
+        cli.main(
+            ["create", "ws1", "--daemon-mint"],
+            transport=mock(
+                lambda req: httpx.Response(201, json={"id": "ws1"})
+            ),
         )

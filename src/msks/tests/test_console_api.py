@@ -565,6 +565,43 @@ def test_console_prelude_image_passes_user_and_size(
     assert stub.console_calls == [("ws-p", "msks", 34, 120, "xterm")]
 
 
+def test_console_admits_the_workspaces_login_user(
+    console_api, tmp_path
+) -> None:
+    """The row's recorded login user (#248) is served beside the
+    image's own console users: the seed provisions the account, so
+    a name the manifest does not list still opens the console —
+    and a name neither the manifest nor the row serves still
+    closes 4400."""
+    api, app, stub = console_api
+    app.state.settings.vmm.state_dir = tmp_path
+    _make_prelude_image(tmp_path)
+    with TestClient(api) as client:
+        response = client.post(
+            "/api/v1/workspaces",
+            json={"id": "ws-lu", "image": "debian:13.6", "user": "alice"},
+            headers=auth(),
+        )
+        assert response.status_code == 201, response.text
+        with client.websocket_connect(
+            f"/api/v1/workspaces/ws-lu/console?token={TOKEN}&user=alice"
+        ) as socket:
+            socket.send_bytes(b"hello")
+            got = b""
+            while b"HELLO" not in got:
+                got += socket.receive_bytes()
+        assert stub.console_calls == [("ws-lu", "alice", 24, 80, "xterm")]
+        stub.console_calls.clear()
+        with client.websocket_connect(
+            f"/api/v1/workspaces/ws-lu/console?token={TOKEN}&user=nobody"
+        ) as s:
+            with pytest.raises(WebSocketDisconnect) as caught:
+                s.receive_text()
+        assert caught.value.code == 4400
+        assert "not served" in (caught.value.reason or "")
+    assert stub.console_calls == []
+
+
 def test_console_bad_term_closes_4400(console_api) -> None:
     api, app, stub = console_api
     with TestClient(api) as client:

@@ -34,6 +34,7 @@ RSA_PEM = mint("rsa")[0]
 KEY = {
     "public_key": "ecdsa-sha2-nistp256 AAAA msksd:alpha",
     "private_key": PEM,
+    "user": "alice",
 }
 RUNNING_ROW = {"id": "alpha", "status": "running"}
 
@@ -667,8 +668,13 @@ def test_wants_user(args: list[str], names: bool) -> None:
 # --- the argv ---
 
 
-def test_build_args_injects_the_default_user() -> None:
-    argv = ssh.build_args("alpha", "/agent.sock", "/id.pub", "/kh", ["-T"])
+def test_build_args_injects_the_workspace_user() -> None:
+    """No user in the passthrough: the workspace's login user rides
+    as ``-l`` (#248) — the name the daemon recorded at create, not
+    an image constant."""
+    argv = ssh.build_args(
+        "alpha", "/agent.sock", "/id.pub", "/kh", ["-T"], "alice"
+    )
     assert argv[0] == "ssh"
     assert argv[1] == "-T"  # passthrough options come first...
     assert argv[2:4] == ["-o", ssh.proxy_command("alpha")]
@@ -684,12 +690,12 @@ def test_build_args_injects_the_default_user() -> None:
         "-i",
         "/id.pub",
     ]
-    assert argv[14:] == ["-l", "msks", "alpha"]
+    assert argv[14:] == ["-l", "alice", "alpha"]
 
 
 def test_build_args_leaves_the_user_to_ssh() -> None:
     argv = ssh.build_args(
-        "alpha", "/agent.sock", "/id.pub", "/kh", ["-l", "root"]
+        "alpha", "/agent.sock", "/id.pub", "/kh", ["-l", "root"], "alice"
     )
     assert argv[1:3] == ["-l", "root"]
     assert argv[-1] == "alpha"
@@ -711,6 +717,7 @@ def test_build_args_lets_an_explicit_override_win() -> None:
             "-o",
             "StrictHostKeyChecking=no",
         ],
+        "alice",
     )
     assert argv[1:5] == [
         "-o",
@@ -723,7 +730,12 @@ def test_build_args_lets_an_explicit_override_win() -> None:
 
 def test_build_args_carries_a_remote_command_after_the_host() -> None:
     argv = ssh.build_args(
-        "alpha", "/agent.sock", "/id.pub", "/kh", ["-v", "--", "uname", "-a"]
+        "alpha",
+        "/agent.sock",
+        "/id.pub",
+        "/kh",
+        ["-v", "--", "uname", "-a"],
+        "alice",
     )
     assert argv[0:2] == ["ssh", "-v"]
     assert argv[-3:] == ["alpha", "uname", "-a"]
@@ -897,7 +909,9 @@ def test_a_socket_with_whitespace_is_quoted(
 def test_build_args_points_forwarding_at_the_operators_agent(
     agent_env: str,
 ) -> None:
-    argv = ssh.build_args("alpha", "/agent.sock", "/id.pub", "/kh", ["-A"])
+    argv = ssh.build_args(
+        "alpha", "/agent.sock", "/id.pub", "/kh", ["-A"], "alice"
+    )
     assert argv[1:3] == front_pair(agent_env)
     assert "-A" in argv  # inert behind the stated path
     # The session agent stays the authentication path — the
@@ -910,7 +924,12 @@ def test_build_args_keeps_an_explicit_forwardagent_socket(
     agent_env: str,
 ) -> None:
     argv = ssh.build_args(
-        "alpha", "/agent.sock", "/id.pub", "/kh", ["-o", "ForwardAgent=/own"]
+        "alpha",
+        "/agent.sock",
+        "/id.pub",
+        "/kh",
+        ["-o", "ForwardAgent=/own"],
+        "alice",
     )
     assert "ForwardAgent=/own" in " ".join(argv)
     assert agent_env not in " ".join(argv)
@@ -1100,7 +1119,12 @@ def test_run_workspace_ssh_names_a_missing_binary_from_the_wait(
 def probe_argv_of(passthrough: list[str]) -> list[str]:
     """The probe argv for a passthrough, through build_args itself."""
     return ssh.probe_args(
-        "alpha", "/faked/agent.sock", "/faked/identity.pub", "/kh", passthrough
+        "alpha",
+        "/faked/agent.sock",
+        "/faked/identity.pub",
+        "/kh",
+        passthrough,
+        "alice",
     )
 
 
@@ -1154,7 +1178,12 @@ def test_probe_args_drops_all_session_luggage() -> None:
     # The login user is the one setting the probe keeps.
     assert "-l" in argv and "root" in argv
     session = ssh.build_args(
-        "alpha", "/faked/agent.sock", "/faked/identity.pub", "/kh", passthrough
+        "alpha",
+        "/faked/agent.sock",
+        "/faked/identity.pub",
+        "/kh",
+        passthrough,
+        "alice",
     )
     assert "-fN" in session and "-W" in session
     assert "-oRemoteCommand=sleep 600" in session
@@ -1177,10 +1206,10 @@ def test_probe_user_extracts_each_user_form() -> None:
 
 def test_probe_args_carries_the_attached_login_spelling() -> None:
     # ssh parses -lroot as user root and takes the first user it
-    # sees, so the probe must carry it too — not the default user.
+    # sees, so the probe must carry it too — not the workspace user.
     argv = probe_argv_of(["-lroot"])
     assert "-lroot" in argv
-    assert "msks" not in argv
+    assert "alice" not in argv
 
 
 def test_probe_args_shares_the_sessions_transport_options() -> None:
@@ -1188,7 +1217,7 @@ def test_probe_args_shares_the_sessions_transport_options() -> None:
     # known_hosts, host-key policy, agent, and identity — the
     # injected option block is the session's own, verbatim.
     session = ssh.build_args(
-        "alpha", "/faked/agent.sock", "/faked/identity.pub", "/kh", []
+        "alpha", "/faked/agent.sock", "/faked/identity.pub", "/kh", [], "alice"
     )
     probe = probe_argv_of([])
     injected = session[1:-2]  # no passthrough options: the whole tail
@@ -1490,3 +1519,64 @@ def test_wait_for_identity_surfaces_distinct_probe_stderr(
     assert err.count("Host key verification failed.") == 1
     assert err.count("Permission denied (publickey).") == 1
     assert err.count("msks ssh probe:") == 2  # deduped, then the new one
+
+
+# --- the workspace's login user (#248) ---
+
+
+def test_workspace_user_reads_the_served_name() -> None:
+    """The identity fetch carries the workspace's login user: the
+    name create recorded, served back as the session's default."""
+    assert ssh.workspace_user(KEY) == "alice"
+
+
+def test_workspace_user_falls_back_for_an_older_daemon() -> None:
+    """A daemon predating the field serves no user: the image's own
+    login user is the only account those workspaces hold, so it is
+    the fallback — a constant named for its job, not the old
+    always-default."""
+    from msks.identity import LEGACY_LOGIN_USER
+
+    assert ssh.workspace_user({"public_key": "k", "private_key": None}) == (
+        LEGACY_LOGIN_USER
+    )
+    assert LEGACY_LOGIN_USER == "msks"
+
+
+def test_run_workspace_ssh_logs_in_as_the_workspace_user(
+    monkeypatch: pytest.MonkeyPatch,
+    client_env: None,
+    tmp_path: Path,
+) -> None:
+    """No user in the passthrough: the session dials as the
+    workspace's recorded login user — the name the identity fetch
+    served (#248)."""
+
+    async def fake_prepare(*args, **kwargs) -> tuple[dict, bool]:
+        return KEY, False
+
+    monkeypatch.setattr(ssh, "prepare", fake_prepare)
+    monkeypatch.setattr(
+        ssh,
+        "known_hosts_path",
+        lambda ws, base=None, instance=None: str(tmp_path),
+    )
+
+    @contextmanager
+    def fake_serve(private, comment):
+        yield FakeAgent()
+
+    monkeypatch.setattr(ssh.agent, "serve", fake_serve)
+    calls: list[list[str]] = []
+
+    def fake_run(argv, **kwargs) -> SimpleNamespace:
+        calls.append(argv)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(ssh.subprocess, "run", fake_run)
+    assert ssh.run_workspace_ssh("alpha", []) == 0
+    argv = calls[0]
+    assert argv[argv.index("alpha") - 2 : argv.index("alpha")] == [
+        "-l",
+        "alice",
+    ]

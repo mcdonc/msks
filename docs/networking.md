@@ -251,8 +251,8 @@ and its console is the vsock one.
 A workspace created without a client-supplied key — a direct API
 create, or `msks create --daemon-mint` — carries an ssh
 identity msksd minted at create (issue #111): a keypair stored with the workspace's state, whose
-public half the first boot plants into `authorized_keys` for both
-root and the `msks` workspace user — through the same cidata seed
+public half the first boot plants into `authorized_keys` for root
+and the workspace's login user — through the same cidata seed
 disk that carries `user_data`, so the guest needs no key steps of
 its own. The halves persist across daemon restarts and workspace
 stop/start: they live on the workspace's row, and a stop/start
@@ -284,29 +284,31 @@ rsync -e 'ssh -i ~/.cache/msks/myws.key -p 2201' \
     -av ./site/ root@127.0.0.1:/root/site/
 ```
 
-The same login works as the workspace user —
-`ssh -i ... -p 2201 msks@127.0.0.1` — whose home rides the
-persistent `/home` volume.
+The same login works as the workspace's login user —
+`ssh -i ... -p 2201 alice@127.0.0.1` (the name `msks create
+--user` recorded, #248; the image's `msks` account for a
+workspace created before #248) — whose home rides the persistent
+`/home` volume.
 
 `msks ssh` (#112) is the zero-step form of the same login: it boots
 the workspace if needed, serves the minted identity from a
 transient in-process ssh-agent (the private half never becomes a
 file), and runs ssh with the forward as its ProxyCommand — as the
-`msks` workspace user by default, with `-l root` as the recovery
+workspace's login user by default, with `-l root` as the recovery
 login (see the CLI chapter's `msks ssh` section). When the command
 itself booted the workspace, it holds the connection back until
 the guest accepts the workspace key (#168): a probe login retries
 behind the first boot's identity seeding, so the first attempt
 lands as a session instead of `Permission denied (publickey)`.
 
-The same login works as the workspace user —
-`ssh -i ... -p 2201 msks@127.0.0.1` — whose home rides the
+The same login works as the workspace's login user —
+`ssh -i ... -p 2201 alice@127.0.0.1` — whose home rides the
 persistent `/home` volume.
 
 `msks rsync` (#190) is the copy form of the same seam: it runs
 the host rsync over the forward with the identity staged in
 memory and the copy opening its own forward
-(`msks rsync devbox -- -aP src/ :src/`, the `msks` user's home;
+(`msks rsync devbox -- -aP src/ :src/`, the login user's home;
 `root@:/root/x` for root-owned paths) — see the CLI chapter's
 `msks rsync` section.
 

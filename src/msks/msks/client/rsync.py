@@ -25,16 +25,17 @@ sit before the colon, and a path that names none (``:src``,
 filled in as the host, so the push and pull forms read
 ``msks rsync my-workspace -- -av ./site/ root@:/root/site/``
 (the ``root@`` spelling matters for root-owned paths: the guest's
-``/root`` is root's alone, and the default login — the image's
-``msks`` workspace user — writes under that user's persistent
-``/home``). The direction comes entirely from the rsync
+``/root`` is root's alone, and the default login — the workspace's
+recorded user (#248), whose persistent ``/home`` it writes under). The
+direction comes entirely from the rsync
 arguments. A path that names a host keeps it (the transport is
 the proxy, so the name never resolves); ``::`` (rsync's daemon
 protocol) is left as typed, and the workspace image runs no rsync
 daemon — sshd stays the guest's one inbound service (#110).
 
-The login user defaults to the image's workspace user the same way
-``msks ssh`` injects ``-l msks`` — but rsync itself appends
+The login user defaults to the workspace's recorded user the same
+way
+``msks ssh`` injects ``-l <user>`` — but rsync itself appends
 ``-l user`` to the remote shell when a path spells ``user@host:``,
 and ssh keeps the first user it obtains, so the default cannot
 ride the ``-e`` string. It rides a generated per-session ssh
@@ -55,7 +56,6 @@ import time
 from pathlib import Path
 
 from .ssh import (
-    DEFAULT_USER,
     SSH_SEED_WAIT_S,
     config_quote,
     exec_child,
@@ -127,7 +127,7 @@ def config_directives(options: list[str], user: str) -> list[str]:
     return lines
 
 
-def write_ssh_config(served, options: list[str]) -> str:
+def write_ssh_config(served, options: list[str], user: str) -> str:
     """The per-session ssh config beside the served identity's
     public half, inside the agent's mode-0700 temporary directory —
     it exists exactly as long as the session does. The user lives
@@ -138,7 +138,7 @@ def write_ssh_config(served, options: list[str]) -> str:
     from the command line."""
     path = Path(served.identity_path).parent / "ssh_config"
     path.write_text(
-        "\n".join(config_directives(options, DEFAULT_USER)) + "\n",
+        "\n".join(config_directives(options, user)) + "\n",
         encoding="utf-8",
     )
     return str(path)
@@ -194,17 +194,18 @@ def run_workspace_rsync(
 ) -> int:
     """One rsync run, from boot pre-flight to rsync's own exit code.
 
-    The first-boot probe dials as the DEFAULT user even when the
-    copy logs in as another (``root@:`` paths): the guest's seed
-    writes both users' ``authorized_keys`` in one cloud-init run,
-    so the default user's acceptance is the seed's arrival either
-    way."""
+    The first-boot probe dials as the workspace's login user even
+    when the copy logs in as another (``root@:`` paths): the
+    guest's seed writes every login user's ``authorized_keys`` in
+    one cloud-init run, so the workspace user's acceptance is the
+    seed's arrival either way."""
     passthrough = passthrough_args(passthrough)
     require_args(passthrough)
     with staged_session(workspace_id, transport) as (
         booted,
         served,
         token,
+        user,
     ):
         known_hosts = known_hosts_path(workspace_id, instance=token)
         config_path = write_ssh_config(
@@ -215,6 +216,7 @@ def run_workspace_rsync(
                 served.identity_path,
                 known_hosts,
             ),
+            user,
         )
         if booted:
             wait_for_identity(
@@ -225,6 +227,7 @@ def run_workspace_rsync(
                     served.identity_path,
                     known_hosts,
                     [],
+                    user,
                 ),
                 time.monotonic() + SSH_SEED_WAIT_S,
                 "msks rsync",

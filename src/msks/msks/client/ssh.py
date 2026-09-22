@@ -16,8 +16,10 @@ half arrives over the API and stays in memory for the session; a
 client-minted half is read from its one file and left exactly
 there.
 
-The session logs in as the image's workspace user by default;
-``-l root`` in the passthrough args is the recovery login. Agent
+The session logs in as the workspace's recorded login user
+(#248 — the name ``msks create --user`` planted, the creating
+operator's own name by default); ``-l root`` in the passthrough
+args is the recovery login. Agent
 forwarding asked for on the command line — ``msks ssh <ws> -- -A``
 — forwards the operator's agent, the one ``SSH_AUTH_SOCK`` names
 (:func:`forward_agent_args` rewrites the request onto that socket
@@ -53,6 +55,7 @@ from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
 
+from ..identity import LEGACY_LOGIN_USER
 from . import agent
 from .rest import (
     ensure_running,
@@ -64,10 +67,6 @@ from .rest import (
 
 #: The guest port sshd listens on (#110).
 SSH_PORT = 22
-
-#: The image's workspace user — the daily identity #111 seeds next
-#: to root in ``authorized_keys``.
-DEFAULT_USER = "msks"
 
 #: How long a just-booted workspace's first ssh attempt keeps
 #: retrying (#168): the daemon reports ``running`` when the VM
@@ -597,12 +596,28 @@ def session_options(
     ]
 
 
+def workspace_user(key: dict) -> str:
+    """The workspace's login user from the identity fetch (#248) —
+    the user ``msks ssh`` and ``msks rsync`` log in as when the
+    passthrough names none.
+
+    The daemon serves the recorded create-time user with the
+    identity (a workspace created by one operator and ssh'd into by
+    another answers the same for both); the fallback covers a
+    daemon one version behind this client, whose workspaces hold
+    only the accounts the image ships — root and the legacy login
+    user — so logging in as anything else could only fail.
+    """
+    return key.get("user") or LEGACY_LOGIN_USER
+
+
 def build_args(
     workspace_id: str,
     agent_socket: str,
     identity_pub: str,
     known_hosts: str,
     passthrough: list[str],
+    user: str,
 ) -> list[str]:
     """ssh's argv: the passthrough's options FIRST, then the
     transport, host-key, and agent options as defaults — ssh takes
@@ -615,7 +630,9 @@ def build_args(
     ``-i identity.pub`` names the identity (public material only);
     ``IdentityAgent`` points ssh at the transient agent that holds
     the private half, and under ``IdentitiesOnly`` ssh offers that
-    one key and nothing else.
+    one key and nothing else. ``user`` is the workspace's login
+    user (:func:`workspace_user`) — injected as ``-l`` only when
+    the passthrough names no user of its own.
     """
     options, command = split_command(passthrough)
     options = forward_agent_args(options)
@@ -627,7 +644,7 @@ def build_args(
         ),
     ]
     if not wants_user(options):
-        argv += ["-l", DEFAULT_USER]
+        argv += ["-l", user]
     return argv + [workspace_id] + command
 
 
@@ -643,6 +660,7 @@ def probe_args(
     identity_pub: str,
     known_hosts: str,
     passthrough: list[str],
+    user: str,
 ) -> list[str] | None:
     """The readiness probe's argv: msks's own transport and agent
     settings, the session's login user and agent-forwarding setting,
@@ -674,8 +692,8 @@ def probe_args(
     error, so it runs at once.
     """
     options, _ = split_command(passthrough)
-    user = probe_user(options)
-    if wants_user(options) and not user:
+    user_fragments = probe_user(options)
+    if wants_user(options) and not user_fragments:
         return None
     # After the refusal check: a session ssh rejects outright names
     # no agent to resolve — its own usage error is the answer.
@@ -684,14 +702,14 @@ def probe_args(
     argv = [
         "ssh",
         "-q",
-        *user,
+        *user_fragments,
         *forwarded,
         *session_options(
             workspace_id, agent_socket, identity_pub, known_hosts
         ),
     ]
     if not wants_user(options):
-        argv += ["-l", DEFAULT_USER]
+        argv += ["-l", user]
     return argv + [workspace_id, "true"]
 
 
@@ -837,9 +855,11 @@ def staged_session(workspace_id: str, transport=None):
     """The pre-flight every ssh-transport command runs: the client
     environment, the boot-if-needed probe wait's inputs, and the
     workspace identity served from the transient agent
-    (:mod:`msks.client.agent`). Yields ``(booted, served)`` — whether
-    this session booted the workspace (the #168 wait runs only
-    then), and the served agent holding the private half in memory.
+    (:mod:`msks.client.agent`). Yields ``(booted, served,
+    instance, user)`` — whether this session booted the workspace
+    (the #168 wait runs only then), the served agent holding the
+    private half in memory, the workspace instance's host-key
+    cache stamp (#245), and the workspace's login user (#248).
     ``msks ssh`` (#112) and ``msks rsync`` (#190) share it."""
     token = env_token()
     url = env_url()
@@ -849,7 +869,12 @@ def staged_session(workspace_id: str, transport=None):
     )
     private = agent.load_private(resolve_private(key, workspace_id))
     with agent.serve(private, identity_comment(key)) as served:
-        yield booted, served, instance_token(key)
+        yield (
+            booted,
+            served,
+            instance_token(key),
+            workspace_user(key),
+        )
 
 
 def exec_child(argv: list[str], missing_line: str) -> int:
@@ -867,7 +892,12 @@ def run_workspace_ssh(
 ) -> int:
     """One ssh session, from boot pre-flight to ssh's own exit code."""
     passthrough = passthrough_args(passthrough)
-    with staged_session(workspace_id, transport) as (booted, served, token):
+    with staged_session(workspace_id, transport) as (
+        booted,
+        served,
+        token,
+        user,
+    ):
         known_hosts = known_hosts_path(workspace_id, instance=token)
         if booted:
             probe_argv = probe_args(
@@ -876,6 +906,7 @@ def run_workspace_ssh(
                 served.identity_path,
                 known_hosts,
                 passthrough,
+                user,
             )
             if probe_argv is not None:
                 wait_for_identity(
@@ -889,5 +920,6 @@ def run_workspace_ssh(
             served.identity_path,
             known_hosts,
             passthrough,
+            user,
         )
         return exec_child(argv, "msks ssh: ssh not found on PATH")
