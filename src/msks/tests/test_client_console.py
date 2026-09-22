@@ -627,6 +627,20 @@ def test_report_close_carries_reason() -> None:
         console._report_close(_closed(4501, "workspace stopped"))
 
 
+def test_report_close_4501_keeps_its_hint_only_without_a_reason() -> None:
+    """A reason-bearing 4501 names the cause alone; the generic
+    is-the-workspace-running hint would read as the cause itself
+    beside a specific refusal (#248 review)."""
+    with pytest.raises(SystemExit) as bare:
+        console._report_close(_closed(4501))
+    assert "is the workspace running" in str(bare.value)
+    with pytest.raises(SystemExit) as named:
+        console._report_close(_closed(4501, "console refused user 'sync'"))
+    line = str(named.value)
+    assert "is the workspace running" not in line
+    assert "refused user 'sync'" in line
+
+
 def test_report_close_4502_names_the_stall() -> None:
 
     with pytest.raises(SystemExit, match="console stalled"):

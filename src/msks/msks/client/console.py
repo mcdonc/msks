@@ -284,11 +284,28 @@ CLOSE_CODE_REASONS = {
     4401: "authentication failed (bad token?)",
     4403: "console refused by the guest (auth)",
     4404: "no such workspace",
-    4501: "console unavailable (is the workspace running?)",
+    # The daemon's own message names the real cause (a refused
+    # user, a dead VMM, a wedged stream); the parenthetical hint
+    # speaks only when it carried none.
+    4501: "console unavailable",
     4502: (
         "console stalled (guest stream wedged; reconnect for a fresh session)"
     ),
 }
+
+#: The 4501 hint, shown only when the daemon's close carried no
+#: reason to say more.
+UNAVAILABLE_HINT = " (is the workspace running?)"
+
+
+def close_label(code: int, reason: str) -> str:
+    """The label for one close code, its hint applied: the 4501
+    is-the-workspace-running hint rides only when the daemon's
+    reason said nothing — beside a specific refusal it would read
+    as the cause itself (#248 review)."""
+    if code == 4501 and not reason:
+        return CLOSE_CODE_REASONS[code] + UNAVAILABLE_HINT
+    return CLOSE_CODE_REASONS[code]
 
 
 def _report_close(closed: websockets.ConnectionClosed) -> None:
@@ -300,8 +317,9 @@ def _report_close(closed: websockets.ConnectionClosed) -> None:
     if closed.rcvd is None or closed.rcvd.code not in CLOSE_CODE_REASONS:
         return
     reason = closed.rcvd.reason.strip()
+    label = close_label(closed.rcvd.code, reason)
     detail = f": {reason}" if reason else ""
-    raise SystemExit(f"msks: {CLOSE_CODE_REASONS[closed.rcvd.code]}{detail}")
+    raise SystemExit(f"msks: {label}{detail}")
 
 
 class _StdinPipe:

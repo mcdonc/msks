@@ -99,8 +99,10 @@ class _UserRetry(Exception):
     login_user) and the refusal is usually transient: a freshly
     booted guest refuses until the first-boot seed creates the
     account. The one permanent shape — a name that landed on a
-    system account the image ships — is named in the error the
-    retry deadline raises."""
+    system account the image ships — answers the same way; the
+    error the retry deadline raises names both causes without
+    distinguishing them (the daemon cannot see the guest's
+    passwd)."""
 
 
 async def vsock_attempt(socket_path: Path, port: int):
@@ -201,11 +203,13 @@ async def negotiate_prelude(
             # seed that provisions the login user lands with the
             # same boot (cloud-init), so the caller retries within
             # its vsock deadline rather than refusing a first-boot
-            # console.
+            # console. The message fits the websocket close-reason
+            # budget (123 bytes) at the charset's longest name —
+            # close_reason truncates at 120, and a refusal cut
+            # mid-sentence names nothing.
             raise _UserRetry(
-                f"console refused user {user!r}: the guest has no such "
-                "account (the image does not serve it, or the first-boot "
-                "seed has not created it yet)"
+                f"console refused user {user!r}: the image serves no "
+                "such account, or its seed has not run yet"
             )
         raise MicrovmError(f"console refused user {user!r}: {reason}")
     writer.close()

@@ -1255,11 +1255,17 @@ async def test_prelude_user_refusal_is_retryable(tmp_path: Path) -> None:
     server = await asyncio.start_unix_server(session, str(path))
     try:
         with pytest.raises(local_mod._UserRetry) as caught:
-            await local_mod._vsock_handshake(path, 1023, user="alice")
+            await local_mod._vsock_handshake(
+                path, 1023, user="a" * 32
+            )  # the charset's longest name
     finally:
         server.close()
         await server.wait_closed()
-    assert "first-boot seed" in str(caught.value)
+    assert "serves no such account" in str(caught.value)
+    # The message rides a websocket close reason (a 123-byte wire
+    # budget; the daemon truncates at 120) — at the longest name
+    # it must still fit whole, or the refusal names nothing.
+    assert len(str(caught.value).encode()) <= 120
 
 
 @pytest.mark.asyncio
@@ -1670,7 +1676,7 @@ async def test_console_user_refusal_expires_at_the_deadline(
 
     server = await asyncio.start_unix_server(session, str(path))
     try:
-        with pytest.raises(MicrovmError, match="first-boot seed"):
+        with pytest.raises(MicrovmError, match="serves no such account"):
             await app.state.microvm.console(WID, user="alice")
     finally:
         server.close()
