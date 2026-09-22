@@ -82,6 +82,13 @@
               *CAP_NET_ADMIN*) ;;
               *) echo "fail: egress branch lost CAP_NET_ADMIN"; exit 1 ;;
             esac
+            case "$capsOn" in
+              *CAP_NET_BIND_SERVICE*) ;;
+              *)
+                echo "fail: egress branch lost CAP_NET_BIND_SERVICE (the stack binds DHCP 67 and DNS 53)"
+                exit 1
+                ;;
+            esac
             case "$capsOff" in
               *CAP_NET_ADMIN*|*CAP_NET_BIND_SERVICE*)
                 echo "fail: vsock-only branch kept an egress capability"; exit 1 ;;

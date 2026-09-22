@@ -249,22 +249,22 @@ in
   # The deployment-host daemon, dev shape (#231): msksd runs
   # FIRST-LEVEL on this host — cloud-hypervisor on the real /dev/kvm,
   # per-VM taps, the egress consent stack in this kernel — no
-  # appliance VM. Lifecycle: `msks-dev-up` / `msks-dev-down`
-  # (scripts/dev-daemon.sh, wrapped as devenv scripts below) — no
-  # devenv process manager: its detached daemon intermittently never
-  # came up on this devenv (empty daemon.log, "Daemon failed to
-  # start within 120s") while the CLI kept spawning new ones; the
-  # script is one daemon, one pidfile, one log, under the worktree
-  # state dir. The two ambient caps arrive through the host's
-  # capability wrapper (security.wrappers.msks-caps): net_admin for
-  # per-VM taps and nftables chains, net_bind_service for the egress
-  # stack's DHCP 67 and DNS 53 — the wrapper is the whole grant
-  # (devenv's linux.capabilities broker was tried and dropped: a root
-  # helper on a rotating store path plus wildcard sudoers for the
-  # same grant). More than one worktree runs its own instance: each
-  # seeds a stable API port into its own state dir, and the egress
-  # subnet derives from the port so concurrent instances allocate
-  # disjoint /30 pools.
+  # appliance VM. Lifecycle: `devenv processes up` (the managed
+  # FOREGROUND process below — attached, Ctrl-C stops) or `msks-dev`
+  # (the same script by hand); scripts/dev-daemon.sh is the one
+  # source of truth both exec. The detached daemon mode also works;
+  # the nohup+pidfile variant was tried and dropped. The two ambient
+  # caps arrive through the host's capability wrapper
+  # (security.wrappers.msks-caps): net_admin for per-VM taps and
+  # nftables chains, net_bind_service for the egress stack's DHCP 67
+  # and DNS 53 — the wrapper is the whole grant (devenv's
+  # linux.capabilities broker was tried and dropped: a root helper on
+  # a rotating store path plus wildcard sudoers for the same grant).
+  # More than one worktree runs its own instance: each seeds a
+  # stable API port into its own state dir (guarded by a state-dir
+  # lock — one daemon per catalog), and the egress subnet derives
+  # from the port (a distinct private 10.x/16 each) so concurrent
+  # instances allocate disjoint /30 pools.
   processes = {
     # The dev-mode daemon as a managed foreground process (#231):
     # `devenv processes up` (no -d) runs it attached; the manager
@@ -279,8 +279,9 @@ in
     };
 
     # The appliance process (#146), demoted: the dev-mode daemon is
-    # msks-dev-up (#231), and the appliance stays explicitly-
-    # startable (`devenv up -d appliance`) until #232 removes it.
+    # the msksd process above (#231), and the appliance stays
+    # explicitly-startable (`devenv up appliance`) until #232
+    # removes it.
     appliance = {
       start.enable = false;
       exec = ''
@@ -362,10 +363,9 @@ in
     exec = ''exec bash "$DEVENV_ROOT/scripts/build-runner-image.sh" "$@"'';
   };
 
-  # The dev-mode daemon, foreground (#231): `msks-dev` in a kept-
-  # open terminal (scripts/dev-daemon.sh); Ctrl-C stops it. No
-  # process manager, no backgrounding — see the block comment at
-  # `processes = {` above and the script's header for the history.
+  # The dev-mode daemon by hand (#231): `msks-dev` runs the same
+  # script the msksd process above execs, in a kept-open terminal;
+  # Ctrl-C stops it. See the block comment at `processes = {` above.
   scripts.msks-dev = {
     description = "Run the deployment-host dev daemon in the foreground (msksd through the msks-caps wrapper; Ctrl-C stops)";
     exec = ''exec bash "$DEVENV_ROOT/scripts/dev-daemon.sh"'';
@@ -747,14 +747,15 @@ in
     PRETTIER
     # The client presets (#231): resolved here, per shell entry,
     # from the DEV DAEMON's state dir — ".devenv/state/msksd" by
-    # default; MSKS_DEV_STATE relocates it (the msksd process seeds
-    # the same directory). Per-shell resolution, not env.*: the
+    # default; MSKSD_STATE_DIR relocates it (the same documented var
+    # the daemon script, msks-dev-ready, and the image builder
+    # honor). Per-shell resolution, not env.*: the
     # token rotates, the CA materializes after the daemon's first
     # boot. A file that does not exist yet leaves its variable
     # untouched, so a value exported before entering the shell
     # survives; otherwise the preset wins (unset it inside the
     # shell to override).
-    state="''${MSKS_DEV_STATE:-$DEVENV_ROOT/.devenv/state/msksd}"
+    state="''${MSKSD_STATE_DIR:-$DEVENV_ROOT/.devenv/state/msksd}"
     # A relative override resolves below the repo root — the
     # exported MSKSC_CAFILE must be absolute, or the client would
     # resolve it against its own CWD.

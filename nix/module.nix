@@ -192,7 +192,9 @@ in
         Extra msksd.yaml keys (docs/config.md) the module does not
         generate — the escape hatch for daemon settings without a
         first-class option. A generated key set here fails evaluation
-        naming the first-class option to use instead.
+        naming the first-class option to use instead. The generated
+        file lands in the store world-readable: pass secrets through
+        environmentFile, never through settings.
       '';
     };
 

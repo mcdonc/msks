@@ -141,11 +141,21 @@ MSKSD_STATE_DIR=/tmp/msksd MSKSD_BOOTSTRAP_TOKEN=dev-secret MSKSD_PORT=8660 msks
 - **Schema**: the SQLite database is created and upgraded by Alembic at
   startup (inside the package: `msks/migrations`).
 
-### The bare-host daemon (by hand, no process)
+### The dev daemon (the default `processes up`, #231)
 
-When the appliance is not wanted — no KVM available, API/client
-work only — run msksd by hand from a devenv shell (#146). One
-script converges a workable state first:
+msksd runs FIRST-LEVEL on the dev host — cloud-hypervisor on the
+real `/dev/kvm`, per-VM taps, the egress consent stack in the host
+kernel — through the `msks-caps` capability wrapper the host's
+NixOS config installs. `devenv processes up` runs it attached in
+the foreground (Ctrl-C stops it, workspaces get their stop cycle);
+`msks-dev` runs the same script by hand in a terminal. Each
+worktree state dir (`.devenv/state/msksd`, `MSKSD_STATE_DIR`
+relocates) seeds its own bootstrap token, API port, and
+port-derived egress subnet, so concurrent worktrees run one daemon
+each; a state-dir lock refuses a second daemon on the same catalog.
+The client presets below land in every devenv shell. (An older
+hand-run flow without KVM — `msks-dev-ready` — still exists for
+API/client-only work:)
 
 ```bash
 devenv --quiet -O dotenv.enable:bool false shell -- msks-dev-ready
@@ -172,10 +182,11 @@ setting; remove the workspace and recreate it with `--no-egress`,
 or use the appliance. Daemon edits restart with Ctrl-C and re-run
 (`--reload` restarts on tree change, #144).
 
-### The msksd appliance (the default `processes up`)
+### The msksd appliance (explicitly started, pending #232)
 
-The daemon runs as an appliance microvm — the deployed shape —
-and that is what `devenv processes up` starts (#146): egress
+The daemon can still run as an appliance microvm — the deployed
+shape — via an explicit `devenv up appliance` (#146, demoted from
+the default by #231): egress
 networking, the guest network bridge, nested workspaces, and the
 dev tree all live here, and the client environment targets it by
 default. Requirements: any Linux with KVM + nested virtualization
@@ -225,7 +236,8 @@ previous one (or the image's shipped artifacts) and says so on the
 console; `msks-appliance-update` rewinds the profile to what
 actually runs before building the next update on top of it.
 
-**The appliance is the one managed process (#146)**: its exec runs
+**The appliance is a demoted process (#146, #231 — start it
+explicitly)**: its exec runs
 the idempotent `scripts/build-appliance.sh` (a cached nix build when
 nothing changed, a rebuild after a pull or an edit — #166) and then
 `scripts/appliance-run.sh` under the supervisor — crash-restart,
@@ -246,9 +258,10 @@ also how a fix merged to main reaches a running appliance —
 between restarts the daemon keeps serving the image it started
 with, so `msks` behavior stays that of the build inside the VM.
 
-**`up` converges loudly (#160).** The daemon names the image it
-boots from in `/health` (the `msksd.image` cmdline pair), and a
-devenv shell presets `MSKSC_EXPECTED_IMAGE` to what this checkout
+**Appliance `up` converges loudly (#160).** The daemon names the
+image it boots from in `/health` (the `msksd.image` cmdline pair),
+and the appliance's run script presets
+`MSKSC_EXPECTED_IMAGE` to what this checkout
 builds — `msks ls` compares the two and, on drift, prints the
 running and expected images with the fix (`devenv processes down
 && devenv processes up -d`). The run script also gates its own
