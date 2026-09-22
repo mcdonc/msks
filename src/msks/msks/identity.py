@@ -257,6 +257,15 @@ def named_user_block(login_user: str) -> str:
     behind it. The block says so on stderr (cloud-init's output
     log, the serial console) and the rest of the script — the
     signers store included — still runs.
+
+    A ``useradd`` that fails gets the same tolerance, for the same
+    reason the skeleton copy does: the block sits before the
+    signers store under ``set -eu``, so an abort here would plant
+    the keys but never the console challenge's trust store — and a
+    guest whose helper reads a missing store serves no challenge
+    at all (#123's opt-in shape). The failure (useradd's own
+    stderr and the line above) lands in the cloud-init log, and
+    the seeding stands down.
     """
     return "\n".join(
         [
@@ -264,7 +273,11 @@ def named_user_block(login_user: str) -> str:
             "seed_user=yes",
             'luid=$(getent passwd "$luser" 2>/dev/null | cut -d: -f3)',
             'if [ -z "$luid" ]; then',
-            'useradd -m -s /bin/bash "$luser"',
+            'if ! useradd -m -s /bin/bash "$luser"; then',
+            'printf "msks: login user %s could not be created; '
+            'msks will not seed it\\n" "$luser" >&2',
+            "seed_user=no",
+            "fi",
             'elif [ "$luid" -lt 1000 ] && [ "$luid" -ne 0 ]; then',
             'printf "msks: login user %s names a system account, '
             'uid %s; msks will not seed it\\n" "$luser" "$luid" >&2',

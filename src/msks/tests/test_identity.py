@@ -150,38 +150,44 @@ def sandboxed(script: str, sandbox) -> str:
     )
 
 
-def run_seed(sandbox, guest_passwd_line: str):
+def run_seed(sandbox, guest_passwd_line: str, useradd_fails: bool = False):
     """Execute the sandboxed seed under stubbed guest tools.
 
-    ``getent`` answers the passwd line the scenario wants (empty
-    for a name the guest does not know); ``useradd`` and ``chown``
-    log instead of touching the host's accounts; ``install``
-    mkdirs its final argument, ignoring the ownership flags only
-    root could apply. Everything else — the shell, cut, grep,
-    printf, cp, touch, chmod — runs for real against the sandbox.
+    ``getent`` answers the passwd line the scenario wants, and
+    only for the name the script queries (empty for a name the
+    guest does not know); ``useradd`` and ``chown`` log instead of
+    touching the host's accounts — the caller can make ``useradd``
+    fail to exercise the seed's tolerance; ``install`` mkdirs its
+    last non-flag argument, ignoring the ownership flags only root
+    could apply. Everything else — the shell, cut, grep, printf,
+    cp, touch, chmod — runs for real against the sandbox.
     """
     stubs = sandbox / "bin"
     stubs.mkdir(exist_ok=True)
     log = sandbox / "stub.log"
     stubs.joinpath("getent").write_text(
         "#!/bin/sh\n"
-        '[ -n "$GUEST_PASSWD_LINE" ] && echo "$GUEST_PASSWD_LINE" '
-        "|| exit 2\n"
+        '[ "$2" = "$GUEST_NAME" ] && [ -n "$GUEST_PASSWD_LINE" ] '
+        '&& echo "$GUEST_PASSWD_LINE" || exit 2\n'
     )
-    for name in ("useradd", "chown"):
-        stubs.joinpath(name).write_text(
-            f'#!/bin/sh\necho "{name} $*" >> "{log}"\n'
-        )
+    verdict = "exit 1" if useradd_fails else "exit 0"
+    stubs.joinpath("useradd").write_text(
+        f'#!/bin/sh\necho "useradd $*" >> "{log}"\n{verdict}\n'
+    )
+    stubs.joinpath("chown").write_text(
+        f'#!/bin/sh\necho "chown $*" >> "{log}"\n'
+    )
     stubs.joinpath("install").write_text(
         "#!/bin/sh\n"
         f'echo "install $*" >> "{log}"\n'
-        "for dir; do :; done\n"
+        "for arg; do case $arg in -*) ;; *) dir=$arg ;; esac; done\n"
         'exec mkdir -p "$dir"\n'
     )
     for stub in stubs.iterdir():
         stub.chmod(0o755)
     env = {
         "PATH": f"{stubs}:{os.environ['PATH']}",
+        "GUEST_NAME": "alice",
         "GUEST_PASSWD_LINE": guest_passwd_line,
     }
     return subprocess.run(
@@ -226,9 +232,10 @@ def test_seed_script_executes_provisioning(tmp_path) -> None:
 
 def test_seed_script_executes_the_skip_for_a_system_uid(tmp_path) -> None:
     """The guard's executable pin, system-account shape: a passwd
-    entry under uid 1000 seeds nothing for the name (no account
-    write, no sudoers grant) while the rest of the script — root's
-    keys, the msks home, the signers store — still lands."""
+    entry under uid 1000 seeds nothing for the name the script
+    targets (no home, no sudoers grant — the paths the seeded
+    shape WOULD write) while the rest of the script — root's keys,
+    the msks home, the signers store — still lands."""
     sandbox = prepare_sandbox(tmp_path)
     done = run_seed(
         sandbox,
@@ -238,11 +245,31 @@ def test_seed_script_executes_the_skip_for_a_system_uid(tmp_path) -> None:
     assert "names a system account" in done.stderr
     log = sandbox.joinpath("stub.log").read_text()
     assert "useradd" not in log
-    assert not (sandbox / "home" / "sync").exists()
-    assert not (sandbox / "sudoers.d" / "sync").exists()
+    # The script targets alice in every scenario (run_seed renders
+    # her name): the skip must keep HER seeded paths absent — the
+    # seeded shape below writes exactly these.
+    assert not (sandbox / "home" / "alice").exists()
+    assert not (sandbox / "sudoers.d" / "alice").exists()
     # The rest of the seed still ran.
     assert (sandbox / "root" / ".ssh" / "authorized_keys").read_text()
     assert (sandbox / "home" / "msks" / ".ssh" / "authorized_keys").exists()
+    assert (sandbox / "msks" / "console.allowed_signers").exists()
+
+
+def test_seed_script_tolerates_a_failed_useradd(tmp_path) -> None:
+    """A useradd that fails stands the seeding down without
+    aborting the script: the block sits before the signers store
+    under ``set -eu``, and an abort would plant the keys but never
+    the console challenge's trust store — a guest whose helper
+    reads a missing store serves no challenge at all (#123's
+    opt-in shape)."""
+    sandbox = prepare_sandbox(tmp_path)
+    done = run_seed(sandbox, guest_passwd_line="", useradd_fails=True)
+    assert done.returncode == 0, done.stderr
+    assert "could not be created" in done.stderr
+    assert not (sandbox / "home" / "alice").exists()
+    assert not (sandbox / "sudoers.d" / "alice").exists()
+    # The trust store still landed.
     assert (sandbox / "msks" / "console.allowed_signers").exists()
 
 
@@ -257,7 +284,9 @@ def test_seed_script_executes_the_keep_for_a_regular_uid(tmp_path) -> None:
     )
     assert done.returncode == 0, done.stderr
     assert "useradd" not in sandbox.joinpath("stub.log").read_text()
-    assert (sandbox / "sudoers.d" / "alice").exists()
+    sudoers = sandbox / "sudoers.d" / "alice"
+    assert sudoers.read_text() == "alice ALL=(ALL) NOPASSWD:ALL\n"
+    assert sudoers.stat().st_mode & 0o777 == 0o440
     assert (
         sandbox / "home" / "alice" / ".ssh" / "authorized_keys"
     ).read_text().strip() == PUBLIC

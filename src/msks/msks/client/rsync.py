@@ -33,9 +33,9 @@ the proxy, so the name never resolves); ``::`` (rsync's daemon
 protocol) is left as typed, and the workspace image runs no rsync
 daemon — sshd stays the guest's one inbound service (#110).
 
-The login user defaults to the workspace's recorded user the same
-way
-``msks ssh`` injects ``-l <user>`` — but rsync itself appends
+The login user defaults to the workspace's recorded user the
+same way ``msks ssh`` injects ``-l <user>`` — but rsync itself
+appends
 ``-l user`` to the remote shell when a path spells ``user@host:``,
 and ssh keeps the first user it obtains, so the default cannot
 ride the ``-e`` string. It rides a generated per-session ssh
