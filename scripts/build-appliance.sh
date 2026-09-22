@@ -39,7 +39,28 @@ case "$app_dir" in
 *) app_dir="$root/$app_dir" ;;
 esac
 
-mkdir -p "$app_dir"
+# The deployed update key (#220): root's authorized_keys on the
+# appliance carries the public half, read from an
+# `appliance-update-key` NIX_PATH entry at evaluation time. The key
+# seeds ONCE per appliance dir and never rotates silently — a
+# rotation would strand the private half the update path holds.
+# Dev and Debian builds stay keyless: nothing to update over ssh
+# (the store is the host's / a repacked image).
+update_key_ies=""
+if [ "$build" = nixos ] && [ "${MSKS_APPLIANCE_MODE:-dev}" = deployed ]; then
+  mkdir -p "$app_dir"
+  if [ ! -f "$app_dir/update-key" ]; then
+    ssh-keygen -q -t ed25519 -N '' -C "msks-appliance-update" \
+      -f "$app_dir/update-key.tmp" </dev/null
+    mv -f "$app_dir/update-key.tmp" "$app_dir/update-key"
+    mv -f "$app_dir/update-key.tmp.pub" "$app_dir/update-key.pub"
+  fi
+  [ -f "$app_dir/update-key.pub" ] || {
+    echo "msks: $app_dir/update-key exists without its .pub — delete both and rebuild to reseed" >&2
+    exit 1
+  }
+  update_key_ies="-I appliance-update-key=$app_dir/update-key.pub"
+fi
 # One build, two uses: the GC-root symlink IS the build — nix-build
 # prints the out path, which doubles as the $out the artifact copies
 # read from. A cached derivation makes this seconds; changed inputs
@@ -54,8 +75,16 @@ previous="$(readlink -f "$app_dir/image" 2>/dev/null || true)"
 echo "msks: ensuring appliance assets in $app_dir (idempotent — unchanged inputs are a cached no-op)"
 if [ "$build" = nixos ]; then
   out="$(
+    # The env prefix must CONTINUE into nix-build (the backslash): on
+    # its own line the assignment is an unexported shell variable, the
+    # evaluation falls to its plain-eval default ("deployed"), and a
+    # dev checkout silently builds the deployed shape (found live,
+    # #220).
+    # $update_key_ies: zero-or-one pre-quoted -I flag, word-split by
+    # design. The directive line must end at its codes.
+    # shellcheck disable=SC2086
     MSKS_APPLIANCE_MODE="${MSKS_APPLIANCE_MODE:-dev}" \
-      nix-build -I nixpkgs="$nixpkgs" \
+      nix-build -I nixpkgs="$nixpkgs" $update_key_ies \
       "$root/nix/appliance-nixos.nix" -o "$app_dir/image"
   )"
 else

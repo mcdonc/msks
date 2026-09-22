@@ -242,6 +242,43 @@ fi
 # --- the appliance VM ----------------------------------------------------
 rm -f "$app_dir/api.sock"
 
+# The boot source: the image's shipped artifacts (first boot, dev,
+# Debian) or — deployed, after any update — the generation the
+# appliance profile pointed at when msks-appliance-update cached it
+# host-side. boot-cache/current beats the shipped pair: an updated
+# appliance boots its NEW generation, not the image's original one;
+# without the cache an update would land in the profile and never be
+# booted (the store volume keeps both, so the shipped pair keeps
+# booting fine — just stale). Resolved HERE, in the main shell:
+# boot_vm runs backgrounded below, and its variable writes would
+# die with its subshell — the fallback branch and the ready line
+# both read these from the main shell.
+resolve_boot_source() {
+  boot_kernel="$app_dir/vmlinux"
+  boot_initrd="$app_dir/initrd"
+  boot_cmdline="$base_cmdline"
+  boot_erofs="$app_dir/base-store.erofs"
+  boot_source="the image's shipped artifacts"
+  boot_source_note=""
+  if [ "$appliance_mode" = deployed ] && [ -f "$app_dir/boot-cache/current/kernel" ]; then
+    boot_kernel="$app_dir/boot-cache/current/kernel"
+    boot_initrd="$app_dir/boot-cache/current/initrd"
+    boot_cmdline="$(cat "$app_dir/boot-cache/current/cmdline")"
+    boot_source="boot-cache/current"
+    boot_source_note="$(cat "$app_dir/boot-cache/current/profile" 2>/dev/null || echo boot-cache/current)"
+    # The generation's own erofs (the update pinned the era's base
+    # beside it): a later image rebuild swapped <state>/base-store.erofs
+    # for a lower this generation's upper was never written against,
+    # and mismatched-era boots freeze at switch-root (found live,
+    # #220). Without a pinned base the shipped one stays — the
+    # earliest caches predate the pin.
+    if [ -f "$app_dir/boot-cache/current/base-store.erofs" ]; then
+      boot_erofs="$app_dir/boot-cache/current/base-store.erofs"
+    fi
+  fi
+}
+resolve_boot_source
+
 # The disk set follows the mode: the rootfs disk is the Debian
 # appliance's; the NixOS appliance direct-boots (no rootfs), and the
 # deployed shape adds the erofs base (read-only) and the store
@@ -258,8 +295,10 @@ dev)
   disks=$(printf '    {"path": "%s", "image_type": "Raw"}' "$state_disk")
   ;;
 deployed)
-  disks=$(printf '    {"path": "%s/base-store.erofs", "readonly": true, "image_type": "Raw"},\n    {"path": "%s", "image_type": "Raw"},\n    {"path": "%s", "image_type": "Raw"}' \
-    "$app_dir" "${MSKS_APPLIANCE_STORE_VOLUME:-$app_dir/store-volume.img}" "$state_disk")
+  # $boot_erofs: the cache's pinned base when a cached generation
+  # boots (resolve_boot_source), the image's otherwise.
+  disks=$(printf '    {"path": "%s", "readonly": true, "image_type": "Raw"},\n    {"path": "%s", "image_type": "Raw"},\n    {"path": "%s", "image_type": "Raw"}' \
+    "$boot_erofs" "${MSKS_APPLIANCE_STORE_VOLUME:-$app_dir/store-volume.img}" "$state_disk")
   ;;
 esac
 
@@ -270,6 +309,7 @@ esac
 # sector 0 writes" on raw images that do not declare one — a
 # QCOW2-misdetection guard that breaks any guest writing an ext4
 # superblock (sector 0).
+
 boot_vm() {
   for _ in $(seq 1 100); do
     [ -S "$app_dir/api.sock" ] && break
@@ -295,9 +335,9 @@ boot_vm() {
   "cpus": {"boot_vcpus": 2, "max_vcpus": 2},
   "memory": {"size": $((MSKS_APPLIANCE_MEM_MIB * 1024 * 1024)), "shared": true},
   "payload": {
-    "kernel": "$app_dir/vmlinux",
-    "initramfs": "$app_dir/initrd",
-    "cmdline": "$base_cmdline msksd.bootstrap_token=$bootstrap_token msksd.default_image=$default_image msksd.image=$booted_image$dev_cmdline $MSKS_APPLIANCE_CMDLINE_EXTRA"
+    "kernel": "$boot_kernel",
+    "initramfs": "$boot_initrd",
+    "cmdline": "$boot_cmdline msksd.bootstrap_token=$bootstrap_token msksd.default_image=$default_image msksd.image=$booted_image$dev_cmdline $MSKS_APPLIANCE_CMDLINE_EXTRA"
   },
   "disks": [
 $disks
@@ -423,23 +463,93 @@ chpid=$!
 # supervisor restarts it, and a persistently broken image reaches
 # gave_up loudly instead of idling as a "ready" appliance.
 : "${MSKS_APPLIANCE_SERVE_TIMEOUT_S:=300}"
-served=""
-vmm_died=""
-for _ in $(seq 1 "$MSKS_APPLIANCE_SERVE_TIMEOUT_S"); do
-  if curl -sk --connect-timeout 2 "https://$guest_ip:8660/api/v1/health" >/dev/null 2>&1; then
-    served=1
-    break
+# await_serve — the gate as a function: the deployed fallback below
+# reuses it for its retry boot. Returns 0 on serving; on failure the
+# globals served/vmm_died carry which way it failed and the caller
+# decides (a stop request during the wait is a completed stop, not a
+# boot failure — clean exit so the supervisor does not restart a
+# deliberately stopped process).
+await_serve() {
+  served=""
+  vmm_died=""
+  local _
+  for _ in $(seq 1 "$MSKS_APPLIANCE_SERVE_TIMEOUT_S"); do
+    if curl -sk --connect-timeout 2 "https://$guest_ip:8660/api/v1/health" >/dev/null 2>&1; then
+      served=1
+      return 0
+    fi
+    if ! kill -0 "$chpid" 2>/dev/null; then
+      vmm_died=1
+      return 1
+    fi
+    sleep 1
+  done
+  return 1
+}
+# || true: the gate's nonzero return is its MESSAGE (the globals
+# carry the verdict) — under set -e a bare call would exit here,
+# before the fallback below could run (found live, #220).
+await_serve || true
+if [ -z "$served" ] && [ -z "${stopping:-}" ]; then
+  # The deployed fallback (#220, spike 3's boot-pointer answer): a
+  # cached generation that fails to serve — a broken update — boots
+  # the PREVIOUS cached generation (or the image's shipped pair when
+  # there is none) once, before giving up. The broken cache entry
+  # moves aside (.fell-back-<ts>, kept for forensics; the run script
+  # never auto-boots it again) and `current` re-points at whatever
+  # served. The guest profile stays aimed at the broken generation —
+  # msks-appliance-update rewinds it to what actually runs. Only a
+  # cache boot with a live VMM reaches here: the shipped pair has
+  # nothing better to fall back to, and a VMM that died mid-boot
+  # cannot be rebooted in place — both take the original exit below.
+  if [ "$appliance_mode" = deployed ] &&
+    [ "$boot_source" != "the image's shipped artifacts" ] && [ -z "$vmm_died" ]; then
+    fb_target="shipped"
+    if [ -f "$app_dir/boot-cache/previous/kernel" ]; then
+      fb_target="previous"
+    fi
+    echo "msks: cached generation never served ($boot_source) — falling back to the $fb_target generation, serial: $serial_note" >&2
+    mv -f "$app_dir/boot-cache/current" \
+      "$app_dir/boot-cache/.fell-back-$(date +%s)"
+    if [ "$fb_target" = previous ]; then
+      mv -fT "$app_dir/boot-cache/previous" "$app_dir/boot-cache/current"
+    else
+      rm -f "$app_dir/boot-cache/previous"
+    fi
+    # Re-resolve against the moved links — boot_vm reads these
+    # globals, and they still point at the broken generation.
+    resolve_boot_source
+    # Power off the dead guest, then start a FRESH VMM for the
+    # fallback source. vm.shutdown is the hard stop: the guest never
+    # served, so there is no graceful state to lose. A vm.delete +
+    # re-create on the SAME VMM was tried and the recreated guest
+    # froze at boot (systemd finding no units — the read-only erofs
+    # re-attach through a reused VMM does not come up the same);
+    # cloud-hypervisor exits cleanly on vm.shutdown's power-off when
+    # no other VM holds it, so reap it and spawn a new one — the
+    # spike-3 harness's answer, and what a supervisor restart would
+    # do anyway, minus one crash cycle (#220).
+    curl -sS --unix-socket "$app_dir/api.sock" -X PUT \
+      http://localhost/api/v1/vm.shutdown >/dev/null 2>&1 || true
+    for _ in $(seq 1 50); do
+      kill -0 "$chpid" 2>/dev/null || break
+      sleep 0.2
+    done
+    kill "$chpid" 2>/dev/null || true
+    wait "$chpid" 2>/dev/null || true
+    rm -f "$app_dir/api.sock" "$app_dir/vmm-sock" "$app_dir/vmm-sock.pid"
+    cloud-hypervisor \
+      --api-socket "$app_dir/api.sock" \
+      >>"$app_dir/cloud-hypervisor.log" 2>&1 &
+    chpid=$!
+    boot_vm || {
+      echo "msks: the fallback boot's vm.create/vm.boot failed — cloud-hypervisor.log: $app_dir/cloud-hypervisor.log, serial: $serial_note" >&2
+      exit 1
+    }
+    await_serve || true
   fi
-  if ! kill -0 "$chpid" 2>/dev/null; then
-    vmm_died=1
-    break
-  fi
-  sleep 1
-done
+fi
 if [ -z "$served" ]; then
-  # A stop request during the boot wait is a completed stop, not a
-  # boot failure: no crash diagnostics, and a clean exit status so
-  # the supervisor does not restart a deliberately stopped process.
   if [ -n "${stopping:-}" ]; then
     echo "msks: appliance stopped during boot"
     exit 0
@@ -455,7 +565,18 @@ fi
 # reader looks here for "what do I connect to"); the image rides
 # along by its short name only — the build line above already
 # printed the full store path once.
-echo "msks: appliance serving — https://$guest_ip:8660 (image ${booted_image##*/})"
+echo "msks: appliance serving — https://$guest_ip:8660 (image ${booted_image##*/})${boot_source_note:+ (booted from $boot_source_note)}"
+# Record the base this system booted with, as a HARD LINK (a later
+# image rebuild replaces <state>/base-store.erofs by path; the link
+# keeps the booted inode pinned). msks-appliance-update pins a
+# generation's erofs from THIS file — the overlay's upper is
+# consistent with exactly this era (#220).
+if [ "$appliance_mode" = deployed ]; then
+  rm -f "$app_dir/boot-cache/booted-base.erofs"
+  mkdir -p "$app_dir/boot-cache"
+  ln -f "$boot_erofs" "$app_dir/boot-cache/booted-base.erofs" 2>/dev/null ||
+    cp -L "$boot_erofs" "$app_dir/boot-cache/booted-base.erofs"
+fi
 
 # --- opt-in drift auto-restart (#160) ------------------------------
 # MSKS_APPLIANCE_AUTO_RESTART=1: while the appliance runs, compare

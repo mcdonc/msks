@@ -202,6 +202,27 @@ curl --cacert .devenv/state/appliance/msks-ca.pem https://192.168.77.2:8660/api/
 devenv --quiet -O dotenv.enable:bool false shell -- devenv processes down
 ```
 
+#### Updating the deployed appliance over ssh (#220)
+
+The NixOS appliance built with `MSKS_APPLIANCE_BUILD=nixos
+MSKS_APPLIANCE_MODE=deployed` updates over its bridge sshd — no
+image rebuild, no repack:
+
+```bash
+msks-appliance-update          # rebuild + copy the delta over ssh, cache the generation
+msks-appliance-down && msks-appliance-up   # activate: reboot into the new generation
+```
+
+The update seeds `<state>/update-key` once at build time and bakes
+its public half into root's authorized_keys (bridge-only, key-only
+sshd); `nixos-rebuild boot --target-host` copies only the store
+paths the appliance is missing, and the appliance-side system
+profile is the generation pointer. The next `up` boots the cached
+generation — and a generation that fails to serve falls back to the
+previous one (or the image's shipped artifacts) and says so on the
+console; `msks-appliance-update` rewinds the profile to what
+actually runs before building the next update on top of it.
+
 **The appliance is the one managed process (#146)**: its exec runs
 the idempotent `scripts/build-appliance.sh` (a cached nix build when
 nothing changed, a rebuild after a pull or an edit — #166) and then
