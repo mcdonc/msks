@@ -240,32 +240,54 @@ def named_user_block(login_user: str) -> str:
     not ship (#248): the account (created only when missing, so a
     re-provision or an operator-premade account keeps its uid), its
     home in the #171 shape, its authorized_keys, and the #169
-    passwordless-sudo grant.
+    passwordless-sudo grant — skipped, with a line on stderr, when
+    the name lands on a system account the image ships.
 
     Ownership rides ``chown user:`` (the colon form names the
     account's login group) rather than install's -o/-g, so an
     account whose primary group is not its own name — one the
     operator's user_data made — still takes its files. The name is
     LOGIN_NAME_RE-validated before it ever reaches this string.
+
+    A name that lands on an account the image already ships with a
+    system uid (1-999: Debian's base-passwd carries charset-valid
+    names like ``sync`` and ``man``) seeds nothing: the console
+    helper refuses those accounts by its own rule, and a sudoers
+    grant against one would be a privilege write with no login
+    behind it. The block says so on stderr (cloud-init's output
+    log, the serial console) and the rest of the script — the
+    signers store included — still runs.
     """
-    return (
-        f"luser='{login_user}'\n"
-        'getent passwd "$luser" >/dev/null 2>&1 '
-        '|| useradd -m -s /bin/bash "$luser"\n'
-        'install -d -m 0755 "/home/$luser"\n'
-        'if [ ! -e "/home/$luser/.profile" ]; then\n'
-        'cp -a /etc/skel/. "/home/$luser/" || true\n'
-        "fi\n"
-        'install -d -m 0700 "/home/$luser/.ssh"\n'
-        'touch "/home/$luser/.ssh/authorized_keys"\n'
-        'grep -qxF "$key" "/home/$luser/.ssh/authorized_keys" '
-        '|| printf \'%s\\n\' "$key" >> "/home/$luser/.ssh/authorized_keys"\n'
-        'chown -R "$luser:" "/home/$luser"\n'
-        'chown "$luser:" "/home/$luser/.ssh"\n'
-        'chmod 0600 "/home/$luser/.ssh/authorized_keys"\n'
-        "printf '%s ALL=(ALL) NOPASSWD:ALL\\n' \"$luser\" "
-        '> "/etc/sudoers.d/$luser"\n'
-        'chmod 0440 "/etc/sudoers.d/$luser"\n'
+    return "\n".join(
+        [
+            f"luser='{login_user}'",
+            "seed_user=yes",
+            'luid=$(getent passwd "$luser" 2>/dev/null | cut -d: -f3)',
+            'if [ -z "$luid" ]; then',
+            'useradd -m -s /bin/bash "$luser"',
+            'elif [ "$luid" -lt 1000 ] && [ "$luid" -ne 0 ]; then',
+            'printf "msks: login user %s names a system account, '
+            'uid %s; msks will not seed it\\n" "$luser" "$luid" >&2',
+            "seed_user=no",
+            "fi",
+            'if [ "$seed_user" = yes ]; then',
+            'install -d -m 0755 "/home/$luser"',
+            'if [ ! -e "/home/$luser/.profile" ]; then',
+            'cp -a /etc/skel/. "/home/$luser/" || true',
+            "fi",
+            'install -d -m 0700 "/home/$luser/.ssh"',
+            'touch "/home/$luser/.ssh/authorized_keys"',
+            'grep -qxF "$key" "/home/$luser/.ssh/authorized_keys" '
+            "|| printf '%s\\n' \"$key\" "
+            '>> "/home/$luser/.ssh/authorized_keys"',
+            'chown -R "$luser:" "/home/$luser"',
+            'chmod 0600 "/home/$luser/.ssh/authorized_keys"',
+            "printf '%s ALL=(ALL) NOPASSWD:ALL\\n' \"$luser\" "
+            '> "/etc/sudoers.d/$luser"',
+            'chmod 0440 "/etc/sudoers.d/$luser"',
+            "fi",
+            "",
+        ]
     )
 
 

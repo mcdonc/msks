@@ -96,9 +96,11 @@ class _UserRetry(Exception):
     """The guest refused the login user (#248) — retried like a
     boot-state refusal, because the daemon's own gate already
     admitted the name (the image's console users or the row's
-    login_user), so by the time the guest says "no such user" the
-    only live cause is the first-boot seed that creates the account
-    not having run yet."""
+    login_user) and the refusal is usually transient: a freshly
+    booted guest refuses until the first-boot seed creates the
+    account. The one permanent shape — a name that landed on a
+    system account the image ships — is named in the error the
+    retry deadline raises."""
 
 
 async def vsock_attempt(socket_path: Path, port: int):
@@ -195,13 +197,15 @@ async def negotiate_prelude(
         reason = line[len(b"MSKS ERR ") :].decode(errors="replace")
         writer.close()
         if reason == "user":
-            # The helper's absent-account refusal: the seed that
-            # provisions the login user lands with the same boot
-            # (cloud-init), so the caller retries within its vsock
-            # deadline rather than refusing a first-boot console.
+            # The helper's absent-or-system account refusal: the
+            # seed that provisions the login user lands with the
+            # same boot (cloud-init), so the caller retries within
+            # its vsock deadline rather than refusing a first-boot
+            # console.
             raise _UserRetry(
-                f"console refused user {user!r}: the first-boot seed "
-                "has not created it yet; retry shortly"
+                f"console refused user {user!r}: the guest has no such "
+                "account (the image does not serve it, or the first-boot "
+                "seed has not created it yet)"
             )
         raise MicrovmError(f"console refused user {user!r}: {reason}")
     writer.close()
@@ -355,8 +359,8 @@ def console_retry_error(workspace_id: str, retry: Exception) -> MicrovmError:
     """The named error for a console retry whose deadline passed, by
     what was being retried: a bring-up state (socket, handshake)
     names the VM's availability; a login-user refusal (#248) keeps
-    its own message — the seed that creates the account never
-    landed within the wait."""
+    its own message — the guest never grew such an account within
+    the wait."""
     if isinstance(retry, _UserRetry):
         return MicrovmError(str(retry))
     return MicrovmError(

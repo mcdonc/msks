@@ -367,19 +367,20 @@ def run_workspace_shell(workspace_id: str, user: str | None = None) -> int:
     require_tty()
     token = env_token()
     url = env_url()
+    # One TLS context serves the whole command — the login-user
+    # fetch below included — so its unverified-mode warning prints
+    # once. It is built BEFORE raw mode: setraw clears OPOST, so a
+    # plain \n printed mid-session would leave the cursor
+    # mid-column; the pre-flight calls that follow share the same
+    # reason (their notices land on stderr before the tty goes
+    # raw).
+    ssl_ctx = ssl_context()
     if user is None:
-        user = console_login_user(workspace_id, url, token, ssl_context())
+        user = console_login_user(workspace_id, url, token, ssl_ctx)
     try:
         old = termios.tcgetattr(sys.stdin.fileno())
     except termios.error:
         old = None
-    # The TLS context (and its unverified-mode warning) is built
-    # BEFORE raw mode: setraw clears OPOST, so a plain \n printed
-    # mid-session would leave the cursor mid-column.
-    ssl_ctx = ssl_context()
-    # Same reason for the pre-flight REST call: a not-running
-    # workspace is booted here, with its notices on stderr, before
-    # the tty goes raw.
     asyncio.run(ensure_running(workspace_id, url, token, ssl_ctx=ssl_ctx))
     size = tty_size(sys.stdin.fileno())
     # The client's terminal type rides the request (#63): the login

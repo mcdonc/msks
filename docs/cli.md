@@ -186,7 +186,12 @@ lands your own account. The name must fit the login-name charset
 letter or underscore first; at most 32 characters); a username
 that does not (a capitalized one) is refused with a line pointing
 at `--user`. Naming `root` or the image's `msks` account keeps the
-shipped account and seeds nothing new. Create-time and immutable,
+shipped account and seeds nothing new. A name that lands on a
+system account the image already ships (Debian carries
+charset-valid names like `sync` and `man`) seeds nothing either —
+the first boot says so in its log, and the login stays with the
+accounts the guest already serves; pick a name the image uses
+for no one. Create-time and immutable,
 like `user_data`: a workspace created before #248 keeps the
 image's `msks` user as its login.
 

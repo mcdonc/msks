@@ -93,8 +93,9 @@ def test_seed_script_provisions_a_named_login_user() -> None:
     assert "luser='alice'" in script
     # The account is made only when passwd names it — a
     # re-provision or an operator-premade account keeps its uid.
-    assert 'getent passwd "$luser" >/dev/null 2>&1 ' in script
-    assert '|| useradd -m -s /bin/bash "$luser"' in script
+    assert 'luid=$(getent passwd "$luser" 2>/dev/null | cut -d: -f3)' in script
+    assert 'if [ -z "$luid" ]; then' in script
+    assert 'useradd -m -s /bin/bash "$luser"' in script
     # The home and key, in the same shape the msks user gets;
     # ownership rides the chown colon form, which works whatever
     # the account's primary group is named.
@@ -110,6 +111,28 @@ def test_seed_script_provisions_a_named_login_user() -> None:
     # The root, msks, and signers lines ride along unchanged.
     assert script.count("grep -qxF") == 4
     assert 'chmod 0600 "$signers"' in script
+
+
+def test_seed_script_skips_a_system_account_name() -> None:
+    """A name that lands on a system account the image ships
+    (Debian's base-passwd carries charset-valid names like
+    ``sync``) seeds nothing: the console helper refuses those
+    accounts on its own rule, and a sudoers grant against one
+    would be a privilege write with no login behind it — the block
+    says so on stderr, the provisioning sits behind a guard, and
+    the rest of the script (the signers store included) still
+    runs."""
+    script = seed_script(PUBLIC, "ws-id", "sync")
+    assert 'elif [ "$luid" -lt 1000 ] && [ "$luid" -ne 0 ]; then' in script
+    assert "names a system account" in script
+    assert "seed_user=no" in script
+    assert 'if [ "$seed_user" = yes ]; then' in script
+    guarded = script.split('if [ "$seed_user" = yes ]; then')[1]
+    assert "sudoers.d" in guarded
+    # The signers block stays outside the guard — a skipped login
+    # user never costs the console challenge its trust store.
+    tail = script.split("fi\n")[-1]
+    assert 'chmod 0600 "$signers"' in tail
 
 
 def test_seed_script_skips_provisioning_for_shipped_users() -> None:

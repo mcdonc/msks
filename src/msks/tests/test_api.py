@@ -850,16 +850,24 @@ async def test_create_with_user_reaches_the_row_and_spec(client) -> None:
 
 
 async def test_create_rejects_a_login_name_off_the_charset(client) -> None:
-    """A user the guest could never carry (the console prelude's
-    charset, the seed's quoting guard) is a named 400 at create —
-    not a first-boot surprise."""
+    """A user the guest could never carry is a named 422 at create
+    — not a first-boot surprise. The crafted shapes pin the guard
+    the charset exists for: a quote-bearing name must never reach
+    the seed script's quoted assignment."""
     http, _app, _stub = client
-    created = await http.post(
-        "/api/v1/workspaces",
-        json={"id": "ws-bad", "kernel": "/k", "rootfs": "/r", "user": "Alice"},
-        headers=auth(),
-    )
-    assert created.status_code == 422
+    for bad in (
+        "Alice",
+        "alice'; rm -rf /; '",
+        'alice\nprintf "pwned"',
+        "alice ",
+        "x" * 33,
+    ):
+        created = await http.post(
+            "/api/v1/workspaces",
+            json={"id": "ws-bad", "kernel": "/k", "rootfs": "/r", "user": bad},
+            headers=auth(),
+        )
+        assert created.status_code == 422, bad
 
 
 async def test_ssh_key_serves_the_legacy_user_for_old_rows(client) -> None:
