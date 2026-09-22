@@ -247,8 +247,13 @@ async def test_daemon_e2e_full_path() -> None:
         # the listener, then the console's own TLS context.
         await await_ca(proc, state_dir)
         client = httpx.AsyncClient(
-            verify=str(state_dir / "msks-ca.pem"),
-            timeout=httpx.Timeout(connect=10.0, read=180.0, write=10.0),
+            base_url=url,
+            verify=ssl.create_default_context(
+                cafile=str(state_dir / "msks-ca.pem")
+            ),
+            timeout=httpx.Timeout(
+                connect=10.0, read=180.0, write=10.0, pool=10.0
+            ),
             headers={"Authorization": f"Bearer {token}"},
         )
         await await_health(client, proc, state_dir)
