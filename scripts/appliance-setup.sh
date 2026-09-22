@@ -29,18 +29,36 @@ mode="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("mod
 case "$mode" in
 debian) required="vmlinux initrd rootfs.ext4" ;;
 dev) required="vmlinux initrd" ;;
-deployed) required="vmlinux initrd base-store.erofs ${MSKS_APPLIANCE_STORE_VOLUME:-$app_dir/store-volume.img}" ;;
+deployed)
+  # The store volume rides MSKS_APPLIANCE_STORE_VOLUME when set —
+  # relative values resolve below the app dir, and the default
+  # lives there — so it arrives as an ABSOLUTE path appended to the
+  # bare-name list below (never pre-concatenated: $app_dir/$f would
+  # double an absolute path).
+  store_volume="${MSKS_APPLIANCE_STORE_VOLUME:-store-volume.img}"
+  case "$store_volume" in
+  /*) ;;
+  *) store_volume="$app_dir/$store_volume" ;;
+  esac
+  required="vmlinux initrd base-store.erofs $store_volume"
+  ;;
 *)
   echo "msks: unknown appliance mode '$mode' in $app_dir/appliance-manifest.json" >&2
   exit 1
   ;;
 esac
 for f in $required; do
-  [ -f "$app_dir/$f" ] || {
+  # Bare names resolve below the app dir; the store volume arrives
+  # absolute and passes through as-is.
+  case "$f" in
+  /*) path="$f" ;;
+  *) path="$app_dir/$f" ;;
+  esac
+  [ -f "$path" ] || {
     # The plain build task run may SKIP (execIfModified keys
     # unchanged — the up task's four-artifact guard in devenv.nix
     # heals this by building directly; that is the command to name).
-    echo "msks: $app_dir/$f missing — run: MSKS_APPLIANCE_DIR=$app_dir devenv processes up -d (it rebuilds missing artifacts)" >&2
+    echo "msks: $path missing — run: MSKS_APPLIANCE_DIR=$app_dir devenv processes up -d (it rebuilds missing artifacts)" >&2
     exit 1
   }
 done

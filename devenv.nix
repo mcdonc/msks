@@ -470,6 +470,17 @@ in
     '';
   };
 
+  # The deployed update channel (#220): nixos-rebuild boot
+  # --target-host against the appliance's bridge sshd, then cache
+  # the new generation host-side so the next up boots it. The
+  # activation reboot stays the operator's call (the wrapper prints
+  # it): the update path never restarts a serving appliance on its
+  # own.
+  scripts.msks-appliance-update = {
+    description = "Update the deployed appliance over ssh and cache the new generation (reboot to activate)";
+    exec = ''exec bash "$DEVENV_ROOT/scripts/appliance-update.sh" "$@"'';
+  };
+
   # The appliance debug console (#189): one command for a root
   # shell on the appliance. It stops the appliance, seeds the
   # debug-shell marker onto the state disk, boots with the serial

@@ -18,6 +18,16 @@ tagged `vX.Y.Z`.
   unknown workspace) exits with the reason instead of waiting. The
   `watch`/`decide`/`revoke` subcommands remain the scripting
   surface. See [docs/cli.md](cli.md#msks-egress).
+- **`msks-appliance-update` (#220).** The deployed NixOS
+  appliance updates over its bridge sshd: `nixos-rebuild boot
+--target-host` copies only missing store paths into the overlay,
+  and the updated generation is cached host-side so the next
+  `msks-appliance-up` boots it. A generation that fails to serve
+  falls back to the previous cached one, and the update path
+  rewinds the appliance profile to the generation actually running
+  before building the next update. Activation is the operator's
+  reboot (`down && up`); the update never restarts a serving
+  appliance.
 - **`MSKS_APPLIANCE_BUILD` / `MSKS_APPLIANCE_MODE` (#212).** Build the
   msksd appliance as a NixOS system beside the Debian repack: one
   configuration, two store shapes. `MSKS_APPLIANCE_BUILD=nixos` with

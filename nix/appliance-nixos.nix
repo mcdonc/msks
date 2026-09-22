@@ -124,14 +124,29 @@ let
     pkgs.runCommand "msks-appliance-nixos-volume"
       {
         __structuredAttrs = true;
-        nativeBuildInputs = [ pkgs.e2fsprogs ];
+        nativeBuildInputs = [
+          pkgs.e2fsprogs
+          pkgs.fakeroot
+        ];
         unsafeDiscardReferences.out = true;
       }
       ''
         set -eu
         mkdir -p root/store root/work root/nix-var
         truncate -s 4G "$out"
-        mkfs.ext4 -F -L MSKSSTORE -d root "$out"
+        # Root-owned from the start: mkfs -d bakes the building
+        # user's ownership (uid 1000 on a dev host) into the image,
+        # and the guest's tmpfiles then refuses the unsafe
+        # uid-1000-parent → root-child transition under nix-var
+        # (msks-journal-persist fails, journald stays volatile —
+        # found live on the first deployed boot, #220). The whole
+        # mkfs runs inside the fakeroot: faked ownership only lives
+        # as long as the fakeroot process does (the state-disk
+        # template's recipe).
+        fakeroot -- sh -c '
+          chown -R 0:0 root
+          mkfs.ext4 -F -L MSKSSTORE -d root "$out"
+        '
         e2fsck -fy "$out" >/dev/null 2>&1 || test $? -le 1
       '';
 
