@@ -50,6 +50,30 @@ workspace-<name>-<version>.tar
 The manifest is self-describing: importing the archive needs nothing
 beside the archive itself.
 
+### What the host provides
+
+Every workspace artifact the guest touches is owned by msksd at
+runtime: the root and home volumes and the cidata seed disks are
+created under the state dir (`MSKSD_STATE_DIR`, the one relocation
+variable), and the console reaches the guest over AF_VSOCK through
+the VMM msksd launched — both deployment shapes (the NixOS module
+and the dev daemon) deliver this without host-side scripting. The
+host itself provides four things, all configuration:
+
+- **`/dev/kvm`**, reachable through the `kvm` group.
+- **Two ambient capabilities** for msksd's service user:
+  `CAP_NET_ADMIN` (taps, addresses, nftables) and
+  `CAP_NET_BIND_SERVICE` (the DHCP and DNS listeners).
+- **The egress kernel modules** — `tun` and the nftables/NAT set —
+  loaded at boot (the NixOS module's `boot.kernelModules`).
+- **`net.ipv4.ip_forward=1`**, verified by the daemon at start
+  when egress is armed; the module ships it as a sysctl.
+
+The daemon e2e smoke (`test_smoke/test_daemon_e2e.py`) drives this
+whole surface against a real `msksd` process: the image boots,
+serves its console, and reaches the outside exactly as this
+section describes.
+
 ### What a guest must provide
 
 The rootfs and kernel together decide whether a workspace actually
