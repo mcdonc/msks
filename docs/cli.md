@@ -22,7 +22,7 @@ msks rm ws                    # delete it (and its data)
 
 ## Client environment
 
-The client reads four environment variables. They are prefixed
+The client reads six environment variables. They are prefixed
 `MSKSC_` (client) to stay apart from the daemon's `MSKSD_*` (server)
 namespace — a box that runs both can export each side independently.
 
@@ -32,13 +32,28 @@ namespace — a box that runs both can export each side independently.
 | `MSKSC_TOKEN`          | A daemon bearer token (see tokens below)                                                                                          | — (required)             |
 | `MSKSC_CAFILE`         | A PEM file to verify the daemon's TLS certificate                                                                                 | unverified with warning  |
 | `MSKSC_EXPECTED_IMAGE` | An image reference the operator sets; `msks ls` compares it with the image the daemon reports in `/health` and names drift (#160) | unset (no check)         |
+| `MSKSC_CACHE_DIR`      | The directory per-workspace host-key caches live under (#251); it names the root itself, not an XDG base                          | `~/.cache/msks`          |
+| `MSKSC_DATA_DIR`       | The directory client-minted workspace identities live under (#251); same naming rule                                              | `~/.local/share/msks`    |
+
+The two directory variables are separate because their contents
+differ in durability: the host-key cache is disposable (a swept
+cache costs one trust-on-first-use re-pin), while the minted
+private halves have no other copy — losing one loses ssh to that
+workspace. Pointing the cache at a per-project, disposable
+location and the identities at somewhere durable is the intended
+use; one variable for both would tie their lifetimes together.
 
 A missing `MSKSC_TOKEN` is an error before any network activity: the
 client names the variable and exits. Tokens come from the daemon:
 `POST /api/v1/tokens` mints one, and the devenv environment presets
 all three from the worktree's dev-daemon state dir,
 `.devenv/state/msksd/` (token + CA) — once the dev daemon has
-served once, a fresh devenv shell needs no exports:
+served once, a fresh devenv shell needs no exports. The same shell
+presets the two directory variables at the worktree's own
+`.devenv/state/msksc/` (cache under `cache/`, identities under
+`data/`), so each checkout's client state stays its own — one
+tree's cache entry is never read by another (#251); a value
+exported before entering the shell survives the preset.
 
 ```bash
 msks ls        # presets: https://127.0.0.1:8660, the worktree's
@@ -233,9 +248,9 @@ The client mint is the create default (#121): `msks create` mints
 the workspace's ssh keypair on this client, sends the public half
 only, and keeps the private half — the daemon never holds it (no
 escrow). The private half is written mode 0600 under the client
-data root (`~/.local/share/msks/<id>/identity`, honoring
-`XDG_DATA_HOME`) after the create succeeds, and `msks ssh` picks it
-up from there:
+data root — `~/.local/share/msks/<id>/identity`, honoring
+`XDG_DATA_HOME` or `MSKSC_DATA_DIR` — after the create succeeds,
+and `msks ssh` picks it up from there:
 
 ```bash
 $ msks create my-workspace --image debian:13 --start

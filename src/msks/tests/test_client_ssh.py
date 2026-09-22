@@ -606,6 +606,29 @@ def test_cache_dir_honors_xdg(monkeypatch: pytest.MonkeyPatch) -> None:
     assert ssh.cache_dir() == Path("/tmp/xdg-cache/msks")
 
 
+def test_cache_dir_honors_msksc_dir(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`MSKSC_CACHE_DIR` names the root itself and wins over the
+    XDG base (#251): a checkout points it at its own state and
+    the shared `~/.cache/msks` tree stays out of the session."""
+    monkeypatch.setenv("XDG_CACHE_HOME", "/tmp/xdg-cache")
+    monkeypatch.setenv("MSKSC_CACHE_DIR", "/tmp/per-checkout-cache")
+    assert ssh.cache_dir() == Path("/tmp/per-checkout-cache")
+
+
+def test_data_dir_honors_xdg(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XDG_DATA_HOME", "/tmp/xdg-data")
+    assert ssh.data_dir() == Path("/tmp/xdg-data/msks")
+
+
+def test_data_dir_honors_msksc_dir(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`MSKSC_DATA_DIR` names the root itself and wins over the
+    XDG base (#251) — separately from the cache variable, since
+    the minted identities outlive a disposable cache."""
+    monkeypatch.setenv("XDG_DATA_HOME", "/tmp/xdg-data")
+    monkeypatch.setenv("MSKSC_DATA_DIR", "/tmp/durable-identities")
+    assert ssh.data_dir() == Path("/tmp/durable-identities")
+
+
 # --- passthrough handling ---
 
 

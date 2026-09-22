@@ -334,7 +334,11 @@ alias; ControlMaster shares one forward connection across
 concurrent invocations. The alias block names its identity with
 `IdentityFile` — create it once with `msks key devbox --out
 ~/.cache/msks/msks-devbox.key` (mode 0600, the private half fetched
-over the authenticated API). `msks ssh` is the command form that
+over the authenticated API). The paths here are the client cache
+root's defaults: a relocated cache (`MSKSC_CACHE_DIR`, #251) moves
+them with it — the devenv shell presets that variable, so a
+development tree's aliases point under its own
+`.devenv/state/msksc/cache`. `msks ssh` is the command form that
 carries the identity per-session from memory instead — plain `ssh`
 invocations against the alias need the file. For a client-minted
 workspace (#121, the create default) that file is the client-held

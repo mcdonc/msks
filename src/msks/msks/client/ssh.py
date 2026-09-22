@@ -108,20 +108,38 @@ async def prepare(
 
 
 def cache_dir() -> Path:
-    """The client cache root: XDG_CACHE_HOME or ~/.cache, under msks."""
+    """The client cache root: `MSKSC_CACHE_DIR` when set, else
+    XDG_CACHE_HOME or ~/.cache, under msks.
+
+    The variable names the root itself — the per-workspace
+    directories are created below it — so a checkout (the devenv
+    shell points it at the worktree's own state, #251) or an
+    operator takes the whole cache out of the shared XDG tree.
+    """
+    override = os.environ.get("MSKSC_CACHE_DIR")
+    if override:
+        return Path(override)
     base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
     return Path(base) / "msks"
 
 
 def data_dir() -> Path:
-    """The client data root: XDG_DATA_HOME or ~/.local/share, under msks.
+    """The client data root: `MSKSC_DATA_DIR` when set, else
+    XDG_DATA_HOME or ~/.local/share, under msks.
 
     Distinct from :func:`cache_dir` on purpose: the cache is
     disposable by convention (``~/.cache`` may be swept at any
     time), while the client-minted private half (#121) is the
     workspace's only copy — losing it loses ssh — so it lives with
-    data that survives cache cleanup.
+    data that survives cache cleanup. The two override variables
+    stay separate for the same reason (#251): the cache can point
+    at a per-checkout, disposable location while the identities
+    stay somewhere durable — one root for both would couple their
+    lifetimes.
     """
+    override = os.environ.get("MSKSC_DATA_DIR")
+    if override:
+        return Path(override)
     base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser(
         "~/.local/share"
     )
