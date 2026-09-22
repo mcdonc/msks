@@ -59,7 +59,6 @@ from .ssh import (
     SSH_SEED_WAIT_S,
     config_quote,
     exec_child,
-    known_hosts_path,
     passthrough_args,
     probe_args,
     session_options,
@@ -204,10 +203,9 @@ def run_workspace_rsync(
     with staged_session(workspace_id, transport) as (
         booted,
         served,
-        token,
+        known_hosts,
         user,
     ):
-        known_hosts = known_hosts_path(workspace_id, instance=token)
         config_path = write_ssh_config(
             served,
             session_options(

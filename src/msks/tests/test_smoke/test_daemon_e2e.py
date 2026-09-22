@@ -262,10 +262,16 @@ async def test_daemon_e2e_full_path() -> None:
         )
 
         # Create: the default image (imported at startup) sizes the
-        # boot artifacts; egress is the create default.
-        response = await client.post("/api/v1/workspaces", json={"id": wid})
+        # boot artifacts; egress is the create default. The #246 split:
+        # the typed label becomes the name, and the daemon mints the
+        # immutable id — the rest of the flow addresses it by either.
+        response = await client.post("/api/v1/workspaces", json={"name": wid})
         assert response.status_code == 201, response.text
+        minted = response.json()["id"]
+        assert minted != wid
+        assert response.json()["name"] == wid
         row = (await client.get(f"/api/v1/workspaces/{wid}")).json()
+        assert row["id"] == minted
         assert row["status"] == "created", row
 
         # Start: the call returns when the boot completes.
@@ -328,7 +334,9 @@ async def test_daemon_e2e_full_path() -> None:
         response = await client.delete(f"/api/v1/workspaces/{wid}")
         assert response.status_code == 200, response.text
         listing = (await client.get("/api/v1/workspaces")).json()
-        assert all(w["id"] != wid for w in listing), listing
+        assert all(
+            w["id"] != minted and w.get("name") != wid for w in listing
+        ), listing
     except BaseException:
         print(daemon_log_tail(state_dir))
         raise

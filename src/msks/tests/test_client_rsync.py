@@ -195,7 +195,7 @@ def wired(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[list[str]]:
 
     monkeypatch.setattr(ssh, "prepare", fake_prepare)
     monkeypatch.setattr(
-        rsync,
+        ssh,
         "known_hosts_path",
         lambda ws, base=None, instance=None: str(tmp_path),
     )
@@ -256,7 +256,7 @@ def test_run_workspace_rsync_waits_out_a_first_boot(
 
     monkeypatch.setattr(ssh, "prepare", fake_prepare)
     monkeypatch.setattr(
-        rsync,
+        ssh,
         "known_hosts_path",
         lambda ws, base=None, instance=None: str(tmp_path),
     )
@@ -311,7 +311,7 @@ def test_run_workspace_rsync_names_a_missing_ssh_from_the_wait(
 
     monkeypatch.setattr(ssh, "prepare", fake_prepare)
     monkeypatch.setattr(
-        rsync,
+        ssh,
         "known_hosts_path",
         lambda ws, base=None, instance=None: str(tmp_path),
     )

@@ -34,6 +34,7 @@ from test_smoke import (
     VMLINUX,
     await_guest_up,
     collect_failure_evidence,
+    created_id,
     default_route_iface,
     free_port,
     needs_egress,
@@ -318,6 +319,11 @@ async def test_local_minted_identity() -> None:
             "alice",
         )
         assert created.returncode == 0, created.stderr
+        # The daemon minted the workspace's id (#246); the artifacts
+        # — the serial log among them — key on it, while the name the
+        # test typed keeps addressing every API surface.
+        vm_id = created_id(created)
+        serial_log = state_dir / "vms" / vm_id / "serial.log"
 
         private_pem = await fetch_key(key)
         assert private_pem.startswith("-----BEGIN OPENSSH PRIVATE KEY-----")
@@ -336,7 +342,7 @@ async def test_local_minted_identity() -> None:
         )
         minted = pub.stdout.strip()
         assert minted.startswith("ssh-ed25519 ") and minted.endswith(
-            f"msksd:{wid}"
+            f"msksd:{vm_id}"
         )
         await run_in_console(
             microvm,
@@ -618,7 +624,6 @@ async def test_local_client_minted_identity() -> None:
     workdir = state_dir / "cmint-work"
     workdir.mkdir(parents=True)
     data = workdir / "data"
-    identity = data / "msks" / wid / "identity"
 
     forwarding = Path("/proc/sys/net/ipv4/ip_forward")
     forwarding_was = forwarding.read_text()
@@ -653,10 +658,12 @@ async def test_local_client_minted_identity() -> None:
 
     def row_halves() -> tuple[str | None, str | None]:
         """(ssh_privkey, ssh_pubkey) straight from the daemon's own
-        database — the no-escrow contract, not the API's word for it."""
+        database — the no-escrow contract, not the API's word for it.
+        The row is found by name (#246): the id is minted."""
         with sqlite3.connect(settings.server.db_path) as conn:
             return conn.execute(
-                "select ssh_privkey, ssh_pubkey from workspaces where id = ?",
+                "select ssh_privkey, ssh_pubkey from workspaces "
+                "where name = ?",
                 (wid,),
             ).fetchone()
 
@@ -693,6 +700,10 @@ async def test_local_client_minted_identity() -> None:
             "alice",
         )
         assert created.returncode == 0, created.stderr
+        # The client mint lands under the minted id (#246).
+        vm_id = created_id(created)
+        serial_log = state_dir / "vms" / vm_id / "serial.log"
+        identity = data / "msks" / vm_id / "identity"
         assert identity.exists()
         assert identity.stat().st_mode & 0o777 == 0o600
         assert identity.read_text().startswith(
@@ -922,7 +933,8 @@ async def test_local_operator_pubkey() -> None:
     def row_halves() -> tuple[str | None, str | None]:
         with sqlite3.connect(settings.server.db_path) as conn:
             return conn.execute(
-                "select ssh_privkey, ssh_pubkey from workspaces where id = ?",
+                "select ssh_privkey, ssh_pubkey from workspaces "
+                "where name = ?",
                 (wid,),
             ).fetchone()
 
@@ -980,9 +992,11 @@ async def test_local_operator_pubkey() -> None:
             str(pub_file),
         )
         assert created.returncode == 0, created.stderr
+        vm_id = created_id(created)
+        serial_log = state_dir / "vms" / vm_id / "serial.log"
         # Nothing was written client-side: the private half stays
         # wherever the operator keeps it (here, the workdir).
-        assert not (data / "msks" / wid).exists()
+        assert not (data / "msks").exists()
 
         priv, pub = row_halves()
         assert priv is None

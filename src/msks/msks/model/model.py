@@ -204,36 +204,60 @@ class Model:
         image_hash: str | None = None,
         host: str | None = None,
         ssh_privkey: str | None = None,
+        name: str | None = None,
     ) -> dict:
         """Insert a workspace row from its VM spec and artifact facts.
 
         ``ssh_privkey`` carries the minted identity's private half
         (#111): the spec holds the public half (the seed needs it at
         artifact-build time), the private half goes from mint to row
-        without ever riding a spec.
+        without ever riding a spec. ``name`` is the operator-chosen
+        label (#246) — the spec's ``workspace_id`` is the daemon-
+        minted immutable id, so the label rides beside it the same
+        way the private half does.
         """
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
             row = Workspace(
-                **workspace_fields(spec, image_hash, host, ssh_privkey)
+                **workspace_fields(spec, image_hash, host, ssh_privkey, name)
             )
             session.add(row)
             await session.commit()
             return workspace_dict(row)
 
-    async def get_workspace(self, workspace_id: str) -> dict | None:
-        """One workspace row as a dict, None when absent."""
+    async def get_workspace(self, ref: str) -> dict | None:
+        """One workspace row by reference — its immutable id or its
+        unique name (#246) — None when neither matches.
+
+        Id first: a minted id never collides with a name, but a
+        pre-#246 row's id doubles as its name, and the id is the
+        canonical reference every keyed surface uses.
+        """
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
-            row = await session.get(Workspace, workspace_id)
+            row = await session.get(Workspace, ref)
+            if row is not None:
+                return workspace_dict(row)
+            row = await session.scalar(
+                select(Workspace).where(Workspace.name == ref)
+            )
             return None if row is None else workspace_dict(row)
 
+    async def name_taken(self, name: str) -> bool:
+        """Whether a workspace already owns the label (#246)."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            row = await session.scalar(
+                select(Workspace).where(Workspace.name == name)
+            )
+            return row is not None
+
     async def list_workspaces(self) -> list[dict]:
-        """All workspace rows."""
+        """All workspace rows, oldest first."""
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
             rows = await session.scalars(
-                select(Workspace).order_by(Workspace.id)
+                select(Workspace).order_by(Workspace.created_at, Workspace.id)
             )
             return [workspace_dict(row) for row in rows]
 
@@ -296,19 +320,29 @@ class Model:
             await session.commit()
             return result.rowcount > 0
 
-    async def get_ssh_key(self, workspace_id: str) -> dict | None:
+    async def get_ssh_key(self, ref: str) -> dict | None:
         """The workspace's minted identity halves (#111) and login
-        user (#248), or None when the workspace does not exist. A
-        row without an identity (a pre-#111 workspace) returns
-        halves of None — the caller distinguishes row-missing from
+        user (#248), or None when the workspace does not exist. The
+        workspace is resolved by id or name (#246) like every
+        route-facing lookup, and the answer carries the row's
+        immutable id and name so a client keys its caches on
+        instance identity, not the reference it typed. A row
+        without an identity (a pre-#111 workspace) returns halves of
+        None — the caller distinguishes row-missing from
         identity-missing — and a row without a login user (a
         pre-#248 one) returns None for it the same way."""
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
-            row = await session.get(Workspace, workspace_id)
+            row = await session.get(Workspace, ref)
+            if row is None:
+                row = await session.scalar(
+                    select(Workspace).where(Workspace.name == ref)
+                )
             if row is None:
                 return None
             return {
+                "id": row.id,
+                "name": row.name,
                 "public_key": row.ssh_pubkey,
                 "private_key": row.ssh_privkey,
                 # The workspace instance's stamp (#245): the client
@@ -501,10 +535,12 @@ def workspace_fields(
     image_hash: str | None,
     host: str | None,
     ssh_privkey: str | None,
+    name: str | None = None,
 ) -> dict:
     """The ORM column values a VmSpec maps to."""
     return {
         "id": spec.workspace_id,
+        "name": name,
         "kernel": str(spec.kernel),
         "initrd": None if spec.initrd is None else str(spec.initrd),
         "rootfs": str(spec.rootfs),
@@ -564,6 +600,7 @@ def workspace_dict(row: Workspace) -> dict:
     """The API-facing dict for a workspace row."""
     return {
         "id": row.id,
+        "name": row.name,
         "kernel": row.kernel,
         "initrd": row.initrd,
         "rootfs": row.rootfs,

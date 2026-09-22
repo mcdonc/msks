@@ -108,7 +108,7 @@ def _make_workspace(client, egress: bool = True) -> str:
     body = {"id": "ws-f", "kernel": "/k", "rootfs": "/r", "egress": egress}
     response = client.post("/api/v1/workspaces", json=body, headers=auth())
     assert response.status_code == 201
-    return "ws-f"
+    return response.json()["id"]  # the minted id (#246)
 
 
 def test_forward_rejects_missing_token(forward_api) -> None:
@@ -190,7 +190,7 @@ def test_forward_seam_error_closes(forward_api) -> None:
     api, app, net = forward_api
     net.refusal = "workspace ws-f has no live network attachment"
     with TestClient(api) as client:
-        _make_workspace(client)
+        wid = _make_workspace(client)
         with client.websocket_connect(
             "/api/v1/workspaces/ws-f/forward/22", headers=bearer()
         ) as s:
@@ -198,7 +198,7 @@ def test_forward_seam_error_closes(forward_api) -> None:
                 s.receive_text()
         assert caught.value.code == 4501
         assert "no live network attachment" in caught.value.reason
-    assert net.calls == [("ws-f", 22)]
+    assert net.calls == [(wid, 22)]
 
 
 def test_forward_ignores_query_string_tokens(forward_api) -> None:
@@ -219,7 +219,7 @@ def test_forward_ignores_query_string_tokens(forward_api) -> None:
 def test_forward_bridges_bytes_both_ways(forward_api) -> None:
     api, app, net = forward_api
     with TestClient(api) as client:
-        _make_workspace(client)
+        wid = _make_workspace(client)
         with client.websocket_connect(
             "/api/v1/workspaces/ws-f/forward/22", headers=bearer()
         ) as socket:
@@ -232,13 +232,13 @@ def test_forward_bridges_bytes_both_ways(forward_api) -> None:
             while b"WORLD" not in got:
                 got += socket.receive_bytes()
             assert got == b"HELLO WORLD\n"
-    assert net.calls == [("ws-f", 22)]
+    assert net.calls == [(wid, 22)]
 
 
 def test_two_forwards_run_concurrently(forward_api) -> None:
     api, app, net = forward_api
     with TestClient(api) as client:
-        _make_workspace(client)
+        wid = _make_workspace(client)
         with (
             client.websocket_connect(
                 "/api/v1/workspaces/ws-f/forward/22", headers=bearer()
@@ -253,7 +253,7 @@ def test_two_forwards_run_concurrently(forward_api) -> None:
             assert two.receive_bytes() == b"SECOND\n"
     # Each websocket dialed its own guest connection, port as named
     # (the two dials land in completion order, not entry order).
-    assert sorted(net.calls) == [("ws-f", 22), ("ws-f", 8022)]
+    assert sorted(net.calls) == [(wid, 22), (wid, 8022)]
 
 
 def test_forward_publishes_open_and_closed_events(
@@ -271,19 +271,19 @@ def test_forward_publishes_open_and_closed_events(
         await original(hub, event_type, data)
 
     monkeypatch.setattr(EventHub, "publish", spy)
-    closed = ("forward.closed", {"id": "ws-f", "port": 22})
     # The guest service hangs up after its answer: the session ends
     # from the stream side, so the route's close path (and its
     # forward.closed) runs before any client teardown — no race.
     net.close_after_echo = True
     with TestClient(api) as client:
-        _make_workspace(client)
+        wid = _make_workspace(client)
+        closed = ("forward.closed", {"id": wid, "port": 22})
         with client.websocket_connect(
             "/api/v1/workspaces/ws-f/forward/22", headers=bearer()
         ) as socket:
             socket.send_bytes(b"ping\n")
             assert socket.receive_bytes() == b"PING\n"
-        assert ("forward.opened", {"id": "ws-f", "port": 22}) in published
+        assert ("forward.opened", {"id": wid, "port": 22}) in published
         deadline = time.monotonic() + 5
         while closed not in published and time.monotonic() < deadline:
             time.sleep(0.01)

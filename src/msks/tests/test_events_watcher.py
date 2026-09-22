@@ -73,18 +73,19 @@ def test_websocket_receives_transitions(tmp_path: Path) -> None:
         ) as socket:
             # Create a workspace, then flip the seam underneath it: the
             # watcher must publish the transition within a few polls.
-            client.post(
+            created = client.post(
                 "/api/v1/workspaces",
                 json={"id": "ws-w", "kernel": "/k", "rootfs": "/r"},
                 headers=auth(),
             )
-            stub.statuses["ws-w"] = VmStatus.RUNNING
+            wid = created.json()["id"]
+            stub.statuses[wid] = VmStatus.RUNNING
             seen = False
             for _ in range(80):
                 message = socket.receive_json()
                 if message == {
                     "event": "workspace.status",
-                    "data": {"id": "ws-w", "status": "running"},
+                    "data": {"id": wid, "status": "running"},
                 }:
                     seen = True
                     break

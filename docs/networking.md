@@ -241,7 +241,11 @@ is a key login: `PasswordAuthentication no`, and root may log in
 with a key only (`PermitRootLogin prohibit-password`). Host keys are
 generated on the workspace's first boot into its persistent root
 overlay, so a stop/start cycle presents the same host key — the
-`known_hosts` entry you recorded on first login keeps matching.
+`known_hosts` entry you recorded on first login keeps matching. The
+entry lives under the workspace's immutable id (#246), so a workspace
+recreated under the same name is a new id with a fresh cache: it
+trusts its own first-boot host keys instead of refusing the first
+instance's.
 A workspace without egress carries the same image unchanged: its
 forward is refused at the API with close code 4501 before any dial,
 and its console is the vsock one.

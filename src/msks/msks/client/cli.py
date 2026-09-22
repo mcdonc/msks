@@ -45,10 +45,17 @@ from .tui.consent_app import run_consent_tui
 
 
 def format_workspace(row: dict) -> str:
-    """One listing line: id, status, image hash, host."""
+    """One listing line: name, id, status, image hash, host."""
     image = (row.get("image_hash") or "-")[:12]
     host = row.get("host") or "-"
-    return f"{row['id']:<24} {row['status']:<9} {image:<13} {host}"
+    name = row.get("name") or "-"
+    return f"{name:<20} {row['id']:<32} {row['status']:<9} {image:<13} {host}"
+
+
+def display_name(row: dict) -> str:
+    """The human-facing label (#246): the workspace's name, else
+    its immutable id (a nameless workspace is addressed by id)."""
+    return row.get("name") or row["id"]
 
 
 def render_ls(rows: list[dict], as_json: bool) -> str:
@@ -158,24 +165,28 @@ async def create_workspace(
     key_type: str | None = None,
     pubkey: str | None = None,
 ) -> dict:
-    """POST the workspace, print its id, then boot it when asked.
+    """POST the workspace, print its name and id, then boot it when
+    asked.
 
-    The id prints before the boot attempt: a failed start must not
+    The line prints before the boot attempt: a failed start must not
     hide that the workspace exists — recover with ``msks start``.
-    In the client-mint mode (#121) the keypair is minted here — the
-    private half never crosses the wire — and is persisted (mode
-    0600, client data root) only after the create succeeded, so a
-    refused create leaves no orphaned key behind. With an
-    operator-supplied key (#132) only the public line travels and
-    nothing is written client-side: the private half stays wherever
-    the operator keeps it.
+    The daemon mints the workspace's immutable id (#246); the
+    follow-up calls (boot, identity) address the workspace by that
+    id, and the label the operator typed stays the day-to-day
+    reference. In the client-mint mode (#121) the keypair is minted
+    here — the private half never crosses the wire — and is
+    persisted (mode 0600, client data root, keyed on the id) only
+    after the create succeeded, so a refused create leaves no
+    orphaned key behind. With an operator-supplied key (#132) only
+    the public line travels and nothing is written client-side: the
+    private half stays wherever the operator keeps it.
     """
     private_pem, public = await identity_material(body, key_type, pubkey)
     async with api_client(url, token, transport) as client:
         row = await request(
             client, "POST", "/api/v1/workspaces", json_body=body
         )
-        print(f"created {row['id']}")
+        print(created_line(row))
         if public is not None:
             await verify_no_escrow(client, row["id"], public)
         if private_pem is not None:
@@ -190,11 +201,21 @@ async def create_workspace(
         except SystemExit as exc:
             raise SystemExit(
                 f"{exc}\nmsks: {row['id']} is created; "
-                f"boot it later with: msks start {row['id']}"
+                f"boot it later with: msks start {display_name(row)}"
             ) from exc
-        print(f"attach with: msks console {row['id']}")
+        print(f"attach with: msks console {display_name(row)}")
         row["status"] = "running"
         return row
+
+
+def created_line(row: dict) -> str:
+    """The create confirmation: the label beside the daemon-minted,
+    immutable id (#246) — the name is the everyday reference, the
+    id is the one no future workspace will ever reuse."""
+    name = row.get("name")
+    if name and name != row["id"]:
+        return f"created {name} (id {row['id']})"
+    return f"created {row['id']}"
 
 
 async def identity_material(
@@ -361,10 +382,11 @@ def require_daemon_half(key: dict, workspace_id: str) -> None:
     the daemon never held (#121, #132): the error names the two
     places that half can be instead of printing nothing."""
     if key["private_key"] is None:
+        directory = key.get("id") or workspace_id
         raise SystemExit(
             f"msks key: the daemon holds no private half for {workspace_id}. "
             "The workspace's key was minted on a client (its private half "
-            f"lives at {data_dir() / workspace_id / 'identity'} on that "
+            f"lives at {data_dir() / directory / 'identity'} on that "
             "machine), or supplied from a key you already own — use that "
             "key directly"
         )
@@ -452,27 +474,28 @@ def render_storage(
 
 
 def format_storage_row(ws: dict) -> str:
-    """One workspace line: id, both cost/ceiling cells, total cost."""
+    """One workspace line: label, both cost/ceiling cells, total
+    cost — the name is the human key (#246), the id rides in the
+    ``--json`` document."""
     return (
-        f"{ws['id']:<24} "
+        f"{display_name(ws):<24} "
         f"{cost_pair(ws['root_bytes'], ws['root_mib']):<20} "
         f"{cost_pair(ws['home_bytes'], ws['home_mib']):<20} "
         f"{human_bytes(ws['root_bytes'] + ws['home_bytes'])}"
     )
 
 
-def narrowed(workspaces: list[dict], workspace_id: str | None) -> list[dict]:
-    """The rows one table shows: every row, or the one id asked for."""
-    if workspace_id is None:
+def narrowed(workspaces: list[dict], ref: str | None) -> list[dict]:
+    """The rows one table shows: every row, or the one workspace the
+    ref names — its id or its name (#246)."""
+    if ref is None:
         return workspaces
-    return [ws for ws in workspaces if ws["id"] == workspace_id]
+    return [ws for ws in workspaces if ref in (ws["id"], ws.get("name"))]
 
 
-def workspace_lines(
-    workspaces: list[dict], workspace_id: str | None
-) -> list[str]:
+def workspace_lines(workspaces: list[dict], ref: str | None) -> list[str]:
     """The per-workspace cost/ceiling table — empty when none match."""
-    matches = narrowed(workspaces, workspace_id)
+    matches = narrowed(workspaces, ref)
     if not matches:
         return []
     header = (
@@ -546,8 +569,8 @@ def cmd_storage(
             transport=transport,
         )
     )
-    if workspace_id is not None and not any(
-        ws["id"] == workspace_id for ws in report["workspaces"]
+    if workspace_id is not None and not narrowed(
+        report["workspaces"], workspace_id
     ):
         raise SystemExit(f"msks: no such workspace: {workspace_id}")
     print(render_storage(report, as_json, workspace_id))
@@ -580,7 +603,7 @@ def resize_message(row: dict, body: dict) -> str:
     not the request's flags) — home bytes moved at once on the host;
     only the root's guest-side fill waits for the next boot."""
     line = (
-        f"resized {row['id']}: root {row['root_mib']} MiB, "
+        f"resized {display_name(row)}: root {row['root_mib']} MiB, "
         f"home {row['home_mib']} MiB"
     )
     if any(change.startswith("root") for change in row.get("changes", [])):
@@ -813,18 +836,35 @@ def read_secret(path: str) -> str:
 
 
 async def find_placeholder(
-    url: str, token: str, workspace_id: str, name: str, transport
+    url: str, token: str, ref: str, name: str, transport
 ) -> dict:
-    """The (workspace, name) pair's row, or a named exit."""
+    """The (workspace, name) pair's row, or a named exit.
+
+    ``ref`` names the workspace by id or name (#246); the listing's
+    workspace rows carry both, and the placeholder row binds to the
+    immutable id, so the ref resolves against the listing before
+    the pair matches.
+    """
+    workspaces = await api_call(
+        "GET", url, token, "/api/v1/workspaces", transport=transport
+    )
+    workspace_id = resolved_workspace_id(workspaces, ref)
     rows = await api_call(
         "GET", url, token, "/api/v1/secrets", transport=transport
     )
     for row in rows:
         if row["workspace_id"] == workspace_id and row["name"] == name:
             return row
-    raise SystemExit(
-        f"msks: no placeholder {name} on workspace {workspace_id}"
-    )
+    raise SystemExit(f"msks: no placeholder {name} on workspace {ref}")
+
+
+def resolved_workspace_id(workspaces: list[dict], ref: str) -> str:
+    """The immutable id the ref names (#246), or the named exit
+    when no workspace answers to it."""
+    for row in workspaces:
+        if ref in (row["id"], row.get("name")):
+            return row["id"]
+    raise SystemExit(f"msks: no such workspace: {ref}")
 
 
 def cmd_secret_mint(
@@ -1177,7 +1217,7 @@ def checked_login_name(name: str, what: str) -> str:
 def create_body(args: argparse.Namespace) -> dict:
     """The POST body: only the fields the operator set."""
     fields = {
-        "id": args.workspace_id,
+        "name": args.workspace_id,
         "image": args.image,
         "kernel": args.kernel,
         "initrd": args.initrd,
@@ -1237,14 +1277,16 @@ def build_parser() -> argparse.ArgumentParser:
         "workspace",
         nargs="?",
         default=None,
-        help="narrow the workspace table to one id",
+        help="narrow the workspace table to one workspace (name or id)",
     )
     storage_cmd.add_argument(
         "--json", action="store_true", help="one JSON document"
     )
     create = sub.add_parser("create", help="create a workspace")
     create.add_argument(
-        "workspace_id", help="the id to create (DNS-label charset)"
+        "workspace_id",
+        help="the workspace's name (#246): the label you address it "
+        "by (DNS-label charset); the daemon mints the immutable id",
     )
     create.add_argument(
         "--image", help="catalog ref: name:version, name, or hash"
@@ -1399,13 +1441,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="the duration a --decide allow applies",
     )
     starter = sub.add_parser("start", help="boot a created workspace")
-    starter.add_argument("workspace_id", help="the workspace to boot")
+    starter.add_argument(
+        "workspace_id", help="the workspace to boot (name or id)"
+    )
     stopper = sub.add_parser("stop", help="power a workspace off")
-    stopper.add_argument("workspace_id", help="the workspace to stop")
+    stopper.add_argument(
+        "workspace_id", help="the workspace to stop (name or id)"
+    )
     resizer = sub.add_parser(
         "resize", help="grow (or shrink) a stopped workspace's disks (#184)"
     )
-    resizer.add_argument("workspace_id", help="the workspace to resize")
+    resizer.add_argument(
+        "workspace_id", help="the workspace to resize (name or id)"
+    )
     resizer.add_argument(
         "--home-mib",
         type=int,
@@ -1418,12 +1466,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     remover = sub.add_parser("rm", help="delete workspaces and their data")
     remover.add_argument(
-        "workspace_ids", nargs="+", help="the workspaces to delete, in order"
+        "workspace_ids",
+        nargs="+",
+        help="the workspaces to delete, in order (name or id)",
     )
     console = sub.add_parser(
         "console", help="interactive shell in a workspace"
     )
-    console.add_argument("workspace_id", help="the workspace to attach to")
+    console.add_argument(
+        "workspace_id", help="the workspace to attach to (name or id)"
+    )
     console.add_argument(
         "--user",
         default=None,
@@ -1433,7 +1485,9 @@ def build_parser() -> argparse.ArgumentParser:
     forward = sub.add_parser(
         "forward", help="bridge a workspace TCP port to stdio or a local port"
     )
-    forward.add_argument("workspace_id", help="the workspace to reach")
+    forward.add_argument(
+        "workspace_id", help="the workspace to reach (name or id)"
+    )
     forward.add_argument("port", type=int, help="the guest TCP port to reach")
     forward.add_argument(
         "--local",
@@ -1448,7 +1502,8 @@ def build_parser() -> argparse.ArgumentParser:
         "alone for a client-minted #121 workspace)",
     )
     key.add_argument(
-        "workspace_id", help="the workspace whose identity to fetch"
+        "workspace_id",
+        help="the workspace whose identity to fetch (name or id)",
     )
     key_private = key.add_mutually_exclusive_group()
     key_private.add_argument(
@@ -1467,7 +1522,9 @@ def build_parser() -> argparse.ArgumentParser:
             "ssh into a workspace over the forward, identity staged in memory"
         ),
     )
-    ssh.add_argument("workspace_id", help="the workspace to log into")
+    ssh.add_argument(
+        "workspace_id", help="the workspace to log into (name or id)"
+    )
     ssh.add_argument(
         "passthrough",
         nargs=argparse.REMAINDER,
@@ -1483,7 +1540,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     rsync_cmd.add_argument(
-        "workspace_id", help="the workspace to copy against"
+        "workspace_id", help="the workspace to copy against (name or id)"
     )
     rsync_cmd.add_argument(
         "passthrough",
@@ -1533,7 +1590,8 @@ def build_parser() -> argparse.ArgumentParser:
         "export", help="download a workspace's /home volume"
     )
     home_export.add_argument(
-        "workspace_id", help="the workspace whose volume to download"
+        "workspace_id",
+        help="the workspace whose volume to download (name or id)",
     )
     home_export.add_argument(
         "file",
@@ -1545,7 +1603,8 @@ def build_parser() -> argparse.ArgumentParser:
         "import", help="replace a workspace's /home volume from an ext4 image"
     )
     home_import.add_argument(
-        "workspace_id", help="the workspace whose volume to replace"
+        "workspace_id",
+        help="the workspace whose volume to replace (name or id)",
     )
     home_import.add_argument(
         "file", help="the ext4 volume image to upload; - reads stdin"

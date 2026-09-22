@@ -26,6 +26,16 @@ WORKSPACE_STATUSES = (
 class Workspace(Base):
     """One workspace: identity + VM spec + observed lifecycle state.
 
+    Identity is two fields (#246): ``id`` is the daemon-minted,
+    immutable instance id (a fresh random UUID per create, never
+    reused — every artifact path, cache, and keyed surface derives
+    from it), and ``name`` is the operator-chosen label the CLI
+    addresses workspaces by. A row minted before #246 keeps its
+    operator-chosen id as both halves — the migration copies id to
+    name — so its paths and caches are untouched. ``name`` is
+    unique per daemon and may be NULL (a workspace created through
+    the API without a label, addressable by id only).
+
     Three #14 columns record the workspace's persistent half:
     ``image_hash`` binds it to the catalog image its overlay backs
     (an image with live workspaces cannot be removed), ``host`` is
@@ -37,6 +47,9 @@ class Workspace(Base):
     __tablename__ = "workspaces"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str | None] = mapped_column(
+        String, nullable=True, unique=True
+    )
     kernel: Mapped[str] = mapped_column(String)
     initrd: Mapped[str | None] = mapped_column(String, nullable=True)
     rootfs: Mapped[str] = mapped_column(String)

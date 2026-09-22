@@ -90,15 +90,34 @@ stderr on every invocation — the same trust-on-first-use posture as
 `msks console` (#21), fine for a lab network and worth closing before
 anything real.
 
+## Workspace identity: a name and an id (#246)
+
+A workspace carries two identity fields. The **name** is the label
+you choose at create — the positional argument of every command,
+unique among the daemon's workspaces. The **id** is minted by the
+daemon at create (a random UUID), immutable, and never reused:
+every host-side surface — the artifact directories under the state
+dir, the catalog row, and the client-side caches — keys on the id.
+Deleting a workspace and creating another under the same name
+yields a different id with nothing of the first instance left to
+collide: the second workspace's `msks ssh` works on the first try,
+with a fresh host-key cache of its own.
+
+Every command that takes a workspace accepts either reference —
+`msks console ws` and `msks console 1a2b3c…d` reach the same
+workspace. The name is the everyday reference; the id is the one
+no future workspace will ever answer to.
+
 ## `msks ls`
 
-Prints one line per workspace the daemon knows, aligned in four
-columns: id, status, image hash (first 12 hex chars), and owning host.
+Prints one line per workspace the daemon knows, aligned in five
+columns: name, id, status, image hash (first 12 hex chars), and
+owning host.
 
 ```text
 $ msks ls
-my-workspace             running   9f2c41ab77de   hv-1
-scratch                  created   -              hv-1
+my-workspace   9f2c41ab77de0011aabbccdd00112233   running   9f2c41ab77de   hv-1
+scratch        2233ccddeeff445566778899aabbccdd   created   -              hv-1
 ```
 
 The status column speaks the daemon's lifecycle vocabulary —
@@ -108,11 +127,12 @@ means the workspace boots explicit kernel/rootfs paths instead of
 a catalog image.
 
 `--json` replaces the table with one JSON document — the API's
-workspace rows verbatim (id, kernel, initrd, rootfs, cmdline, cpus,
-mem_mib, image_hash, host, root_mib, home_mib, status, created_at):
+workspace rows verbatim (id, name, kernel, initrd, rootfs, cmdline,
+cpus, mem_mib, image_hash, host, root_mib, home_mib, status,
+created_at):
 
 ```bash
-msks ls --json | jq -r '.[] | select(.status == "running") | .id'
+msks ls --json | jq -r '.[] | select(.status == "running") | .name'
 ```
 
 A daemon with zero workspaces prints nothing (an empty table) and an
@@ -160,17 +180,21 @@ storage` names the consumers; `msks rm` and `msks image rm`
   copy plus unpacked cache), and a home upload with a
   `Content-Length` must fit above the floor.
 
-`msks storage <id>` narrows the workspace table to one workspace.
+`msks storage <workspace>` narrows the workspace table to one
+workspace, by name or id.
 `--json` prints the API's `GET /api/v1/storage` document verbatim
 (state block, per-workspace rows, catalog rows). The events channel
 carries a `storage.pressure` event whenever the pressure changes.
 
 ## `msks create`
 
-POSTs the API's create body. The positional id follows the daemon's
-workspace charset — lowercase letters, digits, and dashes, starting
-with a letter or digit, up to 64 chars (it becomes a directory name
-under the state dir).
+POSTs the API's create body. The positional argument names the
+workspace (#246) and follows the daemon's workspace charset —
+lowercase letters, digits, and dashes, starting with a letter or
+digit, up to 64 chars. The daemon mints the workspace's immutable
+id; the name is the label the other commands address it by. The
+create request's field is `name` (an `id` field is accepted as the
+same thing — the pre-#246 spelling).
 
 Flags map onto the create request's fields (the identity flags
 below generate theirs):
@@ -225,23 +249,25 @@ image's `msks` user as its login.
 
 ```bash
 $ msks create my-workspace --image debian:13 --start
-created my-workspace
+created my-workspace (id 9f2c41ab77de0011aabbccdd00112233)
 attach with: msks console my-workspace
 ```
 
-The id prints as soon as the create succeeds and before the boot is
+The confirmation line prints both halves of the workspace's
+identity — the label you chose and the id the daemon minted — as
+soon as the create succeeds and before the boot is
 attempted. A failed boot still leaves the workspace created — the
 error message says so and names the recovery command:
 
 ```text
-created my-workspace
+created my-workspace (id 9f2c41ab77de0011aabbccdd00112233)
 msks: 503: vmm launch failed
-msks: my-workspace is created; boot it later with: msks start my-workspace
+msks: 9f2c41ab77de0011aabbccdd00112233 is created; boot it later with: msks start my-workspace
 ```
 
-Creating without `--start` prints the id and exits; boot it whenever
-with `msks start` — or just `msks console` it: the console command boots
-a not-running workspace on its own (below).
+Creating without `--start` prints the same line and exits; boot it
+whenever with `msks start` — or just `msks console` it: the console
+command boots a not-running workspace on its own (below).
 
 `--user-data` is the first-boot provisioning hook (#41): the file's
 contents travel to the daemon and run once on the
@@ -251,7 +277,7 @@ the create-time immutability). It composes with `--start`:
 
 ```bash
 $ printf '#!/bin/sh\napt-get update\n' | msks create ws --user-data - --start
-created ws
+created ws (id 2233ccddeeff445566778899aabbccdd)
 attach with: msks console ws
 ```
 
@@ -265,8 +291,8 @@ and `msks ssh` picks it up from there:
 
 ```bash
 $ msks create my-workspace --image debian:13 --start
-created my-workspace
-client identity (mode 0600): /home/you/.local/share/msks/my-workspace/identity
+created my-workspace (id 9f2c41ab77de0011aabbccdd00112233)
+client identity (mode 0600): /home/you/.local/share/msks/9f2c41ab77de0011aabbccdd00112233/identity
 attach with: msks console my-workspace
 ```
 
@@ -297,7 +323,7 @@ its state — the private half is then fetchable with `msks key
 
 ## `msks start`
 
-Boots one created workspace (`POST /api/v1/workspaces/{id}/start`)
+Boots one created workspace (`POST /api/v1/workspaces/{id-or-name}/start`)
 and prints the result:
 
 ```bash
@@ -312,7 +338,7 @@ that the daemon may still finish the boot.
 
 ## `msks stop`
 
-Powers one running workspace off (`POST /api/v1/workspaces/{id}/stop`)
+Powers one running workspace off (`POST /api/v1/workspaces/{id-or-name}/stop`)
 and prints the result, mirroring `msks start`:
 
 ```bash
@@ -324,7 +350,7 @@ my-workspace stopped
 
 Moves a **stopped** workspace's disk sizes (#184) — the ceilings
 its guest sees as quotas — through `POST
-/api/v1/workspaces/{id}/resize`:
+/api/v1/workspaces/{id-or-name}/resize`:
 
 ```text
 $ msks resize ws4 --home-mib 4096
@@ -365,11 +391,13 @@ happening). The data survives the stop — the root overlay and the
 
 ## `msks rm`
 
-Deletes workspaces (`DELETE /api/v1/workspaces/{id}`) — the row, the
-VMM (stopped first, killed if wedged), and the persistent artifacts:
-the root overlay and the `/home` volume. The data does not come back;
-recreating a workspace with the same id starts from the image's
-pristine root. One id or several:
+Deletes workspaces (`DELETE /api/v1/workspaces/{id-or-name}`) — the
+row, the VMM (stopped first, killed if wedged), and the persistent
+artifacts: the root overlay and the `/home` volume. The data does
+not come back; creating a workspace under the same name mints a
+fresh id and starts from the image's pristine root, with nothing
+of the deleted instance left to collide with. One workspace or
+several:
 
 ```bash
 $ msks rm my-workspace
@@ -379,12 +407,12 @@ scratch-1 deleted
 scratch-2 deleted
 ```
 
-Ids are removed one at a time, in the order given; a failure stops
-the run there with the API's one-line error, and the ids already
-removed stay removed (each success printed its confirmation line).
-There is no confirmation prompt — deleting is what `rm` means, and a
-workspace is recoverable by recreating it. A workspace recorded on
-another host answers 409 with the host mismatch named in the error,
+Workspaces are removed one at a time, in the order given; a failure
+stops the run there with the API's one-line error, and the ones
+already removed stay removed (each success printed its confirmation
+line). There is no confirmation prompt — deleting is what `rm` means,
+and a workspace is recoverable by recreating it. A workspace recorded
+on another host answers 409 with the host mismatch named in the error,
 like every lifecycle command.
 
 ## `msks image`
@@ -796,11 +824,14 @@ process, and a client-minted half is read from its one file and
 left exactly there. Host keys land in a per-workspace
 `known_hosts` under the msks cache root — `MSKSC_CACHE_DIR` when
 it is set, else `XDG_CACHE_HOME` or `~/.cache/msks`, then
-`<ws>/known_hosts` — under `accept-new`; they
-persist across stop/start on the workspace's
-overlay, so the first-connection entry keeps matching. (The alias block keeps
-its own known_hosts under `~/.cache/msks/msks-<ws>/` — the two
-paths record the same host key independently.)
+`<workspace-id>/known_hosts` (#246 — the cache keys on the
+workspace's immutable id, so a workspace recreated under the same
+name starts with a fresh cache and trusts its own first-boot keys
+again) — under `accept-new`; they persist across stop/start on the
+workspace's overlay, so the first-connection entry keeps matching.
+(The alias block keeps its own known_hosts under
+`~/.cache/msks/msks-<ws>/` — the two paths record the same host
+key independently.)
 
 Agent forwarding asked for on the command line (`-A`, or
 `-o ForwardAgent=yes`) forwards **your** agent — the socket

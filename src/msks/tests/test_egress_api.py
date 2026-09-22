@@ -113,11 +113,12 @@ async def test_decide_and_revoke_endpoints(consent_client) -> None:
     async with httpx.AsyncClient(
         transport=transport, base_url="https://test"
     ) as http:
-        await create_workspace(http, "ws-dec", "interactive")
+        row = await create_workspace(http, "ws-dec", "interactive")
+        wid = row["id"]
         engine = app.state.consent
-        app.state.deciders.register(1, "ws-dec")
-        future = await engine.hold("ws-dec", "api.example", 443)
-        rows = await app.state.model.egress_consent.list_requests("ws-dec")
+        app.state.deciders.register(1, wid)
+        future = await engine.hold(wid, "api.example", 443)
+        rows = await app.state.model.egress_consent.list_requests(wid)
         request_id = rows[0]["id"]
         # An unknown workspace 404s first.
         reply = await http.post(
@@ -149,7 +150,7 @@ async def test_decide_and_revoke_endpoints(consent_client) -> None:
             assert reply.status_code == 200
         # A pending-but-not-held row answers 404 (nothing to decide).
         orphan = await app.state.model.egress_consent.create_request(
-            "ws-dec", "orphan.example", 443
+            wid, "orphan.example", 443
         )
         reply = await http.post(
             f"/api/v1/workspaces/ws-dec/egress/requests/{orphan['id']}",
@@ -179,8 +180,8 @@ async def test_requests_listing_filters_by_decision(consent_client) -> None:
     async with httpx.AsyncClient(
         transport=transport, base_url="https://test"
     ) as http:
-        await create_workspace(http, "ws-list", "static")
-        await app.state.consent.hold("ws-list", "off.example", 80)
+        row = await create_workspace(http, "ws-list", "static")
+        await app.state.consent.hold(row["id"], "off.example", 80)
         reply = await http.get(
             "/api/v1/workspaces/ws-list/egress/requests",
             headers=auth(),
@@ -217,6 +218,7 @@ def test_events_decider_registration_and_frames(tmp_path: Path) -> None:
     stub = StubMicrovm()
     app.state.microvm = stub
     api = build_api(app)
+    ids: dict[str, str] = {}
 
     def hold_off_thread() -> None:
         """Create + resolve a hold on a private loop (the engine's
@@ -225,7 +227,7 @@ def test_events_decider_registration_and_frames(tmp_path: Path) -> None:
 
         async def run() -> None:
             engine = app.state.consent
-            future = await engine.hold("ws-ev", "live.example", 443)
+            future = await engine.hold(ids["wid"], "live.example", 443)
             assert not future.done()
             await asyncio.sleep(0.2)
 
@@ -243,6 +245,7 @@ def test_events_decider_registration_and_frames(tmp_path: Path) -> None:
             headers=auth(),
         )
         assert reply.status_code == 201
+        ids["wid"] = reply.json()["id"]
 
         with client.websocket_connect(f"/api/v1/events?token={TOKEN}") as ws:
             # Registration: the pending snapshot (empty) then the
@@ -608,14 +611,14 @@ async def test_decide_validates_and_binds_the_workspace(
     async with httpx.AsyncClient(
         transport=transport, base_url="https://test"
     ) as http:
-        await create_workspace(http, "ws-va", "interactive")
+        va = await create_workspace(http, "ws-va", "interactive")
         await create_workspace(http, "ws-vb", "interactive")
         engine = app.state.consent
-        app.state.deciders.register(1, "ws-va")
-        future = await engine.hold("ws-va", "api.example", 443)
+        app.state.deciders.register(1, va["id"])
+        future = await engine.hold(va["id"], "api.example", 443)
         row = (
             await app.state.model.egress_consent.list_requests(
-                "ws-va", decision="pending"
+                va["id"], decision="pending"
             )
         )[0]
         # Bad decision token and bad duration both 400.
@@ -689,9 +692,9 @@ async def test_requests_limit_bounds_the_page(consent_client) -> None:
     async with httpx.AsyncClient(
         transport=transport, base_url="https://test"
     ) as http:
-        await create_workspace(http, "ws-lim", "static")
+        row = await create_workspace(http, "ws-lim", "static")
         for i in range(3):
-            await app.state.consent.hold("ws-lim", f"h{i}.example", 80)
+            await app.state.consent.hold(row["id"], f"h{i}.example", 80)
         reply = await http.get(
             "/api/v1/workspaces/ws-lim/egress/requests?limit=2",
             headers=auth(),

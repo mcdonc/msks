@@ -60,10 +60,83 @@ async def test_create_and_get_workspace(app_for) -> None:
     await app.state.model.create_all()
     row = await app.state.model.create_workspace(spec(initrd="/i"))
     assert row["id"] == "ws1"
+    assert row["name"] is None
     assert row["status"] == "created"
     assert row["initrd"] == "/i"
     fetched = await app.state.model.get_workspace("ws1")
     assert fetched["cpus"] == 2
+
+
+async def test_workspace_name_roundtrip_and_ref_resolution(app_for) -> None:
+    """The #246 split: the name rides the row, and a lookup by name
+    resolves the same row a lookup by id does — the id stays the
+    canonical key every other surface uses."""
+    app = app_for()
+    await app.state.model.create_all()
+    row = await app.state.model.create_workspace(spec("abc123"), name="ws")
+    assert (row["id"], row["name"]) == ("abc123", "ws")
+    by_id = await app.state.model.get_workspace("abc123")
+    by_name = await app.state.model.get_workspace("ws")
+    assert by_id == by_name
+    assert by_id["id"] == "abc123"
+
+
+async def test_workspace_names_are_unique(app_for) -> None:
+    """Two workspaces cannot share a label (#246): the second insert
+    answers the unique index's IntegrityError."""
+    from sqlalchemy.exc import IntegrityError
+
+    app = app_for()
+    await app.state.model.create_all()
+    await app.state.model.create_workspace(spec("one"), name="ws")
+    assert await app.state.model.name_taken("ws")
+    with pytest.raises(IntegrityError):
+        await app.state.model.create_workspace(spec("two"), name="ws")
+
+
+async def test_migration_backfills_names_from_ids(
+    tmp_path: Path, app_for
+) -> None:
+    """A database stamped before #246 upgrades in place: every row's
+    operator-chosen id becomes its name too, so the label the
+    operator typed keeps addressing the workspace and no path or
+    cache moves."""
+    app = app_for()
+    db_path = tmp_path / "t.db"
+    config = alembic_config(db_path)
+    command.upgrade(config, "0009")
+    engine = sa.create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as conn:
+            workspaces = sa.Table(
+                "workspaces", sa.MetaData(), autoload_with=conn
+            )
+            assert "name" not in workspaces.columns
+            conn.execute(
+                workspaces.insert().values(
+                    id="legacy",
+                    kernel="/k",
+                    initrd=None,
+                    rootfs="/r",
+                    cmdline="c",
+                    cpus=1,
+                    mem_mib=256,
+                    status="stopped",
+                    created_at=datetime(2026, 1, 1),
+                    updated_at=datetime(2026, 1, 1),
+                )
+            )
+    finally:
+        engine.dispose()
+    app.state.model.migrate()
+    row = await app.state.model.get_workspace("legacy")
+    assert (row["id"], row["name"]) == ("legacy", "legacy")
+    # The name column carries a unique index: a second row cannot
+    # take the same label.
+    from sqlalchemy.exc import IntegrityError
+
+    with pytest.raises(IntegrityError):
+        await app.state.model.create_workspace(spec("new"), name="legacy")
 
 
 async def test_create_and_fetch_minted_identity(app_for) -> None:
@@ -82,6 +155,8 @@ async def test_create_and_fetch_minted_identity(app_for) -> None:
     assert "ssh_privkey" not in row
     key = await app.state.model.get_ssh_key("ws1")
     assert key == {
+        "id": "ws1",  # the immutable id, for client caches (#246)
+        "name": None,
         "public_key": pub,
         "private_key": private_pem,
         "created_at": key["created_at"],  # the instance stamp (#245)
@@ -100,6 +175,8 @@ async def test_get_ssh_key_without_identity_and_absent(app_for) -> None:
     await app.state.model.create_workspace(spec())
     key = await app.state.model.get_ssh_key("ws1")
     assert key == {
+        "id": "ws1",
+        "name": None,
         "public_key": None,
         "private_key": None,
         "created_at": key["created_at"],

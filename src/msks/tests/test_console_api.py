@@ -82,7 +82,7 @@ def _make_workspace(client) -> str:
         headers=auth(),
     )
     assert response.status_code == 201
-    return "ws-c"
+    return response.json()["id"]  # the minted id (#246)
 
 
 def test_console_rejects_bad_token(console_api) -> None:
@@ -111,8 +111,8 @@ def test_console_unknown_workspace_closes(console_api) -> None:
 def test_console_seam_error_closes(console_api) -> None:
     api, app, stub = console_api
     with TestClient(api) as client:
-        _make_workspace(client)
-        stub.refusals.add("ws-c")
+        wid = _make_workspace(client)
+        stub.refusals.add(wid)
         with client.websocket_connect(
             f"/api/v1/workspaces/ws-c/console?token={TOKEN}"
         ) as s:
@@ -496,7 +496,7 @@ def _make_prelude_image(tmp_path, hash_name: str = "a" * 64) -> str:
 
 def _make_prelude_workspace(
     client, tmp_path, workspace_id: str = "ws-p"
-) -> None:
+) -> str:
     digest = _make_prelude_image(tmp_path)
     response = client.post(
         "/api/v1/workspaces",
@@ -505,12 +505,13 @@ def _make_prelude_workspace(
     )
     assert response.status_code == 201, response.text
     _ = digest
+    return response.json()["id"]  # the minted id (#246)
 
 
 def test_console_default_user_root_legacy(console_api, tmp_path) -> None:
     api, app, stub = console_api
     with TestClient(api) as client:
-        _make_workspace(client)
+        wid = _make_workspace(client)
         with client.websocket_connect(
             f"/api/v1/workspaces/ws-c/console?token={TOKEN}"
         ) as socket:
@@ -518,7 +519,7 @@ def test_console_default_user_root_legacy(console_api, tmp_path) -> None:
             got = b""
             while b"HELLO" not in got:
                 got += socket.receive_bytes()
-    assert stub.console_calls == [("ws-c", None, 0, 0, "xterm")]
+    assert stub.console_calls == [(wid, None, 0, 0, "xterm")]
 
 
 def test_console_unknown_user_closes_4400(console_api) -> None:
@@ -554,7 +555,7 @@ def test_console_prelude_image_passes_user_and_size(
     api, app, stub = console_api
     app.state.settings.vmm.state_dir = tmp_path
     with TestClient(api) as client:
-        _make_prelude_workspace(client, tmp_path)
+        wid = _make_prelude_workspace(client, tmp_path)
         with client.websocket_connect(
             f"/api/v1/workspaces/ws-p/console?token={TOKEN}&user=msks&rows=34&cols=120"
         ) as socket:
@@ -562,7 +563,7 @@ def test_console_prelude_image_passes_user_and_size(
             got = b""
             while b"HELLO" not in got:
                 got += socket.receive_bytes()
-    assert stub.console_calls == [("ws-p", "msks", 34, 120, "xterm")]
+    assert stub.console_calls == [(wid, "msks", 34, 120, "xterm")]
 
 
 def test_console_admits_the_workspaces_login_user(
@@ -583,6 +584,7 @@ def test_console_admits_the_workspaces_login_user(
             headers=auth(),
         )
         assert response.status_code == 201, response.text
+        wid = response.json()["id"]
         with client.websocket_connect(
             f"/api/v1/workspaces/ws-lu/console?token={TOKEN}&user=alice"
         ) as socket:
@@ -590,7 +592,7 @@ def test_console_admits_the_workspaces_login_user(
             got = b""
             while b"HELLO" not in got:
                 got += socket.receive_bytes()
-        assert stub.console_calls == [("ws-lu", "alice", 24, 80, "xterm")]
+        assert stub.console_calls == [(wid, "alice", 24, 80, "xterm")]
         stub.console_calls.clear()
         with client.websocket_connect(
             f"/api/v1/workspaces/ws-lu/console?token={TOKEN}&user=nobody"
@@ -620,7 +622,7 @@ def test_console_prelude_image_carries_term(console_api, tmp_path) -> None:
     api, app, stub = console_api
     app.state.settings.vmm.state_dir = tmp_path
     with TestClient(api) as client:
-        _make_prelude_workspace(client, tmp_path)
+        wid = _make_prelude_workspace(client, tmp_path)
         with client.websocket_connect(
             f"/api/v1/workspaces/ws-p/console?token={TOKEN}"
             f"&user=msks&term=tmux-256color"
@@ -629,7 +631,7 @@ def test_console_prelude_image_carries_term(console_api, tmp_path) -> None:
             got = b""
             while b"HELLO" not in got:
                 got += socket.receive_bytes()
-    assert stub.console_calls == [("ws-p", "msks", 24, 80, "tmux-256color")]
+    assert stub.console_calls == [(wid, "msks", 24, 80, "tmux-256color")]
 
 
 def test_console_unreadable_image_record_closes_4501(
@@ -686,7 +688,7 @@ def test_console_prelude_image_default_size(console_api, tmp_path) -> None:
     api, app, stub = console_api
     app.state.settings.vmm.state_dir = tmp_path
     with TestClient(api) as client:
-        _make_prelude_workspace(client, tmp_path)
+        wid = _make_prelude_workspace(client, tmp_path)
         with client.websocket_connect(
             f"/api/v1/workspaces/ws-p/console?token={TOKEN}&user=root"
         ) as socket:
@@ -694,4 +696,4 @@ def test_console_prelude_image_default_size(console_api, tmp_path) -> None:
             got = b""
             while b"X" not in got:
                 got += socket.receive_bytes()
-    assert stub.console_calls == [("ws-p", "root", 24, 80, "xterm")]
+    assert stub.console_calls == [(wid, "root", 24, 80, "xterm")]

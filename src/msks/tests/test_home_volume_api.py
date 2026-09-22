@@ -87,8 +87,8 @@ async def test_export_unknown_workspace_is_404(home_api) -> None:
 
 
 async def test_export_streams_the_volume_bytes(home_api) -> None:
-    await create_workspace(home_api, "ws-exp")
-    home = planted_volume(home_api, "ws-exp")
+    wid_ws_exp = await create_workspace(home_api, "ws-exp")
+    home = planted_volume(home_api, wid_ws_exp["id"])
     response = await home_api.http.get(
         "/api/v1/workspaces/ws-exp/home", headers=auth()
     )
@@ -97,7 +97,7 @@ async def test_export_streams_the_volume_bytes(home_api) -> None:
     assert response.headers["content-length"] == str(len(IMAGE))
     assert response.headers["content-type"] == "application/octet-stream"
     assert response.headers["content-disposition"] == (
-        'attachment; filename="ws-exp.ext4"'
+        f'attachment; filename="{wid_ws_exp["id"]}.ext4"'
     )
     # The stream is a read: the file keeps its contents.
     assert home.read_bytes() == IMAGE
@@ -122,11 +122,11 @@ async def test_move_refused_while_the_vm_is_attached(home_api) -> None:
     under a writing guest is a torn image, an import under a
     mounted device is lost work — and ``unknown`` (a VM the daemon
     could not probe) refuses with them (#80 review)."""
-    await create_workspace(home_api, "ws-live")
-    planted_volume(home_api, "ws-live")
+    wid_ws_live = await create_workspace(home_api, "ws-live")
+    planted_volume(home_api, wid_ws_live["id"])
     model = home_api.app.state.model
     for status in ("starting", "running", "paused", "unknown"):
-        await model.set_status("ws-live", status)
+        await model.set_status(wid_ws_live["id"], status)
         for method in ("GET", "PUT"):
             response = await home_api.http.request(
                 method,
@@ -136,10 +136,11 @@ async def test_move_refused_while_the_vm_is_attached(home_api) -> None:
             )
             assert response.status_code == 409, (status, method)
             assert (
-                f"workspace ws-live is {status}" in response.json()["detail"]
+                f"workspace {wid_ws_live['id']} is {status}"
+                in response.json()["detail"]
             )
     # Stopped again, the same pair answers 200.
-    await model.set_status("ws-live", "stopped")
+    await model.set_status(wid_ws_live["id"], "stopped")
     ok = await home_api.http.get(
         "/api/v1/workspaces/ws-live/home", headers=auth()
     )
@@ -147,8 +148,8 @@ async def test_move_refused_while_the_vm_is_attached(home_api) -> None:
 
 
 async def test_move_on_foreign_host_is_409(home_api) -> None:
-    await create_workspace(home_api, "ws-far")
-    planted_volume(home_api, "ws-far")
+    wid_ws_far = await create_workspace(home_api, "ws-far")
+    planted_volume(home_api, wid_ws_far["id"])
     home_api.app.state.settings.vmm.host_name = "elsewhere"
     for method in ("GET", "PUT"):
         response = await home_api.http.request(
@@ -162,22 +163,22 @@ async def test_move_on_foreign_host_is_409(home_api) -> None:
 
 
 async def test_import_replaces_the_volume(home_api) -> None:
-    await create_workspace(home_api, "ws-imp")
-    planted_volume(home_api, "ws-imp", b"old-volume" * 8)
+    wid_ws_imp = await create_workspace(home_api, "ws-imp")
+    planted_volume(home_api, wid_ws_imp["id"], b"old-volume" * 8)
     response = await home_api.http.put(
         "/api/v1/workspaces/ws-imp/home", content=IMAGE, headers=auth()
     )
     assert response.status_code == 200, response.text
-    assert response.json() == {"id": "ws-imp", "bytes": len(IMAGE)}
-    assert volume_path(home_api, "ws-imp").read_bytes() == IMAGE
+    assert response.json() == {"id": wid_ws_imp["id"], "bytes": len(IMAGE)}
+    assert volume_path(home_api, wid_ws_imp["id"]).read_bytes() == IMAGE
     # The scratch is swept: only the volume remains.
     state_dir = home_api.app.state.settings.vmm.state_dir
     assert not list((state_dir / "volumes").glob("*.tmp"))
 
 
 async def test_import_refuses_non_ext4_and_empty(home_api) -> None:
-    await create_workspace(home_api, "ws-bad")
-    home = planted_volume(home_api, "ws-bad", b"preexisting" * 64)
+    wid_ws_bad = await create_workspace(home_api, "ws-bad")
+    home = planted_volume(home_api, wid_ws_bad["id"], b"preexisting" * 64)
     garbage = await home_api.http.put(
         "/api/v1/workspaces/ws-bad/home",
         content=b"garbage" * 1000,
@@ -197,20 +198,20 @@ async def test_import_refuses_non_ext4_and_empty(home_api) -> None:
 async def test_import_into_missing_volume_path(home_api) -> None:
     """A workspace whose volume file never materialized (the seam
     stub creates none) gets one from the import alone."""
-    await create_workspace(home_api, "ws-heal")
+    wid_ws_heal = await create_workspace(home_api, "ws-heal")
     response = await home_api.http.put(
         "/api/v1/workspaces/ws-heal/home", content=IMAGE, headers=auth()
     )
     assert response.status_code == 200
-    assert volume_path(home_api, "ws-heal").read_bytes() == IMAGE
+    assert volume_path(home_api, wid_ws_heal["id"]).read_bytes() == IMAGE
 
 
 async def test_moves_publish_events(home_api) -> None:
     hub = home_api.api.state.hub
     queue = hub.subscribe()
     try:
-        await create_workspace(home_api, "ws-ev")
-        planted_volume(home_api, "ws-ev")
+        wid_ws_ev = await create_workspace(home_api, "ws-ev")
+        planted_volume(home_api, wid_ws_ev["id"])
         await home_api.http.get(
             "/api/v1/workspaces/ws-ev/home", headers=auth()
         )
@@ -222,11 +223,11 @@ async def test_moves_publish_events(home_api) -> None:
         hub.unsubscribe(queue)
     assert events[0] == {
         "event": "home.exported",
-        "data": {"id": "ws-ev", "bytes": len(IMAGE)},
+        "data": {"id": wid_ws_ev["id"], "bytes": len(IMAGE)},
     }
     assert events[1] == {
         "event": "home.imported",
-        "data": {"id": "ws-ev", "bytes": len(IMAGE)},
+        "data": {"id": wid_ws_ev["id"], "bytes": len(IMAGE)},
     }
 
 
@@ -263,8 +264,8 @@ async def raw_put(api, path: str, messages: list[dict]) -> list[dict]:
 async def test_upload_cut_off_mid_body_keeps_the_volume(home_api) -> None:
     """A client that dies mid-upload answers 400, not a traceback:
     the partial scratch is swept and the old volume survives."""
-    await create_workspace(home_api, "ws-cut")
-    home = planted_volume(home_api, "ws-cut", b"old-volume" * 8)
+    wid_ws_cut = await create_workspace(home_api, "ws-cut")
+    home = planted_volume(home_api, wid_ws_cut["id"], b"old-volume" * 8)
     sent = await raw_put(
         home_api.api,
         "/api/v1/workspaces/ws-cut/home",
@@ -285,10 +286,10 @@ async def test_client_layer_round_trips(
     """The dogfood pair through the client's own streaming helpers:
     export one workspace's volume into another (seeding), end to
     end over the same streaming endpoints."""
-    await create_workspace(home_api, "ws-a")
-    planted_volume(home_api, "ws-a")
-    await create_workspace(home_api, "ws-b")
-    planted_volume(home_api, "ws-b", b"blank" * 100)
+    wid_ws_a = await create_workspace(home_api, "ws-a")
+    planted_volume(home_api, wid_ws_a["id"])
+    wid_ws_b = await create_workspace(home_api, "ws-b")
+    planted_volume(home_api, wid_ws_b["id"], b"blank" * 100)
     monkeypatch.setenv("MSKSC_URL", "https://daemon")
     monkeypatch.setenv("MSKSC_TOKEN", TOKEN)
     url, token = cli.env_url(), cli.env_token()
@@ -302,7 +303,7 @@ async def test_client_layer_round_trips(
         url, token, "ws-b", str(image), home_api.transport
     )
     assert imported == len(IMAGE)
-    assert volume_path(home_api, "ws-b").read_bytes() == IMAGE
+    assert volume_path(home_api, wid_ws_b["id"]).read_bytes() == IMAGE
 
 
 async def test_client_export_error_is_one_line(home_api, monkeypatch) -> None:
@@ -366,9 +367,9 @@ async def test_a_boot_waits_out_a_held_move_lock(home_api) -> None:
     it. The boot holds off until the move finishes — the silent
     lost-writes outcome is unreachable — and the volume it boots is
     the one the move left behind."""
-    await create_workspace(home_api, "ws-boot")
-    planted_volume(home_api, "ws-boot", b"old" * 64)
-    lock = await home_volume_lock(home_api.app, "ws-boot")
+    wid_ws_boot = await create_workspace(home_api, "ws-boot")
+    planted_volume(home_api, wid_ws_boot["id"], b"old" * 64)
+    lock = await home_volume_lock(home_api.app, wid_ws_boot["id"])
     async with lock:
         boot = await delayed(
             home_api,
@@ -378,13 +379,13 @@ async def test_a_boot_waits_out_a_held_move_lock(home_api) -> None:
         )
         assert not boot.done()  # waiting on the move, not racing it
     assert (await boot).status_code == 200
-    assert volume_path(home_api, "ws-boot").read_bytes() == b"old" * 64
+    assert volume_path(home_api, wid_ws_boot["id"]).read_bytes() == b"old" * 64
 
 
 async def test_an_import_waits_for_the_lock(home_api) -> None:
-    await create_workspace(home_api, "ws-move")
-    planted_volume(home_api, "ws-move", b"old" * 64)
-    lock = await home_volume_lock(home_api.app, "ws-move")
+    wid_ws_move = await create_workspace(home_api, "ws-move")
+    planted_volume(home_api, wid_ws_move["id"], b"old" * 64)
+    lock = await home_volume_lock(home_api.app, wid_ws_move["id"])
     async with lock:
         move = await delayed(
             home_api,
@@ -396,13 +397,13 @@ async def test_an_import_waits_for_the_lock(home_api) -> None:
         )
         assert not move.done()
     assert (await move).status_code == 200
-    assert volume_path(home_api, "ws-move").read_bytes() == IMAGE
+    assert volume_path(home_api, wid_ws_move["id"]).read_bytes() == IMAGE
 
 
 async def test_the_export_holds_the_lock_through_the_stream(home_api) -> None:
-    await create_workspace(home_api, "ws-str")
-    planted_volume(home_api, "ws-str")
-    lock = await home_volume_lock(home_api.app, "ws-str")
+    wid_ws_str = await create_workspace(home_api, "ws-str")
+    planted_volume(home_api, wid_ws_str["id"])
+    lock = await home_volume_lock(home_api.app, wid_ws_str["id"])
     async with lock:
         export = await delayed(
             home_api,
@@ -423,10 +424,10 @@ async def test_both_moves_recheck_the_row_under_the_lock(home_api) -> None:
     """What the world did while a move waited on the lock decides
     its answer: a booted workspace refuses, a deleted row 404s, and
     a vanished volume file names the gap."""
-    await create_workspace(home_api, "ws-rx")
-    planted_volume(home_api, "ws-rx")
+    wid_ws_rx = await create_workspace(home_api, "ws-rx")
+    planted_volume(home_api, wid_ws_rx["id"])
     model = home_api.app.state.model
-    lock = await home_volume_lock(home_api.app, "ws-rx")
+    lock = await home_volume_lock(home_api.app, wid_ws_rx["id"])
     for method, body in (
         ("GET", None),
         ("PUT", IMAGE),
@@ -441,24 +442,26 @@ async def test_both_moves_recheck_the_row_under_the_lock(home_api) -> None:
                     headers=auth(),
                 ),
             )
-            await model.set_status("ws-rx", "running")
+            await model.set_status(wid_ws_rx["id"], "running")
         assert (await task).status_code == 409
-        await model.set_status("ws-rx", "stopped")
+        await model.set_status(wid_ws_rx["id"], "stopped")
     async with lock:
         task = await delayed(
             home_api,
             home_api.http.get("/api/v1/workspaces/ws-rx/home", headers=auth()),
         )
-        await model.delete_workspace("ws-rx")
+        await model.delete_workspace(wid_ws_rx["id"])
     assert (await task).status_code == 404
     # A vanished volume file, deleted while the export waited.
-    await create_workspace(home_api, "ws-rx")
+    wid_ws_rx = await create_workspace(home_api, "ws-rx")
+    planted_volume(home_api, wid_ws_rx["id"])
+    lock = await home_volume_lock(home_api.app, wid_ws_rx["id"])
     async with lock:
         task = await delayed(
             home_api,
             home_api.http.get("/api/v1/workspaces/ws-rx/home", headers=auth()),
         )
-        volume_path(home_api, "ws-rx").unlink()
+        volume_path(home_api, wid_ws_rx["id"]).unlink()
     response = await task
     assert response.status_code == 404
     assert "missing or unreadable" in response.json()["detail"]
@@ -467,10 +470,10 @@ async def test_both_moves_recheck_the_row_under_the_lock(home_api) -> None:
 async def test_import_rechecks_the_row_under_the_lock(home_api) -> None:
     """The import's re-read: a row that vanished while the upload
     waited on the lock answers 404 without touching the disks."""
-    await create_workspace(home_api, "ws-iv")
-    planted_volume(home_api, "ws-iv")
+    wid_ws_iv = await create_workspace(home_api, "ws-iv")
+    planted_volume(home_api, wid_ws_iv["id"])
     model = home_api.app.state.model
-    lock = await home_volume_lock(home_api.app, "ws-iv")
+    lock = await home_volume_lock(home_api.app, wid_ws_iv["id"])
     async with lock:
         task = await delayed(
             home_api,
@@ -478,7 +481,7 @@ async def test_import_rechecks_the_row_under_the_lock(home_api) -> None:
                 "/api/v1/workspaces/ws-iv/home", content=IMAGE, headers=auth()
             ),
         )
-        await model.delete_workspace("ws-iv")
+        await model.delete_workspace(wid_ws_iv["id"])
     assert (await task).status_code == 404
 
 
@@ -492,12 +495,12 @@ async def test_waiters_answer_a_named_409_past_the_bound(
     """A stalled reader can hold an export's lock as long as its
     connection lives; a boot or move that waits past
     move_wait_timeout_s answers a named 409 instead of hanging."""
-    await create_workspace(home_api, "ws-bound")
-    planted_volume(home_api, "ws-bound")
+    wid_ws_bound = await create_workspace(home_api, "ws-bound")
+    planted_volume(home_api, wid_ws_bound["id"])
     monkeypatch.setattr(
         home_api.app.state.settings.vmm, "move_wait_timeout_s", 0.05
     )
-    lock = await home_volume_lock(home_api.app, "ws-bound")
+    lock = await home_volume_lock(home_api.app, wid_ws_bound["id"])
     async with lock:
         waiters = [
             asyncio.create_task(call)
@@ -525,9 +528,9 @@ async def test_the_live_seam_refuses_where_the_row_lies(home_api) -> None:
     """A watcher scan that probed a launch's spawn window can leave
     a live VM's row at ``stopped`` for one poll interval; the seam
     re-check under the lock refuses where the row would pass."""
-    await create_workspace(home_api, "ws-seam")
-    planted_volume(home_api, "ws-seam")
-    home_api.stub.statuses["ws-seam"] = VmStatus.RUNNING
+    wid_ws_seam = await create_workspace(home_api, "ws-seam")
+    planted_volume(home_api, wid_ws_seam["id"])
+    home_api.stub.statuses[wid_ws_seam["id"]] = VmStatus.RUNNING
     for method, body in (("GET", None), ("PUT", IMAGE)):
         response = await home_api.http.request(
             method,
@@ -538,7 +541,7 @@ async def test_the_live_seam_refuses_where_the_row_lies(home_api) -> None:
         assert response.status_code == 409
         assert "VMM reports running" in response.json()["detail"]
     # The refused import installed nothing.
-    assert volume_path(home_api, "ws-seam").read_bytes() == IMAGE
+    assert volume_path(home_api, wid_ws_seam["id"]).read_bytes() == IMAGE
 
 
 async def test_holding_response_tears_down_on_send_failure() -> None:
@@ -595,9 +598,9 @@ async def test_a_delete_waits_out_a_held_move_lock(home_api) -> None:
     """Delete holds the move lock too: an import racing a delete
     cannot resurrect the volume under a deleted row — the pair is
     ordered, and the loser sees the row gone."""
-    await create_workspace(home_api, "ws-del")
-    planted_volume(home_api, "ws-del")
-    lock = await home_volume_lock(home_api.app, "ws-del")
+    wid_ws_del = await create_workspace(home_api, "ws-del")
+    planted_volume(home_api, wid_ws_del["id"])
+    lock = await home_volume_lock(home_api.app, wid_ws_del["id"])
     async with lock:
         gone = await delayed(
             home_api,
@@ -605,7 +608,7 @@ async def test_a_delete_waits_out_a_held_move_lock(home_api) -> None:
         )
         assert not gone.done()
     assert (await gone).status_code == 200
-    assert ("cleanup", "ws-del") in home_api.stub.calls
+    assert ("cleanup", wid_ws_del["id"]) in home_api.stub.calls
     later = await home_api.http.put(
         "/api/v1/workspaces/ws-del/home", content=IMAGE, headers=auth()
     )

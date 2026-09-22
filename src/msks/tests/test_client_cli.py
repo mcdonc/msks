@@ -28,12 +28,19 @@ from test_api import TOKEN, StubMicrovm
 
 ROWS = [
     {
-        "id": "alpha",
+        "id": "1a" * 16,
+        "name": "alpha",
         "status": "running",
         "image_hash": "a" * 64,
         "host": "hv1",
     },
-    {"id": "beta", "status": "created", "image_hash": None, "host": None},
+    {
+        "id": "2b" * 16,
+        "name": "beta",
+        "status": "created",
+        "image_hash": None,
+        "host": None,
+    },
 ]
 
 
@@ -157,6 +164,48 @@ def test_cmd_ls_formats_rows(
     assert "alpha" in out and "running" in out and "hv1" in out
     assert "a" * 12 in out  # the image hash is shortened to 12 chars
     assert "beta" in out and "created" in out and "-" in out
+    # The #246 columns: the label beside the immutable id, which
+    # addresses the workspace as surely as the name does.
+    assert cli.format_workspace(ROWS[0]) == (
+        f"{ROWS[0]['name']:<20} {ROWS[0]['id']:<32} "
+        f"running   {'a' * 12:<13} hv1"
+    )
+
+
+def test_display_name_prefers_the_label() -> None:
+    """#246: the human-facing label is the name, falling back to the
+    id for a nameless workspace."""
+    assert cli.display_name({"id": "x1", "name": "ws"}) == "ws"
+    assert cli.display_name({"id": "x1", "name": None}) == "x1"
+
+
+def test_created_line_names_the_label_and_the_id() -> None:
+    """#246: the create confirmation carries both halves of the
+    workspace's identity."""
+    row = {"id": "1a2b3c4d5e6f7890", "name": "ws"}
+    assert cli.created_line(row) == "created ws (id 1a2b3c4d5e6f7890)"
+    nameless = {"id": "1a2b3c4d5e6f7890", "name": None}
+    assert cli.created_line(nameless) == "created 1a2b3c4d5e6f7890"
+    legacy = {"id": "ws", "name": "ws"}
+    assert cli.created_line(legacy) == "created ws"
+
+
+def test_narrowed_matches_the_name_or_the_id() -> None:
+    """#246: the storage table narrows by either reference."""
+    rows = [{"id": "1a2b", "name": "ws"}]
+    assert cli.narrowed(rows, "ws") == rows
+    assert cli.narrowed(rows, "1a2b") == rows
+    assert cli.narrowed(rows, "other") == []
+    assert cli.narrowed(rows, None) == rows
+
+
+def test_resolved_workspace_id_names_a_missing_ref() -> None:
+    """#246: the secret commands resolve their workspace ref through
+    the listing; a ref nothing answers exits naming it."""
+    rows = [{"id": "1a2b", "name": "ws"}]
+    assert cli.resolved_workspace_id(rows, "ws") == "1a2b"
+    with pytest.raises(SystemExit, match="no such workspace: ghost"):
+        cli.resolved_workspace_id(rows, "ghost")
 
 
 OLD_IMAGE = "/nix/store/oldaaaa-msks-appliance"
@@ -987,7 +1036,7 @@ def test_main_create_dispatch(
     )
     assert rc == 0
     assert seen["body"] == {
-        "id": "ws1",
+        "name": "ws1",
         "image": "debian:13",
         "cpus": 4,
         "user": "alice",
@@ -1063,7 +1112,7 @@ async def test_api_call_creates_and_lists_workspaces(api_transport) -> None:
         json_body={"id": "cli-a", "kernel": "/k", "rootfs": "/r"},
         transport=api_transport,
     )
-    assert row["id"] == "cli-a"
+    assert row["name"] == "cli-a"
     assert row["status"] == "created"
     rows = await rest.api_call(
         "GET",
@@ -1072,7 +1121,8 @@ async def test_api_call_creates_and_lists_workspaces(api_transport) -> None:
         "/api/v1/workspaces",
         transport=api_transport,
     )
-    assert [item["id"] for item in rows] == ["cli-a"]
+    assert [item["name"] for item in rows] == ["cli-a"]
+    assert [item["id"] for item in rows] == [row["id"]]
 
 
 async def test_api_call_maps_bad_token(api_transport) -> None:
@@ -1090,7 +1140,7 @@ async def test_api_call_stops_and_deletes_a_workspace(api_transport) -> None:
     """The ls/stop/rm endpoints through the client's own plumbing,
     against the real daemon surface with the seam stubbed."""
     transport = api_transport
-    await rest.api_call(
+    created = await rest.api_call(
         "POST",
         "https://test",
         TOKEN,
@@ -1098,6 +1148,7 @@ async def test_api_call_stops_and_deletes_a_workspace(api_transport) -> None:
         json_body={"id": "cli-l", "kernel": "/k", "rootfs": "/r"},
         transport=transport,
     )
+    wid = created["id"]
     await rest.api_call(
         "POST",
         "https://test",
@@ -1112,7 +1163,7 @@ async def test_api_call_stops_and_deletes_a_workspace(api_transport) -> None:
         "/api/v1/workspaces/cli-l/stop",
         transport=transport,
     )
-    assert stopped == {"id": "cli-l", "status": "stopped"}
+    assert stopped == {"id": wid, "status": "stopped"}
     rows = await rest.api_call(
         "GET", "https://test", TOKEN, "/api/v1/workspaces", transport=transport
     )
@@ -1124,7 +1175,7 @@ async def test_api_call_stops_and_deletes_a_workspace(api_transport) -> None:
         "/api/v1/workspaces/cli-l",
         transport=transport,
     )
-    assert deleted == {"deleted": "cli-l"}
+    assert deleted == {"deleted": wid}
     with pytest.raises(SystemExit, match="404: no such workspace"):
         await rest.api_call(
             "GET",
@@ -1162,9 +1213,10 @@ async def test_api_call_rm_deletes_a_running_workspace(api_transport) -> None:
         "/api/v1/workspaces/cli-r",
         transport=transport,
     )
-    assert deleted == {"deleted": "cli-r"}
-    assert stub.calls.index(("shutdown", "cli-r")) < stub.calls.index(
-        ("cleanup", "cli-r")
+    wid = deleted["deleted"]
+    assert len(wid) == 32  # the minted id (#246)
+    assert stub.calls.index(("shutdown", wid)) < stub.calls.index(
+        ("cleanup", wid)
     )
 
 
@@ -1791,7 +1843,11 @@ def test_create_user_data_reads_the_file(
         transport=mock(handler),
     )
     assert rc == 0
-    assert seen["body"] == {"id": "ws1", "user_data": payload, "user": "alice"}
+    assert seen["body"] == {
+        "name": "ws1",
+        "user_data": payload,
+        "user": "alice",
+    }
     assert "created ws1" in capsys.readouterr().out
 
 
@@ -2849,6 +2905,18 @@ def secret_rows() -> list[dict]:
     ]
 
 
+def workspace_rows() -> list[dict]:
+    """The listing the secret commands resolve the workspace ref
+    against (#246)."""
+    return [
+        {
+            "id": "ws-sec",
+            "name": "ws-sec",
+            "status": "created",
+        }
+    ]
+
+
 def test_cmd_secret_mint_posts_and_prints_the_sentinel_once(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -3005,6 +3073,8 @@ def test_cmd_secret_revoke_and_renew_resolve_the_label(
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append((request.method, request.url.path))
+        if request.url.path == "/api/v1/workspaces":
+            return httpx.Response(200, json=workspace_rows())
         if request.method == "DELETE":
             return httpx.Response(
                 200, json={"revoked": 3, "store_cleaned": True}
@@ -3047,6 +3117,8 @@ def test_cmd_secret_revoke_reports_a_leftover_value(
     client_env(monkeypatch)
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/workspaces":
+            return httpx.Response(200, json=workspace_rows())
         if request.method == "DELETE":
             return httpx.Response(
                 200, json={"revoked": 3, "store_cleaned": False}
@@ -3097,6 +3169,8 @@ def test_cmd_secret_revoke_names_a_missing_label(
     client_env(monkeypatch)
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/workspaces":
+            return httpx.Response(200, json=workspace_rows())
         # A listing that neither starts with nor holds the match: the
         # scan walks every row before naming the absence.
         other = {**secret_rows()[0], "workspace_id": "ws-other"}
