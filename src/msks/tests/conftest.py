@@ -24,7 +24,7 @@ for _name, _value in guestassets.smoke_env_defaults(
 
 
 @pytest.fixture(autouse=True)
-def msksc_client_dirs(monkeypatch: pytest.MonkeyPatch) -> None:
+def devenv_shell_presets(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep the devenv shell's presets out of the suite.
 
     The shell presets MSKSC_CACHE_DIR and MSKSC_DATA_DIR at the
