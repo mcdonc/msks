@@ -31,6 +31,9 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlparse
+
+import httpx
 
 #: The cache file that carries an entry's import time (#186): one
 #: ISO-8601 line, rewritten by every import (a re-import refreshes
@@ -90,6 +93,110 @@ class ImageRecord:
 
 def images_dir(state_dir: Path) -> Path:
     return state_dir / "images"
+
+
+def is_url(source: str) -> bool:
+    """Whether an import source is a URL rather than a host path
+    (#258). A scheme separator is the marker: workspace paths never
+    carry one."""
+    return "://" in source
+
+
+def stream_to(response, dest: Path, max_bytes: int, url: str) -> int:
+    """Write the open response's body to ``dest``, enforcing the
+    ceiling while it streams; returns the byte count. A failure at
+    any point removes the partial file — the caller never sees a
+    half-written staging name."""
+    try:
+        size = 0
+        with dest.open("wb") as sink:
+            for chunk in response.iter_bytes(1 << 20):
+                size += len(chunk)
+                if size > max_bytes:
+                    raise ImageError(
+                        f"image download passed the {max_bytes}-byte "
+                        f"ceiling: {url}"
+                    )
+                sink.write(chunk)
+        if size == 0:
+            raise ImageError(f"image download is empty: {url}")
+        return size
+    except BaseException:
+        with contextlib.suppress(OSError):
+            dest.unlink(missing_ok=True)
+        raise
+
+
+def require_https(url: str) -> None:
+    """Refuse a source whose scheme is not https, by name."""
+    scheme = urlparse(url).scheme
+    if scheme == "https":
+        return
+    named = scheme or "no scheme"
+    raise ImageError(f"image source must be https://, got {named}: {url}")
+
+
+def check_response(response, url: str, max_bytes: int) -> None:
+    """Refuse, by name, a download that is not a plain https 200 —
+    a bad status, a redirect chain that left https behind, or a
+    declared length over the ceiling (checked before a byte of the
+    body is read)."""
+    if response.status_code != 200:
+        code = response.status_code
+        raise ImageError(f"image download answered {code}: {url}")
+    if str(response.url).startswith("http://"):
+        raise ImageError(f"image download redirected away from https: {url}")
+    declared = 0
+    with contextlib.suppress(ValueError):
+        declared = int(response.headers.get("content-length") or 0)
+    if declared > max_bytes:
+        raise ImageError(
+            f"image download declares {declared} bytes, over the "
+            f"{max_bytes}-byte ceiling: {url}"
+        )
+
+
+def fetch_archive(
+    url: str,
+    state_dir: Path,
+    *,
+    timeout_s: float,
+    max_bytes: int,
+    transport=None,
+) -> Path:
+    """Download an ``https://`` image archive into the catalog's
+    staging area (#258).
+
+    Returns the staged copy's path — dot-prefixed, so a crash's
+    leftovers are swept at the next startup — for the caller to
+    import and unlink. The download verifies TLS against the
+    system roots and refuses, by name: non-https schemes (a
+    redirect downgrade included), non-200 statuses, empty bodies,
+    and bodies over ``max_bytes``.
+    """
+    require_https(url)
+    root = images_dir(state_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    dest = root / f".dl-{os.getpid()}-{uuid.uuid4().hex[:8]}.tar"
+    try:
+        with httpx.Client(
+            verify=True,
+            follow_redirects=True,
+            timeout=timeout_s,
+            transport=transport,
+        ) as client:
+            with client.stream("GET", url) as response:
+                check_response(response, url, max_bytes)
+                stream_to(response, dest, max_bytes, url)
+        return dest
+    except httpx.HTTPError as exc:
+        raise ImageError(f"image download failed: {exc}") from exc
+    except OSError as exc:
+        raise ImageError(f"cannot write {dest}: {exc}") from exc
+    finally:
+        if not dest.is_file():
+            with contextlib.suppress(OSError):
+                dest.unlink(missing_ok=True)
 
 
 def hash_file(path: Path) -> str:

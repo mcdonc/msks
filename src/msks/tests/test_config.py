@@ -443,6 +443,13 @@ KEY_CASES = [
     ("conntrack_tool", "/ct", "net.conntrack_tool", "/ct"),
     ("audit_hmac_key", "k1", "server.audit_hmac_key", "k1"),
     ("ssh_key_type", "ed25519", "vmm.ssh_key_type", "ed25519"),
+    ("image_import_max_mib", 4096, "vmm.image_import_max_mib", 4096),
+    (
+        "image_import_timeout_s",
+        60.0,
+        "vmm.image_import_timeout_s",
+        60.0,
+    ),
     (
         "secret_store_provider",
         "file",

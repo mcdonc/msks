@@ -1276,3 +1276,250 @@ def minimal_manifest() -> dict:
         "cmdline": "console=ttyS0 root=/dev/vda rw",
         "vsock_shell_port": 1023,
     }
+
+
+# --- URL fetch (#258) --------------------------------------------------
+
+
+import httpx  # noqa: E402
+from msks.imagestore import fetch_archive, is_url  # noqa: E402
+
+
+def test_is_url_separates_paths_from_urls() -> None:
+    assert is_url("https://example.com/img.tar")
+    assert not is_url("/srv/images/img.tar")
+    assert not is_url("relative.tar")
+
+
+def serving(
+    body: bytes = b"archive-bytes",
+    status: int = 200,
+    headers: dict | None = None,
+):
+    """A transport serving one canned response."""
+    return httpx.MockTransport(
+        lambda request: httpx.Response(status, content=body, headers=headers)
+    )
+
+
+def redirecting(to: str):
+    """A transport that redirects the https request once, then
+    serves the redirected request plainly."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.scheme == "https":
+            return httpx.Response(302, headers={"location": to})
+        return httpx.Response(200, content=b"payload")
+
+    return httpx.MockTransport(handler)
+
+
+def test_fetch_archive_downloads_to_staging(tmp_path: Path) -> None:
+    staged = fetch_archive(
+        "https://images.example.com/ws.tar",
+        tmp_path,
+        timeout_s=5.0,
+        max_bytes=1 << 20,
+        transport=serving(b"payload"),
+    )
+    assert staged.parent == imagestore.images_dir(tmp_path)
+    assert staged.name.startswith(".dl-")  # crash-debris, swept at start
+    assert staged.read_bytes() == b"payload"
+
+
+def test_fetch_archive_refuses_non_https(tmp_path: Path) -> None:
+    with pytest.raises(ImageError, match="must be https"):
+        fetch_archive(
+            "http://images.example.com/ws.tar",
+            tmp_path,
+            timeout_s=5.0,
+            max_bytes=1 << 20,
+            transport=serving(),
+        )
+
+
+def test_fetch_archive_refuses_redirect_downgrade(tmp_path: Path) -> None:
+    """An https source that redirects to plain http is refused by
+    name — the redirect must not silently drop the TLS posture."""
+    with pytest.raises(ImageError, match="redirected away from https"):
+        fetch_archive(
+            "https://images.example.com/ws.tar",
+            tmp_path,
+            timeout_s=5.0,
+            max_bytes=1 << 20,
+            transport=redirecting("http://mirror.example.com/ws.tar"),
+        )
+
+
+def test_fetch_archive_names_a_bad_status(tmp_path: Path) -> None:
+    with pytest.raises(ImageError, match="answered 404"):
+        fetch_archive(
+            "https://images.example.com/gone.tar",
+            tmp_path,
+            timeout_s=5.0,
+            max_bytes=1 << 20,
+            transport=serving(status=404),
+        )
+
+
+def test_fetch_archive_honors_declared_ceiling(tmp_path: Path) -> None:
+    """A Content-Length over the ceiling refuses before the body
+    is read."""
+    with pytest.raises(ImageError, match="declares"):
+        fetch_archive(
+            "https://images.example.com/big.tar",
+            tmp_path,
+            timeout_s=5.0,
+            max_bytes=8,
+            transport=serving(b"x" * 16, headers={"content-length": "16"}),
+        )
+
+
+def test_fetch_archive_enforces_ceiling_while_streaming(
+    tmp_path: Path,
+) -> None:
+    """A server that understates its length is cut off mid-stream;
+    the partial file does not survive."""
+    lying = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200, content=b"x" * 64, headers={"content-length": "1"}
+        )
+    )
+    with pytest.raises(ImageError, match="ceiling"):
+        fetch_archive(
+            "https://images.example.com/big.tar",
+            tmp_path,
+            timeout_s=5.0,
+            max_bytes=8,
+            transport=lying,
+        )
+    assert not list(imagestore.images_dir(tmp_path).glob(".dl-*"))
+
+
+def test_fetch_archive_refuses_empty_body(tmp_path: Path) -> None:
+    with pytest.raises(ImageError, match="empty"):
+        fetch_archive(
+            "https://images.example.com/void.tar",
+            tmp_path,
+            timeout_s=5.0,
+            max_bytes=1 << 20,
+            transport=serving(b""),
+        )
+
+
+def test_fetch_archive_names_transport_failures(tmp_path: Path) -> None:
+    def refused(request):
+        raise httpx.ConnectError("connection refused", request=request)
+
+    with pytest.raises(ImageError, match="image download failed"):
+        fetch_archive(
+            "https://images.example.com/ws.tar",
+            tmp_path,
+            timeout_s=5.0,
+            max_bytes=1 << 20,
+            transport=httpx.MockTransport(refused),
+        )
+
+
+def test_fetch_archive_names_write_failures(tmp_path: Path) -> None:
+    """A staging area that cannot be written fails with the path
+    named, not a traceback."""
+    import os
+
+    root = imagestore.images_dir(tmp_path)
+    root.mkdir(parents=True)
+    os.chmod(root, 0o500)
+    try:
+        with pytest.raises(ImageError, match="cannot write"):
+            fetch_archive(
+                "https://images.example.com/ws.tar",
+                tmp_path,
+                timeout_s=5.0,
+                max_bytes=1 << 20,
+                transport=serving(b"payload"),
+            )
+    finally:
+        os.chmod(root, 0o700)
+
+
+# --- URL import through the API (#258) ---------------------------------
+
+
+def test_api_import_from_url_stages_and_unlinks(tmp_path: Path) -> None:
+    """A URL source: the daemon stages the download privately,
+    imports from the staged copy (the hash keys the fetched bytes),
+    and unlinks the staging file."""
+    archive = tmp_path / "ws.tar"
+    build_containerdisk(archive)
+    staged_names: list[str] = []
+
+    def fake_fetch(url, state_dir, *, timeout_s, max_bytes, transport=None):
+        dest = (
+            imagestore.images_dir(state_dir)
+            / f".dl-test-{len(staged_names)}.tar"
+        )
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(archive, dest)
+        staged_names.append(dest.name)
+        return dest
+
+    settings = Settings(
+        vmm=VmmSettings(state_dir=tmp_path / "vms"),
+        net=NetSettings(enabled=False),
+        server=ServerSettings(
+            db_path=tmp_path / "api.db", bootstrap_token=TOKEN
+        ),
+    )
+    app = build_app(settings)
+    app.state.microvm = StubMicrovm()
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(imagestore, "fetch_archive", fake_fetch)
+    try:
+        with TestClient(build_api(app)) as client:
+            made = client.post(
+                "/api/v1/images",
+                json={"source": "https://images.example.com/ws.tar"},
+                headers=auth(),
+            )
+            assert made.status_code == 201, made.text
+            body = made.json()
+            assert body["ref"] == "debian:13.6"
+            # The staged copy is gone; the catalog carries the image.
+            assert not list(
+                imagestore.images_dir(tmp_path / "vms").glob(".dl-*")
+            )
+            assert resolve(body["hash"], tmp_path / "vms") is not None
+    finally:
+        monkey.undo()
+
+
+def test_api_import_from_url_names_fetch_failures(
+    tmp_path: Path,
+) -> None:
+    """A fetch that fails answers 400 with the named cause."""
+
+    def fake_fetch(url, state_dir, *, timeout_s, max_bytes, transport=None):
+        raise ImageError("image download answered 404: gone")
+
+    settings = Settings(
+        vmm=VmmSettings(state_dir=tmp_path / "vms"),
+        net=NetSettings(enabled=False),
+        server=ServerSettings(
+            db_path=tmp_path / "api.db", bootstrap_token=TOKEN
+        ),
+    )
+    app = build_app(settings)
+    app.state.microvm = StubMicrovm()
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(imagestore, "fetch_archive", fake_fetch)
+    try:
+        with TestClient(build_api(app)) as client:
+            made = client.post(
+                "/api/v1/images",
+                json={"source": "https://images.example.com/gone.tar"},
+                headers=auth(),
+            )
+            assert made.status_code == 400
+            assert "answered 404" in made.json()["detail"]
+    finally:
+        monkey.undo()

@@ -258,3 +258,25 @@ def test_consent_settings_name_bad_values() -> None:
         Settings.from_env({"MSKSD_EGRESS_MODE": "sloppy"})
     with pytest.raises(ValueError, match="MSKSD_EGRESS_CONSENT_TIMEOUT_S"):
         Settings.from_env({"MSKSD_EGRESS_CONSENT_TIMEOUT_S": "0"})
+
+
+def test_image_import_settings_default_and_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The URL-import ceiling and deadline (#258): defaults hold,
+    env overrides land, and non-positive values are named errors."""
+    defaults = Settings.from_env()
+    assert defaults.vmm.image_import_max_mib == 8192
+    assert defaults.vmm.image_import_timeout_s == 600.0
+    monkeypatch.setenv("MSKSD_IMAGE_IMPORT_MAX_MIB", "2048")
+    monkeypatch.setenv("MSKSD_IMAGE_IMPORT_TIMEOUT_S", "30")
+    settings = Settings.from_env()
+    assert settings.vmm.image_import_max_mib == 2048
+    assert settings.vmm.image_import_timeout_s == 30.0
+    monkeypatch.setenv("MSKSD_IMAGE_IMPORT_MAX_MIB", "0")
+    with pytest.raises(ValueError, match="MSKSD_IMAGE_IMPORT_MAX_MIB"):
+        Settings.from_env()
+    monkeypatch.setenv("MSKSD_IMAGE_IMPORT_MAX_MIB", "2048")
+    monkeypatch.setenv("MSKSD_IMAGE_IMPORT_TIMEOUT_S", "-1")
+    with pytest.raises(ValueError, match="MSKSD_IMAGE_IMPORT_TIMEOUT_S"):
+        Settings.from_env()

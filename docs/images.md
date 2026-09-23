@@ -3,8 +3,9 @@
 A workspace image is one file: a **container-image tar** — the layout
 `podman load` and `skopeo` already understand — carrying a kernel, an
 initrd, a rootfs disk, and a manifest that describes all three. This
-chapter covers the image contract, how to build one, how to register
-it with a running daemon, and how workspaces select an image.
+chapter covers the image contract, how to build one, how to check
+one, how to register it with a running daemon, and how workspaces
+select an image.
 
 msksd boots the kernel directly and attaches the rootfs as a virtio
 disk. Nothing ever runs the image as a container; the container-image
@@ -276,6 +277,50 @@ podman save -o workspace-mine-1.0.tar workspace-mine:1.0
 both compressed and uncompressed layers (uncompressed layers keep
 import and in-place inspection cheaper).
 
+## Checking an image
+
+The daemon verifies layout and manifest at import, but a tar that
+parses can still carry a guest that does not boot — the layout is
+the only thing the daemon can see. `msks image check <archive>` (#258)
+is the gate an image author runs before publishing: it boots the
+archive exactly the way a workspace boots (same driver, overlay,
+home volume, seed disk, and console path — against a throwaway
+state dir under `/tmp`) and reports each contract point by name:
+
+```text
+$ msks image check workspace-mine-1.0.tar
+PASS archive        imported mine:1.0 (1d6a5e782fc0), prelude-v1 handshake as 'root'
+PASS boot           guest answered the console in 3.4s (kernel 6.12.107+deb13-amd64)
+PASS console        prelude-v1 handshake as 'root'
+PASS user-data      seed payload ran on first boot
+PASS acpi-shutdown  clean shutdown within 120s
+PASS root-rw        root is writable and the write survived a stop/start (overlay)
+PASS home-label     /home mounted by label msks-home and its write survived a stop/start (volume)
+```
+
+Any host with `/dev/kvm` runs it — nothing else from msks is
+needed (no daemon, no state). The points map one-to-one onto "What
+a guest must provide" above: the archive layout and manifest, a
+guest that answers the vsock console under the protocol the
+manifest declares, a root that accepts writes through the overlay,
+`/home` mounted by its label (both surviving a stop/start cycle),
+the seed payload running on first boot (checked when the manifest
+declares a provisioner; a provisioner-less image reports the point
+skipped with that reason), and the ACPI power button producing a
+clean shutdown. A broken point fails its row, the exit code is 1,
+and the summary names the first failure; `--keep` preserves the
+throwaway state dir (serial logs included) for inspection.
+
+`--egress` adds the networking point — the guest must take a
+global address over DHCP when the checker boots it with a NIC
+through the daemon's own net stack. That leg needs root (taps,
+nftables, the DHCP and DNS listeners on their privileged ports)
+and an egress-capable default route (`--uplink` names another
+interface); the checker sets `net.ipv4.ip_forward` to 1 for the
+pass and restores what it found. The no-NIC half of the posture is
+the core pass itself: it boots without a NIC and requires a usable
+login.
+
 ## Registering an image
 
 Import makes the daemon unpack the boot files once into a per-hash
@@ -291,9 +336,22 @@ curl -X POST https://192.168.77.2:8660/api/v1/images \
   -d '{"source": "/path/on/the/daemon/workspace-mine-1.0.tar"}'
 ```
 
-The `source` path is a path on the **daemon's** filesystem (the
-daemon reads them from its state dir). The daemon
-copies it privately and hashes that copy, so a source file changing
+The `source` is a path on the **daemon's** filesystem (the daemon
+reads them from its state dir), or — #258 — an `https://` URL the
+daemon downloads itself:
+
+```bash
+msks image import https://images.example.com/workspace-mine-1.0.tar
+curl -X POST .../api/v1/images -d '{"source": "https://images.example.com/workspace-mine-1.0.tar"}'
+```
+
+A URL download lands in the catalog's staging area under a size
+ceiling and a deadline (`MSKSD_IMAGE_IMPORT_MAX_MIB`,
+`MSKSD_IMAGE_IMPORT_TIMEOUT_S`; see `docs/config.md`), verifies
+TLS against the system roots, refuses a redirect that leaves
+https, and imports from the downloaded copy — so the recorded hash
+always reflects the fetched bytes. Either way the daemon
+copies privately and hashes that copy, so a source file changing
 underneath the import cannot desync the recorded hash from the
 imported content, and importing the same content twice is idempotent.
 

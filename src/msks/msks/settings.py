@@ -156,6 +156,11 @@ class VmmSettings:
     # modules that predate EdDSA. The type is a setting so the
     # default can move without code surgery (#115).
     ssh_key_type: str = "ed25519"
+    # URL image imports (#258): the download's size ceiling (the
+    # archive alone — the storage floor still counts its import
+    # cost twice, like a path import) and its overall deadline.
+    image_import_max_mib: int = 8192
+    image_import_timeout_s: float = 600.0
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> VmmSettings:
@@ -384,7 +389,24 @@ def vmm_settings_from_env(
         ssh_key_type=parse_key_type(
             env, "MSKSD_SSH_KEY_TYPE", cls.ssh_key_type
         ),
+        image_import_max_mib=image_import_max_mib(env),
+        image_import_timeout_s=image_import_timeout_s(env),
     )
+
+
+def image_import_max_mib(env: Mapping[str, str]) -> int:
+    """The URL-import ceiling (#258): a positive MiB count."""
+    return _parse_positive_int(env, "MSKSD_IMAGE_IMPORT_MAX_MIB", 8192)
+
+
+def image_import_timeout_s(env: Mapping[str, str]) -> float:
+    """The URL-import deadline (#258): a positive second count."""
+    value = _env_float(env, "MSKSD_IMAGE_IMPORT_TIMEOUT_S", 600.0)
+    if value <= 0:
+        raise ValueError(
+            f"MSKSD_IMAGE_IMPORT_TIMEOUT_S must be positive, got {value}"
+        )
+    return value
 
 
 def parse_key_type(env: Mapping[str, str], name: str, default: str) -> str:
