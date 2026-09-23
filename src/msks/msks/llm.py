@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import hmac
 import json
 import logging
@@ -273,7 +274,15 @@ def normalize_dict_entry(entry: dict) -> dict:
     """One LiteLLM-native dict entry: kebab- or snake-case keys at
     the top level (``model-name``/``model_name``), ``params`` as the
     ``litellm_params`` shorthand, and the params block normalized
-    (ported from klangk — the file's list form carries these)."""
+    (ported from klangk — the file's list form carries these). The
+    copy is deep: the Router owns its model_list outright, and a
+    configure retry must see the entry exactly as the file wrote
+    it — depth-2 sub-objects included."""
+    return _normalized_entry(copy.deepcopy(entry))
+
+
+def _normalized_entry(entry: dict) -> dict:
+    """The normalization walk over a shallow copy of *entry*."""
     normalized = {}
     for key, value in entry.items():
         name = normalize_key(key)
@@ -291,14 +300,16 @@ def build_model_list(
 ) -> list[dict]:
     """The litellm model_list from the settings' entries — strings
     parsed, dicts normalized; the default key fills every entry that
-    named none."""
+    named none (``setdefault`` attaches the block, so an entry that
+    arrived without one still takes the key — klangk's original
+    wrote it into a detached dict and lost it)."""
     items = []
     for entry in entries:
         if isinstance(entry, dict):
             parsed = normalize_dict_entry(entry)
         else:
             parsed = parse_model_entry(entry)
-        params = parsed.get("litellm_params", {})
+        params = parsed.setdefault("litellm_params", {})
         if default_api_key and "api_key" not in params:
             params["api_key"] = default_api_key
         items.append(parsed)
@@ -401,6 +412,11 @@ class LlmRouter:
             params = model_list[0]["litellm_params"]
             self._passthrough_base = params.get("api_base", "")
             self._passthrough_key = params.get("api_key", "")
+            if not self._passthrough_base:
+                raise ValueError(
+                    "the passthrough entry names no api_base — the "
+                    "upstream URL is the entry's whole meaning"
+                )
             self._router = None
             self._http_client = self.client_factory(timeout=300)
             logger.info(

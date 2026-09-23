@@ -50,9 +50,11 @@ over httpx, and `/models` is discovered dynamically from the
 upstream — every model the upstream serves is available with no
 further configuration. Any other list is _multi-provider mode_:
 the entries become a [`litellm`](https://github.com/BerriAI/litellm)
-router, workspaces address models by the name after the provider
-slash, and a request that names no model — or a name the list does
-not carry — uses the first configured model. Known providers
+router. A workspace addresses a model by its logical name — the
+part after the provider slash for a string entry, the explicit
+`model_name` for a dict one — and a request that names no model —
+or a name the list does not carry — uses the first configured
+model. Known providers
 (`openai`, `anthropic`, `cohere`, `mistral`, `groq`, `together_ai`,
 `deepseek`, `fireworks_ai`) fill their default base when an entry
 names none.

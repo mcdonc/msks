@@ -672,15 +672,69 @@ def llm_models_from(env) -> tuple[str | dict, ...]:
 
 
 def model_entry(entry) -> str | dict:
-    """One entry, kept: a mapping as-is, a stripped non-empty
-    string, a blank string dropped; anything else is a named
-    error (the env's string form and the file's list share this
-    walk)."""
+    """One entry, kept: a mapping validated in place, a stripped
+    non-empty string, a blank string dropped; anything else is a
+    named error (the env's string form and the file's list share
+    this walk). The dict check is the load-time half of the file's
+    fail-at-startup rule — a malformed entry names itself here,
+    not as an unnamed exception at the first request (#259
+    review)."""
     if isinstance(entry, dict):
+        check_dict_entry(entry)
         return entry
     if isinstance(entry, str):
         return entry.strip()
     raise ValueError("MSKSD_LLM_MODELS entries must be strings or mappings")
+
+
+def check_dict_entry(entry: dict) -> None:
+    """The load-time shape check for one dict entry: keys must be
+    strings (the normalizer's kebab→snake walk reads them),
+    ``params``/``litellm_params`` a mapping when present (a null
+    block is a named error, not a None crash at configure),
+    ``model_name``/``model-name`` a string, and the params block's
+    keys strings too."""
+    check_entry_keys(entry)
+    check_entry_name(entry)
+    check_params_keys(entry)
+
+
+def check_entry_keys(entry: dict) -> None:
+    """The top-level walk: string keys, mapping-valued params."""
+    for key, value in entry.items():
+        if not isinstance(key, str):
+            raise ValueError(
+                f"MSKSD_LLM_MODELS entry keys must be strings, got {key!r}"
+            )
+        if key.replace("-", "_") in ("params", "litellm_params") and not (
+            isinstance(value, dict)
+        ):
+            raise ValueError(
+                "MSKSD_LLM_MODELS litellm_params must be a mapping, "
+                f"got {type(value).__name__}"
+            )
+
+
+def check_entry_name(entry: dict) -> None:
+    """The logical name is the entry's address — a string, either
+    spelling."""
+    name = entry.get("model_name", entry.get("model-name"))
+    if not isinstance(name, str):
+        raise ValueError(
+            f"MSKSD_LLM_MODELS entries need a string model_name, got {name!r}"
+        )
+
+
+def check_params_keys(entry: dict) -> None:
+    """The params block's keys are read by the same kebab→snake
+    walk — strings only."""
+    params = entry.get("litellm_params", entry.get("params", {}))
+    for key in params:
+        if not isinstance(key, str):
+            raise ValueError(
+                "MSKSD_LLM_MODELS litellm_params keys must be strings, "
+                f"got {key!r}"
+            )
 
 
 def _server_settings_from_env(

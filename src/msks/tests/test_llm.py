@@ -942,6 +942,11 @@ def test_build_model_list_mixed_entries_and_default_key() -> None:
     )
     assert items[0]["litellm_params"]["api_key"] == "sk-1"
     assert items[1]["litellm_params"]["api_key"] == "sk-default"
+    # An entry that arrived without a params block still takes the
+    # default key — the block attaches, never a detached write
+    # (klangk's original lost it).
+    bare = build_model_list(({"model_name": "bare"},), "sk-default")
+    assert bare[0]["litellm_params"]["api_key"] == "sk-default"
 
 
 def test_a_dict_entry_can_name_passthrough() -> None:
@@ -962,3 +967,56 @@ def test_a_dict_entry_can_name_passthrough() -> None:
     assert router.passthrough and router._passthrough_base == (
         "http://up.stream/v1"
     )
+
+
+def test_a_dict_list_reaches_a_real_litellm_router() -> None:
+    """The dict form is not normalize-only: a configured entry with
+    routing knobs constructs the real Router and serves its
+    model_name — the docs' yaml example, proven against litellm
+    itself."""
+    router = LlmRouter()
+    router.ensure(
+        llm_settings(
+            (
+                {
+                    "model_name": "cl-sonnet",
+                    "litellm_params": {
+                        "model": "anthropic/claude-sonnet-4",
+                        "api_key": "sk-2",
+                        "rpm": 10,
+                    },
+                },
+                "openai/one::sk-1",
+            )
+        )
+    )
+    assert not router.passthrough
+    assert router.get_model_names() == ["cl-sonnet", "one"]
+
+
+def test_a_baseless_passthrough_entry_is_a_named_configure_error() -> None:
+    router = LlmRouter()
+    with pytest.raises(ValueError, match="names no api_base"):
+        router.ensure(llm_settings(({"model_name": "*"},)))
+
+
+def test_normalize_copies_deep_between_configures() -> None:
+    """The settings entry survives configure: the Router's copy is
+    its own, at depth — an entry configured twice reads the same
+    both times."""
+    entry = {
+        "model_name": "m",
+        "litellm_params": {
+            "model": "openai/m",
+            "api_key": "sk-1",
+            "metadata": {"team": "core"},
+        },
+    }
+    router = LlmRouter()
+    router.ensure(llm_settings((entry,)))
+    first = router._router.model_list[0]
+    first["litellm_params"]["metadata"]["team"] = "mutated"
+    router.ensure(llm_settings((entry,)))
+    again = router._router.model_list[0]
+    assert again["litellm_params"]["metadata"]["team"] == "core"
+    assert entry["litellm_params"]["metadata"]["team"] == "core"

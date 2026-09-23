@@ -353,3 +353,20 @@ def test_llm_models_accepts_the_file_list_form(
     )
     with pytest.raises(ValueError, match="strings or mappings"):
         Settings.from_env({"MSKSD_LLM_MODELS": [17]})
+
+
+def test_dict_entry_shapes_fail_named_at_load() -> None:
+    """The fail-at-load rule reaches inside dict entries (#259
+    review): non-string keys, a null or scalar params block, and a
+    missing model_name are named errors where the file is read —
+    never unnamed exceptions at the first request."""
+    bad_entries = [
+        {17: "x"},
+        {"model_name": "m", "litellm_params": None},
+        {"model_name": "m", "params": "openai/s"},
+        {"litellm_params": {"model": "openai/m"}},
+        {"model_name": "m", "litellm_params": {7: "y"}},
+    ]
+    for entry in bad_entries:
+        with pytest.raises(ValueError, match="MSKSD_LLM_MODELS"):
+            Settings.from_env({"MSKSD_LLM_MODELS": [entry]})

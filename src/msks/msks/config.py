@@ -315,17 +315,17 @@ class LayeredEnv(Mapping):
     entry does not shadow the file's value.
     """
 
-    def __init__(self, overrides: Mapping[str, str]) -> None:
+    def __init__(self, overrides: Mapping) -> None:
         self._overrides = dict(overrides)
 
-    def _merged(self) -> dict[str, str]:
+    def _merged(self) -> dict:
         merged = dict(self._overrides)
         merged.update(
             {name: value for name, value in os.environ.items() if value}
         )
         return merged
 
-    def __getitem__(self, name: str) -> str:
+    def __getitem__(self, name: str):
         value = os.environ.get(name)
         if value:
             return value
