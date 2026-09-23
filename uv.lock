@@ -907,7 +907,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=44" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.28" },
-    { name = "mitmproxy", specifier = ">=12.2" },
+    { name = "mitmproxy", specifier = ">=12.2,<13" },
     { name = "netfilterqueue", specifier = ">=0.9" },
     { name = "pydantic", specifier = ">=2.5" },
     { name = "pyyaml", specifier = ">=6.0" },

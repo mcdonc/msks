@@ -44,6 +44,9 @@ class FakeRequest:
         self._query = query
         self.pretty_host = pretty_host
         self.host = "198.51.100.7"  # the dialed address (transparent)
+        self.host_header = pretty_host
+        self.scheme = "https"
+        self.port = 443
 
     @property
     def query(self):
@@ -348,3 +351,30 @@ def test_log_bridge_maps_levels(caplog) -> None:
         bridge.log(SimpleNamespace(level="mystery", msg="huh"))
     assert "careful" in caplog.text
     assert "huh" in caplog.text
+
+
+async def test_a_swapped_https_request_pins_its_host_header(authority) -> None:
+    """Fronting exfiltration (#260 review): a guest may send an
+    allowlisted SNI with a Host header naming its own vhost on
+    shared infrastructure. The swap pins the header to the matched
+    name, so the request routes to the allowlisted service's vhost —
+    the dialed, SNI-verified connection is untouched."""
+    sentinel = entry().sentinel
+    owner = FakeOwner({sentinel: entry()}, authority)
+    flow = swap_flow(sentinel)
+    flow.request.host_header = "attacker-vhost.example.net"
+    await engine.InterceptorAddon(owner).request(flow)
+    assert flow.request.host_header == "api.example.com"
+    assert flow.request.host == "198.51.100.7"  # the dial is pinned by SNI
+
+
+async def test_matching_is_case_insensitive(authority) -> None:
+    """DNS names compare case-insensitively: a mixed-case Host or
+    SNI still swaps (lowercase stays the stored form)."""
+    assert engine.host_matches("API.Example.COM", ("api.example.com",))
+    sentinel = entry().sentinel
+    owner = FakeOwner({sentinel: entry()}, authority)
+    flow = swap_flow(sentinel, tls=False, pretty="API.Example.COM")
+    await engine.InterceptorAddon(owner).request(flow)
+    assert owner.swaps == [("ws-a", "api", "API.Example.COM")]
+    assert flow.request.host == "API.Example.COM"

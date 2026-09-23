@@ -115,7 +115,11 @@ class Origin:
                 headers[name.strip().lower()] = value.strip()
             path = line.decode().split()[1]
             body = json.dumps(
-                {"auth": headers.get("authorization"), "path": path}
+                {
+                    "auth": headers.get("authorization"),
+                    "path": path,
+                    "host": headers.get("host"),
+                }
             ).encode()
             writer.write(
                 b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
@@ -150,12 +154,16 @@ def read_response(sock: socket.socket) -> tuple[int, str]:
     return int(status.split()[1]), body
 
 
-def https_get(listener_port, sni, path, headers, cafile) -> tuple[int, str]:
-    """One guest-side HTTPS request through the redirect stand-in."""
+def https_get(
+    listener_port, sni, path, headers, cafile, host_header=None
+) -> tuple[int, str]:
+    """One guest-side HTTPS request through the redirect stand-in;
+    *host_header* overrides the Host the guest claims (the fronting
+    leg)."""
     context = ssl.create_default_context(cafile=cafile)
     with socket.create_connection((TAP_IP, listener_port), timeout=20) as sock:
         with context.wrap_socket(sock, server_hostname=sni) as tls:
-            tls.sendall(request_bytes(sni, path, headers))
+            tls.sendall(request_bytes(host_header or sni, path, headers))
             return read_response(tls)
 
 
@@ -292,6 +300,27 @@ async def test_the_live_interceptor(tmp_path, monkeypatch) -> None:
     )
     assert status == 200
     assert second["sentinel"] in body
+
+    # 6. Fronting: the guest claims an allowlisted SNI with a Host
+    # header naming its own vhost — the swap pins the header to the
+    # matched name, and the allowlisted origin answers.
+    holder["dst"] = ("127.0.0.1", origins["a"].port)
+    status, body = await asyncio.to_thread(
+        https_get,
+        port,
+        API,
+        "/echo",
+        {"Authorization": f"Bearer {second['sentinel']}"},
+        ws_ca,
+        host_header="attacker-vhost.example.net",
+    )
+    assert status == 200
+    seen = json.loads(body)
+    # The pin names the allowlisted host; the port is the origin's
+    # real (here ephemeral) port — production's redirect only ever
+    # hands 443 to this path, where the name rides bare.
+    assert seen["host"] == f"{API}:{origins['a'].port}"
+    assert "real-secret-two" in seen["auth"]
 
     events = []
     while not queue.empty():

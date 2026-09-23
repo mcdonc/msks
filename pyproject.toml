@@ -20,8 +20,11 @@ dependencies = [
   # the #194 spike vetted: 35 packages on top of the project's 44,
   # including the cryptography bump 48 → 50 (within the >=44 floor);
   # nix/msks-pkg.nix mirrors it from the pinned nixpkgs (12.2.3, the
-  # version the spike ran).
-  "mitmproxy>=12.2",
+  # version the spike ran). The <13 ceiling holds the integration to
+  # the 12.x internals it leans on (addon-before-defaults ordering,
+  # tls_start_client's set_accept_state, mode-spec dispatch) — lift
+  # it only alongside a re-run of the spike's gates.
+  "mitmproxy>=12.2,<13",
   # Egress consent's NFQUEUE binding (#69): consent is the normal
   # posture for workspaces, so the binding ships with every
   # install. It links libnetfilter_queue — devenv carries the

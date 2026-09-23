@@ -29,6 +29,7 @@ import logging
 from mitmproxy import http, tls
 from mitmproxy.addons.tlsconfig import _default_ciphers
 from mitmproxy.net import tls as net_tls
+from mitmproxy.net.http import url
 from OpenSSL import SSL
 
 logger = logging.getLogger(__name__)
@@ -37,7 +38,10 @@ logger = logging.getLogger(__name__)
 def host_matches(host: str, dests: tuple[str, ...]) -> bool:
     """The allowlist grammar (#194): an exact hostname, or a
     label-anchored suffix — ``.example.com`` matches every host
-    under example.com and never ``notexample.com``."""
+    under example.com and never ``notexample.com``. Names compare
+    case-insensitively (DNS semantics; the mint path lowercases
+    the stored entries)."""
+    host = host.lower()
     for dest in dests:
         if host == dest or (dest.startswith(".") and host.endswith(dest)):
             return True
@@ -48,8 +52,8 @@ def destination_name(flow: http.HTTPFlow) -> str:
     """The name the guest aimed this request at: the TLS handshake's
     SNI where the connection is TLS (cryptographic — the handshake
     names the server), else the Host header (plain HTTP's only
-    name). Falls back to the address form mitmproxy derived, which
-    never matches the name grammar."""
+    name); with no Host header at all, the address form mitmproxy
+    derived — which never matches the name grammar."""
     if flow.client_conn.sni:
         return flow.client_conn.sni
     return flow.request.pretty_host
@@ -100,17 +104,27 @@ def rewrite_request(flow: http.HTTPFlow, sentinel: str, secret: str) -> None:
     ]
 
 
-def pin_plain_http_dial(flow: http.HTTPFlow, host: str) -> None:
-    """Pin a plain-HTTP swap's upstream dial to the matched name.
+def pin_destination(flow: http.HTTPFlow, host: str) -> None:
+    """Bind the swapped request's routing to the matched name.
 
-    Plain HTTP carries no SNI to bind the request's name to its
-    dialed address, so the swap dials by the allowlisted name: the
-    daemon resolves it, and the secret can only land on the server
-    the allowlist names — a guest that dials one address while
-    claiming another's Host header gets its request rerouted, not
-    its secret leaked. TLS connections keep their dialed address;
-    the handshake's SNI already bound their name."""
+    TLS connections already carry the binding in their handshake:
+    the upstream dial was verified for the SNI. What a verified
+    connection does **not** pin is the request's Host header — a
+    guest can send ``SNI: api.example.com`` with ``Host:
+    attacker-vhost`` toward shared fronting infrastructure, and
+    the infrastructure routes by Host. The swap pins the header to
+    the matched name, so the request lands on the allowlisted
+    service's own vhost, and a fronting guest's request is
+    rerouted rather than its secret leaked.
+
+    Plain HTTP carries no SNI to bind anything: the swap pins the
+    upstream dial to the matched name instead — the daemon
+    resolves it, and the secret only reaches the server the
+    allowlist names."""
     if flow.client_conn.tls:
+        flow.request.host_header = url.hostport(
+            flow.request.scheme, host, flow.request.port
+        )
         return
     flow.request.host = host
 
@@ -152,7 +166,7 @@ async def swap_on_flow(owner, workspace, entry, host, flow) -> None:
     if secret is None:
         return  # revoked or expired: decrypted, unrewritten
     rewrite_request(flow, entry.sentinel, secret)
-    pin_plain_http_dial(flow, host)
+    pin_destination(flow, host)
     await owner.publish_swap(workspace, entry, host)
 
 

@@ -8,17 +8,6 @@ tagged `vX.Y.Z`.
 
 ### Added
 
-- **The egress interceptor: the placeholder swap on the wire
-  (#199).** A workspace with at least one live placeholder is
-  armed: its TCP flows toward ports 80/443 redirect into an
-  embedded mitmproxy, and the sentinel is exchanged for the real
-  secret in every header and query pair, only toward the
-  placeholder's allowlisted destinations. Non-matching HTTPS is
-  spliced (relayed undecrypted, pinned clients keep working);
-  off-allowlist sightings and every swap publish events on the
-  events channel. `MSKSD_INTERCEPTOR_PORT` (default 8643) names the
-  shared listener port. See
-  [docs/secrets.md](secrets.md#the-interceptor-the-swap-on-the-wire).
 - **The NixOS workspace guest image (#250).** A second catalog image
   built from the devenv-pinned nixpkgs with
   `msks-build-guest nixos` (into `.devenv/state/guest-nixos`;

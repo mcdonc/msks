@@ -15,6 +15,7 @@ owns the mint-at-create setting that makes it configurable beside
 the ssh identity's.
 """
 
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -139,8 +140,9 @@ def load_or_mint(vm_dir: Path, workspace_id: str) -> WorkspaceCA:
         return WorkspaceCA(key=key, cert=cert, chain_file=cert_path)
     key, cert = mint_ca(workspace_id)
     vm_dir.mkdir(parents=True, exist_ok=True)
-    key_path.write_bytes(key_pem(key))
-    key_path.chmod(0o600)
+    fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(key_pem(key))
     cert_path.write_bytes(cert_pem(cert))
     return WorkspaceCA(key=key, cert=cert, chain_file=cert_path)
 

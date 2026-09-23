@@ -27,12 +27,16 @@ What each request gets:
 - **The swap.** The sentinel is exchanged for the real secret in
   every request header and every query-string pair — duplicate
   keys included — when the destination matches the placeholder's
-  allowlist (exact host or label-anchored suffix, as minted). The
-  origin sees the real secret; the workspace never holds it. On
-  HTTPS the connection's TLS handshake (its SNI) names the
-  destination; on plain HTTP the Host header does, and the request
-  is dialed by that name so the secret only reaches the server the
-  allowlist names.
+  allowlist (exact host or label-anchored suffix, as minted).
+  Request **bodies** are not scanned: the sentinel rides headers
+  and URLs, and an operator pasting it into a body payload sends
+  it nowhere the placeholder covers. The origin sees the real
+  secret; the workspace never holds it. On HTTPS the connection's
+  TLS handshake (its SNI) names the destination and the request's
+  Host header is pinned to that same name — a guest cannot claim
+  one name in the handshake and route by another in the header
+  (domain fronting). On plain HTTP the request is dialed by the
+  Host header's name, for the same binding.
 - **The splice.** An HTTPS destination no placeholder of this
   workspace covers is relayed undecrypted: the origin's real
   certificate reaches the workspace, pinned clients keep working,
@@ -49,6 +53,13 @@ What each request gets:
   port 443 are dropped, so browsers fall back to the TCP flow the
   redirect owns — nothing routes around the interceptor.
 
+While a workspace is armed, the redirect takes its web egress
+(TCP 80 and 443) **before** the egress-consent gates see it: the
+interceptor's own allowlist is what gates web traffic during that
+time, and a static or interactive workspace with a live
+placeholder reaches any web destination through the splice tier.
+The consent modes keep gating every other port.
+
 Each swap publishes a `secret.swap` event; mint, revoke, and expiry
 publish their own (`secret.mint`, `secret.revoke`, `secret.expiry`).
 All five ride the events websocket beside the workspace lifecycle
@@ -60,14 +71,19 @@ row the database cannot read, answers the request locally with a
 sentinel never leaves the host.
 
 The interceptor presents each connection a leaf certificate signed
-by the workspace's own CA. A workspace's guest trusts that CA
-(minted into its first-boot seed, [#200]), so HTTPS toward
-allowlisted destinations validates normally. Each workspace's CA
-is its own: one workspace's leaves never validate under another's.
-Arming and disarming swap the workspace's firewall table in one
-nft transaction — the redirect, the widened input rule for the
-listener, and the QUIC drop appear and disappear together, with no
-window in between where the table is absent.
+by the workspace's own CA, and each workspace's CA is its own: one
+workspace's leaves never validate under another's. A workspace
+whose guest already trusts its CA — the first-boot seeding is
+[#200]'s composition — sees HTTPS toward allowlisted destinations
+validate normally from the first placeholder. Until #200 lands,
+the CA is minted at the first arm: a workspace minted a
+placeholder against sees HTTPS toward allowlisted destinations
+fail visibly until its next boot (the recorded decision — the
+trust-store entry rides the seed, and a running guest cannot be
+retro-trusted). Arming and disarming swap the workspace's firewall
+table in one nft transaction — the redirect, the widened input
+rule for the listener, and the QUIC drop appear and disappear
+together, with no window in between where the table is absent.
 
 The listeners bind one shared port on each armed tap address
 (`interceptor_port`, default 8643 — see the

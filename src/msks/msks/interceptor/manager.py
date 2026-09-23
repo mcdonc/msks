@@ -78,7 +78,8 @@ def build_master(owner) -> Master:
     master = Master(options.Options(mode=[], confdir=str(confdir)))
     master.addons.add(InterceptorAddon(owner), LogBridge(), *default_addons())
     # lazy: the splice tier must relay before any upstream dial;
-    # keep_host_header: the origin sees the name it was dialed by.
+    # keep_host_header: the Host the swap pinned is the Host the
+    # origin sees — mitmproxy's own rewrite stays off.
     master.options.update(connection_strategy="lazy", keep_host_header=True)
     return master
 
@@ -229,7 +230,16 @@ class Interceptor:
             raise
 
     async def ensure_master(self) -> None:
-        """Start the embedded master once, lazily."""
+        """Start the embedded master once, lazily.
+
+        ``Master.run`` sets two process-wide loop attributes from
+        here until shutdown: an eager task factory and mitmproxy's
+        own exception handler for otherwise-unhandled loop errors
+        (they log through the LogBridge instead of the default
+        lastResort stderr). The daemon's other tasks keep running
+        under both — the first arm is the moment the loop's
+        semantics change, which is why the master starts once and
+        lives for the daemon's lifetime, never per workspace."""
         if self._master is not None:
             return
         self._master = self._master_factory(self)
