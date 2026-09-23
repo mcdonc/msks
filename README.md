@@ -173,7 +173,8 @@ path: the script anchors a relative value below the repo root while
 the daemon resolves one against its own CWD, so only an absolute
 value moves both to the same place.
 Gitignored but NOT disposable-clean — `git clean -xfd` deletes all
-of it. Egress (and `msks ssh`, whose forwards ride the egress NIC)
+of it, along with the dev daemon's personal `msksd.yaml` at the
+repo root (#262). Egress (and `msks ssh`, whose forwards ride the egress NIC)
 needs `CAP_NET_ADMIN` (#101): the dev host's wrapper grants it, so
 egress workspaces run first-level; on a host without the grant a
 workspace created without `--no-egress` refuses to start — the 503

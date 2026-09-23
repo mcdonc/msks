@@ -671,6 +671,13 @@ in
     : "''${MSKSC_CACHE_DIR:=$DEVENV_ROOT/.devenv/state/msksc/cache}"
     : "''${MSKSC_DATA_DIR:=$DEVENV_ROOT/.devenv/state/msksc/data}"
     export MSKSC_CACHE_DIR MSKSC_DATA_DIR
+    # The daemon's config-tree root (#262): the dev daemon script
+    # exports this itself, but a hand-run bare `msksd` from a
+    # devenv shell resolves the same <repo>/msksd.yaml. A non-empty
+    # value exported before entering the shell survives; the file
+    # is gitignored, so local edits stay personal.
+    : "''${MSKSD_CONFIG_DIR:=$DEVENV_ROOT}"
+    export MSKSD_CONFIG_DIR
     # Tidy the state tree (#156): every `devenv shell --` /
     # `devenv tasks run` invocation writes a one-shot wrapper
     # (shell-<hash>.sh, ~150KB) at the top of .devenv/ and leaves it

@@ -4,6 +4,13 @@
 .pre-commit-config.yaml
 .prettierignore
 
+# local daemon config: the dev daemon resolves
+# $MSKSD_CONFIG_DIR/msksd.yaml at the repo root (generated as the
+# commented template on first start) — edits are personal. Anchored
+# to the root so a tracked fixture of the same name deeper in the
+# tree stays visible to git.
+/msksd.yaml
+
 # python
 __pycache__/
 *.py[cod]
