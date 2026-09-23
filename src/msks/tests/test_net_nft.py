@@ -367,3 +367,96 @@ async def test_table_exists_tolerates_a_missing_tool(tmp_path) -> None:
     apply below is the call that names the missing binary."""
     settings = Settings(net=NetSettings(nft_tool=str(tmp_path / "absent")))
     assert await nft.table_exists(settings, "ws-a") is False
+
+
+# --- consent elements across a swap (#260 review) ---------------------------
+
+
+def json_set(name: str, elems: list) -> bytes:
+    import json as json_mod
+
+    return json_mod.dumps(
+        {"nftables": [{"set": {"name": name, "elem": elems}}]}
+    )
+
+
+def test_element_scopes_reads_both_set_kinds() -> None:
+    payload = json_set(
+        "allows_port",
+        [
+            {"elem": {"val": ["10.1.2.3", 443], "timeout": 2987}},
+            {"elem": {"val": "10.9.9.9"}},
+        ],
+    )
+    assert nft.element_scopes(payload) == [
+        ("10.1.2.3 . 443", 2987),
+        ("10.9.9.9", None),
+    ]
+
+
+def test_element_scopes_tolerates_garbage() -> None:
+    assert nft.element_scopes(b"not json") == []
+    assert nft.element_scopes(b"{}") == []
+    assert nft.element_scopes(json_set("x", [{"elem": {"timeout": 5}}])) == []
+
+
+def test_element_statements_render_the_restore_file() -> None:
+    body = nft.element_statements(
+        "msks-e-x",
+        {
+            "allows_any": [("10.1.2.3", 45)],
+            "rejects": [("10.2.3.4 . 25", None)],
+            "allows_port": [],
+        },
+    )
+    assert (
+        body
+        == "add element inet msks-e-x allows_any { 10.1.2.3 timeout 45s }\n"
+        "add element inet msks-e-x rejects { 10.2.3.4 . 25 }\n"
+    )
+
+
+async def test_dump_reads_and_restore_writes(tools) -> None:
+    settings, log = tools
+    dumped = await nft.dump_consent_elements(settings, "ws-a")
+    assert dumped == {}  # the stub answers nothing for list set
+    assert [line.split()[4] for line in log_lines(log)] == [
+        "allows_any",
+        "allows_port",
+        "rejects",
+    ]
+    log.write_text("")
+    stdin = Path(str(log) + ".stdin")
+    stdin.write_text("")
+    await nft.restore_consent_elements(
+        settings, "ws-a", {"allows_any": [("10.1.2.3", 45)]}
+    )
+    assert "add element" in stdin.read_text()
+    # An empty dump restores nothing.
+    log.write_text("")
+    await nft.restore_consent_elements(settings, "ws-a", {})
+    assert log_lines(log) == []
+
+
+async def test_dump_reads_a_real_listing(tools, monkeypatch) -> None:
+    """The dump path end to end against a JSON listing: the elements
+    parse into the snapshot restore consumes."""
+    settings, _log = tools
+
+    async def fake_json(settings, args):
+        assert args[:4] == ["list", "set", "inet", table_name("ws-a")]
+        if args[4] == "allows_any":
+            return json_set(
+                "allows_any", [{"elem": {"val": "10.1.2.3", "timeout": 60}}]
+            )
+        return None  # the other sets are absent
+
+    monkeypatch.setattr(nft, "nft_json", fake_json)
+    assert await nft.dump_consent_elements(settings, "ws-a") == {
+        "allows_any": [("10.1.2.3", 60)]
+    }
+
+
+async def test_dump_tolerates_a_missing_tool(tmp_path) -> None:
+    settings = Settings(net=NetSettings(nft_tool=str(tmp_path / "absent")))
+    assert await nft.dump_consent_elements(settings, "ws-a") == {}

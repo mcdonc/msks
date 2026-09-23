@@ -38,6 +38,7 @@ docs/networking.md.
 """
 
 import asyncio
+import json
 
 from ..consent.specs import EgressPolicy, IpSpec
 from ..microvm.errors import MicrovmError
@@ -391,6 +392,142 @@ async def apply_base(settings) -> None:
         ["-f", "-"],
         input_text=base_ruleset(settings.net.uplink).encode(),
         what="nft base ruleset apply",
+    )
+
+
+# The consent sets a whole-table swap must carry across itself
+# (#260 review): their kernel-side elements — verdict pins and
+# resolver-learned allows with their remaining timeouts — die with
+# the table otherwise, and a static workspace's learned egress
+# would drop until its DNS cache expired.
+CONSENT_SETS = ("allows_any", "allows_port", "rejects")
+
+
+def element_scopes(payload: bytes) -> list[tuple[str, int | None]]:
+    """One set's ``-j list set`` output as ``(scope, seconds)``
+    pairs — scope is the element's value (an address, or ``addr .
+    port`` for the concatenated sets), seconds its remaining
+    timeout. Anything unparseable yields [] (the swap proceeds
+    without that set's elements — the fail-closed direction)."""
+    try:
+        entries = json.loads(payload)["nftables"]
+    except ValueError, KeyError, TypeError:
+        return []
+    found: list[tuple[str, int | None]] = []
+    for entry in entries:
+        found.extend(element_pairs(entry))
+    return found
+
+
+def element_pairs(entry: dict) -> list[tuple[str, int | None]]:
+    """One nftables JSON entry's elements, as pairs."""
+    pairs = []
+    for item in (entry.get("set") or {}).get("elem") or []:
+        pair = element_pair(item)
+        if pair is not None:
+            pairs.append(pair)
+    return pairs
+
+
+def element_pair(item: dict) -> tuple[str, int | None] | None:
+    """One element as ``(scope, seconds)``, None when it has no
+    value to render."""
+    data = item.get("elem") or {}
+    scope = element_scope(data)
+    if scope is None:
+        return None
+    return (scope, element_timeout(data))
+
+
+def element_scope(data: dict) -> str | None:
+    """One element's rendered scope: the value as nft spells it."""
+    value = data.get("val")
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return " . ".join(str(part) for part in value)
+    return str(value)
+
+
+def element_timeout(data: dict) -> int | None:
+    """One element's remaining timeout, in whole seconds."""
+    timeout = data.get("timeout")
+    return None if timeout is None else int(timeout)
+
+
+def element_text(scope: str, seconds: int | None) -> str:
+    """One element's restore text: the scope with its remaining
+    timeout when it has one."""
+    if seconds is None:
+        return scope
+    return f"{scope} timeout {timeout_text(seconds)}"
+
+
+def element_statements(
+    table: str, dumped: dict[str, list[tuple[str, int | None]]]
+) -> str:
+    """The restore file's body: one ``add element`` per set, one
+    transaction — the timeouts ride as they were read."""
+    blocks = []
+    for name, scopes in dumped.items():
+        if not scopes:
+            continue
+        rendered = ", ".join(
+            element_text(scope, seconds) for scope, seconds in scopes
+        )
+        blocks.append(f"add element inet {table} {name} {{ {rendered} }}\n")
+    return "".join(blocks)
+
+
+async def nft_json(settings, args: list[str]) -> bytes | None:
+    """One ``nft -j`` invocation's stdout; None on any failure (an
+    absent set is simply not dumped)."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            settings.net.nft_tool,
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except FileNotFoundError:
+        return None
+    out, _err = await proc.communicate()
+    return out if proc.returncode == 0 else None
+
+
+async def dump_consent_elements(
+    settings, workspace_id: str
+) -> dict[str, list[tuple[str, int | None]]]:
+    """The live consent sets' elements, ready to restore after a
+    whole-table swap."""
+    table = table_name(workspace_id)
+    dumped: dict[str, list[tuple[str, int | None]]] = {}
+    for name in CONSENT_SETS:
+        payload = await nft_json(
+            settings, ["list", "set", "inet", table, name]
+        )
+        if payload:
+            scopes = element_scopes(payload)
+            if scopes:
+                dumped[name] = scopes
+    return dumped
+
+
+async def restore_consent_elements(
+    settings,
+    workspace_id: str,
+    dumped: dict[str, list[tuple[str, int | None]]],
+) -> None:
+    """Re-add the dumped elements into the fresh table — one
+    transaction; an empty dump restores nothing."""
+    body = element_statements(table_name(workspace_id), dumped)
+    if not body:
+        return
+    await nft_run(
+        settings,
+        ["-f", "-"],
+        input_text=body.encode(),
+        what=f"nft consent elements restore for {workspace_id}",
     )
 
 

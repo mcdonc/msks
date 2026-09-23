@@ -375,13 +375,19 @@ class NetManager:
         """Swap one workspace's table with or without the
         interceptor's rules (#199): the whole table re-applies in one
         nft transaction, so the redirect and its absence never leave
-        a window where the table is gone."""
+        a window where the table is gone. The swap carries the
+        kernel-side consent elements across itself — verdict pins
+        and resolver-learned allows would die with the table
+        otherwise (#260 review), and a static workspace's learned
+        egress would drop until its DNS cache expired."""
         attachment = self._attachments.get(workspace_id)
         services = self._services.get(workspace_id)
         if attachment is None or services is None:
             return  # not attached: the table does not exist to swap
+        settings = self.app.state.settings
+        snapshot = await self.consent_snapshot(workspace_id, services)
         await nft.install_vm(
-            self.app.state.settings,
+            settings,
             workspace_id,
             attachment.tap,
             attachment.guest_ip,
@@ -389,6 +395,19 @@ class NetManager:
             policy=services.policy,
             queue_num=services.queue_num,
             interceptor_port=port,
+        )
+        if snapshot:
+            await nft.restore_consent_elements(
+                settings, workspace_id, snapshot
+            )
+
+    async def consent_snapshot(self, workspace_id: str, services) -> dict:
+        """The consent elements a swap must carry: gated modes only —
+        an allow-mode workspace has no sets to carry."""
+        if services.policy is None or not services.policy.gated:
+            return {}
+        return await nft.dump_consent_elements(
+            self.app.state.settings, workspace_id
         )
 
     async def consent_allow(

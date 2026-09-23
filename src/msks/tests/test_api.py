@@ -2422,3 +2422,79 @@ async def test_renew_refreshes_the_interceptor(client) -> None:
         app.state.interceptor = real
     assert renewed.status_code == 200
     assert recorder.refreshes == ["ws-sec"]
+
+
+async def test_a_mint_that_cannot_arm_rolls_back_whole(client) -> None:
+    """Arming failure answers 503 with nothing left behind: the row,
+    the store value, and the manifest entry all go (#260 review) —
+    a live placeholder that cannot redirect would leak its raw
+    sentinel toward the wire."""
+    http, app, _stub = client
+    await seed_workspace(app)
+
+    class RefusingInterceptor:
+        async def refresh(self, workspace_id: str) -> None:
+            raise RuntimeError("bind failed")
+
+        async def on_detach(self, ws):  # pragma: no cover
+            raise AssertionError
+
+        async def stop(self):  # pragma: no cover
+            raise AssertionError
+
+    real = app.state.interceptor
+    app.state.interceptor = RefusingInterceptor()
+    try:
+        response = await http.post(
+            "/api/v1/secrets", json=mint_body(), headers=auth()
+        )
+    finally:
+        app.state.interceptor = real
+    assert response.status_code == 503
+    assert "could not arm" in response.json()["detail"]
+    listing = await http.get("/api/v1/secrets", headers=auth())
+    assert listing.json() == []
+    root = app.state.settings.secret_store.root
+    assert (
+        "MSKS_WS_SEC_GITHUB_API" not in (root / "secretspec.toml").read_text()
+    )
+    assert not (root / "msks" / "default" / "MSKS_WS_SEC_GITHUB_API").exists()
+
+
+async def test_renew_and_revoke_survive_a_failing_refresh(client) -> None:
+    """The operation stands when the armed-state re-evaluation
+    fails: renew has already extended, revoke has already deleted —
+    the refresh retries on the next placeholder event."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    row = (
+        await http.post("/api/v1/secrets", json=mint_body(), headers=auth())
+    ).json()
+
+    class RefusingInterceptor:
+        async def refresh(self, workspace_id: str) -> None:
+            raise RuntimeError("nft down")
+
+        async def on_detach(self, ws):  # pragma: no cover
+            raise AssertionError
+
+        async def stop(self):  # pragma: no cover
+            raise AssertionError
+
+    real = app.state.interceptor
+    app.state.interceptor = RefusingInterceptor()
+    try:
+        renewed = await http.post(
+            f"/api/v1/secrets/{row['id']}/renew",
+            json={"ttl_s": 600},
+            headers=auth(),
+        )
+        revoked = await http.delete(
+            f"/api/v1/secrets/{row['id']}", headers=auth()
+        )
+    finally:
+        app.state.interceptor = real
+    assert renewed.status_code == 200
+    assert revoked.status_code == 200
+    listing = await http.get("/api/v1/secrets", headers=auth())
+    assert listing.json() == []

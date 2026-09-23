@@ -8,6 +8,7 @@ query is built outside ``msks.model``.
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import re
 import secrets
@@ -886,6 +887,9 @@ async def _workspace_or_404(app, workspace_id: str) -> dict:
     return row
 
 
+LOG = logging.getLogger(__name__)
+
+
 def placeholder_view(row: dict, sentinel: bool = True) -> dict:
     """The API-facing view of a placeholder row (#198).
 
@@ -1005,6 +1009,19 @@ def build_api(app) -> FastAPI:
         refs = await app.state.model.placeholder_refs()
         await asyncio.to_thread(app.state.secrets.sync_manifest, refs)
 
+    async def refresh_quietly(workspace_id: str) -> None:
+        """Re-evaluate the armed state, logging instead of failing:
+        the operation that triggered it already stood, and the next
+        placeholder event (or the next attach) retries the arm."""
+        try:
+            await app.state.interceptor.refresh(workspace_id)
+        except Exception:  # noqa: BLE001 - logged, never fatal here
+            LOG.exception(
+                "interceptor refresh for %s failed; armed state retries "
+                "on the next placeholder event",
+                workspace_id,
+            )
+
     def validated_dests(dests: list[str]) -> list[str]:
         """Lowercased, de-duplicated, pattern-checked destinations."""
         seen = []
@@ -1115,8 +1132,27 @@ def build_api(app) -> FastAPI:
             },
         )
         # Arming is placeholder-driven (#199): a mint against a
-        # running workspace redirects its web egress from here.
-        await app.state.interceptor.refresh(workspace_id)
+        # running workspace redirects its web egress from here. A
+        # mint that cannot arm stands or falls whole — a live
+        # placeholder leaking its raw sentinel toward the wire is
+        # the one outcome this feature exists to prevent — so the
+        # row and its value roll back and the refusal names the
+        # cause (#260 review).
+        try:
+            await app.state.interceptor.refresh(workspace_id)
+        except Exception as exc:  # noqa: BLE001 - rolled back below
+            async with app.state.store_lock:
+                await app.state.model.delete_placeholder(row["id"])
+                with contextlib.suppress(SecretStoreError):
+                    await app.state.secrets.delete(ref)
+                await sync_store_manifest()
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "mint rolled back: the workspace's interceptor "
+                    f"could not arm ({exc})"
+                ),
+            ) from exc
         return Response(
             status_code=201,
             content=json.dumps(placeholder_view(row)),
@@ -1152,8 +1188,11 @@ def build_api(app) -> FastAPI:
             # reads; a renew that lost its row answers 404, not 500.
             raise HTTPException(status_code=404, detail="no such placeholder")
         # A renew can revive a workspace's last live placeholder, so
-        # the armed state re-evaluates (#199).
-        await app.state.interceptor.refresh(row["workspace_id"])
+        # the armed state re-evaluates (#199). The renew itself
+        # stands even when the re-evaluation fails — the sentinel's
+        # lifetime is already extended, and the next placeholder
+        # event retries the arm.
+        await refresh_quietly(row["workspace_id"])
         return placeholder_view(row, sentinel=False)
 
     @api.delete(
@@ -1184,8 +1223,9 @@ def build_api(app) -> FastAPI:
         )
         # The redirect stands down when the last placeholder went
         # (#199) — the row is already gone, so refresh reads the new
-        # state.
-        await app.state.interceptor.refresh(row["workspace_id"])
+        # state. The revoke stands even when the re-evaluation
+        # fails: the row is deleted, so nothing swaps either way.
+        await refresh_quietly(row["workspace_id"])
         return {"revoked": placeholder_id, "store_cleaned": cleaned}
 
     @api.get("/api/v1/secrets/audit", dependencies=[Depends(require_token)])

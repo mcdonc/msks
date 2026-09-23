@@ -88,9 +88,14 @@ together, with no window in between where the table is absent.
 The listeners bind one shared port on each armed tap address
 (`interceptor_port`, default 8643 — see the
 [key reference](config.md)). Upstream connections are verified
-against the platform's trust store; the daemon pins no cipher
-lists anywhere (the FIPS posture: overrides arrive as settings
-with the certification effort, never as code).
+against the platform's trust store. The daemon pins no cipher
+list of its own anywhere: the contexts it builds take mitmproxy's
+curated default list, and any override arrives as a setting with
+the certification effort, never as code. One functional limit
+rides that posture: the client-facing leg negotiates HTTP/1.1
+only (no ALPN callback is installed), so guests with HTTP/2
+fall back — the swap, the splice, and the detection behave the
+same over HTTP/1.1.
 
 ## The mint flow
 

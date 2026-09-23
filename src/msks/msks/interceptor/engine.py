@@ -39,10 +39,11 @@ def host_matches(host: str, dests: tuple[str, ...]) -> bool:
     """The allowlist grammar (#194): an exact hostname, or a
     label-anchored suffix — ``.example.com`` matches every host
     under example.com and never ``notexample.com``. Names compare
-    case-insensitively (DNS semantics; the mint path lowercases
-    the stored entries)."""
+    case-insensitively (DNS semantics), both sides — the mint path
+    lowercases, and the wire does not have to."""
     host = host.lower()
     for dest in dests:
+        dest = dest.lower()
         if host == dest or (dest.startswith(".") and host.endswith(dest)):
             return True
     return False
@@ -120,7 +121,9 @@ def pin_destination(flow: http.HTTPFlow, host: str) -> None:
     Plain HTTP carries no SNI to bind anything: the swap pins the
     upstream dial to the matched name instead — the daemon
     resolves it, and the secret only reaches the server the
-    allowlist names."""
+    allowlist names. (The TLS branch's ``hostport`` can carry a
+    port only on a non-443 TLS connection, which the redirect
+    never produces — port-80 flows take the plain branch.)"""
     if flow.client_conn.tls:
         flow.request.host_header = url.hostport(
             flow.request.scheme, host, flow.request.port

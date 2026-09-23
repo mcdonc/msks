@@ -304,3 +304,26 @@ async def test_build_master_orders_the_addon_first(tmp_path) -> None:
     assert str(tmp_path / "interceptor") in master.options.confdir
     assert master.options.connection_strategy == "lazy"
     assert master.options.keep_host_header is True
+
+
+class CrashingMaster(FakeMaster):
+    """A master whose run() dies (the stop() resilience path)."""
+
+    async def run(self) -> None:
+        raise RuntimeError("mitmproxy exploded")
+
+
+async def test_stop_survives_a_master_that_died(app, monkeypatch) -> None:
+    """A dead master's stored error must not cascade into daemon
+    shutdown: stop() logs it and finishes (#260 review)."""
+    monkeypatch.setattr(manager_mod, "SHUTDOWN_TIMEOUT_S", 0.1)
+    app.state.interceptor = Interceptor(
+        app, master_factory=fake_master_factory(CrashingMaster)
+    )
+    await app.state.interceptor.ensure_master()
+    task = app.state.interceptor._task
+    while not task.done():
+        await asyncio.sleep(0)
+    assert isinstance(task.exception(), RuntimeError)
+    await app.state.interceptor.stop()
+    assert FakeMaster.built[0].shutdown_calls == 1

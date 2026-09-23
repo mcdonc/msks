@@ -901,3 +901,40 @@ async def test_attachment_for_answers_the_live_attachment(net_app) -> None:
     assert app.state.net.attachment_for("ws-a") is None
     attachment = await manager.attach("ws-a", want=True)
     assert app.state.net.attachment_for("ws-a") is attachment
+
+
+async def test_a_gated_swap_carries_consent_elements_across(
+    gated_app, monkeypatch
+) -> None:
+    """The whole-table swap preserves the kernel-side consent
+    elements (#260 review): a gated workspace's verdict pins are
+    dumped before the swap and restored after it."""
+    from msks.net import nft as nft_mod
+
+    app, _consumers, nft_log = gated_app
+    await app.state.net.start()
+    await app.state.net.attach("ws-i", want=True, policy=interactive_policy())
+
+    async def fake_dump(settings, workspace_id):
+        return {"allows_any": [("10.1.2.3", 45)]}
+
+    monkeypatch.setattr(nft_mod, "dump_consent_elements", fake_dump)
+    stdin = Path(str(nft_log) + ".stdin")
+    stdin.write_text("")
+    await app.state.net.apply_interception("ws-i", 8643)
+    applied = stdin.read_text()
+    assert "redirect to :8643" in applied
+    assert "add element inet" in applied
+    assert "10.1.2.3 timeout 45s" in applied
+
+
+async def test_an_allow_mode_swap_dumps_nothing(net_app) -> None:
+    """An ungated workspace has no consent sets: the swap skips the
+    dump entirely."""
+    app, _ip, nft_log = net_app
+    manager = await ready(app)
+    await manager.attach("ws-a", want=True)
+    open(nft_log, "w").close()
+    await manager.apply_interception("ws-a", 8643)
+    assert not any(line.startswith("list set") for line in log_lines(nft_log))
+    assert "redirect to :8643" in Path(str(nft_log) + ".stdin").read_text()

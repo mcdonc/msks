@@ -293,3 +293,7 @@ class Interceptor:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
+        except Exception:  # noqa: BLE001 - a dead master must not
+            # take daemon shutdown down with it: the run task's own
+            # error is logged here, and the close-out below continues.
+            logger.exception("the interceptor's master run ended in error")
