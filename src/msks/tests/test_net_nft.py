@@ -449,7 +449,10 @@ async def test_dump_reads_a_real_listing(tools, monkeypatch) -> None:
             return json_set(
                 "allows_any", [{"elem": {"val": "10.1.2.3", "timeout": 60}}]
             )
-        return None  # the other sets are absent
+        if args[4] == "allows_port":
+            # A set that exists but holds nothing: the dump skips it.
+            return json_set("allows_port", [])
+        return None  # the third set is absent
 
     monkeypatch.setattr(nft, "nft_json", fake_json)
     assert await nft.dump_consent_elements(settings, "ws-a") == {
