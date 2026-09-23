@@ -94,9 +94,10 @@ def finish_aclose_task(task: asyncio.Task) -> None:
 def spawn_aclose(client: httpx.AsyncClient) -> None:
     """Schedule *client*'s ``aclose()`` holding a strong reference.
 
-    No-op outside a running event loop (sync construction paths):
-    there is nothing to schedule on then, and process exit closes
-    the sockets anyway.
+    No-op outside a running event loop (a worker thread — the
+    configure ran under ``to_thread``): the caller drains the
+    retired list on the serving loop instead, where this schedules
+    for real. Process exit closes the sockets anyway.
     """
     try:
         loop = asyncio.get_running_loop()
@@ -292,6 +293,12 @@ class LlmRouter:
         # Reconfigure serialization: concurrent first-requests after
         # one SIGHUP swap share a single configure.
         self._lock: asyncio.Lock | None = None
+        # Clients a configure replaced, awaiting their close on the
+        # serving loop: ``configure`` may run in a worker thread
+        # (where no loop exists to schedule on), so it retires here
+        # and the ensure paths drain — the sync one best-effort, the
+        # async one on the loop that owns the client's connections.
+        self._retired: list[httpx.AsyncClient] = []
 
     def ensure(self, settings) -> None:
         """Rebuild when the settings object changed; a no-op while
@@ -307,6 +314,15 @@ class LlmRouter:
             return
         self.configure(settings)
         self._settings = settings
+        self.drain_retired()
+
+    def drain_retired(self) -> None:
+        """Hand every retired client to :func:`spawn_aclose` — on
+        the caller's loop when one exists (the serving loop for the
+        async path), a no-op otherwise (the sync path outside a
+        loop; the next drain on a loop closes them)."""
+        while self._retired:
+            spawn_aclose(self._retired.pop(0))
 
     async def ensure_async(self, settings) -> None:
         """The request path's ensure: one reconfigure at a time, off
@@ -322,6 +338,7 @@ class LlmRouter:
                 return
             await asyncio.to_thread(self.configure, settings)
             self._settings = settings
+            self.drain_retired()
 
     def configure(self, settings) -> None:
         """Build the routing state from one settings object."""
@@ -330,9 +347,11 @@ class LlmRouter:
             self.clear()
             return
         model_list = build_model_list(llm.models, self.default_key(settings))
-        # Close any previous passthrough client before switching.
+        # Retire any previous passthrough client before switching
+        # (the close is scheduled by the ensure path that owns a
+        # loop — a worker thread here has none).
         if self._http_client is not None:
-            spawn_aclose(self._http_client)
+            self._retired.append(self._http_client)
             self._http_client = None
         if is_passthrough(model_list):
             params = model_list[0]["litellm_params"]
@@ -370,7 +389,7 @@ class LlmRouter:
         self._passthrough_base = None
         self._passthrough_key = ""
         if self._http_client is not None:
-            spawn_aclose(self._http_client)
+            self._retired.append(self._http_client)
             self._http_client = None
 
     @property
@@ -580,6 +599,12 @@ class TapListener:
             log_level="warning",
             access_log=False,
             lifespan="off",
+            # A bound on the graceful shutdown: an in-flight proxied
+            # request gets this long to finish after the stop ask —
+            # explicit because uvicorn's default (no bound) is
+            # internal behavior, not a contract a daemon teardown
+            # should lean on.
+            timeout_graceful_shutdown=5,
         )
         server = uvicorn.Server(config)
         server.install_signal_handlers = lambda: None
@@ -773,22 +798,42 @@ def bad_json() -> JSONResponse:
     )
 
 
+async def configured_router(proxy: LlmProxy):
+    """The proxy's router after a live ensure — or None with the
+    route's answer ready: a configuration that cannot build (a
+    dead ``file:``/``cmd:`` reference after a SIGHUP) answers a
+    named 503, its detail logged server-side only (the configure
+    error names the entry, which may carry an inline key — never
+    guest-visible)."""
+    router = proxy.router
+    try:
+        await router.ensure_async(proxy.app.state.settings)
+    except Exception:
+        logger.exception("LLM router configuration failed")
+        return None, JSONResponse(
+            status_code=503,
+            content={"error": "LLM router configuration failed"},
+        )
+    if not router.active:
+        return None, JSONResponse(
+            status_code=503,
+            content={"error": "LLM router not configured"},
+        )
+    return router, None
+
+
 def build_proxy_app(proxy: LlmProxy) -> FastAPI:
     """The OpenAI-shaped proxy app: ``/v1/models`` and
     ``/v1/chat/completions``, workspace-token gated."""
 
     async def list_models(request: Request) -> dict:
         """The model list (OpenAI ``GET /v1/models`` shape); 503 in
-        the unconfigured posture, on the same gate the completion
-        route carries."""
+        the unconfigured posture and on a failed configure, the
+        same gates the completion route carries."""
         await proxy.authorize(request)
-        router = proxy.router
-        await router.ensure_async(proxy.app.state.settings)
-        if not router.active:
-            return JSONResponse(
-                status_code=503,
-                content={"error": "LLM router not configured"},
-            )
+        router, failure = await configured_router(proxy)
+        if failure is not None:
+            return failure
         return {
             "object": "list",
             "data": await router.list_upstream_models(),
@@ -804,13 +849,9 @@ def build_proxy_app(proxy: LlmProxy) -> FastAPI:
         refusal, body = await parse_body(request)
         if refusal is not None:
             return refusal
-        router = proxy.router
-        await router.ensure_async(proxy.app.state.settings)
-        if not router.active:
-            return JSONResponse(
-                status_code=503,
-                content={"error": "LLM router not configured"},
-            )
+        router, failure = await configured_router(proxy)
+        if failure is not None:
+            return failure
         try:
             return await dispatch_completion(router, chat_fields(body))
         except Exception:

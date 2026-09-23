@@ -290,7 +290,11 @@ class NetManager:
         attachment = self._attachments.pop(workspace_id, None)
         services = self._services.pop(workspace_id, None)
         self.close_forwards(workspace_id)
-        await self.stop_llm(workspace_id)
+        with contextlib.suppress(Exception):
+            # Best-effort like the rest of the teardown: a listener
+            # whose serve task already died badly must not abort the
+            # table and tap cleanup below it.
+            await self.stop_llm(workspace_id)
         if attachment is None:
             return
         await self.app.state.consent.on_workspace_stop(workspace_id)
@@ -676,12 +680,14 @@ class NetManager:
 
         Best-effort by design: DHCP and DNS are the workspace's
         network, but the proxy is an auxiliary surface — a refused
-        bind (another daemon on the port) or a broken model entry
-        (a ``file:``/``cmd:`` reference that no longer resolves)
-        logs loudly and the boot proceeds, leaving that workspace
-        without the LLM surface until its next start. The
-        listener's absence leaves the input chain's admission
-        pointing at a closed port — connection refused, harmless."""
+        bind (another daemon on the port, an address the host
+        cannot bind) logs loudly and the boot proceeds, leaving
+        that workspace without the LLM surface until its next
+        start. A model entry that cannot resolve is not seen here
+        at all — entries parse at the first request, where a failed
+        configure answers a named 503. The listener's absence
+        leaves the input chain's admission pointing at a closed
+        port — connection refused, harmless."""
         llm = self.app.state.llm
         if llm is None:
             return
@@ -718,7 +724,8 @@ class NetManager:
 
     async def _unwind(self, workspace_id: str) -> None:
         """Roll back a half-built attachment (best effort)."""
-        await self.stop_llm(workspace_id)
+        with contextlib.suppress(Exception):
+            await self.stop_llm(workspace_id)
         services = self._services.pop(workspace_id, None)
         if services is not None:
             await stop_services(services)

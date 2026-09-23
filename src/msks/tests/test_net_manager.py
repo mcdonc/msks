@@ -1134,15 +1134,16 @@ async def test_attach_and_detach_work_without_an_llm_subsystem(
     await app.state.net.detach("ws-a")
 
 
-async def test_a_broken_model_entry_leaves_the_boot_alive(
+async def test_a_boot_survives_an_unbindable_llm_address(
     net_app, monkeypatch, capsys
 ) -> None:
-    """A model entry whose file: reference no longer resolves must
-    not fail the workspace's boot (#259 review): the proxy is an
-    auxiliary surface — the warning names the cause, the network
-    still arms."""
+    """The proxy is an auxiliary surface: whatever keeps its
+    listener from binding — an address the host cannot bind, a
+    port another daemon holds — logs loudly and the workspace
+    still boots (#259). Model entries themselves parse at the
+    first request, never here."""
     app, _ip, _nft = net_app
-    app.state.settings.llm.models = ("m::file:/nonexistent/key",)
+    app.state.settings.llm.models = ("*:http://up.stream/v1:sk-x",)
     monkeypatch.setattr(
         manager_mod, "verify_forwarding", lambda path=None: None
     )

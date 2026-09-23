@@ -2646,3 +2646,28 @@ async def test_llm_token_endpoints_demand_a_bearer(client) -> None:
     assert bare.status_code == 401
     posted = await http.post("/api/v1/workspaces/any/llm-token")
     assert posted.status_code == 401
+
+
+async def test_launch_heals_a_lost_seed_with_the_row_token(
+    client, tmp_path: Path
+) -> None:
+    """The #259 review's heal gap: a workspace whose seed.img is
+    gone at boot rebuilds it carrying the ROW's token — the guest
+    keeps its planted credential even though workspace views omit
+    it from the row dict spec_for reads."""
+    http, app, stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-heal", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201, created.text
+    wid = created.json()["id"]
+    minted = (
+        await http.get(f"/api/v1/workspaces/{wid}/llm-token", headers=auth())
+    ).json()["token"]
+    started = await http.post(
+        f"/api/v1/workspaces/{wid}/start", headers=auth()
+    )
+    assert started.status_code == 200, started.text
+    assert stub.seen_specs[wid].llm_token == minted

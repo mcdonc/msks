@@ -28,8 +28,11 @@ dependencies = [
   # The LLM router's multi-provider mode (#259, ported from
   # klangk): imported lazily inside msks.llm so the ~5 s import
   # tax stays off every path that never configures a model list —
-  # the CLI, the TUI, an unconfigured daemon.
-  "litellm>=1.86",
+  # the CLI, the TUI, an unconfigured daemon. The <2 ceiling holds
+  # the allowlist posture to the 1.x kwargs semantics it was
+  # reviewed against (call-site api_base/api_key overrides) — lift
+  # it only alongside a re-review of CHAT_FIELDS.
+  "litellm>=1.86,<2",
   # Egress consent's NFQUEUE binding (#69): consent is the normal
   # posture for workspaces, so the binding ships with every
   # install. It links libnetfilter_queue — devenv carries the

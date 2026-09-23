@@ -314,3 +314,20 @@ def test_llm_port_validation(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MSKSD_LLM_PORT", "0")
     with pytest.raises(ValueError, match="MSKSD_LLM_PORT"):
         Settings.from_env()
+
+
+def test_llm_port_may_not_collide_with_the_interceptor_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One per-tap address, two services: equal ports are a named
+    load-time refusal (#259 review), not an attach-time bind
+    failure naming neither setting."""
+    monkeypatch.setenv("MSKSD_LLM_MODELS", "*:http://up.stream/v1:k")
+    monkeypatch.setenv("MSKSD_LLM_PORT", "8643")
+    monkeypatch.setenv("MSKSD_INTERCEPTOR_PORT", "8643")
+    with pytest.raises(ValueError, match="MSKSD_LLM_PORT"):
+        Settings.from_env()
+    # Unconfigured daemons may share the number: no LLM listener
+    # ever binds it.
+    monkeypatch.delenv("MSKSD_LLM_MODELS")
+    assert Settings.from_env().llm.port == 8643

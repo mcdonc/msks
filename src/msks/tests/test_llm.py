@@ -846,3 +846,59 @@ async def test_parse_body_bounds_a_headerless_stream(monkeypatch) -> None:
     refusal, body = await llm_mod.parse_body(StreamedRequest([b'{"a": 1}']))
     assert refusal is None
     assert body == {"a": 1}
+
+
+# --- second review: client retirement, config-failure posture ---------------
+
+
+async def test_ensure_async_closes_the_replaced_client_on_the_loop() -> None:
+    """The to_thread configure cannot schedule closes itself (no
+    loop in the worker): the replaced client retires, and the
+    serving loop's ensure drains it — the close task really runs."""
+    router = LlmRouter()
+    router.client_factory = lambda timeout: httpx.AsyncClient(
+        transport=httpx.MockTransport(upstream_handler), timeout=timeout
+    )
+    await router.ensure_async(llm_settings(("*:http://a.stream/v1:k",)))
+    first = router._http_client
+    await router.ensure_async(llm_settings(("*:http://b.stream/v1:k",)))
+    assert first is not None and not first.is_closed
+    # The drain scheduled the close on this loop; give it a tick.
+    for _ in range(10):
+        await asyncio.sleep(0)
+    assert first.is_closed
+    assert not router._retired
+
+
+async def test_a_failed_configure_answers_a_named_503(caplog) -> None:
+    """A SIGHUP onto a dead file: reference: both routes answer a
+    503 naming the configure failure — and the body never carries
+    the entry's text (it may hold an inline key)."""
+    proxy = proxy_under_test(
+        {"ws1": {"id": "ws1", "llm_token": TOKEN}},
+        llm_settings(("*:http://up.stream/v1:sk-live-key",)),
+    )
+    proxy.router.client_factory = lambda timeout: httpx.AsyncClient(
+        transport=httpx.MockTransport(upstream_handler), timeout=timeout
+    )
+    proxy.router.ensure(proxy.app.state.settings)
+    proxy.app.state.settings = llm_settings(
+        ("*:http://up.stream/v1:file:/nonexistent/key",)
+    )
+    async with async_client(proxy, "10.0.0.1") as http:
+        with caplog.at_level("ERROR"):
+            models = await http.get("/v1/models", headers=AUTH)
+            completion = await http.post(
+                "/v1/chat/completions",
+                headers=AUTH,
+                json={"model": "m", "messages": []},
+            )
+    for reply in (models, completion):
+        assert reply.status_code == 503
+        assert reply.json() == {"error": "LLM router configuration failed"}
+        assert "sk-live-key" not in reply.text
+        assert "/nonexistent" not in reply.text
+    # The daemon log keeps the named cause.
+    assert any(
+        "LLM router configuration failed" in r.message for r in caplog.records
+    )

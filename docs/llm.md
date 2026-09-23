@@ -44,9 +44,11 @@ no proxy port.
 Every secret-bearing value resolves indirection at configure time:
 `file:` reads a path, `cmd:` runs a shell command and takes its
 stdout. It works on each entry's key and on the shared default
-`llm_api_key` (`MSKSD_LLM_API_KEY`). A broken reference fails the
-configure step with a named error instead of sending an empty key
-upstream.
+`llm_api_key` (`MSKSD_LLM_API_KEY`). A broken reference refuses
+the configure — the daemon log carries the named error (the
+entry's own text, operator-visible), and requests answer a 503
+that names only the failure, never the entry — instead of sending
+an empty key upstream.
 
 ## The listener, the firewall, and the credential
 
@@ -93,9 +95,17 @@ workspace by hand after rotating.
 
 One more create-time fact rides the seed: the port. The planted
 `OPENAI_BASE_URL` names the port the daemon served when the
-workspace was created; moving `MSKSD_LLM_PORT` later moves every
-listener, and each existing workspace's planted environment needs
-the same hand update (or a recreate).
+workspace was created. Moving `MSKSD_LLM_PORT` later does not
+rebind a live listener — each workspace's listener and firewall
+admission move at its next stop/start, and until then that
+workspace's LLM surface stays on the old port (fail-closed:
+refused). A workspace created before a port change needs the
+same hand update for its planted environment (or a recreate).
+
+One upstream-side behavior worth knowing in multi-provider mode:
+providers that want images inline make the daemon fetch remote
+URLs a request's message parts name — litellm's own URL
+validation guards those fetches.
 
 ## What a request may carry
 

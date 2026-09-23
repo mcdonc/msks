@@ -13,6 +13,7 @@ import os
 import re
 import secrets
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -579,6 +580,21 @@ def default_cmdline(body: WorkspaceCreate, record) -> str:
     if record is not None:
         return record.cmdline
     return "console=hvc0 root=/dev/vda rw"
+
+
+async def healed_spec(app, row: dict) -> VmSpec:
+    """The launch spec with the row's LLM credential restored (#259
+    review): ``workspace_dict`` omits it (operator views never show
+    it), so ``spec_for`` alone would rebuild a crash-healed seed
+    without the token the row still authenticates — the boot path
+    is the one consumer that needs the secret half."""
+    spec = spec_for(row)
+    if spec.llm_token is not None:
+        return spec
+    token = await app.state.model.get_llm_token(row["id"])
+    if token is None or token["llm_token"] is None:
+        return spec
+    return replace(spec, llm_token=token["llm_token"])
 
 
 def spec_for(row: dict) -> VmSpec:
@@ -1842,7 +1858,7 @@ def build_api(app) -> FastAPI:
         # boot and any in-flight move serialize — the status write
         # stays inside the hold or a waiter would read a stale row.
         async with move_lock(app, workspace_id):
-            await app.state.microvm.launch(spec_for(row))
+            await app.state.microvm.launch(await healed_spec(app, row))
             await app.state.model.set_status(workspace_id, "running")
         return {"id": workspace_id, "status": "running"}
 

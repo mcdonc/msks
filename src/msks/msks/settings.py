@@ -333,12 +333,30 @@ class Settings:
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
-        return cls(
+        settings = cls(
             vmm=VmmSettings.from_env(env),
             server=ServerSettings.from_env(env),
             net=NetSettings.from_env(env),
             secret_store=SecretStoreSettings.from_env(env),
             llm=LlmSettings.from_env(env),
+        )
+        check_tap_port_collision(settings)
+        return settings
+
+
+def check_tap_port_collision(settings: Settings) -> None:
+    """Refuse a daemon whose two per-tap services would bind the
+    same port (#259 review): the LLM proxy binds first at attach
+    and the interceptor's armed bind would then fail with an error
+    naming neither setting — one comparison at load names both."""
+    if (
+        settings.llm.models
+        and settings.llm.port == settings.net.interceptor_port
+    ):
+        raise ValueError(
+            "MSKSD_LLM_PORT and MSKSD_INTERCEPTOR_PORT name the same "
+            f"port ({settings.llm.port}); the proxy and the "
+            "interceptor cannot share it"
         )
 
 
