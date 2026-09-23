@@ -1,5 +1,6 @@
 """The nftables rulesets and their application (#52)."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -410,10 +411,33 @@ def test_element_scopes_reads_both_set_kinds() -> None:
     ]
 
 
+def test_element_pairs_read_permanent_elements() -> None:
+    """Permanent elements (added without a timeout) dump as bare
+    values — no wrapper object — and a permanent concatenation still
+    arrives as a ``concat`` object (#260 review, round 4)."""
+    payload = json_set(
+        "allows_any",
+        ["10.9.9.9", {"elem": {"val": {"concat": ["10.7.7.7", 53]}}}],
+    )
+    assert nft.element_scopes(payload) == [
+        ("10.9.9.9", None),
+        ("10.7.7.7 . 53", None),
+    ]
+
+
 def test_element_scopes_tolerates_garbage() -> None:
     assert nft.element_scopes(b"not json") == []
     assert nft.element_scopes(b"{}") == []
     assert nft.element_scopes(json_set("x", [{"elem": {"timeout": 5}}])) == []
+    # A non-list elem block, and bare non-string items: skipped,
+    # never raised (#260 review, round 4).
+    assert (
+        nft.element_scopes(
+            json.dumps({"nftables": [{"set": {"elem": {"val": 1}}}]}).encode()
+        )
+        == []
+    )
+    assert nft.element_scopes(json_set("x", [7])) == []
 
 
 def test_element_statements_render_the_restore_file() -> None:
@@ -436,7 +460,7 @@ async def test_dump_reads_the_live_sets(tools) -> None:
     settings, log = tools
     dumped = await nft.dump_consent_elements(settings, "ws-a")
     assert dumped == {}  # the stub answers nothing for list set
-    assert [line.split()[4] for line in log_lines(log)] == [
+    assert [line.split()[5] for line in log_lines(log)] == [
         "allows_any",
         "allows_port",
         "rejects",
@@ -449,12 +473,15 @@ async def test_dump_reads_a_real_listing(tools, monkeypatch) -> None:
     settings, _log = tools
 
     async def fake_json(settings, args):
-        assert args[:4] == ["list", "set", "inet", table_name("ws-a")]
-        if args[4] == "allows_any":
+        # The JSON flag is load-bearing: without it nft answers in
+        # its human format and the parse silently empties (#260
+        # review, round 4).
+        assert args[:5] == ["-j", "list", "set", "inet", table_name("ws-a")]
+        if args[5] == "allows_any":
             return json_set(
                 "allows_any", [{"elem": {"val": "10.1.2.3", "timeout": 60}}]
             )
-        if args[4] == "allows_port":
+        if args[5] == "allows_port":
             # A set that exists but holds nothing: the dump skips it.
             return json_set("allows_port", [])
         return None  # the third set is absent

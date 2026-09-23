@@ -421,17 +421,28 @@ def element_scopes(payload: bytes) -> list[tuple[str, int | None]]:
 
 def element_pairs(entry: dict) -> list[tuple[str, int | None]]:
     """One nftables JSON entry's elements, as pairs."""
+    elems = (entry.get("set") or {}).get("elem")
+    if not isinstance(elems, list):
+        return []
     pairs = []
-    for item in (entry.get("set") or {}).get("elem") or []:
+    for item in elems:
         pair = element_pair(item)
         if pair is not None:
             pairs.append(pair)
     return pairs
 
 
-def element_pair(item: dict) -> tuple[str, int | None] | None:
+def element_pair(item) -> tuple[str, int | None] | None:
     """One element as ``(scope, seconds)``, None when it has no
-    value to render."""
+    value to render. A timed element dumps as a ``{"elem": {...}}``
+    object; a permanent one dumps as its bare value — nft emits no
+    wrapper for the timeout-less shape (probed, 1.1.6) — so a bare
+    string renders with no timeout and anything unrecognized is
+    skipped (fail-closed)."""
+    if isinstance(item, str):
+        return (item, None)
+    if not isinstance(item, dict):
+        return None
     data = item.get("elem") or {}
     scope = element_scope(data)
     if scope is None:
@@ -523,7 +534,7 @@ async def dump_consent_elements(
     dumped: dict[str, list[tuple[str, int | None]]] = {}
     for name in CONSENT_SETS:
         payload = await nft_json(
-            settings, ["list", "set", "inet", table, name]
+            settings, ["-j", "list", "set", "inet", table, name]
         )
         if payload:
             scopes = element_scopes(payload)

@@ -58,11 +58,11 @@ While a workspace is armed, the redirect takes its web egress
 interceptor's own allowlist is what gates web traffic during that
 time, and a static or interactive workspace with a live
 placeholder reaches any web destination through the splice tier.
-The consent modes keep gating every other port. A connection the
-guest opened **before** the first placeholder armed keeps flowing
-unintercepted until it ends — the kernel's connection tracking
-outlives the rule swap — which places it in the same accepted
-blind-spot class as the splice tier.
+The consent modes keep gating every other port, and the verdict
+pins and resolver-learned allows they hold in the kernel carry
+across the interceptor's arm/disarm table swaps — re-pinned with
+their remaining lifetimes in the same transaction that swaps the
+table.
 
 Each swap publishes a `secret.swap` event; mint, revoke, and expiry
 publish their own (`secret.mint`, `secret.revoke`, `secret.expiry`).
@@ -92,14 +92,27 @@ together, with no window in between where the table is absent.
 The listeners bind one shared port on each armed tap address
 (`interceptor_port`, default 8643 — see the
 [key reference](config.md)). Upstream connections are verified
-against the platform's trust store. The daemon pins no cipher
-list of its own anywhere: the contexts it builds take mitmproxy's
-curated default list, and any override arrives as a setting with
-the certification effort, never as code. One functional limit
-rides that posture: the client-facing leg negotiates HTTP/1.1
-only (no ALPN callback is installed), so guests with HTTP/2
-fall back — the swap, the splice, and the detection behave the
-same over HTTP/1.1.
+against the CA bundle mitmproxy ships (certifi's Mozilla list) —
+not the platform's own store; pointing verification at the
+platform bundle is a setting the certification effort brings,
+never a code change. The daemon pins no cipher list of its own
+anywhere: the contexts it builds take mitmproxy's curated default
+list, and any override arrives as a setting with the certification
+effort, never as code. One functional limit rides that posture:
+the client-facing leg negotiates HTTP/1.1 only (no ALPN callback
+is installed), so guests with HTTP/2 fall back — the swap, the
+splice, and the detection behave the same over HTTP/1.1.
+
+Two lifecycle facts worth knowing: a workspace whose interceptor
+cannot arm (its listener cannot bind) fails its boot with the
+named cause — an armed workspace is the whole point of a
+placeholder, and half-armed is worse than refused. And a
+connection the guest opened before the first placeholder armed
+keeps flowing unintercepted until it ends (the kernel's connection
+tracking outlives the rule swap); an established _redirected_
+flow, symmetrically, breaks when the last placeholder goes — the
+listener is gone while its NAT entry lingers. Both sit in the
+same accepted blind-spot class as the splice tier.
 
 ## The mint flow
 
