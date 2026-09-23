@@ -1356,7 +1356,7 @@ def build_api(app) -> FastAPI:
                         # same named 507 a path import answers,
                         # before any bytes are fetched.
                         refusal = storage.floor_refusal(
-                            vmm, "importing images", 1 << 20
+                            vmm, "importing images"
                         )
                         raise HTTPException(
                             status_code=507,
@@ -1389,17 +1389,20 @@ def build_api(app) -> FastAPI:
                 record = await asyncio.to_thread(
                     imagestore.import_archive, source, state_dir
                 )
+                # The first imported image becomes the default: a fresh
+                # daemon answers a bare workspace create immediately (the
+                # sole-entry fallback would resolve it, but the pointer
+                # keeps the designation explicit and stable across later
+                # imports). Inside the lock: two imports into an empty
+                # catalog otherwise both observe the other's row and
+                # leave no default designated at all.
+                if len(imagestore.list_images(state_dir)) == 1:
+                    imagestore.set_default(record.hash, state_dir)
         except (ImageError, OSError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
         finally:
             if staged is not None:
                 staged.unlink(missing_ok=True)
-        # The first imported image becomes the default: a fresh
-        # daemon answers a bare workspace create immediately (the
-        # sole-entry fallback would resolve it, but the pointer keeps
-        # the designation explicit and stable across later imports).
-        if len(imagestore.list_images(state_dir)) == 1:
-            imagestore.set_default(record.hash, state_dir)
         return Response(
             status_code=201,
             content=json.dumps(

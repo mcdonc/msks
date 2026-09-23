@@ -887,10 +887,21 @@ def test_check_flags_have_one_source() -> None:
     assert conformance.check_arguments is conformance_args.check_arguments
 
 
-def test_uplink_without_egress_is_a_usage_error() -> None:
+def test_uplink_without_egress_is_a_usage_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     """--uplink names the egress pass's uplink; alone it is a
-    named usage error, not a silently ignored flag."""
-    assert conformance.run_check(check_args(uplink="eth0", egress=False)) == 2
+    named usage error, not a silently ignored flag — asserted on
+    the stderr text, against a real archive, so the guard itself
+    (not a sibling early exit) is what answers."""
+    path = archive_with(tmp_path, manifest())
+    assert (
+        conformance.run_check(
+            check_args(archive=str(path), uplink="eth0", egress=False)
+        )
+        == 2
+    )
+    assert "needs --egress" in capsys.readouterr().err
 
 
 async def test_default_state_dir_is_private(tmp_path: Path) -> None:
@@ -920,3 +931,63 @@ async def test_default_state_dir_is_private(tmp_path: Path) -> None:
     assert first_failure(rows) is None
     assert made and (made[0].stat().st_mode & 0o777) == 0o700
     shutil.rmtree(made[0], ignore_errors=True)
+
+
+async def test_bad_console_users_fails_the_archive_row(
+    tmp_path: Path,
+) -> None:
+    """A non-list console_users field fails the archive row by name
+    (the TypeError-crash shape the third review caught)."""
+    document = manifest()
+    document["console_users"] = 42
+    rows = await check_image(
+        archive_with(tmp_path, document, tag="badusers"),
+        boot_timeout_s=0.5,
+        app_factory=make_app(CheckMicrovm(FakeConsole())),
+    )
+    assert statuses(rows)[ARCHIVE] == "fail"
+    assert "console_users" in first_failure(rows).detail
+    assert all(row.status == "skip" for row in rows[1:])
+
+
+def test_run_check_keeps_and_names_the_state_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--keep prints the kept dir's path so the operator can find
+    the serial logs without globbing /tmp."""
+
+    async def fake_check(*args, **kwargs):
+        return [passed(ARCHIVE, "imported mine:1.0")]
+
+    monkeypatch.setattr(conformance, "check_image", fake_check)
+    path = archive_with(tmp_path, manifest())
+    assert conformance.run_check(check_args(archive=str(path), keep=True)) == 0
+    out = capsys.readouterr().out
+    assert "state kept at " in out
+    kept = Path(out.split("state kept at ")[1].split()[0])
+    assert kept.is_dir() and (kept.stat().st_mode & 0o777) == 0o700
+    shutil.rmtree(kept, ignore_errors=True)
+
+
+def test_sanitize_strips_direction_marks() -> None:
+    """Format characters (Cf) — RTL overrides — cannot visually
+    rewrite a row's detail."""
+    from msks.conformance import sanitize
+
+    assert sanitize("ok\u202eevil") == "okevil"
+
+
+def test_default_uplink_names_a_missing_ip_tool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A host without iproute2 gets a named refusal pointing at
+    --uplink, not a FileNotFoundError traceback."""
+
+    def gone(*args, **kwargs):
+        raise FileNotFoundError("No such file or directory: 'ip'")
+
+    monkeypatch.setattr(subprocess, "run", gone)
+    with pytest.raises(RuntimeError, match="--uplink"):
+        default_uplink()

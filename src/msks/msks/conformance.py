@@ -32,6 +32,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -63,15 +64,15 @@ PASS = "pass"
 FAIL = "fail"
 SKIP = "skip"
 
-#: Every point the core pass reports; the archive-failure path
-#: skips them all.
+#: Every point the core pass reports, in the order a green pass
+#: emits them; the archive- and launch-failure paths skip them all.
 CORE_POINTS = (
     BOOT,
     CONSOLE,
-    ROOT_RW,
-    HOME_LABEL,
     USER_DATA,
     ACPI_SHUTDOWN,
+    ROOT_RW,
+    HOME_LABEL,
 )
 
 #: The ip_forward sysctl the --egress pass owns for its run (the
@@ -263,7 +264,11 @@ def sanitize(text: str) -> str:
     into it from ANY channel.
     """
     line = text.splitlines()[0] if text else ""
-    return "".join(ch for ch in line if ch.isprintable())
+    return "".join(
+        ch
+        for ch in line
+        if ch.isprintable() and unicodedata.category(ch) != "Cf"
+    )
 
 
 def console_detail(record: ImageRecord) -> str:
@@ -294,9 +299,17 @@ def probe_user(record: ImageRecord) -> str | None:
 def default_uplink() -> str:
     """The default route's device — the uplink the --egress pass
     NATs behind when the operator named none."""
-    route = subprocess.run(
-        ["ip", "route", "show", "default"], capture_output=True, text=True
-    ).stdout
+    try:
+        route = subprocess.run(
+            ["ip", "route", "show", "default"],
+            capture_output=True,
+            text=True,
+        ).stdout
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "cannot name a default-route uplink: no ip(8) on this host; "
+            "pass --uplink"
+        ) from exc
     parts = route.split()
     for index, part in enumerate(parts):
         if part == "dev":
@@ -369,7 +382,7 @@ async def shutdown_row(
         return failed(
             ACPI_SHUTDOWN, f"status {info.status.value} after the press"
         )
-    except BaseException as exc:
+    except Exception as exc:
         return failed(ACPI_SHUTDOWN, exc)
 
 
@@ -388,7 +401,7 @@ async def boot_rows(
         elapsed = await await_console(
             microvm, workspace_id, user, boot_timeout_s
         )
-    except BaseException as exc:
+    except Exception as exc:
         append_failure(results, exc, BOOT, *CORE_POINTS[1:])
         return False
     results.append(
@@ -425,7 +438,7 @@ async def write_markers(
             "WROTE-42",
             user,
         )
-    except BaseException as exc:
+    except Exception as exc:
         root_exc = exc
     try:
         await await_marker(
@@ -439,7 +452,7 @@ async def write_markers(
             user,
             boot_timeout_s,
         )
-    except BaseException as exc:
+    except Exception as exc:
         home_exc = exc
     return root_exc, home_exc
 
@@ -467,7 +480,7 @@ async def user_data_row(
             boot_timeout_s,
         )
         results.append(passed(USER_DATA, "seed payload ran on first boot"))
-    except BaseException as exc:
+    except Exception as exc:
         results.append(failed(USER_DATA, exc))
 
 
@@ -502,7 +515,7 @@ async def persistence_rows(
     try:
         await microvm.launch(spec)
         await await_console(microvm, spec.workspace_id, user, boot_timeout_s)
-    except BaseException as exc:
+    except Exception as exc:
         results.append(failed(ROOT_RW, f"second boot failed: {exc}"))
         results.append(failed(HOME_LABEL, f"second boot failed: {exc}"))
         return
@@ -517,7 +530,7 @@ async def persistence_rows(
             user,
             boot_timeout_s,
         )
-    except BaseException as exc:
+    except Exception as exc:
         root_read = exc
     try:
         await await_marker(
@@ -528,7 +541,7 @@ async def persistence_rows(
             user,
             boot_timeout_s,
         )
-    except BaseException as exc:
+    except Exception as exc:
         home_read = exc
     results.append(
         verdict_row(
@@ -583,8 +596,8 @@ async def run_core_pass(
     try:
         try:
             await microvm.launch(spec)
-        except BaseException as exc:
-            append_failure(results, exc, BOOT)
+        except Exception as exc:
+            append_failure(results, exc, BOOT, *CORE_POINTS[1:])
             return
         if not await boot_rows(
             microvm,
@@ -680,7 +693,7 @@ async def run_egress_pass(
                 )
             finally:
                 await discard(microvm, spec.workspace_id)
-    except BaseException as exc:
+    except Exception as exc:
         append_failure(results, exc, EGRESS_DHCP)
     finally:
         with contextlib.suppress(Exception):
@@ -769,8 +782,9 @@ async def check_image(
 
     Returns every contract point's row, in report order. The state
     dir defaults to a throwaway under ``/tmp`` — shallow, for the
-    AF_UNIX socket limit — and is removed unless ``keep_state``;
-    ``state_dir`` relocates it.
+    AF_UNIX socket limit; the checker OWNS it and removes it unless
+    ``keep_state`` (a caller-supplied ``state_dir`` is removed the
+    same way — pass one you do not want kept).
     """
     if state_dir is None:
         # mkdtemp: 0700 and atomically created — the serial log and
@@ -812,25 +826,53 @@ async def check_image(
             shutil.rmtree(state_dir, ignore_errors=True)
 
 
-def run_check(args: argparse.Namespace) -> int:
-    """The check subcommand's body: run the pass, print, exit."""
+def usage_guards(args: argparse.Namespace) -> int | None:
+    """The named usage refusals that answer before any boot."""
     if args.egress and os.geteuid() != 0:
         print("msks: --egress needs root (tap/nftables/DHCP)", file=sys.stderr)
         return 2
+    if args.uplink and not args.egress:
+        print("msks: --uplink needs --egress", file=sys.stderr)
+        return 2
+    return None
+
+
+def run_pass(
+    archive: Path, args: argparse.Namespace
+) -> tuple[list[CheckResult], Path]:
+    """One pass in its own throwaway state dir, with that dir's
+    path beside the rows (``--keep`` keeps it and names it)."""
+    state_dir = Path(tempfile.mkdtemp(prefix="msks-conf-"))
+    try:
+        results = asyncio.run(
+            check_image(
+                archive,
+                egress=args.egress,
+                uplink=args.uplink,
+                boot_timeout_s=args.boot_timeout_s,
+                shutdown_timeout_s=args.shutdown_timeout_s,
+                keep_state=args.keep,
+                state_dir=state_dir,
+            )
+        )
+        return results, state_dir
+    finally:
+        if not args.keep:
+            shutil.rmtree(state_dir, ignore_errors=True)
+
+
+def run_check(args: argparse.Namespace) -> int:
+    """The check subcommand's body: run the pass, print, exit."""
+    refusal = usage_guards(args)
+    if refusal is not None:
+        return refusal
     archive = Path(args.archive)
     if not archive.is_file():
         print(f"msks: no such archive: {archive}", file=sys.stderr)
         return 2
-    results = asyncio.run(
-        check_image(
-            archive,
-            egress=args.egress,
-            uplink=args.uplink,
-            boot_timeout_s=args.boot_timeout_s,
-            shutdown_timeout_s=args.shutdown_timeout_s,
-            keep_state=args.keep,
-        )
-    )
+    results, state_dir = run_pass(archive, args)
+    if args.keep:
+        print(f"state kept at {state_dir} (serial logs, image cache)")
     print(render(results))
     failure = first_failure(results)
     if failure is not None:

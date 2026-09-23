@@ -300,7 +300,26 @@ def validate_manifest(layer: tarfile.TarFile) -> dict:
     # behind the 400.
     provisioner_of(raw)
     vsock_port_of(raw)
+    console_users_of(raw)
     return raw
+
+
+def console_users_of(manifest: dict) -> tuple[str, ...]:
+    """The manifest's console users, validated (#261): a list of
+    strings — the one manifest field the old import never
+    type-checked, so a non-list surfaced as a bare TypeError after
+    the cache was renamed into place."""
+    users = manifest.get("console_users")
+    if users is None:
+        return ("root",)
+    if not isinstance(users, list) or not all(
+        isinstance(user, str) for user in users
+    ):
+        raise ImageError(
+            "image.json console_users must be a list of strings, "
+            f"got {users!r}"
+        )
+    return tuple(users)
 
 
 def vsock_port_of(manifest: dict) -> int:

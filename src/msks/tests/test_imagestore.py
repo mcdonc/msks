@@ -1640,3 +1640,59 @@ def test_api_url_import_answers_507_at_the_floor(tmp_path: Path) -> None:
             assert "floor" in made.json()["detail"]
     finally:
         monkey.undo()
+
+
+async def test_api_concurrent_url_imports_serialize(tmp_path) -> None:
+    """The daemon-wide import lock: two concurrent URL imports never
+    stage at the same time — the floor clamp one measured while the
+    other streams would be a lie."""
+    import time as time_mod
+
+    archive = tmp_path / "ws.tar"
+    build_containerdisk(archive)
+    events: list[tuple[str, str]] = []
+
+    def slow_fetch(url, state_dir, *, timeout_s, max_bytes, transport=None):
+        tag = url.rsplit("/", 1)[-1]
+        dest = imagestore.images_dir(state_dir) / f".dl-serial-{tag}"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(archive, dest)
+        events.append(("enter", tag))
+        time_mod.sleep(0.25)
+        events.append(("exit", tag))
+        return dest
+
+    settings = Settings(
+        vmm=VmmSettings(state_dir=tmp_path / "vms"),
+        net=NetSettings(enabled=False),
+        server=ServerSettings(
+            db_path=tmp_path / "api.db", bootstrap_token=TOKEN
+        ),
+    )
+    app = build_app(settings)
+    app.state.microvm = StubMicrovm()
+    api = build_api(app)
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(imagestore, "fetch_archive", slow_fetch)
+    try:
+        async with api.router.lifespan_context(api):
+            async with AsyncClient(
+                transport=httpx.ASGITransport(app=api),
+                base_url="https://test",
+            ) as client:
+                posts = [
+                    client.post(
+                        "/api/v1/images",
+                        json={"source": f"https://images.example.com/{n}.tar"},
+                        headers={"authorization": f"Bearer {TOKEN}"},
+                    )
+                    for n in range(2)
+                ]
+                both = await asyncio.gather(*posts)
+            assert [made.status_code for made in both] == [201, 201]
+    finally:
+        monkey.undo()
+    # Strict enter/exit alternation: no overlap between the two.
+    kinds = [kind for kind, _ in events]
+    assert kinds == ["enter", "exit", "enter", "exit"]
+    assert len({tag for _, tag in events}) == 2
