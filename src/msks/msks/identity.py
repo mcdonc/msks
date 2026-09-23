@@ -143,7 +143,11 @@ def mint(key_type: str) -> tuple[str, str]:
 
 
 def seed_script(
-    public_key: str, workspace_id: str, login_user: str | None = None
+    public_key: str | None,
+    workspace_id: str,
+    login_user: str | None = None,
+    llm_token: str | None = None,
+    llm_port: int = 0,
 ) -> str:
     """The seeding payload's script half: authorized_keys for root
     and the msks workspace user (#63) plus the console helper's
@@ -178,7 +182,19 @@ def seed_script(
     workspace's id. The daemon relays the challenge and the
     signature; it can answer for neither. ssh and console share the
     key: what authorized_keys accepts, allowed_signers accepts.
+
+    A workspace's LLM proxy credential rides the same script
+    (#259): the token file under /etc/msks and the profile.d
+    exports that point OpenAI-shaped clients at the daemon's
+    proxy. A token with no identity (a pre-#111 row whose seed is
+    healing) seeds the token block alone.
     """
+    if public_key is None:
+        return (
+            "#!/bin/sh\n"
+            "# msks (#259): the workspace's LLM proxy credential.\n"
+            "set -eu\n" + llm_seed_block(llm_token, llm_port)
+        )
     script = (
         "#!/bin/sh\n"
         "# msks (#111, #123): the workspace identity — authorized_keys\n"
@@ -232,7 +248,37 @@ def seed_script(
         'chown root:root "$signers"\n'
         'chmod 0600 "$signers"\n'
     )
+    if llm_token is not None:
+        script += llm_seed_block(llm_token, llm_port)
     return script
+
+
+def llm_seed_block(token: str, port: int) -> str:
+    """The #259 block: the workspace's proxy credential as
+    /etc/msks/llm.token, and the profile.d script that exports the
+    OpenAI-shaped client environment — the base URL names the
+    DHCP lease's gateway (this workspace's tap address) and the port
+    the daemon served at create, so login shells point at the proxy
+    with zero manual steps. The token's charset (``msksllm1_`` plus
+    URL-safe base64) carries no quote or metacharacter, so the
+    single-quoted assignment is safe; the heredoc is quoted, so it
+    plants unexpanded and computes the gateway at login."""
+    return (
+        f"llm_token='{token}'\n"
+        "install -d -m 0755 -o root -g root /etc/msks\n"
+        "printf '%s\\n' \"$llm_token\" > /etc/msks/llm.token\n"
+        "chmod 0644 /etc/msks/llm.token\n"
+        "cat > /etc/profile.d/msks-llm.sh <<'MSEOF'\n"
+        "# msks (#259): point OpenAI-shaped clients at the daemon's\n"
+        "# proxy on this workspace's tap.\n"
+        "gw=$(ip route show default 2>/dev/null | awk '{print $3; exit}')\n"
+        'if [ -n "$gw" ] && [ -r /etc/msks/llm.token ]; then\n'
+        f'  OPENAI_BASE_URL="http://$gw:{port}/v1"\n'
+        '  OPENAI_API_KEY="$(cat /etc/msks/llm.token)"\n'
+        "  export OPENAI_BASE_URL OPENAI_API_KEY\n"
+        "fi\n"
+        "MSEOF\n"
+    )
 
 
 def named_user_block(login_user: str) -> str:
@@ -346,20 +392,24 @@ def compose_user_data(
     public_key: str | None,
     workspace_id: str = "",
     login_user: str | None = None,
+    llm_token: str | None = None,
+    llm_port: int = 0,
 ) -> str:
     """The seed's user-data document: what cidata actually carries.
 
-    With no minted key the operator's payload travels verbatim (the
-    #41 contract, unchanged); with a key and no payload the seed is
-    the identity script alone; with both, a MIME multipart carries
-    the script and the payload as sibling parts. The content type of
-    the operator part is sniffed from its first line — the two forms
-    the #41 contract documents are a ``#!`` script and a
-    ``#cloud-config`` document.
+    With no minted key and no LLM token the operator's payload
+    travels verbatim (the #41 contract, unchanged); with a key or a
+    token and no payload the seed is the seeding script alone; with
+    a script and a payload, a MIME multipart carries the two as
+    sibling parts. The content type of the operator part is sniffed
+    from its first line — the two forms the #41 contract documents
+    are a ``#!`` script and a ``#cloud-config`` document.
     """
-    if public_key is None:
+    if public_key is None and llm_token is None:
         return operator_payload
-    script = seed_script(public_key, workspace_id, login_user)
+    script = seed_script(
+        public_key, workspace_id, login_user, llm_token, llm_port
+    )
     if operator_payload is None:
         return script
     boundary = unique_boundary(operator_payload, script)

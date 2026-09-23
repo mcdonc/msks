@@ -411,6 +411,14 @@ KEY_CASES = [
     ("event_poll_s", 2.5, "server.event_poll_s", 2.5),
     ("bootstrap_token", "tok", "server.bootstrap_token", "tok"),
     ("access_log", True, "server.access_log", True),
+    ("llm_port", 8771, "llm.port", 8771),
+    (
+        "llm_models",
+        "openai/gpt-4o:https://api.openai.com/v1:sk-x",
+        "llm.models",
+        ("openai/gpt-4o:https://api.openai.com/v1:sk-x",),
+    ),
+    ("llm_api_key", "sk-y", "llm.api_key", "sk-y"),
     ("egress_enabled", True, "net.enabled", True),
     ("egress_subnet", "10.9.0.0/16", "net.pool", "10.9.0.0/16"),
     ("egress_uplink", "enp1s0", "net.uplink", "enp1s0"),
@@ -779,3 +787,46 @@ def test_reload_latches_the_secret_store_location(tmp_path) -> None:
     assert str(store.root) == str(tmp_path / "old-root")  # latched
     assert store.age_identity == "/new/key"  # connection detail: live
     assert app.state.secrets._cache == {}  # the swap emptied the cache
+
+
+def test_llm_models_is_the_one_list_valued_key(tmp_path: Path) -> None:
+    """The file's list form (#259, klangk's shape): entries are
+    strings or LiteLLM-native dicts, and the settings carry them
+    through; every other key keeps the scalar-only rule."""
+    config = tmp_path / "msksd.yaml"
+    config.write_text(
+        "llm_models:\n"
+        "  - openai/gpt-4o::sk-1\n"
+        "  - model_name: claude\n"
+        "    litellm_params:\n"
+        "      model: anthropic/claude-sonnet-4\n"
+        "      api_key: sk-2\n"
+    )
+    settings = load_settings(str(config))
+    string, entry = settings.llm.models
+    assert string == "openai/gpt-4o::sk-1"
+    assert entry["litellm_params"]["api_key"] == "sk-2"
+
+
+def test_a_list_for_any_other_key_is_a_named_error(tmp_path: Path) -> None:
+    config = tmp_path / "msksd.yaml"
+    config.write_text("port:\n  - 1\n")
+    with pytest.raises(ValueError, match="'port' must be a number"):
+        load_settings(str(config))
+
+
+def test_a_bad_list_entry_is_a_named_error(tmp_path: Path) -> None:
+    config = tmp_path / "msksd.yaml"
+    config.write_text("llm_models:\n  - 17\n")
+    with pytest.raises(ValueError, match="entries must be strings"):
+        load_settings(str(config))
+
+
+def test_the_environment_overrides_the_file_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "msksd.yaml"
+    config.write_text("llm_models:\n  - model_name: kept\n")
+    monkeypatch.setenv("MSKSD_LLM_MODELS", "openai/x::sk-env")
+    settings = load_settings(str(config))
+    assert settings.llm.models == ("openai/x::sk-env",)

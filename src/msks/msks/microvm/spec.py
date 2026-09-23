@@ -59,6 +59,12 @@ class VmSpec:
     # created before per-workspace users — its login user is the
     # image's own (LEGACY_LOGIN_USER).
     login_user: str | None = None
+    # The workspace's LLM proxy credential (#259): minted at create,
+    # stored on the row, and seeded into the guest (the token file
+    # plus the profile.d exports that point OpenAI-shaped clients
+    # at the daemon's proxy on this workspace's tap). None is a
+    # workspace created before the proxy existed.
+    llm_token: str | None = None
 
 
 class VmStatus(StrEnum):

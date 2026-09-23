@@ -295,6 +295,35 @@ class SecretStoreSettings:
 
 
 @dataclass
+class LlmSettings:
+    """The workspace LLM proxy (#259).
+
+    The model list is the switch: a daemon with no ``MSKSD_LLM_MODELS``
+    presents no LLM surface at all (nothing binds on a tap, the
+    per-VM input chain admits nothing), and a daemon with one serves
+    the OpenAI-shaped proxy on every workspace tap at *port*.
+    Entries are ``provider/model:api_base:api_key`` strings —
+    comma-separated in the environment, or the config file's list,
+    whose entries may also be LiteLLM-native dicts (klangk's YAML
+    shape: ``model_name``/``litellm_params``, kebab- or snake-case,
+    the routing knobs the string grammar cannot spell). Secret-
+    bearing values carry ``file:``/``cmd:``
+    indirection (resolved at configure time), and a single entry
+    whose model name is ``*`` is single-upstream passthrough mode.
+    The settings are read live, so a SIGHUP swap re-routes requests
+    wherever a listener already serves.
+    """
+
+    port: int = 8770
+    models: tuple[str | dict, ...] = ()
+    api_key: str | None = None
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str] | None = None) -> LlmSettings:
+        return llm_settings_from_env(cls, live_env(env))
+
+
+@dataclass
 class Settings:
     """The live-swappable settings root msksd subsystems read."""
 
@@ -304,14 +333,34 @@ class Settings:
     secret_store: SecretStoreSettings = field(
         default_factory=SecretStoreSettings
     )
+    llm: LlmSettings = field(default_factory=LlmSettings)
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
-        return cls(
+        settings = cls(
             vmm=VmmSettings.from_env(env),
             server=ServerSettings.from_env(env),
             net=NetSettings.from_env(env),
             secret_store=SecretStoreSettings.from_env(env),
+            llm=LlmSettings.from_env(env),
+        )
+        check_tap_port_collision(settings)
+        return settings
+
+
+def check_tap_port_collision(settings: Settings) -> None:
+    """Refuse a daemon whose two per-tap services would bind the
+    same port (#259 review): the LLM proxy binds first at attach
+    and the interceptor's armed bind would then fail with an error
+    naming neither setting — one comparison at load names both."""
+    if (
+        settings.llm.models
+        and settings.llm.port == settings.net.interceptor_port
+    ):
+        raise ValueError(
+            "MSKSD_LLM_PORT and MSKSD_INTERCEPTOR_PORT name the same "
+            f"port ({settings.llm.port}); the proxy and the "
+            "interceptor cannot share it"
         )
 
 
@@ -591,6 +640,101 @@ def egress_mode(env: Mapping[str, str], name: str, default: str) -> str:
             f"{name} must be one of {list(EGRESS_MODES)}, got {value!r}"
         )
     return value
+
+
+def llm_settings_from_env(
+    cls: type[LlmSettings], env: Mapping[str, str]
+) -> LlmSettings:
+    """Build LlmSettings from the environment (helper: keeps the
+    class block itself at xenon rank A, like its siblings)."""
+    default = cls()
+    port = _parse_int(env, "MSKSD_LLM_PORT", default.port)
+    if not 1 <= port <= 65535:
+        raise ValueError(f"MSKSD_LLM_PORT must be a port, got {port}")
+    return cls(
+        port=port,
+        models=llm_models_from(env),
+        api_key=optional_env(env, "MSKSD_LLM_API_KEY"),
+    )
+
+
+def llm_models_from(env) -> tuple[str | dict, ...]:
+    """The model list: the env's comma-separated strings, or the
+    config file's list (its entries already validated as strings
+    or mappings — the same shapes mix freely)."""
+    raw = env.get("MSKSD_LLM_MODELS", "")
+    entries = raw if isinstance(raw, list) else raw.split(",")
+    return tuple(
+        entry
+        for entry in (model_entry(item) for item in entries)
+        if entry != ""
+    )
+
+
+def model_entry(entry) -> str | dict:
+    """One entry, kept: a mapping validated in place, a stripped
+    non-empty string, a blank string dropped; anything else is a
+    named error (the env's string form and the file's list share
+    this walk). The dict check is the load-time half of the file's
+    fail-at-startup rule — a malformed entry names itself here,
+    not as an unnamed exception at the first request (#259
+    review)."""
+    if isinstance(entry, dict):
+        check_dict_entry(entry)
+        return entry
+    if isinstance(entry, str):
+        return entry.strip()
+    raise ValueError("MSKSD_LLM_MODELS entries must be strings or mappings")
+
+
+def check_dict_entry(entry: dict) -> None:
+    """The load-time shape check for one dict entry: keys must be
+    strings (the normalizer's kebab→snake walk reads them),
+    ``params``/``litellm_params`` a mapping when present (a null
+    block is a named error, not a None crash at configure),
+    ``model_name``/``model-name`` a string, and the params block's
+    keys strings too."""
+    check_entry_keys(entry)
+    check_entry_name(entry)
+    check_params_keys(entry)
+
+
+def check_entry_keys(entry: dict) -> None:
+    """The top-level walk: string keys, mapping-valued params."""
+    for key, value in entry.items():
+        if not isinstance(key, str):
+            raise ValueError(
+                f"MSKSD_LLM_MODELS entry keys must be strings, got {key!r}"
+            )
+        if key.replace("-", "_") in ("params", "litellm_params") and not (
+            isinstance(value, dict)
+        ):
+            raise ValueError(
+                "MSKSD_LLM_MODELS litellm_params must be a mapping, "
+                f"got {type(value).__name__}"
+            )
+
+
+def check_entry_name(entry: dict) -> None:
+    """The logical name is the entry's address — a string, either
+    spelling."""
+    name = entry.get("model_name", entry.get("model-name"))
+    if not isinstance(name, str):
+        raise ValueError(
+            f"MSKSD_LLM_MODELS entries need a string model_name, got {name!r}"
+        )
+
+
+def check_params_keys(entry: dict) -> None:
+    """The params block's keys are read by the same kebab→snake
+    walk — strings only."""
+    params = entry.get("litellm_params", entry.get("params", {}))
+    for key in params:
+        if not isinstance(key, str):
+            raise ValueError(
+                "MSKSD_LLM_MODELS litellm_params keys must be strings, "
+                f"got {key!r}"
+            )
 
 
 def _server_settings_from_env(

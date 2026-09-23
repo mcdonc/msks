@@ -421,7 +421,7 @@ class LocalCloudHypervisor(MicrovmDriver):
                     f"already exists: {artifact}; "
                     "remove it (or restore the workspace row) first"
                 )
-        await persist.ensure_artifacts(spec, vmm)
+        await persist.ensure_artifacts(spec, vmm, self._settings().llm.port)
 
     async def launch(self, spec: VmSpec) -> None:
         async with self._guard(spec.workspace_id):
@@ -487,7 +487,7 @@ class LocalCloudHypervisor(MicrovmDriver):
         # Boots heal their artifacts (#14): a workspace row whose
         # overlay or volume is missing (a crash mid-create, or a row
         # that predates #14) gets them back before the VM starts.
-        await persist.ensure_artifacts(spec, vmm)
+        await persist.ensure_artifacts(spec, vmm, self._settings().llm.port)
         socket_path = vm_dir / "api.sock"
         serial_log = vm_dir / "serial.log"
         proc = await self._spawn(

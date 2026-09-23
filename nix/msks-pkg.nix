@@ -34,6 +34,9 @@
   # The NFQUEUE binding (#69), built from the sdist against
   # nixpkgs' libnetfilter_queue (nix/netfilterqueue-pkg.nix).
   netfilterqueue,
+  # The LLM router's multi-provider mode (#259), lazily imported
+  # (the passthrough mode runs without it).
+  litellm,
 }:
 
 let
@@ -81,6 +84,7 @@ buildPythonPackage {
     mitmproxy
     textual
     netfilterqueue
+    litellm
   ];
 
   # No nix-side test run: the unit suite runs in the devenv shell

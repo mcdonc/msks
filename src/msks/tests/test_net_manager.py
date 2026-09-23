@@ -12,7 +12,12 @@ from msks.microvm.errors import MicrovmError
 from msks.net import alloc
 from msks.net import manager as manager_mod
 from msks.net.manager import NetManager
-from msks.settings import NetSettings, ServerSettings, Settings
+from msks.settings import (
+    LlmSettings,
+    NetSettings,
+    ServerSettings,
+    Settings,
+)
 from netstubs import NFT_FAIL_AT, NFT_STDERR, log_lines, stub_ip, stub_nft
 
 
@@ -964,3 +969,190 @@ async def test_a_disarming_swap_carries_consent_elements_too(
     applied = stdin.read_text()
     assert "redirect" not in applied
     assert "10.2.3.4 . 25 timeout 9s" in applied
+
+
+# --- the per-tap LLM listener (#259) -----------------------------------------
+
+
+class RecordingListener:
+    """The llm seam's listener: records its lifecycle, refuses on
+    demand."""
+
+    def __init__(self, tap_ip: str, *, fail: bool = False) -> None:
+        self.tap_ip = tap_ip
+        self.fail = fail
+        self.started = 0
+        self.stopped = 0
+
+    async def start(self) -> None:
+        if self.fail:
+            raise OSError("address in use")
+        self.started += 1
+
+    async def stop(self) -> None:
+        self.stopped += 1
+
+
+async def llm_seamed_net_app(tmp_path: Path, monkeypatch, listeners: dict):
+    """The net_app fixture's shape plus an llm_factory that hands out
+    RecordingListeners (one per attachment), so no real socket
+    binds."""
+    ip_log = tmp_path / "ip.log"
+    nft_log = tmp_path / "nft.log"
+    settings = Settings(
+        net=NetSettings(
+            enabled=True,
+            ip_tool=str(stub_ip(tmp_path, ip_log)),
+            nft_tool=str(stub_nft(tmp_path, nft_log)),
+            dns_upstream="10.9.9.9",
+        ),
+        server=ServerSettings(db_path=tmp_path / "net.db"),
+        llm=LlmSettings(models=("*:http://up.stream/v1:sk-x",)),
+    )
+    app = build_app(settings)
+    monkeypatch.setattr(
+        manager_mod, "verify_forwarding", lambda path=None: None
+    )
+
+    def factory(attachment):
+        listener = RecordingListener(attachment.tap_ip)
+        listeners[attachment.workspace_id] = listener
+        return listener
+
+    manager = NetManager(
+        app,
+        dhcp_factory=FakeService,
+        dns_factory=FakeService,
+        llm_factory=factory,
+    )
+    app.state.net = manager
+    app.state.model.migrate()
+    for wid in ("ws-a", "ws-b"):
+        await app.state.model.create_workspace(
+            VmSpec(
+                workspace_id=wid,
+                kernel=Path("/k"),
+                rootfs=Path("/r"),
+                egress=True,
+            )
+        )
+    return app
+
+
+async def test_attach_starts_the_llm_listener_and_detaches_stop_it(
+    tmp_path: Path, monkeypatch
+) -> None:
+    listeners: dict = {}
+    app = await llm_seamed_net_app(tmp_path, monkeypatch, listeners)
+    await app.state.net.start()
+    attachment = await app.state.net.attach("ws-a", want=True)
+    proxy = app.state.llm
+    listener = listeners["ws-a"]
+    assert listener.started == 1
+    # The proxy's mapping answers auth: this tap's address is this
+    # workspace.
+    assert proxy._by_tap_ip[attachment.tap_ip] == "ws-a"
+    await app.state.net.detach("ws-a")
+    assert listener.stopped == 1
+    assert attachment.tap_ip not in proxy._by_tap_ip
+
+
+async def test_attach_without_models_starts_no_listener(
+    net_app,
+) -> None:
+    """The default factory path with an unconfigured daemon: no
+    listener, no mapping (and the boot still succeeds)."""
+    app, _ip, _nft = net_app
+    await ready(app)
+    await app.state.net.attach("ws-a", want=True)
+    assert app.state.llm._listeners == {}
+    await app.state.net.detach("ws-a")
+
+
+async def test_a_refused_llm_bind_leaves_the_boot_alive(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    listeners: dict = {}
+
+    def factory(attachment):
+        listener = RecordingListener(attachment.tap_ip, fail=True)
+        listeners[attachment.workspace_id] = listener
+        return listener
+
+    ip_log = tmp_path / "ip.log"
+    nft_log = tmp_path / "nft.log"
+    settings = Settings(
+        net=NetSettings(
+            enabled=True,
+            ip_tool=str(stub_ip(tmp_path, ip_log)),
+            nft_tool=str(stub_nft(tmp_path, nft_log)),
+            dns_upstream="10.9.9.9",
+        ),
+        server=ServerSettings(db_path=tmp_path / "net.db"),
+        llm=LlmSettings(models=("*:http://up.stream/v1:sk-x",)),
+    )
+    app = build_app(settings)
+    monkeypatch.setattr(
+        manager_mod, "verify_forwarding", lambda path=None: None
+    )
+    manager = NetManager(
+        app,
+        dhcp_factory=FakeService,
+        dns_factory=FakeService,
+        llm_factory=factory,
+    )
+    app.state.net = manager
+    app.state.model.migrate()
+    await app.state.model.create_workspace(
+        VmSpec(
+            workspace_id="ws-a",
+            kernel=Path("/k"),
+            rootfs=Path("/r"),
+            egress=True,
+        )
+    )
+    await app.state.net.start()
+    attachment = await app.state.net.attach("ws-a", want=True)
+    # The boot proceeded; the warning says what happened.
+    assert attachment is not None
+    assert "did not start" in capsys.readouterr().out
+    assert app.state.llm._listeners == {}
+    await app.state.net.detach("ws-a")
+
+
+async def test_attach_and_detach_work_without_an_llm_subsystem(
+    net_app,
+) -> None:
+    """A NetManager whose app carries no llm subsystem (the seam a
+    stripped-down host would present) attaches and detaches
+    untouched: the listener step is absent, not fatal."""
+    app, _ip, _nft = net_app
+    app.state.llm = None
+    await ready(app)
+    attachment = await app.state.net.attach("ws-a", want=True)
+    assert attachment is not None
+    await app.state.net.detach("ws-a")
+
+
+async def test_a_boot_survives_an_unbindable_llm_address(
+    net_app, monkeypatch, capsys
+) -> None:
+    """The proxy is an auxiliary surface: whatever keeps its
+    listener from binding — an address the host cannot bind, a
+    port another daemon holds — logs loudly and the workspace
+    still boots (#259). Model entries themselves parse at the
+    first request, never here."""
+    app, _ip, _nft = net_app
+    app.state.settings.llm.models = ("*:http://up.stream/v1:sk-x",)
+    monkeypatch.setattr(
+        manager_mod, "verify_forwarding", lambda path=None: None
+    )
+    manager = NetManager(
+        app, dhcp_factory=FakeService, dns_factory=FakeService
+    )
+    app.state.net = manager
+    await manager.start()
+    attachment = await manager.attach("ws-a", want=True)
+    assert attachment is not None
+    assert "did not start" in capsys.readouterr().out
+    await manager.detach("ws-a")

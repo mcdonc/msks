@@ -819,6 +819,24 @@ lives — the client data root of the client that created the
 workspace (`~/.local/share/msks/<id>/identity`, or that root under
 `MSKSC_DATA_DIR`).
 
+## `msks llm-token`
+
+The workspace's LLM proxy credential (#259): the bearer token the
+workspace's own LLM clients present to the daemon's proxy on its
+tap (`docs/llm.md`). The seed already planted it inside the
+workspace — `/etc/msks/llm.token` and the `OPENAI_*` exports — so
+this fetch is for the operator's side (a tool configured outside
+the workspace) and for rotation:
+
+```bash
+msks llm-token my-workspace             # the stored credential
+msks llm-token my-workspace --remint    # a fresh one, replacing it
+```
+
+A remint does not re-run the seed — export the new token inside the
+workspace by hand. A workspace that predates #259 answers with the
+remint hint instead of a token.
+
 ## `msks ssh`
 
 Stock ssh into a workspace over the forward, with the minted

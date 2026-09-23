@@ -61,8 +61,10 @@ tap:
   what blocks one workspace from reaching another's tap), and
   inbound the guest never asked for — nothing outside initiates a
   connection into a workspace.
-- **Input.** The guest may reach exactly two ports on the host
-  through its tap: DHCP (67) and the resolver (53). Everything else
+- **Input.** The guest may reach a fixed set of ports on the host
+  through its tap: DHCP (67), the resolver (53), the interceptor's
+  listener while armed (#199), and the LLM proxy port when one is
+  configured (#259). Everything else
   from the tap drops before the host's own services — the API
   listener among them — so guest root cannot port-scan the
   host.

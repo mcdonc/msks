@@ -293,3 +293,80 @@ def test_interceptor_port_must_be_a_tcp_port() -> None:
         Settings.from_env({"MSKSD_INTERCEPTOR_PORT": "0"})
     with pytest.raises(ValueError, match="MSKSD_INTERCEPTOR_PORT"):
         Settings.from_env({"MSKSD_INTERCEPTOR_PORT": "70000"})
+
+
+def test_llm_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The #259 group: the port, the comma-separated model list
+    (blanks drop), and the optional default key."""
+    monkeypatch.setenv("MSKSD_LLM_PORT", "9001")
+    monkeypatch.setenv("MSKSD_LLM_MODELS", " a:b:c ,, d ")
+    monkeypatch.setenv("MSKSD_LLM_API_KEY", "sk-def")
+    settings = Settings.from_env()
+    assert settings.llm.port == 9001
+    assert settings.llm.models == ("a:b:c", "d")
+    assert settings.llm.api_key == "sk-def"
+
+
+def test_llm_port_validation(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MSKSD_LLM_PORT", "70000")
+    with pytest.raises(ValueError, match="MSKSD_LLM_PORT"):
+        Settings.from_env()
+    monkeypatch.setenv("MSKSD_LLM_PORT", "0")
+    with pytest.raises(ValueError, match="MSKSD_LLM_PORT"):
+        Settings.from_env()
+
+
+def test_llm_port_may_not_collide_with_the_interceptor_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One per-tap address, two services: equal ports are a named
+    load-time refusal (#259 review), not an attach-time bind
+    failure naming neither setting."""
+    monkeypatch.setenv("MSKSD_LLM_MODELS", "*:http://up.stream/v1:k")
+    monkeypatch.setenv("MSKSD_LLM_PORT", "8643")
+    monkeypatch.setenv("MSKSD_INTERCEPTOR_PORT", "8643")
+    with pytest.raises(ValueError, match="MSKSD_LLM_PORT"):
+        Settings.from_env()
+    # Unconfigured daemons may share the number: no LLM listener
+    # ever binds it.
+    monkeypatch.delenv("MSKSD_LLM_MODELS")
+    assert Settings.from_env().llm.port == 8643
+
+
+def test_llm_models_accepts_the_file_list_form(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The config layer's list reaches the tuple as-is (klangk's
+    dict entries); a bad entry type is a named error wherever it
+    came from."""
+    settings = Settings.from_env(
+        {
+            "MSKSD_LLM_MODELS": [
+                "openai/x::sk-1",
+                {"model_name": "y", "litellm_params": {}},
+            ]
+        }
+    )
+    assert settings.llm.models == (
+        "openai/x::sk-1",
+        {"model_name": "y", "litellm_params": {}},
+    )
+    with pytest.raises(ValueError, match="strings or mappings"):
+        Settings.from_env({"MSKSD_LLM_MODELS": [17]})
+
+
+def test_dict_entry_shapes_fail_named_at_load() -> None:
+    """The fail-at-load rule reaches inside dict entries (#259
+    review): non-string keys, a null or scalar params block, and a
+    missing model_name are named errors where the file is read —
+    never unnamed exceptions at the first request."""
+    bad_entries = [
+        {17: "x"},
+        {"model_name": "m", "litellm_params": None},
+        {"model_name": "m", "params": "openai/s"},
+        {"litellm_params": {"model": "openai/m"}},
+        {"model_name": "m", "litellm_params": {7: "y"}},
+    ]
+    for entry in bad_entries:
+        with pytest.raises(ValueError, match="MSKSD_LLM_MODELS"):
+            Settings.from_env({"MSKSD_LLM_MODELS": [entry]})

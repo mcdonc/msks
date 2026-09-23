@@ -18,6 +18,31 @@ def tools(tmp_path: Path):
     return settings, log
 
 
+def test_vm_ruleset_admits_the_llm_proxy_port_when_configured() -> None:
+    """The #259 admission: the proxy port, pinned to this tap's
+    address and this guest's source, TCP only — present exactly
+    when a port was named, and ahead of the chain's final drop."""
+    plain = nft.vm_ruleset(
+        "ws-a", "msks-tap", "172.31.0.1", "172.31.0.2", "eth0"
+    )
+    assert "8770" not in plain
+    ruleset = nft.vm_ruleset(
+        "ws-a",
+        "msks-tap",
+        "172.31.0.1",
+        "172.31.0.2",
+        "eth0",
+        llm_port=8770,
+    )
+    admission = (
+        'iifname "msks-tap" ip saddr 172.31.0.1 '
+        "ip daddr 172.31.0.2 tcp dport 8770 accept"
+    )
+    assert admission in ruleset
+    ingress = ruleset[ruleset.index("chain ingress") :]
+    assert ingress.index(admission) < ingress.index('iifname "msks-tap" drop')
+
+
 def test_base_ruleset_masquerades_the_uplink() -> None:
     ruleset = nft.base_ruleset("eth0")
     assert f"table inet {nft.BASE_TABLE}" in ruleset
@@ -157,6 +182,26 @@ async def test_install_vm_pins_the_workspace_ruleset(tools) -> None:
     applied = log.with_name(log.name + ".stdin").read_text()
     assert 'iifname "msks-pinned" ip saddr 172.31.0.1' in applied
     assert "msks-e-" in applied
+
+
+async def test_install_vm_admits_the_llm_port_with_models_configured(
+    tools,
+) -> None:
+    """The admission and the listener agree (#259): the ruleset a
+    configured daemon ships names the proxy port; an unconfigured
+    one admits nothing beyond DHCP and the resolver."""
+    settings, log = tools
+    await nft.install_vm(
+        settings, "ws-llm", "msks-tap", "172.31.0.1", "172.31.0.2"
+    )
+    applied = log.with_name(log.name + ".stdin").read_text()
+    assert "tcp dport 8770" not in applied
+    settings.llm.models = ("*:http://up:9",)
+    await nft.install_vm(
+        settings, "ws-llm", "msks-tap", "172.31.0.1", "172.31.0.2"
+    )
+    applied = log.with_name(log.name + ".stdin").read_text()
+    assert "tcp dport 8770 accept" in applied
 
 
 # --- consent chain shapes and flow elements (#69) ----------------------------

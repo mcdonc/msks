@@ -12,7 +12,8 @@ from the VM's:
   ``<state_dir>/volumes/<id>.ext4``, attached as a second virtio-blk
   disk the guest mounts at /home (labeled ``msks-home``).
 - the **seed disk** (#41) — present when the workspace carries a
-  ``user_data`` payload or a minted identity (#111): a small iso9660
+  ``user_data`` payload, a minted identity (#111), or an LLM proxy
+  credential (#259): a small iso9660
   image under ``<state_dir>/vms/<id>/seed.img`` labeled ``cidata``,
   attached read-only as a third virtio-blk disk. Its ``user-data``
   document is the operator payload composed with the identity's
@@ -112,7 +113,7 @@ def sweep_tmp_siblings(target: Path) -> None:
             debris.unlink(missing_ok=True)
 
 
-async def ensure_artifacts(spec: VmSpec, settings) -> None:
+async def ensure_artifacts(spec: VmSpec, settings, llm_port: int = 0) -> None:
     """Create the workspace's overlay and home volume when absent.
 
     Each artifact is installed atomically (private scratch file, one
@@ -133,23 +134,26 @@ async def ensure_artifacts(spec: VmSpec, settings) -> None:
         if not overlay.is_file():
             await create_overlay(spec, settings, overlay)
             installed.append(overlay)
-        await ensure_seed(spec, settings, installed)
+        await ensure_seed(spec, settings, installed, llm_port)
     except BaseException:
         for artifact in installed:
             artifact.unlink(missing_ok=True)
         raise
 
 
-async def ensure_seed(spec: VmSpec, settings, installed: list[Path]) -> None:
+async def ensure_seed(
+    spec: VmSpec, settings, installed: list[Path], llm_port: int = 0
+) -> None:
     """Build the #41 seed when the workspace carries a payload — its
     own or the minted identity's (#111) — and the file is absent; a
     fresh build joins the rollback list."""
     if spec.user_data is None and spec.ssh_pubkey is None:
-        return
+        if spec.llm_token is None:
+            return
     seed = seed_path(settings.state_dir, spec.workspace_id)
     if seed.is_file():
         return
-    await create_seed(spec, settings)
+    await create_seed(spec, settings, llm_port)
     installed.append(seed)
 
 
@@ -238,7 +242,7 @@ def seed_metadata(workspace_id: str) -> str:
     return f"instance-id: {workspace_id}\n"
 
 
-async def create_seed(spec: VmSpec, settings) -> None:
+async def create_seed(spec: VmSpec, settings, llm_port: int = 0) -> None:
     """Build and install the workspace's #41 seed disk.
 
     mkisofs packs the staged ``user-data``/``meta-data`` into a
@@ -268,6 +272,8 @@ async def create_seed(spec: VmSpec, settings) -> None:
                 spec.ssh_pubkey,
                 spec.workspace_id,
                 spec.login_user,
+                spec.llm_token,
+                llm_port,
             ),
             encoding="utf-8",
         )

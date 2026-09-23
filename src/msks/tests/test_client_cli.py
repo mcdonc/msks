@@ -3319,3 +3319,44 @@ def test_cmd_image_check_routes_to_the_conformance_pass(
     monkeypatch.setattr(conformance, "run_check", fake_run)
     assert cli.cmd_image_check(argparse.Namespace(archive="x.tar")) == 1
     assert seen[0].archive == "x.tar"
+
+
+def test_cmd_llm_token_prints_and_remints(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``msks llm-token`` prints the workspace credential; a null
+    token explains the remint path instead of printing None."""
+    client_env(monkeypatch)
+    seen: dict = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["method"] = req.method
+        seen["path"] = req.url.path
+        if req.method == "POST":
+            return httpx.Response(
+                200, json={"workspace": "alpha", "token": "msksllm1_new"}
+            )
+        return httpx.Response(
+            200, json={"workspace": "alpha", "token": "msksllm1_old"}
+        )
+
+    rc = cli.cmd_llm_token("alpha", transport=mock(handler))
+    assert rc == 0
+    assert seen["path"] == "/api/v1/workspaces/alpha/llm-token"
+    assert capsys.readouterr().out.strip() == "msksllm1_old"
+    rc = cli.cmd_llm_token("alpha", remint=True, transport=mock(handler))
+    assert rc == 0
+    assert seen["method"] == "POST"
+    assert capsys.readouterr().out.strip() == "msksllm1_new"
+
+
+def test_cmd_llm_token_explains_a_missing_token(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client_env(monkeypatch)
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"workspace": "alpha", "token": None})
+
+    with pytest.raises(SystemExit, match="--remint"):
+        cli.cmd_llm_token("alpha", transport=mock(handler))

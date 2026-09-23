@@ -13,6 +13,7 @@ import os
 import re
 import secrets
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -40,6 +41,7 @@ from ..identity import (
     normalize_public_key,
 )
 from ..imagestore import ImageError
+from ..llm import mint_token
 from ..microvm.errors import MicrovmError
 from ..microvm.spec import VmSpec, VmStatus
 from ..model.egress_consent import DECISIONS, DURATIONS
@@ -580,6 +582,21 @@ def default_cmdline(body: WorkspaceCreate, record) -> str:
     return "console=hvc0 root=/dev/vda rw"
 
 
+async def healed_spec(app, row: dict) -> VmSpec:
+    """The launch spec with the row's LLM credential restored (#259
+    review): ``workspace_dict`` omits it (operator views never show
+    it), so ``spec_for`` alone would rebuild a crash-healed seed
+    without the token the row still authenticates — the boot path
+    is the one consumer that needs the secret half."""
+    spec = spec_for(row)
+    if spec.llm_token is not None:
+        return spec
+    token = await app.state.model.get_llm_token(row["id"])
+    if token is None or token["llm_token"] is None:
+        return spec
+    return replace(spec, llm_token=token["llm_token"])
+
+
 def spec_for(row: dict) -> VmSpec:
     """Rebuild the seam's VmSpec from a workspace row."""
     initrd = None if row["initrd"] is None else Path(row["initrd"])
@@ -599,6 +616,7 @@ def spec_for(row: dict) -> VmSpec:
         user_data=row.get("user_data"),
         ssh_pubkey=row.get("ssh_pubkey"),
         login_user=row.get("login_user"),
+        llm_token=row.get("llm_token"),
     )
 
 
@@ -1349,6 +1367,11 @@ def build_api(app) -> FastAPI:
             except ValueError as exc:
                 raise HTTPException(status_code=500, detail=str(exc)) from None
             boot["ssh_pubkey"] = f"{public_key} msksd:{workspace_id}"
+        # The LLM proxy credential (#259): minted beside the identity,
+        # stored on the row, and seeded into the guest so the
+        # workspace's LLM clients point at the daemon's proxy with
+        # zero manual steps.
+        boot["llm_token"] = mint_token()
         # The persistent artifacts (#14) come before the row: a refused
         # create (a leftover artifact from a previous workspace of this
         # id) answers 503 with nothing written and nothing removed, and
@@ -1596,6 +1619,42 @@ def build_api(app) -> FastAPI:
             "user": key["login_user"] or LEGACY_LOGIN_USER,
         }
 
+    @api.get(
+        "/api/v1/workspaces/{workspace_id}/llm-token",
+        dependencies=[Depends(require_token)],
+    )
+    async def workspace_llm_token(workspace_id: str) -> dict:
+        """The workspace's LLM proxy credential (#259), token-gated.
+
+        The same rationale the identity's private half carries: a
+        bearer-token holder already owns the workspace's root
+        console, and the credential is usable only from inside the
+        workspace's own tap. ``null`` answers for a workspace
+        created before the proxy existed — POST mints one."""
+        token = await app.state.model.get_llm_token(workspace_id)
+        if token is None:
+            raise HTTPException(status_code=404, detail="no such workspace")
+        return {
+            "workspace": token["id"],
+            "name": token["name"],
+            "token": token["llm_token"],
+        }
+
+    @api.post(
+        "/api/v1/workspaces/{workspace_id}/llm-token",
+        dependencies=[Depends(require_token)],
+    )
+    async def remint_workspace_llm_token(workspace_id: str) -> dict:
+        """Mint a fresh LLM proxy credential (#259), replacing the
+        row's. The seed is immutable create-time input — it still
+        carries the old token — so a reminted credential reaches a
+        running workspace by hand: export it as the client's API
+        key in place of what the seed planted."""
+        row = await _workspace_or_404(app, workspace_id)
+        token = mint_token()
+        await app.state.model.set_llm_token(row["id"], token)
+        return {"workspace": row["id"], "token": token}
+
     # The #41 immutability contract, said out loud: the create-time
     # shape (user_data above all) never changes — a mutation attempt
     # gets a named error instead of a bare 405 from the router's
@@ -1799,7 +1858,7 @@ def build_api(app) -> FastAPI:
         # boot and any in-flight move serialize — the status write
         # stays inside the hold or a waiter would read a stale row.
         async with move_lock(app, workspace_id):
-            await app.state.microvm.launch(spec_for(row))
+            await app.state.microvm.launch(await healed_spec(app, row))
             await app.state.model.set_status(workspace_id, "running")
         return {"id": workspace_id, "status": "running"}
 

@@ -32,6 +32,9 @@ class StubMicrovm:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
+        # The specs prepare/boot ran with — the #259 token ride and
+        # any other create-time fact the tests pin.
+        self.prepared: list[VmSpec] = []
         self.statuses: dict[str, VmStatus] = {}
         self.fail_prepare = False
         self.seen_specs: dict[str, VmSpec] = {}
@@ -40,6 +43,7 @@ class StubMicrovm:
         if self.fail_prepare:
             raise MicrovmError("prepare boom")
         self.calls.append(("prepare", spec.workspace_id))
+        self.prepared.append(spec)
         self.seen_specs[spec.workspace_id] = spec
 
     async def launch(self, spec: VmSpec) -> None:
@@ -2577,3 +2581,115 @@ async def test_a_renew_rollback_restores_a_real_deadline(client) -> None:
     restored = await app.state.model.get_placeholder(row["id"])
     assert restored["expires_at"] is not None
     assert restored["expires_at"] < row["expires_at"]
+
+
+# --- the workspace LLM proxy credential (#259) -------------------------------
+
+
+async def test_create_mints_and_seeds_an_llm_token(client) -> None:
+    """A create mints the credential: the row carries it (the
+    token-gated endpoint serves it), the spec that prepared the
+    artifacts carried it (the seed's input), and neither the create
+    reply nor a workspace view ever shows it."""
+    http, app, stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-llm", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201, created.text
+    assert "llm_token" not in created.json()
+    listing = await http.get("/api/v1/workspaces", headers=auth())
+    assert "llm_token" not in listing.text
+    minted = (
+        await http.get("/api/v1/workspaces/ws-llm/llm-token", headers=auth())
+    ).json()
+    assert minted["token"].startswith("msksllm1_")
+    # The spec the artifacts were prepared from carried the same
+    # token: the seed's planted credential and the row's agree.
+    assert stub.prepared, stub.calls
+    assert stub.prepared[-1].llm_token == minted["token"]
+
+
+async def test_llm_token_endpoint_shapes_and_404s(client) -> None:
+    http, _app, _stub = client
+    missing = await http.get(
+        "/api/v1/workspaces/nope/llm-token", headers=auth()
+    )
+    assert missing.status_code == 404
+    remint_missing = await http.post(
+        "/api/v1/workspaces/nope/llm-token", headers=auth()
+    )
+    assert remint_missing.status_code == 404
+    await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-tok", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    first = (
+        await http.get("/api/v1/workspaces/ws-tok/llm-token", headers=auth())
+    ).json()
+    rotated = await http.post(
+        "/api/v1/workspaces/ws-tok/llm-token", headers=auth()
+    )
+    assert rotated.status_code == 200
+    assert rotated.json()["token"] != first["token"]
+    after = (
+        await http.get("/api/v1/workspaces/ws-tok/llm-token", headers=auth())
+    ).json()
+    assert after["token"] == rotated.json()["token"]
+
+
+async def test_llm_token_endpoints_demand_a_bearer(client) -> None:
+    http, _app, _stub = client
+    bare = await http.get("/api/v1/workspaces/any/llm-token")
+    assert bare.status_code == 401
+    posted = await http.post("/api/v1/workspaces/any/llm-token")
+    assert posted.status_code == 401
+
+
+async def test_launch_heals_a_lost_seed_with_the_row_token(
+    client, tmp_path: Path
+) -> None:
+    """The #259 review's heal gap: a workspace whose seed.img is
+    gone at boot rebuilds it carrying the ROW's token — the guest
+    keeps its planted credential even though workspace views omit
+    it from the row dict spec_for reads."""
+    http, app, stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-heal", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201, created.text
+    wid = created.json()["id"]
+    minted = (
+        await http.get(f"/api/v1/workspaces/{wid}/llm-token", headers=auth())
+    ).json()["token"]
+    started = await http.post(
+        f"/api/v1/workspaces/{wid}/start", headers=auth()
+    )
+    assert started.status_code == 200, started.text
+    assert stub.seen_specs[wid].llm_token == minted
+
+
+async def test_healed_spec_returns_a_token_carrying_row_untouched() -> None:
+    """The heal's early exit: a spec whose row already carries the
+    credential (a direct construction, not the dict path) needs no
+    model round-trip."""
+    app = build_app(Settings(server=ServerSettings(db_path=Path("/dev/null"))))
+    row = {
+        "id": "ws-x",
+        "kernel": "/k",
+        "initrd": None,
+        "rootfs": "/r",
+        "cmdline": "c",
+        "cpus": 1,
+        "mem_mib": 64,
+        "root_mib": 16,
+        "home_mib": 8,
+        "llm_token": "msksllm1_present",
+    }
+    assert (await api_mod.healed_spec(app, row)).llm_token == (
+        "msksllm1_present"
+    )
