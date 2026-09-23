@@ -550,3 +550,129 @@ async def test_listener_bind_failure_unregisters_the_mapping() -> None:
         await proxy.start_listener("ws1", listener)
     assert "ws1" not in proxy._by_tap_ip
     squatter.close()
+
+
+# --- coverage: the remaining branches ---------------------------------------
+
+
+def test_spawn_aclose_outside_a_loop_is_a_noop() -> None:
+    # The sync construction path: no loop to schedule on.
+    client = httpx.AsyncClient()
+    spawn_aclose(client)
+    asyncio.run(client.aclose())
+
+
+def test_parse_entry_without_a_base_or_key() -> None:
+    parsed = parse_model_entry("m::k")
+    assert "api_base" not in parsed["litellm_params"]
+    assert parsed["litellm_params"]["api_key"] == "k"
+
+
+async def test_resolve_router_model_names_the_empty_list() -> None:
+    class Empty(FakeLitellmRouter):
+        def get_model_names(self) -> list[str]:
+            return []
+
+    router = LlmRouter()
+    router._router = Empty()
+    with pytest.raises(RuntimeError, match="no models configured"):
+        router.resolve_router_model({"model": ""})
+
+
+async def test_resolve_router_model_keeps_a_valid_name() -> None:
+    router = LlmRouter()
+    fake = FakeLitellmRouter()
+    router._router = fake
+    kwargs = {"model": "two", "messages": []}
+    router.resolve_router_model(kwargs)
+    assert kwargs["model"] == "two"
+
+
+async def test_acompletion_unconfigured_names_the_state() -> None:
+    router = LlmRouter()
+    with pytest.raises(RuntimeError, match="not configured"):
+        await router.acompletion(messages=[])
+
+
+async def test_passthrough_without_a_key_sends_no_authorization() -> None:
+    router = LlmRouter()
+    router.client_factory = lambda timeout: httpx.AsyncClient(
+        transport=httpx.MockTransport(upstream_handler), timeout=timeout
+    )
+    router.ensure(llm_settings(("*:http://up.stream/v1",)))
+    answer = await router.acompletion(messages=[])
+    assert answer["auth"] is None
+    assert router.get_model_names() == []
+
+
+async def test_streaming_upstream_failure_maps_to_502() -> None:
+    def down(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500)
+
+    proxy = proxy_under_test(
+        {"ws1": {"id": "ws1", "llm_token": TOKEN}},
+        llm_settings(("*:http://up.stream/v1:sk-x",)),
+    )
+    proxy.router.client_factory = lambda timeout: httpx.AsyncClient(
+        transport=httpx.MockTransport(down), timeout=timeout
+    )
+    proxy.router.ensure(proxy.app.state.settings)
+    async with async_client(proxy, "10.0.0.1") as http:
+        failure = await http.post(
+            "/v1/chat/completions",
+            headers=AUTH,
+            json={"model": "m", "messages": [], "stream": True},
+        )
+        assert failure.status_code == 502
+
+
+def test_listener_for_follows_the_model_list() -> None:
+    from types import SimpleNamespace
+
+    attachment = SimpleNamespace(tap_ip="172.31.0.2")
+    proxy = proxy_under_test({"ws1": {"id": "ws1", "llm_token": TOKEN}})
+    assert proxy.listener_for(attachment) is None
+    configured = proxy_under_test(
+        {"ws1": {"id": "ws1", "llm_token": TOKEN}},
+        llm_settings(("*:http://up.stream/v1:sk-x",)),
+    )
+    listener = configured.listener_for(attachment)
+    assert isinstance(listener, TapListener)
+    assert listener.tap_ip == "172.31.0.2"
+    assert listener.port == 8770
+
+
+async def test_tap_listener_accepts_a_prebound_socket() -> None:
+    proxy = proxy_under_test(
+        {"ws1": {"id": "ws1", "llm_token": TOKEN}},
+        llm_settings(("*:http://up.stream/v1:sk-x",)),
+    )
+    proxy.router.client_factory = lambda timeout: httpx.AsyncClient(
+        transport=httpx.MockTransport(upstream_handler), timeout=timeout
+    )
+    listener = TapListener(proxy.proxy_app, tap_ip="127.0.0.1", port=0)
+    listener.bind()  # the eager path start() would otherwise take
+    await proxy.start_listener("ws1", listener)
+    port = listener._sock.getsockname()[1]
+    async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as http:
+        reply = await http.get("/v1/models", headers=AUTH)
+    assert reply.status_code == 200
+    await listener.stop()
+    await listener.stop()  # the listener's own idempotent stop
+
+
+def test_stop_mapping_leaves_a_reassigned_address() -> None:
+    proxy = proxy_under_test({})
+    listener = FakeListener("172.31.0.2")
+    proxy._listeners["ws1"] = listener
+    proxy._by_tap_ip["172.31.0.2"] = "ws9"  # a successor took the tap
+    proxy.stop_mapping("ws1", listener)
+    assert "ws1" not in proxy._listeners
+    assert proxy._by_tap_ip["172.31.0.2"] == "ws9"
+
+
+def test_workspace_for_request_without_a_server_scope() -> None:
+    from types import SimpleNamespace
+
+    proxy = proxy_under_test({})
+    assert proxy.workspace_for_request(SimpleNamespace(scope={})) is None

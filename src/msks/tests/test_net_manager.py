@@ -1116,3 +1116,17 @@ async def test_a_refused_llm_bind_leaves_the_boot_alive(
     assert "did not bind" in capsys.readouterr().out
     assert app.state.llm._listeners == {}
     await app.state.net.detach("ws-a")
+
+
+async def test_attach_and_detach_work_without_an_llm_subsystem(
+    net_app,
+) -> None:
+    """A NetManager whose app carries no llm subsystem (the seam a
+    stripped-down host would present) attaches and detaches
+    untouched: the listener step is absent, not fatal."""
+    app, _ip, _nft = net_app
+    app.state.llm = None
+    await ready(app)
+    attachment = await app.state.net.attach("ws-a", want=True)
+    assert attachment is not None
+    await app.state.net.detach("ws-a")

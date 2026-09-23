@@ -682,6 +682,8 @@ class NetManager:
         input chain's admission pointing at a closed port —
         connection refused, harmless."""
         llm = self.app.state.llm
+        if llm is None:
+            return
         factory = self._llm_factory or (lambda att: llm.listener_for(att))
         listener = factory(attachment)
         if listener is None:
