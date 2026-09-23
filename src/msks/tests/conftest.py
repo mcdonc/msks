@@ -25,12 +25,14 @@ for _name, _value in guestassets.smoke_env_defaults(
 
 @pytest.fixture(autouse=True)
 def msksc_client_dirs(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep the devenv shell's client-state preset out of the suite.
+    """Keep the devenv shell's presets out of the suite.
 
     The shell presets MSKSC_CACHE_DIR and MSKSC_DATA_DIR at the
-    worktree's own state (#251); tests exercise the documented
-    defaults (the XDG roots) and their own explicit overrides, so
-    the ambient preset never picks the root for them.
+    worktree's own state (#251) and MSKSD_CONFIG_DIR at the worktree
+    root (#262); tests exercise the documented defaults (the XDG
+    roots, the home config tree) and their own explicit overrides,
+    so the ambient presets never pick the root for them.
     """
     monkeypatch.delenv("MSKSC_CACHE_DIR", raising=False)
     monkeypatch.delenv("MSKSC_DATA_DIR", raising=False)
+    monkeypatch.delenv("MSKSD_CONFIG_DIR", raising=False)

@@ -16,6 +16,10 @@
 #   MSKSD_STATE_DIR   state dir (default .devenv/state/msksd) — the
 #                     same documented var msks-dev-ready and the
 #                     image builder honor
+#   MSKSD_CONFIG_DIR  config-tree root for the daemon's msksd.yaml
+#                     (default the devenv root; the file is
+#                     generated as the commented template on first
+#                     start, gitignored — edit it freely)
 #   MSKS_DEV_HOST     bind address (default 127.0.0.1)
 #   MSKS_DEV_UPLINK   egress NAT uplink (default eno4 — this dev
 #                     host's default route; unlike the NixOS module,
@@ -116,6 +120,14 @@ true | false) ;;
 esac
 
 export MSKSD_STATE_DIR="$state"
+# The daemon's config file: bare msksd resolves
+# $MSKSD_CONFIG_DIR/msksd.yaml, and the tree root is the devenv
+# root — so the dev daemon's durable settings live in
+# <repo>/msksd.yaml (generated as the commented template on first
+# start; gitignored, since local edits are personal). The exports
+# below still win over file values (env > file > defaults), so the
+# port/state/egress wiring this script owns stays authoritative.
+export MSKSD_CONFIG_DIR="${MSKSD_CONFIG_DIR:-$root}"
 MSKSD_BOOTSTRAP_TOKEN="$(cat "$state/bootstrap-token")"
 export MSKSD_BOOTSTRAP_TOKEN
 export MSKSD_HOST="${MSKS_DEV_HOST:-127.0.0.1}"
