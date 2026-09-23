@@ -2581,6 +2581,8 @@ async def test_a_renew_rollback_restores_a_real_deadline(client) -> None:
     restored = await app.state.model.get_placeholder(row["id"])
     assert restored["expires_at"] is not None
     assert restored["expires_at"] < row["expires_at"]
+
+
 # --- the workspace LLM proxy credential (#259) -------------------------------
 
 

@@ -969,6 +969,8 @@ async def test_a_disarming_swap_carries_consent_elements_too(
     applied = stdin.read_text()
     assert "redirect" not in applied
     assert "10.2.3.4 . 25 timeout 9s" in applied
+
+
 # --- the per-tap LLM listener (#259) -----------------------------------------
 
 
