@@ -184,20 +184,20 @@ chapter](secrets.md) for the flow and worked provider examples).
 Values validate at load: each provider's required key is named in
 the error when absent.
 
-| Key                         | Environment variable              | Type   | Default               | What it does                                                                                          |
-| --------------------------- | --------------------------------- | ------ | --------------------- | ----------------------------------------------------------------------------------------------------- |
-| `secret_store_provider`     | `MSKSD_SECRET_STORE_PROVIDER`     | string | `file`                | The SecretSpec provider secrets are stored in: `file`, `age`, `awssm`, or `bws`.                      |
-| `secret_store_root`         | `MSKSD_SECRET_STORE_ROOT`         | string | `<state_dir>/secrets` | The store's root: the per-secret tree for `file`, the encrypted file's directory for `age`.           |
-| `secret_store_age_identity` | `MSKSD_SECRET_STORE_AGE_IDENTITY` | string | _(unset)_             | The age identity file; required when the provider is `age`.                                           |
-| `secret_store_region`       | `MSKSD_SECRET_STORE_REGION`       | string | _(unset)_             | The AWS region; required when the provider is `awssm`.                                                |
-| `secret_store_profile`      | `MSKSD_SECRET_STORE_PROFILE`      | string | _(unset)_             | An AWS credentials profile for `awssm`.                                                               |
-| `secret_store_prefix`       | `MSKSD_SECRET_STORE_PREFIX`       | string | _(unset)_             | A secret-name prefix for `awssm` (default `secretspec/msks/`).                                        |
-| `secret_store_project`      | `MSKSD_SECRET_STORE_PROJECT`      | string | _(unset)_             | The Bitwarden Secrets Manager project UUID; required when the provider is `bws`.                      |
-| `secret_store_cli`          | `MSKSD_SECRET_STORE_CLI`          | string | `secretspec`          | Path to the SecretSpec CLI the store drives.                                                          |
-| `secret_store_timeout_s`    | `MSKSD_SECRET_STORE_TIMEOUT_S`    | float  | `30.0`                | Seconds one store operation may run.                                                                  |
-| `llm_port`                  | `MSKSD_LLM_PORT`                  | int    | `8770`                | The port each workspace's LLM proxy listener binds on its tap (#259).                                 |
-| `llm_models`                | `MSKSD_LLM_MODELS`                | string | `""`                  | The model list (#259): `provider/model:api_base:api_key` entries, comma-separated; see `docs/llm.md`. |
-| `llm_api_key`               | `MSKSD_LLM_API_KEY`               | string | `""`                  | A default key for entries that name none; `file:`/`cmd:` indirection works.                           |
+| Key                         | Environment variable              | Type        | Default               | What it does                                                                                                                                                           |
+| --------------------------- | --------------------------------- | ----------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `secret_store_provider`     | `MSKSD_SECRET_STORE_PROVIDER`     | string      | `file`                | The SecretSpec provider secrets are stored in: `file`, `age`, `awssm`, or `bws`.                                                                                       |
+| `secret_store_root`         | `MSKSD_SECRET_STORE_ROOT`         | string      | `<state_dir>/secrets` | The store's root: the per-secret tree for `file`, the encrypted file's directory for `age`.                                                                            |
+| `secret_store_age_identity` | `MSKSD_SECRET_STORE_AGE_IDENTITY` | string      | _(unset)_             | The age identity file; required when the provider is `age`.                                                                                                            |
+| `secret_store_region`       | `MSKSD_SECRET_STORE_REGION`       | string      | _(unset)_             | The AWS region; required when the provider is `awssm`.                                                                                                                 |
+| `secret_store_profile`      | `MSKSD_SECRET_STORE_PROFILE`      | string      | _(unset)_             | An AWS credentials profile for `awssm`.                                                                                                                                |
+| `secret_store_prefix`       | `MSKSD_SECRET_STORE_PREFIX`       | string      | _(unset)_             | A secret-name prefix for `awssm` (default `secretspec/msks/`).                                                                                                         |
+| `secret_store_project`      | `MSKSD_SECRET_STORE_PROJECT`      | string      | _(unset)_             | The Bitwarden Secrets Manager project UUID; required when the provider is `bws`.                                                                                       |
+| `secret_store_cli`          | `MSKSD_SECRET_STORE_CLI`          | string      | `secretspec`          | Path to the SecretSpec CLI the store drives.                                                                                                                           |
+| `secret_store_timeout_s`    | `MSKSD_SECRET_STORE_TIMEOUT_S`    | float       | `30.0`                | Seconds one store operation may run.                                                                                                                                   |
+| `llm_port`                  | `MSKSD_LLM_PORT`                  | int         | `8770`                | The port each workspace's LLM proxy listener binds on its tap (#259).                                                                                                  |
+| `llm_models`                | `MSKSD_LLM_MODELS`                | string/list | `""`                  | The model list (#259): `provider/model:api_base:api_key` entries — comma-separated strings, or the file's list of strings and LiteLLM-native dicts; see `docs/llm.md`. |
+| `llm_api_key`               | `MSKSD_LLM_API_KEY`               | string      | `""`                  | A default key for entries that name none; `file:`/`cmd:` indirection works.                                                                                            |
 
 ## SIGHUP reload
 

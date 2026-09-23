@@ -164,9 +164,10 @@ def scalar_to_str(key: str, value: object) -> str:
 
     Native YAML scalars keep their meaning: a bare int/float arrives
     as its digits, a bare bool as ``true``/``false``, a quoted string
-    as itself. Anything else (a list or mapping — no setting is one
-    today) is rejected so a misplaced block fails at startup instead
-    of stringifying into garbage.
+    as itself. Anything else (a list or mapping — the one list-valued
+    key is ``llm_models``, handled before this rule) is rejected so
+    a misplaced block fails at startup instead of stringifying into
+    garbage.
     """
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -176,6 +177,29 @@ def scalar_to_str(key: str, value: object) -> str:
     raise ValueError(
         f"config key {key!r} must be a number, boolean, or string, got {kind}"
     )
+
+
+#: The file's one list-valued key (#259): ``llm_models`` entries may
+#: be colon-delimited strings or LiteLLM-native dicts, matching
+#: klangk's YAML shape — env vars stay strings (comma-separated).
+LIST_KEYS = {"llm_models": "MSKSD_LLM_MODELS"}
+
+
+def list_value(key: str, value: list) -> list:
+    """One list-valued key's entries: each a string or a mapping,
+    else a named error at load (a misplaced block fails at startup,
+    the same rule scalar keys carry)."""
+    entries = []
+    for entry in value:
+        if isinstance(entry, (str, dict)):
+            entries.append(entry)
+        else:
+            kind = type(entry).__name__
+            raise ValueError(
+                f"config key {key!r} entries must be strings or "
+                f"mappings, got {kind}"
+            )
+    return entries
 
 
 class UniqueKeyLoader(yaml.SafeLoader):
@@ -218,7 +242,7 @@ def note_key(loader, key_node, seen: set, deep: bool) -> None:
     seen.add(key)
 
 
-def parse_config_doc(text: str, path: str) -> dict[str, str]:
+def parse_config_doc(text: str, path: str) -> dict:
     """Parse config-file text into an ``MSKSD_*`` env-var layer.
 
     Unknown keys are errors — a typo'd key fails fast at startup
@@ -240,9 +264,9 @@ def parse_config_doc(text: str, path: str) -> dict[str, str]:
     return key_layer(doc, path)
 
 
-def key_layer(doc: dict, path: str) -> dict[str, str]:
+def key_layer(doc: dict, path: str) -> dict:
     """The validated key walk of a parsed config document."""
-    layer: dict[str, str] = {}
+    layer: dict = {}
     for key, value in doc.items():
         if not isinstance(key, str):
             raise ValueError(
@@ -256,11 +280,19 @@ def key_layer(doc: dict, path: str) -> dict[str, str]:
             )
         if value is None:
             continue
-        layer[var] = scalar_to_str(key, value)
+        layer[var] = layer_value(key, value, var)
     return layer
 
 
-def file_env_overrides(path: str) -> dict[str, str]:
+def layer_value(key: str, value: object, var: str):
+    """One key's env-layer value: the one list-valued key keeps its
+    validated list; every other key must be a scalar."""
+    if isinstance(value, list) and LIST_KEYS.get(key) == var:
+        return list_value(key, value)
+    return scalar_to_str(key, value)
+
+
+def file_env_overrides(path: str) -> dict:
     """Read the config file at *path* into an ``MSKSD_*`` env-var layer.
 
     Raises on anything the operator should see at startup: an
@@ -274,7 +306,9 @@ class LayeredEnv(Mapping):
     """The live environment over the config-file layer (#46).
 
     Lookup order: ``os.environ`` first, then the file — so a variable
-    set in the process overrides the same key in the file. A variable
+    set in the process overrides the same key in the file (an env
+    string overrides the file's list for the one list-valued key the
+    same way). A variable
     set to an empty string is the unset form and falls through to the
     file, matching the settings parsers' empty-means-default rule.
     Iteration applies the same rule: an empty-string environment
@@ -516,9 +550,11 @@ def render_template() -> str:
 # llm_port: 8770            # the port each workspace's proxy
 #                           # listener binds on its tap
 # llm_models: ""           # comma-separated provider/model:api_base:
-#                           # api_key entries; a single * entry is
-#                           # passthrough mode; empty presents no
-#                           # LLM surface at all
+#                           # api_key entries; the file may carry a
+#                           # list whose entries are also
+#                           # LiteLLM-native dicts; a single *
+#                           # entry is passthrough mode; empty
+#                           # presents no LLM surface at all
 # llm_api_key: ""          # a default key for entries that name
 #                           # none; file:/cmd: indirection works on
 #                           # every key

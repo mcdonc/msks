@@ -12,9 +12,31 @@ providers, because the daemon makes the upstream connection itself.
 ## The two routing modes
 
 The model list is one setting, `llm_models`
-(`MSKSD_LLM_MODELS`), carrying comma-separated entries spelled
-`provider/model:api_base:api_key`. The colons split with two
-exceptions, so the common shapes all parse:
+(`MSKSD_LLM_MODELS`), carrying entries spelled
+`provider/model:api_base:api_key` — comma-separated in the
+environment, or a YAML list in the config file, where each entry
+may also be a **LiteLLM-native dict** (klangk's YAML shape) for
+the routing knobs the string grammar cannot spell:
+
+```yaml
+llm_models:
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_base: https://api.openai.com/v1
+      api_key: file:/etc/msksd/openai.key
+  - model-name: claude-sonnet-4
+    litellm-params:
+      model: anthropic/claude-sonnet-4
+      api_key: cmd:pass show anthropic
+      rpm: 10
+```
+
+Dict keys accept kebab- or snake-case, `params` is the
+`litellm_params` shorthand, and `file:`/`cmd:` indirection works
+on `api_key`/`api_base` inside the block. An environment string
+overrides the file's list wholesale. The colons of the string
+grammar split with two exceptions, so the common shapes all parse:
 
 - an entry whose key is a `file:` or `cmd:` reference keeps
   everything from the marker — paths and commands carry colons

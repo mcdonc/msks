@@ -331,3 +331,25 @@ def test_llm_port_may_not_collide_with_the_interceptor_port(
     # ever binds it.
     monkeypatch.delenv("MSKSD_LLM_MODELS")
     assert Settings.from_env().llm.port == 8643
+
+
+def test_llm_models_accepts_the_file_list_form(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The config layer's list reaches the tuple as-is (klangk's
+    dict entries); a bad entry type is a named error wherever it
+    came from."""
+    settings = Settings.from_env(
+        {
+            "MSKSD_LLM_MODELS": [
+                "openai/x::sk-1",
+                {"model_name": "y", "litellm_params": {}},
+            ]
+        }
+    )
+    assert settings.llm.models == (
+        "openai/x::sk-1",
+        {"model_name": "y", "litellm_params": {}},
+    )
+    with pytest.raises(ValueError, match="strings or mappings"):
+        Settings.from_env({"MSKSD_LLM_MODELS": [17]})

@@ -21,6 +21,7 @@ from msks.llm import (
     finish_aclose_task,
     is_passthrough,
     mint_token,
+    normalize_dict_entry,
     parse_model_entry,
     resolve_indirection,
     spawn_aclose,
@@ -36,7 +37,7 @@ AUTH = {"authorization": f"Bearer {TOKEN}"}
 
 
 def llm_settings(
-    models: tuple[str, ...] = (), api_key: str | None = None
+    models: tuple[str | dict, ...] = (), api_key: str | None = None
 ) -> Settings:
     """Settings with only the LLM group shaped (a fresh object each
     call, so ``ensure`` rebuilds on identity)."""
@@ -901,4 +902,63 @@ async def test_a_failed_configure_answers_a_named_503(caplog) -> None:
     # The daemon log keeps the named cause.
     assert any(
         "LLM router configuration failed" in r.message for r in caplog.records
+    )
+
+
+# --- dict entries (the file's list form, klangk's shape) ---------------------
+
+
+def test_dict_entries_normalize_keys_and_indirection(
+    tmp_path: Path,
+) -> None:
+    key_file = tmp_path / "key"
+    key_file.write_text("sk-dict\n")
+    parsed = normalize_dict_entry(
+        {
+            "model-name": "claude",
+            "litellm-params": {
+                "model": "anthropic/claude-sonnet-4",
+                "api-key": f"file:{key_file}",
+                "rpm": 10,
+            },
+        }
+    )
+    assert parsed["model_name"] == "claude"
+    assert parsed["litellm_params"]["api_key"] == "sk-dict"
+    assert parsed["litellm_params"]["rpm"] == 10
+
+
+def test_params_is_the_litellm_params_shorthand() -> None:
+    parsed = normalize_dict_entry(
+        {"model_name": "m", "params": {"model": "openai/m"}}
+    )
+    assert parsed["litellm_params"] == {"model": "openai/m"}
+
+
+def test_build_model_list_mixed_entries_and_default_key() -> None:
+    items = build_model_list(
+        ("openai/one::sk-1", {"model_name": "two", "params": {}}),
+        "sk-default",
+    )
+    assert items[0]["litellm_params"]["api_key"] == "sk-1"
+    assert items[1]["litellm_params"]["api_key"] == "sk-default"
+
+
+def test_a_dict_entry_can_name_passthrough() -> None:
+    router = LlmRouter()
+    router.ensure(
+        llm_settings(
+            (
+                {
+                    "model_name": "*",
+                    "litellm_params": {
+                        "api_base": "http://up.stream/v1",
+                        "api_key": "sk-x",
+                    },
+                },
+            )
+        )
+    )
+    assert router.passthrough and router._passthrough_base == (
+        "http://up.stream/v1"
     )

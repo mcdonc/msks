@@ -302,8 +302,12 @@ class LlmSettings:
     presents no LLM surface at all (nothing binds on a tap, the
     per-VM input chain admits nothing), and a daemon with one serves
     the OpenAI-shaped proxy on every workspace tap at *port*.
-    Entries are ``provider/model:api_base:api_key`` strings,
-    comma-separated; secret-bearing values carry ``file:``/``cmd:``
+    Entries are ``provider/model:api_base:api_key`` strings —
+    comma-separated in the environment, or the config file's list,
+    whose entries may also be LiteLLM-native dicts (klangk's YAML
+    shape: ``model_name``/``litellm_params``, kebab- or snake-case,
+    the routing knobs the string grammar cannot spell). Secret-
+    bearing values carry ``file:``/``cmd:``
     indirection (resolved at configure time), and a single entry
     whose model name is ``*`` is single-upstream passthrough mode.
     The settings are read live, so a SIGHUP swap re-routes requests
@@ -311,7 +315,7 @@ class LlmSettings:
     """
 
     port: int = 8770
-    models: tuple[str, ...] = ()
+    models: tuple[str | dict, ...] = ()
     api_key: str | None = None
 
     @classmethod
@@ -647,16 +651,36 @@ def llm_settings_from_env(
     port = _parse_int(env, "MSKSD_LLM_PORT", default.port)
     if not 1 <= port <= 65535:
         raise ValueError(f"MSKSD_LLM_PORT must be a port, got {port}")
-    models = tuple(
-        entry.strip()
-        for entry in _env(env, "MSKSD_LLM_MODELS", "").split(",")
-        if entry.strip()
-    )
     return cls(
         port=port,
-        models=models,
+        models=llm_models_from(env),
         api_key=optional_env(env, "MSKSD_LLM_API_KEY"),
     )
+
+
+def llm_models_from(env) -> tuple[str | dict, ...]:
+    """The model list: the env's comma-separated strings, or the
+    config file's list (its entries already validated as strings
+    or mappings — the same shapes mix freely)."""
+    raw = env.get("MSKSD_LLM_MODELS", "")
+    entries = raw if isinstance(raw, list) else raw.split(",")
+    return tuple(
+        entry
+        for entry in (model_entry(item) for item in entries)
+        if entry != ""
+    )
+
+
+def model_entry(entry) -> str | dict:
+    """One entry, kept: a mapping as-is, a stripped non-empty
+    string, a blank string dropped; anything else is a named
+    error (the env's string form and the file's list share this
+    walk)."""
+    if isinstance(entry, dict):
+        return entry
+    if isinstance(entry, str):
+        return entry.strip()
+    raise ValueError("MSKSD_LLM_MODELS entries must be strings or mappings")
 
 
 def _server_settings_from_env(

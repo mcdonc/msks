@@ -246,15 +246,59 @@ def parse_model_entry(entry: str) -> dict:
     return {"model_name": model_name, "litellm_params": params}
 
 
+# litellm_params keys whose values may carry secrets and so
+# resolve file:/cmd: indirection inside dict entries too.
+INDIRECT_KEYS = frozenset({"api_key", "api_base"})
+
+
+def normalize_key(key: str) -> str:
+    """Kebab-case to snake_case (the file's dict entries accept
+    both spellings, klangk's shape)."""
+    return key.replace("-", "_")
+
+
+def normalize_params(params: dict) -> dict:
+    """One ``litellm_params`` block: kebab→snake keys, indirection
+    resolved on the secret-bearing values."""
+    normalized = {}
+    for key, value in params.items():
+        name = normalize_key(key)
+        if name in INDIRECT_KEYS and isinstance(value, str):
+            value = resolve_indirection(value, name) or ""
+        normalized[name] = value
+    return normalized
+
+
+def normalize_dict_entry(entry: dict) -> dict:
+    """One LiteLLM-native dict entry: kebab- or snake-case keys at
+    the top level (``model-name``/``model_name``), ``params`` as the
+    ``litellm_params`` shorthand, and the params block normalized
+    (ported from klangk — the file's list form carries these)."""
+    normalized = {}
+    for key, value in entry.items():
+        name = normalize_key(key)
+        if name == "params":
+            name = "litellm_params"
+        if name == "litellm_params" and isinstance(value, dict):
+            normalized[name] = normalize_params(value)
+        else:
+            normalized[name] = value
+    return normalized
+
+
 def build_model_list(
-    entries: tuple[str, ...], default_api_key: str
+    entries: tuple[str | dict, ...], default_api_key: str
 ) -> list[dict]:
-    """The litellm model_list from the settings' entry strings; the
-    default key fills every entry that named none."""
+    """The litellm model_list from the settings' entries — strings
+    parsed, dicts normalized; the default key fills every entry that
+    named none."""
     items = []
     for entry in entries:
-        parsed = parse_model_entry(entry)
-        params = parsed["litellm_params"]
+        if isinstance(entry, dict):
+            parsed = normalize_dict_entry(entry)
+        else:
+            parsed = parse_model_entry(entry)
+        params = parsed.get("litellm_params", {})
         if default_api_key and "api_key" not in params:
             params["api_key"] = default_api_key
         items.append(parsed)
