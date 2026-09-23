@@ -26,12 +26,21 @@ empty string is the unset form: the file value applies.
 | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `msksd`                              | Reads `$MSKSD_CONFIG_DIR/msksd.yaml` (default `~/.config/msksd/msksd.yaml`, honoring `$XDG_CONFIG_HOME`). A missing file is **generated** as a commented template pointing at this chapter — the first run writes the file so its location is discoverable, and the daemon then runs on environment variables and defaults. |
 | `msksd --config /path/to/msksd.yaml` | Reads exactly that file. A missing file is a startup error naming the path. Explicit paths are never auto-generated.                                                                                                                                                                                                        |
-| `msksd --config=none`                | Reads environment variables and built-in defaults only — the dev daemon and deployment shapes manage config out-of-band.                                                                                                                                                                                                    |
+| `msksd --config=none`                | Reads environment variables and built-in defaults only — the smoke-test daemon and the shapes that manage config out-of-band.                                                                                                                                                                                               |
 
 `MSKSD_CONFIG_DIR` is read before anything else and exists only as
 an environment variable: the config file cannot relocate the
 directory it lives in, so the tree root must be resolvable before
 the file is located.
+
+The dev daemon runs bare: `scripts/dev-daemon.sh` sets
+`MSKSD_CONFIG_DIR` to the devenv root (and the devenv shell presets
+the same value, so a hand-run `msksd` resolves the same file), so
+its durable settings live in `<repo>/msksd.yaml` — generated as
+the commented template on first daemon start, untracked (local
+edits are personal). The environment the script exports (API port,
+state dir, egress wiring) wins over file values under the
+precedence above.
 
 ## Key mapping
 

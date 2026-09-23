@@ -134,11 +134,12 @@ if [ -e "$state/default-image" ]; then
   export MSKSD_DEFAULT_IMAGE="$state/default-image"
 fi
 
-echo "msks-dev: serving https://127.0.0.1:$p (state $state; Ctrl-C stops)"
+echo "msks-dev: serving https://127.0.0.1:$p (state $state; config ${MSKSD_CONFIG_DIR}/msksd.yaml; Ctrl-C stops)"
 # Foreground exec: the wrapper raises the two caps ambient (both
 # flags required — ambient needs the caps inheritable first), and
-# they flow to the daemon and every tool it spawns.
+# they flow to the daemon and every tool it spawns. Bare msksd (no
+# --config): the daemon resolves $MSKSD_CONFIG_DIR/msksd.yaml itself.
 exec "$caps" \
   --inh-caps=+net_admin,+net_bind_service \
   --ambient-caps=+net_admin,+net_bind_service \
-  -- "$msksd_bin" --config=none
+  -- "$msksd_bin"
