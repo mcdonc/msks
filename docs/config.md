@@ -174,6 +174,7 @@ the file itself carries them all at one level.
 | `egress_consent_row_cap`        | `MSKSD_EGRESS_CONSENT_ROW_CAP`        | int    | `1000`          | The per-workspace consent-row ceiling (the flood bound); `0` disables the cap.                                                                     |
 | `egress_queue_base`             | `MSKSD_EGRESS_QUEUE_BASE`             | int    | `1024`          | The base per-workspace NFQUEUE numbers derive from (`base + pool slice`); must leave room under 65535.                                             |
 | `conntrack_tool`                | `MSKSD_CONNTRACK_TOOL`                | string | `conntrack`     | The tool revocation uses to drop a revoked destination's established connections.                                                                  |
+| `interceptor_port`              | `MSKSD_INTERCEPTOR_PORT`              | int    | `8643`          | The TCP port every armed workspace's interceptor listener binds on its own tap address (#199).                                                     |
 | `audit_hmac_key`                | `MSKSD_AUDIT_HMAC_KEY`                | string | _(unset)_       | When set, every consent row is written with an HMAC-SHA256 tag over its data columns (tamper-evident audit); unset stores no tags.                 |
 
 ### The placeholder secret store

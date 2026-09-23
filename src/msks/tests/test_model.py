@@ -530,3 +530,38 @@ async def test_workspace_row_carries_the_consent_posture(app_for) -> None:
     assert (
         await app.state.model.egress_consent.list_requests("ws-consent") == []
     )
+
+
+async def test_workspace_placeholders_scope_and_order(app_for) -> None:
+    """The interceptor's arming read (#199): one workspace's rows,
+    insertion order, another workspace's rows excluded."""
+    app = app_for()
+    model = app.state.model
+    model.migrate()
+    await model.create_workspace(spec("ws1"))
+    await model.create_workspace(spec("ws2"))
+    from msks.secretstore import backend_ref, new_sentinel
+
+    for name in ("alpha", "beta"):
+        await model.create_placeholder(
+            "ws1",
+            name,
+            new_sentinel(),
+            ["api.example.com"],
+            backend_ref("ws1", name),
+            None,
+        )
+    await model.create_placeholder(
+        "ws2",
+        "gamma",
+        new_sentinel(),
+        ["api.example.com"],
+        backend_ref("ws2", "gamma"),
+        None,
+    )
+    rows = await model.workspace_placeholders("ws1")
+    assert [row["name"] for row in rows] == ["alpha", "beta"]
+    assert [
+        row["name"] for row in await model.workspace_placeholders("ws2")
+    ] == ["gamma"]
+    assert await model.workspace_placeholders("missing") == []

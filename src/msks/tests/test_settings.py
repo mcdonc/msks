@@ -237,6 +237,7 @@ def test_consent_settings_defaults_and_env() -> None:
             "MSKSD_EGRESS_CONSENT_ROW_CAP": "50",
             "MSKSD_EGRESS_QUEUE_BASE": "2048",
             "MSKSD_CONNTRACK_TOOL": "/usr/sbin/conntrack",
+            "MSKSD_INTERCEPTOR_PORT": "9443",
             "MSKSD_AUDIT_HMAC_KEY": "k1",
         }
     )
@@ -247,6 +248,8 @@ def test_consent_settings_defaults_and_env() -> None:
     assert tuned.net.consent_row_cap == 50
     assert tuned.net.queue_base == 2048
     assert tuned.net.conntrack_tool == "/usr/sbin/conntrack"
+    assert default.interceptor_port == 8643
+    assert tuned.net.interceptor_port == 9443
     assert tuned.server.audit_hmac_key == "k1"
 
 
@@ -280,3 +283,13 @@ def test_image_import_settings_default_and_override(
     monkeypatch.setenv("MSKSD_IMAGE_IMPORT_TIMEOUT_S", "-1")
     with pytest.raises(ValueError, match="MSKSD_IMAGE_IMPORT_TIMEOUT_S"):
         Settings.from_env()
+
+
+def test_interceptor_port_must_be_a_tcp_port() -> None:
+    import pytest
+    from msks.settings import Settings
+
+    with pytest.raises(ValueError, match="MSKSD_INTERCEPTOR_PORT"):
+        Settings.from_env({"MSKSD_INTERCEPTOR_PORT": "0"})
+    with pytest.raises(ValueError, match="MSKSD_INTERCEPTOR_PORT"):
+        Settings.from_env({"MSKSD_INTERCEPTOR_PORT": "70000"})

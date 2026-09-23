@@ -98,12 +98,15 @@ class NetAttachment:
 
 @dataclass
 class NetServices:
-    """One workspace's live DHCP + DNS (+ consent consumer) tasks."""
+    """One workspace's live DHCP + DNS (+ consent consumer) tasks,
+    and the firewall shape a table swap re-applies (#199)."""
 
     dhcp: DhcpServer
     dns: DnsForwarder
     tasks: list[asyncio.Task]
     consumer: FlowConsumer | None = None
+    policy: EgressPolicy | None = None
+    queue_num: int | None = None
 
     def stop_consumer(self) -> None:
         """Unbind the consent queue first: an unbound queue drops
@@ -279,6 +282,11 @@ class NetManager:
         if attachment is None:
             return
         await self.app.state.consent.on_workspace_stop(workspace_id)
+        # The interceptor's listener drops before the table dies: an
+        # armed workspace's redirected flows must not reach a proxy
+        # whose entries are already gone (the table deletion below
+        # needs no swap of its own).
+        await self.app.state.interceptor.on_detach(workspace_id)
         if services is not None:
             services.stop_consumer()
         settings = self.app.state.settings
@@ -355,6 +363,33 @@ class NetManager:
         return queue
 
     # --- consent enforcement helpers (#69) ---------------------------------
+
+    def attachment_for(self, workspace_id: str) -> NetAttachment | None:
+        """The workspace's live attachment, None when not running
+        (the interceptor's arming predicate reads this)."""
+        return self._attachments.get(workspace_id)
+
+    async def apply_interception(
+        self, workspace_id: str, port: int | None
+    ) -> None:
+        """Swap one workspace's table with or without the
+        interceptor's rules (#199): the whole table re-applies in one
+        nft transaction, so the redirect and its absence never leave
+        a window where the table is gone."""
+        attachment = self._attachments.get(workspace_id)
+        services = self._services.get(workspace_id)
+        if attachment is None or services is None:
+            return  # not attached: the table does not exist to swap
+        await nft.install_vm(
+            self.app.state.settings,
+            workspace_id,
+            attachment.tap,
+            attachment.guest_ip,
+            attachment.tap_ip,
+            policy=services.policy,
+            queue_num=services.queue_num,
+            interceptor_port=port,
+        )
 
     async def consent_allow(
         self, workspace_id: str, ip: str, port: int | None, ttl_s: float
@@ -526,9 +561,13 @@ class NetManager:
                 if consumer is not None:
                     consumer.stop()
                 raise
-            await self._start_services(attachment, policy, consumer)
+            await self._start_services(attachment, policy, consumer, queue_num)
             self._attachments[workspace_id] = attachment
             await self.replay_forever(workspace_id)
+            # The interceptor arms last (#199): its listener and the
+            # table's redirect half appear together, only when a
+            # placeholder wants them.
+            await self.app.state.interceptor.refresh(workspace_id)
             return attachment
         except BaseException:
             self._used_slices.discard(slice_)
@@ -540,6 +579,7 @@ class NetManager:
         attachment: NetAttachment,
         policy: EgressPolicy,
         consumer: FlowConsumer | None = None,
+        queue_num: int | None = None,
     ) -> None:
         """Bring up DHCP + DNS on the tap and start serving.
 
@@ -569,7 +609,12 @@ class NetManager:
             gate=gate,
         )
         services = NetServices(
-            dhcp=dhcp_server, dns=forwarder, tasks=[], consumer=consumer
+            dhcp=dhcp_server,
+            dns=forwarder,
+            tasks=[],
+            consumer=consumer,
+            policy=policy,
+            queue_num=queue_num,
         )
         self._services[attachment.workspace_id] = services
         try:
@@ -614,6 +659,7 @@ class NetManager:
         if services is not None:
             await stop_services(services)
         settings = self.app.state.settings
+        await self.app.state.interceptor.on_detach(workspace_id)
         await nft.delete_vm_table(settings, workspace_id)
         await taps.remove_tap(alloc.tap_name(workspace_id), settings)
 

@@ -1,6 +1,7 @@
 """API-level tests over ASGITransport with a stubbed microvm seam."""
 
 import asyncio
+import json
 from pathlib import Path
 
 import httpx
@@ -2354,3 +2355,70 @@ async def test_concurrent_mints_leave_one_intact_manifest(client) -> None:
     ).read_text()
     assert "MSKS_WS_SEC_ALPHA" in manifest
     assert "MSKS_WS_SEC_BETA" in manifest
+
+
+class RefreshRecorder:
+    """The interceptor surface the secret routes touch, recorded."""
+
+    def __init__(self) -> None:
+        self.refreshes: list[str] = []
+
+    async def refresh(self, workspace_id: str) -> None:
+        self.refreshes.append(workspace_id)
+
+    async def on_detach(self, workspace_id: str) -> None:  # pragma: no cover
+        raise AssertionError("no attachment exists in the api fixture")
+
+    async def stop(self) -> None:  # pragma: no cover
+        raise AssertionError("lifespan teardown replaces the recorder")
+
+
+async def test_mint_publishes_and_refreshes_the_interceptor(client) -> None:
+    """The lifecycle events reach the stream (#199): mint announces,
+    and the armed state re-evaluates — the workspace is not running
+    here, so the refresh is the no-op half."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    recorder = RefreshRecorder()
+    real = app.state.interceptor
+    app.state.interceptor = recorder
+    queue = app.state.hub.subscribe()
+    try:
+        response = await http.post(
+            "/api/v1/secrets", json=mint_body(), headers=auth()
+        )
+        assert response.status_code == 201
+        await http.delete(
+            f"/api/v1/secrets/{response.json()['id']}", headers=auth()
+        )
+    finally:
+        app.state.interceptor = real
+    events = []
+    while not queue.empty():
+        events.append(await queue.get())
+    kinds = [json.loads(event)["event"] for event in events]
+    assert kinds == ["secret.mint", "secret.revoke"]
+    assert recorder.refreshes == ["ws-sec", "ws-sec"]
+
+
+async def test_renew_refreshes_the_interceptor(client) -> None:
+    """A renew can revive a workspace's last live placeholder: the
+    armed state re-evaluates (#199)."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    row = (
+        await http.post("/api/v1/secrets", json=mint_body(), headers=auth())
+    ).json()
+    recorder = RefreshRecorder()
+    real = app.state.interceptor
+    app.state.interceptor = recorder
+    try:
+        renewed = await http.post(
+            f"/api/v1/secrets/{row['id']}/renew",
+            json={"ttl_s": 600},
+            headers=auth(),
+        )
+    finally:
+        app.state.interceptor = real
+    assert renewed.status_code == 200
+    assert recorder.refreshes == ["ws-sec"]

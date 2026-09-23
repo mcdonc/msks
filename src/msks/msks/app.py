@@ -9,6 +9,7 @@ propagates without per-subsystem reconfiguration.
 
 from .consent.coordinator import ConsentEngine
 from .consent.deciders import DeciderRegistry
+from .interceptor import Interceptor
 from .microvm import Microvm
 from .model import Model
 from .net import NetManager
@@ -32,6 +33,7 @@ class AppState:
         self.deciders: DeciderRegistry | None = None
         self.hub: EventHub | None = None
         self.secrets: SecretStore | None = None
+        self.interceptor: Interceptor | None = None
 
 
 class App:
@@ -46,6 +48,9 @@ class App:
         self.state.deciders = DeciderRegistry()
         self.state.hub = EventHub()
         self.state.secrets = SecretStore(self)
+        # The egress interceptor (#199): its embedded master starts
+        # lazily, on the first workspace that arms.
+        self.state.interceptor = Interceptor(self)
 
 
 def build_app(settings: Settings | None = None) -> App:

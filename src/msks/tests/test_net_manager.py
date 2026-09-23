@@ -811,3 +811,93 @@ async def test_replay_row_skips_portless_denies(gated_app) -> None:
         },
     )
     assert log_lines(nft_log) == []
+
+
+# --- the interceptor wiring (#199) ------------------------------------------
+
+
+class FakeInterceptor:
+    """The interceptor surface the net manager touches, recorded."""
+
+    def __init__(self) -> None:
+        self.refreshes: list[str] = []
+        self.detaches: list[str] = []
+
+    async def refresh(self, workspace_id: str) -> None:
+        self.refreshes.append(workspace_id)
+
+    async def on_detach(self, workspace_id: str) -> None:
+        self.detaches.append(workspace_id)
+
+
+async def test_attach_ends_in_an_interceptor_refresh(net_app) -> None:
+    """Arming is placeholder-driven: the attachment completes, then
+    the interceptor re-evaluates (it arms only if a placeholder is
+    live)."""
+    app, _ip, _nft = net_app
+    recorder = FakeInterceptor()
+    app.state.interceptor = recorder
+    manager = await ready(app)
+    await manager.attach("ws-a", want=True)
+    assert recorder.refreshes == ["ws-a"]
+
+
+async def test_detach_drops_the_interceptor_first(net_app) -> None:
+    """The listener goes before the table dies, so an armed
+    workspace's redirected flows never reach a proxy whose entries
+    are already gone."""
+    app, _ip, nft_log = net_app
+    recorder = FakeInterceptor()
+    app.state.interceptor = recorder
+    manager = await ready(app)
+    await manager.attach("ws-a", want=True)
+    open(nft_log, "w").close()
+    await manager.detach("ws-a")
+    assert recorder.detaches == ["ws-a"]
+    # The table deletion still ran after the disarm.
+    assert any(line.startswith("delete table") for line in log_lines(nft_log))
+
+
+async def test_apply_interception_swaps_the_table(net_app) -> None:
+    """Armed: the redirect, the widened input, and the QUIC drop all
+    land in one transaction; disarmed: they leave the same way, and
+    the consent shape survives both."""
+    app, _ip, nft_log = net_app
+    manager = await ready(app)
+    await manager.attach("ws-a", want=True)
+    stdin = Path(str(nft_log) + ".stdin")
+
+    def last_apply() -> str:
+        blocks = stdin.read_text().split("--- -f -\n")
+        return blocks[-1]
+
+    open(nft_log, "w").close()
+    stdin.write_text("")
+    await manager.apply_interception("ws-a", 8643)
+    assert "redirect to :8643" in last_apply()
+    assert "udp dport 443 drop" in last_apply()
+    assert "tcp dport 8643 accept" in last_apply()
+
+    stdin.write_text("")
+    await manager.apply_interception("ws-a", None)
+    assert "redirect" not in last_apply()
+    assert "udp dport 443" not in last_apply()
+    assert "delete table" in last_apply()  # one transaction, not two
+
+
+async def test_apply_interception_skips_an_unattached_workspace(
+    net_app,
+) -> None:
+    app, _ip, nft_log = net_app
+    manager = await ready(app)
+    open(nft_log, "w").close()
+    await manager.apply_interception("ws-gone", 8643)
+    assert log_lines(nft_log) == []
+
+
+async def test_attachment_for_answers_the_live_attachment(net_app) -> None:
+    app, _ip, _nft = net_app
+    manager = await ready(app)
+    assert app.state.net.attachment_for("ws-a") is None
+    attachment = await manager.attach("ws-a", want=True)
+    assert app.state.net.attachment_for("ws-a") is attachment

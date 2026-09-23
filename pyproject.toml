@@ -15,6 +15,13 @@ dependencies = [
   "aiosqlite>=0.20",
   "uvicorn[standard]>=0.32",
   "websockets>=14",
+  # The egress interceptor's engine (#199): embedded in-process,
+  # one master for every workspace, per-tap listeners. The footprint
+  # the #194 spike vetted: 35 packages on top of the project's 44,
+  # including the cryptography bump 48 → 50 (within the >=44 floor);
+  # nix/msks-pkg.nix mirrors it from the pinned nixpkgs (12.2.3, the
+  # version the spike ran).
+  "mitmproxy>=12.2",
   # Egress consent's NFQUEUE binding (#69): consent is the normal
   # posture for workspaces, so the binding ships with every
   # install. It links libnetfilter_queue — devenv carries the
@@ -52,10 +59,15 @@ packages = ["src/msks/msks"]
 # Library-internal deprecations our code paths cannot fix (last-resort
 # filters, house rules): starlette's TestClient wants httpx2 and anyio
 # renamed BlockingPortal — both fire inside fastapi.testclient imports,
-# not in msks code. Revisit when starlette ships httpx2 support.
+# not in msks code. Revisit when starlette ships httpx2 support. The
+# mitmproxy pair fires inside ITS imports (ldap3's pyasn1 bridge,
+# pyparsing's old spelling in flowfilter) the moment the interceptor
+# module loads — unreachable from msks sources until mitmproxy moves.
 filterwarnings = [
   "ignore:Using `httpx` with `starlette.testclient` is deprecated",
   "ignore:The anyio.abc.BlockingPortal alias is deprecated",
+  "ignore::DeprecationWarning:ldap3.utils.asn1",
+  "ignore::pyparsing.warnings.PyparsingDeprecationWarning",
 ]
 # Coverage rides in addopts so the plain CI invocation (`python -m pytest
 # src/msks/tests -v -n auto`) is the gated one; scoped runs pass

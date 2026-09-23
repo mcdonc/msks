@@ -156,6 +156,60 @@ def queue_gate(tap: str, guest_ip: str, queue_num: int | None) -> str:
     )
 
 
+# The ports the interceptor owns while armed (#199): the guest's
+# web egress redirects to the per-tap listener, and QUIC dies so
+# nothing routes around the TCP-only redirect.
+WEB_PORTS = "{ 80, 443 }"
+QUIC_PORT = "443"
+
+
+def intercept_prerouting(tap: str, port: int) -> str:
+    """The armed interceptor's NAT half (#199): every TCP flow the
+    guest sends to ports 80/443 redirects to the per-tap listener —
+    the destination address becomes the tap's own address, which is
+    where that listener binds."""
+    return (
+        "  chain intercept {\n"
+        "    type nat hook prerouting priority dstnat; policy accept;\n"
+        f'    iifname "{tap}" tcp dport {WEB_PORTS} redirect to :{port}\n'
+        "  }\n"
+    )
+
+
+def intercept_forward_drop(tap: str) -> str:
+    """QUIC stays dead while armed (#199): UDP 443 toward the uplink
+    drops, so the guest's browser falls back to the TCP flow the
+    redirect owns."""
+    return f'    iifname "{tap}" udp dport {QUIC_PORT} drop\n'
+
+
+def intercept_input_accept(
+    tap: str, guest_ip: str, tap_ip: str, port: int
+) -> str:
+    """The widened input rule (#199): a redirected flow's destination
+    is the tap address, so the interceptor's port on it must accept
+    — pinned to this guest's source and this tap's address."""
+    return (
+        f'    iifname "{tap}" ip saddr {guest_ip} ip daddr {tap_ip} '
+        f"tcp dport {port} accept\n"
+    )
+
+
+def armed_rules(
+    tap: str, guest_ip: str, tap_ip: str, port: int | None
+) -> tuple[str, str, str]:
+    """The interceptor's three rule pieces when armed — prerouting
+    chain, forward line, input line — or three empty strings when
+    not; ``vm_ruleset`` splices them in (#199)."""
+    if port is None:
+        return "", "", ""
+    return (
+        intercept_prerouting(tap, port),
+        intercept_forward_drop(tap),
+        intercept_input_accept(tap, guest_ip, tap_ip, port),
+    )
+
+
 def established_accept(tap: str, policy: EgressPolicy) -> str:
     """The outbound established accept (gated modes): a flow that
     passed the gates once (its SYN carried a verdict, or it hit a
@@ -175,6 +229,7 @@ def vm_ruleset(
     uplink: str,
     policy: EgressPolicy | None = None,
     queue_num: int | None = None,
+    interceptor_port: int | None = None,
 ) -> str:
     """One workspace's enforcement tables.
 
@@ -193,17 +248,28 @@ def vm_ruleset(
       drops before the host's own wildcard-bound services (the
       API among them): a guest-initiated connection arrives state
       NEW and does not match the established rule.
+
+    With ``interceptor_port`` set (#199) the workspace is armed: a
+    prerouting chain redirects the guest's TCP 80/443 to the
+    per-tap interceptor listener, the input chain widens to that
+    listener's port, and the forward chain drops the guest's QUIC
+    so nothing routes around the redirect.
     """
     mode = policy or EgressPolicy(workspace_id, "allow", ())
     gated = mode.gated
     final = "drop" if gated else "accept"
+    prerouting, quic_drop, input_widen = armed_rules(
+        tap, guest_ip, tap_ip, interceptor_port
+    )
     return (
         f"table inet {table_name(workspace_id)} {{\n"
         f"{consent_sets(mode)}"
+        f"{prerouting}"
         "  chain egress {\n"
         "    type filter hook forward priority filter; policy accept;\n"
         f'    oifname "{tap}" ct state established,related accept\n'
         f"{dns_lockout_rules(tap)}"
+        f"{quic_drop}"
         f"{established_accept(tap, mode)}"
         f"{ip_spec_rules(tap, mode.ip_specs)}"
         f"{allow_matches(tap, mode)}"
@@ -229,6 +295,9 @@ def vm_ruleset(
         # and only those, per conntrack — come home here (#109).
         f'    iifname "{tap}" ip saddr {guest_ip} '
         f"ct state established,related accept\n"
+        # The interceptor's listener (#199) — present only while
+        # armed, ahead of the tap's final drop.
+        f"{input_widen}"
         f'    iifname "{tap}" drop\n'
         "  }\n"
         "}\n"
@@ -325,6 +394,28 @@ async def apply_base(settings) -> None:
     )
 
 
+async def table_exists(settings, workspace_id: str) -> bool:
+    """Whether this workspace's table is installed (the swap's
+    probe)."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            settings.net.nft_tool,
+            "list",
+            "table",
+            "inet",
+            table_name(workspace_id),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+    except FileNotFoundError:
+        # The tool's absence names itself on the apply below; the
+        # probe treats it as "no table" so that error is the one
+        # raised.
+        return False
+    await proc.wait()
+    return proc.returncode == 0
+
+
 async def install_vm(
     settings,
     workspace_id: str,
@@ -333,10 +424,15 @@ async def install_vm(
     tap_ip: str,
     policy: EgressPolicy | None = None,
     queue_num: int | None = None,
+    interceptor_port: int | None = None,
 ) -> None:
-    """Install one workspace's tables, converging on any previous
-    table of the same name first."""
-    await delete_vm_table(settings, workspace_id)
+    """Install one workspace's tables as **one nft transaction**
+    when a previous table exists: the delete and the add ride the
+    same ``-f`` invocation, so an armed↔disarmed swap never leaves
+    a window where the table is absent — a guest SYN that slips
+    between two runs would carry its sentinel past the redirect.
+    A failed transaction aborts whole, leaving the previous table
+    enforcing."""
     ruleset = vm_ruleset(
         workspace_id,
         tap,
@@ -345,11 +441,15 @@ async def install_vm(
         settings.net.uplink,
         policy=policy,
         queue_num=queue_num,
+        interceptor_port=interceptor_port,
     )
+    prior = ""
+    if await table_exists(settings, workspace_id):
+        prior = f"delete table inet {table_name(workspace_id)}\n"
     await nft_run(
         settings,
         ["-f", "-"],
-        input_text=ruleset.encode(),
+        input_text=(prior + ruleset).encode(),
         what=f"nft ruleset apply for {workspace_id}",
     )
 

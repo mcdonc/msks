@@ -948,6 +948,10 @@ def build_api(app) -> FastAPI:
             finally:
                 await app.state.consent.stop()
                 await app.state.net.stop()
+                # After the net detach: every armed listener's
+                # teardown ran through it; what remains is the
+                # master itself (#199).
+                await app.state.interceptor.stop()
                 await app.state.model.close()
 
     api = FastAPI(title="msksd", version=__version__, lifespan=lifespan)
@@ -1102,6 +1106,17 @@ def build_api(app) -> FastAPI:
                 raise HTTPException(status_code=503, detail=str(exc)) from None
             await app.state.model.record_audit("mint", row)
         # The sentinel appears in exactly one response: this one.
+        await hub.publish(
+            "secret.mint",
+            {
+                "workspace_id": workspace_id,
+                "name": body.name,
+                "dests": dests,
+            },
+        )
+        # Arming is placeholder-driven (#199): a mint against a
+        # running workspace redirects its web egress from here.
+        await app.state.interceptor.refresh(workspace_id)
         return Response(
             status_code=201,
             content=json.dumps(placeholder_view(row)),
@@ -1136,6 +1151,9 @@ def build_api(app) -> FastAPI:
             # The expiry sweep can retire the row between the two
             # reads; a renew that lost its row answers 404, not 500.
             raise HTTPException(status_code=404, detail="no such placeholder")
+        # A renew can revive a workspace's last live placeholder, so
+        # the armed state re-evaluates (#199).
+        await app.state.interceptor.refresh(row["workspace_id"])
         return placeholder_view(row, sentinel=False)
 
     @api.delete(
@@ -1160,6 +1178,14 @@ def build_api(app) -> FastAPI:
                 cleaned = False
             await app.state.model.record_audit("revoke", row)
             await sync_store_manifest()
+        await hub.publish(
+            "secret.revoke",
+            {"workspace_id": row["workspace_id"], "name": row["name"]},
+        )
+        # The redirect stands down when the last placeholder went
+        # (#199) — the row is already gone, so refresh reads the new
+        # state.
+        await app.state.interceptor.refresh(row["workspace_id"])
         return {"revoked": placeholder_id, "store_cleaned": cleaned}
 
     @api.get("/api/v1/secrets/audit", dependencies=[Depends(require_token)])

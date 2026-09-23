@@ -74,18 +74,49 @@ def test_vm_ruleset_scopes_the_tap() -> None:
     ) < ingress.index('iifname "msks-tap" drop')
 
 
-async def test_apply_base_and_install_vm(tools) -> None:
+async def test_apply_base_and_install_vm(tools, monkeypatch) -> None:
     settings, log = tools
     await nft.apply_base(settings)
+    # The stub answers success for everything by default, so the
+    # probe must be told the table is absent for a fresh install.
+    monkeypatch.setenv(NFT_FAIL_AT, "list table")
     await nft.install_vm(
         settings, "ws-a", "msks-tap", "172.31.0.1", "172.31.0.2"
     )
-    # install converges: the old table drops before the fresh one.
     assert log_lines(log) == [
         "-f -",
-        f"delete table inet {table_name('ws-a')}",
+        f"list table inet {table_name('ws-a')}",
         "-f -",
     ]
+    # A fresh install applies the ruleset alone.
+    stdin = Path(str(log) + ".stdin").read_text()
+    assert f"table inet {table_name('ws-a')} {{" in stdin
+    assert "delete table" not in stdin
+
+
+async def test_install_vm_swaps_atomically(tools) -> None:
+    """A table that exists is replaced in ONE nft transaction
+    (#199): the delete and the re-add ride the same ``-f`` file, so
+    no guest SYN slips between them past the redirect."""
+    settings, log = tools
+    await nft.install_vm(
+        settings, "ws-a", "msks-tap", "172.31.0.1", "172.31.0.2"
+    )
+    assert log_lines(log) == [
+        f"list table inet {table_name('ws-a')}",
+        "-f -",
+    ]
+    stdin = Path(str(log) + ".stdin").read_text()
+    applies = [
+        block
+        for block in stdin.split("--- -f -\n")
+        if block.startswith("delete table")
+    ]
+    assert len(applies) == 1
+    assert applies[0].startswith(
+        f"delete table inet {table_name('ws-a')}\n"
+        f"table inet {table_name('ws-a')} {{"
+    )
 
 
 async def test_delete_vm_table_tolerates_absence(tools, monkeypatch) -> None:
@@ -128,6 +159,58 @@ async def test_install_vm_pins_the_workspace_ruleset(tools) -> None:
 
 
 # --- consent chain shapes and flow elements (#69) ----------------------------
+
+
+def test_armed_ruleset_redirects_web_egress() -> None:
+    """The armed shape (#199): a prerouting redirect of the guest's
+    TCP 80/443 to the per-tap listener, the input chain widened to
+    that listener ahead of the tap's drop, and the guest's QUIC
+    dead so nothing routes around the redirect."""
+    ruleset = nft.vm_ruleset(
+        "ws-a",
+        "msks-tap",
+        "172.31.0.1",
+        "172.31.0.2",
+        "eth0",
+        interceptor_port=8643,
+    )
+    prerouting = ruleset[
+        ruleset.index("chain intercept") : ruleset.index("chain egress")
+    ]
+    assert (
+        "type nat hook prerouting priority dstnat; policy accept;"
+        in prerouting
+    )
+    assert (
+        'iifname "msks-tap" tcp dport { 80, 443 } redirect to :8643'
+        in prerouting
+    )
+    egress = ruleset[
+        ruleset.index("chain egress") : ruleset.index("chain ingress")
+    ]
+    assert 'iifname "msks-tap" udp dport 443 drop' in egress
+    assert egress.index("udp dport 443 drop") < egress.index(
+        'oifname "eth0" accept'
+    )
+    ingress = ruleset[ruleset.index("chain ingress") :]
+    assert (
+        'iifname "msks-tap" ip saddr 172.31.0.1 ip daddr 172.31.0.2 '
+        "tcp dport 8643 accept" in ingress
+    )
+    assert ingress.index("tcp dport 8643 accept") < ingress.index(
+        'iifname "msks-tap" drop'
+    )
+
+
+def test_disarmed_ruleset_carries_no_interception() -> None:
+    """The default shape keeps #52's posture: no redirect, no input
+    widening, no QUIC drop."""
+    ruleset = nft.vm_ruleset(
+        "ws-a", "msks-tap", "172.31.0.1", "172.31.0.2", "eth0"
+    )
+    assert "redirect" not in ruleset
+    assert "8643" not in ruleset
+    assert "udp dport 443" not in ruleset
 
 
 def policy(mode: str, specs=()):
@@ -277,3 +360,10 @@ async def test_install_vm_passes_the_policy_shape(tools) -> None:
     applied = log.with_name(log.name + ".stdin").read_text()
     assert "queue num 4242" in applied
     assert "allows_any" in applied
+
+
+async def test_table_exists_tolerates_a_missing_tool(tmp_path) -> None:
+    """The probe reports no table when the tool is absent, so the
+    apply below is the call that names the missing binary."""
+    settings = Settings(net=NetSettings(nft_tool=str(tmp_path / "absent")))
+    assert await nft.table_exists(settings, "ws-a") is False

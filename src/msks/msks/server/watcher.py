@@ -191,7 +191,15 @@ async def sweep_expired_placeholders(app, hub: EventHub) -> int:
             await retire_expired(app, hub, row)
         refs = await model.placeholder_refs()
         await asyncio.to_thread(app.state.secrets.sync_manifest, refs)
+    await refresh_disarmed(app, expired)
     return len(expired)
+
+
+async def refresh_disarmed(app, expired: list[dict]) -> None:
+    """Stand each expired workspace's redirect down (#199): the rows
+    are already gone, so every refresh reads the new state."""
+    for workspace_id in dict.fromkeys(row["workspace_id"] for row in expired):
+        await app.state.interceptor.refresh(workspace_id)
 
 
 #: Rows one watcher pass may retire (#198): each can hold the store

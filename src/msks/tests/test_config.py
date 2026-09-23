@@ -441,6 +441,7 @@ KEY_CASES = [
     ("egress_consent_row_cap", 50, "net.consent_row_cap", 50),
     ("egress_queue_base", 2048, "net.queue_base", 2048),
     ("conntrack_tool", "/ct", "net.conntrack_tool", "/ct"),
+    ("interceptor_port", 9443, "net.interceptor_port", 9443),
     ("audit_hmac_key", "k1", "server.audit_hmac_key", "k1"),
     ("ssh_key_type", "ed25519", "vmm.ssh_key_type", "ed25519"),
     ("image_import_max_mib", 4096, "vmm.image_import_max_mib", 4096),

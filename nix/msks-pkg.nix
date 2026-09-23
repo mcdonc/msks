@@ -22,6 +22,11 @@
   cryptography,
   alembic,
   websockets,
+  # The egress interceptor's engine (#199), straight from the
+  # pinned nixpkgs (12.2.3 — the version the #194 spike ran);
+  # test_pkg_mirror.py keeps the name set honest against
+  # pyproject.toml.
+  mitmproxy,
   # The consent decider TUI framework (#195), pinned to the
   # >=8.2.8 floor pyproject declares — nixpkgs' 8.2.6 predates the
   # ListView focus semantics it relies on (nix/textual-pkg.nix).
@@ -73,6 +78,7 @@ buildPythonPackage {
     cryptography
     alembic
     websockets
+    mitmproxy
     textual
     netfilterqueue
   ];

@@ -8,9 +8,73 @@ mint named. The real secret lives in msksd's **secret store** and in
 the daemon's memory, nowhere else.
 
 This chapter is about the store and the mint/revoke/renew commands.
-The in-flight swap itself is the egress interceptor
-([#194 decision doc](spikes/194-egress-interceptor.md); the
-implementation lands with the interceptor).
+The in-flight swap itself is the **egress interceptor** — the next
+section.
+
+## The interceptor (the swap on the wire)
+
+A workspace with at least one live placeholder — minted, unrevoked,
+and unexpired — is **armed**: the daemon redirects that workspace's
+TCP flows toward ports 80 and 443 into an in-process HTTPS/HTTP
+proxy, and the swap happens there. The proxy is
+[mitmproxy](https://mitmproxy.org), embedded in msksd — one process
+serving every armed workspace, one listener per workspace's tap,
+so a guest that spoofs another workspace's source address still
+lands on its own tap's placeholders.
+
+What each request gets:
+
+- **The swap.** The sentinel is exchanged for the real secret in
+  every request header and every query-string pair — duplicate
+  keys included — when the destination matches the placeholder's
+  allowlist (exact host or label-anchored suffix, as minted). The
+  origin sees the real secret; the workspace never holds it. On
+  HTTPS the connection's TLS handshake (its SNI) names the
+  destination; on plain HTTP the Host header does, and the request
+  is dialed by that name so the secret only reaches the server the
+  allowlist names.
+- **The splice.** An HTTPS destination no placeholder of this
+  workspace covers is relayed undecrypted: the origin's real
+  certificate reaches the workspace, pinned clients keep working,
+  and the sentinel rides raw. Detection of off-allowlist sightings
+  is limited to decrypted flows — this blind spot is recorded on
+  the [#194 decision doc](spikes/194-egress-interceptor.md).
+- **The sighting.** A sentinel seen toward a destination its own
+  allowlist misses — while another placeholder decrypts the flow —
+  passes through unrewritten and publishes a `secret.sighting`
+  event on the events channel. A revoked or expired sentinel
+  passes through the same way; its placeholder is gone, so there
+  is nothing to swap and nothing to report.
+- **QUIC stays down while armed.** The workspace's UDP flows toward
+  port 443 are dropped, so browsers fall back to the TCP flow the
+  redirect owns — nothing routes around the interceptor.
+
+Each swap publishes a `secret.swap` event; mint, revoke, and expiry
+publish their own (`secret.mint`, `secret.revoke`, `secret.expiry`).
+All five ride the events websocket beside the workspace lifecycle
+events.
+
+Fail-closed on the swap path: a secret the store cannot serve, or a
+row the database cannot read, answers the request locally with a
+502 instead of forwarding it — a request that still carries the
+sentinel never leaves the host.
+
+The interceptor presents each connection a leaf certificate signed
+by the workspace's own CA. A workspace's guest trusts that CA
+(minted into its first-boot seed, [#200]), so HTTPS toward
+allowlisted destinations validates normally. Each workspace's CA
+is its own: one workspace's leaves never validate under another's.
+Arming and disarming swap the workspace's firewall table in one
+nft transaction — the redirect, the widened input rule for the
+listener, and the QUIC drop appear and disappear together, with no
+window in between where the table is absent.
+
+The listeners bind one shared port on each armed tap address
+(`interceptor_port`, default 8643 — see the
+[key reference](config.md)). Upstream connections are verified
+against the platform's trust store; the daemon pins no cipher
+lists anywhere (the FIPS posture: overrides arrive as settings
+with the certification effort, never as code).
 
 ## The mint flow
 
