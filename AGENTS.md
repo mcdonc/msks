@@ -232,15 +232,14 @@ flag — rewrite before merging.
 
 ## Changelog (`docs/changes.md`)
 
-**Entries are frozen for the duration of the #229 deployment-host
-rework.** While #229's sub-issues are in flight, leave
-`docs/changes.md` untouched: the parallel branches all append to the
-same `## \[Unreleased]` section, so every landing produces a conflict
-to resolve by hand, and per-PR entries written mid-rework describe a
-tree the rework is about to delete. When the rework lands, cut a
-single `Changed` entry covering the whole arc (the appliance layer removed,
-deployment-host module added, k8s retired) in the PR that closes
-issue #229. The rules below govern entries outside the freeze.
+**Entries are omitted indefinitely.** Leave `docs/changes.md`
+untouched in every PR: write no entries under `## \[Unreleased]`
+and no per-PR entries anywhere in the file. The reasons (parallel
+branches appending to one section, entries describing trees about
+to be reworked) held for the #229 freeze and stay true for the
+indefinite future; hand-authored notes and the release cut below
+keep working without agent entries. The rules below govern the
+file's format and the release cut, not PR-time entry writing.
 
 `docs/changes.md` is the single source of truth for human-authored release notes,
 formatted as [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
