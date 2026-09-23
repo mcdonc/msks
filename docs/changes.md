@@ -8,6 +8,15 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The NixOS workspace guest image (#250).** A second catalog image
+  built from the devenv-pinned nixpkgs with
+  `msks-build-guest nixos` (into `.devenv/state/guest-nixos`;
+  `MSKS_GUEST_NIXOS_DIR` relocates it), registering under the
+  `nixos` name beside `debian`. The archive carries the same
+  containerDisk contract and the same declared capabilities —
+  cloud-init, the prelude-v1 console — so the daemon serves it
+  with no new machinery and nothing keyed off the image's name.
+  See [docs/images.md](images.md#the-shipped-builder).
 - **`msks egress tui` (#195).** The consent decider TUI: a textual app
   that registers as the workspace's decider, shows held requests with
   countdowns (`a`/`d` verdicts, `A`/`D` duration picker), and adds a
