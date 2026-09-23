@@ -149,11 +149,7 @@ def resolve_cmd_ref(command: str, name: str) -> str:
         timeout=30,
     )
     if proc.returncode != 0:
-        detail = proc.stderr.strip()[:200]
-        raise ValueError(
-            f"{name}: cmd: reference exited {proc.returncode}"
-            + (f": {detail}" if detail else "")
-        )
+        raise ValueError(f"{name}: cmd: reference exited {proc.returncode}")
     return proc.stdout.strip()
 
 
@@ -293,14 +289,39 @@ class LlmRouter:
         # The test seam for the passthrough client: a factory the
         # suite replaces with a MockTransport-backed client.
         self.client_factory = httpx.AsyncClient
+        # Reconfigure serialization: concurrent first-requests after
+        # one SIGHUP swap share a single configure.
+        self._lock: asyncio.Lock | None = None
 
     def ensure(self, settings) -> None:
         """Rebuild when the settings object changed; a no-op while
-        it did not (the per-request call on the proxy paths)."""
+        it did not (the per-request call on the proxy paths). The
+        heavy halves of a rebuild — the lazily-imported litellm tree,
+        a ``cmd:`` secret's subprocess — run in :func:`ensure_async`
+        off the loop; the sync form serves sync callers only and
+        stays off the request path. The settings latch lands only
+        after a successful configure — a broken model entry raises,
+        and the next request retries instead of serving the stale
+        router under a latched identity."""
         if settings is self._settings:
             return
-        self._settings = settings
         self.configure(settings)
+        self._settings = settings
+
+    async def ensure_async(self, settings) -> None:
+        """The request path's ensure: one reconfigure at a time, off
+        the event loop — a ~5 s litellm import or a 30 s ``cmd:``
+        must not stall DHCP, DNS, and every other workspace's
+        traffic."""
+        if settings is self._settings:
+            return
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        async with self._lock:
+            if settings is self._settings:
+                return
+            await asyncio.to_thread(self.configure, settings)
+            self._settings = settings
 
     def configure(self, settings) -> None:
         """Build the routing state from one settings object."""
@@ -463,10 +484,56 @@ def mint_token() -> str:
     return TOKEN_PREFIX + secrets.token_urlsafe(24)
 
 
+# The chat-completion request fields the proxy forwards (#259
+# review): litellm's Router treats call-site ``api_base``/``api_key``
+# as dynamic overrides of the deployment's credentials, so a guest
+# body naming them would redirect the daemon's upstream and ride
+# the provider key out. The allowlist is the whole defense: fields
+# an OpenAI chat-completion request may carry, nothing more, in
+# both routing modes — unknown fields drop (a newer client field
+# the list lacks costs that field, never the credential).
+CHAT_FIELDS = frozenset(
+    {
+        "model",
+        "messages",
+        "stream",
+        "stream_options",
+        "temperature",
+        "top_p",
+        "n",
+        "max_tokens",
+        "max_completion_tokens",
+        "presence_penalty",
+        "frequency_penalty",
+        "logit_bias",
+        "logprobs",
+        "top_logprobs",
+        "response_format",
+        "seed",
+        "stop",
+        "tools",
+        "tool_choice",
+        "parallel_tool_calls",
+        "reasoning_effort",
+        "user",
+        "metadata",
+    }
+)
+
+
+def chat_fields(body: dict) -> dict:
+    """The request body's forwardable subset — the allowlist applied."""
+    return {k: v for k, v in body.items() if k in CHAT_FIELDS}
+
+
 def token_matches(presented: str, stored: str | None) -> bool:
-    """Constant-time equality; no stored token authenticates
-    nothing."""
-    return stored is not None and hmac.compare_digest(presented, stored)
+    """Constant-time equality on the encoded forms; no stored token
+    authenticates nothing. Bytes, because HTTP header bytes are
+    latin-1-decoded and the digest comparison refuses non-ASCII
+    strings — a crafted header must answer 401, never a 500."""
+    return stored is not None and hmac.compare_digest(
+        presented.encode("utf-8", "replace"), stored.encode("utf-8")
+    )
 
 
 class TapListener:
@@ -555,9 +622,11 @@ class LlmProxy:
     def listener_for(self, attachment) -> TapListener | None:
         """The attachment's listener, or None when no model list is
         configured (an unconfigured daemon presents no LLM surface:
-        nothing binds, and the input chain admits nothing)."""
+        nothing binds, and the input chain admits nothing). Reads
+        the settings only — the router configures lazily at the
+        first request, so a broken entry never blocks the bind
+        decision here."""
         settings = self.app.state.settings
-        self.router.ensure(settings)
         if not settings.llm.models:
             return None
         listener = TapListener(
@@ -635,34 +704,115 @@ class LlmProxy:
             )
 
 
+# One completion body's ceiling: generous against a real prompt
+# (a pasted book is a few MiB) and bounded against a guest that
+# streams an unending document at the daemon's memory.
+MAX_BODY_BYTES = 16 * 1024 * 1024
+
+#: The read's oversized sentinel (an object identity, so a body
+# that legitimately reads back as anything else is never confused).
+OVERSIZED = object()
+
+
+def body_refusal(request: Request) -> JSONResponse | None:
+    """413 when the request announces more than the ceiling on
+    Content-Length — the honest case refuses before a byte is
+    read; the streamed read enforces the same bound for bodies
+    that arrive without the header."""
+    for value in request.headers.get("content-length", "").split(","):
+        if value.strip().isdigit() and int(value) > MAX_BODY_BYTES:
+            return too_large()
+    return None
+
+
+def too_large() -> JSONResponse:
+    """The named 413 refusal."""
+    return JSONResponse(
+        status_code=413,
+        content={"error": f"request body exceeds {MAX_BODY_BYTES} bytes"},
+    )
+
+
+async def read_capped_json(request: Request):
+    """The request's parsed JSON body, or OVERSIZED past the
+    ceiling; a decode failure raises (the caller answers 400)."""
+    chunks = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > MAX_BODY_BYTES:
+            return OVERSIZED
+        chunks.append(chunk)
+    return json.loads(b"".join(chunks))
+
+
+async def parse_body(request: Request) -> tuple:
+    """(refusal, body): the named 413/400 answers, or (None, the
+    parsed dict) — the whole request-body half of the completion
+    route, split out so the stream-bounded path is testable
+    without an HTTP client."""
+    refusal = body_refusal(request)
+    if refusal is not None:
+        return refusal, None
+    try:
+        body = await read_capped_json(request)
+    except Exception:
+        return bad_json(), None
+    if body is OVERSIZED:
+        return too_large(), None
+    if not isinstance(body, dict):
+        return bad_json(), None
+    return None, body
+
+
+def bad_json() -> JSONResponse:
+    """The named 400 for a body that is not a JSON object."""
+    return JSONResponse(
+        status_code=400,
+        content={"error": "request body is not JSON"},
+    )
+
+
 def build_proxy_app(proxy: LlmProxy) -> FastAPI:
     """The OpenAI-shaped proxy app: ``/v1/models`` and
     ``/v1/chat/completions``, workspace-token gated."""
 
     async def list_models(request: Request) -> dict:
-        """The model list (OpenAI ``GET /v1/models`` shape)."""
-        await proxy.authorize(request)
-        proxy.router.ensure(proxy.app.state.settings)
-        return {
-            "object": "list",
-            "data": await proxy.router.list_upstream_models(),
-        }
-
-    async def chat_completions(request: Request):
-        """One completion (OpenAI ``POST /v1/chat/completions`` body):
-        JSON or SSE by the request's ``stream`` flag; 503 when no
-        model list is configured, 502 when the upstream fails."""
+        """The model list (OpenAI ``GET /v1/models`` shape); 503 in
+        the unconfigured posture, on the same gate the completion
+        route carries."""
         await proxy.authorize(request)
         router = proxy.router
-        router.ensure(proxy.app.state.settings)
+        await router.ensure_async(proxy.app.state.settings)
         if not router.active:
             return JSONResponse(
                 status_code=503,
                 content={"error": "LLM router not configured"},
             )
-        body = await request.json()
+        return {
+            "object": "list",
+            "data": await router.list_upstream_models(),
+        }
+
+    async def chat_completions(request: Request):
+        """One completion (OpenAI ``POST /v1/chat/completions`` body):
+        JSON or SSE by the request's ``stream`` flag; 503 when no
+        model list is configured, 502 when the upstream fails. The
+        body's forwardable fields are the allowlist's — credentials
+        and endpoints a guest names never reach the router."""
+        await proxy.authorize(request)
+        refusal, body = await parse_body(request)
+        if refusal is not None:
+            return refusal
+        router = proxy.router
+        await router.ensure_async(proxy.app.state.settings)
+        if not router.active:
+            return JSONResponse(
+                status_code=503,
+                content={"error": "LLM router not configured"},
+            )
         try:
-            return await dispatch_completion(router, body)
+            return await dispatch_completion(router, chat_fields(body))
         except Exception:
             logger.exception("LLM completion failed")
             return JSONResponse(

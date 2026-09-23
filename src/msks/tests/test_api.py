@@ -2605,8 +2605,6 @@ async def test_create_mints_and_seeds_an_llm_token(client) -> None:
     assert minted["token"].startswith("msksllm1_")
     # The spec the artifacts were prepared from carried the same
     # token: the seed's planted credential and the row's agree.
-    # The spec the artifacts were prepared from carried the same
-    # token: the seed's planted credential and the row's agree.
     assert stub.prepared, stub.calls
     assert stub.prepared[-1].llm_token == minted["token"]
 

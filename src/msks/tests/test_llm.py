@@ -16,6 +16,7 @@ from msks.llm import (
     LlmRouter,
     TapListener,
     build_model_list,
+    chat_fields,
     dispatch_completion,
     finish_aclose_task,
     is_passthrough,
@@ -27,6 +28,8 @@ from msks.llm import (
     token_matches,
 )
 from msks.settings import LlmSettings, Settings
+
+from msks import llm as llm_mod
 
 TOKEN = "msksllm1_testtoken"
 AUTH = {"authorization": f"Bearer {TOKEN}"}
@@ -447,7 +450,7 @@ async def test_models_endpoint_answers_the_openai_shape() -> None:
     assert reply.json() == {"object": "list", "data": [{"id": "up-model"}]}
 
 
-async def test_completions_endpoint_serves_json_and_503() -> None:
+async def test_completions_endpoint_serves_json() -> None:
     # Unconfigured: the ported klangk posture — the route exists,
     # 503 answers.
     proxy = proxy_under_test(
@@ -676,3 +679,170 @@ def test_workspace_for_request_without_a_server_scope() -> None:
 
     proxy = proxy_under_test({})
     assert proxy.workspace_for_request(SimpleNamespace(scope={})) is None
+
+
+# --- review findings: injection, malformed bodies, oversize ----------------
+
+
+async def test_injected_routing_fields_never_reach_the_router() -> None:
+    """The allowlist is the whole defense (#259 review): a guest body
+    naming api_base/api_key/headers must not redirect the daemon's
+    upstream or ride the provider key out. Router mode: the kwargs
+    litellm sees carry none of it."""
+    router = LlmRouter()
+    fake = FakeLitellmRouter()
+    router._router = fake
+    await dispatch_completion(
+        router,
+        chat_fields(
+            {
+                "model": "one",
+                "messages": [],
+                "api_base": "http://attacker/v1",
+                "api_key": "sk-guess",
+                "base_url": "http://attacker/v1",
+                "headers": {"x": "y"},
+                "timeout": 1,
+            }
+        ),
+    )
+    assert fake.calls[0]["model"] == "one"
+    for field in ("api_base", "api_key", "base_url", "headers", "timeout"):
+        assert field not in fake.calls[0]
+
+
+async def test_injected_routing_fields_never_leave_passthrough() -> None:
+    """Passthrough mode: the upstream receives the filtered body —
+    the injected fields drop before the wire."""
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": []})
+        seen.update(json.loads(request.content.decode()))
+        return httpx.Response(200, json={"ok": True})
+
+    proxy = proxy_under_test(
+        {"ws1": {"id": "ws1", "llm_token": TOKEN}},
+        llm_settings(("*:http://up.stream/v1:sk-x",)),
+    )
+    proxy.router.client_factory = lambda timeout: httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), timeout=timeout
+    )
+    proxy.router.ensure(proxy.app.state.settings)
+    async with async_client(proxy, "10.0.0.1") as http:
+        reply = await http.post(
+            "/v1/chat/completions",
+            headers=AUTH,
+            json={
+                "model": "m",
+                "messages": [],
+                "api_base": "http://attacker/v1",
+                "api_key": "sk-guess",
+            },
+        )
+    assert reply.status_code == 200
+    assert seen == {"model": "m", "messages": []}
+
+
+def test_token_matches_survives_non_ascii_headers() -> None:
+    """HTTP header bytes are latin-1-decoded: a crafted bearer must
+    answer 401, never the digest comparison's TypeError."""
+    assert not token_matches("caf\xe9tok", "stored")
+    assert not token_matches("ok", "caf\xe9stored")
+
+
+async def test_malformed_and_oversized_bodies_answer_named_codes(
+    monkeypatch,
+) -> None:
+    proxy = proxy_under_test(
+        {"ws1": {"id": "ws1", "llm_token": TOKEN}},
+        llm_settings(("*:http://up.stream/v1:sk-x",)),
+    )
+    proxy.router.client_factory = lambda timeout: httpx.AsyncClient(
+        transport=httpx.MockTransport(upstream_handler), timeout=timeout
+    )
+    proxy.router.ensure(proxy.app.state.settings)
+    monkeypatch.setattr(llm_mod, "MAX_BODY_BYTES", 16)
+    async with async_client(proxy, "10.0.0.1") as http:
+        not_json = await http.post(
+            "/v1/chat/completions",
+            headers={**AUTH, "content-type": "application/json"},
+            content=b"this is not json",
+        )
+        assert not_json.status_code == 400
+        assert not_json.json() == {"error": "request body is not JSON"}
+        not_object = await http.post(
+            "/v1/chat/completions",
+            headers=AUTH,
+            json=[1, 2, 3],
+        )
+        assert not_object.status_code == 400
+        oversized = await http.post(
+            "/v1/chat/completions",
+            headers=AUTH,
+            json={"model": "m", "messages": [{"role": "u", "content": "x"}]},
+        )
+        assert oversized.status_code == 413
+        assert oversized.json() == {"error": "request body exceeds 16 bytes"}
+
+
+async def test_models_endpoint_answers_503_once_unconfigured() -> None:
+    """Models removed by a SIGHUP swap: the open port answers 503 —
+    the closed-port posture arrives with the next stop/start."""
+    proxy = proxy_under_test(
+        {"ws1": {"id": "ws1", "llm_token": TOKEN}},
+        llm_settings(("*:http://up.stream/v1:sk-x",)),
+    )
+    proxy.router.client_factory = lambda timeout: httpx.AsyncClient(
+        transport=httpx.MockTransport(upstream_handler), timeout=timeout
+    )
+    proxy.router.ensure(proxy.app.state.settings)
+    # The SIGHUP shape: the app's own settings object is swapped for
+    # the empty one — the request path re-reads it live.
+    proxy.app.state.settings = llm_settings(())
+    async with async_client(proxy, "10.0.0.1") as http:
+        reply = await http.get("/v1/models", headers=AUTH)
+    assert reply.status_code == 503
+
+
+async def test_ensure_async_serializes_one_reconfigure() -> None:
+    """A concurrent second wave after one SIGHUP swap: both coros
+    see the new settings, the lock admits one configure, the other
+    returns at the inner recheck — one rebuild, not two."""
+    router = LlmRouter()
+    first = llm_settings(("*:http://a.stream/v1:9",))
+    second = llm_settings(("*:http://b.stream/v1:9",))
+    await router.ensure_async(first)
+    assert router._lock is not None
+    await asyncio.gather(
+        router.ensure_async(second), router.ensure_async(second)
+    )
+    assert router._passthrough_base == "http://b.stream/v1"
+
+
+class StreamedRequest:
+    """A request stub whose body arrives without Content-Length."""
+
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = chunks
+        self.headers = {}
+
+    def stream(self):
+        return self._agen()
+
+    async def _agen(self):
+        for chunk in self._chunks:
+            yield chunk
+
+
+async def test_parse_body_bounds_a_headerless_stream(monkeypatch) -> None:
+    monkeypatch.setattr(llm_mod, "MAX_BODY_BYTES", 8)
+    refusal, body = await llm_mod.parse_body(
+        StreamedRequest([b'{"model":', b' "m"}'])
+    )
+    assert body is None
+    assert refusal.status_code == 413
+    refusal, body = await llm_mod.parse_body(StreamedRequest([b'{"a": 1}']))
+    assert refusal is None
+    assert body == {"a": 1}

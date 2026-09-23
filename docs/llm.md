@@ -91,13 +91,33 @@ A reminted credential does not re-run the seed — the seed is
 immutable create-time input — so export the new one inside the
 workspace by hand after rotating.
 
+One more create-time fact rides the seed: the port. The planted
+`OPENAI_BASE_URL` names the port the daemon served when the
+workspace was created; moving `MSKSD_LLM_PORT` later moves every
+listener, and each existing workspace's planted environment needs
+the same hand update (or a recreate).
+
+## What a request may carry
+
+The proxy forwards the fields an OpenAI chat-completion request
+carries — `model`, `messages`, `stream`, sampling and tool
+parameters — and drops everything else before the router sees
+the body. Provider credentials and endpoints are deployment
+configuration: a request that names `api_base`, `api_key`, or any
+other routing parameter gets those fields dropped, never
+honored. A body larger than 16 MiB answers 413; a body that is
+not a JSON object answers 400.
+
 ## SIGHUP
 
 The proxy reads settings live: a `SIGHUP` that changes the model
 list re-routes the very next request wherever a listener already
 serves, in either direction (models added begin serving; models
-removed answer 503, the same posture an unconfigured daemon
-presents on its routes). A workspace that booted while no model
-list was configured has no listener and no firewall admission —
-its next stop/start brings the surface up once the daemon is
-configured.
+removed answer 503 on the open port — the closed-port posture of
+an unconfigured daemon arrives with that workspace's next
+stop/start). A workspace that booted while no model list was
+configured has no listener and no firewall admission — its next
+stop/start brings the surface up once the daemon is configured.
+(The first request after a swap pays the reconfigure — the
+lazily-imported litellm tree, a `cmd:` secret's subprocess — off
+the serving loop, so no other workspace's traffic waits on it.)

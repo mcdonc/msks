@@ -1113,7 +1113,7 @@ async def test_a_refused_llm_bind_leaves_the_boot_alive(
     attachment = await app.state.net.attach("ws-a", want=True)
     # The boot proceeded; the warning says what happened.
     assert attachment is not None
-    assert "did not bind" in capsys.readouterr().out
+    assert "did not start" in capsys.readouterr().out
     assert app.state.llm._listeners == {}
     await app.state.net.detach("ws-a")
 
@@ -1130,3 +1130,26 @@ async def test_attach_and_detach_work_without_an_llm_subsystem(
     attachment = await app.state.net.attach("ws-a", want=True)
     assert attachment is not None
     await app.state.net.detach("ws-a")
+
+
+async def test_a_broken_model_entry_leaves_the_boot_alive(
+    net_app, monkeypatch, capsys
+) -> None:
+    """A model entry whose file: reference no longer resolves must
+    not fail the workspace's boot (#259 review): the proxy is an
+    auxiliary surface — the warning names the cause, the network
+    still arms."""
+    app, _ip, _nft = net_app
+    app.state.settings.llm.models = ("m::file:/nonexistent/key",)
+    monkeypatch.setattr(
+        manager_mod, "verify_forwarding", lambda path=None: None
+    )
+    manager = NetManager(
+        app, dhcp_factory=FakeService, dns_factory=FakeService
+    )
+    app.state.net = manager
+    await manager.start()
+    attachment = await manager.attach("ws-a", want=True)
+    assert attachment is not None
+    assert "did not start" in capsys.readouterr().out
+    await manager.detach("ws-a")

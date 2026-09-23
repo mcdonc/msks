@@ -676,24 +676,26 @@ class NetManager:
 
         Best-effort by design: DHCP and DNS are the workspace's
         network, but the proxy is an auxiliary surface — a refused
-        bind (another daemon on the port) logs loudly and the boot
-        proceeds, leaving that workspace without the LLM surface
-        until its next start. The listener's absence leaves the
-        input chain's admission pointing at a closed port —
-        connection refused, harmless."""
+        bind (another daemon on the port) or a broken model entry
+        (a ``file:``/``cmd:`` reference that no longer resolves)
+        logs loudly and the boot proceeds, leaving that workspace
+        without the LLM surface until its next start. The
+        listener's absence leaves the input chain's admission
+        pointing at a closed port — connection refused, harmless."""
         llm = self.app.state.llm
         if llm is None:
             return
         factory = self._llm_factory or (lambda att: llm.listener_for(att))
-        listener = factory(attachment)
-        if listener is None:
-            return
         try:
+            listener = factory(attachment)
+            if listener is None:
+                return
             await llm.start_listener(attachment.workspace_id, listener)
-        except OSError as exc:
+        except Exception as exc:
             print(
                 f"msksd: LLM proxy for {attachment.workspace_id} "
-                f"did not bind ({exc}); the workspace boots without it",
+                f"did not start ({exc}); the workspace boots "
+                "without it",
                 flush=True,
             )
 
