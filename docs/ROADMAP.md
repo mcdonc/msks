@@ -32,10 +32,8 @@ no web frontend yet.
   code and configuration are tested; generations and rollback come
   from the host's NixOS system. Guest VMs run under cloud-hypervisor
   on the host's real `/dev/kvm` — one VM boundary between a
-  workspace and the metal — with microvm.nix as the preferred
-  plumbing for them (#237 maps the existing workspace accounting onto
-  it, keeping msks-owned code only where microvm.nix has no
-  equivalent). Routing and kernel configuration belong to the host's
+  workspace and the metal. Routing and kernel configuration belong
+  to the host's
   NixOS configuration — the state `scripts/appliance-host-setup.sh`
   installed by hand (#233); an including host needs no scripted
   setup. The development deployment host is keithmoon
@@ -129,9 +127,8 @@ The deployment host for development is keithmoon, a bare-metal NixOS
 machine. Its configuration includes the msks flake's module; the test
 loop is include-the-module-and-rebuild: new msks code and
 configuration land through the host's rebuild, running workspaces
-are unaffected by a rebuild (declared shapes become instantiable;
-retired ones go off the menu, #237), and a bad build rolls back
-through the host's NixOS generations. Host-specific configuration stays out of
+are unaffected by a rebuild, and a bad build rolls back through the
+host's NixOS generations. Host-specific configuration stays out of
 the repo — the module carries the msks-owned parts, the host's own
 files carry everything else. Work that needs no host (the unit
 suite, client work) runs from a checkout as before; the bare-host
