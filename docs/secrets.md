@@ -58,7 +58,11 @@ While a workspace is armed, the redirect takes its web egress
 interceptor's own allowlist is what gates web traffic during that
 time, and a static or interactive workspace with a live
 placeholder reaches any web destination through the splice tier.
-The consent modes keep gating every other port.
+The consent modes keep gating every other port. A connection the
+guest opened **before** the first placeholder armed keeps flowing
+unintercepted until it ends — the kernel's connection tracking
+outlives the rule swap — which places it in the same accepted
+blind-spot class as the splice tier.
 
 Each swap publishes a `secret.swap` event; mint, revoke, and expiry
 publish their own (`secret.mint`, `secret.revoke`, `secret.expiry`).

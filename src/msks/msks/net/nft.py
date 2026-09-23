@@ -439,20 +439,39 @@ def element_pair(item: dict) -> tuple[str, int | None] | None:
     return (scope, element_timeout(data))
 
 
-def element_scope(data: dict) -> str | None:
-    """One element's rendered scope: the value as nft spells it."""
-    value = data.get("val")
-    if value is None:
+def concat_scope(value: dict) -> str | None:
+    """A ``concat`` object's rendered scope, None when malformed."""
+    parts = value.get("concat")
+    if not isinstance(parts, list):
         return None
+    return " . ".join(str(part) for part in parts)
+
+
+def element_scope(data: dict) -> str | None:
+    """One element's rendered scope, as nft spells it: a plain
+    value as itself, a concatenation (the address . port sets)
+    joined with ``.`` — nft's JSON wraps those in a ``concat``
+    object, which a bare ``str()`` would render as a Python dict
+    and poison the restore file with. An unrecognized shape is
+    None (skipped, fail-closed)."""
+    value = data.get("val")
+    if isinstance(value, dict):
+        return concat_scope(value)
     if isinstance(value, list):
         return " . ".join(str(part) for part in value)
+    if value is None:
+        return None
     return str(value)
 
 
 def element_timeout(data: dict) -> int | None:
-    """One element's remaining timeout, in whole seconds."""
-    timeout = data.get("timeout")
-    return None if timeout is None else int(timeout)
+    """One element's **remaining** seconds: ``expires`` is the
+    countdown nft keeps per element, while ``timeout`` is the
+    constant the element was added with — reading the latter would
+    renew every verdict to its full window on each swap. Absent
+    both, the element carries no timeout."""
+    remaining = data.get("expires", data.get("timeout"))
+    return None if remaining is None else int(remaining)
 
 
 def element_text(scope: str, seconds: int | None) -> str:
@@ -513,24 +532,6 @@ async def dump_consent_elements(
     return dumped
 
 
-async def restore_consent_elements(
-    settings,
-    workspace_id: str,
-    dumped: dict[str, list[tuple[str, int | None]]],
-) -> None:
-    """Re-add the dumped elements into the fresh table — one
-    transaction; an empty dump restores nothing."""
-    body = element_statements(table_name(workspace_id), dumped)
-    if not body:
-        return
-    await nft_run(
-        settings,
-        ["-f", "-"],
-        input_text=body.encode(),
-        what=f"nft consent elements restore for {workspace_id}",
-    )
-
-
 async def table_exists(settings, workspace_id: str) -> bool:
     """Whether this workspace's table is installed (the swap's
     probe)."""
@@ -562,6 +563,7 @@ async def install_vm(
     policy: EgressPolicy | None = None,
     queue_num: int | None = None,
     interceptor_port: int | None = None,
+    elements: str = "",
 ) -> None:
     """Install one workspace's tables as **one nft transaction**
     when a previous table exists: the delete and the add ride the
@@ -569,7 +571,14 @@ async def install_vm(
     a window where the table is absent — a guest SYN that slips
     between two runs would carry its sentinel past the redirect.
     A failed transaction aborts whole, leaving the previous table
-    enforcing."""
+    enforcing.
+
+    ``elements`` (pre-rendered ``add element`` statements — the
+    consent carry, #260 review) rides the same transaction: the
+    fresh table's sets exist by the time the statements apply, so
+    the swap and the element restore commit or abort together — an
+    unparseable statement loses nothing, the previous table keeps
+    its elements."""
     ruleset = vm_ruleset(
         workspace_id,
         tap,
@@ -586,7 +595,7 @@ async def install_vm(
     await nft_run(
         settings,
         ["-f", "-"],
-        input_text=(prior + ruleset).encode(),
+        input_text=(prior + ruleset + elements).encode(),
         what=f"nft ruleset apply for {workspace_id}",
     )
 

@@ -386,6 +386,9 @@ class NetManager:
             return  # not attached: the table does not exist to swap
         settings = self.app.state.settings
         snapshot = await self.consent_snapshot(workspace_id, services)
+        elements = nft.element_statements(
+            alloc.table_name(workspace_id), snapshot
+        )
         await nft.install_vm(
             settings,
             workspace_id,
@@ -395,11 +398,8 @@ class NetManager:
             policy=services.policy,
             queue_num=services.queue_num,
             interceptor_port=port,
+            elements=elements,
         )
-        if snapshot:
-            await nft.restore_consent_elements(
-                settings, workspace_id, snapshot
-            )
 
     async def consent_snapshot(self, workspace_id: str, services) -> dict:
         """The consent elements a swap must carry: gated modes only —

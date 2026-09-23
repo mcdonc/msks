@@ -1121,16 +1121,7 @@ def build_api(app) -> FastAPI:
                 await app.state.model.delete_placeholder(row["id"])
                 await sync_store_manifest()
                 raise HTTPException(status_code=503, detail=str(exc)) from None
-            await app.state.model.record_audit("mint", row)
         # The sentinel appears in exactly one response: this one.
-        await hub.publish(
-            "secret.mint",
-            {
-                "workspace_id": workspace_id,
-                "name": body.name,
-                "dests": dests,
-            },
-        )
         # Arming is placeholder-driven (#199): a mint against a
         # running workspace redirects its web egress from here. A
         # mint that cannot arm stands or falls whole — a live
@@ -1153,6 +1144,18 @@ def build_api(app) -> FastAPI:
                     f"could not arm ({exc})"
                 ),
             ) from exc
+        # The mint record and its event trail the arm: a rolled-back
+        # mint never existed, so the audit table and the stream say
+        # nothing about it (#260 review).
+        await app.state.model.record_audit("mint", row)
+        await hub.publish(
+            "secret.mint",
+            {
+                "workspace_id": workspace_id,
+                "name": body.name,
+                "dests": dests,
+            },
+        )
         return Response(
             status_code=201,
             content=json.dumps(placeholder_view(row)),

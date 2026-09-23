@@ -381,15 +381,31 @@ def json_set(name: str, elems: list) -> bytes:
 
 
 def test_element_scopes_reads_both_set_kinds() -> None:
+    """The real `nft -j` shapes: concatenations arrive as ``concat``
+    objects with ``expires`` counting down — ``timeout`` is the
+    constant the element was added with, and reading it would renew
+    every verdict on each swap. A bare list renders the same; an
+    unrecognized object is skipped (fail-closed)."""
     payload = json_set(
         "allows_port",
         [
-            {"elem": {"val": ["10.1.2.3", 443], "timeout": 2987}},
+            {
+                "elem": {
+                    "val": {"concat": ["10.1.2.3", 443]},
+                    "timeout": 300,
+                    "expires": 89,
+                }
+            },
+            # A bare list (the defensive shape) falls back to
+            # ``timeout`` when ``expires`` is absent.
+            {"elem": {"val": ["10.3.4.5", 853], "timeout": 12}},
             {"elem": {"val": "10.9.9.9"}},
+            {"elem": {"val": {"weird": 1}}},
         ],
     )
     assert nft.element_scopes(payload) == [
-        ("10.1.2.3 . 443", 2987),
+        ("10.1.2.3 . 443", 89),
+        ("10.3.4.5 . 853", 12),
         ("10.9.9.9", None),
     ]
 
@@ -416,7 +432,7 @@ def test_element_statements_render_the_restore_file() -> None:
     )
 
 
-async def test_dump_reads_and_restore_writes(tools) -> None:
+async def test_dump_reads_the_live_sets(tools) -> None:
     settings, log = tools
     dumped = await nft.dump_consent_elements(settings, "ws-a")
     assert dumped == {}  # the stub answers nothing for list set
@@ -425,17 +441,6 @@ async def test_dump_reads_and_restore_writes(tools) -> None:
         "allows_port",
         "rejects",
     ]
-    log.write_text("")
-    stdin = Path(str(log) + ".stdin")
-    stdin.write_text("")
-    await nft.restore_consent_elements(
-        settings, "ws-a", {"allows_any": [("10.1.2.3", 45)]}
-    )
-    assert "add element" in stdin.read_text()
-    # An empty dump restores nothing.
-    log.write_text("")
-    await nft.restore_consent_elements(settings, "ws-a", {})
-    assert log_lines(log) == []
 
 
 async def test_dump_reads_a_real_listing(tools, monkeypatch) -> None:

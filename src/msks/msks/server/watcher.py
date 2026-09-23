@@ -197,9 +197,18 @@ async def sweep_expired_placeholders(app, hub: EventHub) -> int:
 
 async def refresh_disarmed(app, expired: list[dict]) -> None:
     """Stand each expired workspace's redirect down (#199): the rows
-    are already gone, so every refresh reads the new state."""
+    are already gone, so every refresh reads the new state. One
+    workspace's failure defers only its own stand-down — the next
+    watch interval retries it — never its siblings'."""
     for workspace_id in dict.fromkeys(row["workspace_id"] for row in expired):
-        await app.state.interceptor.refresh(workspace_id)
+        try:
+            await app.state.interceptor.refresh(workspace_id)
+        except Exception:  # noqa: BLE001 - deferred, logged
+            LOG.exception(
+                "interceptor stand-down for %s failed; retried next "
+                "watch interval",
+                workspace_id,
+            )
 
 
 #: Rows one watcher pass may retire (#198): each can hold the store

@@ -2444,6 +2444,7 @@ async def test_a_mint_that_cannot_arm_rolls_back_whole(client) -> None:
 
     real = app.state.interceptor
     app.state.interceptor = RefusingInterceptor()
+    queue = app.state.hub.subscribe()
     try:
         response = await http.post(
             "/api/v1/secrets", json=mint_body(), headers=auth()
@@ -2454,6 +2455,13 @@ async def test_a_mint_that_cannot_arm_rolls_back_whole(client) -> None:
     assert "could not arm" in response.json()["detail"]
     listing = await http.get("/api/v1/secrets", headers=auth())
     assert listing.json() == []
+    # A rolled-back mint never existed: no audit row, no event.
+    audit = await http.get("/api/v1/secrets/audit", headers=auth())
+    assert audit.json() == []
+    events = []
+    while not queue.empty():
+        events.append(json.loads(await queue.get()))
+    assert events == []
     root = app.state.settings.secret_store.root
     assert (
         "MSKS_WS_SEC_GITHUB_API" not in (root / "secretspec.toml").read_text()

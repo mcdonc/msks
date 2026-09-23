@@ -923,9 +923,12 @@ async def test_a_gated_swap_carries_consent_elements_across(
     stdin.write_text("")
     await app.state.net.apply_interception("ws-i", 8643)
     applied = stdin.read_text()
+    # One transaction: the table swap and the element carry ride the
+    # same file (#260 review) — the sets exist when the adds apply.
     assert "redirect to :8643" in applied
     assert "add element inet" in applied
     assert "10.1.2.3 timeout 45s" in applied
+    assert applied.index("table inet") < applied.index("add element")
 
 
 async def test_an_allow_mode_swap_dumps_nothing(net_app) -> None:
@@ -938,3 +941,26 @@ async def test_an_allow_mode_swap_dumps_nothing(net_app) -> None:
     await manager.apply_interception("ws-a", 8643)
     assert not any(line.startswith("list set") for line in log_lines(nft_log))
     assert "redirect to :8643" in Path(str(nft_log) + ".stdin").read_text()
+
+
+async def test_a_disarming_swap_carries_consent_elements_too(
+    gated_app, monkeypatch
+) -> None:
+    """Disarm swaps the same table: the consent carry rides that
+    transaction as well."""
+    from msks.net import nft as nft_mod
+
+    app, _consumers, nft_log = gated_app
+    await app.state.net.start()
+    await app.state.net.attach("ws-i", want=True, policy=interactive_policy())
+
+    async def fake_dump(settings, workspace_id):
+        return {"rejects": [("10.2.3.4 . 25", 9)]}
+
+    monkeypatch.setattr(nft_mod, "dump_consent_elements", fake_dump)
+    stdin = Path(str(nft_log) + ".stdin")
+    stdin.write_text("")
+    await app.state.net.apply_interception("ws-i", None)
+    applied = stdin.read_text()
+    assert "redirect" not in applied
+    assert "10.2.3.4 . 25 timeout 9s" in applied
