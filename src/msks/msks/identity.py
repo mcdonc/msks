@@ -241,10 +241,10 @@ def named_user_block(login_user: str) -> str:
     re-provision or an operator-premade account keeps its uid),
     its home in the #171 shape, its authorized_keys, its shell
     (the image's own workspace user names it — Debian's /bin/bash,
-    NixOS's store bash), and membership in the image's workspace
-    group ``msks``, which is where the #169 passwordless-sudo
-    grant lives: the image declares the grant for the group
-    (Debian's ``%msks`` sudoers dropin, NixOS's declarative rule),
+    NixOS's store bash), and membership in the image's admin group
+    ``wheel``, which is where the #169 passwordless-sudo grant
+    lives: the image declares the grant for the group (Debian's
+    ``%wheel`` sudoers dropin, NixOS's declarative rule),
     so the seed never writes sudo configuration — a guest that is
     rebuilt keeps exactly the sudo policy its configuration
     declares. Skipped, with a line on stderr, when the name lands
@@ -293,10 +293,10 @@ def named_user_block(login_user: str) -> str:
             'wshell=$(grep "^msks:" /etc/passwd | cut -d: -f7)',
             '[ -n "$wshell" ] || wshell=/bin/bash',
             'if [ -z "$luid" ]; then',
-            # -G joins the workspace group; an image without the
+            # -G joins the admin group; an image without the
             # group still gets the account (without the sudo grant
             # — the membership step below says so on stderr).
-            'if ! useradd -m -s "$wshell" -G msks "$luser" 2>/dev/null; then',
+            'if ! useradd -m -s "$wshell" -G wheel "$luser" 2>/dev/null; then',
             'if ! useradd -m -s "$wshell" "$luser"; then',
             'printf "msks: login user %s could not be created; '
             'msks will not seed it\\n" "$luser" >&2',
@@ -311,10 +311,10 @@ def named_user_block(login_user: str) -> str:
             'if [ "$seed_user" = yes ]; then',
             # An operator-premade account joins the group too — the
             # grant is the group's, not the account's creation.
-            'if ! id -nG "$luser" 2>/dev/null | grep -qw msks; then',
-            'usermod -aG msks "$luser" 2>/dev/null '
+            'if ! id -nG "$luser" 2>/dev/null | grep -qw wheel; then',
+            'usermod -aG wheel "$luser" 2>/dev/null '
             '|| printf "msks: login user %s could not join the '
-            'msks group; it gets no passwordless sudo\\n" '
+            'wheel group; it gets no passwordless sudo\\n" '
             '"$luser" >&2',
             "fi",
             'install -d -m 0755 "/home/$luser"',

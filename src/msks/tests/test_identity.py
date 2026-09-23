@@ -103,14 +103,14 @@ def test_seed_script_provisions_a_named_login_user() -> None:
     # /bin/bash, NixOS's store bash), not a hardcoded path.
     assert 'wshell=$(grep "^msks:" /etc/passwd | cut -d: -f7)' in script
     assert '[ -n "$wshell" ] || wshell=/bin/bash' in script
-    assert 'useradd -m -s "$wshell" -G msks "$luser" 2>/dev/null' in script
+    assert 'useradd -m -s "$wshell" -G wheel "$luser" 2>/dev/null' in script
     assert 'useradd -m -s "$wshell" "$luser"' in script
     # The sudo grant rides the image's workspace group: the seed
     # joins the account to it (at creation, or usermod for an
     # operator-premade one) and writes no sudo configuration — a
     # rebuilt guest keeps exactly what its config declares.
     assert "sudoers" not in script
-    assert 'usermod -aG msks "$luser" 2>/dev/null' in script
+    assert 'usermod -aG wheel "$luser" 2>/dev/null' in script
     # The home and key, in the same shape the msks user gets;
     # ownership rides the chown colon form, which works whatever
     # the account's primary group is named.
@@ -140,7 +140,7 @@ def test_seed_script_skips_a_system_account_name() -> None:
     assert "seed_user=no" in script
     assert 'if [ "$seed_user" = yes ]; then' in script
     guarded = script.split('if [ "$seed_user" = yes ]; then')[1]
-    assert "usermod -aG msks" in guarded
+    assert "usermod -aG wheel" in guarded
     # The signers block stays outside the guard — a skipped login
     # user never costs the console challenge its trust store.
     assert script.index('chmod 0600 "$signers"') > script.index(
@@ -242,12 +242,12 @@ def test_seed_script_executes_provisioning(tmp_path) -> None:
     done = run_seed(sandbox, guest_passwd_line="")
     assert done.returncode == 0, done.stderr
     stub_log = sandbox.joinpath("stub.log").read_text()
-    assert "useradd -m -s /bin/bash -G msks alice" in stub_log
+    assert "useradd -m -s /bin/bash -G wheel alice" in stub_log
     # The membership check consults the account's groups; the stub
     # answers empty (it tracks no group state), so the join runs —
     # idempotent by construction in the real guest, where the -G
     # above already made it a no-op.
-    assert "usermod -aG msks alice" in stub_log
+    assert "usermod -aG wheel alice" in stub_log
     keys = sandbox / "home" / "alice" / ".ssh" / "authorized_keys"
     assert keys.read_text().strip() == PUBLIC
     assert keys.stat().st_mode & 0o777 == 0o600
@@ -310,7 +310,7 @@ def test_seed_script_executes_the_keep_for_a_regular_uid(tmp_path) -> None:
     assert done.returncode == 0, done.stderr
     log = sandbox.joinpath("stub.log").read_text()
     assert "useradd" not in log
-    assert "usermod -aG msks alice" in log
+    assert "usermod -aG wheel alice" in log
     assert (
         sandbox / "home" / "alice" / ".ssh" / "authorized_keys"
     ).read_text().strip() == PUBLIC

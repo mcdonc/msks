@@ -136,15 +136,15 @@ boots. A guest image must:
   (the daemon formats the volume with that label) so the mount
   stays on the right device whatever the disk order is; `nofail`
   keeps boots moving when the volume is absent.
-- **Grant passwordless sudo to the workspace group.** The image
-  ships a workspace group named `msks` (gid 1000 — the shipped
-  workspace user's own group) whose members administer the VM:
-  Debian through a `%msks` dropin in `/etc/sudoers.d`, NixOS
-  through a declarative sudo rule. The identity seed (#248)
-  creates a named login user, gives it the workspace user's shell,
-  and joins it to the group — the seed never writes sudo
-  configuration, so a guest that is rebuilt keeps exactly the
-  sudo policy its configuration declares.
+- **Grant passwordless sudo to the `wheel` group.** Both images
+  ship the conventional admin group `wheel` whose members
+  administer the VM: Debian through a `%wheel` dropin in
+  `/etc/sudoers.d` (the image creates the group — Debian's own
+  tree carries none), NixOS through a declarative sudo rule. The
+  identity seed (#248) creates a named login user, gives it the
+  workspace user's shell, and joins it to the group — the seed
+  never writes sudo configuration, so a guest that is rebuilt
+  keeps exactly the sudo policy its configuration declares.
 - **Run cloud-init against the cidata seed disk.** A workspace
   created with `user_data` (#41) or a minted identity (#111) boots
   with a third, read-only virtio disk: a small iso9660 filesystem

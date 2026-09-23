@@ -273,6 +273,7 @@ let
         uid = 1000;
         isNormalUser = true;
         group = "msks";
+        extraGroups = [ "wheel" ];
         home = "/home/msks";
         createHome = false;
         hashedPassword = "!";
@@ -281,17 +282,18 @@ let
       users.groups.msks.gid = 1000;
 
       # The workspace user's sudo (#169): passwordless root, granted
-      # to the workspace GROUP — the shipped msks user and any login
-      # user the identity seed (#248) adds to the group — because the
-      # password is locked by design, NOPASSWD is the only form that
-      # can ever run, and a per-image declarative rule keeps the
-      # policy owned by the config (a rebuilt guest keeps exactly
-      # what it declares; the seed never writes sudo
-      # configuration). NixOS delivers sudo itself as an
-      # activation-built wrapper, not a setuid file.
+      # to wheel — the conventional admin group NixOS itself ships,
+      # carrying the workspace user and any login user the identity
+      # seed (#248) joins at first boot — because the password is
+      # locked by design, NOPASSWD is the only form that can ever
+      # run, and a per-image declarative rule keeps the policy owned
+      # by the config (a rebuilt guest keeps exactly what it
+      # declares; the seed never writes sudo configuration). The
+      # msks user's own primary group (gid 1000) stays for /home
+      # ownership.
       security.sudo.extraRules = [
         {
-          groups = [ "msks" ];
+          groups = [ "wheel" ];
           commands = [
             {
               command = "ALL";
