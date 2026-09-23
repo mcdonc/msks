@@ -1523,3 +1523,82 @@ def test_api_import_from_url_names_fetch_failures(
             assert "answered 404" in made.json()["detail"]
     finally:
         monkey.undo()
+
+
+# --- review fixes (#261) -------------------------------------------------
+
+
+def port_archive(tmp_path: Path, port) -> Path:
+    """A valid containerDisk whose manifest carries a bad port."""
+    members = {
+        "boot/vmlinuz": b"kernel-bytes",
+        "boot/initrd.img": b"initrd-bytes",
+        "disk/rootfs.ext4": b"rootfs-bytes",
+        "disk/image.json": json.dumps(
+            {
+                "schema": 2,
+                "name": "badport",
+                "version": "1.0",
+                "cmdline": "console=ttyS0",
+                "vsock_shell_port": port,
+            }
+        ).encode(),
+    }
+    path = tmp_path / "badport.tar"
+    build_containerdisk(path, schema=False, members=members)
+    return path
+
+
+@pytest.mark.parametrize("port", ["not-a-port", True, 0, -1, 1 << 32])
+def test_import_rejects_a_bad_vsock_port(tmp_path: Path, port) -> None:
+    """A non-integer or out-of-range vsock_shell_port fails the
+    import by name, with nothing installed (the poisoned-entry
+    shape a bare ValueError used to leave behind)."""
+    with pytest.raises(ImageError, match="vsock_shell_port"):
+        import_archive(port_archive(tmp_path, port), tmp_path)
+    assert list_images(tmp_path) == []
+
+
+def test_stream_to_enforces_the_overall_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A drip-feed server cannot outlast the deadline: the transfer
+    is cut mid-stream and the partial file removed."""
+
+    class Resp:
+        headers: dict = {}
+
+        def iter_bytes(self, n: int):
+            yield b"x" * 1024
+
+    import time as time_mod
+
+    ticks = [0.0]
+    monkeypatch.setattr(
+        time_mod,
+        "monotonic",
+        lambda: ticks.__setitem__(0, ticks[0] + 1000.0) or ticks[0],
+    )
+    dest = tmp_path / "dl.tar"
+    from msks import imagestore as ist
+
+    with pytest.raises(ImageError, match="deadline"):
+        ist.stream_to(Resp(), dest, 1 << 20, 5.0, "https://x/y.tar")
+    assert not dest.exists()
+
+
+def test_download_ceiling_clamps_to_floor_headroom(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The URL-import ceiling cannot spend the bytes the storage
+    floor protects; an unprobeable disk keeps the setting."""
+    from msks.server import api as api_mod
+
+    vmm = VmmSettings(state_dir=Path("/tmp/ceiling"), storage_floor_mib=512)
+    tight = {"free": 600 * 1024 * 1024, "total": 1 << 40, "used": 0}
+    monkeypatch.setattr(api_mod.storage, "state_usage", lambda d: tight)
+    assert api_mod.download_ceiling(vmm) == 88 * 1024 * 1024
+    monkeypatch.setattr(api_mod.storage, "state_usage", lambda d: None)
+    assert api_mod.download_ceiling(vmm) == vmm.image_import_max_mib * (
+        1024 * 1024
+    )

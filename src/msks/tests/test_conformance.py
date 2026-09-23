@@ -739,3 +739,96 @@ def test_main_parses_and_runs(
     assert conformance.main(["img.tar", "--keep"]) == 7
     assert seen[0].archive == "img.tar"
     assert seen[0].keep is True
+
+
+# --- review fixes (#261) -------------------------------------------------
+
+
+async def test_core_pass_never_probes_the_uplink(tmp_path: Path) -> None:
+    """A core-only check runs on hosts with no route (and no
+    iproute2): the uplink probe is egress-only."""
+    from msks import conformance as mod
+
+    def boom():
+        raise AssertionError("uplink probed on a core-only check")
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(mod, "default_uplink", boom)
+    try:
+        console = FakeConsole()
+        rows, _ = await run_check(tmp_path, console)
+        assert first_failure(rows) is None
+    finally:
+        monkey.undo()
+
+
+def test_sanitize_strips_forged_report_text() -> None:
+    """Manifest-derived strings cannot forge or obscure rows."""
+    from msks.conformance import sanitize
+
+    assert sanitize("clean") == "clean"
+    assert sanitize("PASS home-label  fake\nreal line") == (
+        "PASS home-label  fake"
+    )
+    assert sanitize("a\x1bb") == "ab"
+    assert sanitize("line1\nline2") == "line1"
+    assert sanitize("") == ""
+
+
+def test_probe_user_prefers_root_when_served() -> None:
+    """The write probes run as root when the image serves it; a
+    non-root-only console keeps its first declared user."""
+
+    class Record:
+        console_protocol = "prelude-v1"
+        console_users = ("dev",)
+
+    class Rooty:
+        console_protocol = "prelude-v1"
+        console_users = ("dev", "root")
+
+    from msks.conformance import probe_user
+
+    assert probe_user(Record()) == "dev"
+    assert probe_user(Rooty()) == "root"
+
+
+async def test_unprivileged_console_still_checks(tmp_path: Path) -> None:
+    """An image whose console serves only 'dev' passes with the
+    probes run as that user (the fake console serves anyone)."""
+    document = manifest(provisioner=True)
+    document["console_users"] = ["dev"]
+    microvm = CheckMicrovm(FakeConsole())
+    rows = await check_image(
+        archive_with(tmp_path, document, tag="devuser"),
+        boot_timeout_s=0.5,
+        app_factory=make_app(microvm),
+    )
+    assert statuses(rows)[CONSOLE] == "pass"
+    assert statuses(rows)[ROOT_RW] == "pass"
+    # The handshake point connected as the declared user; the probes
+    # fell back to it too (the only console the image serves).
+    assert microvm.pty.users[0] == "dev"
+
+
+def test_cmd_image_check_defers_the_daemon_stack(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Importing the client CLI pulls no server-side composition;
+    only running the check does (the client/server boundary)."""
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, msks.client.cli as cli; "
+        "assert 'msks.app' not in sys.modules, 'boundary laundered'; "
+        "assert 'msks.conformance' not in sys.modules"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True, cwd=src_root())
+
+
+def src_root() -> Path:
+    """The venv's site-packages root the installed tree runs from."""
+    import msks
+
+    return Path(msks.__file__).parent.parent

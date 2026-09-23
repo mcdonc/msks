@@ -11,11 +11,10 @@ pre-import gate the operator runs, not one the daemon enforces.
 This module composes the real app (``msks.app``) rather than a
 client-side reimplementation: the point of the check is to exercise
 the same machinery a workspace boot exercises. It therefore pulls
-server-side composition into the process — the client boundary
-(``msks.client`` imports nothing from ``msks.server``/``model``/
-``app``) stays intact because this is a top-level module the CLI
-reaches for only under ``msks image check``; every remote
-subcommand's imports are unchanged.
+server-side composition into any process that imports it — the
+client reaches for it only inside ``msks image check`` (a
+deliberate deferred import, marked for the gate), so every remote
+subcommand's process stays free of the server stack.
 
 The check is read-only toward the host except for three things it
 owns outright: a throwaway state dir under ``/tmp`` (removed unless
@@ -251,10 +250,40 @@ def console_user(record: ImageRecord) -> str | None:
     return None
 
 
+def sanitize(text: str) -> str:
+    """One printable line from manifest-derived text.
+
+    The image author controls these strings; the report is the
+    tool's whole product, so a forged row (embedded newlines, ANSI
+    escapes) must not survive into it.
+    """
+    line = text.splitlines()[0] if text else ""
+    return "".join(ch for ch in line if ch.isprintable())
+
+
 def console_detail(record: ImageRecord) -> str:
     if record.console_protocol == "prelude-v1":
-        return f"prelude-v1 handshake as {console_user(record)!r}"
+        return (
+            f"prelude-v1 handshake as {sanitize(console_user(record) or '')!r}"
+        )
     return "legacy raw root shell"
+
+
+def probe_user(record: ImageRecord) -> str | None:
+    """The user the write/read probes connect as.
+
+    The probes touch root-owned paths (the /root markers, the
+    seed's file), so they run over a root console whenever the
+    image serves one; an image whose ``console_users`` names only
+    other users gets its first declared user instead — the probes
+    then report what that account can actually reach. Legacy
+    images serve the raw root shell (no user on the wire).
+    """
+    if record.console_protocol != "prelude-v1":
+        return None
+    if "root" in record.console_users:
+        return "root"
+    return console_user(record)
 
 
 def default_uplink() -> str:
@@ -534,6 +563,7 @@ async def run_core_pass(
     """
     microvm = app.state.microvm
     user = console_user(record)
+    probes = probe_user(record)
     ud_marker = (
         f"UD-{uuid.uuid4().hex[:8]}"
         if record.provisioner == "cloud-init"
@@ -563,14 +593,14 @@ async def run_core_pass(
         root_exc, home_exc = await write_markers(
             microvm,
             spec.workspace_id,
-            user,
+            probes,
             root_marker,
             boot_timeout_s=boot_timeout_s,
         )
         await user_data_row(
             microvm,
             spec.workspace_id,
-            user,
+            probes,
             ud_marker,
             results,
             boot_timeout_s=boot_timeout_s,
@@ -581,7 +611,7 @@ async def run_core_pass(
         await persistence_rows(
             microvm,
             spec,
-            user,
+            probes,
             root_marker,
             root_exc,
             home_exc,
@@ -612,7 +642,7 @@ async def run_egress_pass(
     """Boot with a NIC through the daemon's net stack; the guest
     must take a global address over DHCP."""
     microvm = app.state.microvm
-    user = console_user(record)
+    user = probe_user(record)
     spec = vm_spec(
         record,
         f"conf-eg-{uuid.uuid4().hex[:8]}",
@@ -655,14 +685,21 @@ async def run_egress_pass(
 def settings_for(
     state_dir: Path, record: ImageRecord, egress: bool, uplink: str | None
 ) -> Settings:
-    net = NetSettings(enabled=True, uplink=uplink or default_uplink())
+    """The settings the throwaway app runs under. The uplink probe
+    runs only for the egress pass — a core-only check must run on
+    hosts with no route (and no iproute2) at all."""
+    net = (
+        NetSettings(enabled=True, uplink=uplink or default_uplink())
+        if egress
+        else NetSettings()
+    )
     return Settings(
         vmm=VmmSettings(
             state_dir=state_dir,
             vsock_shell_port=record.vsock_shell_port,
         ),
         server=ServerSettings(db_path=state_dir / "conf.db"),
-        net=net if egress else NetSettings(),
+        net=net,
     )
 
 

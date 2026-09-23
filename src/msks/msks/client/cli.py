@@ -20,7 +20,6 @@ from collections.abc import AsyncIterator
 from datetime import datetime
 from pathlib import Path
 
-from .. import conformance
 from ..identity import KEY_TYPES, LOGIN_NAME_RE, mint
 from ..imagestore import is_hash_shape, version_key
 from ..storage import MIB
@@ -1024,7 +1023,16 @@ def cmd_image_import(source: str, transport=None) -> int:
 
 
 def cmd_image_check(args: argparse.Namespace) -> int:
-    """``msks image check``: the local conformance pass (#258)."""
+    """``msks image check``: the local conformance pass (#258).
+
+    The import stays inside the command: conformance composes the
+    daemon's app (msks.app), and a module-scope import would load
+    the whole server stack into every ``msks`` invocation — the
+    client/server boundary is a standing decision, so this is the
+    one deliberate deferral in the client.
+    """
+    from .. import conformance  # allow-deferred-import
+
     return conformance.run_check(args)
 
 
@@ -1580,7 +1588,40 @@ def build_parser() -> argparse.ArgumentParser:
         help="boot an image and verify the guest contract (#258); "
         "local — needs /dev/kvm, --egress needs root",
     )
-    conformance.check_arguments(image_check)
+    # The flags are client-owned (like every other subcommand's):
+    # conformance composes the daemon app, and its import stays
+    # inside cmd_image_check so only a real check pays for it.
+    image_check.add_argument(
+        "archive", help="the container-image tar to check"
+    )
+    image_check.add_argument(
+        "--egress",
+        action="store_true",
+        help="also verify DHCP address acquisition through the "
+        "daemon's net stack (requires root)",
+    )
+    image_check.add_argument(
+        "--uplink",
+        default=None,
+        help="uplink interface for --egress (default: the default route)",
+    )
+    image_check.add_argument(
+        "--boot-timeout-s",
+        type=float,
+        default=120.0,
+        help="deadline for each boot and seed wait (default: 120)",
+    )
+    image_check.add_argument(
+        "--shutdown-timeout-s",
+        type=float,
+        default=120.0,
+        help="deadline for the ACPI power-button shutdown (default: 120)",
+    )
+    image_check.add_argument(
+        "--keep",
+        action="store_true",
+        help="keep the throwaway state dir (serial logs) for inspection",
+    )
     image_rm = image_sub.add_parser(
         "rm", help="remove an image from the catalog"
     )

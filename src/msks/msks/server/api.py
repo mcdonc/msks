@@ -212,6 +212,21 @@ class WorkspaceCreate(BaseModel):
 CMDLINE = Path("/proc/cmdline")
 
 
+def download_ceiling(vmm) -> int:
+    """The URL-import ceiling, clamped to what the state disk can
+    actually hold (#258): the download itself must not spend the
+    bytes the storage floor protects (#184). The post-download
+    floor check still runs with the archive's real size — the
+    import counts it twice (retained copy plus boot cache)."""
+    max_bytes = vmm.image_import_max_mib * 1024 * 1024
+    usage = storage.state_usage(vmm.state_dir)
+    if usage is None:
+        return max_bytes
+    protected = vmm.storage_floor_mib * storage.MIB
+    headroom = max(usage["free"] - protected, 0)
+    return min(max_bytes, headroom)
+
+
 def cmdline_image() -> str | None:
     """The image this daemon booted from, when it says.
 
@@ -1327,12 +1342,13 @@ def build_api(app) -> FastAPI:
         staged: Path | None = None
         try:
             if imagestore.is_url(body.source):
+                max_bytes = download_ceiling(vmm)
                 staged = await asyncio.to_thread(
                     imagestore.fetch_archive,
                     body.source,
                     state_dir,
                     timeout_s=vmm.image_import_timeout_s,
-                    max_bytes=vmm.image_import_max_mib * 1024 * 1024,
+                    max_bytes=max_bytes,
                 )
                 source = staged
             else:

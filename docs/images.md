@@ -317,9 +317,15 @@ through the daemon's own net stack. That leg needs root (taps,
 nftables, the DHCP and DNS listeners on their privileged ports)
 and an egress-capable default route (`--uplink` names another
 interface); the checker sets `net.ipv4.ip_forward` to 1 for the
-pass and restores what it found. The no-NIC half of the posture is
+pass and restores what it found — a checker killed outright
+leaves the sysctl at 1. Run the leg on a host that is not serving
+the real daemon: both bind the same privileged DHCP and DNS
+ports. The no-NIC half of the posture is
 the core pass itself: it boots without a NIC and requires a usable
-login.
+login. The write probes (`root-rw`, `home-label`, `user-data`)
+run over a root console whenever the image serves one
+(`console_users`); an image whose console serves other users only
+gets those users' reach reported.
 
 ## Registering an image
 
@@ -350,7 +356,13 @@ ceiling and a deadline (`MSKSD_IMAGE_IMPORT_MAX_MIB`,
 `MSKSD_IMAGE_IMPORT_TIMEOUT_S`; see `docs/config.md`), verifies
 TLS against the system roots, refuses a redirect that leaves
 https, and imports from the downloaded copy — so the recorded hash
-always reflects the fetched bytes. Either way the daemon
+always reflects the fetched bytes. The ceiling also clamps to the
+bytes the storage floor protects, so the download itself cannot
+spend the state disk's headroom. The fetch runs with the calling
+token's authority: a deployment hands its API token to operators
+it trusts to import images, and the URL form reaches whatever
+network the daemon can reach — the same trust a daemon-side path
+import already carries. Either way the daemon
 copies privately and hashes that copy, so a source file changing
 underneath the import cannot desync the recorded hash from the
 imported content, and importing the same content twice is idempotent.
