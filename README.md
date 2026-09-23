@@ -286,6 +286,20 @@ workspace refuses to boot with the cause named (boot those with
 connection) is #69.
 See `docs/networking.md` for the full reference.
 
+### The workspace LLM proxy (#259)
+
+Each workspace's tap carries its own proxy service when the daemon
+is configured for it: an OpenAI-shaped proxy (`/v1/models`,
+`/v1/chat/completions`, streaming included) served by msksd at
+`MSKSD_LLM_PORT`, admitted by that workspace's input chain from
+that tap only, and authenticated by a per-workspace credential the
+first-boot seed plants (`/etc/msks/llm.token` plus the
+`OPENAI_BASE_URL`/`OPENAI_API_KEY` exports). Provider credentials
+live host-side — `MSKSD_LLM_MODELS` entries with `file:`/`cmd:`
+secret indirection, a single `*` entry for single-upstream
+passthrough, any other list through the litellm router. See
+`docs/llm.md`.
+
 ### Developing msks inside a workspace (#77)
 
 The dev-workspace bootstrap seed turns a pristine Debian workspace

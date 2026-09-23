@@ -295,6 +295,31 @@ class SecretStoreSettings:
 
 
 @dataclass
+class LlmSettings:
+    """The workspace LLM proxy (#259).
+
+    The model list is the switch: a daemon with no ``MSKSD_LLM_MODELS``
+    presents no LLM surface at all (nothing binds on a tap, the
+    per-VM input chain admits nothing), and a daemon with one serves
+    the OpenAI-shaped proxy on every workspace tap at *port*.
+    Entries are ``provider/model:api_base:api_key`` strings,
+    comma-separated; secret-bearing values carry ``file:``/``cmd:``
+    indirection (resolved at configure time), and a single entry
+    whose model name is ``*`` is single-upstream passthrough mode.
+    The settings are read live, so a SIGHUP swap re-routes requests
+    wherever a listener already serves.
+    """
+
+    port: int = 8770
+    models: tuple[str, ...] = ()
+    api_key: str | None = None
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str] | None = None) -> LlmSettings:
+        return llm_settings_from_env(cls, live_env(env))
+
+
+@dataclass
 class Settings:
     """The live-swappable settings root msksd subsystems read."""
 
@@ -304,6 +329,7 @@ class Settings:
     secret_store: SecretStoreSettings = field(
         default_factory=SecretStoreSettings
     )
+    llm: LlmSettings = field(default_factory=LlmSettings)
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
@@ -312,6 +338,7 @@ class Settings:
             server=ServerSettings.from_env(env),
             net=NetSettings.from_env(env),
             secret_store=SecretStoreSettings.from_env(env),
+            llm=LlmSettings.from_env(env),
         )
 
 
@@ -591,6 +618,27 @@ def egress_mode(env: Mapping[str, str], name: str, default: str) -> str:
             f"{name} must be one of {list(EGRESS_MODES)}, got {value!r}"
         )
     return value
+
+
+def llm_settings_from_env(
+    cls: type[LlmSettings], env: Mapping[str, str]
+) -> LlmSettings:
+    """Build LlmSettings from the environment (helper: keeps the
+    class block itself at xenon rank A, like its siblings)."""
+    default = cls()
+    port = _parse_int(env, "MSKSD_LLM_PORT", default.port)
+    if not 1 <= port <= 65535:
+        raise ValueError(f"MSKSD_LLM_PORT must be a port, got {port}")
+    models = tuple(
+        entry.strip()
+        for entry in _env(env, "MSKSD_LLM_MODELS", "").split(",")
+        if entry.strip()
+    )
+    return cls(
+        port=port,
+        models=models,
+        api_key=optional_env(env, "MSKSD_LLM_API_KEY"),
+    )
 
 
 def _server_settings_from_env(

@@ -123,6 +123,10 @@ SETTING_ENV_VARS: tuple[str, ...] = (
     "MSKSD_SECRET_STORE_PROJECT",
     "MSKSD_SECRET_STORE_CLI",
     "MSKSD_SECRET_STORE_TIMEOUT_S",
+    # LlmSettings — the workspace LLM proxy (#259).
+    "MSKSD_LLM_PORT",
+    "MSKSD_LLM_MODELS",
+    "MSKSD_LLM_API_KEY",
 )
 
 # The key↔variable mapping, derived by the one rule. ``state_dir``
@@ -507,6 +511,17 @@ def render_template() -> str:
 #                           # provider is bws)
 # secret_store_cli: secretspec  # the SecretSpec CLI binary
 # secret_store_timeout_s: 30.0  # seconds per store call
+#
+# --- The workspace LLM proxy (#259) ---
+# llm_port: 8770            # the port each workspace's proxy
+#                           # listener binds on its tap
+# llm_models: ""           # comma-separated provider/model:api_base:
+#                           # api_key entries; a single * entry is
+#                           # passthrough mode; empty presents no
+#                           # LLM surface at all
+# llm_api_key: ""          # a default key for entries that name
+#                           # none; file:/cmd: indirection works on
+#                           # every key
 """
 
 

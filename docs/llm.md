@@ -1,0 +1,103 @@
+# The workspace LLM proxy
+
+Every workspace consumes LLMs through msksd. The daemon holds the
+provider credentials and the routing configuration; each workspace
+holds only its own proxy credential and talks to an OpenAI-shaped
+endpoint served on its own tap. Provider keys never enter a
+workspace, and a workspace uses LLMs with its egress consent
+untouched — including a workspace with no egress at all (once one
+is attached) or a `static` workspace whose allowlist names no
+providers, because the daemon makes the upstream connection itself.
+
+## The two routing modes
+
+The model list is one setting, `llm_models`
+(`MSKSD_LLM_MODELS`), carrying comma-separated entries spelled
+`provider/model:api_base:api_key`. The colons split with two
+exceptions, so the common shapes all parse:
+
+- an entry whose key is a `file:` or `cmd:` reference keeps
+  everything from the marker — paths and commands carry colons
+  (`openai/gpt-4o::file:/etc/msksd/openai.key`);
+- a scheme-bearing base keeps its port and any key after its path
+  (`openai/gpt-4o:https://api.openai.com/v1:sk-...`).
+
+A **single** entry whose model name is `*` is _passthrough mode_:
+the entry's base names one upstream, requests forward verbatim
+over httpx, and `/models` is discovered dynamically from the
+upstream — every model the upstream serves is available with no
+further configuration. Any other list is _multi-provider mode_:
+the entries become a [`litellm`](https://github.com/BerriAI/litellm)
+router, workspaces address models by the name after the provider
+slash, and a request that names no model — or a name the list does
+not carry — uses the first configured model. Known providers
+(`openai`, `anthropic`, `cohere`, `mistral`, `groq`, `together_ai`,
+`deepseek`, `fireworks_ai`) fill their default base when an entry
+names none.
+
+An empty list (the default) presents no LLM surface at all:
+nothing binds on any tap, and the per-workspace input chain admits
+no proxy port.
+
+## Secrets stay out of the config file
+
+Every secret-bearing value resolves indirection at configure time:
+`file:` reads a path, `cmd:` runs a shell command and takes its
+stdout. It works on each entry's key and on the shared default
+`llm_api_key` (`MSKSD_LLM_API_KEY`). A broken reference fails the
+configure step with a named error instead of sending an empty key
+upstream.
+
+## The listener, the firewall, and the credential
+
+Each egress workspace's tap carries its host-reachable services —
+DHCP (67), the resolver (53), the interceptor's listener while
+armed (#199), and — when a model list is configured — the proxy at
+`llm_port` (`MSKSD_LLM_PORT`, default `8770`). The listener binds the tap's own address, and that
+workspace's per-VM nftables input chain admits exactly this port
+from exactly that tap, pinned to the guest's source address. A
+workspace cannot reach another workspace's proxy, and nothing
+outside a tap can reach any of them.
+
+The credential is per workspace, minted at create and stored on
+the workspace's row. The proxy accepts one thing: that workspace's
+token in the `Authorization: Bearer` header. Daemon API tokens,
+anonymous requests, and any other credential answer 401 — the
+proxy is usable only from inside a workspace, by that workspace.
+
+The first-boot seed delivers it (`docs/networking.md` describes
+the tap; the identity seed is the vehicle): the token lands at
+`/etc/msks/llm.token` and `/etc/profile.d/msks-llm.sh` exports
+`OPENAI_BASE_URL` — the DHCP lease's gateway and the daemon's port
+— and `OPENAI_API_KEY`. A login shell inside the workspace is
+therefore already configured for every OpenAI-shaped client:
+
+```console
+$ env | grep OPENAI
+OPENAI_BASE_URL=http://172.31.0.2:8770/v1
+OPENAI_API_KEY=msksllm1_...
+```
+
+Retrieve or rotate a credential with the CLI or API — a token
+holder already owns the workspace's root console, so the private
+half serving rule is the identity's:
+
+```console
+msks llm-token myws            # the stored credential
+msks llm-token myws --remint   # a fresh one, replacing the row's
+```
+
+A reminted credential does not re-run the seed — the seed is
+immutable create-time input — so export the new one inside the
+workspace by hand after rotating.
+
+## SIGHUP
+
+The proxy reads settings live: a `SIGHUP` that changes the model
+list re-routes the very next request wherever a listener already
+serves, in either direction (models added begin serving; models
+removed answer 503, the same posture an unconfigured daemon
+presents on its routes). A workspace that booted while no model
+list was configured has no listener and no firewall admission —
+its next stop/start brings the surface up once the daemon is
+configured.

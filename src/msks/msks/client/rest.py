@@ -374,3 +374,24 @@ async def fetch_ssh_key(
         transport=transport,
         ssl_ctx=ssl_ctx,
     )
+
+
+async def fetch_llm_token(
+    url: str,
+    token: str,
+    workspace_id: str,
+    transport=None,
+    ssl_ctx=None,
+) -> dict:
+    """GET the workspace's LLM proxy credential (#259): the
+    workspace's own bearer token for the daemon's proxy on its
+    tap. ``msks llm-token`` prints it; a null token is a workspace
+    created before the proxy existed — the remint route mints one."""
+    return await api_call(
+        "GET",
+        url,
+        token,
+        f"/api/v1/workspaces/{workspace_id}/llm-token",
+        transport=transport,
+        ssl_ctx=ssl_ctx,
+    )

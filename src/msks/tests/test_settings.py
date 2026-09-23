@@ -293,3 +293,22 @@ def test_interceptor_port_must_be_a_tcp_port() -> None:
         Settings.from_env({"MSKSD_INTERCEPTOR_PORT": "0"})
     with pytest.raises(ValueError, match="MSKSD_INTERCEPTOR_PORT"):
         Settings.from_env({"MSKSD_INTERCEPTOR_PORT": "70000"})
+def test_llm_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The #259 group: the port, the comma-separated model list
+    (blanks drop), and the optional default key."""
+    monkeypatch.setenv("MSKSD_LLM_PORT", "9001")
+    monkeypatch.setenv("MSKSD_LLM_MODELS", " a:b:c ,, d ")
+    monkeypatch.setenv("MSKSD_LLM_API_KEY", "sk-def")
+    settings = Settings.from_env()
+    assert settings.llm.port == 9001
+    assert settings.llm.models == ("a:b:c", "d")
+    assert settings.llm.api_key == "sk-def"
+
+
+def test_llm_port_validation(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MSKSD_LLM_PORT", "70000")
+    with pytest.raises(ValueError, match="MSKSD_LLM_PORT"):
+        Settings.from_env()
+    monkeypatch.setenv("MSKSD_LLM_PORT", "0")
+    with pytest.raises(ValueError, match="MSKSD_LLM_PORT"):
+        Settings.from_env()

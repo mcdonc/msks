@@ -530,3 +530,46 @@ def test_normalize_public_key_rejects_malformed_lines() -> None:
     for line, detail in zip(bad_lines, details, strict=True):
         with pytest.raises(ValueError, match=detail):
             normalize_public_key(line)
+
+
+# --- the LLM credential block (#259) -----------------------------------------
+
+
+def test_seed_script_appends_the_llm_block() -> None:
+    """A key-minted workspace with an LLM token seeds both: the
+    identity machinery and the token block after it."""
+    script = seed_script(
+        PUBLIC, "ws-id", None, llm_token="msksllm1_x", llm_port=8770
+    )
+    assert "llm_token='msksllm1_x'" in script
+    assert "/etc/msks/llm.token" in script
+    assert "/etc/profile.d/msks-llm.sh" in script
+    assert 'OPENAI_BASE_URL="http://$gw:8770/v1"' in script
+    assert 'OPENAI_API_KEY="$(cat /etc/msks/llm.token)"' in script
+    # The heredoc plants unexpanded (quoted delimiter); the gateway
+    # computes at login.
+    assert "<<'MSEOF'" in script
+    assert "MSEOF" in script.split("<<'MSEOF'", 1)[1]
+
+
+def test_seed_script_carries_a_token_without_an_identity() -> None:
+    """A pre-#111 row healing its seed with a token plants the token
+    block alone — under a shebang, so cloud-init runs it."""
+    script = seed_script(None, "ws-id", llm_token="msksllm1_y", llm_port=99)
+    assert script.startswith("#!/bin/sh\n")
+    assert "llm_token='msksllm1_y'" in script
+    assert "authorized_keys" not in script
+    assert ':99/v1"' in script
+
+
+def test_compose_with_only_a_token_builds_a_seed() -> None:
+    """No key, no payload, a token: the seed is the token's script
+    alone (the seed's presence condition includes the token)."""
+    script = compose_user_data(
+        None, None, "ws-id", llm_token="msksllm1_z", llm_port=8770
+    )
+    assert "llm_token='msksllm1_z'" in script
+    assert script.startswith("#!/bin/sh\n")
+    # Neither a key nor a token: the operator's payload verbatim (the
+    # #41 contract).
+    assert compose_user_data(None, None, "ws-id") is None

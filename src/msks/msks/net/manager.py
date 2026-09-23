@@ -151,11 +151,15 @@ class NetManager:
         dns_factory=DnsForwarder,
         dialer=None,
         consumer_factory=FlowConsumer,
+        llm_factory=None,
     ) -> None:
         self.app = app
         self._dhcp_factory = dhcp_factory
         self._dns_factory = dns_factory
         self._consumer_factory = consumer_factory
+        # The per-tap LLM listener seam (#259): the default asks the
+        # llm subsystem; the tests inject one that records the ask.
+        self._llm_factory = llm_factory
         # The guest-dial seam for the forward websocket (#109): the
         # default dials real TCP; the tests inject one that answers
         # from a listener they control (fake_ch has no NIC).
@@ -263,6 +267,13 @@ class NetManager:
         for writer in self._forwards.pop(workspace_id, []):
             writer.close()
 
+    async def stop_llm(self, workspace_id: str) -> None:
+        """Stop the workspace's LLM listener when one serves (#259).
+        Unconditional and idempotent: the services' own stop is the
+        backstop, this one keeps the proxy's mapping honest."""
+        if self.app.state.llm is not None:
+            await self.app.state.llm.stop_listener(workspace_id)
+
     async def detach(self, workspace_id: str) -> None:
         """Tear one workspace's egress down (idempotent).
 
@@ -279,6 +290,7 @@ class NetManager:
         attachment = self._attachments.pop(workspace_id, None)
         services = self._services.pop(workspace_id, None)
         self.close_forwards(workspace_id)
+        await self.stop_llm(workspace_id)
         if attachment is None:
             return
         await self.app.state.consent.on_workspace_stop(workspace_id)
@@ -654,6 +666,34 @@ class NetManager:
             asyncio.create_task(dhcp_server.serve()),
             asyncio.create_task(forwarder.serve()),
         ]
+        await self.start_llm(services, attachment)
+
+    async def start_llm(
+        self, services: NetServices, attachment: NetAttachment
+    ) -> None:
+        """Bind this tap's LLM proxy listener when one is warranted
+        (#259).
+
+        Best-effort by design: DHCP and DNS are the workspace's
+        network, but the proxy is an auxiliary surface — a refused
+        bind (another daemon on the port) logs loudly and the boot
+        proceeds, leaving that workspace without the LLM surface
+        until its next start. The listener's absence leaves the
+        input chain's admission pointing at a closed port —
+        connection refused, harmless."""
+        llm = self.app.state.llm
+        factory = self._llm_factory or (lambda att: llm.listener_for(att))
+        listener = factory(attachment)
+        if listener is None:
+            return
+        try:
+            await llm.start_listener(attachment.workspace_id, listener)
+        except OSError as exc:
+            print(
+                f"msksd: LLM proxy for {attachment.workspace_id} "
+                f"did not bind ({exc}); the workspace boots without it",
+                flush=True,
+            )
 
     def dns_upstream(self) -> tuple[str, int]:
         """Where the forwarder relays: the setting, else resolv.conf."""
@@ -674,6 +714,7 @@ class NetManager:
 
     async def _unwind(self, workspace_id: str) -> None:
         """Roll back a half-built attachment (best effort)."""
+        await self.stop_llm(workspace_id)
         services = self._services.pop(workspace_id, None)
         if services is not None:
             await stop_services(services)
@@ -688,7 +729,8 @@ async def stop_services(services: NetServices) -> None:
 
     The consumer unbinds first (fail-closed), then the cancelled
     tasks are gathered so their cleanup (including pending reader
-    removal) lands before the caller moves on.
+    removal) lands before the caller moves on. The LLM listener is
+    not here: detach's own stop_llm owns it, before this runs.
     """
     services.stop_consumer()
     for task in services.tasks:

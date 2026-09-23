@@ -38,6 +38,9 @@ from .rest import (
     upload,
 )
 from .rest import (
+    fetch_llm_token as rest_fetch_llm_token,
+)
+from .rest import (
     fetch_ssh_key as rest_fetch_ssh_key,
 )
 from .rsync import run_workspace_rsync
@@ -357,6 +360,41 @@ async def fetch_ssh_key(url, token, workspace_id, transport) -> dict:
     memory for the duration of a connection.
     """
     return await rest_fetch_ssh_key(url, token, workspace_id, transport)
+
+
+def cmd_llm_token(
+    workspace_id: str, remint: bool = False, transport=None
+) -> int:
+    """``msks llm-token``: the workspace's LLM proxy credential
+    (#259) — the token the workspace's own LLM clients present to
+    the daemon's proxy. A null token is a workspace created before
+    the proxy existed; ``--remint`` mints a fresh one (the seed's
+    planted copy keeps the old token — export the new one by
+    hand)."""
+    url = env_url()
+    token = env_token()
+    if remint:
+        reply = asyncio.run(
+            api_call(
+                "POST",
+                url,
+                token,
+                f"/api/v1/workspaces/{workspace_id}/llm-token",
+                transport=transport,
+            )
+        )
+        print(reply["token"])
+        return 0
+    reply = asyncio.run(
+        rest_fetch_llm_token(url, token, workspace_id, transport)
+    )
+    if reply["token"] is None:
+        raise SystemExit(
+            f"msks: workspace {workspace_id} has no LLM token (created "
+            "before the proxy); remint one with --remint"
+        )
+    print(reply["token"])
+    return 0
 
 
 def write_private_key(key: dict, out: str) -> None:
@@ -1532,6 +1570,19 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="FILE",
         help="write the private half to FILE (mode 0600) instead of printing",
     )
+    llm_token_cmd = sub.add_parser(
+        "llm-token",
+        help="fetch a workspace's LLM proxy credential (#259)",
+    )
+    llm_token_cmd.add_argument(
+        "workspace_id",
+        help="the workspace whose credential to fetch (name or id)",
+    )
+    llm_token_cmd.add_argument(
+        "--remint",
+        action="store_true",
+        help="mint a fresh credential, replacing the stored one",
+    )
     ssh = sub.add_parser(
         "ssh",
         help=(
@@ -1853,6 +1904,9 @@ def command_table(args: argparse.Namespace, transport) -> dict:
         ),
         "key": lambda: cmd_key(
             args.workspace_id, args.private, args.out, transport=transport
+        ),
+        "llm-token": lambda: cmd_llm_token(
+            args.workspace_id, args.remint, transport=transport
         ),
         "ssh": lambda: run_workspace_ssh(
             args.workspace_id, args.passthrough, transport=transport

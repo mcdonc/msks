@@ -325,11 +325,7 @@ class Model:
         pre-#248 one) returns None for it the same way."""
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
-            row = await session.get(Workspace, ref)
-            if row is None:
-                row = await session.scalar(
-                    select(Workspace).where(Workspace.name == ref)
-                )
+            row = await resolve_workspace(session, ref)
             if row is None:
                 return None
             return {
@@ -347,6 +343,33 @@ class Model:
                 # a row created before per-workspace users.
                 "login_user": row.login_user,
             }
+
+    async def get_llm_token(self, ref: str) -> dict | None:
+        """The workspace's LLM proxy credential (#259) by id-or-name
+        ref, or None when the workspace does not exist. The answer
+        carries the row's immutable id and name (the #246 shape)
+        beside the token; a pre-#259 row answers ``llm_token: None``
+        — the caller distinguishes row-missing from token-missing,
+        and the remint route mints one."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            row = await resolve_workspace(session, ref)
+            if row is None:
+                return None
+            return {"id": row.id, "name": row.name, "llm_token": row.llm_token}
+
+    async def set_llm_token(self, workspace_id: str, token: str) -> bool:
+        """Record a (re)minted proxy credential (#259); False when
+        the row is absent."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            result = await session.execute(
+                update(Workspace)
+                .where(Workspace.id == workspace_id)
+                .values(llm_token=token)
+            )
+            await session.commit()
+            return result.rowcount > 0
 
     async def delete_workspace(self, workspace_id: str) -> bool:
         """Remove a workspace row and its consent rows; False when
@@ -535,6 +558,19 @@ class Model:
             return [audit_dict(row) for row in rows]
 
 
+async def resolve_workspace(session, ref: str) -> Workspace | None:
+    """One workspace row by id-or-name ref (#246), inside a session
+    the caller owns: id first (the canonical preference, not a
+    tiebreak — live ids and names are one disjoint namespace), then
+    the unique name."""
+    row = await session.get(Workspace, ref)
+    if row is None:
+        row = await session.scalar(
+            select(Workspace).where(Workspace.name == ref)
+        )
+    return row
+
+
 def workspace_fields(
     spec: VmSpec,
     image_hash: str | None,
@@ -565,6 +601,7 @@ def workspace_fields(
         "ssh_pubkey": spec.ssh_pubkey,
         "ssh_privkey": ssh_privkey,
         "login_user": spec.login_user,
+        "llm_token": spec.llm_token,
         "status": "created",
     }
 
