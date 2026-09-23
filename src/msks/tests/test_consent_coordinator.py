@@ -30,10 +30,27 @@ class RecordingNet:
 
 @pytest.fixture
 async def engine_app(tmp_path: Path):
+    app, frames, queue = await build_engine_app(
+        tmp_path, consent_timeout_s=0.05
+    )
+    try:
+        yield app, frames, queue
+    finally:
+        await app.state.model.close()
+
+
+async def build_engine_app(tmp_path: Path, consent_timeout_s: float):
+    """The coordinator over a scratch app. The default 50ms hold
+    timeout is for the expiry tests; tests that assert on a LIVE
+    hold pass a comfortable one — a loaded CI runner can stall
+    past 50ms between two awaits and expire the hold mid-test."""
     app = build_app(
         Settings(
             server=ServerSettings(db_path=tmp_path / "e.db"),
-            net=NetSettings(consent_timeout_s=0.05, consent_rate_limit=3),
+            net=NetSettings(
+                consent_timeout_s=consent_timeout_s,
+                consent_rate_limit=3,
+            ),
         )
     )
     app.state.model.migrate()
@@ -61,10 +78,7 @@ async def engine_app(tmp_path: Path):
             await hub.publish(event, data)
 
     app.state.hub = Capture()
-    try:
-        yield app, frames, queue
-    finally:
-        await app.state.model.close()
+    return app, frames, queue
 
 
 async def drain(queue) -> None:
@@ -282,28 +296,36 @@ async def test_hold_fail_closes_on_a_model_error(engine_app) -> None:
     assert (await verdict_of(future))["reason"] == "error"
 
 
-async def test_rules_frame_and_snapshot(engine_app) -> None:
-    app, _frames, _queue = engine_app
-    engine = app.state.consent
-    assert await engine.rules_frame("missing-ws") is None
-    frame = await engine.rules_frame("ws-interactive")
-    assert frame["mode"] == MODE_INTERACTIVE
-    assert frame["allow_list"] == []
-    assert frame["allowed"] == [] and frame["denied"] == []
-    # A pending hold snapshots only while held.
-    app.state.deciders.register(1, "ws-interactive")
-    future = await engine.hold("ws-interactive", "api.example", 443)
-    snap = await engine.snapshot("ws-interactive")
-    assert [s["request"]["dest_host"] for s in snap] == ["api.example"]
-    assert all(
-        "expires_at" in s["request"] for s in snap
-    )  # the replay is as honest as the live frame
-    rows = await app.state.model.egress_consent.list_requests(
-        "ws-interactive", decision="pending"
+async def test_rules_frame_and_snapshot(tmp_path) -> None:
+    # A comfortable hold timeout: this test asserts on a live hold,
+    # and the fixture's 50ms default is an expiry race on a loaded
+    # runner (hold() → snapshot() can outlive it).
+    app, _frames, _queue = await build_engine_app(
+        tmp_path, consent_timeout_s=30.0
     )
-    engine.pop_hold(rows[0]["id"])  # a verdict in flight
-    assert await engine.snapshot("ws-interactive") == []
-    future.cancel()
+    try:
+        engine = app.state.consent
+        assert await engine.rules_frame("missing-ws") is None
+        frame = await engine.rules_frame("ws-interactive")
+        assert frame["mode"] == MODE_INTERACTIVE
+        assert frame["allow_list"] == []
+        assert frame["allowed"] == [] and frame["denied"] == []
+        # A pending hold snapshots only while held.
+        app.state.deciders.register(1, "ws-interactive")
+        future = await engine.hold("ws-interactive", "api.example", 443)
+        snap = await engine.snapshot("ws-interactive")
+        assert [s["request"]["dest_host"] for s in snap] == ["api.example"]
+        assert all(
+            "expires_at" in s["request"] for s in snap
+        )  # the replay is as honest as the live frame
+        rows = await app.state.model.egress_consent.list_requests(
+            "ws-interactive", decision="pending"
+        )
+        engine.pop_hold(rows[0]["id"])  # a verdict in flight
+        assert await engine.snapshot("ws-interactive") == []
+        future.cancel()
+    finally:
+        await app.state.model.close()
 
 
 def test_duration_ttl_mapping() -> None:

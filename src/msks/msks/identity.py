@@ -238,10 +238,17 @@ def seed_script(
 def named_user_block(login_user: str) -> str:
     """The seed lines that provision a login user the image does
     not ship (#248): the account (created only when missing, so a
-    re-provision or an operator-premade account keeps its uid), its
-    home in the #171 shape, its authorized_keys, and the #169
-    passwordless-sudo grant — skipped, with a line on stderr, when
-    the name lands on a system account the image ships.
+    re-provision or an operator-premade account keeps its uid),
+    its home in the #171 shape, its authorized_keys, its shell
+    (the image's own workspace user names it — Debian's /bin/bash,
+    NixOS's store bash), and membership in the image's admin group
+    ``wheel``, which is where the #169 passwordless-sudo grant
+    lives: the image declares the grant for the group (Debian's
+    ``%wheel`` sudoers dropin, NixOS's declarative rule),
+    so the seed never writes sudo configuration — a guest that is
+    rebuilt keeps exactly the sudo policy its configuration
+    declares. Skipped, with a line on stderr, when the name lands
+    on a system account the image ships.
 
     Ownership rides ``chown user:`` (the colon form names the
     account's login group) rather than install's -o/-g, so an
@@ -252,11 +259,11 @@ def named_user_block(login_user: str) -> str:
     A name that lands on an account the image already ships with a
     system uid (1-999: Debian's base-passwd carries charset-valid
     names like ``sync`` and ``man``) seeds nothing: the console
-    helper refuses those accounts by its own rule, and a sudoers
-    grant against one would be a privilege write with no login
-    behind it. The block says so on stderr (cloud-init's output
-    log, the serial console) and the rest of the script — the
-    signers store included — still runs.
+    helper refuses those accounts by its own rule, and adding one
+    to the workspace group would be a privilege write with no
+    login behind it. The block says so on stderr (cloud-init's
+    output log, the serial console) and the rest of the script —
+    the signers store included — still runs.
 
     A ``useradd`` that fails gets the same tolerance, for the same
     reason the skeleton copy does: the block sits before the
@@ -271,12 +278,30 @@ def named_user_block(login_user: str) -> str:
         [
             f"luser='{login_user}'",
             "seed_user=yes",
-            'luid=$(getent passwd "$luser" 2>/dev/null | cut -d: -f3)',
+            # /etc/passwd is parsed directly, not through getent:
+            # the seed runs in cloud-init's job environment, whose
+            # PATH carries no NSS tool on every image (NixOS's
+            # busybox has no getent applet) — and workspaces carry
+            # only file-based accounts, the same fact the console
+            # helper's own passwd parsing rests on. The name is
+            # LOGIN_NAME_RE-validated, so it is safe inside the
+            # pattern.
+            'luid=$(grep "^$luser:" /etc/passwd | cut -d: -f3)',
+            # The image's workspace user names the login shell; a
+            # login user gets the same one (fallback: the POSIX
+            # default every image has).
+            'wshell=$(grep "^msks:" /etc/passwd | cut -d: -f7)',
+            '[ -n "$wshell" ] || wshell=/bin/bash',
             'if [ -z "$luid" ]; then',
-            'if ! useradd -m -s /bin/bash "$luser"; then',
+            # -G joins the admin group; an image without the
+            # group still gets the account (without the sudo grant
+            # — the membership step below says so on stderr).
+            'if ! useradd -m -s "$wshell" -G wheel "$luser" 2>/dev/null; then',
+            'if ! useradd -m -s "$wshell" "$luser"; then',
             'printf "msks: login user %s could not be created; '
             'msks will not seed it\\n" "$luser" >&2',
             "seed_user=no",
+            "fi",
             "fi",
             'elif [ "$luid" -lt 1000 ] && [ "$luid" -ne 0 ]; then',
             'printf "msks: login user %s names a system account, '
@@ -284,6 +309,14 @@ def named_user_block(login_user: str) -> str:
             "seed_user=no",
             "fi",
             'if [ "$seed_user" = yes ]; then',
+            # An operator-premade account joins the group too — the
+            # grant is the group's, not the account's creation.
+            'if ! id -nG "$luser" 2>/dev/null | grep -qw wheel; then',
+            'usermod -aG wheel "$luser" 2>/dev/null '
+            '|| printf "msks: login user %s could not join the '
+            'wheel group; it gets no passwordless sudo\\n" '
+            '"$luser" >&2',
+            "fi",
             'install -d -m 0755 "/home/$luser"',
             'if [ ! -e "/home/$luser/.profile" ]; then',
             'cp -a /etc/skel/. "/home/$luser/" || true',
@@ -295,9 +328,6 @@ def named_user_block(login_user: str) -> str:
             '>> "/home/$luser/.ssh/authorized_keys"',
             'chown -R "$luser:" "/home/$luser"',
             'chmod 0600 "/home/$luser/.ssh/authorized_keys"',
-            "printf '%s ALL=(ALL) NOPASSWD:ALL\\n' \"$luser\" "
-            '> "/etc/sudoers.d/$luser"',
-            'chmod 0440 "/etc/sudoers.d/$luser"',
             "fi",
             "",
         ]

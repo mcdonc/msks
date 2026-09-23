@@ -136,6 +136,15 @@ boots. A guest image must:
   (the daemon formats the volume with that label) so the mount
   stays on the right device whatever the disk order is; `nofail`
   keeps boots moving when the volume is absent.
+- **Grant passwordless sudo to the `wheel` group.** Both images
+  ship the conventional admin group `wheel` whose members
+  administer the VM: Debian through a `%wheel` dropin in
+  `/etc/sudoers.d` (the image creates the group — Debian's own
+  tree carries none), NixOS through a declarative sudo rule. The
+  identity seed (#248) creates a named login user, gives it the
+  workspace user's shell, and joins it to the group — the seed
+  never writes sudo configuration, so a guest that is rebuilt
+  keeps exactly the sudo policy its configuration declares.
 - **Run cloud-init against the cidata seed disk.** A workspace
   created with `user_data` (#41) or a minted identity (#111) boots
   with a third, read-only virtio disk: a small iso9660 filesystem
@@ -182,8 +191,26 @@ image deduplicates across hosts.
 
 The output lands under `.devenv/state/guest/` (`MSKS_GUEST_DIR`
 relocates it); `scripts/build-guest.sh` and
-`nix/guest-assets.nix` document every step and are the reference for
+`nix/guest-debian.nix` document every step and are the reference for
 what an image build does.
+
+```bash
+msks-build-guest nixos
+```
+
+builds the second catalog image (`workspace-nixos-<version>.tar`)
+from a NixOS system evaluated against the same pinned nixpkgs the
+development shell uses — the guest's console helper, cloud-init,
+sshd, and rsync are built by nixpkgs instead of fetched as Debian
+artifacts. The root filesystem is the whole system closure packed
+into a fresh ext4 (the same `mke2fs -d` under fakeroot; no cloud
+image exists to extract), and the guest boots with no nix
+database anywhere — every store path resolves from the image
+itself. The archive carries the same `image.json` schema with the
+same declared capabilities (`cloud-init`, `prelude-v1`): the daemon
+serves it with nothing keyed off the image's name. The output
+lands under `.devenv/state/guest-nixos/` (`MSKS_GUEST_NIXOS_DIR`
+relocates it); `nix/guest-nixos.nix` documents every step.
 
 ### Building your own
 

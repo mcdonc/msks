@@ -65,15 +65,19 @@ async def test_local_console_identity_drop() -> None:
         )
         await await_guest_up(serial_log)
         # The identity seed made the home before any console connect
-        # (#171): populated from /etc/skel and owned by the user —
-        # and cloud-init created no `debian` account alongside the
-        # shipped msks one. run_in_console's retries absorb
+        # (#171): owned by the user — and cloud-init created no
+        # `debian` account alongside the shipped msks one. The
+        # home's contents are image-specific (Debian's skel ships
+        # .profile; NixOS ships an empty skel and the seed's skel
+        # copy is a best-effort `|| true` — a bare home still
+        # starts the shell), so the pin is the home itself, not
+        # any dotfile. run_in_console's retries absorb
         # cloud-final still finishing the seed after the serial
         # prompt appears.
         await run_in_console(
             microvm,
             wid,
-            "test -f /home/msks/.profile "
+            "test -d /home/msks "
             '&& test "$(stat -c %U:%G /home/msks)" = msks:msks '
             "&& test ! -e /home/debian "
             "&& ! grep -q '^debian:' /etc/passwd "

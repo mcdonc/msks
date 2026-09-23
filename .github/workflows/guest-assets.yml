@@ -27,7 +27,10 @@ on:
       - devenv.yaml
       - devenv.lock
       - nix/guest.nix
-      - nix/guest-assets.nix
+      - nix/guest-debian.nix
+      - nix/guest-nixos.nix
+      - nix/console-helper-pkg.nix
+      - nix/image-archive.nix
       - src/console-helper/**
       - scripts/build-guest.sh
   pull_request:
@@ -37,7 +40,10 @@ on:
       - devenv.yaml
       - devenv.lock
       - nix/guest.nix
-      - nix/guest-assets.nix
+      - nix/guest-debian.nix
+      - nix/guest-nixos.nix
+      - nix/console-helper-pkg.nix
+      - nix/image-archive.nix
       - scripts/build-guest.sh
 
 permissions:
@@ -74,12 +80,23 @@ jobs:
           devenv --quiet -O dotenv.enable:bool false shell --
           msks-build-guest
 
+      # The NixOS guest (#250): the second catalog image, built from
+      # the same pinned nixpkgs the Debian guest's toolchain uses.
+      # Its closure is all cache.nixos.org downloads on a cold
+      # runner — the 60-minute ceiling holds, but the step sits
+      # after the Debian build so a slow mirror never muddies its
+      # signal.
+      - name: Build the NixOS guest assets
+        run: >-
+          devenv --quiet -O dotenv.enable:bool false shell --
+          msks-build-guest nixos
+
       # The real-artifact pinning test: the ''-escape RepoTag bug
       # shipped precisely because this test skipped everywhere CI
-      # ran. The import costs ~8s against the built archive.
-      - name: Import the built image (pinning test)
+      # ran. The import costs ~8s against each built archive.
+      - name: Import the built images (pinning test)
         run: >-
           devenv --quiet -O dotenv.enable:bool false shell --
           python -m pytest src/msks/tests/test_imagestore.py
           -q -p no:cacheprovider --no-cov
-          -k real_built_image
+          -k real_built

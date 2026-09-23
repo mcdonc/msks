@@ -109,7 +109,7 @@ in
   # Rust for the guest-side console helper (#63): src/console-helper
   # builds locally with this toolchain (cargo test, the coverage
   # gate) and in the guest image via rustPlatform + static glibc
-  # (nix/guest-assets.nix). Nightly because branch coverage
+  # (nix/guest-debian.nix). Nightly because branch coverage
   # (-Z coverage-options=branch) is nightly-only; the pin comes from
   # the rust-overlay input in devenv.lock. The LLVM 23 tools pair
   # with the pinned rustc's LLVM for the coverage gate's
@@ -311,7 +311,7 @@ in
   # evaluated — the guest toolchain cannot drift from the dev shell,
   # and the build needs nothing from the host but nix.
   scripts.msks-build-guest = {
-    description = "Build the microvm guest assets (kernel, initrd, ext4 rootfs) into the guest state dir (.devenv/state/guest; MSKS_GUEST_DIR relocates it)";
+    description = "Build the microvm guest assets (kernel, initrd, ext4 rootfs) into the guest state dir (.devenv/state/guest; MSKS_GUEST_DIR relocates it; `msks-build-guest nixos` builds the NixOS guest into .devenv/state/guest-nixos)";
     exec = ''exec bash "$DEVENV_ROOT/scripts/build-guest.sh" "$@"'';
   };
 
@@ -330,7 +330,7 @@ in
 
   # The workspace image archive, alone (#141): the bare-host dev
   # daemon's default image. Same derivation tree as msks-build-guest
-  # (pinned nixpkgs, guest-assets expression, the Rust
+  # (pinned nixpkgs, guest-debian/nixos expressions, the Rust
   # console-helper baked into the workspace image), but built as
   # ONE artifact and landed as a symlink the daemon imports on its
   # first boot — no kernel/rootfs copies, no guest asset dir.

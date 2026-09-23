@@ -372,7 +372,10 @@ async def test_watch_loop_sweeps_consent_on_its_deadline(
 
     app.state.model.egress_consent.prune = fake_prune
     async with api.router.lifespan_context(api):
-        await asyncio.sleep(0.1)
+        # A full second of patience for a loop ticking every 10ms:
+        # a loaded CI runner can starve a 0.1s window entirely
+        # while the loop itself is perfectly healthy.
+        await asyncio.sleep(1.0)
     watcher_mod.PRUNE_INTERVAL_S = 3600.0
     assert swept
 

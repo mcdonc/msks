@@ -200,25 +200,10 @@ let
         rm -rf "$out"/tree
       '';
 
-  # The console identity helper (#63): one static binary that owns
-  # the vsock listener (replacing the socat EXEC line), negotiates
-  # the identity prelude, applies the window size, and drops to the
-  # requested user before exec'ing that user's shell.
-  #
-  # pkgsStatic (musl) makes the static link the default, so nothing
-  # depends on glibc's layout; the guest rootfs (Debian) and the host
-  # nixpkgs pin ship different glibcs, and a dynamically linked helper
-  # would only run on one of them. NSS never matters — the helper
-  # parses /etc/passwd and /etc/group itself. Sources and lockfile
-  # live in src/console-helper/; the devenv shell (languages.rust)
-  # carries the toolchain for local builds and the coverage gate.
-  consoleHelper = pkgs.pkgsStatic.rustPlatform.buildRustPackage {
-    pname = "msks-console-helper";
-    version = "0.1.0";
-    src = ../src/console-helper;
-    cargoLock.lockFile = ../src/console-helper/Cargo.lock;
-    doCheck = false;
-  };
+  # The console identity helper (#63): shared with every guest
+  # build (#250) — nix/console-helper-pkg.nix carries the why (the
+  # static link, the NSS note).
+  consoleHelper = pkgs.callPackage ./console-helper-pkg.nix { };
 
   # The msks additions, staged as an overlay tree: the vsock console
   # service, serial-console autologin (the debug console), the vsock
@@ -280,18 +265,23 @@ let
       'PermitRootLogin prohibit-password' \
       > $out/etc/ssh/sshd_config.d/00-msks.conf
 
-    # The workspace user's sudo (#169): passwordless root for the
-    # msks user — the single-user dev VM's standard cloud posture
-    # (Debian's own default cloud user carries the same grant). The
-    # password is locked by design (the console helper and ssh keys
-    # are the road in), so NOPASSWD is the only form that can ever
-    # run. The pack stage sets the 0440 sudoers mode: the store
-    # rewrites the built file's group bits (0440 lands 0444), and
-    # the tar hop's chmod -R u+w would widen it again before
-    # mke2fs packs the tree.
+    # The admin group's sudo (#169): passwordless root for every
+    # member of wheel — the conventional admin group both images
+    # ship, carrying the shipped workspace user and any login user
+    # the identity seed (#248) joins at first boot — the
+    # single-user dev VM's standard cloud posture (Debian's own
+    # default cloud user carries the same grant). The grant rides
+    # the GROUP because the group is image-shipped state the policy
+    # names: the seed creates accounts and joins them, never sudo
+    # configuration. The password is locked by design (the console
+    # helper and ssh keys are the road in), so NOPASSWD is the only
+    # form that can ever run. The pack stage sets the 0440 sudoers
+    # mode: the store rewrites the built file's group bits (0440
+    # lands 0444), and the tar hop's chmod -R u+w would widen it
+    # again before mke2fs packs the tree.
     printf '%s\n' \
-      '# msks (#169): the workspace user administers this VM.' \
-      'msks ALL=(ALL) NOPASSWD:ALL' \
+      '# msks (#169): the wheel group administers this VM.' \
+      '%wheel ALL=(ALL) NOPASSWD:ALL' \
       > $out/etc/sudoers.d/msks
 
     # Host keys come from the image's own sshd-keygen.service (wanted
@@ -928,6 +918,23 @@ let
           'msks:!::' \
           >> "$root"/etc/gshadow
 
+        # The admin group both images grant passwordless sudo to
+        # (#169, #248): wheel, the conventional name (NixOS ships
+        # it; Debian does not, so the image creates it). gid 11 is
+        # unassigned in Debian's base-passwd sequence (uucp 10,
+        # man 12), asserted here so a base image change that claims
+        # it fails the build, not the grant. The shipped workspace
+        # user is a member; the identity seed joins the workspace's
+        # login user at first boot.
+        ! grep -q '^wheel:' "$root"/etc/group
+        ! grep -q ':11:' "$root"/etc/group
+        printf '%s\n' \
+          'wheel:x:11:msks' \
+          >> "$root"/etc/group
+        grep -q '^wheel:' "$root"/etc/gshadow || printf '%s\n' \
+          'wheel:!::' \
+          >> "$root"/etc/gshadow
+
         # The generic kernel's module tree (#96): the guest's runtime
         # needs are the modprobe closure of the modules it loads —
         # vmw_vsock_virtio_transport (the vsock console, #21),
@@ -1274,53 +1281,17 @@ let
         EOF
       '';
 
-  # The image archive: a container-image tar built with plain tar
-  # instead of dockerTools (#40 review). The layout is the one
-  # `podman save` writes (manifest.json +
-  # <id>/{layer.tar,json,VERSION} + repositories; the format
-  # originates with `docker save`, which is the last time docker is
-  # mentioned here). The layer is UNCOMPRESSED (members readable in
-  # place with `tar tf`, no decompression at import) and byte-stable
-  # (--sort=name --mtime=@1 --owner=0 --group=0 --numeric-owner), so
-  # identical rebuilds hash identically and the per-hash cache
-  # dedupes across hosts and CI.
-  imageArchive =
-    pkgs.runCommand "msks-image-archive"
-      {
-        inherit bootTree imageName imageVersion;
-        nativeBuildInputs = [ pkgs.gnutar ];
-        imageId =
-          "msks" + builtins.hashString "sha256" (imageName + ":" + imageVersion);
-      }
-      ''
-        set -eu
-        mkdir work
-        # The layer: the containerDisk tree, uncompressed, sorted,
-        # zeroed timestamps and ownership.
-        tar --sort=name --mtime='@1' --owner=0 --group=0 --numeric-owner \
-          -C "${bootTree}" -cf work/layer.tar .
-        # Container-image bookkeeping.
-        mkdir "work/$imageId"
-        mv work/layer.tar "work/$imageId/layer.tar"
-        printf '1.0' > "work/$imageId/VERSION"
-        # A minimally valid image config: podman requires the rootfs
-        # diff_ids (the uncompressed layer's digest).
-        layer_digest=$(sha256sum "work/$imageId/layer.tar" | cut -d' ' -f1)
-        printf '%s' \
-          '{"architecture":"amd64","os":"linux","config":{},' \
-          '"rootfs":{"type":"layers","diff_ids":["sha256:'"$layer_digest"'"]}}' \
-          > "work/$imageId/json"
-        # Unquoted heredocs: the env-provided name/version/imageId
-        # expand in the shell.
-        cat > work/manifest.json <<EOF
-        [{"Config":"$imageId/json","RepoTags":["workspace-''${imageName}:''${imageVersion}"],"Layers":["$imageId/layer.tar"]}]
-        EOF
-        cat > work/repositories <<EOF
-        {"workspace-''${imageName}":{"''${imageVersion}":"$imageId"}}
-        EOF
-        tar --sort=name --mtime='@1' --owner=0 --group=0 --numeric-owner \
-          -C work -cf "$out" manifest.json repositories "$imageId"
-      '';
+  # The image archive: the shared containerDisk packer (#40
+  # review, shared since #250 — nix/image-archive.nix owns the
+  # format: the podman-save layout, the uncompressed byte-stable
+  # layer, the per-name:version image id).
+  imageArchive = (pkgs.callPackage ./image-archive.nix { }).mkImageArchive {
+    inherit
+      bootTree
+      imageName
+      imageVersion
+      ;
+  };
 
 in
 pkgs.runCommand "msks-guest"

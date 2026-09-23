@@ -1,0 +1,145 @@
+# The egress real-VM smoke suite (#75, split from the one-job smoke
+# workflow): every test boots a VM through the daemon's own net
+# stack — egress boot (DHCP, the daemon's resolver, NAT'd TCP,
+# input-chain containment), sshd+rsync through the forward, git-out
+# (#81: substitutes in over egress, then a push whose credential
+# rode the forward as a forwarded agent), the minted identity, and
+# the daemon e2e (#234: the full path against the real msksd
+# process — TLS, REST, the #123 console websocket, graceful
+# SIGTERM).
+#
+# Needs root and the runner's FORWARD chain handed to the daemon's
+# own nft tables; the precondition step below takes it. The dev
+# workspace bootstrap smoke stays out of the default run (its
+# ceiling is an hour) — it runs by hand with the same env.
+name: Smoke (egress)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/smoke-egress.yml
+      - devenv.nix
+      - devenv.yaml
+      - devenv.lock
+      - nix/guest.nix
+      - nix/guest-debian.nix
+      - nix/console-helper-pkg.nix
+      - nix/image-archive.nix
+      - scripts/build-guest.sh
+      - src/msks/msks/**
+      - src/msks/tests/conftest.py
+      - src/msks/tests/test_smoke/__init__.py
+      - src/msks/tests/test_smoke/egress/**
+  pull_request:
+    paths:
+      - .github/workflows/smoke-egress.yml
+      - devenv.nix
+      - devenv.yaml
+      - devenv.lock
+      - nix/guest.nix
+      - nix/guest-debian.nix
+      - nix/console-helper-pkg.nix
+      - nix/image-archive.nix
+      - scripts/build-guest.sh
+      - src/msks/msks/**
+      - src/msks/tests/conftest.py
+      - src/msks/tests/test_smoke/__init__.py
+      - src/msks/tests/test_smoke/egress/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smoke-egress-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke-egress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: cachix/cachix-action@v17
+        with:
+          name: devenv
+
+      - name: Install devenv.sh
+        run: nix profile add github:cachix/devenv/v2.3.1
+
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Build guest assets
+        run: >-
+          devenv --quiet -O dotenv.enable:bool false shell --
+          msks-build-guest
+
+      # The egress smokes need the host's network to themselves and
+      # the runner's FORWARD chain handed to the daemon's own nft
+      # tables — this step also guards the dev-host posture: msksd's
+      # net stack runs on a kernel it shares with other firewall
+      # owners, and an nft accept in the daemon's own tables cannot
+      # override a foreign base chain's drop — on a shared kernel,
+      # host firewall control must be taken explicitly. Concretely
+      # here: the runner's docker leaves FORWARD policy DROP for
+      # traffic not its own, so the step prints whatever the image
+      # left behind, clears FORWARD, and hands the forward hook to
+      # the daemon's own tables. Without that, guest TCP out
+      # blackholes behind docker's policy while DHCP and DNS
+      # (host-terminated, input chain) pass; validated against a
+      # faithful FORWARD policy-drop simulation during #75. The
+      # runner is a per-job VM, so the flush and policy travel with
+      # it and touch no other workload.
+      - name: Egress smoke forwarding precondition
+        run: |
+          echo "::group::forward/firewall state before"
+          sysctl net.ipv4.ip_forward
+          sudo iptables -S FORWARD || true
+          sudo nft list tables || true
+          echo "::endgroup::"
+          sudo iptables -F FORWARD
+          sudo iptables -P FORWARD ACCEPT
+          sudo iptables -S FORWARD
+
+      # Root, serial, verbose. HOME=/root because sudo -i semantics
+      # do not apply to `sudo -n env`; TMPDIR=/tmp for the AF_UNIX
+      # path-depth reason as ci.yml; the devenv PATH rides along so
+      # the tests resolve ip/nft and the scratch sshd/git the
+      # git-out smoke spawns. The dev workspace bootstrap stays out
+      # (hour-long ceiling); the closing grep guards the same
+      # quietly-skipped-everything failure as the core lanes.
+      - name: Egress smoke (root)
+        env:
+          TMPDIR: /tmp
+        run: >-
+          sudo apt-get update -qq && sudo apt-get install -y -qq nftables &&
+          devenv --quiet -O dotenv.enable:bool false shell -- bash -c "
+          sudo -n env MSKSD_TEST_EGRESS=1 TMPDIR=/tmp
+          MSKSD_TEST_GUEST_UP_TIMEOUT_S=180
+          MSKSD_TEST_CONSOLE_TIMEOUT_S=120
+          MSKSD_TEST_SHUTDOWN_TIMEOUT_S=180
+          MSKSD_TEST_SSH_TIMEOUT_S=120
+          MSKSD_TEST_GIT_OUT_TIMEOUT_S=900
+          PATH=\"\$PATH\" HOME=/root
+          python -m pytest src/msks/tests/test_smoke/egress
+          --ignore=src/msks/tests/test_smoke/egress/test_dev_workspace.py
+          -v -rs -p no:cacheprovider --no-cov 2>&1 | tee /tmp/smoke-egress.log;
+          ! grep -q 'test_local_egress_boot.*SKIPPED' /tmp/smoke-egress.log"
+
+      - name: Collect smoke state on failure
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-egress-evidence
+          path: /tmp/msks-smoke-failed/
+          if-no-files-found: ignore
+          retention-days: 7
