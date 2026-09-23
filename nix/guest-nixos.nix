@@ -72,6 +72,15 @@ let
     {
       nixpkgs.hostPlatform = "x86_64-linux";
 
+      # Runtime accounts stay first-class: the identity seed (#248)
+      # creates the workspace's login user with shadow's useradd at
+      # first boot — mutableUsers (the default, kept deliberately)
+      # is what lets that account and its group membership live in
+      # /etc on the workspace's overlay and survive rebuilds. The
+      # deployment-host stance (false — the config owns accounts)
+      # would forfeit every seeded login user.
+      users.mutableUsers = lib.mkDefault true;
+
       # Direct kernel boot off the ext4 archive: no bootloader, no
       # nix (the closure resolves with no database — spike 205), no
       # docs.
@@ -256,14 +265,6 @@ let
       # workspace boots.
       programs.bash.promptInit = ''PS1='\u@\h:\w\$ ' '';
 
-      # The wrappers dir (sudo, and whatever else gains a setuid
-      # wrapper) normally reaches sessions through PAM's environment;
-      # the console helper's login shells and sshd's login shells
-      # skip PAM's pam_env, so /etc/profile (shellInit) must put it
-      # on PATH itself — the Debian image's sudo sits in /usr/bin
-      # where every PATH finds it.
-      environment.shellInit = ''export PATH="$PATH:${config.security.wrapperDir}"'';
-
       # The console workspace user (#63): uid/gid 1000, locked
       # password (the console helper and ssh keys are the road in),
       # home on the persistent /home volume (#14) — the identity
@@ -279,13 +280,18 @@ let
       };
       users.groups.msks.gid = 1000;
 
-      # The workspace user's sudo (#169): passwordless root — the
-      # password is locked by design, so NOPASSWD is the only form
-      # that can ever run. NixOS delivers sudo as an
+      # The workspace user's sudo (#169): passwordless root, granted
+      # to the workspace GROUP — the shipped msks user and any login
+      # user the identity seed (#248) adds to the group — because the
+      # password is locked by design, NOPASSWD is the only form that
+      # can ever run, and a per-image declarative rule keeps the
+      # policy owned by the config (a rebuilt guest keeps exactly
+      # what it declares; the seed never writes sudo
+      # configuration). NixOS delivers sudo itself as an
       # activation-built wrapper, not a setuid file.
       security.sudo.extraRules = [
         {
-          users = [ "msks" ];
+          groups = [ "msks" ];
           commands = [
             {
               command = "ALL";
@@ -329,10 +335,17 @@ let
   initrd = "${nixos.system.build.initialRamdisk}/initrd";
   kernelVersion = kernel.modDirVersion;
 
-  # Catalog identity: the NixOS release this tree evaluates to
-  # (e.g. 26.05pre…), pinned by the same nixpkgs lock as every
-  # other artifact here.
-  imageVersion = nixos.system.nixos.version;
+  # Catalog identity: the NixOS release plus the toplevel's short
+  # hash — the release label alone (26.05pre…) stays constant across
+  # months of pin bumps while the closure changes, and two different
+  # builds must never share a name:version in the catalog.
+  imageVersion =
+    let
+      toplevelHash = builtins.substring 0 8 (
+        lib.head (lib.splitString "-" (baseNameOf (toString toplevel)))
+      );
+    in
+    "${nixos.system.nixos.version}-${toplevelHash}";
 
   # Same boot shape as the Debian image plus the stage-2 init:
   # NixOS's own init must be named on the cmdline (there is no
@@ -368,15 +381,16 @@ let
         while read -r p; do
           cp -a "$p" "$root"/nix/store/
         done < "$closureInfo"/store-paths
-        # A bootable tree: stage-2 init present, and the services
-        # the contract names are in the closure — a config that
-        # silently dropped one fails the build here, not a
-        # workspace's first boot.
+        # A bootable tree: stage-2 init present, and the units the
+        # contract names are wanted at boot — the console service,
+        # cloud-init, sshd. A config that silently dropped one (the
+        # enable flipped off, the wantedBy lost) fails the build
+        # here, not a workspace's first boot.
         test -x "$toplevel"/init
+        test -e "$toplevel"/etc/systemd/system/multi-user.target.wants/msks-console.service
+        test -e "$toplevel"/etc/systemd/system/multi-user.target.wants/cloud-init.service
+        test -e "$toplevel"/etc/systemd/system/multi-user.target.wants/sshd.service
         grep -q msks-console-helper "$closureInfo"/store-paths
-        grep -q cloud-init "$closureInfo"/store-paths
-        grep -q openssh "$closureInfo"/store-paths
-        grep -q rsync "$closureInfo"/store-paths
         mkdir -p "$out"
         du -s --apparent-size --block-size=4096 "$root" | cut -f1 > "$out"/tree-blocks
         # The opaque-tar hop (the same discipline as the Debian

@@ -269,6 +269,15 @@ CONSOLE_PROMPT_NEEDLE = b"root@msks-guest:~# "
 USER_CONSOLE_PROMPT_NEEDLE = b"msks@msks-guest:~$ "
 
 
+def user_prompt_needle(user: str) -> bytes:
+    """The first-prompt needle for any non-root session (#248): a
+    login user's prompt carries ITS name — same shape, same
+    hostname, the user the session negotiated."""
+    if user == "msks":
+        return USER_CONSOLE_PROMPT_NEEDLE
+    return f"{user}@msks-guest:~$ ".encode()
+
+
 async def answer_console_auth(
     reader, writer, workspace_id, app, signer=None
 ) -> None:
@@ -362,8 +371,8 @@ async def run_in_console(
                     )
                 needle = (
                     CONSOLE_PROMPT_NEEDLE
-                    if user == "root"
-                    else USER_CONSOLE_PROMPT_NEEDLE
+                    if user in (None, "root")
+                    else user_prompt_needle(user)
                 )
                 await read_until(reader, needle)
                 writer.write(command.encode() + b"\n")

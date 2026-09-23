@@ -35,6 +35,9 @@ on:
       - devenv.lock
       - nix/guest.nix
       - nix/guest-debian.nix
+      - nix/guest-nixos.nix
+      - nix/console-helper-pkg.nix
+      - nix/image-archive.nix
       - scripts/build-guest.sh
       - src/msks/msks/**
       - src/msks/tests/conftest.py
@@ -47,6 +50,9 @@ on:
       - devenv.lock
       - nix/guest.nix
       - nix/guest-debian.nix
+      - nix/guest-nixos.nix
+      - nix/console-helper-pkg.nix
+      - nix/image-archive.nix
       - scripts/build-guest.sh
       - src/msks/msks/**
       - src/msks/tests/conftest.py
@@ -62,7 +68,7 @@ concurrency:
 jobs:
   smoke-kvm:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v5
 
@@ -126,6 +132,49 @@ jobs:
             | tee /tmp/smoke-pytest.log
           ! grep -qE '^SKIPPED.*test_boot_lifecycle' /tmp/smoke-pytest.log \
             || { echo 'the local boots skipped — assets or /dev/kvm regressed'; exit 1; }
+
+      # The same core suite against the NixOS guest (#250): the
+      # explicit MSKSD_TEST_* exports override the conftest's
+      # discovered Debian defaults, so this phase boots the nixos
+      # image end to end — boot lifecycle, console identity drop,
+      # sudo, user_data both forms, minted-identity ssh, ssh forward.
+      # The egress legs stay Debian-only in CI (the git-out proof
+      # runs apt inside the guest). Same guard: a phase that skipped
+      # everything reports red, not green.
+      - name: Build the NixOS guest assets
+        run: >-
+          devenv --quiet -O dotenv.enable:bool false shell --
+          msks-build-guest nixos
+
+      - name: Smoke tests (NixOS guest)
+        env:
+          TMPDIR: /tmp
+          MSKSD_TEST_GUEST_UP_TIMEOUT_S: "180"
+          MSKSD_TEST_CONSOLE_TIMEOUT_S: "120"
+          MSKSD_TEST_SHUTDOWN_TIMEOUT_S: "180"
+        run: |
+          set -o pipefail
+          G=.devenv/state/guest-nixos
+          manifest="$G/guest-manifest.json"
+          cmdline=$(
+            python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['cmdline'])" \
+              "$manifest"
+          )
+          devenv --quiet -O dotenv.enable:bool false shell -- env \
+            MSKSD_TEST_VMLINUX="$PWD/$G/vmlinux" \
+            MSKSD_TEST_INITRD="$PWD/$G/initrd" \
+            MSKSD_TEST_ROOTFS="$PWD/$G/rootfs.ext4" \
+            MSKSD_TEST_CMDLINE="$cmdline" \
+            python -m pytest src/msks/tests/test_smoke/ \
+              --ignore=src/msks/tests/test_smoke/test_egress.py \
+              --ignore=src/msks/tests/test_smoke/test_dev_workspace.py \
+              -q -rs -p no:cacheprovider --no-cov 2>&1 \
+              | tee /tmp/smoke-nx.log
+          ! grep -qE '^SKIPPED.*test_boot_lifecycle' /tmp/smoke-nx.log \
+            || {
+              echo 'the NixOS boots skipped — assets or /dev/kvm regressed'
+              exit 1
+            }
 
       # The egress smokes need root and the runner's FORWARD chain
       # handed to the daemon's own nft tables. This step also guards

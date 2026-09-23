@@ -265,18 +265,23 @@ let
       'PermitRootLogin prohibit-password' \
       > $out/etc/ssh/sshd_config.d/00-msks.conf
 
-    # The workspace user's sudo (#169): passwordless root for the
-    # msks user — the single-user dev VM's standard cloud posture
-    # (Debian's own default cloud user carries the same grant). The
-    # password is locked by design (the console helper and ssh keys
-    # are the road in), so NOPASSWD is the only form that can ever
-    # run. The pack stage sets the 0440 sudoers mode: the store
-    # rewrites the built file's group bits (0440 lands 0444), and
-    # the tar hop's chmod -R u+w would widen it again before
-    # mke2fs packs the tree.
+    # The workspace group's sudo (#169): passwordless root for
+    # every member of the msks group — the shipped workspace user
+    # and any login user the identity seed (#248) adds at first
+    # boot — the single-user dev VM's standard cloud posture
+    # (Debian's own default cloud user carries the same grant).
+    # The grant rides the GROUP because the group is image-shipped
+    # state the policy names: the seed creates accounts and joins
+    # them, never sudo configuration. The password is locked by
+    # design (the console helper and ssh keys are the road in), so
+    # NOPASSWD is the only form that can ever run. The pack stage
+    # sets the 0440 sudoers mode: the store rewrites the built
+    # file's group bits (0440 lands 0444), and the tar hop's
+    # chmod -R u+w would widen it again before mke2fs packs the
+    # tree.
     printf '%s\n' \
-      '# msks (#169): the workspace user administers this VM.' \
-      'msks ALL=(ALL) NOPASSWD:ALL' \
+      '# msks (#169): the workspace group administers this VM.' \
+      '%msks ALL=(ALL) NOPASSWD:ALL' \
       > $out/etc/sudoers.d/msks
 
     # Host keys come from the image's own sshd-keygen.service (wanted

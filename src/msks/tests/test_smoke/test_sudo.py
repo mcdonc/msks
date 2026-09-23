@@ -71,7 +71,7 @@ async def test_local_workspace_user_sudo() -> None:
             wid,
             's="$(command -v sudo)" '
             '&& test -n "$s" '
-            '&& test "$(stat -c %a "$s" | cut -c1)" = 4 '
+            '&& test $(( 0$(stat -c %a "$s") & 04000 )) -ne 0 '
             '&& test "$(stat -c %u "$s")" = 0 '
             "&& echo MODE-$((6*7))",
             "MODE-42",

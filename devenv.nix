@@ -330,7 +330,7 @@ in
 
   # The workspace image archive, alone (#141): the bare-host dev
   # daemon's default image. Same derivation tree as msks-build-guest
-  # (pinned nixpkgs, guest-assets expression, the Rust
+  # (pinned nixpkgs, guest-debian/nixos expressions, the Rust
   # console-helper baked into the workspace image), but built as
   # ONE artifact and landed as a symlink the daemon imports on its
   # first boot — no kernel/rootfs copies, no guest asset dir.
