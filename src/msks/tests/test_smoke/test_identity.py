@@ -355,7 +355,7 @@ async def test_local_minted_identity() -> None:
             "&& stat -c %a /home/msks/.ssh/authorized_keys "
             f"&& grep -qxF '{minted}' /home/alice/.ssh/authorized_keys "
             '&& [ "$(stat -c %a /home/alice/.ssh/authorized_keys)" = 600 ] '
-            "&& id -nG alice | grep -qw msks "
+            "&& id -nG alice | grep -qw wheel "
             '&& [ "$(id -u alice)" -ge 1000 ] '
             "&& echo AK-$((6*7))",
             "AK-42",
