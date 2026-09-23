@@ -30,6 +30,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from collections.abc import Callable
@@ -37,6 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .app import App, build_app
+from .conformance_args import check_arguments
 from .imagestore import ImageError, ImageRecord, import_archive
 from .microvm import VmSpec
 from .settings import (
@@ -97,16 +99,16 @@ class CheckResult:
 
 
 def passed(name: str, detail: str) -> CheckResult:
-    return CheckResult(name, PASS, detail)
+    return CheckResult(name, PASS, sanitize(detail))
 
 
 def failed(name: str, exc: BaseException | str) -> CheckResult:
     text = str(exc) if isinstance(exc, str) else str(exc) or type(exc).__name__
-    return CheckResult(name, FAIL, text)
+    return CheckResult(name, FAIL, sanitize(text))
 
 
 def skipped(name: str, reason: str) -> CheckResult:
-    return CheckResult(name, SKIP, reason)
+    return CheckResult(name, SKIP, sanitize(reason))
 
 
 def first_failure(results: list[CheckResult]) -> CheckResult | None:
@@ -251,11 +253,14 @@ def console_user(record: ImageRecord) -> str | None:
 
 
 def sanitize(text: str) -> str:
-    """One printable line from manifest-derived text.
+    """One printable line from anything that reaches a row detail.
 
-    The image author controls these strings; the report is the
-    tool's whole product, so a forged row (embedded newlines, ANSI
-    escapes) must not survive into it.
+    Every row constructor runs this: the image author controls the
+    manifest strings (name, version, kernel_version,
+    console_users), and the guest controls refusal text that rides
+    exceptions back — the report is the tool's whole product, so a
+    forged row (embedded newlines, ANSI escapes) must not survive
+    into it from ANY channel.
     """
     line = text.splitlines()[0] if text else ""
     return "".join(ch for ch in line if ch.isprintable())
@@ -768,7 +773,10 @@ async def check_image(
     ``state_dir`` relocates it.
     """
     if state_dir is None:
-        state_dir = Path(f"/tmp/msks-conf-{uuid.uuid4().hex[:8]}")
+        # mkdtemp: 0700 and atomically created — the serial log and
+        # the unpacked image inside are not world-readable on a
+        # shared host.
+        state_dir = Path(tempfile.mkdtemp(prefix="msks-conf-"))
     try:
         try:
             record = import_archive(archive, state_dir)
@@ -802,39 +810,6 @@ async def check_image(
     finally:
         if not keep_state:
             shutil.rmtree(state_dir, ignore_errors=True)
-
-
-def check_arguments(parser: argparse.ArgumentParser) -> None:
-    """The check subcommand's flags."""
-    parser.add_argument("archive", help="the container-image tar to check")
-    parser.add_argument(
-        "--egress",
-        action="store_true",
-        help="also verify DHCP address acquisition through the "
-        "daemon's net stack (requires root)",
-    )
-    parser.add_argument(
-        "--uplink",
-        default=None,
-        help="uplink interface for --egress (default: the default route)",
-    )
-    parser.add_argument(
-        "--boot-timeout-s",
-        type=float,
-        default=120.0,
-        help="deadline for each boot and seed wait (default: 120)",
-    )
-    parser.add_argument(
-        "--shutdown-timeout-s",
-        type=float,
-        default=120.0,
-        help="deadline for the ACPI power-button shutdown (default: 120)",
-    )
-    parser.add_argument(
-        "--keep",
-        action="store_true",
-        help="keep the throwaway state dir (serial logs) for inspection",
-    )
 
 
 def run_check(args: argparse.Namespace) -> int:

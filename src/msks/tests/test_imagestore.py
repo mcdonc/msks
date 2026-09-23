@@ -1602,3 +1602,41 @@ def test_download_ceiling_clamps_to_floor_headroom(
     assert api_mod.download_ceiling(vmm) == vmm.image_import_max_mib * (
         1024 * 1024
     )
+
+
+def test_api_url_import_answers_507_at_the_floor(tmp_path: Path) -> None:
+    """A URL import on a disk sitting at the floor answers the named
+    507 before any bytes are fetched."""
+    from msks.server import api as api_mod
+
+    settings = Settings(
+        vmm=VmmSettings(
+            state_dir=tmp_path / "vms",
+            storage_floor_mib=8192,
+        ),
+        net=NetSettings(enabled=False),
+        server=ServerSettings(
+            db_path=tmp_path / "api.db", bootstrap_token=TOKEN
+        ),
+    )
+    app = build_app(settings)
+    app.state.microvm = StubMicrovm()
+
+    def must_not_fetch(*args, **kwargs):
+        raise AssertionError("fetched past the floor refusal")
+
+    tight = {"free": 100 << 20, "total": 1 << 40, "used": 0}
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(api_mod.storage, "state_usage", lambda d: tight)
+    monkey.setattr(imagestore, "fetch_archive", must_not_fetch)
+    try:
+        with TestClient(build_api(app)) as client:
+            made = client.post(
+                "/api/v1/images",
+                json={"source": "https://images.example.com/ws.tar"},
+                headers=auth(),
+            )
+            assert made.status_code == 507, made.text
+            assert "floor" in made.json()["detail"]
+    finally:
+        monkey.undo()

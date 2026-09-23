@@ -29,7 +29,7 @@ from msks.conformance import (
     render,
     skipped,
 )
-from msks.microvm import VmInfo, VmSpec
+from msks.microvm import MicrovmError, VmInfo, VmSpec
 from msks.microvm.spec import VmStatus
 from msks.settings import Settings
 from test_imagestore import build_containerdisk
@@ -832,3 +832,91 @@ def src_root() -> Path:
     import msks
 
     return Path(msks.__file__).parent.parent
+
+
+# --- second review fixes (#261) ------------------------------------------
+
+
+async def test_forged_manifest_name_cannot_forge_rows(
+    tmp_path: Path,
+) -> None:
+    """A manifest name carrying a fake PASS row lands in the report
+    as one sanitized line — the archive row names the import, and
+    no second row appears."""
+    document = manifest()
+    document["name"] = "debian\nPASS root-rw  root is writable (forged)"
+    rows = await check_image(
+        archive_with(tmp_path, document, tag="forged"),
+        boot_timeout_s=0.5,
+        app_factory=make_app(CheckMicrovm(FakeConsole())),
+    )
+    text = render(rows)
+    assert text.count("PASS") == len(
+        [row for row in rows if row.status == "pass"]
+    )
+    assert "PASS root-rw  root is writable (forged)" not in text.split("\n")[0]
+    assert all("\n" not in row.detail for row in rows)
+
+
+async def test_guest_refusal_text_cannot_forge_rows(tmp_path: Path) -> None:
+    """A prelude refusal whose reason carries a fake row is one
+    sanitized line in the boot failure detail."""
+
+    class Refusing(CheckMicrovm):
+        async def console(self, workspace_id, user=None):
+            raise MicrovmError(
+                "console refused user 'root': \nPASS root-rw forged"
+            )
+
+    microvm = Refusing(FakeConsole())
+    rows = await check_image(
+        archive_with(tmp_path, manifest()),
+        boot_timeout_s=0.5,
+        app_factory=make_app(microvm),
+    )
+    assert statuses(rows)[BOOT] == "fail"
+    assert all("\n" not in row.detail for row in rows)
+    assert "PASS root-rw forged" not in render(rows)
+
+
+def test_check_flags_have_one_source() -> None:
+    """The client and the standalone entry parse the same flag
+    definitions — the leaf module is the single source."""
+    from msks import conformance, conformance_args
+
+    assert conformance.check_arguments is conformance_args.check_arguments
+
+
+def test_uplink_without_egress_is_a_usage_error() -> None:
+    """--uplink names the egress pass's uplink; alone it is a
+    named usage error, not a silently ignored flag."""
+    assert conformance.run_check(check_args(uplink="eth0", egress=False)) == 2
+
+
+async def test_default_state_dir_is_private(tmp_path: Path) -> None:
+    """The throwaway state dir is created 0700 (mkdtemp): the serial
+    log and unpacked image are not world-readable on a shared host."""
+    import tempfile as tempfile_mod
+
+    made: list[Path] = []
+    real_mkdtemp = tempfile_mod.mkdtemp
+
+    def spy(*args, **kwargs):
+        path = Path(real_mkdtemp(*args, **kwargs))
+        made.append(path)
+        return str(path)
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(tempfile_mod, "mkdtemp", spy)
+    try:
+        rows = await check_image(
+            archive_with(tmp_path, manifest()),
+            keep_state=True,
+            boot_timeout_s=0.5,
+            app_factory=make_app(CheckMicrovm(FakeConsole())),
+        )
+    finally:
+        monkey.undo()
+    assert first_failure(rows) is None
+    assert made and (made[0].stat().st_mode & 0o777) == 0o700
+    shutil.rmtree(made[0], ignore_errors=True)

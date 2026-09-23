@@ -913,6 +913,13 @@ def build_api(app) -> FastAPI:
     """
     hub = app.state.hub
     app.state.create_locks: dict[str, asyncio.Lock] = {}
+    # Imports serialize daemon-wide (#258): concurrent URL imports
+    # would each clamp to the same floor headroom and stream real
+    # bytes in parallel — the lock keeps the ceiling's promise that
+    # the disk never dips below the floor mid-download. Path
+    # imports ride the same lock: their floor check has the same
+    # race, just a narrower window.
+    import_lock = asyncio.Lock()
     app.state.home_locks: dict[str, asyncio.Lock] = {}
 
     @contextlib.asynccontextmanager
@@ -1341,34 +1348,47 @@ def build_api(app) -> FastAPI:
         # the fetched bytes.
         staged: Path | None = None
         try:
-            if imagestore.is_url(body.source):
-                max_bytes = download_ceiling(vmm)
-                staged = await asyncio.to_thread(
-                    imagestore.fetch_archive,
-                    body.source,
-                    state_dir,
-                    timeout_s=vmm.image_import_timeout_s,
-                    max_bytes=max_bytes,
+            async with import_lock:
+                if imagestore.is_url(body.source):
+                    max_bytes = download_ceiling(vmm)
+                    if max_bytes <= 0:
+                        # The disk sits at or below the floor: the
+                        # same named 507 a path import answers,
+                        # before any bytes are fetched.
+                        refusal = storage.floor_refusal(
+                            vmm, "importing images", 1 << 20
+                        )
+                        raise HTTPException(
+                            status_code=507,
+                            detail=refusal
+                            or "the state disk sits at the storage floor",
+                        )
+                    staged = await asyncio.to_thread(
+                        imagestore.fetch_archive,
+                        body.source,
+                        state_dir,
+                        timeout_s=vmm.image_import_timeout_s,
+                        max_bytes=max_bytes,
+                    )
+                    source = staged
+                else:
+                    source = Path(body.source)
+                # The floor (#184): an import retains the archive **and**
+                # unpacks its boot cache — the incoming bytes are counted
+                # twice. A URL source is sized after its download, so a
+                # floor refusal lands before the unpack with the real
+                # size named.
+                incoming_b = 0
+                with contextlib.suppress(OSError):
+                    incoming_b = 2 * source.stat().st_size
+                refusal = storage.floor_refusal(
+                    vmm, "importing images", incoming_b
                 )
-                source = staged
-            else:
-                source = Path(body.source)
-            # The floor (#184): an import retains the archive **and**
-            # unpacks its boot cache — the incoming bytes are counted
-            # twice. A URL source is sized after its download, so a
-            # floor refusal lands before the unpack with the real
-            # size named.
-            incoming_b = 0
-            with contextlib.suppress(OSError):
-                incoming_b = 2 * source.stat().st_size
-            refusal = storage.floor_refusal(
-                vmm, "importing images", incoming_b
-            )
-            if refusal is not None:
-                raise HTTPException(status_code=507, detail=refusal)
-            record = await asyncio.to_thread(
-                imagestore.import_archive, source, state_dir
-            )
+                if refusal is not None:
+                    raise HTTPException(status_code=507, detail=refusal)
+                record = await asyncio.to_thread(
+                    imagestore.import_archive, source, state_dir
+                )
         except (ImageError, OSError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
         finally:
