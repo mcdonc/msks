@@ -205,345 +205,503 @@ let
   # static link, the NSS note).
   consoleHelper = pkgs.callPackage ./console-helper-pkg.nix { };
 
+  # The agent toolchain's Node pin (#266): the official standalone
+  # release, digest-pinned, that the overlay stages under
+  # /usr/local. Distro Node is older than pi's engines floor on
+  # every Debian the image builds from, so the official tarball is
+  # the source — the platform's own packaging where it exists is
+  # the rule, and here it does not.
+  agentNodeTarball = pkgs.fetchurl {
+    url = "https://nodejs.org/dist/v22.23.3/" + "node-v22.23.3-linux-x64.tar.gz";
+    hash = "sha256-EISqNhlrukw6Xmmh7jiKbk/3KdrQlEX7zUNLKP48JK8=";
+  };
+
+  # The registry tarball behind the pi pin itself.
+  piTarball = pkgs.fetchurl {
+    url =
+      "https://registry.npmjs.org/@earendil-works/pi-coding-agent/-/"
+      + "pi-coding-agent-0.87.1.tgz";
+    hash = "sha256-FCPuPGHnyWRk4cvzyNwk0wVss0EJlcNnGpjD7MUnVA8=";
+  };
+
+  # The integrity injector (#266): the published shrinkwrap omits
+  # integrity for the five @earendil-works monorepo siblings
+  # (lockstep 0.87.1), which npm tolerates and nix's prefetch
+  # refuses — this adds the registry tarballs' own sha512, pinning
+  # content the URLs already name, changing no resolution.
+  piShrinkwrapPatch = pkgs.writeText "pi-shrinkwrap-patch.py" ''
+    import json
+    import sys
+
+    MISSING = {
+        "@earendil-works/chord":
+            "bg7IkJGFcEaMqqYgOGUiq5Ky9RghpRfrlZ8I/v/1b4bBZ02A7"
+            "t3E+6uhPRbadwWb/kWsnVFbZsqOKRN4a3LLCg==",
+        "@earendil-works/pi-agent-core":
+            "Zev3B0HK7YS5A4EZQ2XnEqiJuirx6QBiltJ+LpmjV5a/+2IU0cf"
+            "KtIfnkNkORK707XOvKBY2WRtk7cAwHpbh2Q==",
+        "@earendil-works/pi-ai":
+            "X/3PfQBnnoeVdO9Cv8zHghUMglzlgNZYGNzoPnbRoGnHl3Rw3T"
+            "lA2UKSUB7BRHUOxMryHXYa8dnjWZlbRheDZA==",
+        "@earendil-works/pi-telemetry":
+            "MC6TRQH5lgMXpcN+Vku2WMI2T8BsiUPzMQHGo81uqFZD3/9O79"
+            "WWJAysEDGuzduP6R4tvtgwMLwmqIxynM10JQ==",
+        "@earendil-works/pi-tui":
+            "YEH2vRyOeiO7hhN6j6AE6YwKSq2Kz2f3XR8bj1TbR+aGE/JsnY"
+            "1hLPMI2pvaZfRM1n9Y00tejxFQ4zbzvF7nkQ==",
+    }
+
+    path = sys.argv[1]
+    with open(path) as f:
+        lock = json.load(f)
+    patched = 0
+    for key, entry in lock["packages"].items():
+        name = key.rsplit("node_modules/", 1)[-1]
+        resolved = entry.get("resolved")
+        if name in MISSING and resolved and not entry.get("integrity"):
+            entry["integrity"] = "sha512-" + MISSING[name]
+            patched += 1
+    if patched != len(MISSING):
+        raise SystemExit(
+            "expected %d integrity gaps, patched %d"
+            % (len(MISSING), patched)
+        )
+    with open(path, "w") as f:
+        json.dump(lock, f, indent=2)
+        f.write("\n")
+
+    # The published package.json still names its devDependencies,
+    # which the pruned shrinkwrap no longer carries — npm ci would
+    # reach for the network to satisfy them. The dist/ tree is
+    # prebuilt, so the production install drops them instead.
+    pkgpath = sys.argv[2]
+    with open(pkgpath) as f:
+        pkg = json.load(f)
+    if "devDependencies" in pkg:
+        del pkg["devDependencies"]
+        with open(pkgpath, "w") as f:
+            json.dump(pkg, f, indent=2)
+            f.write("\n")
+  '';
+
+  # The pi pin's source (#266): the registry tarball with the
+  # shrinkwrap integrity gaps closed, ready for the offline npm
+  # build.
+  patchedPiSource =
+    pkgs.runCommand "pi-coding-agent-src"
+      {
+        nativeBuildInputs = [
+          pkgs.gnutar
+          (pkgs.python3.withPackages (ps: [ ]))
+        ];
+      }
+      ''
+        set -eu
+        mkdir -p $out
+        tar -xzf ${piTarball} -C $out --strip-components=1
+        chmod -R u+w $out
+        python3 ${piShrinkwrapPatch} \
+          $out/npm-shrinkwrap.json $out/package.json
+      '';
+
+  # The agent toolchain's pi pin (#266): the npm package built
+  # offline from its own shrinkwrap — npmDepsHash pins the whole
+  # dependency closure, so the build is reproducible and no
+  # network touches the sandbox. The output is the npm global
+  # layout (lib/node_modules/<name> plus the bin symlink) the
+  # overlay drops into /usr/local, matching what the Node tarball
+  # itself lays down for npm.
+  agentPiPackage = pkgs.buildNpmPackage {
+    pname = "pi-coding-agent";
+    version = "0.87.1";
+    src = patchedPiSource;
+    npmDepsHash = "sha256-g7xLIxQbKLO/l09bQKE+knAF5+tgO3hzn3UXgFIJZrg=";
+    # The published package ships dist/ prebuilt; there is nothing
+    # to compile.
+    buildPhase = ''
+      runHook preBuild
+      runHook postBuild
+    '';
+    installPhase = ''
+      runHook preInstall
+      mkdir -p $out/lib/node_modules/pi-coding-agent $out/bin
+      cp -r ./. $out/lib/node_modules/pi-coding-agent/
+      ln -s ../lib/node_modules/pi-coding-agent/dist/cli.js \
+        $out/bin/pi
+      runHook postInstall
+    '';
+  };
+
   # The msks additions, staged as an overlay tree: the vsock console
   # service, serial-console autologin (the debug console), the vsock
   # and net module loads, the nested-KVM module and inner-egress
   # stack a workspace running msksd itself needs (#82), a stable
   # hostname, the DHCP client an egress workspace (#52) brings up,
   # the sshd posture + rsync the TCP service plane rides (#110),
-  # the sudoers grant behind the workspace user's sudo (#169), and
-  # the console helper binary.
+  # the sudoers grant behind the workspace user's sudo (#169), the
+  # console helper binary, and the agent toolchain (#266): pinned
+  # Node and pi under /usr/local, and the pi model-discovery
+  # extension planted for root and in /etc/skel for every account
+  # the identity seed provisions from it.
   # Debian's socat 1.8.x is built WITH_VSOCK, so nothing is
   # cross-compiled in.
-  guestOverlay = pkgs.runCommand "msks-guest-overlay" { } ''
-    set -eu
-    mkdir -p \
-      $out/home \
-      $out/usr/bin \
-      $out/etc/cloud/cloud.cfg.d \
-      $out/etc/sudoers.d \
-      $out/etc/ssh/sshd_config.d \
-      $out/etc/systemd/system/serial-getty@ttyS0.service.d \
-      $out/etc/systemd/system/ssh.service.d \
-      $out/etc/systemd/system/multi-user.target.wants \
-      $out/etc/systemd/system/sockets.target.wants \
-      $out/etc/systemd/system/sysinit.target.wants \
-      $out/etc/systemd/network \
-      $out/etc/modules-load.d
+  guestOverlay =
+    pkgs.runCommand "msks-guest-overlay" { nativeBuildInputs = [ pkgs.gnutar ]; }
+      ''
+        set -eu
+        mkdir -p \
+          $out/home \
+          $out/usr/bin \
+          $out/etc/cloud/cloud.cfg.d \
+          $out/etc/sudoers.d \
+          $out/etc/ssh/sshd_config.d \
+          $out/etc/systemd/system/serial-getty@ttyS0.service.d \
+          $out/etc/systemd/system/ssh.service.d \
+          $out/etc/systemd/system/multi-user.target.wants \
+          $out/etc/systemd/system/sockets.target.wants \
+          $out/etc/systemd/system/sysinit.target.wants \
+          $out/etc/systemd/network \
+          $out/etc/modules-load.d
 
-    printf 'msks-guest\n' > $out/etc/hostname
+        printf 'msks-guest\n' > $out/etc/hostname
 
-    # The console helper (#63): the only privileged listener in the
-    # image. Mode 0755 — it drops privileges itself; it is never
-    # setuid.
-    cp "${consoleHelper}/bin/msks-console-helper" \
-      $out/usr/bin/msks-console-helper
-    chmod 0755 $out/usr/bin/msks-console-helper
+        # The console helper (#63): the only privileged listener in the
+        # image. Mode 0755 — it drops privileges itself; it is never
+        # setuid.
+        cp "${consoleHelper}/bin/msks-console-helper" \
+          $out/usr/bin/msks-console-helper
+        chmod 0755 $out/usr/bin/msks-console-helper
 
-    # rsync (#110): the sync half of the TCP service plane — Debian's
-    # own binary from the pinned deb (see rsyncDeb), staged into the
-    # tree below with its NEEDED libraries asserted.
+        # The agent toolchain (#266): pinned Node from the official
+        # tarball and pi in npm's global layout, both under /usr/local —
+        # system-wide, root-owned, on every account's default PATH, so
+        # a workspace boots with a working agent toolchain and no
+        # per-user installer steps. The pins move with an image
+        # rebuild; a workspace that already booted keeps what it has.
+        mkdir -p $out/usr/local/lib/node_modules
+        tar -xzf ${agentNodeTarball} \
+          -C $out/usr/local --strip-components=1
+        cp -r "${agentPiPackage}/lib/node_modules/pi-coding-agent" \
+          $out/usr/local/lib/node_modules/
+        ln -s ../lib/node_modules/pi-coding-agent/dist/cli.js \
+          $out/usr/local/bin/pi
 
-    # The sshd posture (#110): every login is a key login. The
-    # genericcloud image ships sshd enabled with its own
-    # PasswordAuthentication no; the dropin states the full contract
-    # where sshd reads it first (Include is the config's opening
-    # line, and first match wins). Root may log in with a key —
-    # the console-planted identity of #110's tests, the msksd-minted
-    # key of #111 — and never with a password.
-    #
-    # Authentication policy only, never algorithm policy: no cipher,
-    # MAC, key-exchange, or host-key lists here, so a FIPS-restricted
-    # OpenSSH (a distro crypto provider) narrows itself without
-    # config surgery (#115 — identities ride the mint's setting,
-    # Ed25519 by default, #138, and ssh-keygen -A's rsa/ecdsa host
-    # keys are FIPS-approvable).
-    printf '%s\n' \
-      '# msks (#110): key-only login; the forward is the road in.' \
-      'PasswordAuthentication no' \
-      'KbdInteractiveAuthentication no' \
-      'PermitRootLogin prohibit-password' \
-      > $out/etc/ssh/sshd_config.d/00-msks.conf
+        # The model-discovery extension (#266): into /etc/skel — every
+        # account the identity seed provisions copies the skeleton —
+        # and into root's own home, since root seeds no skeleton. pi
+        # discovers extensions from per-user directories only, so this
+        # is the image-side home of the file each login user ends up
+        # with; a user's later edits are theirs (nothing ever
+        # re-overwrites it).
+        install -D -m 0644 ${./guest-pi-extension.ts} \
+          $out/etc/skel/.pi/agent/extensions/llm-models.ts
+        install -D -m 0644 ${./guest-pi-extension.ts} \
+          $out/root/.pi/agent/extensions/llm-models.ts
 
-    # The admin group's sudo (#169): passwordless root for every
-    # member of wheel — the conventional admin group both images
-    # ship, carrying the shipped workspace user and any login user
-    # the identity seed (#248) joins at first boot — the
-    # single-user dev VM's standard cloud posture (Debian's own
-    # default cloud user carries the same grant). The grant rides
-    # the GROUP because the group is image-shipped state the policy
-    # names: the seed creates accounts and joins them, never sudo
-    # configuration. The password is locked by design (the console
-    # helper and ssh keys are the road in), so NOPASSWD is the only
-    # form that can ever run. The pack stage sets the 0440 sudoers
-    # mode: the store rewrites the built file's group bits (0440
-    # lands 0444), and the tar hop's chmod -R u+w would widen it
-    # again before mke2fs packs the tree.
-    printf '%s\n' \
-      '# msks (#169): the wheel group administers this VM.' \
-      '%wheel ALL=(ALL) NOPASSWD:ALL' \
-      > $out/etc/sudoers.d/msks
+        # rsync (#110): the sync half of the TCP service plane — Debian's
+        # own binary from the pinned deb (see rsyncDeb), staged into the
+        # tree below with its NEEDED libraries asserted.
 
-    # Host keys come from the image's own sshd-keygen.service (wanted
-    # by ssh.service, ConditionFirstBoot): ssh-keygen -A writes them
-    # into /etc/ssh on the root overlay, so they survive stop/start
-    # with the overlay (#14) and each workspace owns its own keys —
-    # nothing here to stage.
+        # The sshd posture (#110): every login is a key login. The
+        # genericcloud image ships sshd enabled with its own
+        # PasswordAuthentication no; the dropin states the full contract
+        # where sshd reads it first (Include is the config's opening
+        # line, and first match wins). Root may log in with a key —
+        # the console-planted identity of #110's tests, the msksd-minted
+        # key of #111 — and never with a password.
+        #
+        # Authentication policy only, never algorithm policy: no cipher,
+        # MAC, key-exchange, or host-key lists here, so a FIPS-restricted
+        # OpenSSH (a distro crypto provider) narrows itself without
+        # config surgery (#115 — identities ride the mint's setting,
+        # Ed25519 by default, #138, and ssh-keygen -A's rsa/ecdsa host
+        # keys are FIPS-approvable).
+        printf '%s\n' \
+          '# msks (#110): key-only login; the forward is the road in.' \
+          'PasswordAuthentication no' \
+          'KbdInteractiveAuthentication no' \
+          'PermitRootLogin prohibit-password' \
+          > $out/etc/ssh/sshd_config.d/00-msks.conf
 
-    # sshd waits for the interface to have its address (#110): the
-    # forward path dials the guest's tap address, and the ordering
-    # puts listening behind DHCP instead of ahead of it. A scoped
-    # oneshot, NOT systemd's wait-online: this guest boots with no
-    # NIC at all in the no-egress posture, and a link-less networkd
-    # never reaches "online" — wait-online would stall those boots
-    # at network-online.target. The NIC check lives in ExecCondition
-    # (systemd path conditions do not glob — a literal e* path never
-    # exists): with no NIC beyond lo the unit is skipped and sshd
-    # listens immediately (nothing can reach it anyway); the 15s
-    # ceiling never blocks the port beyond a slow DHCP.
-    cat > $out/etc/systemd/system/msks-wait-address.service <<'WAITUNIT'
-    [Unit]
-    Description=msks: sshd listens once the NIC has its address
-    After=systemd-networkd.service
-    Before=ssh.service ssh.socket
+        # The admin group's sudo (#169): passwordless root for every
+        # member of wheel — the conventional admin group both images
+        # ship, carrying the shipped workspace user and any login user
+        # the identity seed (#248) joins at first boot — the
+        # single-user dev VM's standard cloud posture (Debian's own
+        # default cloud user carries the same grant). The grant rides
+        # the GROUP because the group is image-shipped state the policy
+        # names: the seed creates accounts and joins them, never sudo
+        # configuration. The password is locked by design (the console
+        # helper and ssh keys are the road in), so NOPASSWD is the only
+        # form that can ever run. The pack stage sets the 0440 sudoers
+        # mode: the store rewrites the built file's group bits (0440
+        # lands 0444), and the tar hop's chmod -R u+w would widen it
+        # again before mke2fs packs the tree.
+        printf '%s\n' \
+          '# msks (#169): the wheel group administers this VM.' \
+          '%wheel ALL=(ALL) NOPASSWD:ALL' \
+          > $out/etc/sudoers.d/msks
 
-    [Service]
-    Type=oneshot
-    RemainAfterExit=yes
-    ExecCondition=/bin/sh -c 'ip -o link show 2>/dev/null | grep -qv "lo:"'
-    ExecStart=/bin/sh -c 'for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do ip -4 -o addr show scope global 2>/dev/null | grep -q . && exit 0; sleep 1; done'
-    WAITUNIT
-    printf '%s\n' \
-      '[Unit]' \
-      'Wants=msks-wait-address.service' \
-      'After=msks-wait-address.service' \
-      > $out/etc/systemd/system/ssh.service.d/10-after-address.conf
+        # Host keys come from the image's own sshd-keygen.service (wanted
+        # by ssh.service, ConditionFirstBoot): ssh-keygen -A writes them
+        # into /etc/ssh on the root overlay, so they survive stop/start
+        # with the overlay (#14) and each workspace owns its own keys —
+        # nothing here to stage.
 
-    # cloud-init (#41): the workspace's cidata seed is NoCloud's own
-    # format. Two dropins pin the behavior the msks contract needs:
-    # the datasource list stops cloud-init probing EC2/OpenStack/
-    # network sources (the seed disk answers immediately), and
-    # network rendering stays off — the overlay's networkd unit owns
-    # whatever NIC appears, taking its address from the daemon's own
-    # DHCP (#52), so cloud-init must not fight it with netplan.
-    printf '%s\n' \
-      '# msks: the cidata seed disk is the only datasource.' \
-      'datasource_list: [ NoCloud, None ]' \
-      > $out/etc/cloud/cloud.cfg.d/99-msks-datasources.cfg
-    printf '%s\n' \
-      '# msks: networkd (see 80-msks-egress.network) owns the NIC.' \
-      'network: {config: disabled}' \
-      > $out/etc/cloud/cloud.cfg.d/99-msks-network.cfg
-    # cloud-init creates no accounts (#171): the image ships the
-    # msks workspace user (#63), and the identity seed makes its
-    # home. The genericcloud image's own default account — the
-    # 'debian' user with /home/debian and a passwordless-sudo
-    # sudoers entry — never comes into being. The dropin must keep
-    # lexicographically sorting at (or after) the tail of
-    # cloud.cfg.d: cloud-init merges the directory with the
-    # first-defined `users` winning, so a later-sorted dropin
-    # defining users would take precedence.
-    printf '%s\n' \
-      '# msks (#171): the image ships the msks user (#63);' \
-      '# cloud-init creates no accounts and the identity seed' \
-      '# makes the home.' \
-      'users: []' \
-      > $out/etc/cloud/cloud.cfg.d/99-msks-users.cfg
+        # sshd waits for the interface to have its address (#110): the
+        # forward path dials the guest's tap address, and the ordering
+        # puts listening behind DHCP instead of ahead of it. A scoped
+        # oneshot, NOT systemd's wait-online: this guest boots with no
+        # NIC at all in the no-egress posture, and a link-less networkd
+        # never reaches "online" — wait-online would stall those boots
+        # at network-online.target. The NIC check lives in ExecCondition
+        # (systemd path conditions do not glob — a literal e* path never
+        # exists): with no NIC beyond lo the unit is skipped and sshd
+        # listens immediately (nothing can reach it anyway); the 15s
+        # ceiling never blocks the port beyond a slow DHCP.
+        cat > $out/etc/systemd/system/msks-wait-address.service <<'WAITUNIT'
+        [Unit]
+        Description=msks: sshd listens once the NIC has its address
+        After=systemd-networkd.service
+        Before=ssh.service ssh.socket
 
-    # The image's fstab mounts the root filesystem by the PARTUUID of
-    # the cloud image's partition table; direct kernel boot presents
-    # a bare ext4, so those device jobs can never start and systemd
-    # stalls at boot. The kernel cmdline already names the root
-    # device; systemd mounts the pseudo-filesystems itself.
-    #
-    # /home is the workspace's second persistent disk (#14): the
-    # host-side ext4 volume, labeled msks-home at mkfs time and
-    # attached as a second virtio-blk disk. Mounting by label (not
-    # /dev/vdb) keeps /home on the right device even if the disk
-    # order ever shifts. nofail plus a device timeout keeps a boot
-    # without the volume (a demo VM, a pre-#14 image) moving instead
-    # of stalling the default 90s.
-    #
-    # The timeout must survive a slow udev coldplug: the device job
-    # for /dev/disk/by-label/msks-home is enqueued at sysinit start,
-    # before udevd itself runs, and udevd must probe the volume for
-    # its label before the clock expires — else home.mount fails for
-    # the whole boot (nofail keeps the boot moving; it never retries
-    # the mount). A first boot from a fresh overlay is the slow
-    # case: every root read is a copy-on-write miss against the
-    # backing image, and module loading and journal writes compete
-    # with the coldplug for the same I/O. 30s covers it; a boot
-    # without the volume pays the same 30s once, in parallel with
-    # the rest of boot, and continues.
-    printf '%s\n' \
-      '# msks: root comes from the kernel cmdline; no swap.' \
-      '# /home is the second persistent disk (#14), labeled msks-home.' \
-      'LABEL=msks-home /home ext4 defaults,nofail,x-systemd.device-timeout=30s 0 2' \
-      > $out/etc/fstab
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        ExecCondition=/bin/sh -c 'ip -o link show 2>/dev/null | grep -qv "lo:"'
+        ExecStart=/bin/sh -c 'for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do ip -4 -o addr show scope global 2>/dev/null | grep -q . && exit 0; sleep 1; done'
+        WAITUNIT
+        printf '%s\n' \
+          '[Unit]' \
+          'Wants=msks-wait-address.service' \
+          'After=msks-wait-address.service' \
+          > $out/etc/systemd/system/ssh.service.d/10-after-address.conf
 
-    printf '%s\n' \
-      '# The vsock console transport: the module name on Debian' \
-      '# is vmw_vsock_virtio_transport (#21).' \
-      'vmw_vsock_virtio_transport' \
-      > $out/etc/modules-load.d/msks-vsock.conf
+        # cloud-init (#41): the workspace's cidata seed is NoCloud's own
+        # format. Two dropins pin the behavior the msks contract needs:
+        # the datasource list stops cloud-init probing EC2/OpenStack/
+        # network sources (the seed disk answers immediately), and
+        # network rendering stays off — the overlay's networkd unit owns
+        # whatever NIC appears, taking its address from the daemon's own
+        # DHCP (#52), so cloud-init must not fight it with netplan.
+        printf '%s\n' \
+          '# msks: the cidata seed disk is the only datasource.' \
+          'datasource_list: [ NoCloud, None ]' \
+          > $out/etc/cloud/cloud.cfg.d/99-msks-datasources.cfg
+        printf '%s\n' \
+          '# msks: networkd (see 80-msks-egress.network) owns the NIC.' \
+          'network: {config: disabled}' \
+          > $out/etc/cloud/cloud.cfg.d/99-msks-network.cfg
+        # cloud-init creates no accounts (#171): the image ships the
+        # msks workspace user (#63), and the identity seed makes its
+        # home. The genericcloud image's own default account — the
+        # 'debian' user with /home/debian and a passwordless-sudo
+        # sudoers entry — never comes into being. The dropin must keep
+        # lexicographically sorting at (or after) the tail of
+        # cloud.cfg.d: cloud-init merges the directory with the
+        # first-defined `users` winning, so a later-sorted dropin
+        # defining users would take precedence.
+        printf '%s\n' \
+          '# msks (#171): the image ships the msks user (#63);' \
+          '# cloud-init creates no accounts and the identity seed' \
+          '# makes the home.' \
+          'users: []' \
+          > $out/etc/cloud/cloud.cfg.d/99-msks-users.cfg
 
-    # Egress networking (#52): a workspace created with egress boots
-    # with a virtio-net NIC; everything else presents none. The
-    # module loads at boot either way (udev would autoload it on
-    # device discovery too), so networkd never waits on a cold probe.
-    printf '%s\n' \
-      '# The virtio-net driver for egress NICs (#52).' \
-      'virtio_net' \
-      > $out/etc/modules-load.d/msks-net.conf
+        # The image's fstab mounts the root filesystem by the PARTUUID of
+        # the cloud image's partition table; direct kernel boot presents
+        # a bare ext4, so those device jobs can never start and systemd
+        # stalls at boot. The kernel cmdline already names the root
+        # device; systemd mounts the pseudo-filesystems itself.
+        #
+        # /home is the workspace's second persistent disk (#14): the
+        # host-side ext4 volume, labeled msks-home at mkfs time and
+        # attached as a second virtio-blk disk. Mounting by label (not
+        # /dev/vdb) keeps /home on the right device even if the disk
+        # order ever shifts. nofail plus a device timeout keeps a boot
+        # without the volume (a demo VM, a pre-#14 image) moving instead
+        # of stalling the default 90s.
+        #
+        # The timeout must survive a slow udev coldplug: the device job
+        # for /dev/disk/by-label/msks-home is enqueued at sysinit start,
+        # before udevd itself runs, and udevd must probe the volume for
+        # its label before the clock expires — else home.mount fails for
+        # the whole boot (nofail keeps the boot moving; it never retries
+        # the mount). A first boot from a fresh overlay is the slow
+        # case: every root read is a copy-on-write miss against the
+        # backing image, and module loading and journal writes compete
+        # with the coldplug for the same I/O. 30s covers it; a boot
+        # without the volume pays the same 30s once, in parallel with
+        # the rest of boot, and continues.
+        printf '%s\n' \
+          '# msks: root comes from the kernel cmdline; no swap.' \
+          '# /home is the second persistent disk (#14), labeled msks-home.' \
+          'LABEL=msks-home /home ext4 defaults,nofail,x-systemd.device-timeout=30s 0 2' \
+          > $out/etc/fstab
 
-    # The nested-msks stack (#82): a workspace running msksd needs
-    # the same kernel modules a deployment host loads — tun for the
-    # per-inner-workspace taps, the nftables/NAT set the daemon's
-    # rulesets name — so a workspace can host workspaces itself.
-    # KVM does NOT ride this file: which flavor loads depends on the
-    # host CPU, and a modules-load.d entry that fails leaves
-    # systemd-modules-load.service failed (a degraded boot) — the
-    # oneshot service below picks the flavor and swallows a host
-    # without nested virt.
-    printf '%s\n' \
-      '# msks: the inner-egress stack (#82); KVM loads via its unit.' \
-      'tun' \
-      'nf_tables' \
-      'nft_chain_nat' \
-      'nft_masq' \
-      'nft_ct' \
-      'nf_nat' \
-      'nf_conntrack' \
-      > $out/etc/modules-load.d/msks-egress.conf
+        printf '%s\n' \
+          '# The vsock console transport: the module name on Debian' \
+          '# is vmw_vsock_virtio_transport (#21).' \
+          'vmw_vsock_virtio_transport' \
+          > $out/etc/modules-load.d/msks-vsock.conf
 
-    # The nested-KVM module for inner workspace VMs (#82): which
-    # flavor loads depends on the host CPU, so a shell picks, and a workspace
-    # booted where vmx does not reach (a host without nested virt)
-    # still boots — the unit stays active (exited) and /dev/kvm
-    # simply never appears. udev makes the node when a module
-    # registers; root (the only inner-daemon operator today) opens
-    # it regardless of the kvm group's mode bits.
-    printf '%s\n' \
-      '[Unit]' \
-      'Description=msks nested-KVM module (inner workspace VMs, #82)' \
-      'After=systemd-modules-load.service' \
-      ''' \
-      '[Service]' \
-      'Type=oneshot' \
-      'ExecStart=/bin/sh -c "modprobe kvm-intel || modprobe kvm-amd || true"' \
-      'RemainAfterExit=yes' \
-      ''' \
-      '[Install]' \
-      'WantedBy=multi-user.target' \
-      > $out/etc/systemd/system/msks-kvm.service
-    ln -s ../msks-kvm.service \
-      $out/etc/systemd/system/multi-user.target.wants/msks-kvm.service
+        # Egress networking (#52): a workspace created with egress boots
+        # with a virtio-net NIC; everything else presents none. The
+        # module loads at boot either way (udev would autoload it on
+        # device discovery too), so networkd never waits on a cold probe.
+        printf '%s\n' \
+          '# The virtio-net driver for egress NICs (#52).' \
+          'virtio_net' \
+          > $out/etc/modules-load.d/msks-net.conf
 
-    # The DHCP client for an egress NIC (#52): networkd takes an
-    # address and the daemon's resolver over DHCP on whatever NIC
-    # appears. With no NIC (a workspace without egress) nothing
-    # matches the unit and networkd stays idle — the same image
-    # serves both postures.
-    printf '%s\n' \
-      '[Match]' \
-      'Name=en* eth*' \
-      "" \
-      '[Network]' \
-      'DHCP=yes' \
-      > $out/etc/systemd/network/80-msks-egress.network
+        # The nested-msks stack (#82): a workspace running msksd needs
+        # the same kernel modules a deployment host loads — tun for the
+        # per-inner-workspace taps, the nftables/NAT set the daemon's
+        # rulesets name — so a workspace can host workspaces itself.
+        # KVM does NOT ride this file: which flavor loads depends on the
+        # host CPU, and a modules-load.d entry that fails leaves
+        # systemd-modules-load.service failed (a degraded boot) — the
+        # oneshot service below picks the flavor and swallows a host
+        # without nested virt.
+        printf '%s\n' \
+          '# msks: the inner-egress stack (#82); KVM loads via its unit.' \
+          'tun' \
+          'nf_tables' \
+          'nft_chain_nat' \
+          'nft_masq' \
+          'nft_ct' \
+          'nf_nat' \
+          'nf_conntrack' \
+          > $out/etc/modules-load.d/msks-egress.conf
 
-    # networkd must not race udev's coldplug rename (eth0 to ens3):
-    # this boot reaches multi-user immediately after sysinit, and a
-    # networkd that enumerates while udevd is still renaming the NIC
-    # never manages the renamed link — DHCP never runs, and
-    # networkd sits in activating forever. Ordering after the
-    # coldplug makes the interface name final before the first
-    # enumeration; the .network above matches either name anyway.
-    mkdir -p $out/etc/systemd/system/systemd-networkd.service.d
-    printf '%s\n' \
-      '[Unit]' \
-      'After=systemd-udev-trigger.service systemd-udevd.service' \
-      > $out/etc/systemd/system/systemd-networkd.service.d/10-after-udev-coldplug.conf
+        # The nested-KVM module for inner workspace VMs (#82): which
+        # flavor loads depends on the host CPU, so a shell picks, and a workspace
+        # booted where vmx does not reach (a host without nested virt)
+        # still boots — the unit stays active (exited) and /dev/kvm
+        # simply never appears. udev makes the node when a module
+        # registers; root (the only inner-daemon operator today) opens
+        # it regardless of the kvm group's mode bits.
+        printf '%s\n' \
+          '[Unit]' \
+          'Description=msks nested-KVM module (inner workspace VMs, #82)' \
+          'After=systemd-modules-load.service' \
+          ''' \
+          '[Service]' \
+          'Type=oneshot' \
+          'ExecStart=/bin/sh -c "modprobe kvm-intel || modprobe kvm-amd || true"' \
+          'RemainAfterExit=yes' \
+          ''' \
+          '[Install]' \
+          'WantedBy=multi-user.target' \
+          > $out/etc/systemd/system/msks-kvm.service
+        ln -s ../msks-kvm.service \
+          $out/etc/systemd/system/multi-user.target.wants/msks-kvm.service
 
-    # networkd + resolved stay enabled for egress workspaces (#52):
-    # DHCP configures the NIC and resolved serves the offered
-    # resolver at 127.0.0.53. The boot-diet lines that dropped these
-    # wants symlinks are gone (they predate NICs); wait-online stays
-    # dropped — nothing orders on network-online.target.
-    ln -s /lib/systemd/system/systemd-networkd.service \
-      $out/etc/systemd/system/multi-user.target.wants/systemd-networkd.service
-    ln -s /lib/systemd/system/systemd-networkd.socket \
-      $out/etc/systemd/system/sockets.target.wants/systemd-networkd.socket
-    ln -s /lib/systemd/system/systemd-resolved.service \
-      $out/etc/systemd/system/sysinit.target.wants/systemd-resolved.service
-    # resolved's stub: the symlink may exist in the source image, but
-    # an image edited to a static resolv.conf would silently ignore
-    # the DHCP-offered resolver.
-    rm -f $out/etc/resolv.conf
-    ln -s /run/systemd/resolve/stub-resolv.conf $out/etc/resolv.conf
+        # The DHCP client for an egress NIC (#52): networkd takes an
+        # address and the daemon's resolver over DHCP on whatever NIC
+        # appears. With no NIC (a workspace without egress) nothing
+        # matches the unit and networkd stays idle — the same image
+        # serves both postures.
+        printf '%s\n' \
+          '[Match]' \
+          'Name=en* eth*' \
+          "" \
+          '[Network]' \
+          'DHCP=yes' \
+          > $out/etc/systemd/network/80-msks-egress.network
 
-    # Escape the default basic.target ordering (#37): the console
-    # starts as soon as the vsock module is loaded, not after the
-    # whole boot. A too-early start self-heals through Restart=
-    # always, and StartLimitIntervalSec=0 keeps systemd's default
-    # burst limit from ending those retries.
-    #
-    # The helper (#63) owns the listener the socat line used to: it
-    # accepts host-originated connections only, reads the identity
-    # prelude (user, window size), and execs the requested user's
-    # login shell on a fresh pty sized to the client's tty (#61's
-    # 0x0 fix). A fresh pty slave's default termios — ECHO, ICANON,
-    # ISIG, OPOST/ONLCR — is what programs that read stdin directly
-    # get, and bash's readline takes over editing while it is active;
-    # the helper sends TERM=xterm because systemd hands services
-    # TERM=dumb, which turns readline off (#61).
-    printf '%s\n' \
-      '[Unit]' \
-      'Description=msks vsock console (one negotiated shell per connection)' \
-      'Documentation=https://github.com/mcdonc/msks' \
-      'ConditionPathExists=/dev/vsock' \
-      'After=systemd-modules-load.service dev-pts.mount' \
-      'DefaultDependencies=no' \
-      'StartLimitIntervalSec=0' \
-      ''' \
-      '[Service]' \
-      'ExecStart=/usr/bin/msks-console-helper ${toString vsockShellPort}' \
-      'Restart=always' \
-      'RestartSec=0.1' \
-      'StandardInput=null' \
-      ''' \
-      '[Install]' \
-      'WantedBy=multi-user.target' \
-      > $out/etc/systemd/system/msks-console.service
-    ln -s ../msks-console.service \
-      $out/etc/systemd/system/multi-user.target.wants/msks-console.service
+        # networkd must not race udev's coldplug rename (eth0 to ens3):
+        # this boot reaches multi-user immediately after sysinit, and a
+        # networkd that enumerates while udevd is still renaming the NIC
+        # never manages the renamed link — DHCP never runs, and
+        # networkd sits in activating forever. Ordering after the
+        # coldplug makes the interface name final before the first
+        # enumeration; the .network above matches either name anyway.
+        mkdir -p $out/etc/systemd/system/systemd-networkd.service.d
+        printf '%s\n' \
+          '[Unit]' \
+          'After=systemd-udev-trigger.service systemd-udevd.service' \
+          > $out/etc/systemd/system/systemd-networkd.service.d/10-after-udev-coldplug.conf
 
-    # grub-common records successful boots into /boot — harmless
-    # under the #14 overlay, but a direct-boot VM has no grub to
-    # inform anyway.
-    ln -s /dev/null $out/etc/systemd/system/grub-common.service
+        # networkd + resolved stay enabled for egress workspaces (#52):
+        # DHCP configures the NIC and resolved serves the offered
+        # resolver at 127.0.0.53. The boot-diet lines that dropped these
+        # wants symlinks are gone (they predate NICs); wait-online stays
+        # dropped — nothing orders on network-online.target.
+        ln -s /lib/systemd/system/systemd-networkd.service \
+          $out/etc/systemd/system/multi-user.target.wants/systemd-networkd.service
+        ln -s /lib/systemd/system/systemd-networkd.socket \
+          $out/etc/systemd/system/sockets.target.wants/systemd-networkd.socket
+        ln -s /lib/systemd/system/systemd-resolved.service \
+          $out/etc/systemd/system/sysinit.target.wants/systemd-resolved.service
+        # resolved's stub: the symlink may exist in the source image, but
+        # an image edited to a static resolv.conf would silently ignore
+        # the DHCP-offered resolver.
+        rm -f $out/etc/resolv.conf
+        ln -s /run/systemd/resolve/stub-resolv.conf $out/etc/resolv.conf
 
-    # The first-boot wizard (locale/timezone prompts) has nothing to
-    # ask: the image is already provisioned, and with the root
-    # writable (#14) an empty machine-id flips ConditionFirstBoot on
-    # and the wizard stalls sysinit.target — no getty ever starts.
-    # Masked, systemd generates each workspace's machine-id on its
-    # own overlay instead.
-    ln -s /dev/null $out/etc/systemd/system/systemd-firstboot.service
+        # Escape the default basic.target ordering (#37): the console
+        # starts as soon as the vsock module is loaded, not after the
+        # whole boot. A too-early start self-heals through Restart=
+        # always, and StartLimitIntervalSec=0 keeps systemd's default
+        # burst limit from ending those retries.
+        #
+        # The helper (#63) owns the listener the socat line used to: it
+        # accepts host-originated connections only, reads the identity
+        # prelude (user, window size), and execs the requested user's
+        # login shell on a fresh pty sized to the client's tty (#61's
+        # 0x0 fix). A fresh pty slave's default termios — ECHO, ICANON,
+        # ISIG, OPOST/ONLCR — is what programs that read stdin directly
+        # get, and bash's readline takes over editing while it is active;
+        # the helper sends TERM=xterm because systemd hands services
+        # TERM=dumb, which turns readline off (#61).
+        printf '%s\n' \
+          '[Unit]' \
+          'Description=msks vsock console (one negotiated shell per connection)' \
+          'Documentation=https://github.com/mcdonc/msks' \
+          'ConditionPathExists=/dev/vsock' \
+          'After=systemd-modules-load.service dev-pts.mount' \
+          'DefaultDependencies=no' \
+          'StartLimitIntervalSec=0' \
+          ''' \
+          '[Service]' \
+          'ExecStart=/usr/bin/msks-console-helper ${toString vsockShellPort}' \
+          'Restart=always' \
+          'RestartSec=0.1' \
+          'StandardInput=null' \
+          ''' \
+          '[Install]' \
+          'WantedBy=multi-user.target' \
+          > $out/etc/systemd/system/msks-console.service
+        ln -s ../msks-console.service \
+          $out/etc/systemd/system/multi-user.target.wants/msks-console.service
 
-    # AppArmor profile loading costs ~0.7s of every boot (#37) and
-    # confines nothing in a pristine workspace VM.
-    ln -s /dev/null $out/etc/systemd/system/apparmor.service
+        # grub-common records successful boots into /boot — harmless
+        # under the #14 overlay, but a direct-boot VM has no grub to
+        # inform anyway.
+        ln -s /dev/null $out/etc/systemd/system/grub-common.service
 
-    # The serial console is the guest's debug channel: autologin root
-    # on ttyS0 (the vsock console is the supported interactive path).
-    printf '%s\n' \
-      '[Service]' \
-      'ExecStart=' \
-      'ExecStart=-/sbin/agetty --autologin root --noclear %I $TERM' \
-      > $out/etc/systemd/system/serial-getty@ttyS0.service.d/autologin.conf
+        # The first-boot wizard (locale/timezone prompts) has nothing to
+        # ask: the image is already provisioned, and with the root
+        # writable (#14) an empty machine-id flips ConditionFirstBoot on
+        # and the wizard stalls sysinit.target — no getty ever starts.
+        # Masked, systemd generates each workspace's machine-id on its
+        # own overlay instead.
+        ln -s /dev/null $out/etc/systemd/system/systemd-firstboot.service
 
-  '';
+        # AppArmor profile loading costs ~0.7s of every boot (#37) and
+        # confines nothing in a pristine workspace VM.
+        ln -s /dev/null $out/etc/systemd/system/apparmor.service
+
+        # The serial console is the guest's debug channel: autologin root
+        # on ttyS0 (the vsock console is the supported interactive path).
+        printf '%s\n' \
+          '[Service]' \
+          'ExecStart=' \
+          'ExecStart=-/sbin/agetty --autologin root --noclear %I $TERM' \
+          > $out/etc/systemd/system/serial-getty@ttyS0.service.d/autologin.conf
+
+      '';
 
   # Parse sfdisk --json: print the byte offset of the Linux root
   # partition. A separate file (not inline) because nix ''-string

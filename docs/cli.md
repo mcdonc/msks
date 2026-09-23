@@ -824,7 +824,7 @@ workspace (`~/.local/share/msks/<id>/identity`, or that root under
 The workspace's LLM proxy credential (#259): the bearer token the
 workspace's own LLM clients present to the daemon's proxy on its
 tap (`docs/llm.md`). The seed already planted it inside the
-workspace — `/etc/msks/llm.token` and the `OPENAI_*` exports — so
+workspace — `/etc/msks/llm.token` and the `MSKSWS_*` exports — so
 this fetch is for the operator's side (a tool configured outside
 the workspace) and for rotation:
 

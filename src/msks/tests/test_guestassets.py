@@ -226,3 +226,45 @@ def test_smoke_env_without_assets(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_smoke_env_without_kvm(monkeypatch: pytest.MonkeyPatch) -> None:
     _force_kvm(monkeypatch, False)
     assert guestassets.smoke_env_defaults(_assets()) == {}
+
+
+# --- the image-baked agent toolchain (#266) ----------------------------------
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+
+
+def test_the_image_ships_the_pi_extension() -> None:
+    """The model-discovery extension rides the guest image (#266):
+    the file exists beside the image build, reads the MSKSWS_*
+    pair the seed exports (never a vendor-shaped name), resolves
+    its credential per request from the seeded token file, and
+    carries the klangk behavior — provider registration, the
+    embed/rerank filter, the quiet no-op when the environment
+    names no proxy."""
+    ext = (REPO_ROOT / "nix" / "guest-pi-extension.ts").read_text()
+    assert "process.env.MSKSWS_BASE_URL" in ext
+    assert "process.env.MSKSWS_API_KEY" in ext
+    assert "OPENAI_API_KEY" not in ext
+    assert 'apiKey: "!cat /etc/msks/llm.token"' in ext
+    assert 'pi.registerProvider("msks"' in ext
+    assert '"embed"' in ext and '"rerank"' in ext
+
+
+def test_the_image_bakes_the_agent_toolchain() -> None:
+    """The toolchain pins and their staging (#266): the build fetches
+    the pinned Node tarball and the pinned pi package by digest,
+    builds pi offline against its shrinkwrap, and stages both into
+    the overlay's /usr/local with the extension planted for root
+    and in the skeleton every seed-provisioned account copies."""
+    build = (REPO_ROOT / "nix" / "guest-debian.nix").read_text()
+    assert (
+        "https://nodejs.org/dist/v22.23.3/"
+        "node-v22.23.3-linux-x64.tar.gz" in build.replace('"\n      + "', "")
+    )
+    assert "pi-coding-agent-0.87.1.tgz" in build
+    # A real npmDepsHash, not the placeholder the two-step prefetch
+    # starts from.
+    assert "AAAAAAAAAAAAAAAAAAAAAAAA" not in build
+    assert "$out/etc/skel/.pi/agent/extensions/llm-models.ts" in build
+    assert "$out/root/.pi/agent/extensions/llm-models.ts" in build
+    assert "$out/usr/local/bin/pi" in build

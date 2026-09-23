@@ -195,6 +195,19 @@ relocates it); `scripts/build-guest.sh` and
 `nix/guest-debian.nix` document every step and are the reference for
 what an image build does.
 
+The Debian image bakes the agent toolchain (#266): digest-pinned
+Node and the pinned pi coding agent land under `/usr/local`, and
+the pi model-discovery extension lands in `/etc/skel` and root's
+home (`docs/llm.md` describes what the extension does at pi
+startup). The pins — `agentNodeTarball`, `piTarball`, and
+`npmDepsHash` in `nix/guest-debian.nix` — move with an image
+rebuild, and the build stays pure derivations: pi's dependency
+closure is prefetched against its shrinkwrap (with the five
+integrity gaps the published lock leaves, closed by hash) and
+installed offline. A workspace that already booted keeps the
+toolchain it booted with; a rebuilt image serves the new pins to
+the next workspace.
+
 ```bash
 msks-build-guest nixos
 ```
