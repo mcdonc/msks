@@ -1,6 +1,7 @@
 """API-level tests over ASGITransport with a stubbed microvm seam."""
 
 import asyncio
+import json
 from pathlib import Path
 
 import httpx
@@ -2354,3 +2355,225 @@ async def test_concurrent_mints_leave_one_intact_manifest(client) -> None:
     ).read_text()
     assert "MSKS_WS_SEC_ALPHA" in manifest
     assert "MSKS_WS_SEC_BETA" in manifest
+
+
+class RefreshRecorder:
+    """The interceptor surface the secret routes touch, recorded."""
+
+    def __init__(self) -> None:
+        self.refreshes: list[str] = []
+
+    async def refresh(self, workspace_id: str) -> None:
+        self.refreshes.append(workspace_id)
+
+    async def on_detach(self, workspace_id: str) -> None:  # pragma: no cover
+        raise AssertionError("no attachment exists in the api fixture")
+
+    async def stop(self) -> None:  # pragma: no cover
+        raise AssertionError("lifespan teardown replaces the recorder")
+
+
+async def test_mint_publishes_and_refreshes_the_interceptor(client) -> None:
+    """The lifecycle events reach the stream (#199): mint announces,
+    and the armed state re-evaluates — the workspace is not running
+    here, so the refresh is the no-op half."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    recorder = RefreshRecorder()
+    real = app.state.interceptor
+    app.state.interceptor = recorder
+    queue = app.state.hub.subscribe()
+    try:
+        response = await http.post(
+            "/api/v1/secrets", json=mint_body(), headers=auth()
+        )
+        assert response.status_code == 201
+        await http.delete(
+            f"/api/v1/secrets/{response.json()['id']}", headers=auth()
+        )
+    finally:
+        app.state.interceptor = real
+    events = []
+    while not queue.empty():
+        events.append(await queue.get())
+    kinds = [json.loads(event)["event"] for event in events]
+    assert kinds == ["secret.mint", "secret.revoke"]
+    assert recorder.refreshes == ["ws-sec", "ws-sec"]
+
+
+async def test_renew_refreshes_the_interceptor(client) -> None:
+    """A renew can revive a workspace's last live placeholder: the
+    armed state re-evaluates (#199)."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    row = (
+        await http.post("/api/v1/secrets", json=mint_body(), headers=auth())
+    ).json()
+    recorder = RefreshRecorder()
+    real = app.state.interceptor
+    app.state.interceptor = recorder
+    try:
+        renewed = await http.post(
+            f"/api/v1/secrets/{row['id']}/renew",
+            json={"ttl_s": 600},
+            headers=auth(),
+        )
+    finally:
+        app.state.interceptor = real
+    assert renewed.status_code == 200
+    assert recorder.refreshes == ["ws-sec"]
+
+
+async def test_a_mint_that_cannot_arm_rolls_back_whole(client) -> None:
+    """Arming failure answers 503 with nothing left behind: the row,
+    the store value, and the manifest entry all go (#260 review) —
+    a live placeholder that cannot redirect would leak its raw
+    sentinel toward the wire."""
+    http, app, _stub = client
+    await seed_workspace(app)
+
+    class RefusingInterceptor:
+        async def refresh(self, workspace_id: str) -> None:
+            raise RuntimeError("bind failed")
+
+        async def on_detach(self, ws):  # pragma: no cover
+            raise AssertionError
+
+        async def stop(self):  # pragma: no cover
+            raise AssertionError
+
+    real = app.state.interceptor
+    app.state.interceptor = RefusingInterceptor()
+    queue = app.state.hub.subscribe()
+    try:
+        response = await http.post(
+            "/api/v1/secrets", json=mint_body(), headers=auth()
+        )
+    finally:
+        app.state.interceptor = real
+    assert response.status_code == 503
+    assert "could not arm" in response.json()["detail"]
+    listing = await http.get("/api/v1/secrets", headers=auth())
+    assert listing.json() == []
+    # A rolled-back mint never existed: no audit row, no event.
+    audit = await http.get("/api/v1/secrets/audit", headers=auth())
+    assert audit.json() == []
+    events = []
+    while not queue.empty():
+        events.append(json.loads(await queue.get()))
+    assert events == []
+    root = app.state.settings.secret_store.root
+    assert (
+        "MSKS_WS_SEC_GITHUB_API" not in (root / "secretspec.toml").read_text()
+    )
+    assert not (root / "msks" / "default" / "MSKS_WS_SEC_GITHUB_API").exists()
+
+
+async def test_revoke_survives_a_failing_refresh(client) -> None:
+    """The revoke stands when the armed-state re-evaluation fails:
+    the row is already deleted, so nothing swaps either way — the
+    stand-down retries on the next placeholder event. (A renew in
+    the same position rolls back instead; its own test pins that.)"""
+    http, app, _stub = client
+    await seed_workspace(app)
+    row = (
+        await http.post("/api/v1/secrets", json=mint_body(), headers=auth())
+    ).json()
+
+    class RefusingInterceptor:
+        async def refresh(self, workspace_id: str) -> None:
+            raise RuntimeError("nft down")
+
+        async def on_detach(self, ws):  # pragma: no cover
+            raise AssertionError
+
+        async def stop(self):  # pragma: no cover
+            raise AssertionError
+
+    real = app.state.interceptor
+    app.state.interceptor = RefusingInterceptor()
+    try:
+        revoked = await http.delete(
+            f"/api/v1/secrets/{row['id']}", headers=auth()
+        )
+    finally:
+        app.state.interceptor = real
+    assert revoked.status_code == 200
+    listing = await http.get("/api/v1/secrets", headers=auth())
+    assert listing.json() == []
+
+
+async def test_a_renew_that_cannot_arm_restores_the_deadline(client) -> None:
+    """The renew rolls back like a mint does (#260 review, round 5):
+    the prior deadline returns, so no live placeholder stands
+    without its redirect."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    row = (
+        await http.post("/api/v1/secrets", json=mint_body(), headers=auth())
+    ).json()
+    prior = row["expires_at"]  # unbounded: the mint sent no ttl
+    assert prior is None
+
+    class RefusingInterceptor:
+        async def refresh(self, workspace_id: str) -> None:
+            raise RuntimeError("bind failed")
+
+        async def on_detach(self, ws):  # pragma: no cover
+            raise AssertionError
+
+        async def stop(self):  # pragma: no cover
+            raise AssertionError
+
+    real = app.state.interceptor
+    app.state.interceptor = RefusingInterceptor()
+    try:
+        response = await http.post(
+            f"/api/v1/secrets/{row['id']}/renew",
+            json={"ttl_s": 600},
+            headers=auth(),
+        )
+    finally:
+        app.state.interceptor = real
+    assert response.status_code == 503
+    assert "could not arm" in response.json()["detail"]
+    restored = await app.state.model.get_placeholder(row["id"])
+    assert restored["expires_at"] is None
+
+
+async def test_a_renew_rollback_restores_a_real_deadline(client) -> None:
+    """The restore path with a datetime deadline, not just the
+    unbounded None."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    row = (
+        await http.post(
+            "/api/v1/secrets", json=mint_body(ttl_s=3600), headers=auth()
+        )
+    ).json()
+    assert row["expires_at"] is not None
+
+    class RefusingInterceptor:
+        async def refresh(self, workspace_id: str) -> None:
+            raise RuntimeError("bind failed")
+
+        async def on_detach(self, ws):  # pragma: no cover
+            raise AssertionError
+
+        async def stop(self):  # pragma: no cover
+            raise AssertionError
+
+    real = app.state.interceptor
+    app.state.interceptor = RefusingInterceptor()
+    try:
+        response = await http.post(
+            f"/api/v1/secrets/{row['id']}/renew",
+            json={"ttl_s": 600},
+            headers=auth(),
+        )
+    finally:
+        app.state.interceptor = real
+    assert response.status_code == 503
+    restored = await app.state.model.get_placeholder(row["id"])
+    assert restored["expires_at"] is not None
+    assert restored["expires_at"] < row["expires_at"]

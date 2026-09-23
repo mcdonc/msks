@@ -1,5 +1,6 @@
 """The nftables rulesets and their application (#52)."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -74,18 +75,49 @@ def test_vm_ruleset_scopes_the_tap() -> None:
     ) < ingress.index('iifname "msks-tap" drop')
 
 
-async def test_apply_base_and_install_vm(tools) -> None:
+async def test_apply_base_and_install_vm(tools, monkeypatch) -> None:
     settings, log = tools
     await nft.apply_base(settings)
+    # The stub answers success for everything by default, so the
+    # probe must be told the table is absent for a fresh install.
+    monkeypatch.setenv(NFT_FAIL_AT, "list table")
     await nft.install_vm(
         settings, "ws-a", "msks-tap", "172.31.0.1", "172.31.0.2"
     )
-    # install converges: the old table drops before the fresh one.
     assert log_lines(log) == [
         "-f -",
-        f"delete table inet {table_name('ws-a')}",
+        f"list table inet {table_name('ws-a')}",
         "-f -",
     ]
+    # A fresh install applies the ruleset alone.
+    stdin = Path(str(log) + ".stdin").read_text()
+    assert f"table inet {table_name('ws-a')} {{" in stdin
+    assert "delete table" not in stdin
+
+
+async def test_install_vm_swaps_atomically(tools) -> None:
+    """A table that exists is replaced in ONE nft transaction
+    (#199): the delete and the re-add ride the same ``-f`` file, so
+    no guest SYN slips between them past the redirect."""
+    settings, log = tools
+    await nft.install_vm(
+        settings, "ws-a", "msks-tap", "172.31.0.1", "172.31.0.2"
+    )
+    assert log_lines(log) == [
+        f"list table inet {table_name('ws-a')}",
+        "-f -",
+    ]
+    stdin = Path(str(log) + ".stdin").read_text()
+    applies = [
+        block
+        for block in stdin.split("--- -f -\n")
+        if block.startswith("delete table")
+    ]
+    assert len(applies) == 1
+    assert applies[0].startswith(
+        f"delete table inet {table_name('ws-a')}\n"
+        f"table inet {table_name('ws-a')} {{"
+    )
 
 
 async def test_delete_vm_table_tolerates_absence(tools, monkeypatch) -> None:
@@ -128,6 +160,58 @@ async def test_install_vm_pins_the_workspace_ruleset(tools) -> None:
 
 
 # --- consent chain shapes and flow elements (#69) ----------------------------
+
+
+def test_armed_ruleset_redirects_web_egress() -> None:
+    """The armed shape (#199): a prerouting redirect of the guest's
+    TCP 80/443 to the per-tap listener, the input chain widened to
+    that listener ahead of the tap's drop, and the guest's QUIC
+    dead so nothing routes around the redirect."""
+    ruleset = nft.vm_ruleset(
+        "ws-a",
+        "msks-tap",
+        "172.31.0.1",
+        "172.31.0.2",
+        "eth0",
+        interceptor_port=8643,
+    )
+    prerouting = ruleset[
+        ruleset.index("chain intercept") : ruleset.index("chain egress")
+    ]
+    assert (
+        "type nat hook prerouting priority dstnat; policy accept;"
+        in prerouting
+    )
+    assert (
+        'iifname "msks-tap" tcp dport { 80, 443 } redirect to :8643'
+        in prerouting
+    )
+    egress = ruleset[
+        ruleset.index("chain egress") : ruleset.index("chain ingress")
+    ]
+    assert 'iifname "msks-tap" udp dport 443 drop' in egress
+    assert egress.index("udp dport 443 drop") < egress.index(
+        'oifname "eth0" accept'
+    )
+    ingress = ruleset[ruleset.index("chain ingress") :]
+    assert (
+        'iifname "msks-tap" ip saddr 172.31.0.1 ip daddr 172.31.0.2 '
+        "tcp dport 8643 accept" in ingress
+    )
+    assert ingress.index("tcp dport 8643 accept") < ingress.index(
+        'iifname "msks-tap" drop'
+    )
+
+
+def test_disarmed_ruleset_carries_no_interception() -> None:
+    """The default shape keeps #52's posture: no redirect, no input
+    widening, no QUIC drop."""
+    ruleset = nft.vm_ruleset(
+        "ws-a", "msks-tap", "172.31.0.1", "172.31.0.2", "eth0"
+    )
+    assert "redirect" not in ruleset
+    assert "8643" not in ruleset
+    assert "udp dport 443" not in ruleset
 
 
 def policy(mode: str, specs=()):
@@ -277,3 +361,137 @@ async def test_install_vm_passes_the_policy_shape(tools) -> None:
     applied = log.with_name(log.name + ".stdin").read_text()
     assert "queue num 4242" in applied
     assert "allows_any" in applied
+
+
+async def test_table_exists_tolerates_a_missing_tool(tmp_path) -> None:
+    """The probe reports no table when the tool is absent, so the
+    apply below is the call that names the missing binary."""
+    settings = Settings(net=NetSettings(nft_tool=str(tmp_path / "absent")))
+    assert await nft.table_exists(settings, "ws-a") is False
+
+
+# --- consent elements across a swap (#260 review) ---------------------------
+
+
+def json_set(name: str, elems: list) -> bytes:
+    import json as json_mod
+
+    return json_mod.dumps(
+        {"nftables": [{"set": {"name": name, "elem": elems}}]}
+    )
+
+
+def test_element_scopes_reads_both_set_kinds() -> None:
+    """The real `nft -j` shapes: concatenations arrive as ``concat``
+    objects with ``expires`` counting down — ``timeout`` is the
+    constant the element was added with, and reading it would renew
+    every verdict on each swap. A bare list renders the same; an
+    unrecognized object is skipped (fail-closed)."""
+    payload = json_set(
+        "allows_port",
+        [
+            {
+                "elem": {
+                    "val": {"concat": ["10.1.2.3", 443]},
+                    "timeout": 300,
+                    "expires": 89,
+                }
+            },
+            # A bare list (the defensive shape) falls back to
+            # ``timeout`` when ``expires`` is absent.
+            {"elem": {"val": ["10.3.4.5", 853], "timeout": 12}},
+            {"elem": {"val": "10.9.9.9"}},
+            {"elem": {"val": {"weird": 1}}},
+        ],
+    )
+    assert nft.element_scopes(payload) == [
+        ("10.1.2.3 . 443", 89),
+        ("10.3.4.5 . 853", 12),
+        ("10.9.9.9", None),
+    ]
+
+
+def test_element_pairs_read_permanent_elements() -> None:
+    """Permanent elements (added without a timeout) dump as bare
+    values — a scalar plain, a concatenation still as a ``concat``
+    object with NO wrapper (#260 review, round 5 re-probed the
+    shapes; round 4's fixture certified one nft never emits)."""
+    payload = json_set(
+        "allows_any", ["10.9.9.9", {"concat": ["10.7.7.7", 53]}]
+    )
+    assert nft.element_scopes(payload) == [
+        ("10.9.9.9", None),
+        ("10.7.7.7 . 53", None),
+    ]
+
+
+def test_element_scopes_tolerates_garbage() -> None:
+    assert nft.element_scopes(b"not json") == []
+    assert nft.element_scopes(b"{}") == []
+    assert nft.element_scopes(json_set("x", [{"elem": {"timeout": 5}}])) == []
+    # A non-list elem block, and bare non-string items: skipped,
+    # never raised (#260 review, round 4).
+    assert (
+        nft.element_scopes(
+            json.dumps({"nftables": [{"set": {"elem": {"val": 1}}}]}).encode()
+        )
+        == []
+    )
+    assert nft.element_scopes(json_set("x", [7])) == []
+
+
+def test_element_statements_render_the_restore_file() -> None:
+    body = nft.element_statements(
+        "msks-e-x",
+        {
+            "allows_any": [("10.1.2.3", 45)],
+            "rejects": [("10.2.3.4 . 25", None)],
+            "allows_port": [],
+        },
+    )
+    assert (
+        body
+        == "add element inet msks-e-x allows_any { 10.1.2.3 timeout 45s }\n"
+        "add element inet msks-e-x rejects { 10.2.3.4 . 25 }\n"
+    )
+
+
+async def test_dump_reads_the_live_sets(tools) -> None:
+    settings, log = tools
+    dumped = await nft.dump_consent_elements(settings, "ws-a")
+    assert dumped == {}  # the stub answers nothing for list set
+    assert [line.split()[5] for line in log_lines(log)] == [
+        "allows_any",
+        "allows_port",
+        "rejects",
+    ]
+
+
+async def test_dump_reads_a_real_listing(tools, monkeypatch) -> None:
+    """The dump path end to end against a JSON listing: the elements
+    parse into the snapshot restore consumes."""
+    settings, _log = tools
+
+    async def fake_json(settings, args):
+        # The JSON flag is load-bearing: without it nft answers in
+        # its human format and the parse silently empties (#260
+        # review, round 4).
+        assert args[:5] == ["-j", "list", "set", "inet", table_name("ws-a")]
+        if args[5] == "allows_any":
+            return json_set(
+                "allows_any", [{"elem": {"val": "10.1.2.3", "timeout": 60}}]
+            )
+        if args[5] == "allows_port":
+            # A set that exists but holds nothing: the dump skips it.
+            return json_set("allows_port", [])
+        return None  # the third set is absent
+
+    monkeypatch.setattr(nft, "nft_json", fake_json)
+    assert await nft.dump_consent_elements(settings, "ws-a") == {
+        "allows_any": [("10.1.2.3", 60)]
+    }
+
+
+async def test_dump_tolerates_a_missing_tool(tmp_path) -> None:
+    settings = Settings(net=NetSettings(nft_tool=str(tmp_path / "absent")))
+    assert await nft.dump_consent_elements(settings, "ws-a") == {}

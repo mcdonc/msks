@@ -250,6 +250,10 @@ class NetSettings:
     # The conntrack tool revocation uses to kill a revoked
     # destination's established flows.
     conntrack_tool: str = "conntrack"
+    # The port every per-tap interceptor listener binds (#199): one
+    # port, one address per workspace — the listeners differ by tap
+    # address, so they share the number.
+    interceptor_port: int = 8643
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> NetSettings:
@@ -530,6 +534,9 @@ def _net_settings_from_env(
             "MSKSD_EGRESS_CONSENT_TIMEOUT_S must be positive, "
             f"got {consent_timeout}"
         )
+    interceptor_port = parse_interceptor_port(
+        env, "MSKSD_INTERCEPTOR_PORT", default.interceptor_port
+    )
     return cls(
         enabled=_env(env, "MSKSD_EGRESS_ENABLED", str(default.enabled)).lower()
         == "true",
@@ -559,7 +566,19 @@ def _net_settings_from_env(
         conntrack_tool=_env(
             env, "MSKSD_CONNTRACK_TOOL", default.conntrack_tool
         ),
+        interceptor_port=interceptor_port,
     )
+
+
+def parse_interceptor_port(
+    env: Mapping[str, str], name: str, default: int
+) -> int:
+    """The interceptor listeners' shared TCP port (#199): a named
+    error outside the port range."""
+    value = _parse_int(env, name, default)
+    if not 1 <= value <= 65535:
+        raise ValueError(f"{name} must be a TCP port, got {value}")
+    return value
 
 
 def egress_mode(env: Mapping[str, str], name: str, default: str) -> str:

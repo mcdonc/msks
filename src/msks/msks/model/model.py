@@ -418,6 +418,19 @@ class Model:
             )
             return None if row is None else placeholder_dict(row)
 
+    async def workspace_placeholders(self, workspace_id: str) -> list[dict]:
+        """Every placeholder row of one workspace, insertion order —
+        the interceptor's arming read (#199): a row per active
+        placeholder arms the workspace's tap."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            rows = await session.scalars(
+                select(Placeholder)
+                .where(Placeholder.workspace_id == workspace_id)
+                .order_by(Placeholder.id)
+            )
+            return [placeholder_dict(row) for row in rows]
+
     async def placeholder_by_ref(self, ref: str) -> dict | None:
         """The placeholder owning a backend ref, None when none does.
 

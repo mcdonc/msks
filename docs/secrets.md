@@ -8,9 +8,118 @@ mint named. The real secret lives in msksd's **secret store** and in
 the daemon's memory, nowhere else.
 
 This chapter is about the store and the mint/revoke/renew commands.
-The in-flight swap itself is the egress interceptor
-([#194 decision doc](spikes/194-egress-interceptor.md); the
-implementation lands with the interceptor).
+The in-flight swap itself is the **egress interceptor** — the next
+section.
+
+## The interceptor (the swap on the wire)
+
+A workspace with at least one live placeholder — minted, unrevoked,
+and unexpired — is **armed**: the daemon redirects that workspace's
+TCP flows toward ports 80 and 443 into an in-process HTTPS/HTTP
+proxy, and the swap happens there. The proxy is
+[mitmproxy](https://mitmproxy.org), embedded in msksd — one process
+serving every armed workspace, one listener per workspace's tap,
+so a guest that spoofs another workspace's source address still
+lands on its own tap's placeholders.
+
+What each request gets:
+
+- **The swap.** The sentinel is exchanged for the real secret in
+  every request header and every query-string pair — duplicate
+  keys included — when the destination matches the placeholder's
+  allowlist (exact host or label-anchored suffix, as minted).
+  Request **bodies** are not scanned: the sentinel rides headers
+  and URLs, and an operator pasting it into a body payload sends
+  it nowhere the placeholder covers. The origin sees the real
+  secret; the workspace never holds it. On HTTPS the connection's
+  TLS handshake (its SNI) names the destination and the request's
+  Host header is pinned to that same name — a guest cannot claim
+  one name in the handshake and route by another in the header
+  (domain fronting). On plain HTTP the request is dialed by the
+  Host header's name, for the same binding.
+- **The splice.** An HTTPS destination no placeholder of this
+  workspace covers is relayed undecrypted: the origin's real
+  certificate reaches the workspace, pinned clients keep working,
+  and the sentinel rides raw. Detection of off-allowlist sightings
+  is limited to decrypted flows — this blind spot is recorded on
+  the [#194 decision doc](spikes/194-egress-interceptor.md).
+- **The sighting.** A sentinel seen toward a destination its own
+  allowlist misses — while another placeholder decrypts the flow —
+  passes through unrewritten and publishes a `secret.sighting`
+  event on the events channel. A revoked or expired sentinel
+  passes through the same way; its placeholder is gone, so there
+  is nothing to swap and nothing to report.
+- **QUIC stays down while armed.** The workspace's UDP flows toward
+  port 443 are dropped, so browsers fall back to the TCP flow the
+  redirect owns — nothing routes around the interceptor.
+
+While a workspace is armed, the redirect takes its web egress
+(TCP 80 and 443) **before** the egress-consent gates see it: the
+interceptor's own allowlist is what gates web traffic during that
+time, and a static or interactive workspace with a live
+placeholder reaches any web destination through the splice tier.
+The consent modes keep gating every other port, and the verdict
+pins and resolver-learned allows they hold in the kernel carry
+across the interceptor's arm/disarm table swaps — re-pinned with
+their remaining lifetimes in the same transaction that swaps the
+table.
+
+Each swap publishes a `secret.swap` event; mint, revoke, and expiry
+publish their own (`secret.mint`, `secret.revoke`, `secret.expiry`).
+All five ride the events websocket beside the workspace lifecycle
+events.
+
+Fail-closed on the swap path: a secret the store cannot serve, or a
+row the database cannot read, answers the request locally with a
+502 instead of forwarding it — a request that still carries the
+sentinel never leaves the host.
+
+The interceptor presents each connection a leaf certificate signed
+by the workspace's own CA, and each workspace's CA is its own: one
+workspace's leaves never validate under another's. A workspace
+whose guest already trusts its CA sees HTTPS toward allowlisted
+destinations validate normally from the first placeholder. That
+trust arrives with [#200]'s first-boot seeding; until it lands,
+nothing installs the CA into a guest — a workspace minted a
+placeholder against does not validate HTTPS toward allowlisted
+destinations at all, across reboots, until #200 ships and the
+workspace is recreated (or the operator installs the CA by hand —
+`.devenv/state/msksd/vms/<id>/interceptor-ca.crt` into
+`/usr/local/share/ca-certificates/` + `update-ca-certificates`;
+the interactive recipe on the issue does exactly that). The splice
+leg needs none of this: it presents the origin's own certificate. Arming and disarming swap the workspace's firewall
+table in one nft transaction — the redirect, the widened input
+rule for the listener, and the QUIC drop appear and disappear
+together, with no window in between where the table is absent.
+
+The listeners bind one shared port on each armed tap address
+(`interceptor_port`, default 8643 — see the
+[key reference](config.md)). Upstream connections are verified
+against the CA bundle mitmproxy ships (certifi's Mozilla list) —
+not the platform's own store; pointing verification at the
+platform bundle is a setting the certification effort brings,
+never a code change. The daemon pins no cipher list of its own
+anywhere: the contexts it builds take mitmproxy's curated default
+list, and any override arrives as a setting with the certification
+effort, never as code. One functional limit rides that posture:
+the client-facing leg negotiates HTTP/1.1 only (no ALPN callback
+is installed), so guests with HTTP/2 fall back — the swap, the
+splice, and the detection behave the same over HTTP/1.1.
+
+Two lifecycle facts worth knowing: a workspace whose interceptor
+cannot arm (its listener cannot bind) fails its boot with the
+named cause — an armed workspace is the whole point of a
+placeholder, and half-armed is worse than refused. And a
+connection the guest opened before the first placeholder armed
+keeps flowing unintercepted until it ends (the kernel's connection
+tracking outlives the rule swap); an established _redirected_
+flow, symmetrically, breaks when the last placeholder goes — the
+listener is gone while its NAT entry lingers. Both sit in the
+same accepted blind-spot class as the splice tier — as does
+guest-to-guest web traffic while armed: the redirect takes every
+tap 80/443 flow, including one workspace dialing another's
+address, and the interceptor dials the destination from the host,
+where the per-VM forward gates do not apply.
 
 ## The mint flow
 

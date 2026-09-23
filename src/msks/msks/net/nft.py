@@ -38,6 +38,7 @@ docs/networking.md.
 """
 
 import asyncio
+import json
 
 from ..consent.specs import EgressPolicy, IpSpec
 from ..microvm.errors import MicrovmError
@@ -156,6 +157,60 @@ def queue_gate(tap: str, guest_ip: str, queue_num: int | None) -> str:
     )
 
 
+# The ports the interceptor owns while armed (#199): the guest's
+# web egress redirects to the per-tap listener, and QUIC dies so
+# nothing routes around the TCP-only redirect.
+WEB_PORTS = "{ 80, 443 }"
+QUIC_PORT = "443"
+
+
+def intercept_prerouting(tap: str, port: int) -> str:
+    """The armed interceptor's NAT half (#199): every TCP flow the
+    guest sends to ports 80/443 redirects to the per-tap listener —
+    the destination address becomes the tap's own address, which is
+    where that listener binds."""
+    return (
+        "  chain intercept {\n"
+        "    type nat hook prerouting priority dstnat; policy accept;\n"
+        f'    iifname "{tap}" tcp dport {WEB_PORTS} redirect to :{port}\n'
+        "  }\n"
+    )
+
+
+def intercept_forward_drop(tap: str) -> str:
+    """QUIC stays dead while armed (#199): UDP 443 toward the uplink
+    drops, so the guest's browser falls back to the TCP flow the
+    redirect owns."""
+    return f'    iifname "{tap}" udp dport {QUIC_PORT} drop\n'
+
+
+def intercept_input_accept(
+    tap: str, guest_ip: str, tap_ip: str, port: int
+) -> str:
+    """The widened input rule (#199): a redirected flow's destination
+    is the tap address, so the interceptor's port on it must accept
+    — pinned to this guest's source and this tap's address."""
+    return (
+        f'    iifname "{tap}" ip saddr {guest_ip} ip daddr {tap_ip} '
+        f"tcp dport {port} accept\n"
+    )
+
+
+def armed_rules(
+    tap: str, guest_ip: str, tap_ip: str, port: int | None
+) -> tuple[str, str, str]:
+    """The interceptor's three rule pieces when armed — prerouting
+    chain, forward line, input line — or three empty strings when
+    not; ``vm_ruleset`` splices them in (#199)."""
+    if port is None:
+        return "", "", ""
+    return (
+        intercept_prerouting(tap, port),
+        intercept_forward_drop(tap),
+        intercept_input_accept(tap, guest_ip, tap_ip, port),
+    )
+
+
 def established_accept(tap: str, policy: EgressPolicy) -> str:
     """The outbound established accept (gated modes): a flow that
     passed the gates once (its SYN carried a verdict, or it hit a
@@ -175,6 +230,7 @@ def vm_ruleset(
     uplink: str,
     policy: EgressPolicy | None = None,
     queue_num: int | None = None,
+    interceptor_port: int | None = None,
 ) -> str:
     """One workspace's enforcement tables.
 
@@ -193,17 +249,28 @@ def vm_ruleset(
       drops before the host's own wildcard-bound services (the
       API among them): a guest-initiated connection arrives state
       NEW and does not match the established rule.
+
+    With ``interceptor_port`` set (#199) the workspace is armed: a
+    prerouting chain redirects the guest's TCP 80/443 to the
+    per-tap interceptor listener, the input chain widens to that
+    listener's port, and the forward chain drops the guest's QUIC
+    so nothing routes around the redirect.
     """
     mode = policy or EgressPolicy(workspace_id, "allow", ())
     gated = mode.gated
     final = "drop" if gated else "accept"
+    prerouting, quic_drop, input_widen = armed_rules(
+        tap, guest_ip, tap_ip, interceptor_port
+    )
     return (
         f"table inet {table_name(workspace_id)} {{\n"
         f"{consent_sets(mode)}"
+        f"{prerouting}"
         "  chain egress {\n"
         "    type filter hook forward priority filter; policy accept;\n"
         f'    oifname "{tap}" ct state established,related accept\n'
         f"{dns_lockout_rules(tap)}"
+        f"{quic_drop}"
         f"{established_accept(tap, mode)}"
         f"{ip_spec_rules(tap, mode.ip_specs)}"
         f"{allow_matches(tap, mode)}"
@@ -229,6 +296,9 @@ def vm_ruleset(
         # and only those, per conntrack — come home here (#109).
         f'    iifname "{tap}" ip saddr {guest_ip} '
         f"ct state established,related accept\n"
+        # The interceptor's listener (#199) — present only while
+        # armed, ahead of the tap's final drop.
+        f"{input_widen}"
         f'    iifname "{tap}" drop\n'
         "  }\n"
         "}\n"
@@ -325,6 +395,184 @@ async def apply_base(settings) -> None:
     )
 
 
+# The consent sets a whole-table swap must carry across itself
+# (#260 review): their kernel-side elements — verdict pins and
+# resolver-learned allows with their remaining timeouts — die with
+# the table otherwise, and a static workspace's learned egress
+# would drop until its DNS cache expired.
+CONSENT_SETS = ("allows_any", "allows_port", "rejects")
+
+
+def element_scopes(payload: bytes) -> list[tuple[str, int | None]]:
+    """One set's ``-j list set`` output as ``(scope, seconds)``
+    pairs — scope is the element's value (an address, or ``addr .
+    port`` for the concatenated sets), seconds its remaining
+    timeout. Anything unparseable yields [] (the swap proceeds
+    without that set's elements — the fail-closed direction)."""
+    try:
+        entries = json.loads(payload)["nftables"]
+    except ValueError, KeyError, TypeError:
+        return []
+    found: list[tuple[str, int | None]] = []
+    for entry in entries:
+        found.extend(element_pairs(entry))
+    return found
+
+
+def element_pairs(entry: dict) -> list[tuple[str, int | None]]:
+    """One nftables JSON entry's elements, as pairs."""
+    elems = (entry.get("set") or {}).get("elem")
+    if not isinstance(elems, list):
+        return []
+    pairs = []
+    for item in elems:
+        pair = element_pair(item)
+        if pair is not None:
+            pairs.append(pair)
+    return pairs
+
+
+def timed_pair(item: dict) -> tuple[str, int | None] | None:
+    """The timed wrapper's (``{"elem": {...}}``) pair."""
+    data = item.get("elem") or {}
+    scope = element_scope(data)
+    if scope is None:
+        return None
+    return (scope, element_timeout(data))
+
+
+def element_pair(item) -> tuple[str, int | None] | None:
+    """One element as ``(scope, seconds)``, None when it has no
+    value to render. A timed element dumps as an ``{"elem": {...}}``
+    wrapper; a permanent one dumps as its bare value — a scalar
+    plain, a concatenation still as a ``concat`` object (probed,
+    1.1.6) — so both bare shapes render with no timeout and
+    anything unrecognized is skipped (fail-closed)."""
+    if isinstance(item, str):
+        return (item, None)
+    if not isinstance(item, dict):
+        return None
+    if "elem" in item:
+        return timed_pair(item)
+    scope = concat_scope(item)
+    return None if scope is None else (scope, None)
+
+
+def concat_scope(value: dict) -> str | None:
+    """A ``concat`` object's rendered scope, None when malformed."""
+    parts = value.get("concat")
+    if not isinstance(parts, list):
+        return None
+    return " . ".join(str(part) for part in parts)
+
+
+def element_scope(data: dict) -> str | None:
+    """One element's rendered scope, as nft spells it: a plain
+    value as itself, a concatenation (the address . port sets)
+    joined with ``.`` — nft's JSON wraps those in a ``concat``
+    object, which a bare ``str()`` would render as a Python dict
+    and poison the restore file with. An unrecognized shape is
+    None (skipped, fail-closed)."""
+    value = data.get("val")
+    if isinstance(value, dict):
+        return concat_scope(value)
+    if isinstance(value, list):
+        return " . ".join(str(part) for part in value)
+    if value is None:
+        return None
+    return str(value)
+
+
+def element_timeout(data: dict) -> int | None:
+    """One element's **remaining** seconds: ``expires`` is the
+    countdown nft keeps per element, while ``timeout`` is the
+    constant the element was added with — reading the latter would
+    renew every verdict to its full window on each swap. Absent
+    both, the element carries no timeout."""
+    remaining = data.get("expires", data.get("timeout"))
+    return None if remaining is None else int(remaining)
+
+
+def element_text(scope: str, seconds: int | None) -> str:
+    """One element's restore text: the scope with its remaining
+    timeout when it has one."""
+    if seconds is None:
+        return scope
+    return f"{scope} timeout {timeout_text(seconds)}"
+
+
+def element_statements(
+    table: str, dumped: dict[str, list[tuple[str, int | None]]]
+) -> str:
+    """The restore file's body: one ``add element`` per set, one
+    transaction — the timeouts ride as they were read."""
+    blocks = []
+    for name, scopes in dumped.items():
+        if not scopes:
+            continue
+        rendered = ", ".join(
+            element_text(scope, seconds) for scope, seconds in scopes
+        )
+        blocks.append(f"add element inet {table} {name} {{ {rendered} }}\n")
+    return "".join(blocks)
+
+
+async def nft_json(settings, args: list[str]) -> bytes | None:
+    """One ``nft -j`` invocation's stdout; None on any failure (an
+    absent set is simply not dumped)."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            settings.net.nft_tool,
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except FileNotFoundError:
+        return None
+    out, _err = await proc.communicate()
+    return out if proc.returncode == 0 else None
+
+
+async def dump_consent_elements(
+    settings, workspace_id: str
+) -> dict[str, list[tuple[str, int | None]]]:
+    """The live consent sets' elements, ready to restore after a
+    whole-table swap."""
+    table = table_name(workspace_id)
+    dumped: dict[str, list[tuple[str, int | None]]] = {}
+    for name in CONSENT_SETS:
+        payload = await nft_json(
+            settings, ["-j", "list", "set", "inet", table, name]
+        )
+        if payload:
+            scopes = element_scopes(payload)
+            if scopes:
+                dumped[name] = scopes
+    return dumped
+
+
+async def table_exists(settings, workspace_id: str) -> bool:
+    """Whether this workspace's table is installed (the swap's
+    probe)."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            settings.net.nft_tool,
+            "list",
+            "table",
+            "inet",
+            table_name(workspace_id),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+    except FileNotFoundError:
+        # The tool's absence names itself on the apply below; the
+        # probe treats it as "no table" so that error is the one
+        # raised.
+        return False
+    await proc.wait()
+    return proc.returncode == 0
+
+
 async def install_vm(
     settings,
     workspace_id: str,
@@ -333,10 +581,23 @@ async def install_vm(
     tap_ip: str,
     policy: EgressPolicy | None = None,
     queue_num: int | None = None,
+    interceptor_port: int | None = None,
+    elements: str = "",
 ) -> None:
-    """Install one workspace's tables, converging on any previous
-    table of the same name first."""
-    await delete_vm_table(settings, workspace_id)
+    """Install one workspace's tables as **one nft transaction**
+    when a previous table exists: the delete and the add ride the
+    same ``-f`` invocation, so an armed↔disarmed swap never leaves
+    a window where the table is absent — a guest SYN that slips
+    between two runs would carry its sentinel past the redirect.
+    A failed transaction aborts whole, leaving the previous table
+    enforcing.
+
+    ``elements`` (pre-rendered ``add element`` statements — the
+    consent carry, #260 review) rides the same transaction: the
+    fresh table's sets exist by the time the statements apply, so
+    the swap and the element restore commit or abort together — an
+    unparseable statement loses nothing, the previous table keeps
+    its elements."""
     ruleset = vm_ruleset(
         workspace_id,
         tap,
@@ -345,11 +606,15 @@ async def install_vm(
         settings.net.uplink,
         policy=policy,
         queue_num=queue_num,
+        interceptor_port=interceptor_port,
     )
+    prior = ""
+    if await table_exists(settings, workspace_id):
+        prior = f"delete table inet {table_name(workspace_id)}\n"
     await nft_run(
         settings,
         ["-f", "-"],
-        input_text=ruleset.encode(),
+        input_text=(prior + ruleset + elements).encode(),
         what=f"nft ruleset apply for {workspace_id}",
     )
 

@@ -8,6 +8,7 @@ query is built outside ``msks.model``.
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import re
 import secrets
@@ -886,6 +887,19 @@ async def _workspace_or_404(app, workspace_id: str) -> dict:
     return row
 
 
+LOG = logging.getLogger(__name__)
+
+
+def prior_deadline(row: dict) -> datetime | None:
+    """The row's pre-renew deadline, as a datetime the model takes
+    back (None restores an unbounded lifetime). The stored value is
+    naive UTC on the sqlite round-trip; replace() normalizes."""
+    raw = row.get("expires_at")
+    if raw is None:
+        return None
+    return datetime.fromisoformat(raw).replace(tzinfo=UTC)
+
+
 def placeholder_view(row: dict, sentinel: bool = True) -> dict:
     """The API-facing view of a placeholder row (#198).
 
@@ -948,6 +962,10 @@ def build_api(app) -> FastAPI:
             finally:
                 await app.state.consent.stop()
                 await app.state.net.stop()
+                # After the net detach: every armed listener's
+                # teardown ran through it; what remains is the
+                # master itself (#199).
+                await app.state.interceptor.stop()
                 await app.state.model.close()
 
     api = FastAPI(title="msksd", version=__version__, lifespan=lifespan)
@@ -1000,6 +1018,19 @@ def build_api(app) -> FastAPI:
         (off the event loop — it is file IO)."""
         refs = await app.state.model.placeholder_refs()
         await asyncio.to_thread(app.state.secrets.sync_manifest, refs)
+
+    async def refresh_quietly(workspace_id: str) -> None:
+        """Re-evaluate the armed state, logging instead of failing:
+        the operation that triggered it already stood, and the next
+        placeholder event (or the next attach) retries the arm."""
+        try:
+            await app.state.interceptor.refresh(workspace_id)
+        except Exception:  # noqa: BLE001 - logged, never fatal here
+            LOG.exception(
+                "interceptor refresh for %s failed; armed state retries "
+                "on the next placeholder event",
+                workspace_id,
+            )
 
     def validated_dests(dests: list[str]) -> list[str]:
         """Lowercased, de-duplicated, pattern-checked destinations."""
@@ -1100,8 +1131,45 @@ def build_api(app) -> FastAPI:
                 await app.state.model.delete_placeholder(row["id"])
                 await sync_store_manifest()
                 raise HTTPException(status_code=503, detail=str(exc)) from None
-            await app.state.model.record_audit("mint", row)
         # The sentinel appears in exactly one response: this one.
+        # Arming is placeholder-driven (#199): a mint against a
+        # running workspace redirects its web egress from here. A
+        # mint that cannot arm stands or falls whole — a live
+        # placeholder leaking its raw sentinel toward the wire is
+        # the one outcome this feature exists to prevent — so the
+        # row and its value roll back and the refusal names the
+        # cause (#260 review).
+        try:
+            await app.state.interceptor.refresh(workspace_id)
+        except Exception as exc:  # noqa: BLE001 - rolled back below
+            async with app.state.store_lock:
+                await app.state.model.delete_placeholder(row["id"])
+                with contextlib.suppress(SecretStoreError):
+                    await app.state.secrets.delete(ref)
+                await sync_store_manifest()
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "mint rolled back: the workspace's interceptor "
+                    f"could not arm ({exc})"
+                ),
+            ) from exc
+        # The mint record and its event trail the arm: a rolled-back
+        # mint never existed, so the audit table and the stream say
+        # nothing about it (#260 review). The reverse edge is
+        # accepted knowingly: an audit/publish failure here 500s
+        # with the placeholder live and armed — recovery is revoke
+        # and re-mint, and suppressing it would silently drop the
+        # mint's trail instead.
+        await app.state.model.record_audit("mint", row)
+        await hub.publish(
+            "secret.mint",
+            {
+                "workspace_id": workspace_id,
+                "name": body.name,
+                "dests": dests,
+            },
+        )
         return Response(
             status_code=201,
             content=json.dumps(placeholder_view(row)),
@@ -1127,7 +1195,8 @@ def build_api(app) -> FastAPI:
         dependencies=[Depends(require_token)],
     )
     async def renew_secret(placeholder_id: int, body: SecretRenew) -> dict:
-        if await app.state.model.get_placeholder(placeholder_id) is None:
+        prior = await app.state.model.get_placeholder(placeholder_id)
+        if prior is None:
             raise HTTPException(status_code=404, detail="no such placeholder")
         expires = datetime.now(UTC) + timedelta(seconds=body.ttl_s)
         await app.state.model.renew_placeholder(placeholder_id, expires)
@@ -1136,6 +1205,25 @@ def build_api(app) -> FastAPI:
             # The expiry sweep can retire the row between the two
             # reads; a renew that lost its row answers 404, not 500.
             raise HTTPException(status_code=404, detail="no such placeholder")
+        # A renew can revive a workspace's last live placeholder, so
+        # the armed state re-evaluates (#199). A renew that cannot
+        # (re)arm restores the deadline it extended: a live
+        # placeholder without its redirect would leak the raw
+        # sentinel toward the wire — the outcome the mint rollback
+        # exists to prevent (#260 review, round 5).
+        try:
+            await app.state.interceptor.refresh(row["workspace_id"])
+        except Exception as exc:  # noqa: BLE001 - rolled back below
+            await app.state.model.renew_placeholder(
+                placeholder_id, prior_deadline(prior)
+            )
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "renew rolled back: the workspace's interceptor "
+                    f"could not arm ({exc})"
+                ),
+            ) from exc
         return placeholder_view(row, sentinel=False)
 
     @api.delete(
@@ -1160,6 +1248,15 @@ def build_api(app) -> FastAPI:
                 cleaned = False
             await app.state.model.record_audit("revoke", row)
             await sync_store_manifest()
+        await hub.publish(
+            "secret.revoke",
+            {"workspace_id": row["workspace_id"], "name": row["name"]},
+        )
+        # The redirect stands down when the last placeholder went
+        # (#199) — the row is already gone, so refresh reads the new
+        # state. The revoke stands even when the re-evaluation
+        # fails: the row is deleted, so nothing swaps either way.
+        await refresh_quietly(row["workspace_id"])
         return {"revoked": placeholder_id, "store_cleaned": cleaned}
 
     @api.get("/api/v1/secrets/audit", dependencies=[Depends(require_token)])

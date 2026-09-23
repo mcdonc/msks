@@ -111,6 +111,8 @@ SETTING_ENV_VARS: tuple[str, ...] = (
     "MSKSD_EGRESS_CONSENT_ROW_CAP",
     "MSKSD_EGRESS_QUEUE_BASE",
     "MSKSD_CONNTRACK_TOOL",
+    # The egress interceptor's shared listener port (#199).
+    "MSKSD_INTERCEPTOR_PORT",
     # SecretStoreSettings — the placeholder secret store (#198).
     "MSKSD_SECRET_STORE_PROVIDER",
     "MSKSD_SECRET_STORE_ROOT",

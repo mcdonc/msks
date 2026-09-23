@@ -811,3 +811,156 @@ async def test_replay_row_skips_portless_denies(gated_app) -> None:
         },
     )
     assert log_lines(nft_log) == []
+
+
+# --- the interceptor wiring (#199) ------------------------------------------
+
+
+class FakeInterceptor:
+    """The interceptor surface the net manager touches, recorded."""
+
+    def __init__(self) -> None:
+        self.refreshes: list[str] = []
+        self.detaches: list[str] = []
+
+    async def refresh(self, workspace_id: str) -> None:
+        self.refreshes.append(workspace_id)
+
+    async def on_detach(self, workspace_id: str) -> None:
+        self.detaches.append(workspace_id)
+
+
+async def test_attach_ends_in_an_interceptor_refresh(net_app) -> None:
+    """Arming is placeholder-driven: the attachment completes, then
+    the interceptor re-evaluates (it arms only if a placeholder is
+    live)."""
+    app, _ip, _nft = net_app
+    recorder = FakeInterceptor()
+    app.state.interceptor = recorder
+    manager = await ready(app)
+    await manager.attach("ws-a", want=True)
+    assert recorder.refreshes == ["ws-a"]
+
+
+async def test_detach_drops_the_interceptor_first(net_app) -> None:
+    """The listener goes before the table dies, so an armed
+    workspace's redirected flows never reach a proxy whose entries
+    are already gone."""
+    app, _ip, nft_log = net_app
+    recorder = FakeInterceptor()
+    app.state.interceptor = recorder
+    manager = await ready(app)
+    await manager.attach("ws-a", want=True)
+    open(nft_log, "w").close()
+    await manager.detach("ws-a")
+    assert recorder.detaches == ["ws-a"]
+    # The table deletion still ran after the disarm.
+    assert any(line.startswith("delete table") for line in log_lines(nft_log))
+
+
+async def test_apply_interception_swaps_the_table(net_app) -> None:
+    """Armed: the redirect, the widened input, and the QUIC drop all
+    land in one transaction; disarmed: they leave the same way, and
+    the consent shape survives both."""
+    app, _ip, nft_log = net_app
+    manager = await ready(app)
+    await manager.attach("ws-a", want=True)
+    stdin = Path(str(nft_log) + ".stdin")
+
+    def last_apply() -> str:
+        blocks = stdin.read_text().split("--- -f -\n")
+        return blocks[-1]
+
+    open(nft_log, "w").close()
+    stdin.write_text("")
+    await manager.apply_interception("ws-a", 8643)
+    assert "redirect to :8643" in last_apply()
+    assert "udp dport 443 drop" in last_apply()
+    assert "tcp dport 8643 accept" in last_apply()
+
+    stdin.write_text("")
+    await manager.apply_interception("ws-a", None)
+    assert "redirect" not in last_apply()
+    assert "udp dport 443" not in last_apply()
+    assert "delete table" in last_apply()  # one transaction, not two
+
+
+async def test_apply_interception_skips_an_unattached_workspace(
+    net_app,
+) -> None:
+    app, _ip, nft_log = net_app
+    manager = await ready(app)
+    open(nft_log, "w").close()
+    await manager.apply_interception("ws-gone", 8643)
+    assert log_lines(nft_log) == []
+
+
+async def test_attachment_for_answers_the_live_attachment(net_app) -> None:
+    app, _ip, _nft = net_app
+    manager = await ready(app)
+    assert app.state.net.attachment_for("ws-a") is None
+    attachment = await manager.attach("ws-a", want=True)
+    assert app.state.net.attachment_for("ws-a") is attachment
+
+
+async def test_a_gated_swap_carries_consent_elements_across(
+    gated_app, monkeypatch
+) -> None:
+    """The whole-table swap preserves the kernel-side consent
+    elements (#260 review): a gated workspace's verdict pins are
+    dumped before the swap and restored after it."""
+    from msks.net import nft as nft_mod
+
+    app, _consumers, nft_log = gated_app
+    await app.state.net.start()
+    await app.state.net.attach("ws-i", want=True, policy=interactive_policy())
+
+    async def fake_dump(settings, workspace_id):
+        return {"allows_any": [("10.1.2.3", 45)]}
+
+    monkeypatch.setattr(nft_mod, "dump_consent_elements", fake_dump)
+    stdin = Path(str(nft_log) + ".stdin")
+    stdin.write_text("")
+    await app.state.net.apply_interception("ws-i", 8643)
+    applied = stdin.read_text()
+    # One transaction: the table swap and the element carry ride the
+    # same file (#260 review) — the sets exist when the adds apply.
+    assert "redirect to :8643" in applied
+    assert "add element inet" in applied
+    assert "10.1.2.3 timeout 45s" in applied
+    assert applied.index("table inet") < applied.index("add element")
+
+
+async def test_an_allow_mode_swap_dumps_nothing(net_app) -> None:
+    """An ungated workspace has no consent sets: the swap skips the
+    dump entirely."""
+    app, _ip, nft_log = net_app
+    manager = await ready(app)
+    await manager.attach("ws-a", want=True)
+    open(nft_log, "w").close()
+    await manager.apply_interception("ws-a", 8643)
+    assert not any(line.startswith("list set") for line in log_lines(nft_log))
+    assert "redirect to :8643" in Path(str(nft_log) + ".stdin").read_text()
+
+
+async def test_a_disarming_swap_carries_consent_elements_too(
+    gated_app, monkeypatch
+) -> None:
+    """Disarm swaps the same table: the consent carry rides that
+    transaction as well."""
+    from msks.net import nft as nft_mod
+
+    app, _consumers, nft_log = gated_app
+    await app.state.net.start()
+    await app.state.net.attach("ws-i", want=True, policy=interactive_policy())
+
+    async def fake_dump(settings, workspace_id):
+        return {"rejects": [("10.2.3.4 . 25", 9)]}
+
+    monkeypatch.setattr(nft_mod, "dump_consent_elements", fake_dump)
+    stdin = Path(str(nft_log) + ".stdin")
+    stdin.write_text("")
+    await app.state.net.apply_interception("ws-i", None)
+    applied = stdin.read_text()
+    assert "redirect" not in applied
+    assert "10.2.3.4 . 25 timeout 9s" in applied

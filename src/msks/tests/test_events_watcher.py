@@ -574,3 +574,97 @@ async def test_sweep_caps_retirements_per_pass(tmp_path, monkeypatch) -> None:
         assert await app.state.model.list_placeholders() == []
         kinds = [event["kind"] for event in await app.state.model.list_audit()]
         assert kinds == ["expiry", "expiry"]
+
+
+async def test_sweep_refreshes_the_interceptor_once_per_workspace(
+    tmp_path,
+) -> None:
+    """A workspace whose last live placeholder expired stands its
+    redirect down (#199): one refresh per workspace, however many of
+    its rows retired."""
+    api, app = sweep_app(tmp_path)
+
+    class Recorder:
+        def __init__(self) -> None:
+            self.refreshes: list[str] = []
+
+        async def refresh(self, workspace_id: str) -> None:
+            self.refreshes.append(workspace_id)
+
+        async def on_detach(
+            self, workspace_id: str
+        ) -> None:  # pragma: no cover
+            raise AssertionError("no attachment exists in the sweep fixture")
+
+        async def stop(self) -> None:  # pragma: no cover
+            raise AssertionError("lifespan teardown replaces the recorder")
+
+    recorder = Recorder()
+    real = app.state.interceptor
+    app.state.interceptor = recorder
+    async with api.router.lifespan_context(api):
+        api.state.watcher.cancel()
+        try:
+            await seed_placeholder(
+                app,
+                "ws-a",
+                "expired",
+                datetime.now(UTC) - timedelta(seconds=1),
+            )
+            await app.state.model.create_placeholder(
+                "ws-a",
+                "expired2",
+                new_sentinel(),
+                ["api.example.com"],
+                backend_ref("ws-a", "expired2"),
+                datetime.now(UTC) - timedelta(seconds=1),
+            )
+            await sweep_expired_placeholders(app, api.state.hub)
+        finally:
+            app.state.interceptor = real
+    assert recorder.refreshes == ["ws-a"]
+
+
+async def test_refresh_disarmed_defers_one_workspace_not_its_siblings(
+    tmp_path,
+) -> None:
+    """One workspace's failing stand-down defers only itself — the
+    next interval retries it — while its sibling still stands down
+    in the same pass (#260 review)."""
+    api, app = sweep_app(tmp_path)
+
+    class Recorder:
+        def __init__(self) -> None:
+            self.refreshes: list[str] = []
+            self.refuse: set[str] = set()
+
+        async def refresh(self, workspace_id: str) -> None:
+            self.refreshes.append(workspace_id)
+            if workspace_id in self.refuse:
+                raise RuntimeError("nft down")
+
+        async def on_detach(
+            self, workspace_id: str
+        ) -> None:  # pragma: no cover
+            raise AssertionError("no attachment exists in the sweep fixture")
+
+        async def stop(self) -> None:  # pragma: no cover
+            raise AssertionError("lifespan teardown replaces the recorder")
+
+    recorder = Recorder()
+    recorder.refuse = {"ws-a"}
+    real = app.state.interceptor
+    app.state.interceptor = recorder
+    from msks.server.watcher import refresh_disarmed
+
+    async with api.router.lifespan_context(api):
+        api.state.watcher.cancel()
+        try:
+            expired = [
+                {"workspace_id": "ws-a"},
+                {"workspace_id": "ws-b"},
+            ]
+            await refresh_disarmed(app, expired)
+        finally:
+            app.state.interceptor = real
+    assert recorder.refreshes == ["ws-a", "ws-b"]
