@@ -196,11 +196,17 @@ relocates it); `scripts/build-guest.sh` and
 what an image build does.
 
 The Debian image bakes the agent toolchain (#266): digest-pinned
-Node and the pinned pi coding agent land under `/usr/local`, and
-the pi model-discovery extension lands in `/etc/skel` and root's
-home (`docs/llm.md` describes what the extension does at pi
-startup). The pins — `agentNodeTarball`, `piTarball`, and
-`npmDepsHash` in `nix/guest-debian.nix` — move with an image
+Node, the pinned pi coding agent, the pinned herdr terminal
+workspace manager (herdr.dev, the release's static binary), and
+pinned Claude Code (the npm wrapper plus its linux-x64 native
+binary, staged in npm's global layout with the wrapper's own
+post-install linking done at build time) land under `/usr/local`,
+and the pi model-discovery extension lands in `/etc/skel` and
+root's home (`docs/llm.md` describes what the extension does at pi
+startup). The pins — `agentNodeTarball`, `piTarball`,
+`npmDepsHash`, `agentHerdrBinary`, and the two
+`agentClaude*` tarballs in `nix/guest-debian.nix` — move with an
+image
 rebuild, and the build stays pure derivations: pi's dependency
 closure is prefetched against its shrinkwrap (with the five
 integrity gaps the published lock leaves, closed by hash) and

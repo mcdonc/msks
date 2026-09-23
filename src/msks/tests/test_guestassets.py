@@ -265,6 +265,11 @@ def test_the_image_bakes_the_agent_toolchain() -> None:
     # A real npmDepsHash, not the placeholder the two-step prefetch
     # starts from.
     assert "AAAAAAAAAAAAAAAAAAAAAAAA" not in build
+    assert '"v0.9.1/herdr-linux-x86_64"' in build
+    assert '"claude-code-2.1.281.tgz"' in build
+    assert '"claude-code-linux-x64-2.1.281.tgz"' in build
+    assert "$out/usr/local/bin/claude" in build
     assert "$out/etc/skel/.pi/agent/extensions/llm-models.ts" in build
     assert "$out/root/.pi/agent/extensions/llm-models.ts" in build
     assert "$out/usr/local/bin/pi" in build
+    assert "$out/usr/local/bin/herdr" in build

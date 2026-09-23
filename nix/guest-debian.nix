@@ -224,6 +224,65 @@ let
     hash = "sha256-FCPuPGHnyWRk4cvzyNwk0wVss0EJlcNnGpjD7MUnVA8=";
   };
 
+  # The agent toolchain's herdr pin (#266): the terminal workspace
+  # manager for AI coding agents (herdr.dev), as the pinned
+  # release's static x86-64 build — a digest-pinned upstream
+  # artifact like the Node tarball, needing nothing from the image
+  # beyond the file itself.
+  agentHerdrBinary = pkgs.fetchurl {
+    url =
+      "https://github.com/ogulcancelik/herdr/releases/download/"
+      + "v0.9.1/herdr-linux-x86_64";
+    hash = "sha256-KgL+0WvrZR7wBuHUPwSPZSyk3FitBTzS1ERQVj1cVLc=";
+  };
+
+  # The agent toolchain's Claude Code pin (#266): the npm wrapper
+  # package plus the linux-x64 native-binary package, both
+  # digest-pinned. The wrapper's own postinstall links the platform
+  # binary over its bin stub; the staged package below does that
+  # wiring at build time instead — a symlink standing in for the
+  # link — so the image build runs no Node and no npm scripts.
+  agentClaudeWrapper = pkgs.fetchurl {
+    url =
+      "https://registry.npmjs.org/@anthropic-ai/claude-code/-/"
+      + "claude-code-2.1.281.tgz";
+    hash = "sha256-WNaCuYqB1qI77iv/2Y8WVMS/e75ESHP1IadUcd5tkpk=";
+  };
+  agentClaudeBinary = pkgs.fetchurl {
+    url =
+      "https://registry.npmjs.org/@anthropic-ai/claude-code-linux-x64/-/"
+      + "claude-code-linux-x64-2.1.281.tgz";
+    hash = "sha256-sNo8XYzhnBCEmFvKLkmqTG54rQYGwrSsfeYH2aMd10o=";
+  };
+
+  # Claude Code in npm's global layout (#266): the wrapper at
+  # lib/node_modules/@anthropic-ai/claude-code with the platform
+  # package nested as its optional dependency, the bin stub pointed
+  # at the platform binary, and the global bin symlink beside it —
+  # the exact tree `npm install -g` leaves behind.
+  agentClaudePackage =
+    pkgs.runCommand "agent-claude-code" { nativeBuildInputs = [ pkgs.gnutar ]; }
+      ''
+        set -eu
+        mods=$out/lib/node_modules/@anthropic-ai
+        mkdir -p $mods/claude-code/bin
+        mkdir -p \
+          $mods/claude-code/node_modules/@anthropic-ai/claude-code-linux-x64
+        tar -xzf ${agentClaudeWrapper} \
+          -C $mods/claude-code --strip-components=1
+        rm -f $mods/claude-code/bin/claude.exe
+        tar -xzf ${agentClaudeBinary} \
+          -C $mods/claude-code/node_modules/@anthropic-ai/claude-code-linux-x64 \
+          --strip-components=1
+        ln -s \
+          ../node_modules/@anthropic-ai/claude-code-linux-x64/claude \
+          $mods/claude-code/bin/claude.exe
+        mkdir -p $out/bin
+        ln -s \
+          ../lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe \
+          $out/bin/claude
+      '';
+
   # The integrity injector (#266): the published shrinkwrap omits
   # integrity for the five @earendil-works monorepo siblings
   # (lockstep 0.87.1), which npm tolerates and nix's prefetch
@@ -340,7 +399,8 @@ let
   # the sshd posture + rsync the TCP service plane rides (#110),
   # the sudoers grant behind the workspace user's sudo (#169), the
   # console helper binary, and the agent toolchain (#266): pinned
-  # Node and pi under /usr/local, and the pi model-discovery
+  # Node, pi, herdr, and Claude Code under /usr/local, and the pi
+  # model-discovery
   # extension planted for root and in /etc/skel for every account
   # the identity seed provisions from it.
   # Debian's socat 1.8.x is built WITH_VSOCK, so nothing is
@@ -385,6 +445,17 @@ let
           $out/usr/local/lib/node_modules/
         ln -s ../lib/node_modules/pi-coding-agent/dist/cli.js \
           $out/usr/local/bin/pi
+
+        # herdr (#266): the pinned static binary, executable as-is.
+        install -D -m 0755 ${agentHerdrBinary} \
+          $out/usr/local/bin/herdr
+
+        # Claude Code (#266): the staged npm tree, merged into
+        # /usr/local.
+        cp -r "${agentClaudePackage}/lib/." $out/usr/local/lib/
+        ln -s \
+          ../lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe \
+          $out/usr/local/bin/claude
 
         # The model-discovery extension (#266): into /etc/skel — every
         # account the identity seed provisions copies the skeleton —
