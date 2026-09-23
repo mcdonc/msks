@@ -84,6 +84,16 @@ def build_master(owner) -> Master:
     return master
 
 
+def log_dead_master(task: asyncio.Task) -> None:
+    """Name why a finished run task ended, when it can be named at
+    all (a cancelled task carries no exception to read)."""
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None:
+        logger.error("the interceptor's master run ended: %s", error)
+
+
 class Interceptor:
     """Owns the embedded master and every workspace's armed state."""
 
@@ -172,6 +182,7 @@ class Interceptor:
         placeholder change (mint, renew, revoke, expiry) or as the
         last step of an egress attach."""
         async with self._lock:
+            self.retire_dead_master()
             attachment = self.app.state.net.attachment_for(workspace_id)
             if attachment is None:
                 return  # not running: arming happens at attach
@@ -184,6 +195,24 @@ class Interceptor:
                 self._entries[workspace_id] = entries
                 return
             await self.arm(workspace_id, attachment, entries)
+
+    def retire_dead_master(self) -> None:
+        """Drop a master whose run task ended: it serves nothing,
+        and armed bookkeeping over a dead listener would let every
+        later refresh "succeed" while redirected flows hit a closed
+        port. Clearing the books makes the next arm rebuild the
+        master and its listeners whole (#260 review, round 5)."""
+        if self._master is None or self._task is None:
+            return
+        if not self._task.done():
+            return
+        log_dead_master(self._task)
+        self._armed.clear()
+        self._by_tap.clear()
+        self._entries.clear()
+        self._cas.clear()
+        self._master = None
+        self._task = None
 
     async def active_entries(
         self, workspace_id: str

@@ -432,22 +432,30 @@ def element_pairs(entry: dict) -> list[tuple[str, int | None]]:
     return pairs
 
 
-def element_pair(item) -> tuple[str, int | None] | None:
-    """One element as ``(scope, seconds)``, None when it has no
-    value to render. A timed element dumps as a ``{"elem": {...}}``
-    object; a permanent one dumps as its bare value — nft emits no
-    wrapper for the timeout-less shape (probed, 1.1.6) — so a bare
-    string renders with no timeout and anything unrecognized is
-    skipped (fail-closed)."""
-    if isinstance(item, str):
-        return (item, None)
-    if not isinstance(item, dict):
-        return None
+def timed_pair(item: dict) -> tuple[str, int | None] | None:
+    """The timed wrapper's (``{"elem": {...}}``) pair."""
     data = item.get("elem") or {}
     scope = element_scope(data)
     if scope is None:
         return None
     return (scope, element_timeout(data))
+
+
+def element_pair(item) -> tuple[str, int | None] | None:
+    """One element as ``(scope, seconds)``, None when it has no
+    value to render. A timed element dumps as an ``{"elem": {...}}``
+    wrapper; a permanent one dumps as its bare value — a scalar
+    plain, a concatenation still as a ``concat`` object (probed,
+    1.1.6) — so both bare shapes render with no timeout and
+    anything unrecognized is skipped (fail-closed)."""
+    if isinstance(item, str):
+        return (item, None)
+    if not isinstance(item, dict):
+        return None
+    if "elem" in item:
+        return timed_pair(item)
+    scope = concat_scope(item)
+    return None if scope is None else (scope, None)
 
 
 def concat_scope(value: dict) -> str | None:

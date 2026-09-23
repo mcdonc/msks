@@ -121,9 +121,9 @@ def pin_destination(flow: http.HTTPFlow, host: str) -> None:
     Plain HTTP carries no SNI to bind anything: the swap pins the
     upstream dial to the matched name instead — the daemon
     resolves it, and the secret only reaches the server the
-    allowlist names. (The TLS branch's ``hostport`` can carry a
-    port only on a non-443 TLS connection, which the redirect
-    never produces — port-80 flows take the plain branch.)"""
+    allowlist names. (The TLS branch's ``hostport`` carries the
+    connection's real port whenever it is not the scheme default —
+    TLS toward a non-443 port is redirected like any other.)"""
     if flow.client_conn.tls:
         flow.request.host_header = url.hostport(
             flow.request.scheme, host, flow.request.port

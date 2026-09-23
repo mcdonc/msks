@@ -126,9 +126,10 @@ def load_or_mint(vm_dir: Path, workspace_id: str) -> WorkspaceCA:
     written (key 0600) when they do not.
 
     The mint-on-miss is the interim shape until #200 moves it to
-    create time and seeds the cert into the guest; a workspace
-    created before that lands mints here on first arm, and its
-    guest trusts the CA from its next boot.
+    create time and seeds the cert into the guest. Until that
+    lands, nothing installs this CA into any guest: HTTPS toward
+    allowlisted destinations does not validate until the operator
+    installs the cert by hand or #200 ships.
     """
     key_path = vm_dir / CA_KEY_FILE
     cert_path = vm_dir / CA_CERT_FILE

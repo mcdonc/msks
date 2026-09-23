@@ -2469,10 +2469,11 @@ async def test_a_mint_that_cannot_arm_rolls_back_whole(client) -> None:
     assert not (root / "msks" / "default" / "MSKS_WS_SEC_GITHUB_API").exists()
 
 
-async def test_renew_and_revoke_survive_a_failing_refresh(client) -> None:
-    """The operation stands when the armed-state re-evaluation
-    fails: renew has already extended, revoke has already deleted —
-    the refresh retries on the next placeholder event."""
+async def test_revoke_survives_a_failing_refresh(client) -> None:
+    """The revoke stands when the armed-state re-evaluation fails:
+    the row is already deleted, so nothing swaps either way — the
+    stand-down retries on the next placeholder event. (A renew in
+    the same position rolls back instead; its own test pins that.)"""
     http, app, _stub = client
     await seed_workspace(app)
     row = (
@@ -2492,17 +2493,87 @@ async def test_renew_and_revoke_survive_a_failing_refresh(client) -> None:
     real = app.state.interceptor
     app.state.interceptor = RefusingInterceptor()
     try:
-        renewed = await http.post(
-            f"/api/v1/secrets/{row['id']}/renew",
-            json={"ttl_s": 600},
-            headers=auth(),
-        )
         revoked = await http.delete(
             f"/api/v1/secrets/{row['id']}", headers=auth()
         )
     finally:
         app.state.interceptor = real
-    assert renewed.status_code == 200
     assert revoked.status_code == 200
     listing = await http.get("/api/v1/secrets", headers=auth())
     assert listing.json() == []
+
+
+async def test_a_renew_that_cannot_arm_restores_the_deadline(client) -> None:
+    """The renew rolls back like a mint does (#260 review, round 5):
+    the prior deadline returns, so no live placeholder stands
+    without its redirect."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    row = (
+        await http.post("/api/v1/secrets", json=mint_body(), headers=auth())
+    ).json()
+    prior = row["expires_at"]  # unbounded: the mint sent no ttl
+    assert prior is None
+
+    class RefusingInterceptor:
+        async def refresh(self, workspace_id: str) -> None:
+            raise RuntimeError("bind failed")
+
+        async def on_detach(self, ws):  # pragma: no cover
+            raise AssertionError
+
+        async def stop(self):  # pragma: no cover
+            raise AssertionError
+
+    real = app.state.interceptor
+    app.state.interceptor = RefusingInterceptor()
+    try:
+        response = await http.post(
+            f"/api/v1/secrets/{row['id']}/renew",
+            json={"ttl_s": 600},
+            headers=auth(),
+        )
+    finally:
+        app.state.interceptor = real
+    assert response.status_code == 503
+    assert "could not arm" in response.json()["detail"]
+    restored = await app.state.model.get_placeholder(row["id"])
+    assert restored["expires_at"] is None
+
+
+async def test_a_renew_rollback_restores_a_real_deadline(client) -> None:
+    """The restore path with a datetime deadline, not just the
+    unbounded None."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    row = (
+        await http.post(
+            "/api/v1/secrets", json=mint_body(ttl_s=3600), headers=auth()
+        )
+    ).json()
+    assert row["expires_at"] is not None
+
+    class RefusingInterceptor:
+        async def refresh(self, workspace_id: str) -> None:
+            raise RuntimeError("bind failed")
+
+        async def on_detach(self, ws):  # pragma: no cover
+            raise AssertionError
+
+        async def stop(self):  # pragma: no cover
+            raise AssertionError
+
+    real = app.state.interceptor
+    app.state.interceptor = RefusingInterceptor()
+    try:
+        response = await http.post(
+            f"/api/v1/secrets/{row['id']}/renew",
+            json={"ttl_s": 600},
+            headers=auth(),
+        )
+    finally:
+        app.state.interceptor = real
+    assert response.status_code == 503
+    restored = await app.state.model.get_placeholder(row["id"])
+    assert restored["expires_at"] is not None
+    assert restored["expires_at"] < row["expires_at"]

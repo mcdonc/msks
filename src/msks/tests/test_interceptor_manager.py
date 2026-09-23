@@ -327,3 +327,48 @@ async def test_stop_survives_a_master_that_died(app, monkeypatch) -> None:
     assert isinstance(task.exception(), RuntimeError)
     await app.state.interceptor.stop()
     assert FakeMaster.built[0].shutdown_calls == 1
+
+
+async def test_a_dead_master_is_retired_and_rebuilt_on_refresh(app) -> None:
+    """A master whose run task ended serves nothing: the armed books
+    clear, and the next refresh builds a fresh master and re-arms
+    (#260 review, round 5)."""
+    await mint_placeholder(app)
+    await app.state.interceptor.refresh("ws-a")
+    first = FakeMaster.built[0]
+    first.exiting.set()  # its run task lands
+    task = app.state.interceptor._task
+    while not task.done():
+        await asyncio.sleep(0)
+    await mint_placeholder(app, name="second")
+    await app.state.interceptor.refresh("ws-a")
+    assert len(FakeMaster.built) == 2
+    assert app.state.interceptor.workspace_for_tap(TAP_IP) == "ws-a"
+    assert FakeMaster.built[1].options.mode == [f"transparent@{TAP_IP}:8643"]
+
+
+async def test_a_cancelled_master_run_retires_quietly(app) -> None:
+    """A cancelled run task carries no exception to read: the books
+    still clear, and the next refresh rebuilds."""
+    await mint_placeholder(app)
+    await app.state.interceptor.refresh("ws-a")
+    task = app.state.interceptor._task
+    task.cancel()
+    while not task.done():
+        await asyncio.sleep(0)
+    built = len(FakeMaster.built)
+    await app.state.interceptor.refresh("ws-a")  # retire, then re-arm
+    assert len(FakeMaster.built) == built + 1
+    assert app.state.interceptor.workspace_for_tap(TAP_IP) == "ws-a"
+
+
+async def test_log_dead_master_names_the_error(caplog) -> None:
+    async def boom() -> None:
+        raise RuntimeError("mitmproxy died")
+
+    task = asyncio.create_task(boom())
+    while not task.done():
+        await asyncio.sleep(0)
+    with caplog.at_level("ERROR", logger="msks.interceptor.manager"):
+        manager_mod.log_dead_master(task)
+    assert "mitmproxy died" in caplog.text

@@ -413,11 +413,11 @@ def test_element_scopes_reads_both_set_kinds() -> None:
 
 def test_element_pairs_read_permanent_elements() -> None:
     """Permanent elements (added without a timeout) dump as bare
-    values — no wrapper object — and a permanent concatenation still
-    arrives as a ``concat`` object (#260 review, round 4)."""
+    values — a scalar plain, a concatenation still as a ``concat``
+    object with NO wrapper (#260 review, round 5 re-probed the
+    shapes; round 4's fixture certified one nft never emits)."""
     payload = json_set(
-        "allows_any",
-        ["10.9.9.9", {"elem": {"val": {"concat": ["10.7.7.7", 53]}}}],
+        "allows_any", ["10.9.9.9", {"concat": ["10.7.7.7", 53]}]
     )
     assert nft.element_scopes(payload) == [
         ("10.9.9.9", None),

@@ -77,14 +77,17 @@ sentinel never leaves the host.
 The interceptor presents each connection a leaf certificate signed
 by the workspace's own CA, and each workspace's CA is its own: one
 workspace's leaves never validate under another's. A workspace
-whose guest already trusts its CA — the first-boot seeding is
-[#200]'s composition — sees HTTPS toward allowlisted destinations
-validate normally from the first placeholder. Until #200 lands,
-the CA is minted at the first arm: a workspace minted a
-placeholder against sees HTTPS toward allowlisted destinations
-fail visibly until its next boot (the recorded decision — the
-trust-store entry rides the seed, and a running guest cannot be
-retro-trusted). Arming and disarming swap the workspace's firewall
+whose guest already trusts its CA sees HTTPS toward allowlisted
+destinations validate normally from the first placeholder. That
+trust arrives with [#200]'s first-boot seeding; until it lands,
+nothing installs the CA into a guest — a workspace minted a
+placeholder against does not validate HTTPS toward allowlisted
+destinations at all, across reboots, until #200 ships and the
+workspace is recreated (or the operator installs the CA by hand —
+`.devenv/state/msksd/vms/<id>/interceptor-ca.crt` into
+`/usr/local/share/ca-certificates/` + `update-ca-certificates`;
+the interactive recipe on the issue does exactly that). The splice
+leg needs none of this: it presents the origin's own certificate. Arming and disarming swap the workspace's firewall
 table in one nft transaction — the redirect, the widened input
 rule for the listener, and the QUIC drop appear and disappear
 together, with no window in between where the table is absent.
@@ -112,7 +115,11 @@ keeps flowing unintercepted until it ends (the kernel's connection
 tracking outlives the rule swap); an established _redirected_
 flow, symmetrically, breaks when the last placeholder goes — the
 listener is gone while its NAT entry lingers. Both sit in the
-same accepted blind-spot class as the splice tier.
+same accepted blind-spot class as the splice tier — as does
+guest-to-guest web traffic while armed: the redirect takes every
+tap 80/443 flow, including one workspace dialing another's
+address, and the interceptor dials the destination from the host,
+where the per-VM forward gates do not apply.
 
 ## The mint flow
 
