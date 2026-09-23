@@ -20,6 +20,7 @@ from collections.abc import AsyncIterator
 from datetime import datetime
 from pathlib import Path
 
+from ..conformance_args import check_arguments
 from ..identity import KEY_TYPES, LOGIN_NAME_RE, mint
 from ..imagestore import is_hash_shape, version_key
 from ..storage import MIB
@@ -1016,9 +1017,24 @@ def cmd_image_ls(as_json: bool = False, transport=None) -> int:
 
 
 def cmd_image_import(source: str, transport=None) -> int:
-    """``msks image import``: register a daemon-side archive."""
+    """``msks image import``: register a daemon-side archive or
+    fetch one from an https:// URL (#258)."""
     asyncio.run(import_image(env_url(), env_token(), source, transport))
     return 0
+
+
+def cmd_image_check(args: argparse.Namespace) -> int:
+    """``msks image check``: the local conformance pass (#258).
+
+    The import stays inside the command: conformance composes the
+    daemon's app (msks.app), and a module-scope import would load
+    the whole server stack into every ``msks`` invocation — the
+    client/server boundary is a standing decision, so this is the
+    one deliberate deferral in the client.
+    """
+    from .. import conformance  # allow-deferred-import
+
+    return conformance.run_check(args)
 
 
 def cmd_image_rm(ref: str, transport=None) -> int:
@@ -1559,13 +1575,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     image_import = image_sub.add_parser(
         "import",
-        help="register an image archive from a daemon-side path",
+        help="register an image archive from a daemon-side path or an "
+        "https:// URL",
     )
     image_import.add_argument(
         "source",
         help="archive path as the daemon sees it (its own filesystem; "
-        "the file is read by the daemon, not uploaded by this command)",
+        "the file is read by the daemon, not uploaded by this command) "
+        "or an https:// URL the daemon downloads itself (#258)",
     )
+    image_check = image_sub.add_parser(
+        "check",
+        help="boot an image and verify the guest contract (#258); "
+        "local — needs /dev/kvm, --egress needs root",
+    )
+    # The flags come from the leaf module conformance_args: the
+    # same definitions the standalone entry parses, with none of
+    # the daemon composition importing them would drag in.
+    check_arguments(image_check)
+
     image_rm = image_sub.add_parser(
         "rm", help="remove an image from the catalog"
     )
@@ -1884,6 +1912,7 @@ def image_command_table(args: argparse.Namespace, transport) -> dict:
     return {
         "ls": lambda: cmd_image_ls(args.json, transport=transport),
         "import": lambda: cmd_image_import(args.source, transport=transport),
+        "check": lambda: cmd_image_check(args),
         "rm": lambda: cmd_image_rm(args.ref, transport=transport),
         "info": lambda: cmd_image_info(args.ref, transport=transport),
     }

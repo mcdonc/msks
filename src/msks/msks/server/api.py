@@ -117,11 +117,16 @@ class EgressDecide(BaseModel):
 
 
 class ImageImport(BaseModel):
-    """An import request: a host-side path to a container-image tar.
+    """An import request: a host-side path to a container-image tar,
+    or an ``https://`` URL the daemon downloads itself (#258).
 
-    The daemon's filesystem must reach it (a store path via the
-    share, or a state-dir path) — the API deliberately
-    does not accept uploads yet.
+    The daemon's filesystem must reach a path source (a store path
+    via the share, or a state-dir path) — the API deliberately
+    does not accept uploads yet. A URL source is fetched into the
+    catalog's staging area under the import ceiling and deadline
+    (``MSKSD_IMAGE_IMPORT_MAX_MIB`` / ``MSKSD_IMAGE_IMPORT_TIMEOUT_S``),
+    verified against system TLS roots, and imported from the
+    downloaded copy.
     """
 
     source: str
@@ -205,6 +210,21 @@ class WorkspaceCreate(BaseModel):
 #: can name drift between a running daemon and the tree's
 #: current build (#160).
 CMDLINE = Path("/proc/cmdline")
+
+
+def download_ceiling(vmm) -> int:
+    """The URL-import ceiling, clamped to what the state disk can
+    actually hold (#258): the download itself must not spend the
+    bytes the storage floor protects (#184). The post-download
+    floor check still runs with the archive's real size — the
+    import counts it twice (retained copy plus boot cache)."""
+    max_bytes = vmm.image_import_max_mib * 1024 * 1024
+    usage = storage.state_usage(vmm.state_dir)
+    if usage is None:
+        return max_bytes
+    protected = vmm.storage_floor_mib * storage.MIB
+    headroom = max(usage["free"] - protected, 0)
+    return min(max_bytes, headroom)
 
 
 def cmdline_image() -> str | None:
@@ -893,6 +913,13 @@ def build_api(app) -> FastAPI:
     """
     hub = app.state.hub
     app.state.create_locks: dict[str, asyncio.Lock] = {}
+    # Imports serialize daemon-wide (#258): concurrent URL imports
+    # would each clamp to the same floor headroom and stream real
+    # bytes in parallel — the lock keeps the ceiling's promise that
+    # the disk never dips below the floor mid-download. Path
+    # imports ride the same lock: their floor check has the same
+    # race, just a narrower window.
+    import_lock = asyncio.Lock()
     app.state.home_locks: dict[str, asyncio.Lock] = {}
 
     @contextlib.asynccontextmanager
@@ -1312,30 +1339,70 @@ def build_api(app) -> FastAPI:
 
     @api.post("/api/v1/images", dependencies=[Depends(require_token)])
     async def import_image(body: ImageImport) -> Response:
-        # The floor (#184): an import retains the archive **and**
-        # unpacks its boot cache — the incoming bytes are counted
-        # twice.
-        incoming_b = 0
-        with contextlib.suppress(OSError):
-            incoming_b = 2 * Path(body.source).stat().st_size
-        refusal = storage.floor_refusal(
-            app.state.settings.vmm, "importing images", incoming_b
-        )
-        if refusal is not None:
-            raise HTTPException(status_code=507, detail=refusal)
         state_dir = app.state.settings.vmm.state_dir
+        vmm = app.state.settings.vmm
+        # A URL source is staged first (#258): the download lands in
+        # the catalog's own dot-prefixed staging area (crash
+        # leftovers sweep at startup), and the import below works on
+        # the downloaded copy — the recorded hash always reflects
+        # the fetched bytes.
+        staged: Path | None = None
         try:
-            record = await asyncio.to_thread(
-                imagestore.import_archive, Path(body.source), state_dir
-            )
+            async with import_lock:
+                if imagestore.is_url(body.source):
+                    max_bytes = download_ceiling(vmm)
+                    if max_bytes <= 0:
+                        # The disk sits at or below the floor: the
+                        # same named 507 a path import answers,
+                        # before any bytes are fetched.
+                        refusal = storage.floor_refusal(
+                            vmm, "importing images"
+                        )
+                        raise HTTPException(
+                            status_code=507,
+                            detail=refusal
+                            or "the state disk sits at the storage floor",
+                        )
+                    staged = await asyncio.to_thread(
+                        imagestore.fetch_archive,
+                        body.source,
+                        state_dir,
+                        timeout_s=vmm.image_import_timeout_s,
+                        max_bytes=max_bytes,
+                    )
+                    source = staged
+                else:
+                    source = Path(body.source)
+                # The floor (#184): an import retains the archive **and**
+                # unpacks its boot cache — the incoming bytes are counted
+                # twice. A URL source is sized after its download, so a
+                # floor refusal lands before the unpack with the real
+                # size named.
+                incoming_b = 0
+                with contextlib.suppress(OSError):
+                    incoming_b = 2 * source.stat().st_size
+                refusal = storage.floor_refusal(
+                    vmm, "importing images", incoming_b
+                )
+                if refusal is not None:
+                    raise HTTPException(status_code=507, detail=refusal)
+                record = await asyncio.to_thread(
+                    imagestore.import_archive, source, state_dir
+                )
+                # The first imported image becomes the default: a fresh
+                # daemon answers a bare workspace create immediately (the
+                # sole-entry fallback would resolve it, but the pointer
+                # keeps the designation explicit and stable across later
+                # imports). Inside the lock: two imports into an empty
+                # catalog otherwise both observe the other's row and
+                # leave no default designated at all.
+                if len(imagestore.list_images(state_dir)) == 1:
+                    imagestore.set_default(record.hash, state_dir)
         except (ImageError, OSError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
-        # The first imported image becomes the default: a fresh
-        # daemon answers a bare workspace create immediately (the
-        # sole-entry fallback would resolve it, but the pointer keeps
-        # the designation explicit and stable across later imports).
-        if len(imagestore.list_images(state_dir)) == 1:
-            imagestore.set_default(record.hash, state_dir)
+        finally:
+            if staged is not None:
+                staged.unlink(missing_ok=True)
         return Response(
             status_code=201,
             content=json.dumps(

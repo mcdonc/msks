@@ -83,6 +83,8 @@ SETTING_ENV_VARS: tuple[str, ...] = (
     "MSKSD_STORAGE_WARN_PCT",
     "MSKSD_STORAGE_FLOOR_MIB",
     "MSKSD_SSH_KEY_TYPE",
+    "MSKSD_IMAGE_IMPORT_MAX_MIB",
+    "MSKSD_IMAGE_IMPORT_TIMEOUT_S",
     # ServerSettings — the API listener.
     "MSKSD_HOST",
     "MSKSD_PORT",

@@ -444,17 +444,52 @@ scripting.
 ### `msks image import`
 
 Registers an archive in the catalog (`POST /api/v1/images`). The
-path is a **daemon-side** path: the daemon reads the file from its
-own filesystem — the command does not upload anything:
+source is a **daemon-side** path — the daemon reads the file from
+its own filesystem; the command does not upload anything — or an
+`https://` URL the daemon downloads itself (#258):
 
 ```text
 $ msks image import /srv/images/debian-13.tar
 imported debian:13 (9f2c41ab77de)
+
+$ msks image import https://images.example.com/debian-13.tar
+imported debian:13 (9f2c41ab77de)
 ```
 
-The first image imported into an empty catalog also becomes the
-daemon's default. An archive the daemon cannot read or parse
-answers 400 with the reason on one line.
+A URL source is fetched into the catalog's staging area under the
+import ceiling and deadline (`MSKSD_IMAGE_IMPORT_MAX_MIB`,
+`MSKSD_IMAGE_IMPORT_TIMEOUT_S`), verified against system TLS
+roots, and imported from the downloaded copy — the recorded hash
+always reflects the fetched bytes, so the same content imports
+once regardless of source. The first image imported into an empty
+catalog also becomes the daemon's default. An archive the daemon
+cannot read, parse, or fetch answers 400 with the reason on one
+line.
+
+### `msks image check`
+
+Boots an image locally and verifies the guest contract point by
+point (#258) — the pre-import gate `docs/images.md` describes. The
+command runs on the image author's host: it needs `/dev/kvm` and
+nothing else from msks (no daemon, no state):
+
+```text
+$ msks image check workspace-mine-1.0.tar
+PASS archive        imported mine:1.0 (1d6a5e782fc0), prelude-v1 handshake as 'root'
+PASS boot           guest answered the console in 3.4s (kernel 6.12.107+deb13-amd64)
+PASS console        prelude-v1 handshake as 'root'
+PASS user-data      seed payload ran on first boot
+PASS acpi-shutdown  clean shutdown within 120s
+PASS root-rw        root is writable and the write survived a stop/start (overlay)
+PASS home-label     /home mounted by label msks-home and its write survived a stop/start (volume)
+```
+
+A broken contract point fails its row and the exit code is 1,
+naming the first failure; `--keep` preserves the throwaway state
+dir (serial logs) for inspection. `--egress` adds the DHCP point —
+the guest must take a global address over the daemon's own net
+stack — and needs root plus an egress-capable default route
+(`--uplink` names another interface).
 
 ### `msks image rm`
 

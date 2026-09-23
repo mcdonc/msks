@@ -3299,3 +3299,23 @@ def test_create_refuses_when_no_invoking_name(
                 lambda req: httpx.Response(201, json={"id": "ws1"})
             ),
         )
+
+
+def test_cmd_image_check_routes_to_the_conformance_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``msks image check`` delegates to the local conformance pass
+    (#258); its exit code is the command's."""
+    import argparse
+
+    from msks import conformance
+
+    seen: list[argparse.Namespace] = []
+
+    def fake_run(args):
+        seen.append(args)
+        return 1
+
+    monkeypatch.setattr(conformance, "run_check", fake_run)
+    assert cli.cmd_image_check(argparse.Namespace(archive="x.tar")) == 1
+    assert seen[0].archive == "x.tar"
