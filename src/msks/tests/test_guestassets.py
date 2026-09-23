@@ -257,10 +257,10 @@ def test_the_image_bakes_the_agent_toolchain() -> None:
     the overlay's /usr/local with the extension planted for root
     and in the skeleton every seed-provisioned account copies."""
     build = (REPO_ROOT / "nix" / "guest-debian.nix").read_text()
-    assert (
-        "https://nodejs.org/dist/v22.23.3/"
-        "node-v22.23.3-linux-x64.tar.gz" in build.replace('"\n      + "', "")
-    )
+    # String fragments, not joined URLs: nixfmt reflows the
+    # concatenation layout, and the fragments are the stable atoms.
+    assert '"https://nodejs.org/dist/v22.23.3/"' in build
+    assert '"node-v22.23.3-linux-x64.tar.gz"' in build
     assert "pi-coding-agent-0.87.1.tgz" in build
     # A real npmDepsHash, not the placeholder the two-step prefetch
     # starts from.
