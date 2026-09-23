@@ -590,8 +590,7 @@ class TapListener:
         :meth:`stop`."""
         import uvicorn  # allow-deferred-import (startup path only)
 
-        if self._sock is None:
-            self.bind()
+        self.bind_if_needed()
         config = uvicorn.Config(
             self._app,
             host=self.tap_ip,
@@ -610,6 +609,13 @@ class TapListener:
         server.install_signal_handlers = lambda: None
         self._server = server
         self._task = asyncio.create_task(server.serve(sockets=[self._sock]))
+
+    def bind_if_needed(self) -> None:
+        """The bind start() owes when the caller did not pre-bind
+        (the eager path that surfaces a taken port in the manager's
+        tolerant frame)."""
+        if self._sock is None:
+            self.bind()
 
     async def stop(self) -> None:
         """Ask the server to exit and gather its task (idempotent).

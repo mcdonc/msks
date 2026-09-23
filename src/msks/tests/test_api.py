@@ -2671,3 +2671,25 @@ async def test_launch_heals_a_lost_seed_with_the_row_token(
     )
     assert started.status_code == 200, started.text
     assert stub.seen_specs[wid].llm_token == minted
+
+
+async def test_healed_spec_returns_a_token_carrying_row_untouched() -> None:
+    """The heal's early exit: a spec whose row already carries the
+    credential (a direct construction, not the dict path) needs no
+    model round-trip."""
+    app = build_app(Settings(server=ServerSettings(db_path=Path("/dev/null"))))
+    row = {
+        "id": "ws-x",
+        "kernel": "/k",
+        "initrd": None,
+        "rootfs": "/r",
+        "cmdline": "c",
+        "cpus": 1,
+        "mem_mib": 64,
+        "root_mib": 16,
+        "home_mib": 8,
+        "llm_token": "msksllm1_present",
+    }
+    assert (await api_mod.healed_spec(app, row)).llm_token == (
+        "msksllm1_present"
+    )
