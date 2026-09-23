@@ -34,7 +34,7 @@ on:
       - devenv.yaml
       - devenv.lock
       - nix/guest.nix
-      - nix/guest-assets.nix
+      - nix/guest-debian.nix
       - scripts/build-guest.sh
       - src/msks/msks/**
       - src/msks/tests/conftest.py
@@ -46,7 +46,7 @@ on:
       - devenv.yaml
       - devenv.lock
       - nix/guest.nix
-      - nix/guest-assets.nix
+      - nix/guest-debian.nix
       - scripts/build-guest.sh
       - src/msks/msks/**
       - src/msks/tests/conftest.py

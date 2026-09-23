@@ -200,25 +200,10 @@ let
         rm -rf "$out"/tree
       '';
 
-  # The console identity helper (#63): one static binary that owns
-  # the vsock listener (replacing the socat EXEC line), negotiates
-  # the identity prelude, applies the window size, and drops to the
-  # requested user before exec'ing that user's shell.
-  #
-  # pkgsStatic (musl) makes the static link the default, so nothing
-  # depends on glibc's layout; the guest rootfs (Debian) and the host
-  # nixpkgs pin ship different glibcs, and a dynamically linked helper
-  # would only run on one of them. NSS never matters — the helper
-  # parses /etc/passwd and /etc/group itself. Sources and lockfile
-  # live in src/console-helper/; the devenv shell (languages.rust)
-  # carries the toolchain for local builds and the coverage gate.
-  consoleHelper = pkgs.pkgsStatic.rustPlatform.buildRustPackage {
-    pname = "msks-console-helper";
-    version = "0.1.0";
-    src = ../src/console-helper;
-    cargoLock.lockFile = ../src/console-helper/Cargo.lock;
-    doCheck = false;
-  };
+  # The console identity helper (#63): shared with every guest
+  # build (#250) — nix/console-helper-pkg.nix carries the why (the
+  # static link, the NSS note).
+  consoleHelper = pkgs.callPackage ./console-helper-pkg.nix { };
 
   # The msks additions, staged as an overlay tree: the vsock console
   # service, serial-console autologin (the debug console), the vsock
@@ -1274,53 +1259,17 @@ let
         EOF
       '';
 
-  # The image archive: a container-image tar built with plain tar
-  # instead of dockerTools (#40 review). The layout is the one
-  # `podman save` writes (manifest.json +
-  # <id>/{layer.tar,json,VERSION} + repositories; the format
-  # originates with `docker save`, which is the last time docker is
-  # mentioned here). The layer is UNCOMPRESSED (members readable in
-  # place with `tar tf`, no decompression at import) and byte-stable
-  # (--sort=name --mtime=@1 --owner=0 --group=0 --numeric-owner), so
-  # identical rebuilds hash identically and the per-hash cache
-  # dedupes across hosts and CI.
-  imageArchive =
-    pkgs.runCommand "msks-image-archive"
-      {
-        inherit bootTree imageName imageVersion;
-        nativeBuildInputs = [ pkgs.gnutar ];
-        imageId =
-          "msks" + builtins.hashString "sha256" (imageName + ":" + imageVersion);
-      }
-      ''
-        set -eu
-        mkdir work
-        # The layer: the containerDisk tree, uncompressed, sorted,
-        # zeroed timestamps and ownership.
-        tar --sort=name --mtime='@1' --owner=0 --group=0 --numeric-owner \
-          -C "${bootTree}" -cf work/layer.tar .
-        # Container-image bookkeeping.
-        mkdir "work/$imageId"
-        mv work/layer.tar "work/$imageId/layer.tar"
-        printf '1.0' > "work/$imageId/VERSION"
-        # A minimally valid image config: podman requires the rootfs
-        # diff_ids (the uncompressed layer's digest).
-        layer_digest=$(sha256sum "work/$imageId/layer.tar" | cut -d' ' -f1)
-        printf '%s' \
-          '{"architecture":"amd64","os":"linux","config":{},' \
-          '"rootfs":{"type":"layers","diff_ids":["sha256:'"$layer_digest"'"]}}' \
-          > "work/$imageId/json"
-        # Unquoted heredocs: the env-provided name/version/imageId
-        # expand in the shell.
-        cat > work/manifest.json <<EOF
-        [{"Config":"$imageId/json","RepoTags":["workspace-''${imageName}:''${imageVersion}"],"Layers":["$imageId/layer.tar"]}]
-        EOF
-        cat > work/repositories <<EOF
-        {"workspace-''${imageName}":{"''${imageVersion}":"$imageId"}}
-        EOF
-        tar --sort=name --mtime='@1' --owner=0 --group=0 --numeric-owner \
-          -C work -cf "$out" manifest.json repositories "$imageId"
-      '';
+  # The image archive: the shared containerDisk packer (#40
+  # review, shared since #250 — nix/image-archive.nix owns the
+  # format: the podman-save layout, the uncompressed byte-stable
+  # layer, the per-name:version image id).
+  imageArchive = (pkgs.callPackage ./image-archive.nix { }).mkImageArchive {
+    inherit
+      bootTree
+      imageName
+      imageVersion
+      ;
+  };
 
 in
 pkgs.runCommand "msks-guest"

@@ -359,6 +359,39 @@ def test_import_of_the_real_built_image(tmp_path: Path) -> None:
     assert "'" not in tag and "''" not in tag, tag
 
 
+def nixos_guest_dir() -> Path:
+    """The NixOS guest state dir (#250), mirroring the Debian one's
+    resolution: MSKS_GUEST_NIXOS_DIR relocates it (absolute as-is,
+    relative below the repo root)."""
+    override = os.environ.get("MSKS_GUEST_NIXOS_DIR")
+    base = Path(os.environ.get("DEVENV_ROOT", "."))
+    if override is None:
+        return base / ".devenv/state/guest-nixos"
+    path = Path(override)
+    return path if path.is_absolute() else base / path
+
+
+def test_import_of_the_real_built_nixos_image(tmp_path: Path) -> None:
+    """The `msks-build-guest nixos` containerDisk (#250), when
+    present, imports through the same schema — and the capabilities
+    carry the whole NixOS-vs-Debian difference the daemon acts on:
+    the same declared cloud-init provisioner, the same prelude-v1
+    console."""
+
+    archives = sorted(nixos_guest_dir().glob("workspace-nixos-*.tar"))
+    if not archives:
+        pytest.skip("nixos guest assets not built")
+    record = import_archive(archives[-1], tmp_path)
+    assert record.name == "nixos"
+    assert record.kernel.stat().st_size > 1_000_000
+    assert record.rootfs.stat().st_size > 1_000_000_000
+    assert record.provisioner == "cloud-init"
+    assert record.console_protocol == "prelude-v1"
+    with tarfile.open(archives[-1]) as tf:
+        tag = json.load(tf.extractfile("manifest.json"))[0]["RepoTags"][0]
+    assert "'" not in tag and "''" not in tag, tag
+
+
 async def test_image_endpoints_and_create_by_ref(tmp_path) -> None:
     """The catalog surfaces over the API and fills workspace boots."""
 

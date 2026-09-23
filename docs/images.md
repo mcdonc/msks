@@ -182,8 +182,26 @@ image deduplicates across hosts.
 
 The output lands under `.devenv/state/guest/` (`MSKS_GUEST_DIR`
 relocates it); `scripts/build-guest.sh` and
-`nix/guest-assets.nix` document every step and are the reference for
+`nix/guest-debian.nix` document every step and are the reference for
 what an image build does.
+
+```bash
+msks-build-guest nixos
+```
+
+builds the second catalog image (`workspace-nixos-<version>.tar`)
+from a NixOS system evaluated against the same pinned nixpkgs the
+development shell uses — the guest's console helper, cloud-init,
+sshd, and rsync are built by nixpkgs instead of fetched as Debian
+artifacts. The root filesystem is the whole system closure packed
+into a fresh ext4 (the same `mke2fs -d` under fakeroot; no cloud
+image exists to extract), and the guest boots with no nix
+database anywhere — every store path resolves from the image
+itself. The archive carries the same `image.json` schema with the
+same declared capabilities (`cloud-init`, `prelude-v1`): the daemon
+serves it with nothing keyed off the image's name. The output
+lands under `.devenv/state/guest-nixos/` (`MSKS_GUEST_NIXOS_DIR`
+relocates it); `nix/guest-nixos.nix` documents every step.
 
 ### Building your own
 

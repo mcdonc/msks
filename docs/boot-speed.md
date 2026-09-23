@@ -61,7 +61,7 @@ image that regresses any of them pays for it at every boot.
 ### A pinned kernel with a minimal path to root
 
 Debian's **generic kernel** flavor (`linux-image-*-amd64`, pinned
-by pool URL and hash in `nix/guest-assets.nix`) builds virtio-pci
+by pool URL and hash in `nix/guest-debian.nix`) builds virtio-pci
 in and carries the KVM modules, so one flavor serves both the
 workspace guest and nested-KVM workspaces (#96 — one pin, one
 fetch). The
@@ -76,7 +76,7 @@ was). The measured cost of the swap is in the #96 section below.
 
 ### A minimal initramfs
 
-The msks-built initramfs (`minimalInitrd` in `nix/guest-assets.nix`)
+The msks-built initramfs (`minimalInitrd` in `nix/guest-debian.nix`)
 is a static busybox, the six modules the generic kernel needs to
 mount the ext4 root (crc16, crc32c_generic, mbcache, jbd2, ext4,
 virtio_blk — dependency order, because busybox `insmod` resolves
@@ -116,7 +116,7 @@ Units a workspace never uses are absent from the boot: AppArmor
 profile loading (~0.7s), `systemd-timesyncd`, `grub-common`,
 `unattended-upgrades`, `e2scrub_reap`. (networkd and resolved run —
 egress workspaces (#52) need the NIC configured; see
-`nix/guest-assets.nix`.) The wants symlinks are removed at image
+`nix/guest-debian.nix`.) The wants symlinks are removed at image
 build time, with the reason each removal is safe recorded there.
 
 ## The generic-kernel unification (#96)

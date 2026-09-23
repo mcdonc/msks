@@ -16,13 +16,22 @@
 }:
 
 let
-  guest = pkgs.callPackage ./guest-assets.nix { };
+  guest = pkgs.callPackage ./guest-debian.nix { };
+  guest-nixos = pkgs.callPackage ./guest-nixos.nix { };
 in
 {
   inherit guest;
+
+  # The NixOS workspace guest (#250): same output surface and
+  # archive contract as the Debian `guest`, built from a NixOS
+  # system evaluated against the same pinned nixpkgs.
+  inherit guest-nixos;
 
   # The workspace image archive on its own (#141): the bare-host dev
   # daemon's default image — same derivation the `guest` build embeds,
   # buildable without the kernel/rootfs copies that shape serves.
   image-archive = guest.imageArchive;
+
+  # The NixOS image archive on its own (#250).
+  image-archive-nixos = guest-nixos.imageArchive;
 }

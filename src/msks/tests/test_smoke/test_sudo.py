@@ -1,15 +1,15 @@
-"""The workspace user's sudo (#169): setuid bits survive the build.
+"""The workspace user's sudo (#169): setuid sudo, in the booted image.
 
-The image build extracts the Debian root unprivileged, which drops
-the setuid/setgid bits and flattens ownership; the build records the
-source image's inode metadata and the fakeroot pack stage bakes it
-back (see nix/guest-assets.nix). This smoke pins the result in a real
-boot: the binary's mode (04755, root-owned — the pairing sudo demands
-before anything else) and the behavior as the msks user, whose
-sudoers grant (#169) makes a successful elevation the observable
-outcome. With the bits lost, sudo refuses to run at all — the
-marker never arrives — so the assertion catches the exact
-regression class the build once shipped.
+The two images ship their sudo differently and the pin covers both:
+Debian's distro binary at /usr/bin/sudo (mode 4755), whose bits the
+unprivileged extraction drops and the fakeroot pack stage bakes
+back (see nix/guest-debian.nix); NixOS's activation-built wrapper
+at /run/wrappers/bin/sudo (mode 4511 — setuid, others
+execute-only). Either way the binary is setuid root in a real
+boot, and the msks user's sudoers grant (#169) makes a successful
+elevation the observable outcome. With the bits lost, sudo refuses
+to run at all — the marker never arrives — so the assertion
+catches the exact regression class the Debian build once shipped.
 """
 
 import contextlib
@@ -60,14 +60,19 @@ async def test_local_workspace_user_sudo() -> None:
         info = await microvm.info(wid)
         assert info.status.value == "running"
         await await_guest_up(serial_log)
-        # The pairing sudo checks first: uid-0 ownership of a 04755
-        # binary. Guest-computed sentinel, per run_in_console's
-        # echo-collision rule.
+        # The pairing sudo checks first: a setuid (mode 4xxx),
+        # uid-0-owned binary — wherever the image's sudo lives
+        # (Debian's distro binary at /usr/bin/sudo, mode 4755;
+        # NixOS's activation-built wrapper at /run/wrappers/bin/sudo,
+        # mode 4511 — setuid with others execute-only). Guest-computed
+        # sentinel, per run_in_console's echo-collision rule.
         await run_in_console(
             microvm,
             wid,
-            'test "$(stat -c %a /usr/bin/sudo)" = 4755 '
-            '&& test "$(stat -c %u /usr/bin/sudo)" = 0 '
+            's="$(command -v sudo)" '
+            '&& test -n "$s" '
+            '&& test "$(stat -c %a "$s" | cut -c1)" = 4 '
+            '&& test "$(stat -c %u "$s")" = 0 '
             "&& echo MODE-$((6*7))",
             "MODE-42",
         )
@@ -76,7 +81,7 @@ async def test_local_workspace_user_sudo() -> None:
         await run_in_console(
             microvm,
             wid,
-            "sudo -n /bin/true && echo SUDO-$((6*7))",
+            "sudo -n true && echo SUDO-$((6*7))",
             "SUDO-42",
             user="msks",
         )
