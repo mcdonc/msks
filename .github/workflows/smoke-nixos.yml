@@ -19,6 +19,10 @@ on:
       - devenv.yaml
       - devenv.lock
       - nix/guest.nix
+      - nix/guest-pi-extension.ts
+      - nix/agent-toolchain.nix
+      - nix/pi-shrinkwrap-patch.py
+      - nix/pi-shrinkwrap-integrity.json
       - nix/guest-nixos.nix
       - nix/console-helper-pkg.nix
       - nix/image-archive.nix
@@ -35,6 +39,10 @@ on:
       - devenv.yaml
       - devenv.lock
       - nix/guest.nix
+      - nix/guest-pi-extension.ts
+      - nix/agent-toolchain.nix
+      - nix/pi-shrinkwrap-patch.py
+      - nix/pi-shrinkwrap-integrity.json
       - nix/guest-nixos.nix
       - nix/console-helper-pkg.nix
       - nix/image-archive.nix
