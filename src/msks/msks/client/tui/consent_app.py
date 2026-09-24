@@ -379,18 +379,9 @@ def event_item(event: SecretEvent) -> ListItem:
 
 
 def events_note() -> str:
-def events_note() -> str:
     """The events screen's explanatory line, in operator language
     (#305): what the rows are, what the marker means, and where
     detection stops (#201)."""
-    return (
-        "Placeholder-token audit — this workspace's recorded mints, "
-        "revokes, and expiries, then wire events as they happen. "
-        "! marks a sighting: a placeholder token reached a host its "
-        "mint did not allow — the exfiltration signal. Wire events "
-        "cover decrypted connections only; a connection the daemon "
-        "relays untouched passes unread and produces no row."
-    )
     return (
         "Placeholder-token audit — this workspace's recorded mints, "
         "revokes, and expiries, then wire events as they happen. "
@@ -736,16 +727,12 @@ class EventsScreen(Screen):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="events-body"):
-    def compose(self) -> ComposeResult:
-        with Vertical(id="events-body"):
             yield Static(id="events-note")
             yield Static(
                 "No placeholder events yet — mints, revokes, and "
                 "expiries appear here.",
                 id="events-empty",
             )
-            yield ListView(id="event-rows")
-        yield Footer()
             yield ListView(id="event-rows")
         yield Footer()
 
