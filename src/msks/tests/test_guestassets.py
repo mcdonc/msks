@@ -464,6 +464,11 @@ def test_the_nixos_image_is_rebuild_ready() -> None:
     # One source of truth: the image build evaluates the same file
     # the guest rebuild imports.
     assert "configuration = ./guest-nixos-configuration.nix;" in build
+    # The vsock port guard (#274 review): the extraction duplicated
+    # vsockShellPort across two files — the build asserts the
+    # module's service unit carries the same port the manifest
+    # advertises, so a drift fails the build.
+    assert "msks-console-helper $vsockShellPort" in build
 
 
 def test_the_extension_bounds_its_single_fetch() -> None:

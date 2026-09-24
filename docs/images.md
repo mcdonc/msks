@@ -260,8 +260,8 @@ image exists to extract), and every store path resolves from the
 image itself. The archive carries the same `image.json` schema with
 the same declared capabilities (`cloud-init`, `prelude-v1`): the
 daemon serves it with nothing keyed off the image's name. The
-output lands under `.devenv/state/guest-nixos/` (`
-MSKS_GUEST_NIXOS_DIR` relocates it); `nix/guest-nixos.nix`
+output lands under `.devenv/state/guest-nixos/`
+(`MSKS_GUEST_NIXOS_DIR` relocates it); `nix/guest-nixos.nix`
 documents every step. The image ships the same agent toolchain as
 the Debian one (#268): nixpkgs' own Node and the shared pins
 (`nix/agent-toolchain.nix`) ride the system profile — the

@@ -172,6 +172,7 @@ let
           channelSources
           configurationEntry
           consoleHelperSrc
+          vsockShellPort
           ;
         guestConfiguration = ./guest-nixos-configuration.nix;
         consoleHelperPkgFile = ./console-helper-pkg.nix;
@@ -280,6 +281,14 @@ let
         test -e "$toplevel"/etc/systemd/system/multi-user.target.wants/cloud-init.service
         test -e "$toplevel"/etc/systemd/system/multi-user.target.wants/sshd.service
         grep -q msks-console-helper "$closureInfo"/store-paths
+        # The vsock port the module declares must match the one the
+        # image manifest advertises (#274 review): vsockShellPort is
+        # defined in both files after the extraction, and a drift
+        # would silently break workspace connects. The module's
+        # value lands in the console service's ExecStart; the
+        # build's value is $vsockShellPort.
+        grep -q "msks-console-helper $vsockShellPort" \
+          "$toplevel"/etc/systemd/system/msks-console.service
         # Sanity: the baked agent toolchain (#266, #268) — an
         # upstream package or profile change must fail the build
         # here, not boot a workspace with a broken agent (the #36
