@@ -38,6 +38,7 @@ from ..rest import api_call, env_token, env_url, ssl_context
 from .consent import (
     DURATION_DEFAULT,
     DURATIONS,
+    EGRESS_MODES,
     REJECTED,
     ConsentController,
     ConsentRequest,
@@ -196,6 +197,30 @@ def refused_close(exc: websockets.ConnectionClosed) -> bool:
     return exc.rcvd is not None and exc.rcvd.code == AUTH_CLOSE_CODE
 
 
+#: The keys every modal above the queue shadows (#280 review, the
+#: RulesScreen precedent from #195): the app-level verdict, rules,
+#: and quit bindings must not act on the hidden queue below —
+#: `a`/`d` deciding a hold nobody can see is the bug class, `q`
+#: closing the modal instead of the app is the same rule one level
+#: up (each modal binds `q` itself, to its own cancel).
+SHADOW_BINDINGS = (
+    Binding("a", "noop", show=False),
+    Binding("A", "noop", show=False),
+    Binding("d", "noop", show=False),
+    Binding("D", "noop", show=False),
+    Binding("r", "noop", show=False),
+)
+
+
+class ModalShadow:
+    """The action half of SHADOW_BINDINGS: swallowing a queue
+    key pressed under a modal. A mixin, because Textual resolves
+    an action as a method on the focused screen."""
+
+    def action_noop(self) -> None:
+        """Swallow a queue-action key pressed under this modal."""
+
+
 def backoff(delays: tuple[float, ...], attempt: int) -> float:
     """The reconnect delay for an attempt (capped at the last)."""
     if not delays:
@@ -203,11 +228,100 @@ def backoff(delays: tuple[float, ...], attempt: int) -> float:
     return delays[min(attempt - 1, len(delays) - 1)]
 
 
-class DurationScreen(ModalScreen[str | None]):
-    """The duration picker: Enter picks, Escape cancels. The chosen
-    duration (or None) goes to the callback given at construction."""
+def effective_allows(rules: EgressRules | None) -> bool:
+    """Whether anything effectively allows egress under the
+    snapshot (#280): a non-empty allowlist or an in-effect allowed
+    verdict — the condition the static switch's confirmation
+    gates on."""
+    if rules is None:
+        return False
+    return bool(rules.allow_list) or bool(rules.allowed)
+
+
+class ModeScreen(ModalShadow, ModalScreen[str | None]):
+    """The mode picker (#280): Enter picks, Escape or q cancels.
+    The chosen mode (or None) goes to the callback given at
+    construction."""
 
     BINDINGS = [
+        *SHADOW_BINDINGS,
+        Binding("q", "cancel", show=False),
+        Binding("escape", "cancel", "Cancel", show=False),
+    ]
+
+    def __init__(self, current: str, picked) -> None:
+        super().__init__()
+        self.current = current
+        self.picked = picked
+
+    def compose(self) -> ComposeResult:
+        yield OptionList(*EGRESS_MODES, id="modes")
+
+    def on_mount(self) -> None:
+        options = self.query_one("#modes", OptionList)
+        options.focus()
+        if self.current in EGRESS_MODES:
+            options.highlighted = list(EGRESS_MODES).index(self.current)
+
+    def on_option_list_option_selected(
+        self, event: OptionList.OptionSelected
+    ) -> None:
+        self.dismiss_with(str(event.option.prompt))
+
+    def action_cancel(self) -> None:
+        self.dismiss_with(None)
+
+    def dismiss_with(self, mode: str | None) -> None:
+        """Dismiss and hand the pick to the callback (async — the
+        switch runs as a task, so the modal closes without waiting
+        on it)."""
+        self.dismiss()
+        # Referenced: an unreferenced task can be collected mid-await.
+        self._pick_task = asyncio.create_task(self.picked(mode))
+
+
+class ConfirmScreen(ModalShadow, ModalScreen[bool]):
+    """A yes/no question (#280): ``y``/Enter answers True, ``n``/
+    ``q``/Escape answers False. The callback given at construction
+    runs as a task with the answer."""
+
+    BINDINGS = [
+        *SHADOW_BINDINGS,
+        Binding("y", "yes", "Confirm"),
+        Binding("enter", "yes", "Confirm", show=False),
+        Binding("n", "no", "Cancel"),
+        Binding("q", "no", "Cancel", show=False),
+        Binding("escape", "no", "Cancel", show=False),
+    ]
+
+    def __init__(self, question: str, answered) -> None:
+        super().__init__()
+        self.question = question
+        self.answered = answered
+
+    def compose(self) -> ComposeResult:
+        yield Static(self.question, id="question")
+
+    def action_yes(self) -> None:
+        self.dismiss_with(True)
+
+    def action_no(self) -> None:
+        self.dismiss_with(False)
+
+    def dismiss_with(self, answer: bool) -> None:
+        """Dismiss and hand the answer to the callback."""
+        self.dismiss()
+        self._pick_task = asyncio.create_task(self.answered(answer))
+
+
+class DurationScreen(ModalShadow, ModalScreen[str | None]):
+    """The duration picker: Enter picks, Escape or q cancels. The
+    chosen duration (or None) goes to the callback given at
+    construction."""
+
+    BINDINGS = [
+        *SHADOW_BINDINGS,
+        Binding("q", "cancel", show=False),
         Binding("escape", "cancel", "Cancel", show=False),
     ]
 
@@ -249,6 +363,7 @@ class RulesScreen(Screen):
 
     BINDINGS = [
         Binding("x", "revoke", "Revoke"),
+        Binding("m", "mode", "Mode"),
         Binding("r", "back", "Back"),
         Binding("escape", "back", "Back", show=False),
         Binding("q", "back", "Back", show=False),
@@ -265,10 +380,13 @@ class RulesScreen(Screen):
     def action_noop(self) -> None:
         """Swallow a queue-action key pressed on the rules screen."""
 
-    def __init__(self, controller: ConsentController, revoke) -> None:
+    def __init__(
+        self, controller: ConsentController, revoke, set_mode
+    ) -> None:
         super().__init__()
         self.controller = controller
         self.revoke = revoke
+        self.set_mode = set_mode
         self._refresh_scheduled = False
         self._refresh_pending = False
 
@@ -352,6 +470,14 @@ class RulesScreen(Screen):
         if rule_id is not None:
             await self.revoke(rule_id)
 
+    def action_mode(self) -> None:
+        """Open the mode picker (#280); the current mode starts
+        highlighted. The picked mode goes to the app's switch
+        path (which owns the empty-static confirmation)."""
+        rules = self.controller.rules
+        current = rules.mode if rules is not None else ""
+        self.app.push_screen(ModeScreen(current, self.app.switch_mode))
+
     def action_back(self) -> None:
         self.app.pop_screen()
 
@@ -386,15 +512,19 @@ class ConsentDeciderApp(App):
         ws_factory=None,
         decide=None,
         revoke=None,
+        set_mode=None,
         reconnect_delays: tuple[float, ...] = RECONNECT_DELAYS,
     ) -> None:
         super().__init__()
         self.workspace_id = workspace_id
         self.reconnect_delays = reconnect_delays
-        self.controller = ConsentController(hold_timeout=hold_timeout)
+        self.controller = ConsentController(
+            hold_timeout=hold_timeout, workspace_id=workspace_id
+        )
         self._ws_factory = ws_factory or default_ws_factory
         self._decide = decide or rest_decide
         self._revoke = revoke or rest_revoke
+        self._set_mode = set_mode or rest_set_mode
         self._conn_state = RECONNECTING
         self._stop = False
         self._flash_msg = ""
@@ -583,7 +713,50 @@ class ConsentDeciderApp(App):
             self.flash(f"decide failed: {exc}")
 
     def action_rules(self) -> None:
-        self.push_screen(RulesScreen(self.controller, self.revoke_rule))
+        self.push_screen(
+            RulesScreen(self.controller, self.revoke_rule, self.switch_mode)
+        )
+
+    async def switch_mode(self, mode: str | None) -> None:
+        """One picked mode from the picker (#280). ``static`` with
+        nothing effectively allowed confirms first — that posture
+        answers every name NXDOMAIN, and the daemon refuses an
+        unconfirmed switch; every other pick (and a confirmed
+        ``static``) goes straight through the seam. The refreshed
+        ``egress.rules`` frame repaints the header — the switch is
+        never reflected optimistically."""
+        if mode is None:
+            return
+        if mode == "static" and not effective_allows(self.controller.rules):
+            await self.push_screen(
+                ConfirmScreen(
+                    "static with nothing allowed answers every name "
+                    "NXDOMAIN — an offline workspace. Switch anyway?",
+                    self.confirmed_switch,
+                )
+            )
+            return
+        await self.send_mode(mode)
+
+    async def confirmed_switch(self, answer: bool) -> None:
+        """The confirmation's answer: a yes sends the confirmed
+        static switch, a no decides nothing."""
+        if answer:
+            await self.send_mode("static", confirm_empty=True)
+
+    async def send_mode(
+        self, mode: str, *, confirm_empty: bool = False
+    ) -> None:
+        """One mode switch through the seam; a failure flashes,
+        never crashes the app (SystemExit included — the REST
+        seam's error surface, the daemon's named refusal among
+        them)."""
+        try:
+            await self._set_mode(
+                self.workspace_id, mode, confirm_empty=confirm_empty
+            )
+        except (Exception, SystemExit) as exc:
+            self.flash(f"mode switch failed: {exc}")
 
     async def revoke_rule(self, request_id: str) -> None:
         """Revoke through the seam; a failure flashes on the app
@@ -813,6 +986,25 @@ async def rest_revoke(workspace_id: str, request_id: str) -> dict:
         env_url(),
         env_token(),
         f"/api/v1/workspaces/{workspace_id}/egress/requests/{request_id}",
+        ssl_ctx=shared_ssl(),
+    )
+
+
+async def rest_set_mode(
+    workspace_id: str, mode: str, *, confirm_empty: bool = False
+) -> dict:
+    """One mode switch through the REST endpoint (#280; shared
+    context). ``confirm_empty`` rides only when set — the daemon's
+    refusal names it."""
+    body: dict = {"mode": mode}
+    if confirm_empty:
+        body["confirm_empty"] = True
+    return await api_call(
+        "PUT",
+        env_url(),
+        env_token(),
+        f"/api/v1/workspaces/{workspace_id}/egress/policy",
+        json_body=body,
         ssl_ctx=shared_ssl(),
     )
 

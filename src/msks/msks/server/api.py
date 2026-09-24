@@ -33,7 +33,12 @@ from sqlalchemy.exc import IntegrityError
 from starlette.requests import ClientDisconnect
 
 from .. import __version__, imagestore, persist, storage
-from ..consent.specs import EGRESS_MODES, parse_allowlist
+from ..consent.specs import (
+    EGRESS_MODES,
+    MODE_STATIC,
+    EgressPolicy,
+    parse_allowlist,
+)
 from ..identity import (
     LEGACY_LOGIN_USER,
     LOGIN_NAME_RE,
@@ -44,7 +49,7 @@ from ..imagestore import ImageError
 from ..llm import mint_token
 from ..microvm.errors import MicrovmError
 from ..microvm.spec import VmSpec, VmStatus
-from ..model.egress_consent import DECISIONS, DURATIONS
+from ..model.egress_consent import DECISION_ALLOWED, DECISIONS, DURATIONS
 from ..secretstore import (
     SecretStoreError,
     backend_ref,
@@ -120,6 +125,18 @@ class EgressDecide(BaseModel):
 
     decision: str  # "allow" | "deny"
     duration: str = "tilrestart"  # once | 5m | 15m | tilrestart | forever
+
+
+class EgressPolicySet(BaseModel):
+    """A mode switch (#280): the new posture, and — when given —
+    the allowlist that replaces the row's (a None keeps it)."""
+
+    mode: str  # allow | static | interactive
+    allow_list: list[str] | None = Field(default=None, max_length=256)
+    # The empty-static confirmation: the switch runs past the
+    # nothing-effectively-allowed refusal when the operator gave
+    # it (the TUI's confirm dialog, the CLI's --offline).
+    confirm_empty: bool = False
 
 
 class ImageImport(BaseModel):
@@ -1955,6 +1972,16 @@ def build_api(app) -> FastAPI:
         # boot and any in-flight move serialize — the status write
         # stays inside the hold or a waiter would read a stale row.
         async with move_lock(app, workspace_id):
+            # Re-read under the lock (#280 review): a mode switch
+            # landing between the outer read and this hold must not
+            # boot under the posture the outer row named — the
+            # permissive direction would leave the row and every
+            # rules frame claiming a lockdown the VM does not run.
+            row = await app.state.model.get_workspace(workspace_id)
+            if row is None:
+                raise HTTPException(
+                    status_code=404, detail="no such workspace"
+                )
             await app.state.microvm.launch(await healed_spec(app, row))
             await app.state.model.set_status(workspace_id, "running")
         return {"id": workspace_id, "status": "running"}
@@ -2259,6 +2286,118 @@ def build_api(app) -> FastAPI:
         frame = await app.state.consent.rules_frame(workspace_id)
         return frame or {"workspace_id": workspace_id}
 
+    @api.put(
+        "/api/v1/workspaces/{workspace_id}/egress/policy",
+        dependencies=[Depends(require_token)],
+    )
+    async def set_egress_policy(
+        workspace_id: str, body: EgressPolicySet
+    ) -> dict:
+        """Switch a workspace's egress posture (#280): the row's
+        mode (and, when given, its allowlist) change now; a running
+        workspace swaps its whole table in one nft transaction —
+        established flows survive — and a stopped one builds the
+        new posture at its next start. Verdicts carry: an
+        ``allow forever`` granted under one mode keeps acting under
+        the next.
+
+        Switching to ``static`` with nothing effectively allowed
+        (an empty allowlist and no in-effect allowed verdict) is
+        refused unless the request confirms it — that posture
+        answers every name NXDOMAIN, an offline workspace, and the
+        refusal names the escape.
+        """
+        row = await _workspace_or_404(app, workspace_id)
+        workspace_id = row["id"]
+        if body.mode not in EGRESS_MODES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"egress_mode must be one of {list(EGRESS_MODES)}, "
+                f"got {body.mode!r}",
+            )
+        try:
+            parse_allowlist(body.allow_list or [])
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        async with move_lock(app, workspace_id):
+            # Re-read under the lock (#280 review, round 2): the
+            # specs an omitted allow_list keeps and the facts a
+            # failed swap rolls back to both come from THIS row —
+            # a pre-lock copy can be a posture a concurrent switch
+            # already superseded.
+            row = await app.state.model.get_workspace(workspace_id)
+            if row is None:
+                raise HTTPException(
+                    status_code=404, detail="no such workspace"
+                )
+            # The under-lock specs: an omitted allowlist keeps the
+            # fresh row's list (a bad explicit list already answered
+            # its 400 above, so this parse cannot fail).
+            specs = (
+                parse_allowlist(body.allow_list)
+                if body.allow_list is not None
+                else tuple(row.get("egress_allowlist") or ())
+            )
+            if (
+                body.mode == MODE_STATIC
+                and not specs
+                and not body.confirm_empty
+                and not await egress_consent_allowed(app, workspace_id)
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "static mode with nothing effectively allowed "
+                        "answers every name NXDOMAIN (an offline "
+                        "workspace); pass allow_list entries, or set "
+                        "confirm_empty to switch anyway"
+                    ),
+                )
+            wrote = await app.state.model.set_egress_policy(
+                workspace_id, body.mode, body.allow_list
+            )
+            if not wrote:
+                raise HTTPException(
+                    status_code=404, detail="no such workspace"
+                )
+            # The live swap under the same lock a boot holds: a
+            # concurrent start cannot attach the old posture after
+            # the flip reads no attachment and skips.
+            policy = EgressPolicy(workspace_id, body.mode, specs)
+            try:
+                applied = await app.state.net.apply_policy(
+                    workspace_id, policy
+                )
+            except BaseException:
+                # The swap failed whole — the old table still
+                # enforces — so the row must not claim a posture
+                # the workspace does not run: the under-lock row's
+                # facts go back before the refusal surfaces.
+                with contextlib.suppress(Exception):
+                    await app.state.model.set_egress_policy(
+                        workspace_id,
+                        row.get("egress_mode") or "allow",
+                        (
+                            None
+                            if body.allow_list is None
+                            else list(row.get("egress_allowlist") or ())
+                        ),
+                    )
+                raise
+        LOG.info(
+            "egress mode set: ws=%s mode=%s allowlist=%s applied=%s by=token",
+            workspace_id[:8],
+            body.mode,
+            len(specs),
+            applied,
+        )
+        await app.state.consent.broadcast_rules(workspace_id)
+        frame = await app.state.consent.rules_frame(workspace_id)
+        return {
+            **(frame or {"workspace_id": workspace_id}),
+            "applied": applied,
+        }
+
     @api.get(
         "/api/v1/workspaces/{workspace_id}/egress/requests",
         dependencies=[Depends(require_token)],
@@ -2335,6 +2474,15 @@ def build_api(app) -> FastAPI:
         return {"id": request_id, "revoked": True}
 
     return api
+
+
+async def egress_consent_allowed(app, workspace_id: str) -> bool:
+    """Whether an in-effect allowed verdict covers the workspace
+    (#280) — the static switch's other escape from the
+    nothing-effectively-allowed guard: an ``allow forever`` a
+    decider granted is as good as an allowlist entry."""
+    rows = await app.state.model.egress_consent.list_active(workspace_id)
+    return any(row["decision"] == DECISION_ALLOWED for row in rows)
 
 
 async def verdict_refusal(app, workspace_id, request_id, body) -> tuple | None:

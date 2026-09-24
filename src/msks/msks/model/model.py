@@ -322,6 +322,38 @@ class Model:
             await session.commit()
             return result.rowcount > 0
 
+    async def set_egress_policy(
+        self, workspace_id: str, mode: str, allowlist: list[str] | None
+    ) -> bool:
+        """Record a workspace's egress posture (#280); False when
+        the row is absent.
+
+        ``mode`` always writes. ``allowlist`` writes when given —
+        a None keeps the column, so a mode-only switch leaves the
+        static allowlist the workspace already carries. The next
+        boot builds from the row; a live swap reads it too."""
+        maker = sessionmaker_for(self.engine())
+        encoded = (
+            json.dumps(list(allowlist)) if allowlist is not None else None
+        )
+        async with maker() as session:
+            result = await session.execute(
+                update(Workspace)
+                .where(Workspace.id == workspace_id)
+                .values(
+                    **{
+                        column: value
+                        for column, value in (
+                            ("egress_mode", mode),
+                            ("egress_allowlist", encoded),
+                        )
+                        if value is not None
+                    }
+                )
+            )
+            await session.commit()
+            return result.rowcount > 0
+
     async def egress_slice(self, workspace_id: str) -> int | None:
         """The workspace's recorded egress pool slice, None when never
         attached (#70 review)."""

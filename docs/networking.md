@@ -78,9 +78,10 @@ through the host uplink is reachable; in `static` and
 ## Egress consent (#69)
 
 A workspace picks its consent posture at create time
-(`msks create --egress-mode`, immutable like the rest of the
-create-time facts), and the posture decides where each new outbound
-connection is decided:
+(`msks create --egress-mode`), and `msks egress mode` switches it
+afterwards (#280) — see [switching modes
+live](#switching-modes-live-280) below. The posture decides where
+each new outbound connection is decided:
 
 - **`allow` (the create default).** New flows pass. The daemon's
   resolver records each off-allowlist name the guest looks up, as an
@@ -164,6 +165,52 @@ it (no syscall, no `/proc`, no signal target).
 enforcement; the consent API itself (requests, verdicts, durations,
 revocation, audit) is enforcement-agnostic, so a future backend can
 drive a different mechanism from the same model.
+
+### Switching modes live (#280)
+
+`msks egress mode <ws> <mode> [--allow SPEC]...` (or `m` in the
+decider TUI's rules screen) moves a workspace between the three
+postures without recreating it. The row's mode and allowlist
+change at once; a running workspace then swaps its whole per-VM
+table in one nft transaction — the same maneuver the interceptor's
+arm/disarm uses (#199) — carrying the consent elements (verdict
+pins, resolver-learned allows) across, so established connections
+survive the switch and an attached `msks ssh` session stays up. A
+stopped workspace builds the new posture at its next start.
+
+The switch keeps three invariants:
+
+- **The queue never dangles.** Entering `interactive` binds the
+  workspace's NFQUEUE consumer before the chain references the
+  queue; leaving it installs the queue-less table first and unbinds
+  the consumer after — an unbound queue drops, so the order is the
+  whole rule.
+- **Held requests answer.** A switch away from `interactive`
+  fail-closes every hold the workspace still owns — the held SYNs
+  answer deny at once rather than waiting out the timeout against
+  a queue that no longer exists.
+- **Verdicts carry.** The consent rows survive every switch, and
+  enforcement follows the current mode: an `allow forever` granted
+  under `interactive` keeps acting under `static` (name-keyed
+  verdicts at the resolver, address-keyed ones re-pinned into the
+  fresh table's sets), so `static` after an `interactive` session
+  is the frozen consent set — everything approved so far, and
+  nothing else. The pins rebuild from the rows across a direct
+  gated→gated switch and at every gated entry; a round-trip
+  through `allow` re-pins the `forever` rows, while a timed
+  address-keyed allow re-prompts or re-learns on the guest's next
+  resolution.
+
+The resolver flips with the chain in the same step, so a switch to
+`static` starts answering off-list names with NXDOMAIN mid-session
+(the guest's cached answers run out on their own TTLs). A switch
+to `static` with nothing effectively allowed — an empty allowlist
+and no in-effect allowed verdict — is refused with a message
+naming the escape (`--allow` entries, or `--offline` to run the
+switch): that posture answers every name NXDOMAIN, an offline
+workspace. The daemon logs each switch and broadcasts a
+refreshed `egress.rules` frame, so an attached TUI repaints its
+header without reconnecting.
 
 ## What runs where
 

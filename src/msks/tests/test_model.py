@@ -589,3 +589,32 @@ async def test_workspace_placeholders_scope_and_order(app_for) -> None:
         row["name"] for row in await model.workspace_placeholders("ws2")
     ] == ["gamma"]
     assert await model.workspace_placeholders("missing") == []
+
+
+async def test_set_egress_policy_updates_named_columns(app_for) -> None:
+    """The mode switch's row write (#280): the mode always writes,
+    a None allowlist keeps the column, and a vanished row answers
+    False."""
+    app = app_for()
+    await app.state.model.create_all()
+    await app.state.model.create_workspace(
+        VmSpec(
+            workspace_id="ws-mode",
+            kernel=Path("/k"),
+            rootfs=Path("/r"),
+            egress_mode="static",
+            egress_allowlist=(".a.de",),
+        )
+    )
+    assert await app.state.model.set_egress_policy(
+        "ws-mode", "interactive", [".b.de"]
+    )
+    row = await app.state.model.get_workspace("ws-mode")
+    assert row["egress_mode"] == "interactive"
+    assert row["egress_allowlist"] == [".b.de"]
+    # A mode-only switch keeps the list.
+    assert await app.state.model.set_egress_policy("ws-mode", "static", None)
+    row = await app.state.model.get_workspace("ws-mode")
+    assert row["egress_mode"] == "static"
+    assert row["egress_allowlist"] == [".b.de"]
+    assert not await app.state.model.set_egress_policy("ghost", "allow", None)

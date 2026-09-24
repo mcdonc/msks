@@ -31,6 +31,10 @@ IGNORED = "ignore"  # malformed / unknown frame; state untouched
 DURATIONS = ("once", "5m", "15m", "tilrestart", "forever")
 DURATION_DEFAULT = "tilrestart"
 
+#: The egress modes a mode switch offers (#280), display order —
+#: the same CLI-isolation duplication as the durations.
+EGRESS_MODES = ("allow", "static", "interactive")
+
 #: Timed durations in seconds (a mirror of the daemon's table);
 #: ``once`` is consumed by its connection and ``tilrestart`` /
 #: ``forever`` have no fixed expiry, so none of those countdown.
@@ -188,10 +192,20 @@ class ConsentController:
     """The decider's state machine over the events frames (#195)."""
 
     def __init__(
-        self, hold_timeout: float = 120.0, *, clock=time.time
+        self,
+        hold_timeout: float = 120.0,
+        *,
+        clock=time.time,
+        workspace_id: str = "",
     ) -> None:
         self.hold_timeout = hold_timeout
         self._clock = clock
+        # Frames are per-workspace on one shared hub (#280 review):
+        # a foreign workspace's request or rules frame must not
+        # plant a ghost hold or repaint this decider's snapshot.
+        # Empty accepts every frame — the protocol-level default
+        # the pure tests run under.
+        self.workspace_id = workspace_id
         self.pending: dict[str, ConsentRequest] = {}
         self.rules: EgressRules | None = None
 
@@ -222,11 +236,13 @@ class ConsentController:
         return REJECTED, reason if isinstance(reason, str) else None
 
     def apply_request(self, data: object) -> tuple[str, object]:
-        """One ``egress.request`` frame's data: add the hold."""
+        """One ``egress.request`` frame's data: add the hold (a
+        foreign workspace's frame is ignored — the decider decided
+        for one workspace, #280 review)."""
         request = parse_request(
             data.get("request") if isinstance(data, dict) else None
         )
-        if request is None:
+        if request is None or not self.owns(request.workspace_id):
             return IGNORED, None
         self.pending[request.id] = request
         return ADDED, request
@@ -242,9 +258,10 @@ class ConsentController:
         )
 
     def apply_rules(self, data: object) -> tuple[str, object]:
-        """One ``egress.rules`` frame's data: replace the snapshot."""
+        """One ``egress.rules`` frame's data: replace the snapshot
+        (a foreign workspace's frame is ignored)."""
         rules = parse_rules(data) if isinstance(data, dict) else None
-        if rules is None:
+        if rules is None or not self.owns(rules.workspace_id):
             return IGNORED, None
         self.rules = rules
         return RULES, rules
@@ -254,6 +271,11 @@ class ConsentController:
         return sorted(
             self.pending.values(), key=lambda request: request.requested_at
         )
+
+    def owns(self, workspace_id: str) -> bool:
+        """Whether a frame's workspace is this controller's (an
+        empty own-id accepts every frame)."""
+        return not self.workspace_id or workspace_id == self.workspace_id
 
     def remaining(self, request: ConsentRequest) -> float:
         """Seconds until this hold's timeout expires to deny

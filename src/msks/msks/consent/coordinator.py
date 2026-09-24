@@ -311,17 +311,31 @@ class ConsentEngine:
         except Exception:
             logger.exception("consent: timeout task failed while reaping")
 
+    async def fail_close_workspace(
+        self, workspace_id: str, *, reason: str
+    ) -> int:
+        """Fail-close every hold one workspace still has (a stop,
+        or a live mode switch away from interactive, #280): the
+        rows expire, the held SYNs answer deny, and each hold's
+        timeout task is cancelled and reaped. Returns how many
+        holds closed. A hold that vanished mid-loop (a racing
+        timeout won it) is not counted — it closed itself."""
+        closed = 0
+        for request_id in list(self._holds):
+            owner, task = hold_owner(self._holds, request_id)
+            if task is None or owner != workspace_id:
+                continue  # vanished, or another workspace's hold
+            await self.fail_close(request_id, reason=reason)
+            await self.cancel_hold_task(task)
+            closed += 1
+        return closed
+
     async def on_workspace_stop(self, workspace_id: str) -> None:
         """Teardown for one workspace (VM stop/kill/delete): the
         flow rules died with its table, so session memory and
         ``tilrestart`` verdicts go with them, and any hold the
         workspace still has fail-closes."""
-        for request_id in list(self._holds):
-            owner, task = hold_owner(self._holds, request_id)
-            if task is None or owner != workspace_id:
-                continue  # vanished, or another workspace's hold
-            await self.fail_close(request_id, reason="stopped")
-            await self.cancel_hold_task(task)
+        await self.fail_close_workspace(workspace_id, reason="stopped")
         self.session.clear(workspace_id)
         await self.model.clear_tilrestart(workspace_id)
 

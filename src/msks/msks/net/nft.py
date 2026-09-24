@@ -424,6 +424,19 @@ async def apply_base(settings) -> None:
 CONSENT_SETS = ("allows_any", "allows_port", "rejects")
 
 
+def posture_sets(policy: EgressPolicy) -> tuple[str, ...]:
+    """The consent set names a posture's table carries — the mode
+    switch's carry filter (#280): both gated postures pin allows,
+    only interactive keeps the reject machinery. A carried element
+    naming a set the fresh table does not define fails the whole
+    swap transaction."""
+    if not policy.gated:
+        return ()
+    if policy.interactive:
+        return CONSENT_SETS
+    return ("allows_any", "allows_port")
+
+
 def element_scopes(payload: bytes) -> list[tuple[str, int | None]]:
     """One set's ``-j list set`` output as ``(scope, seconds)``
     pairs — scope is the element's value (an address, or ``addr .
