@@ -621,3 +621,41 @@ async def test_a_cached_portless_deny_drops_without_a_pin(
     assert pkt.verdict == "drop"
     await flow_quiesce(flow)
     assert net.rejects == []
+
+
+async def test_on_packet_exception_drops_and_logs(
+    consumer_app, monkeypatch, caplog
+) -> None:
+    """An exception inside the packet handler drops the SYN (fail-
+    closed) and logs the traceback instead of silently hanging."""
+    import logging
+
+    app, _net = consumer_app
+    flow = consumer(app, app.state.net)
+
+    def exploding_route(pkt):
+        raise RuntimeError("unexpected bug")
+
+    monkeypatch.setattr(flow, "route_packet", exploding_route)
+    pkt = FakePkt(syn_packet())
+    with caplog.at_level(logging.ERROR):
+        flow.on_packet(pkt)
+    assert pkt.verdict == "drop"
+    assert any("on_packet failed" in r.message for r in caplog.records)
+
+
+async def test_drain_logs_on_failure(
+    consumer_app, monkeypatch, caplog
+) -> None:
+    """A drain failure is logged, not silently swallowed."""
+    import logging
+
+    app, _net = consumer_app
+    flow = consumer(app, app.state.net)
+    monkeypatch.setattr(nfq, "NetfilterQueue", FakeNfq)
+    flow.start()
+    with caplog.at_level(logging.ERROR):
+        flow.drain()
+    flow.stop()
+    FakeFd.close_all()
+    assert any("drain failed" in r.message for r in caplog.records)

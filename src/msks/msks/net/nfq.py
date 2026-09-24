@@ -171,12 +171,33 @@ class FlowConsumer:
         try:
             self._nfq.run(block=False)
         except Exception:
-            pass  # a transient netlink read defers to the next event
+            logger.exception("nfq: drain failed for queue %s", self.queue_num)
 
     # --- per-packet --------------------------------------------------------
 
     def on_packet(self, pkt) -> None:
-        """Classify and route one queued packet — non-blocking."""
+        """Classify and route one queued packet — non-blocking.
+
+        The entire body is guarded: netfilterqueue's C callback
+        propagates Python exceptions into :meth:`drain`, whose
+        catch-all used to swallow them — turning any bug here into a
+        silent hang (the packet stays in the kernel queue unacted on,
+        the SYN retransmit timer is the only escape).  A fail-closed
+        drop and a logged traceback are strictly better.
+        """
+        try:
+            self.route_packet(pkt)
+        except Exception:
+            logger.exception(
+                "nfq: on_packet failed for queue %s; dropping",
+                self.queue_num,
+            )
+            with contextlib.suppress(Exception):
+                pkt.drop()
+
+    def route_packet(self, pkt) -> None:
+        """The classification and routing body that :meth:`on_packet`
+        guards."""
         parsed = parse_packet(pkt.get_payload())
         if parsed is None:
             pkt.drop()  # unparseable: fail-closed
