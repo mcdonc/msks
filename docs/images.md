@@ -256,17 +256,68 @@ development shell uses — the guest's console helper, cloud-init,
 sshd, and rsync are built by nixpkgs instead of fetched as Debian
 artifacts. The root filesystem is the whole system closure packed
 into a fresh ext4 (the same `mke2fs -d` under fakeroot; no cloud
-image exists to extract), and the guest boots with no nix
-database anywhere — every store path resolves from the image
-itself. The archive carries the same `image.json` schema with the
-same declared capabilities (`cloud-init`, `prelude-v1`): the daemon
-serves it with nothing keyed off the image's name. The output
-lands under `.devenv/state/guest-nixos/` (`MSKS_GUEST_NIXOS_DIR`
-relocates it); `nix/guest-nixos.nix` documents every step. The
-image ships the same agent toolchain as the Debian one (#268):
-nixpkgs' own Node and the shared pins (`nix/agent-toolchain.nix`)
-ride the system profile — the loader-patched Claude Code and the
-tmpfiles-planted extension staging described above.
+image exists to extract), and every store path resolves from the
+image itself. The archive carries the same `image.json` schema with
+the same declared capabilities (`cloud-init`, `prelude-v1`): the
+daemon serves it with nothing keyed off the image's name. The
+output lands under `.devenv/state/guest-nixos/`
+(`MSKS_GUEST_NIXOS_DIR` relocates it); `nix/guest-nixos.nix`
+documents every step. The image ships the same agent toolchain as
+the Debian one (#268): nixpkgs' own Node and the shared pins
+(`nix/agent-toolchain.nix`) ride the system profile — the
+loader-patched Claude Code and the tmpfiles-planted extension
+staging described above.
+
+#### Rebuilding the system inside a NixOS workspace
+
+A NixOS workspace is `nixos-rebuild`-ready (#274). `nix` runs as
+on any NixOS host — the daemon, the build users, and the CLI ship
+enabled — and the image bakes everything a rebuild evaluates
+against:
+
+- **The store database.** Every store path the image ships is
+  registered valid (the build loads the closure's registration
+  into `/nix/var/nix/db/db.sqlite`), so the guest's nix answers
+  reference queries and a rebuild reuses the shipped closure
+  instead of refetching or rebuilding it.
+- **The pinned nixpkgs source.** The same revision the image was
+  built from rides the store as root's channel profile, so
+  `<nixpkgs>` resolves with no network. A `nix-channel --update`
+  moves to the rolling channel deliberately — that is the stock
+  NixOS posture, and the pin governs what a fresh workspace starts
+  with.
+- **`/etc/nixos/configuration.nix`.** It imports
+  `nix/guest-nixos-configuration.nix` — the very module the image
+  build evaluated — with the module's whole import chain (its
+  package files, the shrinkwrap pair, the console helper's
+  sources) shipped beside it at the same relative paths. A rebuild
+  re-evaluates the shipped configuration; edit the module or add
+  settings in `configuration.nix` and run:
+
+  ```bash
+  sudo nixos-rebuild switch
+  ```
+
+- **The system profile as the boot's init.** The kernel cmdline
+  names `init=/nix/var/nix/profiles/system/init` — the
+  activation-maintained indirection a `nixos-rebuild switch`
+  re-points — so a rebuilt system survives a workspace stop/start
+  with no daemon involvement. The VMM always boots the image's
+  frozen kernel and initrd, so a rebuilt system's new _kernel_
+  takes effect only through a new image; userspace changes apply
+  fully on reboot.
+
+A rebuild that changes nothing but re-activates keeps every msks
+contract item — the vsock console, the sshd posture, cloud-init
+seed handling, the agent toolchain on PATH — because the
+configuration it evaluates is the one that shipped. A workspace
+with egress fetches substitutes from `cache.nixos.org` through the
+workspace's egress path like any other traffic; a no-egress
+workspace rebuilds against what is already in the store (new
+packages that need a fetch fail with nix's own error until egress
+is granted). Both images stay the same size class as before —
+the nix closure, the validity database, and the nixpkgs source
+grow the NixOS rootfs by roughly a gigabyte uncompressed.
 
 Each image build also executes every staged launcher and fails on
 one that does not run (#272): the Debian build runs `node`, `pi`,
