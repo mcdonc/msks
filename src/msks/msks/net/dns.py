@@ -199,7 +199,12 @@ class ResolverGate:
         name resolved to them (#304): an address-keyed pin on a
         shared address enforces one name's verdict on its
         co-resident, so the pin goes and the next SYN gates at the
-        queue under the naming memory instead."""
+        queue under the naming memory instead. Interactive only:
+        a static chain has no queue to gate a withdrawn pin's
+        connections — its allowlist pins ARE the enforcement, so
+        they stand."""
+        if not self.policy.interactive:
+            return
         await self.net.retract_consent_pins(self.workspace_id, ips)
 
     async def learn(

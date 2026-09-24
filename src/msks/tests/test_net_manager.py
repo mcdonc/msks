@@ -773,6 +773,119 @@ async def test_retract_consent_pins_clears_one_address(
     assert not any("10.9.9.9" in line for line in cleared)
 
 
+async def test_static_pins_survive_a_shared_address(gated_app) -> None:
+    """A static chain has no queue to gate a withdrawn pin's
+    connections: its allowlist pins stand on a shared address
+    (#304 review, round 2)."""
+    app, _consumers, nft_log = gated_app
+    net = app.state.net
+    await net.start()
+    from msks.consent.specs import EgressPolicy
+
+    await net.attach(
+        "ws-a", want=True, policy=EgressPolicy("ws-a", "static", ())
+    )
+    net._services["ws-a"].dns.shared_ips = {"10.1.2.3"}
+    await net.consent_allow("ws-a", "10.1.2.3", 443, 60)
+    assert any(
+        "add element" in line and "allows_port" in line
+        for line in log_lines(nft_log)
+    )
+
+
+async def test_a_racing_allow_pin_is_withdrawn_when_shared_flips(
+    gated_app, monkeypatch
+) -> None:
+    """The TOCTOU reconcile (#304 review, round 2): a second name
+    resolving while the pin's nft add runs leaves the element
+    over-broad — the post-add re-check withdraws it."""
+    app, _consumers, nft_log = gated_app
+    net = app.state.net
+    await net.start()
+    await net.attach("ws-i", want=True, policy=interactive_policy())
+    real_add = manager_mod.nft.allow_element
+
+    async def flipping_add(settings, workspace_id, ip, port, ttl_s):
+        net._services["ws-i"].dns.shared_ips = {ip}
+        await real_add(settings, workspace_id, ip, port, ttl_s)
+
+    monkeypatch.setattr(manager_mod.nft, "allow_element", flipping_add)
+    await net.consent_allow("ws-i", "10.1.2.3", 443, 60)
+    lines = log_lines(nft_log)
+    assert any(
+        "add element" in line and "allows_port" in line for line in lines
+    )
+    assert any(
+        "delete element" in line and "allows_any" in line for line in lines
+    )
+
+
+async def test_a_racing_blanket_reject_swaps_for_its_own_flow(
+    gated_app, monkeypatch
+) -> None:
+    """The deny-side reconcile: a blanket RST that lands on a
+    newly shared address is withdrawn and re-pinned per-flow (#304
+    review, round 2)."""
+    app, _consumers, nft_log = gated_app
+    net = app.state.net
+    await net.start()
+    await net.attach("ws-i", want=True, policy=interactive_policy())
+    real_reject = manager_mod.nft.reject_element
+
+    async def flipping_reject(settings, workspace_id, ip, port, ttl_s):
+        net._services["ws-i"].dns.shared_ips = {ip}
+        await real_reject(settings, workspace_id, ip, port, ttl_s)
+
+    monkeypatch.setattr(manager_mod.nft, "reject_element", flipping_reject)
+    await net.consent_reject(
+        "ws-i", "10.1.2.3", 443, 5, sport=40000, named=True
+    )
+    lines = log_lines(nft_log)
+    assert any(
+        "delete element" in line and "rejects" in line for line in lines
+    )
+    assert any(
+        "add element" in line and "rejects_flow" in line for line in lines
+    )
+
+
+async def test_a_literal_forever_pin_survives_a_retraction(
+    gated_app,
+) -> None:
+    """The retraction cannot tell a literal pin from a named one,
+    so every literal forever verdict re-pins after the clear (#304
+    review, round 2)."""
+    app, _consumers, nft_log = gated_app
+    net = app.state.net
+    await net.start()
+    await net.attach("ws-i", want=True, policy=interactive_policy())
+    model = app.state.model.egress_consent
+    row = await model.create_request("ws-i", "10.1.2.3", 0)
+    await model.decide(row["id"], "allowed", "t", "forever")
+    await net.retract_consent_pins("ws-i", ["10.1.2.3"])
+    lines = log_lines(nft_log)
+    assert any(
+        "delete element" in line and "allows_any" in line for line in lines
+    )
+    # The literal forever verdict re-pinned after the withdrawal.
+    assert any(
+        "add element" in line and "allows_any" in line for line in lines
+    )
+    assert lines.index(
+        next(
+            line
+            for line in lines
+            if "add element" in line and "allows_any" in line
+        )
+    ) > lines.index(
+        next(
+            line
+            for line in lines
+            if "delete element" in line and "allows_any" in line
+        )
+    )
+
+
 async def test_host_for_reads_the_services_naming(gated_app) -> None:
     app, _consumers, _nft_log = gated_app
     await app.state.net.start()

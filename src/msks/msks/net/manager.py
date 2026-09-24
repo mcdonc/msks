@@ -180,9 +180,17 @@ def reject_is_per_flow(
     services, ip: str, sport: int | None, named: bool
 ) -> bool:
     """Whether a deny's RST element is per-flow (#304): a NAME
-    verdict on a shared address — the element would otherwise
-    answer the co-resident's connections too."""
-    return bool(named and sport and services.dns.shared(ip))
+    verdict on a shared address in an interactive posture — the
+    element would otherwise answer the co-resident's connections
+    too. Static and literal denies pin the blanket element (the
+    static chain has no queue to fall back to; a literal verdict
+    was given on the address itself)."""
+    return bool(
+        named
+        and sport
+        and services.policy.interactive
+        and services.dns.shared(ip)
+    )
 
 
 class NetManager:
@@ -700,25 +708,39 @@ class NetManager:
         consent sets — nothing to enforce, nothing to do (the
         resolver gate still LEARNs under a carried forever allow,
         #280 review: the pin must not spawn a doomed nft run per
-        answer). A NAME pin on a shared address — more than one
-        live name resolved to it (#304) — installs nothing: the
-        element is keyed by address alone and would let the
-        verdict cover its co-resident, so the next SYN gates at
-        the queue under the naming memory instead. Address-literal
-        verdicts (``named=False``) pin regardless — the verdict
-        was given on the address itself."""
+        answer). A NAME pin in an INTERACTIVE posture on a shared
+        address — more than one live name resolved to it (#304) —
+        installs nothing: the element is keyed by address alone
+        and would let the verdict cover its co-resident, so the
+        next SYN gates at the queue under the naming memory
+        instead. Address-literal verdicts (``named=False``) and
+        every static-mode pin act regardless — a literal verdict
+        was given on the address itself, and a static chain has
+        no queue to gate a skipped pin's connections."""
         services = self._services.get(workspace_id)
         if services is None or not services.policy.gated:
             return
-        if named and services.dns.shared(ip):
+        settings = self.app.state.settings
+        if self.skips_shared_pin(services, ip, named):
             logger.debug(
                 "consent: shared address %s unpinned for %s (#304)",
                 ip,
                 workspace_id,
             )
             return
-        await nft.allow_element(
-            self.app.state.settings, workspace_id, ip, port, ttl_s
+        await nft.allow_element(settings, workspace_id, ip, port, ttl_s)
+        # The shared mark may have flipped while the add ran (a
+        # second name resolved mid-pin): reconcile by withdrawing
+        # the now-over-broad element (#304 review, round 2).
+        if self.skips_shared_pin(services, ip, named):
+            await self.retract_address(workspace_id, ip)
+
+    def skips_shared_pin(self, services, ip: str, named: bool) -> bool:
+        """Whether this allow pin must not install: a name-derived
+        pin in an interactive posture on an address two live
+        names resolved to."""
+        return bool(
+            named and services.policy.interactive and services.dns.shared(ip)
         )
 
     async def consent_reject(
@@ -733,12 +755,12 @@ class NetManager:
     ) -> None:
         """Pin one destination port for RST-refusal (the deny path)
         — gated postures only, the same shape as an allow pin. A
-        NAME deny on a shared address refuses only its own
-        connection: the element lands in the per-flow set keyed by
-        the connection's source port (#304), so the co-resident's
-        connections never see the refusal. An address-literal
-        verdict (``named=False``) pins the blanket element — the
-        verdict was given on the address itself."""
+        NAME deny on a shared address in an interactive posture
+        refuses only its own connection: the element lands in the
+        per-flow set keyed by the connection's source port (#304),
+        so the co-resident's connections never see the refusal.
+        An address-literal verdict (``named=False``) and every
+        static-mode deny pin the blanket element."""
         services = self._services.get(workspace_id)
         if services is None or not services.policy.gated:
             return
@@ -749,6 +771,15 @@ class NetManager:
             )
             return
         await nft.reject_element(settings, workspace_id, ip, port, ttl_s)
+        # The shared mark may have flipped while the add ran: a
+        # blanket RST on a now-shared address answers the
+        # co-resident's connections too — swap it for the
+        # connection's own per-flow element (#304 review, round 2).
+        if reject_is_per_flow(services, ip, sport, named):
+            await nft.clear_elements(settings, workspace_id, ip, port)
+            await nft.reject_flow_element(
+                settings, workspace_id, ip, sport, port, ttl_s
+            )
 
     async def clear_consent_dest(
         self, workspace_id: str, host: str, port: int
@@ -779,9 +810,10 @@ class NetManager:
     async def flush_flow_rejects(self, workspace_id: str) -> None:
         """Empty the per-flow RST set on revocation (#304): its
         elements name connections, not verdicts, and a dropped one
-        re-pins on the flow's next retransmit through the session
-        gate — self-healing, so the flush is safe. Only an
-        interactive table defines the set."""
+        re-gates on the flow's next retransmit — the session memory
+        or the verdict cache answers it, and past both windows it
+        re-prompts (fail-closed). Only an interactive table defines
+        the set."""
         services = self._services.get(workspace_id)
         if services is not None and services.policy.interactive:
             await nft.flush_set(
@@ -798,9 +830,18 @@ class NetManager:
         co-resident. Best-effort — a missed retraction is a window
         bounded by the element's own timeout."""
         for ip in ips:
-            await nft.clear_ip_elements(
-                self.app.state.settings, workspace_id, ip
-            )
+            await self.retract_address(workspace_id, ip)
+
+    async def retract_address(self, workspace_id: str, ip: str) -> None:
+        """Withdraw one address's consent elements and restore the
+        verdicts that legitimately survive co-residency: the clear
+        cannot tell a name's pin from an address-literal one, so
+        every literal ``forever`` verdict re-pins (a literal
+        verdict is address-scoped by construction — #304 review,
+        round 2)."""
+        settings = self.app.state.settings
+        await nft.clear_ip_elements(settings, workspace_id, ip)
+        await self.replay_forever(workspace_id)
 
     def dest_addresses(self, workspace_id: str, host: str) -> list[str]:
         """The addresses a verdict's destination covers: the

@@ -298,8 +298,12 @@ class FlowConsumer:
         #2372/#2434/#2446): a SYN to a host an in-effect verdict
         already covers — including a CDN-rotated IP no fresh
         resolution learned — never re-prompts. On a shared address
-        the most recent resolution names the flow (#304). Allow
-        wins over deny (checked first). Returns True when the
+        the most recent resolution names the flow (#304): that is
+        the only attribution the network layer has — a flow whose
+        guest-side cached resolution is stale is indistinguishable
+        and rides the latest name's verdict (separating those needs
+        the connection's own hostname, which no L3 packet carries).
+        Allow wins over deny (checked first). Returns True when the
         packet was handled."""
         engine = self._net.app.state.consent
         host = self._net.host_for(self.workspace_id, dst) or dst

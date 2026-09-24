@@ -340,6 +340,17 @@ async def test_coresident_resolution_retracts_address_pins(gated) -> None:
         upstream.close()
 
 
+async def test_a_static_gate_never_retracts(gated) -> None:
+    """A static gate keeps its allowlist pins on a shared address:
+    its chain has no queue to gate a withdrawn pin's connections
+    (#304 review, round 2)."""
+    app, net = gated
+    gate = gate_for(app, net, "ws-static", MODE_STATIC, (".debian.org",))
+    await gate.retract(["10.0.0.1"])
+    assert net.retractions == []
+    await gate.classify("any.debian.org")  # the gate still works
+
+
 async def test_naming_memory_lifecycle() -> None:
     forwarder = dns.DnsForwarder(("127.0.0.1", 53))
     forwarder.remember("a.example", [("10.0.0.1", 0)])

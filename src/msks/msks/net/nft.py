@@ -39,10 +39,13 @@ docs/networking.md.
 
 import asyncio
 import json
+import logging
 
 from ..consent.specs import EgressPolicy, IpSpec
 from ..microvm.errors import MicrovmError
 from .alloc import table_name
+
+logger = logging.getLogger(__name__)
 
 BASE_TABLE = "msks-egress"
 
@@ -467,12 +470,18 @@ async def clear_listed_elements(
     settings, workspace_id: str, name: str, ip: str
 ) -> None:
     """Destroy one port-keyed set's elements naming ``ip``, found by
-    listing (an element's whole key is needed to destroy it)."""
+    listing (an element's whole key is needed to destroy it). A
+    set that cannot be listed (absent, or the invocation failed)
+    holds nothing to destroy — the fail-open direction, bounded by
+    the elements' own timeouts."""
     table = table_name(workspace_id)
     payload = await nft_json(
         settings, ["-j", "list", "set", "inet", table, name]
     )
-    for scope, _seconds in element_scopes(payload or b""):
+    if payload is None:
+        logger.debug("nft: %s listing failed in the retraction", name)
+        return
+    for scope, _seconds in element_scopes(payload):
         if scope != ip and not scope.startswith(f"{ip} . "):
             continue
         await nft_run(

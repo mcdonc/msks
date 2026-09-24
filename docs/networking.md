@@ -141,13 +141,24 @@ live (each new connection gates at the queue, named by whichever
 resolution came last), a deny refuses only its own connection (a
 per-flow RST, keyed by that connection's source port), and the
 pins the address already carried are withdrawn the moment the
-second name resolves to it. `msks egress revoke` undoes an
-effect verdict at once: the pinned rules clear, the destination's
-live connections die with their conntrack entries, and new
-connections gate again. Every row — request, verdict, expiry,
-revocation — lands in the consent table with its provenance,
-pruned past `MSKSD_EGRESS_CONSENT_RETENTION_DAYS` and the
-per-workspace `MSKSD_EGRESS_CONSENT_ROW_CAP`; with
+second name resolves to it — except the pins a verdict given by
+address owns, which are address-scoped by construction and
+re-pin after the withdrawal. The queue attributes a connection to
+the most recent resolution of its address; a guest whose cached
+resolution outlives a later one for the same address is
+indistinguishable at this layer — separating those needs the
+connection's own hostname (TLS SNI), which the network layer does
+not read. A static workspace keeps its allowlist pins on a shared
+address: its chain has no queue to hand a withdrawn pin's
+connections to, and the allowlist's resolved-address pins are the
+whole of its enforcement. `msks egress revoke` undoes an in-effect
+verdict at once: the pinned rules clear, the destination's live
+connections die with their conntrack entries — on a shared
+address that includes the co-resident's live connections to it —
+and new connections gate again. Every row — request, verdict,
+expiry, revocation — lands in the consent table with its
+provenance, pruned past `MSKSD_EGRESS_CONSENT_RETENTION_DAYS` and
+the per-workspace `MSKSD_EGRESS_CONSENT_ROW_CAP`; with
 `MSKSD_AUDIT_HMAC_KEY` set each row also carries an HMAC-SHA256
 tag over its columns.
 
