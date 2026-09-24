@@ -328,6 +328,20 @@ in
     exec = ''exec bash "$DEVENV_ROOT/scripts/demo-vm.sh" "$@"'';
   };
 
+  # The interactive-egress consent fuzz harness (#286), ported
+  # from klangk's smoketest (#2392): boots a workspace with an
+  # allow-list + interactive egress, registers a decider on the
+  # events websocket, and drives N fuzzed verdict rounds with a
+  # deterministic expectation model. Human-run and long: it needs
+  # root, KVM, the built guest assets, and several minutes (the
+  # 5m-duration lifecycle phase alone is ~12 min; --no-lifecycle
+  # skips it). Python, not bash: exec resolves the venv's own
+  # interpreter, so the msks imports and web deps come with it.
+  scripts.msks-fuzz-egress = {
+    description = "Run the interactive-egress consent fuzz harness against a real daemon (#286; root + built guest assets; --url/--token/--cafile attaches to a running one)";
+    exec = ''exec python "$DEVENV_ROOT/scripts/fuzz-egress.py" "$@"'';
+  };
+
   # The workspace image archive, alone (#141): the bare-host dev
   # daemon's default image. Same derivation tree as msks-build-guest
   # (pinned nixpkgs, guest-debian/nixos expressions, the Rust
