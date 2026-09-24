@@ -235,6 +235,14 @@ let
       + "v0.9.1/herdr-linux-x86_64";
     hash = "sha256-KgL+0WvrZR7wBuHUPwSPZSyk3FitBTzS1ERQVj1cVLc=";
   };
+  # herdr's license, pinned to the same tag the binary came from:
+  # Apache-2.0 wants the notice to travel with redistribution, and
+  # the release binary alone carries none.
+  agentHerdrLicense = pkgs.fetchurl {
+    url =
+      "https://raw.githubusercontent.com/ogulcancelik/herdr/" + "v0.9.1/LICENSE";
+    hash = "sha256-xx0jnfkXJvxRnG63LTGOxlggYnIysveWIZ6H3PNdCrQ=";
+  };
 
   # The agent toolchain's Claude Code pin (#266): the npm wrapper
   # package plus the linux-x64 native-binary package, both
@@ -389,6 +397,8 @@ let
         # herdr (#266): the pinned static binary, executable as-is.
         install -D -m 0755 ${agentHerdrBinary} \
           $out/usr/local/bin/herdr
+        install -D -m 0644 ${agentHerdrLicense} \
+          $out/usr/local/share/doc/herdr/LICENSE
 
         # Claude Code (#266): the staged npm tree, merged into
         # /usr/local.
@@ -1321,12 +1331,18 @@ let
                    exit 1; }
           done
           interp=$(readelf -l "$bin" \
-            | awk '/interpreter/{gsub(/\[\]/,"",$NF); print $NF}')
+            | awk '/interpreter/{gsub(/[\[\]]/,"",$NF); print $NF}')
           test -e "$root""$interp" \
             || { echo "$bin loader $interp absent from the tree" >&2; \
                  exit 1; }
+          # Only the "Version needs" section: the toolchain
+          # binaries also carry version *definitions* (bun-profile,
+          # BUN_1.2) whose lines would masquerade as needs.
           reqs=$(readelf --version-info "$bin" \
-            | awk '/File: /{f=$5} /Name: /{print f, $3}')
+            | awk '/Version needs section/{need=1} \
+                /Version definition section/{need=0} \
+                need && /File: /{f=$5} \
+                need && /  Name: /{print f, $3}')
           while read -r so ver; do
             [ -n "$so" ] || continue
             lib="$root"/usr/lib/x86_64-linux-gnu/"$so"
