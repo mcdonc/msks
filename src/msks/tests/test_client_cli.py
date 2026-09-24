@@ -33,6 +33,8 @@ ROWS = [
         "status": "running",
         "image_hash": "a" * 64,
         "host": "hv1",
+        "egress_mode": "interactive",
+        "created_at": "2026-05-14T12:00:00",
     },
     {
         "id": "2b3c4d5e",
@@ -40,6 +42,8 @@ ROWS = [
         "status": "created",
         "image_hash": None,
         "host": None,
+        "egress_mode": "allow",
+        "created_at": "2026-06-01T09:30:00",
     },
 ]
 
@@ -189,12 +193,16 @@ def test_cmd_ls_rows_fit_the_values(
     out = capsys.readouterr().out
     assert "alpha" in out and "running" in out and "hv1" in out
     assert "beta" in out and "created" in out and "-" in out
+    assert "interactive" in out and "allow" in out
+    assert "2026-05-14" in out and "2026-06-01" in out
     # The #246 columns: the label beside the immutable id, which
     # addresses the workspace as surely as the name does.
     assert cli.workspace_cells(ROWS[0]) == [
         "alpha",
         ROWS[0]["id"],
         "running",
+        "interactive",
+        "2026-05-14",
         "a" * 12,
         "hv1",
     ]
