@@ -2887,11 +2887,14 @@ async def register_decider(app, socket, client_id: int, message: dict):
     # state keys on the row's immutable id.
     workspace = row["id"]
     app.state.deciders.register(client_id, workspace)
-    for pending in await app.state.consent.snapshot(workspace):
-        await socket.send_json({"event": "egress.request", "data": pending})
+    # Rules first: the TUI adopts the server's resolved workspace id
+    # from the first rules frame (#297), so pending requests sent
+    # before it would be silently dropped by the owns() check.
     rules = await app.state.consent.rules_frame(workspace)
     if rules is not None:
         await socket.send_json({"event": "egress.rules", "data": rules})
+    for pending in await app.state.consent.snapshot(workspace):
+        await socket.send_json({"event": "egress.request", "data": pending})
 
 
 def decode_frame(raw: str) -> dict | None:

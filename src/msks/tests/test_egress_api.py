@@ -364,21 +364,22 @@ def test_decider_frames_reach_the_snapshot_and_ignore_junk(
             ws.send_text(
                 json.dumps({"type": "egress.decider", "workspace": "ws-snap"})
             )
-            # The snapshot replays the other decider's pending hold…
-            # then the rules view (the hold's hub fanout may also
-            # arrive around them — read until the rules frame).
+            # The rules view lands first (#297: the TUI adopts the
+            # resolved workspace id from it), then the snapshot
+            # replays the other decider's pending hold (the hub's
+            # fanout may also arrive — read until the request frame).
             frames = []
             for _ in range(5):
                 frame = json.loads(ws.receive_text())
                 frames.append(frame)
-                if frame["event"] == "egress.rules":
+                if frame["event"] == "egress.request":
                     break
+            assert frames[0]["event"] == "egress.rules"
             requests = [f for f in frames if f["event"] == "egress.request"]
             assert requests
             assert (
                 requests[0]["data"]["request"]["dest_host"] == "held.example"
             )
-            assert frames[-1]["event"] == "egress.rules"
             # Junk arms: no workspace key, a non-string — ignored
             # without closing the socket; an unknown workspace is
             # told it was rejected (a typo'd decider must not wait
@@ -507,8 +508,9 @@ async def test_register_decider_lands_the_snapshot_directly(
     tmp_path: Path,
 ) -> None:
     """The registration handshake, unit-shaped: the socket receives
-    the pending snapshot then the rules view, sent directly (not
-    through the hub)."""
+    the rules view then the pending snapshot, sent directly (not
+    through the hub). Rules first so the TUI adopts the resolved
+    workspace id before any request frame arrives (#297)."""
     settings = Settings(
         vmm=VmmSettings(state_dir=tmp_path / "vms"),
         net=NetSettings(enabled=False),
@@ -548,8 +550,8 @@ async def test_register_decider_lands_the_snapshot_directly(
         message={"workspace": "ws-reg"},
     )
     events = [payload["event"] for payload in socket.sent]
-    assert events == ["egress.request", "egress.rules"]
-    assert socket.sent[0]["data"]["request"]["dest_host"] == "held.example"
+    assert events == ["egress.rules", "egress.request"]
+    assert socket.sent[1]["data"]["request"]["dest_host"] == "held.example"
     # An unknown workspace is told so (one rejection frame) — never
     # registered.
     empty = RecordingSocket()

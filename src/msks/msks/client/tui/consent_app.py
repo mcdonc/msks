@@ -1025,7 +1025,7 @@ class ConsentDeciderApp(App):
         try:
             self.repaint()
         except Exception:
-            pass
+            logger.exception("tui: repaint failed")
 
     def repaint(self) -> None:
         """Sync the queue rows and the status line to state, and keep

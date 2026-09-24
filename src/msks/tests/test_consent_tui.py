@@ -431,3 +431,27 @@ def test_foreign_workspace_frames_are_ignored() -> None:
     assert bare.apply_frame(request_frame("r3", workspace="anywhere"))[0] == (
         consent.ADDED
     )
+
+
+def test_first_rules_frame_adopts_resolved_workspace_id() -> None:
+    """The TUI starts with the CLI name (``bar``); the server
+    resolves it to the row's immutable id (``95c55d47d1``) and
+    sends all frames keyed on that id. The first rules frame
+    adopts the resolved id so later request frames pass the
+    ``owns()`` check instead of being silently dropped (#297)."""
+    controller = consent.ConsentController(workspace_id="bar")
+    # The server sends the rules frame with the resolved id.
+    outcome, rules = controller.apply_frame(
+        rules_frame(workspace="95c55d47d1")
+    )
+    assert outcome == consent.RULES
+    assert controller.workspace_id == "95c55d47d1"
+    # Subsequent request frames with the resolved id are accepted.
+    outcome, _ = controller.apply_frame(
+        request_frame("r1", workspace="95c55d47d1")
+    )
+    assert outcome == consent.ADDED
+    assert "r1" in controller.pending
+    # A truly foreign workspace is still rejected after adoption.
+    outcome, _ = controller.apply_frame(rules_frame(workspace="ws-foreign"))
+    assert outcome == consent.IGNORED
