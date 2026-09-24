@@ -17,6 +17,7 @@ from msks.client.tui.consent_app import (
     focus_event_by_id,
     focused_event_id,
     focused_rule_id,
+    render_order,
     row_map,
     sighting_flash,
 )
@@ -127,6 +128,19 @@ def test_event_line_marks_the_sighting() -> None:
     assert "#" not in event_line(event(placeholder_id=None))
 
 
+def test_render_order_sorts_by_timestamp() -> None:
+    """The render order is timestamp order with arrival breaking
+    ties (#305): a live frame the socket delivered between two
+    replayed rows renders in its time's place, not wherever the
+    interleaving dropped it."""
+    live = event(kind="swap", host="live.example", ts=99.5)
+    replayed = event(kind="mint", ts=100.0)
+    assert render_order([live, replayed]) == [live, replayed]
+    assert render_order([replayed, live]) == [live, replayed]
+    tie = event(kind="swap", ts=100.0, seq=2)
+    assert render_order([tie, replayed]) == [replayed, tie]
+
+
 def test_event_item_carries_the_highlight_class() -> None:
     """Only the sighting row takes the ``sighting`` class; every
     row carries its seq for focus restoration."""
@@ -138,10 +152,12 @@ def test_event_item_carries_the_highlight_class() -> None:
 
 
 def test_events_note_and_sighting_flash() -> None:
-    """The note names the marker and the detection boundary; the
-    flash names the workspace, placeholder, and host."""
+    """The note names the marker, the recorded/live split, and the
+    detection boundary; the flash names the workspace, placeholder,
+    and host."""
     note = events_note()
     assert "!" in note and "decrypted" in note
+    assert "recorded mints" in note and "as they happen" in note
     flash = sighting_flash(event(kind="sighting", host=None))
     assert flash == "! sighting: ws-a/api → ?"
     assert sighting_flash(event(kind="sighting")) == (

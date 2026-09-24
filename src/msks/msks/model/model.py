@@ -587,25 +587,34 @@ class Model:
 
     # --- secret audit (#198) -----------------------------------------
 
-    async def record_audit(self, kind: str, row: dict) -> None:
-        """Append one lifecycle event for a placeholder row."""
+    async def record_audit(self, kind: str, row: dict) -> int:
+        """Append one lifecycle event for a placeholder row; the
+        new row's id — the identity the live publish and the
+        decider replay share, so a frame that already landed is
+        not sent or counted twice (#305)."""
         if kind not in AUDIT_KINDS:
             raise ValueError(f"unknown audit kind: {kind!r}")
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
-            session.add(
-                SecretAudit(
-                    kind=kind,
-                    workspace_id=row["workspace_id"],
-                    name=row["name"],
-                    dests=(
-                        json.dumps(row["dests"])
-                        if isinstance(row["dests"], list)
-                        else row["dests"]
-                    ),
-                )
+            entry = SecretAudit(
+                kind=kind,
+                workspace_id=row["workspace_id"],
+                name=row["name"],
+                dests=(
+                    json.dumps(row["dests"])
+                    if isinstance(row["dests"], list)
+                    else row["dests"]
+                ),
             )
+            session.add(entry)
+            await session.flush()
+            # The flush populates the generated id into the instance
+            # before commit; reading it into a local keeps the
+            # return correct whatever the session factory's
+            # expire_on_commit setting (#305 review).
+            row_id = entry.id
             await session.commit()
+            return row_id
 
     async def list_audit(self, limit: int = 100) -> list[dict]:
         """The newest audit events first (operator view)."""
@@ -617,6 +626,24 @@ class Model:
                 .limit(limit)
             )
             return [audit_dict(row) for row in rows]
+
+    async def list_workspace_audit(
+        self, workspace_id: str, limit: int = 100
+    ) -> list[dict]:
+        """One workspace's audit events, oldest first (#305): the
+        decider registration replays them so the events screen
+        opens on the recorded lifecycle. The newest ``limit`` rows
+        arrive in recording order — replay sends oldest first, so
+        the client log lands newest last."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            rows = await session.scalars(
+                select(SecretAudit)
+                .where(SecretAudit.workspace_id == workspace_id)
+                .order_by(SecretAudit.id.desc())
+                .limit(limit)
+            )
+            return [audit_dict(row) for row in reversed(rows.all())]
 
 
 async def resolve_workspace(session, ref: str) -> Workspace | None:

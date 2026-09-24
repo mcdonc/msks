@@ -1212,11 +1212,15 @@ def build_api(app) -> FastAPI:
         # with the placeholder live and armed — recovery is revoke
         # and re-mint, and suppressing it would silently drop the
         # mint's trail instead.
-        await app.state.model.record_audit("mint", row)
+        audit_id = await app.state.model.record_audit("mint", row)
+        # The audit row commits before this publish: a registration
+        # whose replay read lands in the gap delivers the row twice,
+        # and the client's audit-id dedup drops the second (#305).
         await hub.publish(
             "secret.mint",
             {
                 "placeholder_id": row["id"],
+                "audit_id": audit_id,
                 "workspace_id": workspace_id,
                 "name": body.name,
                 "dests": dests,
@@ -1299,12 +1303,17 @@ def build_api(app) -> FastAPI:
                 # operator sees it in the response and can re-run
                 # check.
                 cleaned = False
-            await app.state.model.record_audit("revoke", row)
+            audit_id = await app.state.model.record_audit("revoke", row)
             await sync_store_manifest()
+        # The lock above released before the publish: a registration
+        # in the commit-to-publish gap replays the row, and the
+        # client's audit-id dedup drops whichever delivery is second
+        # (#305) — the dedup is load-bearing here, not a belt.
         await hub.publish(
             "secret.revoke",
             {
                 "placeholder_id": placeholder_id,
+                "audit_id": audit_id,
                 "workspace_id": row["workspace_id"],
                 "name": row["name"],
                 "ts": time.time(),
@@ -2865,10 +2874,16 @@ async def next_frame(socket: WebSocket) -> dict | None | bool:
     return decode_frame(raw)
 
 
+#: The registration replay's row bound (#305): the newest rows the
+#: audit table contributes to the decider's screen at connect.
+SECRET_REPLAY_LIMIT = 100
+
+
 async def register_decider(app, socket, client_id: int, message: dict):
     """One ``egress.decider`` frame: register the socket as this
     workspace's decider and land it the pending snapshot and rules
-    view directly (before any hub broadcast could)."""
+    view directly (before any hub broadcast could), then replay
+    the recorded placeholder lifecycle (#305)."""
     workspace = message.get("workspace")
     if not isinstance(workspace, str):
         return
@@ -2895,6 +2910,64 @@ async def register_decider(app, socket, client_id: int, message: dict):
         await socket.send_json({"event": "egress.rules", "data": rules})
     for pending in await app.state.consent.snapshot(workspace):
         await socket.send_json({"event": "egress.request", "data": pending})
+    await replay_secret_audit(app, socket, workspace)
+
+
+async def replay_secret_audit(app, socket, workspace_id: str) -> None:
+    """The workspace's recorded placeholder lifecycle (#305): the
+    audit table's newest rows, oldest first, as ``secret.*``
+    frames — the decider's events screen opens on the recorded
+    mints, revokes, and expiries instead of an empty live tail.
+    Swaps and sightings stay live-only: they are per-request wire
+    events, and the audit table records lifecycle alone. A read
+    failure skips the replay and logs — registration keeps the
+    rules view and pending snapshot it already landed."""
+    try:
+        rows = await app.state.model.list_workspace_audit(
+            workspace_id, limit=SECRET_REPLAY_LIMIT
+        )
+    except Exception:  # noqa: BLE001 - best-effort, logged
+        LOG.warning(
+            "secret-audit replay for %s failed; the events screen "
+            "opens on the live stream alone",
+            workspace_id,
+            exc_info=True,
+        )
+        return
+    if len(rows) == SECRET_REPLAY_LIMIT:
+        LOG.info(
+            "secret-audit replay for %s reached its %d-row limit; "
+            "older recorded events may exist and stay off the "
+            "screen",
+            workspace_id,
+            SECRET_REPLAY_LIMIT,
+        )
+    for row in rows:
+        data = {
+            "audit_id": row["id"],
+            "workspace_id": row["workspace_id"],
+            "name": row["name"],
+            "ts": audit_epoch(row["created_at"]),
+        }
+        if row["kind"] == "mint":
+            # The live mint names its allowlist; the exit kinds carry
+            # identity alone, and the replay matches the live shapes.
+            data["dests"] = row["dests"]
+        await socket.send_json(
+            {"event": f"secret.{row['kind']}", "data": data}
+        )
+
+
+def audit_epoch(iso: str) -> float:
+    """An audit row's stored timestamp as epoch — the wire events'
+    ``ts`` domain (the daemon stamps wall-clock). Naive UTC is the
+    sqlite round-trip's shape (the dialect strips tzinfo at bind);
+    a value that carries an offset converts — it is never silently
+    reinterpreted as UTC."""
+    moment = datetime.fromisoformat(iso)
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=UTC).timestamp()
+    return moment.astimezone(UTC).timestamp()
 
 
 def decode_frame(raw: str) -> dict | None:

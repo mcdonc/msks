@@ -357,6 +357,17 @@ def event_id_suffix(event: SecretEvent) -> str:
     return f"#{event.placeholder_id}" if event.placeholder_id else ""
 
 
+def render_order(events: list[SecretEvent]) -> list[SecretEvent]:
+    """The events oldest-first for rendering (#305): timestamp
+    order, ties in arrival order — a live frame the socket
+    delivered between two replayed rows renders in its time's
+    place, not wherever the interleaving dropped it. Arrival order
+    is client-local, so two same-timestamp rows can render in
+    either order across reconnects — the tie is cosmetic, the
+    timestamps are not."""
+    return sorted(events, key=lambda event: (event.ts, event.seq))
+
+
 def event_item(event: SecretEvent) -> ListItem:
     """One audit row as a list item; the sighting carries the
     highlight class (the color pairs with the ``!`` marker)."""
@@ -368,15 +379,25 @@ def event_item(event: SecretEvent) -> ListItem:
 
 
 def events_note() -> str:
-    """The events screen's explanatory line: what the stream
-    carries, what the marker means, and where detection stops
-    (#201)."""
+def events_note() -> str:
+    """The events screen's explanatory line, in operator language
+    (#305): what the rows are, what the marker means, and where
+    detection stops (#201)."""
     return (
-        "interceptor audit — swaps, mints, revokes, expiries; ! marks "
-        "an off-allowlist sighting (the sentinel seen toward a "
-        "destination its allowlist misses). Sightings fire on "
-        "decrypted flows; a spliced connection relays undecrypted "
-        "and reports nothing."
+        "Placeholder-token audit — this workspace's recorded mints, "
+        "revokes, and expiries, then wire events as they happen. "
+        "! marks a sighting: a placeholder token reached a host its "
+        "mint did not allow — the exfiltration signal. Wire events "
+        "cover decrypted connections only; a connection the daemon "
+        "relays untouched passes unread and produces no row."
+    )
+    return (
+        "Placeholder-token audit — this workspace's recorded mints, "
+        "revokes, and expiries, then wire events as they happen. "
+        "! marks a sighting: a placeholder token reached a host its "
+        "mint did not allow — the exfiltration signal. Wire events "
+        "cover decrypted connections only; a connection the daemon "
+        "relays untouched passes unread and produces no row."
     )
 
 
@@ -672,11 +693,13 @@ class RulesScreen(Screen):
 
 
 class EventsScreen(Screen):
-    """The interceptor audit stream (#201): swap, mint, revoke,
-    expiry, and off-allowlist sighting rows, newest first. A
-    sighting row carries the ``sighting`` class — the highlight that
-    names the exfil signal — beside its ``!`` marker. Arrows move
-    the list; ``r`` or Escape returns to the queue — no focus trap."""
+    """The placeholder-token audit (#201, #305): swap, mint,
+    revoke, expiry, and off-allowlist sighting rows, newest first —
+    the recorded lifecycle replayed at registration, the wire
+    events live. A sighting row carries the ``sighting`` class —
+    the highlight that names the exfil signal — beside its ``!``
+    marker. Arrows move the list; ``r`` or Escape returns to the
+    queue — no focus trap."""
 
     BINDINGS = [
         Binding("r", "back", "Back"),
@@ -713,7 +736,16 @@ class EventsScreen(Screen):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="events-body"):
+    def compose(self) -> ComposeResult:
+        with Vertical(id="events-body"):
             yield Static(id="events-note")
+            yield Static(
+                "No placeholder events yet — mints, revokes, and "
+                "expiries appear here.",
+                id="events-empty",
+            )
+            yield ListView(id="event-rows")
+        yield Footer()
             yield ListView(id="event-rows")
         yield Footer()
 
@@ -764,8 +796,13 @@ class EventsScreen(Screen):
         children that are all real."""
         focused = focused_event_id(old)
         items = [
-            event_item(event) for event in reversed(self.controller.events)
+            event_item(event)
+            for event in reversed(render_order(self.controller.events))
         ]
+        # The empty state rides beside the list (#305): a screen
+        # that holds nothing says so, instead of rendering the
+        # header line alone.
+        self.query_one("#events-empty", Static).display = not items
         fresh = ListView(*items, id="event-rows")
         if old is not None:
             await old.remove()  # frees the id before the fresh list mounts
@@ -807,6 +844,7 @@ class ConsentDeciderApp(App):
     #requests ListItem { height: 1; }
     #empty { padding: 1 2; color: $text-muted; }
     #events-note { padding: 0 1; color: $text-muted; }
+    #events-empty { padding: 0 1; color: $text-muted; }
     #event-rows ListItem { height: 1; }
     #event-rows ListItem.sighting { color: $warning; text-style: bold; }
     """

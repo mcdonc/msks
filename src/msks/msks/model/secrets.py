@@ -61,7 +61,10 @@ class SecretAudit(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     kind: Mapped[str] = mapped_column(String)
-    workspace_id: Mapped[str] = mapped_column(String)
+    # Indexed for the decider replay's per-workspace scan (#305):
+    # the table is append-only with no pruning, so the scan
+    # degrades as it grows without the index.
+    workspace_id: Mapped[str] = mapped_column(String, index=True)
     name: Mapped[str] = mapped_column(String)
     dests: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

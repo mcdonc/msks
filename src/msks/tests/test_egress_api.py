@@ -562,6 +562,201 @@ async def test_register_decider_lands_the_snapshot_directly(
     assert not app.state.deciders.has_decider("ghost")
 
 
+async def test_register_decider_replays_the_recorded_lifecycle(
+    tmp_path: Path,
+) -> None:
+    """Registration replays the workspace's audit rows as secret.*
+    frames (#305): after the rules view, the recorded lifecycle
+    lands oldest first — the mint with its allowlist, the exit
+    kinds with identity alone — and a foreign workspace's rows
+    stay off the socket."""
+    settings = Settings(
+        vmm=VmmSettings(state_dir=tmp_path / "vms"),
+        net=NetSettings(enabled=False),
+        server=ServerSettings(
+            db_path=tmp_path / "replay.db",
+            bootstrap_token=TOKEN,
+            event_poll_s=10.0,
+        ),
+    )
+    app = build_app(settings)
+    app.state.microvm = StubMicrovm()
+    app.state.model.migrate()
+    await app.state.model.create_workspace(
+        VmSpec(
+            workspace_id="ws-re",
+            kernel=Path("/k"),
+            rootfs=Path("/r"),
+            egress_mode="interactive",
+        )
+    )
+    model = app.state.model
+    await model.record_audit(
+        "mint",
+        {"workspace_id": "ws-re", "name": "api", "dests": ["api.example"]},
+    )
+    await model.record_audit(
+        "mint",
+        {
+            "workspace_id": "ws-other",
+            "name": "api",
+            "dests": ["elsewhere.example"],
+        },
+    )
+    await model.record_audit(
+        "revoke",
+        {"workspace_id": "ws-re", "name": "api", "dests": "[]"},
+    )
+
+    class RecordingSocket:
+        def __init__(self) -> None:
+            self.sent: list[dict] = []
+
+        async def send_json(self, payload) -> None:
+            self.sent.append(payload)
+
+    socket = RecordingSocket()
+    await api_mod.register_decider(
+        app,
+        socket,
+        client_id=1,
+        message={"workspace": "ws-re"},
+    )
+    assert [f["event"] for f in socket.sent] == [
+        "egress.rules",
+        "secret.mint",
+        "secret.revoke",
+    ]
+    mint, revoke = socket.sent[1]["data"], socket.sent[2]["data"]
+    assert mint["workspace_id"] == "ws-re"
+    assert mint["name"] == "api"
+    assert mint["dests"] == ["api.example"]
+    assert mint["ts"] > 0.0
+    assert isinstance(mint["audit_id"], int)
+    assert isinstance(revoke["audit_id"], int)
+    assert revoke["audit_id"] != mint["audit_id"]
+    assert "dests" not in revoke
+    assert mint["ts"] <= revoke["ts"]  # stored order, not send order
+
+
+def test_audit_epoch_converts_aware_timestamps() -> None:
+    """audit_epoch reads naive UTC as UTC and converts a value that
+    carries an offset — it never reinterprets an aware timestamp
+    as UTC (#305 review)."""
+    naive = api_mod.audit_epoch("2026-09-24T10:00:00")
+    assert api_mod.audit_epoch("2026-09-24T12:00:00+02:00") == naive
+    assert api_mod.audit_epoch("2026-09-24T08:00:00-02:00") == naive
+
+
+async def test_replay_logs_when_it_hits_its_row_limit(
+    tmp_path: Path, caplog
+) -> None:
+    """A workspace with more recorded rows than the replay's limit
+    gets the newest ones and a log line saying the history is
+    incomplete (#305 review) — the truncation never passes
+    silently."""
+    import logging
+
+    settings = Settings(
+        vmm=VmmSettings(state_dir=tmp_path / "vms"),
+        net=NetSettings(enabled=False),
+        server=ServerSettings(
+            db_path=tmp_path / "many.db",
+            bootstrap_token=TOKEN,
+            event_poll_s=10.0,
+        ),
+    )
+    app = build_app(settings)
+    app.state.microvm = StubMicrovm()
+    app.state.model.migrate()
+    await app.state.model.create_workspace(
+        VmSpec(
+            workspace_id="ws-many",
+            kernel=Path("/k"),
+            rootfs=Path("/r"),
+            egress_mode="interactive",
+        )
+    )
+    for i in range(api_mod.SECRET_REPLAY_LIMIT + 1):
+        await app.state.model.record_audit(
+            "mint",
+            {"workspace_id": "ws-many", "name": f"n{i}", "dests": "[]"},
+        )
+
+    class RecordingSocket:
+        def __init__(self) -> None:
+            self.sent: list[dict] = []
+
+        async def send_json(self, payload) -> None:
+            self.sent.append(payload)
+
+    with caplog.at_level(logging.INFO, logger="msks.server.api"):
+        socket = RecordingSocket()
+        await api_mod.register_decider(
+            app,
+            socket,
+            client_id=1,
+            message={"workspace": "ws-many"},
+        )
+    frames = [f for f in socket.sent if f["event"].startswith("secret.")]
+    assert len(frames) == api_mod.SECRET_REPLAY_LIMIT
+    # The newest SECRET_REPLAY_LIMIT rows, oldest first: the first
+    # replayed row is the second row ever recorded.
+    assert frames[0]["data"]["name"] == "n1"
+    assert frames[-1]["data"]["name"] == f"n{api_mod.SECRET_REPLAY_LIMIT}"
+    assert any("row limit" in record.message for record in caplog.records)
+
+
+async def test_register_decider_survives_a_failed_audit_read(
+    tmp_path: Path,
+) -> None:
+    """The replay is best-effort (#305): a read failure logs and
+    skips it — registration keeps the rules view and pending
+    snapshot it already landed."""
+    settings = Settings(
+        vmm=VmmSettings(state_dir=tmp_path / "vms"),
+        net=NetSettings(enabled=False),
+        server=ServerSettings(
+            db_path=tmp_path / "fail.db",
+            bootstrap_token=TOKEN,
+            event_poll_s=10.0,
+        ),
+    )
+    app = build_app(settings)
+    app.state.microvm = StubMicrovm()
+    app.state.model.migrate()
+    await app.state.model.create_workspace(
+        VmSpec(
+            workspace_id="ws-fail",
+            kernel=Path("/k"),
+            rootfs=Path("/r"),
+            egress_mode="interactive",
+        )
+    )
+
+    async def unreadable(_workspace_id):
+        raise RuntimeError("table away")
+
+    app.state.model.list_workspace_audit = unreadable
+
+    class RecordingSocket:
+        def __init__(self) -> None:
+            self.sent: list[dict] = []
+
+        async def send_json(self, payload) -> None:
+            self.sent.append(payload)
+
+    socket = RecordingSocket()
+    await api_mod.register_decider(
+        app,
+        socket,
+        client_id=1,
+        message={"workspace": "ws-fail"},
+    )
+    assert [f["event"] for f in socket.sent] == ["egress.rules"]
+    assert app.state.deciders.has_decider("ws-fail")
+
+
 async def test_register_decider_when_rules_read_fails(tmp_path: Path) -> None:
     """The rules view is best-effort on registration: a read failure
     sends the snapshot alone."""

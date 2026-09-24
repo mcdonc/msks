@@ -938,6 +938,25 @@ async def test_verdict_keys_do_not_bleed_from_the_events_screen() -> None:
         app.action_quit_screen()
 
 
+async def test_the_events_screen_states_when_empty() -> None:
+    """A list with nothing to show says so (#305): the screen opens
+    with the empty line under the header, and the first event
+    retires it."""
+    factory = FakeFactory([FakeWS([]), FakeWS([])])
+    app, _ = make_app(factory)
+    async with app.run_test() as pilot:
+        await pilot.press("e")
+        await wait_for(lambda: type(app.screen).__name__ == "EventsScreen")
+        empty = app.screen.query_one("#events-empty", Static)
+        assert empty.display
+        assert "No placeholder events yet" in str(empty.content)
+        app.controller.apply_frame(secret_frame("mint", dests=["api.example"]))
+        app.safe_repaint()
+        await wait_for(lambda: events_children(app) == 1)
+        await wait_for(lambda: not empty.display)
+        app.action_quit_screen()
+
+
 async def test_a_sighting_flashes_on_the_queue_screen() -> None:
     """The exfil signal surfaces wherever the operator is: a
     sighting frame takes the queue's status line (#201)."""

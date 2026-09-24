@@ -2785,6 +2785,14 @@ async def test_mint_and_revoke_events_carry_the_placeholder_identity(
     assert mint["name"] == revoke["name"] == "github_api"
     assert revoke["placeholder_id"] == minted["id"]
     assert revoke["ts"] > 0.0
+    # The audit row's id rides the live frame and the decider
+    # replay alike (#305): the same fact lands once on the events
+    # screen however it arrives.
+    audit = await app.state.model.list_audit()
+    assert [row["id"] for row in audit] == [
+        revoke["audit_id"],
+        mint["audit_id"],
+    ]
 
 
 async def test_renew_refreshes_the_interceptor(client) -> None:
