@@ -410,7 +410,25 @@ Rules worth knowing:
 
 - The **first image imported becomes the default** — the one a bare
   workspace create uses — and keeps the designation while more
-  images arrive; re-designating the default is future API work.
+  images arrive; `POST /api/v1/images/default` re-designates at any
+  time (#270):
+
+```bash
+# designate by any reference form create's image field takes
+curl -X POST .../api/v1/images/default \
+  -H "authorization: Bearer $TOKEN" -d '{"ref": "debian:13.6"}'
+
+# clear the designation; the answer reports the fallback
+# (the sole catalog entry, or none)
+curl -X DELETE .../api/v1/images/default \
+  -H "authorization: Bearer $TOKEN"
+```
+
+- The designation is the catalog's `default` pointer file: it
+  survives restarts, `msks image ls`/`image info` mark the
+  designated row, and with it cleared a bare create falls back to
+  the sole catalog entry — on a catalog holding several images it
+  answers a named error until one is designated again.
 - `MSKSD_DEFAULT_IMAGE` (set by the dev daemon from its state dir's
   image) imports and designates at first boot; on later boots the
   daemon only re-checks the hash, not a full re-import.

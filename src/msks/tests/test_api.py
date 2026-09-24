@@ -1,6 +1,7 @@
 """API-level tests over ASGITransport with a stubbed microvm seam."""
 
 import asyncio
+import contextlib
 import json
 from pathlib import Path
 
@@ -94,6 +95,28 @@ async def client(tmp_path: Path):
             transport=transport, base_url="https://test"
         ) as http:
             yield http, app, stub
+
+
+@contextlib.asynccontextmanager
+async def catalog_daemon(state_dir: Path, db_path: Path):
+    """One daemon over the given paths — the restart tests build a
+    second over the same state dir in sequence (#270)."""
+    settings = Settings(
+        vmm=VmmSettings(state_dir=state_dir),
+        net=NetSettings(enabled=False),
+        server=ServerSettings(
+            db_path=db_path, bootstrap_token=TOKEN, event_poll_s=10.0
+        ),
+    )
+    app = build_app(settings)
+    app.state.microvm = StubMicrovm()
+    api = build_api(app)
+    async with api.router.lifespan_context(api):
+        transport = httpx.ASGITransport(app=api)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="https://test"
+        ) as http:
+            yield http
 
 
 async def test_lifespan_startup_failure_closes_engine(tmp_path: Path) -> None:
@@ -975,6 +998,159 @@ async def test_image_pinned_by_workspace_artifacts(client) -> None:
     assert deleted.status_code == 200
     released = await http.delete(f"/api/v1/images/{digest}", headers=auth())
     assert released.status_code == 200
+
+
+async def import_named_images(http, state_dir: Path, entries) -> dict:
+    """Import one archive per (name, version); ref → hash."""
+    from test_imagestore import build_containerdisk
+
+    state_dir.mkdir(parents=True, exist_ok=True)
+    hashes = {}
+    for name, version in entries:
+        archive = state_dir / f"{name}.tar"
+        build_containerdisk(archive, name=name, version=version)
+        imported = await http.post(
+            "/api/v1/images", json={"source": str(archive)}, headers=auth()
+        )
+        assert imported.status_code == 201, imported.text
+        hashes[f"{name}:{version}"] = imported.json()["hash"]
+    return hashes
+
+
+async def test_default_designation_names_the_boot_image(client) -> None:
+    """#270: POST /api/v1/images/default resolves the reference
+    against the catalog, the next listing marks the designated row,
+    and a bare create boots it; a miss and a malformed pin are named
+    errors."""
+    http, app, _stub = client
+    state_dir = app.state.settings.vmm.state_dir
+    hashes = await import_named_images(
+        http, state_dir, (("one", "1"), ("two", "2"))
+    )
+    designated = await http.post(
+        "/api/v1/images/default", json={"ref": "two:2"}, headers=auth()
+    )
+    assert designated.status_code == 200, designated.text
+    assert designated.json()["ref"] == "two:2"
+    assert designated.json()["hash"] == hashes["two:2"]
+    listed = await http.get("/api/v1/images", headers=auth())
+    flags = {
+        f"{row['name']}:{row['version']}": row["default"]
+        for row in listed.json()
+    }
+    assert flags == {"one:1": False, "two:2": True}
+    created = await http.post(
+        "/api/v1/workspaces", json={"id": "ws-default"}, headers=auth()
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["image_hash"] == hashes["two:2"]
+    missed = await http.post(
+        "/api/v1/images/default", json={"ref": "three"}, headers=auth()
+    )
+    assert missed.status_code == 404
+    assert "no such image" in missed.json()["detail"]
+    pinned = await http.post(
+        "/api/v1/images/default", json={"ref": "two@zz"}, headers=auth()
+    )
+    assert pinned.status_code == 400
+    assert "malformed image hash" in pinned.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    "form", ["name:version", "bare name", "hash", "name@hash"]
+)
+async def test_default_designation_accepts_every_reference_form(
+    client, form: str
+) -> None:
+    """#270: the endpoint resolves the same forms a create's image
+    field takes."""
+    http, app, _stub = client
+    state_dir = app.state.settings.vmm.state_dir
+    hashes = await import_named_images(http, state_dir, (("two", "2"),))
+    digest = hashes["two:2"]
+    ref = {
+        "name:version": "two:2",
+        "bare name": "two",
+        "hash": digest,
+        "name@hash": f"two@{digest}",
+    }[form]
+    designated = await http.post(
+        "/api/v1/images/default", json={"ref": ref}, headers=auth()
+    )
+    assert designated.status_code == 200, designated.text
+    assert designated.json()["hash"] == digest
+
+
+async def test_default_unset_reports_the_fallback(client) -> None:
+    """#270: DELETE /api/v1/images/default clears the designation;
+    the answer reports the fallback a bare create now takes — none on
+    a multi-image catalog (the create answers the named refusal),
+    the sole entry once only one image remains."""
+    http, app, _stub = client
+    state_dir = app.state.settings.vmm.state_dir
+    hashes = await import_named_images(
+        http, state_dir, (("one", "1"), ("two", "2"))
+    )
+    cleared = await http.delete("/api/v1/images/default", headers=auth())
+    assert cleared.status_code == 200
+    assert cleared.json()["fallback"] is None
+    refused = await http.post(
+        "/api/v1/workspaces", json={"id": "ws-nodefault"}, headers=auth()
+    )
+    assert refused.status_code == 400
+    assert "a default image" in refused.json()["detail"]
+    removed = await http.delete(
+        f"/api/v1/images/{hashes['one:1']}", headers=auth()
+    )
+    assert removed.status_code == 200
+    cleared = await http.delete("/api/v1/images/default", headers=auth())
+    fallback = cleared.json()["fallback"]
+    assert fallback["hash"] == hashes["two:2"]
+    assert fallback["ref"] == "two:2"
+    created = await http.post(
+        "/api/v1/workspaces", json={"id": "ws-sole"}, headers=auth()
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["image_hash"] == hashes["two:2"]
+
+
+async def test_default_designation_survives_a_restart(
+    tmp_path: Path,
+) -> None:
+    """#270: the designation is the pointer file — a second daemon
+    over the same state dir serves it."""
+    state_dir = tmp_path / "vms"
+    hashes = {}
+    db_path = tmp_path / "restart.db"
+    async with catalog_daemon(state_dir, db_path) as http:
+        hashes = await import_named_images(
+            http, state_dir, (("one", "1"), ("two", "2"))
+        )
+        designated = await http.post(
+            "/api/v1/images/default", json={"ref": "two:2"}, headers=auth()
+        )
+        assert designated.status_code == 200, designated.text
+    async with catalog_daemon(state_dir, db_path) as http:
+        listed = await http.get("/api/v1/images", headers=auth())
+        flags = {
+            f"{row['name']}:{row['version']}": row["default"]
+            for row in listed.json()
+        }
+        assert flags == {"one:1": False, "two:2": True}
+        created = await http.post(
+            "/api/v1/workspaces", json={"id": "ws-restart"}, headers=auth()
+        )
+        assert created.status_code == 201, created.text
+        assert created.json()["image_hash"] == hashes["two:2"]
+
+
+async def test_default_designation_requires_a_token(client) -> None:
+    """#270: the designation endpoints are token-gated."""
+    http, _app, _stub = client
+    posted = await http.post("/api/v1/images/default", json={"ref": "x"})
+    assert posted.status_code in (401, 403)
+    deleted = await http.delete("/api/v1/images/default")
+    assert deleted.status_code in (401, 403)
 
 
 async def test_delete_never_started_workspace(client) -> None:

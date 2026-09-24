@@ -551,6 +551,35 @@ default  yes
 
 The reference forms are the same as `image rm`'s.
 
+### `msks image default`
+
+Designates the image a bare `msks create` boots (#270) — the row
+`image ls` marks — or clears the designation with `--unset`:
+
+```text
+$ msks image default debian:13.6
+designated debian:13.6 (98ccf2e1f2db) as the default image
+
+$ msks image default --unset
+default designation removed; a bare create falls back to the sole
+entry debian:13.6 (98ccf2e1f2db)
+```
+
+The reference forms are the same as `image rm`'s — `name:version`,
+a bare name (its newest version), `name@hash`, a full hash, a
+unique hash prefix. The designation goes through the daemon (`POST
+/api/v1/images/default`), survives restarts, and the next `image ls`
+marks the row. A fresh `MSKSD_DEFAULT_IMAGE` import at daemon
+startup still reclaims the slot — the command is the operator's
+designation between restarts. A reference that names nothing exits
+with the catalog spelled out, the same miss `image rm` answers.
+
+`--unset` clears the designation (`DELETE /api/v1/images/default`)
+and reports the fallback a bare create now takes: the sole catalog
+entry stays what it boots (the line above), and on a catalog
+holding several images a bare create needs `--image` until one is
+designated again — the line says so.
+
 ## `msks home`
 
 Moves a workspace's `/home` volume through the daemon (#80) —

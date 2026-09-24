@@ -138,6 +138,18 @@ class ImageImport(BaseModel):
     source: str
 
 
+class ImageDefault(BaseModel):
+    """A default-designation request (#270): the catalog reference
+    whose image a bare workspace create boots.
+
+    Every form the daemon resolves for a create's ``image`` field
+    works here — hash, ``name:version``, bare name (newest),
+    ``name@hash`` — and a miss is a named 404.
+    """
+
+    ref: str
+
+
 class WorkspaceCreate(BaseModel):
     # The workspace's name (#246): the operator-chosen label the CLI
     # addresses the workspace by — the same DNS-label charset the
@@ -1538,6 +1550,60 @@ def build_api(app) -> FastAPI:
             ),
             media_type="application/json",
         )
+
+    # Both default routes are declared before the {digest} route:
+    # Starlette matches in registration order, and "default" would
+    # otherwise land in the digest parameter's seat.
+    @api.post("/api/v1/images/default", dependencies=[Depends(require_token)])
+    async def set_default_image(body: ImageDefault) -> dict:
+        """Designate the image a bare create boots (#270).
+
+        The reference resolves against the catalog — the same forms
+        a create's ``image`` field takes — and writing the pointer
+        is the whole designation: it survives restarts (the pointer
+        file), and a fresh ``MSKSD_DEFAULT_IMAGE`` import at startup
+        still reclaims the slot. A miss is a named 404.
+        """
+        state_dir = app.state.settings.vmm.state_dir
+        try:
+            record = imagestore.resolve(body.ref, state_dir)
+        except ImageError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        if record is None:
+            raise HTTPException(
+                status_code=404, detail=f"no such image: {body.ref}"
+            )
+        imagestore.set_default(record.hash, state_dir)
+        return {
+            "hash": record.hash,
+            "name": record.name,
+            "version": record.version,
+            "ref": record.ref,
+        }
+
+    @api.delete(
+        "/api/v1/images/default", dependencies=[Depends(require_token)]
+    )
+    async def unset_default_image() -> dict:
+        """Clear the designation (#270).
+
+        The answer reports the fallback a bare create now takes:
+        the sole catalog entry, or none (a multi-image catalog
+        without a designation refuses a bare create by name).
+        """
+        state_dir = app.state.settings.vmm.state_dir
+        imagestore.unset_default(state_dir)
+        fallback = imagestore.default_image(state_dir)
+        return {
+            "fallback": None
+            if fallback is None
+            else {
+                "hash": fallback.hash,
+                "name": fallback.name,
+                "version": fallback.version,
+                "ref": fallback.ref,
+            }
+        }
 
     @api.delete(
         "/api/v1/images/{digest}", dependencies=[Depends(require_token)]

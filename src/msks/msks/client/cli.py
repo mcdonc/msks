@@ -717,6 +717,60 @@ async def remove_image(url, token, ref, transport) -> dict:
     return result
 
 
+async def designate_image(url, token, ref, transport) -> dict:
+    """Resolve ``ref`` against the listing, POST the designation
+    (#270) — the rm shape: resolution and designation share one
+    client, and every reference form (a unique hash prefix, an
+    ambiguous one named) reads as one exchange.
+    """
+    async with api_client(url, token, transport) as client:
+        rows = await request(client, "GET", "/api/v1/images")
+        row = resolve_image_ref(ref, rows)
+        result = await request(
+            client,
+            "POST",
+            "/api/v1/images/default",
+            json_body={"ref": row["hash"]},
+        )
+    print(
+        f"designated {row['name']}:{row['version']} "
+        f"({row['hash'][:12]}) as the default image"
+    )
+    return result
+
+
+async def unset_default_image(url, token, transport) -> dict:
+    """DELETE the designation; report the fallback that applies
+    (#270) — the sole catalog entry a bare create still boots, or
+    the named refusal when nothing answers for one.
+    """
+    result = await api_call(
+        "DELETE",
+        url,
+        token,
+        "/api/v1/images/default",
+        transport=transport,
+    )
+    print(unset_message(result))
+    return result
+
+
+def unset_message(result: dict) -> str:
+    """The result line: the designation is gone, and the line names
+    what a bare create boots now — the sole entry the fallback
+    rule picks, or the need for an explicit --image."""
+    fallback = result.get("fallback")
+    if fallback is None:
+        return (
+            "default designation removed; a bare create needs --image "
+            "until an image is designated"
+        )
+    return (
+        f"default designation removed; a bare create falls back to "
+        f"the sole entry {fallback['ref']} ({fallback['hash'][:12]})"
+    )
+
+
 async def describe_image(url, token, ref, transport) -> dict:
     """Print one image's full record from the listing data."""
     rows = await fetch_images(url, token, transport)
@@ -1117,6 +1171,31 @@ def cmd_image_rm(ref: str, transport=None) -> int:
 def cmd_image_info(ref: str, transport=None) -> int:
     """``msks image info``: one image's full record."""
     asyncio.run(describe_image(env_url(), env_token(), ref, transport))
+    return 0
+
+
+def checked_default_args(ref: str | None, unset: bool) -> None:
+    """Reject the argument shapes that say nothing — both a
+    reference and --unset, or neither (#270)."""
+    if unset and ref is not None:
+        raise SystemExit("msks: pass a reference or --unset, not both")
+    if not unset and ref is None:
+        raise SystemExit(
+            "msks: pass an image reference, or --unset to clear "
+            "the designation"
+        )
+
+
+def cmd_image_default(
+    ref: str | None, unset: bool = False, transport=None
+) -> int:
+    """``msks image default``: designate the image a bare create
+    boots (#270), or clear the designation with --unset."""
+    checked_default_args(ref, unset)
+    if unset:
+        asyncio.run(unset_default_image(env_url(), env_token(), transport))
+    else:
+        asyncio.run(designate_image(env_url(), env_token(), ref, transport))
     return 0
 
 
@@ -1723,6 +1802,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="name:version, bare name, name@hash, or hash "
         "(a unique hash prefix works too)",
     )
+    image_default = image_sub.add_parser(
+        "default",
+        help="designate the image a bare create boots (#270), or "
+        "clear the designation with --unset",
+    )
+    image_default.add_argument(
+        "ref",
+        nargs="?",
+        default=None,
+        help="name:version, bare name (newest), name@hash, or hash "
+        "(a unique hash prefix works too)",
+    )
+    image_default.add_argument(
+        "--unset",
+        action="store_true",
+        help="clear the designation; a bare create falls back to the "
+        "sole catalog entry, or needs --image when several remain",
+    )
     home = sub.add_parser(
         "home", help="move a workspace's /home volume through the daemon (#80)"
     )
@@ -2046,6 +2143,9 @@ def image_command_table(args: argparse.Namespace, transport) -> dict:
         "check": lambda: cmd_image_check(args),
         "rm": lambda: cmd_image_rm(args.ref, transport=transport),
         "info": lambda: cmd_image_info(args.ref, transport=transport),
+        "default": lambda: cmd_image_default(
+            args.ref, args.unset, transport=transport
+        ),
     }
 
 
