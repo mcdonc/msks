@@ -1,6 +1,7 @@
 """The msksd entry point: run the API server over TLS (#8)."""
 
 import argparse
+import logging
 import signal
 import sys
 from pathlib import Path
@@ -145,6 +146,10 @@ def install_sighup_reload(app, config: str | None) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     """Console-script entry: parse args, run the server."""
+    logging.basicConfig(
+        format="%(levelname)s %(name)s: %(message)s",
+        level=logging.INFO,
+    )
     parser = argparse.ArgumentParser(prog="msksd")
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument(
