@@ -288,17 +288,27 @@ def test_the_extension_bounds_its_single_fetch() -> None:
     assert "for (let attempt" not in ext
 
 
+def load_integrity_table():
+    """The integrity table the patcher consumes, as the tests use
+    it: the JSON file in nix/."""
+    spec = importlib.util.spec_from_file_location(
+        "pi_shrinkwrap_patch", REPO_ROOT / "nix" / "pi-shrinkwrap-patch.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    table = mod.load_missing(
+        REPO_ROOT / "nix" / "pi-shrinkwrap-integrity.json"
+    )
+    return mod, table
+
+
 def test_the_shrinkwrap_patch_pins_every_gap_by_name() -> None:
     """The injector (#266 review): every MISSING name takes its
     sha512, scoped and nested package keys resolve to their
     package names, entries that already carry integrity are left
     alone, and the guard the caller checks counts names — a
     duplicate of one sibling cannot mask another."""
-    spec = importlib.util.spec_from_file_location(
-        "pi_shrinkwrap_patch", REPO_ROOT / "nix" / "pi-shrinkwrap-patch.py"
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod, table = load_integrity_table()
 
     lock = {
         "packages": {
@@ -316,35 +326,28 @@ def test_the_shrinkwrap_patch_pins_every_gap_by_name() -> None:
             "node_modules/chalk": {"resolved": "https://x/y"},
         }
     }
-    patched = mod.patch_lock(lock)
+    patched = mod.patch_lock(lock, table)
     # The nested key resolved to its package name; the
     # already-pinned entry stayed untouched.
     assert patched == {"@earendil-works/chord", "@earendil-works/pi-tui"}
     assert (
         lock["packages"]["node_modules/@earendil-works/chord"]["integrity"]
-        == "sha512-" + mod.MISSING["@earendil-works/chord"]
+        == "sha512-" + table["@earendil-works/chord"]
     )
     nested = lock["packages"][
         "node_modules/chalk/node_modules/@earendil-works/pi-tui"
     ]
-    assert (
-        nested["integrity"]
-        == "sha512-" + mod.MISSING["@earendil-works/pi-tui"]
-    )
+    assert nested["integrity"] == "sha512-" + table["@earendil-works/pi-tui"]
     already = lock["packages"]["node_modules/@earendil-works/pi-ai"]
     assert already["integrity"] == "sha512-alreadythere"
     # Names the table still expects fail loudly.
-    assert patched != set(mod.MISSING)
+    assert patched != set(table)
 
 
 def test_the_shrinkwrap_patch_strips_dev_dependencies() -> None:
     """The package.json half (#266 review): devDependencies go, the
     rest of the manifest stays byte-identical in content."""
-    spec = importlib.util.spec_from_file_location(
-        "pi_shrinkwrap_patch", REPO_ROOT / "nix" / "pi-shrinkwrap-patch.py"
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod, _table = load_integrity_table()
 
     pkg = {
         "name": "pi-coding-agent",
@@ -354,3 +357,20 @@ def test_the_shrinkwrap_patch_strips_dev_dependencies() -> None:
     assert mod.strip_dev_dependencies(pkg) is True
     assert pkg == {"name": "pi-coding-agent", "dependencies": {"chalk": "5"}}
     assert mod.strip_dev_dependencies(pkg) is False
+
+
+def test_the_shrinkwrap_patch_values_are_valid_sha512() -> None:
+    """Every injected integrity value is well-formed base64 that
+    decodes to 64 bytes (#267 review follow-up): a truncated value
+    passes the opaque string tests above and fails only inside
+    nix's npm cache insert, on CI, far from the cause."""
+    import base64
+    import json as _json
+
+    table = _json.loads(
+        (REPO_ROOT / "nix" / "pi-shrinkwrap-integrity.json").read_text()
+    )
+    assert table
+    for name, value in table.items():
+        raw = base64.b64decode(value, validate=True)
+        assert len(raw) == 64, name

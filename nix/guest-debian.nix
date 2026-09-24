@@ -305,7 +305,8 @@ let
         tar -xzf ${piTarball} -C $out --strip-components=1
         chmod -R u+w $out
         python3 ${./pi-shrinkwrap-patch.py} \
-          $out/npm-shrinkwrap.json $out/package.json
+          $out/npm-shrinkwrap.json $out/package.json \
+          ${./pi-shrinkwrap-integrity.json}
       '';
 
   # The agent toolchain's pi pin (#266): the npm package built

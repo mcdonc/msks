@@ -12,32 +12,27 @@ of reaching for the network).
 
 Invoked by ``nix/guest-debian.nix`` (``patchedPiSource``) as
 
-    python pi-shrinkwrap-patch.py <shrinkwrap> <package.json>
+    python pi-shrinkwrap-patch.py <shrinkwrap> <package.json> <integrity-table>
 
-Unit-tested by ``src/msks/tests/test_guestassets.py``; the MISSING
-table is the only thing that moves with a pin bump.
+Unit-tested by ``src/msks/tests/test_guestassets.py``; the
+integrity table is the only thing that moves with a pin bump.
 """
 
 import json
 import sys
 
+
 #: The sha512 integrity (registry tarball digests, base64) for the
 #: five lockstep siblings the published lock leaves unpinned.
-MISSING = {
-    "@earendil-works/chord": "bg7IkJGFcEaMqqYgOGUiq5Ky"
-    "9RghpRfrlZ8I/v/1b4bBZ02A7",
-    "@earendil-works/pi-agent-core": "Zev3B0HK7YS5A4EZQ2XnEqiJu"
-    "irx6QBiltJ+LpmjV5a/+2IU0cf",
-    "@earendil-works/pi-ai": "X/3PfQBnnoeVdO9Cv8zHghUMg"
-    "lzlgNZYGNzoPnbRoGnHl3Rw3T",
-    "@earendil-works/pi-telemetry": "MC6TRQH5lgMXpcN+Vku2WMI2T"
-    "8BsiUPzMQHGo81uqFZD3/9O79",
-    "@earendil-works/pi-tui": "YEH2vRyOeiO7hhN6j6AE6YwKS"
-    "q2Kz2f3XR8bj1TbR+aGE/JsnY",
-}
+def load_missing(path):
+    """The integrity table: name → registry sha512 (base64), from
+    nix/pi-shrinkwrap-integrity.json — data, not code, so the
+    formatter never re-wraps a digest."""
+    with open(path) as f:
+        return json.load(f)
 
 
-def patch_lock(lock: dict) -> set[str]:
+def patch_lock(lock: dict, missing: dict) -> set[str]:
     """Inject the missing integrity values in place; return the
     names actually patched. The guard the caller wants counts
     names, not events: a future lock that nests a duplicate of one
@@ -49,8 +44,8 @@ def patch_lock(lock: dict) -> set[str]:
             continue
         name = key.rsplit("node_modules/", 1)[-1]
         resolved = entry.get("resolved")
-        if name in MISSING and resolved and not entry.get("integrity"):
-            entry["integrity"] = "sha512-" + MISSING[name]
+        if name in missing and resolved and not entry.get("integrity"):
+            entry["integrity"] = "sha512-" + missing[name]
             patched.add(name)
     return patched
 
@@ -65,15 +60,16 @@ def strip_dev_dependencies(pkg: dict) -> bool:
 
 
 def main(argv: list[str]) -> int:
-    lock_path, pkg_path = argv[1], argv[2]
+    lock_path, pkg_path, table_path = argv[1], argv[2], argv[3]
     with open(lock_path) as f:
         lock = json.load(f)
-    patched = patch_lock(lock)
-    if patched != set(MISSING):
-        missing = sorted(set(MISSING) - patched)
+    missing = load_missing(table_path)
+    patched = patch_lock(lock, missing)
+    if patched != set(missing):
+        unpinned = sorted(set(missing) - patched)
         raise SystemExit(
-            f"expected {len(MISSING)} integrity gaps, "
-            f"patched {sorted(patched)}; unpinned: {missing}"
+            f"expected {len(missing)} integrity gaps, "
+            f"patched {sorted(patched)}; unpinned: {unpinned}"
         )
     with open(lock_path, "w") as f:
         json.dump(lock, f, indent=2)
