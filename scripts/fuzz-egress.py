@@ -991,8 +991,8 @@ def a_response(query: bytes, ip: str) -> bytes:
     )
     # The question section is the query's own question verbatim.
     qsection = question.wire[dnsmsg.HEADER_LEN :]
-    # Answer: name pointer to the question's name (offset 12),
-    # type A, class IN, TTL, rdlength 4, rdata.
+    # Answer: owner name (full labels), type A, class IN, TTL,
+    # rdlength 4, rdata.
     answer = struct.pack(
         "!HHIH",
         1,
@@ -1020,17 +1020,21 @@ class ControlledDNS:
         self.bind = bind
         self.port = 53
         self.sock: socket.socket | None = None
-        self._task: asyncio.Task | None = None
 
     def start(self) -> None:
         """Bind the UDP socket."""
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.bind((self.bind, self.port))
+        try:
+            self.sock.bind((self.bind, self.port))
+        except OSError as exc:
+            raise SystemExit(
+                f"controlled DNS: cannot bind {self.bind}:{self.port}: {exc}"
+            ) from exc
         self.sock.setblocking(False)
 
     async def serve(self) -> None:
-        """Serve queries until cancelled."""
+        """Serve queries until cancelled or the socket closes."""
         loop = asyncio.get_running_loop()
         while True:
             data, addr = await loop.sock_recvfrom(self.sock, 65535)
@@ -1070,17 +1074,8 @@ class ControlledDNS:
         finally:
             sock.close()
 
-    async def run(self) -> None:
-        """Start and serve as a task."""
-        self.start()
-        self._task = asyncio.current_task()
-        await self.serve()
-
     def stop(self) -> None:
-        """Shut down the server."""
-        if self._task is not None:
-            self._task.cancel()
-            self._task = None
+        """Close the socket; the serve task dies on the next recv."""
         if self.sock is not None:
             self.sock.close()
             self.sock = None
@@ -1713,6 +1708,8 @@ class Harness:
         if self.client is not None:
             await self.client.aclose()
         await self.daemon.stop()
+        if self._dns_task is not None:
+            self._dns_task.cancel()
         if self.dns is not None:
             self.dns.stop()
 
