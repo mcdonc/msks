@@ -553,6 +553,28 @@ async def test_record_audit_rejects_unknown_kinds(tmp_path) -> None:
             await app.state.model.record_audit("leak", row)
 
 
+async def test_list_workspace_audit_scopes_orders_and_bounds(
+    tmp_path,
+) -> None:
+    """One workspace's audit rows, oldest first, bounded to the
+    newest (#305) — the source the decider registration replays."""
+    api, app = sweep_app(tmp_path)
+    async with api.router.lifespan_context(api):
+        api.state.watcher.cancel()
+        row_a = await seed_placeholder(app, "ws-a", "x")
+        row_b = await seed_placeholder(app, "ws-b", "y")
+        model = app.state.model
+        await model.record_audit("mint", row_a)
+        await model.record_audit("mint", row_b)
+        await model.record_audit("revoke", row_a)
+        await model.record_audit("expiry", row_a)
+        scoped = await model.list_workspace_audit("ws-a")
+        assert [row["kind"] for row in scoped] == ["mint", "revoke", "expiry"]
+        assert all(row["workspace_id"] == "ws-a" for row in scoped)
+        newest = await model.list_workspace_audit("ws-a", limit=2)
+        assert [row["kind"] for row in newest] == ["revoke", "expiry"]
+
+
 async def test_delete_unknown_placeholder_is_false(tmp_path) -> None:
     api, app = sweep_app(tmp_path)
     async with api.router.lifespan_context(api):

@@ -138,10 +138,12 @@ def test_event_item_carries_the_highlight_class() -> None:
 
 
 def test_events_note_and_sighting_flash() -> None:
-    """The note names the marker and the detection boundary; the
-    flash names the workspace, placeholder, and host."""
+    """The note names the marker, the recorded/live split, and the
+    detection boundary; the flash names the workspace, placeholder,
+    and host."""
     note = events_note()
     assert "!" in note and "decrypted" in note
+    assert "recorded mints" in note and "as they happen" in note
     flash = sighting_flash(event(kind="sighting", host=None))
     assert flash == "! sighting: ws-a/api → ?"
     assert sighting_flash(event(kind="sighting")) == (

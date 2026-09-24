@@ -73,9 +73,12 @@ the row itself retires on revoke and expiry. A swap or sighting
 also names the destination the wire saw; a mint names the
 allowlist it was minted with; revoke and expiry carry the
 identity alone. `msks egress tui`'s audit screen (`e`) shows this
-workspace's events newest first, with the off-allowlist sighting
+workspace's events newest first: the recorded mints, revokes,
+and expiries replay onto it at registration (#305), and swaps and
+sightings stream in live, with the off-allowlist sighting
 highlighted as the exfil signal and a header line stating the
-detection boundary above.
+detection boundary above. An empty list says so — the screen
+never renders the header line alone.
 
 Fail-closed on the swap path: a secret the store cannot serve, or a
 row the database cannot read, answers the request locally with a

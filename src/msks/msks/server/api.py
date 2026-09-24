@@ -2868,7 +2868,8 @@ async def next_frame(socket: WebSocket) -> dict | None | bool:
 async def register_decider(app, socket, client_id: int, message: dict):
     """One ``egress.decider`` frame: register the socket as this
     workspace's decider and land it the pending snapshot and rules
-    view directly (before any hub broadcast could)."""
+    view directly (before any hub broadcast could), then replay
+    the recorded placeholder lifecycle (#305)."""
     workspace = message.get("workspace")
     if not isinstance(workspace, str):
         return
@@ -2895,6 +2896,50 @@ async def register_decider(app, socket, client_id: int, message: dict):
         await socket.send_json({"event": "egress.rules", "data": rules})
     for pending in await app.state.consent.snapshot(workspace):
         await socket.send_json({"event": "egress.request", "data": pending})
+    await replay_secret_audit(app, socket, workspace)
+
+
+async def replay_secret_audit(app, socket, workspace_id: str) -> None:
+    """The workspace's recorded placeholder lifecycle (#305): the
+    audit table's newest rows, oldest first, as ``secret.*``
+    frames — the decider's events screen opens on the recorded
+    mints, revokes, and expiries instead of an empty live tail.
+    Swaps and sightings stay live-only: they are per-request wire
+    events, and the audit table records lifecycle alone. A read
+    failure skips the replay and logs — registration keeps the
+    rules view and pending snapshot it already landed."""
+    try:
+        rows = await app.state.model.list_workspace_audit(workspace_id)
+    except Exception:  # noqa: BLE001 - best-effort, logged
+        LOG.warning(
+            "secret-audit replay for %s failed; the events screen "
+            "opens on the live stream alone",
+            workspace_id,
+            exc_info=True,
+        )
+        return
+    for row in rows:
+        data = {
+            "workspace_id": row["workspace_id"],
+            "name": row["name"],
+            "ts": audit_epoch(row["created_at"]),
+        }
+        if row["kind"] == "mint":
+            # The live mint names its allowlist; the exit kinds carry
+            # identity alone, and the replay matches the live shapes.
+            data["dests"] = row["dests"]
+        await socket.send_json(
+            {"event": f"secret.{row['kind']}", "data": data}
+        )
+
+
+def audit_epoch(iso: str) -> float:
+    """An audit row's stored timestamp as epoch — the wire events'
+    ``ts`` domain (the daemon stamps wall-clock). Stored deadlines
+    and timestamps are naive UTC on the sqlite round-trip (the
+    dialect strips tzinfo at bind); replace() unconditionally
+    normalizes."""
+    return datetime.fromisoformat(iso).replace(tzinfo=UTC).timestamp()
 
 
 def decode_frame(raw: str) -> dict | None:

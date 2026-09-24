@@ -618,6 +618,24 @@ class Model:
             )
             return [audit_dict(row) for row in rows]
 
+    async def list_workspace_audit(
+        self, workspace_id: str, limit: int = 100
+    ) -> list[dict]:
+        """One workspace's audit events, oldest first (#305): the
+        decider registration replays them so the events screen
+        opens on the recorded lifecycle. The newest ``limit`` rows
+        arrive in recording order — replay sends oldest first, so
+        the client log lands newest last."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            rows = await session.scalars(
+                select(SecretAudit)
+                .where(SecretAudit.workspace_id == workspace_id)
+                .order_by(SecretAudit.id.desc())
+                .limit(limit)
+            )
+            return [audit_dict(row) for row in reversed(rows.all())]
+
 
 async def resolve_workspace(session, ref: str) -> Workspace | None:
     """One workspace row by id-or-name ref (#246), inside a session

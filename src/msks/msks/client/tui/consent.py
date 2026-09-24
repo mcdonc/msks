@@ -40,8 +40,9 @@ SECRET_KINDS = {
 }
 
 #: The event log's bound: a rolling window, not an unbounded ledger
-#: — the screen is a live tail of the stream, and the audit table
-#: keeps the durable record.
+#: — the screen replays the audit table's recorded lifecycle at
+#: connect (#305) and tails the stream after; the table keeps the
+#: durable record.
 EVENT_LOG_MAX = 500
 
 #: The durations a decider can pick, display order; the default is
