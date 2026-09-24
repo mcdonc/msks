@@ -49,16 +49,18 @@ from .tabular import command_parser, listing_text
 from .tui.consent_app import run_consent_tui
 
 
+def _created_date(raw: str | None) -> str:
+    """ISO timestamp to YYYY-MM-DD, or ``-``."""
+    return raw[:10] if raw else "-"
+
+
 def workspace_cells(row: dict) -> list[str]:
     """One listing row's cells."""
     image = (row.get("image_hash") or "-")[:12]
     host = row.get("host") or "-"
     name = row.get("name") or "-"
     egress_mode = row.get("egress_mode") or "-"
-    created = row.get("created_at") or "-"
-    if created != "-":
-        # ISO timestamp → human-readable date
-        created = created[:10]
+    created = _created_date(row.get("created_at"))
     return [name, row["id"], row["status"], egress_mode, created, image, host]
 
 
