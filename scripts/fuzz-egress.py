@@ -150,6 +150,24 @@ def canonical(host: str) -> str:
     return host.strip().lower().rstrip(".")
 
 
+def settle_host(spec: str) -> str:
+    """A resolvable hostname from an allow-list spec: strip port
+    suffixes (``host:443`` → ``host``) and translate scope sigils
+    into a name the spec actually covers so ``getent hosts`` can
+    resolve through the daemon's forwarder.
+
+    - ``*.gnu.org`` (subdomains only) → ``www.gnu.org`` (the apex
+      is NOT covered, so a ``getent hosts gnu.org`` never resolves)
+    - ``.debian.org`` (inclusive) → ``debian.org``
+    - ``gnu.org`` (exact) → ``gnu.org``
+    """
+    host = spec.split(":")[0]
+    if host.startswith("*."):
+        return "www." + host[2:]
+    host = host.lstrip(".")
+    return host or ALLOW_LIST[0]
+
+
 def carries(duration: str) -> bool:
     """Whether a verdict's duration covers later connections."""
     return duration != DURATION_ONCE
@@ -244,8 +262,8 @@ FRESH = {
     "scope_exact_off": "www.gnu.org",
     "scope_star_on": "www.gnu.org",
     "scope_star_off": "gnu.org",
-    "port80_host": "deb.debian.org",
-    "port443_host": "example.com",
+    "port80_host": "ietf.org",
+    "port443_host": "sqlite.org",
 }
 _FUZZ_DURATIONS = [
     DURATION_ONCE,
@@ -668,7 +686,7 @@ def dedupe_outcome(
     if all(released):
         return MISMATCH, "both connections released under one once verdict"
     if all(results.get(t) in (None, 124) for t in tags):
-        return FINDING, "the duplicate connection hung"
+        return FINDING, "probe result never arrived (duplicate connection)"
     return PASS, "one prompt; the duplicate refused fast"
 
 
@@ -683,17 +701,19 @@ def free_port() -> int:
 
 
 def default_route_iface() -> str:
-    """The host's default-route interface (the egress uplink)."""
+    """The default route's device (the egress uplink) — parsed the
+    way the smoke suite parses it: the token after ``dev``."""
     out = subprocess.run(
         ["ip", "-4", "route", "show", "default"],
         capture_output=True,
         text=True,
         check=True,
     ).stdout
-    for field_text in out.split():
-        if field_text != "default" and "." not in field_text:
-            return field_text
-    raise SystemExit("no default route found for the egress uplink")
+    parts = out.split()
+    for i, part in enumerate(parts):
+        if part == "dev" and i + 1 < len(parts):
+            return parts[i + 1]
+    raise SystemExit(f"no default route to NAT behind: {out!r}")
 
 
 def guest_archive() -> Path:
@@ -964,23 +984,29 @@ class RawDecider:
         ]
 
     async def wait_for(self, host: str, timeout: float) -> str | None:
-        """The request id for one destination, or None."""
+        """The request id for one destination that has not yet been
+        resolved, or None.  A prior iteration's resolved request
+        must not satisfy a later probe's wait."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             rows = self.rows_for(host)
-            if rows:
-                return rows[-1]["id"]
+            for row in reversed(rows):
+                rid = row["id"]
+                if rid not in self.resolutions:
+                    return rid
             await asyncio.sleep(0.05)
         return None
 
     async def wait_no_request(self, host: str, window: float) -> str | None:
         """The id of a request that must NOT arrive, or None when
-        the window stayed quiet."""
+        the window stayed quiet.  Only unresolved requests count:
+        a prior iteration's resolved request is not a new hold."""
         deadline = time.monotonic() + window
         while time.monotonic() < deadline:
-            rows = self.rows_for(host)
-            if rows:
-                return rows[-1]["id"]
+            for row in reversed(self.rows_for(host)):
+                rid = row["id"]
+                if rid not in self.resolutions:
+                    return rid
             await asyncio.sleep(0.05)
         return None
 
@@ -1044,6 +1070,9 @@ class RawDecider:
 # -- the guest console ------------------------------------------------------
 
 
+PROMPT_NEEDLE = b"root@msks-guest:~#"
+
+
 class Console:
     """One workspace's console websocket: the probe surface.
 
@@ -1105,14 +1134,24 @@ class Console:
     async def try_once(
         self, command: str, want: bytes, timeout: float
     ) -> bytes | None:
-        """One session: auth, send, await the marker."""
+        """One session: auth, wait for the prompt, send, await the
+        marker.  The prompt wait is critical (#75): the pty's
+        readline discards typeahead that arrives before it starts,
+        so a command sent before the prompt lands is swallowed."""
         try:
             async with self.connect() as ws:
                 buf = await self.authed_lead(ws)
+                buf = await self.wait_prompt(ws, buf)
                 if want in buf:
                     return want
                 await ws.send(command.encode() + b"\n")
-                return await self.drain_until(ws, buf, [want], timeout)[0]
+                hits = await self.drain_until(ws, buf, [want], timeout)
+                if hits is None:
+                    print(
+                        f"     (console session wedged; tail: {buf[-200:]!r})",
+                        flush=True,
+                    )
+                return None if hits is None else hits[0]
         except websockets.ConnectionClosed, TimeoutError, OSError:
             return None
 
@@ -1123,8 +1162,9 @@ class Console:
         try:
             async with self.connect() as ws:
                 buf = await self.authed_lead(ws)
+                buf = await self.wait_prompt(ws, buf)
                 await ws.send(command.encode() + b"\n")
-                return self.drain_until(ws, buf, wants, timeout)
+                return await self.drain_until(ws, buf, wants, timeout)
         except websockets.ConnectionClosed, TimeoutError, OSError:
             return None
 
@@ -1139,6 +1179,20 @@ class Console:
             self.ctx(),
         )
         return lead if isinstance(lead, bytes) else lead.encode()
+
+    async def wait_prompt(self, ws, buf: bytes) -> bytes:
+        """Drain until the shell prompt arrives (#75): readline
+        discards typeahead that precedes its first prompt, so a
+        command sent too early is swallowed silently."""
+        deadline = time.monotonic() + 30.0
+        while PROMPT_NEEDLE not in buf:
+            if time.monotonic() > deadline:
+                return buf  # give up waiting; the caller retries
+            try:
+                buf += await self.next_chunk(ws)
+            except TimeoutError:
+                return buf
+        return buf
 
     async def drain_until(
         self, ws, buf: bytes, wants: list[bytes], timeout: float
@@ -1155,23 +1209,44 @@ class Console:
         return [found[i] for i in range(len(wants))]
 
     @staticmethod
-    async def next_chunk(ws) -> bytes:
+    async def next_chunk(ws, timeout: float = 30.0) -> bytes:
         """One console chunk, as bytes."""
-        chunk = await asyncio.wait_for(ws.recv(), 10)
+        chunk = await asyncio.wait_for(ws.recv(), timeout)
         return chunk if isinstance(chunk, bytes) else chunk.encode()
 
 
 def locate_marker(buf: bytes, want: bytes) -> bytes | None:
-    """The marker's full text (through its ``-RC-<n>`` tail) once
-    a delimiter follows the tail -- a partial digit run at the
-    buffer's edge waits for more output."""
-    at = buf.find(want)
+    """The probe's marker (``want`` + its numeric tail) once it
+    has arrived. The pty echoes the sent command, and that echo
+    carries the prefix with the literal ``$?`` tail, so an
+    occurrence counts only when its tail is delimited and all
+    digits; the echo's occurrence keeps the search moving."""
+    start = 0
+    while (hit := scan_marker(buf, want, start)) is not None:
+        at, end = hit
+        tail = buf[at + len(want) : end]
+        if tail.isdigit():
+            return buf[at:end]
+        start = at + 1
+    return None
+
+
+def scan_marker(buf: bytes, want: bytes, start: int) -> tuple[int, int] | None:
+    """The next prefix occurrence with its tail's delimiter index
+    (None when the prefix is absent or its tail is still open --
+    an open tail may yet prove to be the answer, so it waits)."""
+    at = buf.find(want, start)
     if at < 0:
         return None
-    rest = buf[at + len(want) :]
-    for i, ch in enumerate(rest):
-        if ch in b" \r\n\x00":
-            return buf[at : at + len(want) + i]
+    end = delimiter_at(buf, at + len(want))
+    return None if end is None else (at, end)
+
+
+def delimiter_at(buf: bytes, pos: int) -> int | None:
+    """The first output delimiter at or after ``pos``."""
+    for i in range(pos, len(buf)):
+        if buf[i] in b" \r\n\x00":
+            return i
     return None
 
 
@@ -1273,7 +1348,10 @@ class Harness:
     async def create_workspace(
         self, name: str, mode: str, allow: list[str] | None = None
     ) -> str:
-        """Create + start one workspace with a consent posture."""
+        """Create + start one workspace with a consent posture, and
+        settle its guest: the console answers before DHCP and the
+        resolver do, so the first scored probe waits for a name to
+        resolve before anything is scored."""
         body: dict = {"name": name, "egress_mode": mode}
         if allow is not None:
             body["egress_allowlist"] = allow
@@ -1282,7 +1360,29 @@ class Harness:
         wid = response.json()["id"]
         response = await self.client.post(f"/api/v1/workspaces/{wid}/start")
         assert response.status_code == 200, response.text
+        host = allow[0] if allow else ALLOW_LIST[0]
+        await self.settle_guest(wid, settle_host(host))
         return wid
+
+    async def settle_guest(self, wid: str, host: str) -> None:
+        """Wait for the guest's networking: a name resolving through
+        the daemon's forwarder (pure DNS -- no SYN, so it gates
+        nothing and records nothing in interactive mode)."""
+        deadline = time.monotonic() + 120.0
+        while time.monotonic() < deadline:
+            tag = self.tag()
+            marker = await self.console_for(wid).run(
+                f"getent hosts {host} >/dev/null 2>&1; echo {tag}-RC-$?",
+                f"{tag}-RC-",
+                30.0,
+            )
+            if parse_rc(marker) == 0:
+                return
+            await asyncio.sleep(2.0)
+        raise SystemExit(
+            f"workspace {wid}: no DNS through the daemon within 120s; "
+            "the guest's egress path is not up"
+        )
 
     async def delete_workspace(self, wid: str) -> None:
         """Stop + delete one workspace (best-effort)."""
@@ -1355,15 +1455,46 @@ class Harness:
             f"workspace {self.ws_id} (interactive, allow-list: {ALLOW_LIST})"
         )
         self.console = self.console_for(self.ws_id)
-        rc = await self.probe("deb.debian.org")
-        if rc != 0:
-            raise SystemExit(
-                f"allow-list readiness probe failed (rc={rc}); the guest's "
-                "egress path is not up"
-            )
         self.decider = RawDecider(self.daemon, self.ws_id)
         await self.decider.connect()
         await self.decider.settle()
+        await self.readiness_probe()
+
+    async def readiness_probe(self) -> None:
+        """One allow-list connection with the decider attached: the
+        learned pin usually carries it (no request), but a rotated
+        CDN address re-holds (klangk #2399's class) and the probe
+        settles that hold itself -- either path proves the guest's
+        data path out.
+
+        Retried: the first probe races with the resolver's allow-
+        list pin learning (the SYN lands before the name→IP map is
+        populated and the NFQUEUE hold outlasts the probe timeout).
+        A second probe usually finds the pin in place."""
+        for attempt in range(3):
+            rc = await self.readiness_attempt()
+            if rc == 0:
+                return
+            if attempt < 2:
+                print(
+                    f"     (readiness attempt {attempt + 1}/3: "
+                    f"rc={rc}; retrying)",
+                    flush=True,
+                )
+                await asyncio.sleep(3.0)
+        raise SystemExit(
+            f"allow-list readiness probe failed (rc={rc}); the guest's "
+            f"egress path is not up\n{self.daemon.log_tail()}"
+        )
+
+    async def readiness_attempt(self) -> int | None:
+        """One readiness probe attempt."""
+        task = asyncio.create_task(self.probe(ALLOW_LIST[0]))
+        rid = await self.decider.wait_for(ALLOW_LIST[0], 30.0)
+        if rid is not None:
+            await self.decider.verdict(rid, "allow", DURATION_ONCE)
+            await self.decider.wait_resolution(rid, 15.0)
+        return await task
 
     async def teardown(self) -> None:
         """Delete workspaces, close sockets, stop the daemon."""
@@ -1564,7 +1695,12 @@ class Harness:
         same backstop and adds nothing, so it is skipped."""
         if not self.args.retries or step.action == "none":
             return
-        if step.duration == DURATION_ONCE and step.action == "allow":
+        if step.duration == DURATION_ONCE:
+            # A once verdict is consumed by its connection: the
+            # retry must re-prompt. For a deny the fail-fast RST
+            # pin covers the first seconds; the guest's SYN
+            # retransmit passes the lapsed pin and re-queues, so
+            # the request arrives inside the wait window.
             await self.sub_probe(
                 step, canon, "exceeding-retry(once)", True, EXPECT_NOT0
             )
@@ -2538,51 +2674,77 @@ class Harness:
         bare spec is apex-only, a leading ``.`` includes subdomains,
         ``*.`` matches subdomains only -- all enforced at the
         resolver gate, so the names themselves carry the
-        determinism."""
-        wid = await self.create_workspace(
-            f"scope-h-{uuid.uuid4().hex[:6]}", "static", [".debian.org"]
-        )
-        self.extra_ws.append(wid)
-        await self.scope_matrix(
-            wid,
+        determinism.
+
+        Each sub-case gets its own workspace: the resolver's learned
+        name→IP pins survive a policy swap, so a name allowed under
+        one scope keeps connecting after the scope tightens (the pin
+        is per-name, not per-spec)."""
+        await self.host_scope_case(
             "inclusive (.debian.org)",
+            [".debian.org"],
             [
                 (FRESH["scope_incl_sub"], True),
                 (FRESH["scope_incl_apex"], True),
             ],
         )
-        await self.set_policy(wid, "static", [FRESH["scope_exact_on"]])
-        await self.scope_matrix(
-            wid,
+        await self.host_scope_case(
             "exact (gnu.org)",
+            [FRESH["scope_exact_on"]],
             [
                 (FRESH["scope_exact_on"], True),
                 (FRESH["scope_exact_off"], False),
             ],
         )
-        await self.set_policy(wid, "static", [f"*.{FRESH['scope_star_off']}"])
-        await self.scope_matrix(
-            wid,
+        await self.host_scope_case(
             "subdomains (*.gnu.org)",
+            [f"*.{FRESH['scope_star_off']}"],
             [(FRESH["scope_star_on"], True), (FRESH["scope_star_off"], False)],
         )
+
+    async def host_scope_case(
+        self,
+        label: str,
+        allow: list[str],
+        cases: list[tuple[str, bool]],
+    ) -> None:
+        """One host-scope sub-case in its own workspace."""
+        wid = await self.create_workspace(
+            f"scope-h-{uuid.uuid4().hex[:6]}", "static", allow
+        )
+        self.extra_ws.append(wid)
+        await self.scope_matrix(wid, label, cases)
 
     async def run_port_scope_phase(self) -> None:
         """Port-scoped allows (``host:port``): the resolver gate
         learns the name's addresses pinned to the allowed port
         only -- the other port's SYN finds no pin and the static
-        chain drops it."""
+        chain drops it.
+
+        Each spec gets its own workspace (same reason as host-scope:
+        learned pins survive a policy swap)."""
+        await self.port_scope_case(
+            FRESH["port80_host"], 80, [(80, True), (443, False)]
+        )
+        await self.port_scope_case(
+            FRESH["port443_host"], 443, [(443, True), (80, False)]
+        )
+
+    async def port_scope_case(
+        self,
+        host: str,
+        spec_port: int,
+        cases: list[tuple[int, bool]],
+    ) -> None:
+        """One port-scope sub-case in its own workspace; a warm-up
+        probe wires the static chain before the scored probes."""
+        spec = f"{host}:{spec_port}"
         wid = await self.create_workspace(
-            f"scope-p-{uuid.uuid4().hex[:6]}",
-            "static",
-            [f"{FRESH['port80_host']}:80"],
+            f"scope-p-{uuid.uuid4().hex[:6]}", "static", [spec]
         )
         self.extra_ws.append(wid)
-        await self.port_matrix(wid, f"{FRESH['port80_host']}:80", 80, True)
-        await self.port_matrix(wid, f"{FRESH['port80_host']}:80", 443, False)
-        await self.set_policy(wid, "static", [f"{FRESH['port443_host']}:443"])
-        await self.port_matrix(wid, f"{FRESH['port443_host']}:443", 443, True)
-        await self.port_matrix(wid, f"{FRESH['port443_host']}:443", 80, False)
+        for port, allowed in cases:
+            await self.port_matrix(wid, spec, port, allowed)
 
     async def scope_matrix(
         self, wid: str, label: str, cases: list[tuple[str, bool]]
@@ -2831,7 +2993,15 @@ class Harness:
             if row.outcome:
                 names[row.outcome] = names.get(row.outcome, 0) + 1
         for name, count in sorted(names.items()):
-            print(f"  {name:<32} x{count}  {OUTCOME_NAMES[name]}")
+            desc = OUTCOME_NAMES.get(name, "(unmapped outcome)")
+            print(f"  {name:<32} x{count}  {desc}")
+
+
+def snapshot_label(has_a: bool, has_b: bool) -> str:
+    """The snapshot row's B=/A= presence summary."""
+    b = "y" if has_b else "n"
+    a = "y" if has_a else "n"
+    return f"B={b},A={a}"
 
 
 def scope_outcome(
@@ -3029,10 +3199,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
-
-def snapshot_label(has_a: bool, has_b: bool) -> str:
-    """The snapshot row's B=/A= presence summary."""
-    b = "y" if has_b else "n"
-    a = "y" if has_a else "n"
-    return f"B={b},A={a}"
