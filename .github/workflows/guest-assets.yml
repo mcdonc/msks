@@ -32,6 +32,8 @@ on:
       - nix/console-helper-pkg.nix
       - nix/image-archive.nix
       - nix/guest-pi-extension.ts
+      - nix/pi-shrinkwrap-patch.py
+      - nix/pi-shrinkwrap-integrity.json
       - src/console-helper/**
       - scripts/build-guest.sh
   pull_request:
@@ -46,6 +48,8 @@ on:
       - nix/console-helper-pkg.nix
       - nix/image-archive.nix
       - nix/guest-pi-extension.ts
+      - nix/pi-shrinkwrap-patch.py
+      - nix/pi-shrinkwrap-integrity.json
       - scripts/build-guest.sh
 
 permissions:

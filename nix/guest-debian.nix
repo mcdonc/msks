@@ -277,10 +277,6 @@ let
         ln -s \
           ../node_modules/@anthropic-ai/claude-code-linux-x64/claude \
           $mods/claude-code/bin/claude.exe
-        mkdir -p $out/bin
-        ln -s \
-          ../lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe \
-          $out/bin/claude
       '';
 
   # The integrity injector (#266): nix/pi-shrinkwrap-patch.py
@@ -329,10 +325,8 @@ let
     '';
     installPhase = ''
       runHook preInstall
-      mkdir -p $out/lib/node_modules/pi-coding-agent $out/bin
+      mkdir -p $out/lib/node_modules/pi-coding-agent
       cp -r ./. $out/lib/node_modules/pi-coding-agent/
-      ln -s ../lib/node_modules/pi-coding-agent/dist/cli.js \
-        $out/bin/pi
       runHook postInstall
     '';
   };
@@ -389,7 +383,7 @@ let
           -C $out/usr/local --strip-components=1
         cp -r "${agentPiPackage}/lib/node_modules/pi-coding-agent" \
           $out/usr/local/lib/node_modules/
-        ln -s ../lib/node_modules/pi-coding-agent/dist/cli.js \
+        ln -s ../lib/node_modules/pi-coding-agent/dist/bundle/cli.js \
           $out/usr/local/bin/pi
 
         # herdr (#266): the pinned static binary, executable as-is.
@@ -1309,6 +1303,43 @@ let
         test -f \
           "$root"/etc/skel/.pi/agent/extensions/llm-models.ts
         test -f "$root"/root/.pi/agent/extensions/llm-models.ts
+        # The toolchain linkage guard (#267 review): the same
+        # checks rsync gets, for the two dynamically linked tools —
+        # every NEEDED soname resolves in the tree, the interpreter
+        # exists, and every version symbol the binary asks a
+        # library for is defined by the tree's copy of it. A
+        # future pin bump onto a newer libc or a musl build fails
+        # here, not at the workspace's first launch. herdr is
+        # asserted static: it needs nothing from the tree.
+        for bin in "$root"/usr/local/bin/node \
+          "$root"/usr/local/lib/node_modules/@anthropic-ai/claude-code/node_modules/@anthropic-ai/claude-code-linux-x64/claude; do
+          for so in $(readelf -d "$bin" \
+            | awk '/NEEDED/{gsub(/\[\]/,"",$NF); print $NF}'); do
+            test -e "$root"/usr/lib/x86_64-linux-gnu/"$so" \
+              || test -e "$root"/lib/x86_64-linux-gnu/"$so" \
+              || { echo "$bin needs $so, absent from the tree" >&2; \
+                   exit 1; }
+          done
+          interp=$(readelf -l "$bin" \
+            | awk '/interpreter/{gsub(/\[\]/,"",$NF); print $NF}')
+          test -e "$root""$interp" \
+            || { echo "$bin loader $interp absent from the tree" >&2; \
+                 exit 1; }
+          reqs=$(readelf --version-info "$bin" \
+            | awk '/File: /{f=$5} /Name: /{print f, $3}')
+          while read -r so ver; do
+            [ -n "$so" ] || continue
+            lib="$root"/usr/lib/x86_64-linux-gnu/"$so"
+            [ -e "$lib" ] || lib="$root"/lib/x86_64-linux-gnu/"$so"
+            readelf --version-info "$lib" | grep -q "Name: $ver" \
+              || { echo "$bin needs $ver from $so; the tree's copy is older" \
+                   >&2; exit 1; }
+          done <<<"$reqs"
+        done
+        ! readelf -l "$root"/usr/local/bin/herdr | grep -q interpreter \
+          || { echo "herdr is not static; the pin changed shape" >&2; \
+               exit 1; }
+        test -f "$root"/usr/local/share/doc/herdr/LICENSE
         # The dropin's load-bearing line, not just the file's
         # existence: a typo'd printf must fail the build here, not
         # in the opt-in smoke.

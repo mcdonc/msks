@@ -5,13 +5,15 @@
  * from the seed script the daemon writes at first boot) — seeded
  * even when the daemon serves no LLM surface, so the environment
  * alone cannot tell whether a proxy listens. This extension makes
- * one fetch of the proxy's /models, bounded at 1500 ms, and
+ * one fetch of the proxy's /models, aborted at 1500 ms, and
  * registers the catalog under the "msks" provider, so /model
  * always shows the daemon's live model list. No retry, no sleep:
  * an unanswered proxy is a daemon with no model list (the tap
  * drops, and the daemon's configured-but-failed answer is a
  * stable 503) — retrying would only stall pi's startup — so the
- * fetch is attempted once and any failure registers nothing.
+ * fetch is attempted once and any failure registers nothing. The
+ * abort bounds the request; a peer that answers headers fast and
+ * trickles its body can hold the read a little past the bound.
  *
  * The image ships this file in /etc/skel (every seed-provisioned
  * account copies it into ~/.pi/agent/extensions/ — pi discovers

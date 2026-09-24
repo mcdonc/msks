@@ -114,14 +114,25 @@ under `/usr/local` — system-wide, on every account's default
 provisions copies the skeleton, so each login user ends up with
 the extension in `~/.pi/agent/extensions/`, where pi discovers
 it. At every pi startup the extension makes one fetch of
-`${MSKSWS_BASE_URL}/models`, bounded at 1.5 seconds, and registers
+`${MSKSWS_BASE_URL}/models`, aborted at 1.5 seconds, and registers
 the catalog under the `msks` provider, so `/model` always shows
 the daemon's live model list. A workspace whose daemon serves no
-model list registers nothing after that one bounded attempt —
-pi starts without the provider, delayed by at most the bound (the
-environment pair is seeded even when no proxy listens, so the
-fetch, not the shell, is what discovers the difference). A copy a
-user has edited stays edited; nothing re-overwrites it.
+model list registers nothing after that one attempt — pi starts
+without the provider (the environment pair is seeded even when no
+proxy listens, so the fetch, not the shell, is what discovers the
+difference); a peer that answers headers fast and trickles its
+body can hold the read slightly past the abort. A copy a user has
+edited stays edited; nothing re-overwrites it.
+
+Two limits to know. A home that existed before the image carried
+the extension keeps its old state — the extension reaches accounts
+provisioned after the image did, and an older home can copy it
+from `/etc/skel/.pi/agent/extensions/`. And the model metadata the
+extension registers is a placeholder (128k context, 8192 max
+output, plain text chat, zero cost): the proxy's OpenAI-shaped
+model list carries no limits, so a model that serves more is
+under-planned and one that serves less can over-generate — set
+per-model values in `~/.pi/agent/models.json` when it matters.
 The toolchain pins move with an image rebuild
 (`nix/guest-debian.nix`); a workspace that already booted keeps
 what it booted with.

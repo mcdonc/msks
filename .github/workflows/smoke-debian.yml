@@ -31,6 +31,8 @@ on:
       - nix/console-helper-pkg.nix
       - nix/image-archive.nix
       - nix/guest-pi-extension.ts
+      - nix/pi-shrinkwrap-patch.py
+      - nix/pi-shrinkwrap-integrity.json
       - scripts/build-guest.sh
       - src/msks/msks/**
       - src/msks/tests/conftest.py
@@ -48,6 +50,8 @@ on:
       - nix/console-helper-pkg.nix
       - nix/image-archive.nix
       - nix/guest-pi-extension.ts
+      - nix/pi-shrinkwrap-patch.py
+      - nix/pi-shrinkwrap-integrity.json
       - scripts/build-guest.sh
       - src/msks/msks/**
       - src/msks/tests/conftest.py
