@@ -122,8 +122,13 @@ async def test_local_agent_toolchain() -> None:
         await run_in_console(
             microvm,
             wid,
-            "useradd -m probe "
-            "&& test -f /home/probe/.pi/agent/extensions/llm-models.ts "
+            # Idempotent, per the harness's retry contract: a retried
+            # session must not fail on "user probe already in use" —
+            # a pre-existing probe home is itself useradd -m's
+            # product from this same boot, so the probe still
+            # proves the skel delivery.
+            "id -u probe >/dev/null 2>&1 || useradd -m probe; "
+            "test -f /home/probe/.pi/agent/extensions/llm-models.ts "
             "&& echo SKEL-$((6*7))",
             "SKEL-42",
         )

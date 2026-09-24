@@ -436,7 +436,11 @@ let
           closureInfo
           toplevel
           ;
-        nativeBuildInputs = [ pkgs.gnutar ];
+        # binutils: readelf for the claude linkage guard below.
+        nativeBuildInputs = [
+          pkgs.gnutar
+          pkgs.binutils
+        ];
       }
       ''
         set -eu
@@ -468,6 +472,37 @@ let
           test -x "$toplevel"/sw/bin/$bin \
             || { echo "sw/bin/$bin missing from the system profile" >&2; exit 1; }
         done
+        # The claude ELF's linkage (#268 review): the loader-patched
+        # binary must resolve everything inside the closure — its
+        # interpreter, every NEEDED soname, and every version symbol
+        # it asks a library for. A pin bump onto a libc newer than
+        # nixpkgs' glibc fails here, not at a workspace's first
+        # launch (the same guard the Debian build gives rsync and
+        # the toolchain). Every NEEDED soname this binary carries is
+        # glibc-internal, so the loader's own glibc directory is the
+        # tree's copy to ask.
+        claudeElf="$root$(readlink -f "$toplevel"/sw/bin/claude)"
+        interp=$(readelf -l "$claudeElf" \
+          | awk '/interpreter/{gsub(/[\[\]]/,"",$NF); print $NF}')
+        test -e "$root""$interp" \
+          || { echo "claude loader $interp absent from the tree" >&2; exit 1; }
+        glibcLib=$(dirname "$root""$interp")
+        while read -r so ver; do
+          [ -n "$so" ] || continue
+          lib="$glibcLib"/"$so"
+          if [ ! -e "$lib" ]; then
+            lib=$(find "$root"/nix/store -maxdepth 5 -name "$so" | head -1)
+          fi
+          [ -n "$lib" ] && [ -e "$lib" ] \
+            || { echo "claude needs $so, absent from the tree" >&2; exit 1; }
+          readelf --version-info "$lib" | grep -q "Name: $ver" \
+            || { echo "claude needs $ver from $so; the tree's copy is older" \
+                 >&2; exit 1; }
+        done <<<"$(readelf --version-info "$claudeElf" \
+          | awk '/^Version needs section/ {needs=1; next} \
+                 /^Version [a-z]+ section/ {needs=0} \
+                 needs && /File: / {f=$5} \
+                 needs && /Name: / {print f, $3}')"
         grep -Rq 'llm-models.ts' "$toplevel"/etc/tmpfiles.d/
         grep -q 'guest-pi-extension' "$closureInfo"/store-paths
         mkdir -p "$out"

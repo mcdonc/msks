@@ -134,8 +134,9 @@ output, plain text chat, zero cost): the proxy's OpenAI-shaped
 model list carries no limits, so a model that serves more is
 under-planned and one that serves less can over-generate — set
 per-model values in `~/.pi/agent/models.json` when it matters.
-The toolchain pins move with an image rebuild
-(`nix/agent-toolchain.nix`); a workspace that already booted keeps
+The toolchain pins move with an image rebuild (the shared pins in
+`nix/agent-toolchain.nix`; the Debian Node tarball pin in
+`nix/guest-debian.nix`); a workspace that already booted keeps
 what it booted with.
 
 Retrieve or rotate a credential with the CLI or API — a token

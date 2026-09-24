@@ -168,9 +168,10 @@ let
         sed -i '1s|^#!/nix/store/\([^ ]*/\([^/]*\)\)$|#!/usr/bin/env \2|' "$f"
       done < <(grep -rlZ '^#!/nix/store/' "$out" || true)
       left=$(grep -rl '^#!/nix/store/' "$out" || true)
-      if [ -n "$left" ]; then
-        echo "$left" >&2
-        echo "pi tree still carries build-time store interpreters" >&2
+      straylinks=$(find "$out" -type l -lname '/nix/store*' || true)
+      if [ -n "$left" ] || [ -n "$straylinks" ]; then
+        echo "$left" "$straylinks" >&2
+        echo "pi tree still carries build-time store interpreters or links" >&2
         exit 1
       fi
     '';
@@ -196,7 +197,6 @@ let
   claudeLoaderPatched =
     pkgs.runCommand "agent-claude-code-nixos"
       {
-        inherit claudePackage;
         loader = pkgs.stdenv.cc.bintools.dynamicLinker;
         nativeBuildInputs = [ pkgs.patchelf ];
       }
