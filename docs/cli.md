@@ -851,8 +851,9 @@ verdicts through the same endpoints the subcommands use. Keys:
   since #301): picking a mode switches it live through the same
   endpoint the subcommands use, and the refreshed `egress.rules`
   frame repaints the mode everywhere it shows — the queue's status
-  line names the current mode at all times (`mode interactive`),
-  and the rules and events screens carry it in their headers. A
+  line names the current mode (`mode interactive`) beside the
+  connection state and held count, and the rules and events
+  screens carry it in their headers. A
   pick of `static` with nothing effectively allowed asks first
   (the offline-workspace confirmation); a declined question
   decides nothing.

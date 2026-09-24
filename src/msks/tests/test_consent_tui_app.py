@@ -337,7 +337,7 @@ async def test_the_rules_screen_revokes() -> None:
         from msks.client.tui.consent_app import RulesScreen
 
         empty = consent_mod.ConsentController()
-        app.push_screen(RulesScreen(empty, app.revoke_rule, app.switch_mode))
+        app.push_screen(RulesScreen(empty, app.revoke_rule))
         await wait_for(lambda: type(app.screen).__name__ == "RulesScreen")
         await pilot.press("x")
         await pilot.pause()
@@ -1671,10 +1671,13 @@ async def test_the_status_line_shows_the_mode() -> None:
 
 
 async def test_m_stays_inert_under_a_modal() -> None:
-    """`m` under the duration picker opens nothing (#301, the
-    shadow rule): a mode picker stacked under a modal would be a
-    screen nobody can see deciding a posture."""
-    factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
+    """`m` under the duration picker, the confirmation, and the
+    picker itself opens nothing (#301, the shadow rule): a mode
+    picker stacked under a modal would be a screen nobody can see
+    deciding a posture."""
+    factory = FakeFactory(
+        [FakeWS([request_frame("r1"), empty_rules_frame()]), FakeWS([])]
+    )
     app, _ = make_app(factory)
     async with app.run_test() as pilot:
         await wait_for(lambda: queue_children(app) == 1)
@@ -1685,6 +1688,21 @@ async def test_m_stays_inert_under_a_modal() -> None:
         assert not [
             s for s in app.screen_stack if type(s).__name__ == "ModeScreen"
         ]
+        await pilot.press("escape")
+        await wait_for(lambda: type(app.screen).__name__ != "DurationScreen")
+        # The empty-static confirmation: m under it stays inert too.
+        await pilot.press("m")
+        await wait_for(lambda: type(app.screen).__name__ == "ModeScreen")
+        await pilot.press("down")  # allow -> static
+        await pilot.press("enter")
+        await wait_for(lambda: type(app.screen).__name__ == "ConfirmScreen")
+        await pilot.press("m")
+        await pilot.pause()
+        assert not [
+            s for s in app.screen_stack if type(s).__name__ == "ModeScreen"
+        ]
+        await pilot.press("n")
+        await wait_for(lambda: type(app.screen).__name__ != "ConfirmScreen")
         app.action_quit_screen()
 
 
@@ -1708,6 +1726,27 @@ async def test_the_rules_screen_repaints_in_place() -> None:
         current = app.screen.query_one("#rule-rows")
         assert current is rows
         assert rules_focus(app) == "d1"
+        # The survivors' countdown text follows the clock (the
+        # repaint's other half — a no-op repaint would freeze it):
+        # a1's 5m verdict, decided_at 200, reads off the controller
+        # clock the test now owns.
+        clock = {"now": 300.0}
+        app.controller._clock = lambda: clock["now"]
+
+        def row_text(i: int) -> str:
+            return str(
+                app.screen.query_one("#rule-rows")
+                .children[i]
+                .query_one(Static)
+                .content
+            )
+
+        app.safe_repaint()
+        await wait_for(lambda: "3m left" in row_text(0))  # 500-300
+        clock["now"] = 360.0
+        app.safe_repaint()
+        await wait_for(lambda: "2m left" in row_text(0))  # 500-360
+        assert app.screen.query_one("#rule-rows") is rows  # still in place
         # A same-membership frame (a mode switch lands in it): the
         # header follows the mode, the rows never swap.
         app.controller.apply_frame(same_rows_frame("allow"))

@@ -557,13 +557,10 @@ class RulesScreen(Screen):
     def action_noop(self) -> None:
         """Swallow a queue-action key pressed on the rules screen."""
 
-    def __init__(
-        self, controller: ConsentController, revoke, set_mode
-    ) -> None:
+    def __init__(self, controller: ConsentController, revoke) -> None:
         super().__init__()
         self.controller = controller
         self.revoke = revoke
-        self.set_mode = set_mode
         self.rebuilds = OneFlight(
             lambda: self.rebuild_rows(),
             lambda: self.app.is_running,
@@ -712,7 +709,7 @@ class EventsScreen(Screen):
         # The log fingerprint this screen last painted: the per-tick
         # repaint rebuilds only on a change (event rows are static —
         # unlike the rules screen's countdowns, nothing ticks).
-        self._built: tuple[int, int] | None = None
+        self._built: tuple[int, int, str] | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="events-body"):
@@ -1025,9 +1022,7 @@ class ConsentDeciderApp(App):
             self.flash(f"decide failed: {exc}")
 
     def action_rules(self) -> None:
-        self.push_screen(
-            RulesScreen(self.controller, self.revoke_rule, self.switch_mode)
-        )
+        self.push_screen(RulesScreen(self.controller, self.revoke_rule))
 
     def action_mode(self) -> None:
         """Open the mode picker (#301: `m` from the queue, the rules
