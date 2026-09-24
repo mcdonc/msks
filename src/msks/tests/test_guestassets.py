@@ -322,26 +322,33 @@ def test_the_nixos_image_ships_the_agent_toolchain() -> None:
     copy-once rules. The build's sanity battery pins the profile
     bins and the planting rules."""
     build = (REPO_ROOT / "nix" / "guest-nixos.nix").read_text()
+    configuration = (
+        REPO_ROOT / "nix" / "guest-nixos-configuration.nix"
+    ).read_text()
     pins = (REPO_ROOT / "nix" / "agent-toolchain.nix").read_text()
-    # The engines floor: a nixpkgs regression must fail the build,
-    # not boot a workspace whose pi refuses to start.
-    assert 'lib.versionAtLeast pkgs.nodejs_22.version "22.19.0"' in build
-    assert "pkgs.nodejs_22" in build
+    # The engines floor: a nixpkgs regression must fail the
+    # evaluation — the image build's or a workspace rebuild's —
+    # not boot a workspace whose pi refuses to start. The floor
+    # rides the module (the file both evaluations import).
+    assert (
+        'lib.versionAtLeast pkgs.nodejs_22.version "22.19.0"' in configuration
+    )
+    assert "pkgs.nodejs_22" in configuration
     # The shared derivations, staged through the system profile:
     # pi, the loader-patched Claude Code (a stock NixOS ships no
     # /lib64 loader shim), and herdr's static binary.
-    assert "pkgs.callPackage ./agent-toolchain.nix" in build
-    assert "toolchain.piPackage" in build
-    assert "toolchain.claudeLoaderPatched" in build
-    assert "toolchain.herdrPackage" in build
+    assert "pkgs.callPackage ./agent-toolchain.nix" in configuration
+    assert "toolchain.piPackage" in configuration
+    assert "toolchain.claudeLoaderPatched" in configuration
+    assert "toolchain.herdrPackage" in configuration
     assert "patchelf --set-interpreter" in pins
     # The extension: tmpfiles copy-once rules for the skeleton and
     # root's home — real-file copies, not store symlinks, so a
     # user's later edits stay theirs. Fragments, not the joined
     # rule: nixfmt reflows the line.
-    assert "C /etc/skel/.pi/agent/extensions/llm-models.ts" in build
-    assert "C /root/.pi/agent/extensions/llm-models.ts" in build
-    assert "0644 root root - ${piExtension}" in build
+    assert "C /etc/skel/.pi/agent/extensions/llm-models.ts" in configuration
+    assert "C /root/.pi/agent/extensions/llm-models.ts" in configuration
+    assert "0644 root root - ${piExtension}" in configuration
     # The sanity battery: the profile bins resolve (claude's chain
     # runs through the loader patch), and the planting rules plus
     # the extension itself ride the closure. Every launcher also
@@ -359,8 +366,104 @@ def test_the_nixos_image_ships_the_agent_toolchain() -> None:
     # otherwise download both from GitHub — behind the egress
     # interceptor. nixpkgs' own packages put them on the profile
     # PATH instead.
-    assert "pkgs.fd" in build
-    assert "pkgs.ripgrep" in build
+    assert "pkgs.fd" in configuration
+    assert "pkgs.ripgrep" in configuration
+
+
+def test_the_nixos_image_is_rebuild_ready() -> None:
+    """The rebuild posture (#274): a NixOS workspace user can run
+    `nixos-rebuild switch` against the store the image ships. The
+    build registers every shipped path in a store database, bakes
+    the pinned nixpkgs source in as root's channel, ships
+    /etc/nixos/configuration.nix importing the very module the
+    image evaluated, and boots through the activation-maintained
+    system profile so a rebuilt system survives stop/start. The
+    Debian image stays untouched by all of it."""
+    build = (REPO_ROOT / "nix" / "guest-nixos.nix").read_text()
+    configuration = (
+        REPO_ROOT / "nix" / "guest-nixos-configuration.nix"
+    ).read_text()
+    debian = (REPO_ROOT / "nix" / "guest-debian.nix").read_text()
+    # nix answers: the module enables it (the daemon, build users,
+    # and the CLI + nixos-rebuild that nixpkgs wires to the
+    # profile), and the old nixless posture is gone.
+    assert "nix.enable = true;" in configuration
+    assert "nix.enable = false;" not in configuration
+    assert "nix.enable" not in debian
+    # The store database: load-db over the closure info (the
+    # make-disk-image pattern), with the registration times zeroed
+    # and the file vacuumed — and a second load must hash
+    # identically, or the build is not deterministic.
+    assert 'nix-store --load-db < "$closureInfo"/registration' in build
+    assert "update ValidPaths set registrationTime = 0; vacuum;" in build
+    assert (
+        'cp "$state1"/db/db.sqlite "$root"/nix/var/nix/db/db.sqlite' in build
+    )
+    # The pinned nixpkgs source rides the store as root's channel
+    # (the channelSources shape, nixos/ plus the nixpkgs alias),
+    # and the closure-info roots include it so it ships.
+    assert 'cp -prd ${pkgs.path} "$out"/nixos' in build
+    assert 'ln -s nixos "$out"/nixpkgs' in build
+    assert (
+        "rootPaths = [\n      toplevel\n      channelSources\n    ]" in build
+    )
+    # The profiles: the system chain nixos-rebuild re-points, the
+    # channel profile NIX_PATH resolves <nixpkgs> through, the
+    # gcroot that keeps a guest-run collect-garbage from dropping
+    # the live system, and root's defexpr fallback.
+    assert (
+        'ln -s "$toplevel" "$root"/nix/var/nix/profiles/system-1-link' in build
+    )
+    assert 'ln -s system-1-link "$root"/nix/var/nix/profiles/system' in build
+    assert (
+        'ln -s /nix/var/nix/profiles "$root"/nix/var/nix/gcroots/profiles'
+        in build
+    )
+    assert (
+        "ln -s /nix/var/nix/profiles/per-user/root/channels \\\n"
+        '          "$root"/root/.nix-defexpr/channels' in build
+    )
+    # The boot cmdline names the profile's init — the stable
+    # indirection — so a rebuild persists across stop/start with
+    # no daemon change; the frozen toplevel no longer pins the
+    # boot. Fragments, not the joined cmdline: nixfmt reflows it.
+    assert "init=/nix/var/nix/profiles/system/init" in build
+    assert "init=${toplevel}/init" not in build
+    # /etc/nixos reproduces the shipped config: configuration.nix
+    # imports the module, and the module's whole import chain —
+    # package files, the shrinkwrap pair, the console helper's
+    # sources at the ../src path the helper package expects —
+    # ships beside it. The store inputs carry hash basenames, so
+    # the copies name their destinations.
+    assert "imports = [ ./nix/guest-nixos-configuration.nix ];" in build
+    assert (
+        'cp "$guestConfiguration" \\\n'
+        '          "$root"/etc/nixos/nix/guest-nixos-configuration.nix'
+        in build
+    )
+    assert (
+        'cp -a "$consoleHelperSrc"/. "$root"/etc/nixos/src/console-helper/'
+        in build
+    )
+    assert (
+        'baseNameOf path != "target"'
+        in build  # the source filter keeps Rust builds out
+    )
+    # The sanity battery: nix and nixos-rebuild on the profile, the
+    # db registering exactly the shipped closure, the profiles
+    # resolving, and the /etc/nixos chain present — a rebuild
+    # posture that silently regressed fails the build, not a
+    # workspace's rebuild.
+    assert "for bin in nix nixos-rebuild; do" in build
+    assert "select count(*) from ValidPaths" in build
+    assert 'test -x "$root"/nix/var/nix/profiles/system/init' in build
+    assert (
+        'test -f "$root"/nix/var/nix/profiles/per-user/root/channels'
+        "/nixos/default.nix" in build
+    )
+    # One source of truth: the image build evaluates the same file
+    # the guest rebuild imports.
+    assert "configuration = ./guest-nixos-configuration.nix;" in build
 
 
 def test_the_extension_bounds_its_single_fetch() -> None:

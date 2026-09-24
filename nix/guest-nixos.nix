@@ -12,11 +12,22 @@
 # the daemon acts on is declared in image.json (the capabilities),
 # never keyed off the image's name.
 #
-# The whole rootfs carries the system closure — no virtiofs store
-# share, no host store dependency, and no nix database anywhere:
-# spike 205 proved NixOS boot and activation resolve every path
-# with none. No microvm.nix and no shapes (#237's study,
-# superseded): this file is a plain nixpkgs evaluation.
+# The rootfs carries the system closure under /nix/store with no
+# virtiofs store share and no host store dependency: the image
+# boots on any host that imports it. Since #274 it also carries a
+# live nix: the closure is registered in a store database
+# (`nix-store --load-db` over the closure info, the make-disk-image
+# pattern), root's channel profile points at the pinned nixpkgs
+# source the build itself used, and /etc/nixos/configuration.nix
+# imports the very module this file evaluates — so `nixos-rebuild
+# switch` inside a workspace re-evaluates the shipped configuration
+# and activates the new system. Rebuilds persist across
+# stop/start: the boot cmdline names the system profile
+# (/nix/var/nix/profiles/system/init), an activation-maintained
+# indirection the image's own profile seeds — no daemon change,
+# no bootloader. The VMM still boots the image's frozen kernel and
+# initrd, so a rebuilt system's new kernel takes effect only
+# through a new image; userspace changes apply fully on reboot.
 #
 # A NixOS image needs no inode-metadata story (the Debian build
 # records and restores every distro inode's mode/uid/gid):
@@ -58,349 +69,36 @@ let
 
   imageName = "nixos";
 
-  consoleHelper = pkgs.callPackage ./console-helper-pkg.nix { };
+  # The console helper's sources, filtered for the store hop the
+  # /etc/nixos bake (#274) makes: nothing but VCS noise and Rust's
+  # target/ may ride along, or the image would embed whatever a
+  # dev tree happened to have built.
+  consoleHelperSrc = lib.cleanSourceWith {
+    src = ../src/console-helper;
+    filter =
+      path: type: lib.cleanSourceFilter path type && baseNameOf path != "target";
+  };
 
-  # The agent toolchain (#266, #268): the shared pins and offline
-  # builds — pi, herdr, Claude Code — staged the NixOS way, through
-  # the system profile. One file (nix/agent-toolchain.nix) owns
-  # every pin; the Debian image stages the same derivations under
-  # /usr/local. Node itself comes from nixpkgs below — the
-  # platform's own packaging where it exists is the rule, and on
-  # NixOS it exists (the Debian image stages the official tarball
-  # because Debian's own Node is older than pi's engines floor).
-  toolchain = pkgs.callPackage ./agent-toolchain.nix { };
-
-  # pi's engines floor holds against the pinned nixpkgs: a devenv
-  # lock move that regressed Node below it must fail the image
-  # build, not boot a workspace whose pi refuses to start. The
-  # check rides the returned derivation (asserts are expressions,
-  # not let bindings), with a message naming the regression.
-  nodeFloorMet = lib.versionAtLeast pkgs.nodejs_22.version "22.19.0";
-
-  # The model-discovery extension (#266, #268): the shared source
-  # file the tmpfiles rules below plant inside the guest.
-  piExtension = ./guest-pi-extension.ts;
-
-  # The guest system: every contract item from docs/images.md is a
-  # declarative NixOS setting — no overlay tree, no baked /etc.
-  guest =
+  # The /etc/nixos entry point (#274): imports the module the
+  # image itself evaluated. The module, its package files, and the
+  # console helper's sources ship beside it in the rootfs tree
+  # below — a workspace rebuild evaluates exactly what the image
+  # build did.
+  configurationEntry = pkgs.writeText "configuration.nix" ''
+    # The msks workspace's system configuration, as shipped by the
+    # image build (#274). This file imports the same module the
+    # image was built from; edit the module (or add settings here)
+    # and run `sudo nixos-rebuild switch` to activate them.
+    { ... }:
     {
-      config,
-      lib,
-      pkgs,
-      ...
-    }:
-    {
-      nixpkgs.hostPlatform = "x86_64-linux";
-
-      # Runtime accounts stay first-class: the identity seed (#248)
-      # creates the workspace's login user with shadow's useradd at
-      # first boot — mutableUsers (the default, kept deliberately)
-      # is what lets that account and its group membership live in
-      # /etc on the workspace's overlay and survive rebuilds. The
-      # deployment-host stance (false — the config owns accounts)
-      # would forfeit every seeded login user.
-      users.mutableUsers = lib.mkDefault true;
-
-      # Direct kernel boot off the ext4 archive: no bootloader, no
-      # nix (the closure resolves with no database — spike 205), no
-      # docs.
-      boot.loader.grub.enable = false;
-      nix.enable = false;
-      documentation.enable = false;
-
-      system.stateVersion = lib.versions.majorMinor lib.version;
-
-      networking.hostName = "msks-guest";
-      networking.useDHCP = false;
-      networking.useNetworkd = true;
-
-      # wait-online stays off (the Debian image's posture): a
-      # link-less networkd — the no-egress workspace — never reaches
-      # "online", and network-online.target must never stall a boot.
-      systemd.network.wait-online.enable = false;
-
-      # Whatever NIC appears takes an address over DHCP from the
-      # daemon (#52); with no NIC (a no-egress workspace) the
-      # .network matches nothing and networkd stays idle. resolved
-      # serves the DHCP-offered resolver at 127.0.0.53.
-      systemd.network.enable = true;
-      systemd.network.networks."80-msks-egress" = {
-        matchConfig.Name = "en* eth*";
-        DHCP = "yes";
-      };
-      services.resolved.enable = true;
-
-      # Root boots rw from the kernel cmdline (the per-workspace
-      # overlay absorbs writes, #14); /home is the second
-      # persistent disk, labeled msks-home, nofail + a device
-      # timeout exactly like the Debian image's fstab.
-      fileSystems."/" = {
-        device = "/dev/vda";
-        fsType = "ext4";
-      };
-      fileSystems."/home" = {
-        device = "/dev/disk/by-label/msks-home";
-        fsType = "ext4";
-        options = [
-          "defaults"
-          "nofail"
-          "x-systemd.device-timeout=30s"
-        ];
-      };
-
-      boot.kernelParams = [ "console=ttyS0" ];
-
-      # Stage-1 holds the discipline the Debian build's six-module
-      # initramfs established (#37, docs/boot-speed.md): the initrd
-      # carries the virtio pair plus the ext4 root-fs closure —
-      # tens of milliseconds, not a MODULES=most archive. gzip
-      # because that is the initramfs compression the VMM line has
-      # always decompressed.
-      boot.initrd.availableKernelModules = [
-        "virtio_pci"
-        "virtio_blk"
-      ];
-      boot.initrd.compressor = "gzip";
-
-      # The runtime module set — the same closure the Debian image
-      # ships (#96, #82): the vsock console transport (#21), the
-      # egress NIC driver (#52), the ACPI button pair logind
-      # answers the graceful shutdown with (#25), isofs (the
-      # NoCloud seed disk is iso9660), crc32c-intel (ext4's
-      # metadata_csum asks the crypto API for it), and the L3
-      # recursion stack (tun + the nftables/NAT modules a
-      # workspace hosting workspaces itself needs). KVM rides its
-      # own unit: the flavor depends on the host CPU, and a failed
-      # modules-load entry leaves a degraded boot.
-      boot.kernelModules = [
-        "vmw_vsock_virtio_transport"
-        "virtio_net"
-        "button"
-        "evdev"
-        "isofs"
-        "crc32c-intel"
-        "tun"
-        "nf_tables"
-        "nft_chain_nat"
-        "nft_masq"
-        "nft_ct"
-        "nf_nat"
-        "nf_conntrack"
-      ];
-
-      # The vsock console (#63): the helper binary plus the unit
-      # shape the Debian image ships — DefaultDependencies=no so
-      # the console starts as soon as the vsock module lands (#37's
-      # escape from basic.target ordering), Restart=always +
-      # StartLimitIntervalSec=0 so a too-early start self-heals.
-      # TERM is the helper's own business (#61).
-      systemd.services.msks-console = {
-        description = "msks vsock console (one negotiated shell per connection)";
-        documentation = [ "https://github.com/mcdonc/msks" ];
-        after = [
-          "systemd-modules-load.service"
-          "dev-pts.mount"
-        ];
-        wantedBy = [ "multi-user.target" ];
-        unitConfig = {
-          ConditionPathExists = "/dev/vsock";
-          DefaultDependencies = "no";
-          StartLimitIntervalSec = 0;
-        };
-        serviceConfig = {
-          ExecStart = "${consoleHelper}/bin/msks-console-helper ${toString vsockShellPort}";
-          # The helper's auth (#123) shells out to `ssh-keygen`,
-          # and the session shells it execs inherit this unit's
-          # environment — a system service gets none of the profile
-          # PATHs a login shell builds, so name the system profile
-          # explicitly (the Debian image's /usr/bin needs no such
-          # help).
-          Environment = [ "PATH=/run/current-system/sw/bin:/bin" ];
-          Restart = "always";
-          RestartSec = "0.1";
-          StandardInput = "null";
-        };
-      };
-
-      # Nested KVM (#82): the flavor depends on the host CPU; a
-      # workspace booted where vmx does not reach still boots — the
-      # unit stays active (exited) and /dev/kvm simply never
-      # appears.
-      systemd.services.msks-kvm = {
-        description = "msks nested-KVM module (inner workspace VMs)";
-        after = [ "systemd-modules-load.service" ];
-        wantedBy = [ "multi-user.target" ];
-        serviceConfig = {
-          Type = "oneshot";
-          RemainAfterExit = true;
-          ExecStart = "${pkgs.runtimeShell} -c \"${pkgs.kmod}/bin/modprobe kvm-intel || ${pkgs.kmod}/bin/modprobe kvm-amd || true\"";
-        };
-      };
-
-      # sshd posture (#110): every login is a key login; the
-      # forward is the road in. Authentication policy only, never
-      # algorithm policy (#115). Host keys generate per-workspace
-      # at first boot (openssh's own unit) — none are baked.
-      services.openssh = {
-        enable = true;
-        settings = {
-          PasswordAuthentication = false;
-          KbdInteractiveAuthentication = false;
-          PermitRootLogin = "prohibit-password";
-        };
-      };
-
-      # cloud-init over the NoCloud seed (#41): the same two pins
-      # the Debian image's dropins make — the seed disk is the only
-      # datasource, and network rendering stays off (networkd owns
-      # the NIC). users [] keeps cloud-init from creating accounts
-      # (#171): the image ships the msks workspace user (#63), the
-      # identity seed (#248) makes the login user's home, and both
-      # payload forms work (cloud-config YAML and #! scripts).
-      services.cloud-init = {
-        enable = true;
-        settings = {
-          datasource_list = [
-            "NoCloud"
-            "None"
-          ];
-          network.config = "disabled";
-          users = [ ];
-        };
-      };
-
-      # The serial console is the guest's debug channel: autologin
-      # root on ttyS0 (the vsock console is the supported interactive
-      # path), the same parity the Debian image ships. NixOS's getty
-      # module bakes --autologin into the getty/serial-getty/console-
-      # getty templates; systemd's getty-generator instantiates
-      # serial-getty@ttyS0 from console=ttyS0.
-      services.getty.autologinUser = "root";
-
-      # One console look across images: the Debian guest's plain
-      # PS1 (\u@\h:\w\$ — root@msks-guest:~# for root,
-      # msks@msks-guest:~$ for the workspace user), not NixOS's
-      # bracketed default. The smoke suite's prompt needles key on
-      # the shape, and users get the same console whichever image a
-      # workspace boots.
-      programs.bash.promptInit = ''PS1='\u@\h:\w\$ ' '';
-
-      # The console workspace user (#63): uid/gid 1000, locked
-      # password (the console helper and ssh keys are the road in),
-      # home on the persistent /home volume (#14) — the identity
-      # seed creates it on first boot.
-      users.users.msks = {
-        uid = 1000;
-        isNormalUser = true;
-        group = "msks";
-        extraGroups = [ "wheel" ];
-        home = "/home/msks";
-        createHome = false;
-        hashedPassword = "!";
-        shell = "${pkgs.bashInteractive}/bin/bash";
-      };
-      users.groups.msks.gid = 1000;
-
-      # The workspace user's sudo (#169): passwordless root, granted
-      # to wheel — the conventional admin group NixOS itself ships,
-      # carrying the workspace user and any login user the identity
-      # seed (#248) joins at first boot — because the password is
-      # locked by design, NOPASSWD is the only form that can ever
-      # run, and a per-image declarative rule keeps the policy owned
-      # by the config (a rebuilt guest keeps exactly what it
-      # declares; the seed never writes sudo configuration). The
-      # msks user's own primary group (gid 1000) stays for /home
-      # ownership.
-      security.sudo.extraRules = [
-        {
-          groups = [ "wheel" ];
-          commands = [
-            {
-              command = "ALL";
-              options = [ "NOPASSWD" ];
-            }
-          ];
-        }
-      ];
-
-      # The sync half of the TCP service plane (#110): nixpkgs'
-      # own rsync. The console helper rides the system profile too,
-      # so `msks-console-helper` is on PATH like Debian's
-      # /usr/bin copy. cloud-init/util-linux/iproute2 put the
-      # operator-facing tools the Debian image ships in every PATH
-      # (`cloud-init status`, blkid, ip) — the cloud-init units
-      # carry their own job PATH, but a workspace console is a
-      # login shell, not a cloud-init job.
-      environment.systemPackages = [
-        consoleHelper
-        pkgs.rsync
-        pkgs.cloud-init
-        pkgs.util-linux
-        pkgs.iproute2
-        # The console helper's auth (#123) shells out to
-        # `ssh-keygen -Y verify`; the Debian image's openssh
-        # carries it in /usr/bin, so it rides the profile here too
-        # (the helper is static and PATH-inherits from its service).
-        pkgs.openssh
-        # The agent toolchain (#266, #268): nixpkgs' Node — the
-        # platform's own packaging, current enough for pi's
-        # engines floor (asserted above) — plus the shared pins.
-        # The profile puts every bin on each login PATH, the same
-        # posture the Debian image's /usr/local staging gives: a
-        # workspace boots with a working agent toolchain and no
-        # per-user installer steps. pi's `env node` shebang resolves
-        # because Node rides the same profile; Claude Code ships as
-        # the loader-patched variant (a stock NixOS ships no
-        # /lib64 loader shim — see nix/agent-toolchain.nix). The
-        # pins move with an image rebuild; a workspace that already
-        # booted keeps what it booted with.
-        pkgs.nodejs_22
-        toolchain.piPackage
-        toolchain.claudeLoaderPatched
-        toolchain.herdrPackage
-        # fd and rg (#272): pi resolves its fd and rg tools from
-        # PATH (fd, fdfind, or rg) and downloads them from GitHub
-        # releases when it finds none — a download a fresh
-        # workspace's first agent start would otherwise wait on,
-        # behind the egress interceptor. nixpkgs' own packages put
-        # both on the same profile PATH the toolchain rides
-        # (nixpkgs' fd ships the `fd` name pi accepts).
-        pkgs.fd
-        pkgs.ripgrep
-      ];
-
-      # The model-discovery extension (#266, #268): planted the
-      # NixOS way. tmpfiles copies the store file into /etc/skel —
-      # every account the identity seed provisions copies the
-      # skeleton at useradd -m — and into root's home, since root
-      # seeds no skeleton. Copy-once semantics, and a real file
-      # rather than a store symlink, keep a user's or root's later
-      # edits theirs: nothing ever re-overwrites a copy that
-      # exists, and within one workspace the closure is frozen in
-      # the rootfs, so the once-only copy is also the every-boot
-      # copy. The rules run at sysinit, ahead of the cloud-init
-      # that runs the seed's useradd.
-      systemd.tmpfiles.rules = [
-        "d /etc/skel/.pi/agent/extensions 0755 root root -"
-        "d /root/.pi/agent/extensions 0755 root root -"
-        "C /etc/skel/.pi/agent/extensions/llm-models.ts 0644 root root - ${piExtension}"
-        "C /root/.pi/agent/extensions/llm-models.ts 0644 root root - ${piExtension}"
-      ];
-
-      # Every `env`-shebang in the toolchain (`env node` for pi,
-      # and whatever the build leaves beside it) resolves through
-      # this activation-built /usr/bin/env. NixOS's default is the
-      # same coreutils env; the guest states it because the whole
-      # toolchain depends on it — a config that dropped it would
-      # break every shebang at once, far from the cause.
-      environment.usrbinenv = "${pkgs.coreutils}/bin/env";
-    };
+      imports = [ ./nix/guest-nixos-configuration.nix ];
+    }
+  '';
 
   nixos =
     (import (pkgs.path + "/nixos") {
       system = "x86_64-linux";
-      configuration = guest;
+      configuration = ./guest-nixos-configuration.nix;
     }).config;
 
   toplevel = nixos.system.build.toplevel;
@@ -408,6 +106,25 @@ let
   kernelFile = nixos.system.boot.loader.kernelFile;
   initrd = "${nixos.system.build.initialRamdisk}/initrd";
   kernelVersion = kernel.modDirVersion;
+
+  # The pinned nixpkgs source as the guest-side input (#274): the
+  # same revision the image was built from, staged the channel way
+  # (make-disk-image's channelSources pattern) so <nixpkgs>
+  # resolves for workspace rebuilds without a network. The
+  # .version-suffix matches what the image build itself evaluated,
+  # so `nixos-version` reports the same string after a rebuild.
+  channelSources =
+    pkgs.runCommand "nixos-${nixos.system.nixos.version}"
+      {
+        preferLocalBuild = true;
+      }
+      ''
+        mkdir -p "$out"
+        cp -prd ${pkgs.path} "$out"/nixos
+        chmod -R u+w "$out"/nixos
+        echo -n ${nixos.system.nixos.versionSuffix} > "$out"/nixos/.version-suffix
+        ln -s nixos "$out"/nixpkgs
+      '';
 
   # Catalog identity: the NixOS release plus the toplevel's short
   # hash — the release label alone (26.05pre…) stays constant across
@@ -423,32 +140,52 @@ let
 
   # Same boot shape as the Debian image plus the stage-2 init:
   # NixOS's own init must be named on the cmdline (there is no
-  # bootloader to encode it), and the store path resolves INSIDE
-  # the guest's rootfs — the archive is self-contained on any
-  # host that imports it.
-  kernelCmdline = "console=ttyS0 root=/dev/vda rootfstype=ext4 rw init=${toplevel}/init";
+  # bootloader to encode it), and it goes through the system
+  # profile (#274) — the activation-maintained indirection a
+  # `nixos-rebuild switch` re-points — so a rebuilt system, not
+  # the image's frozen toplevel, boots after a workspace
+  # stop/start. The store path itself resolves INSIDE the guest's
+  # rootfs: the archive is self-contained on any host that
+  # imports it.
+  kernelCmdline = "console=ttyS0 root=/dev/vda rootfstype=ext4 rw init=/nix/var/nix/profiles/system/init";
 
-  # The system closure, resolved by nix: store-paths lists every
-  # path stage-2 activation and the units need.
+  # The system closure plus the channel source, resolved by nix:
+  # store-paths lists every path stage-2 activation, the units,
+  # and the guest-side rebuild need.
   closureInfo = pkgs.closureInfo {
-    rootPaths = [ toplevel ];
+    rootPaths = [
+      toplevel
+      channelSources
+    ];
   };
 
-  # The NixOS root tree: the closure under /nix/store plus the
-  # empty mount points; activation materializes everything else
-  # (/etc, /var, the wrappers) on the workspace's own overlay at
-  # boot.
+  # The NixOS root tree: the closure under /nix/store, the
+  # registered store database, the nix profiles, and /etc/nixos;
+  # activation materializes everything else (/etc, /var, the
+  # wrappers) on the workspace's own overlay at boot.
   nixosRoot =
     pkgs.runCommand "msks-nixos-root"
       {
         inherit
           closureInfo
           toplevel
+          channelSources
+          configurationEntry
+          consoleHelperSrc
           ;
-        # binutils: readelf for the claude linkage guard below.
+        guestConfiguration = ./guest-nixos-configuration.nix;
+        consoleHelperPkgFile = ./console-helper-pkg.nix;
+        agentToolchainFile = ./agent-toolchain.nix;
+        piExtensionFile = ./guest-pi-extension.ts;
+        shrinkwrapPatchFile = ./pi-shrinkwrap-patch.py;
+        shrinkwrapTableFile = ./pi-shrinkwrap-integrity.json;
+        # binutils: readelf for the claude linkage guard below;
+        # nix + sqlite: the store-db registration.
         nativeBuildInputs = [
           pkgs.gnutar
           pkgs.binutils
+          pkgs.nix
+          pkgs.sqlite
         ];
       }
       ''
@@ -459,6 +196,80 @@ let
         while read -r p; do
           cp -a "$p" "$root"/nix/store/
         done < "$closureInfo"/store-paths
+
+        # The store database (#274): every shipped path registered
+        # valid, so the guest's nix answers `nix-store -q
+        # --references` and a rebuild reuses the shipped closure
+        # instead of refetching it. The load runs against a
+        # scratch state dir and the finished db lands in the tree;
+        # registrationTime is zeroed and the file vacuumed, and a
+        # second load of the same input must hash identically —
+        # the build stays deterministic (a nix change that stamped
+        # other build-time state into the db fails here, not as a
+        # reproducibility mystery later).
+        state1=$(pwd)/nix-state-1
+        state2=$(pwd)/nix-state-2
+        NIX_STATE_DIR="$state1" nix-store --load-db < "$closureInfo"/registration
+        sqlite3 "$state1"/db/db.sqlite \
+          'update ValidPaths set registrationTime = 0; vacuum;'
+        NIX_STATE_DIR="$state2" nix-store --load-db < "$closureInfo"/registration
+        sqlite3 "$state2"/db/db.sqlite \
+          'update ValidPaths set registrationTime = 0; vacuum;'
+        test "$(sha256sum < "$state1"/db/db.sqlite | cut -d' ' -f1)" \
+          = "$(sha256sum < "$state2"/db/db.sqlite | cut -d' ' -f1)"
+        mkdir -p "$root"/nix/var/nix/db
+        cp "$state1"/db/db.sqlite "$root"/nix/var/nix/db/db.sqlite
+
+        # The nix profiles (#274), in the exact shape nix-env
+        # leaves: a generation symlink to the store, the profile
+        # symlink to the generation. `system` is the init the
+        # kernel cmdline names (nixos-rebuild switch re-points
+        # it); root's `channels` is the baked pin the default
+        # NIX_PATH resolves <nixpkgs> through. gcroots/profiles
+        # keeps a guest-run nix-collect-garbage from collecting
+        # the live system, and root's .nix-defexpr/channels gives
+        # <nixpkgs> a fallback for shells sudo reset the session
+        # NIX_PATH out of.
+        mkdir -p "$root"/nix/var/nix/profiles/per-user/root \
+          "$root"/nix/var/nix/gcroots "$root"/root/.nix-defexpr
+        ln -s "$toplevel" "$root"/nix/var/nix/profiles/system-1-link
+        ln -s system-1-link "$root"/nix/var/nix/profiles/system
+        ln -s "$channelSources" \
+          "$root"/nix/var/nix/profiles/per-user/root/channels-1-link
+        ln -s channels-1-link \
+          "$root"/nix/var/nix/profiles/per-user/root/channels
+        ln -s /nix/var/nix/profiles "$root"/nix/var/nix/gcroots/profiles
+        ln -s /nix/var/nix/profiles/per-user/root/channels \
+          "$root"/root/.nix-defexpr/channels
+
+        # /etc/nixos (#274): configuration.nix plus the import
+        # chain it pulls — the module, its package files, the
+        # shrinkwrap pair the toolchain build reads, and the
+        # console helper's sources at the ../src path the helper
+        # package expects to find beside ../nix. The repo layout
+        # under /etc/nixos is what keeps the module's relative
+        # imports resolving identically at image build and inside
+        # a rebuilt workspace. Store inputs carry their hash
+        # basenames, so each copy names its destination; the
+        # u+w pass leaves the files editable for a workspace
+        # user's own rebuild edits.
+        mkdir -p "$root"/etc/nixos/nix "$root"/etc/nixos/src/console-helper
+        cp "$configurationEntry" "$root"/etc/nixos/configuration.nix
+        cp "$guestConfiguration" \
+          "$root"/etc/nixos/nix/guest-nixos-configuration.nix
+        cp "$consoleHelperPkgFile" \
+          "$root"/etc/nixos/nix/console-helper-pkg.nix
+        cp "$agentToolchainFile" \
+          "$root"/etc/nixos/nix/agent-toolchain.nix
+        cp "$piExtensionFile" \
+          "$root"/etc/nixos/nix/guest-pi-extension.ts
+        cp "$shrinkwrapPatchFile" \
+          "$root"/etc/nixos/nix/pi-shrinkwrap-patch.py
+        cp "$shrinkwrapTableFile" \
+          "$root"/etc/nixos/nix/pi-shrinkwrap-integrity.json
+        cp -a "$consoleHelperSrc"/. "$root"/etc/nixos/src/console-helper/
+        chmod -R u+w "$root"/etc/nixos
+
         # A bootable tree: stage-2 init present, and the units the
         # contract names are wanted at boot — the console service,
         # cloud-init, sshd. A config that silently dropped one (the
@@ -481,6 +292,43 @@ let
           test -x "$toplevel"/sw/bin/$bin \
             || { echo "sw/bin/$bin missing from the system profile" >&2; exit 1; }
         done
+        # The rebuild posture (#274): nix answers, the rebuild
+        # driver rides the profile, the store db registers the
+        # shipped closure exactly, the profiles resolve, and
+        # /etc/nixos carries the module chain a rebuild
+        # re-evaluates.
+        for bin in nix nixos-rebuild; do
+          test -x "$toplevel"/sw/bin/$bin \
+            || { echo "sw/bin/$bin missing from the system profile" >&2; exit 1; }
+        done
+        # The search path the rebuild tool rides (#274): its nix
+        # calls run with a stripped environment, so the nix.conf
+        # entry is the one every lookup falls back to — including
+        # the nixos-system entrypoint it prefers.
+        grep -q 'nixos-system=/nix/var/nix/profiles/per-user/root/channels/nixos/nixos' \
+          "$toplevel"/etc/nix/nix.conf
+        grep -q 'nixos-config=/etc/nixos/configuration.nix' \
+          "$toplevel"/etc/nix/nix.conf
+        db_rows=$(sqlite3 "$root"/nix/var/nix/db/db.sqlite \
+          'select count(*) from ValidPaths')
+        shipped=$(wc -l < "$closureInfo"/store-paths)
+        test "$db_rows" -eq "$shipped" \
+          || { echo "store db registers $db_rows paths, the tree ships $shipped" >&2; exit 1; }
+        test -x "$root"/nix/var/nix/profiles/system/init
+        test -f "$root"/nix/var/nix/profiles/per-user/root/channels/nixos/default.nix
+        # The defexpr link's target is absolute (a guest-root path);
+        # test the link itself, not -e through it — following it here
+        # would answer for the BUILD HOST's /nix/var, not the tree's.
+        test "$(readlink "$root"/root/.nix-defexpr/channels)" \
+          = /nix/var/nix/profiles/per-user/root/channels
+        grep -q 'guest-nixos-configuration.nix' "$root"/etc/nixos/configuration.nix
+        test -f "$root"/etc/nixos/nix/guest-nixos-configuration.nix
+        test -f "$root"/etc/nixos/nix/console-helper-pkg.nix
+        test -f "$root"/etc/nixos/nix/agent-toolchain.nix
+        test -f "$root"/etc/nixos/nix/guest-pi-extension.ts
+        test -f "$root"/etc/nixos/nix/pi-shrinkwrap-patch.py
+        test -f "$root"/etc/nixos/nix/pi-shrinkwrap-integrity.json
+        test -f "$root"/etc/nixos/src/console-helper/Cargo.toml
         # The claude ELF's linkage (#268 review): the loader-patched
         # binary must resolve everything inside the closure — its
         # interpreter, every NEEDED soname, and every version symbol
@@ -594,7 +442,7 @@ let
         # Content plus 1G of slack, like the Debian image: the
         # base keeps room for activation writes, and the
         # per-workspace overlay (#14) carries whatever the guest
-        # writes beyond it.
+        # writes beyond it — a rebuild's new store paths included.
         PACK_TREE=work \
           PACK_IMG="$out/rootfs.ext4" \
           PACK_BLOCKS=$(( $(cat "$nixosRoot"/tree-blocks) + 262144 )) \
@@ -652,9 +500,6 @@ let
   };
 
 in
-assert (
-  lib.assertMsg nodeFloorMet "pi's engines floor (22.19.0) exceeds nixpkgs nodejs_22 (${pkgs.nodejs_22.version}) — a devenv lock regression"
-);
 pkgs.runCommand "msks-guest-nixos"
   {
     inherit
