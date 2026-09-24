@@ -1485,6 +1485,13 @@ def build_api(app) -> FastAPI:
                 "kernel_format": image.kernel_format,
                 "provisioner": image.provisioner,
                 "default": image.hash == default_hash,
+                # ISO 8601, UTC-aware: the record's stamp (#186) or the
+                # cache-mtime fallback. None only in the rename race.
+                "imported": (
+                    image.imported.isoformat()
+                    if image.imported is not None
+                    else None
+                ),
             }
             for image in imagestore.list_images(state_dir)
         ]

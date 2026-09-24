@@ -663,11 +663,13 @@ def resize_message(row: dict, body: dict) -> str:
 
 
 def image_cells(row: dict) -> list[str]:
-    """One catalog row's cells: ref, short hash, default flag, kernel."""
+    """One catalog row's cells: ref, short hash, default flag,
+    kernel, and the import time (#283) — the same stamped-or-dash
+    cell the storage table renders."""
     flag = "default" if row["default"] else "-"
     kernel = f"{row['kernel_version'] or '-'} ({row['kernel_format'] or '-'})"
     ref = f"{row['name']}:{row['version']}"
-    return [ref, row["hash"][:12], flag, kernel]
+    return [ref, row["hash"][:12], flag, kernel, imported_cell(row)]
 
 
 def render_image_ls(rows: list[dict], as_json: bool) -> str:
@@ -675,7 +677,7 @@ def render_image_ls(rows: list[dict], as_json: bool) -> str:
     if as_json:
         return json.dumps(rows, indent=2)
     return listing_text(
-        ["ref", "hash", "default", "kernel"],
+        ["ref", "hash", "default", "kernel", "imported"],
         [image_cells(row) for row in rows],
     )
 

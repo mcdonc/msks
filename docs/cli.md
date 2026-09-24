@@ -445,20 +445,24 @@ same client environment as the workspace commands.
 ### `msks image ls`
 
 One line per registered image — reference, hash (first 12 hex
-chars), the default designation, and the kernel facts — on the
-measured grid every listing shares (#271):
+chars), the default designation, the kernel facts, and when the
+image entered the catalog — on the measured grid every listing
+shares (#271):
 
 ```text
 $ msks image ls
-ref          hash          default  kernel
-debian:13    9f2c41ab77de  default  6.12.107+deb13 (raw)
-alpine:3.20  33aa9db1c4ef  -        6.12.7 (raw)
+ref          hash          default  kernel                imported
+debian:13    9f2c41ab77de  default  6.12.107+deb13 (raw)  2026-09-22 14:03
+alpine:3.20  33aa9db1c4ef  -        6.12.7 (raw)          2026-09-19 09:41
 ```
 
 The image the daemon designates as default carries the `default`
-flag; a bare `msks create` resolves to it. `--json` prints the
-listing as the API returns it (`GET /api/v1/images`), stable for
-scripting.
+flag; a bare `msks create` resolves to it. The `imported` column
+shows the moment the archive entered the catalog, in local time
+to the minute — an entry re-imported under the same reference
+moves the time forward with it. `--json` prints the listing as
+the API returns it (`GET /api/v1/images`, each row's `imported`
+field in ISO 8601 UTC), stable for scripting.
 
 ### `msks image import`
 

@@ -464,8 +464,9 @@ curl -X DELETE .../api/v1/images/default \
 - `MSKSD_DEFAULT_IMAGE` (set by the dev daemon from its state dir's
   image) imports and designates at first boot; on later boots the
   daemon only re-checks the hash, not a full re-import.
-- Listing shows every registered image with its hash, name, version,
-  kernel facts, and which one is default:
+- Listing shows every registered image with its hash, name,
+  version, kernel facts, which one is default, and when each
+  entered the catalog (the `imported` field, ISO 8601 UTC):
 
 ```bash
 curl -H "authorization: Bearer $TOKEN" \
