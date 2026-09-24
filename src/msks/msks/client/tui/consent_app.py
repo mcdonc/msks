@@ -640,14 +640,14 @@ class RulesScreen(Screen):
     def repaint_rule_rows(self, rows: ListView, ordered: list) -> None:
         """Repaint each surviving rule row's text in place (the
         queue's per-tick countdown repaint, carried to the rules
-        rows): the caller's membership match guarantees every
-        ordered id has a real child, so the pass moves no index and
-        takes no focus."""
-        existing = {
-            getattr(child, "rule_id", None): child for child in rows.children
-        }
-        for rule in ordered:
-            existing[rule.id].query_one(Static).update(
+        rows): the caller's order-equal membership match proves the
+        children and ``ordered`` line up positionally, so the pass
+        walks the two side by side (never id-keyed — a malformed
+        frame with duplicate ids would repaint one row twice and
+        leave its twin stale), moves no index, and takes no
+        focus."""
+        for child, rule in zip(rows.children, ordered):
+            child.query_one(Static).update(
                 rule_line(rule, self.controller.rule_remaining(rule))
             )
 
@@ -709,7 +709,7 @@ class EventsScreen(Screen):
         # The log fingerprint this screen last painted: the per-tick
         # repaint rebuilds only on a change (event rows are static —
         # unlike the rules screen's countdowns, nothing ticks).
-        self._built: tuple[int, int, str] | None = None
+        self._built: tuple[tuple[int, int], str] | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="events-body"):
@@ -731,20 +731,37 @@ class EventsScreen(Screen):
         self.rebuilds.request()
 
     async def rebuild_rows(self) -> None:
-        """Repaint the audit log with a freshly-built list, newest
-        first, preserving the focused row by seq (the top when it
-        left): a mutating ListView carries asynchronously-pruned
-        stale children that shift indexes, so positions come from
-        children that are all real."""
+        """Repaint the screen from the log: the header line always,
+        and the rows list only when it moved. An unchanged log (a
+        mode switch with no event landing) takes the header-only
+        path — a list swap under a reading operator is the flash
+        this PR removes elsewhere. A missing list (a rebuild that
+        died mid-swap) always rebuilds, unchanged log or not: the
+        swap is also the heal."""
+        rows_id = self.rows_fingerprint()
         self.query_one("#events-note", Static).update(
             events_header(self.controller.rules)
         )
-        body = self.query_one("#events-body", Vertical)
         old = None
         try:
             old = self.query_one("#event-rows", ListView)
         except NoMatches:
             pass  # a died-mid-swap rebuild: mount the fresh list anew
+        if (
+            old is not None
+            and self._built is not None
+            and self._built[0] == rows_id
+        ):
+            self._built = self.log_fingerprint()
+            return
+        await self.swap_event_rows(old)
+
+    async def swap_event_rows(self, old: ListView | None) -> None:
+        """Swap in a freshly-built list (its mount awaited), newest
+        first, preserving the focused row by seq (the top when it
+        left): a mutating ListView carries asynchronously-pruned
+        stale children that shift indexes, so positions come from
+        children that are all real."""
         focused = focused_event_id(old)
         items = [
             event_item(event) for event in reversed(self.controller.events)
@@ -752,22 +769,23 @@ class EventsScreen(Screen):
         fresh = ListView(*items, id="event-rows")
         if old is not None:
             await old.remove()  # frees the id before the fresh list mounts
-        await body.mount(fresh)
+        await self.query_one("#events-body", Vertical).mount(fresh)
         fresh.focus()
         focus_event_by_id(fresh, focused)  # after mount: index sticks
         self._built = self.log_fingerprint()
 
-    def log_fingerprint(self) -> tuple[int, int, str]:
-        """The log's identity for repaint gating: its length, newest
-        seq (seq is monotonic; the length catches the bound's
-        trims), and the mode — a switch repaints the header's mode
-        label even when no event landed (#301)."""
+    def rows_fingerprint(self) -> tuple[int, int]:
+        """The log's rows identity: length and newest seq (seq is
+        monotonic, appends grow it, the bound's trims shrink the
+        length — equal values mean equal rows)."""
         events = self.controller.events
-        return (
-            len(events),
-            events[-1].seq if events else 0,
-            mode_label(self.controller.rules),
-        )
+        return (len(events), events[-1].seq if events else 0)
+
+    def log_fingerprint(self) -> tuple[tuple[int, int], str]:
+        """The log's identity for repaint gating: its rows identity
+        and the mode — a switch repaints the header's mode label
+        even when no event landed (#301)."""
+        return (self.rows_fingerprint(), mode_label(self.controller.rules))
 
     def log_changed(self) -> bool:
         """Whether the log moved since this screen last painted it

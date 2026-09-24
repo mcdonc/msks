@@ -1545,18 +1545,7 @@ async def test_a_flight_dying_at_teardown_stays_quiet() -> None:
 def empty_rules_frame() -> str:
     """A rules snapshot with nothing effectively allowed: an empty
     allowlist under a mode that holds nothing allowed."""
-    return json.dumps(
-        {
-            "event": "egress.rules",
-            "data": {
-                "workspace_id": "ws-dev",
-                "mode": "allow",
-                "allow_list": [],
-                "allowed": [],
-                "denied": [],
-            },
-        }
-    )
+    return mode_frame("allow")
 
 
 def mode_frame(mode: str) -> str:
@@ -1769,18 +1758,27 @@ async def test_the_rules_screen_repaints_in_place() -> None:
 async def test_the_events_screen_shows_the_mode() -> None:
     """The audit screen's header names the mode (#301 — visible on
     every screen), and a mode switch's frame repaints it without an
-    event landing: the repaint fingerprint carries the mode."""
-    factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
+    event landing — the header-only path: the rows list keeps its
+    identity (a mode switch must not swap the log out from under a
+    reading operator)."""
+    factory = FakeFactory(
+        [
+            FakeWS([rules_frame(), secret_frame("swap", host="a.example")]),
+            FakeWS([]),
+        ]
+    )
     app, _ = make_app(factory)
     async with app.run_test() as pilot:
-        await wait_for(lambda: app.controller.rules is not None)
+        await wait_for(lambda: len(app.controller.events) == 1)
         await pilot.press("e")
         await wait_for(
             lambda: (
                 "mode interactive"
                 in str(app.screen.query_one("#events-note").content)
+                and events_children(app) == 1
             )
         )
+        rows = app.screen.query_one("#event-rows")
         app.controller.apply_frame(mode_frame("allow"))
         app.safe_repaint()
         await wait_for(
@@ -1789,6 +1787,8 @@ async def test_the_events_screen_shows_the_mode() -> None:
                 in str(app.screen.query_one("#events-note").content)
             )
         )
+        assert app.screen.query_one("#event-rows") is rows
+        assert events_children(app) == 1
         app.action_quit_screen()
 
 
