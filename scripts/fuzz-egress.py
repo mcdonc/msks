@@ -3090,15 +3090,30 @@ class Harness:
         not leak to host B, and vice-versa.  Controlled DNS maps
         both names to the same address; the enforcement layer must
         key by name, not IP."""
+        if self.dns is None:
+            print("  (skipped: co-resident canaries need controlled DNS)")
+            return
         host_a = FRESH["coresident_a"]
         host_b = FRESH["coresident_b"]
         if not await self.coresident_allow_a(host_a):
             return
         if not await self.coresident_deny_b(host_b):
             return
-        await self.coresident_verify_a(host_a, canonical(host_a))
+        await self.coresident_verify(
+            "re-A",
+            host_a,
+            canonical(host_a),
+            EXPECT_RELEASED,
+            "co-resident deny leaked to the allowed hostname",
+        )
         if not self.abort:
-            await self.coresident_verify_b(host_b, canonical(host_b))
+            await self.coresident_verify(
+                "re-B",
+                host_b,
+                canonical(host_b),
+                EXPECT_REFUSED,
+                "co-resident allow leaked to the denied hostname",
+            )
 
     async def coresident_allow_a(self, host: str) -> bool:
         """Allow host A (5m) and score the connection."""
@@ -3170,8 +3185,16 @@ class Harness:
         )
         return not self.abort
 
-    async def coresident_verify_a(self, host: str, canon: str) -> None:
-        """Host A must still be covered by its own allow verdict."""
+    async def coresident_verify(
+        self,
+        tag: str,
+        host: str,
+        canon: str,
+        expect_conn: str,
+        leak_detail: str,
+    ) -> None:
+        """Re-probe a canary host: its own verdict must still hold."""
+        label = f"coresident {tag}"
         task = asyncio.create_task(self.probe(host))
         intruder = await self.decider.wait_no_request(
             canon, NO_REQUEST_WINDOW_S
@@ -3180,62 +3203,25 @@ class Harness:
         if intruder is not None:
             self.record(
                 Result(
-                    "coresident re-A",
+                    label,
                     host,
                     False,
-                    EXPECT_RELEASED,
+                    expect_conn,
                     "-",
                     "request(!)",
                     rc,
                     MISMATCH,
-                    "co-resident deny leaked to the allowed hostname",
+                    leak_detail,
                 )
             )
             return
-        status, detail = classify_conn(EXPECT_RELEASED, rc)
+        status, detail = classify_conn(expect_conn, rc)
         self.record(
             Result(
-                "coresident re-A",
+                label,
                 host,
                 False,
-                EXPECT_RELEASED,
-                "-",
-                "no-req",
-                rc,
-                status,
-                detail=detail,
-            )
-        )
-
-    async def coresident_verify_b(self, host: str, canon: str) -> None:
-        """Host B must still be covered by its own deny verdict."""
-        task = asyncio.create_task(self.probe(host))
-        intruder = await self.decider.wait_no_request(
-            canon, NO_REQUEST_WINDOW_S
-        )
-        rc = await task
-        if intruder is not None:
-            self.record(
-                Result(
-                    "coresident re-B",
-                    host,
-                    False,
-                    EXPECT_REFUSED,
-                    "-",
-                    "request(!)",
-                    rc,
-                    MISMATCH,
-                    "co-resident allow leaked to the denied hostname",
-                )
-            )
-            return
-        status, detail = classify_conn(EXPECT_REFUSED, rc)
-        self.record(
-            Result(
-                "coresident re-B",
-                host,
-                False,
-                EXPECT_REFUSED,
+                expect_conn,
                 "-",
                 "no-req",
                 rc,
