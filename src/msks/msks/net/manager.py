@@ -84,6 +84,38 @@ NOT_READY_CAUSES = {
 }
 
 
+class WorkspaceGuard:
+    """A per-workspace re-entrant async guard (#280 review, round
+    2): attach, detach, and the live mode swap hold it, and the
+    interceptor's arm/disarm — which run under those callers and
+    also standalone, from the watcher's placeholder sweep and the
+    mint/renew/revoke routes — hold it through
+    ``apply_interception``. Re-entrant by task: the nested table
+    swap a holder drives is the mutation itself, not an
+    interloper; every other writer waits."""
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._holder: asyncio.Task | None = None
+        self._depth = 0
+
+    async def __aenter__(self) -> WorkspaceGuard:
+        task = asyncio.current_task()
+        if self._holder is task:
+            self._depth += 1
+            return self
+        await self._lock.acquire()
+        self._holder = task
+        self._depth = 1
+        return self
+
+    async def __aexit__(self, *exc) -> None:
+        self._depth -= 1
+        if self._depth == 0:
+            self._holder = None
+            self._lock.release()
+
+
 @dataclass(frozen=True)
 class NetAttachment:
     """What the VM spec needs from an armed egress workspace."""
@@ -170,7 +202,7 @@ class NetManager:
         self.dialer = dialer or asyncio.open_connection
         self._attachments: dict[str, NetAttachment] = {}
         self._services: dict[str, NetServices] = {}
-        self._locks: dict[str, asyncio.Lock] = {}
+        self._guards: dict[str, WorkspaceGuard] = {}
         self._forwards: dict[str, list] = {}
         self._used_slices: set[int] = set()
         self._state = "init"  # init | disabled | ready | unavailable
@@ -214,7 +246,7 @@ class NetManager:
         if not want:
             return None
         self.require_ready(workspace_id)
-        async with self.workspace_lock(workspace_id):
+        async with self.workspace_guard(workspace_id):
             existing = self._attachments.get(workspace_id)
             if existing is not None:
                 return existing
@@ -222,17 +254,17 @@ class NetManager:
                 workspace_id, policy or EgressPolicy(workspace_id, "allow", ())
             )
 
-    def workspace_lock(self, workspace_id: str) -> asyncio.Lock:
-        """The per-workspace net-mutation lock: attach, detach, and
-        the live mode swap serialize against each other whatever
-        the route above them holds (#280 review) — a detach landing
-        between a swap's table probe and its install would leave a
-        table and a bound queue nothing cleans. Leaf-level only:
-        nothing below these three takes it."""
-        lock = self._locks.get(workspace_id)
-        if lock is None:
-            lock = self._locks.setdefault(workspace_id, asyncio.Lock())
-        return lock
+    def workspace_guard(self, workspace_id: str) -> WorkspaceGuard:
+        """The per-workspace net-mutation guard: attach, detach,
+        the live mode swap, and the interceptor's table swap
+        serialize against each other whatever the route above them
+        holds (#280 review) — a detach landing between a swap's
+        table probe and its install would leave a table and a
+        bound queue nothing cleans."""
+        guard = self._guards.get(workspace_id)
+        if guard is None:
+            guard = self._guards.setdefault(workspace_id, WorkspaceGuard())
+        return guard
 
     async def forward_stream(self, workspace_id: str, port: int):
         """(reader, writer) dialed to the guest's address on ``port``.
@@ -304,7 +336,7 @@ class NetManager:
         closed-socket fd number is never reused by a fresh
         subprocess pipe underneath a stale selector entry.
         """
-        async with self.workspace_lock(workspace_id):
+        async with self.workspace_guard(workspace_id):
             attachment = self._attachments.pop(workspace_id, None)
             services = self._services.pop(workspace_id, None)
             self.close_forwards(workspace_id)
@@ -417,7 +449,7 @@ class NetManager:
 
         Returns whether a live swap ran: a workspace without an
         attachment keeps the row's change for its next boot."""
-        async with self.workspace_lock(workspace_id):
+        async with self.workspace_guard(workspace_id):
             return await self.switch_live(policy, workspace_id)
 
     async def switch_live(
@@ -595,7 +627,25 @@ class NetManager:
         kernel-side consent elements across itself — verdict pins
         and resolver-learned allows would die with the table
         otherwise (#260 review), and a static workspace's learned
-        egress would drop until its DNS cache expired."""
+        egress would drop until its DNS cache expired.
+
+        Under the workspace's net guard (#280 review, round 2): the
+        watcher's placeholder sweep and the placeholder routes call
+        this with no route lock, and an unserialized install here
+        can land after a mode switch — restoring a chain that
+        references a queue whose consumer the switch already
+        stopped (an unbound queue drops every new flow), or
+        clobbering a fresh interactive chain with a queue-less
+        one. The guard is re-entrant, so the arm/disarm an attach
+        or detach itself drives still runs."""
+        async with self.workspace_guard(workspace_id):
+            await self.swap_interception(workspace_id, port)
+
+    async def swap_interception(
+        self, workspace_id: str, port: int | None
+    ) -> None:
+        """The interception swap's body (guard held by the
+        caller)."""
         attachment = self._attachments.get(workspace_id)
         services = self._services.get(workspace_id)
         if attachment is None or services is None:

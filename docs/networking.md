@@ -195,7 +195,11 @@ The switch keeps three invariants:
   verdicts at the resolver, address-keyed ones re-pinned into the
   fresh table's sets), so `static` after an `interactive` session
   is the frozen consent set — everything approved so far, and
-  nothing else.
+  nothing else. The pins rebuild from the rows across a direct
+  gated→gated switch and at every gated entry; a round-trip
+  through `allow` re-pins the `forever` rows, while a timed
+  address-keyed allow re-prompts or re-learns on the guest's next
+  resolution.
 
 The resolver flips with the chain in the same step, so a switch to
 `static` starts answering off-list names with NXDOMAIN mid-session

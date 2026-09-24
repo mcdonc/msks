@@ -1462,3 +1462,74 @@ async def test_allow_mode_pins_no_elements(gated_app) -> None:
     await manager.consent_allow("ws-i", "10.1.2.3", None, 60)
     await manager.consent_reject("ws-i", "203.0.113.9", 443, 5)
     assert len(log_lines(nft_log)) == before
+
+
+async def test_workspace_guard_reenters_and_serializes() -> None:
+    """The net guard is re-entrant for the task that holds it (the
+    interceptor's arm/disarm run under the attach/detach/switch
+    that drove them) and serializing for every other writer (#280
+    review, round 2)."""
+    guard = manager_mod.WorkspaceGuard()
+    order: list[str] = []
+    async with guard:
+        async with guard:  # same task: no block
+            order.append("inner")
+    assert order == ["inner"]
+
+    held = asyncio.Event()
+    release = asyncio.Event()
+
+    async def holder():
+        async with guard:
+            held.set()
+            await release.wait()
+
+    async def waiter():
+        await held.wait()
+        async with guard:
+            order.append("waiter")
+
+    hold_task = asyncio.create_task(holder())
+    wait_task = asyncio.create_task(waiter())
+    await held.wait()
+    await asyncio.sleep(0.01)
+    assert order == ["inner"]  # the waiter is still outside
+    release.set()
+    await asyncio.gather(hold_task, wait_task)
+    assert order == ["inner", "waiter"]
+
+
+async def test_apply_interception_takes_the_workspace_guard(
+    gated_app, monkeypatch
+) -> None:
+    """The interception swap runs under the guard: a mode switch in
+    flight holds it off, so a placeholder sweep's install cannot
+    land on the switch's table shape (#280 review, round 2)."""
+    from msks.consent.specs import EgressPolicy
+
+    app, _consumers, _nft_log = gated_app
+    await app.state.net.start()
+    manager = app.state.net
+    await manager.attach(
+        "ws-i", want=True, policy=EgressPolicy("ws-i", "static", ())
+    )
+    order: list[str] = []
+    guard = manager.workspace_guard("ws-i")
+    real_swap = manager.swap_interception
+
+    async def swap_after_switch(workspace_id, port):
+        order.append("swap")
+        return await real_swap(workspace_id, port)
+
+    monkeypatch.setattr(manager, "swap_interception", swap_after_switch)
+
+    async def holding_switch():
+        async with guard:
+            order.append("switch")
+            await asyncio.sleep(0.05)  # the switch's install window
+
+    switch_task = asyncio.create_task(holding_switch())
+    await asyncio.sleep(0.01)
+    await manager.apply_interception("ws-i", None)
+    await switch_task
+    assert order == ["switch", "swap"]

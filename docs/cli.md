@@ -817,7 +817,11 @@ posture at its next start — the command's output line says which
 happened. Verdicts carry across switches: an `allow forever`
 granted under `interactive` keeps acting under `static`, so
 switching to `static` freezes the workspace at everything
-approved so far. `--allow SPEC` (repeatable, create's grammar)
+approved so far — name-keyed verdicts in full, and, on a direct
+gated→gated switch, the kernel-side pins too. A round-trip
+through `allow` rebuilds the pins from the durable rows
+(`forever` verdicts re-pin at entry; a timed address-keyed allow
+re-prompts or re-learns on the guest's next resolution). `--allow SPEC` (repeatable, create's grammar)
 replaces the allowlist; omitted, the workspace keeps its list.
 Switching to `static` with nothing effectively allowed — an
 empty allowlist and no in-effect allowed verdict — is refused

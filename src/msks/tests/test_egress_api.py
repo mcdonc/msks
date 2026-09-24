@@ -985,3 +985,65 @@ async def test_start_404s_when_the_row_leaves_under_the_lock(
             "/api/v1/workspaces/ws-m/start", headers=auth()
         )
         assert reply.status_code == 404
+
+
+async def test_a_failed_swap_rolls_back_the_under_lock_row(
+    consent_client, monkeypatch
+) -> None:
+    """The rollback restores the row as it stood under the lock —
+    a pre-lock copy could resurrect a posture a concurrent switch
+    already superseded (#280 review, round 2)."""
+    import httpx
+    from msks.microvm.errors import MicrovmError
+
+    api, app, _stub = consent_client
+
+    class FailingNet(StubNet):
+        async def apply_policy(self, workspace_id, policy):
+            raise MicrovmError("nft refused the transaction")
+
+    app.state.net = FailingNet(applied=False)
+    transport = httpx.ASGITransport(app=api)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://test"
+    ) as http:
+        await create_workspace(http, "ws-m", "allow")
+        real = await app.state.model.get_workspace("ws-m")
+        # A first switch lands cleanly before this request's outer
+        # read: the outer row says allow, the row now says static.
+        await app.state.model.set_egress_policy(
+            real["id"], "static", [".a.de"]
+        )
+        reply = await put_policy(http, "ws-m", {"mode": "interactive"})
+        assert reply.status_code == 503
+        row = await app.state.model.get_workspace("ws-m")
+        assert row["egress_mode"] == "static"  # the fresh facts, not allow
+        assert row["egress_allowlist"] == [".a.de"]
+
+
+async def test_mode_switch_404s_when_the_row_vanishes_under_the_lock(
+    consent_client, monkeypatch
+) -> None:
+    """A delete completing between the route's outer read and its
+    re-read under the lock answers 404, never a switch of a
+    vanished workspace."""
+    import httpx
+
+    api, app, _stub = consent_client
+    transport = httpx.ASGITransport(app=api)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://test"
+    ) as http:
+        await create_workspace(http, "ws-m", "allow")
+        real_read = app.state.model.get_workspace
+        calls = {"n": 0}
+
+        async def vanishing(ref):
+            calls["n"] += 1
+            if calls["n"] >= 2:
+                return None  # deleted between the read and the lock
+            return await real_read(ref)
+
+        monkeypatch.setattr(app.state.model, "get_workspace", vanishing)
+        reply = await put_policy(http, "ws-m", {"mode": "interactive"})
+        assert reply.status_code == 404

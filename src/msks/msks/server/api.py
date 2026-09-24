@@ -2316,29 +2316,43 @@ def build_api(app) -> FastAPI:
                 f"got {body.mode!r}",
             )
         try:
+            parse_allowlist(body.allow_list or [])
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        async with move_lock(app, workspace_id):
+            # Re-read under the lock (#280 review, round 2): the
+            # specs an omitted allow_list keeps and the facts a
+            # failed swap rolls back to both come from THIS row —
+            # a pre-lock copy can be a posture a concurrent switch
+            # already superseded.
+            row = await app.state.model.get_workspace(workspace_id)
+            if row is None:
+                raise HTTPException(
+                    status_code=404, detail="no such workspace"
+                )
+            # The under-lock specs: an omitted allowlist keeps the
+            # fresh row's list (a bad explicit list already answered
+            # its 400 above, so this parse cannot fail).
             specs = (
                 parse_allowlist(body.allow_list)
                 if body.allow_list is not None
                 else tuple(row.get("egress_allowlist") or ())
             )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from None
-        if (
-            body.mode == MODE_STATIC
-            and not specs
-            and not body.confirm_empty
-            and not await egress_consent_allowed(app, workspace_id)
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "static mode with nothing effectively allowed "
-                    "answers every name NXDOMAIN (an offline "
-                    "workspace); pass allow_list entries, or set "
-                    "confirm_empty to switch anyway"
-                ),
-            )
-        async with move_lock(app, workspace_id):
+            if (
+                body.mode == MODE_STATIC
+                and not specs
+                and not body.confirm_empty
+                and not await egress_consent_allowed(app, workspace_id)
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "static mode with nothing effectively allowed "
+                        "answers every name NXDOMAIN (an offline "
+                        "workspace); pass allow_list entries, or set "
+                        "confirm_empty to switch anyway"
+                    ),
+                )
             wrote = await app.state.model.set_egress_policy(
                 workspace_id, body.mode, body.allow_list
             )
@@ -2357,8 +2371,8 @@ def build_api(app) -> FastAPI:
             except BaseException:
                 # The swap failed whole — the old table still
                 # enforces — so the row must not claim a posture
-                # the workspace does not run: the old facts go
-                # back before the refusal surfaces (#280 review).
+                # the workspace does not run: the under-lock row's
+                # facts go back before the refusal surfaces.
                 with contextlib.suppress(Exception):
                     await app.state.model.set_egress_policy(
                         workspace_id,
