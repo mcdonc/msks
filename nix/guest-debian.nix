@@ -1198,6 +1198,12 @@ let
           done
           interp=$(readelf -l "$bin" \
             | awk '/interpreter/{gsub(/[\[\]]/,"",$NF); print $NF}')
+          # A static pin would leave interp empty and pass the
+          # check below vacuously — the deb's shape changed, fail
+          # the build and restage deliberately.
+          [ -n "$interp" ] \
+            || { echo "$name has no interpreter; the deb went static" \
+                 >&2; exit 1; }
           test -e "$root""$interp" \
             || { echo "$name loader $interp absent from the tree" >&2; \
                  exit 1; }
@@ -1325,6 +1331,12 @@ let
         cli="$root"/usr/local/lib/node_modules/pi-coding-agent/dist/bundle/cli.js
         [ "$(head -n 1 "$cli")" = '#!/usr/bin/env node' ] \
           || { echo "pi cli.js lost its env-node shebang" >&2; exit 1; }
+        # npm's launcher is the same class — a JS file behind an
+        # env-node shebang — and comes straight from the Node
+        # tarball, so the same byte-exact contract pins it cheaply.
+        npmcli="$root"/usr/local/lib/node_modules/npm/bin/npm-cli.js
+        [ "$(head -n 1 "$npmcli")" = '#!/usr/bin/env node' ] \
+          || { echo "npm-cli.js lost its env-node shebang" >&2; exit 1; }
         ldso="$root"/lib64/ld-linux-x86-64.so.2
         libpath="$root"/usr/lib/x86_64-linux-gnu
         run_tool() { "$ldso" --library-path "$libpath" "$@"; }

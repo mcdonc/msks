@@ -222,11 +222,11 @@ A workspace that already booted keeps the toolchain it booted
 with; a rebuilt image serves the new pins to the next workspace.
 
 pi's own tool dependencies ride the image too (#272): pi resolves
-`fd` and `rg` from PATH on first start and downloads each from
-GitHub releases when it finds neither — a download a fresh
-workspace's first agent start would otherwise wait on, behind the
-egress interceptor and the GitHub API quota every workspace behind
-one address shares. The Debian image stages Debian's own `fd-find`
+`fd` and `rg` from PATH — at interactive startup and again at
+first tool use — and downloads each from GitHub releases when it
+finds neither: a download a fresh workspace's first agent start
+would otherwise wait on, behind the egress interceptor and the
+GitHub API quota every workspace behind one address shares. The Debian image stages Debian's own `fd-find`
 and `ripgrep` debs (`fdFindDeb` and `ripgrepDeb` in
 `nix/guest-debian.nix`, pinned by pool URL and checksum like the
 kernel and rsync debs) with the same linkage guard rsync gets;
@@ -270,17 +270,18 @@ tmpfiles-planted extension staging described above.
 
 Each image build also executes every staged launcher and fails on
 one that does not run (#272): the Debian build runs `node`, `pi`,
-`herdr`, `claude`, `fdfind`, and `rg` through the tree's own
-dynamic loader and libraries — the same world the guest execs them
-in, because the build sandbox carries no `/usr/bin/env` or
-`/lib64`; pi's published `#!/usr/bin/env node` shebang, which that
-sandbox cannot resolve, is asserted byte-exact instead. The NixOS
-build runs the profile binaries directly. The first image that
-shipped the toolchain passed every presence check while `pi` could
-not start: the npm build had rewritten cli.js's shebang to a
-build-time Nix store node no guest carries, and `test -x` on a
-symlink says nothing about the interpreter behind it. The launcher
-executions turn that class of breakage into a build failure.
+`claude`, `fdfind`, and `rg` through the tree's own dynamic loader
+and libraries — the same world the guest execs them in, because
+the build sandbox carries no `/usr/bin/env` or `/lib64` — while
+`herdr`, a static binary, runs as-is; pi's and npm's published
+`#!/usr/bin/env node` shebangs, which that sandbox cannot resolve,
+are asserted byte-exact instead. The NixOS build runs the profile
+binaries directly. The first image that shipped the toolchain
+passed every presence check while `pi` could not start: the npm
+build had rewritten cli.js's shebang to a build-time Nix store
+node no guest carries, and `test -x` on a symlink says nothing
+about the interpreter behind it. The launcher executions turn
+that class of breakage into a build failure.
 
 ### Building your own
 
