@@ -42,6 +42,11 @@ dependencies = [
   # with a named refusal, never silently.
   "netfilterqueue>=0.9",
   "textual>=8.2.8",
+  # The listings' and help's measured columns (#271): textual
+  # already ships it, but the CLI imports it directly on every
+  # path — the dependency is msks's own, declared here so a
+  # textual pin change cannot silently drop it.
+  "rich>=13",
 ]
 
 [dependency-groups]

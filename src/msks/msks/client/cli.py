@@ -45,15 +45,16 @@ from .rest import (
 )
 from .rsync import run_workspace_rsync
 from .ssh import data_dir, run_workspace_ssh
+from .tabular import command_parser, listing_text
 from .tui.consent_app import run_consent_tui
 
 
-def format_workspace(row: dict) -> str:
-    """One listing line: name, id, status, image hash, host."""
+def workspace_cells(row: dict) -> list[str]:
+    """One listing row's cells: name, id, status, image hash, host."""
     image = (row.get("image_hash") or "-")[:12]
     host = row.get("host") or "-"
     name = row.get("name") or "-"
-    return f"{name:<20} {row['id']:<12} {row['status']:<9} {image:<13} {host}"
+    return [name, row["id"], row["status"], image, host]
 
 
 def display_name(row: dict) -> str:
@@ -63,10 +64,13 @@ def display_name(row: dict) -> str:
 
 
 def render_ls(rows: list[dict], as_json: bool) -> str:
-    """The whole listing: aligned lines, or one JSON document."""
+    """The whole listing: the aligned table, or one JSON document."""
     if as_json:
         return json.dumps(rows, indent=2)
-    return "\n".join(format_workspace(row) for row in rows)
+    return listing_text(
+        ["name", "id", "status", "image", "host"],
+        [workspace_cells(row) for row in rows],
+    )
 
 
 def health_image(health: object) -> str | None:
@@ -506,22 +510,25 @@ def render_storage(
     cost/ceiling table, catalog costs — or one JSON document."""
     if as_json:
         return json.dumps(report, indent=2)
-    lines = [state_line(report["state"])]
-    lines.extend(workspace_lines(report["workspaces"], workspace_id))
-    lines.extend(image_lines(report["images"]))
-    return "\n".join(lines)
+    parts = [state_line(report["state"])]
+    workspaces = workspace_table(narrowed(report["workspaces"], workspace_id))
+    if workspaces:
+        parts.append(workspaces)
+    if images := image_cost_table(report["images"]):
+        parts.append(images)
+    return "\n\n".join(parts)
 
 
-def format_storage_row(ws: dict) -> str:
-    """One workspace line: label, both cost/ceiling cells, total
-    cost — the name is the human key (#246), the id rides in the
-    ``--json`` document."""
-    return (
-        f"{display_name(ws):<24} "
-        f"{cost_pair(ws['root_bytes'], ws['root_mib']):<20} "
-        f"{cost_pair(ws['home_bytes'], ws['home_mib']):<20} "
-        f"{human_bytes(ws['root_bytes'] + ws['home_bytes'])}"
-    )
+def storage_cells(ws: dict) -> list[str]:
+    """One workspace row's cells: label, both cost/ceiling cells,
+    total cost — the name is the human key (#246), the id rides in
+    the ``--json`` document."""
+    return [
+        display_name(ws),
+        cost_pair(ws["root_bytes"], ws["root_mib"]),
+        cost_pair(ws["home_bytes"], ws["home_mib"]),
+        human_bytes(ws["root_bytes"] + ws["home_bytes"]),
+    ]
 
 
 def narrowed(workspaces: list[dict], ref: str | None) -> list[dict]:
@@ -532,16 +539,12 @@ def narrowed(workspaces: list[dict], ref: str | None) -> list[dict]:
     return [ws for ws in workspaces if ref in (ws["id"], ws.get("name"))]
 
 
-def workspace_lines(workspaces: list[dict], ref: str | None) -> list[str]:
-    """The per-workspace cost/ceiling table — empty when none match."""
-    matches = narrowed(workspaces, ref)
-    if not matches:
-        return []
-    header = (
-        f"{'workspace':<24} {'root cost/ceiling':<20} "
-        f"{'home cost/ceiling':<20} cost"
+def workspace_table(workspaces: list[dict]) -> str:
+    """The per-workspace cost/ceiling table — empty when none."""
+    return listing_text(
+        ["workspace", "root cost/ceiling", "home cost/ceiling", "cost"],
+        [storage_cells(ws) for ws in workspaces],
     )
-    return ["", header, *[format_storage_row(ws) for ws in matches]]
 
 
 def imported_cell(image: dict) -> str:
@@ -563,34 +566,24 @@ def imported_cell(image: dict) -> str:
     return "-"
 
 
-def image_row(image: dict, stamped: bool) -> str:
-    """One catalog line: ref, its import time when the report
-    carries one (#186), and the cost."""
-    ref = f"{image['name']}:{image['version']}"
-    if stamped:
-        return (
-            f"{ref:<24} {imported_cell(image):<16} "
-            f"{human_bytes(image['bytes'])}"
-        )
-    return f"{ref:<24} {human_bytes(image['bytes'])}"
-
-
-def image_lines(images: list[dict]) -> list[str]:
-    """The catalog cost table — empty when the catalog is empty.
+def image_cost_table(images: list[dict]) -> str:
+    """The catalog cost table.
 
     Rows that carry their import time (#186) show it, so entries
     sharing a reference read as distinct; a daemon predating
     stamps keeps the two-column table.
     """
-    if not images:
-        return []
     stamped = any(image.get("imported") for image in images)
-    header = (
-        f"{'image':<24} {'imported':<16} cost"
-        if stamped
-        else f"{'image':<24} cost"
-    )
-    return ["", header, *[image_row(image, stamped) for image in images]]
+    headers = ["image", "imported", "cost"] if stamped else ["image", "cost"]
+    rows = [
+        [
+            f"{image['name']}:{image['version']}",
+            *([imported_cell(image)] if stamped else []),
+            human_bytes(image["bytes"]),
+        ]
+        for image in images
+    ]
+    return listing_text(headers, rows)
 
 
 def cmd_storage(
@@ -650,19 +643,22 @@ def resize_message(row: dict, body: dict) -> str:
     return line
 
 
-def format_image(row: dict) -> str:
-    """One catalog line: ref, short hash, default flag, kernel."""
+def image_cells(row: dict) -> list[str]:
+    """One catalog row's cells: ref, short hash, default flag, kernel."""
     flag = "default" if row["default"] else "-"
     kernel = f"{row['kernel_version'] or '-'} ({row['kernel_format'] or '-'})"
     ref = f"{row['name']}:{row['version']}"
-    return f"{ref:<24} {row['hash'][:12]:<13} {flag:<8} {kernel}"
+    return [ref, row["hash"][:12], flag, kernel]
 
 
 def render_image_ls(rows: list[dict], as_json: bool) -> str:
-    """The whole catalog: aligned lines, or one JSON document."""
+    """The whole catalog: the aligned table, or one JSON document."""
     if as_json:
         return json.dumps(rows, indent=2)
-    return "\n".join(format_image(row) for row in rows)
+    return listing_text(
+        ["ref", "hash", "default", "kernel"],
+        [image_cells(row) for row in rows],
+    )
 
 
 async def fetch_images(url, token, transport) -> list[dict]:
@@ -710,20 +706,27 @@ async def describe_image(url, token, ref, transport) -> dict:
     return row
 
 
-def info_lines(row: dict) -> list[str]:
-    """The full record: boot facts the listing carries."""
+def info_pairs(row: dict) -> list[list[str]]:
+    """The record's label/value pairs: boot facts the listing
+    carries."""
     default = "yes" if row["default"] else "no"
     kernel = f"{row['kernel_version'] or '-'} ({row['kernel_format'] or '-'})"
     provisioner = row.get("provisioner") or "- (none declared)"
     return [
-        f"ref      {row['name']}:{row['version']}",
-        f"hash     {row['hash']}",
-        f"kernel   {kernel}",
-        f"cmdline  {row['cmdline']}",
-        f"console  vsock port {row['vsock_shell_port']}",
-        f"seed     provisioner {provisioner}",
-        f"default  {default}",
+        ("ref", f"{row['name']}:{row['version']}"),
+        ("hash", row["hash"]),
+        ("kernel", kernel),
+        ("cmdline", row["cmdline"]),
+        ("console", f"vsock port {row['vsock_shell_port']}"),
+        ("seed", f"provisioner {provisioner}"),
+        ("default", default),
     ]
+
+
+def info_lines(row: dict) -> list[str]:
+    """The full record, the label column aligned the same way every
+    listing aligns (#271)."""
+    return listing_text(None, info_pairs(row)).splitlines()
 
 
 def resolve_image_ref(ref: str, rows: list[dict]) -> dict:
@@ -939,6 +942,17 @@ def cmd_secret_mint(
     return 0
 
 
+def secret_cells(row: dict) -> list[str]:
+    """One placeholder row's cells: id, workspace/name,
+    destinations, expiry."""
+    return [
+        str(row["id"]),
+        f"{row['workspace_id']}/{row['name']}",
+        ", ".join(row["dests"]),
+        row["expires_at"] or "never",
+    ]
+
+
 def cmd_secret_ls(as_json: bool = False, transport=None) -> int:
     """``msks secret ls``: every placeholder, no sentinels."""
     rows = asyncio.run(
@@ -953,12 +967,12 @@ def cmd_secret_ls(as_json: bool = False, transport=None) -> int:
     if as_json:
         print(json.dumps(rows, indent=2))
         return 0
-    for row in rows:
-        expires = row["expires_at"] or "never"
-        print(
-            f"{row['id']:>4}  {row['workspace_id']}/{row['name']}  "
-            f"{', '.join(row['dests'])}  expires {expires}"
-        )
+    text = listing_text(
+        ["id", "workspace", "destinations", "expires"],
+        [secret_cells(row) for row in rows],
+    )
+    if text:
+        print(text)
     return 0
 
 
@@ -1314,11 +1328,17 @@ def consent_fields(args: argparse.Namespace) -> dict:
 
 def build_parser() -> argparse.ArgumentParser:
     """The ``msks`` command line."""
-    parser = argparse.ArgumentParser(
+    parser = command_parser(
         prog="msks",
         description="msks client: workspace microvms over the daemon API",
     )
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(
+        dest="command",
+        required=True,
+        title="commands",
+        metavar="<command>",
+        parser_class=command_parser,
+    )
     listing = sub.add_parser("ls", help="list workspaces on the daemon")
     listing.add_argument(
         "--json", action="store_true", help="one JSON document"
@@ -1435,7 +1455,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="egress consent: decide, watch, and inspect (#69)",
     )
     egress_sub = egress_cmd.add_subparsers(
-        dest="egress_command", required=True
+        dest="egress_command",
+        required=True,
+        title="commands",
+        metavar="<command>",
+        parser_class=command_parser,
     )
     egress_rules = egress_sub.add_parser(
         "rules", help="the in-effect verdicts for a workspace"
@@ -1619,7 +1643,13 @@ def build_parser() -> argparse.ArgumentParser:
     image = sub.add_parser(
         "image", help="manage the daemon's image catalog (#65)"
     )
-    image_sub = image.add_subparsers(dest="image_command", required=True)
+    image_sub = image.add_subparsers(
+        dest="image_command",
+        required=True,
+        title="commands",
+        metavar="<command>",
+        parser_class=command_parser,
+    )
     image_ls = image_sub.add_parser("ls", help="list catalog images")
     image_ls.add_argument(
         "--json", action="store_true", help="one JSON document"
@@ -1664,7 +1694,13 @@ def build_parser() -> argparse.ArgumentParser:
     home = sub.add_parser(
         "home", help="move a workspace's /home volume through the daemon (#80)"
     )
-    home_sub = home.add_subparsers(dest="home_command", required=True)
+    home_sub = home.add_subparsers(
+        dest="home_command",
+        required=True,
+        title="commands",
+        metavar="<command>",
+        parser_class=command_parser,
+    )
     home_export = home_sub.add_parser(
         "export", help="download a workspace's /home volume"
     )
@@ -1692,7 +1728,13 @@ def build_parser() -> argparse.ArgumentParser:
         "secret",
         help="placeholder secrets: mint, list, revoke, renew, check",
     )
-    secret_sub = secret.add_subparsers(dest="secret_command", required=True)
+    secret_sub = secret.add_subparsers(
+        dest="secret_command",
+        required=True,
+        title="commands",
+        metavar="<command>",
+        parser_class=command_parser,
+    )
     secret_mint = secret_sub.add_parser(
         "mint", help="mint a placeholder for one workspace"
     )

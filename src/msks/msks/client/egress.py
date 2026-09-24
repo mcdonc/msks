@@ -7,6 +7,7 @@ import urllib.parse
 import websockets
 
 from .rest import api_client, env_token, env_url, request, ssl_context
+from .tabular import listing_text
 
 DURATIONS = ("once", "5m", "15m", "tilrestart", "forever")
 
@@ -33,28 +34,61 @@ def dest_label(row: dict) -> str:
     return f"{host}:{row['dest_port']}"
 
 
-def request_line(request: dict) -> str:
-    """One pending request, one line. The id prints in full — it is
-    what ``msks egress decide`` takes."""
-    row = request["request"]
-    return (
-        f"{row['id']}  {dest_label(row):40s}  "
-        f"{row['decision']}  {row['requested_at']:.0f}"
+def request_cells(row: dict) -> list[str]:
+    """One request row's cells. The id prints in full — it is what
+    ``msks egress decide`` takes."""
+    return [
+        row["id"],
+        dest_label(row),
+        row["decision"],
+        row.get("duration") or "-",
+        f"{row['requested_at']:.0f}",
+    ]
+
+
+def requests_text(rows: list[dict]) -> str:
+    """The consent listing as one aligned table (#271)."""
+    return listing_text(
+        ["id", "destination", "decision", "duration", "requested at"],
+        [request_cells(row) for row in rows],
     )
 
 
+def request_line(request: dict) -> str:
+    """One pending request, one line — the watch stream's shape.
+    The id prints in full — it is what ``msks egress decide``
+    takes."""
+    row = request["request"]
+    line = (
+        f"{row['id']}  {dest_label(row)}  {row['decision']}  "
+        f"{row['requested_at']:.0f}"
+    )
+    return line
+
+
+def verdict_rows(rules: dict) -> list[list[str]]:
+    """The in-effect verdict rows: verdict, destination, duration."""
+    return [
+        [verdict, dest_label(row), row.get("duration") or "-"]
+        for verdict, section in (
+            ("allowed", rules["allowed"]),
+            ("denied", rules["denied"]),
+        )
+        for row in section
+    ]
+
+
 def rules_line(rules: dict) -> str:
-    """The rules view, one block."""
+    """The rules view, one block: heading, allowlist, then the
+    verdict rows as one aligned table (#271)."""
     lines = [f"workspace {rules['workspace_id']} (mode {rules['mode']})"]
     if rules["allow_list"]:
         lines.append("allowlist: " + ", ".join(rules["allow_list"]))
-    for verdict, rows in (
-        ("allowed", rules["allowed"]),
-        ("denied", rules["denied"]),
-    ):
-        for row in rows:
-            duration = row.get("duration") or "-"
-            lines.append(f"{verdict:7s} {dest_label(row):40s} {duration}")
+    rows = verdict_rows(rules)
+    if rows:
+        lines.append(
+            listing_text(["verdict", "destination", "duration"], rows)
+        )
     return "\n".join(lines)
 
 
@@ -77,12 +111,9 @@ async def run_requests(
         path += f"?decision={decision}"
     async with api_client(env_url(), env_token(), transport) as client:
         rows = await request(client, "GET", path)
-    for row in rows:
-        print(
-            f"{row['id']}  {dest_label(row):40s}  {row['decision']:8s}"
-            f"  {row.get('duration') or '-':10s}  "
-            f"{row['requested_at']:.0f}"
-        )
+    text = requests_text(rows)
+    if text:
+        print(text)
     return 0
 
 
