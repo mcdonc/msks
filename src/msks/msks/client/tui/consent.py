@@ -31,6 +31,10 @@ IGNORED = "ignore"  # malformed / unknown frame; state untouched
 DURATIONS = ("once", "5m", "15m", "tilrestart", "forever")
 DURATION_DEFAULT = "tilrestart"
 
+#: The egress modes a mode switch offers (#280), display order —
+#: the same CLI-isolation duplication as the durations.
+EGRESS_MODES = ("allow", "static", "interactive")
+
 #: Timed durations in seconds (a mirror of the daemon's table);
 #: ``once`` is consumed by its connection and ``tilrestart`` /
 #: ``forever`` have no fixed expiry, so none of those countdown.

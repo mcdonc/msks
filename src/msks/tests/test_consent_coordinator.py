@@ -701,3 +701,31 @@ async def test_hold_on_a_missing_workspace_denies(engine_app) -> None:
     assert verdict["decision"] == "deny"
     assert verdict["reason"] == "gone"
     assert await app.state.model.egress_consent.list_requests("ghost-ws") == []
+
+
+async def test_fail_close_workspace_closes_only_its_holds(engine_app) -> None:
+    """The mode switch's hold teardown (#280): every hold the
+    workspace owns answers deny with the caller's reason, its row
+    expires, and another workspace's hold — and the workspace's
+    session memory and tilrestart verdicts — stay untouched (those
+    die with a stop, not a switch)."""
+    app, _frames, _queue = engine_app
+    engine = app.state.consent
+    app.state.settings.net.consent_timeout_s = 30.0
+    app.state.deciders.register(1, "ws-interactive")
+    held = await engine.hold("ws-interactive", "switch.example", 443)
+    foreign = object()
+    engine._holds["foreign"] = {
+        "future": asyncio.get_running_loop().create_future(),
+        "workspace_id": "ws-elsewhere",
+        "task": asyncio.create_task(asyncio.sleep(3600)),
+    }
+    closed = await engine.fail_close_workspace(
+        "ws-interactive", reason="mode switch"
+    )
+    assert closed == 1
+    assert (await verdict_of(held))["reason"] == "mode switch"
+    assert "foreign" in engine._holds
+    engine._holds["foreign"]["task"].cancel()
+    del engine._holds["foreign"]
+    del foreign

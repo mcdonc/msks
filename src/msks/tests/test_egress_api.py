@@ -705,3 +705,185 @@ async def test_requests_limit_bounds_the_page(consent_client) -> None:
             headers=auth(),
         )
         assert len(reply.json()) == 2
+
+
+# --- the mode switch (#280) -------------------------------------------
+
+
+class StubNet:
+    """The manager seam the switch endpoint drives, recorded."""
+
+    def __init__(self, applied: bool) -> None:
+        self.applied = applied
+        self.calls: list[tuple] = []
+
+    async def apply_policy(self, workspace_id, policy):
+        self.calls.append((workspace_id, policy))
+        return self.applied
+
+    async def start(self) -> None:
+        return None
+
+    async def stop(self) -> None:
+        return None
+
+
+async def put_policy(http, workspace_id: str, body: dict):
+    return await http.put(
+        f"/api/v1/workspaces/{workspace_id}/egress/policy",
+        json=body,
+        headers=auth(),
+    )
+
+
+async def test_mode_switch_updates_the_row(consent_client) -> None:
+    import httpx
+
+    api, app, _stub = consent_client
+    transport = httpx.ASGITransport(app=api)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://test"
+    ) as http:
+        await create_workspace(http, "ws-m", "interactive", [".a.de"])
+        reply = await put_policy(
+            http, "ws-m", {"mode": "static", "allow_list": [".b.de"]}
+        )
+        assert reply.status_code == 200, reply.text
+        assert reply.json()["mode"] == "static"
+        assert reply.json()["applied"] is False  # not running: next boot
+        row = await app.state.model.get_workspace("ws-m")
+        assert row["egress_mode"] == "static"
+        assert row["egress_allowlist"] == [".b.de"]
+        rules = await http.get(
+            "/api/v1/workspaces/ws-m/egress", headers=auth()
+        )
+        assert rules.json()["allow_list"] == [".b.de"]
+
+
+async def test_mode_switch_keeps_an_omitted_allowlist(consent_client) -> None:
+    import httpx
+
+    api, app, _stub = consent_client
+    transport = httpx.ASGITransport(app=api)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://test"
+    ) as http:
+        await create_workspace(http, "ws-m", "static", [".a.de"])
+        reply = await put_policy(http, "ws-m", {"mode": "interactive"})
+        assert reply.status_code == 200
+        row = await app.state.model.get_workspace("ws-m")
+        assert row["egress_mode"] == "interactive"
+        assert row["egress_allowlist"] == [".a.de"]
+
+
+async def test_mode_switch_validates(consent_client) -> None:
+    import httpx
+
+    api, _app, _stub = consent_client
+    transport = httpx.ASGITransport(app=api)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://test"
+    ) as http:
+        await create_workspace(http, "ws-m", "allow")
+        reply = await put_policy(http, "ws-m", {"mode": "permissive"})
+        assert reply.status_code == 400
+        assert "egress_mode must be one of" in reply.json()["detail"]
+        reply = await put_policy(
+            http, "ws-m", {"mode": "static", "allow_list": ["bad spec!"]}
+        )
+        assert reply.status_code == 400
+        assert "invalid egress allowlist entries" in reply.json()["detail"]
+        reply = await put_policy(http, "ws-missing", {"mode": "static"})
+        assert reply.status_code == 404
+
+
+async def test_mode_switch_static_empty_needs_confirmation(
+    consent_client,
+) -> None:
+    import httpx
+
+    api, app, _stub = consent_client
+    transport = httpx.ASGITransport(app=api)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://test"
+    ) as http:
+        await create_workspace(http, "ws-m", "allow")
+        reply = await put_policy(http, "ws-m", {"mode": "static"})
+        assert reply.status_code == 400
+        assert "confirm_empty" in reply.json()["detail"]
+        # The confirmed switch runs; the row records the posture.
+        reply = await put_policy(
+            http, "ws-m", {"mode": "static", "confirm_empty": True}
+        )
+        assert reply.status_code == 200
+        row = await app.state.model.get_workspace("ws-m")
+        assert row["egress_mode"] == "static"
+
+
+async def test_mode_switch_static_passes_over_allowed_verdicts(
+    consent_client,
+) -> None:
+    import httpx
+
+    api, app, _stub = consent_client
+    transport = httpx.ASGITransport(app=api)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://test"
+    ) as http:
+        await create_workspace(http, "ws-m", "interactive")
+        row = await app.state.model.get_workspace("ws-m")
+        request = await app.state.model.egress_consent.create_request(
+            row["id"], "api.example", 443
+        )
+        await app.state.model.egress_consent.decide(
+            request["id"], "allowed", "token", "forever"
+        )
+        # An in-effect allowed verdict is effective egress: the
+        # switch to static needs no allowlist and no confirmation.
+        reply = await put_policy(http, "ws-m", {"mode": "static"})
+        assert reply.status_code == 200, reply.text
+
+
+async def test_mode_switch_live_reports_applied(consent_client) -> None:
+    import httpx
+
+    api, app, _stub = consent_client
+    stub = StubNet(applied=True)
+    app.state.net = stub
+    transport = httpx.ASGITransport(app=api)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://test"
+    ) as http:
+        await create_workspace(http, "ws-m", "allow")
+        reply = await put_policy(
+            http, "ws-m", {"mode": "interactive", "allow_list": [".a.de"]}
+        )
+        assert reply.status_code == 200
+        assert reply.json()["applied"] is True
+        row = await app.state.model.get_workspace("ws-m")
+        workspace_id, policy = stub.calls[0]
+        assert workspace_id == row["id"]  # the ref resolved to the row id
+        assert policy.interactive
+        assert policy.host_specs[0].host == "a.de"
+
+
+async def test_mode_switch_404s_when_the_row_vanishes_under_it(
+    consent_client, monkeypatch
+) -> None:
+    """The model's False (the row left between the ref resolve and
+    the write) maps to the 404, never a 200 over a stale frame."""
+    import httpx
+
+    api, app, _stub = consent_client
+    transport = httpx.ASGITransport(app=api)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://test"
+    ) as http:
+        await create_workspace(http, "ws-m", "allow")
+
+        async def vanished(workspace_id, mode, allowlist):
+            return False
+
+        monkeypatch.setattr(app.state.model, "set_egress_policy", vanished)
+        reply = await put_policy(http, "ws-m", {"mode": "interactive"})
+        assert reply.status_code == 404

@@ -3727,3 +3727,71 @@ def test_cmd_llm_token_explains_a_missing_token(
 
     with pytest.raises(SystemExit, match="--remint"):
         cli.cmd_llm_token("alpha", transport=mock(handler))
+
+
+def test_egress_mode_sends_the_switch(monkeypatch, capsys) -> None:
+    """`msks egress mode` (#280): the repeatable --allow entries
+    ride as the replacement allowlist, the offline confirmation
+    rides only when given, and the reply's applied flag picks the
+    effect line."""
+    client_env(monkeypatch)
+    seen = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["method"] = req.method
+        seen["path"] = req.url.path
+        seen["body"] = json.loads(req.read())
+        return httpx.Response(
+            200,
+            json={
+                "workspace_id": "ws1",
+                "mode": "static",
+                "allow_list": [".a.de"],
+                "applied": False,
+            },
+        )
+
+    rc = cli.main(
+        [
+            "egress",
+            "mode",
+            "ws1",
+            "static",
+            "--allow",
+            ".a.de",
+        ],
+        transport=mock(handler),
+    )
+    assert rc == 0
+    assert seen["method"] == "PUT"
+    assert seen["path"].endswith("/egress/policy")
+    assert seen["body"] == {"mode": "static", "allow_list": [".a.de"]}
+    out = capsys.readouterr().out
+    assert "mode static (takes effect at next start)" in out
+
+    def live(req: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(req.read())
+        return httpx.Response(
+            200,
+            json={
+                "workspace_id": "ws1",
+                "mode": "interactive",
+                "applied": True,
+            },
+        )
+
+    rc = cli.main(
+        ["egress", "mode", "ws1", "interactive", "--offline"],
+        transport=mock(live),
+    )
+    assert rc == 0
+    assert seen["body"] == {"mode": "interactive", "confirm_empty": True}
+    assert "mode interactive (in effect now)" in capsys.readouterr().out
+
+
+def test_egress_mode_rejects_an_unknown_mode(monkeypatch) -> None:
+    from msks.client import egress as egress_mod
+
+    client_env(monkeypatch)
+    with pytest.raises(SystemExit, match="mode must be one of"):
+        asyncio.run(egress_mod.run_mode("ws1", "permissive", None))

@@ -177,6 +177,13 @@ class Interceptor:
 
     # --- lifecycle ---------------------------------------------------
 
+    def armed_port(self, workspace_id: str) -> int | None:
+        """The armed listener's port for a workspace, None while
+        disarmed (#280): a live table swap re-applies the chain
+        with the redirect half exactly as it stands."""
+        armed = self._armed.get(workspace_id)
+        return None if armed is None else armed.port
+
     async def refresh(self, workspace_id: str) -> None:
         """Re-evaluate one workspace's armed state — after any
         placeholder change (mint, renew, revoke, expiry) or as the

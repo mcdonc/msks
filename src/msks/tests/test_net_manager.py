@@ -1156,3 +1156,221 @@ async def test_a_boot_survives_an_unbindable_llm_address(
     assert attachment is not None
     assert "did not start" in capsys.readouterr().out
     await manager.detach("ws-a")
+
+
+# --- the live mode switch (#280) --------------------------------------
+
+
+def applied_rulesets(nft_log: Path) -> list[str]:
+    """Every ``-f -`` application's stdin, in order — the last is
+    the table the stub now enforces."""
+    stdin = nft_log.with_name(nft_log.name + ".stdin").read_text()
+    blocks = stdin.split("--- -f -\n")
+    return [block for block in blocks if block.strip()]
+
+
+async def held_request(app, workspace_id: str, host: str) -> dict:
+    """One live hold in the engine (the switch-out path's probe)."""
+    return await app.state.model.egress_consent.create_request(
+        workspace_id, host, 443
+    )
+
+
+async def test_apply_policy_switches_a_live_workspace_into_interactive(
+    gated_app,
+) -> None:
+    app, consumers, nft_log = gated_app
+    await app.state.net.start()
+    from msks.consent.specs import EgressPolicy
+
+    await app.state.net.attach(
+        "ws-i", want=True, policy=EgressPolicy("ws-i", "static", (".a.de",))
+    )
+    switched = await app.state.net.apply_policy(
+        "ws-i", EgressPolicy("ws-i", "interactive", (".a.de",))
+    )
+    assert switched is True
+    # The queue bound before the chain references it (the boot
+    # rule, run against a live tap) and the applied ruleset carries
+    # the queue gate.
+    assert consumers and consumers[0].started
+    last = applied_rulesets(nft_log)[-1]
+    assert f"queue num {consumers[0].queue_num}" in last
+    services = app.state.net._services["ws-i"]
+    assert services.queue_num == consumers[0].queue_num
+    assert services.policy.interactive
+    # The resolver gate flipped with the chain.
+    assert services.gate.policy.interactive
+
+
+async def test_apply_policy_out_of_interactive_fail_closes_and_unbinds(
+    gated_app,
+) -> None:
+    app, consumers, nft_log = gated_app
+    await app.state.net.start()
+    await app.state.net.attach("ws-i", want=True, policy=interactive_policy())
+    from msks.consent.specs import EgressPolicy
+
+    request = await held_request(app, "ws-i", "203.0.113.9")
+    hold = app.state.consent.register_hold(request)
+    switched = await app.state.net.apply_policy(
+        "ws-i", EgressPolicy("ws-i", "allow", ())
+    )
+    assert switched is True
+    # The hold answered deny (reason names the switch), the row
+    # expired, and the consumer unbound after the queue-less table
+    # applied — the last ruleset carries no queue gate.
+    assert hold.result()["decision"] == "deny"
+    assert hold.result()["reason"] == "mode switch"
+    row = await app.state.model.egress_consent.get_request(request["id"])
+    assert row["decision"] == "expired"
+    assert consumers[0].stopped
+    last = applied_rulesets(nft_log)[-1]
+    assert "queue num" not in last
+    services = app.state.net._services["ws-i"]
+    assert services.consumer is None
+    assert services.gate.policy.mode == "allow"
+
+
+async def test_apply_policy_carries_elements_between_gated_modes(
+    gated_app, monkeypatch
+) -> None:
+    app, _consumers, nft_log = gated_app
+    await app.state.net.start()
+    await app.state.net.attach("ws-i", want=True, policy=interactive_policy())
+    from msks.consent.specs import EgressPolicy
+
+    async def dumped(settings, workspace_id):
+        return {"allows_any": [("10.1.2.3", 60)]}
+
+    monkeypatch.setattr(manager_mod.nft, "dump_consent_elements", dumped)
+    await app.state.net.apply_policy(
+        "ws-i", EgressPolicy("ws-i", "static", (".a.de",))
+    )
+    last = applied_rulesets(nft_log)[-1]
+    assert "add element inet" in last and "allows_any" in last
+    # A switch to allow carries nothing: the allow-mode table has
+    # no consent sets, and an element statement naming an absent
+    # set would fail the whole transaction.
+    await app.state.net.apply_policy("ws-i", EgressPolicy("ws-i", "allow", ()))
+    last = applied_rulesets(nft_log)[-1]
+    assert "add element" not in last
+
+
+async def test_apply_policy_into_gated_replays_address_verdicts(
+    gated_app,
+) -> None:
+    app, _consumers, nft_log = gated_app
+    await app.state.net.start()
+    from msks.consent.specs import EgressPolicy
+
+    await app.state.net.attach(
+        "ws-i", want=True, policy=EgressPolicy("ws-i", "allow", ())
+    )
+    # A durable address verdict from the workspace's interactive
+    # past: the fresh sets need it pinned.
+    request = await app.state.model.egress_consent.create_request(
+        "ws-i", "198.51.100.7", 0
+    )
+    await app.state.model.egress_consent.decide(
+        request["id"], "allowed", "token", "forever"
+    )
+    await app.state.net.apply_policy(
+        "ws-i", EgressPolicy("ws-i", "static", (".a.de",))
+    )
+    lines = log_lines(nft_log)
+    assert any(
+        "add element" in line and "allows_any" in line for line in lines
+    )
+
+
+async def test_apply_policy_interactive_to_interactive_keeps_the_consumer(
+    gated_app,
+) -> None:
+    app, consumers, nft_log = gated_app
+    await app.state.net.start()
+    await app.state.net.attach("ws-i", want=True, policy=interactive_policy())
+    from msks.consent.specs import EgressPolicy
+
+    await app.state.net.apply_policy(
+        "ws-i", EgressPolicy("ws-i", "interactive", (".b.de",))
+    )
+    assert len(consumers) == 1  # no second bind; the first still runs
+    assert not consumers[0].stopped
+    last = applied_rulesets(nft_log)[-1]
+    assert ".b.de" not in last  # name specs gate at the resolver...
+    services = app.state.net._services["ws-i"]
+    assert services.policy.host_specs[0].host == "b.de"  # ...not the chain
+    assert services.gate.policy.mode == "interactive"
+
+
+async def test_apply_policy_without_an_attachment_is_row_only(
+    gated_app,
+) -> None:
+    app, _consumers, nft_log = gated_app
+    await app.state.net.start()
+    from msks.consent.specs import EgressPolicy
+
+    before = len(log_lines(nft_log))
+    switched = await app.state.net.apply_policy(
+        "ws-i", EgressPolicy("ws-i", "interactive", ())
+    )
+    assert switched is False
+    assert len(log_lines(nft_log)) == before  # no table touched
+
+
+async def test_allow_mode_boot_skips_the_forever_replay(
+    gated_app,
+) -> None:
+    app, _consumers, nft_log = gated_app
+    await app.state.net.start()
+    from msks.consent.specs import EgressPolicy
+
+    request = await app.state.model.egress_consent.create_request(
+        "ws-i", "198.51.100.7", 0
+    )
+    await app.state.model.egress_consent.decide(
+        request["id"], "allowed", "token", "forever"
+    )
+    await app.state.net.attach(
+        "ws-i", want=True, policy=EgressPolicy("ws-i", "allow", ())
+    )
+    # The allow-mode table carries no consent sets; the boot pins
+    # nothing (reachable only after a live switch left the row in
+    # allow mode carrying forever verdicts).
+    assert not [ln for ln in log_lines(nft_log) if "add element" in ln]
+
+
+async def test_a_failed_swap_unbinds_the_fresh_consumer(
+    gated_app, monkeypatch
+) -> None:
+    """A swap whose transaction fails leaves the old table
+    enforcing and unbinds a consumer the failed chain never
+    referenced — a bound queue no chain points at is a leak
+    (#280)."""
+    from msks.consent.specs import EgressPolicy
+
+    app, consumers, _nft_log = gated_app
+    await app.state.net.start()
+    await app.state.net.attach(
+        "ws-i", want=True, policy=EgressPolicy("ws-i", "static", ())
+    )
+    monkeypatch.setenv("MSKS_TEST_NFT_FAIL_AT", "-f -")
+    try:
+        with pytest.raises(MicrovmError):
+            await app.state.net.apply_policy(
+                "ws-i", EgressPolicy("ws-i", "interactive", ())
+            )
+        # The freshly-bound consumer (abort with a consumer) ...
+        assert consumers[0].started and consumers[0].stopped
+        # ... and a consumer-less switch aborts clean too.
+        with pytest.raises(MicrovmError):
+            await app.state.net.apply_policy(
+                "ws-i", EgressPolicy("ws-i", "allow", ())
+            )
+    finally:
+        monkeypatch.delenv("MSKS_TEST_NFT_FAIL_AT")
+    # The old posture is still recorded: nothing committed.
+    services = app.state.net._services["ws-i"]
+    assert services.consumer is None
+    assert services.policy.mode == "static"

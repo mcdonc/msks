@@ -93,6 +93,7 @@ class Entering:
 def recording(seams: dict, **kw) -> None:
     seams.setdefault("decided", [])
     seams.setdefault("revoked", [])
+    seams.setdefault("modes", [])
 
 
 async def fake_decide(seams, workspace, request_id, decision, duration):
@@ -107,6 +108,14 @@ async def fake_revoke(seams, workspace, request_id):
         raise RuntimeError("daemon away")
 
 
+async def fake_set_mode(
+    seams, workspace, mode, *, confirm_empty: bool = False
+):
+    seams["modes"].append((workspace, mode, confirm_empty))
+    if seams.get("fail_mode"):
+        raise RuntimeError("daemon away")
+
+
 def make_app(factory, hold_timeout: float = 120.0):
     seams: dict = {}
     recording(seams)
@@ -116,6 +125,7 @@ def make_app(factory, hold_timeout: float = 120.0):
         ws_factory=factory,
         decide=lambda *a: fake_decide(seams, *a),
         revoke=lambda *a: fake_revoke(seams, *a),
+        set_mode=lambda *a, **kw: fake_set_mode(seams, *a, **kw),
         reconnect_delays=(0.01, 0.01, 0.01),
     )
     return app, seams
@@ -295,7 +305,7 @@ async def test_the_rules_screen_revokes() -> None:
         from msks.client.tui.consent_app import RulesScreen
 
         empty = consent_mod.ConsentController()
-        app.push_screen(RulesScreen(empty, app.revoke_rule))
+        app.push_screen(RulesScreen(empty, app.revoke_rule, app.switch_mode))
         await wait_for(lambda: type(app.screen).__name__ == "RulesScreen")
         await pilot.press("x")
         await pilot.pause()
@@ -523,8 +533,18 @@ async def test_the_seams_and_entry_point(monkeypatch, capsys) -> None:
         "ok": True,
     }
     await consent_app.rest_revoke("ws", "r1")
+    await consent_app.rest_set_mode("ws", "static")
+    await consent_app.rest_set_mode("ws", "allow", confirm_empty=True)
     assert calls[0][0] == "POST" and calls[0][1].endswith("/r1")
     assert calls[1][0] == "DELETE"
+    # The mode seam PUTs the policy; the confirmation rides only
+    # when set.
+    assert calls[2] == (
+        "PUT",
+        "/api/v1/workspaces/ws/egress/policy",
+        {"mode": "static"},
+    )
+    assert calls[3][2] == {"mode": "allow", "confirm_empty": True}
     # The default factory builds the events connection.
     monkeypatch.setattr(consent_app, "env_url", lambda: "https://d:1")
     monkeypatch.setattr(consent_app, "env_token", lambda: "t")
@@ -1262,3 +1282,125 @@ async def test_a_flight_dying_at_teardown_stays_quiet() -> None:
     gate.set()
     await asyncio.sleep(0.05)
     assert app._rebuild_scheduled is False
+
+
+# --- the mode picker (#280) -------------------------------------------
+
+
+def empty_rules_frame() -> str:
+    """A rules snapshot with nothing effectively allowed: an empty
+    allowlist under a mode that holds nothing allowed."""
+    return json.dumps(
+        {
+            "event": "egress.rules",
+            "data": {
+                "workspace_id": "ws",
+                "mode": "allow",
+                "allow_list": [],
+                "allowed": [],
+                "denied": [],
+            },
+        }
+    )
+
+
+async def test_mode_picker_switches_through_the_seam(monkeypatch) -> None:
+    """`m` opens the picker over the rules screen; a picked mode
+    goes through the set_mode seam with no confirmation when
+    something is effectively allowed (the allowlist is enough)."""
+    factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
+    app, seams = make_app(factory)
+    async with app.run_test() as pilot:
+        await pilot.press("r")
+        await wait_for(lambda: rules_children(app) == 2)
+        await pilot.press("m")
+        await pilot.press("up")  # interactive -> static
+        await pilot.press("enter")
+        await wait_for(lambda: len(seams["modes"]) == 1)
+        assert seams["modes"] == [("ws-dev", "static", False)]
+        app.action_quit_screen()
+
+
+async def test_mode_picker_confirms_an_empty_static_switch(
+    monkeypatch,
+) -> None:
+    """static with nothing effectively allowed asks first: a no
+    decides nothing, a yes sends the confirmed switch
+    (confirm_empty — the daemon's escape from its own refusal)."""
+    factory = FakeFactory([FakeWS([empty_rules_frame()]), FakeWS([])])
+    app, seams = make_app(factory)
+    async with app.run_test() as pilot:
+        await pilot.press("r")
+        await wait_for(lambda: rules_children(app) == 0)
+        await pilot.press("m")
+        await pilot.press("down")  # allow -> static
+        await pilot.press("enter")
+        await pilot.press("n")  # the confirmation: declined
+        await wait_for(
+            lambda: not isinstance(app.screen, consent_app.ConfirmScreen)
+        )
+        assert seams["modes"] == []
+        await pilot.press("m")
+        await pilot.press("down")
+        await pilot.press("enter")
+        await pilot.press("y")  # the confirmation: taken
+        await wait_for(lambda: len(seams["modes"]) == 1)
+        assert seams["modes"] == [("ws-dev", "static", True)]
+        app.action_quit_screen()
+
+
+async def test_mode_picker_escape_cancels(monkeypatch) -> None:
+    """Escape closes the picker deciding nothing."""
+    factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
+    app, seams = make_app(factory)
+    async with app.run_test() as pilot:
+        await pilot.press("r")
+        await wait_for(lambda: rules_children(app) == 2)
+        await pilot.press("m")
+        await pilot.press("escape")
+        await wait_for(
+            lambda: not isinstance(app.screen, consent_app.ModeScreen)
+        )
+        assert seams["modes"] == []
+        app.action_quit_screen()
+
+
+async def test_mode_switch_failure_flashes(monkeypatch) -> None:
+    """A failed switch (the daemon's named refusal among them)
+    flashes on the status line, never crashes the app."""
+    factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
+    app, seams = make_app(factory)
+    seams["fail_mode"] = True
+    async with app.run_test() as pilot:
+        await pilot.press("r")
+        await wait_for(lambda: rules_children(app) == 2)
+        await pilot.press("m")
+        await pilot.press("up")  # interactive -> static
+        await pilot.press("enter")
+        await wait_for(lambda: len(seams["modes"]) == 1)
+        await wait_for(lambda: "mode switch failed" in app_status(app))
+        app.action_quit_screen()
+
+
+def app_status(app) -> str:
+    """The status line's current text."""
+    return str(app.query_one("#status", Static).content)
+
+
+async def test_mode_picker_without_a_snapshot_confirms_static() -> None:
+    """`m` before any rules frame lands: the picker highlights
+    nothing (an unknown current mode), and a static pick with no
+    snapshot asks the offline question — nothing effectively
+    allowed is the reading of no rules at all."""
+    factory = FakeFactory([FakeWS([]), FakeWS([])])
+    app, seams = make_app(factory)
+    async with app.run_test() as pilot:
+        await pilot.press("r")
+        await wait_for(lambda: type(app.screen).__name__ == "RulesScreen")
+        await pilot.press("m")
+        await pilot.press("down")  # allow -> static
+        await pilot.press("enter")
+        await pilot.press("y")  # the confirmation: taken
+        await wait_for(lambda: len(seams["modes"]) == 1)
+        assert seams["modes"] == [("ws-dev", "static", True)]
+        app.action_quit_screen()

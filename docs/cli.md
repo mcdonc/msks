@@ -785,6 +785,10 @@ msks egress requests ws-dev --decision pending
 msks egress decide ws-dev <request-id> allow --duration 5m
 msks egress decide ws-dev <request-id> deny --duration forever
 msks egress revoke ws-dev <request-id>
+msks egress mode ws-dev interactive          # switch the posture (#280);
+msks egress mode ws-dev static --allow .debian.org   # --allow replaces
+msks egress mode ws-dev static --offline     # ... the allowlist (--offline
+                                              # confirms an empty static)
 msks egress watch ws-dev          # stream frames; registers this client as
                                   # a decider (holds wait only while one is
                                   # connected)
@@ -803,6 +807,24 @@ lifetime — replayed at every boot). `revoke` undoes an in-effect
 verdict immediately: the flow rules and the destination's live
 connections drop, and new connections gate again.
 
+`mode` (#280) switches a workspace's posture without recreating
+it. A running workspace swaps live: the whole firewall table
+re-applies in one transaction, established connections survive
+(an attached `msks ssh` session stays up), the resolver flips
+with the chain, and any held request answers deny when the
+switch leaves `interactive`. A stopped workspace builds the new
+posture at its next start — the command's output line says which
+happened. Verdicts carry across switches: an `allow forever`
+granted under `interactive` keeps acting under `static`, so
+switching to `static` freezes the workspace at everything
+approved so far. `--allow SPEC` (repeatable, create's grammar)
+replaces the allowlist; omitted, the workspace keeps its list.
+Switching to `static` with nothing effectively allowed — an
+empty allowlist and no in-effect allowed verdict — is refused
+with a message naming the fix: pass `--allow` entries, or pass
+`--offline` to run the switch anyway (that posture answers every
+name NXDOMAIN — an offline workspace, reachable only by ssh).
+
 ### `msks egress tui` — the decider's screen
 
 The TUI is the interface a human decides from: it registers this
@@ -817,6 +839,12 @@ verdicts through the same endpoints the subcommands use. Keys:
   in-effect verdicts with countdowns, and `x` to revoke the focused
   rule — the row leaves on the daemon's refreshed frame, never
   optimistically); `r` or `Escape` returns.
+- `m` on the rules screen opens the mode picker (#280): picking a
+  mode switches it live through the same endpoint the subcommands
+  use, and the refreshed `egress.rules` frame repaints the header.
+  A pick of `static` with nothing effectively allowed asks first
+  (the offline-workspace confirmation); a declined question
+  decides nothing.
 - `q` quits. A dropped connection reconnects with backoff and
   re-registers (the snapshot re-lands); while disconnected the
   status line says so — the daemon fail-closes new connects, and
@@ -827,13 +855,15 @@ unit-tested; the `watch`/`decide`/`revoke` subcommands remain the
 scripting surface (`watch` prints frames as lines).
 
 The create-time posture (`msks create --egress-mode`, `--allow`)
-is fixed with the workspace: `--egress-mode allow|static|interactive`,
+sets the first mode — `--egress-mode allow|static|interactive`,
 and repeatable `--allow SPEC` entries — a bare host matches the
 apex only, `.host` includes subdomains, `*.host` matches subdomains
 only, `host:port` scopes a port, and `10.0.0.0/8[:port]` names an
 address range. Name entries gate at the daemon's resolver (the one
 the DHCP lease hands the guest); address entries accept in the
-per-VM kernel chain. Switching mode means recreating the workspace.
+per-VM kernel chain. `msks egress mode` switches the posture
+after create (#280); the daemon-wide default new workspaces take
+is `MSKSD_EGRESS_MODE` (`allow` as shipped).
 
 ## `msks key`
 

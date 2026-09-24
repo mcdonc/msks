@@ -1590,6 +1590,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     egress_revoke.add_argument("workspace_id")
     egress_revoke.add_argument("request_id")
+    egress_mode = egress_sub.add_parser(
+        "mode",
+        help="switch the egress posture (#280): live for a running "
+        "workspace, at next start for a stopped one",
+    )
+    egress_mode.add_argument("workspace_id")
+    egress_mode.add_argument(
+        "mode", choices=("allow", "static", "interactive")
+    )
+    egress_mode.add_argument(
+        "--allow",
+        action="append",
+        metavar="SPEC",
+        help="replace the static allowlist with this entry "
+        "(repeatable); omitted, the workspace keeps its list",
+    )
+    egress_mode.add_argument(
+        "--offline",
+        action="store_true",
+        help="confirm the switch to static even with nothing "
+        "effectively allowed (every name NXDOMAINs — an offline "
+        "workspace)",
+    )
     egress_tui = egress_sub.add_parser(
         "tui",
         help="the consent decider TUI (#195): live holds, verdicts, rules",
@@ -2127,6 +2150,15 @@ def egress_command_table(args: argparse.Namespace, transport) -> dict:
         "revoke": lambda: asyncio.run(
             egress_mod.run_revoke(
                 args.workspace_id, args.request_id, transport=transport
+            )
+        ),
+        "mode": lambda: asyncio.run(
+            egress_mod.run_mode(
+                args.workspace_id,
+                args.mode,
+                args.allow,
+                args.offline,
+                transport=transport,
             )
         ),
         "watch": lambda: asyncio.run(

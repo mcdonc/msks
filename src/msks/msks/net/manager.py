@@ -99,11 +99,15 @@ class NetAttachment:
 @dataclass
 class NetServices:
     """One workspace's live DHCP + DNS (+ consent consumer) tasks,
-    and the firewall shape a table swap re-applies (#199)."""
+    and the firewall shape a table swap re-applies (#199). The
+    gate is the resolver's live policy cell: a mode switch (#280)
+    rewrites it in the same step that swaps the table, so the
+    naming layer and the chain never disagree."""
 
     dhcp: DhcpServer
     dns: DnsForwarder
     tasks: list[asyncio.Task]
+    gate: ResolverGate
     consumer: FlowConsumer | None = None
     policy: EgressPolicy | None = None
     queue_num: int | None = None
@@ -385,6 +389,173 @@ class NetManager:
         (the interceptor's arming predicate reads this)."""
         return self._attachments.get(workspace_id)
 
+    async def apply_policy(
+        self, workspace_id: str, policy: EgressPolicy
+    ) -> bool:
+        """Switch a live workspace's consent posture (#280): the
+        whole table re-applies in one nft transaction carrying the
+        consent elements across (established flows survive), the
+        resolver gate flips with the chain, and the NFQUEUE
+        consumer binds before a chain references it and unbinds
+        after the chain stops referencing it — the same ordering
+        rules ``_build`` follows, run against a workspace whose
+        tap never goes down.
+
+        Returns whether a live swap ran: a workspace without an
+        attachment keeps the row's change for its next boot."""
+        pair = self.switch_pair(workspace_id)
+        if pair is None:
+            return False
+        attachment, services = pair
+        old = services.policy
+        await self.retire_interactive_holds(old, policy, workspace_id)
+        elements = await self.switch_elements(
+            old, policy, workspace_id, services
+        )
+        fresh, queue_num = self.bind_switch_consumer(
+            workspace_id, attachment, services, policy
+        )
+        try:
+            await self.install_swapped_table(
+                workspace_id, attachment, policy, queue_num, elements
+            )
+        except BaseException:
+            self.abort_switch(fresh)
+            raise
+        self.commit_switch(services, policy, old, fresh, queue_num)
+        await self.replay_switch_verdicts(policy, old, workspace_id)
+        return True
+
+    def switch_pair(self, workspace_id: str) -> tuple | None:
+        """``(attachment, services)`` for a live workspace, None
+        when it is not attached — the row's change is then the
+        whole switch, and the next boot builds it."""
+        attachment = self._attachments.get(workspace_id)
+        services = self._services.get(workspace_id)
+        if attachment is None or services is None:
+            return None
+        return attachment, services
+
+    def abort_switch(self, fresh) -> None:
+        """Unbind a freshly-bound consumer whose swap failed: the
+        old table still enforces, and a bound queue no chain
+        references is a leak."""
+        if fresh is not None:
+            fresh.stop()
+
+    async def replay_switch_verdicts(
+        self, policy: EgressPolicy, old: EgressPolicy, workspace_id: str
+    ) -> None:
+        """Pin the durable address verdicts when the swap enters a
+        gated posture from one that kept no consent sets (allow):
+        the fresh sets start empty, and the rows say what belongs
+        in them."""
+        if policy.gated and not old.gated:
+            await self.replay_forever(workspace_id)
+
+    async def retire_interactive_holds(
+        self, old: EgressPolicy, policy: EgressPolicy, workspace_id: str
+    ) -> None:
+        """Fail-close the workspace's holds when the swap drops the
+        queue rule (#280): a held SYN must not queue into a table
+        that is about to lose its queue — it answers deny now, not
+        at the kernel's retransmit timer."""
+        if old.interactive and not policy.interactive:
+            await self.app.state.consent.fail_close_workspace(
+                workspace_id, reason="mode switch"
+            )
+
+    async def switch_elements(
+        self,
+        old: EgressPolicy,
+        policy: EgressPolicy,
+        workspace_id: str,
+        services,
+    ) -> str:
+        """The #260 carry, mode-to-mode: verdict pins and
+        resolver-learned allows ride the swap between gated
+        postures. A switch to allow carries nothing — the
+        allow-mode table carries no consent sets, and an element
+        statement naming an absent set would fail the whole
+        transaction."""
+        if not (old.gated and policy.gated):
+            return ""
+        snapshot = await self.consent_snapshot(workspace_id, services)
+        return nft.element_statements(alloc.table_name(workspace_id), snapshot)
+
+    def bind_switch_consumer(
+        self, workspace_id, attachment, services, policy
+    ) -> tuple:
+        """``(fresh consumer or None, queue_num)`` for the swapped
+        table. Entering interactive binds a NEW consumer before the
+        chain references the queue (the _build rule: an unbound
+        queue drops); staying interactive keeps the bound one and
+        its queue number."""
+        if not policy.interactive:
+            return None, None
+        if services.consumer is not None:
+            return None, services.queue_num
+        queue_num = self.queue_for(attachment.slice)
+        fresh = self._consumer_factory(workspace_id, queue_num, self)
+        fresh.start()
+        return fresh, queue_num
+
+    async def install_swapped_table(
+        self, workspace_id, attachment, policy, queue_num, elements
+    ) -> None:
+        """The one-transaction table swap with the interceptor's
+        armed half exactly as it stands (#199's swap, retargeted
+        by #280)."""
+        await nft.install_vm(
+            self.app.state.settings,
+            workspace_id,
+            attachment.tap,
+            attachment.guest_ip,
+            attachment.tap_ip,
+            policy=policy,
+            queue_num=queue_num,
+            interceptor_port=self.interceptor_port(workspace_id),
+            elements=elements,
+        )
+
+    def commit_switch(
+        self,
+        services,
+        policy: EgressPolicy,
+        old: EgressPolicy,
+        fresh,
+        queue_num,
+    ) -> None:
+        """Land the swap's bookkeeping: the consumer slot, the
+        recorded shape, and the resolver gate's live policy cell —
+        all after the fresh table applied, so a mid-swap read sees
+        one whole posture."""
+        self.retire_switched_consumer(services, policy, fresh)
+        services.policy = policy
+        services.queue_num = queue_num
+        services.gate.policy = policy
+
+    def retire_switched_consumer(
+        self, services, policy: EgressPolicy, fresh
+    ) -> None:
+        """The consumer slot after the swap: a fresh bind takes it;
+        leaving interactive unbinds the old one AFTER the chain
+        stopped referencing the queue — stopped-first would drop
+        every packet still headed for it (an unbound queue
+        drops)."""
+        if fresh is not None:
+            services.consumer = fresh
+            return
+        if not policy.interactive and services.consumer is not None:
+            services.consumer.stop()
+            services.consumer = None
+
+    def interceptor_port(self, workspace_id: str) -> int | None:
+        """The interceptor's armed port for a workspace, None while
+        disarmed — a table swap keeps the redirect half exactly as
+        it found it (#199's swap, retargeted by #280)."""
+        return self.app.state.interceptor.armed_port(workspace_id)
+
     async def apply_interception(
         self, workspace_id: str, port: int | None
     ) -> None:
@@ -508,6 +679,17 @@ class NetManager:
             return None
         return services.dns.host_for(ip)
 
+    async def replay_boot_verdicts(
+        self, workspace_id: str, policy: EgressPolicy
+    ) -> None:
+        """Pin a fresh boot's durable verdicts, gated modes only:
+        an allow-mode table carries no consent sets, so the pins
+        would fail the boot — reachable once a switch leaves a
+        workspace in allow mode carrying forever verdicts
+        (#280)."""
+        if policy.gated:
+            await self.replay_forever(workspace_id)
+
     async def replay_forever(self, workspace_id: str) -> None:
         """Pin a fresh boot's durable verdicts: every in-effect
         ``forever`` allow/deny given by *address* re-pins its flow
@@ -598,7 +780,7 @@ class NetManager:
                 raise
             await self._start_services(attachment, policy, consumer, queue_num)
             self._attachments[workspace_id] = attachment
-            await self.replay_forever(workspace_id)
+            await self.replay_boot_verdicts(workspace_id, policy)
             # The interceptor arms last (#199): its listener and the
             # table's redirect half appear together, only when a
             # placeholder wants them.
@@ -647,6 +829,7 @@ class NetManager:
             dhcp=dhcp_server,
             dns=forwarder,
             tasks=[],
+            gate=gate,
             consumer=consumer,
             policy=policy,
             queue_num=queue_num,

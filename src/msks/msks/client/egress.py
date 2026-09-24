@@ -11,6 +11,10 @@ from .tabular import listing_text
 
 DURATIONS = ("once", "5m", "15m", "tilrestart", "forever")
 
+#: The egress modes a switch names (#280); the daemon owns the
+#: tokens — the client duplicates them per the CLI-isolation rule.
+MODES = ("allow", "static", "interactive")
+
 
 def events_url(base_url: str, token: str) -> str:
     """The events websocket URL for a daemon base URL."""
@@ -142,6 +146,43 @@ async def run_decide(
         f"{request_id} {reply['verdict']['decision']} "
         f"({reply['verdict'].get('duration', '')})"
     )
+    return 0
+
+
+async def run_mode(
+    workspace_id: str,
+    mode: str,
+    allow: list[str] | None,
+    offline: bool = False,
+    transport=None,
+) -> int:
+    """``msks egress mode`` (#280): switch the workspace's posture.
+
+    A running workspace swaps live (established connections
+    survive); a stopped one builds the new posture at its next
+    start. ``allow`` replaces the static allowlist when given;
+    omitted, the workspace keeps the list it carries.
+    """
+    if mode not in MODES:
+        raise SystemExit(f"msks: mode must be one of {', '.join(MODES)}")
+    body = {"mode": mode}
+    if allow is not None:
+        body["allow_list"] = allow
+    if offline:
+        body["confirm_empty"] = True
+    async with api_client(env_url(), env_token(), transport) as client:
+        reply = await request(
+            client,
+            "PUT",
+            f"/api/v1/workspaces/{workspace_id}/egress/policy",
+            body,
+        )
+    effect = (
+        "in effect now"
+        if reply.get("applied")
+        else ("takes effect at next start")
+    )
+    print(f"{workspace_id}: egress mode {reply['mode']} ({effect})")
     return 0
 
 
