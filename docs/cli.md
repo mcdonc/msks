@@ -847,10 +847,13 @@ verdicts through the same endpoints the subcommands use. Keys:
   in-effect verdicts with countdowns, and `x` to revoke the focused
   rule — the row leaves on the daemon's refreshed frame, never
   optimistically); `r` or `Escape` returns.
-- `m` on the rules screen opens the mode picker (#280): picking a
-  mode switches it live through the same endpoint the subcommands
-  use, and the refreshed `egress.rules` frame repaints the header.
-  A pick of `static` with nothing effectively allowed asks first
+- `m` opens the mode picker (#280; `m` works on every screen
+  since #301): picking a mode switches it live through the same
+  endpoint the subcommands use, and the refreshed `egress.rules`
+  frame repaints the mode everywhere it shows — the queue's status
+  line names the current mode at all times (`mode interactive`),
+  and the rules and events screens carry it in their headers. A
+  pick of `static` with nothing effectively allowed asks first
   (the offline-workspace confirmation); a declined question
   decides nothing.
 - `e` opens the interceptor audit screen (#201): this workspace's
