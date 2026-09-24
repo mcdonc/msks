@@ -66,8 +66,8 @@ Deferred phases (klangk features with no msks counterpart yet):
 - consent pause/resume (#2332/#2389) -- msks has no pause.
 - mixed users / --as-member (#3112) -- msks auth is token-only;
   there is no second identity to act as.
-- co-resident per-IP canaries (#2440) -- needs two names on one
-  address; now possible with controlled DNS (#289).
+- co-resident per-IP canaries (#2440) -- implemented (#292):
+  two names on one address via controlled DNS (#289).
 
 Requires: root (self-boot brings up taps and NFQUEUE), the built
 guest assets (``msks-build-guest``), KVM, and a host whose FORWARD
@@ -267,6 +267,8 @@ FRESH = {
     "scope_star_off": "gnu.org",
     "port80_host": "ietf.org",
     "port443_host": "sqlite.org",
+    "coresident_a": "httpbin.org",
+    "coresident_b": "archive.org",
 }
 _FUZZ_DURATIONS = [
     DURATION_ONCE,
@@ -482,6 +484,8 @@ _DETAIL_PREFIX_NAMES: list[tuple[str, str]] = [
     ("tilrestart verdict survived restart", "RESTART-TILRESTART-SURVIVED"),
     ("host scope: ", "HOST-SCOPE-VIOLATION"),
     ("port scope: ", "PORT-SCOPE-VIOLATION"),
+    ("co-resident allow leaked", "CORESIDENT-LEAK"),
+    ("co-resident deny leaked", "CORESIDENT-LEAK"),
     ("phase bring-up failed", "UNEXPECTED-ERROR"),
     ("step raised", "UNEXPECTED-ERROR"),
 ]
@@ -565,6 +569,10 @@ OUTCOME_NAMES: dict[str, str] = {
     ),
     "PORT-SCOPE-VIOLATION": (
         "a port-scoped allow permitted a different port, or refused its own."
+    ),
+    "CORESIDENT-LEAK": (
+        "a verdict on one hostname leaked to a co-resident hostname "
+        "(same IP, different name): consent is IP-scoped, not name-scoped."
     ),
     "UNEXPECTED-ERROR": "a phase bring-up or per-step exception.",
 }
@@ -1628,6 +1636,11 @@ class Harness:
         hostnames = all_harness_hostnames()
         print(f"controlled DNS: resolving {len(hostnames)} hostnames...")
         mapping = resolve_hostnames(hostnames)
+        # Co-resident canaries: alias host B to host A's address so
+        # both names resolve to the same IP (#292).
+        host_a = canonical(FRESH["coresident_a"])
+        host_b = canonical(FRESH["coresident_b"])
+        mapping[host_b] = mapping[host_a]
         for name, ip in sorted(mapping.items()):
             print(f"  {name:<28} -> {ip}")
         upstream = upstream_from_resolv()
@@ -2053,6 +2066,11 @@ class Harness:
             ),
             ("host scope", self.args.host_scope, self.run_host_scope_phase),
             ("port scope", self.args.port_scope, self.run_port_scope_phase),
+            (
+                "co-resident canaries",
+                self.args.coresident_phase,
+                self.run_coresident_phase,
+            ),
             ("no decider", self.args.static_phase, self.run_no_decider_phase),
         ]
         for name, enabled, phase in phases:
@@ -3067,6 +3085,165 @@ class Harness:
             )
         )
 
+    async def run_coresident_phase(self) -> None:
+        """Two hostnames on one IP (#292): a verdict on host A must
+        not leak to host B, and vice-versa.  Controlled DNS maps
+        both names to the same address; the enforcement layer must
+        key by name, not IP."""
+        host_a = FRESH["coresident_a"]
+        host_b = FRESH["coresident_b"]
+        if not await self.coresident_allow_a(host_a):
+            return
+        if not await self.coresident_deny_b(host_b):
+            return
+        await self.coresident_verify_a(host_a, canonical(host_a))
+        if not self.abort:
+            await self.coresident_verify_b(host_b, canonical(host_b))
+
+    async def coresident_allow_a(self, host: str) -> bool:
+        """Allow host A (5m) and score the connection."""
+        rid, task = await self.fresh_hold(host)
+        if rid is None:
+            self.hold_failed("coresident hold A", host, task)
+            return False
+        await self.decider.verdict(rid, "allow", DURATION_5M)
+        await self.decider.wait_resolution(rid, 20.0)
+        self.model.record(
+            canonical(host), DECISION_ALLOWED, DURATION_5M, time.time()
+        )
+        rc = await task
+        status, detail = classify_conn(EXPECT_RELEASED, rc)
+        self.record(
+            Result(
+                "coresident allow A",
+                host,
+                True,
+                EXPECT_RELEASED,
+                "allow/5m",
+                "resolved",
+                rc,
+                status,
+                detail=detail,
+            )
+        )
+        return not self.abort
+
+    async def coresident_deny_b(self, host: str) -> bool:
+        """Probe host B (same IP, different name) — it must gate
+        independently and accept a deny."""
+        rid, task = await self.fresh_hold(host)
+        if rid is None:
+            rc = await task
+            self.record(
+                Result(
+                    "coresident gate B",
+                    host,
+                    True,
+                    EXPECT_REFUSED,
+                    "-",
+                    "no-request(!)",
+                    rc,
+                    MISMATCH,
+                    "co-resident allow leaked to a different hostname",
+                )
+            )
+            return False
+        await self.decider.verdict(rid, "deny", DURATION_5M)
+        await self.decider.wait_resolution(rid, 20.0)
+        self.model.record(
+            canonical(host), DECISION_DENIED, DURATION_5M, time.time()
+        )
+        rc = await task
+        status, detail = classify_conn(EXPECT_REFUSED, rc)
+        self.record(
+            Result(
+                "coresident deny B",
+                host,
+                True,
+                EXPECT_REFUSED,
+                "deny/5m",
+                "resolved",
+                rc,
+                status,
+                detail=detail,
+            )
+        )
+        return not self.abort
+
+    async def coresident_verify_a(self, host: str, canon: str) -> None:
+        """Host A must still be covered by its own allow verdict."""
+        task = asyncio.create_task(self.probe(host))
+        intruder = await self.decider.wait_no_request(
+            canon, NO_REQUEST_WINDOW_S
+        )
+        rc = await task
+        if intruder is not None:
+            self.record(
+                Result(
+                    "coresident re-A",
+                    host,
+                    False,
+                    EXPECT_RELEASED,
+                    "-",
+                    "request(!)",
+                    rc,
+                    MISMATCH,
+                    "co-resident deny leaked to the allowed hostname",
+                )
+            )
+            return
+        status, detail = classify_conn(EXPECT_RELEASED, rc)
+        self.record(
+            Result(
+                "coresident re-A",
+                host,
+                False,
+                EXPECT_RELEASED,
+                "-",
+                "no-req",
+                rc,
+                status,
+                detail=detail,
+            )
+        )
+
+    async def coresident_verify_b(self, host: str, canon: str) -> None:
+        """Host B must still be covered by its own deny verdict."""
+        task = asyncio.create_task(self.probe(host))
+        intruder = await self.decider.wait_no_request(
+            canon, NO_REQUEST_WINDOW_S
+        )
+        rc = await task
+        if intruder is not None:
+            self.record(
+                Result(
+                    "coresident re-B",
+                    host,
+                    False,
+                    EXPECT_REFUSED,
+                    "-",
+                    "request(!)",
+                    rc,
+                    MISMATCH,
+                    "co-resident allow leaked to the denied hostname",
+                )
+            )
+            return
+        status, detail = classify_conn(EXPECT_REFUSED, rc)
+        self.record(
+            Result(
+                "coresident re-B",
+                host,
+                False,
+                EXPECT_REFUSED,
+                "-",
+                "no-req",
+                rc,
+                status,
+                detail=detail,
+            )
+        )
+
     async def run_no_decider_phase(self) -> None:
         """With no decider registered, interactive mode denies
         off-list fast (the no-hold static answer) while the
@@ -3371,6 +3548,12 @@ def build_parser() -> argparse.ArgumentParser:
         dest="port_scope",
         action="store_false",
         help="skip the port-scope (host:443 vs :80) phase",
+    )
+    p.add_argument(
+        "--no-coresident",
+        dest="coresident_phase",
+        action="store_false",
+        help="skip the co-resident per-IP canary phase",
     )
     p.add_argument(
         "--no-static-phase",
