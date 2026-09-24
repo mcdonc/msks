@@ -28,7 +28,7 @@ def upgrade() -> None:
     op.add_column(
         "workspaces",
         sa.Column(
-            "home_mib", sa.Integer(), nullable=False, server_default="2048"
+            "home_mib", sa.Integer(), nullable=False, server_default="20480"
         ),
     )
 

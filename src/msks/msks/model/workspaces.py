@@ -60,7 +60,7 @@ class Workspace(Base):
     image_hash: Mapped[str | None] = mapped_column(String, nullable=True)
     host: Mapped[str | None] = mapped_column(String, nullable=True)
     root_mib: Mapped[int] = mapped_column(Integer, default=10240)
-    home_mib: Mapped[int] = mapped_column(Integer, default=2048)
+    home_mib: Mapped[int] = mapped_column(Integer, default=20480)
     # Egress networking (#52): boots the VM with a virtio-net NIC
     # onto a per-VM host tap. The default keeps the
     # no-NIC posture.

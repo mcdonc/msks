@@ -215,7 +215,7 @@ below generate theirs):
 | `--rootfs`      | `rootfs`                | Explicit rootfs path (skips the catalog)                                     |
 | `--cmdline`     | `cmdline`               | Explicit kernel cmdline                                                      |
 | `--cpus`        | `cpus`                  | vcpus, 1–64 (daemon default: 2)                                              |
-| `--mem-mib`     | `mem_mib`               | Guest memory MiB, 64–32768 (daemon default: 1024)                            |
+| `--mem-mib`     | `mem_mib`               | Guest memory MiB, 64–32768 (daemon default: 8192)                            |
 | `--root-mib`    | `root_mib`              | Persistent root overlay size (daemon default)                                |
 | `--home-mib`    | `home_mib`              | Persistent /home volume size (daemon default)                                |
 | `--user-data`   | `user_data`             | First-boot provisioning payload file; `-` reads stdin (#41)                  |
@@ -356,13 +356,18 @@ my-workspace stopped
 
 ## `msks resize`
 
-Moves a **stopped** workspace's disk sizes (#184) — the ceilings
-its guest sees as quotas — through `POST
+Moves a **stopped** workspace's disk sizes and topology
+(#184, #277) — the ceilings its guest sees as quotas, and the cpus
+and memory it boots with — through `POST
 /api/v1/workspaces/{id-or-name}/resize`:
 
 ```text
 $ msks resize ws4 --home-mib 4096
 resized ws4: root 10240 MiB, home 4096 MiB
+
+$ msks resize ws4 --cpus 4 --mem-mib 4096
+resized ws4: root 10240 MiB, home 2048 MiB, cpus 4, mem 4096 MiB
+(the new topology applies on its next boot)
 ```
 
 - `--home-mib` grows or shrinks the `/home` volume. The daemon
@@ -376,6 +381,14 @@ resized ws4: root 10240 MiB, home 4096 MiB
   virtual size, which sits above the row when create clamped it to
   the base image. Shrinking the root stays unsupported — `msks rm`
   and a fresh create, or a factory reset, reclaim a root instead.
+- `--cpus` and `--mem-mib` set the vCPU count and guest memory. The
+  daemon records them in the workspace row and boots it with the new
+  topology at the next `msks start` — a running workspace is never
+  reconfigured live. The bounds are create's (`--cpus` 1–64,
+  `--mem-mib` 64–32768 MiB), and the command's output carries the
+  boot note when they changed. The flags mix freely with the disk
+  flags: one invocation can move the disks and the topology
+  together.
 
 The workspace must be in a free lifecycle state (`created`,
 `stopped`, `absent`) — a running or paused workspace answers `409`.

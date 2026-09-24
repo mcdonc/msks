@@ -275,7 +275,7 @@ async def test_migration_backfills_pre14_rows(tmp_path: Path, app_for) -> None:
     assert row["image_hash"] is None  # explicit-boot rows bind no image
     assert row["host"] is None  # pre-#14 rows adopt the starting host
     assert row["root_mib"] == 10240
-    assert row["home_mib"] == 2048
+    assert row["home_mib"] == 20480
     assert row["egress"] is False  # pre-egress rows keep the no-NIC posture
     assert row["status"] == "stopped"
 
@@ -495,6 +495,30 @@ async def test_set_sizes_updates_named_columns(app_for) -> None:
     assert row["root_mib"] == 20480
     assert row["home_mib"] == 8192
     assert not await app.state.model.set_sizes("ghost", None, 64)
+
+
+async def test_set_topology_updates_named_columns(app_for) -> None:
+    """cpus and mem_mib move through set_topology (#277): a None
+    keeps the column, and a vanished row answers False."""
+    app = app_for()
+    await app.state.model.create_all()
+    await app.state.model.create_workspace(
+        VmSpec(
+            workspace_id="ws-topo",
+            kernel=Path("/k"),
+            rootfs=Path("/r"),
+        )
+    )
+    assert await app.state.model.set_topology("ws-topo", cpus=4, mem_mib=4096)
+    row = await app.state.model.get_workspace("ws-topo")
+    assert row["cpus"] == 4
+    assert row["mem_mib"] == 4096
+    # One side alone keeps the other.
+    assert await app.state.model.set_topology("ws-topo", 8, None)
+    row = await app.state.model.get_workspace("ws-topo")
+    assert row["cpus"] == 8
+    assert row["mem_mib"] == 4096
+    assert not await app.state.model.set_topology("ghost", 4, 4096)
 
 
 async def test_workspace_row_carries_the_consent_posture(app_for) -> None:

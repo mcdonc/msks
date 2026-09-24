@@ -614,7 +614,8 @@ def cmd_resize(
     body: dict,
     transport=None,
 ) -> int:
-    """``msks resize``: move a stopped workspace's sizes (#184)."""
+    """``msks resize``: move a stopped workspace's sizes and
+    topology (#184, #277)."""
     row = asyncio.run(
         api_call(
             "POST",
@@ -629,18 +630,36 @@ def cmd_resize(
     return 0
 
 
+def resize_boot_note(changes: list[str]) -> str:
+    """The parenthesized note for what waits for the next boot:
+    empty when nothing does. The daemon's ``changes`` list decides,
+    not the request's flags — home bytes moved at once on the host;
+    the root's guest-side fill and the new topology apply at the
+    next boot."""
+    waits = [
+        note
+        for prefixes, note in (
+            (("root",), "the guest fills the larger root"),
+            (("cpus", "mem"), "the new topology applies"),
+        )
+        if any(change.startswith(prefixes) for change in changes)
+    ]
+    if not waits:
+        return ""
+    return f" ({' and '.join(waits)} on its next boot)"
+
+
 def resize_message(row: dict, body: dict) -> str:
-    """The result line: the new sizes, with the boot note only when
-    the root actually moved (the daemon's ``changes`` list says so,
-    not the request's flags) — home bytes moved at once on the host;
-    only the root's guest-side fill waits for the next boot."""
+    """The result line: the new sizes, plus the topology when the
+    request moved it, with the boot note naming what waits for the
+    next boot."""
     line = (
         f"resized {display_name(row)}: root {row['root_mib']} MiB, "
         f"home {row['home_mib']} MiB"
     )
-    if any(change.startswith("root") for change in row.get("changes", [])):
-        line += " (the guest fills the larger root on its next boot)"
-    return line
+    if body.get("cpus") is not None or body.get("mem_mib") is not None:
+        line += f", cpus {row['cpus']}, mem {row['mem_mib']} MiB"
+    return line + resize_boot_note(row.get("changes", []))
 
 
 def image_cells(row: dict) -> list[str]:
@@ -1375,7 +1394,7 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--cmdline", help="explicit kernel cmdline")
     create.add_argument("--cpus", type=int, help="vcpu count (default 2)")
     create.add_argument(
-        "--mem-mib", type=int, help="guest memory, MiB (default 1024)"
+        "--mem-mib", type=int, help="guest memory, MiB (default 8192)"
     )
     create.add_argument(
         "--root-mib", type=int, help="persistent root size, MiB"
@@ -1527,7 +1546,10 @@ def build_parser() -> argparse.ArgumentParser:
         "workspace_id", help="the workspace to stop (name or id)"
     )
     resizer = sub.add_parser(
-        "resize", help="grow (or shrink) a stopped workspace's disks (#184)"
+        "resize",
+        help=(
+            "change a stopped workspace's disk sizes and topology (#184, #277)"
+        ),
     )
     resizer.add_argument(
         "workspace_id", help="the workspace to resize (name or id)"
@@ -1541,6 +1563,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--root-mib",
         type=int,
         help="new root overlay size, MiB (grows only)",
+    )
+    resizer.add_argument(
+        "--cpus",
+        type=int,
+        help="new vcpu count (applies at the next boot)",
+    )
+    resizer.add_argument(
+        "--mem-mib",
+        type=int,
+        help="new guest memory, MiB (applies at the next boot)",
     )
     remover = sub.add_parser("rm", help="delete workspaces and their data")
     remover.add_argument(
@@ -1899,12 +1931,15 @@ def run_resize(args: argparse.Namespace, transport) -> int:
         for key, value in (
             ("home_mib", args.home_mib),
             ("root_mib", args.root_mib),
+            ("cpus", args.cpus),
+            ("mem_mib", args.mem_mib),
         )
         if value is not None
     }
     if not body:
         raise SystemExit(
-            "msks: nothing to resize: pass --home-mib, --root-mib, or both"
+            "msks: nothing to resize: pass --home-mib, --root-mib, "
+            "--cpus, or --mem-mib"
         )
     return cmd_resize(args.workspace_id, body, transport)
 

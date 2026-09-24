@@ -102,7 +102,8 @@ USER_DATA_MAX = 65536
 
 
 class WorkspaceResize(BaseModel):
-    """A resize request (#184): the new sizes, either side optional.
+    """A resize request (#184, #277): the new disk sizes or
+    topology, any side optional.
 
     The bounds match create — a resize is the create-time sizing
     revisited, so the same floors and ceilings hold.
@@ -110,6 +111,8 @@ class WorkspaceResize(BaseModel):
 
     root_mib: int | None = Field(default=None, ge=256, le=65536)
     home_mib: int | None = Field(default=None, ge=64, le=65536)
+    cpus: int | None = Field(default=None, ge=1, le=64)
+    mem_mib: int | None = Field(default=None, ge=64, le=1 << 15)
 
 
 class EgressDecide(BaseModel):
@@ -163,7 +166,7 @@ class WorkspaceCreate(BaseModel):
     rootfs: str | None = None
     cmdline: str | None = None
     cpus: int = Field(default=2, ge=1, le=64)
-    mem_mib: int = Field(default=1024, ge=64, le=1 << 15)
+    mem_mib: int = Field(default=8192, ge=64, le=1 << 15)
     # Persistent-artifact sizes (#14), fixed at create; unset takes
     # the MSKSD_ROOT_MIB / MSKSD_HOME_MIB defaults.
     root_mib: int | None = Field(default=None, ge=256, le=65536)
@@ -1674,7 +1677,7 @@ def build_api(app) -> FastAPI:
             status_code=405,
             detail=(
                 "workspaces cannot be modified after create (user_data is "
-                "create-time; sizes move through "
+                "create-time; sizes and topology move through "
                 f"POST /api/v1/workspaces/{workspace_id}/resize); delete "
                 "the workspace and recreate it to change anything else"
             ),
@@ -1687,8 +1690,9 @@ def build_api(app) -> FastAPI:
     async def resize_workspace(
         workspace_id: str, body: WorkspaceResize
     ) -> dict:
-        """Move a stopped workspace's sizes (#184): the home volume
-        grows or shrinks, the overlay grows.
+        """Move a stopped workspace's sizes (#184) and topology
+        (#277): the home volume grows or shrinks, the overlay grows,
+        and cpus and memory become row facts the next boot reads.
 
         The same guards a home-volume move carries: free lifecycle
         statuses, the placement check, the move-lock against a
@@ -1702,10 +1706,18 @@ def build_api(app) -> FastAPI:
         workspace_id = row["id"]
         if mismatch := host_mismatch(app, row):
             raise HTTPException(status_code=409, detail=mismatch)
-        if body.root_mib is None and body.home_mib is None:
+        if (
+            body.root_mib is None
+            and body.home_mib is None
+            and body.cpus is None
+            and body.mem_mib is None
+        ):
             raise HTTPException(
                 status_code=400,
-                detail="nothing to resize: name root_mib, home_mib, or both",
+                detail=(
+                    "nothing to resize: name root_mib, home_mib, cpus, "
+                    "mem_mib, or any mix"
+                ),
             )
         async with move_lock(app, workspace_id):
             row = await rechecked_row(app, workspace_id)
@@ -1817,6 +1829,23 @@ def build_api(app) -> FastAPI:
                     await app.state.model.set_sizes(
                         workspace_id, None, body.home_mib
                     )
+            # The topology (#277): cpus and memory are row facts the
+            # next boot reads (the VmSpec builds from the row), so a
+            # row write is the whole move — no host file to move, no
+            # guest tool to run. The disk sides' one-sided shape
+            # holds here too: only a change records, so an identical
+            # resize is a no-op.
+            topology_moved = False
+            if body.cpus is not None and body.cpus != row["cpus"]:
+                moved.append(f"cpus set to {body.cpus}")
+                topology_moved = True
+            if body.mem_mib is not None and body.mem_mib != row["mem_mib"]:
+                moved.append(f"mem set to {body.mem_mib} MiB")
+                topology_moved = True
+            if topology_moved:
+                await app.state.model.set_topology(
+                    workspace_id, body.cpus, body.mem_mib
+                )
             updated = await app.state.model.get_workspace(workspace_id)
             if updated is None:
                 # The row vanished under the move-lock (a concurrent
@@ -1834,6 +1863,8 @@ def build_api(app) -> FastAPI:
                     "id": workspace_id,
                     "root_mib": updated["root_mib"],
                     "home_mib": updated["home_mib"],
+                    "cpus": updated["cpus"],
+                    "mem_mib": updated["mem_mib"],
                     "changes": moved,
                 },
             )
