@@ -197,6 +197,30 @@ def refused_close(exc: websockets.ConnectionClosed) -> bool:
     return exc.rcvd is not None and exc.rcvd.code == AUTH_CLOSE_CODE
 
 
+#: The keys every modal above the queue shadows (#280 review, the
+#: RulesScreen precedent from #195): the app-level verdict, rules,
+#: and quit bindings must not act on the hidden queue below —
+#: `a`/`d` deciding a hold nobody can see is the bug class, `q`
+#: closing the modal instead of the app is the same rule one level
+#: up (each modal binds `q` itself, to its own cancel).
+SHADOW_BINDINGS = (
+    Binding("a", "noop", show=False),
+    Binding("A", "noop", show=False),
+    Binding("d", "noop", show=False),
+    Binding("D", "noop", show=False),
+    Binding("r", "noop", show=False),
+)
+
+
+class ModalShadow:
+    """The action half of SHADOW_BINDINGS: swallowing a queue
+    key pressed under a modal. A mixin, because Textual resolves
+    an action as a method on the focused screen."""
+
+    def action_noop(self) -> None:
+        """Swallow a queue-action key pressed under this modal."""
+
+
 def backoff(delays: tuple[float, ...], attempt: int) -> float:
     """The reconnect delay for an attempt (capped at the last)."""
     if not delays:
@@ -214,12 +238,14 @@ def effective_allows(rules: EgressRules | None) -> bool:
     return bool(rules.allow_list) or bool(rules.allowed)
 
 
-class ModeScreen(ModalScreen[str | None]):
-    """The mode picker (#280): Enter picks, Escape cancels. The
-    chosen mode (or None) goes to the callback given at
+class ModeScreen(ModalShadow, ModalScreen[str | None]):
+    """The mode picker (#280): Enter picks, Escape or q cancels.
+    The chosen mode (or None) goes to the callback given at
     construction."""
 
     BINDINGS = [
+        *SHADOW_BINDINGS,
+        Binding("q", "cancel", show=False),
         Binding("escape", "cancel", "Cancel", show=False),
     ]
 
@@ -254,15 +280,17 @@ class ModeScreen(ModalScreen[str | None]):
         self._pick_task = asyncio.create_task(self.picked(mode))
 
 
-class ConfirmScreen(ModalScreen[bool]):
+class ConfirmScreen(ModalShadow, ModalScreen[bool]):
     """A yes/no question (#280): ``y``/Enter answers True, ``n``/
-    Escape answers False. The callback given at construction runs
-    as a task with the answer."""
+    ``q``/Escape answers False. The callback given at construction
+    runs as a task with the answer."""
 
     BINDINGS = [
+        *SHADOW_BINDINGS,
         Binding("y", "yes", "Confirm"),
         Binding("enter", "yes", "Confirm", show=False),
         Binding("n", "no", "Cancel"),
+        Binding("q", "no", "Cancel", show=False),
         Binding("escape", "no", "Cancel", show=False),
     ]
 
@@ -286,11 +314,14 @@ class ConfirmScreen(ModalScreen[bool]):
         self._pick_task = asyncio.create_task(self.answered(answer))
 
 
-class DurationScreen(ModalScreen[str | None]):
-    """The duration picker: Enter picks, Escape cancels. The chosen
-    duration (or None) goes to the callback given at construction."""
+class DurationScreen(ModalShadow, ModalScreen[str | None]):
+    """The duration picker: Enter picks, Escape or q cancels. The
+    chosen duration (or None) goes to the callback given at
+    construction."""
 
     BINDINGS = [
+        *SHADOW_BINDINGS,
+        Binding("q", "cancel", show=False),
         Binding("escape", "cancel", "Cancel", show=False),
     ]
 
@@ -487,7 +518,9 @@ class ConsentDeciderApp(App):
         super().__init__()
         self.workspace_id = workspace_id
         self.reconnect_delays = reconnect_delays
-        self.controller = ConsentController(hold_timeout=hold_timeout)
+        self.controller = ConsentController(
+            hold_timeout=hold_timeout, workspace_id=workspace_id
+        )
         self._ws_factory = ws_factory or default_ws_factory
         self._decide = decide or rest_decide
         self._revoke = revoke or rest_revoke

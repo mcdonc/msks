@@ -204,9 +204,9 @@ to `static` with nothing effectively allowed — an empty allowlist
 and no in-effect allowed verdict — is refused with a message
 naming the escape (`--allow` entries, or `--offline` to run the
 switch): that posture answers every name NXDOMAIN, an offline
-workspace. The daemon logs every switch with the acting principal,
-and each one broadcasts a refreshed `egress.rules` frame, so an
-attached TUI repaints its header without reconnecting.
+workspace. The daemon logs each switch and broadcasts a
+refreshed `egress.rules` frame, so an attached TUI repaints its
+header without reconnecting.
 
 ## What runs where
 

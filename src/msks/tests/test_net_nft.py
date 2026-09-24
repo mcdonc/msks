@@ -540,3 +540,18 @@ async def test_dump_reads_a_real_listing(tools, monkeypatch) -> None:
 async def test_dump_tolerates_a_missing_tool(tmp_path) -> None:
     settings = Settings(net=NetSettings(nft_tool=str(tmp_path / "absent")))
     assert await nft.dump_consent_elements(settings, "ws-a") == {}
+
+
+def test_posture_sets_name_the_sets_each_mode_carries() -> None:
+    """The mode switch's carry filter (#280): both gated postures
+    pin allows, only interactive keeps the reject machinery, and
+    allow carries nothing."""
+    from msks.consent.specs import EgressPolicy
+    from msks.net.nft import CONSENT_SETS, posture_sets
+
+    assert posture_sets(EgressPolicy("w", "allow", ())) == ()
+    assert posture_sets(EgressPolicy("w", "static", ())) == (
+        "allows_any",
+        "allows_port",
+    )
+    assert posture_sets(EgressPolicy("w", "interactive", ())) == CONSENT_SETS

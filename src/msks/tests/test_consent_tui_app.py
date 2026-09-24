@@ -12,8 +12,24 @@ from msks.client.tui.consent_app import (
     backoff,
     refused_close,
 )
-from test_consent_tui import request_frame, rules_frame
+from test_consent_tui import (
+    request_frame as shared_request_frame,
+)
+from test_consent_tui import (
+    rules_frame as shared_rules_frame,
+)
 from textual.widgets import Static
+
+
+def request_frame(rid, host="api.example", port=443):
+    """The shared fixture, scoped to this app's workspace — the
+    controller filters foreign frames (#280 review)."""
+    return shared_request_frame(rid, host, port, workspace="ws-dev")
+
+
+def rules_frame():
+    """The shared fixture, scoped to this app's workspace."""
+    return shared_rules_frame(workspace="ws-dev")
 
 
 class FakeWS:
@@ -701,7 +717,7 @@ async def test_rules_refresh_survives_a_shifted_snapshot() -> None:
                 {
                     "event": "egress.rules",
                     "data": {
-                        "workspace_id": "ws",
+                        "workspace_id": "ws-dev",
                         "mode": "interactive",
                         "allow_list": [],
                         "allowed": [],
@@ -739,7 +755,7 @@ async def test_rules_refresh_survives_a_shifted_snapshot() -> None:
                 {
                     "event": "egress.rules",
                     "data": {
-                        "workspace_id": "ws",
+                        "workspace_id": "ws-dev",
                         "mode": "interactive",
                         "allow_list": [],
                         "allowed": [],
@@ -781,7 +797,7 @@ async def test_the_rules_screen_refreshes_on_frames(monkeypatch) -> None:
                 {
                     "event": "egress.rules",
                     "data": {
-                        "workspace_id": "ws",
+                        "workspace_id": "ws-dev",
                         "mode": "interactive",
                         "allow_list": [".debian.org"],
                         "allowed": [],
@@ -1294,7 +1310,7 @@ def empty_rules_frame() -> str:
         {
             "event": "egress.rules",
             "data": {
-                "workspace_id": "ws",
+                "workspace_id": "ws-dev",
                 "mode": "allow",
                 "allow_list": [],
                 "allowed": [],
@@ -1403,4 +1419,27 @@ async def test_mode_picker_without_a_snapshot_confirms_static() -> None:
         await pilot.press("y")  # the confirmation: taken
         await wait_for(lambda: len(seams["modes"]) == 1)
         assert seams["modes"] == [("ws-dev", "static", True)]
+        app.action_quit_screen()
+
+
+async def test_modal_keys_do_not_reach_the_hidden_queue() -> None:
+    """The verdict/quit keys stay inert under a modal (#280
+    review, RulesScreen's precedent): `a` decides nothing while
+    the picker is open, and `q` closes the modal instead of the
+    app."""
+    factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
+    app, seams = make_app(factory)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: queue_children(app) == 1)
+        await pilot.press("r")
+        await wait_for(lambda: type(app.screen).__name__ == "RulesScreen")
+        await pilot.press("m")
+        await wait_for(lambda: type(app.screen).__name__ == "ModeScreen")
+        await pilot.press("a")
+        await pilot.press("d")
+        await asyncio.sleep(0.05)
+        assert seams["decided"] == []  # the hidden hold stays undecided
+        await pilot.press("q")  # the modal's own binding
+        await wait_for(lambda: type(app.screen).__name__ == "RulesScreen")
+        assert app.is_running  # q closed the modal, not the app
         app.action_quit_screen()

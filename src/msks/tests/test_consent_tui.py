@@ -12,13 +12,15 @@ def frame(event: str, data: dict) -> str:
     return json.dumps({"event": event, "data": data})
 
 
-def request_frame(rid: str, host: str = "api.example", port: int = 443) -> str:
+def request_frame(
+    rid: str, host: str = "api.example", port: int = 443, workspace: str = "ws"
+) -> str:
     return frame(
         "egress.request",
         {
             "request": {
                 "id": rid,
-                "workspace_id": "ws",
+                "workspace_id": workspace,
                 "dest_host": host,
                 "dest_port": port,
                 "requested_at": 100.0,
@@ -27,11 +29,11 @@ def request_frame(rid: str, host: str = "api.example", port: int = 443) -> str:
     )
 
 
-def rules_frame() -> str:
+def rules_frame(workspace: str = "ws") -> str:
     return frame(
         "egress.rules",
         {
-            "workspace_id": "ws",
+            "workspace_id": workspace,
             "mode": "interactive",
             "allow_list": [".debian.org"],
             "allowed": [
@@ -245,3 +247,32 @@ def test_decode_frame_shapes() -> None:
 def test_parse_request_refuses_nonstring_ids() -> None:
     assert consent.parse_request({"id": 5, "workspace_id": "ws"}) is None
     assert consent.parse_request({"id": "r", "workspace_id": None}) is None
+
+
+def test_foreign_workspace_frames_are_ignored() -> None:
+    """A controller that owns a workspace drops another workspace's
+    request and rules frames (#280 review): the hub broadcasts to
+    every subscriber, and a foreign snapshot must neither plant a
+    ghost hold nor repaint this decider's view."""
+    controller = consent.ConsentController(workspace_id="ws-mine")
+    assert (
+        controller.apply_frame(request_frame("r1", workspace="ws-mine"))[0]
+        == consent.ADDED
+    )
+    assert (
+        controller.apply_frame(request_frame("r2", workspace="ws-other"))[0]
+        == consent.IGNORED
+    )
+    assert "r2" not in controller.pending
+    assert controller.apply_frame(rules_frame(workspace="ws-mine"))[0] == (
+        consent.RULES
+    )
+    assert controller.apply_frame(rules_frame(workspace="ws-other"))[0] == (
+        consent.IGNORED
+    )
+    assert controller.rules.workspace_id == "ws-mine"
+    # The empty own-id (the protocol default) accepts every frame.
+    bare = consent.ConsentController()
+    assert bare.apply_frame(request_frame("r3", workspace="anywhere"))[0] == (
+        consent.ADDED
+    )

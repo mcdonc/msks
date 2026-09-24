@@ -170,6 +170,7 @@ class NetManager:
         self.dialer = dialer or asyncio.open_connection
         self._attachments: dict[str, NetAttachment] = {}
         self._services: dict[str, NetServices] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
         self._forwards: dict[str, list] = {}
         self._used_slices: set[int] = set()
         self._state = "init"  # init | disabled | ready | unavailable
@@ -213,13 +214,25 @@ class NetManager:
         if not want:
             return None
         self.require_ready(workspace_id)
-        existing = self._attachments.get(workspace_id)
-        if existing is not None:
-            return existing
-        attachment = await self._build(
-            workspace_id, policy or EgressPolicy(workspace_id, "allow", ())
-        )
-        return attachment
+        async with self.workspace_lock(workspace_id):
+            existing = self._attachments.get(workspace_id)
+            if existing is not None:
+                return existing
+            return await self._build(
+                workspace_id, policy or EgressPolicy(workspace_id, "allow", ())
+            )
+
+    def workspace_lock(self, workspace_id: str) -> asyncio.Lock:
+        """The per-workspace net-mutation lock: attach, detach, and
+        the live mode swap serialize against each other whatever
+        the route above them holds (#280 review) — a detach landing
+        between a swap's table probe and its install would leave a
+        table and a bound queue nothing cleans. Leaf-level only:
+        nothing below these three takes it."""
+        lock = self._locks.get(workspace_id)
+        if lock is None:
+            lock = self._locks.setdefault(workspace_id, asyncio.Lock())
+        return lock
 
     async def forward_stream(self, workspace_id: str, port: int):
         """(reader, writer) dialed to the guest's address on ``port``.
@@ -291,30 +304,31 @@ class NetManager:
         closed-socket fd number is never reused by a fresh
         subprocess pipe underneath a stale selector entry.
         """
-        attachment = self._attachments.pop(workspace_id, None)
-        services = self._services.pop(workspace_id, None)
-        self.close_forwards(workspace_id)
-        with contextlib.suppress(Exception):
-            # Best-effort like the rest of the teardown: a listener
-            # whose serve task already died badly must not abort the
-            # table and tap cleanup below it.
-            await self.stop_llm(workspace_id)
-        if attachment is None:
-            return
-        await self.app.state.consent.on_workspace_stop(workspace_id)
-        # The interceptor's listener drops before the table dies: an
-        # armed workspace's redirected flows must not reach a proxy
-        # whose entries are already gone (the table deletion below
-        # needs no swap of its own).
-        await self.app.state.interceptor.on_detach(workspace_id)
-        if services is not None:
-            services.stop_consumer()
-        settings = self.app.state.settings
-        await nft.delete_vm_table(settings, workspace_id)
-        await taps.remove_tap(attachment.tap, settings)
-        if services is not None:
-            await stop_services(services)
-        self._used_slices.discard(attachment.slice)
+        async with self.workspace_lock(workspace_id):
+            attachment = self._attachments.pop(workspace_id, None)
+            services = self._services.pop(workspace_id, None)
+            self.close_forwards(workspace_id)
+            with contextlib.suppress(Exception):
+                # Best-effort like the rest of the teardown: a listener
+                # whose serve task already died badly must not abort the
+                # table and tap cleanup below it.
+                await self.stop_llm(workspace_id)
+            if attachment is None:
+                return
+            await self.app.state.consent.on_workspace_stop(workspace_id)
+            # The interceptor's listener drops before the table dies: an
+            # armed workspace's redirected flows must not reach a proxy
+            # whose entries are already gone (the table deletion below
+            # needs no swap of its own).
+            await self.app.state.interceptor.on_detach(workspace_id)
+            if services is not None:
+                services.stop_consumer()
+            settings = self.app.state.settings
+            await nft.delete_vm_table(settings, workspace_id)
+            await taps.remove_tap(attachment.tap, settings)
+            if services is not None:
+                await stop_services(services)
+            self._used_slices.discard(attachment.slice)
 
     def require_ready(self, workspace_id: str) -> None:
         """Refuse an egress boot unless the plumbing is armed."""
@@ -403,6 +417,16 @@ class NetManager:
 
         Returns whether a live swap ran: a workspace without an
         attachment keeps the row's change for its next boot."""
+        async with self.workspace_lock(workspace_id):
+            return await self.switch_live(policy, workspace_id)
+
+    async def switch_live(
+        self, policy: EgressPolicy, workspace_id: str
+    ) -> bool:
+        """The swap itself, under the workspace's net lock: the
+        detach a stop or delete drives cannot interleave the table
+        probe and the install (a table and a bound queue nothing
+        cleans would be the residue)."""
         pair = self.switch_pair(workspace_id)
         if pair is None:
             return False
@@ -474,14 +498,19 @@ class NetManager:
     ) -> str:
         """The #260 carry, mode-to-mode: verdict pins and
         resolver-learned allows ride the swap between gated
-        postures. A switch to allow carries nothing — the
-        allow-mode table carries no consent sets, and an element
-        statement naming an absent set would fail the whole
-        transaction."""
+        postures, filtered to the sets the TARGET table defines
+        (#280 review) — a carried ``rejects`` element meeting a
+        static table (no such set) would fail the whole
+        transaction. A switch to allow carries nothing at all."""
         if not (old.gated and policy.gated):
             return ""
         snapshot = await self.consent_snapshot(workspace_id, services)
-        return nft.element_statements(alloc.table_name(workspace_id), snapshot)
+        carried = {
+            name: scopes
+            for name, scopes in snapshot.items()
+            if name in nft.posture_sets(policy)
+        }
+        return nft.element_statements(alloc.table_name(workspace_id), carried)
 
     def bind_switch_consumer(
         self, workspace_id, attachment, services, policy
@@ -602,8 +631,13 @@ class NetManager:
     ) -> None:
         """Pin one destination as allowed (the verdict/DNS-learn
         path). A workspace without a live attachment has no table
-        to pin into — nothing to enforce, nothing to do."""
-        if workspace_id in self._attachments:
+        to pin into, and a live one in allow mode carries no
+        consent sets — nothing to enforce, nothing to do (the
+        resolver gate still LEARNs under a carried forever allow,
+        #280 review: the pin must not spawn a doomed nft run per
+        answer)."""
+        services = self._services.get(workspace_id)
+        if services is not None and services.policy.gated:
             await nft.allow_element(
                 self.app.state.settings, workspace_id, ip, port, ttl_s
             )
@@ -612,8 +646,10 @@ class NetManager:
         self, workspace_id: str, ip: str, port: int, ttl_s: float
     ) -> None:
         """Pin one destination port for RST-refusal (the deny
-        path)."""
-        if workspace_id in self._attachments:
+        path) — gated postures only, the same shape as an allow
+        pin."""
+        services = self._services.get(workspace_id)
+        if services is not None and services.policy.gated:
             await nft.reject_element(
                 self.app.state.settings, workspace_id, ip, port, ttl_s
             )

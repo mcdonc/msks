@@ -1374,3 +1374,91 @@ async def test_a_failed_swap_unbinds_the_fresh_consumer(
     services = app.state.net._services["ws-i"]
     assert services.consumer is None
     assert services.policy.mode == "static"
+
+
+async def test_the_switch_pins_bind_before_reference_and_unbind_after(
+    gated_app, monkeypatch
+) -> None:
+    """The ordering invariants as one ordered log (#280 review):
+    entering interactive records the consumer's bind BEFORE the
+    queue-referencing chain applies; leaving records the queue-less
+    table BEFORE the unbind — an unbound queue drops, so the order
+    is the whole rule."""
+    from msks.consent.specs import EgressPolicy
+
+    app, _consumers, _nft_log = gated_app
+    await app.state.net.start()
+    manager = app.state.net
+    events: list[str] = []
+
+    def factory(workspace_id, queue_num, net):
+        consumer = FakeConsumer(workspace_id, queue_num, net)
+        start, stop = consumer.start, consumer.stop
+
+        consumer.start = lambda: (events.append("bind"), start())
+        consumer.stop = lambda: (events.append("unbind"), stop())
+        return consumer
+
+    manager._consumer_factory = factory
+    real_install = manager_mod.nft.install_vm
+
+    async def recording_install(*args, **kwargs):
+        events.append("install")
+        return await real_install(*args, **kwargs)
+
+    monkeypatch.setattr(manager_mod.nft, "install_vm", recording_install)
+    await manager.attach(
+        "ws-i", want=True, policy=EgressPolicy("ws-i", "static", ())
+    )
+    await manager.apply_policy("ws-i", EgressPolicy("ws-i", "interactive", ()))
+    assert events[-2:] == ["bind", "install"]  # bind BEFORE reference
+    await manager.apply_policy("ws-i", EgressPolicy("ws-i", "static", ()))
+    assert events[-2:] == ["install", "unbind"]  # unbind AFTER deref
+
+
+async def test_the_carry_drops_rejects_leaving_interactive(
+    gated_app, monkeypatch
+) -> None:
+    """A static table defines no rejects set (#280 review): the
+    carry into static must not emit an element statement naming
+    it — real nft would abort the whole transaction, leaving the
+    row and the live table divergent."""
+    from msks.consent.specs import EgressPolicy
+
+    app, _consumers, nft_log = gated_app
+    await app.state.net.start()
+    manager = app.state.net
+    await manager.attach("ws-i", want=True, policy=interactive_policy())
+
+    async def dumped(settings, workspace_id):
+        return {
+            "allows_any": [("10.1.2.3", 60)],
+            "rejects": [("203.0.113.9", 600)],
+        }
+
+    monkeypatch.setattr(manager_mod.nft, "dump_consent_elements", dumped)
+    await manager.apply_policy(
+        "ws-i", EgressPolicy("ws-i", "static", (".a.de",))
+    )
+    last = applied_rulesets(nft_log)[-1]
+    assert "allows_any" in last  # the allow pin rides
+    assert "rejects" not in last  # the deny pin cannot: no such set
+
+
+async def test_allow_mode_pins_no_elements(gated_app) -> None:
+    """consent_allow/consent_reject skip a live allow-mode
+    workspace (#280 review): the resolver still LEARNs under a
+    carried forever allow, and the pin would spawn a doomed nft
+    run per answer into a table with no consent sets."""
+    from msks.consent.specs import EgressPolicy
+
+    app, _consumers, nft_log = gated_app
+    await app.state.net.start()
+    manager = app.state.net
+    await manager.attach(
+        "ws-i", want=True, policy=EgressPolicy("ws-i", "allow", ())
+    )
+    before = len(log_lines(nft_log))
+    await manager.consent_allow("ws-i", "10.1.2.3", None, 60)
+    await manager.consent_reject("ws-i", "203.0.113.9", 443, 5)
+    assert len(log_lines(nft_log)) == before

@@ -49,7 +49,7 @@ from ..imagestore import ImageError
 from ..llm import mint_token
 from ..microvm.errors import MicrovmError
 from ..microvm.spec import VmSpec, VmStatus
-from ..model.egress_consent import DECISIONS, DURATIONS
+from ..model.egress_consent import DECISION_ALLOWED, DECISIONS, DURATIONS
 from ..secretstore import (
     SecretStoreError,
     backend_ref,
@@ -1972,6 +1972,16 @@ def build_api(app) -> FastAPI:
         # boot and any in-flight move serialize — the status write
         # stays inside the hold or a waiter would read a stale row.
         async with move_lock(app, workspace_id):
+            # Re-read under the lock (#280 review): a mode switch
+            # landing between the outer read and this hold must not
+            # boot under the posture the outer row named — the
+            # permissive direction would leave the row and every
+            # rules frame claiming a lockdown the VM does not run.
+            row = await app.state.model.get_workspace(workspace_id)
+            if row is None:
+                raise HTTPException(
+                    status_code=404, detail="no such workspace"
+                )
             await app.state.microvm.launch(await healed_spec(app, row))
             await app.state.model.set_status(workspace_id, "running")
         return {"id": workspace_id, "status": "running"}
@@ -2340,7 +2350,26 @@ def build_api(app) -> FastAPI:
             # concurrent start cannot attach the old posture after
             # the flip reads no attachment and skips.
             policy = EgressPolicy(workspace_id, body.mode, specs)
-            applied = await app.state.net.apply_policy(workspace_id, policy)
+            try:
+                applied = await app.state.net.apply_policy(
+                    workspace_id, policy
+                )
+            except BaseException:
+                # The swap failed whole — the old table still
+                # enforces — so the row must not claim a posture
+                # the workspace does not run: the old facts go
+                # back before the refusal surfaces (#280 review).
+                with contextlib.suppress(Exception):
+                    await app.state.model.set_egress_policy(
+                        workspace_id,
+                        row.get("egress_mode") or "allow",
+                        (
+                            None
+                            if body.allow_list is None
+                            else list(row.get("egress_allowlist") or ())
+                        ),
+                    )
+                raise
         LOG.info(
             "egress mode set: ws=%s mode=%s allowlist=%s applied=%s by=token",
             workspace_id[:8],
@@ -2439,7 +2468,7 @@ async def egress_consent_allowed(app, workspace_id: str) -> bool:
     nothing-effectively-allowed guard: an ``allow forever`` a
     decider granted is as good as an allowlist entry."""
     rows = await app.state.model.egress_consent.list_active(workspace_id)
-    return any(row["decision"] == "allowed" for row in rows)
+    return any(row["decision"] == DECISION_ALLOWED for row in rows)
 
 
 async def verdict_refusal(app, workspace_id, request_id, body) -> tuple | None:

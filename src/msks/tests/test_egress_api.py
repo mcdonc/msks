@@ -887,3 +887,101 @@ async def test_mode_switch_404s_when_the_row_vanishes_under_it(
         monkeypatch.setattr(app.state.model, "set_egress_policy", vanished)
         reply = await put_policy(http, "ws-m", {"mode": "interactive"})
         assert reply.status_code == 404
+
+
+async def test_a_failed_live_swap_restores_the_row(consent_client) -> None:
+    """The swap failing whole (the old table still enforces) must
+    not leave the row claiming the posture the workspace does not
+    run (#280 review): the old facts go back and the refusal
+    surfaces."""
+    import httpx
+    from msks.microvm.errors import MicrovmError
+
+    api, app, _stub = consent_client
+
+    class FailingNet(StubNet):
+        async def apply_policy(self, workspace_id, policy):
+            raise MicrovmError("nft refused the transaction")
+
+    app.state.net = FailingNet(applied=False)
+    transport = httpx.ASGITransport(app=api)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://test"
+    ) as http:
+        await create_workspace(http, "ws-m", "interactive", [".a.de"])
+        reply = await put_policy(
+            http, "ws-m", {"mode": "static", "allow_list": [".b.de"]}
+        )
+        assert reply.status_code == 503
+        row = await app.state.model.get_workspace("ws-m")
+        assert row["egress_mode"] == "interactive"
+        assert row["egress_allowlist"] == [".a.de"]
+
+
+async def test_start_reads_the_row_under_the_move_lock(
+    consent_client, monkeypatch
+) -> None:
+    """A mode switch landing between the route's first row read and
+    the lock must not boot the old posture (#280 review): the boot
+    builds its spec from the row re-read under the lock — the
+    permissive direction otherwise leaves the row and every rules
+    frame claiming a lockdown the VM does not run."""
+    import httpx
+
+    api, app, stub = consent_client
+    transport = httpx.ASGITransport(app=api)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://test"
+    ) as http:
+        row = await create_workspace(http, "ws-m", "allow")
+        # The switch lands while the route's outer read is in
+        # flight: resolve the id and flip the row BEFORE the
+        # patched read serves the stale pre-switch copy.
+        real = await app.state.model.get_workspace("ws-m")
+        await app.state.model.set_egress_policy(real["id"], "static", None)
+        real_read = app.state.model.get_workspace
+        stale = dict(row)
+        served = {"first": True}
+
+        async def stale_once(ref):
+            if served["first"] and ref == "ws-m":
+                served["first"] = False
+                return stale  # the pre-lock read: the old posture
+            return await real_read(ref)
+
+        monkeypatch.setattr(app.state.model, "get_workspace", stale_once)
+        reply = await http.post(
+            "/api/v1/workspaces/ws-m/start", headers=auth()
+        )
+        assert reply.status_code == 200, reply.text
+        assert stub.seen_specs[real["id"]].egress_mode == "static"
+
+
+async def test_start_404s_when_the_row_leaves_under_the_lock(
+    consent_client, monkeypatch
+) -> None:
+    """A delete completing between start's outer read and its
+    re-read under the lock answers 404, never a boot of a vanished
+    workspace."""
+    import httpx
+
+    api, app, _stub = consent_client
+    transport = httpx.ASGITransport(app=api)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://test"
+    ) as http:
+        await create_workspace(http, "ws-m", "allow")
+        real_read = app.state.model.get_workspace
+        calls = {"n": 0}
+
+        async def vanishing(ref):
+            calls["n"] += 1
+            if calls["n"] >= 2:
+                return None  # deleted between the read and the lock
+            return await real_read(ref)
+
+        monkeypatch.setattr(app.state.model, "get_workspace", vanishing)
+        reply = await http.post(
+            "/api/v1/workspaces/ws-m/start", headers=auth()
+        )
+        assert reply.status_code == 404
