@@ -127,12 +127,12 @@ each from its own source of truth (#184):
 $ msks storage
 state disk    used 23.4G of 40G    free 16.6G    pressure ok
 
-workspace                root cost/ceiling    home cost/ceiling    cost
-ws4                      3.1G / 10G           812M / 2G            3.9G
+workspace  root cost/ceiling  home cost/ceiling  cost
+ws4        3.1G / 10G         812M / 2G          3.9G
 
-image                    imported         cost
-debian:13                2026-09-21 12:03 3G
-debian:13                2026-08-02 05:11 3G
+image      imported          cost
+debian:13  2026-09-21 12:03  3G
+debian:13  2026-08-02 05:11  3G
 ```
 
 - **The budget line** is the daemon's own `statvfs` on the state

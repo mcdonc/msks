@@ -154,7 +154,33 @@ def test_cmd_key_dispatch(
     assert "ecdsa-sha2-nistp256" in capsys.readouterr().out
 
 
-def test_cmd_ls_formats_rows(
+def test_cmd_ls_aligns_columns(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#271: every row's columns start at the same offset — a long
+    name widens its column for all rows instead of shifting that
+    row's later columns off the grid."""
+    rows = [
+        ROWS[0],
+        {
+            **ROWS[1],
+            "name": "a-workspace-name-far-past-twenty-chars",
+        },
+    ]
+    client_env(monkeypatch)
+    rc = cli.cmd_ls(transport=mock(lambda req: httpx.Response(200, json=rows)))
+    assert rc == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 3  # header plus one per row
+    assert lines[0].startswith("name")  # the header aligns with its column
+    # The id and status columns start at the same offset in both
+    # rows: the long name widened its column for the whole grid.
+    assert lines[1].index(rows[0]["id"]) == lines[2].index(rows[1]["id"])
+    assert lines[1].index("running") == lines[2].index("created")
+    assert "a" * 12 in lines[1]  # the image hash is shortened to 12 chars
+
+
+def test_cmd_ls_rows_fit_the_values(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     client_env(monkeypatch)
@@ -162,14 +188,16 @@ def test_cmd_ls_formats_rows(
     assert rc == 0
     out = capsys.readouterr().out
     assert "alpha" in out and "running" in out and "hv1" in out
-    assert "a" * 12 in out  # the image hash is shortened to 12 chars
     assert "beta" in out and "created" in out and "-" in out
     # The #246 columns: the label beside the immutable id, which
     # addresses the workspace as surely as the name does.
-    assert cli.format_workspace(ROWS[0]) == (
-        f"{ROWS[0]['name']:<20} {ROWS[0]['id']:<12} "
-        f"running   {'a' * 12:<13} hv1"
-    )
+    assert cli.workspace_cells(ROWS[0]) == [
+        "alpha",
+        ROWS[0]["id"],
+        "running",
+        "a" * 12,
+        "hv1",
+    ]
 
 
 def test_display_name_prefers_the_label() -> None:
@@ -1497,13 +1525,49 @@ def test_image_ls_formats_rows(
     assert "6.12.107+deb13 (raw)" in out
 
 
+def test_image_ls_aligns_columns(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#271: the grid holds when a ref outgrows its column — the
+    issue's own two rows, debian and the long nixos ref."""
+    rows = [
+        {
+            **IMAGES[0],
+            "name": "debian",
+            "version": "13.6",
+            "kernel_version": "6.12.107+deb13-amd64",
+            "kernel_format": "bzImage",
+        },
+        {
+            **IMAGES[1],
+            "name": "nixos",
+            "version": "26.05pre-git-w7r3iyyw",
+            "hash": "7" * 64,
+            "kernel_version": "6.18.50",
+            "kernel_format": "bzImage",
+        },
+    ]
+    client_env(monkeypatch)
+    rc = cli.cmd_image_ls(
+        transport=mock(lambda req: httpx.Response(200, json=rows))
+    )
+    assert rc == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 3  # header plus one per image
+    # The hash and kernel columns start at the same offset in both
+    # rows — the long ref widens its column for the whole grid.
+    assert lines[1].index("a" * 12) == lines[2].index("7" * 12)
+    assert lines[1].index("6.12.107") == lines[2].index("6.18.50")
+    assert lines[0].startswith("ref")  # the header aligns with its column
+
+
 def test_image_ls_marks_only_the_default(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     client_env(monkeypatch)
     cli.cmd_image_ls(transport=listing_transport())
     lines = capsys.readouterr().out.splitlines()
-    flags = [line.split()[2] for line in lines]
+    flags = [line.split()[2] for line in lines[1:]]  # line 0 is the header
     assert flags == ["default", "-", "-"]
 
 
@@ -2170,7 +2234,7 @@ def test_cmd_storage_json_is_verbatim(
     assert json.loads(out) == STORAGE_BODY
 
 
-def test_image_lines_show_import_times() -> None:
+def test_image_cost_table_shows_import_times() -> None:
     """Same-reference rows read as distinct through their import
     times (#186), rendered in the operator's local time; a row
     without a time — or one the clock cannot parse — renders a
@@ -2210,19 +2274,26 @@ def test_image_lines_show_import_times() -> None:
             "imported": 12345,
         },
     ]
-    lines = cli.image_lines(rows)
-    assert lines[1] == f"{'image':<24} {'imported':<16} cost"
+    text = cli.image_cost_table(rows)
+    lines = text.splitlines()
+    assert lines[0].split() == ["image", "imported", "cost"]
     expect = when.astimezone().strftime("%Y-%m-%d %H:%M")
     older = (
         datetime.fromisoformat("2026-08-01T09:00:00+00:00")
         .astimezone()
         .strftime("%Y-%m-%d %H:%M")
     )
-    assert lines[2] == f"{'debian:13.6':<24} {expect:<16} 3G"
-    assert lines[3] == f"{'debian:13.6':<24} {older:<16} 3G"
-    assert lines[4] == f"{'debian:13.6':<24} {'-':<16} 3G"
-    assert lines[5] == f"{'debian:13.6':<24} {'-':<16} 3G"
-    assert lines[6] == f"{'debian:13.6':<24} {'-':<16} 3G"
+    # Every row's cost column starts at the same offset — the
+    # measured grid holds across the rows (#271).
+    costs = [line.index("3G") for line in lines[1:]]
+    assert costs == [costs[0]] * 5
+    assert [line.split("  ")[1] for line in lines[1:]] == [
+        expect,
+        older,
+        "-",
+        "-",
+        "-",
+    ]
 
 
 @pytest.fixture
@@ -2249,14 +2320,13 @@ def test_imported_cell_degrades_extreme_stamps(western_zone) -> None:
     assert cli.imported_cell(row) == "-"
 
 
-def test_image_lines_without_times_keep_two_columns() -> None:
+def test_image_cost_table_without_times_keeps_two_columns() -> None:
     """A daemon predating stamps (#186) still gets its table — the
     two-column shape, without a column of dashes."""
     rows = [{"name": "debian", "version": "13", "bytes": int(3.0 * 1024**3)}]
-    assert cli.image_lines(rows) == [
-        "",
-        f"{'image':<24} cost",
-        f"{'debian:13':<24} 3G",
+    assert cli.image_cost_table(rows).splitlines() == [
+        "image      cost",
+        "debian:13  3G",
     ]
 
 
@@ -2412,8 +2482,11 @@ def test_egress_rules_renders(monkeypatch, capsys) -> None:
     assert rc == 0
     assert "mode interactive" in out
     assert "allowlist: .debian.org" in out
-    assert "allowed api.example:443" in out
-    assert "denied  203.0.113.7" in out
+    # The verdict rows render on the measured grid: one offset for
+    # every destination, the header row included (#271).
+    assert "verdict  destination" in out
+    assert "allowed  api.example:443" in out
+    assert "denied   203.0.113.7 (all ports)  5m" in out
 
 
 def test_egress_requests_filter_and_decide(monkeypatch, capsys) -> None:
@@ -2455,6 +2528,13 @@ def test_egress_requests_filter_and_decide(monkeypatch, capsys) -> None:
     assert rc == 0
     assert seen["path"].endswith("egress/requests?decision=pending")
     assert "db.internal:5432" in capsys.readouterr().out
+
+    rc = cli.main(
+        ["egress", "requests", "ws1"],
+        transport=mock(lambda req: httpx.Response(200, json=[])),
+    )
+    assert rc == 0
+    assert capsys.readouterr().out == ""  # no rows, no header
 
     rc = cli.main(
         ["egress", "decide", "ws1", "cccc", "allow", "--duration", "5m"],
@@ -3160,6 +3240,20 @@ def test_cmd_secret_ls_json(
     code = cli.main(["secret", "ls", "--json"], transport=mock(handler))
     assert code == 0
     assert json.loads(capsys.readouterr().out) == secret_rows()
+
+
+def test_cmd_secret_ls_empty_prints_nothing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A daemon holding no placeholders prints nothing — the empty
+    table contract every listing shares."""
+    client_env(monkeypatch)
+    code = cli.main(
+        ["secret", "ls"],
+        transport=mock(lambda req: httpx.Response(200, json=[])),
+    )
+    assert code == 0
+    assert capsys.readouterr().out == ""
 
 
 def test_cmd_secret_revoke_names_a_missing_label(

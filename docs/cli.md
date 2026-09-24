@@ -114,12 +114,16 @@ reference no other workspace shares.
 
 Prints one line per workspace the daemon knows, aligned in five
 columns: name, id, status, image hash (first 12 hex chars), and
-owning host.
+owning host. The columns are measured against the values present
+(#271): a long name or image reference widens its column for every
+row, so each row's columns start at the same offsets — the header
+row included.
 
 ```text
 $ msks ls
-my-workspace   1a2b3c4d5e   running   9f2c41ab77de   hv-1
-scratch        77eedd0199   created   -              hv-1
+name          id          status   image         host
+my-workspace  1a2b3c4d5e  running  9f2c41ab77de  hv-1
+scratch       77eedd0199  created  -             hv-1
 ```
 
 The status column speaks the daemon's lifecycle vocabulary —
@@ -152,13 +156,13 @@ image's cost:
 $ msks storage
 state disk    used 23.4G of 40G    free 16.6G    pressure ok
 
-workspace                root cost/ceiling    home cost/ceiling    cost
-ws4                      3.1G / 10G           812M / 2G            3.9G
-scratch                  61M / 10G            12M / 2G             73M
+workspace  root cost/ceiling  home cost/ceiling  cost
+ws4        3.1G / 10G         812M / 2G          3.9G
+scratch    61M / 10G          12M / 2G           73M
 
-image                    imported         cost
-debian:13                2026-09-21 12:03 3G
-debian:13                2026-08-02 05:11 3G
+image      imported          cost
+debian:13  2026-09-21 12:03  3G
+debian:13  2026-08-02 05:11  3G
 ```
 
 - **cost** is the disk blocks the artifact occupies on the state
@@ -428,12 +432,14 @@ same client environment as the workspace commands.
 ### `msks image ls`
 
 One line per registered image — reference, hash (first 12 hex
-chars), the default designation, and the kernel facts:
+chars), the default designation, and the kernel facts — on the
+measured grid every listing shares (#271):
 
 ```text
 $ msks image ls
-debian:13                9f2c41ab77de  default  6.12.107+deb13 (raw)
-alpine:3.20              33aa9db1c4ef  -        6.12.7 (raw)
+ref          hash          default  kernel
+debian:13    9f2c41ab77de  default  6.12.107+deb13 (raw)
+alpine:3.20  33aa9db1c4ef  -        6.12.7 (raw)
 ```
 
 The image the daemon designates as default carries the `default`
@@ -526,6 +532,7 @@ hash     9f2c41ab77de0000000000000000000000000000000000000000000000000000
 kernel   6.12.107+deb13 (raw)
 cmdline  console=hvc0 root=/dev/vda rw
 console  vsock port 1073741826
+seed     provisioner - (none declared)
 default  yes
 ```
 
