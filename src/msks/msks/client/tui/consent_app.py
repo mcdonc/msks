@@ -4,7 +4,11 @@
 workspace's decider on the events websocket, shows the pending-hold
 snapshot and every live hold with its countdown, and sends verdicts
 through the REST decide/revoke endpoints (msks's decider channel is a
-read-only stream — verdicts carry the API's validation).
+read-only stream — verdicts carry the API's validation). The mode
+picker (#280, on `m` from every screen since #301) switches the
+workspace's egress posture live through the policy endpoint, and the
+current mode stays visible on every screen (the queue's status line,
+the rules header, the events header).
 
 Every side effect has an injectable seam so the tests drive the app
 without a socket or a daemon: ``ws_factory`` yields the connection
@@ -119,6 +123,16 @@ def allowlist_text(rules: EgressRules | None) -> str:
     return f"mode {rules.mode}   allowlist: {entries}"
 
 
+def mode_label(rules: EgressRules | None) -> str:
+    """The workspace's current egress mode as a label; ``—`` until
+    the first rules frame names it (the queue's status line and the
+    events screen's header share it — the mode stays visible on
+    every screen, #301)."""
+    if rules is None or not rules.mode:
+        return "—"
+    return rules.mode
+
+
 def rule_rows(rules: EgressRules | None) -> list:
     """The snapshot's verdict rows, allowed then denied."""
     if rules is None:
@@ -149,6 +163,13 @@ def row_ids(rows: ListView) -> set:
         for child in rows.children
         if getattr(child, "request_id", None) is not None
     }
+
+
+def row_rule_ids(rows: ListView) -> list:
+    """The rules list's row ids in order — the in-place repaint's
+    membership check (order included: a reordered snapshot takes
+    the fresh-list swap, never a text-only pass over moved rows)."""
+    return [getattr(child, "rule_id", None) for child in rows.children]
 
 
 def focused_request_id(rows: ListView | None) -> str | None:
@@ -205,8 +226,8 @@ def refused_close(exc: websockets.ConnectionClosed) -> bool:
 #: `a`/`d` deciding a hold nobody can see is the bug class, `q`
 #: closing the modal instead of the app is the same rule one level
 #: up (each modal binds `q` itself, to its own cancel). `e` joins
-#: with #201's events screen: opening it under a modal stacks a
-#: screen nobody can see.
+#: with #201's events screen and `m` with #301's queue-level picker:
+#: opening either under a modal stacks a screen nobody can see.
 SHADOW_BINDINGS = (
     Binding("a", "noop", show=False),
     Binding("A", "noop", show=False),
@@ -214,6 +235,7 @@ SHADOW_BINDINGS = (
     Binding("D", "noop", show=False),
     Binding("r", "noop", show=False),
     Binding("e", "noop", show=False),
+    Binding("m", "noop", show=False),
 )
 
 
@@ -346,8 +368,9 @@ def event_item(event: SecretEvent) -> ListItem:
 
 
 def events_note() -> str:
-    """The events screen's header line: what the stream carries,
-    what the marker means, and where detection stops (#201)."""
+    """The events screen's explanatory line: what the stream
+    carries, what the marker means, and where detection stops
+    (#201)."""
     return (
         "interceptor audit — swaps, mints, revokes, expiries; ! marks "
         "an off-allowlist sighting (the sentinel seen toward a "
@@ -355,6 +378,12 @@ def events_note() -> str:
         "decrypted flows; a spliced connection relays undecrypted "
         "and reports nothing."
     )
+
+
+def events_header(rules: EgressRules | None) -> str:
+    """The events screen's header line: the workspace's current
+    mode (visible on every screen, #301) beside the stream note."""
+    return f"mode {mode_label(rules)}  ·  {events_note()}"
 
 
 def sighting_flash(event: SecretEvent) -> str:
@@ -504,7 +533,10 @@ class RulesScreen(Screen):
     countdowns, the static allowlist, and revoke on the focused row.
 
     Arrows move the rule list; ``x`` revokes the focused rule, ``r``
-    or Escape returns to the queue — no focus trap anywhere."""
+    or Escape returns to the queue — no focus trap anywhere. The
+    per-tick countdown refresh repaints an unchanged row set in
+    place; only a membership change swaps the list (the swap was
+    the once-a-second flash #301 reports)."""
 
     BINDINGS = [
         Binding("x", "revoke", "Revoke"),
@@ -525,13 +557,10 @@ class RulesScreen(Screen):
     def action_noop(self) -> None:
         """Swallow a queue-action key pressed on the rules screen."""
 
-    def __init__(
-        self, controller: ConsentController, revoke, set_mode
-    ) -> None:
+    def __init__(self, controller: ConsentController, revoke) -> None:
         super().__init__()
         self.controller = controller
         self.revoke = revoke
-        self.set_mode = set_mode
         self.rebuilds = OneFlight(
             lambda: self.rebuild_rows(),
             lambda: self.app.is_running,
@@ -558,13 +587,18 @@ class RulesScreen(Screen):
         self.rebuilds.request()
 
     async def rebuild_rows(self) -> None:
-        """Repaint from the controller's rules snapshot with a
-        freshly-built list, preserving the focused rule by id (the
-        top when it left): a mutating ListView carries
-        asynchronously-pruned stale children that shift indexes, so
-        positions must come from children that are all real —
-        `x` must never retarget through a shifted index."""
+        """Repaint from the controller's rules snapshot. An
+        unchanged row set (same ids, same order) repaints the
+        survivors' countdowns in place — the per-tick refresh must
+        not swap the whole list, the once-a-second flash #301
+        reports. A membership change builds a fresh list,
+        preserving the focused rule by id (the top when it left): a
+        mutating ListView carries asynchronously-pruned stale
+        children that shift indexes, so positions must come from
+        children that are all real — `x` must never retarget
+        through a shifted index."""
         rules = self.controller.rules
+        ordered = rule_rows(rules)
         self.query_one("#allowlist", Static).update(allowlist_text(rules))
         body = self.query_one("#rules-body", Vertical)
         old = None
@@ -572,9 +606,25 @@ class RulesScreen(Screen):
             old = self.query_one("#rule-rows", ListView)
         except NoMatches:
             pass  # a died-mid-swap rebuild: mount the fresh list anew
+        if old is not None and row_rule_ids(old) == [
+            rule.id for rule in ordered
+        ]:
+            self.repaint_rule_rows(old, ordered)
+            return
+        await self.swap_rule_rows(body, old, ordered)
+
+    async def swap_rule_rows(
+        self, body: Vertical, old: ListView | None, ordered: list
+    ) -> None:
+        """Swap in a freshly-built list (its mount awaited),
+        preserving the focused rule by id (the top when it left): a
+        mutating ListView carries asynchronously-pruned stale
+        children that shift indexes, so positions must come from
+        children that are all real — `x` must never retarget
+        through a shifted index."""
         focused = focused_rule_id(old)
         items = []
-        for rule in rule_rows(rules):
+        for rule in ordered:
             item = ListItem(
                 Static(rule_line(rule, self.controller.rule_remaining(rule)))
             )
@@ -587,6 +637,20 @@ class RulesScreen(Screen):
         fresh.focus()
         focus_rule_by_id(fresh, focused)  # after mount: index sticks
 
+    def repaint_rule_rows(self, rows: ListView, ordered: list) -> None:
+        """Repaint each surviving rule row's text in place (the
+        queue's per-tick countdown repaint, carried to the rules
+        rows): the caller's order-equal membership match proves the
+        children and ``ordered`` line up positionally, so the pass
+        walks the two side by side (never id-keyed — a malformed
+        frame with duplicate ids would repaint one row twice and
+        leave its twin stale), moves no index, and takes no
+        focus."""
+        for child, rule in zip(rows.children, ordered):
+            child.query_one(Static).update(
+                rule_line(rule, self.controller.rule_remaining(rule))
+            )
+
     async def action_revoke(self) -> None:
         """Revoke the focused rule through the injected seam; the row
         leaves on the refreshed ``egress.rules`` frame, never
@@ -598,12 +662,10 @@ class RulesScreen(Screen):
             await self.revoke(rule_id)
 
     def action_mode(self) -> None:
-        """Open the mode picker (#280); the current mode starts
-        highlighted. The picked mode goes to the app's switch
-        path (which owns the empty-static confirmation)."""
-        rules = self.controller.rules
-        current = rules.mode if rules is not None else ""
-        self.app.push_screen(ModeScreen(current, self.app.switch_mode))
+        """Open the mode picker: the app-level action (#301 exposed
+        it on the queue too); the rules screen keeps its key and
+        footer entry."""
+        self.app.action_mode()
 
     def action_back(self) -> None:
         self.app.pop_screen()
@@ -647,11 +709,11 @@ class EventsScreen(Screen):
         # The log fingerprint this screen last painted: the per-tick
         # repaint rebuilds only on a change (event rows are static —
         # unlike the rules screen's countdowns, nothing ticks).
-        self._built: tuple[int, int] | None = None
+        self._built: tuple[tuple[int, int], str] | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="events-body"):
-            yield Static(events_note(), id="events-note")
+            yield Static(id="events-note")
             yield ListView(id="event-rows")
         yield Footer()
 
@@ -669,17 +731,37 @@ class EventsScreen(Screen):
         self.rebuilds.request()
 
     async def rebuild_rows(self) -> None:
-        """Repaint the audit log with a freshly-built list, newest
-        first, preserving the focused row by seq (the top when it
-        left): a mutating ListView carries asynchronously-pruned
-        stale children that shift indexes, so positions come from
-        children that are all real."""
-        body = self.query_one("#events-body", Vertical)
+        """Repaint the screen from the log: the header line always,
+        and the rows list only when it moved. An unchanged log (a
+        mode switch with no event landing) takes the header-only
+        path — a list swap under a reading operator is the flash
+        this PR removes elsewhere. A missing list (a rebuild that
+        died mid-swap) always rebuilds, unchanged log or not: the
+        swap is also the heal."""
+        rows_id = self.rows_fingerprint()
+        self.query_one("#events-note", Static).update(
+            events_header(self.controller.rules)
+        )
         old = None
         try:
             old = self.query_one("#event-rows", ListView)
         except NoMatches:
             pass  # a died-mid-swap rebuild: mount the fresh list anew
+        if (
+            old is not None
+            and self._built is not None
+            and self._built[0] == rows_id
+        ):
+            self._built = self.log_fingerprint()
+            return
+        await self.swap_event_rows(old)
+
+    async def swap_event_rows(self, old: ListView | None) -> None:
+        """Swap in a freshly-built list (its mount awaited), newest
+        first, preserving the focused row by seq (the top when it
+        left): a mutating ListView carries asynchronously-pruned
+        stale children that shift indexes, so positions come from
+        children that are all real."""
         focused = focused_event_id(old)
         items = [
             event_item(event) for event in reversed(self.controller.events)
@@ -687,17 +769,23 @@ class EventsScreen(Screen):
         fresh = ListView(*items, id="event-rows")
         if old is not None:
             await old.remove()  # frees the id before the fresh list mounts
-        await body.mount(fresh)
+        await self.query_one("#events-body", Vertical).mount(fresh)
         fresh.focus()
         focus_event_by_id(fresh, focused)  # after mount: index sticks
         self._built = self.log_fingerprint()
 
-    def log_fingerprint(self) -> tuple[int, int]:
-        """The log's identity for repaint gating: its length and
-        newest seq (seq is monotonic; the length catches the bound's
-        trims)."""
+    def rows_fingerprint(self) -> tuple[int, int]:
+        """The log's rows identity: length and newest seq (seq is
+        monotonic, appends grow it, the bound's trims shrink the
+        length — equal values mean equal rows)."""
         events = self.controller.events
         return (len(events), events[-1].seq if events else 0)
+
+    def log_fingerprint(self) -> tuple[tuple[int, int], str]:
+        """The log's identity for repaint gating: its rows identity
+        and the mode — a switch repaints the header's mode label
+        even when no event landed (#301)."""
+        return (self.rows_fingerprint(), mode_label(self.controller.rules))
 
     def log_changed(self) -> bool:
         """Whether the log moved since this screen last painted it
@@ -730,6 +818,7 @@ class ConsentDeciderApp(App):
         Binding("D", "deny_duration", "Deny…"),
         Binding("r", "rules", "Rules"),
         Binding("e", "events", "Events"),
+        Binding("m", "mode", "Mode"),
         Binding("q", "quit_screen", "Quit"),
         Binding("escape", "quit_screen", "Quit", show=False),
     ]
@@ -951,9 +1040,18 @@ class ConsentDeciderApp(App):
             self.flash(f"decide failed: {exc}")
 
     def action_rules(self) -> None:
-        self.push_screen(
-            RulesScreen(self.controller, self.revoke_rule, self.switch_mode)
-        )
+        self.push_screen(RulesScreen(self.controller, self.revoke_rule))
+
+    def action_mode(self) -> None:
+        """Open the mode picker (#301: `m` from the queue, the rules
+        screen, or the events screen — the operator watching holds
+        escalates or relaxes the posture without leaving the
+        decider): the current mode starts highlighted, and the pick
+        goes to the switch path (which owns the empty-static
+        confirmation)."""
+        rules = self.controller.rules
+        current = rules.mode if rules is not None else ""
+        self.push_screen(ModeScreen(current, self.switch_mode))
 
     async def switch_mode(self, mode: str | None) -> None:
         """One picked mode from the picker (#280). ``static`` with
@@ -1142,14 +1240,17 @@ class ConsentDeciderApp(App):
         return item
 
     def update_status(self) -> None:
-        """The status line: a flash owns it until its TTL lapses."""
+        """The status line: workspace, current mode (visible on
+        every screen the queue owns — #301), connection state, held
+        count; a flash owns it until its TTL lapses."""
         if self._flash_until > time.time():
             text = self._flash_msg
         else:
             held = len(self.controller.pending)
             text = (
-                f" {escape(self.workspace_id)}  ·  {self._conn_state}"
-                f"  ·  {held} held"
+                f" {escape(self.workspace_id)}  ·  mode "
+                f"{mode_label(self.controller.rules)}"
+                f"  ·  {self._conn_state}  ·  {held} held"
             )
         self.query_one("#status", Static).update(text)
 

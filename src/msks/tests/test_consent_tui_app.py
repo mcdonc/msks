@@ -337,7 +337,7 @@ async def test_the_rules_screen_revokes() -> None:
         from msks.client.tui.consent_app import RulesScreen
 
         empty = consent_mod.ConsentController()
-        app.push_screen(RulesScreen(empty, app.revoke_rule, app.switch_mode))
+        app.push_screen(RulesScreen(empty, app.revoke_rule))
         await wait_for(lambda: type(app.screen).__name__ == "RulesScreen")
         await pilot.press("x")
         await pilot.pause()
@@ -431,6 +431,7 @@ def test_row_and_label_helpers() -> None:
         allowlist_text,
         dest_line,
         duration_label,
+        mode_label,
         rule_line,
         rule_rows,
     )
@@ -465,6 +466,8 @@ def test_row_and_label_helpers() -> None:
         denied=(),
     )
     assert allowlist_text(rules) == "mode allow   allowlist: x"
+    assert mode_label(None) == "—"
+    assert mode_label(rules) == "allow"
 
 
 class RaisingEnter:
@@ -1542,18 +1545,251 @@ async def test_a_flight_dying_at_teardown_stays_quiet() -> None:
 def empty_rules_frame() -> str:
     """A rules snapshot with nothing effectively allowed: an empty
     allowlist under a mode that holds nothing allowed."""
+    return mode_frame("allow")
+
+
+def mode_frame(mode: str) -> str:
+    """One rules frame carrying only the mode — the refresh a live
+    mode switch sends (#301)."""
     return json.dumps(
         {
             "event": "egress.rules",
             "data": {
                 "workspace_id": "ws-dev",
-                "mode": "allow",
+                "mode": mode,
                 "allow_list": [],
                 "allowed": [],
                 "denied": [],
             },
         }
     )
+
+
+def same_rows_frame(mode: str) -> str:
+    """The fixture snapshot's rows under another mode — the
+    same-membership refresh a mode switch sends while verdicts
+    stand."""
+    return json.dumps(
+        {
+            "event": "egress.rules",
+            "data": {
+                "workspace_id": "ws-dev",
+                "mode": mode,
+                "allow_list": [".debian.org"],
+                "allowed": [
+                    {
+                        "id": "a1",
+                        "dest_host": "api.example",
+                        "dest_port": 443,
+                        "decision": "allowed",
+                        "duration": "5m",
+                        "decided_at": 200.0,
+                        "decided_by": "token",
+                    }
+                ],
+                "denied": [
+                    {
+                        "id": "d1",
+                        "dest_host": "203.0.113.7",
+                        "dest_port": 0,
+                        "decision": "denied",
+                        "duration": "forever",
+                        "decided_at": 201.0,
+                        "decided_by": "token",
+                    }
+                ],
+            },
+        }
+    )
+
+
+async def test_the_mode_picker_opens_from_the_queue() -> None:
+    """`m` on the queue opens the picker directly (#301): the
+    operator watching holds escalates or relaxes the posture
+    without detouring through the rules screen; the pick goes
+    through the seam, and `m` again under the open picker stacks
+    nothing (the shadow rule). The picker also opens over the
+    events screen — every screen carries the toggle."""
+    factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
+    app, seams = make_app(factory)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: "mode interactive" in status_line(app))
+        await pilot.press("m")
+        await wait_for(lambda: type(app.screen).__name__ == "ModeScreen")
+        await pilot.press("m")  # under the picker: inert
+        await pilot.pause()
+        assert (
+            len(
+                [
+                    s
+                    for s in app.screen_stack
+                    if type(s).__name__ == "ModeScreen"
+                ]
+            )
+            == 1
+        )
+        await pilot.press("up")  # interactive -> static
+        await pilot.press("enter")
+        await wait_for(lambda: len(seams["modes"]) == 1)
+        assert seams["modes"] == [("ws-dev", "static", False)]
+        await pilot.press("e")
+        await wait_for(lambda: type(app.screen).__name__ == "EventsScreen")
+        await pilot.press("m")
+        await wait_for(lambda: type(app.screen).__name__ == "ModeScreen")
+        await pilot.press("escape")
+        await wait_for(lambda: type(app.screen).__name__ == "EventsScreen")
+        app.action_quit_screen()
+
+
+async def test_the_status_line_shows_the_mode() -> None:
+    """The queue's status line names the current mode at all times
+    (#301): `—` until the first rules frame lands, the snapshot's
+    mode after, and a mode switch's refreshed frame repaints it."""
+    factory = FakeFactory([FakeWS([]), FakeWS([])])
+    app, _ = make_app(factory)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert "mode —" in status_line(app)
+        app.controller.apply_frame(rules_frame())
+        app.safe_repaint()
+        await wait_for(lambda: "mode interactive" in status_line(app))
+        app.controller.apply_frame(mode_frame("allow"))
+        app.safe_repaint()
+        await wait_for(lambda: "mode allow" in status_line(app))
+        app.action_quit_screen()
+
+
+async def test_m_stays_inert_under_a_modal() -> None:
+    """`m` under the duration picker, the confirmation, and the
+    picker itself opens nothing (#301, the shadow rule): a mode
+    picker stacked under a modal would be a screen nobody can see
+    deciding a posture."""
+    factory = FakeFactory(
+        [FakeWS([request_frame("r1"), empty_rules_frame()]), FakeWS([])]
+    )
+    app, _ = make_app(factory)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: queue_children(app) == 1)
+        await pilot.press("A")
+        await wait_for(lambda: type(app.screen).__name__ == "DurationScreen")
+        await pilot.press("m")
+        await pilot.pause()
+        assert not [
+            s for s in app.screen_stack if type(s).__name__ == "ModeScreen"
+        ]
+        await pilot.press("escape")
+        await wait_for(lambda: type(app.screen).__name__ != "DurationScreen")
+        # The empty-static confirmation: m under it stays inert too.
+        await pilot.press("m")
+        await wait_for(lambda: type(app.screen).__name__ == "ModeScreen")
+        await pilot.press("down")  # allow -> static
+        await pilot.press("enter")
+        await wait_for(lambda: type(app.screen).__name__ == "ConfirmScreen")
+        await pilot.press("m")
+        await pilot.pause()
+        assert not [
+            s for s in app.screen_stack if type(s).__name__ == "ModeScreen"
+        ]
+        await pilot.press("n")
+        await wait_for(lambda: type(app.screen).__name__ != "ConfirmScreen")
+        app.action_quit_screen()
+
+
+async def test_the_rules_screen_repaints_in_place() -> None:
+    """An unchanged row set takes an in-place countdown repaint, not
+    the remove-and-mount swap — the once-a-second flash #301
+    reports. The list keeps its identity (and with it the focus and
+    indexes) across a tick and across a same-membership frame; a
+    membership change still swaps in a fresh list."""
+    factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
+    app, _ = make_app(factory)
+    async with app.run_test() as pilot:
+        await pilot.press("r")
+        await wait_for(lambda: rules_children(app) == 2)
+        rows = app.screen.query_one("#rule-rows")
+        await pilot.press("down")  # focus d1
+        await pilot.pause()
+        # A tick on the same snapshot: in place, identity kept.
+        app.safe_repaint()
+        await pilot.pause()
+        current = app.screen.query_one("#rule-rows")
+        assert current is rows
+        assert rules_focus(app) == "d1"
+        # The survivors' countdown text follows the clock (the
+        # repaint's other half — a no-op repaint would freeze it):
+        # a1's 5m verdict, decided_at 200, reads off the controller
+        # clock the test now owns.
+        clock = {"now": 300.0}
+        app.controller._clock = lambda: clock["now"]
+
+        def row_text(i: int) -> str:
+            return str(
+                app.screen.query_one("#rule-rows")
+                .children[i]
+                .query_one(Static)
+                .content
+            )
+
+        app.safe_repaint()
+        await wait_for(lambda: "3m left" in row_text(0))  # 500-300
+        clock["now"] = 360.0
+        app.safe_repaint()
+        await wait_for(lambda: "2m left" in row_text(0))  # 500-360
+        assert app.screen.query_one("#rule-rows") is rows  # still in place
+        # A same-membership frame (a mode switch lands in it): the
+        # header follows the mode, the rows never swap.
+        app.controller.apply_frame(same_rows_frame("allow"))
+        app.safe_repaint()
+        await wait_for(
+            lambda: (
+                "mode allow" in str(app.screen.query_one("#allowlist").content)
+            )
+        )
+        assert app.screen.query_one("#rule-rows") is rows
+        assert rules_focus(app) == "d1"
+        # A membership change (a1 revoked): the fresh-list swap.
+        app.controller.apply_frame(mode_frame("allow"))
+        app.safe_repaint()
+        await wait_for(lambda: rules_children(app) == 0)
+        assert app.screen.query_one("#rule-rows") is not rows
+        app.action_quit_screen()
+
+
+async def test_the_events_screen_shows_the_mode() -> None:
+    """The audit screen's header names the mode (#301 — visible on
+    every screen), and a mode switch's frame repaints it without an
+    event landing — the header-only path: the rows list keeps its
+    identity (a mode switch must not swap the log out from under a
+    reading operator)."""
+    factory = FakeFactory(
+        [
+            FakeWS([rules_frame(), secret_frame("swap", host="a.example")]),
+            FakeWS([]),
+        ]
+    )
+    app, _ = make_app(factory)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: len(app.controller.events) == 1)
+        await pilot.press("e")
+        await wait_for(
+            lambda: (
+                "mode interactive"
+                in str(app.screen.query_one("#events-note").content)
+                and events_children(app) == 1
+            )
+        )
+        rows = app.screen.query_one("#event-rows")
+        app.controller.apply_frame(mode_frame("allow"))
+        app.safe_repaint()
+        await wait_for(
+            lambda: (
+                "mode allow"
+                in str(app.screen.query_one("#events-note").content)
+            )
+        )
+        assert app.screen.query_one("#event-rows") is rows
+        assert events_children(app) == 1
+        app.action_quit_screen()
 
 
 async def test_mode_picker_switches_through_the_seam(monkeypatch) -> None:

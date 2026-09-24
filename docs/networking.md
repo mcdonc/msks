@@ -188,7 +188,7 @@ drive a different mechanism from the same model.
 ### Switching modes live (#280)
 
 `msks egress mode <ws> <mode> [--allow SPEC]...` (or `m` in the
-decider TUI's rules screen) moves a workspace between the three
+decider TUI, from any of its screens) moves a workspace between the three
 postures without recreating it. The row's mode and allowlist
 change at once; a running workspace then swaps its whole per-VM
 table in one nft transaction — the same maneuver the interceptor's
