@@ -74,7 +74,7 @@ let
   # lock move that regressed Node below it must fail the image
   # build, not boot a workspace whose pi refuses to start. The
   # check rides the returned derivation (asserts are expressions,
-  # not let bindings).
+  # not let bindings), with a message naming the regression.
   nodeFloorMet = lib.versionAtLeast pkgs.nodejs_22.version "22.19.0";
 
   # The model-discovery extension (#266, #268): the shared source
@@ -378,6 +378,14 @@ let
         "C /etc/skel/.pi/agent/extensions/llm-models.ts 0644 root root - ${piExtension}"
         "C /root/.pi/agent/extensions/llm-models.ts 0644 root root - ${piExtension}"
       ];
+
+      # Every `env`-shebang in the toolchain (`env node` for pi,
+      # and whatever the build leaves beside it) resolves through
+      # this activation-built /usr/bin/env. NixOS's default is the
+      # same coreutils env; the guest states it because the whole
+      # toolchain depends on it — a config that dropped it would
+      # break every shebang at once, far from the cause.
+      environment.usrbinenv = "${pkgs.coreutils}/bin/env";
     };
 
   nixos =
@@ -576,7 +584,9 @@ let
   };
 
 in
-assert nodeFloorMet;
+assert (
+  lib.assertMsg nodeFloorMet "pi's engines floor (22.19.0) exceeds nixpkgs nodejs_22 (${pkgs.nodejs_22.version}) — a devenv lock regression"
+);
 pkgs.runCommand "msks-guest-nixos"
   {
     inherit

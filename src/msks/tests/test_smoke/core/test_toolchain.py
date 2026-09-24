@@ -5,11 +5,11 @@ Both images ship the toolchain and the pin covers both: Debian
 stages the official Node tarball plus the shared pins' npm trees
 under /usr/local; NixOS rides nixpkgs' Node plus the same pins
 through the system profile, with Claude Code's native binary
-loader-patched (a stock NixOS ships a musl stub at
-/lib64/ld-linux-x86-64.so.2, so the published interpreter cannot
-exec). The observable outcome is the same either way: every tool
-answers on a login PATH, pi's `env node` shebang resolves, the
-claude symlink chain reaches a binary that runs, and the
+loader-patched (a stock NixOS ships no usable loader where the
+published interpreter points — see nix/agent-toolchain.nix). The
+observable outcome is the same either way: every tool answers on
+a login PATH, pi's `env node` shebang resolves, the claude
+symlink chain reaches a binary that runs, and the
 model-discovery extension is planted where accounts copy it.
 """
 
@@ -105,7 +105,12 @@ async def test_local_agent_toolchain() -> None:
             "CLAUDE-42",
         )
         # The extension: planted for the skeleton (every account
-        # the identity seed provisions copies it) and for root.
+        # the identity seed provisions copies it) and for root —
+        # and the delivery link itself: useradd -m copies the
+        # skeleton into a fresh home, exactly the path a
+        # seed-provisioned login user's extension takes. NixOS
+        # populates /etc/skel at boot (tmpfiles) rather than
+        # baking it, so this probe pins that machinery too.
         await run_in_console(
             microvm,
             wid,
@@ -113,6 +118,14 @@ async def test_local_agent_toolchain() -> None:
             "&& test -f /root/.pi/agent/extensions/llm-models.ts "
             "&& echo EXT-$((6*7))",
             "EXT-42",
+        )
+        await run_in_console(
+            microvm,
+            wid,
+            "useradd -m probe "
+            "&& test -f /home/probe/.pi/agent/extensions/llm-models.ts "
+            "&& echo SKEL-$((6*7))",
+            "SKEL-42",
         )
         # The workspace user's PATH carries the toolchain too —
         # the same bins a seed-provisioned login user gets.
