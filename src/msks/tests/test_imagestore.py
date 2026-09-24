@@ -23,9 +23,11 @@ from msks.imagestore import (
     import_archive,
     list_images,
     record_from,
+    remove,
     resolve,
     set_default,
     sweep_crash_leftovers,
+    unset_default,
     warm_import,
 )
 from msks.server.api import build_api
@@ -227,6 +229,30 @@ def test_default_selection(tmp_path: Path) -> None:
     # A stale pointer falls back to nothing (never a wrong image).
     set_default("f" * 64, tmp_path)
     assert default_image(tmp_path) is None
+
+
+def test_unset_default(tmp_path: Path) -> None:
+    """#270: clearing the pointer is idempotent, and the fallback
+    rule takes over — the sole entry answers, several answer
+    nothing."""
+    a, b = tmp_path / "a.tar", tmp_path / "b.tar"
+    build_containerdisk(a, name="one", version="1")
+    build_containerdisk(b, name="two", version="2")
+    one = import_archive(a, tmp_path)
+    two = import_archive(b, tmp_path)
+    set_default(two.hash, tmp_path)
+    assert default_image(tmp_path).ref == "two:2"
+    unset_default(tmp_path)
+    assert not (tmp_path / "images" / "default").exists()
+    # Two entries, no pointer: nothing is silently picked.
+    assert default_image(tmp_path) is None
+    # The sole-entry fallback once one is gone.
+    remove(one.hash, tmp_path)
+    unset_default(tmp_path)
+    assert default_image(tmp_path).ref == "two:2"
+    # A catalog without a pointer unsets cleanly.
+    unset_default(tmp_path)
+    assert default_image(tmp_path).ref == "two:2"
 
 
 @pytest.mark.parametrize(

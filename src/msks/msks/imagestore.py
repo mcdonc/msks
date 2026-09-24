@@ -667,6 +667,16 @@ def set_default(digest: str, state_dir: Path) -> None:
     (root / "default").write_text(digest + "\n")
 
 
+def unset_default(state_dir: Path) -> None:
+    """Remove the designation pointer (#270).
+
+    Idempotent: a catalog without a pointer unsets cleanly. From the
+    next bare create, the sole-entry fallback applies — or nothing,
+    on a multi-image catalog.
+    """
+    (images_dir(state_dir) / "default").unlink(missing_ok=True)
+
+
 def default_image(state_dir: Path) -> ImageRecord | None:
     """The designated default, or the sole catalog entry, or None."""
     root = images_dir(state_dir)

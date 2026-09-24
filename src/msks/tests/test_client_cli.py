@@ -1764,6 +1764,142 @@ def test_image_info_prints_the_record(
     assert "default  no" in out
 
 
+@pytest.mark.parametrize(
+    "ref",
+    [
+        "debian:13",
+        "debian",
+        "debian@" + "a" * 64,
+        "a" * 64,
+        "a" * 12,  # a unique hash prefix, as ls prints it
+    ],
+)
+def test_image_default_designates_by_every_reference_form(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    ref: str,
+) -> None:
+    """#270: every reference form rm takes designates the same
+    digest — the resolution happens client-side against the
+    listing, then one POST carries the resolved hash."""
+    client_env(monkeypatch)
+    posted = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        posted.append(
+            (request.method, request.url.path, json.loads(request.content))
+        )
+        return httpx.Response(200, json={"hash": "a" * 64, "ref": "debian:13"})
+
+    rc = cli.cmd_image_default(ref, transport=listing_transport(handler))
+    assert rc == 0
+    assert posted == [("POST", "/api/v1/images/default", {"ref": "a" * 64})]
+    assert (
+        "designated debian:13 (" + "a" * 12 + ") as the default image"
+        in capsys.readouterr().out
+    )
+
+
+def test_image_default_miss_lists_the_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#270: a reference that names nothing is the named miss with
+    the catalog spelled out — the same lookup rm uses."""
+    client_env(monkeypatch)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.cmd_image_default("fedora:40", transport=listing_transport())
+    message = str(excinfo.value)
+    assert "no image matches 'fedora:40'" in message
+    assert "debian:13" in message and "alpine:3.20" in message
+
+
+def test_image_default_ambiguous_prefix_is_named(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#270: an ambiguous hash prefix names the images it matches —
+    the same refusal rm answers, before any POST leaves."""
+    client_env(monkeypatch)
+    rows = IMAGES + [image_row("debian", "13.1", "a" * 63 + "e")]
+    posted = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method != "GET":
+            posted.append(request.url.path)
+        return httpx.Response(200, json=rows)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.cmd_image_default("a" * 63, transport=mock(handler))
+    message = str(excinfo.value)
+    assert "matches 2 images" in message
+    assert "debian:13" in message and "debian:13.1" in message
+    assert "use the full hash or name@hash" in message
+    assert posted == []
+
+
+def test_image_default_unset_reports_the_fallback(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#270: --unset DELETEs the designation and the line reports
+    the fallback that applies — the sole entry, or the need for
+    --image."""
+    client_env(monkeypatch)
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path))
+        return httpx.Response(200, json={"fallback": None})
+
+    rc = cli.cmd_image_default(None, unset=True, transport=mock(handler))
+    assert rc == 0
+    assert seen == [("DELETE", "/api/v1/images/default")]
+    assert "a bare create needs --image" in capsys.readouterr().out
+    fallback = {
+        "hash": "c" * 64,
+        "name": "alpine",
+        "version": "3.20",
+        "ref": "alpine:3.20",
+    }
+    cli.cmd_image_default(
+        None,
+        unset=True,
+        transport=mock(
+            lambda req: httpx.Response(200, json={"fallback": fallback})
+        ),
+    )
+    assert (
+        "falls back to the sole entry alpine:3.20 (" + "c" * 12 + ")"
+        in capsys.readouterr().out
+    )
+
+
+def test_image_default_needs_a_reference_or_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#270: neither a reference nor --unset is a named usage error,
+    and both together are refused."""
+    client_env(monkeypatch)
+    with pytest.raises(SystemExit, match="or --unset"):
+        cli.cmd_image_default(None, transport=listing_transport())
+    with pytest.raises(SystemExit, match="not both"):
+        cli.cmd_image_default(
+            "debian:13", unset=True, transport=listing_transport()
+        )
+
+
+def test_main_dispatches_image_default(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client_env(monkeypatch)
+    rc = cli.main(
+        ["image", "default", "alpine"],
+        transport=listing_transport(
+            lambda req: httpx.Response(200, json={"hash": "c" * 64})
+        ),
+    )
+    assert rc == 0
+    assert "designated alpine:3.20" in capsys.readouterr().out
+
+
 def test_main_dispatches_image_subcommands(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1809,6 +1945,38 @@ async def test_image_commands_against_the_real_api(api_transport) -> None:
     assert removed == {"removed": record["hash"]}
     with pytest.raises(SystemExit, match="no image matches"):
         await cli.remove_image("https://test", TOKEN, "debian:13.6", transport)
+
+
+async def test_image_default_against_the_real_api(api_transport) -> None:
+    """#270: designate and unset against the real daemon surface —
+    the listing marks the designated row, and the unset reports the
+    fallback that applies."""
+    from test_imagestore import build_containerdisk
+
+    transport = api_transport
+    app = transport.app.state.msks_app
+    state_dir = app.state.settings.vmm.state_dir
+    state_dir.mkdir(parents=True, exist_ok=True)
+    hashes = {}
+    for name, version in (("one", "1"), ("two", "2")):
+        archive = state_dir / f"{name}.tar"
+        build_containerdisk(archive, name=name, version=version)
+        imported = await cli.import_image(
+            "https://test", TOKEN, str(archive), transport
+        )
+        hashes[f"{name}:{version}"] = imported["hash"]
+    designated = await cli.designate_image(
+        "https://test", TOKEN, "two:2", transport
+    )
+    assert designated["hash"] == hashes["two:2"]
+    rows = await cli.fetch_images("https://test", TOKEN, transport)
+    flags = {f"{row['name']}:{row['version']}": row["default"] for row in rows}
+    assert flags == {"one:1": False, "two:2": True}
+    unset = await cli.unset_default_image("https://test", TOKEN, transport)
+    assert unset["fallback"] is None
+    await cli.remove_image("https://test", TOKEN, hashes["one:1"], transport)
+    unset = await cli.unset_default_image("https://test", TOKEN, transport)
+    assert unset["fallback"]["ref"] == "two:2"
 
 
 def test_image_rm_miss_caps_a_large_catalog(
