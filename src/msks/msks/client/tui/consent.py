@@ -119,6 +119,7 @@ class SecretEvent:
     workspace_id: str
     name: str
     placeholder_id: int | None = None  # absent on an older daemon
+    audit_id: int | None = None  # the recorded row's identity
     host: str | None = None  # the swap/sighting destination
     dests: tuple[str, ...] = ()  # the mint's allowlist
     ts: float = 0.0  # epoch; 0.0 when the frame carried none
@@ -228,6 +229,18 @@ def numeric_field(value: object) -> float | None:
     return float(value)
 
 
+def audit_already_landed(
+    events: list[SecretEvent], audit_id: int | None
+) -> bool:
+    """Whether a recorded row's identity already holds a log slot
+    (#305): the replay of a fact the live stream delivered (or the
+    live frame after a replay that read the row between its commit
+    and its publish) drops instead of doubling the row."""
+    return audit_id is not None and any(
+        landed.audit_id == audit_id for landed in events
+    )
+
+
 def parse_secret_event(seq: int, kind: str, obj: object) -> SecretEvent | None:
     """One secret frame's data, or None on an unusable shape (no
     workspace/name pair to key the row). Fields the frame does not
@@ -245,6 +258,7 @@ def parse_secret_event(seq: int, kind: str, obj: object) -> SecretEvent | None:
         workspace_id=fields[0],
         name=fields[1],
         placeholder_id=int_field(obj.get("placeholder_id")),
+        audit_id=int_field(obj.get("audit_id")),
         host=text_or_none(obj.get("host")),
         dests=(
             tuple(str(entry) for entry in dests)
@@ -366,9 +380,15 @@ class ConsentController:
         log, report. A foreign workspace's frame is ignored — the
         #280 rule for requests and rules, and the same stake: a
         foreign sighting flashing this decider's exfil alarm is a
-        false one. An unusable shape is ignored with no slot used."""
+        false one. A recorded row's second delivery (the replay of
+        a fact the live stream already landed, or the live frame
+        after a replay that read the row mid-commit) is dropped on
+        its shared audit identity (#305). An unusable shape is
+        ignored with no slot used."""
         event = parse_secret_event(self._event_seq + 1, kind, data)
         if event is None or not self.owns(event.workspace_id):
+            return IGNORED, None
+        if audit_already_landed(self.events, event.audit_id):
             return IGNORED, None
         self._event_seq += 1
         self.events.append(event)
@@ -411,8 +431,9 @@ class ConsentController:
         """Drop all pending holds and the cached rules snapshot: the
         registration handshake re-sends both, and rows that resolved
         while disconnected must not linger as ghosts. The audit log
-        stays: its rows are history the daemon does not re-send, not
-        live state a re-registration replaces."""
+        stays: re-registration replays the recorded lifecycle beside
+        it, and each recorded row carries the audit identity the
+        replay drops on a second delivery (#305)."""
         self.pending.clear()
         self.rules = None
 

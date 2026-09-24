@@ -1212,11 +1212,12 @@ def build_api(app) -> FastAPI:
         # with the placeholder live and armed — recovery is revoke
         # and re-mint, and suppressing it would silently drop the
         # mint's trail instead.
-        await app.state.model.record_audit("mint", row)
+        audit_id = await app.state.model.record_audit("mint", row)
         await hub.publish(
             "secret.mint",
             {
                 "placeholder_id": row["id"],
+                "audit_id": audit_id,
                 "workspace_id": workspace_id,
                 "name": body.name,
                 "dests": dests,
@@ -1299,12 +1300,13 @@ def build_api(app) -> FastAPI:
                 # operator sees it in the response and can re-run
                 # check.
                 cleaned = False
-            await app.state.model.record_audit("revoke", row)
+            audit_id = await app.state.model.record_audit("revoke", row)
             await sync_store_manifest()
         await hub.publish(
             "secret.revoke",
             {
                 "placeholder_id": placeholder_id,
+                "audit_id": audit_id,
                 "workspace_id": row["workspace_id"],
                 "name": row["name"],
                 "ts": time.time(),
@@ -2920,6 +2922,7 @@ async def replay_secret_audit(app, socket, workspace_id: str) -> None:
         return
     for row in rows:
         data = {
+            "audit_id": row["id"],
             "workspace_id": row["workspace_id"],
             "name": row["name"],
             "ts": audit_epoch(row["created_at"]),

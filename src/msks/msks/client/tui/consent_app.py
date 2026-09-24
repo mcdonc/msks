@@ -357,6 +357,14 @@ def event_id_suffix(event: SecretEvent) -> str:
     return f"#{event.placeholder_id}" if event.placeholder_id else ""
 
 
+def render_order(events: list[SecretEvent]) -> list[SecretEvent]:
+    """The events oldest-first for rendering (#305): timestamp
+    order, arrival order (seq) breaking ties — a live frame the
+    socket delivered between two replayed rows still renders in
+    its time's place, not wherever the interleaving dropped it."""
+    return sorted(events, key=lambda event: (event.ts, event.seq))
+
+
 def event_item(event: SecretEvent) -> ListItem:
     """One audit row as a list item; the sighting carries the
     highlight class (the color pairs with the ``!`` marker)."""
@@ -785,7 +793,8 @@ class EventsScreen(Screen):
         children that are all real."""
         focused = focused_event_id(old)
         items = [
-            event_item(event) for event in reversed(self.controller.events)
+            event_item(event)
+            for event in reversed(render_order(self.controller.events))
         ]
         # The empty state rides beside the list (#305): a screen
         # that holds nothing says so, instead of rendering the

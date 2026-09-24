@@ -632,6 +632,9 @@ async def test_register_decider_replays_the_recorded_lifecycle(
     assert mint["name"] == "api"
     assert mint["dests"] == ["api.example"]
     assert mint["ts"] > 0.0
+    assert isinstance(mint["audit_id"], int)
+    assert isinstance(revoke["audit_id"], int)
+    assert revoke["audit_id"] != mint["audit_id"]
     assert "dests" not in revoke
     assert mint["ts"] <= revoke["ts"]  # stored order, not send order
 

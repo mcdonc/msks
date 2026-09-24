@@ -77,8 +77,12 @@ workspace's events newest first: the recorded mints, revokes,
 and expiries replay onto it at registration (#305), and swaps and
 sightings stream in live, with the off-allowlist sighting
 highlighted as the exfil signal and a header line stating the
-detection boundary above. An empty list says so — the screen
-never renders the header line alone.
+detection boundary above. Each lifecycle event carries its audit
+row's id on both the live stream and the replay, so one fact
+lands once on the screen however it arrives; a replayed row
+keeps no placeholder row-id suffix (the audit record holds the
+identity, not the placeholder's id). An empty list says so — the
+screen never renders the header line alone.
 
 Fail-closed on the swap path: a secret the store cannot serve, or a
 row the database cannot read, answers the request locally with a

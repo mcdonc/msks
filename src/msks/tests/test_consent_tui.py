@@ -223,9 +223,10 @@ def test_an_unhashable_event_value_is_ignored() -> None:
 
 def test_secret_log_is_bounded_and_survives_reset() -> None:
     """The log keeps only the newest EVENT_LOG_MAX rows, and a
-    reconnect's reset keeps it: the daemon does not re-send history,
-    so a re-registration must not blank the tail the operator is
-    reading."""
+    reconnect's reset keeps it: re-registration replays the
+    recorded lifecycle beside it (deduplicated on the shared
+    audit identity), so the tail the operator is reading stays
+    (#305)."""
     controller = ConsentController()
     for i in range(consent.EVENT_LOG_MAX + 10):
         controller.apply_frame(
@@ -237,6 +238,54 @@ def test_secret_log_is_bounded_and_survives_reset() -> None:
     controller.reset()
     assert controller.pending == {}
     assert len(controller.events) == consent.EVENT_LOG_MAX
+
+
+def test_replayed_rows_dedup_on_their_audit_identity() -> None:
+    """A recorded row lands once however it arrives (#305): the
+    replay of a fact the live stream already delivered (a
+    reconnect's re-registration, or a replay that read the row
+    between its commit and its live publish) drops on the shared
+    audit id, in either arrival order — while rows without one
+    (swaps, sightings, an older daemon) keep appending."""
+    controller = ConsentController()
+    live = frame(
+        "secret.mint",
+        {
+            "workspace_id": "ws",
+            "name": "api",
+            "audit_id": 7,
+            "dests": ["api.example"],
+            "ts": 100.0,
+        },
+    )
+    replay = frame(
+        "secret.mint",
+        {
+            "workspace_id": "ws",
+            "name": "api",
+            "audit_id": 7,
+            "dests": ["api.example"],
+            "ts": 100.0,
+        },
+    )
+    assert controller.apply_frame(live)[0] == consent.SECRET_EVENT
+    assert controller.apply_frame(replay) == (consent.IGNORED, None)
+    assert len(controller.events) == 1
+    reversed_order = ConsentController()
+    assert reversed_order.apply_frame(replay)[0] == consent.SECRET_EVENT
+    assert reversed_order.apply_frame(live) == (consent.IGNORED, None)
+    assert len(reversed_order.events) == 1
+    other = frame(
+        "secret.revoke",
+        {"workspace_id": "ws", "name": "api", "audit_id": 8, "ts": 101.0},
+    )
+    swap = frame(
+        "secret.swap",
+        {"workspace_id": "ws", "name": "api", "host": "a.example"},
+    )
+    assert controller.apply_frame(other)[0] == consent.SECRET_EVENT
+    assert controller.apply_frame(swap)[0] == consent.SECRET_EVENT
+    assert len(controller.events) == 3
 
 
 def test_apply_frame_ignores_malformed() -> None:

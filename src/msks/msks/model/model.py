@@ -587,25 +587,28 @@ class Model:
 
     # --- secret audit (#198) -----------------------------------------
 
-    async def record_audit(self, kind: str, row: dict) -> None:
-        """Append one lifecycle event for a placeholder row."""
+    async def record_audit(self, kind: str, row: dict) -> int:
+        """Append one lifecycle event for a placeholder row; the
+        new row's id — the identity the live publish and the
+        decider replay share, so a frame that already landed is
+        not sent or counted twice (#305)."""
         if kind not in AUDIT_KINDS:
             raise ValueError(f"unknown audit kind: {kind!r}")
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
-            session.add(
-                SecretAudit(
-                    kind=kind,
-                    workspace_id=row["workspace_id"],
-                    name=row["name"],
-                    dests=(
-                        json.dumps(row["dests"])
-                        if isinstance(row["dests"], list)
-                        else row["dests"]
-                    ),
-                )
+            entry = SecretAudit(
+                kind=kind,
+                workspace_id=row["workspace_id"],
+                name=row["name"],
+                dests=(
+                    json.dumps(row["dests"])
+                    if isinstance(row["dests"], list)
+                    else row["dests"]
+                ),
             )
+            session.add(entry)
             await session.commit()
+            return entry.id
 
     async def list_audit(self, limit: int = 100) -> list[dict]:
         """The newest audit events first (operator view)."""

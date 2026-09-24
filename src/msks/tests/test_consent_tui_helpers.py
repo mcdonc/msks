@@ -17,6 +17,7 @@ from msks.client.tui.consent_app import (
     focus_event_by_id,
     focused_event_id,
     focused_rule_id,
+    render_order,
     row_map,
     sighting_flash,
 )
@@ -125,6 +126,19 @@ def test_event_line_marks_the_sighting() -> None:
     assert "1970" not in event_line(event(ts=0.0))
     # A frame without an id (an older daemon) keeps no suffix.
     assert "#" not in event_line(event(placeholder_id=None))
+
+
+def test_render_order_sorts_by_timestamp() -> None:
+    """The render order is timestamp order with arrival breaking
+    ties (#305): a live frame the socket delivered between two
+    replayed rows renders in its time's place, not wherever the
+    interleaving dropped it."""
+    live = event(kind="swap", host="live.example", ts=99.5)
+    replayed = event(kind="mint", ts=100.0)
+    assert render_order([live, replayed]) == [live, replayed]
+    assert render_order([replayed, live]) == [live, replayed]
+    tie = event(kind="swap", ts=100.0, seq=2)
+    assert render_order([tie, replayed]) == [replayed, tie]
 
 
 def test_event_item_carries_the_highlight_class() -> None:
