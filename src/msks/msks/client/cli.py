@@ -49,12 +49,19 @@ from .tabular import command_parser, listing_text
 from .tui.consent_app import run_consent_tui
 
 
+def _created_date(raw: str | None) -> str:
+    """ISO timestamp to YYYY-MM-DD, or ``-``."""
+    return raw[:10] if raw else "-"
+
+
 def workspace_cells(row: dict) -> list[str]:
-    """One listing row's cells: name, id, status, image hash, host."""
+    """One listing row's cells."""
     image = (row.get("image_hash") or "-")[:12]
     host = row.get("host") or "-"
     name = row.get("name") or "-"
-    return [name, row["id"], row["status"], image, host]
+    egress_mode = row.get("egress_mode") or "-"
+    created = _created_date(row.get("created_at"))
+    return [name, row["id"], row["status"], egress_mode, created, image, host]
 
 
 def display_name(row: dict) -> str:
@@ -68,7 +75,7 @@ def render_ls(rows: list[dict], as_json: bool) -> str:
     if as_json:
         return json.dumps(rows, indent=2)
     return listing_text(
-        ["name", "id", "status", "image", "host"],
+        ["name", "id", "status", "egress", "created", "image", "host"],
         [workspace_cells(row) for row in rows],
     )
 
