@@ -338,8 +338,17 @@ def test_gzip_layer_supported(tmp_path: Path) -> None:
     assert record.kernel.read_bytes() == b"k"
 
 
+@pytest.mark.timeout(300)
 def test_import_of_the_real_built_image(tmp_path: Path) -> None:
-    """The msks-build-guest containerDisk, when present, imports as-is."""
+    """The msks-build-guest containerDisk, when present, imports as-is.
+
+    The ceiling lifts for this one test: the archive the toolchain
+    bake grew past 2 GB (#266), and the import's plain file copy
+    takes longer than the suite's 30 s default on CI runners'
+    disks. The copy is the behavior under test — shrinking or
+    parallel-cutting it would test something else — so the test
+    names its own ceiling instead.
+    """
 
     assets = guestassets.load_guest_assets()
     if assets is None:
