@@ -2,6 +2,7 @@
 services — the real DHCP/DNS protocols have their own suites."""
 
 import asyncio
+import json
 from ipaddress import IPv4Network
 from pathlib import Path
 
@@ -42,7 +43,8 @@ class FakeService:
 
     # The naming memory (#69): the forwarder surface the consent
     # seam reads, kept in the same fake so gated-mode attaches get
-    # it too.
+    # it too. Co-residency (#304): `shared` marks addresses two
+    # live names resolved to; tests set it to drive the pin skip.
     def remember(self, name, records) -> None:
         self._names = {ip: name for ip, _ttl in records}
 
@@ -56,6 +58,9 @@ class FakeService:
         self._names = {
             ip: name for ip, name in self._names.items() if name != host
         }
+
+    def shared(self, ip) -> bool:
+        return ip in getattr(self, "shared_ips", set())
 
 
 @pytest.fixture
@@ -653,6 +658,121 @@ async def test_consent_helpers_pin_through_the_chain(gated_app) -> None:
     )
 
 
+async def test_shared_addresses_carry_no_allow_pins(gated_app) -> None:
+    """Co-residency (#304): a NAME pin on an address two live names
+    resolved to installs nothing — the element is keyed by address
+    alone and would cover the co-resident; the next SYN gates at
+    the queue under the naming memory. An address-literal verdict
+    (given on the address itself) still pins."""
+    app, _consumers, nft_log = gated_app
+    net = app.state.net
+    await net.start()
+    await net.attach("ws-i", want=True, policy=interactive_policy())
+    net._services["ws-i"].dns.shared_ips = {"10.1.2.3"}
+    await net.consent_allow("ws-i", "10.1.2.3", 443, 60)
+    assert not any(
+        "add element" in line and "allows" in line
+        for line in log_lines(nft_log)
+    )
+    await net.consent_allow("ws-i", "10.1.2.3", 443, 60, named=False)
+    assert any(
+        "add element" in line and "allows_port" in line
+        for line in log_lines(nft_log)
+    )
+
+
+async def test_a_named_deny_on_a_shared_address_refuses_only_its_flow(
+    gated_app,
+) -> None:
+    """A name deny on a shared address pins the per-flow element —
+    keyed by the connection's source port — so the co-resident's
+    connections keep gating (#304); unnamed and literal denies pin
+    the blanket element."""
+    app, _consumers, nft_log = gated_app
+    net = app.state.net
+    await net.start()
+    await net.attach("ws-i", want=True, policy=interactive_policy())
+    net._services["ws-i"].dns.shared_ips = {"10.1.2.3"}
+    await net.consent_reject(
+        "ws-i", "10.1.2.3", 443, 5, sport=40000, named=True
+    )
+    added = [
+        line.split()[4]
+        for line in log_lines(nft_log)
+        if line.startswith("add element")
+    ]
+    assert "rejects_flow" in added
+    assert "rejects" not in added
+    await net.consent_reject(
+        "ws-i", "10.1.2.3", 443, 5, sport=40000, named=False
+    )
+    added = [
+        line.split()[4]
+        for line in log_lines(nft_log)
+        if line.startswith("add element")
+    ]
+    assert added[-1] == "rejects"
+
+
+async def test_retract_consent_pins_clears_one_address(
+    gated_app, monkeypatch
+) -> None:
+    """The co-residency retraction (#304): every element naming the
+    address dies — the all-ports allow directly, the port-keyed sets
+    by listing and destroying their matching elements — and another
+    address's elements stay."""
+    app, _consumers, nft_log = gated_app
+    net = app.state.net
+    await net.start()
+    await net.attach("ws-i", want=True, policy=interactive_policy())
+
+    async def fake_json(settings, args):
+        if args[5] == "allows_port":
+            return json.dumps(
+                {
+                    "nftables": [
+                        {
+                            "set": {
+                                "elem": [
+                                    {
+                                        "elem": {
+                                            "val": {
+                                                "concat": ["10.1.2.3", 443]
+                                            },
+                                            "timeout": 60,
+                                        }
+                                    },
+                                    {
+                                        "elem": {
+                                            "val": {
+                                                "concat": ["10.9.9.9", 80]
+                                            },
+                                            "timeout": 60,
+                                        }
+                                    },
+                                ]
+                            }
+                        }
+                    ]
+                }
+            )
+        return None
+
+    monkeypatch.setattr(manager_mod.nft, "nft_json", fake_json)
+    await net.retract_consent_pins("ws-i", ["10.1.2.3"])
+    lines = log_lines(nft_log)
+    assert any(
+        "delete element" in line and "allows_any" in line for line in lines
+    )
+    cleared = [
+        line
+        for line in lines
+        if "delete element" in line and "10.1.2.3" in line
+    ]
+    assert any("allows_port" in line for line in cleared)
+    assert not any("10.9.9.9" in line for line in cleared)
+
+
 async def test_host_for_reads_the_services_naming(gated_app) -> None:
     app, _consumers, _nft_log = gated_app
     await app.state.net.start()
@@ -715,6 +835,36 @@ async def test_clear_consent_dest_forgets_names_and_drops_flows(
     assert f"-D -s {guest} -d 198.51.100.4" in log_lines(ct_log)
     # No attachment: nothing to clear, nothing raised.
     await app.state.net.clear_consent_dest("ws-missing", "x", 0)
+
+
+async def test_revoke_flushes_the_per_flow_rsts(gated_app) -> None:
+    """Revocation empties the per-flow RST set wholesale (#304):
+    its elements name connections, not verdicts, and a dropped one
+    re-pins on the flow's next retransmit through the session gate.
+    A static workspace defines no such set — its revoke clears its
+    elements without a flush."""
+    app, _consumers, nft_log = gated_app
+    net = app.state.net
+    await net.start()
+    await net.attach("ws-i", want=True, policy=interactive_policy())
+    net._services["ws-i"].dns.remember("api.example", [("203.0.113.7", 300)])
+    app.state.settings.net.conntrack_tool = "/nonexistent/conntrack"
+    await net.clear_consent_dest("ws-i", "api.example", 443)
+    assert any(
+        "flush set" in line and "rejects_flow" in line
+        for line in log_lines(nft_log)
+    )
+    # A static workspace defines no per-flow set: its revoke clears
+    # its elements without a flush.
+    from msks.consent.specs import EgressPolicy
+
+    await net.attach(
+        "ws-a", want=True, policy=EgressPolicy("ws-a", "static", ())
+    )
+    net._services["ws-a"].dns.remember("static.example", [("10.5.5.5", 300)])
+    before = len(log_lines(nft_log))
+    await net.clear_consent_dest("ws-a", "static.example", 443)
+    assert not any("flush set" in line for line in log_lines(nft_log)[before:])
 
 
 async def test_drop_flows_survives_a_missing_tool(gated_app) -> None:

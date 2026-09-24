@@ -509,6 +509,119 @@ async def test_dump_reads_the_live_sets(tools) -> None:
         "allows_any",
         "allows_port",
         "rejects",
+        "rejects_flow",
+    ]
+
+
+def test_rejects_flow_ships_with_the_queue() -> None:
+    """#304: the per-flow reject set and its match ride only the
+    interactive posture — a name verdict on a shared address
+    refuses just its own connection."""
+    from msks.consent.specs import EgressPolicy
+
+    interactive = nft.vm_ruleset(
+        "ws-a",
+        "msks-tap",
+        "172.31.0.1",
+        "172.31.0.2",
+        "eth0",
+        policy=EgressPolicy("ws-a", "interactive", ()),
+        queue_num=1107,
+    )
+    assert "set rejects_flow" in interactive
+    assert (
+        "ip daddr . tcp sport . tcp dport @rejects_flow "
+        "reject with tcp reset" in interactive
+    )
+    static = nft.vm_ruleset(
+        "ws-a",
+        "msks-tap",
+        "172.31.0.1",
+        "172.31.0.2",
+        "eth0",
+        policy=EgressPolicy("ws-a", "static", ()),
+    )
+    assert "rejects_flow" not in static
+
+
+async def test_reject_flow_element_pins_one_connection(tools) -> None:
+    """The per-flow RST element: address . source port . destination
+    port with the verdict's timeout."""
+    settings, log = tools
+    await nft.reject_flow_element(settings, "ws-a", "10.1.2.3", 40000, 443, 5)
+    line = log_lines(log)[0]
+    assert line.split()[4] == "rejects_flow"
+    assert "10.1.2.3 . 40000 . 443 timeout 5s" in line
+
+
+async def test_clear_ip_elements_destroys_only_that_address(
+    tools, monkeypatch
+) -> None:
+    """The co-residency retraction (#304): the address's elements
+    die across every consent set — the all-ports allow directly,
+    the port-keyed sets by listing — and another address's
+    elements stay."""
+    settings, log = tools
+
+    async def fake_json(settings, args):
+        if args[5] == "allows_port":
+            return json_set(
+                "allows_port",
+                [
+                    {
+                        "elem": {
+                            "val": {"concat": ["10.1.2.3", 443]},
+                            "timeout": 60,
+                        }
+                    },
+                    {
+                        "elem": {
+                            "val": {"concat": ["10.9.9.9", 80]},
+                            "timeout": 60,
+                        }
+                    },
+                ],
+            )
+        if args[5] == "rejects_flow":
+            return json_set(
+                "rejects_flow",
+                [
+                    {
+                        "elem": {
+                            "val": {"concat": ["10.1.2.3", 40000, 443]},
+                            "timeout": 60,
+                        }
+                    }
+                ],
+            )
+        return None
+
+    monkeypatch.setattr(nft, "nft_json", fake_json)
+    await nft.clear_ip_elements(settings, "ws-a", "10.1.2.3")
+    lines = log_lines(log)
+    assert any(
+        "delete element" in line and "allows_any { 10.1.2.3 }" in line
+        for line in lines
+    )
+    cleared = [line for line in lines if "delete element" in line]
+    assert any(
+        "allows_port" in line and "10.1.2.3" in line for line in cleared
+    )
+    assert any("rejects_flow" in line for line in cleared)
+    assert not any("10.9.9.9" in line for line in cleared)
+
+
+async def test_flush_set_empties_one_set(tools) -> None:
+    """Revocation's per-flow RST clear: one wholesale flush."""
+    settings, log = tools
+    await nft.flush_set(settings, "ws-a", "rejects_flow")
+    line = log_lines(log)[0]
+    assert line.split()[:5] == [
+        "flush",
+        "set",
+        "inet",
+        table_name("ws-a"),
+        "rejects_flow",
     ]
 
 

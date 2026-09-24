@@ -134,14 +134,22 @@ duration and covers the _name_, so a CDN-rotated address of an
 allowed host resolves and passes without re-prompting. A deny
 answers the SYN and its retransmits with a TCP RST — the guest's
 `connect()` fails immediately instead of hanging on the kernel's
-retransmit timer. `msks egress revoke` undoes an in-effect verdict
-at once: the pinned rules clear, the destination's live connections
-die with their conntrack entries, and new connections gate again.
-Every row — request, verdict, expiry, revocation — lands in the
-consent table with its provenance, pruned past
-`MSKSD_EGRESS_CONSENT_RETENTION_DAYS` and the per-workspace
-`MSKSD_EGRESS_CONSENT_ROW_CAP`; with `MSKSD_AUDIT_HMAC_KEY` set
-each row also carries an HMAC-SHA256 tag over its columns.
+retransmit timer. On an address two names resolved to (shared
+hosting, a CDN front) a verdict stays with its own name: the
+address carries no allow pin while both names' resolutions are
+live (each new connection gates at the queue, named by whichever
+resolution came last), a deny refuses only its own connection (a
+per-flow RST, keyed by that connection's source port), and the
+pins the address already carried are withdrawn the moment the
+second name resolves to it. `msks egress revoke` undoes an
+effect verdict at once: the pinned rules clear, the destination's
+live connections die with their conntrack entries, and new
+connections gate again. Every row — request, verdict, expiry,
+revocation — lands in the consent table with its provenance,
+pruned past `MSKSD_EGRESS_CONSENT_RETENTION_DAYS` and the
+per-workspace `MSKSD_EGRESS_CONSENT_ROW_CAP`; with
+`MSKSD_AUDIT_HMAC_KEY` set each row also carries an HMAC-SHA256
+tag over its columns.
 
 **The naming layer owns DNS.** Ports 53 and 853 toward anywhere but
 the daemon's own resolver drop in the per-VM chain, in every mode,

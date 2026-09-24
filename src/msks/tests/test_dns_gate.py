@@ -47,16 +47,20 @@ def answer_for(name: str, ip: str, ttl: int = 300, ident: int = 0xABCD):
 
 
 class RecordingNet:
-    """The consent seam the gate learns through."""
+    """The consent seam the gate learns and retracts through."""
 
     def __init__(self) -> None:
         self.pins: list[tuple] = []
+        self.retractions: list[tuple] = []
 
     async def consent_allow(self, workspace_id, ip, port, ttl_s):
         self.pins.append((workspace_id, ip, port, ttl_s))
 
     async def consent_reject(self, *args):
         self.pins.append(args)
+
+    async def retract_consent_pins(self, workspace_id, ips):
+        self.retractions.append((workspace_id, tuple(ips)))
 
 
 @pytest.fixture
@@ -275,9 +279,95 @@ async def test_forwarder_relay_with_a_gate(gated) -> None:
         upstream.close()
 
 
+async def test_coresident_resolution_retracts_address_pins(gated) -> None:
+    """#304, end to end through real sockets: a session-covered name
+    resolves and its address pins; a SECOND name resolving to the
+    same address retracts those pins (an address-keyed element
+    would cover the co-resident) and pins nothing of its own."""
+    app, net = gated
+    app.state.consent.session.allow("ws-interactive", "a.example", None, 60.0)
+    upstream = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    upstream.bind(("127.0.0.1", 0))
+    upstream.setblocking(False)
+    gate = gate_for(app, net, "ws-interactive", MODE_INTERACTIVE)
+    forwarder = dns.DnsForwarder(
+        upstream.getsockname(),
+        1.0,
+        bind=("127.0.0.1", 0),
+        client_ip="127.0.0.1",
+        gate=gate,
+    )
+    await forwarder.start()
+    client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    client.bind(("127.0.0.1", 0))
+    client.settimeout(2.0)
+    serve = asyncio.create_task(forwarder.serve())
+
+    async def answer_once(name: str, ip: str) -> None:
+        data, peer = await asyncio.wait_for(
+            dns.recvfrom(asyncio.get_running_loop(), upstream, 65535), 2.0
+        )
+        ident = int.from_bytes(data[:2], "big")
+        parsed = dnsmsg.parse_query(data)
+        upstream.sendto(answer_for(parsed.name, ip, ident=ident), peer)
+
+    async def ask(name: str) -> None:
+        await asyncio.to_thread(
+            client.sendto, query_for(name), forwarder._sock.getsockname()
+        )
+        await asyncio.to_thread(client.recvfrom, 65535)
+
+    try:
+        relay = asyncio.create_task(answer_once("a.example", "10.2.3.4"))
+        await ask("a.example")
+        await asyncio.wait_for(relay, 2.0)
+        assert net.pins == [
+            ("ws-interactive", "10.2.3.4", None, pytest.approx(60.0, abs=5))
+        ]
+        assert net.retractions == []
+        relay = asyncio.create_task(answer_once("b.example", "10.2.3.4"))
+        await ask("b.example")
+        await asyncio.wait_for(relay, 2.0)
+        assert net.retractions == [("ws-interactive", ("10.2.3.4",))]
+        # The co-resident's own query pinned nothing.
+        assert len(net.pins) == 1
+        assert forwarder.shared("10.2.3.4") is True
+        assert forwarder.host_for("10.2.3.4") == "b.example"
+    finally:
+        serve.cancel()
+        forwarder.stop()
+        client.close()
+        upstream.close()
+
+
 async def test_naming_memory_lifecycle() -> None:
     forwarder = dns.DnsForwarder(("127.0.0.1", 53))
     forwarder.remember("a.example", [("10.0.0.1", 0)])
+
+
+def test_coresident_names_keep_their_own_pairings() -> None:
+    """#304: one address may carry several live names — the pairing
+    list keeps them all, the most recent resolution names the
+    flow, and `shared` marks the address so verdict pins honor the
+    co-residency."""
+    forwarder = dns.DnsForwarder(("127.0.0.1", 53))
+    assert forwarder.remember("a.example", [("10.0.0.1", 300)]) == []
+    assert forwarder.remember("b.example", [("10.0.0.1", 300)]) == ["10.0.0.1"]
+    assert forwarder.shared("10.0.0.1") is True
+    assert forwarder.host_for("10.0.0.1") == "b.example"  # most recent
+    # A refresh of the first name re-names the address (and is not
+    # a NEW co-residency — nothing to retract).
+    assert forwarder.remember("a.example", [("10.0.0.1", 300)]) == []
+    assert forwarder.host_for("10.0.0.1") == "a.example"
+    assert forwarder.ips_for("a.example") == ["10.0.0.1"]
+    assert forwarder.ips_for("b.example") == ["10.0.0.1"]
+    # Forgetting one name leaves the other's pairing intact — and
+    # the address stops reading as shared.
+    forwarder.forget("b.example")
+    assert forwarder.shared("10.0.0.1") is False
+    assert forwarder.host_for("10.0.0.1") == "a.example"
+    # An address no name resolved to never reads as shared.
+    assert forwarder.shared("10.0.0.2") is False
     assert forwarder.host_for("10.0.0.1") == "a.example"  # floored TTL
     forwarder.forget("a.example")
     assert forwarder.host_for("10.0.0.1") is None
@@ -368,7 +458,7 @@ def test_naming_memory_bound_clears() -> None:
     assert len(forwarder._names) >= dns.NAMES_MAX
     forwarder.remember("overflow.example", [("10.9.9.9", 60)])
     assert forwarder._names == {
-        "10.9.9.9": ("overflow.example", forwarder._names["10.9.9.9"][1])
+        "10.9.9.9": [("overflow.example", forwarder._names["10.9.9.9"][0][1])]
     }
 
 

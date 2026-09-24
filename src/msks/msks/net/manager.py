@@ -176,6 +176,15 @@ def verify_forwarding(path: Path = FORWARDING) -> None:
         )
 
 
+def reject_is_per_flow(
+    services, ip: str, sport: int | None, named: bool
+) -> bool:
+    """Whether a deny's RST element is per-flow (#304): a NAME
+    verdict on a shared address — the element would otherwise
+    answer the co-resident's connections too."""
+    return bool(named and sport and services.dns.shared(ip))
+
+
 class NetManager:
     """Owns every workspace's egress plumbing."""
 
@@ -677,7 +686,13 @@ class NetManager:
         )
 
     async def consent_allow(
-        self, workspace_id: str, ip: str, port: int | None, ttl_s: float
+        self,
+        workspace_id: str,
+        ip: str,
+        port: int | None,
+        ttl_s: float,
+        *,
+        named: bool = True,
     ) -> None:
         """Pin one destination as allowed (the verdict/DNS-learn
         path). A workspace without a live attachment has no table
@@ -685,24 +700,55 @@ class NetManager:
         consent sets — nothing to enforce, nothing to do (the
         resolver gate still LEARNs under a carried forever allow,
         #280 review: the pin must not spawn a doomed nft run per
-        answer)."""
+        answer). A NAME pin on a shared address — more than one
+        live name resolved to it (#304) — installs nothing: the
+        element is keyed by address alone and would let the
+        verdict cover its co-resident, so the next SYN gates at
+        the queue under the naming memory instead. Address-literal
+        verdicts (``named=False``) pin regardless — the verdict
+        was given on the address itself."""
         services = self._services.get(workspace_id)
-        if services is not None and services.policy.gated:
-            await nft.allow_element(
-                self.app.state.settings, workspace_id, ip, port, ttl_s
+        if services is None or not services.policy.gated:
+            return
+        if named and services.dns.shared(ip):
+            logger.debug(
+                "consent: shared address %s unpinned for %s (#304)",
+                ip,
+                workspace_id,
             )
+            return
+        await nft.allow_element(
+            self.app.state.settings, workspace_id, ip, port, ttl_s
+        )
 
     async def consent_reject(
-        self, workspace_id: str, ip: str, port: int, ttl_s: float
+        self,
+        workspace_id: str,
+        ip: str,
+        port: int,
+        ttl_s: float,
+        sport: int | None = None,
+        *,
+        named: bool = True,
     ) -> None:
-        """Pin one destination port for RST-refusal (the deny
-        path) — gated postures only, the same shape as an allow
-        pin."""
+        """Pin one destination port for RST-refusal (the deny path)
+        — gated postures only, the same shape as an allow pin. A
+        NAME deny on a shared address refuses only its own
+        connection: the element lands in the per-flow set keyed by
+        the connection's source port (#304), so the co-resident's
+        connections never see the refusal. An address-literal
+        verdict (``named=False``) pins the blanket element — the
+        verdict was given on the address itself."""
         services = self._services.get(workspace_id)
-        if services is not None and services.policy.gated:
-            await nft.reject_element(
-                self.app.state.settings, workspace_id, ip, port, ttl_s
+        if services is None or not services.policy.gated:
+            return
+        settings = self.app.state.settings
+        if reject_is_per_flow(services, ip, sport, named):
+            await nft.reject_flow_element(
+                settings, workspace_id, ip, sport, port, ttl_s
             )
+            return
+        await nft.reject_element(settings, workspace_id, ip, port, ttl_s)
 
     async def clear_consent_dest(
         self, workspace_id: str, host: str, port: int
@@ -713,10 +759,14 @@ class NetManager:
         plus the host itself when the verdict was given by address.
         New connections re-gate; established ones die with their
         conntrack entries (klangk never needed this — its sidecar's
-        netns died with the container)."""
+        netns died with the container). The per-flow RST set
+        flushes wholesale with it: its elements name connections,
+        not verdicts, and a dropped one re-pins on the flow's next
+        retransmit (#304)."""
         attachment = self._attachments.get(workspace_id)
         if attachment is None:
             return
+        await self.flush_flow_rejects(workspace_id)
         for ip in self.dest_addresses(workspace_id, host):
             await nft.clear_elements(
                 self.app.state.settings,
@@ -725,6 +775,32 @@ class NetManager:
                 None if port == 0 else port,
             )
             await self.drop_flows(workspace_id, attachment.guest_ip, ip)
+
+    async def flush_flow_rejects(self, workspace_id: str) -> None:
+        """Empty the per-flow RST set on revocation (#304): its
+        elements name connections, not verdicts, and a dropped one
+        re-pins on the flow's next retransmit through the session
+        gate — self-healing, so the flush is safe. Only an
+        interactive table defines the set."""
+        services = self._services.get(workspace_id)
+        if services is not None and services.policy.interactive:
+            await nft.flush_set(
+                self.app.state.settings, workspace_id, "rejects_flow"
+            )
+
+    async def retract_consent_pins(
+        self, workspace_id: str, ips: list[str]
+    ) -> None:
+        """Drop the consent elements addresses carried before a
+        second name resolved to them (the naming layer's
+        co-residency retraction, #304): an address-keyed element
+        on a shared address enforces one name's verdict on its
+        co-resident. Best-effort — a missed retraction is a window
+        bounded by the element's own timeout."""
+        for ip in ips:
+            await nft.clear_ip_elements(
+                self.app.state.settings, workspace_id, ip
+            )
 
     def dest_addresses(self, workspace_id: str, host: str) -> list[str]:
         """The addresses a verdict's destination covers: the
@@ -808,11 +884,19 @@ class NetManager:
         port = None if row["dest_port"] == 0 else row["dest_port"]
         if row["decision"] == DECISION_ALLOWED:
             await self.consent_allow(
-                workspace_id, row["dest_host"], port, LONG_TTL_S
+                workspace_id,
+                row["dest_host"],
+                port,
+                LONG_TTL_S,
+                named=False,
             )
         elif port is not None:
             await self.consent_reject(
-                workspace_id, row["dest_host"], port, LONG_TTL_S
+                workspace_id,
+                row["dest_host"],
+                port,
+                LONG_TTL_S,
+                named=False,
             )
 
     async def _build(

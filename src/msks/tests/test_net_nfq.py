@@ -67,11 +67,15 @@ class FakeNet:
         self.allows: list[tuple] = []
         self.rejects: list[tuple] = []
 
-    async def consent_allow(self, workspace_id, ip, port, ttl_s):
-        self.allows.append((workspace_id, ip, port, ttl_s))
+    async def consent_allow(
+        self, workspace_id, ip, port, ttl_s, *, named=True
+    ):
+        self.allows.append((workspace_id, ip, port, ttl_s, named))
 
-    async def consent_reject(self, workspace_id, ip, port, ttl_s):
-        self.rejects.append((workspace_id, ip, port, ttl_s))
+    async def consent_reject(
+        self, workspace_id, ip, port, ttl_s, sport=None, *, named=True
+    ):
+        self.rejects.append((workspace_id, ip, port, ttl_s, sport, named))
 
     def host_for(self, workspace_id, ip):
         return None
@@ -158,6 +162,7 @@ async def test_cached_verdict_reuses(consumer_app) -> None:
     flow._verdicts[(40000, "203.0.113.7", 443)] = (
         "deny",
         time_mod.time() + 60,
+        False,
     )
     denied = FakePkt(syn_packet())
     flow.on_packet(denied)
@@ -234,7 +239,7 @@ async def test_session_gates_cover_before_prompting(consumer_app) -> None:
     assert allowed.verdict == "accept"
     await flow_quiesce(flow)
     assert net.allows == [
-        ("ws", "203.0.113.9", 443, pytest.approx(60.0, abs=5))
+        ("ws", "203.0.113.9", 443, pytest.approx(60.0, abs=5), True)
     ]
     # A deny covering the name: fast deny with a reject pin.
     engine.session.deny("ws", "denied.example", 443, 60.0)
@@ -281,12 +286,59 @@ async def test_verdicts_apply_pins(consumer_app) -> None:
     assert net.rejects[-1][3] <= nfq.VERDICT_CACHE_TTL + 1
 
 
+async def test_a_named_deny_on_a_shared_address_refuses_only_its_flow(
+    consumer_app,
+) -> None:
+    """#304: a deny on a destination the naming memory holds a name
+    for carries the flow's source port and the named flag — the
+    manager routes it to the per-flow element on a shared address.
+    A literal destination (no remembered name) carries neither."""
+    app, net = consumer_app
+    flow = consumer(app, net)
+    app.state.deciders.register(1, "ws")
+    net.host_for = lambda ws, ip: "shared.example"
+    pkt = FakePkt(syn_packet(sport=40000))
+    flow.on_packet(pkt)
+    row = await pending_row(app)
+    await app.state.consent.resolve(row["id"], "denied", "t", "5m")
+    await flow_quiesce(flow)
+    assert pkt.verdict == "drop"
+    _ws, ip, port, _ttl, sport, named = net.rejects[-1]
+    assert (ip, port, sport, named) == ("203.0.113.7", 443, 40000, True)
+    net.host_for = lambda ws, ip: None
+    literal = FakePkt(syn_packet(sport=40001, dst="198.51.100.9"))
+    flow.on_packet(literal)
+    row = await pending_row(app)
+    await app.state.consent.resolve(row["id"], "denied", "t", "5m")
+    await flow_quiesce(flow)
+    assert literal.verdict == "drop"
+    _ws, ip, port, _ttl, sport, named = net.rejects[-1]
+    assert (ip, sport, named) == ("198.51.100.9", 40001, False)
+
+
+async def test_verdict_allow_pins_carry_their_scope(consumer_app) -> None:
+    """An allow pin carries the named flag too (#304): a named
+    destination's pin can be skipped on a shared address, a
+    literal one's cannot."""
+    app, net = consumer_app
+    flow = consumer(app, net)
+    app.state.deciders.register(1, "ws")
+    net.host_for = lambda ws, ip: "api.example"
+    pkt = FakePkt(syn_packet())
+    flow.on_packet(pkt)
+    row = await pending_row(app)
+    await app.state.consent.resolve(row["id"], "allowed", "t", "5m")
+    await flow_quiesce(flow)
+    assert pkt.verdict == "accept"
+    assert net.allows[-1][4] is True
+
+
 async def test_verdict_cache_bound_clears(consumer_app) -> None:
     app, _net = consumer_app
     flow = consumer(app, app.state.net)
     flow._verdicts.update(
         {
-            (i, "10.0.0.1", 80): ("allow", 1.0)
+            (i, "10.0.0.1", 80): ("allow", 1.0, True)
             for i in range(nfq.VERDICT_CACHE_MAX + 1)
         }
     )
@@ -594,6 +646,7 @@ async def test_a_cached_deny_refreshes_the_rst_pin(consumer_app) -> None:
     flow._verdicts[(40000, "203.0.113.7", 443)] = (
         "deny",
         time_mod.time() + 60,
+        False,
     )
     pkt = FakePkt(syn_packet())
     flow.on_packet(pkt)
@@ -615,6 +668,7 @@ async def test_a_cached_portless_deny_drops_without_a_pin(
     flow._verdicts[(44000, "203.0.113.7", 0)] = (
         "deny",
         time_mod.time() + 60,
+        False,
     )
     pkt = FakePkt(syn_packet(dport=0, sport=44000))
     flow.on_packet(pkt)
