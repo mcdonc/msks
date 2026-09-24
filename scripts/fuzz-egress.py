@@ -741,6 +741,222 @@ def guest_archive() -> Path:
     return archives[-1]
 
 
+# -- host-process hygiene (#307) --------------------------------------------
+#
+# The daemon's SIGTERM shutdown stops nft tables and taps but not
+# the VMMs: a workspace's cloud-hypervisor runs in its own session
+# (#141) so daemon death must not kill it -- only the API path
+# (stop + delete) retires one, and only while msksd lives.  A
+# teardown that dies partway, or a fuzzer crash, strands VMM
+# processes on the host.  The helpers below find and reap them.
+
+VMM_BASENAME = "cloud-hypervisor"
+DAEMON_PID = "daemon.pid"
+IP_FORWARD_WAS = "ip_forward.was"
+REAP_SENTINEL = "reap.done"
+REAP_POLL_S = 1.0
+
+
+def pid_alive(pid: int) -> bool:
+    """Whether /proc still lists the pid (zombies included)."""
+    return Path(f"/proc/{pid}").exists()
+
+
+def alive_pids(pids: list[int]) -> list[int]:
+    """Which of the scanned pids still live."""
+    alive = []
+    for pid in pids:
+        if pid_alive(pid):
+            alive.append(pid)
+    return alive
+
+
+def read_cmdline(pid: int) -> list[bytes]:
+    """A /proc cmdline's non-empty NUL-separated fields."""
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return []
+    return [f for f in raw.split(b"\0") if f]
+
+
+def proc_pids() -> list[int]:
+    """Every numeric /proc entry (the live pids)."""
+    return [
+        int(entry.name)
+        for entry in Path("/proc").iterdir()
+        if entry.name.isdigit()
+    ]
+
+
+def socket_of(fields: list[bytes]) -> bytes | None:
+    """The --api-socket value, in either = or separate-field
+    form."""
+    for index, item in enumerate(fields):
+        if item == b"--api-socket" and index + 1 < len(fields):
+            return fields[index + 1]
+        if item.startswith(b"--api-socket="):
+            return item.split(b"=", 1)[1]
+    return None
+
+
+def is_vmm_field(field: bytes) -> bool:
+    """Whether one argv field names the cloud-hypervisor binary
+    (a path or a bare name, exact basename match)."""
+    return os.path.basename(os.fsdecode(field)) == VMM_BASENAME
+
+
+def has_vmm_field(fields: list[bytes]) -> bool:
+    """Whether any argv field names the cloud-hypervisor binary."""
+    for item in fields:
+        if is_vmm_field(item):
+            return True
+    return False
+
+
+def owned_vmm(fields: list[bytes], root, ws_ids) -> bool:
+    """Whether a /proc cmdline is a VMM this run owns: the binary
+    is cloud-hypervisor and its --api-socket lives under our state
+    dir (self-boot) or in a workspace directory we created
+    (attach mode, where the daemon's state dir is the
+    operator's)."""
+    sock = socket_of(fields)
+    if sock is None:
+        return False
+    if not has_vmm_field(fields):
+        return False
+    path = Path(os.fsdecode(sock))
+    under_root = root is not None and root in path.parents
+    return under_root or path.parent.name in ws_ids
+
+
+def scan_vmm_pids(root, ws_ids) -> list[int]:
+    """Every live process that reads as an owned VMM."""
+    owned = []
+    for pid in proc_pids():
+        fields = read_cmdline(pid)
+        if fields and owned_vmm(fields, root, ws_ids):
+            owned.append(pid)
+    return owned
+
+
+def kill_verified(pid: int, sig: int, root, ws_ids) -> bool:
+    """Signal one owned VMM.  The cmdline is re-read first, so a
+    pid recycled between scan and kill is never signaled."""
+    if not owned_vmm(read_cmdline(pid), root, ws_ids):
+        return False
+    with contextlib.suppress(OSError):
+        os.kill(pid, sig)
+    return True
+
+
+def read_pidfile(path: Path) -> int | None:
+    """The pid in a pidfile, or None when absent or unparsable."""
+    try:
+        return int(path.read_text().strip())
+    except OSError, ValueError:
+        return None
+
+
+def cmdline_is_msksd(fields: list[bytes]) -> bool:
+    """Whether a /proc cmdline is the msksd we booted -- the exact
+    msksd binary name or the -m module field (the pidfile pid is
+    verified before any signal, so a recycled pid reads as not
+    ours)."""
+    if any(os.path.basename(os.fsdecode(item)) == "msksd" for item in fields):
+        return True
+    return b"msks.server.main" in fields
+
+
+def term_then_kill(pid: int) -> None:
+    """SIGTERM the daemon, wait out its graceful window, then
+    SIGKILL.  The cmdline is re-read every poll, so an exited or
+    recycled pid ends the wait instead of taking the kill."""
+    with contextlib.suppress(OSError):
+        os.kill(pid, signal.SIGTERM)
+    deadline = time.monotonic() + 90.0
+    while cmdline_is_msksd(read_cmdline(pid)):
+        if time.monotonic() > deadline:
+            with contextlib.suppress(OSError):
+                os.kill(pid, signal.SIGKILL)
+            return
+        time.sleep(REAP_POLL_S)
+
+
+def restore_forwarding_file(path: Path) -> None:
+    """Put ip_forward back where boot found it (the crash path's
+    copy of Daemon.restore_forwarding)."""
+    try:
+        saved = path.read_text()
+    except OSError:
+        return
+    with contextlib.suppress(OSError):
+        Path("/proc/sys/net/ipv4/ip_forward").write_text(saved)
+
+
+def reap_active(fuzzer_pid: int, state_dir: Path) -> bool:
+    """Whether the watchdog must keep watching: the fuzzer lives,
+    the state dir exists, and no sentinel says teardown ran."""
+    if not pid_alive(fuzzer_pid) or not state_dir.exists():
+        return False
+    return not (state_dir / REAP_SENTINEL).exists()
+
+
+def reap_daemon_stack(state_dir: Path) -> None:
+    """The crash-path cleanup: the daemon (graceful window first),
+    its state dir's VMMs, then ip_forward."""
+    daemon_pid = read_pidfile(state_dir / DAEMON_PID)
+    if daemon_pid is not None and cmdline_is_msksd(read_cmdline(daemon_pid)):
+        term_then_kill(daemon_pid)
+    for pid in scan_vmm_pids(state_dir, set()):
+        kill_verified(pid, signal.SIGKILL, state_dir, set())
+    restore_forwarding_file(state_dir / IP_FORWARD_WAS)
+
+
+def run_reaper(fuzzer_pid: int, state_dir: Path) -> int:
+    """Watchdog for the crash path (#307): runs detached (own
+    session, null stdio), polls the fuzzer, and on its death
+    reaps the stack it booted.  Stands down without touching
+    anything when the sentinel or a vanished state dir says the
+    teardown completed."""
+    while reap_active(fuzzer_pid, state_dir):
+        time.sleep(REAP_POLL_S)
+    if pid_alive(fuzzer_pid):
+        return 0  # stood down: the fuzzer's teardown completed
+    reap_daemon_stack(state_dir)
+    return 0
+
+
+def reap_result(label: str, killed: list[int], alive: list[int]) -> Result:
+    """The row for a sweep that had to kill VMMs by hand: a FINDING
+    when the kills land (the run cleaned up after itself), a
+    MISMATCH when processes survive SIGKILL."""
+    pid_list = ", ".join(str(pid) for pid in killed)
+    if alive:
+        return Result(
+            label,
+            "(host)",
+            True,
+            "",
+            "?",
+            "host",
+            None,
+            MISMATCH,
+            detail=f"{len(alive)} VMM(s) survived SIGKILL: {pid_list}",
+        )
+    return Result(
+        label,
+        "(host)",
+        True,
+        "",
+        "?",
+        "host",
+        None,
+        FINDING,
+        detail=f"reaped {len(killed)} leftover VMM(s): {pid_list}",
+    )
+
+
 class Daemon:
     """A self-booted msksd (the daemon-e2e smoke's shape) or an
     attached one (``--url``)."""
@@ -808,8 +1024,13 @@ class Daemon:
         self.proc = subprocess.Popen(
             command, env=env, stdout=self.out_file, stderr=self.err_file
         )
+        # The crash-path watchdog's inputs (#307): the daemon's pid
+        # and the pre-boot ip_forward value, both written here,
+        # before anything can strand a process on the host.
+        (self.state_dir / DAEMON_PID).write_text(f"{self.proc.pid}\n")
         self.forwarding_was = Path("/proc/sys/net/ipv4/ip_forward").read_text()
         Path("/proc/sys/net/ipv4/ip_forward").write_text("1")
+        (self.state_dir / IP_FORWARD_WAS).write_text(self.forwarding_was)
 
     async def wait_ready(self) -> None:
         """The CA file, then /health, then the client context."""
@@ -871,16 +1092,29 @@ class Daemon:
                 )
             await asyncio.sleep(0.5)
 
-    async def stop(self) -> None:
-        """SIGTERM, the graceful-exit check, and state cleanup."""
-        if self.forwarding_was is not None:
-            with contextlib.suppress(OSError):
-                Path("/proc/sys/net/ipv4/ip_forward").write_text(
-                    self.forwarding_was
-                )
+    async def stop(self) -> str | None:
+        """Terminate the daemon, restore forwarding, drop the state.
+
+        Returns a problem string instead of raising (#307): the
+        teardown's other steps must run even when the daemon
+        misbehaves, and a second call is a no-op (terminate nulls
+        self.proc)."""
+        problem = None
         if self.proc is not None:
-            await self.terminate()
-            self.cleanup_files()
+            problem = await self.terminate()
+        self.restore_forwarding()
+        self.cleanup_files()
+        return problem
+
+    def restore_forwarding(self) -> None:
+        """Put ip_forward back where boot found it (idempotent)."""
+        if self.forwarding_was is None:
+            return
+        with contextlib.suppress(OSError):
+            Path("/proc/sys/net/ipv4/ip_forward").write_text(
+                self.forwarding_was
+            )
+        self.forwarding_was = None
 
     def cleanup_files(self) -> None:
         """Close the captured output and drop the state dir."""
@@ -890,21 +1124,25 @@ class Daemon:
         if self.state_dir is not None:
             shutil.rmtree(self.state_dir, ignore_errors=True)
 
-    async def terminate(self) -> None:
-        """SIGTERM -> exit, with the graceful-path check."""
-        self.proc.terminate()
+    async def terminate(self) -> str | None:
+        """SIGTERM -> exit, with the graceful-path check.  A daemon
+        that will not exit is SIGKILLed and the problem returned,
+        not raised, so teardown continues (#307)."""
+        proc, self.proc = self.proc, None
+        proc.terminate()
         try:
-            rc = await asyncio.to_thread(self.proc.wait, 90)
+            rc = await asyncio.to_thread(proc.wait, 90)
         except subprocess.TimeoutExpired:
-            self.proc.kill()
-            raise SystemExit(
+            proc.kill()
+            return (
                 "msksd did not exit on SIGTERM within 90s\n" + self.log_tail()
             )
         if rc not in (0, -signal.SIGTERM):
-            raise SystemExit(
+            return (
                 f"msksd exited {rc} on SIGTERM (not the graceful path)\n"
                 + self.log_tail()
             )
+        return None
 
 
 def check_root() -> None:
@@ -1496,6 +1734,7 @@ class Harness:
         self.tag_seq = 0
         self.dns: ControlledDNS | None = None
         self._dns_task: asyncio.Task | None = None
+        self.reaper: subprocess.Popen | None = None
 
     def tag(self) -> str:
         """A fresh probe marker tag."""
@@ -1576,7 +1815,10 @@ class Harness:
         )
 
     async def delete_workspace(self, wid: str) -> None:
-        """Stop + delete one workspace (best-effort)."""
+        """Stop + delete one workspace (best-effort, skipped when
+        setup died before the client existed)."""
+        if self.client is None:
+            return
         with contextlib.suppress(Exception):
             await self.client.post(f"/api/v1/workspaces/{wid}/stop")
         with contextlib.suppress(Exception):
@@ -1658,6 +1900,7 @@ class Harness:
         if self.args.url is None:
             dns_upstream = await self.start_controlled_dns()
             self.daemon.boot(dns_upstream=dns_upstream)
+            self.arm_reaper()
         elif not (self.args.token and self.args.cafile):
             raise SystemExit(
                 "--url needs --token and --cafile (the dev daemon writes "
@@ -1714,24 +1957,131 @@ class Harness:
         return await task
 
     async def teardown(self) -> None:
-        """Delete workspaces, close sockets, stop the daemon and DNS."""
+        """Teardown as independent steps (#307): each step's failure
+        is suppressed on its own, so one failure cannot strand the
+        rest, and every exit path retires the whole stack."""
+        for step in self.teardown_steps():
+            with contextlib.suppress(Exception):
+                await step()
+
+    def teardown_steps(self) -> list:
+        """The teardown steps in order: the sockets first (they need
+        a live daemon), the daemon and any leftover VMMs next, the
+        watchdog and the DNS server last."""
+        steps = []
         if self.decider is not None:
-            await self.decider.close()
-        await self.teardown_workspaces()
+            steps.append(self.decider.close)
+        steps.append(self.teardown_workspaces)
         if self.client is not None:
-            await self.client.aclose()
-        await self.daemon.stop()
-        if self._dns_task is not None:
-            self._dns_task.cancel()
-        if self.dns is not None:
-            self.dns.stop()
+            steps.append(self.client.aclose)
+        steps.append(self.stop_daemon)
+        steps.append(self.stand_down_reaper)
+        steps.append(self.stop_dns)
+        return steps
 
     async def teardown_workspaces(self) -> None:
-        """Delete all workspaces unless --keep-workspace."""
-        if not self.args.keep_workspace:
-            await self.delete_workspace(self.ws_id)
-            for wid in self.extra_ws:
-                await self.delete_workspace(wid)
+        """Delete every workspace and verify its VMM retired; a
+        --keep-workspace run leaves the workspaces to the operator
+        (so no verification and no sweep either)."""
+        if self.args.keep_workspace:
+            return
+        for wid in sorted(self.workspace_ids()):
+            await self.delete_workspace(wid)
+            await self.verify_workspace_gone(wid)
+
+    def workspace_ids(self) -> set[str]:
+        """Every workspace this run created."""
+        ids = set(self.extra_ws)
+        if self.ws_id:
+            ids.add(self.ws_id)
+        return ids
+
+    async def verify_workspace_gone(self, wid: str) -> None:
+        """The API said gone; make sure the host agrees.  A delete
+        can return while the VMM is still dying, so the check
+        retries the API once before reaping by hand (#307)."""
+        root = self.daemon.state_dir
+        for _ in range(2):
+            if not scan_vmm_pids(root, {wid}):
+                return
+            await self.delete_workspace(wid)
+            await asyncio.sleep(2.0)
+        await self.reap_strays(f"workspace {wid}", {wid})
+
+    async def reap_strays(self, label: str, ids: set[str]) -> None:
+        """SIGKILL owned VMMs still on the host and record the
+        residue (#307)."""
+        if self.args.keep_workspace:
+            return
+        root = self.daemon.state_dir
+        strays = scan_vmm_pids(root, ids)
+        if not strays:
+            return
+        for pid in strays:
+            kill_verified(pid, signal.SIGKILL, root, ids)
+        await asyncio.sleep(1.0)
+        alive = alive_pids(strays)
+        self.record(reap_result(label, strays, alive))
+
+    async def stop_daemon(self) -> None:
+        """Stop msksd -- recording, not raising, a grace failure --
+        then sweep the host for leftover VMMs (#307)."""
+        problem = await self.daemon.stop()
+        if problem is not None:
+            self.record(
+                Result(
+                    "daemon stop",
+                    "(daemon)",
+                    True,
+                    "",
+                    "?",
+                    "error",
+                    None,
+                    MISMATCH,
+                    detail=problem,
+                )
+            )
+        await self.reap_strays("host sweep", self.workspace_ids())
+
+    def arm_reaper(self) -> None:
+        """Spawn the detached watchdog that cleans up the stack if
+        this process dies without a teardown (#307).  Attach mode
+        has no self-booted daemon, so there is nothing to watch."""
+        if self.daemon.state_dir is None:
+            return
+        self.reaper = subprocess.Popen(
+            [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--reap-for",
+                str(os.getpid()),
+                "--state-dir",
+                str(self.daemon.state_dir),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+    def stand_down_reaper(self) -> None:
+        """Tell the watchdog the teardown completed (#307): the
+        sentinel, or a state dir the daemon's stop already dropped,
+        ends its poll without a reap."""
+        if self.reaper is None:
+            return
+        with contextlib.suppress(OSError):
+            (self.daemon.state_dir / REAP_SENTINEL).touch()
+        self.reaper = None
+
+    async def stop_dns(self) -> None:
+        """Stop the controlled DNS server and its serve task."""
+        if self._dns_task is not None:
+            self._dns_task.cancel()
+            self._dns_task = None
+        if self.dns is not None:
+            self.dns.stop()
+            self.dns = None
 
     # -- the fuzz loop -------------------------------------------------------
 
@@ -3290,8 +3640,21 @@ class Harness:
     # -- run / summary -------------------------------------------------------
 
     async def run(self) -> int:
-        """Setup, the fuzz loop, the phases, teardown, summary."""
-        await self.setup()
+        """Setup, the fuzz loop, the phases, teardown, summary.
+
+        A setup failure still tears down (#307): the daemon and its
+        workspaces are booted partway through setup, and skipping
+        teardown there strands them on the host."""
+        try:
+            await self.setup()
+        except SystemExit:
+            await self.teardown()
+            raise
+        except Exception as exc:  # noqa: BLE001
+            self.setup_failure(exc)
+            await self.teardown()
+            self.print_summary(self.abort)
+            return 1
         try:
             await self.run_plan()
             await self.run_phases()
@@ -3310,10 +3673,25 @@ class Harness:
                 )
             )
         finally:
-            with contextlib.suppress(Exception):
-                await self.teardown()
+            await self.teardown()
         self.print_summary(self.abort)
         return 1 if self.summary.mismatches else 0
+
+    def setup_failure(self, exc: Exception) -> None:
+        """A setup crash, recorded so the summary shows why."""
+        self.record(
+            Result(
+                "setup",
+                "(setup)",
+                True,
+                "",
+                "?",
+                "error",
+                None,
+                MISMATCH,
+                detail=f"setup raised: {exc!r}",
+            )
+        )
 
     async def run_plan(self) -> None:
         """The fuzz loop, one guarded step at a time."""
@@ -3560,12 +3938,20 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="do not delete the workspaces on exit",
     )
+    # The crash-path watchdog's own invocation (#307): the fuzzer
+    # respawns this script detached with these two flags.
+    p.add_argument("--reap-for", type=int, help=argparse.SUPPRESS)
+    p.add_argument("--state-dir", help=argparse.SUPPRESS)
     return p
 
 
 def main() -> int:
-    """Entry point: parse, run, exit."""
+    """Entry point: parse, run, exit (or serve as the detached
+    crash-path watchdog, #307)."""
     args = build_parser().parse_args()
+    if args.reap_for is not None:
+        assert args.state_dir is not None
+        return run_reaper(args.reap_for, Path(args.state_dir))
     if args.seed is None:
         args.seed = random.randrange(2**32)
     harness = Harness(args)
