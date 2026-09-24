@@ -27,13 +27,14 @@ on:
       - devenv.yaml
       - devenv.lock
       - nix/guest.nix
+      - nix/agent-toolchain.nix
+      - nix/pi-shrinkwrap-patch.py
+      - nix/pi-shrinkwrap-integrity.json
       - nix/guest-debian.nix
       - nix/guest-nixos.nix
       - nix/console-helper-pkg.nix
       - nix/image-archive.nix
       - nix/guest-pi-extension.ts
-      - nix/pi-shrinkwrap-patch.py
-      - nix/pi-shrinkwrap-integrity.json
       - src/console-helper/**
       - scripts/build-guest.sh
   pull_request:
@@ -43,13 +44,14 @@ on:
       - devenv.yaml
       - devenv.lock
       - nix/guest.nix
+      - nix/agent-toolchain.nix
+      - nix/pi-shrinkwrap-patch.py
+      - nix/pi-shrinkwrap-integrity.json
       - nix/guest-debian.nix
       - nix/guest-nixos.nix
       - nix/console-helper-pkg.nix
       - nix/image-archive.nix
       - nix/guest-pi-extension.ts
-      - nix/pi-shrinkwrap-patch.py
-      - nix/pi-shrinkwrap-integrity.json
       - scripts/build-guest.sh
 
 permissions:

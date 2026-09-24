@@ -60,6 +60,27 @@ let
 
   consoleHelper = pkgs.callPackage ./console-helper-pkg.nix { };
 
+  # The agent toolchain (#266, #268): the shared pins and offline
+  # builds — pi, herdr, Claude Code — staged the NixOS way, through
+  # the system profile. One file (nix/agent-toolchain.nix) owns
+  # every pin; the Debian image stages the same derivations under
+  # /usr/local. Node itself comes from nixpkgs below — the
+  # platform's own packaging where it exists is the rule, and on
+  # NixOS it exists (the Debian image stages the official tarball
+  # because Debian's own Node is older than pi's engines floor).
+  toolchain = pkgs.callPackage ./agent-toolchain.nix { };
+
+  # pi's engines floor holds against the pinned nixpkgs: a devenv
+  # lock move that regressed Node below it must fail the image
+  # build, not boot a workspace whose pi refuses to start. The
+  # check rides the returned derivation (asserts are expressions,
+  # not let bindings), with a message naming the regression.
+  nodeFloorMet = lib.versionAtLeast pkgs.nodejs_22.version "22.19.0";
+
+  # The model-discovery extension (#266, #268): the shared source
+  # file the tmpfiles rules below plant inside the guest.
+  piExtension = ./guest-pi-extension.ts;
+
   # The guest system: every contract item from docs/images.md is a
   # declarative NixOS setting — no overlay tree, no baked /etc.
   guest =
@@ -322,7 +343,49 @@ let
         # carries it in /usr/bin, so it rides the profile here too
         # (the helper is static and PATH-inherits from its service).
         pkgs.openssh
+        # The agent toolchain (#266, #268): nixpkgs' Node — the
+        # platform's own packaging, current enough for pi's
+        # engines floor (asserted above) — plus the shared pins.
+        # The profile puts every bin on each login PATH, the same
+        # posture the Debian image's /usr/local staging gives: a
+        # workspace boots with a working agent toolchain and no
+        # per-user installer steps. pi's `env node` shebang resolves
+        # because Node rides the same profile; Claude Code ships as
+        # the loader-patched variant (a stock NixOS ships no
+        # /lib64 loader shim — see nix/agent-toolchain.nix). The
+        # pins move with an image rebuild; a workspace that already
+        # booted keeps what it booted with.
+        pkgs.nodejs_22
+        toolchain.piPackage
+        toolchain.claudeLoaderPatched
+        toolchain.herdrPackage
       ];
+
+      # The model-discovery extension (#266, #268): planted the
+      # NixOS way. tmpfiles copies the store file into /etc/skel —
+      # every account the identity seed provisions copies the
+      # skeleton at useradd -m — and into root's home, since root
+      # seeds no skeleton. Copy-once semantics, and a real file
+      # rather than a store symlink, keep a user's or root's later
+      # edits theirs: nothing ever re-overwrites a copy that
+      # exists, and within one workspace the closure is frozen in
+      # the rootfs, so the once-only copy is also the every-boot
+      # copy. The rules run at sysinit, ahead of the cloud-init
+      # that runs the seed's useradd.
+      systemd.tmpfiles.rules = [
+        "d /etc/skel/.pi/agent/extensions 0755 root root -"
+        "d /root/.pi/agent/extensions 0755 root root -"
+        "C /etc/skel/.pi/agent/extensions/llm-models.ts 0644 root root - ${piExtension}"
+        "C /root/.pi/agent/extensions/llm-models.ts 0644 root root - ${piExtension}"
+      ];
+
+      # Every `env`-shebang in the toolchain (`env node` for pi,
+      # and whatever the build leaves beside it) resolves through
+      # this activation-built /usr/bin/env. NixOS's default is the
+      # same coreutils env; the guest states it because the whole
+      # toolchain depends on it — a config that dropped it would
+      # break every shebang at once, far from the cause.
+      environment.usrbinenv = "${pkgs.coreutils}/bin/env";
     };
 
   nixos =
@@ -373,7 +436,11 @@ let
           closureInfo
           toplevel
           ;
-        nativeBuildInputs = [ pkgs.gnutar ];
+        # binutils: readelf for the claude linkage guard below.
+        nativeBuildInputs = [
+          pkgs.gnutar
+          pkgs.binutils
+        ];
       }
       ''
         set -eu
@@ -393,6 +460,51 @@ let
         test -e "$toplevel"/etc/systemd/system/multi-user.target.wants/cloud-init.service
         test -e "$toplevel"/etc/systemd/system/multi-user.target.wants/sshd.service
         grep -q msks-console-helper "$closureInfo"/store-paths
+        # Sanity: the baked agent toolchain (#266, #268) — an
+        # upstream package or profile change must fail the build
+        # here, not boot a workspace with a broken agent (the #36
+        # bug class). Each sw/bin link resolves its whole symlink
+        # chain — claude's runs down through the loader-patched
+        # platform binary — and the tmpfiles conf plus the
+        # extension's own store path prove the planting rules
+        # ride the closure.
+        for bin in node npm npx pi herdr claude; do
+          test -x "$toplevel"/sw/bin/$bin \
+            || { echo "sw/bin/$bin missing from the system profile" >&2; exit 1; }
+        done
+        # The claude ELF's linkage (#268 review): the loader-patched
+        # binary must resolve everything inside the closure — its
+        # interpreter, every NEEDED soname, and every version symbol
+        # it asks a library for. A pin bump onto a libc newer than
+        # nixpkgs' glibc fails here, not at a workspace's first
+        # launch (the same guard the Debian build gives rsync and
+        # the toolchain). Every NEEDED soname this binary carries is
+        # glibc-internal, so the loader's own glibc directory is the
+        # tree's copy to ask.
+        claudeElf="$root$(readlink -f "$toplevel"/sw/bin/claude)"
+        interp=$(readelf -l "$claudeElf" \
+          | awk '/interpreter/{gsub(/[\[\]]/,"",$NF); print $NF}')
+        test -e "$root""$interp" \
+          || { echo "claude loader $interp absent from the tree" >&2; exit 1; }
+        glibcLib=$(dirname "$root""$interp")
+        while read -r so ver; do
+          [ -n "$so" ] || continue
+          lib="$glibcLib"/"$so"
+          if [ ! -e "$lib" ]; then
+            lib=$(find "$root"/nix/store -maxdepth 5 -name "$so" | head -1)
+          fi
+          [ -n "$lib" ] && [ -e "$lib" ] \
+            || { echo "claude needs $so, absent from the tree" >&2; exit 1; }
+          readelf --version-info "$lib" | grep -q "Name: $ver" \
+            || { echo "claude needs $ver from $so; the tree's copy is older" \
+                 >&2; exit 1; }
+        done <<<"$(readelf --version-info "$claudeElf" \
+          | awk '/^Version needs section/ {needs=1; next} \
+                 /^Version [a-z]+ section/ {needs=0} \
+                 needs && /File: / {f=$5} \
+                 needs && /Name: / {print f, $3}')"
+        grep -Rq 'llm-models.ts' "$toplevel"/etc/tmpfiles.d/
+        grep -q 'guest-pi-extension' "$closureInfo"/store-paths
         mkdir -p "$out"
         du -s --apparent-size --block-size=4096 "$root" | cut -f1 > "$out"/tree-blocks
         # The opaque-tar hop (the same discipline as the Debian
@@ -507,6 +619,9 @@ let
   };
 
 in
+assert (
+  lib.assertMsg nodeFloorMet "pi's engines floor (22.19.0) exceeds nixpkgs nodejs_22 (${pkgs.nodejs_22.version}) — a devenv lock regression"
+);
 pkgs.runCommand "msks-guest-nixos"
   {
     inherit

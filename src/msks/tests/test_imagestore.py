@@ -380,12 +380,15 @@ def nixos_guest_dir() -> Path:
     return path if path.is_absolute() else base / path
 
 
+@pytest.mark.timeout(300)
 def test_import_of_the_real_built_nixos_image(tmp_path: Path) -> None:
     """The `msks-build-guest nixos` containerDisk (#250), when
     present, imports through the same schema — and the capabilities
     carry the whole NixOS-vs-Debian difference the daemon acts on:
     the same declared cloud-init provisioner, the same prelude-v1
-    console."""
+    console. The ceiling lifts for the same reason as the Debian
+    twin's: the toolchain bake (#268) grew the archive past the
+    suite's 30 s copy budget on CI runners' disks."""
 
     archives = sorted(nixos_guest_dir().glob("workspace-nixos-*.tar"))
     if not archives:
