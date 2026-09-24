@@ -116,7 +116,7 @@ absent simply records the new size — the next start's artifact heal
 builds the blank artifact at it — and a request naming sizes the
 files already have answers an idempotent `200` that moves nothing.
 A completed resize is announced on the events channel
-(`workspace.resized`, with the new sizes).
+(`workspace.resized`, with the new sizes and topology).
 
 ## Capacity reporting
 

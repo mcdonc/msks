@@ -353,6 +353,8 @@ def vm_spec(
         initrd=record.initrd,
         rootfs=record.rootfs,
         cmdline=record.cmdline,
+        cpus=2,
+        mem_mib=1024,
         root_mib=2048,
         home_mib=256,
         egress=egress,

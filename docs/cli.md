@@ -366,7 +366,7 @@ $ msks resize ws4 --home-mib 4096
 resized ws4: root 10240 MiB, home 4096 MiB
 
 $ msks resize ws4 --cpus 4 --mem-mib 4096
-resized ws4: root 10240 MiB, home 2048 MiB, cpus 4, mem 4096 MiB
+resized ws4: root 10240 MiB, home 4096 MiB, cpus 4, mem 4096 MiB
 (the new topology applies on its next boot)
 ```
 
