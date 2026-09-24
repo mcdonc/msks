@@ -1813,6 +1813,29 @@ def test_image_default_miss_lists_the_catalog(
     assert "debian:13" in message and "alpine:3.20" in message
 
 
+def test_image_default_ambiguous_prefix_is_named(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#270: an ambiguous hash prefix names the images it matches —
+    the same refusal rm answers, before any POST leaves."""
+    client_env(monkeypatch)
+    rows = IMAGES + [image_row("debian", "13.1", "a" * 63 + "e")]
+    posted = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method != "GET":
+            posted.append(request.url.path)
+        return httpx.Response(200, json=rows)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.cmd_image_default("a" * 63, transport=mock(handler))
+    message = str(excinfo.value)
+    assert "matches 2 images" in message
+    assert "debian:13" in message and "debian:13.1" in message
+    assert "use the full hash or name@hash" in message
+    assert posted == []
+
+
 def test_image_default_unset_reports_the_fallback(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

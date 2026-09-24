@@ -98,11 +98,13 @@ async def client(tmp_path: Path):
 
 
 @contextlib.asynccontextmanager
-async def catalog_daemon(state_dir: Path, db_path: Path):
+async def catalog_daemon(
+    state_dir: Path, db_path: Path, default_image: str = ""
+):
     """One daemon over the given paths — the restart tests build a
     second over the same state dir in sequence (#270)."""
     settings = Settings(
-        vmm=VmmSettings(state_dir=state_dir),
+        vmm=VmmSettings(state_dir=state_dir, default_image=default_image),
         net=NetSettings(enabled=False),
         server=ServerSettings(
             db_path=db_path, bootstrap_token=TOKEN, event_poll_s=10.0
@@ -1118,9 +1120,10 @@ async def test_default_designation_survives_a_restart(
     tmp_path: Path,
 ) -> None:
     """#270: the designation is the pointer file — a second daemon
-    over the same state dir serves it."""
+    over the same state dir serves it, and a warm
+    MSKSD_DEFAULT_IMAGE hit on another image leaves it alone (the
+    fresh-import reclaim is the one startup path that moves it)."""
     state_dir = tmp_path / "vms"
-    hashes = {}
     db_path = tmp_path / "restart.db"
     async with catalog_daemon(state_dir, db_path) as http:
         hashes = await import_named_images(
@@ -1130,7 +1133,9 @@ async def test_default_designation_survives_a_restart(
             "/api/v1/images/default", json={"ref": "two:2"}, headers=auth()
         )
         assert designated.status_code == 200, designated.text
-    async with catalog_daemon(state_dir, db_path) as http:
+    async with catalog_daemon(
+        state_dir, db_path, default_image=str(state_dir / "one.tar")
+    ) as http:
         listed = await http.get("/api/v1/images", headers=auth())
         flags = {
             f"{row['name']}:{row['version']}": row["default"]

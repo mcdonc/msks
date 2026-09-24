@@ -371,7 +371,8 @@ gets those users' reach reported.
 Import makes the daemon unpack the boot files once into a per-hash
 cache and record the image in the catalog. The `msks image` commands
 drive this surface from the CLI — `msks image import <path>`, `msks
-image ls`, `msks image rm <ref>`, and `msks image info <ref>` (see
+image ls`, `msks image rm <ref>`, `msks image info <ref>`, and `msks
+image default <ref>` (see
 `docs/cli.md`); the raw HTTP form:
 
 ```bash
