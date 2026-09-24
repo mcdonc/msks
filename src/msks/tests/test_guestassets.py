@@ -289,6 +289,28 @@ def test_the_image_bakes_the_agent_toolchain() -> None:
     # pins: one file owns every pin, so a bump moves both images.
     assert "pkgs.callPackage ./agent-toolchain.nix" in build
     assert "agentPiPackage" not in build
+    # #272: pi's fd and rg come from Debian's own debs — pinned by
+    # pool URL and checksum like the kernel and rsync debs, staged
+    # with the same linkage guard, in the layout apt leaves (fd's
+    # real ELF under usr/lib/cargo/bin, fdfind a symlink).
+    assert "fd-find_10.2.0-1+b5_amd64.deb" in build
+    assert "ripgrep_14.1.1-1+b4_amd64.deb" in build
+    assert '"$root"/usr/lib/cargo/bin/fd' in build
+    assert 'ln -s ../lib/cargo/bin/fd "$root"/usr/bin/fdfind' in build
+    assert "install -D -m 0755 rg-deb/usr/bin/rg" in build
+    # Every launcher executes at build time (#272): the sandbox
+    # cannot resolve the env shebang, so it is asserted byte-exact
+    # and the dynamic tools run through the tree's own loader.
+    assert "'#!/usr/bin/env node'" in build
+    assert '"$root"/usr/local/bin/pi --version' in build
+    assert 'run_tool "$root"/usr/bin/fdfind --version' in build
+    assert 'run_tool "$root"/usr/bin/rg --version' in build
+    # The NEEDED strip must be a bracket expression: the
+    # two-character escape leaves the brackets, the word becomes a
+    # glob, and stdenv's nullglob deletes it — a guard that
+    # silently checks nothing.
+    assert "gsub(/\\[\\]/" not in build
+    assert "gsub(/[\\[\\]]/" in build
 
 
 def test_the_nixos_image_ships_the_agent_toolchain() -> None:
@@ -322,10 +344,23 @@ def test_the_nixos_image_ships_the_agent_toolchain() -> None:
     assert "0644 root root - ${piExtension}" in build
     # The sanity battery: the profile bins resolve (claude's chain
     # runs through the loader patch), and the planting rules plus
-    # the extension itself ride the closure.
-    assert "for bin in node npm npx pi herdr claude; do" in build
+    # the extension itself ride the closure. Every launcher also
+    # executes (#272): node, pi under the profile node, claude,
+    # herdr, fd, and rg run at build time, so a staging change that
+    # breaks one fails the build, not a workspace's first start.
+    assert "for bin in node npm npx pi herdr claude fd rg; do" in build
     assert "grep -Rq 'llm-models.ts' \"$toplevel\"/etc/tmpfiles.d/" in build
     assert "grep -q 'guest-pi-extension'" in build
+    assert "\"$nodeBin\" --version | grep -q '^v[0-9][0-9.]*$'" in build
+    assert '"$(readlink -f "$toplevel"/sw/bin/herdr)" --version' in build
+    assert '"$(readlink -f "$toplevel"/sw/bin/fd)" --version' in build
+    assert '"$(readlink -f "$toplevel"/sw/bin/rg)" --version' in build
+    # pi's fd/rg tool dependencies (#272): a first pi start would
+    # otherwise download both from GitHub — behind the egress
+    # interceptor. nixpkgs' own packages put them on the profile
+    # PATH instead.
+    assert "pkgs.fd" in build
+    assert "pkgs.ripgrep" in build
 
 
 def test_the_extension_bounds_its_single_fetch() -> None:

@@ -359,6 +359,15 @@ let
         toolchain.piPackage
         toolchain.claudeLoaderPatched
         toolchain.herdrPackage
+        # fd and rg (#272): pi resolves its fd and rg tools from
+        # PATH (fd, fdfind, or rg) and downloads them from GitHub
+        # releases when it finds none — a download a fresh
+        # workspace's first agent start would otherwise wait on,
+        # behind the egress interceptor. nixpkgs' own packages put
+        # both on the same profile PATH the toolchain rides
+        # (nixpkgs' fd ships the `fd` name pi accepts).
+        pkgs.fd
+        pkgs.ripgrep
       ];
 
       # The model-discovery extension (#266, #268): planted the
@@ -468,7 +477,7 @@ let
         # platform binary — and the tmpfiles conf plus the
         # extension's own store path prove the planting rules
         # ride the closure.
-        for bin in node npm npx pi herdr claude; do
+        for bin in node npm npx pi herdr claude fd rg; do
           test -x "$toplevel"/sw/bin/$bin \
             || { echo "sw/bin/$bin missing from the system profile" >&2; exit 1; }
         done
@@ -505,6 +514,30 @@ let
                  needs && /Name: / {print f, $3}')"
         grep -Rq 'llm-models.ts' "$toplevel"/etc/tmpfiles.d/
         grep -q 'guest-pi-extension' "$closureInfo"/store-paths
+        # The launchers must execute (#272): a profile link proves
+        # presence, not a working interpreter — the bug this closes
+        # shipped a cli.js whose shebang named a store node no guest
+        # carries, and every launcher passed test -x. The store
+        # binaries resolve against their own closure, so each runs
+        # directly; pi runs under the profile's node with a scratch
+        # HOME — cli.js is what sw/bin/pi execs through its env
+        # shebang on a real guest. The version greps pin output
+        # shape, not version: the pins live in nix/agent-toolchain.nix.
+        nodeBin=$(readlink -f "$toplevel"/sw/bin/node)
+        "$nodeBin" --version | grep -q '^v[0-9][0-9.]*$'
+        mkdir pi-home
+        HOME="$PWD"/pi-home "$nodeBin" \
+          "$(readlink -f "$toplevel"/sw/bin/pi)" --version \
+          | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'
+        HOME="$PWD"/pi-home \
+          "$(readlink -f "$toplevel"/sw/bin/claude)" --version \
+          | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+'
+        "$(readlink -f "$toplevel"/sw/bin/herdr)" --version \
+          | grep -q '^herdr [0-9]'
+        "$(readlink -f "$toplevel"/sw/bin/fd)" --version | head -1 \
+          | grep -q '^fd [0-9]'
+        "$(readlink -f "$toplevel"/sw/bin/rg)" --version | head -1 \
+          | grep -q '^ripgrep [0-9]'
         mkdir -p "$out"
         du -s --apparent-size --block-size=4096 "$root" | cut -f1 > "$out"/tree-blocks
         # The opaque-tar hop (the same discipline as the Debian

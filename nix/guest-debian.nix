@@ -131,6 +131,31 @@ let
     hash = "sha256-iqEi9rqNL/ESxyu5gU7glu5RbwITs2uYu+ecg8kvsiY=";
   };
 
+  # Debian's own fd-find and ripgrep (#272): pi resolves its fd
+  # and rg tools from PATH (fd, fdfind — the binary name Debian
+  # ships — or rg) and downloads them from GitHub releases when it
+  # finds none. That download would sit on the critical path of a
+  # fresh workspace's first agent start, behind the egress
+  # interceptor, against the GitHub API quota every workspace
+  # behind one address shares. Debian's packages, pinned by pool
+  # URL and sha256 like the debs above (fd-find's real ELF lives
+  # under usr/lib/cargo/bin with usr/bin/fdfind a symlink — the
+  # deb's own layout is staged as-is), put both on PATH where pi
+  # finds them, and the first start needs no downloads.
+  fdFindDeb = pkgs.fetchurl {
+    url =
+      "https://deb.debian.org/debian/pool/main/r/rust-fd-find/"
+      + "fd-find_10.2.0-1+b5_amd64.deb";
+    hash = "sha256-FVTGiS23vhDUxr2/GfetQXKCahttAeXMU3uB1rAttNE=";
+  };
+
+  ripgrepDeb = pkgs.fetchurl {
+    url =
+      "https://deb.debian.org/debian/pool/main/r/rust-ripgrep/"
+      + "ripgrep_14.1.1-1+b4_amd64.deb";
+    hash = "sha256-fgwyUQwmTDEzX+O5rjerdtzSL30WJ6CghRilvyixesI=";
+  };
+
   # The minimal initramfs (#37's shape, #96's module set): busybox,
   # the six modules the generic kernel needs to mount the ext4
   # root, and an init that mounts /dev/vda rw and switch_roots into
@@ -1140,40 +1165,77 @@ let
         rm -rf "$root"/etc/netplan
 
         # rsync (#110): Debian's own binary from the pinned deb —
-        # the tree's libraries are its build-time world, and the
-        # guards below fail the build the day that stops being true:
-        # every NEEDED soname present, the ELF interpreter resolvable,
-        # and every version symbol the binary requires (GLIBC_*,
-        # OPENSSL_*) defined by the tree's copy of that library — a
-        # deb rebuilt against newer symbols than the image ships is
-        # the #36 bug class. (u+w: the overlay cp carries the store's
-        # read-only dir modes.) Only usr/bin/rsync is staged: nothing
-        # in the runtime needs the deb's rrsync/rsync-ssl or its
-        # /usr/share scripts — an operator wanting rrsync's scoped
-        # syncs installs it in the workspace itself.
+        # only usr/bin/rsync is staged: nothing in the runtime needs
+        # the deb's rrsync/rsync-ssl or its /usr/share scripts — an
+        # operator wanting rrsync's scoped syncs installs it in the
+        # workspace itself. (u+w: the overlay cp carries the store's
+        # read-only dir modes.)
+        #
+        # The deb-staged ELF guard (rsync #110; fd and rg #272): a
+        # binary copied from a pinned deb runs against the tree's
+        # libraries, and the guard fails the build the day that
+        # stops being true — every NEEDED soname present, the ELF
+        # interpreter resolvable, and every version symbol the
+        # binary requires (GLIBC_*, OPENSSL_*) defined by the tree's
+        # copy of that library — a deb rebuilt against newer symbols
+        # than the image ships is the #36 bug class. Only the
+        # "Version needs" section is parsed: a binary that also
+        # defines versioned symbols would otherwise feed its own
+        # definitions back in as needs. The strip regex must be a
+        # bracket expression ([\[\]], the set of both brackets):
+        # the two-character escape `\[\]` matches only adjacent
+        # `[]`, the unstripped `[libx.so]` word is a glob, and
+        # stdenv's nullglob then deletes it from the `for` word
+        # list — the loop silently checks nothing (the #272 class).
+        deb_elf_guard() {
+          bin=$1
+          name=$(basename "$bin")
+          for so in $(readelf -d "$bin" \
+            | awk '/NEEDED/{gsub(/[\[\]]/,"",$NF); print $NF}'); do
+            test -e "$root"/usr/lib/x86_64-linux-gnu/"$so" \
+              || { echo "$name needs $so, absent from the tree" >&2; \
+                   exit 1; }
+          done
+          interp=$(readelf -l "$bin" \
+            | awk '/interpreter/{gsub(/[\[\]]/,"",$NF); print $NF}')
+          test -e "$root""$interp" \
+            || { echo "$name loader $interp absent from the tree" >&2; \
+                 exit 1; }
+          reqs=$(readelf --version-info "$bin" \
+            | awk '/Version needs section/{need=1; next} \
+                /Version definition section/{need=0} \
+                need && /File: /{f=$5} \
+                need && /  Name: /{print f, $3}')
+          while read -r so ver; do
+            [ -n "$so" ] || continue
+            lib="$root"/usr/lib/x86_64-linux-gnu/"$so"
+            readelf --version-info "$lib" | grep -q "Name: $ver" \
+              || { echo "$name needs $ver from $so; the tree's " \
+                   "copy is older" >&2; exit 1; }
+          done <<<"$reqs"
+        }
         chmod u+w "$root"/usr/bin
         mkdir -p rsync-deb
         dpkg-deb -x ${rsyncDeb} rsync-deb
         cp --no-preserve=ownership rsync-deb/usr/bin/rsync \
           "$root"/usr/bin/rsync
-        for so in $(readelf -d "$root"/usr/bin/rsync \
-          | awk '/NEEDED/{gsub(/\[\]/,"",$NF); print $NF}'); do
-          test -e "$root"/usr/lib/x86_64-linux-gnu/"$so" \
-            || { echo "rsync needs $so, absent from the tree" >&2; exit 1; }
-        done
-        interp=$(readelf -l "$root"/usr/bin/rsync \
-          | awk '/interpreter/{gsub(/[\[\]]/,"",$NF); print $NF}')
-        test -e "$root""$interp" \
-          || { echo "rsync loader $interp absent from the tree" >&2; exit 1; }
-        reqs=$(readelf --version-info "$root"/usr/bin/rsync \
-          | awk '/File: /{f=$5} /Name: /{print f, $3}')
-        while read -r so ver; do
-          [ -n "$so" ] || continue
-          lib="$root"/usr/lib/x86_64-linux-gnu/"$so"
-          readelf --version-info "$lib" | grep -q "Name: $ver" \
-            || { echo "rsync needs $ver from $so; the tree's copy is older" \
-                 >&2; exit 1; }
-        done <<<"$reqs"
+        deb_elf_guard "$root"/usr/bin/rsync
+
+        # fd-find and ripgrep (#272): Debian's own fd and rg for pi's
+        # tool resolution (see the fdFindDeb pin) — staged from the
+        # pinned debs the same way rsync is, binaries only, with the
+        # same linkage guard. fd-find's usr/bin/fdfind is a symlink
+        # into usr/lib/cargo/bin; both halves of the deb's layout
+        # land in the tree exactly as apt would leave them.
+        mkdir -p fd-deb rg-deb
+        dpkg-deb -x ${fdFindDeb} fd-deb
+        dpkg-deb -x ${ripgrepDeb} rg-deb
+        install -D -m 0755 fd-deb/usr/lib/cargo/bin/fd \
+          "$root"/usr/lib/cargo/bin/fd
+        ln -s ../lib/cargo/bin/fd "$root"/usr/bin/fdfind
+        install -D -m 0755 rg-deb/usr/bin/rg "$root"/usr/bin/rg
+        deb_elf_guard "$root"/usr/lib/cargo/bin/fd
+        deb_elf_guard "$root"/usr/bin/rg
 
         # No baked host keys — ever (#110): each workspace generates
         # its own on first boot; an upstream image that started
@@ -1185,6 +1247,8 @@ let
         test -x "$root"/usr/bin/socat
         test -x "$root"/usr/bin/msks-console-helper
         test -x "$root"/usr/bin/rsync
+        test -x "$root"/usr/bin/fdfind
+        test -x "$root"/usr/bin/rg
         test -x "$root"/usr/sbin/sshd
         # Sanity: the baked agent toolchain (#266) — an upstream
         # tarball or layout change must fail the build here, not
@@ -1212,7 +1276,7 @@ let
         for bin in "$root"/usr/local/bin/node \
           "$root"/usr/local/lib/node_modules/@anthropic-ai/claude-code/node_modules/@anthropic-ai/claude-code-linux-x64/claude; do
           for so in $(readelf -d "$bin" \
-            | awk '/NEEDED/{gsub(/\[\]/,"",$NF); print $NF}'); do
+            | awk '/NEEDED/{gsub(/[\[\]]/,"",$NF); print $NF}'); do
             test -e "$root"/usr/lib/x86_64-linux-gnu/"$so" \
               || test -e "$root"/lib/x86_64-linux-gnu/"$so" \
               || { echo "$bin needs $so, absent from the tree" >&2; \
@@ -1244,6 +1308,40 @@ let
           || { echo "herdr is not static; the pin changed shape" >&2; \
                exit 1; }
         test -f "$root"/usr/local/share/doc/herdr/LICENSE
+        # The launchers must execute (#272): test -x proves a
+        # symlink chain, not a working interpreter — the bug this
+        # closes shipped a cli.js whose shebang named a store node
+        # no guest carries, and every launcher passed test -x. The
+        # build sandbox runs no /usr/bin/env and no /lib64 loader,
+        # so the env shebang is asserted byte-exact and each
+        # dynamic tool runs through the tree's own loader with the
+        # tree's libraries — the same world the guest execs it in.
+        # (herdr is static and runs as-is; pi runs under the staged
+        # node, the interpreter its shebang resolves to on a real
+        # guest.) A scratch HOME keeps the JS tools from writing
+        # into the build user's home. The version greps pin output
+        # shape, not version: the pins live in this file and
+        # nix/agent-toolchain.nix.
+        cli="$root"/usr/local/lib/node_modules/pi-coding-agent/dist/bundle/cli.js
+        [ "$(head -n 1 "$cli")" = '#!/usr/bin/env node' ] \
+          || { echo "pi cli.js lost its env-node shebang" >&2; exit 1; }
+        ldso="$root"/lib64/ld-linux-x86-64.so.2
+        libpath="$root"/usr/lib/x86_64-linux-gnu
+        run_tool() { "$ldso" --library-path "$libpath" "$@"; }
+        run_tool "$root"/usr/local/bin/node --version \
+          | grep -q '^v[0-9][0-9.]*$'
+        mkdir pi-home
+        HOME="$PWD"/pi-home run_tool "$root"/usr/local/bin/node \
+          "$root"/usr/local/bin/pi --version \
+          | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'
+        "$root"/usr/local/bin/herdr --version \
+          | grep -q '^herdr [0-9]'
+        HOME="$PWD"/pi-home run_tool "$root"/usr/local/bin/claude \
+          --version | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+'
+        run_tool "$root"/usr/bin/fdfind --version | head -1 \
+          | grep -q '^fdfind [0-9]'
+        run_tool "$root"/usr/bin/rg --version | head -1 \
+          | grep -q '^ripgrep [0-9]'
         # The dropin's load-bearing line, not just the file's
         # existence: a typo'd printf must fail the build here, not
         # in the opt-in smoke.
