@@ -329,11 +329,11 @@ async def test_the_live_interceptor(tmp_path, monkeypatch) -> None:
     assert "secret.swap" in kinds
     assert kinds.count("secret.sighting") == 2
     swap = next(event for event in events if event["event"] == "secret.swap")
-    assert swap["data"] == {
-        "workspace_id": "ws-live",
-        "name": "api",
-        "host": API,
-    }
+    assert swap["data"]["workspace_id"] == "ws-live"
+    assert swap["data"]["name"] == "api"
+    assert swap["data"]["host"] == API
+    assert swap["data"]["placeholder_id"] == first["id"]
+    assert swap["data"]["ts"] > 0.0
 
     await interceptor.stop()
     for origin in origins.values():

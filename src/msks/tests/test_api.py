@@ -2762,6 +2762,31 @@ async def test_mint_publishes_and_refreshes_the_interceptor(client) -> None:
     assert recorder.refreshes == ["ws-sec", "ws-sec"]
 
 
+async def test_mint_and_revoke_events_carry_the_placeholder_identity(
+    client,
+) -> None:
+    """The lifecycle events name the placeholder's row id and a
+    timestamp (#201): the stream's readers tie an event to its
+    placeholder even after the row retires."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    queue = app.state.hub.subscribe()
+    minted = (
+        await http.post("/api/v1/secrets", json=mint_body(), headers=auth())
+    ).json()
+    await http.delete(f"/api/v1/secrets/{minted['id']}", headers=auth())
+    drained = []
+    while not queue.empty():
+        drained.append(json.loads(queue.get_nowait()))
+    mint, revoke = (event["data"] for event in drained)
+    assert mint["placeholder_id"] == minted["id"]
+    assert mint["dests"] == ["api.github.com"]
+    assert mint["ts"] > 0.0
+    assert mint["name"] == revoke["name"] == "github_api"
+    assert revoke["placeholder_id"] == minted["id"]
+    assert revoke["ts"] > 0.0
+
+
 async def test_renew_refreshes_the_interceptor(client) -> None:
     """A renew can revive a workspace's last live placeholder: the
     armed state re-evaluates (#199)."""

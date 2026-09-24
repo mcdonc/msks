@@ -489,7 +489,10 @@ async def test_sweep_retires_expired_and_keeps_live_rows(tmp_path) -> None:
         assert (stored / "MSKS_WS_B_LIVE").exists()
         event = json.loads(queue.get_nowait())
         assert event["event"] == "secret.expiry"
-        assert event["data"] == {"workspace_id": "ws-a", "name": "expired"}
+        assert event["data"]["workspace_id"] == "ws-a"
+        assert event["data"]["name"] == "expired"
+        assert event["data"]["placeholder_id"] == past["id"]
+        assert event["data"]["ts"] > 0.0
 
 
 async def test_sweep_survives_a_failing_store_delete(tmp_path) -> None:

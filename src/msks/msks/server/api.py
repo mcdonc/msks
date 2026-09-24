@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import secrets
+import time
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -1215,9 +1216,11 @@ def build_api(app) -> FastAPI:
         await hub.publish(
             "secret.mint",
             {
+                "placeholder_id": row["id"],
                 "workspace_id": workspace_id,
                 "name": body.name,
                 "dests": dests,
+                "ts": time.time(),
             },
         )
         return Response(
@@ -1300,7 +1303,12 @@ def build_api(app) -> FastAPI:
             await sync_store_manifest()
         await hub.publish(
             "secret.revoke",
-            {"workspace_id": row["workspace_id"], "name": row["name"]},
+            {
+                "placeholder_id": placeholder_id,
+                "workspace_id": row["workspace_id"],
+                "name": row["name"],
+                "ts": time.time(),
+            },
         )
         # The redirect stands down when the last placeholder went
         # (#199) — the row is already gone, so refresh reads the new

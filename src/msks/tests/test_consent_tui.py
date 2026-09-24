@@ -84,6 +84,161 @@ def test_apply_frame_lifecycle() -> None:
     assert [rule.id for rule in payload.denied] == ["d1"]
 
 
+def test_secret_events_append_to_the_log() -> None:
+    """Each of the five interceptor audit frames lands in the log
+    with its kind and fields (#201); the seq orders arrival."""
+    controller = ConsentController()
+    outcome, first = controller.apply_frame(
+        frame(
+            "secret.mint",
+            {
+                "placeholder_id": 4,
+                "workspace_id": "ws",
+                "name": "api",
+                "dests": ["api.example"],
+                "ts": 100.0,
+            },
+        )
+    )
+    assert outcome == consent.SECRET_EVENT
+    assert (first.kind, first.seq) == ("mint", 1)
+    assert first.dests == ("api.example",)
+    outcome, swap = controller.apply_frame(
+        frame(
+            "secret.swap",
+            {
+                "placeholder_id": 4,
+                "workspace_id": "ws",
+                "name": "api",
+                "host": "api.example",
+                "ts": 101.0,
+            },
+        )
+    )
+    assert outcome == consent.SECRET_EVENT
+    assert (swap.kind, swap.seq, swap.host) == ("swap", 2, "api.example")
+    for name, kind in (
+        ("secret.revoke", "revoke"),
+        ("secret.expiry", "expiry"),
+        ("secret.sighting", "sighting"),
+    ):
+        outcome, payload = controller.apply_frame(
+            frame(name, {"workspace_id": "ws", "name": "api"})
+        )
+        assert outcome == consent.SECRET_EVENT
+        assert payload.kind == kind
+    assert [e.kind for e in controller.events] == [
+        "mint",
+        "swap",
+        "revoke",
+        "expiry",
+        "sighting",
+    ]
+    assert [e.seq for e in controller.events] == [1, 2, 3, 4, 5]
+
+
+def test_secret_events_ignore_malformed_without_a_slot() -> None:
+    """An unusable secret frame is ignored and consumes no seq —
+    the next good event's seq stays contiguous."""
+    controller = ConsentController()
+    for raw in (
+        json.dumps({"event": "secret.mint", "data": {}}),
+        json.dumps({"event": "secret.mint", "data": "junk"}),
+        json.dumps({"event": "secret.mint"}),
+        json.dumps({"event": "secret.unknown"}),
+    ):
+        assert controller.apply_frame(raw) == (consent.IGNORED, None)
+    assert controller.events == []
+    outcome, payload = controller.apply_frame(
+        frame("secret.revoke", {"workspace_id": "ws", "name": "api"})
+    )
+    assert payload.seq == 1
+
+
+def test_secret_events_degrade_on_older_daemon_fields() -> None:
+    """A frame without its id, host, or timestamp still lands: the
+    fields degrade to their empty forms."""
+    controller = ConsentController()
+    outcome, payload = controller.apply_frame(
+        frame("secret.swap", {"workspace_id": 3, "name": "api"})
+    )
+    assert outcome == consent.IGNORED  # a non-string workspace is unusable
+    outcome, payload = controller.apply_frame(
+        frame("secret.swap", {"workspace_id": "ws", "name": "api"})
+    )
+    assert payload.placeholder_id is None
+    assert payload.host is None
+    assert payload.dests == ()
+    assert payload.ts == 0.0
+    # Junk shapes read as their empty forms, never raise.
+    outcome, payload = controller.apply_frame(
+        frame(
+            "secret.mint",
+            {
+                "workspace_id": "ws",
+                "name": "api",
+                "placeholder_id": True,
+                "dests": "api.example",
+                "ts": "soon",
+            },
+        )
+    )
+    assert outcome == consent.SECRET_EVENT
+    assert payload.placeholder_id is None
+    assert payload.dests == ()
+    assert payload.ts == 0.0
+
+
+def test_foreign_workspace_secret_frames_are_ignored() -> None:
+    """A foreign workspace's audit frame plants nothing — the #280
+    rule carried to secret events: a foreign sighting flashing this
+    decider's exfil alarm would be a false one. An empty own-id (the
+    protocol default) accepts every frame."""
+    controller = ConsentController(workspace_id="ws-a")
+    sighting = frame(
+        "secret.sighting",
+        {"workspace_id": "ws-b", "name": "api", "host": "evil.example"},
+    )
+    assert controller.apply_frame(sighting) == (consent.IGNORED, None)
+    assert controller.events == []
+    own = frame(
+        "secret.sighting",
+        {"workspace_id": "ws-a", "name": "api", "host": "evil.example"},
+    )
+    outcome, payload = controller.apply_frame(own)
+    assert outcome == consent.SECRET_EVENT
+    assert payload.seq == 1  # the ignored frame used no slot
+    unscoped = ConsentController()
+    assert unscoped.apply_frame(sighting)[0] == consent.SECRET_EVENT
+
+
+def test_an_unhashable_event_value_is_ignored() -> None:
+    """A frame whose event field is a list (unhashable) is ignored,
+    not raised into: the dict lookup would take the connection down
+    a reconnect cycle for one malformed frame."""
+    controller = ConsentController()
+    raw = json.dumps({"event": ["secret.swap"], "data": {}})
+    assert controller.apply_frame(raw) == (consent.IGNORED, None)
+
+
+def test_secret_log_is_bounded_and_survives_reset() -> None:
+    """The log keeps only the newest EVENT_LOG_MAX rows, and a
+    reconnect's reset keeps it: the daemon does not re-send history,
+    so a re-registration must not blank the tail the operator is
+    reading."""
+    controller = ConsentController()
+    for i in range(consent.EVENT_LOG_MAX + 10):
+        controller.apply_frame(
+            frame("secret.swap", {"workspace_id": "ws", "name": f"n{i}"})
+        )
+    assert len(controller.events) == consent.EVENT_LOG_MAX
+    assert controller.events[0].name == "n10"
+    controller.apply_frame(request_frame("r1"))
+    controller.reset()
+    assert controller.pending == {}
+    assert len(controller.events) == consent.EVENT_LOG_MAX
+
+
 def test_apply_frame_ignores_malformed() -> None:
     controller = ConsentController()
     for raw in (

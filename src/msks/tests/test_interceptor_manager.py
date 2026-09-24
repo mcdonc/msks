@@ -1,6 +1,7 @@
 """The interceptor manager: armed state, listeners, events (#199)."""
 
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -134,6 +135,7 @@ def rows_entry(row) -> PlaceholderEntry:
     return PlaceholderEntry(
         sentinel=row["sentinel"],
         name=row["name"],
+        placeholder_id=row["id"],
         dests=tuple(row["dests"]),
         backend_ref=row["backend_ref"],
     )
@@ -280,11 +282,17 @@ async def test_swap_and_sighting_events_reach_the_hub(app) -> None:
     await app.state.interceptor.publish_sighting(
         "ws-a", entry, "elsewhere.example.net"
     )
-    first = await asyncio.wait_for(queue.get(), 1)
-    second = await asyncio.wait_for(queue.get(), 1)
-    assert '"secret.swap"' in first
-    assert "api.example.com" in first
-    assert '"secret.sighting"' in second
+    first = json.loads(await asyncio.wait_for(queue.get(), 1))
+    second = json.loads(await asyncio.wait_for(queue.get(), 1))
+    assert first["event"] == "secret.swap"
+    assert first["data"]["placeholder_id"] == row["id"]
+    assert first["data"]["workspace_id"] == "ws-a"
+    assert first["data"]["name"] == "api"
+    assert first["data"]["host"] == "api.example.com"
+    assert first["data"]["ts"] > 0.0
+    assert second["event"] == "secret.sighting"
+    assert second["data"]["host"] == "elsewhere.example.net"
+    assert second["data"]["placeholder_id"] == row["id"]
 
 
 async def test_build_master_orders_the_addon_first(tmp_path) -> None:
