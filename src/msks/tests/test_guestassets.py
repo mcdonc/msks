@@ -3,6 +3,7 @@ assets (#5)."""
 
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
 
@@ -226,3 +227,150 @@ def test_smoke_env_without_assets(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_smoke_env_without_kvm(monkeypatch: pytest.MonkeyPatch) -> None:
     _force_kvm(monkeypatch, False)
     assert guestassets.smoke_env_defaults(_assets()) == {}
+
+
+# --- the image-baked agent toolchain (#266) ----------------------------------
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+
+
+def test_the_image_ships_the_pi_extension() -> None:
+    """The model-discovery extension rides the guest image (#266):
+    the file exists beside the image build, reads the MSKSWS_*
+    pair the seed exports (never a vendor-shaped name), resolves
+    its credential per request from the seeded token file, and
+    carries the klangk behavior — provider registration, the
+    embed/rerank filter, the quiet no-op when the environment
+    names no proxy."""
+    ext = (REPO_ROOT / "nix" / "guest-pi-extension.ts").read_text()
+    assert "process.env.MSKSWS_BASE_URL" in ext
+    assert "process.env.MSKSWS_API_KEY" in ext
+    assert "OPENAI_API_KEY" not in ext
+    assert 'apiKey: "!cat /etc/msks/llm.token"' in ext
+    assert 'pi.registerProvider("msks"' in ext
+    assert '"embed"' in ext and '"rerank"' in ext
+
+
+def test_the_image_bakes_the_agent_toolchain() -> None:
+    """The toolchain pins and their staging (#266): the build fetches
+    the pinned Node tarball and the pinned pi package by digest,
+    builds pi offline against its shrinkwrap, and stages both into
+    the overlay's /usr/local with the extension planted for root
+    and in the skeleton every seed-provisioned account copies."""
+    build = (REPO_ROOT / "nix" / "guest-debian.nix").read_text()
+    # String fragments, not joined URLs: nixfmt reflows the
+    # concatenation layout, and the fragments are the stable atoms.
+    assert '"https://nodejs.org/dist/v22.23.3/"' in build
+    assert '"node-v22.23.3-linux-x64.tar.gz"' in build
+    assert "pi-coding-agent-0.87.1.tgz" in build
+    # A real npmDepsHash, not the placeholder the two-step prefetch
+    # starts from.
+    assert "AAAAAAAAAAAAAAAAAAAAAAAA" not in build
+    assert '"v0.9.1/herdr-linux-x86_64"' in build
+    assert '"claude-code-2.1.281.tgz"' in build
+    assert '"claude-code-linux-x64-2.1.281.tgz"' in build
+    assert "$out/usr/local/bin/claude" in build
+    assert "$out/etc/skel/.pi/agent/extensions/llm-models.ts" in build
+    assert "$out/root/.pi/agent/extensions/llm-models.ts" in build
+    assert "$out/usr/local/bin/pi" in build
+    assert "$out/usr/local/bin/herdr" in build
+
+
+def test_the_extension_bounds_its_single_fetch() -> None:
+    """The startup fetch posture (#266 review): one attempt, bounded
+    by an abort signal — no retry loop, no sleeps. The environment
+    pair is seeded even when the daemon serves no proxy, so the
+    fetch, not the shell, discovers the difference; a dropped tap
+    must stall pi by at most the bound."""
+    ext = (REPO_ROOT / "nix" / "guest-pi-extension.ts").read_text()
+    assert "AbortSignal.timeout(1500)" in ext
+    assert "setTimeout" not in ext
+    assert "for (let attempt" not in ext
+
+
+def load_integrity_table():
+    """The integrity table the patcher consumes, as the tests use
+    it: the JSON file in nix/."""
+    spec = importlib.util.spec_from_file_location(
+        "pi_shrinkwrap_patch", REPO_ROOT / "nix" / "pi-shrinkwrap-patch.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    table = mod.load_missing(
+        REPO_ROOT / "nix" / "pi-shrinkwrap-integrity.json"
+    )
+    return mod, table
+
+
+def test_the_shrinkwrap_patch_pins_every_gap_by_name() -> None:
+    """The injector (#266 review): every MISSING name takes its
+    sha512, scoped and nested package keys resolve to their
+    package names, entries that already carry integrity are left
+    alone, and the guard the caller checks counts names — a
+    duplicate of one sibling cannot mask another."""
+    mod, table = load_integrity_table()
+
+    lock = {
+        "packages": {
+            "": {"name": "pi-coding-agent"},
+            "node_modules/@earendil-works/chord": {
+                "resolved": "https://registry.example/chord.tgz",
+            },
+            "node_modules/chalk/node_modules/@earendil-works/pi-tui": {
+                "resolved": "https://registry.example/pi-tui.tgz",
+            },
+            "node_modules/@earendil-works/pi-ai": {
+                "resolved": "https://registry.example/pi-ai.tgz",
+                "integrity": "sha512-alreadythere",
+            },
+            "node_modules/chalk": {"resolved": "https://x/y"},
+        }
+    }
+    patched = mod.patch_lock(lock, table)
+    # The nested key resolved to its package name; the
+    # already-pinned entry stayed untouched.
+    assert patched == {"@earendil-works/chord", "@earendil-works/pi-tui"}
+    assert (
+        lock["packages"]["node_modules/@earendil-works/chord"]["integrity"]
+        == "sha512-" + table["@earendil-works/chord"]
+    )
+    nested = lock["packages"][
+        "node_modules/chalk/node_modules/@earendil-works/pi-tui"
+    ]
+    assert nested["integrity"] == "sha512-" + table["@earendil-works/pi-tui"]
+    already = lock["packages"]["node_modules/@earendil-works/pi-ai"]
+    assert already["integrity"] == "sha512-alreadythere"
+    # Names the table still expects fail loudly.
+    assert patched != set(table)
+
+
+def test_the_shrinkwrap_patch_strips_dev_dependencies() -> None:
+    """The package.json half (#266 review): devDependencies go, the
+    rest of the manifest stays byte-identical in content."""
+    mod, _table = load_integrity_table()
+
+    pkg = {
+        "name": "pi-coding-agent",
+        "devDependencies": {"vitest": "^4"},
+        "dependencies": {"chalk": "5"},
+    }
+    assert mod.strip_dev_dependencies(pkg) is True
+    assert pkg == {"name": "pi-coding-agent", "dependencies": {"chalk": "5"}}
+    assert mod.strip_dev_dependencies(pkg) is False
+
+
+def test_the_shrinkwrap_patch_values_are_valid_sha512() -> None:
+    """Every injected integrity value is well-formed base64 that
+    decodes to 64 bytes (#267 review follow-up): a truncated value
+    passes the opaque string tests above and fails only inside
+    nix's npm cache insert, on CI, far from the cause."""
+    import base64
+    import json as _json
+
+    table = _json.loads(
+        (REPO_ROOT / "nix" / "pi-shrinkwrap-integrity.json").read_text()
+    )
+    assert table
+    for name, value in table.items():
+        raw = base64.b64decode(value, validate=True)
+        assert len(raw) == 64, name

@@ -94,15 +94,48 @@ proxy is usable only from inside a workspace, by that workspace.
 The first-boot seed delivers it (`docs/networking.md` describes
 the tap; the identity seed is the vehicle): the token lands at
 `/etc/msks/llm.token` and `/etc/profile.d/msks-llm.sh` exports
-`OPENAI_BASE_URL` — the DHCP lease's gateway and the daemon's port
-— and `OPENAI_API_KEY`. A login shell inside the workspace is
-therefore already configured for every OpenAI-shaped client:
+`MSKSWS_BASE_URL` — the DHCP lease's gateway and the daemon's port
+— and `MSKSWS_API_KEY`. The names carry the msks prefix because
+the proxy is this daemon's own service; a vendor-shaped name
+would claim otherwise. A login shell inside the workspace is
+therefore already configured for every MSKSWS-aware client:
 
 ```console
-$ env | grep OPENAI
-OPENAI_BASE_URL=http://172.31.0.2:8770/v1
-OPENAI_API_KEY=msksllm1_...
+$ env | grep MSKSWS
+MSKSWS_BASE_URL=http://172.31.0.2:8770/v1
+MSKSWS_API_KEY=msksllm1_...
 ```
+
+The guest image ships the agent toolchain beside it (#266): the
+workspace image bakes pinned Node and the pinned pi coding agent
+under `/usr/local` — system-wide, on every account's default
+`PATH` — and plants a pi extension (`llm-models.ts`) in
+`/etc/skel` and root's home. Every account the identity seed
+provisions copies the skeleton, so each login user ends up with
+the extension in `~/.pi/agent/extensions/`, where pi discovers
+it. At every pi startup the extension makes one fetch of
+`${MSKSWS_BASE_URL}/models`, aborted at 1.5 seconds, and registers
+the catalog under the `msks` provider, so `/model` always shows
+the daemon's live model list. A workspace whose daemon serves no
+model list registers nothing after that one attempt — pi starts
+without the provider (the environment pair is seeded even when no
+proxy listens, so the fetch, not the shell, is what discovers the
+difference); a peer that answers headers fast and trickles its
+body can hold the read slightly past the abort. A copy a user has
+edited stays edited; nothing re-overwrites it.
+
+Two limits to know. A home that existed before the image carried
+the extension keeps its old state — the extension reaches accounts
+provisioned after the image did, and an older home can copy it
+from `/etc/skel/.pi/agent/extensions/`. And the model metadata the
+extension registers is a placeholder (128k context, 8192 max
+output, plain text chat, zero cost): the proxy's OpenAI-shaped
+model list carries no limits, so a model that serves more is
+under-planned and one that serves less can over-generate — set
+per-model values in `~/.pi/agent/models.json` when it matters.
+The toolchain pins move with an image rebuild
+(`nix/guest-debian.nix`); a workspace that already booted keeps
+what it booted with.
 
 Retrieve or rotate a credential with the CLI or API — a token
 holder already owns the workspace's root console, so the private
@@ -118,7 +151,7 @@ immutable create-time input — so export the new one inside the
 workspace by hand after rotating.
 
 One more create-time fact rides the seed: the port. The planted
-`OPENAI_BASE_URL` names the port the daemon served when the
+`MSKSWS_BASE_URL` names the port the daemon served when the
 workspace was created. Moving `MSKSD_LLM_PORT` later does not
 rebind a live listener — each workspace's listener and firewall
 admission move at its next stop/start, and until then that

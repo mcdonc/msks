@@ -537,15 +537,24 @@ def test_normalize_public_key_rejects_malformed_lines() -> None:
 
 def test_seed_script_appends_the_llm_block() -> None:
     """A key-minted workspace with an LLM token seeds both: the
-    identity machinery and the token block after it."""
+    identity machinery and the token block after it. The exports
+    carry the msks-prefixed pair (#266): the proxy is this
+    daemon's own service, so the names say so, and no vendor-shaped
+    variable leaves the seed."""
     script = seed_script(
         PUBLIC, "ws-id", None, llm_token="msksllm1_x", llm_port=8770
     )
     assert "llm_token='msksllm1_x'" in script
     assert "/etc/msks/llm.token" in script
     assert "/etc/profile.d/msks-llm.sh" in script
-    assert 'OPENAI_BASE_URL="http://$gw:8770/v1"' in script
-    assert 'OPENAI_API_KEY="$(cat /etc/msks/llm.token)"' in script
+    assert 'MSKSWS_BASE_URL="http://$gw:8770/v1"' in script
+    assert 'MSKSWS_API_KEY="$(cat /etc/msks/llm.token)"' in script
+    assert "export MSKSWS_BASE_URL MSKSWS_API_KEY" in script
+    assert "OPENAI" not in script
+    # The agent toolchain is the image's, not the seed's (#266):
+    # the seed carries per-workspace facts only.
+    assert "/usr/local" not in script
+    assert ".pi/" not in script
     # The heredoc plants unexpanded (quoted delimiter); the gateway
     # computes at login.
     assert "<<'MSEOF'" in script

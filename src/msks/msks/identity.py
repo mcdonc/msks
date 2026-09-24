@@ -185,9 +185,17 @@ def seed_script(
 
     A workspace's LLM proxy credential rides the same script
     (#259): the token file under /etc/msks and the profile.d
-    exports that point OpenAI-shaped clients at the daemon's
-    proxy. A token with no identity (a pre-#111 row whose seed is
-    healing) seeds the token block alone.
+    exports that name the daemon's proxy for MSKSWS_*-aware
+    clients. A token with no identity (a pre-#111 row whose seed
+    is healing) seeds the token block alone.
+
+    The agent toolchain itself is the guest image's, not the
+    seed's (#266): the image bakes pinned Node and pi under
+    /usr/local and ships the pi model-discovery extension in
+    /etc/skel, so the accounts this script provisions copy it
+    into ~/.pi/agent/extensions/ with the rest of the skeleton.
+    The seed carries only the per-workspace facts the image
+    cannot know — the token, the port, the gateway.
     """
     if public_key is None:
         return (
@@ -255,27 +263,30 @@ def seed_script(
 
 def llm_seed_block(token: str, port: int) -> str:
     """The #259 block: the workspace's proxy credential as
-    /etc/msks/llm.token, and the profile.d script that exports the
-    OpenAI-shaped client environment — the base URL names the
-    DHCP lease's gateway (this workspace's tap address) and the port
-    the daemon served at create, so login shells point at the proxy
-    with zero manual steps. The token's charset (``msksllm1_`` plus
-    URL-safe base64) carries no quote or metacharacter, so the
-    single-quoted assignment is safe; the heredoc is quoted, so it
-    plants unexpanded and computes the gateway at login."""
+    /etc/msks/llm.token, and the profile.d script that exports
+    the MSKSWS_* client environment — the base URL names the DHCP
+    lease's gateway (this workspace's tap address) and the port
+    the daemon served at create, so login shells name the proxy
+    with zero manual steps. The names carry the msks prefix, not
+    the generic OpenAI pair: the proxy is this daemon's own
+    service, and a vendor-shaped name would claim otherwise. The
+    token's charset (``msksllm1_`` plus URL-safe base64) carries
+    no quote or metacharacter, so the single-quoted assignment is
+    safe; the heredoc is quoted, so it plants unexpanded and
+    computes the gateway at login."""
     return (
         f"llm_token='{token}'\n"
         "install -d -m 0755 -o root -g root /etc/msks\n"
         "printf '%s\\n' \"$llm_token\" > /etc/msks/llm.token\n"
         "chmod 0644 /etc/msks/llm.token\n"
         "cat > /etc/profile.d/msks-llm.sh <<'MSEOF'\n"
-        "# msks (#259): point OpenAI-shaped clients at the daemon's\n"
-        "# proxy on this workspace's tap.\n"
+        "# msks (#259): name the daemon's LLM proxy on this\n"
+        "# workspace's tap for MSKSWS_*-aware clients.\n"
         "gw=$(ip route show default 2>/dev/null | awk '{print $3; exit}')\n"
         'if [ -n "$gw" ] && [ -r /etc/msks/llm.token ]; then\n'
-        f'  OPENAI_BASE_URL="http://$gw:{port}/v1"\n'
-        '  OPENAI_API_KEY="$(cat /etc/msks/llm.token)"\n'
-        "  export OPENAI_BASE_URL OPENAI_API_KEY\n"
+        f'  MSKSWS_BASE_URL="http://$gw:{port}/v1"\n'
+        '  MSKSWS_API_KEY="$(cat /etc/msks/llm.token)"\n'
+        "  export MSKSWS_BASE_URL MSKSWS_API_KEY\n"
         "fi\n"
         "MSEOF\n"
     )

@@ -195,6 +195,34 @@ relocates it); `scripts/build-guest.sh` and
 `nix/guest-debian.nix` document every step and are the reference for
 what an image build does.
 
+The Debian image bakes the agent toolchain (#266): digest-pinned
+Node, the pinned pi coding agent, the pinned herdr terminal
+workspace manager (herdr.dev, the release's static binary), and
+pinned Claude Code (the npm wrapper plus its linux-x64 native
+binary, staged in npm's global layout with the wrapper's own
+post-install linking done at build time) land under `/usr/local`,
+and the pi model-discovery extension lands in `/etc/skel` and
+root's home (`docs/llm.md` describes what the extension does at pi
+startup). The pins — `agentNodeTarball`, `piTarball`,
+`npmDepsHash` (and, on a pi bump, the table in
+`nix/pi-shrinkwrap-integrity.json`), `agentHerdrBinary` and its
+license pin, and the two `agentClaude*` tarballs in
+`nix/guest-debian.nix` — move with an image rebuild, and the
+build stays pure derivations: pi's dependency closure is
+prefetched against its shrinkwrap (with the five integrity gaps
+the published lock leaves, closed by hash) and installed offline.
+A workspace that already booted keeps the toolchain it booted
+with; a rebuilt image serves the new pins to the next workspace.
+
+The tools themselves decide some of their own freshness: Claude
+Code checks for updates on startup and installs a newer self into
+the user's home when it finds one (its `autoUpdates` setting and
+the `DISABLE_AUTOUPDATER` environment variable are the switches),
+and herdr's `herdr update` does the same on demand. A workspace
+user can therefore run a newer tool than the image pin — the pin
+governs what a fresh workspace starts with, not what a user's home
+accumulates. A no-egress workspace sees these checks fail quietly.
+
 ```bash
 msks-build-guest nixos
 ```
