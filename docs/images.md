@@ -195,24 +195,30 @@ relocates it); `scripts/build-guest.sh` and
 `nix/guest-debian.nix` document every step and are the reference for
 what an image build does.
 
-The Debian image bakes the agent toolchain (#266): digest-pinned
-Node, the pinned pi coding agent, the pinned herdr terminal
+Both images bake the agent toolchain (#266, #268): pinned Node,
+the pinned pi coding agent, the pinned herdr terminal
 workspace manager (herdr.dev, the release's static binary), and
 pinned Claude Code (the npm wrapper plus its linux-x64 native
 binary, staged in npm's global layout with the wrapper's own
-post-install linking done at build time) land under `/usr/local`,
-and the pi model-discovery extension lands in `/etc/skel` and
-root's home (`docs/llm.md` describes what the extension does at pi
-startup). The pins — `agentNodeTarball`, `piTarball`,
+post-install linking done at build time), plus the pi
+model-discovery extension in `/etc/skel` and root's home
+(`docs/llm.md` describes what the extension does at pi
+startup). The staging differs per image: Debian lands the
+official Node tarball and the pinned packages under
+`/usr/local`; NixOS rides nixpkgs' own Node and the same pinned
+packages through the system profile, with Claude Code's native
+binary loader-patched to the closure's glibc (a stock NixOS
+ships a musl stub where the published interpreter points) and
+the extension planted by tmpfiles copy-once rules. The pins —
+`agentNodeTarball` in `nix/guest-debian.nix`; `piTarball`,
 `npmDepsHash`, `agentHerdrBinary`, and the two
-`agentClaude*` tarballs in `nix/guest-debian.nix` — move with an
-image
-rebuild, and the build stays pure derivations: pi's dependency
-closure is prefetched against its shrinkwrap (with the five
-integrity gaps the published lock leaves, closed by hash) and
-installed offline. A workspace that already booted keeps the
-toolchain it booted with; a rebuilt image serves the new pins to
-the next workspace.
+`agentClaude*` tarballs in `nix/agent-toolchain.nix` — move with
+an image rebuild, and the build stays pure derivations: pi's
+dependency closure is prefetched against its shrinkwrap (with
+the five integrity gaps the published lock leaves, closed by
+hash) and installed offline. A workspace that already booted
+keeps the toolchain it booted with; a rebuilt image serves the
+new pins to the next workspace.
 
 ```bash
 msks-build-guest nixos
@@ -230,7 +236,11 @@ itself. The archive carries the same `image.json` schema with the
 same declared capabilities (`cloud-init`, `prelude-v1`): the daemon
 serves it with nothing keyed off the image's name. The output
 lands under `.devenv/state/guest-nixos/` (`MSKS_GUEST_NIXOS_DIR`
-relocates it); `nix/guest-nixos.nix` documents every step.
+relocates it); `nix/guest-nixos.nix` documents every step. The
+image ships the same agent toolchain as the Debian one (#268):
+nixpkgs' own Node and the shared pins (`nix/agent-toolchain.nix`)
+ride the system profile — the loader-patched Claude Code and the
+tmpfiles-planted extension staging described above.
 
 ### Building your own
 

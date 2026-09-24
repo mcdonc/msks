@@ -106,10 +106,11 @@ MSKSWS_BASE_URL=http://172.31.0.2:8770/v1
 MSKSWS_API_KEY=msksllm1_...
 ```
 
-The guest image ships the agent toolchain beside it (#266): the
-workspace image bakes pinned Node and the pinned pi coding agent
-under `/usr/local` — system-wide, on every account's default
-`PATH` — and plants a pi extension (`llm-models.ts`) in
+Both guest images ship the agent toolchain beside it
+(#266, #268): each image bakes pinned Node and the pinned pi
+coding agent on every account's default `PATH` — the Debian
+image under `/usr/local`, the NixOS image through its system
+profile — and plants a pi extension (`llm-models.ts`) in
 `/etc/skel` and root's home. Every account the identity seed
 provisions copies the skeleton, so each login user ends up with
 the extension in `~/.pi/agent/extensions/`, where pi discovers
@@ -123,7 +124,7 @@ environment pair is seeded even when no proxy listens, so the
 fetch, not the shell, is what discovers the difference). A copy a
 user has edited stays edited; nothing re-overwrites it.
 The toolchain pins move with an image rebuild
-(`nix/guest-debian.nix`); a workspace that already booted keeps
+(`nix/agent-toolchain.nix`); a workspace that already booted keeps
 what it booted with.
 
 Retrieve or rotate a credential with the CLI or API — a token

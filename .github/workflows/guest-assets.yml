@@ -27,6 +27,9 @@ on:
       - devenv.yaml
       - devenv.lock
       - nix/guest.nix
+      - nix/agent-toolchain.nix
+      - nix/pi-shrinkwrap-patch.py
+      - nix/pi-shrinkwrap-integrity.json
       - nix/guest-debian.nix
       - nix/guest-nixos.nix
       - nix/console-helper-pkg.nix
@@ -41,6 +44,9 @@ on:
       - devenv.yaml
       - devenv.lock
       - nix/guest.nix
+      - nix/agent-toolchain.nix
+      - nix/pi-shrinkwrap-patch.py
+      - nix/pi-shrinkwrap-integrity.json
       - nix/guest-debian.nix
       - nix/guest-nixos.nix
       - nix/console-helper-pkg.nix

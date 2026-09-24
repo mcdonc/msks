@@ -252,28 +252,71 @@ def test_the_image_ships_the_pi_extension() -> None:
 
 
 def test_the_image_bakes_the_agent_toolchain() -> None:
-    """The toolchain pins and their staging (#266): the build fetches
-    the pinned Node tarball and the pinned pi package by digest,
-    builds pi offline against its shrinkwrap, and stages both into
-    the overlay's /usr/local with the extension planted for root
+    """The toolchain pins and their staging (#266): the shared
+    build fetches the pinned pi package by digest, builds it
+    offline against its shrinkwrap, and stages it with pinned
+    herdr and Claude Code into the overlay's /usr/local beside the
+    Debian-only Node tarball, with the extension planted for root
     and in the skeleton every seed-provisioned account copies."""
     build = (REPO_ROOT / "nix" / "guest-debian.nix").read_text()
+    pins = (REPO_ROOT / "nix" / "agent-toolchain.nix").read_text()
     # String fragments, not joined URLs: nixfmt reflows the
     # concatenation layout, and the fragments are the stable atoms.
     assert '"https://nodejs.org/dist/v22.23.3/"' in build
     assert '"node-v22.23.3-linux-x64.tar.gz"' in build
-    assert "pi-coding-agent-0.87.1.tgz" in build
+    assert "pi-coding-agent-0.87.1.tgz" in pins
     # A real npmDepsHash, not the placeholder the two-step prefetch
     # starts from.
-    assert "AAAAAAAAAAAAAAAAAAAAAAAA" not in build
-    assert '"v0.9.1/herdr-linux-x86_64"' in build
-    assert '"claude-code-2.1.281.tgz"' in build
-    assert '"claude-code-linux-x64-2.1.281.tgz"' in build
+    assert "AAAAAAAAAAAAAAAAAAAAAAAA" not in pins
+    assert '"v0.9.1/herdr-linux-x86_64"' in pins
+    assert '"claude-code-2.1.281.tgz"' in pins
+    assert '"claude-code-linux-x64-2.1.281.tgz"' in pins
     assert "$out/usr/local/bin/claude" in build
     assert "$out/etc/skel/.pi/agent/extensions/llm-models.ts" in build
     assert "$out/root/.pi/agent/extensions/llm-models.ts" in build
     assert "$out/usr/local/bin/pi" in build
     assert "$out/usr/local/bin/herdr" in build
+    # The Debian image stages the shared derivations, not its own
+    # pins: one file owns every pin, so a bump moves both images.
+    assert "pkgs.callPackage ./agent-toolchain.nix" in build
+    assert "agentPiPackage" not in build
+
+
+def test_the_nixos_image_ships_the_agent_toolchain() -> None:
+    """The NixOS flavor's toolchain parity (#268): nixpkgs' own
+    Node (the platform's packaging, floor-checked against pi's
+    engines) plus the shared pins ride the system profile — every
+    login PATH, no /usr/local staging — with Claude Code as the
+    loader-patched variant and the extension planted by tmpfiles
+    copy-once rules. The build's sanity battery pins the profile
+    bins and the planting rules."""
+    build = (REPO_ROOT / "nix" / "guest-nixos.nix").read_text()
+    pins = (REPO_ROOT / "nix" / "agent-toolchain.nix").read_text()
+    # The engines floor: a nixpkgs regression must fail the build,
+    # not boot a workspace whose pi refuses to start.
+    assert 'lib.versionAtLeast pkgs.nodejs_22.version "22.19.0"' in build
+    assert "pkgs.nodejs_22" in build
+    # The shared derivations, staged through the system profile:
+    # pi, the loader-patched Claude Code (a stock NixOS ships no
+    # /lib64 loader shim), and herdr's static binary.
+    assert "pkgs.callPackage ./agent-toolchain.nix" in build
+    assert "toolchain.piPackage" in build
+    assert "toolchain.claudeLoaderPatched" in build
+    assert "toolchain.herdrPackage" in build
+    assert "patchelf --set-interpreter" in pins
+    # The extension: tmpfiles copy-once rules for the skeleton and
+    # root's home — real-file copies, not store symlinks, so a
+    # user's later edits stay theirs. Fragments, not the joined
+    # rule: nixfmt reflows the line.
+    assert "C /etc/skel/.pi/agent/extensions/llm-models.ts" in build
+    assert "C /root/.pi/agent/extensions/llm-models.ts" in build
+    assert "0644 root root - ${piExtension}" in build
+    # The sanity battery: the profile bins resolve (claude's chain
+    # runs through the loader patch), and the planting rules plus
+    # the extension itself ride the closure.
+    assert "for bin in node npm npx pi herdr claude; do" in build
+    assert "grep -Rq 'llm-models.ts' \"$toplevel\"/etc/tmpfiles.d/" in build
+    assert "grep -q 'guest-pi-extension'" in build
 
 
 def test_the_extension_bounds_its_single_fetch() -> None:
