@@ -853,6 +853,21 @@ verdicts through the same endpoints the subcommands use. Keys:
   A pick of `static` with nothing effectively allowed asks first
   (the offline-workspace confirmation); a declined question
   decides nothing.
+- `e` opens the interceptor audit screen (#201): this workspace's
+  `secret.*` events — swaps, mints, revokes, expiries, and
+  off-allowlist sightings — newest first (another workspace's
+  events stay off the screen: a foreign sighting flashing here
+  would be a false alarm). A sighting row carries the `!` marker
+  and the warning color: the sentinel was seen toward a
+  destination its own allowlist misses, the exfil signal the
+  interceptor exists to catch. The header line states the
+  detection boundary: sightings fire on decrypted flows, and a
+  spliced connection relays undecrypted and reports nothing. A
+  sighting that arrives while the queue or another full screen is
+  on top flashes the status line for five seconds (while a picker
+  is open the keys stay on the picker — the flash may lapse
+  before it closes, and the events screen keeps the durable
+  rows); `e`, `r`, or `Escape` returns (and `q`, hidden).
 - `q` quits. A dropped connection reconnects with backoff and
   re-registers (the snapshot re-lands); while disconnected the
   status line says so — the daemon fail-closes new connects, and

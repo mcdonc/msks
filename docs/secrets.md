@@ -67,7 +67,15 @@ table.
 Each swap publishes a `secret.swap` event; mint, revoke, and expiry
 publish their own (`secret.mint`, `secret.revoke`, `secret.expiry`).
 All five ride the events websocket beside the workspace lifecycle
-events.
+events, each naming the placeholder's row id, its workspace and
+name, and a timestamp — the row id is the durable handle, because
+the row itself retires on revoke and expiry. A swap or sighting
+also names the destination the wire saw; a mint names the
+allowlist it was minted with; revoke and expiry carry the
+identity alone. `msks egress tui`'s audit screen (`e`) shows this
+workspace's events newest first, with the off-allowlist sighting
+highlighted as the exfil signal and a header line stating the
+detection boundary above.
 
 Fail-closed on the swap path: a secret the store cannot serve, or a
 row the database cannot read, answers the request locally with a
@@ -224,8 +232,11 @@ settings; msksd never picks an algorithm itself.
 
 Mint, revoke, and expiry append a row to the daemon database:
 the placeholder's workspace, name, destination allowlist, and a
-timestamp. The secret value and the sentinel appear nowhere in the
-audit — the value is not msks's to log, and the sentinel is never
-shown past its single mint-time print. `msks secret ls` lists
-placeholders; expiry fires from the status watcher's periodic sweep
-and publishes a `secret.expiry` event on the events channel.
+timestamp (`msks secret ls` lists placeholders; the audit view is
+`/api/v1/secrets/audit`). Expiry fires from the status watcher's
+periodic sweep, which publishes a `secret.expiry` event and
+re-evaluates the workspace's redirect in the same pass — the last
+placeholder's retirement stands the interception down. The secret
+value and the sentinel appear nowhere in the audit or the events:
+the value is not msks's to log, and the sentinel is never shown
+past its single mint-time print.

@@ -169,6 +169,22 @@ def rules_children(app) -> int:
         return -1
 
 
+def events_children(app) -> int:
+    """The events screen's row count; -1 inside a rebuild's swap
+    window (or when the events screen is not on top)."""
+    try:
+        return len(app.screen.query_one("#event-rows").children)
+    except Exception:
+        return -1
+
+
+def secret_frame(kind: str, **data) -> str:
+    """One interceptor audit frame as the daemon sends it (#201)."""
+    payload = {"workspace_id": "ws-dev", "name": "api"}
+    payload.update(data)
+    return json.dumps({"event": f"secret.{kind}", "data": payload})
+
+
 def focused_request_id_or_none(app) -> str | None:
     """The queue's focused id, or None in a swap window."""
     try:
@@ -827,6 +843,226 @@ async def test_verdict_keys_do_not_bleed_from_the_rules_screen() -> None:
         app.action_quit_screen()
 
 
+async def test_the_events_screen() -> None:
+    """`e` opens the interceptor audit screen (#201): rows newest
+    first, the sighting row highlighted with its marker, arrows move
+    the list, and `r` returns to the queue."""
+    frames = [
+        secret_frame("mint", dests=["api.example"], ts=100.0),
+        secret_frame("swap", host="api.example", ts=101.0),
+        secret_frame("sighting", host="evil.example", ts=102.0),
+    ]
+    factory = FakeFactory([FakeWS(frames), FakeWS([])])
+    app, _ = make_app(factory)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: len(app.controller.events) == 3)
+        await pilot.press("e")
+        await wait_for(lambda: events_children(app) == 3)
+        screen = app.screen
+        rows = screen.query_one("#event-rows")
+        first, second, third = rows.children
+        assert "sighting" in first.classes  # the exfil signal, on top
+        line = str(first.query_one(Static).content)
+        assert line.startswith("! ") and "sighting" in line
+        assert "evil.example" in line
+        assert "swap" in str(second.query_one(Static).content)
+        assert "mint" in str(third.query_one(Static).content)
+        assert screen.query_one("#events-note") is not None
+        await pilot.press("down")  # arrows move the list, no trap
+        await pilot.pause()
+        assert rows.index == 1
+        depth = len(app.screen_stack)
+        await pilot.press("e")  # `e` again returns, not stacks
+        await pilot.pause()
+        assert type(app.screen).__name__ != "EventsScreen"
+        assert len(app.screen_stack) == depth - 1
+        await pilot.press("r")  # r from the queue opens the rules screen
+        await wait_for(lambda: type(app.screen).__name__ == "RulesScreen")
+        await pilot.press("r")  # and r there returns — same toggle shape
+        await wait_for(lambda: type(app.screen).__name__ != "RulesScreen")
+        app.action_quit_screen()
+
+
+async def test_the_events_screen_refreshes_and_keeps_focus() -> None:
+    """An event landing while the screen is open appears on top,
+    and the focused row keeps its seq — a repaint must not move a
+    row out from under a reading operator."""
+    factory = FakeFactory(
+        [FakeWS([secret_frame("swap", host="a.example")]), FakeWS([])]
+    )
+    app, _ = make_app(factory)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: len(app.controller.events) == 1)
+        await pilot.press("e")
+        from msks.client.tui.consent_app import EventsScreen, focused_event_id
+
+        def settled_on(target: int, count: int) -> bool:
+            try:
+                rows = app.screen.query_one("#event-rows")
+                return (
+                    len(rows.children) == count
+                    and focused_event_id(rows) == target
+                )
+            except Exception:
+                return False
+
+        await wait_for(lambda: settled_on(1, 1))
+        await pilot.pause()  # let the first flight settle its focus
+        app.controller.apply_frame(
+            secret_frame("sighting", host="evil.example")
+        )
+        app.safe_repaint()
+        await wait_for(lambda: settled_on(1, 2))
+        rows = app.screen.query_one("#event-rows")
+        assert rows.children[0].event_seq == 2  # newest first
+        assert isinstance(app.screen, EventsScreen)
+        app.action_quit_screen()
+
+
+async def test_verdict_keys_do_not_bleed_from_the_events_screen() -> None:
+    factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
+    app, seams = make_app(factory)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: app.query_one("#requests").children)
+        await pilot.press("e")
+        await wait_for(lambda: type(app.screen).__name__ == "EventsScreen")
+        await pilot.press("a")
+        await pilot.press("d")
+        await pilot.press("A")
+        await pilot.press("D")
+        await pilot.pause()
+        assert seams["decided"] == []  # nothing decided behind the screen
+        app.action_quit_screen()
+
+
+async def test_a_sighting_flashes_on_the_queue_screen() -> None:
+    """The exfil signal surfaces wherever the operator is: a
+    sighting frame takes the queue's status line (#201)."""
+    factory = FakeFactory(
+        [
+            FakeWS(
+                [
+                    request_frame("r1"),
+                    secret_frame("sighting", host="evil.example"),
+                ]
+            ),
+            FakeWS([]),
+        ]
+    )
+    app, _ = make_app(factory)
+    async with app.run_test():
+        await wait_for(lambda: queue_children(app) == 1)
+        await wait_for(lambda: "! sighting:" in status_line(app))
+        app.action_quit_screen()
+
+
+async def test_a_foreign_sighting_never_flashes() -> None:
+    """Another workspace's sighting plants nothing (#280 rule,
+    carried to secret events): the log stays empty and the status
+    line stays quiet — a foreign sighting flashing here would be a
+    false exfil alarm."""
+    factory = FakeFactory(
+        [
+            FakeWS(
+                [
+                    request_frame("r1"),
+                    json.dumps(
+                        {
+                            "event": "secret.sighting",
+                            "data": {
+                                "workspace_id": "ws-other",
+                                "name": "api",
+                                "host": "evil.example",
+                            },
+                        }
+                    ),
+                ]
+            ),
+            FakeWS([]),
+        ]
+    )
+    app, _ = make_app(factory)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: queue_children(app) == 1)
+        await pilot.pause()
+        await pilot.pause()
+        assert app.controller.events == []
+        assert "! sighting:" not in status_line(app)
+        app.action_quit_screen()
+
+
+async def test_the_events_screen_skips_rebuilds_when_unchanged() -> None:
+    """The per-tick repaint costs the events screen a fingerprint
+    compare, not a list swap: an unchanged log takes no rebuild, a
+    new event takes its change-driven rebuild, and the gate closes
+    behind it (a tick landing mid-rebuild may re-arm the in-flight
+    loop — that is OneFlight's mechanism, not this test's subject —
+    so the settled assertion is stability, not a call count)."""
+    factory = FakeFactory(
+        [FakeWS([secret_frame("swap", host="a.example")]), FakeWS([])]
+    )
+    app, _ = make_app(factory)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: len(app.controller.events) == 1)
+        await pilot.press("e")
+        await wait_for(lambda: events_children(app) == 1)
+        await pilot.pause()  # the first flight settles its paint
+        screen = app.screen
+        calls: list[int] = []
+        real = screen.rebuild_rows
+
+        async def counting() -> None:
+            calls.append(1)
+            await real()
+
+        screen.rebuild_rows = counting
+        app.safe_repaint()  # nothing changed: no rebuild
+        await pilot.pause()
+        await pilot.pause()
+        assert calls == []
+        app.controller.apply_frame(secret_frame("mint", dests=["api.example"]))
+        app.safe_repaint()  # the log moved: the change rebuild runs
+        await wait_for(lambda: events_children(app) == 2)
+        await wait_for(lambda: screen._built == screen.log_fingerprint())
+        settled = len(calls)
+        assert settled >= 1  # the change drove its rebuild
+        await pilot.pause()
+        await pilot.pause()
+        await asyncio.sleep(0.05)  # a tick here must add nothing
+        assert len(calls) == settled  # the gate closed behind the paint
+        app.action_quit_screen()
+
+
+async def test_events_rebuild_self_heals_without_an_old_list() -> None:
+    """The events twin of the queue's mid-swap heal: a rebuild with
+    no #event-rows to remove (a died-mid-swap predecessor) mounts
+    the fresh list anew."""
+    from msks.client.tui.consent_app import EventsScreen
+
+    factory = FakeFactory(
+        [FakeWS([secret_frame("swap", host="a.example")]), FakeWS([])]
+    )
+    app, _ = make_app(factory)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: len(app.controller.events) == 1)
+        await pilot.press("e")
+        await wait_for(lambda: events_children(app) == 1)
+        screen = app.screen
+
+        async def die_mid_swap():
+            old = screen.query_one("#event-rows")
+            await old.remove()
+            raise RuntimeError("died before the mount")
+
+        screen.rebuild_rows = die_mid_swap
+        screen.schedule_refresh()
+        await wait_for(lambda: events_children(app) == -1)  # gone
+        screen.rebuild_rows = EventsScreen.rebuild_rows.__get__(screen)
+        screen.schedule_refresh()
+        await wait_for(lambda: events_children(app) == 1)  # healed
+        app.action_quit_screen()
+
+
 async def test_rules_refresh_preserves_the_focused_rule() -> None:
     """A per-tick repaint must not move `x`'s target: the focused
     rule id survives the clear+rebuild."""
@@ -948,7 +1184,7 @@ async def test_rebuild_re_arms_when_frames_land_mid_flight() -> None:
         await pilot.pause()
         await pilot.pause()
         assert len(calls) == 2  # the re-arm looped, then settled
-        assert screen._refresh_scheduled is False
+        assert screen.rebuilds.scheduled is False
         app.action_quit_screen()
 
 
@@ -971,7 +1207,7 @@ async def test_schedule_rebuild_pending_rearm() -> None:
         await pilot.pause()
         await pilot.pause()
         assert len(calls) == 2
-        assert app._rebuild_scheduled is False
+        assert app.rebuilds.scheduled is False
         app.action_quit_screen()
 
 
@@ -1027,7 +1263,7 @@ async def test_a_dying_rebuild_logs_and_re_arms() -> None:
         app.rebuild_queue = boom
         app.schedule_rebuild()
         await pilot.pause()
-        assert app._rebuild_scheduled is False  # finally: cleared
+        assert app.rebuilds.scheduled is False  # finally: cleared
         # A dying rules rebuild clears its flag too.
         factory_rules = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
         app2, _ = make_app(factory_rules)
@@ -1042,7 +1278,7 @@ async def test_a_dying_rebuild_logs_and_re_arms() -> None:
             screen.rebuild_rows = rules_boom
             screen.schedule_refresh()
             await pilot2.pause()
-            assert screen._refresh_scheduled is False
+            assert screen.rebuilds.scheduled is False
             app2.action_quit_screen()
         app.action_quit_screen()
 
@@ -1213,7 +1449,7 @@ def test_schedule_rebuild_on_a_stopped_app_is_a_noop() -> None:
         app, _ = make_app(factory)  # never run_test: not running
         app.schedule_rebuild()
         await asyncio.sleep(0.05)  # the flight lands in the finally
-        assert app._rebuild_scheduled is False
+        assert app.rebuilds.scheduled is False
 
     asyncio.run(scenario())
 
@@ -1260,7 +1496,7 @@ async def test_a_rules_flight_settling_after_teardown() -> None:
         screen.schedule_refresh()  # stopped: zero iterations
         await asyncio.sleep(0)  # the flight runs to its finally
         RulesScreen.app = real_app_prop
-        assert screen._refresh_scheduled is False
+        assert screen.rebuilds.scheduled is False
 
         async def dying():
             raise RuntimeError("died after teardown")
@@ -1273,7 +1509,7 @@ async def test_a_rules_flight_settling_after_teardown() -> None:
         await asyncio.sleep(0)  # the flight runs to its finally
         await asyncio.sleep(0)  # …and the except arm settles
         RulesScreen.app = real_app_prop
-        assert screen._refresh_scheduled is False
+        assert screen.rebuilds.scheduled is False
         assert flip.reads == 2  # while (True), except (False)
         app.action_quit_screen()
 
@@ -1297,7 +1533,7 @@ async def test_a_flight_dying_at_teardown_stays_quiet() -> None:
     # The app stopped (the with-block exited); release the flight.
     gate.set()
     await asyncio.sleep(0.05)
-    assert app._rebuild_scheduled is False
+    assert app.rebuilds.scheduled is False
 
 
 # --- the mode picker (#280) -------------------------------------------
@@ -1437,9 +1673,13 @@ async def test_modal_keys_do_not_reach_the_hidden_queue() -> None:
         await wait_for(lambda: type(app.screen).__name__ == "ModeScreen")
         await pilot.press("a")
         await pilot.press("d")
+        await pilot.press("e")  # the events screen stays stacked nowhere
         await asyncio.sleep(0.05)
         assert seams["decided"] == []  # the hidden hold stays undecided
         await pilot.press("q")  # the modal's own binding
         await wait_for(lambda: type(app.screen).__name__ == "RulesScreen")
         assert app.is_running  # q closed the modal, not the app
+        assert not [
+            s for s in app.screen_stack if type(s).__name__ == "EventsScreen"
+        ]
         app.action_quit_screen()

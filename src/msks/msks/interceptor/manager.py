@@ -20,6 +20,7 @@ place.
 import asyncio
 import contextlib
 import logging
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -45,6 +46,9 @@ class PlaceholderEntry:
 
     sentinel: str
     name: str
+    #: The placeholder row's id — the event stream's durable handle
+    #: (#201); the row itself retires on revoke/expiry.
+    placeholder_id: int
     dests: tuple[str, ...]
     backend_ref: str
 
@@ -166,12 +170,18 @@ class Interceptor:
     async def publish(
         self, event: str, workspace_id: str, entry: PlaceholderEntry, host: str
     ) -> None:
+        """One wire event's payload (#201): the placeholder's row id,
+        the workspace, the destination the wire named, and the time —
+        the sighting carries the same shape, so the stream's readers
+        treat the two alike."""
         await self.app.state.hub.publish(
             event,
             {
+                "placeholder_id": entry.placeholder_id,
                 "workspace_id": workspace_id,
                 "name": entry.name,
                 "host": host,
+                "ts": time.time(),
             },
         )
 
@@ -233,6 +243,7 @@ class Interceptor:
             row["sentinel"]: PlaceholderEntry(
                 sentinel=row["sentinel"],
                 name=row["name"],
+                placeholder_id=row["id"],
                 dests=tuple(row["dests"]),
                 backend_ref=row["backend_ref"],
             )

@@ -248,5 +248,10 @@ async def retire_expired(app, hub: EventHub, row: dict) -> None:
         )
     await hub.publish(
         "secret.expiry",
-        {"workspace_id": row["workspace_id"], "name": row["name"]},
+        {
+            "placeholder_id": row["id"],
+            "workspace_id": row["workspace_id"],
+            "name": row["name"],
+            "ts": time.time(),
+        },
     )

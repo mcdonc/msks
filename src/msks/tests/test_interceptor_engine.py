@@ -125,6 +125,7 @@ def entry(
     return PlaceholderEntry(
         sentinel=sentinel,
         name=name,
+        placeholder_id=7,
         dests=dests,
         backend_ref="MSKS_WS_A_API",
     )

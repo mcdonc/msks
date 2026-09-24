@@ -7,7 +7,9 @@ klangk's ``ConsentDeciderController`` with msks's shapes: frames ride
 the events-websocket envelope (``{"event": …, "data": {…}}``),
 destinations carry a port with 0 meaning all ports (a non-TCP/UDP
 flow), and rows have no process identity (msks sees flows at the
-kernel, not processes inside the guest).
+kernel, not processes inside the guest). The same controller keeps
+the interceptor audit log (#201) — the ``secret.*`` frames the
+daemon publishes for placeholder lifecycle and wire sightings.
 
 The clock defaults to :func:`time.time` because the daemon stamps
 ``requested_at``/``decided_at`` in epoch wall-clock; the countdowns
@@ -22,8 +24,25 @@ from dataclasses import dataclass
 ADDED = "added"  # a held request arrived; payload = ConsentRequest
 RESOLVED = "resolved"  # a request left; payload = (request_id, decision)
 RULES = "rules"  # refreshed in-effect verdicts; payload = EgressRules
+SECRET_EVENT = "secret"  # an interceptor audit event; payload = SecretEvent
 REJECTED = "rejected"  # the daemon refused the registration; payload = reason
 IGNORED = "ignore"  # malformed / unknown frame; state untouched
+
+#: The interceptor audit frames (#201) — event name to row kind. A
+#: swap or sighting names the wire destination; mint carries the
+#: allowlist; revoke and expiry are the placeholder's exit.
+SECRET_KINDS = {
+    "secret.mint": "mint",
+    "secret.revoke": "revoke",
+    "secret.expiry": "expiry",
+    "secret.swap": "swap",
+    "secret.sighting": "sighting",
+}
+
+#: The event log's bound: a rolling window, not an unbounded ledger
+#: — the screen is a live tail of the stream, and the audit table
+#: keeps the durable record.
+EVENT_LOG_MAX = 500
 
 #: The durations a decider can pick, display order; the default is
 #: ``tilrestart`` (mirrors the daemon's tokens — the client duplicates
@@ -87,6 +106,21 @@ class EgressRules:
     allow_list: tuple[str, ...]
     allowed: tuple[ConsentRule, ...]
     denied: tuple[ConsentRule, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SecretEvent:
+    """One interceptor audit event (#201): a placeholder's lifecycle
+    or a wire sighting, as the events stream reports it."""
+
+    seq: int  # arrival order; the view's focus anchor
+    kind: str  # mint / revoke / expiry / swap / sighting
+    workspace_id: str
+    name: str
+    placeholder_id: int | None = None  # absent on an older daemon
+    host: str | None = None  # the swap/sighting destination
+    dests: tuple[str, ...] = ()  # the mint's allowlist
+    ts: float = 0.0  # epoch; 0.0 when the frame carried none
 
 
 def parse_request(obj: object) -> ConsentRequest | None:
@@ -176,8 +210,13 @@ def text_or_none(value: object) -> str | None:
 def port_field(value: object) -> int:
     """A destination port as int (0 = all ports); bools and junk
     read as 0."""
+    return int_field(value) or 0
+
+
+def int_field(value: object) -> int | None:
+    """A frame field as int, with bools and junk excluded."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return 0
+        return None
     return int(value)
 
 
@@ -186,6 +225,33 @@ def numeric_field(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return float(value)
+
+
+def parse_secret_event(seq: int, kind: str, obj: object) -> SecretEvent | None:
+    """One secret frame's data, or None on an unusable shape (no
+    workspace/name pair to key the row). Fields the frame does not
+    carry degrade — an older daemon's events parse without their
+    id or timestamp. The strings ride unbounded (the frame is
+    daemon-authored and TLS/token-gated, the same exposure
+    ``parse_rules`` carries) — the log's row count is the bound."""
+    fields = string_pair(obj, "workspace_id", "name")
+    if fields is None:
+        return None
+    dests = obj.get("dests")
+    return SecretEvent(
+        seq=seq,
+        kind=kind,
+        workspace_id=fields[0],
+        name=fields[1],
+        placeholder_id=int_field(obj.get("placeholder_id")),
+        host=text_or_none(obj.get("host")),
+        dests=(
+            tuple(str(entry) for entry in dests)
+            if isinstance(dests, list)
+            else ()
+        ),
+        ts=numeric_field(obj.get("ts")) or 0.0,
+    )
 
 
 class ConsentController:
@@ -208,6 +274,10 @@ class ConsentController:
         self.workspace_id = workspace_id
         self.pending: dict[str, ConsentRequest] = {}
         self.rules: EgressRules | None = None
+        # The interceptor audit log (#201): newest last, bounded by
+        # EVENT_LOG_MAX; ``seq`` keys arrival order for the view.
+        self.events: list[SecretEvent] = []
+        self._event_seq = 0
 
     #: event name -> data applier (apply_frame dispatches through it)
     APPLIERS = {
@@ -220,14 +290,22 @@ class ConsentController:
     def apply_frame(self, raw: str) -> tuple[str, object]:
         """Parse and apply one inbound frame; ``(outcome, payload)``
         (see the outcome constants). Malformed input is ignored with
-        state untouched."""
+        state untouched — an unhashable ``event`` value included (a
+        dict lookup on it raises, and one malformed frame must not
+        cost the connection its reconnect cycle)."""
         msg = decode_frame(raw)
         if msg is None:
             return IGNORED, None
-        applier = self.APPLIERS.get(msg.get("event"))
-        if applier is None:
+        name = msg.get("event")
+        if not isinstance(name, str):
             return IGNORED, None
-        return getattr(self, applier)(msg.get("data"))
+        applier = self.APPLIERS.get(name)
+        if applier is not None:
+            return getattr(self, applier)(msg.get("data"))
+        kind = SECRET_KINDS.get(name)
+        if kind is None:
+            return IGNORED, None
+        return self.apply_secret_event(kind, msg.get("data"))
 
     def apply_rejection(self, data: object) -> tuple[str, object]:
         """One ``egress.decider_rejected`` frame's data: the reason
@@ -266,6 +344,22 @@ class ConsentController:
         self.rules = rules
         return RULES, rules
 
+    def apply_secret_event(
+        self, kind: str, data: object
+    ) -> tuple[str, object]:
+        """One interceptor audit frame: parse, append to the bounded
+        log, report. A foreign workspace's frame is ignored — the
+        #280 rule for requests and rules, and the same stake: a
+        foreign sighting flashing this decider's exfil alarm is a
+        false one. An unusable shape is ignored with no slot used."""
+        event = parse_secret_event(self._event_seq + 1, kind, data)
+        if event is None or not self.owns(event.workspace_id):
+            return IGNORED, None
+        self._event_seq += 1
+        self.events.append(event)
+        del self.events[:-EVENT_LOG_MAX]
+        return SECRET_EVENT, event
+
     def ordered(self) -> list[ConsentRequest]:
         """Pending requests oldest-first (stable UI order)."""
         return sorted(
@@ -301,7 +395,9 @@ class ConsentController:
     def reset(self) -> None:
         """Drop all pending holds and the cached rules snapshot: the
         registration handshake re-sends both, and rows that resolved
-        while disconnected must not linger as ghosts."""
+        while disconnected must not linger as ghosts. The audit log
+        stays: its rows are history the daemon does not re-send, not
+        live state a re-registration replaces."""
         self.pending.clear()
         self.rules = None
 

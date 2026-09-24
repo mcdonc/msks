@@ -40,9 +40,11 @@ from .consent import (
     DURATIONS,
     EGRESS_MODES,
     REJECTED,
+    SECRET_EVENT,
     ConsentController,
     ConsentRequest,
     EgressRules,
+    SecretEvent,
     fmt_duration,
 )
 
@@ -202,13 +204,16 @@ def refused_close(exc: websockets.ConnectionClosed) -> bool:
 #: and quit bindings must not act on the hidden queue below —
 #: `a`/`d` deciding a hold nobody can see is the bug class, `q`
 #: closing the modal instead of the app is the same rule one level
-#: up (each modal binds `q` itself, to its own cancel).
+#: up (each modal binds `q` itself, to its own cancel). `e` joins
+#: with #201's events screen: opening it under a modal stacks a
+#: screen nobody can see.
 SHADOW_BINDINGS = (
     Binding("a", "noop", show=False),
     Binding("A", "noop", show=False),
     Binding("d", "noop", show=False),
     Binding("D", "noop", show=False),
     Binding("r", "noop", show=False),
+    Binding("e", "noop", show=False),
 )
 
 
@@ -226,6 +231,146 @@ def backoff(delays: tuple[float, ...], attempt: int) -> float:
     if not delays:
         return 0.0
     return delays[min(attempt - 1, len(delays) - 1)]
+
+
+class OneFlight:
+    """A re-armable single-flight rebuild (#201), the one mechanism
+    the rules screen, the events screen, and the queue share: one
+    rebuild is in the air at a time, a request landing mid-flight
+    re-arms, and the in-air flight loops to apply the newer state
+    the moment it lands — never two concurrent rebuilds over one
+    widget tree. ``rebuild`` and ``alive`` are read at flight time,
+    so a test (or a subclass) swapping the callable mid-session is
+    honored."""
+
+    def __init__(self, rebuild, alive, label: str) -> None:
+        self._rebuild = rebuild
+        self._alive = alive
+        self._label = label
+        #: The flight's state, read by the owner's tests: armed, and
+        #: re-armed by a mid-flight request.
+        self.scheduled = False
+        self.pending = False
+
+    def request(self) -> None:
+        """Arm one flight; a request mid-flight re-arms after it."""
+        if self.scheduled:
+            self.pending = True
+            return
+        self.scheduled = True
+        # Referenced: an unreferenced task can be collected mid-await.
+        self._task = asyncio.create_task(self._flight())
+
+    async def _flight(self) -> None:
+        try:
+            while self._alive():
+                self.pending = False
+                await self._rebuild()
+                if not self.pending:
+                    return
+        except Exception:
+            # Teardown unmounts the tree under a mid-swap flight;
+            # that is not a bug worth a traceback after exit.
+            if self._alive():
+                logger.exception("%s rebuild failed", self._label)
+        finally:
+            self.scheduled = False
+
+
+def focused_event_id(rows: ListView | None) -> int | None:
+    """The focused event row's seq, or None when nothing is focused
+    (a None rows is a rebuild's swap window)."""
+    child = rows.highlighted_child if rows is not None else None
+    return getattr(child, "event_seq", None)
+
+
+def focus_event_by_id(rows: ListView, target: int | None) -> None:
+    """Highlight the event row carrying *target* (the top when it
+    left or was never set) — a repaint must never move a row out
+    from under a reading operator."""
+    for position, child in enumerate(rows.children):
+        if target is not None and getattr(child, "event_seq", None) == target:
+            rows.index = position
+            return
+    ensure_focus(rows)
+
+
+def event_time(ts: float) -> str:
+    """The event's local wall-clock label; an undated frame (an
+    older daemon's event) keeps a blank column."""
+    if ts <= 0.0:
+        return ""
+    return time.strftime("%H:%M:%S", time.localtime(ts))
+
+
+def event_dest(event: SecretEvent) -> str:
+    """The event's destination text: the host a swap or sighting
+    named on the wire, the mint's allowlist, or nothing on the exit
+    kinds (revoke, expiry)."""
+    if event.host is not None:
+        return f" → {escape(event.host)}"
+    if event.dests:
+        return " → " + ", ".join(escape(entry) for entry in event.dests)
+    return ""
+
+
+def event_line(event: SecretEvent) -> str:
+    """One audit row's text: marker, time, kind, workspace/name,
+    the placeholder's row id (the durable handle for correlating
+    the audit view once the row retires), and the destination.
+    ``!`` marks the off-allowlist sighting — the exfil signal, the
+    one row kind the screen also highlights."""
+    marker = "!" if event.kind == "sighting" else " "
+    return (
+        f"{marker} {event_time(event.ts):>8}  {event.kind:<8}"
+        f"  {escape(event.workspace_id)}/{escape(event.name)}"
+        f"{event_id_suffix(event)}"
+        f"{event_dest(event)}"
+    )
+
+
+def event_id_suffix(event: SecretEvent) -> str:
+    """The row-id suffix ``#4``, or nothing when the frame carried
+    no id (an older daemon)."""
+    return f"#{event.placeholder_id}" if event.placeholder_id else ""
+
+
+def event_item(event: SecretEvent) -> ListItem:
+    """One audit row as a list item; the sighting carries the
+    highlight class (the color pairs with the ``!`` marker)."""
+    item = ListItem(Static(event_line(event)))
+    item.event_seq = event.seq
+    if event.kind == "sighting":
+        item.add_class("sighting")
+    return item
+
+
+def events_note() -> str:
+    """The events screen's header line: what the stream carries,
+    what the marker means, and where detection stops (#201)."""
+    return (
+        "interceptor audit — swaps, mints, revokes, expiries; ! marks "
+        "an off-allowlist sighting (the sentinel seen toward a "
+        "destination its allowlist misses). Sightings fire on "
+        "decrypted flows; a spliced connection relays undecrypted "
+        "and reports nothing."
+    )
+
+
+def sighting_flash(event: SecretEvent) -> str:
+    """The status line an off-allowlist sighting takes while the
+    queue (or picker) is on top: the exfil signal surfaces on every
+    screen of the app, not only the events screen."""
+    return (
+        f"! sighting: {escape(event.workspace_id)}/{escape(event.name)}"
+        f" → {escape(event.host or '?')}"
+    )
+
+
+def is_sighting(outcome: str, payload) -> bool:
+    """Whether one applied frame surfaced an off-allowlist sighting
+    (#201) — the one audit kind that interrupts the status line."""
+    return outcome == SECRET_EVENT and payload.kind == "sighting"
 
 
 def effective_allows(rules: EgressRules | None) -> bool:
@@ -387,8 +532,11 @@ class RulesScreen(Screen):
         self.controller = controller
         self.revoke = revoke
         self.set_mode = set_mode
-        self._refresh_scheduled = False
-        self._refresh_pending = False
+        self.rebuilds = OneFlight(
+            lambda: self.rebuild_rows(),
+            lambda: self.app.is_running,
+            "rules",
+        )
 
     def compose(self) -> ComposeResult:
         with Vertical(id="rules-body"):
@@ -407,28 +555,7 @@ class RulesScreen(Screen):
         frame lands mid-flight (the in-progress rebuild already
         captured the old snapshot — the re-arm applies the new one
         the moment it lands)."""
-        if self._refresh_scheduled:
-            self._refresh_pending = True
-            return
-        self._refresh_scheduled = True
-
-        async def flight() -> None:
-            try:
-                while self.app.is_running:
-                    self._refresh_pending = False
-                    await self.rebuild_rows()
-                    if not self._refresh_pending:
-                        return
-            except Exception:
-                # Teardown unmounts the tree under a mid-swap flight;
-                # that is not a bug worth a traceback after exit.
-                if self.app.is_running:
-                    logger.exception("rules rebuild failed")
-            finally:
-                self._refresh_scheduled = False
-
-        # Referenced: an unreferenced task can be collected mid-await.
-        self._refresh_task = asyncio.create_task(flight())
+        self.rebuilds.request()
 
     async def rebuild_rows(self) -> None:
         """Repaint from the controller's rules snapshot with a
@@ -482,6 +609,105 @@ class RulesScreen(Screen):
         self.app.pop_screen()
 
 
+class EventsScreen(Screen):
+    """The interceptor audit stream (#201): swap, mint, revoke,
+    expiry, and off-allowlist sighting rows, newest first. A
+    sighting row carries the ``sighting`` class — the highlight that
+    names the exfil signal — beside its ``!`` marker. Arrows move
+    the list; ``r`` or Escape returns to the queue — no focus trap."""
+
+    BINDINGS = [
+        Binding("r", "back", "Back"),
+        Binding("escape", "back", "Back", show=False),
+        Binding("q", "back", "Back", show=False),
+        # `e` from here returns instead of stacking another events
+        # screen (the app-level binding bubbles otherwise) — the
+        # rules screen's `r` follows the same shape.
+        Binding("e", "back", show=False),
+        # Shadows: the app-level verdict keys must not decide the
+        # hidden queue's focused hold from here — same rule as the
+        # rules screen.
+        Binding("a", "noop", show=False),
+        Binding("A", "noop", show=False),
+        Binding("d", "noop", show=False),
+        Binding("D", "noop", show=False),
+    ]
+
+    def action_noop(self) -> None:
+        """Swallow a queue-action key pressed on the events screen."""
+
+    def __init__(self, controller: ConsentController) -> None:
+        super().__init__()
+        self.controller = controller
+        self.rebuilds = OneFlight(
+            lambda: self.rebuild_rows(),
+            lambda: self.app.is_running,
+            "events",
+        )
+        # The log fingerprint this screen last painted: the per-tick
+        # repaint rebuilds only on a change (event rows are static —
+        # unlike the rules screen's countdowns, nothing ticks).
+        self._built: tuple[int, int] | None = None
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="events-body"):
+            yield Static(events_note(), id="events-note")
+            yield ListView(id="event-rows")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.query_one("#event-rows", ListView).focus()
+
+    def on_show(self) -> None:
+        self.schedule_refresh()
+
+    def schedule_refresh(self) -> None:
+        """Arm one rows rebuild; single flight, with a re-arm when a
+        frame lands mid-flight (same rule as the rules screen — a
+        frame landing mid-flight applies the moment the flight
+        lands)."""
+        self.rebuilds.request()
+
+    async def rebuild_rows(self) -> None:
+        """Repaint the audit log with a freshly-built list, newest
+        first, preserving the focused row by seq (the top when it
+        left): a mutating ListView carries asynchronously-pruned
+        stale children that shift indexes, so positions come from
+        children that are all real."""
+        body = self.query_one("#events-body", Vertical)
+        old = None
+        try:
+            old = self.query_one("#event-rows", ListView)
+        except NoMatches:
+            pass  # a died-mid-swap rebuild: mount the fresh list anew
+        focused = focused_event_id(old)
+        items = [
+            event_item(event) for event in reversed(self.controller.events)
+        ]
+        fresh = ListView(*items, id="event-rows")
+        if old is not None:
+            await old.remove()  # frees the id before the fresh list mounts
+        await body.mount(fresh)
+        fresh.focus()
+        focus_event_by_id(fresh, focused)  # after mount: index sticks
+        self._built = self.log_fingerprint()
+
+    def log_fingerprint(self) -> tuple[int, int]:
+        """The log's identity for repaint gating: its length and
+        newest seq (seq is monotonic; the length catches the bound's
+        trims)."""
+        events = self.controller.events
+        return (len(events), events[-1].seq if events else 0)
+
+    def log_changed(self) -> bool:
+        """Whether the log moved since this screen last painted it
+        (never-painted counts as changed)."""
+        return self.log_fingerprint() != self._built
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+
 class ConsentDeciderApp(App):
     """Live queue of held requests with allow/deny, plus the rules
     screen — a thin view over :class:`ConsentController`."""
@@ -492,6 +718,9 @@ class ConsentDeciderApp(App):
     #queue { height: 1fr; }
     #requests ListItem { height: 1; }
     #empty { padding: 1 2; color: $text-muted; }
+    #events-note { padding: 0 1; color: $text-muted; }
+    #event-rows ListItem { height: 1; }
+    #event-rows ListItem.sighting { color: $warning; text-style: bold; }
     """
 
     BINDINGS = [
@@ -500,6 +729,7 @@ class ConsentDeciderApp(App):
         Binding("d", "deny", "Deny"),
         Binding("D", "deny_duration", "Deny…"),
         Binding("r", "rules", "Rules"),
+        Binding("e", "events", "Events"),
         Binding("q", "quit_screen", "Quit"),
         Binding("escape", "quit_screen", "Quit", show=False),
     ]
@@ -530,8 +760,11 @@ class ConsentDeciderApp(App):
         self._flash_msg = ""
         self._flash_until = 0.0
         self._last_conn_error = ""
-        self._rebuild_scheduled = False
-        self._rebuild_pending = False
+        self.rebuilds = OneFlight(
+            lambda: self.rebuild_queue(self.controller.ordered()),
+            lambda: self.is_running,
+            "queue",
+        )
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -612,6 +845,11 @@ class ConsentDeciderApp(App):
                 self.flash_once(f"registration rejected: {reason}")
                 self._stop = True
                 return
+            if is_sighting(outcome, payload):
+                # The exfil signal flashes on every screen (#201):
+                # the events screen highlights it, and the queue's
+                # status line names it while it owns the terminal.
+                self.flash(sighting_flash(payload))
             self.safe_repaint()
 
     def flash_once(self, message: str) -> None:
@@ -758,6 +996,9 @@ class ConsentDeciderApp(App):
         except (Exception, SystemExit) as exc:
             self.flash(f"mode switch failed: {exc}")
 
+    def action_events(self) -> None:
+        self.push_screen(EventsScreen(self.controller))
+
     async def revoke_rule(self, request_id: str) -> None:
         """Revoke through the seam; a failure flashes on the app
         (SystemExit included — the REST seam's error surface)."""
@@ -788,10 +1029,11 @@ class ConsentDeciderApp(App):
 
     def repaint(self) -> None:
         """Sync the queue rows and the status line to state, and keep
-        the rules screen live when it is the active screen (its
-        countdowns tick, a fresh frame shows up — the port of
+        the rules and events screens live when one is the active
+        screen (their rows tick, a fresh frame shows up — the port of
         klangk's per-tick rules refresh)."""
         self.refresh_rules_screen()
+        self.refresh_events_screen()
         self.sync_rows()
         self.update_status()
 
@@ -801,6 +1043,15 @@ class ConsentDeciderApp(App):
         time)."""
         screen = self.screen
         if isinstance(screen, RulesScreen):
+            screen.schedule_refresh()
+
+    def refresh_events_screen(self) -> None:
+        """Repaint the events screen when it is on top and the log
+        moved since its last paint: event rows are static (nothing
+        ticks), so an unchanged log takes no rebuild — the per-tick
+        cost is the fingerprint compare, not a list swap."""
+        screen = self.screen
+        if isinstance(screen, EventsScreen) and screen.log_changed():
             screen.schedule_refresh()
 
     def empty_line(self) -> str:
@@ -854,28 +1105,7 @@ class ConsentDeciderApp(App):
         request lands mid-flight (the in-progress rebuild already
         captured the old membership — the re-arm applies the new one
         the moment it lands, rather than waiting a tick)."""
-        if self._rebuild_scheduled:
-            self._rebuild_pending = True
-            return
-        self._rebuild_scheduled = True
-
-        async def flight() -> None:
-            try:
-                while self.is_running:
-                    self._rebuild_pending = False
-                    await self.rebuild_queue(self.controller.ordered())
-                    if not self._rebuild_pending:
-                        return
-            except Exception:
-                # Teardown unmounts the tree under a mid-swap flight;
-                # that is not a bug worth a traceback after exit.
-                if self.is_running:
-                    logger.exception("queue rebuild failed")
-            finally:
-                self._rebuild_scheduled = False
-
-        # Referenced: an unreferenced task can be collected mid-await.
-        self._flight_task = asyncio.create_task(flight())
+        self.rebuilds.request()
 
     async def rebuild_queue(self, ordered: list[ConsentRequest]) -> None:
         """Swap in a freshly-built queue list (its mount awaited),

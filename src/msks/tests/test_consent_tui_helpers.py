@@ -9,8 +9,16 @@ from msks.client.tui import consent as consent_mod
 from msks.client.tui.consent_app import (
     duration_label,
     ensure_focus,
+    event_dest,
+    event_item,
+    event_line,
+    event_time,
+    events_note,
+    focus_event_by_id,
+    focused_event_id,
     focused_rule_id,
     row_map,
+    sighting_flash,
 )
 
 
@@ -68,3 +76,92 @@ def test_row_and_focus_helpers() -> None:
     focused = FakeRows([FakeChild("a")], index=0)
     ensure_focus(focused)
     assert focused.index == 0  # kept, not reset
+
+
+def event(kind: str = "swap", **kw) -> consent_mod.SecretEvent:
+    """One SecretEvent with test-friendly defaults."""
+    fields = {
+        "seq": 1,
+        "kind": kind,
+        "workspace_id": "ws-a",
+        "name": "api",
+        "placeholder_id": 4,
+        "host": "api.example.com",
+        "dests": (),
+        "ts": 1_700_000_000.0,
+    }
+    fields.update(kw)
+    return consent_mod.SecretEvent(**fields)
+
+
+def test_event_time_labels() -> None:
+    """A dated event renders its local clock; an undated one (an
+    older daemon) keeps a blank column."""
+    assert event_time(0.0) == ""
+    assert event_time(1_700_000_000.0) != ""
+
+
+def test_event_dest_text() -> None:
+    """The wire host wins over the mint's allowlist; the exit kinds
+    carry no destination."""
+    both = event(dests=("a.example",))
+    assert event_dest(both) == " → api.example.com"
+    assert event_dest(event(kind="mint", host=None, dests=("a.example",))) == (
+        " → a.example"
+    )
+    assert event_dest(event(kind="revoke", host=None)) == ""
+
+
+def test_event_line_marks_the_sighting() -> None:
+    """The sighting's row carries the ``!`` marker; every other
+    kind carries a blank; operator-supplied text renders escaped;
+    the placeholder's row id rides its row."""
+    line = event_line(event(kind="sighting", host="evil.example"))
+    assert line.startswith("! ")
+    assert "ws-a/api#4" in line
+    assert "evil.example" in line
+    assert event_line(event()).startswith("  ")
+    # An undated frame keeps its column blank, not "1970".
+    assert "1970" not in event_line(event(ts=0.0))
+    # A frame without an id (an older daemon) keeps no suffix.
+    assert "#" not in event_line(event(placeholder_id=None))
+
+
+def test_event_item_carries_the_highlight_class() -> None:
+    """Only the sighting row takes the ``sighting`` class; every
+    row carries its seq for focus restoration."""
+    marked = event_item(event(kind="sighting"))
+    assert "sighting" in marked.classes
+    assert marked.event_seq == 1
+    plain = event_item(event(kind="mint"))
+    assert "sighting" not in plain.classes
+
+
+def test_events_note_and_sighting_flash() -> None:
+    """The note names the marker and the detection boundary; the
+    flash names the workspace, placeholder, and host."""
+    note = events_note()
+    assert "!" in note and "decrypted" in note
+    flash = sighting_flash(event(kind="sighting", host=None))
+    assert flash == "! sighting: ws-a/api → ?"
+    assert sighting_flash(event(kind="sighting")) == (
+        "! sighting: ws-a/api → api.example.com"
+    )
+
+
+def test_event_focus_helpers() -> None:
+    """The events screen's focus pair mirrors the rules': the
+    focused seq reads back, an absent target falls to the top, and
+    None stays None."""
+    assert focused_event_id(FakeRows([], None)) is None
+    seq_child = FakeChild(None)
+    seq_child.event_seq = 5
+    assert focused_event_id(FakeRows([seq_child], seq_child)) == 5
+    rows = FakeRows([seq_child])
+    focus_event_by_id(rows, 5)
+    assert rows.index == 0
+    focus_event_by_id(rows, None)  # absent target: the top
+    assert rows.index == 0
+    empty = FakeRows([])
+    focus_event_by_id(empty, 5)  # nothing to focus
+    assert empty.index is None
