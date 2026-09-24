@@ -47,9 +47,10 @@ Differences from klangk's harness, forced by the machinery:
   decider-scope phase therefore scores AUTHORITY scoping (a
   cross-workspace decide must 404 and leave the hold pending),
   not frame visibility.
-- Enforcement is name-keyed (the resolver's learned name->IP map),
-  so determinism does not need klangk's controlled-DNS fixture:
-  the expectation model keys destinations by name.
+- Enforcement is name-keyed (the resolver's learned name->IP map).
+  A controlled-DNS fixture (#289) resolves every probed hostname
+  to one stable IP for the run, eliminating CDN address rotation
+  as a source of non-determinism in the carryover model.
 - msks ships one consent duration set (once/5m/15m/tilrestart/
   forever); the lifecycle phase exercises within/exceeding at the
   5m floor, which costs ~6 minutes per case (``--no-lifecycle``
@@ -66,7 +67,7 @@ Deferred phases (klangk features with no msks counterpart yet):
 - mixed users / --as-member (#3112) -- msks auth is token-only;
   there is no second identity to act as.
 - co-resident per-IP canaries (#2440) -- needs two names on one
-  address, i.e. controlled DNS.
+  address; now possible with controlled DNS (#289).
 
 Requires: root (self-boot brings up taps and NFQUEUE), the built
 guest assets (``msks-build-guest``), KVM, and a host whose FORWARD
@@ -91,6 +92,7 @@ import shutil
 import signal
 import socket
 import ssl
+import struct
 import subprocess
 import sys
 import time
@@ -112,6 +114,7 @@ from msks.model.egress_consent import (
     DURATION_ONCE,
     DURATION_TILRESTART,
 )
+from msks.net import dnsmsg
 from msks.net.dns import covers
 
 # -- statuses and expectations ----------------------------------------------
@@ -759,8 +762,11 @@ class Daemon:
                 parts.extend(lines[-limit:])
         return "\n".join(parts)
 
-    def boot(self) -> None:
-        """Start msksd with its own state dir, token, and TLS."""
+    def boot(self, dns_upstream: str | None = None) -> None:
+        """Start msksd with its own state dir, token, and TLS.
+        When *dns_upstream* is given (``host:port`` or just ``host``),
+        ``MSKSD_EGRESS_DNS_UPSTREAM`` is set so the daemon's forwarder
+        relays through the controlled DNS server."""
         check_root()
         self.state_dir = Path(f"/tmp/msks-fuzz-{uuid.uuid4().hex[:8]}")
         self.state_dir.mkdir(parents=True)
@@ -781,6 +787,8 @@ class Daemon:
             MSKSD_DEFAULT_IMAGE=str(guest_archive()),
             MSKSD_EGRESS_CONSENT_TIMEOUT_S=str(self.args.consent_timeout),
         )
+        if dns_upstream is not None:
+            env["MSKSD_EGRESS_DNS_UPSTREAM"] = dns_upstream
         msksd = shutil.which("msksd")
         command = (
             [msksd, "--config=none"]
@@ -898,6 +906,184 @@ def check_root() -> None:
             "self-boot needs root (taps, NFQUEUE, ip_forward); use "
             "--url/--token/--cafile to attach to a running daemon"
         )
+
+
+# -- controlled DNS (#289) --------------------------------------------------
+# A lightweight UDP DNS server that resolves every harness hostname
+# to a single frozen IP for the run, eliminating CDN address
+# rotation as a source of non-determinism.  The daemon's forwarder
+# relays through this server (MSKSD_EGRESS_DNS_UPSTREAM), so the
+# guest's view of every probed name is stable.
+
+
+DNS_CONTROLLED_TTL = 3600
+DNS_CONTROLLED_ADDR = "127.0.0.54"
+
+
+def fresh_hostnames() -> list[str]:
+    """Every hostname in the FRESH map, flattened."""
+    hosts: list[str] = []
+    for val in FRESH.values():
+        if isinstance(val, list):
+            hosts.extend(val)
+        else:
+            hosts.append(val)
+    return hosts
+
+
+def all_harness_hostnames() -> list[str]:
+    """Every hostname the harness probes (pool + edges + FRESH),
+    deduplicated and lowered.  Raw IPs are excluded — they bypass
+    DNS."""
+    names: set[str] = set()
+    for host, kind, _expl in (*_POOL, *_EDGE_VARIANTS):
+        if kind == "domain":
+            names.add(canonical(host))
+    names.update(canonical(h) for h in fresh_hostnames())
+    names.update(canonical(settle_host(s)) for s in ALLOW_LIST)
+    return sorted(names)
+
+
+def resolve_hostnames(hostnames: list[str]) -> dict[str, str]:
+    """Resolve each hostname once via the system resolver and return
+    a frozen ``{name: ipv4}`` map.  A name that fails to resolve is
+    a hard error — the harness cannot score probes against it."""
+    mapping: dict[str, str] = {}
+    for host in hostnames:
+        try:
+            results = socket.getaddrinfo(host, 80, socket.AF_INET)
+        except socket.gaierror as exc:
+            raise SystemExit(
+                f"controlled DNS: cannot resolve {host!r}: {exc}"
+            ) from exc
+        if not results:
+            raise SystemExit(f"controlled DNS: no A record for {host!r}")
+        mapping[host] = results[0][4][0]
+    return mapping
+
+
+def encode_dns_name(name: str) -> bytes:
+    """Encode a domain name as DNS wire format labels."""
+    parts = []
+    for label in name.split("."):
+        encoded = label.encode("ascii")
+        parts.append(bytes([len(encoded)]) + encoded)
+    parts.append(b"\x00")
+    return b"".join(parts)
+
+
+def a_response(query: bytes, ip: str) -> bytes:
+    """Build an A-record response for *query* returning *ip* with
+    the controlled TTL."""
+    question = dnsmsg.parse_query(query)
+    if question is None:
+        return dnsmsg.nxdomain_for(query)
+    addr = socket.inet_aton(ip)
+    # Header: QR + RD + RA, RCODE 0, 1 question, 1 answer.
+    header = struct.pack(
+        "!HHHHHH",
+        question.id,
+        0x8180,
+        1,
+        1,
+        0,
+        0,
+    )
+    # The question section is the query's own question verbatim.
+    qsection = question.wire[dnsmsg.HEADER_LEN :]
+    # Answer: name pointer to the question's name (offset 12),
+    # type A, class IN, TTL, rdlength 4, rdata.
+    answer = struct.pack(
+        "!HHIH",
+        1,
+        1,
+        DNS_CONTROLLED_TTL,
+        4,
+    )
+    name_wire = encode_dns_name(question.name)
+    return header + qsection + name_wire + answer + addr
+
+
+class ControlledDNS:
+    """A UDP DNS server serving frozen A records for harness
+    hostnames.  Queries for names not in the map are forwarded to
+    the real upstream resolver so non-harness DNS still works."""
+
+    def __init__(
+        self,
+        mapping: dict[str, str],
+        upstream: tuple[str, int],
+        bind: str = DNS_CONTROLLED_ADDR,
+    ) -> None:
+        self.mapping = mapping
+        self.upstream = upstream
+        self.bind = bind
+        self.port = 53
+        self.sock: socket.socket | None = None
+        self._task: asyncio.Task | None = None
+
+    def start(self) -> None:
+        """Bind the UDP socket."""
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.bind((self.bind, self.port))
+        self.sock.setblocking(False)
+
+    async def serve(self) -> None:
+        """Serve queries until cancelled."""
+        loop = asyncio.get_running_loop()
+        while True:
+            data, addr = await loop.sock_recvfrom(self.sock, 65535)
+            try:
+                reply = await self._handle(data)
+            except Exception:  # noqa: BLE001
+                continue
+            if reply is not None:
+                await loop.sock_sendto(self.sock, reply, addr)
+
+    async def _handle(self, query: bytes) -> bytes | None:
+        """Resolve from the map or forward to upstream."""
+        question = dnsmsg.parse_query(query)
+        if question is None:
+            return None
+        name = question.name.lower().rstrip(".")
+        ip = self.mapping.get(name)
+        if ip is not None and question.qtype == 1:  # A record
+            return a_response(query, ip)
+        return await self._forward(query)
+
+    async def _forward(self, query: bytes) -> bytes | None:
+        """Relay to the real upstream and return its answer."""
+        loop = asyncio.get_running_loop()
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setblocking(False)
+        try:
+            await loop.sock_sendto(sock, query, self.upstream)
+            # 2s timeout for upstream response.
+            data = await asyncio.wait_for(
+                loop.sock_recvfrom(sock, 65535),
+                2.0,
+            )
+            return data[0]
+        except TimeoutError, OSError:
+            return None
+        finally:
+            sock.close()
+
+    async def run(self) -> None:
+        """Start and serve as a task."""
+        self.start()
+        self._task = asyncio.current_task()
+        await self.serve()
+
+    def stop(self) -> None:
+        """Shut down the server."""
+        if self._task is not None:
+            self._task.cancel()
+            self._task = None
+        if self.sock is not None:
+            self.sock.close()
+            self.sock = None
 
 
 # -- the decider client -----------------------------------------------------
@@ -1305,6 +1491,8 @@ class Harness:
         self.decider: RawDecider | None = None
         self.model = EgressModel(ALLOW_LIST)
         self.tag_seq = 0
+        self.dns: ControlledDNS | None = None
+        self._dns_task: asyncio.Task | None = None
 
     def tag(self) -> str:
         """A fresh probe marker tag."""
@@ -1437,10 +1625,31 @@ class Harness:
 
     # -- lifecycle -----------------------------------------------------------
 
+    async def start_controlled_dns(self) -> str:
+        """Resolve every harness hostname once, start the controlled
+        DNS server, and return the upstream address for the daemon."""
+        from msks.net.dns import upstream_from_resolv
+
+        hostnames = all_harness_hostnames()
+        print(f"controlled DNS: resolving {len(hostnames)} hostnames...")
+        mapping = resolve_hostnames(hostnames)
+        for name, ip in sorted(mapping.items()):
+            print(f"  {name:<28} -> {ip}")
+        upstream = upstream_from_resolv()
+        if upstream is None:
+            raise SystemExit(
+                "controlled DNS: no system resolver in /etc/resolv.conf"
+            )
+        self.dns = ControlledDNS(mapping, upstream)
+        self.dns.start()
+        self._dns_task = asyncio.create_task(self.dns.serve())
+        return DNS_CONTROLLED_ADDR
+
     async def setup(self) -> None:
-        """Daemon, workspace, console, decider."""
+        """Controlled DNS, daemon, workspace, console, decider."""
         if self.args.url is None:
-            self.daemon.boot()
+            dns_upstream = await self.start_controlled_dns()
+            self.daemon.boot(dns_upstream=dns_upstream)
         elif not (self.args.token and self.args.cafile):
             raise SystemExit(
                 "--url needs --token and --cafile (the dev daemon writes "
@@ -1462,10 +1671,10 @@ class Harness:
 
     async def readiness_probe(self) -> None:
         """One allow-list connection with the decider attached: the
-        learned pin usually carries it (no request), but a rotated
-        CDN address re-holds (klangk #2399's class) and the probe
-        settles that hold itself -- either path proves the guest's
-        data path out.
+        learned pin carries it (no request) under controlled DNS
+        (the address is stable).  If the SYN lands before the
+        resolver's pin is populated a re-hold surfaces and the probe
+        settles it — either path proves the guest's data path out.
 
         Retried: the first probe races with the resolver's allow-
         list pin learning (the SYN lands before the name→IP map is
@@ -1497,16 +1706,22 @@ class Harness:
         return await task
 
     async def teardown(self) -> None:
-        """Delete workspaces, close sockets, stop the daemon."""
+        """Delete workspaces, close sockets, stop the daemon and DNS."""
         if self.decider is not None:
             await self.decider.close()
+        await self.teardown_workspaces()
+        if self.client is not None:
+            await self.client.aclose()
+        await self.daemon.stop()
+        if self.dns is not None:
+            self.dns.stop()
+
+    async def teardown_workspaces(self) -> None:
+        """Delete all workspaces unless --keep-workspace."""
         if not self.args.keep_workspace:
             await self.delete_workspace(self.ws_id)
             for wid in self.extra_ws:
                 await self.delete_workspace(wid)
-        if self.client is not None:
-            await self.client.aclose()
-        await self.daemon.stop()
 
     # -- the fuzz loop -------------------------------------------------------
 
