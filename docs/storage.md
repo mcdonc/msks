@@ -76,7 +76,7 @@ adopting the predecessor's data. Clear the files and create again.
 Both sizes are set at workspace create and configurable three
 ways: per request (`root_mib` / `home_mib` on workspace create),
 per daemon (`MSKSD_ROOT_MIB`, default 10240, and `MSKSD_HOME_MIB`,
-default 2048), and per image (the catalog's manifest carries the
+default 20480), and per image (the catalog's manifest carries the
 cmdline the guest boots, which pairs with the sizes). The overlay's
 virtual size never drops below its base image's size — a smaller
 disk would truncate the base filesystem.
@@ -116,7 +116,7 @@ absent simply records the new size — the next start's artifact heal
 builds the blank artifact at it — and a request naming sizes the
 files already have answers an idempotent `200` that moves nothing.
 A completed resize is announced on the events channel
-(`workspace.resized`, with the new sizes).
+(`workspace.resized`, with the new sizes and topology).
 
 ## Capacity reporting
 
@@ -295,7 +295,7 @@ boot. Deleting the workspace releases the pin.
 | Variable                    | Default      | Meaning                                                                                                           |
 | --------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------- |
 | `MSKSD_ROOT_MIB`            | `10240`      | Default overlay (root) size for new workspaces, MiB.                                                              |
-| `MSKSD_HOME_MIB`            | `2048`       | Default `/home` volume size, MiB.                                                                                 |
+| `MSKSD_HOME_MIB`            | `20480`      | Default `/home` volume size, MiB.                                                                                 |
 | `MSKSD_STORAGE_WARN_PCT`    | `90`         | State-disk percentage used that moves pressure to `warn` (#184).                                                  |
 | `MSKSD_STORAGE_FLOOR_MIB`   | `512`        | Free state-disk MiB below which pressure is `critical` and writes answer `507` (#184).                            |
 | `MSKSD_QEMU_IMG`            | `qemu-img`   | The `qemu-img` binary that creates overlays.                                                                      |

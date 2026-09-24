@@ -338,7 +338,7 @@ async def test_resize_publishes_the_event(tmp_path: Path) -> None:
             try:
                 resized = await http.post(
                     "/api/v1/workspaces/ws-evt/resize",
-                    json={"home_mib": 128},
+                    json={"home_mib": 128, "cpus": 4},
                     headers=auth(),
                 )
                 assert resized.status_code == 200
@@ -352,6 +352,7 @@ async def test_resize_publishes_the_event(tmp_path: Path) -> None:
                 api.state.hub.unsubscribe(queue)
     assert published is not None
     assert published["data"]["home_mib"] == 128
+    assert published["data"]["cpus"] == 4
     assert published["data"]["changes"]
 
 

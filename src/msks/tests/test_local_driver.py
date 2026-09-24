@@ -217,7 +217,7 @@ async def test_launch_puts_create_then_boot(env, fake, tmp_path: Path) -> None:
     ]
     body = dict(fake.requests[0][2])
     assert body["payload"]["kernel"] == str(tmp_path / "vmlinux")
-    assert body["memory"]["size"] == 1024 * 1024 * 1024
+    assert body["memory"]["size"] == 8192 * 1024 * 1024
     # The VM boots its persistent artifacts (#14), never the base.
     assert body["disks"] == disk_entries(state_dir, WID)
     await app.state.microvm.kill(WID)  # reap the stub VMM

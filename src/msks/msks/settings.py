@@ -141,7 +141,7 @@ class VmmSettings:
     # knows its name (direct constructions skip from_env).
     host_name: str = field(default_factory=socket.gethostname)
     root_mib: int = 10240
-    home_mib: int = 2048
+    home_mib: int = 20480
     # The state-disk pressure thresholds (#184): past the warn
     # percentage used the watcher publishes a named warning, and at
     # or below the floor's free bytes workspace creates answer 507

@@ -293,6 +293,35 @@ class Model:
             await session.commit()
             return result.rowcount > 0
 
+    async def set_topology(
+        self, workspace_id: str, cpus: int | None, mem_mib: int | None
+    ) -> bool:
+        """Record a resized workspace's cpus and memory (#277);
+        False when the row is absent.
+
+        A ``None`` keeps the column — the route passes only the
+        side the request named. The row is the whole change: the
+        boot builds its VmSpec from it, so the values apply at the
+        next start."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            result = await session.execute(
+                update(Workspace)
+                .where(Workspace.id == workspace_id)
+                .values(
+                    **{
+                        column: value
+                        for column, value in (
+                            ("cpus", cpus),
+                            ("mem_mib", mem_mib),
+                        )
+                        if value is not None
+                    }
+                )
+            )
+            await session.commit()
+            return result.rowcount > 0
+
     async def egress_slice(self, workspace_id: str) -> int | None:
         """The workspace's recorded egress pool slice, None when never
         attached (#70 review)."""

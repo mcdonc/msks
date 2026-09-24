@@ -183,7 +183,7 @@ async def test_workspace_lifecycle(client) -> None:
     assert ("prepare", wid) in stub.calls
     assert created.json()["host"]
     assert created.json()["root_mib"] == 10240
-    assert created.json()["home_mib"] == 2048
+    assert created.json()["home_mib"] == 20480
     dup = await http.post(
         "/api/v1/workspaces",
         json={"id": "ws-a", "kernel": "/k", "rootfs": "/r"},
@@ -199,6 +199,7 @@ async def test_workspace_lifecycle(client) -> None:
     assert [row["name"] for row in listed.json()] == ["ws-a"]
     one = await http.get("/api/v1/workspaces/ws-a", headers=auth())
     assert one.json()["cpus"] == 2
+    assert one.json()["mem_mib"] == 256  # explicit at create
     # The immutable id addresses the same workspace (#246).
     by_id = await http.get(f"/api/v1/workspaces/{wid}", headers=auth())
     assert by_id.json()["id"] == wid
@@ -214,6 +215,22 @@ async def test_workspace_lifecycle(client) -> None:
         "/api/v1/workspaces/ghost/start", headers=auth()
     )
     assert start_missing.status_code == 404
+
+
+async def test_create_defaults_to_the_real_use_sizes(client) -> None:
+    """A create that names neither memory nor /home size starts
+    sized for real use (#276): 8192 MiB of memory and a 20480 MiB
+    /home — both cheap at idle (lazily committed guest memory, a
+    sparse volume)."""
+    http, _app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-def", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    assert created.json()["mem_mib"] == 8192
+    assert created.json()["home_mib"] == 20480
 
 
 async def test_create_accepts_the_new_name_field(client) -> None:
@@ -1967,6 +1984,140 @@ async def test_resize_identical_on_both_sides_is_a_noop(client) -> None:
     )
     assert again.status_code == 200
     assert again.json()["changes"] == []
+
+
+async def test_resize_updates_the_topology(client) -> None:
+    """cpus and mem_mib move through the resize route (#277): the
+    row records them — the create-time bounds, the one-sided
+    keeps-column writes, and the named changes."""
+    http, app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-top", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    wid = created.json()["id"]
+    resized = await http.post(
+        "/api/v1/workspaces/ws-top/resize",
+        json={"cpus": 4, "mem_mib": 4096},
+        headers=auth(),
+    )
+    assert resized.status_code == 200
+    body = resized.json()
+    assert body["cpus"] == 4
+    assert body["mem_mib"] == 4096
+    assert body["changes"] == ["cpus set to 4", "mem set to 4096 MiB"]
+    row = await app.state.model.get_workspace(wid)
+    assert row["cpus"] == 4
+    assert row["mem_mib"] == 4096
+    # One side alone keeps the other.
+    one_side = await http.post(
+        "/api/v1/workspaces/ws-top/resize",
+        json={"cpus": 8},
+        headers=auth(),
+    )
+    assert one_side.status_code == 200
+    assert one_side.json()["mem_mib"] == 4096
+
+
+async def test_resize_topology_is_idempotent(client) -> None:
+    """Values equal to the row's record nothing — the honest
+    idempotent 200, the disk sides' twin."""
+    http, _app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-same", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    row = created.json()
+    again = await http.post(
+        "/api/v1/workspaces/ws-same/resize",
+        json={"cpus": row["cpus"], "mem_mib": row["mem_mib"]},
+        headers=auth(),
+    )
+    assert again.status_code == 200
+    assert again.json()["changes"] == []
+
+
+async def test_resize_topology_bounds_mirror_create(client) -> None:
+    """The resize body carries create's floors and ceilings: a
+    value outside them answers the body-validation 422."""
+    http, _app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-bounds", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    for body in (
+        {"cpus": 0},
+        {"cpus": 65},
+        {"mem_mib": 63},
+        {"mem_mib": 32769},
+    ):
+        refused = await http.post(
+            "/api/v1/workspaces/ws-bounds/resize",
+            json=body,
+            headers=auth(),
+        )
+        assert refused.status_code == 422, body
+
+
+async def test_resize_mixes_disks_and_topology(client) -> None:
+    """One invocation moves the disks and the topology together
+    (#277): each side lands, and the changes report each."""
+    http, app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-mix",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "home_mib": 128,
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    wid = created.json()["id"]
+    await plant_volume(app, wid, 128)
+    resized = await http.post(
+        "/api/v1/workspaces/ws-mix/resize",
+        json={"home_mib": 256, "cpus": 4},
+        headers=auth(),
+    )
+    assert resized.status_code == 200
+    body = resized.json()
+    assert body["home_mib"] == 256
+    assert body["cpus"] == 4
+    assert body["changes"] == ["home grew to 256 MiB", "cpus set to 4"]
+
+
+async def test_a_resized_topology_boots(client) -> None:
+    """The next start builds its VmSpec from the row: a resized
+    topology boots at the new cpus and memory."""
+    http, _app, stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-boot", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    wid = created.json()["id"]
+    resized = await http.post(
+        "/api/v1/workspaces/ws-boot/resize",
+        json={"cpus": 6, "mem_mib": 8192},
+        headers=auth(),
+    )
+    assert resized.status_code == 200
+    started = await http.post(
+        "/api/v1/workspaces/ws-boot/start", headers=auth()
+    )
+    assert started.status_code == 200
+    spec = stub.seen_specs[wid]
+    assert spec.cpus == 6
+    assert spec.mem_mib == 8192
 
 
 async def test_resize_names_a_vanished_volume(client, monkeypatch) -> None:

@@ -2383,12 +2383,29 @@ RESIZED_ROW = {
     "id": "ws1",
     "root_mib": 10240,
     "home_mib": 4096,
+    "cpus": 2,
+    "mem_mib": 1024,
     "changes": ["home grew to 4096 MiB"],
 }
 
 RESIZED_ROW_WITH_ROOT = {
     **RESIZED_ROW,
     "changes": ["root grew to 10240 MiB", "home grew to 4096 MiB"],
+}
+
+RESIZED_ROW_WITH_TOPOLOGY = {
+    **RESIZED_ROW,
+    "cpus": 4,
+    "mem_mib": 4096,
+    "changes": ["cpus set to 4", "mem set to 4096 MiB"],
+}
+
+RESIZED_ROW_WITH_ROOT_AND_TOPOLOGY = {
+    **RESIZED_ROW_WITH_TOPOLOGY,
+    "changes": [
+        "root grew to 10240 MiB",
+        "cpus set to 4",
+    ],
 }
 
 
@@ -2435,6 +2452,22 @@ def test_resize_command_wires_flags(
     assert rc == 0
     assert seen["path"] == "/api/v1/workspaces/ws1/resize"
     assert seen["body"] == {"home_mib": 4096}
+    # The topology flags ride the same body (#277).
+    rc = cli.main(
+        [
+            "resize",
+            "ws1",
+            "--cpus",
+            "4",
+            "--mem-mib",
+            "4096",
+            "--root-mib",
+            "20480",
+        ],
+        transport=mock(handler),
+    )
+    assert rc == 0
+    assert seen["body"] == {"cpus": 4, "mem_mib": 4096, "root_mib": 20480}
 
 
 def test_cmd_resize_notes_the_root_boot_fill(
@@ -2463,6 +2496,47 @@ def test_cmd_resize_notes_the_root_boot_fill(
     out = capsys.readouterr().out
     assert rc == 0
     assert "next boot" not in out
+
+
+def test_cmd_resize_prints_the_new_topology(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A topology resize shows the new cpus and memory with the
+    boot note — the values apply at the next start, and the line
+    says so (#277)."""
+    client_env(monkeypatch)
+    rc = cli.cmd_resize(
+        "ws1",
+        {"cpus": 4, "mem_mib": 4096},
+        transport=mock(
+            lambda req: httpx.Response(200, json=RESIZED_ROW_WITH_TOPOLOGY)
+        ),
+    )
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "cpus 4, mem 4096 MiB" in out
+    assert "the new topology applies on its next boot" in out
+
+
+def test_cmd_resize_combines_the_boot_notes(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A resize that moved the root and the topology names both
+    waits in one note."""
+    client_env(monkeypatch)
+    rc = cli.cmd_resize(
+        "ws1",
+        {"root_mib": 20480, "cpus": 4},
+        transport=mock(
+            lambda req: httpx.Response(
+                200, json=RESIZED_ROW_WITH_ROOT_AND_TOPOLOGY
+            )
+        ),
+    )
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "the guest fills the larger root and the new topology " in out
+    assert "applies on its next boot" in out
 
 
 # --- egress consent commands (#69) ------------------------------------
