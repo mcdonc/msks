@@ -44,6 +44,18 @@ def test_listing_text_without_headers_renders_rows_alone() -> None:
     assert text.splitlines() == ["ref   debian:13", "hash  " + "a" * 8]
 
 
+def test_listing_text_renders_markup_verbatim() -> None:
+    """A cell the guest controls is data, never rich markup: the
+    consent surfaces print bracketed destinations verbatim (the
+    TUI escapes the same fields for the same reason)."""
+    text = listing_text(
+        ["id", "destination"],
+        [["a1", "x[/]y:443"], ["b2", "x[bold]y.z (all ports)"]],
+    )
+    assert "x[/]y:443" in text
+    assert "x[bold]y.z (all ports)" in text
+
+
 def test_listing_text_folds_at_a_bounded_width() -> None:
     """Help-shaped renders wrap inside their width; every continued
     line still starts at its column's offset."""

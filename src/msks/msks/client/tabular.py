@@ -3,8 +3,8 @@
 Rich measures every cell — the header row included — and fits each
 column's width to the values present, so a long value widens its
 column for every row instead of shifting one row's later columns
-off the grid. No hand-rolled padding anywhere the client prints
-rows.
+off the grid. The width arithmetic is rich's, measured per render;
+the client's own code carries none of it.
 """
 
 import argparse
@@ -12,10 +12,20 @@ import io
 
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 
 # Listing rows never fold: the render width sits far past any value
 # a listing carries. Help wraps instead (see ListingHelpFormatter).
 UNFOLDED = 4096
+
+
+def verbatim_rows(table: Table, rows: list[list[str]]) -> None:
+    """Add the rows with each cell as literal text: a value the
+    guest controls (an egress destination, an image's fields) is
+    data, never rich markup to parse — the consent TUI escapes the
+    same fields for the same reason."""
+    for row in rows:
+        table.add_row(*(Text(cell) for cell in row))
 
 
 def listing_table(headers: list[str] | None, rows: list[list[str]]) -> Table:
@@ -28,10 +38,9 @@ def listing_table(headers: list[str] | None, rows: list[list[str]]) -> Table:
         pad_edge=False,
         show_header=headers is not None,
     )
-    for header in headers or [""] * len(rows[0]):
-        table.add_column(header)
-    for row in rows:
-        table.add_row(*row)
+    for header in headers or [""] * (len(rows[0]) if rows else 0):
+        table.add_column(header, overflow="fold")
+    verbatim_rows(table, rows)
     return table
 
 
@@ -63,7 +72,7 @@ def action_rows(formatter: argparse.HelpFormatter, action) -> list[list[str]]:
     """One help entry per row: the invocation beside its help.
 
     A subparsers action's entries are its choices — the command
-    list — not the metavar blob argparse prints for it.
+    list argparse names under the metavar.
     """
     entries = list(formatter._iter_indented_subactions(action)) or [action]
     rows = []
@@ -78,12 +87,13 @@ def action_rows(formatter: argparse.HelpFormatter, action) -> list[list[str]]:
 
 def help_table(rows: list[list[str]]) -> Table:
     """The two-column help table: the invocation column holds its
-    width, the help column wraps inside its own."""
+    width, the help column folds at its edge (a long path or URL
+    keeps every character, argparse's own break-long-words
+    posture)."""
     table = Table(box=None, pad_edge=False, show_header=False)
     table.add_column(no_wrap=True)
-    table.add_column(ratio=1)
-    for row in rows:
-        table.add_row(*row)
+    table.add_column(ratio=1, overflow="fold")
+    verbatim_rows(table, rows)
     return table
 
 

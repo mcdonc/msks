@@ -1634,6 +1634,23 @@ def test_image_import_help_states_the_daemon_reads_the_path(
     assert "not uploaded" in out
 
 
+def test_help_folds_long_tokens_instead_of_cutting_them(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#271: a help string longer than its column folds at the
+    column edge and keeps every character (argparse's own
+    break-long-words posture) — a long path never ends in an
+    ellipsis cut."""
+    monkeypatch.setenv("COLUMNS", "80")
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(["create", "--help"])
+    assert excinfo.value.code == 0
+    text = capsys.readouterr().out
+    assert "…" not in text
+    flat = "".join(line.lstrip() for line in text.splitlines())
+    assert "`~/.local/share/msks/<id>/identity`, or" in flat
+
+
 @pytest.mark.parametrize(
     "ref",
     [
@@ -2512,7 +2529,17 @@ def test_egress_requests_filter_and_decide(monkeypatch, capsys) -> None:
             "decision": "pending",
             "duration": None,
             "requested_at": 1700000000.0,
-        }
+        },
+        # A bracketed SNI is data, never markup: the row prints
+        # verbatim, on the same measured grid as its neighbor.
+        {
+            "id": "d" * 8,
+            "dest_host": "x[/]y[bold]",
+            "dest_port": 443,
+            "decision": "pending",
+            "duration": None,
+            "requested_at": 1700000001.0,
+        },
     ]
 
     def list_handler(req: httpx.Request) -> httpx.Response:
@@ -2527,7 +2554,11 @@ def test_egress_requests_filter_and_decide(monkeypatch, capsys) -> None:
     )
     assert rc == 0
     assert seen["path"].endswith("egress/requests?decision=pending")
-    assert "db.internal:5432" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    lines = out.splitlines()
+    assert "db.internal:5432" in lines[1]
+    expect = f"{'d' * 8}  x[/]y[bold]:443   pending   -         1700000001"
+    assert lines[2] == expect
 
     rc = cli.main(
         ["egress", "requests", "ws1"],

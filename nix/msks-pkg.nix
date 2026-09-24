@@ -31,6 +31,11 @@
   # >=8.2.8 floor pyproject declares — nixpkgs' 8.2.6 predates the
   # ListView focus semantics it relies on (nix/textual-pkg.nix).
   textual,
+  # The listings' and help's measured columns (#271): textual
+  # already ships it, and the CLI imports it directly on every
+  # path — nixpkgs' own rich serves the closure (the pyproject
+  # floor is >=13; test_pkg_mirror.py keeps the name set honest).
+  rich,
   # The NFQUEUE binding (#69), built from the sdist against
   # nixpkgs' libnetfilter_queue (nix/netfilterqueue-pkg.nix).
   netfilterqueue,
@@ -83,6 +88,7 @@ buildPythonPackage {
     websockets
     mitmproxy
     textual
+    rich
     netfilterqueue
     litellm
   ];
