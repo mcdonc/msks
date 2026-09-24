@@ -130,24 +130,28 @@ def test_main_without_reload_leaves_watcher_disarmed(
         signal.signal(signal.SIGHUP, previous)
 
 
-def test_main_configures_root_logging(
+def test_main_configures_msks_logging(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     monkeypatch.setenv("MSKSD_CONFIG_DIR", str(tmp_path / "cfg"))
     monkeypatch.setenv("MSKSD_STATE_DIR", str(tmp_path / "state"))
     previous = signal.getsignal(signal.SIGHUP)
     root = logging.getLogger()
+    msks_logger = logging.getLogger("msks")
     old_handlers = root.handlers[:]
-    old_level = root.level
+    old_root_level = root.level
+    old_msks_level = msks_logger.level
     # Clear handlers so basicConfig actually installs one.
     root.handlers = []
     root.level = logging.WARNING
+    msks_logger.level = logging.NOTSET
     try:
         monkeypatch.setattr(main_mod, "serve", lambda app, no_tls: None)
         assert main([]) == 0
-        assert root.level <= logging.INFO
         assert any(isinstance(h, logging.StreamHandler) for h in root.handlers)
+        assert msks_logger.level <= logging.INFO
     finally:
         signal.signal(signal.SIGHUP, previous)
         root.handlers = old_handlers
-        root.level = old_level
+        root.level = old_root_level
+        msks_logger.level = old_msks_level

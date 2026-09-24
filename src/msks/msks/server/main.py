@@ -148,8 +148,8 @@ def main(argv: list[str] | None = None) -> int:
     """Console-script entry: parse args, run the server."""
     logging.basicConfig(
         format="%(levelname)s %(name)s: %(message)s",
-        level=logging.INFO,
     )
+    logging.getLogger("msks").setLevel(logging.INFO)
     parser = argparse.ArgumentParser(prog="msksd")
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument(
