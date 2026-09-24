@@ -283,65 +283,10 @@ let
           $out/bin/claude
       '';
 
-  # The integrity injector (#266): the published shrinkwrap omits
-  # integrity for the five @earendil-works monorepo siblings
-  # (lockstep 0.87.1), which npm tolerates and nix's prefetch
-  # refuses — this adds the registry tarballs' own sha512, pinning
-  # content the URLs already name, changing no resolution.
-  piShrinkwrapPatch = pkgs.writeText "pi-shrinkwrap-patch.py" ''
-    import json
-    import sys
-
-    MISSING = {
-        "@earendil-works/chord":
-            "bg7IkJGFcEaMqqYgOGUiq5Ky9RghpRfrlZ8I/v/1b4bBZ02A7"
-            "t3E+6uhPRbadwWb/kWsnVFbZsqOKRN4a3LLCg==",
-        "@earendil-works/pi-agent-core":
-            "Zev3B0HK7YS5A4EZQ2XnEqiJuirx6QBiltJ+LpmjV5a/+2IU0cf"
-            "KtIfnkNkORK707XOvKBY2WRtk7cAwHpbh2Q==",
-        "@earendil-works/pi-ai":
-            "X/3PfQBnnoeVdO9Cv8zHghUMglzlgNZYGNzoPnbRoGnHl3Rw3T"
-            "lA2UKSUB7BRHUOxMryHXYa8dnjWZlbRheDZA==",
-        "@earendil-works/pi-telemetry":
-            "MC6TRQH5lgMXpcN+Vku2WMI2T8BsiUPzMQHGo81uqFZD3/9O79"
-            "WWJAysEDGuzduP6R4tvtgwMLwmqIxynM10JQ==",
-        "@earendil-works/pi-tui":
-            "YEH2vRyOeiO7hhN6j6AE6YwKSq2Kz2f3XR8bj1TbR+aGE/JsnY"
-            "1hLPMI2pvaZfRM1n9Y00tejxFQ4zbzvF7nkQ==",
-    }
-
-    path = sys.argv[1]
-    with open(path) as f:
-        lock = json.load(f)
-    patched = 0
-    for key, entry in lock["packages"].items():
-        name = key.rsplit("node_modules/", 1)[-1]
-        resolved = entry.get("resolved")
-        if name in MISSING and resolved and not entry.get("integrity"):
-            entry["integrity"] = "sha512-" + MISSING[name]
-            patched += 1
-    if patched != len(MISSING):
-        raise SystemExit(
-            "expected %d integrity gaps, patched %d"
-            % (len(MISSING), patched)
-        )
-    with open(path, "w") as f:
-        json.dump(lock, f, indent=2)
-        f.write("\n")
-
-    # The published package.json still names its devDependencies,
-    # which the pruned shrinkwrap no longer carries — npm ci would
-    # reach for the network to satisfy them. The dist/ tree is
-    # prebuilt, so the production install drops them instead.
-    pkgpath = sys.argv[2]
-    with open(pkgpath) as f:
-        pkg = json.load(f)
-    if "devDependencies" in pkg:
-        del pkg["devDependencies"]
-        with open(pkgpath, "w") as f:
-            json.dump(pkg, f, indent=2)
-            f.write("\n")
-  '';
+  # The integrity injector (#266): nix/pi-shrinkwrap-patch.py
+  # (unit-tested in test_guestassets.py) closes the integrity gaps
+  # the published shrinkwrap leaves and strips the devDependencies
+  # the pruned lock no longer carries.
 
   # The pi pin's source (#266): the registry tarball with the
   # shrinkwrap integrity gaps closed, ready for the offline npm
@@ -359,7 +304,7 @@ let
         mkdir -p $out
         tar -xzf ${piTarball} -C $out --strip-components=1
         chmod -R u+w $out
-        python3 ${piShrinkwrapPatch} \
+        python3 ${./pi-shrinkwrap-patch.py} \
           $out/npm-shrinkwrap.json $out/package.json
       '';
 
@@ -1348,6 +1293,21 @@ let
         test -x "$root"/usr/bin/msks-console-helper
         test -x "$root"/usr/bin/rsync
         test -x "$root"/usr/sbin/sshd
+        # Sanity: the baked agent toolchain (#266) — an upstream
+        # tarball or layout change must fail the build here, not
+        # boot a workspace with a broken agent (the #36 bug class).
+        # claude is a symlink chain down into its npm tree; test -x
+        # resolves it, proving the whole chain.
+        test -x "$root"/usr/local/bin/node
+        test -x "$root"/usr/local/bin/npm
+        test -x "$root"/usr/local/bin/npx
+        test -x "$root"/usr/local/bin/pi
+        test -x "$root"/usr/local/bin/herdr
+        test -x "$root"/usr/local/bin/claude
+        test -x "$root"/usr/local/lib/node_modules/@anthropic-ai/claude-code/node_modules/@anthropic-ai/claude-code-linux-x64/claude
+        test -f \
+          "$root"/etc/skel/.pi/agent/extensions/llm-models.ts
+        test -f "$root"/root/.pi/agent/extensions/llm-models.ts
         # The dropin's load-bearing line, not just the file's
         # existence: a typo'd printf must fail the build here, not
         # in the opt-in smoke.

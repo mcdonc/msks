@@ -113,12 +113,15 @@ under `/usr/local` — system-wide, on every account's default
 `/etc/skel` and root's home. Every account the identity seed
 provisions copies the skeleton, so each login user ends up with
 the extension in `~/.pi/agent/extensions/`, where pi discovers
-it. At every pi startup the extension fetches
-`${MSKSWS_BASE_URL}/models` and registers the catalog under the
-`msks` provider, so `/model` always shows the daemon's live
-model list. A workspace whose daemon serves no model list
-registers nothing — pi starts normally, without the provider. A
-copy a user has edited stays edited; nothing re-overwrites it.
+it. At every pi startup the extension makes one fetch of
+`${MSKSWS_BASE_URL}/models`, bounded at 1.5 seconds, and registers
+the catalog under the `msks` provider, so `/model` always shows
+the daemon's live model list. A workspace whose daemon serves no
+model list registers nothing after that one bounded attempt —
+pi starts without the provider, delayed by at most the bound (the
+environment pair is seeded even when no proxy listens, so the
+fetch, not the shell, is what discovers the difference). A copy a
+user has edited stays edited; nothing re-overwrites it.
 The toolchain pins move with an image rebuild
 (`nix/guest-debian.nix`); a workspace that already booted keeps
 what it booted with.

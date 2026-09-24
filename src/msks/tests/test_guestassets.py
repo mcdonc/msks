@@ -3,6 +3,7 @@ assets (#5)."""
 
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
 
@@ -273,3 +274,83 @@ def test_the_image_bakes_the_agent_toolchain() -> None:
     assert "$out/root/.pi/agent/extensions/llm-models.ts" in build
     assert "$out/usr/local/bin/pi" in build
     assert "$out/usr/local/bin/herdr" in build
+
+
+def test_the_extension_bounds_its_single_fetch() -> None:
+    """The startup fetch posture (#266 review): one attempt, bounded
+    by an abort signal — no retry loop, no sleeps. The environment
+    pair is seeded even when the daemon serves no proxy, so the
+    fetch, not the shell, discovers the difference; a dropped tap
+    must stall pi by at most the bound."""
+    ext = (REPO_ROOT / "nix" / "guest-pi-extension.ts").read_text()
+    assert "AbortSignal.timeout(1500)" in ext
+    assert "setTimeout" not in ext
+    assert "for (let attempt" not in ext
+
+
+def test_the_shrinkwrap_patch_pins_every_gap_by_name() -> None:
+    """The injector (#266 review): every MISSING name takes its
+    sha512, scoped and nested package keys resolve to their
+    package names, entries that already carry integrity are left
+    alone, and the guard the caller checks counts names — a
+    duplicate of one sibling cannot mask another."""
+    spec = importlib.util.spec_from_file_location(
+        "pi_shrinkwrap_patch", REPO_ROOT / "nix" / "pi-shrinkwrap-patch.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    lock = {
+        "packages": {
+            "": {"name": "pi-coding-agent"},
+            "node_modules/@earendil-works/chord": {
+                "resolved": "https://registry.example/chord.tgz",
+            },
+            "node_modules/chalk/node_modules/@earendil-works/pi-tui": {
+                "resolved": "https://registry.example/pi-tui.tgz",
+            },
+            "node_modules/@earendil-works/pi-ai": {
+                "resolved": "https://registry.example/pi-ai.tgz",
+                "integrity": "sha512-alreadythere",
+            },
+            "node_modules/chalk": {"resolved": "https://x/y"},
+        }
+    }
+    patched = mod.patch_lock(lock)
+    # The nested key resolved to its package name; the
+    # already-pinned entry stayed untouched.
+    assert patched == {"@earendil-works/chord", "@earendil-works/pi-tui"}
+    assert (
+        lock["packages"]["node_modules/@earendil-works/chord"]["integrity"]
+        == "sha512-" + mod.MISSING["@earendil-works/chord"]
+    )
+    nested = lock["packages"][
+        "node_modules/chalk/node_modules/@earendil-works/pi-tui"
+    ]
+    assert (
+        nested["integrity"]
+        == "sha512-" + mod.MISSING["@earendil-works/pi-tui"]
+    )
+    already = lock["packages"]["node_modules/@earendil-works/pi-ai"]
+    assert already["integrity"] == "sha512-alreadythere"
+    # Names the table still expects fail loudly.
+    assert patched != set(mod.MISSING)
+
+
+def test_the_shrinkwrap_patch_strips_dev_dependencies() -> None:
+    """The package.json half (#266 review): devDependencies go, the
+    rest of the manifest stays byte-identical in content."""
+    spec = importlib.util.spec_from_file_location(
+        "pi_shrinkwrap_patch", REPO_ROOT / "nix" / "pi-shrinkwrap-patch.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    pkg = {
+        "name": "pi-coding-agent",
+        "devDependencies": {"vitest": "^4"},
+        "dependencies": {"chalk": "5"},
+    }
+    assert mod.strip_dev_dependencies(pkg) is True
+    assert pkg == {"name": "pi-coding-agent", "dependencies": {"chalk": "5"}}
+    assert mod.strip_dev_dependencies(pkg) is False

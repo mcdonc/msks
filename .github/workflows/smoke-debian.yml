@@ -30,6 +30,7 @@ on:
       - nix/guest-debian.nix
       - nix/console-helper-pkg.nix
       - nix/image-archive.nix
+      - nix/guest-pi-extension.ts
       - scripts/build-guest.sh
       - src/msks/msks/**
       - src/msks/tests/conftest.py
@@ -46,6 +47,7 @@ on:
       - nix/guest-debian.nix
       - nix/console-helper-pkg.nix
       - nix/image-archive.nix
+      - nix/guest-pi-extension.ts
       - scripts/build-guest.sh
       - src/msks/msks/**
       - src/msks/tests/conftest.py

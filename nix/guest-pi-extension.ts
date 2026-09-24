@@ -2,11 +2,16 @@
  * msks (#266): discover the daemon's LLM proxy models at pi
  * startup. The workspace seed exports MSKSWS_BASE_URL and
  * MSKSWS_API_KEY in every login shell (/etc/profile.d/msks-llm.sh,
- * from the seed script the daemon writes at first boot); this
- * extension fetches the proxy's /models and registers the catalog
- * under the "msks" provider, so /model always shows the daemon's
- * live model list. A workspace whose daemon serves no model list
- * registers nothing, quietly.
+ * from the seed script the daemon writes at first boot) — seeded
+ * even when the daemon serves no LLM surface, so the environment
+ * alone cannot tell whether a proxy listens. This extension makes
+ * one fetch of the proxy's /models, bounded at 1500 ms, and
+ * registers the catalog under the "msks" provider, so /model
+ * always shows the daemon's live model list. No retry, no sleep:
+ * an unanswered proxy is a daemon with no model list (the tap
+ * drops, and the daemon's configured-but-failed answer is a
+ * stable 503) — retrying would only stall pi's startup — so the
+ * fetch is attempted once and any failure registers nothing.
  *
  * The image ships this file in /etc/skel (every seed-provisioned
  * account copies it into ~/.pi/agent/extensions/ — pi discovers
@@ -15,10 +20,10 @@
  *
  * A variant of klangk's llm-proxy-models.ts: the credential
  * sources differ (the environment pair above, and the apiKey
- * command below prints the token file the seed plants), everything
- * else — the awaited async factory, three fetch attempts with
- * backoff, the quiet no-op, the embed/rerank filter, the
- * placeholder metadata — carries over verbatim.
+ * command below prints the token file the seed plants) — and so
+ * does the retry posture, for the reasons above; the awaited
+ * async factory, the quiet no-op, the embed/rerank filter, and
+ * the placeholder metadata carry over verbatim.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -37,34 +42,24 @@ async function fetchModels(
   baseUrl: string,
   apiKey: string,
 ): Promise<OpenAIModel[] | null> {
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const response = await fetch(`${baseUrl}/models`, {
-        headers: { Authorization: `Bearer ${apiKey}` },
-      });
-      if (response.ok) {
-        const payload = (await response.json()) as OpenAIModelsResponse;
-        return payload.data ?? [];
-      }
-      if (attempt < 3 && response.status >= 500) {
-        await new Promise((r) => setTimeout(r, 2000 * attempt));
-        continue;
-      }
+  try {
+    const response = await fetch(`${baseUrl}/models`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(1500),
+    });
+    if (!response.ok) {
       console.error(
         "msks llm-models: fetch failed: " +
           `${response.status} ${response.statusText}`,
       );
       return null;
-    } catch (err) {
-      if (attempt < 3) {
-        await new Promise((r) => setTimeout(r, 2000 * attempt));
-        continue;
-      }
-      console.error("msks llm-models: fetch failed:", err);
-      return null;
     }
+    const payload = (await response.json()) as OpenAIModelsResponse;
+    return payload.data ?? [];
+  } catch (err) {
+    console.error("msks llm-models: fetch failed:", err);
+    return null;
   }
-  return null;
 }
 
 export default async function (pi: ExtensionAPI) {
