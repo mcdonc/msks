@@ -229,16 +229,31 @@ def numeric_field(value: object) -> float | None:
     return float(value)
 
 
-def audit_already_landed(
-    events: list[SecretEvent], audit_id: int | None
-) -> bool:
+def audit_already_landed(landed: set[int], audit_id: int | None) -> bool:
     """Whether a recorded row's identity already holds a log slot
     (#305): the replay of a fact the live stream delivered (or the
     live frame after a replay that read the row between its commit
-    and its publish) drops instead of doubling the row."""
-    return audit_id is not None and any(
-        landed.audit_id == audit_id for landed in events
-    )
+    and its publish) drops instead of doubling the row. The set is
+    the landed ids — one int per recorded row, O(1) per frame."""
+    return audit_id is not None and audit_id in landed
+
+
+def land_secret_event(
+    events: list[SecretEvent], landed: set[int], event: SecretEvent
+) -> None:
+    """Append one parsed row and keep the id set in step with the
+    log's bound (#305): the newest EVENT_LOG_MAX rows stay, and an
+    id leaves with its row — the rolling window, not an unbounded
+    ledger."""
+    events.append(event)
+    if event.audit_id is not None:
+        landed.add(event.audit_id)
+    overflow = len(events) - EVENT_LOG_MAX
+    if overflow > 0:
+        for gone in events[:overflow]:
+            if gone.audit_id is not None:
+                landed.discard(gone.audit_id)
+        del events[:overflow]
 
 
 def parse_secret_event(seq: int, kind: str, obj: object) -> SecretEvent | None:
@@ -291,8 +306,10 @@ class ConsentController:
         self.rules: EgressRules | None = None
         # The interceptor audit log (#201): newest last, bounded by
         # EVENT_LOG_MAX; ``seq`` keys arrival order for the view.
+        # The landed-id set is the dedup's index into it (#305).
         self.events: list[SecretEvent] = []
         self._event_seq = 0
+        self._audit_ids: set[int] = set()
 
     #: event name -> data applier (apply_frame dispatches through it)
     APPLIERS = {
@@ -388,11 +405,10 @@ class ConsentController:
         event = parse_secret_event(self._event_seq + 1, kind, data)
         if event is None or not self.owns(event.workspace_id):
             return IGNORED, None
-        if audit_already_landed(self.events, event.audit_id):
+        if audit_already_landed(self._audit_ids, event.audit_id):
             return IGNORED, None
         self._event_seq += 1
-        self.events.append(event)
-        del self.events[:-EVENT_LOG_MAX]
+        land_secret_event(self.events, self._audit_ids, event)
         return SECRET_EVENT, event
 
     def ordered(self) -> list[ConsentRequest]:

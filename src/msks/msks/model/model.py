@@ -607,8 +607,14 @@ class Model:
                 ),
             )
             session.add(entry)
+            await session.flush()
+            # The flush populates the generated id into the instance
+            # before commit; reading it into a local keeps the
+            # return correct whatever the session factory's
+            # expire_on_commit setting (#305 review).
+            row_id = entry.id
             await session.commit()
-            return entry.id
+            return row_id
 
     async def list_audit(self, limit: int = 100) -> list[dict]:
         """The newest audit events first (operator view)."""

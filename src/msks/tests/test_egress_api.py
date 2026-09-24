@@ -639,6 +639,74 @@ async def test_register_decider_replays_the_recorded_lifecycle(
     assert mint["ts"] <= revoke["ts"]  # stored order, not send order
 
 
+def test_audit_epoch_converts_aware_timestamps() -> None:
+    """audit_epoch reads naive UTC as UTC and converts a value that
+    carries an offset — it never reinterprets an aware timestamp
+    as UTC (#305 review)."""
+    naive = api_mod.audit_epoch("2026-09-24T10:00:00")
+    assert api_mod.audit_epoch("2026-09-24T12:00:00+02:00") == naive
+    assert api_mod.audit_epoch("2026-09-24T08:00:00-02:00") == naive
+
+
+async def test_replay_logs_when_it_hits_its_row_limit(
+    tmp_path: Path, caplog
+) -> None:
+    """A workspace with more recorded rows than the replay's limit
+    gets the newest ones and a log line saying the history is
+    incomplete (#305 review) — the truncation never passes
+    silently."""
+    import logging
+
+    settings = Settings(
+        vmm=VmmSettings(state_dir=tmp_path / "vms"),
+        net=NetSettings(enabled=False),
+        server=ServerSettings(
+            db_path=tmp_path / "many.db",
+            bootstrap_token=TOKEN,
+            event_poll_s=10.0,
+        ),
+    )
+    app = build_app(settings)
+    app.state.microvm = StubMicrovm()
+    app.state.model.migrate()
+    await app.state.model.create_workspace(
+        VmSpec(
+            workspace_id="ws-many",
+            kernel=Path("/k"),
+            rootfs=Path("/r"),
+            egress_mode="interactive",
+        )
+    )
+    for i in range(api_mod.SECRET_REPLAY_LIMIT + 1):
+        await app.state.model.record_audit(
+            "mint",
+            {"workspace_id": "ws-many", "name": f"n{i}", "dests": "[]"},
+        )
+
+    class RecordingSocket:
+        def __init__(self) -> None:
+            self.sent: list[dict] = []
+
+        async def send_json(self, payload) -> None:
+            self.sent.append(payload)
+
+    with caplog.at_level(logging.INFO, logger="msks.server.api"):
+        socket = RecordingSocket()
+        await api_mod.register_decider(
+            app,
+            socket,
+            client_id=1,
+            message={"workspace": "ws-many"},
+        )
+    frames = [f for f in socket.sent if f["event"].startswith("secret.")]
+    assert len(frames) == api_mod.SECRET_REPLAY_LIMIT
+    # The newest SECRET_REPLAY_LIMIT rows, oldest first: the first
+    # replayed row is the second row ever recorded.
+    assert frames[0]["data"]["name"] == "n1"
+    assert frames[-1]["data"]["name"] == f"n{api_mod.SECRET_REPLAY_LIMIT}"
+    assert any("row limit" in record.message for record in caplog.records)
+
+
 async def test_register_decider_survives_a_failed_audit_read(
     tmp_path: Path,
 ) -> None:

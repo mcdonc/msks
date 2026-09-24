@@ -237,6 +237,9 @@ async def retire_expired(app, hub: EventHub, row: dict) -> None:
     model = app.state.model
     await model.delete_placeholder(row["id"])
     audit_id = await model.record_audit("expiry", row)
+    # The audit row commits before this publish: a registration in
+    # the gap replays the row, and the client's audit-id dedup
+    # drops whichever delivery is second (#305).
     try:
         await app.state.secrets.delete(row["backend_ref"])
     except Exception:  # noqa: BLE001 - inert leftover, logged below

@@ -359,9 +359,12 @@ def event_id_suffix(event: SecretEvent) -> str:
 
 def render_order(events: list[SecretEvent]) -> list[SecretEvent]:
     """The events oldest-first for rendering (#305): timestamp
-    order, arrival order (seq) breaking ties — a live frame the
-    socket delivered between two replayed rows still renders in
-    its time's place, not wherever the interleaving dropped it."""
+    order, ties in arrival order — a live frame the socket
+    delivered between two replayed rows renders in its time's
+    place, not wherever the interleaving dropped it. Arrival order
+    is client-local, so two same-timestamp rows can render in
+    either order across reconnects — the tie is cosmetic, the
+    timestamps are not."""
     return sorted(events, key=lambda event: (event.ts, event.seq))
 
 
