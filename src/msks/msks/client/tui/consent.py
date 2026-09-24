@@ -336,11 +336,25 @@ class ConsentController:
         )
 
     def apply_rules(self, data: object) -> tuple[str, object]:
-        """One ``egress.rules`` frame's data: replace the snapshot
-        (a foreign workspace's frame is ignored)."""
+        """One ``egress.rules`` frame's data: replace the snapshot.
+
+        The first rules frame also resolves a name-based workspace_id
+        to the server's canonical id: the TUI starts with the CLI
+        argument (``bar``), but the server resolves that to the row's
+        immutable id (``95c55d47d1``) at registration and sends all
+        subsequent frames keyed on the id.  Without the adoption the
+        ``owns()`` check rejects every frame — the hold appears in
+        the daemon log but never in the TUI (#297)."""
         rules = parse_rules(data) if isinstance(data, dict) else None
-        if rules is None or not self.owns(rules.workspace_id):
+        if rules is None:
             return IGNORED, None
+        if not self.owns(rules.workspace_id):
+            if self.rules is None:
+                # First rules frame after registration: adopt the
+                # server's resolved id so later frames pass owns().
+                self.workspace_id = rules.workspace_id
+            else:
+                return IGNORED, None
         self.rules = rules
         return RULES, rules
 
