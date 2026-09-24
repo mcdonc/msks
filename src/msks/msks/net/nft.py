@@ -39,10 +39,13 @@ docs/networking.md.
 
 import asyncio
 import json
+import logging
 
 from ..consent.specs import EgressPolicy, IpSpec
 from ..microvm.errors import MicrovmError
 from .alloc import table_name
+
+logger = logging.getLogger(__name__)
 
 BASE_TABLE = "msks-egress"
 
@@ -100,10 +103,14 @@ def consent_sets(policy: EgressPolicy) -> str:
     port-scoped allows — a static workspace's allowlisted names pin
     their resolved addresses into the same sets an interactive
     verdict does, so both modes share one enforcement shape. The
-    rejects set is deny-verdict machinery and ships only with the
-    queue. Each element carries its own kernel-side timeout —
-    verdict durations are enforced by the kernel, not a userspace
-    sweeper."""
+    rejects sets are deny-verdict machinery and ship only with the
+    queue: ``rejects`` answers a destination port, and
+    ``rejects_flow`` (address . source port . destination port)
+    answers one connection of a NAME verdict on a shared address
+    — a co-resident's connection must not inherit its neighbor's
+    refusal (#304). Each element carries its own kernel-side
+    timeout — verdict durations are enforced by the kernel, not
+    a userspace sweeper."""
     if not policy.gated:
         return ""
     sets = (
@@ -118,6 +125,10 @@ def consent_sets(policy: EgressPolicy) -> str:
         sets += (
             "  set rejects {\n"
             "    type ipv4_addr . inet_service; flags timeout;\n"
+            "  }\n"
+            "  set rejects_flow {\n"
+            "    type ipv4_addr . inet_service . inet_service; "
+            "flags timeout;\n"
             "  }\n"
         )
     return sets
@@ -140,16 +151,20 @@ def queue_gate(tap: str, guest_ip: str, queue_num: int | None) -> str:
     """The deny-match and hold queue (interactive only): rejected
     destination ports answer a SYN with a TCP RST (a dropped SYN
     alone leaves connect() hanging on the kernel's retransmit
-    timer — the RST is the fast refusal), and everything else NEW
-    queues for a verdict — the queue match carries ``ct state
-    new``, so an established flow's later packets never re-enter
-    consent (a ``once`` verdict guards the connection it released
-    for the connection's whole life, not the cache window). The
-    queue carries no ``bypass``: an unbound or full queue drops
+    timer — the RST is the fast refusal) — the per-flow set
+    first, so a name verdict on a shared address refuses only its
+    own connection (#304) — and everything else NEW queues for a
+    verdict — the queue match carries ``ct state new``, so an
+    established flow's later packets never re-enter consent (a
+    ``once`` verdict guards the connection it released for the
+    connection's whole life, not the cache window). The queue
+    carries no ``bypass``: an unbound or full queue drops
     (fail-closed)."""
     if queue_num is None:
         return ""
     return (
+        f'    iifname "{tap}" ip daddr . tcp sport . tcp dport '
+        "@rejects_flow reject with tcp reset\n"
         f'    iifname "{tap}" ip daddr . tcp dport @rejects '
         "reject with tcp reset\n"
         f'    iifname "{tap}" ip saddr {guest_ip} ct state new '
@@ -377,6 +392,33 @@ async def reject_element(
     )
 
 
+async def reject_flow_element(
+    settings,
+    workspace_id: str,
+    ip: str,
+    sport: int,
+    port: int,
+    ttl_s: float,
+) -> None:
+    """Answer ONE connection's SYNs (its source port) to a
+    destination port with a TCP RST for ``ttl_s`` — the per-flow
+    refusal a name verdict on a shared address pins, so the
+    co-resident's connections never see it (#304)."""
+    table = table_name(workspace_id)
+    await nft_run(
+        settings,
+        [
+            "add",
+            "element",
+            "inet",
+            table,
+            "rejects_flow",
+            f"{{ {ip} . {sport} . {port} timeout {timeout_text(ttl_s)} }}",
+        ],
+        what=f"nft reject flow {ip}:{sport}:{port} for {workspace_id}",
+    )
+
+
 async def clear_elements(
     settings, workspace_id: str, ip: str, port: int | None
 ) -> None:
@@ -406,6 +448,63 @@ async def clear_elements(
         )
 
 
+async def clear_ip_elements(settings, workspace_id: str, ip: str) -> None:
+    """Drop every consent element naming one address — the
+    co-residency retraction (#304): a second name just resolved to
+    the address, so the verdict pins and learned allows it
+    carries (keyed by address alone) now cover a name they were
+    never given for. Port-keyed sets are listed and destroyed per
+    element; an address with no elements is a no-op."""
+    table = table_name(workspace_id)
+    await nft_run(
+        settings,
+        ["delete", "element", "inet", table, "allows_any", f"{{ {ip} }}"],
+        what=f"nft clear allows_any {ip} for {workspace_id}",
+        absent_ok=True,
+    )
+    for name in ("allows_port", "rejects", "rejects_flow"):
+        await clear_listed_elements(settings, workspace_id, name, ip)
+
+
+async def clear_listed_elements(
+    settings, workspace_id: str, name: str, ip: str
+) -> None:
+    """Destroy one port-keyed set's elements naming ``ip``, found by
+    listing (an element's whole key is needed to destroy it). A
+    set that cannot be listed (absent, or the invocation failed)
+    holds nothing to destroy — the fail-open direction, bounded by
+    the elements' own timeouts."""
+    table = table_name(workspace_id)
+    payload = await nft_json(
+        settings, ["-j", "list", "set", "inet", table, name]
+    )
+    if payload is None:
+        logger.debug("nft: %s listing failed in the retraction", name)
+        return
+    for scope, _seconds in element_scopes(payload):
+        if scope != ip and not scope.startswith(f"{ip} . "):
+            continue
+        await nft_run(
+            settings,
+            ["delete", "element", "inet", table, name, f"{{ {scope} }}"],
+            what=f"nft clear {name} {scope} for {workspace_id}",
+            absent_ok=True,
+        )
+
+
+async def flush_set(settings, workspace_id: str, name: str) -> None:
+    """Empty one consent set wholesale (revocation's per-flow RST
+    clear): the elements cannot be attributed to a name, and a
+    dropped one re-pins on the flow's next retransmit through the
+    session gate — self-healing, so the flush is safe."""
+    await nft_run(
+        settings,
+        ["flush", "set", "inet", table_name(workspace_id), name],
+        what=f"nft flush {name} for {workspace_id}",
+        absent_ok=True,
+    )
+
+
 async def apply_base(settings) -> None:
     """Install the shared NAT table (idempotent by daemon lifetime)."""
     await nft_run(
@@ -421,7 +520,7 @@ async def apply_base(settings) -> None:
 # resolver-learned allows with their remaining timeouts — die with
 # the table otherwise, and a static workspace's learned egress
 # would drop until its DNS cache expired.
-CONSENT_SETS = ("allows_any", "allows_port", "rejects")
+CONSENT_SETS = ("allows_any", "allows_port", "rejects", "rejects_flow")
 
 
 def posture_sets(policy: EgressPolicy) -> tuple[str, ...]:

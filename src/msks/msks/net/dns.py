@@ -19,6 +19,17 @@ builds) it becomes the naming half of consent:
   names are recorded as allowed (the audit the default-permit
   posture can give).
 
+Co-residency (#304): two names may resolve to the SAME address
+(shared hosting, a CDN front). The naming memory keeps every
+live name per address (the most recent names a flow), and an
+address that carries more than one live name is *shared* — the
+kernel's verdict pins are address-keyed and would let one name's
+verdict cover its co-resident, so on a shared address the manager
+pins nothing (verdicts gate at the queue, keyed by the most
+recent resolution) and a deny answers only its own connection
+(a per-flow RST). The pins an address already carried are
+retracted the moment a second name resolves to it.
+
 The query cache answers repeats locally (id rewritten per client),
 and the name→address memory is what the NFQUEUE consumer's prompts
 and revocations key on. Names expire with their DNS TTL (floored —
@@ -183,6 +194,19 @@ class ResolverGate:
         with contextlib.suppress(Exception):
             await self.model.record_policy(decision, workspace_id, qname, 0)
 
+    async def retract(self, ips: list[str]) -> None:
+        """Drop the kernel pins addresses carried before a second
+        name resolved to them (#304): an address-keyed pin on a
+        shared address enforces one name's verdict on its
+        co-resident, so the pin goes and the next SYN gates at the
+        queue under the naming memory instead. Interactive only:
+        a static chain has no queue to gate a withdrawn pin's
+        connections — its allowlist pins ARE the enforcement, so
+        they stand."""
+        if not self.policy.interactive:
+            return
+        await self.net.retract_consent_pins(self.workspace_id, ips)
+
     async def learn(
         self,
         records: list[tuple[str, int]],
@@ -233,8 +257,10 @@ class DnsForwarder:
         self._tasks: set[asyncio.Task] = set()
         # question wire -> (answer wire, expire epoch)
         self._cache: dict[bytes, tuple[bytes, float]] = {}
-        # ip -> (name, expire epoch): the naming memory.
-        self._names: dict[str, tuple[str, float]] = {}
+        # ip -> [(name, expire), ...] most-recent last: the naming
+        # memory, one entry per live name per address (a shared
+        # address keeps every co-resident's pairing, #304).
+        self._names: dict[str, list[tuple[str, float]]] = {}
 
     async def start(self, sock: socket.socket | None = None) -> None:
         """Bind the service socket (a caller-provided one wins)."""
@@ -284,12 +310,25 @@ class DnsForwarder:
 
     # --- naming memory -------------------------------------------------------
 
+    def live_names(self, ip: str) -> list[tuple[str, float]]:
+        """The address's live pairings, most-recent last; expired
+        ones are pruned as a side effect (every reader pays the
+        same lazy sweep)."""
+        now = time.time()
+        entries = [e for e in self._names.get(ip, ()) if e[1] > now]
+        if entries:
+            self._names[ip] = entries
+        else:
+            self._names.pop(ip, None)
+        return entries
+
     def host_for(self, ip: str) -> str | None:
-        """The name that resolved to ``ip``, while its TTL lives."""
-        entry = self._names.get(ip)
-        if entry is None or entry[1] <= time.time():
-            return None
-        return entry[0]
+        """The name that most recently resolved to ``ip``, while
+        its pairing lives — the flow-namer for prompts and the
+        session gate (a co-resident address names the flow by its
+        latest resolution, #304)."""
+        entries = self.live_names(ip)
+        return entries[-1][0] if entries else None
 
     def ips_for(self, host: str) -> list[str]:
         """Every live address a name resolved to (revocation's
@@ -297,9 +336,16 @@ class DnsForwarder:
         now = time.time()
         return [
             ip
-            for ip, (name, expire) in self._names.items()
-            if name == host and expire > now
+            for ip, entries in self._names.items()
+            if any(name == host and expire > now for name, expire in entries)
         ]
+
+    def shared(self, ip: str) -> bool:
+        """Whether more than one live name resolved to ``ip`` —
+        the co-residency mark: kernel pins on such an address are
+        over-broad by construction, so the manager installs none
+        (#304)."""
+        return len({name for name, _expire in self.live_names(ip)}) > 1
 
     def forget(self, host: str) -> None:
         """Drop a name's pairings and its cached answers
@@ -307,21 +353,45 @@ class DnsForwarder:
         verdict it undid. The answer cache has no name index, so it
         clears wholesale — revokes are rare and the next query
         repopulates it."""
-        self._names = {
-            ip: entry for ip, entry in self._names.items() if entry[0] != host
-        }
+        kept: dict[str, list[tuple[str, float]]] = {}
+        for ip, entries in self._names.items():
+            remaining = [e for e in entries if e[0] != host]
+            if remaining:
+                kept[ip] = remaining
+        self._names = kept
         self._cache.clear()
 
-    def remember(self, name: str, records: list[tuple[str, int]]) -> None:
+    def remember(self, name: str, records: list[tuple[str, int]]) -> list[str]:
         """Record one answer's name→address pairings, floored so a
-        0-TTL answer cannot unname a destination mid-flight. The
+        0-TTL answer cannot unname a destination mid-flight, and
+        return the addresses that just became shared — a second
+        live name arrived, so every kernel pin the address carries
+        is over-broad now and the caller retracts them (#304). The
         bound clears wholesale: a flood of unique names must not
         grow this dict for the workspace's life."""
         if len(self._names) >= NAMES_MAX:
             self._names.clear()
         expire = time.time() + NAME_TTL_FLOOR
+        became_shared: list[str] = []
         for ip, ttl in records:
-            self._names[ip] = (name, pairing_floor(self, ip, ttl, expire))
+            if self.remember_one(ip, name, ttl, expire):
+                became_shared.append(ip)
+        return became_shared
+
+    def remember_one(
+        self, ip: str, name: str, ttl: int, expire: float
+    ) -> bool:
+        """Record one address's pairing, most-recent last; True when
+        a second live name arrived on the address (the co-residency
+        mark, #304)."""
+        entries = self.live_names(ip)
+        floor = pairing_floor(self, ip, ttl, expire, name)
+        live = {entry_name for entry_name, _expire in entries}
+        self._names[ip] = [
+            *(e for e in entries if e[0] != name),
+            (name, floor),
+        ]
+        return bool(live) and name not in live
 
     # --- the relay ---------------------------------------------------------
 
@@ -376,11 +446,20 @@ class DnsForwarder:
         if answer is None:
             return
         records = dnsmsg.parse_a_records(answer)
-        self.remember(parsed.name, records)
+        await self.note_resolution(parsed.name, records)
         if decision.action == LEARN and records:
             await self.learn_quietly(records, decision)
         self.cache_put(parsed, answer, records)
         sendto(sock, answer, client)
+
+    async def note_resolution(
+        self, name: str, records: list[tuple[str, int]]
+    ) -> None:
+        """Feed the naming memory and retract what a newly shared
+        address carries (#304) — the caller owns the answer."""
+        shared = self.remember(name, records)
+        if shared and self._gate is not None:
+            await self.retract_quietly(shared)
 
     async def learn_quietly(
         self, records: list[tuple[str, int]], decision: QueryDecision
@@ -389,6 +468,13 @@ class DnsForwarder:
         pin re-prompts at the SYN; DNS itself still works."""
         with contextlib.suppress(Exception):
             await self._gate.learn(records, decision.ports, decision.cap)
+
+    async def retract_quietly(self, ips: list[str]) -> None:
+        """Retract the pins addresses carried before becoming
+        shared, best-effort: a missed retraction is a leak window
+        bounded by the pin's own timeout, and DNS still works."""
+        with contextlib.suppress(Exception):
+            await self._gate.retract(ips)
 
     async def exchange(self, query: bytes) -> bytes | None:
         """One upstream round-trip; None on timeout or send
@@ -441,12 +527,20 @@ class DnsForwarder:
         self._cache[key] = (answer, expire)
 
 
-def pairing_floor(forwarder, ip: str, ttl: int, floor: float) -> float:
+def pairing_floor(
+    forwarder, ip: str, ttl: int, floor: float, name: str
+) -> float:
     """One pairing's expiry: the answer's TTL (floored), never
-    shortened below a prior pairing's."""
+    shortened below the same name's prior pairing on that
+    address."""
     if ttl > NAME_TTL_FLOOR:
         floor = time.time() + ttl
-    prior = forwarder._names.get(ip)
-    if prior is not None and prior[1] > floor:
-        return prior[1]  # a re-resolve never shortens
-    return floor
+    prior = max(
+        (
+            expire
+            for entry_name, expire in forwarder._names.get(ip, ())
+            if entry_name == name
+        ),
+        default=0.0,
+    )
+    return max(prior, floor)  # a re-resolve never shortens

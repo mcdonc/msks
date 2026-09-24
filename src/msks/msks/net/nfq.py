@@ -26,6 +26,12 @@ decided flow, they reuse the cached verdict (the verdict cache,
 keyed by the connection tuple — which is what makes ``once``
 per-connection: a new source port is a cache miss and re-prompts).
 
+Name scoping on shared addresses (#304): a destination two live
+names resolve to carries no address-keyed allow pin (the manager
+skips it), and a deny on such a destination refuses only its own
+connection — the RST element is keyed by the connection's source
+port, so the co-resident's connections never see it.
+
 ``netfilterqueue`` ships with every install (consent is the normal
 posture for workspaces): the devenv shells build it against
 nixpkgs' libnetfilter_queue/libnfnetlink, and the package closure
@@ -130,8 +136,12 @@ class FlowConsumer:
         self._net = net
         self._nfq = None
         self._loop: asyncio.AbstractEventLoop | None = None
-        # (src_port, dst_ip, dst_port) -> ("allow"|"deny", expire).
-        self._verdicts: dict[tuple[int, str, int], tuple[str, float]] = {}
+        # (src_port, dst_ip, dst_port) -> ("allow"|"deny", expire,
+        # named): the named flag rides the cache so a retransmit's
+        # re-pin keeps the connection's own scope (#304).
+        self._verdicts: dict[
+            tuple[int, str, int], tuple[str, float, bool]
+        ] = {}
         self._inflight: set[tuple[int, str, int]] = set()
         self._tasks: set[asyncio.Task] = set()
 
@@ -207,7 +217,7 @@ class FlowConsumer:
         now = time.time()
         cached = self.cached_verdict(flow, now)
         if cached is not None:
-            self.apply_cached(pkt, cached, dst, dport)
+            self.apply_cached(pkt, cached, flow)
             return
         if flow in self._inflight:
             # A retransmit of a SYN still being held: the in-flight
@@ -224,7 +234,7 @@ class FlowConsumer:
 
     def cached_verdict(
         self, flow: tuple[int, str, int], now: float
-    ) -> tuple[str, float] | None:
+    ) -> tuple[str, float, bool] | None:
         """The still-valid cached verdict for a flow, if any."""
         cached = self._verdicts.get(flow)
         if cached is not None and cached[1] > now:
@@ -232,20 +242,31 @@ class FlowConsumer:
         return None
 
     def apply_cached(
-        self, pkt, cached: tuple[str, float], dst: str, dport: int
+        self,
+        pkt,
+        cached: tuple[str, float, bool],
+        flow: tuple[int, str, int],
     ) -> None:
         """Reuse a decided connection's verdict for its retransmit.
         A cached deny also refreshes the fail-fast RST pin: the
         original pin may have lapsed inside the cache window, and a
         retry that only drops hangs on the kernel's retransmit
-        timer — the exact hang the RST exists to prevent."""
+        timer — the exact hang the RST exists to prevent. The pin
+        keeps the connection's own scope (a named deny on a shared
+        address re-pins per-flow, #304)."""
         if cached[0] == "allow":
             pkt.accept()
             return
+        dst, dport = flow[1], flow[2]
         if dport:
             self.spawn(
                 self._net.consent_reject(
-                    self.workspace_id, dst, dport, ONCE_REJECT_S
+                    self.workspace_id,
+                    dst,
+                    dport,
+                    ONCE_REJECT_S,
+                    sport=flow[0],
+                    named=cached[2],
                 )
             )
         pkt.drop()
@@ -276,20 +297,29 @@ class FlowConsumer:
         """The name-scoped gates before prompting (klangk's
         #2372/#2434/#2446): a SYN to a host an in-effect verdict
         already covers — including a CDN-rotated IP no fresh
-        resolution learned — never re-prompts. Allow wins over deny
-        (checked first). Returns True when the packet was handled."""
+        resolution learned — never re-prompts. On a shared address
+        the most recent resolution names the flow (#304): that is
+        the only attribution the network layer has — a flow whose
+        guest-side cached resolution is stale is indistinguishable
+        and rides the latest name's verdict (separating those needs
+        the connection's own hostname, which no L3 packet carries).
+        Allow wins over deny (checked first). Returns True when the
+        packet was handled."""
         engine = self._net.app.state.consent
         host = self._net.host_for(self.workspace_id, dst) or dst
+        named = host != dst
         if dport:
             remaining = engine.session.allow_ttl(
                 self.workspace_id, host, dport
             )
             if remaining is not None:
-                self.accept_with_pin(pkt, flow, dst, dport, now, remaining)
+                self.accept_with_pin(
+                    pkt, flow, dst, dport, now, remaining, named
+                )
                 return True
             denied = engine.session.deny_ttl(self.workspace_id, host, dport)
             if denied is not None:
-                self.deny_fast(pkt, flow, dst, dport, now, denied)
+                self.deny_fast(pkt, flow, dst, dport, now, denied, named)
                 return True
         return False
 
@@ -301,17 +331,20 @@ class FlowConsumer:
         dport: int,
         now: float,
         remaining: float,
+        named: bool,
     ) -> None:
         """Accept a session-covered SYN and pin its IP for the
         verdict's remaining window (port-scoped — the consented
-        port), so future connections skip the queue entirely."""
+        port), so future connections skip the queue entirely. A
+        shared address pins nothing (#304): future connections
+        gate at the queue under the naming memory instead."""
         self.spawn(
             self._net.consent_allow(
-                self.workspace_id, dst, dport or None, remaining
+                self.workspace_id, dst, dport or None, remaining, named=named
             )
         )
         pkt.accept()
-        self._verdicts[flow] = ("allow", now + VERDICT_CACHE_TTL)
+        self._verdicts[flow] = ("allow", now + VERDICT_CACHE_TTL, named)
 
     def deny_fast(
         self,
@@ -321,15 +354,25 @@ class FlowConsumer:
         dport: int,
         now: float,
         remaining: float,
+        named: bool,
     ) -> None:
         """Deny a session-covered SYN fast: RST element for the
         deny's remaining window, cached verdict, drop. The caller
-        guarantees a ported flow (an RST needs a port)."""
+        guarantees a ported flow (an RST needs a port). A named
+        deny on a shared address pins the per-flow element — the
+        refusal reaches only this connection (#304)."""
         self.spawn(
-            self._net.consent_reject(self.workspace_id, dst, dport, remaining)
+            self._net.consent_reject(
+                self.workspace_id,
+                dst,
+                dport,
+                remaining,
+                sport=flow[0],
+                named=named,
+            )
         )
         pkt.drop()
-        self._verdicts[flow] = ("deny", now + VERDICT_CACHE_TTL)
+        self._verdicts[flow] = ("deny", now + VERDICT_CACHE_TTL, named)
 
     async def decide(
         self,
@@ -338,9 +381,13 @@ class FlowConsumer:
         dst: str,
         dport: int,
     ) -> None:
-        """Hold the SYN for a verdict, then apply it (deferred)."""
+        """Hold the SYN for a verdict, then apply it (deferred).
+        The verdict's scope rides along: a destination the naming
+        memory holds a name for is NAMED (its pins honor shared
+        addresses, #304); a raw-IP connect is address-literal."""
         engine = self._net.app.state.consent
         host = self._net.host_for(self.workspace_id, dst) or dst
+        named = host != dst
         try:
             future = await engine.hold(self.workspace_id, host, dport)
             verdict = await future
@@ -355,7 +402,7 @@ class FlowConsumer:
             # but a bug there must not eat the packet: deny.
             verdict = {"decision": "deny", "reason": "error"}
         try:
-            await self.apply_verdict(pkt, flow, dst, dport, verdict)
+            await self.apply_verdict(pkt, flow, dst, dport, verdict, named)
         except Exception:
             # An enforcement failure (a racing table teardown, a
             # transient nft error) must not eat the retained packet
@@ -379,6 +426,7 @@ class FlowConsumer:
         dst: str,
         dport: int,
         verdict: dict,
+        named: bool,
     ) -> None:
         """Apply one verdict to its held SYN (and cache it)."""
         now = time.time()
@@ -388,35 +436,50 @@ class FlowConsumer:
         self._verdicts[flow] = (
             "allow" if verdict["decision"] == "allow" else "deny",
             now + VERDICT_CACHE_TTL,
+            named,
         )
         if verdict["decision"] == "allow":
-            await self.apply_allow(pkt, dst, dport, duration)
+            await self.apply_allow(pkt, dst, dport, duration, named)
             return
-        await self.apply_deny(pkt, dst, dport, duration)
+        await self.apply_deny(pkt, flow, dst, dport, duration, named)
 
     async def apply_allow(
-        self, pkt, dst: str, dport: int, duration: str
+        self, pkt, dst: str, dport: int, duration: str, named: bool
     ) -> None:
         """Accept the SYN, pinning the destination for a duration
         that outlives this connection (``once`` pins nothing — a
-        reconnect re-prompts)."""
+        reconnect re-prompts; a named verdict on a shared address
+        pins nothing either, #304 — the session gate covers it)."""
         ttl = duration_ttl(duration)
         if ttl is not None:
             await self._net.consent_allow(
-                self.workspace_id, dst, dport or None, ttl
+                self.workspace_id, dst, dport or None, ttl, named=named
             )
         pkt.accept()
 
     async def apply_deny(
-        self, pkt, dst: str, dport: int, duration: str
+        self,
+        pkt,
+        flow: tuple[int, str, int],
+        dst: str,
+        dport: int,
+        duration: str,
+        named: bool,
     ) -> None:
         """Drop the SYN and pin a fail-fast RST for the retransmit
-        (TCP only — an RST is meaningless for anything else)."""
+        (TCP only — an RST is meaningless for anything else). A
+        named deny on a shared address pins the per-flow element
+        (#304): the co-resident's connections keep gating."""
         if dport:
             reject_ttl = duration_ttl(duration)
             if reject_ttl is None:
                 reject_ttl = ONCE_REJECT_S
             await self._net.consent_reject(
-                self.workspace_id, dst, dport, reject_ttl
+                self.workspace_id,
+                dst,
+                dport,
+                reject_ttl,
+                sport=flow[0],
+                named=named,
             )
         pkt.drop()
