@@ -1491,6 +1491,9 @@ def image_row(
         "kernel_version": "6.12.107+deb13",
         "kernel_format": "raw",
         "default": default,
+        # Naive on purpose: the rendered cell reads the same wall
+        # time in every test timezone.
+        "imported": "2026-09-22T14:03:00",
     }
 
 
@@ -1569,6 +1572,28 @@ def test_image_ls_marks_only_the_default(
     lines = capsys.readouterr().out.splitlines()
     flags = [line.split()[2] for line in lines[1:]]  # line 0 is the header
     assert flags == ["default", "-", "-"]
+
+
+def test_image_ls_shows_the_import_column(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#283: each row carries its import time; a row without one
+    keeps the grid and renders the dash."""
+    rows = [
+        IMAGES[0],
+        {**IMAGES[1], "imported": None},
+    ]
+    client_env(monkeypatch)
+    rc = cli.cmd_image_ls(
+        transport=mock(lambda req: httpx.Response(200, json=rows))
+    )
+    assert rc == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].split()[-1] == "imported"  # the header names it
+    # A stamped row ends in its time; the unstamped one keeps the
+    # column with the dash.
+    assert lines[1].endswith("2026-09-22 14:03")
+    assert lines[2].split()[-1] == "-"
 
 
 def test_image_ls_json_is_the_api_document(

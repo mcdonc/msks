@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import json
+from datetime import UTC
 from pathlib import Path
 
 import httpx
@@ -1056,6 +1057,30 @@ async def test_default_designation_names_the_boot_image(client) -> None:
     )
     assert pinned.status_code == 400
     assert "malformed image hash" in pinned.json()["detail"]
+
+
+async def test_image_listing_carries_the_import_time(client) -> None:
+    """#283: GET /api/v1/images stamps each row with its ``imported``
+    moment (ISO 8601, UTC), and a cache whose stamp file is gone
+    still reports the directory's mtime — not an empty field."""
+    from datetime import datetime, timedelta
+
+    from msks.imagestore import IMPORTED_STAMP
+
+    http, app, _stub = client
+    state_dir = app.state.settings.vmm.state_dir
+    hashes = await import_named_images(http, state_dir, (("one", "1"),))
+    listed = await http.get("/api/v1/images", headers=auth())
+    row = listed.json()[0]
+    assert row["imported"].endswith("+00:00")  # ISO 8601, UTC
+    recent = datetime.now(UTC) - timedelta(hours=1)
+    assert datetime.fromisoformat(row["imported"]) > recent
+    # An entry that predates stamps answers the cache's mtime.
+    (state_dir / "images" / hashes["one:1"] / IMPORTED_STAMP).unlink()
+    relisted = await http.get("/api/v1/images", headers=auth())
+    fallback = relisted.json()[0]["imported"]
+    assert fallback.endswith("+00:00")
+    assert datetime.fromisoformat(fallback) > recent
 
 
 @pytest.mark.parametrize(
