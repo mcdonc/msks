@@ -21,7 +21,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from msks.app import build_app
-from msks.client import cli, rest
+from msks.client import cli, create, rest
 from msks.server.api import build_api
 from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
 from test_api import TOKEN, StubMicrovm
@@ -1056,7 +1056,7 @@ def test_main_create_dispatch(
     client_env(monkeypatch)
     # The create default fills the invoking user's name (#248) —
     # pinned here so the body assertion stays about the dispatch.
-    monkeypatch.setattr(cli.getpass, "getuser", lambda: "alice")
+    monkeypatch.setattr(create.getpass, "getuser", lambda: "alice")
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -2117,7 +2117,7 @@ def test_create_user_data_reads_the_file(
     """--user-data FILE (#41) carries the file's bytes verbatim as the
     create body's user_data."""
     client_env(monkeypatch)
-    monkeypatch.setattr(cli.getpass, "getuser", lambda: "alice")
+    monkeypatch.setattr(create.getpass, "getuser", lambda: "alice")
     payload = "#!/bin/sh\necho seeded > /root/stamp\n"
     source = tmp_path / "seed.sh"
     source.write_text(payload)
@@ -3640,7 +3640,7 @@ def test_create_defaults_the_user_to_the_invoking_name(
     """No --user: the body carries the invoking user's name — the
     workspace seeds that account as its own."""
     client_env(monkeypatch)
-    monkeypatch.setattr(cli.getpass, "getuser", lambda: "chrism")
+    monkeypatch.setattr(create.getpass, "getuser", lambda: "chrism")
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -3658,7 +3658,7 @@ def test_create_refuses_an_unusable_invoking_name(
     """A username the guest could never carry (a capitalized one) is
     a named local refusal pointing at --user, before any wire."""
     client_env(monkeypatch)
-    monkeypatch.setattr(cli.getpass, "getuser", lambda: "Chris")
+    monkeypatch.setattr(create.getpass, "getuser", lambda: "Chris")
 
     def no_calls(request: httpx.Request) -> httpx.Response:
         raise AssertionError("the refusal must precede any request")
@@ -3698,7 +3698,7 @@ def test_create_refuses_when_no_invoking_name(
     def no_name() -> str:
         raise OSError("no username in the environment")
 
-    monkeypatch.setattr(cli.getpass, "getuser", no_name)
+    monkeypatch.setattr(create.getpass, "getuser", no_name)
     with pytest.raises(SystemExit, match="pass --user"):
         cli.main(
             ["create", "ws1", "--daemon-mint"],
@@ -3835,3 +3835,33 @@ def test_egress_mode_rejects_an_unknown_mode(monkeypatch) -> None:
     client_env(monkeypatch)
     with pytest.raises(SystemExit, match="mode must be one of"):
         asyncio.run(egress_mod.run_mode("ws1", "permissive", None))
+
+
+def test_create_with_start_builds_one_tls_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The create and its boot share one TLS context: the
+    unverified-mode warning prints once per invocation, not once
+    per client (#309's split of the two exchanges)."""
+    import ssl as ssl_mod
+
+    client_env(monkeypatch)
+    built: list[int] = []
+
+    def counting_context() -> ssl_mod.SSLContext:
+        built.append(1)
+        return ssl_mod.create_default_context()
+
+    async def fake_request(client, method: str, path: str, json_body=None):
+        if path.endswith("/start"):
+            return {"id": "ws1", "status": "running"}
+        if path.endswith("/ssh-key"):
+            return {"public_key": "k c", "private_key": None}
+        return {"id": "ws1", "status": "created"}
+
+    monkeypatch.setattr(cli, "ssl_context", counting_context)
+    monkeypatch.setattr(cli, "request", fake_request)
+    monkeypatch.setattr(create, "request", fake_request)
+    rc = cli.cmd_create({"id": "ws1"}, start=True)
+    assert rc == 0
+    assert built == [1]
