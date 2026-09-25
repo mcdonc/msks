@@ -29,6 +29,7 @@ from msks.client.tui.main_app import (
     MsksTuiApp,
     TuiFollow,
     WorkspaceScreen,
+    image_options,
 )
 from test_consent_tui import frame
 from test_consent_tui import (
@@ -39,7 +40,7 @@ from test_consent_tui import (
 )
 from test_consent_tui_app import FakeFactory, FakeWS, press_until, wait_for
 from textual.css.query import NoMatches
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, OptionList, Select, Static
 
 WS = "ws-a"
 
@@ -95,12 +96,18 @@ class FakeData:
         self.fetches = 0
         self.token = "tok-fresh"
         self.refusal = "daemon away"
+        self.images_rows: list[dict] = []
 
     async def workspaces(self) -> list[dict]:
         self.fetches += 1
         if "workspaces" in self.fail:
             raise RuntimeError("daemon away")
         return [dict(r) for r in self.rows]
+
+    async def images(self) -> list[dict]:
+        if "images" in self.fail:
+            raise RuntimeError(self.refusal)
+        return [dict(r) for r in self.images_rows]
 
     async def create(self, body: dict):
         self.calls.append(("create", body))
@@ -337,6 +344,133 @@ async def test_the_create_form_refuses_local_junk() -> None:
         await pilot.press("escape")
         await wait_for(lambda: on_main(app))
         assert data.calls == []
+
+
+async def test_the_create_form_fits_the_small_terminal() -> None:
+    # 80x24 is the smallest terminal the form must fit: the last
+    # field and the buttons stay inside the screen, above the
+    # footer line.
+    data = FakeData([])
+    app, _ = make_app(data)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.press("c")
+        await wait_for(lambda: type(app.screen).__name__ == "CreateScreen")
+        screen = app.screen
+        assert screen.query_one("#form").outer_size.height <= 24
+        last = screen.query_one("#field-user", Input)
+        buttons = screen.query_one("#form-buttons")
+        assert last.region.bottom < 24
+        assert buttons.region.bottom < 24
+        assert screen.query_one("Footer").region.y == 23
+
+
+def test_image_options_mark_the_default_and_pin_duplicate_refs():
+    # The select offers one row per catalog entry: the reference
+    # as both label and value, the designated default marked.
+    rows = [
+        {
+            "name": "debian-13",
+            "version": "2026.01",
+            "hash": "a" * 64,
+            "default": True,
+        },
+        {
+            "name": "debian-13",
+            "version": "2025.12",
+            "hash": "b" * 64,
+            "default": False,
+        },
+    ]
+    assert image_options(rows) == [
+        ("debian-13:2026.01 — default", "debian-13:2026.01"),
+        ("debian-13:2025.12", "debian-13:2025.12"),
+    ]
+    # Two entries sharing a reference: the second rides its hash
+    # (name@hash resolves to exactly that entry).
+    rows.append(
+        {
+            "name": "debian-13",
+            "version": "2026.01",
+            "hash": "c" * 64,
+            "default": False,
+        }
+    )
+    assert image_options(rows)[2] == (
+        f"debian-13@{'c' * 64}",
+        f"debian-13@{'c' * 64}",
+    )
+
+
+async def test_the_create_form_picks_the_image_from_the_catalog() -> None:
+    data = FakeData([])
+    data.images_rows = [
+        {
+            "name": "debian-13",
+            "version": "2026.01",
+            "hash": "a" * 64,
+            "default": True,
+        },
+        {
+            "name": "debian-13",
+            "version": "2025.12",
+            "hash": "b" * 64,
+            "default": False,
+        },
+    ]
+    app, _ = make_app(data)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.press("c")
+        await wait_for(lambda: type(app.screen).__name__ == "CreateScreen")
+        screen = app.screen
+        select = screen.query_one("#field-image", Select)
+        overlay = select.query_one("SelectOverlay", OptionList)
+        # The blank prompt rides the list as its first row.
+        await wait_for(lambda: overlay.option_count == 3)
+        # The walk itself: the arrows walk from a plain input (down
+        # reaches the select without opening it), Enter opens the
+        # list, down moves to the first catalog entry (the prompt
+        # holds the highlight), Enter picks it.
+        await pilot.press("down")
+        assert screen.focused is select
+        await pilot.press("enter")
+        await pilot.press("down")
+        await pilot.press("enter")
+        assert str(select.value) == "debian-13:2026.01"
+        # A closed select walks on down — it does not reopen —
+        # and up walks back through it the same way.
+        await pilot.press("down")
+        assert screen.focused is screen.query_one("#field-cpus", Input)
+        await pilot.press("up")
+        assert screen.focused is select
+        await pilot.press("up")
+        assert screen.focused is screen.query_one("#field-name", Input)
+        screen.query_one("#field-name", Input).value = "brand-new"
+        screen.submit()
+        await wait_for(lambda: data.calls and data.calls[0][0] == "create")
+        assert data.calls[0][1]["image"] == "debian-13:2026.01"
+
+
+async def test_an_image_listing_refusal_keeps_the_form_standing() -> None:
+    data = FakeData([])
+    data.fail.add("images")
+    app, _ = make_app(data)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.press("c")
+        await wait_for(lambda: type(app.screen).__name__ == "CreateScreen")
+        screen = app.screen
+        await wait_for(
+            lambda: (
+                "image list failed"
+                in str(screen.query_one("#form-note", Static).content)
+            )
+        )
+        # The refused select stays blank — blank means the default
+        # image, so a create still goes out whole.
+        assert screen.query_one("#field-image", Select).is_blank()
+        screen.query_one("#field-name", Input).value = "brand-new"
+        screen.submit()
+        await wait_for(lambda: data.calls and data.calls[0][0] == "create")
+        assert "image" not in data.calls[0][1]
 
 
 async def test_a_create_failure_flashes_the_daemons_line() -> None:
@@ -602,7 +736,11 @@ async def test_a_healthy_drop_restarts_the_ladder_at_its_first_rung(
     )
     link = DeciderLink(WS, ws_factory=factory, reconnect_delays=delays)
     link.start()
-    await wait_for(lambda: len(factory.made) == 2)
+    # >=, not ==: both scripted sockets close instantly, so the
+    # ladder's 0.01s first rung can raise a third connection
+    # between two 0.02s polls — an equality poll then waits on a
+    # count that never comes back (#322 leftover).
+    await wait_for(lambda: len(factory.made) >= 2)
     link.stop()
     assert seen and seen[0] == delays[0]  # the first rung, not the cap
 
@@ -625,6 +763,10 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
             and request.url.path == "/api/v1/workspaces"
         ):
             return httpx.Response(200, json=[{"id": "ws1", "name": "n"}])
+        if request.method == "GET" and request.url.path == "/api/v1/images":
+            return httpx.Response(
+                200, json=[{"name": "debian-13", "version": "2026.01"}]
+            )
         if request.url.path.endswith("/ssh-key"):
             return httpx.Response(
                 200,
@@ -646,6 +788,7 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
 
     data = data_mod.TuiData(transport=httpx.MockTransport(handler))
     assert await data.workspaces() == [{"id": "ws1", "name": "n"}]
+    assert await data.images() == [{"name": "debian-13", "version": "2026.01"}]
     created, path = await data.create({"name": "n"})
     assert created["id"] == "ws1"
     # The client mint's no-escrow exchange, in order after the
@@ -936,10 +1079,11 @@ async def test_the_form_walks_with_enter_and_the_buttons_finish(
         await wait_for(lambda: type(app.screen).__name__ == "CreateScreen")
         screen = app.screen
         screen.query_one("#field-name", Input).value = "walk-test"
-        # Enter in a field moves the walk to the next one.
+        # Enter in a field moves the walk to the next one (the
+        # image select among them — Enter opens it, not walks).
         await pilot.press("enter")
         await pilot.pause()
-        assert app.focused is screen.query_one("#field-image", Input)
+        assert app.focused is screen.query_one("#field-image", Select)
         # The create button submits; the cancel button dismisses
         # with nothing.
         screen.query_one("#do-create", Button).press()
@@ -1175,11 +1319,11 @@ async def test_the_tree_flashes_a_seeded_refusal(monkeypatch) -> None:
         await pilot.pause()
 
 
-async def test_a_free_text_refusal_never_crashes_the_screen(
+async def test_a_markup_refusal_never_crashes_the_screen(
     monkeypatch,
 ) -> None:
-    """The daemon echoes the typed image ref back in its 404 — a
-    stray rich markup bracket in it must flash literally, not crash
+    """The daemon echoes operator-typed text back in its refusals —
+    a stray rich markup bracket in one must flash literally, not crash
     the tree."""
     scripted_link(monkeypatch, [])
     data = FakeData([])
@@ -1191,7 +1335,6 @@ async def test_a_free_text_refusal_never_crashes_the_screen(
         await wait_for(lambda: type(app.screen).__name__ == "CreateScreen")
         screen = app.screen
         screen.query_one("#field-name", Input).value = "brand-new"
-        screen.query_one("#field-image", Input).value = "debian-12[/][/]"
         screen.submit()
         await wait_for(lambda: "create failed" in status_text(app))
         # Rendered literally (rich's escape form in the raw content,

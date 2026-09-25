@@ -25,7 +25,15 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Button, Footer, Input, ListItem, ListView, Static
+from textual.widgets import (
+    Button,
+    Footer,
+    Input,
+    ListItem,
+    ListView,
+    Select,
+    Static,
+)
 
 from ..console import run_workspace_shell
 from ..rest import env_token, env_url
@@ -155,8 +163,8 @@ async def guarded_flash(app, label: str, work):
     tearing the TUI down (SystemExit included — the REST seam's
     error surface, the daemon's named refusal among them). The
     refusal text is escaped: the daemon echoes operator-typed
-    references back, and a free-text image ref carrying rich
-    markup would otherwise crash the screen."""
+    references (a workspace name among them) back, and one
+    carrying rich markup would otherwise crash the screen."""
     try:
         return await work
     except (Exception, SystemExit) as exc:
@@ -306,8 +314,13 @@ class MsksTuiApp(App):
     #form { width: 64; height: auto; background: $panel;
             border: round $primary; padding: 1 2; }
     #form-note { color: $text-muted; margin-bottom: 1; }
-    #form Input { margin-bottom: 1; }
-    #form-buttons { height: auto; align-horizontal: center; }
+    .form-row { height: 1; margin-bottom: 1; }
+    .form-label { width: 12; color: $text-muted; }
+    .form-row Input, .form-row Select { width: 1fr; }
+    #form Input:focus { background-tint: $foreground 15%; }
+    #form-buttons { height: auto; align-horizontal: center;
+                    margin-top: 1; }
+    #form-buttons Button { margin: 0 2; }
     ConfirmScreen { align: center middle; }
     #question { padding: 1 2; background: $panel;
                 border: round $primary; }
@@ -857,15 +870,17 @@ class WorkspaceScreen(Screen):
 
 
 #: The create form's fields (#309): the create body's optional
-#: inputs, in walk order.
+#: inputs in walk order — a short label at the left of each
+#: row, the hint riding the input's placeholder (the image
+#: select's hint is its blank prompt.
 FORM_FIELDS = (
-    ("name", "name — the label you address it by"),
-    ("image", "image ref — name:version, name, or hash"),
-    ("cpus", "vcpus (default 2)"),
-    ("mem_mib", "memory MiB (default 8192)"),
-    ("root_mib", "root size MiB"),
-    ("home_mib", "home size MiB"),
-    ("user", "login user — the account it seeds (default: yours)"),
+    ("name", "name", "the label you address it by"),
+    ("image", "image ref", "the default image"),
+    ("cpus", "vcpus", "default 2"),
+    ("mem_mib", "memory", "MiB — default 8192"),
+    ("root_mib", "root", "MiB"),
+    ("home_mib", "home", "MiB"),
+    ("user", "user", "the account it seeds — default: yours"),
 )
 
 #: The fields whose values must be whole numbers.
@@ -879,19 +894,68 @@ def whole_number(value: str) -> bool:
     return value.isascii() and value.isdigit()
 
 
-class CreateScreen(ModalScreen[dict | None]):
-    """The create form (#309): the fields in walk order, Enter
-    moving between them; the buttons submit and cancel. The
-    submitted body goes to the callback given at construction (the
-    main screen owns the exchange and its flashes); local checks
-    refuse here so the daemon only sees whole bodies."""
+def image_options(rows: list[dict]) -> list[tuple[str, str]]:
+    """The image select's options from the catalog listing: each
+    entry its reference, the designated default marked in the
+    label. A reference two entries share rides the hash instead
+    (name@hash resolves to exactly that entry — name:version
+    would pick the oldest of the two)."""
+    options: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for row in rows:
+        ref = f"{row['name']}:{row['version']}"
+        if ref in seen:
+            ref = f"{row['name']}@{row['hash']}"
+        seen.add(ref)
+        label = f"{ref} — default" if row.get("default") else ref
+        options.append((label, ref))
+    return options
+
+
+class ImageSelect(Select):
+    """The create form's image select: stock Select with the
+    walk's arrows kept — a closed select answers up/down by
+    walking the form's fields (Enter or space opens the list;
+    an open list keeps the stock arrows for its own rows)."""
 
     BINDINGS = [
-        Binding("up", "focus_previous", show=False),
-        Binding("down", "focus_next", show=False),
+        Binding("up", "walk_previous", show=False),
+        Binding("down", "walk_next", show=False),
+    ]
+
+    def action_walk_next(self) -> None:
+        self.app.action_focus_next()
+
+    def action_walk_previous(self) -> None:
+        self.app.action_focus_previous()
+
+
+class CreateScreen(ModalScreen[dict | None]):
+    """The create form (#309): one label-plus-input row per field,
+    in walk order, Enter and the arrows moving between them; the
+    buttons submit and cancel. The form stands 80x24 terminals
+    tall — every control, the buttons included, must stay on
+    screen. The submitted body goes to the callback given at
+    construction (the main screen owns the exchange and its
+    flashes); local checks refuse here so the daemon only sees
+    whole bodies."""
+
+    BINDINGS = [
+        Binding("up", "walk_previous", show=False),
+        Binding("down", "walk_next", show=False),
         Binding("escape", "cancel", "Cancel", show=False),
         Binding("q", "cancel", show=False),
     ]
+
+    def action_walk_next(self) -> None:
+        """Down walks the form — the same walk Enter makes (the
+        arrows own the walk from a plain input; the image select
+        carries its own down that opens its list)."""
+        self.app.action_focus_next()
+
+    def action_walk_previous(self) -> None:
+        """Up walks the form back."""
+        self.app.action_focus_previous()
 
     def __init__(self, submitted) -> None:
         super().__init__()
@@ -903,15 +967,46 @@ class CreateScreen(ModalScreen[dict | None]):
                 "create a workspace — Enter walks the fields",
                 id="form-note",
             )
-            for field, hint in FORM_FIELDS:
-                yield Input(placeholder=hint, id=f"field-{field}")
+            for field, label, hint in FORM_FIELDS:
+                with Horizontal(classes="form-row"):
+                    yield Static(label, classes="form-label")
+                    if field == "image":
+                        yield ImageSelect(
+                            [],
+                            prompt=hint,
+                            id="field-image",
+                            compact=True,
+                        )
+                    else:
+                        yield Input(
+                            placeholder=hint,
+                            id=f"field-{field}",
+                            compact=True,
+                        )
             with Horizontal(id="form-buttons"):
-                yield Button("Create", id="do-create", variant="primary")
-                yield Button("Cancel", id="do-cancel")
+                yield Button(
+                    "Create",
+                    id="do-create",
+                    variant="primary",
+                    compact=True,
+                )
+                yield Button("Cancel", id="do-cancel", compact=True)
         yield Footer()
 
     def on_mount(self) -> None:
         self.query_one("#field-name", Input).focus()
+        self.run_worker(self.load_images, exclusive=True)
+
+    async def load_images(self) -> None:
+        """The image select's options: the catalog's listing. A
+        refusal keeps the form standing — a blank select still
+        creates against the daemon's default image."""
+        try:
+            rows = await self.app.data.images()
+        except (Exception, SystemExit) as exc:
+            self.note(f"image list failed: {escape(str(exc))}")
+            return
+        self.query_one("#field-image", Select).set_options(image_options(rows))
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Enter in a field moves the walk to the next control (the
@@ -934,7 +1029,11 @@ class CreateScreen(ModalScreen[dict | None]):
         self.query_one("#form-note", Static).update(text)
 
     def field_value(self, field: str) -> str:
-        """One field's value, stripped."""
+        """One field's value, stripped — the image select's blank
+        (no pick) stays the daemon's default image."""
+        if field == "image":
+            select = self.query_one("#field-image", Select)
+            return "" if select.is_blank() else str(select.value)
         return self.query_one(f"#field-{field}", Input).value.strip()
 
     def body(self) -> dict | None:
@@ -942,7 +1041,7 @@ class CreateScreen(ModalScreen[dict | None]):
         (blank stays the daemon's default), whole numbers checked
         locally — the daemon's validation stays the authority."""
         body: dict = {}
-        for field, _hint in FORM_FIELDS:
+        for field, _label, _hint in FORM_FIELDS:
             if not self.land_field(field, body):
                 return None
         if "name" not in body:

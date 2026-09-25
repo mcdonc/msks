@@ -39,6 +39,18 @@ class TuiData:
             ssl_ctx=shared_ssl(),
         )
 
+    async def images(self) -> list[dict]:
+        """GET the image catalog — the create form's image select
+        (the same listing ``msksc image ls`` prints)."""
+        return await api_call(
+            "GET",
+            env_url(),
+            env_token(),
+            "/api/v1/images",
+            transport=self.transport,
+            ssl_ctx=shared_ssl(),
+        )
+
     async def create(self, body: dict) -> tuple[dict, Path | None]:
         """POST one workspace (the create form's fields), the client
         mint for its identity — ``(row, private-half path)``."""
