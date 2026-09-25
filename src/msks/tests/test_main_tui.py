@@ -580,6 +580,33 @@ async def test_the_link_reconnects_after_a_drop() -> None:
     link.stop()
 
 
+async def test_a_healthy_drop_restarts_the_ladder_at_its_first_rung(
+    monkeypatch,
+) -> None:
+    """#319: the reset after a healthy connection used to fall
+    through to the ladder's cap (a negative index into the delay
+    tuple), so a drop after minutes of quiet waited the slowest
+    delay. The restart lands on the first rung."""
+    delays = (0.01, 0.02, 0.3)
+    seen: list[float] = []
+    real_backoff = link_mod.backoff
+
+    def spying_backoff(ds, attempt):
+        delay = real_backoff(ds, attempt)
+        seen.append(delay)
+        return delay
+
+    monkeypatch.setattr(link_mod, "backoff", spying_backoff)
+    factory = FakeFactory(
+        [FakeWS([], close_code=1011), FakeWS([], close_code=1011)]
+    )
+    link = DeciderLink(WS, ws_factory=factory, reconnect_delays=delays)
+    link.start()
+    await wait_for(lambda: len(factory.made) == 2)
+    link.stop()
+    assert seen and seen[0] == delays[0]  # the first rung, not the cap
+
+
 # -- the data seam ---------------------------------------------------------
 
 

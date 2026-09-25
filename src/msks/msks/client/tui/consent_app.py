@@ -249,10 +249,12 @@ class ModalShadow:
 
 
 def backoff(delays: tuple[float, ...], attempt: int) -> float:
-    """The reconnect delay for an attempt (capped at the last)."""
+    """The reconnect delay for an attempt: the ladder's first
+    delay at the reset (attempt 0) and below it, capped at the
+    last."""
     if not delays:
         return 0.0
-    return delays[min(attempt - 1, len(delays) - 1)]
+    return delays[min(max(attempt - 1, 0), len(delays) - 1)]
 
 
 class OneFlight:
