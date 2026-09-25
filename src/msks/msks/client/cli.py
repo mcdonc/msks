@@ -1426,14 +1426,24 @@ def passthrough_args(argv: list[str]) -> list[str]:
     return argv[1:] if argv[:1] == ["--"] else argv
 
 
+#: Whether the current parse reached a command body: the help
+# screens and the usage errors never do, and main()'s help gate
+# reads the difference (a token spelled like a help flag that a
+# command consumed as its value must not masquerade as one).
+body_reached = False
+
+
 def one_line_interrupts(fn):
     """A Ctrl-C during a long boot is one line, not a traceback (a
     raw-mode session never gets here — Ctrl-C reaches the guest):
     caught at the command body's edge, where typer's own
-    conversion (a bare exit 130) cannot swallow the line."""
+    conversion (a bare exit 130) cannot swallow the line. Marks
+    the body-reached flag on the way in."""
 
     @functools.wraps(fn)
     def wrapped(*args, **kwargs):
+        global body_reached
+        body_reached = True
         try:
             return fn(*args, **kwargs)
         except KeyboardInterrupt:
@@ -1470,7 +1480,9 @@ app.add_typer(secret_app, name="secret")
 def root(ctx: typer.Context) -> int:
     """A bare ``msks`` is the workspace tree TUI (#309)."""
     if ctx.invoked_subcommand is None:
-        return run_main_tui()
+        # The decorator's edge, same as every command: a Ctrl-C in
+        # the tree is one line, not typer's silent 130.
+        return one_line_interrupts(run_main_tui)()
     return 0
 
 
@@ -1650,10 +1662,11 @@ def create(
 
 def checked_key_type(key_type: str | None) -> None:
     """One local line for a key type outside the mint's set — the
-    identity module stays the single source of the choices."""
+    identity module stays the single source of the choices. A
+    usage refusal: one line, exit 2 (run_parsed maps it)."""
     if key_type is not None and key_type not in KEY_TYPES:
-        raise SystemExit(
-            f"msks: --key-type must be one of {', '.join(sorted(KEY_TYPES))}"
+        raise UsageError(
+            f"--key-type must be one of {', '.join(sorted(KEY_TYPES))}"
         )
 
 
@@ -1784,9 +1797,10 @@ def key(
 
 
 def checked_key_flags(as_private: bool, out: str | None) -> None:
-    """--private and --out are exclusive: one output shape."""
+    """--private and --out are exclusive: one output shape — a
+    usage refusal (one line, exit 2, run_parsed's mapping)."""
     if as_private and out is not None:
-        raise SystemExit("msks: --private and --out are exclusive")
+        raise UsageError("--private and --out are exclusive")
 
 
 @app.command("llm-token")
@@ -1881,7 +1895,7 @@ def egress_requests(
     decision: DecisionFilter | None = typer.Option(
         None,
         "--decision",
-        metavar="STATE",
+        metavar="DECISION",
         help="filter one lifecycle state (pending, allowed, denied, "
         "expired, or revoked)",
     ),
@@ -1908,7 +1922,7 @@ def egress_decide(
     duration: DurationChoice = typer.Option(
         DurationChoice.tilrestart,
         "--duration",
-        metavar="SPAN",
+        metavar="DURATION",
         help="how long enforcement honors the verdict (once, 5m, "
         "15m, tilrestart, or forever; default tilrestart)",
     ),
@@ -2000,7 +2014,7 @@ def egress_watch(
     duration: DurationChoice = typer.Option(
         DurationChoice.tilrestart,
         "--duration",
-        metavar="SPAN",
+        metavar="DURATION",
         help="the duration a --decide allow applies (once, 5m, 15m, "
         "tilrestart, or forever; default tilrestart)",
     ),
@@ -2249,6 +2263,12 @@ def run_parsed(argv: list[str] | None, transport) -> int:
     """One non-standalone pass through the typer app: the command's
     return value is the exit code (typer raises it as an Exit and
     click's non-standalone main hands it back)."""
+    # typer.main.get_command is the layer's own bridge (the public
+    # Typer.__call__ is standalone-only); the floor rides on it
+    # staying the shape every typer release exercises through
+    # Typer.__call__ itself.
+    global body_reached
+    body_reached = False  # per invocation, never across them
     command = typer.main.get_command(app)
     try:
         return command.main(
@@ -2264,13 +2284,21 @@ def run_parsed(argv: list[str] | None, transport) -> int:
         return 2
 
 
+def help_exit(code: int, tokens: list[str]) -> bool:
+    """Whether this run ends as the help screen's exit: a zero
+    code, no command body reached (a help-shaped token a command
+    swallowed as its value ran one — that is not a help exit), and
+    a help flag the scan reaches."""
+    return code == 0 and not body_reached and help_requested(tokens)
+
+
 def main(argv: list[str] | None = None, transport=None) -> int:
     """The ``msks`` entry point: parse with the typer app, run the
     command, return its exit code."""
+    tokens = sys.argv[1:] if argv is None else argv
     code = run_parsed(argv, transport)
-    if code == 0 and help_requested(argv or []):
-        # The --help screen exits through SystemExit(0), the shape
-        # the argparse era pinned.
+    if help_exit(code, tokens):
+        # SystemExit(0), the shape the argparse era pinned.
         raise SystemExit(0)
     return code or 0
 

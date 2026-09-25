@@ -3973,10 +3973,71 @@ def test_a_bare_msks_is_the_tree_tui(monkeypatch: pytest.MonkeyPatch) -> None:
     assert cli.main([]) == 9
 
 
-def test_bad_key_type_and_key_flag_conflicts_are_one_line() -> None:
-    """The two checked flag pairings keep their one-line refusals
-    under the typer layer."""
-    with pytest.raises(SystemExit, match="must be one of"):
-        cli.main(["create", "ws1", "--key-type", "bogus"])
-    with pytest.raises(SystemExit, match="exclusive"):
-        cli.main(["key", "ws1", "--private", "--out", "/tmp/k"])
+def test_flag_validation_refusals_exit_two(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The checked flag pairings are usage refusals: one ``msks:``
+    line on stderr and exit 2, the code the argparse-era
+    mutually-exclusive and choice errors set."""
+    assert cli.main(["create", "ws1", "--key-type", "bogus"]) == 2
+    assert "must be one of" in capsys.readouterr().err
+    assert cli.main(["key", "ws1", "--private", "--out", "/tmp/k"]) == 2
+    assert "exclusive" in capsys.readouterr().err
+
+
+def test_a_help_shaped_option_value_is_not_a_help_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A token spelled like a help flag that a command consumed as
+    its value ran a body: the run's own code returns — never the
+    help screen's SystemExit(0) on top of executed work."""
+    ran: list = []
+    monkeypatch.setattr(
+        cli,
+        "cmd_secret_mint",
+        lambda ws, name, dests, ttl, sf, transport=None: (
+            ran.append(name),
+            0,
+        )[1],
+    )
+    rc = cli.main(
+        [
+            "secret",
+            "mint",
+            "ws",
+            "--name",
+            "-h",
+            "--dest",
+            "h",
+            "--secret-file",
+            "f",
+        ]
+    )
+    assert rc == 0
+    assert ran == ["-h"]
+
+
+def test_a_bare_msks_interrupt_is_one_line(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The tree the bare ``msks`` launches answers a Ctrl-C with
+    the same one line every command prints (the callback's edge,
+    not typer's silent 130)."""
+
+    def interrupted() -> int:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "run_main_tui", interrupted)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main([])
+    assert excinfo.value.code == 130
+    assert "interrupted" in capsys.readouterr().err
+
+
+def test_help_requested_scans_up_to_the_separator() -> None:
+    """The help scan: a flag before the ``--`` separator counts,
+    everything after it is passthrough, and no flag is no help."""
+    assert cli.help_requested(["ls", "--help"])
+    assert cli.help_requested(["egress", "-h", "watch"])
+    assert cli.help_requested(["create", "--", "--help"]) is False
+    assert cli.help_requested(["egress"]) is False

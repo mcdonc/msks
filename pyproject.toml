@@ -48,8 +48,8 @@ dependencies = [
   # textual pin change cannot silently drop it.
   "rich>=13",
   # The command tree (#315): typer renders the help screens and
-  # carries the flags; the pinned floor is the envvar= era the
-  # client's option declarations target.
+  # carries the flags (the flag-pair options and the optional
+  # lists the declarations use date to the 0.12 line).
   "typer>=0.12",
 ]
 
