@@ -412,8 +412,12 @@ async def test_verdict_keys_without_a_focused_row() -> None:
 
 
 def test_backoff_and_refused_close() -> None:
+    # attempt 0 is the healthy-reset value: the ladder restarts at
+    # its first delay, not its cap (#319).
+    assert backoff((1.0, 2.0, 5.0), 0) == 1.0
     assert backoff((), 3) == 0.0
     assert backoff((1.0, 2.0, 5.0), 1) == 1.0
+    assert backoff((1.0, 2.0, 5.0), 2) == 2.0  # the climb skips no rung
     assert backoff((1.0, 2.0, 5.0), 9) == 5.0
     refused = websockets.ConnectionClosed(
         websockets.frames.Close(4401, "bad token"), None
