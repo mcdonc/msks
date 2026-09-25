@@ -38,7 +38,7 @@ from .consent_app import (
     shared_ssl,
 )
 from .data import TuiData
-from .link import REJECTED, DeciderLink
+from .link import CONNECTED, REJECTED, DeciderLink
 
 #: The full-terminal flows a page can ask for (#309).
 FLOW_CONSENT = "consent"
@@ -105,17 +105,22 @@ def granted_line(controller) -> str:
 def consent_line(link, row: dict) -> str:
     """The workspace page's consent status line (#309): the granted
     scope with its expiry, or the honest absence — the row's
-    recorded mode until the first rules frame lands, and the
-    connection state beside it."""
+    recorded mode until the first rules frame lands. The state is
+    named whenever it is not connected: a drop never implies that
+    silence is data (the controller keeps its last snapshot through
+    the backoff ladder, so the line says so beside it)."""
     if link.state == REJECTED:
         return f"egress consent: {link.reject_reason}"
     rules = link.controller.rules
     if rules is None:
         mode = row.get("egress_mode") or "-"
         return f"egress consent: mode {mode} · {link.state}"
-    return (
+    line = (
         f"egress consent: mode {rules.mode} · {granted_line(link.controller)}"
     )
+    if link.state != CONNECTED:
+        line += f" · {link.state}"
+    return line
 
 
 def pending_line(controller, request) -> str:
@@ -130,7 +135,7 @@ def pending_line(controller, request) -> str:
 def created_note(row: dict, path) -> str:
     """The create's flash: the created line, plus the private
     half's path when one was written."""
-    note = f"created {workspace_label(row)} (id {row['id']})"
+    note = f"created {escape(workspace_label(row))} (id {row['id']})"
     if path is not None:
         note += f" · identity {path}"
     return note
@@ -259,7 +264,14 @@ def run_main_tui(open_ref: str | None = None, data=None) -> int:
         action = follow.take()
         if action is None:
             return 0
-        run_follow_up(action)
+        try:
+            run_follow_up(action)
+        except SystemExit:
+            # The flow refused (its one-line error printed on the
+            # plain terminal it owned): the tree still returns
+            # where it left off — its listing tells the current
+            # story. Real exceptions (bugs) still surface.
+            pass
 
 
 class MsksTuiApp(App):
@@ -834,8 +846,9 @@ INT_FIELDS = frozenset({"cpus", "mem_mib", "root_mib", "home_mib"})
 
 def whole_number(value: str) -> bool:
     """Whether a form value is a whole number (the sizes and counts
-    ride the wire as ints)."""
-    return value.isdigit()
+    ride the wire as ints; ASCII digits only — int() refuses some
+    unicode digits isdigit() accepts, and a paste can carry them)."""
+    return value.isascii() and value.isdigit()
 
 
 class CreateScreen(ModalScreen[dict | None]):

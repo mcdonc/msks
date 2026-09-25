@@ -124,7 +124,7 @@ opens the workspace's page).
 The **workspace page** carries the per-workspace loop: a status
 line for egress consent (the mode, the granted scope with its
 expiry, or "no active consent"), the pending holds highlighted at
-the top — Enter on one opens the consent decider screen — and the
+the top — Enter on one opens the consent decider — and the
 page's actions: open a shell, egress consent, start, stop, and
 remint the workspace's LLM token. A workspace in `interactive`
 mode holds new flows while the page is open: the page registers
@@ -138,7 +138,8 @@ workspace page, its consent state current.
 
 Every screen walks with the arrow keys alone: lists move with
 up/down, the create form's fields move with up/down between them,
-and Escape always returns one level. The TUI speaks the same REST
+and Escape leaves the screen it is on — at the workspaces list,
+that is the tree itself quitting. The TUI speaks the same REST
 surface the `msksc` commands speak (`MSKSC_URL`, `MSKSC_TOKEN`,
 `MSKSC_CAFILE`) and reads no daemon state directly.
 

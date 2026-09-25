@@ -105,12 +105,13 @@ class DeciderLink:
 
     async def serve(self, ws) -> tuple[bool, bool, bool]:
         """Register, then feed every frame to the controller; a
-        clean close or any error reconnects, an auth refusal
-        retries slowly, a rejected registration ends the loop."""
+        clean close, a close at the registration send, or any error
+        reconnects; an auth refusal retries slowly, a rejected
+        registration ends the loop."""
         self.state = CONNECTED
-        await ws.send(registration_frame(self.workspace_id))
-        self.controller.reset()
         try:
+            await ws.send(registration_frame(self.workspace_id))
+            self.controller.reset()
             async for raw in ws:
                 if self.land_frame(raw):
                     return True, False, True

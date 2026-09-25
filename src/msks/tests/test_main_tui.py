@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+import websockets
 from msks.client import cli
 from msks.client.tui import data as data_mod
 from msks.client.tui import link as link_mod
@@ -1007,3 +1008,74 @@ async def test_a_resolved_hold_leaves_no_stale_row(monkeypatch) -> None:
         page.repaint_pending(page.actions_widget(), [ghost])
         await pilot.pause()
         assert "gone.example" not in action_text(app, 0)
+
+
+# -- the review fixes -------------------------------------------------------
+
+
+async def test_a_close_at_the_registration_send_reconnects() -> None:
+    """A connection the daemon closes at the registration send (a
+    restart, a revoked token) takes the backoff ladder, not a dead
+    link — the send lives inside the serve loop's guarded span."""
+
+    class ClosedAtSend(FakeWS):
+        async def send(self, text: str) -> None:
+            raise websockets.ConnectionClosed(
+                websockets.frames.Close(1006, "gone"), None
+            )
+
+    factory = FakeFactory([ClosedAtSend([]), FakeWS([rules_frame()])])
+    link = DeciderLink(WS, ws_factory=factory, reconnect_delays=(0.01,))
+    link.start()
+    await wait_for(lambda: link.controller.rules is not None)
+    assert len(factory.made) == 2  # the drop reconnected
+    assert link.state == link_mod.CONNECTED
+    link.stop()
+
+
+async def test_the_consent_line_names_a_drop_after_rules() -> None:
+    """Once the rules have landed, a dropped connection still shows
+    beside the stale snapshot — silence never reads as data."""
+    link = DeciderLink(WS)
+    link.controller.apply_frame(rules_frame())
+    link.state = link_mod.RECONNECTING
+    line = main_app.consent_line(link, row())
+    assert "mode interactive" in line
+    assert "api.example:443" in line
+    assert "reconnecting" in line
+    link.state = link_mod.CONNECTED
+    assert "connected" not in main_app.consent_line(link, row())
+
+
+def test_whole_number_refuses_unicode_digits() -> None:
+    """A pasted ④ passes isdigit but crashes int — the local check
+    refuses what the conversion cannot take."""
+    assert main_app.whole_number("4096")
+    assert not main_app.whole_number("④")
+    assert not main_app.whole_number("-1")
+
+
+def test_a_refused_flow_returns_to_the_tree(monkeypatch) -> None:
+    """A flow that refuses with the CLI's one-line SystemExit (a
+    console shell that cannot reach the daemon) hands the terminal
+    back to the tree instead of ending the session."""
+    runs: list[int] = []
+
+    class FakeApp:
+        def __init__(self, follow, data=None):
+            self.follow = follow
+
+        def run(self):
+            runs.append(1)
+            if len(runs) == 1:
+                self.follow.request(FLOW_SHELL, "ws-9")
+
+    def refused(workspace_id: str) -> None:
+        raise SystemExit("msks: cannot reach the daemon")
+
+    monkeypatch.setattr(main_app, "MsksTuiApp", FakeApp)
+    monkeypatch.setattr(
+        main_app, "FLOWS", {FLOW_SHELL: refused, FLOW_CONSENT: refused}
+    )
+    assert main_app.run_main_tui(data=object()) == 0
+    assert len(runs) == 2  # the tree restarted after the refusal
