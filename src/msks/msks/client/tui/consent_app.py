@@ -286,6 +286,7 @@ class OneFlight:
         self._task = asyncio.create_task(self._flight())
 
     async def _flight(self) -> None:
+        rearm = False
         try:
             while self._alive():
                 self.pending = False
@@ -293,12 +294,29 @@ class OneFlight:
                 if not self.pending:
                     return
         except Exception:
-            # Teardown unmounts the tree under a mid-swap flight;
-            # that is not a bug worth a traceback after exit.
-            if self._alive():
-                logger.exception("%s rebuild failed", self._label)
+            rearm = self.died_mid_flight()
         finally:
             self.scheduled = False
+            if rearm:
+                # Clear the in-air flag first so request() arms a
+                # real flight; this block takes no await, so a
+                # concurrent request cannot interleave (#322).
+                self.pending = False
+                self.request()
+
+    def died_mid_flight(self) -> bool:
+        """A rebuild died mid-flight: log it on a live owner (teardown
+        unmounts the tree under a mid-swap flight — not a bug worth
+        a traceback after exit), and say whether a request armed
+        while the flight was dying must be carried: the loop honors
+        ``pending`` only after a successful rebuild, and the events
+        screen has no per-tick re-request to recover the loss (an
+        unchanged log takes no rebuild) — a dropped request would
+        leave its rows unmounted until the next frame landed."""
+        if self._alive():
+            logger.exception("%s rebuild failed", self._label)
+            return self.pending
+        return False
 
 
 def focused_event_id(rows: ListView | None) -> int | None:
