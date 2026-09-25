@@ -3835,3 +3835,33 @@ def test_egress_mode_rejects_an_unknown_mode(monkeypatch) -> None:
     client_env(monkeypatch)
     with pytest.raises(SystemExit, match="mode must be one of"):
         asyncio.run(egress_mod.run_mode("ws1", "permissive", None))
+
+
+def test_create_with_start_builds_one_tls_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The create and its boot share one TLS context: the
+    unverified-mode warning prints once per invocation, not once
+    per client (#309's split of the two exchanges)."""
+    import ssl as ssl_mod
+
+    client_env(monkeypatch)
+    built: list[int] = []
+
+    def counting_context() -> ssl_mod.SSLContext:
+        built.append(1)
+        return ssl_mod.create_default_context()
+
+    async def fake_request(client, method: str, path: str, json_body=None):
+        if path.endswith("/start"):
+            return {"id": "ws1", "status": "running"}
+        if path.endswith("/ssh-key"):
+            return {"public_key": "k c", "private_key": None}
+        return {"id": "ws1", "status": "created"}
+
+    monkeypatch.setattr(cli, "ssl_context", counting_context)
+    monkeypatch.setattr(cli, "request", fake_request)
+    monkeypatch.setattr(create, "request", fake_request)
+    rc = cli.cmd_create({"id": "ws1"}, start=True)
+    assert rc == 0
+    assert built == [1]

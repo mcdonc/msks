@@ -120,6 +120,10 @@ class DeciderLink:
         except Exception:
             self.state = RECONNECTING
             return True, False, False
+        # The iterator ended on its own: a clean close (1000/1001 —
+        # websockets exits the async-for normally on OK codes, it
+        # does not raise), a restarting daemon among them.
+        self.state = RECONNECTING
         return True, False, False
 
     def land_frame(self, raw: str) -> bool:

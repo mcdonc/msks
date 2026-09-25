@@ -43,6 +43,7 @@ from .rest import (
     env_token,
     env_url,
     request,
+    ssl_context,
     upload,
 )
 from .rest import (
@@ -207,11 +208,15 @@ async def create_workspace(
     nothing is written client-side: the private half stays wherever
     the operator keeps it.
     """
+    # One TLS context serves the create and the boot (an unverified
+    # daemon warns once per context — the pair must not warn twice).
+    ssl_ctx = None if transport is not None else ssl_context()
     row, path = await create_workspace_core(
         url,
         token,
         body,
         transport,
+        ssl_ctx=ssl_ctx,
         key_type=key_type,
         pubkey=pubkey,
         announce=print_created_line,
@@ -220,7 +225,7 @@ async def create_workspace(
         print(f"client identity (mode 0600): {path}")
     if not start:
         return row
-    await boot_created(url, token, row, transport)
+    await boot_created(url, token, row, transport, ssl_ctx)
     return row
 
 
@@ -232,12 +237,13 @@ def print_created_line(row: dict) -> None:
     print(created_line(row))
 
 
-async def boot_created(url, token, row: dict, transport) -> None:
+async def boot_created(url, token, row: dict, transport, ssl_ctx=None) -> None:
     """Boot the freshly created row, with the recovery hint on a
     failed start (the workspace exists; the hint names the command
-    that reaches it later)."""
+    that reaches it later); the caller's TLS context rides along,
+    keeping the unverified-mode warning to the pair's one print."""
     try:
-        async with api_client(url, token, transport) as client:
+        async with api_client(url, token, transport, ssl_ctx) as client:
             await request(
                 client, "POST", f"/api/v1/workspaces/{row['id']}/start"
             )

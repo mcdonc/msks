@@ -16,6 +16,7 @@ leaves the screen it is on — no screen traps focus.
 """
 
 import asyncio
+import sys
 import time
 
 from rich.markup import escape
@@ -29,6 +30,7 @@ from textual.widgets import Button, Footer, Input, ListItem, ListView, Static
 from ..console import run_workspace_shell
 from ..rest import env_token, env_url
 from .consent_app import (
+    FLASH_TTL,
     ConfirmScreen,
     ConsentDeciderApp,
     OneFlight,
@@ -48,8 +50,15 @@ FLOW_SHELL = "shell"
 #: "… (+N more)" cap.
 GRANT_CAP = 3
 
-#: How long a flashed message owns the status lines.
-FLASH_TTL = 5.0
+
+def require_terminal() -> None:
+    """The tree owns the terminal; a pipe on either side cannot host
+    it (the console command's own guard, with this command's
+    name)."""
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        raise SystemExit(
+            "msks: the TUI needs an interactive tty on stdin and stdout"
+        )
 
 
 def workspace_label(row: dict) -> str:
@@ -110,7 +119,7 @@ def consent_line(link, row: dict) -> str:
     silence is data (the controller keeps its last snapshot through
     the backoff ladder, so the line says so beside it)."""
     if link.state == REJECTED:
-        return f"egress consent: {link.reject_reason}"
+        return f"egress consent: {escape(link.reject_reason)}"
     rules = link.controller.rules
     if rules is None:
         mode = row.get("egress_mode") or "-"
@@ -144,11 +153,14 @@ def created_note(row: dict, path) -> str:
 async def guarded_flash(app, label: str, work):
     """Await one screen action, flashing the failure instead of
     tearing the TUI down (SystemExit included — the REST seam's
-    error surface, the daemon's named refusal among them)."""
+    error surface, the daemon's named refusal among them). The
+    refusal text is escaped: the daemon echoes operator-typed
+    references back, and a free-text image ref carrying rich
+    markup would otherwise crash the screen."""
     try:
         return await work
     except (Exception, SystemExit) as exc:
-        app.flash(f"{label} failed: {exc}")
+        app.flash(f"{label} failed: {escape(str(exc))}")
         return None
 
 
@@ -201,6 +213,7 @@ class TuiFollow:
     def __init__(self) -> None:
         self.action: tuple[str, str] | None = None
         self.reopen: str | None = None
+        self.seed: str | None = None
 
     def request(self, kind: str, workspace_id: str) -> None:
         """Record one flow to run after the TUI exits."""
@@ -254,6 +267,7 @@ def run_main_tui(open_ref: str | None = None, data=None) -> int:
     operator's quit.
     """
     if data is None:
+        require_terminal()
         env_url()
         env_token()
         shared_ssl()
@@ -266,12 +280,13 @@ def run_main_tui(open_ref: str | None = None, data=None) -> int:
             return 0
         try:
             run_follow_up(action)
-        except SystemExit:
-            # The flow refused (its one-line error printed on the
-            # plain terminal it owned): the tree still returns
-            # where it left off — its listing tells the current
-            # story. Real exceptions (bugs) still surface.
-            pass
+        except SystemExit as exc:
+            # The flow refused: its one-line reason rides the
+            # follow queue as the restarted tree's first flash (a
+            # SystemExit prints nowhere until the interpreter's
+            # top level, which the restart would eat). Real
+            # exceptions (bugs) still surface.
+            follow.seed = str(exc)
 
 
 class MsksTuiApp(App):
@@ -322,6 +337,13 @@ class MsksTuiApp(App):
 
     def on_mount(self) -> None:
         self.title = "msks"
+        if self.follow.seed is not None:
+            # A refused flow's one-line refusal, carried from the
+            # plain terminal the flow owned (a SystemExit prints
+            # nowhere until the interpreter's top level — which the
+            # tree's restart would otherwise eat).
+            self.flash(self.follow.seed)
+            self.follow.seed = None
         if self.follow.reopen is not None:
             self.run_worker(self.push_remembered, exclusive=True)
 
@@ -336,7 +358,10 @@ class MsksTuiApp(App):
             return
         for row in rows:
             if ref in (row["id"], row.get("name")):
-                self.push_screen(WorkspaceScreen(row))
+                # The operator may have opened a page by hand while
+                # this worker fetched — never stack a second one.
+                if isinstance(self.screen, MainScreen):
+                    self.push_screen(WorkspaceScreen(row))
                 return
 
 
@@ -393,7 +418,7 @@ class MainScreen(Screen):
         try:
             rows = await self.app.data.workspaces()
         except (Exception, SystemExit) as exc:
-            self.app.flash(f"listing failed: {exc}")
+            self.app.flash(f"listing failed: {escape(str(exc))}")
             return
         await self.rebuild_rows(rows)
 
@@ -497,7 +522,7 @@ class MainScreen(Screen):
         call = self.app.data.start if verb == "start" else self.app.data.stop
         reply = await guarded_flash(self.app, verb, call(row["id"]))
         if reply is not None:
-            self.app.flash(f"{workspace_label(row)} {reply['status']}")
+            self.app.flash(f"{escape(workspace_label(row))} {reply['status']}")
             self.refresh_rows()
 
     def action_remove(self) -> None:
@@ -525,7 +550,7 @@ class MainScreen(Screen):
                 self.app, "remove", self.app.data.remove(row["id"])
             )
             if reply is not None:
-                self.app.flash(f"{workspace_label(row)} deleted")
+                self.app.flash(f"{escape(workspace_label(row))} deleted")
                 self.refresh_rows()
 
         return answered
@@ -809,7 +834,9 @@ class WorkspaceScreen(Screen):
         if reply is not None:
             self.row["status"] = reply["status"]
             self.paint_header()
-            self.app.flash(f"{workspace_label(self.row)} {reply['status']}")
+            self.app.flash(
+                f"{escape(workspace_label(self.row))} {reply['status']}"
+            )
 
     async def remint_token(self) -> None:
         """Remint the workspace's LLM proxy credential (#259); the
@@ -820,7 +847,7 @@ class WorkspaceScreen(Screen):
             self.app.data.remint_llm_token(self.row["id"]),
         )
         if token is not None:
-            self.app.flash(f"new LLM token: {token}")
+            self.app.flash(f"new LLM token: {escape(token)}")
 
     def action_back(self) -> None:
         """Return to the workspaces list; the page stops deciding
@@ -838,6 +865,7 @@ FORM_FIELDS = (
     ("mem_mib", "memory MiB (default 8192)"),
     ("root_mib", "root size MiB"),
     ("home_mib", "home size MiB"),
+    ("user", "login user — the account it seeds (default: yours)"),
 )
 
 #: The fields whose values must be whole numbers.

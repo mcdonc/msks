@@ -10,6 +10,7 @@ tests.
 import asyncio
 import json
 import stat
+import sys
 import time
 from types import SimpleNamespace
 
@@ -93,6 +94,7 @@ class FakeData:
         self.fail: set[str] = set()
         self.fetches = 0
         self.token = "tok-fresh"
+        self.refusal = "daemon away"
 
     async def workspaces(self) -> list[dict]:
         self.fetches += 1
@@ -103,7 +105,7 @@ class FakeData:
     async def create(self, body: dict):
         self.calls.append(("create", body))
         if "create" in self.fail:
-            raise RuntimeError("daemon away")
+            raise RuntimeError(self.refusal)
         fresh = dict(row(id="new1", name=body.get("name"), status="created"))
         self.rows.append(fresh)
         return (dict(fresh), None)
@@ -128,7 +130,7 @@ class FakeData:
     def reply(self, verb: str, value):
         """The scripted reply; the named refusal when the verb fails."""
         if verb in self.fail:
-            raise RuntimeError("daemon away")
+            raise RuntimeError(self.refusal)
         return value
 
 
@@ -487,6 +489,7 @@ def test_run_main_tui_chains_the_flows(monkeypatch) -> None:
 def test_run_main_tui_fails_cleanly_without_a_token(
     monkeypatch, capsys
 ) -> None:
+    monkeypatch.setattr(main_app, "require_terminal", lambda: None)
     monkeypatch.delenv("MSKSC_TOKEN", raising=False)
     with pytest.raises(SystemExit, match="MSKSC_TOKEN"):
         main_app.run_main_tui()
@@ -755,6 +758,7 @@ def test_run_main_tui_pre_flights_the_env(monkeypatch) -> None:
         def run(self):
             return None
 
+    monkeypatch.setattr(main_app, "require_terminal", lambda: None)
     monkeypatch.setenv("MSKSC_URL", "https://api.test")
     monkeypatch.setenv("MSKSC_TOKEN", "tok")
     monkeypatch.setattr(main_app, "shared_ssl", lambda: None)
@@ -1079,3 +1083,150 @@ def test_a_refused_flow_returns_to_the_tree(monkeypatch) -> None:
     )
     assert main_app.run_main_tui(data=object()) == 0
     assert len(runs) == 2  # the tree restarted after the refusal
+
+
+# -- the second review's fixes ----------------------------------------------
+
+
+async def test_a_clean_close_names_itself_and_reconnects() -> None:
+    """websockets exits the async-for normally on an OK close (a
+    restarting daemon): the link takes the ladder, and the state
+    names the window instead of reading connected on a dead
+    socket."""
+
+    class CleanClose(FakeWS):
+        async def __anext__(self) -> str:
+            if self.frames:
+                return self.frames.pop(0)
+            raise StopAsyncIteration
+
+    factory = FakeFactory([CleanClose([rules_frame()]), FakeWS([])])
+    link = DeciderLink(WS, ws_factory=factory, reconnect_delays=(0.3,))
+    link.start()
+    await wait_for(lambda: link.state == link_mod.RECONNECTING)
+    await wait_for(lambda: len(factory.made) == 2)
+    link.stop()
+
+
+def test_a_refused_flow_seeds_the_restarted_tree(monkeypatch) -> None:
+    """The refusal line rides the follow queue: the restarted tree
+    flashes it (a SystemExit prints nowhere until the interpreter's
+    top level, which the restart would eat)."""
+    runs: list[str | None] = []
+
+    class FakeApp:
+        def __init__(self, follow, data=None):
+            self.follow = follow
+
+        def run(self):
+            runs.append(self.follow.seed)
+            if len(runs) == 1:
+                self.follow.request(FLOW_SHELL, "ws-9")
+
+    def refused(workspace_id: str) -> None:
+        raise SystemExit("msks: cannot reach the daemon")
+
+    monkeypatch.setattr(main_app, "MsksTuiApp", FakeApp)
+    monkeypatch.setattr(
+        main_app, "FLOWS", {FLOW_SHELL: refused, FLOW_CONSENT: refused}
+    )
+    assert main_app.run_main_tui(data=object()) == 0
+    assert runs == [None, "msks: cannot reach the daemon"]
+
+
+async def test_the_tree_flashes_a_seeded_refusal(monkeypatch) -> None:
+    follow = TuiFollow()
+    follow.seed = "msks: cannot reach the daemon"
+    app = MsksTuiApp(follow, data=FakeData([]))
+    async with app.run_test() as pilot:
+        await wait_for(lambda: "cannot reach" in status_text(app))
+        assert follow.seed is None  # shown once, then spent
+        await pilot.pause()
+
+
+async def test_a_free_text_refusal_never_crashes_the_screen(
+    monkeypatch,
+) -> None:
+    """The daemon echoes the typed image ref back in its 404 — a
+    stray rich markup bracket in it must flash literally, not crash
+    the tree."""
+    scripted_link(monkeypatch, [])
+    data = FakeData([])
+    data.fail.add("create")
+    data.refusal = "no such image: debian-12[/][/]"
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("c")
+        await wait_for(lambda: type(app.screen).__name__ == "CreateScreen")
+        screen = app.screen
+        screen.query_one("#field-name", Input).value = "brand-new"
+        screen.query_one("#field-image", Input).value = "debian-12[/][/]"
+        screen.submit()
+        await wait_for(lambda: "create failed" in status_text(app))
+        # Rendered literally (rich's escape form in the raw content,
+        # the brackets on screen) — no MarkupError, no dead tree.
+        assert "no such image: debian-12" in status_text(app)
+        await pilot.pause()
+
+
+async def test_the_form_sets_the_login_user(monkeypatch) -> None:
+    """The user field rides the body; blank keeps the invoking
+    default (the host whose own name cannot seed a guest account
+    can still create from the TUI)."""
+    scripted_link(monkeypatch, [])
+    data = FakeData([])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("c")
+        await wait_for(lambda: type(app.screen).__name__ == "CreateScreen")
+        screen = app.screen
+        screen.query_one("#field-name", Input).value = "brand-new"
+        screen.query_one("#field-user", Input).value = "ops"
+        screen.submit()
+        await wait_for(lambda: data.calls and data.calls[0][0] == "create")
+        assert data.calls[0][1]["user"] == "ops"
+
+
+def test_the_tui_needs_a_terminal(monkeypatch) -> None:
+    """A pipe on either side cannot host the tree — the one-line
+    refusal, before any screen draws; a tty on both sides passes
+    quietly."""
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    with pytest.raises(SystemExit, match="interactive tty"):
+        main_app.run_main_tui()
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    main_app.require_terminal()
+
+
+async def test_a_reopen_never_stacks_a_second_page(monkeypatch) -> None:
+    """The operator opening a page by hand while the reopen worker
+    fetches wins: the worker's answer arrives to a page already
+    open, and it stacks nothing."""
+    scripted_link(monkeypatch, [])
+
+    class GatedData(FakeData):
+        def __init__(self, rows):
+            super().__init__(rows)
+            self.gate = asyncio.Event()
+
+        async def workspaces(self):
+            await self.gate.wait()
+            return await super().workspaces()
+
+    data = GatedData([row()])
+    follow = TuiFollow()
+    follow.reopen = "alpha"
+    app = MsksTuiApp(follow, data=data)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceScreen(data.rows[0]))
+        await wait_for(lambda: on_page(app))
+        data.gate.set()  # the reopen answer lands on an open page
+        await pilot.pause()
+        await pilot.pause()
+        pages = [
+            screen
+            for screen in app.screen_stack
+            if isinstance(screen, WorkspaceScreen)
+        ]
+        assert len(pages) == 1

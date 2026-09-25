@@ -118,8 +118,8 @@ workspace tree (`msks tui` names the same command, and `msks tui
 my-workspace` opens that workspace's page directly). The tree is
 rooted at the **workspaces list**: every workspace one row, with
 creating, starting, stopping, and removing on its keys (`c` new,
-`s` start, `x` stop, `D` remove — asked and confirmed — and Enter
-opens the workspace's page).
+`s` start, `x` stop, `D` remove — asked and confirmed — `r`
+refresh, and Enter opens the workspace's page).
 
 The **workspace page** carries the per-workspace loop: a status
 line for egress consent (the mode, the granted scope with its
@@ -138,8 +138,8 @@ workspace page, its consent state current.
 
 Every screen walks with the arrow keys alone: lists move with
 up/down, the create form's fields move with up/down between them,
-and Escape leaves the screen it is on — at the workspaces list,
-that is the tree itself quitting. The TUI speaks the same REST
+and Escape leaves the screen it is on (`q` backs out of a page;
+at the workspaces list, Escape is the tree itself quitting). The TUI speaks the same REST
 surface the `msksc` commands speak (`MSKSC_URL`, `MSKSC_TOKEN`,
 `MSKSC_CAFILE`) and reads no daemon state directly.
 
