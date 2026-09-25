@@ -47,6 +47,10 @@ dependencies = [
   # path — the dependency is msks's own, declared here so a
   # textual pin change cannot silently drop it.
   "rich>=13",
+  # The command tree (#315): typer renders the help screens and
+  # carries the flags (the flag-pair options and the optional
+  # lists the declarations use date to the 0.12 line).
+  "typer>=0.12",
 ]
 
 [dependency-groups]

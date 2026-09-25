@@ -36,6 +36,11 @@
   # path — nixpkgs' own rich serves the closure (the pyproject
   # floor is >=13; test_pkg_mirror.py keeps the name set honest).
   rich,
+  # The client's command tree (#315): the typer app renders the
+  # help screens and parses the flags (nixpkgs' own typer; the
+  # vendored-click import in cli falls back to the plain click
+  # when a typer without one serves the closure).
+  typer,
   # The NFQUEUE binding (#69), built from the sdist against
   # nixpkgs' libnetfilter_queue (nix/netfilterqueue-pkg.nix).
   netfilterqueue,
@@ -89,6 +94,7 @@ buildPythonPackage {
     mitmproxy
     textual
     rich
+    typer
     netfilterqueue
     litellm
   ];

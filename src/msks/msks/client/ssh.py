@@ -304,13 +304,13 @@ def known_hosts_path(
 
 
 def passthrough_args(args: list[str]) -> list[str]:
-    """The ssh arguments to pass through, verbatim.
+    """The ssh arguments to hand through, as a plain list.
 
-    argparse's REMAINDER keeps everything after the workspace id as
-    it was typed — the ``--`` between msks and its passthrough was
-    argparse's separator, already eaten — so an ssh-style ``--`` a
-    second time reaches ssh untouched (it is the options/command
-    split :func:`split_command` reads).
+    The CLI's parse already dropped one ``--`` separator
+    (:func:`msks.client.cli.passthrough_args` — the module shares
+    the name and the job), so an ssh-style ``--`` a second time
+    reaches ssh untouched: it is the options/command split
+    :func:`split_command` reads.
     """
     return list(args)
 

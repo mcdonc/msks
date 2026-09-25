@@ -1549,15 +1549,13 @@ def test_run_workspace_ssh_skips_the_wait_when_no_probe_exists(
 # --- CLI wiring ---
 
 
-def test_cli_parses_the_ssh_passthrough() -> None:
-    args = cli.build_parser().parse_args(["ssh", "alpha", "--", "-l", "root"])
-    assert args.workspace_id == "alpha"
-    assert args.passthrough == ["-l", "root"]  # argparse eats the --
-
-
-def test_cli_dispatch_reaches_the_ssh_body(
+def test_cli_parses_the_ssh_passthrough(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Both spellings reach the body with the same verbatim list:
+    the ``--`` separator drops, and options typed right after the
+    workspace id travel untouched (argparse's REMAINDER shape,
+    typer's interspersed-off parse — #315)."""
     calls: list = []
     monkeypatch.setattr(
         cli,
@@ -1567,9 +1565,9 @@ def test_cli_dispatch_reaches_the_ssh_body(
             5,
         )[1],
     )
-    args = cli.build_parser().parse_args(["ssh", "alpha", "-A"])
-    assert cli.dispatch(args) == 5
-    assert calls == [("alpha", ["-A"])]
+    assert cli.main(["ssh", "alpha", "--", "-l", "root"]) == 5
+    assert cli.main(["ssh", "alpha", "-A"]) == 5
+    assert calls == [("alpha", ["-l", "root"]), ("alpha", ["-A"])]
 
 
 def test_wait_for_identity_surfaces_distinct_probe_stderr(

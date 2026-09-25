@@ -5,11 +5,11 @@ path, POST body, output shape, one-line errors); the ASGI tests run
 the same ``api_call`` seam against the real daemon surface.
 """
 
-import argparse
 import asyncio
 import io
 import json
 import os
+import re
 import ssl
 import sys
 import time
@@ -603,6 +603,18 @@ def test_cmd_create_client_mint_with_start_boots_after_verification(
     assert "msks console ws1" in out
 
 
+#: The ANSI styling typer's rich help carries when the host forces
+#: color (CI does): pins read the words, not the style.
+ANSI_STYLES = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def help_flat(out: str) -> str:
+    """Help text as one whitespace-normalized line: styling,
+    panel borders, and the measured wrapping (#315) all drop."""
+    plain = ANSI_STYLES.sub(" ", out).replace("\u2502", " ")
+    return " ".join(plain.split())
+
+
 SUPPLIED_PUBKEY = "ssh-ed25519 AAAAc3NzaC1lZDI1 operator@laptop"
 
 
@@ -611,8 +623,7 @@ def test_create_identity_modes() -> None:
     operator key) resolve to (key type, supplied line), and the
     flag pairings that would look meaningful but are not are
     rejected with the conflict named."""
-    parser = cli.build_parser()
-    plain = parser.parse_args(["create", "ws1"])
+    plain = cli.CreateFlags(workspace_id="ws1")
     assert cli.create_identity(plain) == ("ed25519", None)
     # The client and daemon mints share one default — the CLI help,
     # docs/cli.md, and the #121 changelog entry all say "the same
@@ -620,16 +631,16 @@ def test_create_identity_modes() -> None:
     # a one-sided change fails here instead of silently falsifying
     # that prose (#138's split-default hazard).
     assert cli.create_identity(plain) == (VmmSettings().ssh_key_type, None)
-    typed = parser.parse_args(["create", "ws1", "--key-type", "rsa"])
+    typed = cli.CreateFlags(workspace_id="ws1", key_type="rsa")
     assert cli.create_identity(typed) == ("rsa", None)
-    daemon = parser.parse_args(["create", "ws1", "--daemon-mint"])
+    daemon = cli.CreateFlags(workspace_id="ws1", daemon_mint=True)
     assert cli.create_identity(daemon) == (None, None)
     with pytest.raises(
         SystemExit, match="--key-type conflicts with --daemon-mint"
     ):
         cli.create_identity(
-            parser.parse_args(
-                ["create", "ws1", "--daemon-mint", "--key-type", "rsa"]
+            cli.CreateFlags(
+                workspace_id="ws1", daemon_mint=True, key_type="rsa"
             )
         )
 
@@ -637,23 +648,24 @@ def test_create_identity_modes() -> None:
 def test_create_identity_pubkey_mode(tmp_path: Path) -> None:
     """--pubkey FILE resolves to (None, line) — no mint — and every
     conflicting pairing is rejected before anything runs."""
-    parser = cli.build_parser()
     source = tmp_path / "id.pub"
     source.write_text(f"{SUPPLIED_PUBKEY}\n")
-    args = parser.parse_args(["create", "ws1", "--pubkey", str(source)])
+    args = cli.CreateFlags(workspace_id="ws1", pubkey=str(source))
     assert cli.create_identity(args) == (None, SUPPLIED_PUBKEY)
     with pytest.raises(
         SystemExit, match="--pubkey conflicts with --daemon-mint"
     ):
         cli.create_identity(
-            parser.parse_args(
-                ["create", "ws1", "--pubkey", str(source), "--daemon-mint"]
+            cli.CreateFlags(
+                workspace_id="ws1", pubkey=str(source), daemon_mint=True
             )
         )
     with pytest.raises(SystemExit, match="--key-type needs the client mint"):
         cli.create_identity(
-            parser.parse_args(
-                ["create", "ws1", "--pubkey", str(source), "--key-type", "rsa"]
+            cli.CreateFlags(
+                workspace_id="ws1",
+                pubkey=str(source),
+                key_type="rsa",
             )
         )
     # An explicit empty value still counts as supplied: it conflicts
@@ -662,9 +674,7 @@ def test_create_identity_pubkey_mode(tmp_path: Path) -> None:
         SystemExit, match="--pubkey conflicts with --daemon-mint"
     ):
         cli.create_identity(
-            parser.parse_args(
-                ["create", "ws1", "--pubkey", "", "--daemon-mint"]
-            )
+            cli.CreateFlags(workspace_id="ws1", pubkey="", daemon_mint=True)
         )
 
 
@@ -1481,14 +1491,13 @@ def test_main_interrupt_is_one_line(
 def test_create_body_egress_flags() -> None:
     """--egress/--no-egress override the create body; unset sends the
     daemon's default (egress on, #52)."""
-    parser = cli.build_parser()
 
-    def body(argv: list[str]) -> dict:
-        return cli.create_body(parser.parse_args(argv))
+    def body(**overrides) -> dict:
+        return cli.create_body(cli.CreateFlags(workspace_id="ws", **overrides))
 
-    assert "egress" not in body(["create", "ws"])
-    assert body(["create", "ws", "--egress"])["egress"] is True
-    assert body(["create", "ws", "--no-egress"])["egress"] is False
+    assert "egress" not in body()
+    assert body(egress=True)["egress"] is True
+    assert body(egress=False)["egress"] is False
 
 
 # --- The image catalog commands (#65) ---
@@ -1669,26 +1678,30 @@ def test_image_import_help_states_the_daemon_reads_the_path(
     with pytest.raises(SystemExit) as excinfo:
         cli.main(["image", "import", "--help"])
     assert excinfo.value.code == 0
-    out = capsys.readouterr().out
-    assert "read by the daemon" in out
-    assert "not uploaded" in out
+    flat = help_flat(capsys.readouterr().out)
+    assert "read by the daemon, not uploaded" in flat
 
 
 def test_help_folds_long_tokens_instead_of_cutting_them(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """#271: a help string longer than its column folds at the
-    column edge and keeps every character (argparse's own
-    break-long-words posture) — a long path never ends in an
-    ellipsis cut."""
-    monkeypatch.setenv("COLUMNS", "80")
+    """#271's guarantee under typer's rich help (#315): a long
+    token folds at the column edge and keeps every character — no
+    ellipsis cut. Typer's panel layout owns the geometry (its
+    option columns take their measure first), so the pin runs at
+    a width where the help column fits the longest token; at
+    narrower widths typer crops, which #271's listings (the other
+    render path) never do."""
+    monkeypatch.setenv("COLUMNS", "100")
     with pytest.raises(SystemExit) as excinfo:
         cli.main(["create", "--help"])
     assert excinfo.value.code == 0
     text = capsys.readouterr().out
-    assert "…" not in text
-    flat = "".join(line.lstrip() for line in text.splitlines())
-    assert "`~/.local/share/msks/<id>/identity`, or" in flat
+    assert "…" not in ANSI_STYLES.sub(" ", text)
+    # The long path reconstructs across the fold: strip the style
+    # and border characters, keep every content character in order.
+    flat = help_flat(text).replace(" ", "")
+    assert "`~/.local/share/msks/<id>/identity`,or" in flat
 
 
 @pytest.mark.parametrize(
@@ -2169,20 +2182,9 @@ def test_create_user_data_missing_file_is_one_line(
     client_env(monkeypatch)
     with pytest.raises(SystemExit, match="cannot read user-data"):
         cli.create_body(
-            argparse.Namespace(
+            cli.CreateFlags(
                 workspace_id="ws1",
-                image=None,
-                kernel=None,
-                initrd=None,
-                rootfs=None,
-                cmdline=None,
-                cpus=None,
-                mem_mib=None,
-                root_mib=None,
-                home_mib=None,
-                egress=None,
                 user_data="/nonexistent/seed.sh",
-                start=False,
             )
         )
     assert capsys.readouterr().err == ""
@@ -2637,9 +2639,15 @@ def test_run_resize_refuses_an_empty_body(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client_env(monkeypatch)
-    args = cli.build_parser().parse_args(["resize", "ws1"])
     with pytest.raises(SystemExit, match="nothing to resize"):
-        cli.run_resize(args, mock(lambda req: httpx.Response(200, json={})))
+        cli.run_resize(
+            "ws1",
+            None,
+            None,
+            None,
+            None,
+            mock(lambda req: httpx.Response(200, json={})),
+        )
 
 
 def test_resize_command_wires_flags(
@@ -3713,18 +3721,18 @@ def test_cmd_image_check_routes_to_the_conformance_pass(
 ) -> None:
     """``msks image check`` delegates to the local conformance pass
     (#258); its exit code is the command's."""
-    import argparse
+    from msks.conformance_args import CheckOptions
 
     from msks import conformance
 
-    seen: list[argparse.Namespace] = []
+    seen: list[CheckOptions] = []
 
     def fake_run(args):
         seen.append(args)
         return 1
 
     monkeypatch.setattr(conformance, "run_check", fake_run)
-    assert cli.cmd_image_check(argparse.Namespace(archive="x.tar")) == 1
+    assert cli.cmd_image_check(CheckOptions(archive="x.tar")) == 1
     assert seen[0].archive == "x.tar"
 
 
@@ -3865,3 +3873,171 @@ def test_create_with_start_builds_one_tls_context(
     rc = cli.cmd_create({"id": "ws1"}, start=True)
     assert rc == 0
     assert built == [1]
+
+
+# --- the typer layer's own routing (#315) ---
+
+
+def test_typer_commands_route_to_their_bodies(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Every command the suite drives through cmd_* directly still
+    parses through the typer layer: flags land as the body's
+    arguments and the body's return is the exit code."""
+
+    def routed(name: str, value: int = 7):
+        def body(*args, **kwargs) -> int:
+            calls.append((name, args, kwargs))
+            return value
+
+        return body
+
+    calls: list = []
+    for name in (
+        "cmd_storage",
+        "cmd_llm_token",
+        "cmd_image_import",
+        "cmd_image_rm",
+        "cmd_image_info",
+        "cmd_image_check",
+    ):
+        monkeypatch.setattr(cli, name, routed(name))
+    monkeypatch.setattr(cli, "run_workspace_forward", routed("forward"))
+    monkeypatch.setattr(cli, "run_main_tui", routed("tui"))
+
+    async def fake_rules(workspace_id, transport=None) -> int:
+        calls.append(("rules", (workspace_id,), {}))
+        return 7
+
+    async def fake_watch(workspace_id, decide, duration) -> int:
+        calls.append(("watch", (workspace_id, decide, duration), {}))
+        return 7
+
+    monkeypatch.setattr(cli.egress_mod, "run_rules", fake_rules)
+    monkeypatch.setattr(cli.egress_mod, "run_watch", fake_watch)
+
+    assert cli.main(["storage", "ws1", "--json"]) == 7
+    assert cli.main(["llm-token", "ws1", "--remint"]) == 7
+    assert cli.main(["image", "import", "/srv/i.tar"]) == 7
+    assert cli.main(["image", "rm", "debian:13"]) == 7
+    assert cli.main(["image", "info", "debian:13"]) == 7
+    assert (
+        cli.main(
+            ["image", "check", "x.tar", "--keep", "--boot-timeout-s", "30"]
+        )
+        == 7
+    )
+    assert cli.main(["forward", "ws1", "22", "--local", "2200"]) == 7
+    assert cli.main(["egress", "rules", "ws1"]) == 7
+    assert (
+        cli.main(["egress", "watch", "ws1", "--decide", "--duration", "5m"])
+        == 7
+    )
+    assert cli.main(["tui", "ws1"]) == 7
+    by_name = {name: (args, kwargs) for name, args, kwargs in calls}
+    assert by_name["cmd_storage"] == (("ws1", True), {"transport": None})
+    assert by_name["cmd_llm_token"] == (("ws1", True), {"transport": None})
+    assert by_name["cmd_image_check"][0][0].keep is True
+    assert by_name["cmd_image_check"][0][0].boot_timeout_s == 30.0
+    assert by_name["forward"] == (("ws1", 22, 2200), {})
+    assert by_name["rules"] == (("ws1",), {})
+    assert by_name["watch"] == (("ws1", True, "5m"), {})
+    assert by_name["tui"] == (("ws1",), {})
+    capsys.readouterr()
+
+
+def test_the_usage_error_is_one_line_and_two(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A bad invocation answers with one ``msks:`` line and exit 2 —
+    the argparse-era convention under typer's own parse errors."""
+    assert cli.main(["egress"]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("msks: Missing command")
+    assert cli.main(["egress", "decide", "ws1"]) == 2
+
+
+def test_help_exits_through_system_exit_zero(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--help`` prints its screen and raises SystemExit(0) — the
+    argparse-era exit shape, kept for the scripts that read it."""
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(["ls", "--help"])
+    assert excinfo.value.code == 0
+    assert "one JSON document" in help_flat(capsys.readouterr().out)
+
+
+def test_a_bare_msks_is_the_tree_tui(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cli, "run_main_tui", lambda workspace=None: 9)
+    assert cli.main([]) == 9
+
+
+def test_flag_validation_refusals_exit_two(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The checked flag pairings are usage refusals: one ``msks:``
+    line on stderr and exit 2, the code the argparse-era
+    mutually-exclusive and choice errors set."""
+    assert cli.main(["create", "ws1", "--key-type", "bogus"]) == 2
+    assert "must be one of" in capsys.readouterr().err
+    assert cli.main(["key", "ws1", "--private", "--out", "/tmp/k"]) == 2
+    assert "exclusive" in capsys.readouterr().err
+
+
+def test_a_help_shaped_option_value_is_not_a_help_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A token spelled like a help flag that a command consumed as
+    its value ran a body: the run's own code returns — never the
+    help screen's SystemExit(0) on top of executed work."""
+    ran: list = []
+    monkeypatch.setattr(
+        cli,
+        "cmd_secret_mint",
+        lambda ws, name, dests, ttl, sf, transport=None: (
+            ran.append(name),
+            0,
+        )[1],
+    )
+    rc = cli.main(
+        [
+            "secret",
+            "mint",
+            "ws",
+            "--name",
+            "-h",
+            "--dest",
+            "h",
+            "--secret-file",
+            "f",
+        ]
+    )
+    assert rc == 0
+    assert ran == ["-h"]
+
+
+def test_a_bare_msks_interrupt_is_one_line(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The tree the bare ``msks`` launches answers a Ctrl-C with
+    the same one line every command prints (the callback's edge,
+    not typer's silent 130)."""
+
+    def interrupted() -> int:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "run_main_tui", interrupted)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main([])
+    assert excinfo.value.code == 130
+    assert "interrupted" in capsys.readouterr().err
+
+
+def test_help_requested_scans_up_to_the_separator() -> None:
+    """The help scan: a flag before the ``--`` separator counts,
+    everything after it is passthrough, and no flag is no help."""
+    assert cli.help_requested(["ls", "--help"])
+    assert cli.help_requested(["egress", "-h", "watch"])
+    assert cli.help_requested(["create", "--", "--help"]) is False
+    assert cli.help_requested(["egress"]) is False

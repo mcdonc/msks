@@ -39,7 +39,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .app import App, build_app
-from .conformance_args import check_arguments
+from .conformance_args import CheckOptions, check_arguments
 from .imagestore import ImageError, ImageRecord, import_archive
 from .microvm import VmSpec
 from .settings import (
@@ -828,7 +828,7 @@ async def check_image(
             shutil.rmtree(state_dir, ignore_errors=True)
 
 
-def usage_guards(args: argparse.Namespace) -> int | None:
+def usage_guards(args: CheckOptions) -> int | None:
     """The named usage refusals that answer before any boot."""
     if args.egress and os.geteuid() != 0:
         print("msks: --egress needs root (tap/nftables/DHCP)", file=sys.stderr)
@@ -840,7 +840,7 @@ def usage_guards(args: argparse.Namespace) -> int | None:
 
 
 def run_pass(
-    archive: Path, args: argparse.Namespace
+    archive: Path, args: CheckOptions
 ) -> tuple[list[CheckResult], Path]:
     """One pass in its own throwaway state dir, with that dir's
     path beside the rows (``--keep`` keeps it and names it)."""
@@ -863,7 +863,7 @@ def run_pass(
             shutil.rmtree(state_dir, ignore_errors=True)
 
 
-def run_check(args: argparse.Namespace) -> int:
+def run_check(args: CheckOptions) -> int:
     """The check subcommand's body: run the pass, print, exit."""
     refusal = usage_guards(args)
     if refusal is not None:
@@ -894,7 +894,7 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     check_arguments(parser)
-    return run_check(parser.parse_args(argv))
+    return run_check(CheckOptions(**vars(parser.parse_args(argv))))
 
 
 if __name__ == "__main__":  # pragma: no cover — the manual entry
