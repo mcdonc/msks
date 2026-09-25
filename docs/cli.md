@@ -8,6 +8,7 @@ with the same bearer token the REST API uses.
 The command set covers the operator loop:
 
 ```bash
+msks                         # the workspace tree TUI (#309)
 msks ls                      # what exists, and what state is it in
 msks create ws                # make a workspace
 msks console ws               # boot it if needed, then work inside it
@@ -109,6 +110,37 @@ Every command that takes a workspace accepts either reference —
 `msks console ws` and `msks console 1a2b3c4d5e` reach the same
 workspace. The name is the everyday reference; the id is the
 reference no other workspace shares.
+
+## `msks` — the workspace tree TUI (#309)
+
+A bare `msks` — no arguments at all — launches the full-screen
+workspace tree (`msks tui` names the same command, and `msks tui
+my-workspace` opens that workspace's page directly). The tree is
+rooted at the **workspaces list**: every workspace one row, with
+creating, starting, stopping, and removing on its keys (`c` new,
+`s` start, `x` stop, `D` remove — asked and confirmed — and Enter
+opens the workspace's page).
+
+The **workspace page** carries the per-workspace loop: a status
+line for egress consent (the mode, the granted scope with its
+expiry, or "no active consent"), the pending holds highlighted at
+the top — Enter on one opens the consent decider screen — and the
+page's actions: open a shell, egress consent, start, stop, and
+remint the workspace's LLM token. A workspace in `interactive`
+mode holds new flows while the page is open: the page registers
+as the workspace's decider, so holds land on it.
+
+The leaves that own the whole terminal run as chained screens:
+the consent decider (`msks egress tui`'s app) and a console shell
+(`msks console`'s session). Choosing either hands the terminal
+over, and on exit the tree returns where it left off — the same
+workspace page, its consent state current.
+
+Every screen walks with the arrow keys alone: lists move with
+up/down, the create form's fields move with up/down between them,
+and Escape always returns one level. The TUI speaks the same REST
+surface the `msksc` commands speak (`MSKSC_URL`, `MSKSC_TOKEN`,
+`MSKSC_CAFILE`) and reads no daemon state directly.
 
 ## `msks ls`
 
