@@ -9,17 +9,37 @@ a bearer token, ``MSKSC_CAFILE`` to pin the certificate. The
 interactive console command lives in :mod:`msks.client.console`.
 """
 
-import argparse
 import asyncio
 import contextlib
+import enum
+import functools
 import json
 import os
 import sys
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from ..conformance_args import check_arguments
+import typer
+
+try:
+    # Typer vendors its own click (the 0.16+ line); its exceptions
+    # are the ones a parse of this app raises. Older typer rides
+    # the installed click instead — the pyproject floor spans both.
+    from typer._click.exceptions import UsageError
+except ImportError:  # pragma: no cover — the floor spans both eras
+    from click.exceptions import UsageError
+
+from ..conformance_args import (
+    CHECK_ARCHIVE_HELP,
+    CHECK_BOOT_TIMEOUT_HELP,
+    CHECK_EGRESS_HELP,
+    CHECK_KEEP_HELP,
+    CHECK_SHUTDOWN_TIMEOUT_HELP,
+    CHECK_UPLINK_HELP,
+    CheckOptions,
+)
 from ..identity import KEY_TYPES
 from ..imagestore import is_hash_shape, version_key
 from ..storage import MIB
@@ -54,7 +74,7 @@ from .rest import (
 )
 from .rsync import run_workspace_rsync
 from .ssh import data_dir, run_workspace_ssh
-from .tabular import command_parser, listing_text
+from .tabular import listing_text
 from .tui.consent_app import run_consent_tui
 from .tui.main_app import run_main_tui
 
@@ -1076,28 +1096,6 @@ def cmd_secret_check(transport=None) -> int:
     return 0
 
 
-def secret_command_table(args: argparse.Namespace, transport) -> dict:
-    """One entry per ``secret`` subcommand."""
-    return {
-        "mint": lambda: cmd_secret_mint(
-            args.workspace_id,
-            args.name,
-            args.dests,
-            args.ttl,
-            args.secret_file,
-            transport=transport,
-        ),
-        "ls": lambda: cmd_secret_ls(args.json, transport=transport),
-        "revoke": lambda: cmd_secret_revoke(
-            args.workspace_id, args.name, transport=transport
-        ),
-        "renew": lambda: cmd_secret_renew(
-            args.workspace_id, args.name, args.ttl, transport=transport
-        ),
-        "check": lambda: cmd_secret_check(transport=transport),
-    }
-
-
 def cmd_image_ls(as_json: bool = False, transport=None) -> int:
     """``msks image ls``: the whole catalog, default marked."""
     rows = asyncio.run(fetch_images(env_url(), env_token(), transport))
@@ -1114,7 +1112,7 @@ def cmd_image_import(source: str, transport=None) -> int:
     return 0
 
 
-def cmd_image_check(args: argparse.Namespace) -> int:
+def cmd_image_check(args: CheckOptions) -> int:
     """``msks image check``: the local conformance pass (#258).
 
     The import stays inside the command: conformance composes the
@@ -1314,7 +1312,7 @@ def read_user_data(path: str) -> str:
         ) from None
 
 
-def create_body(args: argparse.Namespace) -> dict:
+def create_body(args: CreateFlags) -> dict:
     """The POST body: only the fields the operator set."""
     fields = {
         "name": args.workspace_id,
@@ -1338,7 +1336,7 @@ def create_body(args: argparse.Namespace) -> dict:
     return body
 
 
-def create_user(args: argparse.Namespace) -> str:
+def create_user(args: CreateFlags) -> str:
     """The workspace's login user (#248): the explicit ``--user``, or
     the invoking user's name — checked before the wire so a bad name
     is one local line, not the daemon's pattern error."""
@@ -1347,7 +1345,7 @@ def create_user(args: argparse.Namespace) -> str:
     return invoking_user()
 
 
-def consent_fields(args: argparse.Namespace) -> dict:
+def consent_fields(args: CreateFlags) -> dict:
     """The egress-consent create fields the operator set (#69):
     the mode and the repeated allowlist entries."""
     fields = {}
@@ -1358,557 +1356,926 @@ def consent_fields(args: argparse.Namespace) -> dict:
     return fields
 
 
-def build_parser() -> argparse.ArgumentParser:
-    """The ``msks`` command line."""
-    parser = command_parser(
-        prog="msks",
-        description="msks client: workspace microvms over the daemon API",
-    )
-    sub = parser.add_subparsers(
-        dest="command",
-        required=False,
-        title="commands",
-        metavar="<command>",
-        parser_class=command_parser,
-    )
-    listing = sub.add_parser("ls", help="list workspaces on the daemon")
-    listing.add_argument(
-        "--json", action="store_true", help="one JSON document"
-    )
-    tui_cmd = sub.add_parser(
-        "tui",
-        help="the full-screen workspace tree (#309): the workspaces "
-        "list, each workspace's page, and the consent decider",
-    )
-    tui_cmd.add_argument(
-        "workspace",
-        nargs="?",
-        default=None,
+@dataclass
+class CreateFlags:
+    """The create command's parsed surface (#315's typer layer fills
+    one): the flag-to-body mapping and the identity resolver read
+    the same attribute shape the argparse era carried."""
+
+    workspace_id: str
+    image: str | None = None
+    kernel: str | None = None
+    initrd: str | None = None
+    rootfs: str | None = None
+    cmdline: str | None = None
+    cpus: int | None = None
+    mem_mib: int | None = None
+    root_mib: int | None = None
+    home_mib: int | None = None
+    egress: bool | None = None
+    egress_mode: str | None = None
+    allow: list[str] | None = None
+    user_data: str | None = None
+    user: str | None = None
+    daemon_mint: bool = False
+    pubkey: str | None = None
+    key_type: str | None = None
+    start: bool = False
+
+
+class PostureChoice(enum.StrEnum):
+    """The egress consent postures (#69)."""
+
+    allow = "allow"
+    static = "static"
+    interactive = "interactive"
+
+
+class DecisionFilter(enum.StrEnum):
+    """The consent row lifecycle states."""
+
+    pending = "pending"
+    allowed = "allowed"
+    denied = "denied"
+    expired = "expired"
+    revoked = "revoked"
+
+
+class VerdictChoice(enum.StrEnum):
+    """The decider's two verdicts."""
+
+    allow = "allow"
+    deny = "deny"
+
+
+class DurationChoice(enum.StrEnum):
+    """How long enforcement honors a verdict."""
+
+    once = "once"
+    five_m = "5m"
+    fifteen_m = "15m"
+    tilrestart = "tilrestart"
+    forever = "forever"
+
+
+def passthrough_args(argv: list[str]) -> list[str]:
+    """The ssh/rsync variadic's verbatim value: click hands the
+    ``--`` separator through inside the list where argparse
+    swallowed it, so one leading separator drops here — everything
+    else, options included, reaches ssh/rsync exactly as typed."""
+    return argv[1:] if argv[:1] == ["--"] else argv
+
+
+def one_line_interrupts(fn):
+    """A Ctrl-C during a long boot is one line, not a traceback (a
+    raw-mode session never gets here — Ctrl-C reaches the guest):
+    caught at the command body's edge, where typer's own
+    conversion (a bare exit 130) cannot swallow the line."""
+
+    @functools.wraps(fn)
+    def wrapped(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except KeyboardInterrupt:
+            print("msks: interrupted", file=sys.stderr)
+            raise SystemExit(130) from None
+
+    return wrapped
+
+
+app = typer.Typer(
+    name="msks",
+    add_completion=False,
+    help="msks client: workspace microvms over the daemon API",
+    context_settings={"help_option_names": ["-h", "--help"]},
+)
+
+egress_app = typer.Typer(
+    help="egress consent: decide, watch, and inspect (#69)"
+)
+image_app = typer.Typer(help="manage the daemon's image catalog (#65)")
+home_app = typer.Typer(
+    help="move a workspace's /home volume through the daemon (#80)"
+)
+secret_app = typer.Typer(
+    help="placeholder secrets: mint, list, revoke, renew, check"
+)
+app.add_typer(egress_app, name="egress")
+app.add_typer(image_app, name="image")
+app.add_typer(home_app, name="home")
+app.add_typer(secret_app, name="secret")
+
+
+@app.callback(invoke_without_command=True)
+def root(ctx: typer.Context) -> int:
+    """A bare ``msks`` is the workspace tree TUI (#309)."""
+    if ctx.invoked_subcommand is None:
+        return run_main_tui()
+    return 0
+
+
+@app.command("ls")
+@one_line_interrupts
+def ls(
+    ctx: typer.Context,
+    as_json: bool = typer.Option(False, "--json", help="one JSON document"),
+) -> int:
+    """List workspaces on the daemon."""
+    return cmd_ls(as_json, transport=ctx.obj)
+
+
+@app.command("tui")
+@one_line_interrupts
+def tui(
+    workspace: str | None = typer.Argument(
+        None,
         help="open this workspace's page (name or id) instead of the list",
-    )
-    storage_cmd = sub.add_parser(
-        "storage",
-        help="report the state-disk budget and per-workspace cost (#184)",
-    )
-    storage_cmd.add_argument(
-        "workspace",
-        nargs="?",
-        default=None,
+    ),
+) -> int:
+    """The full-screen workspace tree (#309): the workspaces list,
+    each workspace's page, and the consent decider."""
+    return run_main_tui(workspace)
+
+
+@app.command("storage")
+@one_line_interrupts
+def storage(
+    ctx: typer.Context,
+    workspace: str | None = typer.Argument(
+        None,
         help="narrow the workspace table to one workspace (name or id)",
-    )
-    storage_cmd.add_argument(
-        "--json", action="store_true", help="one JSON document"
-    )
-    create = sub.add_parser("create", help="create a workspace")
-    create.add_argument(
-        "workspace_id",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="one JSON document"),
+) -> int:
+    """Report the state-disk budget and per-workspace cost (#184)."""
+    return cmd_storage(workspace, as_json, transport=ctx.obj)
+
+
+@app.command("create")
+@one_line_interrupts
+def create(
+    ctx: typer.Context,
+    workspace_id: str = typer.Argument(
+        ...,
         help="the workspace's name (#246): the label you address it "
         "by (DNS-label charset); the daemon mints the immutable id",
-    )
-    create.add_argument(
-        "--image", help="catalog ref: name:version, name, or hash"
-    )
-    create.add_argument(
-        "--kernel", help="explicit kernel path (skips the catalog)"
-    )
-    create.add_argument("--initrd", help="explicit initrd path")
-    create.add_argument(
-        "--rootfs", help="explicit rootfs path (skips the catalog)"
-    )
-    create.add_argument("--cmdline", help="explicit kernel cmdline")
-    create.add_argument("--cpus", type=int, help="vcpu count (default 2)")
-    create.add_argument(
-        "--mem-mib", type=int, help="guest memory, MiB (default 8192)"
-    )
-    create.add_argument(
-        "--root-mib", type=int, help="persistent root size, MiB"
-    )
-    create.add_argument(
-        "--home-mib", type=int, help="persistent home size, MiB"
-    )
-    create.add_argument(
-        "--egress",
-        action=argparse.BooleanOptionalAction,
-        default=None,
+    ),
+    image: str | None = typer.Option(
+        None, "--image", help="catalog ref: name:version, name, or hash"
+    ),
+    kernel: str | None = typer.Option(
+        None, "--kernel", help="explicit kernel path (skips the catalog)"
+    ),
+    initrd: str | None = typer.Option(
+        None, "--initrd", help="explicit initrd path"
+    ),
+    rootfs: str | None = typer.Option(
+        None, "--rootfs", help="explicit rootfs path (skips the catalog)"
+    ),
+    cmdline: str | None = typer.Option(
+        None, "--cmdline", help="explicit kernel cmdline"
+    ),
+    cpus: int | None = typer.Option(
+        None, "--cpus", help="vcpu count (default 2)"
+    ),
+    mem_mib: int | None = typer.Option(
+        None, "--mem-mib", help="guest memory, MiB (default 8192)"
+    ),
+    root_mib: int | None = typer.Option(
+        None, "--root-mib", help="persistent root size, MiB"
+    ),
+    home_mib: int | None = typer.Option(
+        None, "--home-mib", help="persistent home size, MiB"
+    ),
+    egress: bool | None = typer.Option(
+        None,
+        "--egress/--no-egress",
         help="boot with a virtio-net NIC onto a per-VM host tap "
         "(#52; the default is yes — use --no-egress to boot NIC-less)",
-    )
-    create.add_argument(
+    ),
+    egress_mode: PostureChoice | None = typer.Option(
+        None,
         "--egress-mode",
-        choices=("allow", "static", "interactive"),
+        metavar="MODE",
         help="the consent posture (#69): allow (the default — new "
         "flows pass, off-list names are recorded), static (the "
         "allowlist only; off-list names never resolve), interactive "
         "(each new flow's first packet holds until a decider allows "
         "or denies it)",
-    )
-    create.add_argument(
+    ),
+    allow: list[str] | None = typer.Option(
+        None,
         "--allow",
-        action="append",
         metavar="SPEC",
         help="a static allowlist entry (#69), repeatable: host, "
         "host:port, .host (subdomains included), *.host (subdomains "
         "only), or cidr[:port]. Names gate at the daemon's resolver; "
         "address specs accept in the per-VM chain",
-    )
-    create.add_argument(
+    ),
+    user_data: str | None = typer.Option(
+        None,
         "--user-data",
         metavar="FILE",
         help="first-boot provisioning payload (a shell script or "
         "cloud-config) delivered on the workspace's cidata seed disk "
         "(#41); - reads stdin. Create-time only",
-    )
-    create.add_argument(
+    ),
+    user: str | None = typer.Option(
+        None,
         "--user",
         metavar="NAME",
         help="the workspace's login user (#248): seeded into the guest "
         "at first boot (the account, its home, authorized_keys, and "
         "the workspace-user sudo grant) and used as the default login "
         "for msks ssh, rsync, and console (default: your username)",
-    )
-    create.add_argument(
+    ),
+    daemon_mint: bool = typer.Option(
+        False,
         "--daemon-mint",
-        action="store_true",
         help="let the daemon mint the workspace's ssh identity and "
         "escrow both halves (#111) instead of the client mint — the "
         "create default (#121) mints on this client, sends the public "
         "half only, and keeps the private half (mode 0600 under the "
         "client data root — `~/.local/share/msks/<id>/identity`, or "
         "that root under MSKSC_DATA_DIR — where msks ssh finds it)",
-    )
-    create.add_argument(
+    ),
+    pubkey: str | None = typer.Option(
+        None,
         "--pubkey",
         metavar="FILE",
         help="use a public key you already own as the workspace's ssh "
         "identity (#132): the file's one line travels to the daemon, "
         "any well-formed key type, and the private half stays wherever "
         "you keep it (nothing is written client-side). - reads stdin",
-    )
-    create.add_argument(
+    ),
+    key_type: str | None = typer.Option(
+        None,
         "--key-type",
-        choices=sorted(KEY_TYPES),
-        help="the client mint's key type (default ed25519, the same "
+        metavar="TYPE",
+        help="the client mint's key type: one of "
+        f"{', '.join(sorted(KEY_TYPES))} (default ed25519, the same "
         "FIPS-approvable default the daemon mints)",
-    )
-    create.add_argument(
-        "--start", action="store_true", help="boot the workspace immediately"
-    )
-    egress_cmd = sub.add_parser(
-        "egress",
-        help="egress consent: decide, watch, and inspect (#69)",
-    )
-    egress_sub = egress_cmd.add_subparsers(
-        dest="egress_command",
-        required=True,
-        title="commands",
-        metavar="<command>",
-        parser_class=command_parser,
-    )
-    egress_rules = egress_sub.add_parser(
-        "rules", help="the in-effect verdicts for a workspace"
-    )
-    egress_rules.add_argument("workspace_id")
-    egress_requests = egress_sub.add_parser(
-        "requests", help="the consent rows (audit trail)"
-    )
-    egress_requests.add_argument("workspace_id")
-    egress_requests.add_argument(
-        "--decision",
-        choices=("pending", "allowed", "denied", "expired", "revoked"),
-        default=None,
-        help="filter one lifecycle state",
-    )
-    egress_decide = egress_sub.add_parser(
-        "decide", help="give a verdict on a held request"
-    )
-    egress_decide.add_argument("workspace_id")
-    egress_decide.add_argument("request_id")
-    egress_decide.add_argument("decision", choices=("allow", "deny"))
-    egress_decide.add_argument(
-        "--duration",
-        choices=("once", "5m", "15m", "tilrestart", "forever"),
-        default="tilrestart",
-        help="how long enforcement honors the verdict",
-    )
-    egress_revoke = egress_sub.add_parser(
-        "revoke", help="undo an in-effect verdict"
-    )
-    egress_revoke.add_argument("workspace_id")
-    egress_revoke.add_argument("request_id")
-    egress_mode = egress_sub.add_parser(
-        "mode",
-        help="switch the egress posture (#280): live for a running "
-        "workspace, at next start for a stopped one",
-    )
-    egress_mode.add_argument("workspace_id")
-    egress_mode.add_argument(
-        "mode", choices=("allow", "static", "interactive")
-    )
-    egress_mode.add_argument(
-        "--allow",
-        action="append",
-        metavar="SPEC",
-        help="replace the static allowlist with this entry "
-        "(repeatable); omitted, the workspace keeps its list",
-    )
-    egress_mode.add_argument(
-        "--offline",
-        action="store_true",
-        help="confirm the switch to static even with nothing "
-        "effectively allowed (every name NXDOMAINs — an offline "
-        "workspace)",
-    )
-    egress_tui = egress_sub.add_parser(
-        "tui",
-        help="the consent decider TUI (#195): live holds, verdicts, rules",
-    )
-    egress_tui.add_argument("workspace_id", help="decide for this workspace")
-    egress_watch = egress_sub.add_parser(
-        "watch", help="stream egress frames as lines; registers as a decider"
-    )
-    egress_watch.add_argument(
-        "workspace_id",
-        nargs="?",
-        default=None,
-        help="decide for this workspace (hold SYNs only while a "
-        "decider is connected)",
-    )
-    egress_watch.add_argument(
-        "--decide",
-        action="store_true",
-        help="prompt y/n for each pending request",
-    )
-    egress_watch.add_argument(
-        "--duration",
-        choices=("once", "5m", "15m", "tilrestart", "forever"),
-        default="tilrestart",
-        help="the duration a --decide allow applies",
-    )
-    starter = sub.add_parser("start", help="boot a created workspace")
-    starter.add_argument(
-        "workspace_id", help="the workspace to boot (name or id)"
-    )
-    stopper = sub.add_parser("stop", help="power a workspace off")
-    stopper.add_argument(
-        "workspace_id", help="the workspace to stop (name or id)"
-    )
-    resizer = sub.add_parser(
-        "resize",
-        help=(
-            "change a stopped workspace's disk sizes and topology (#184, #277)"
+    ),
+    start: bool = typer.Option(
+        False, "--start", help="boot the workspace immediately"
+    ),
+) -> int:
+    """Create a workspace."""
+    checked_key_type(key_type)
+    return run_create(
+        CreateFlags(
+            workspace_id=workspace_id,
+            image=image,
+            kernel=kernel,
+            initrd=initrd,
+            rootfs=rootfs,
+            cmdline=cmdline,
+            cpus=cpus,
+            mem_mib=mem_mib,
+            root_mib=root_mib,
+            home_mib=home_mib,
+            egress=egress,
+            egress_mode=(None if egress_mode is None else egress_mode.value),
+            allow=allow,
+            user_data=user_data,
+            user=user,
+            daemon_mint=daemon_mint,
+            pubkey=pubkey,
+            key_type=key_type,
+            start=start,
         ),
+        ctx.obj,
     )
-    resizer.add_argument(
-        "workspace_id", help="the workspace to resize (name or id)"
-    )
-    resizer.add_argument(
+
+
+def checked_key_type(key_type: str | None) -> None:
+    """One local line for a key type outside the mint's set — the
+    identity module stays the single source of the choices."""
+    if key_type is not None and key_type not in KEY_TYPES:
+        raise SystemExit(
+            f"msks: --key-type must be one of {', '.join(sorted(KEY_TYPES))}"
+        )
+
+
+@app.command("start")
+@one_line_interrupts
+def start(
+    ctx: typer.Context,
+    workspace_id: str = typer.Argument(
+        ..., help="the workspace to boot (name or id)"
+    ),
+) -> int:
+    """Boot a created workspace."""
+    return cmd_start(workspace_id, transport=ctx.obj)
+
+
+@app.command("stop")
+@one_line_interrupts
+def stop(
+    ctx: typer.Context,
+    workspace_id: str = typer.Argument(
+        ..., help="the workspace to stop (name or id)"
+    ),
+) -> int:
+    """Power a workspace off."""
+    return cmd_stop(workspace_id, transport=ctx.obj)
+
+
+@app.command("resize")
+@one_line_interrupts
+def resize(
+    ctx: typer.Context,
+    workspace_id: str = typer.Argument(
+        ..., help="the workspace to resize (name or id)"
+    ),
+    home_mib: int | None = typer.Option(
+        None,
         "--home-mib",
-        type=int,
         help="new /home volume size, MiB (grows or shrinks)",
-    )
-    resizer.add_argument(
-        "--root-mib",
-        type=int,
-        help="new root overlay size, MiB (grows only)",
-    )
-    resizer.add_argument(
-        "--cpus",
-        type=int,
-        help="new vcpu count (applies at the next boot)",
-    )
-    resizer.add_argument(
+    ),
+    root_mib: int | None = typer.Option(
+        None, "--root-mib", help="new root overlay size, MiB (grows only)"
+    ),
+    cpus: int | None = typer.Option(
+        None, "--cpus", help="new vcpu count (applies at the next boot)"
+    ),
+    mem_mib: int | None = typer.Option(
+        None,
         "--mem-mib",
-        type=int,
         help="new guest memory, MiB (applies at the next boot)",
-    )
-    remover = sub.add_parser("rm", help="delete workspaces and their data")
-    remover.add_argument(
-        "workspace_ids",
-        nargs="+",
-        help="the workspaces to delete, in order (name or id)",
-    )
-    console = sub.add_parser(
-        "console", help="interactive shell in a workspace"
-    )
-    console.add_argument(
-        "workspace_id", help="the workspace to attach to (name or id)"
-    )
-    console.add_argument(
+    ),
+) -> int:
+    """Change a stopped workspace's disk sizes and topology (#184,
+    #277)."""
+    return run_resize(workspace_id, home_mib, root_mib, cpus, mem_mib, ctx.obj)
+
+
+@app.command("rm")
+@one_line_interrupts
+def rm(
+    ctx: typer.Context,
+    workspace_ids: list[str] = typer.Argument(
+        ..., help="the workspaces to delete, in order (name or id)"
+    ),
+) -> int:
+    """Delete workspaces and their data."""
+    return cmd_rm(workspace_ids, transport=ctx.obj)
+
+
+@app.command("console")
+@one_line_interrupts
+def console(
+    workspace_id: str = typer.Argument(
+        ..., help="the workspace to attach to (name or id)"
+    ),
+    user: str | None = typer.Option(
+        None,
         "--user",
-        default=None,
         help="shell user (default: the workspace's login user, #248; "
         "--user root is the recovery shell)",
-    )
-    forward = sub.add_parser(
-        "forward", help="bridge a workspace TCP port to stdio or a local port"
-    )
-    forward.add_argument(
-        "workspace_id", help="the workspace to reach (name or id)"
-    )
-    forward.add_argument("port", type=int, help="the guest TCP port to reach")
-    forward.add_argument(
+    ),
+) -> int:
+    """Interactive shell in a workspace."""
+    return run_workspace_shell(workspace_id, user)
+
+
+@app.command("forward")
+@one_line_interrupts
+def forward(
+    workspace_id: str = typer.Argument(
+        ..., help="the workspace to reach (name or id)"
+    ),
+    port: int = typer.Argument(..., help="the guest TCP port to reach"),
+    local: int | None = typer.Option(
+        None,
         "--local",
-        type=int,
         metavar="PORT",
         help="bind 127.0.0.1:PORT instead of stdio; every accepted "
         "connection gets its own forward",
-    )
-    key = sub.add_parser(
-        "key",
-        help="fetch a workspace's ssh identity (#111; the public half "
-        "alone for a client-minted #121 workspace)",
-    )
-    key.add_argument(
-        "workspace_id",
-        help="the workspace whose identity to fetch (name or id)",
-    )
-    key_private = key.add_mutually_exclusive_group()
-    key_private.add_argument(
+    ),
+) -> int:
+    """Bridge a workspace TCP port to stdio or a local port."""
+    return run_workspace_forward(workspace_id, port, local)
+
+
+@app.command("key")
+@one_line_interrupts
+def key(
+    ctx: typer.Context,
+    workspace_id: str = typer.Argument(
+        ..., help="the workspace whose identity to fetch (name or id)"
+    ),
+    as_private: bool = typer.Option(
+        False,
         "--private",
-        action="store_true",
         help="print the private half instead of the public line",
-    )
-    key_private.add_argument(
+    ),
+    out: str | None = typer.Option(
+        None,
         "--out",
         metavar="FILE",
         help="write the private half to FILE (mode 0600) instead of printing",
-    )
-    llm_token_cmd = sub.add_parser(
-        "llm-token",
-        help="fetch a workspace's LLM proxy credential (#259)",
-    )
-    llm_token_cmd.add_argument(
-        "workspace_id",
-        help="the workspace whose credential to fetch (name or id)",
-    )
-    llm_token_cmd.add_argument(
+    ),
+) -> int:
+    """Fetch a workspace's ssh identity (#111; the public half alone
+    for a client-minted #121 workspace)."""
+    checked_key_flags(as_private, out)
+    return cmd_key(workspace_id, as_private, out, transport=ctx.obj)
+
+
+def checked_key_flags(as_private: bool, out: str | None) -> None:
+    """--private and --out are exclusive: one output shape."""
+    if as_private and out is not None:
+        raise SystemExit("msks: --private and --out are exclusive")
+
+
+@app.command("llm-token")
+@one_line_interrupts
+def llm_token(
+    ctx: typer.Context,
+    workspace_id: str = typer.Argument(
+        ..., help="the workspace whose credential to fetch (name or id)"
+    ),
+    remint: bool = typer.Option(
+        False,
         "--remint",
-        action="store_true",
         help="mint a fresh credential, replacing the stored one",
-    )
-    ssh = sub.add_parser(
-        "ssh",
-        help=(
-            "ssh into a workspace over the forward, identity staged in memory"
-        ),
-    )
-    ssh.add_argument(
-        "workspace_id", help="the workspace to log into (name or id)"
-    )
-    ssh.add_argument(
-        "passthrough",
-        nargs=argparse.REMAINDER,
+    ),
+) -> int:
+    """Fetch a workspace's LLM proxy credential (#259)."""
+    return cmd_llm_token(workspace_id, remint, transport=ctx.obj)
+
+
+@app.command(
+    "ssh",
+    context_settings={
+        "allow_interspersed_args": False,
+        "ignore_unknown_options": True,
+    },
+)
+@one_line_interrupts
+def ssh(
+    ctx: typer.Context,
+    workspace_id: str = typer.Argument(
+        ..., help="the workspace to log into (name or id)"
+    ),
+    passthrough: list[str] | None = typer.Argument(
+        None,
         metavar="ARGS",
-        help="arguments passed to ssh verbatim ('-l root' is the recovery "
-        "login; '-A' forwards your agent, $SSH_AUTH_SOCK)",
+        help="arguments passed to ssh verbatim ('-l root' is the "
+        "recovery login; '-A' forwards your agent, $SSH_AUTH_SOCK)",
+    ),
+) -> int:
+    """Ssh into a workspace over the forward, identity staged in
+    memory."""
+    return run_workspace_ssh(
+        workspace_id,
+        passthrough_args(passthrough or []),
+        transport=ctx.obj,
     )
-    rsync_cmd = sub.add_parser(
-        "rsync",
-        help=(
-            "rsync files to and from a workspace over the forward, "
-            "identity staged in memory"
-        ),
-    )
-    rsync_cmd.add_argument(
-        "workspace_id", help="the workspace to copy against (name or id)"
-    )
-    rsync_cmd.add_argument(
-        "passthrough",
-        nargs=argparse.REMAINDER,
+
+
+@app.command(
+    "rsync",
+    context_settings={
+        "allow_interspersed_args": False,
+        "ignore_unknown_options": True,
+    },
+)
+@one_line_interrupts
+def rsync(
+    ctx: typer.Context,
+    workspace_id: str = typer.Argument(
+        ..., help="the workspace to copy against (name or id)"
+    ),
+    passthrough: list[str] | None = typer.Argument(
+        None,
         metavar="ARGS",
         help="arguments passed to rsync verbatim; an empty-host path "
         "(:/remote/path, user@:/remote/path) targets this workspace",
+    ),
+) -> int:
+    """Rsync files to and from a workspace over the forward,
+    identity staged in memory."""
+    return run_workspace_rsync(
+        workspace_id,
+        passthrough_args(passthrough or []),
+        transport=ctx.obj,
     )
-    image = sub.add_parser(
-        "image", help="manage the daemon's image catalog (#65)"
-    )
-    image_sub = image.add_subparsers(
-        dest="image_command",
-        required=True,
-        title="commands",
-        metavar="<command>",
-        parser_class=command_parser,
-    )
-    image_ls = image_sub.add_parser("ls", help="list catalog images")
-    image_ls.add_argument(
-        "--json", action="store_true", help="one JSON document"
-    )
-    image_import = image_sub.add_parser(
-        "import",
-        help="register an image archive from a daemon-side path or an "
-        "https:// URL",
-    )
-    image_import.add_argument(
-        "source",
-        help="archive path as the daemon sees it (its own filesystem; "
-        "the file is read by the daemon, not uploaded by this command) "
-        "or an https:// URL the daemon downloads itself (#258)",
-    )
-    image_check = image_sub.add_parser(
-        "check",
-        help="boot an image and verify the guest contract (#258); "
-        "local — needs /dev/kvm, --egress needs root",
-    )
-    # The flags come from the leaf module conformance_args: the
-    # same definitions the standalone entry parses, with none of
-    # the daemon composition importing them would drag in.
-    check_arguments(image_check)
 
-    image_rm = image_sub.add_parser(
-        "rm", help="remove an image from the catalog"
+
+@egress_app.command("rules")
+@one_line_interrupts
+def egress_rules(
+    ctx: typer.Context, workspace_id: str = typer.Argument(...)
+) -> int:
+    """The in-effect verdicts for a workspace."""
+    return asyncio.run(egress_mod.run_rules(workspace_id, transport=ctx.obj))
+
+
+@egress_app.command("requests")
+@one_line_interrupts
+def egress_requests(
+    ctx: typer.Context,
+    workspace_id: str = typer.Argument(...),
+    decision: DecisionFilter | None = typer.Option(
+        None,
+        "--decision",
+        metavar="STATE",
+        help="filter one lifecycle state (pending, allowed, denied, "
+        "expired, or revoked)",
+    ),
+) -> int:
+    """The consent rows (audit trail)."""
+    return asyncio.run(
+        egress_mod.run_requests(
+            workspace_id,
+            None if decision is None else decision.value,
+            transport=ctx.obj,
+        )
     )
-    image_rm.add_argument(
-        "ref",
-        help="name:version, bare name (newest), name@hash (full hash), "
-        "or hash (a unique hash prefix works too)",
+
+
+@egress_app.command("decide")
+@one_line_interrupts
+def egress_decide(
+    ctx: typer.Context,
+    workspace_id: str = typer.Argument(...),
+    request_id: str = typer.Argument(...),
+    decision: VerdictChoice = typer.Argument(
+        ..., help="the verdict: allow or deny"
+    ),
+    duration: DurationChoice = typer.Option(
+        DurationChoice.tilrestart,
+        "--duration",
+        metavar="SPAN",
+        help="how long enforcement honors the verdict (once, 5m, "
+        "15m, tilrestart, or forever; default tilrestart)",
+    ),
+) -> int:
+    """Give a verdict on a held request."""
+    return asyncio.run(
+        egress_mod.run_decide(
+            workspace_id,
+            request_id,
+            decision.value,
+            duration.value,
+            transport=ctx.obj,
+        )
     )
-    image_info = image_sub.add_parser(
-        "info", help="show one image's full record"
+
+
+@egress_app.command("revoke")
+@one_line_interrupts
+def egress_revoke(
+    ctx: typer.Context,
+    workspace_id: str = typer.Argument(...),
+    request_id: str = typer.Argument(...),
+) -> int:
+    """Undo an in-effect verdict."""
+    return asyncio.run(
+        egress_mod.run_revoke(workspace_id, request_id, transport=ctx.obj)
     )
-    image_info.add_argument(
-        "ref",
+
+
+@egress_app.command("mode")
+@one_line_interrupts
+def egress_mode_command(
+    ctx: typer.Context,
+    workspace_id: str = typer.Argument(...),
+    mode: PostureChoice = typer.Argument(
+        ...,
+        help="the posture to switch to (#280): allow, static, or interactive",
+    ),
+    allow: list[str] | None = typer.Option(
+        None,
+        "--allow",
+        metavar="SPEC",
+        help="replace the static allowlist with this entry "
+        "(repeatable); omitted, the workspace keeps its list",
+    ),
+    offline: bool = typer.Option(
+        False,
+        "--offline",
+        help="confirm the switch to static even with nothing "
+        "effectively allowed (every name NXDOMAINs — an offline "
+        "workspace)",
+    ),
+) -> int:
+    """Switch the egress posture (#280): live for a running
+    workspace, at next start for a stopped one."""
+    return asyncio.run(
+        egress_mod.run_mode(
+            workspace_id,
+            mode.value,
+            allow,
+            offline,
+            transport=ctx.obj,
+        )
+    )
+
+
+@egress_app.command("tui")
+@one_line_interrupts
+def egress_tui(
+    workspace_id: str = typer.Argument(..., help="decide for this workspace"),
+) -> int:
+    """The consent decider TUI (#195): live holds, verdicts, rules."""
+    return run_consent_tui(workspace_id)
+
+
+@egress_app.command("watch")
+@one_line_interrupts
+def egress_watch(
+    workspace_id: str | None = typer.Argument(
+        None,
+        help="decide for this workspace (hold SYNs only while a "
+        "decider is connected)",
+    ),
+    decide: bool = typer.Option(
+        False,
+        "--decide",
+        help="prompt y/n for each pending request",
+    ),
+    duration: DurationChoice = typer.Option(
+        DurationChoice.tilrestart,
+        "--duration",
+        metavar="SPAN",
+        help="the duration a --decide allow applies (once, 5m, 15m, "
+        "tilrestart, or forever; default tilrestart)",
+    ),
+) -> int:
+    """Stream egress frames as lines; registers as a decider."""
+    return asyncio.run(
+        egress_mod.run_watch(workspace_id, decide, duration.value)
+    )
+
+
+@image_app.command("ls")
+@one_line_interrupts
+def image_ls(
+    ctx: typer.Context,
+    as_json: bool = typer.Option(False, "--json", help="one JSON document"),
+) -> int:
+    """List catalog images."""
+    return cmd_image_ls(as_json, transport=ctx.obj)
+
+
+@image_app.command("import")
+@one_line_interrupts
+def image_import(
+    ctx: typer.Context,
+    source: str = typer.Argument(
+        ...,
+        help="archive path as the daemon sees it (its own "
+        "filesystem; the file is read by the daemon, not uploaded "
+        "by this command) or an https:// URL the daemon downloads "
+        "itself (#258)",
+    ),
+) -> int:
+    """Register an image archive from a daemon-side path or an
+    https:// URL."""
+    return cmd_image_import(source, transport=ctx.obj)
+
+
+@image_app.command("check")
+@one_line_interrupts
+def image_check(
+    archive: str = typer.Argument(..., help=CHECK_ARCHIVE_HELP),
+    egress: bool = typer.Option(False, "--egress", help=CHECK_EGRESS_HELP),
+    uplink: str | None = typer.Option(
+        None, "--uplink", help=CHECK_UPLINK_HELP
+    ),
+    boot_timeout_s: float = typer.Option(
+        120.0, "--boot-timeout-s", help=CHECK_BOOT_TIMEOUT_HELP
+    ),
+    shutdown_timeout_s: float = typer.Option(
+        120.0, "--shutdown-timeout-s", help=CHECK_SHUTDOWN_TIMEOUT_HELP
+    ),
+    keep: bool = typer.Option(False, "--keep", help=CHECK_KEEP_HELP),
+) -> int:
+    """Boot an image and verify the guest contract (#258); local —
+    needs /dev/kvm, --egress needs root."""
+    return cmd_image_check(
+        CheckOptions(
+            archive=archive,
+            egress=egress,
+            uplink=uplink,
+            boot_timeout_s=boot_timeout_s,
+            shutdown_timeout_s=shutdown_timeout_s,
+            keep=keep,
+        )
+    )
+
+
+@image_app.command("rm")
+@one_line_interrupts
+def image_rm(
+    ctx: typer.Context,
+    ref: str = typer.Argument(
+        ...,
+        help="name:version, bare name (newest), name@hash (full "
+        "hash), or hash (a unique hash prefix works too)",
+    ),
+) -> int:
+    """Remove an image from the catalog."""
+    return cmd_image_rm(ref, transport=ctx.obj)
+
+
+@image_app.command("info")
+@one_line_interrupts
+def image_info(
+    ctx: typer.Context,
+    ref: str = typer.Argument(
+        ...,
         help="name:version, bare name, name@hash, or hash "
         "(a unique hash prefix works too)",
-    )
-    image_default = image_sub.add_parser(
-        "default",
-        help="designate the image a bare create boots (#270), or "
-        "clear the designation with --unset",
-    )
-    image_default.add_argument(
-        "ref",
-        nargs="?",
-        default=None,
+    ),
+) -> int:
+    """Show one image's full record."""
+    return cmd_image_info(ref, transport=ctx.obj)
+
+
+@image_app.command("default")
+@one_line_interrupts
+def image_default(
+    ctx: typer.Context,
+    ref: str | None = typer.Argument(
+        None,
         help="name:version, bare name (newest), name@hash, or hash "
         "(a unique hash prefix works too)",
-    )
-    image_default.add_argument(
+    ),
+    unset: bool = typer.Option(
+        False,
         "--unset",
-        action="store_true",
         help="clear the designation; a bare create falls back to the "
         "sole catalog entry, or needs --image when several remain",
-    )
-    home = sub.add_parser(
-        "home", help="move a workspace's /home volume through the daemon (#80)"
-    )
-    home_sub = home.add_subparsers(
-        dest="home_command",
-        required=True,
-        title="commands",
-        metavar="<command>",
-        parser_class=command_parser,
-    )
-    home_export = home_sub.add_parser(
-        "export", help="download a workspace's /home volume"
-    )
-    home_export.add_argument(
-        "workspace_id",
-        help="the workspace whose volume to download (name or id)",
-    )
-    home_export.add_argument(
-        "file",
-        nargs="?",
-        default=None,
+    ),
+) -> int:
+    """Designate the image a bare create boots (#270), or clear the
+    designation with --unset."""
+    return cmd_image_default(ref, unset, transport=ctx.obj)
+
+
+@home_app.command("export")
+@one_line_interrupts
+def home_export(
+    ctx: typer.Context,
+    workspace_id: str = typer.Argument(
+        ..., help="the workspace whose volume to download (name or id)"
+    ),
+    file: str | None = typer.Argument(
+        None,
         help="output file (default: <workspace_id>.ext4); - writes stdout",
-    )
-    home_import = home_sub.add_parser(
-        "import", help="replace a workspace's /home volume from an ext4 image"
-    )
-    home_import.add_argument(
-        "workspace_id",
-        help="the workspace whose volume to replace (name or id)",
-    )
-    home_import.add_argument(
-        "file", help="the ext4 volume image to upload; - reads stdin"
-    )
-    secret = sub.add_parser(
-        "secret",
-        help="placeholder secrets: mint, list, revoke, renew, check",
-    )
-    secret_sub = secret.add_subparsers(
-        dest="secret_command",
-        required=True,
-        title="commands",
-        metavar="<command>",
-        parser_class=command_parser,
-    )
-    secret_mint = secret_sub.add_parser(
-        "mint", help="mint a placeholder for one workspace"
-    )
-    secret_mint.add_argument(
-        "workspace_id", help="the workspace the placeholder binds to"
-    )
-    secret_mint.add_argument(
-        "--name", required=True, help="the placeholder's label"
-    )
-    secret_mint.add_argument(
+    ),
+) -> int:
+    """Download a workspace's /home volume."""
+    return cmd_home_export(workspace_id, file, transport=ctx.obj)
+
+
+@home_app.command("import")
+@one_line_interrupts
+def home_import(
+    ctx: typer.Context,
+    workspace_id: str = typer.Argument(
+        ..., help="the workspace whose volume to replace (name or id)"
+    ),
+    file: str = typer.Argument(
+        ..., help="the ext4 volume image to upload; - reads stdin"
+    ),
+) -> int:
+    """Replace a workspace's /home volume from an ext4 image."""
+    return cmd_home_import(workspace_id, file, transport=ctx.obj)
+
+
+@secret_app.command("mint")
+@one_line_interrupts
+def secret_mint(
+    ctx: typer.Context,
+    workspace_id: str = typer.Argument(
+        ..., help="the workspace the placeholder binds to"
+    ),
+    name: str = typer.Option(..., "--name", help="the placeholder's label"),
+    dests: list[str] = typer.Option(
+        ...,
         "--dest",
-        required=True,
-        action="append",
-        dest="dests",
         metavar="HOST",
         help=(
             "an allowlist destination: an exact host "
             "(api.github.com) or a suffix (.github.com); repeatable"
         ),
-    )
-    secret_mint.add_argument(
+    ),
+    ttl: int | None = typer.Option(
+        None,
         "--ttl",
-        type=int,
         metavar="SECONDS",
         help="the placeholder's lifetime (default: unbounded)",
-    )
-    secret_mint.add_argument(
+    ),
+    secret_file: str = typer.Option(
+        ...,
         "--secret-file",
-        required=True,
         metavar="PATH",
         help=(
             "the file holding the real secret; - reads stdin "
             "(pipe it from a password manager)"
         ),
+    ),
+) -> int:
+    """Mint a placeholder for one workspace."""
+    return cmd_secret_mint(
+        workspace_id, name, dests, ttl, secret_file, transport=ctx.obj
     )
-    secret_ls = secret_sub.add_parser(
-        "ls", help="list placeholders (sentinels are never listed)"
-    )
-    secret_ls.add_argument(
-        "--json", action="store_true", help="one JSON document"
-    )
-    secret_revoke = secret_sub.add_parser(
-        "revoke", help="revoke a placeholder (effective next request)"
-    )
-    secret_revoke.add_argument("workspace_id")
-    secret_revoke.add_argument("--name", required=True)
-    secret_renew = secret_sub.add_parser(
-        "renew", help="extend a placeholder's lifetime in place"
-    )
-    secret_renew.add_argument("workspace_id")
-    secret_renew.add_argument("--name", required=True)
-    secret_renew.add_argument(
+
+
+@secret_app.command("ls")
+@one_line_interrupts
+def secret_ls(
+    ctx: typer.Context,
+    as_json: bool = typer.Option(False, "--json", help="one JSON document"),
+) -> int:
+    """List placeholders (sentinels are never listed)."""
+    return cmd_secret_ls(as_json, transport=ctx.obj)
+
+
+@secret_app.command("revoke")
+@one_line_interrupts
+def secret_revoke(
+    ctx: typer.Context,
+    workspace_id: str = typer.Argument(...),
+    name: str = typer.Option(..., "--name", help="the placeholder's label"),
+) -> int:
+    """Revoke a placeholder (effective next request)."""
+    return cmd_secret_revoke(workspace_id, name, transport=ctx.obj)
+
+
+@secret_app.command("renew")
+@one_line_interrupts
+def secret_renew(
+    ctx: typer.Context,
+    workspace_id: str = typer.Argument(...),
+    name: str = typer.Option(..., "--name", help="the placeholder's label"),
+    ttl: int = typer.Option(
+        ...,
         "--ttl",
-        required=True,
-        type=int,
         metavar="SECONDS",
         help="the new lifetime from now",
-    )
-    secret_sub.add_parser(
-        "check",
-        help="verify the configured secret store answers writes",
-    )
-    return parser
+    ),
+) -> int:
+    """Extend a placeholder's lifetime in place."""
+    return cmd_secret_renew(workspace_id, name, ttl, transport=ctx.obj)
+
+
+@secret_app.command("check")
+@one_line_interrupts
+def secret_check(ctx: typer.Context) -> int:
+    """Verify the configured secret store answers writes."""
+    return cmd_secret_check(transport=ctx.obj)
+
+
+def help_requested(argv: list[str]) -> bool:
+    """Whether the invocation's parse reaches a help flag — the
+    ``--help`` screen exits through SystemExit(0), the shape the
+    argparse era pinned; a ``--`` separator hides everything after
+    it from the flag scan."""
+    for token in argv:
+        if token == "--":
+            return False
+        if token in ("-h", "--help"):
+            return True
+    return False
+
+
+def run_parsed(argv: list[str] | None, transport) -> int:
+    """One non-standalone pass through the typer app: the command's
+    return value is the exit code (typer raises it as an Exit and
+    click's non-standalone main hands it back)."""
+    command = typer.main.get_command(app)
+    try:
+        return command.main(
+            argv,
+            prog_name="msks",
+            obj=transport,
+            standalone_mode=False,
+        )
+    except UsageError as exc:
+        # A bad invocation is one line and exit 2 — the argparse-era
+        # convention, kept (docs/cli.md documents it).
+        print(f"msks: {exc.format_message()}", file=sys.stderr)
+        return 2
 
 
 def main(argv: list[str] | None = None, transport=None) -> int:
-    args = build_parser().parse_args(argv)
-    try:
-        return dispatch(args, transport)
-    except KeyboardInterrupt:
-        # A Ctrl-C during a long boot: one line, not a traceback (a
-        # raw-mode session never gets here — Ctrl-C reaches the guest).
-        print("msks: interrupted", file=sys.stderr)
-        raise SystemExit(130) from None
+    """The ``msks`` entry point: parse with the typer app, run the
+    command, return its exit code."""
+    code = run_parsed(argv, transport)
+    if code == 0 and help_requested(argv or []):
+        # The --help screen exits through SystemExit(0), the shape
+        # the argparse era pinned.
+        raise SystemExit(0)
+    return code or 0
 
 
-def create_identity(args: argparse.Namespace) -> tuple[str | None, str | None]:
+def create_identity(args: CreateFlags) -> tuple[str | None, str | None]:
     """The create's identity mode: ``(mint key type, supplied line)``.
 
     The client mint is the default (#121): absent flags mint locally
@@ -1940,7 +2307,7 @@ IDENTITY_CONFLICTS = (
 )
 
 
-def flag_set(args: argparse.Namespace, name: str) -> bool:
+def flag_set(args: CreateFlags, name: str) -> bool:
     """Whether a flag was supplied — a store_true flag by truth, a
     value flag by presence (an explicit empty value counts, so
     ``--pubkey ""`` still conflicts rather than slipping past)."""
@@ -1948,7 +2315,7 @@ def flag_set(args: argparse.Namespace, name: str) -> bool:
     return bool(value) if name == "daemon_mint" else value is not None
 
 
-def check_identity_conflicts(args: argparse.Namespace) -> None:
+def check_identity_conflicts(args: CreateFlags) -> None:
     """Reject the flag pairings that would look meaningful but are
     not, with the conflict named."""
     for message, flags in IDENTITY_CONFLICTS:
@@ -1989,15 +2356,22 @@ def checked_pubkey_line(text: str) -> str:
     return line
 
 
-def run_resize(args: argparse.Namespace, transport) -> int:
+def run_resize(
+    workspace_id: str,
+    home_mib: int | None,
+    root_mib: int | None,
+    cpus: int | None,
+    mem_mib: int | None,
+    transport,
+) -> int:
     """Compose the request body, refusing the empty one locally."""
     body = {
         key: value
         for key, value in (
-            ("home_mib", args.home_mib),
-            ("root_mib", args.root_mib),
-            ("cpus", args.cpus),
-            ("mem_mib", args.mem_mib),
+            ("home_mib", home_mib),
+            ("root_mib", root_mib),
+            ("cpus", cpus),
+            ("mem_mib", mem_mib),
         )
         if value is not None
     }
@@ -2006,10 +2380,10 @@ def run_resize(args: argparse.Namespace, transport) -> int:
             "msks: nothing to resize: pass --home-mib, --root-mib, "
             "--cpus, or --mem-mib"
         )
-    return cmd_resize(args.workspace_id, body, transport)
+    return cmd_resize(workspace_id, body, transport)
 
 
-def run_create(args: argparse.Namespace, transport) -> int:
+def run_create(args: CreateFlags, transport) -> int:
     """Resolve the identity mode once — the resolver may read stdin
     (``--pubkey -``) or reject a flag pairing, so it runs a single
     time — then create."""
@@ -2026,126 +2400,6 @@ def run_create(args: argparse.Namespace, transport) -> int:
         key_type=key_type,
         pubkey=pubkey,
     )
-
-
-def command_table(args: argparse.Namespace, transport) -> dict:
-    """One entry per subcommand: its zero-argument body."""
-    return {
-        "ls": lambda: cmd_ls(args.json, transport=transport),
-        "tui": lambda: run_main_tui(args.workspace),
-        "storage": lambda: cmd_storage(
-            args.workspace, args.json, transport=transport
-        ),
-        "create": lambda: run_create(args, transport),
-        "start": lambda: cmd_start(args.workspace_id, transport=transport),
-        "stop": lambda: cmd_stop(args.workspace_id, transport=transport),
-        "resize": lambda: run_resize(args, transport),
-        "rm": lambda: cmd_rm(args.workspace_ids, transport=transport),
-        "console": lambda: run_workspace_shell(args.workspace_id, args.user),
-        "forward": lambda: run_workspace_forward(
-            args.workspace_id, args.port, args.local
-        ),
-        "key": lambda: cmd_key(
-            args.workspace_id, args.private, args.out, transport=transport
-        ),
-        "llm-token": lambda: cmd_llm_token(
-            args.workspace_id, args.remint, transport=transport
-        ),
-        "ssh": lambda: run_workspace_ssh(
-            args.workspace_id, args.passthrough, transport=transport
-        ),
-        "rsync": lambda: run_workspace_rsync(
-            args.workspace_id, args.passthrough, transport=transport
-        ),
-        "egress": lambda: egress_command_table(args, transport)[
-            args.egress_command
-        ](),
-        "image": lambda: image_command_table(args, transport)[
-            args.image_command
-        ](),
-        "home": lambda: home_command_table(args, transport)[
-            args.home_command
-        ](),
-        "secret": lambda: secret_command_table(args, transport)[
-            args.secret_command
-        ](),
-    }
-
-
-def egress_command_table(args: argparse.Namespace, transport) -> dict:
-    """One entry per ``egress`` subcommand."""
-    return {
-        "tui": lambda: run_consent_tui(args.workspace_id),
-        "rules": lambda: asyncio.run(
-            egress_mod.run_rules(args.workspace_id, transport=transport)
-        ),
-        "requests": lambda: asyncio.run(
-            egress_mod.run_requests(
-                args.workspace_id, args.decision, transport=transport
-            )
-        ),
-        "decide": lambda: asyncio.run(
-            egress_mod.run_decide(
-                args.workspace_id,
-                args.request_id,
-                args.decision,
-                args.duration,
-                transport=transport,
-            )
-        ),
-        "revoke": lambda: asyncio.run(
-            egress_mod.run_revoke(
-                args.workspace_id, args.request_id, transport=transport
-            )
-        ),
-        "mode": lambda: asyncio.run(
-            egress_mod.run_mode(
-                args.workspace_id,
-                args.mode,
-                args.allow,
-                args.offline,
-                transport=transport,
-            )
-        ),
-        "watch": lambda: asyncio.run(
-            egress_mod.run_watch(args.workspace_id, args.decide, args.duration)
-        ),
-    }
-
-
-def image_command_table(args: argparse.Namespace, transport) -> dict:
-    """One entry per ``image`` subcommand."""
-    return {
-        "ls": lambda: cmd_image_ls(args.json, transport=transport),
-        "import": lambda: cmd_image_import(args.source, transport=transport),
-        "check": lambda: cmd_image_check(args),
-        "rm": lambda: cmd_image_rm(args.ref, transport=transport),
-        "info": lambda: cmd_image_info(args.ref, transport=transport),
-        "default": lambda: cmd_image_default(
-            args.ref, args.unset, transport=transport
-        ),
-    }
-
-
-def home_command_table(args: argparse.Namespace, transport) -> dict:
-    """One entry per ``home`` subcommand."""
-    return {
-        "export": lambda: cmd_home_export(
-            args.workspace_id, args.file, transport=transport
-        ),
-        "import": lambda: cmd_home_import(
-            args.workspace_id, args.file, transport=transport
-        ),
-    }
-
-
-def dispatch(args: argparse.Namespace, transport=None) -> int:
-    """Run one parsed command; a bare ``msks`` is the workspace
-    tree TUI (#309) — the command the no-argument invocation
-    launches."""
-    if args.command is None:
-        return run_main_tui()
-    return command_table(args, transport)[args.command]()
 
 
 if __name__ == "__main__":

@@ -47,6 +47,10 @@ dependencies = [
   # path — the dependency is msks's own, declared here so a
   # textual pin change cannot silently drop it.
   "rich>=13",
+  # The command tree (#315): typer renders the help screens and
+  # carries the flags; the pinned floor is the envvar= era the
+  # client's option declarations target.
+  "typer>=0.12",
 ]
 
 [dependency-groups]

@@ -1167,5 +1167,6 @@ validation failure (422) reports each problem as `field: message`,
 joined on one line — the same facts the API returns, minus the JSON
 scaffolding. A timeout says so explicitly, because the daemon may
 still complete a request the client stopped waiting for. Argument
-errors exit with code 2 (argparse convention); success is 0; a
-Ctrl-C during a long boot prints `msks: interrupted` and exits 130.
+errors exit with code 2 — the convention the argparse-era CLI set
+and the typer-based one (#315) keeps; success is 0; a Ctrl-C during
+a long boot prints `msks: interrupted` and exits 130.

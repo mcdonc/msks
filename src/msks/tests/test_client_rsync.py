@@ -330,12 +330,23 @@ def test_run_workspace_rsync_names_a_missing_ssh_from_the_wait(
 # --- CLI wiring ---
 
 
-def test_cli_parses_the_rsync_passthrough() -> None:
-    args = cli.build_parser().parse_args(
-        ["rsync", "alpha", "--", "-av", "./s/", ":/d/"]
+def test_cli_parses_the_rsync_passthrough(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ``--`` separator drops; everything after it reaches
+    rsync verbatim (argparse's REMAINDER shape, typer's
+    interspersed-off parse — #315)."""
+    calls: list = []
+    monkeypatch.setattr(
+        cli,
+        "run_workspace_rsync",
+        lambda ws, passthrough, transport=None: (
+            calls.append(passthrough),
+            0,
+        )[1],
     )
-    assert args.workspace_id == "alpha"
-    assert args.passthrough == ["-av", "./s/", ":/d/"]  # argparse eats the --
+    assert cli.main(["rsync", "alpha", "--", "-av", "./s/", ":/d/"]) == 0
+    assert calls == [["-av", "./s/", ":/d/"]]
 
 
 def test_cli_dispatch_reaches_the_rsync_body(
@@ -350,10 +361,7 @@ def test_cli_dispatch_reaches_the_rsync_body(
             5,
         )[1],
     )
-    args = cli.build_parser().parse_args(
-        ["rsync", "alpha", "-av", ":/d/", "./d/"]
-    )
-    assert cli.dispatch(args) == 5
+    assert cli.main(["rsync", "alpha", "-av", ":/d/", "./d/"]) == 5
     assert calls == [("alpha", ["-av", ":/d/", "./d/"])]
 
 
