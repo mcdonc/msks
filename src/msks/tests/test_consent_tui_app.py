@@ -132,7 +132,9 @@ async def fake_set_mode(
         raise RuntimeError("daemon away")
 
 
-def make_app(factory, hold_timeout: float = 120.0):
+def make_app(
+    factory, hold_timeout: float = 120.0, reconnect_delays=(0.01, 0.01, 0.01)
+):
     seams: dict = {}
     recording(seams)
     app = ConsentDeciderApp(
@@ -142,7 +144,7 @@ def make_app(factory, hold_timeout: float = 120.0):
         decide=lambda *a: fake_decide(seams, *a),
         revoke=lambda *a: fake_revoke(seams, *a),
         set_mode=lambda *a, **kw: fake_set_mode(seams, *a, **kw),
-        reconnect_delays=(0.01, 0.01, 0.01),
+        reconnect_delays=reconnect_delays,
     )
     return app, seams
 
@@ -364,6 +366,33 @@ async def test_reconnect_after_a_drop() -> None:
             await asyncio.sleep(0.02)
         await pilot.pause()
         assert "r9" in app.controller.pending
+        assert revived.sent  # the re-registration frame
+        app.action_quit_screen()
+
+
+async def test_a_clean_close_names_itself_and_reconnects() -> None:
+    """websockets exits the async-for normally on an OK close (a
+    restarting daemon): the status line reads reconnecting through
+    the backoff, then the second connection registers and serves —
+    never connected over a dead socket (#316)."""
+
+    class CleanClose(FakeWS):
+        async def __anext__(self) -> str:
+            if self.frames:
+                return self.frames.pop(0)
+            raise StopAsyncIteration
+
+    revived = FakeWS([request_frame("r9")])
+    factory = FakeFactory([CleanClose([rules_frame()]), revived, FakeWS([])])
+    # A backoff the poll can see: the default 10ms window repaints
+    # itself away before the 20ms poll lands on it.
+    app, _seams = make_app(factory, reconnect_delays=(0.3,))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await wait_for(lambda: "reconnecting" in app._conn_state)
+        assert "connected" not in status_line(app)
+        await wait_for(lambda: len(factory.made) == 2)
+        await wait_for(lambda: "r9" in app.controller.pending)
         assert revived.sent  # the re-registration frame
         app.action_quit_screen()
 

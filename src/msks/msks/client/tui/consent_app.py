@@ -967,6 +967,12 @@ class ConsentDeciderApp(App):
                 # status line names it while it owns the terminal.
                 self.flash(sighting_flash(payload))
             self.safe_repaint()
+        # The iterator ended on its own: a clean close (1000/1001 —
+        # websockets exits the async-for normally on OK codes, it
+        # does not raise), a restarting daemon among them. Name the
+        # window here: pump_one's fall-through return is the one
+        # exit that leaves the state on connected (#316).
+        self.on_disconnect()
 
     def flash_once(self, message: str) -> None:
         """Flash a connect failure when its text changes: byte-identical
