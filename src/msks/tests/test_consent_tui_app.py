@@ -211,7 +211,7 @@ def status_line(app) -> str:
 
 
 async def wait_for(
-    condition, timeout: float = 15.0, delay: float = 0.02
+    condition, timeout: float = 10.0, delay: float = 0.02
 ) -> None:
     """Poll a render condition until a wall-clock deadline (UI
     updates land on the message pump, not synchronously with the
@@ -1140,7 +1140,7 @@ async def test_a_dying_flight_carries_a_late_request() -> None:
     armed_dying.request()  # arms pending on the dying flight
     alive["yes"] = False
     gate.set()
-    await asyncio.sleep(0.1)
+    await wait_for(lambda: not armed_dying.scheduled)  # unwound, idle
     assert ran == ["dying", "healed", "dying"]  # no fourth flight
     assert not armed_dying.scheduled
     assert armed_dying.pending is True  # dropped with the screen
