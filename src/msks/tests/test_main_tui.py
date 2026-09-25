@@ -812,8 +812,12 @@ async def test_a_refused_remove_decides_nothing(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await wait_for(lambda: "alpha" in row_text(app, 0))
-        await pilot.press("D")
-        await wait_for(lambda: type(app.screen).__name__ == "ConfirmScreen")
+        # press_until, not one press: a key landing in the list
+        # rebuild's swap window reads as nothing focused and no-ops
+        # — no poll window survives a swallowed press (#322).
+        await press_until(
+            pilot, "D", lambda: type(app.screen).__name__ == "ConfirmScreen"
+        )
         await pilot.press("n")
         await wait_for(lambda: on_main(app))
         assert "remove" not in [call[0] for call in data.calls]

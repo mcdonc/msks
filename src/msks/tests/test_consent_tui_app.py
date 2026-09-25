@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import time
 
 import pytest
 import websockets
@@ -211,20 +212,37 @@ def status_line(app) -> str:
     return str(app.query_one("#status").content)
 
 
-async def wait_for(condition, tries: int = 200, delay: float = 0.02) -> None:
-    """Poll a render condition (UI updates land on the message pump,
-    not synchronously with the worker's frames)."""
-    for _ in range(tries):
+async def wait_for(
+    condition, timeout: float = 10.0, delay: float = 0.02
+) -> None:
+    """Poll a render condition until a wall-clock deadline (UI
+    updates land on the message pump, not synchronously with the
+    worker's frames). The budget is monotonic wall-clock time, not
+    a try count: under full-suite load a multi-second event-loop
+    stall stretches every iteration, and a fixed try count then
+    gives up on a condition that lands moments later (#322)."""
+    deadline = time.monotonic() + timeout
+    while True:
         if condition():
             return
+        if time.monotonic() >= deadline:
+            # A loop parked past the deadline gets one pump cycle to
+            # land the condition before the poll gives up: the frames
+            # that arrived during the park are queued, not processed.
+            await asyncio.sleep(delay)
+            if condition():
+                return
+            raise AssertionError("condition never landed")
         await asyncio.sleep(delay)
-    raise AssertionError("condition never landed")
 
 
-async def press_until(pilot, key: str, landed, tries: int = 40) -> None:
+async def press_until(pilot, key: str, landed, timeout: float = 10.0) -> None:
     """Press a key until its effect lands — an action pressed inside
-    a rebuild's swap window no-ops (by design), so the tests retry."""
-    for _ in range(tries):
+    a rebuild's swap window no-ops (by design), so the tests retry.
+    The budget is a wall-clock deadline for the same stall reason
+    as wait_for (#322)."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         await pilot.press(key)
         try:
             if landed():
@@ -356,14 +374,8 @@ async def test_reconnect_after_a_drop() -> None:
         await pilot.pause()
         # The first connection dropped: backoff, then the second
         # registers and serves its snapshot row.
-        for _ in range(100):
-            if len(factory.made) >= 2:
-                break
-            await asyncio.sleep(0.02)
-        for _ in range(100):
-            if app.query_one("#requests").children:
-                break
-            await asyncio.sleep(0.02)
+        await wait_for(lambda: len(factory.made) >= 2)
+        await wait_for(lambda: queue_children(app) >= 1)
         await pilot.pause()
         assert "r9" in app.controller.pending
         assert revived.sent  # the re-registration frame
@@ -403,10 +415,7 @@ async def test_refused_token_retries_slowly() -> None:
     app, _seams = make_app(factory)
     async with app.run_test() as pilot:
         await pilot.pause()
-        for _ in range(100):
-            if "refused" in app._conn_state:
-                break
-            await asyncio.sleep(0.02)
+        await wait_for(lambda: "refused" in app._conn_state)
         await pilot.pause()
         assert "refused" in status_line(app)
         app.action_quit_screen()
@@ -1177,6 +1186,54 @@ async def test_events_rebuild_self_heals_without_an_old_list() -> None:
         app.action_quit_screen()
 
 
+async def test_a_dying_flight_carries_a_late_request() -> None:
+    """OneFlight honors a request armed while its flight dies
+    mid-rebuild (#322): the loop re-arms on ``pending`` only after a
+    successful rebuild, so the dying path must carry the request
+    itself — dropped, it wedges the events screen (an unchanged log
+    takes no per-tick re-request, so nothing recovers the loss).
+    The deterministic twin of the load-only race the self-heal
+    test above flakes on."""
+    from msks.client.tui.consent_app import OneFlight
+
+    gate = asyncio.Event()
+    ran: list[str] = []
+    alive = {"yes": True}
+
+    async def dying() -> None:
+        ran.append("dying")
+        await gate.wait()  # park mid-rebuild, where a request lands
+        raise RuntimeError("died mid-swap")
+
+    async def healed() -> None:
+        ran.append("healed")
+
+    flight = OneFlight(dying, lambda: alive["yes"], "test")
+    flight.request()
+    await wait_for(lambda: "dying" in ran)  # the flight is parked
+    assert flight.scheduled  # in the air: request() arms pending
+    flight.request()
+    flight._rebuild = healed  # the swap the screen restores (#201)
+    gate.set()  # the flight dies; the armed request must re-arm
+    await wait_for(lambda: "healed" in ran)
+    await wait_for(lambda: not flight.scheduled)  # settled, idle
+    assert flight.pending is False
+
+    # The same death against a dead owner drops the request: nothing
+    # re-arms a rebuild whose screen is gone.
+    gate = asyncio.Event()
+    armed_dying = OneFlight(dying, lambda: alive["yes"], "test")
+    armed_dying.request()
+    await wait_for(lambda: "dying" in ran and len(ran) == 3)
+    armed_dying.request()  # arms pending on the dying flight
+    alive["yes"] = False
+    gate.set()
+    await wait_for(lambda: not armed_dying.scheduled)  # unwound, idle
+    assert ran == ["dying", "healed", "dying"]  # no fourth flight
+    assert not armed_dying.scheduled
+    assert armed_dying.pending is True  # dropped with the screen
+
+
 async def test_rules_refresh_preserves_the_focused_rule() -> None:
     """A per-tick repaint must not move `x`'s target: the focused
     rule id survives the clear+rebuild."""
@@ -1912,7 +1969,14 @@ async def test_the_rules_screen_repaints_in_place() -> None:
         # A membership change (a1 revoked): the fresh-list swap.
         app.controller.apply_frame(mode_frame("allow"))
         app.safe_repaint()
-        await wait_for(lambda: rules_children(app) == 0)
+        # Pin the swap itself, not a row count: a count of 0 also
+        # reads on the old list mid-swap under load (#322).
+        await wait_for(
+            lambda: (
+                rules_children(app) == 0
+                and app.screen.query_one("#rule-rows") is not rows
+            )
+        )
         assert app.screen.query_one("#rule-rows") is not rows
         app.action_quit_screen()
 
