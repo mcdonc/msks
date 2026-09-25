@@ -9,6 +9,7 @@ import asyncio
 import io
 import json
 import os
+import re
 import ssl
 import sys
 import time
@@ -600,6 +601,18 @@ def test_cmd_create_client_mint_with_start_boots_after_verification(
     out = capsys.readouterr().out
     assert "created ws1" in out
     assert "msks console ws1" in out
+
+
+#: The ANSI styling typer's rich help carries when the host forces
+#: color (CI does): pins read the words, not the style.
+ANSI_STYLES = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def help_flat(out: str) -> str:
+    """Help text as one whitespace-normalized line: styling,
+    panel borders, and the measured wrapping (#315) all drop."""
+    plain = ANSI_STYLES.sub(" ", out).replace("\u2502", " ")
+    return " ".join(plain.split())
 
 
 SUPPLIED_PUBKEY = "ssh-ed25519 AAAAc3NzaC1lZDI1 operator@laptop"
@@ -1665,10 +1678,7 @@ def test_image_import_help_states_the_daemon_reads_the_path(
     with pytest.raises(SystemExit) as excinfo:
         cli.main(["image", "import", "--help"])
     assert excinfo.value.code == 0
-    # Whitespace-normalized: typer's rich columns wrap the help at
-    # the measured width (#315), so a phrase may split across lines
-    # and a panel border may fall between its words.
-    flat = " ".join(capsys.readouterr().out.replace("│", " ").split())
+    flat = help_flat(capsys.readouterr().out)
     assert "read by the daemon, not uploaded" in flat
 
 
@@ -1687,13 +1697,11 @@ def test_help_folds_long_tokens_instead_of_cutting_them(
         cli.main(["create", "--help"])
     assert excinfo.value.code == 0
     text = capsys.readouterr().out
-    assert "…" not in text
-    flat = "".join(
-        line.lstrip().rstrip("│ ")
-        for line in text.splitlines()
-        if line.strip(" │")
-    )
-    assert "`~/.local/share/msks/<id>/identity`, or" in flat
+    assert "…" not in ANSI_STYLES.sub(" ", text)
+    # The long path reconstructs across the fold: strip the style
+    # and border characters, keep every content character in order.
+    flat = help_flat(text).replace(" ", "")
+    assert "`~/.local/share/msks/<id>/identity`,or" in flat
 
 
 @pytest.mark.parametrize(
@@ -3957,7 +3965,7 @@ def test_help_exits_through_system_exit_zero(
     with pytest.raises(SystemExit) as excinfo:
         cli.main(["ls", "--help"])
     assert excinfo.value.code == 0
-    assert "one JSON document" in capsys.readouterr().out
+    assert "one JSON document" in help_flat(capsys.readouterr().out)
 
 
 def test_a_bare_msks_is_the_tree_tui(monkeypatch: pytest.MonkeyPatch) -> None:
