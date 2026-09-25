@@ -399,6 +399,27 @@ async def test_decide_and_revoke_failures_flash() -> None:
         app.action_quit_screen()
 
 
+async def test_a_truncated_closing_tag_failure_flashes_literally() -> None:
+    """A failure message ending in a truncated closing tag — rich's
+    escape leaves a bare ``[/`` alone, which still raises in the
+    parser — flashes literally too: every bracket shape renders,
+    none wedges the status line (#318)."""
+    factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
+    app, seams = make_app(factory)
+    seams["fail_decide"] = True
+    seams["fail_text"] = "unknown workspace [/dev"
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("a")
+        await wait_for(
+            lambda: "decide failed: unknown workspace" in status_line(app)
+        )
+        assert "\\[/dev" in status_line(app)
+        app.repaint()  # the flash owns the line: renders, no MarkupError
+        await pilot.pause()
+        app.action_quit_screen()
+
+
 async def test_a_bracketed_failure_message_flashes_literally() -> None:
     """A failure message carrying rich markup brackets (a TLS
     handshake failure prints ``[SSL: ...]``) flashes literally —

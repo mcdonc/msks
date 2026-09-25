@@ -26,6 +26,7 @@ line names the state rather than implying silence.
 import asyncio
 import json
 import logging
+import re
 import time
 
 import websockets
@@ -406,6 +407,16 @@ def sighting_flash(event: SecretEvent) -> str:
         f"! sighting: {escape(event.workspace_id)}/{escape(event.name)}"
         f" → {escape(event.host or '?')}"
     )
+
+
+def flash_safe(text: str) -> str:
+    """Escape free text for a status-line flash. ``escape`` covers
+    complete markup tags but passes a truncated closing tag through
+    bare (``unknown workspace [/dev``) — and the status line's
+    Static parses markup at update time, so a bare ``[/`` still
+    raises. The second pass backslash-escapes that prefix too,
+    leaving already-escaped tags untouched."""
+    return re.sub(r"(?<!\\)\[/", r"\\\[/", escape(text))
 
 
 def is_sighting(outcome: str, payload) -> bool:
@@ -927,9 +938,10 @@ class ConsentDeciderApp(App):
         except Exception as exc:
             self.on_disconnect()
             # The exception text is operator-facing free text (a TLS
-            # handshake failure prints bracketed rich markup); escape
-            # it or the status line's render raises every tick.
-            self.flash_once(f"connect failed: {escape(str(exc))}")
+            # handshake failure prints bracketed markup): unescaped,
+            # every status update raises inside safe_repaint and the
+            # line stays stale for the flash's TTL.
+            self.flash_once(f"connect failed: {flash_safe(str(exc))}")
             return False, False
         try:
             await self.serve_connection(ws)
@@ -959,7 +971,7 @@ class ConsentDeciderApp(App):
                 # workspace): waiting would be promptless forever.
                 reason = payload or "registration rejected"
                 self.on_disconnect(True)
-                self.flash_once(f"registration rejected: {escape(reason)}")
+                self.flash_once(f"registration rejected: {flash_safe(reason)}")
                 self._stop = True
                 return
             if is_sighting(outcome, payload):
@@ -1065,7 +1077,7 @@ class ConsentDeciderApp(App):
                 self.workspace_id, request_id, decision, duration
             )
         except (Exception, SystemExit) as exc:
-            self.flash(f"decide failed: {escape(str(exc))}")
+            self.flash(f"decide failed: {flash_safe(str(exc))}")
 
     def action_rules(self) -> None:
         self.push_screen(RulesScreen(self.controller, self.revoke_rule))
@@ -1120,7 +1132,7 @@ class ConsentDeciderApp(App):
                 self.workspace_id, mode, confirm_empty=confirm_empty
             )
         except (Exception, SystemExit) as exc:
-            self.flash(f"mode switch failed: {escape(str(exc))}")
+            self.flash(f"mode switch failed: {flash_safe(str(exc))}")
 
     def action_events(self) -> None:
         self.push_screen(EventsScreen(self.controller))
@@ -1131,7 +1143,7 @@ class ConsentDeciderApp(App):
         try:
             await self._revoke(self.workspace_id, request_id)
         except (Exception, SystemExit) as exc:
-            self.flash(f"revoke failed: {escape(str(exc))}")
+            self.flash(f"revoke failed: {flash_safe(str(exc))}")
 
     def action_quit_screen(self) -> None:
         self._stop = True
