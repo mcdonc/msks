@@ -115,13 +115,13 @@ def recording(seams: dict, **kw) -> None:
 async def fake_decide(seams, workspace, request_id, decision, duration):
     seams["decided"].append((workspace, request_id, decision, duration))
     if seams.get("fail_decide"):
-        raise RuntimeError("daemon away")
+        raise RuntimeError(seams.get("fail_text", "daemon away"))
 
 
 async def fake_revoke(seams, workspace, request_id):
     seams["revoked"].append((workspace, request_id))
     if seams.get("fail_revoke"):
-        raise RuntimeError("daemon away")
+        raise RuntimeError(seams.get("fail_text", "daemon away"))
 
 
 async def fake_set_mode(
@@ -129,7 +129,7 @@ async def fake_set_mode(
 ):
     seams["modes"].append((workspace, mode, confirm_empty))
     if seams.get("fail_mode"):
-        raise RuntimeError("daemon away")
+        raise RuntimeError(seams.get("fail_text", "daemon away"))
 
 
 def make_app(factory, hold_timeout: float = 120.0):
@@ -396,6 +396,65 @@ async def test_decide_and_revoke_failures_flash() -> None:
         seams["fail_revoke"] = True
         await app.revoke_rule("r1")
         await wait_for(lambda: "revoke failed" in status_line(app))
+        app.action_quit_screen()
+
+
+async def test_a_truncated_closing_tag_failure_flashes_literally() -> None:
+    """A failure message ending in a truncated closing tag — rich's
+    escape leaves a bare ``[/`` alone, which still raises in the
+    parser — flashes literally too: every bracket shape renders,
+    none wedges the status line (#318)."""
+    factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
+    app, seams = make_app(factory)
+    seams["fail_decide"] = True
+    seams["fail_text"] = "unknown workspace [/dev"
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("a")
+        await wait_for(
+            lambda: "decide failed: unknown workspace" in status_line(app)
+        )
+        assert "\\[/dev" in status_line(app)
+        app.repaint()  # the flash owns the line: renders, no MarkupError
+        await pilot.pause()
+        app.action_quit_screen()
+
+
+async def test_a_bracketed_failure_message_flashes_literally() -> None:
+    """A failure message carrying rich markup brackets (a TLS
+    handshake failure prints ``[SSL: ...]``) flashes literally —
+    the seam escapes the exception text, so the status line's
+    render never raises and the message the operator needs
+    reaches the screen (#318)."""
+    factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
+    app, seams = make_app(factory)
+    seams["fail_decide"] = True
+    seams["fail_text"] = "[SSL: CERTIFICATE_VERIFY_FAILED] nope[/]"
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("a")
+        await wait_for(
+            lambda: (
+                "decide failed: [SSL: CERTIFICATE_VERIFY_FAILED]"
+                in status_line(app)
+            )
+        )
+        # The closer is escaped in the raw content (rich leaves the
+        # uppercase bracket pair alone — textual renders it as
+        # literal text), and the repaint the flash owns renders it
+        # without raising: pre-fix, visualize raised MarkupError on
+        # the unescaped [/] and every tick aborted.
+        assert "nope\\[/]" in status_line(app)
+        app.repaint()
+        await pilot.pause()
+        # A failing revoke with bracketed text flashes the same way.
+        seams["fail_decide"] = False
+        seams["fail_revoke"] = True
+        await app.revoke_rule("r1")
+        await wait_for(lambda: "revoke failed: [SSL" in status_line(app))
+        assert "nope\\[/]" in status_line(app)
+        app.repaint()
+        await pilot.pause()
         app.action_quit_screen()
 
 
@@ -1175,6 +1234,29 @@ async def test_a_connect_failure_names_itself_once() -> None:
         app.action_quit_screen()
 
 
+async def test_a_bracketed_connect_failure_flashes_literally() -> None:
+    """A connect failure whose text carries rich markup brackets
+    (the TLS handshake failure an untrusted daemon certificate
+    prints) flashes literally — the seam escapes the exception
+    text, so the status line's render never raises (#318)."""
+    app, _ = make_app(FakeFactory([]))
+
+    class Failing:
+        async def __aenter__(self):
+            raise OSError("[SSL: CERTIFICATE_VERIFY_FAILED] nope[/]")
+
+        async def __aexit__(self, *exc):
+            return None
+
+    app._ws_factory = lambda: Failing()
+    async with app.run_test() as pilot:
+        await wait_for(lambda: "connect failed: [SSL" in status_line(app))
+        assert "nope\\[/]" in status_line(app)
+        app.repaint()  # the flash owns the line: renders, no MarkupError
+        await pilot.pause()
+        app.action_quit_screen()
+
+
 def test_ws_connect_kwargs_and_shared_ssl(monkeypatch) -> None:
     from msks.client.tui.consent_app import ws_connect_kwargs
 
@@ -1398,6 +1480,34 @@ async def test_registration_rejection_exits() -> None:
                 "registration rejected: unknown workspace" in status_line(app)
             )
         )
+        app.action_quit_screen()
+
+
+async def test_a_bracketed_rejection_flashes_literally() -> None:
+    """A registration rejection whose reason carries rich markup
+    brackets flashes literally — the seam escapes the daemon's
+    text, so the status line's render never raises (#318)."""
+    factory = FakeFactory([FakeWS([]), FakeWS([])])
+    app, _ = make_app(factory)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: len(factory.made) == 1)
+        factory.made[0].push(
+            json.dumps(
+                {
+                    "event": "egress.decider_rejected",
+                    "data": {"reason": "unknown workspace [ws-dev][/]"},
+                }
+            )
+        )
+        await wait_for(lambda: app._stop is True)
+        await wait_for(
+            lambda: (
+                "registration rejected: unknown workspace" in status_line(app)
+            )
+        )
+        assert "\\[ws-dev]" in status_line(app)
+        app.repaint()  # the flash owns the line: renders, no MarkupError
+        await pilot.pause()
         app.action_quit_screen()
 
 
@@ -1890,6 +2000,27 @@ async def test_mode_switch_failure_flashes(monkeypatch) -> None:
         await pilot.press("enter")
         await wait_for(lambda: len(seams["modes"]) == 1)
         await wait_for(lambda: "mode switch failed" in app_status(app))
+        app.action_quit_screen()
+
+
+async def test_a_bracketed_mode_failure_flashes_literally() -> None:
+    """A mode switch refusal carrying rich markup brackets flashes
+    literally — the seam escapes the exception text (#318)."""
+    factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
+    app, seams = make_app(factory)
+    seams["fail_mode"] = True
+    seams["fail_text"] = "[SSL: CERTIFICATE_VERIFY_FAILED] nope[/]"
+    async with app.run_test() as pilot:
+        await pilot.press("r")
+        await wait_for(lambda: rules_children(app) == 2)
+        await pilot.press("m")
+        await pilot.press("up")
+        await pilot.press("enter")
+        await wait_for(lambda: len(seams["modes"]) == 1)
+        await wait_for(lambda: "mode switch failed: [SSL" in app_status(app))
+        assert "nope\\[/]" in app_status(app)
+        app.repaint()  # the flash owns the line: renders, no MarkupError
+        await pilot.pause()
         app.action_quit_screen()
 
 
