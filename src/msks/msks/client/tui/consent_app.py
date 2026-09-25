@@ -926,7 +926,10 @@ class ConsentDeciderApp(App):
             ws = await self._ws_factory().__aenter__()
         except Exception as exc:
             self.on_disconnect()
-            self.flash_once(f"connect failed: {exc}")
+            # The exception text is operator-facing free text (a TLS
+            # handshake failure prints bracketed rich markup); escape
+            # it or the status line's render raises every tick.
+            self.flash_once(f"connect failed: {escape(str(exc))}")
             return False, False
         try:
             await self.serve_connection(ws)
@@ -956,7 +959,7 @@ class ConsentDeciderApp(App):
                 # workspace): waiting would be promptless forever.
                 reason = payload or "registration rejected"
                 self.on_disconnect(True)
-                self.flash_once(f"registration rejected: {reason}")
+                self.flash_once(f"registration rejected: {escape(reason)}")
                 self._stop = True
                 return
             if is_sighting(outcome, payload):
@@ -1062,7 +1065,7 @@ class ConsentDeciderApp(App):
                 self.workspace_id, request_id, decision, duration
             )
         except (Exception, SystemExit) as exc:
-            self.flash(f"decide failed: {exc}")
+            self.flash(f"decide failed: {escape(str(exc))}")
 
     def action_rules(self) -> None:
         self.push_screen(RulesScreen(self.controller, self.revoke_rule))
@@ -1117,7 +1120,7 @@ class ConsentDeciderApp(App):
                 self.workspace_id, mode, confirm_empty=confirm_empty
             )
         except (Exception, SystemExit) as exc:
-            self.flash(f"mode switch failed: {exc}")
+            self.flash(f"mode switch failed: {escape(str(exc))}")
 
     def action_events(self) -> None:
         self.push_screen(EventsScreen(self.controller))
@@ -1128,7 +1131,7 @@ class ConsentDeciderApp(App):
         try:
             await self._revoke(self.workspace_id, request_id)
         except (Exception, SystemExit) as exc:
-            self.flash(f"revoke failed: {exc}")
+            self.flash(f"revoke failed: {escape(str(exc))}")
 
     def action_quit_screen(self) -> None:
         self._stop = True
