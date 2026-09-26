@@ -34,15 +34,20 @@ BOOT_POLL_S = 1.0
 
 
 def env_url() -> str:
-    return os.environ.get("MSKSC_URL", DEFAULT_URL).rstrip("/")
+    # Empty string is the unset form (the file layer and the shell
+    # presets both lean on it): fall to the default, never to a
+    # base URL of "".
+    return (os.environ.get("MSKSC_URL", "") or DEFAULT_URL).rstrip("/")
 
 
 def env_token() -> str:
     token = os.environ.get("MSKSC_TOKEN", "")
     if not token:
         raise SystemExit(
-            "msks: set MSKSC_TOKEN to a daemon token "
-            "(MSKSC_URL for a non-default daemon)"
+            "msks: set MSKSC_TOKEN to a daemon token, or point "
+            "token_file at a token file in the client config "
+            "(~/.config/msks/msks.yaml; MSKSC_URL for a non-default "
+            "daemon)"
         )
     return token
 
@@ -52,9 +57,11 @@ def ssl_context() -> ssl.SSLContext:
 
     The daemon's certificate is self-signed; pinning it with
     MSKSC_CAFILE gives verification, and without it the client
-    proceeds unverified with a warning to stderr.
+    proceeds unverified with a warning to stderr. A leading ``~``
+    expands — the variable and the config file's ``cafile`` key
+    carry the same home-relative paths the state roots do.
     """
-    cafile = os.environ.get("MSKSC_CAFILE", "")
+    cafile = os.path.expanduser(os.environ.get("MSKSC_CAFILE", ""))
     if cafile:
         return ssl.create_default_context(cafile=cafile)
     print(

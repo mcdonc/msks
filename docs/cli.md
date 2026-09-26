@@ -91,6 +91,111 @@ stderr on every invocation — the same trust-on-first-use posture as
 `msks console` (#21), fine for a lab network and worth closing before
 anything real.
 
+## The client config file (#314)
+
+The environment variables above have a durable home: a YAML file at
+`~/.config/msks/msks.yaml` (relocated by `MSKSC_CONFIG_DIR`, or
+`XDG_CONFIG_HOME`). The variables keep working beside it, and each
+one overrides the same key in the file — a fresh devenv shell with its
+presets exported behaves exactly as it does today. Precedence,
+highest first:
+
+```text
+--daemon flag > MSKSC_* environment > the file's daemon aliases
+> the file's global keys > built-in defaults
+```
+
+A bare `msks` reads the default path and, on the first run, generates
+a commented near-empty template there (the directory 0700, the file
+0600). `--config <path>` reads exactly that file — a missing one is an
+error, and an explicit path is never generated — and `--config=none`
+reads the environment and the built-in defaults only.
+
+Every scalar key is its `MSKSC_*` variable with the prefix stripped
+and lowercased (`MSKSC_URL` → `url`,
+`MSKSC_EXPECTED_IMAGE` → `expected_image`), with the same semantics
+as the variable: a leading `~` expands, and a key set to nothing
+(`key:` with no value, or `""`) is the unset form. Hyphens and
+underscores spell the same key — `token-file` and `token_file` are
+one key (klangk's file spelled kebab; msks's variables spell snake),
+and a file that carries both spellings of one key is refused, the
+second treated as a duplicate. `token_file` is
+the one key whose variable carries a different shape: the file
+points at a file holding one daemon token, so the config tree stays
+free of inline credentials and the token keeps the permissions of
+the file that holds it — `MSKSC_TOKEN` still carries an inline token
+when the environment is the more convenient place for one. For the
+invocation, the token is read out of its file into the process
+environment (the substrate every reader already speaks), where
+child processes — console shells, the terminal launcher — inherit
+it; the file itself stays the durable, permissioned home. An
+unreadable or empty token file is an error before any network
+activity, naming both places a token can come from.
+
+Unknown keys and duplicate keys are refused at load, each error
+naming the key and the valid ones — the same fail-fast rules msksd's
+config file carries (#46).
+
+### Daemon aliases
+
+The file's one structural key is `daemons:` — one entry per daemon
+you talk to. `url` is the entry's one required key; `token_file`,
+`cafile`, and `expected_image` override their global keys for that
+alias:
+
+```yaml
+url: https://127.0.0.1:8660
+token_file: ~/.config/msks/dev.token
+daemons:
+  dev:
+    url: https://127.0.0.1:8660
+    token_file: ~/projects/msks/.devenv/state/msksd/bootstrap-token
+    cafile: ~/projects/msks/.devenv/state/msksd/msks-ca.pem
+  lab:
+    url: https://hv-1.lab.example.com:8660
+    token_file: ~/.config/msks/lab.token
+    cafile: ~/.config/msks/lab-ca.pem
+    expected_image: msks/debian13:1.1
+
+active_daemon: dev
+```
+
+`active_daemon` names the alias a bare `msks` addresses; the
+`--daemon <alias-or-url>` flag picks one for a single invocation and
+also takes a raw URL. The two selections sit at different layers of
+the precedence rule: a `--daemon` alias outranks the environment for
+that invocation (you named the daemon, so its entry's keys win over
+the ambient exports), while an `active_daemon` alias sits below the
+environment (the devenv presets keep winning, so a worktree shell
+still talks to its own dev daemon beside a user config file that
+names another).
+
+### `terminal_open_cmd`
+
+`terminal_open_cmd` names the launcher a future TUI action will use
+to open a workspace shell in a new terminal window (#314); the msks
+invocation is appended after it, the way most terminals take a
+command after `-e` / `--`:
+
+```yaml
+terminal_open_cmd: konsole -e          # string form (shell-split)
+terminal_open_cmd:                     # list form (no shell quoting)
+  - alacritty
+  - -T
+  - msks ssh
+  - -e
+```
+
+`MSKSC_TERMINAL_OPEN_CMD` overrides the file value with the string
+form. The built-in default is `xterm -e` — the terminal most Linux
+distributions carry — so the new-terminal path needs no
+configuration; a launcher that fails to execute (a binary that is
+missing or not executable) shows an inline error and falls back to
+running the shell in the same terminal. A holding variant
+(`konsole --hold -e`, xterm's `-hold`) keeps the window open after
+the session ends, for reading final output; without one the window
+closes itself when the session disconnects.
+
 ## Workspace identity: a name and an id (#246)
 
 A workspace carries two identity fields. The **name** is the label

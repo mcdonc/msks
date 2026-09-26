@@ -1,5 +1,6 @@
 import os
 import shutil
+from pathlib import Path
 
 import pytest
 from msks.app import App
@@ -59,6 +60,29 @@ def preseeded_migrations(tmp_path_factory):
 
     Model.migrate = migrate
     yield
+
+
+@pytest.fixture(autouse=True)
+def isolated_client_config(
+    client_config_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep the client's first-run template out of the home tree.
+
+    Every ``msks`` invocation reads (and on first run generates)
+    ``msks.yaml`` under ``$MSKSC_CONFIG_DIR`` (#314); the suite
+    points that root at a throwaway directory so a bare
+    ``cli.main`` run never writes into the operator's
+    ``~/.config``. Tests that exercise the documented default-path
+    resolution relocate it themselves, the way the msksd tests
+    do.
+    """
+    monkeypatch.setenv("MSKSC_CONFIG_DIR", str(client_config_root))
+
+
+@pytest.fixture(scope="session")
+def client_config_root(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The throwaway config-tree root for one test session."""
+    return tmp_path_factory.mktemp("msks-client-config")
 
 
 @pytest.fixture(autouse=True)

@@ -44,6 +44,7 @@ from ..identity import KEY_TYPES
 from ..imagestore import is_hash_shape, version_key
 from ..storage import MIB
 from . import egress as egress_mod
+from .config import bootstrap
 from .console import run_workspace_shell
 
 # Re-exported for the tests (they drive cli.write_client_identity
@@ -1432,6 +1433,10 @@ def passthrough_args(argv: list[str]) -> list[str]:
 # command consumed as its value must not masquerade as one).
 body_reached = False
 
+#: The current invocation's tokens, recorded by run_parsed for the
+#: root callback's help-screen check (see set_invocation_tokens).
+invocation_tokens: list[str] = []
+
 
 def one_line_interrupts(fn):
     """A Ctrl-C during a long boot is one line, not a traceback (a
@@ -1477,8 +1482,29 @@ app.add_typer(secret_app, name="secret")
 
 
 @app.callback(invoke_without_command=True)
-def root(ctx: typer.Context) -> int:
+def root(
+    ctx: typer.Context,
+    daemon: str = typer.Option(
+        None,
+        "--daemon",
+        help="the daemon to address: an alias from the config file, "
+        "or a raw URL (#314)",
+    ),
+    config: str = typer.Option(
+        None,
+        "--config",
+        help="the client config file to read, or 'none' for "
+        "environment only (#314)",
+    ),
+) -> int:
     """A bare ``msks`` is the workspace tree TUI (#309)."""
+    # The config bootstrap runs before every command body (#314):
+    # the file's and the flag's winners are in the environment by
+    # the time any reader looks — except on a help screen, where
+    # the operator is reading, not connecting, and a broken config
+    # file must not hide the help.
+    if not help_requested(invocation_tokens):
+        bootstrap(daemon, config)
     if ctx.invoked_subcommand is None:
         # The decorator's edge, same as every command: a Ctrl-C in
         # the tree is one line, not typer's silent 130.
@@ -2259,6 +2285,19 @@ def help_requested(argv: list[str]) -> bool:
     return False
 
 
+def set_invocation_tokens(argv: list[str] | None) -> None:
+    """Record the invocation's tokens for the root callback.
+
+    The callback runs before the subcommand parses, so it cannot
+    see whether the parse ends at a help screen; the recorded
+    tokens let it keep the config bootstrap off the help screens —
+    a broken config file must not hide ``msks <cmd> --help``, the
+    operator's most discoverable debugging tool.
+    """
+    global invocation_tokens
+    invocation_tokens = sys.argv[1:] if argv is None else argv
+
+
 def run_parsed(argv: list[str] | None, transport) -> int:
     """One non-standalone pass through the typer app: the command's
     return value is the exit code (typer raises it as an Exit and
@@ -2269,6 +2308,7 @@ def run_parsed(argv: list[str] | None, transport) -> int:
     # Typer.__call__ itself.
     global body_reached
     body_reached = False  # per invocation, never across them
+    set_invocation_tokens(argv)
     command = typer.main.get_command(app)
     try:
         return command.main(
