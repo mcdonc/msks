@@ -1778,6 +1778,103 @@ async def test_a_long_daemon_url_keeps_the_status_bar_one_line(
         assert status.size.height == 1
 
 
+async def test_a_long_flash_keeps_the_status_bar_one_line(
+    monkeypatch,
+) -> None:
+    """#359: a flash longer than the terminal's width — a refusal
+    that echoes operator-typed references back — renders on the
+    bar's one row, the head of the message readable and an
+    ellipsis marking the cut, so the listing below holds its
+    place through the flash's TTL instead of reflowing on every
+    tick."""
+    scripted_link(monkeypatch, [])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    refusal = "start failed: " + "daemon refused: " * 10 + "no room"
+    assert len(refusal) > 150  # wider than the 80-column terminal
+    async with app.run_test(size=(80, 24)) as pilot:
+        await wait_for(lambda: list_children(app) == 1)
+        listing_y = app.query_one("#listing").region.y
+        app.flash(refusal)
+        await wait_for(lambda: "start failed" in status_text(app))
+        # Lay the flashed bar out before measuring — the wait sees
+        # the content land, not the reflow it causes.
+        await pilot.pause()
+        status = app.query_one("#status", Static)
+        # One row at 80 columns, the listing unmoved below it.
+        assert status.region.height == 1
+        assert app.query_one("#listing").region.y == listing_y
+        line = "".join(s.text for s in status.render_line(0))
+        assert cell_len(line) <= 80
+        assert line.lstrip().startswith("start failed: daemon refused")
+        assert line.rstrip().endswith("…")  # the cut, marked
+        # A refusal that spans lines crops the same way: flash_safe
+        # collapses it to one line, so the cut stays marked.
+        assert "\n" not in main_app.flash_safe("one\ntwo[/x")
+        app.flash(
+            main_app.flash_safe("start failed: " + "daemon refused:\n" * 10)
+        )
+        await wait_for(lambda: "start failed" in status_text(app))
+        await pilot.pause()  # lay the flashed bar out
+        assert status.region.height == 1
+        line = "".join(s.text for s in status.render_line(0))
+        assert line.lstrip().startswith("start failed: daemon refused")
+        assert line.rstrip().endswith("…")  # the cut, marked
+
+
+async def test_the_pages_consent_line_keeps_one_row(
+    monkeypatch,
+) -> None:
+    """#359: the page's consent line — the surface the page's own
+    flashes own — carries the same one-row guarantee as the list's
+    status bar: standing grants longer than the terminal and a
+    long refusal flash both crop at the edge with an ellipsis
+    marking the cut, so the page's layout holds and the action
+    list keeps its place."""
+    long_grants = frame(
+        "egress.rules",
+        {
+            "workspace_id": WS,
+            "mode": "interactive",
+            "allow_list": [],
+            "allowed": [
+                {
+                    "id": f"a{i}",
+                    "dest_host": f"service-{i}.internal.example.corp",
+                    "dest_port": 443,
+                    "decision": "allowed",
+                    "duration": "1h",
+                    "decided_at": 200.0,
+                    "decided_by": "token",
+                }
+                for i in range(3)
+            ],
+            "denied": [],
+        },
+    )
+    scripted_link(monkeypatch, [long_grants])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    refusal = "start failed: " + "daemon refused: " * 10 + "no room"
+    async with app.run_test(size=(80, 24)) as pilot:
+        page = await open_page(pilot, app)
+        await wait_for(
+            lambda: "service-0.internal.example.corp" in consent_text(app)
+        )
+        await pilot.pause()  # lay the long standing line out
+        consent = app.screen.query_one("#consent", Static)
+        assert consent.region.height == 1
+        line = "".join(s.text for s in consent.render_line(0))
+        assert "service-0.internal.example.corp" in line
+        assert line.rstrip().endswith("…")  # the cut, marked
+        actions_y = app.screen.query_one("#page").region.y
+        page.flash(refusal)
+        await wait_for(lambda: "start failed" in consent_text(app))
+        await pilot.pause()  # lay the flashed line out
+        assert consent.region.height == 1
+        assert app.screen.query_one("#page").region.y == actions_y
+
+
 async def test_a_scrolling_list_keeps_the_created_label(
     monkeypatch,
 ) -> None:

@@ -256,7 +256,10 @@ between the status bar and the footer. The status bar above it
 sets the workspace count in the bold default foreground with the
 daemon's URL riding after it in muted text (a long URL clips at
 its middle, both ends kept, so the line stays one row); a
-flash message owns the whole line while it lives. Each row's created column reads a
+flash message owns the whole line while it lives, and a flash
+longer than the terminal's width crops at the edge with an
+ellipsis marking the cut, so the bar stays one row whatever a
+refusal echoes back (#359). Each row's created column reads a
 relative label (#350), bucketed by whole calendar days:
 `today`, `yesterday`, then `2d ago` under a week, `3w ago` under
 a month, `1mo ago` under a year, `1y ago` past it — the absolute
@@ -275,7 +278,10 @@ header's first line also counts pending holds (`egress to
 decide: N` while any hold waits, refreshed each second), and on
 a narrow terminal each header line truncates at the edge with an
 ellipsis — the metadata owns its own line, so a name truncates
-only when it alone no longer fits the line. A workspace in
+only when it alone no longer fits the line — and the consent
+status line truncates at the edge the same way, so the page's
+layout holds steady whatever the granted scopes — or a flashed
+refusal — carry. A workspace in
 `interactive`
 mode holds new flows while the page is open: the page registers
 as the workspace's decider, so holds land on it. Reminting the
