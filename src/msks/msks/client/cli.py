@@ -2388,8 +2388,8 @@ def create_identity(
     minted under the data root — its derived public half on the
     wire, nothing written per-workspace, and the private file
     never copied anywhere. ``--key-type`` opts into the
-    per-workspace client mint (#121, today's default);
-    ``--daemon-mint`` hands the identity to the daemon (#111);
+    per-workspace client mint (#121); ``--daemon-mint`` hands the
+    identity to the daemon (#111);
     ``--pubkey`` supplies a one-off operator line (#132). The
     three explicit modes are exclusive
     (:func:`check_identity_conflicts` names the pairings).

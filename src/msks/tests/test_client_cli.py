@@ -893,13 +893,35 @@ def test_the_mint_claim_reuses_a_concurrent_winner(
     assert path == minted
     assert pem == winner_pem
     assert minted.read_text() == winner_pem
-    # A torn write (unusable content squatting on the path) is
+    # A torn file (unusable content squatting on the path) is
     # repaired in place: the next create gets a working key.
     minted.write_text("torn")
     pem, _path = create.mint_operator_identity()
     assert pem != winner_pem
     assert agent.load_private(minted.read_text()) is not None
     assert minted.stat().st_mode & 0o777 == 0o600
+
+
+def test_the_mint_publishes_whole_and_leaves_no_temp(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The publish is atomic: the key is written whole to a temp
+    sibling and linked into place, so a racing create that sees
+    the path already there reads a complete key — and no temp
+    sibling outlives the mint (#336)."""
+    identity_env(monkeypatch, tmp_path)
+    pem, path = create.mint_operator_identity()
+    assert path.read_text() == pem
+    assert sorted(p.name for p in path.parent.iterdir()) == ["identity"]
+    # The lost-race signal carries a complete file: link-then-read
+    # is the publish's own order, pinned here by publishing over
+    # an empty path and reading back whole.
+    fresh = tmp_path / "data" / "msks" / "identity"
+    fresh.unlink()
+    other_pem, _public = mint("ed25519")
+    create.publish_exclusive(fresh, other_pem)
+    assert fresh.read_text() == other_pem
+    assert sorted(p.name for p in fresh.parent.iterdir()) == ["identity"]
 
 
 def test_the_mint_names_an_unwritable_data_root(

@@ -748,6 +748,23 @@ def test_resolve_private_recovery_names_identity_file(
         ssh.resolve_private(key, "ws1")
 
 
+def test_a_broken_identity_file_never_breaks_an_intact_workspace(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The operator rung consults lazily, only after the
+    per-workspace half fails: a set-but-broken identity_file must
+    not lock an operator out of a workspace whose client-minted
+    half is intact (#121 mixed fleet beside #336)."""
+    identity_home(monkeypatch, tmp_path)
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(tmp_path / "gone"))
+    pem, public = mint("ecdsa")
+    path = tmp_path / "data" / "msks" / "ws1" / "identity"
+    path.parent.mkdir(parents=True)
+    path.write_text(pem)
+    key = {"public_key": f"{public} msks-client:ws1", "private_key": None}
+    assert ssh.resolve_private(key, "ws1") == pem
+
+
 def test_resolve_private_names_a_broken_identity_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

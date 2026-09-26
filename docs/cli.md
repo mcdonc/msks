@@ -486,8 +486,9 @@ operator identity minted (mode 0600): /home/you/.local/share/msks/identity
 attach with: msks console my-workspace
 ```
 
-A later create, or one with `identity_file: ~/.ssh/id_ed25519`
-set, prints `identity: <that file>` instead.
+A later create prints an `identity:` line with the minted file's
+path; a create with `identity_file: ~/.ssh/id_ed25519` set prints
+that line with the named file's expanded path instead.
 
 `msks ssh`, `msks rsync`, and the console's key challenge resolve
 the same order at session time, so a workspace re-created under the

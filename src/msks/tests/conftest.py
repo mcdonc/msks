@@ -86,6 +86,21 @@ def client_config_root(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture(autouse=True)
+def hermetic_client_data_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Pin the client data root's XDG fallback for every test.
+
+    A test that reaches the bare-create path without its own
+    environment pinning would otherwise mint a real operator key
+    into the developer's ``~/.local/share/msks`` (#336). Tests
+    that exercise the documented default-path resolution relocate
+    it themselves, the way the config-tree fixture does.
+    """
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "ambient-data"))
+
+
+@pytest.fixture(autouse=True)
 def devenv_shell_presets(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep the devenv shell's presets out of the suite.
 

@@ -15,6 +15,7 @@ in the TUI).
 import asyncio
 import getpass
 import os
+from contextlib import suppress
 from pathlib import Path
 
 from ..identity import LOGIN_NAME_RE, mint
@@ -123,29 +124,34 @@ def mint_operator_identity() -> tuple[str, Path]:
     mode 0600 — the rung that fires when no operator key resolves
     anywhere.
 
-    The claim is exclusive (``O_EXCL``): two first-run creates that
-    race both mint, one file wins, and the loser reuses the
-    winner's key — both workspaces then plant the same public half
-    instead of one holding a private half the other just overwrote.
-    The write happens before the create's POST on purpose: the key
-    belongs to the operator, not to the workspace, so a refused
-    create leaves it for the next create to reuse (rung 3), not an
-    orphan tied to a workspace that never existed.
+    The claim is exclusive: two first-run creates that race both
+    mint, one publish wins, and the loser reuses the winner's key
+    — both workspaces then plant the same public half instead of
+    one holding a private half the other just overwrote. The
+    publish is atomic (written whole to a sibling temp file, then
+    linked into place), so the path only ever holds a complete
+    key: a loser that sees the path already there reads a usable
+    key, never the winner's half-written file. The write happens
+    before the create's POST on purpose: the key belongs to the
+    operator, not to the workspace, so a refused create leaves it
+    for the next create to reuse (rung 3), not an orphan tied to a
+    workspace that never existed.
     """
     pem, _public = mint(OPERATOR_KEY_TYPE)
     path = data_dir() / "identity"
     try:
-        write_exclusive(path, pem)
+        publish_exclusive(path, pem)
     except FileExistsError:
         return claimed_identity(path, pem), path
     return pem, path
 
 
 def claimed_identity(path: Path, pem: str) -> str:
-    """The key in force at *path* when the exclusive create lost
-    its race: the concurrent winner's key when its file is usable,
-    or *pem* after repairing content no intact winner would have
-    left (a torn write, a corrupt half)."""
+    """The key in force at *path* when the exclusive publish lost
+    its race: the concurrent winner's key (complete by
+    construction), or *pem* after repairing content no intact
+    publish could have left there (a torn file from an older
+    version, external corruption)."""
     existing = load_identity_file(path)
     if existing is not None:
         return existing
@@ -153,22 +159,30 @@ def claimed_identity(path: Path, pem: str) -> str:
     return pem
 
 
-def write_exclusive(path: Path, private_pem: str) -> None:
-    """Create *path* mode 0600 holding the PEM — atomically: a
-    file already there raises ``FileExistsError`` (the claim's own
-    signal, re-raised for the caller), and every other failure is
+def publish_exclusive(path: Path, private_pem: str) -> None:
+    """Publish the PEM at *path* mode 0600, atomically: written
+    whole to a private temp sibling and linked into place, so the
+    path never exists half-written. A file already there raises
+    ``FileExistsError`` (the claim's own signal, re-raised for the
+    caller); every other failure — the temp write included — is
     the operator's named refusal raised here."""
+    temp = path.parent / f".{path.name}.{os.getpid()}"
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(private_pem)
+            os.link(temp, path)
+        finally:
+            with suppress(OSError):
+                temp.unlink(missing_ok=True)
     except FileExistsError:
         raise
     except OSError as exc:
         raise SystemExit(
             OPERATOR_WRITE_REFUSAL.format(path=path, exc=exc)
         ) from exc
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(private_pem)
 
 
 def write_private_half(path: Path, private_pem: str, refusal: str) -> Path:

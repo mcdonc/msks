@@ -101,7 +101,7 @@ def load_private(pem: str):
 
 def signable(private) -> bool:
     """Whether the agent can stage this private half — the check
-    the operator-identity scan uses, so a key that loads but
+    the operator-identity resolution uses, so a key that loads but
     cannot sign (a curve or type this agent has no signer for)
     declines to the next resolution rung instead of planting a
     workspace the sugar commands then cannot enter."""
