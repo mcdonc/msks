@@ -12,7 +12,7 @@ from msks.client import cli, config
 from msks.client.rest import DEFAULT_URL, env_token, env_url, ssl_context
 from msks.server.tls import generate_ca
 
-# The six connect/state variables the file can feed, plus the
+# The connect/state variables the file can feed, plus the
 # terminal launcher's — cleared before any test that lets the
 # config (or its materialization) near the environment, so a
 # materialized value never outlives the test that caused it.
@@ -23,6 +23,7 @@ CLIENT_VARS = (
     "MSKSC_EXPECTED_IMAGE",
     "MSKSC_CACHE_DIR",
     "MSKSC_DATA_DIR",
+    "MSKSC_IDENTITY_FILE",
     "MSKSC_TERMINAL_OPEN_CMD",
 )
 
@@ -392,6 +393,7 @@ def layered_tree(root: Path) -> str:
         "expected_image: img:global\n"
         "cache_dir: /global-cache\n"
         "data_dir: /global-data\n"
+        "identity_file: /global-key\n"
         "daemons:\n"
         "  lab:\n"
         "    url: https://lab:8660/\n"
@@ -472,6 +474,7 @@ def test_global_keys_answer_when_nothing_else_does(
         "MSKSC_EXPECTED_IMAGE": "img:global",
         "MSKSC_CACHE_DIR": "/global-cache",
         "MSKSC_DATA_DIR": "/global-data",
+        "MSKSC_IDENTITY_FILE": "/global-key",
     }
 
 
@@ -483,6 +486,7 @@ def test_defaults_hold_when_nothing_provides_a_value(monkeypatch) -> None:
     assert conf.cafile == ""
     assert conf.expected_image == ""
     assert conf.cache_dir is None
+    assert conf.identity_file is None
     # The launcher's floor is xterm -e: the one terminal most
     # Linuxes carry, so the new-window path needs no configuration
     # (#314).
@@ -619,6 +623,41 @@ def test_apply_writes_the_file_derived_winners(tmp_path, monkeypatch) -> None:
     assert os.environ["MSKSC_EXPECTED_IMAGE"] == "img:global"
     assert os.environ["MSKSC_CACHE_DIR"] == "/global-cache"
     assert os.environ["MSKSC_DATA_DIR"] == "/global-data"
+    assert os.environ["MSKSC_IDENTITY_FILE"] == "/global-key"
+
+
+def test_identity_file_is_global_only(tmp_path, monkeypatch) -> None:
+    """identity_file names the operator's own private key (#336):
+    a scalar global key whose variable carries the same shape (a
+    path, ~ expanded), the environment overriding the file, the
+    empty forms unset — and a per-alias identity_file is refused:
+    an identity belongs to the operator, not to a daemon
+    connection."""
+    clean_env(monkeypatch)
+    path = write_config(tmp_path, "identity_file: ~/.ssh/id_ed25519\n")
+    # The file stores the path as written (~ expansion is the
+    # reader's job, the token_file pattern — HOME moves, the config
+    # does not).
+    assert config.resolve(None, path).identity_file == "~/.ssh/id_ed25519"
+    assert config.resolve(None, path).env_layer["MSKSC_IDENTITY_FILE"] == (
+        "~/.ssh/id_ed25519"
+    )
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", "/env-key")
+    conf = config.resolve(None, path)
+    assert conf.identity_file == "/env-key"
+    assert "MSKSC_IDENTITY_FILE" not in conf.env_layer
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", "")
+    unset = write_config(tmp_path, "identity-file:\n")
+    assert config.resolve(None, unset).identity_file is None
+    alias = write_config(
+        tmp_path,
+        "daemons:\n"
+        "  lab:\n"
+        "    url: https://lab:8660\n"
+        "    identity_file: /lab-key\n",
+    )
+    with pytest.raises(ValueError, match="unknown key 'identity_file'"):
+        config.resolve(None, alias)
 
 
 def test_bootstrap_maps_config_errors_to_one_line(

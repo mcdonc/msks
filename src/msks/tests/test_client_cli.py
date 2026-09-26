@@ -20,8 +20,11 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from msks.app import build_app
-from msks.client import cli, create, rest
+from msks.client import agent, cli, create, rest
+from msks.identity import KEY_TYPES, mint
 from msks.server.api import build_api
 from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
 from test_api import TOKEN, StubMicrovm
@@ -477,6 +480,96 @@ def test_cmd_create_client_mint_sends_public_only(
     assert str(identity) in out
 
 
+def test_bare_create_plants_the_operator_key(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """A bare create with identity_file set plants that key's
+    public half (#336): the body's ssh_pubkey is the derived line,
+    the daemon answers a null private half, the client data root
+    gains no per-workspace identity file, and the confirmation
+    names the identity source."""
+    identity_env(monkeypatch, tmp_path)
+    client_env(monkeypatch)
+    pem, public = mint("ed25519")
+    mine = tmp_path / "my-key"
+    mine.write_text(pem)
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(mine))
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/ssh-key"):
+            return httpx.Response(
+                200,
+                json={
+                    "workspace": "ws1",
+                    "type": "ssh-ed25519",
+                    "public_key": f"{seen['supplied']} msks-client:ws1",
+                    "private_key": None,
+                },
+            )
+        seen["supplied"] = json.loads(request.content)["ssh_pubkey"]
+        return httpx.Response(201, json={"id": "ws1", "status": "created"})
+
+    rc = cli.run_create(cli.CreateFlags(workspace_id="ws1"), mock(handler))
+    assert rc == 0
+    assert seen["supplied"] == public
+    assert not any("priv" in name for name in seen)
+    # Nothing per-workspace: the operator's file is the only half.
+    assert not (tmp_path / "data" / "msks" / "ws1").exists()
+    assert not (tmp_path / "data" / "msks" / "identity").exists()
+    assert mine.read_text() == pem
+    out = capsys.readouterr().out
+    assert "created ws1" in out
+    assert f"identity: {mine}" in out
+
+
+def test_bare_create_mints_once_and_the_next_reuses(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """With identity_file unset, two bare creates mint one key and
+    reuse it: both bodies carry the same ssh_pubkey, one file lands
+    at <data_dir>/identity, no per-workspace file ever appears, and
+    the confirmations name the minted key then the reuse (#336)."""
+    identity_env(monkeypatch, tmp_path)
+    client_env(monkeypatch)
+    supplied = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/ssh-key"):
+            # The POST ran first: the last supplied line is this
+            # workspace's.
+            return httpx.Response(
+                200,
+                json={
+                    "workspace": "ws1",
+                    "type": "ssh-ed25519",
+                    "public_key": f"{supplied[-1]} msks-client:ws1",
+                    "private_key": None,
+                },
+            )
+        supplied.append(json.loads(request.content)["ssh_pubkey"])
+        return httpx.Response(201, json={"id": "ws1", "status": "created"})
+
+    rc = cli.run_create(cli.CreateFlags(workspace_id="ws1"), mock(handler))
+    assert rc == 0
+    rc = cli.run_create(cli.CreateFlags(workspace_id="ws2"), mock(handler))
+    assert rc == 0
+    assert len(supplied) == 2
+    assert supplied[0] == supplied[1]
+    minted = tmp_path / "data" / "msks" / "identity"
+    assert minted.exists()
+    assert minted.stat().st_mode & 0o777 == 0o600
+    assert not (tmp_path / "data" / "msks" / "ws1").exists()
+    assert not (tmp_path / "data" / "msks" / "ws2").exists()
+    out = capsys.readouterr().out
+    assert f"operator identity minted (mode 0600): {minted}" in out
+    assert f"identity: {minted}" in out
+
+
 def test_write_client_identity_names_an_unusable_cache(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -618,23 +711,43 @@ def help_flat(out: str) -> str:
 SUPPLIED_PUBKEY = "ssh-ed25519 AAAAc3NzaC1lZDI1 operator@laptop"
 
 
-def test_create_identity_modes() -> None:
-    """The three identity modes (#121 default, #111 daemon, #132
-    operator key) resolve to (key type, supplied line), and the
-    flag pairings that would look meaningful but are not are
-    rejected with the conflict named."""
-    plain = cli.CreateFlags(workspace_id="ws1")
-    assert cli.create_identity(plain) == ("ed25519", None)
-    # The client and daemon mints share one default — the CLI help,
-    # docs/cli.md, and the #121 changelog entry all say "the same
-    # default the daemon mints". Pin the two literals together so
-    # a one-sided change fails here instead of silently falsifying
-    # that prose (#138's split-default hazard).
-    assert cli.create_identity(plain) == (VmmSettings().ssh_key_type, None)
+def identity_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A deterministic operator-identity environment (#336): a
+    fresh client data root — no ambient identity_file, no
+    leftovers from an earlier run."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.delenv("MSKSC_IDENTITY_FILE", raising=False)
+    monkeypatch.delenv("MSKSC_DATA_DIR", raising=False)
+
+
+def test_create_identity_modes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The identity modes resolve to (key type, supplied line,
+    note): the operator key is the bare-create default (#336 —
+    here identity_file names it), --key-type opts into the
+    per-workspace client mint (#121), --daemon-mint hands the
+    identity to the daemon (#111), and the flag pairings that
+    would look meaningful but are not are rejected with the
+    conflict named."""
+    identity_env(monkeypatch, tmp_path)
+    pem, public = mint("ed25519")
+    mine = tmp_path / "my-key"
+    mine.write_text(pem)
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(mine))
+    key_type, supplied, note = cli.create_identity(
+        cli.CreateFlags(workspace_id="ws1")
+    )
+    # The bare create plants the operator key: its derived public
+    # half rides the body, no mint, and the confirmation names the
+    # source.
+    assert key_type is None
+    assert supplied == public
+    assert note == f"identity: {mine}"
     typed = cli.CreateFlags(workspace_id="ws1", key_type="rsa")
-    assert cli.create_identity(typed) == ("rsa", None)
+    assert cli.create_identity(typed)[:2] == ("rsa", None)
     daemon = cli.CreateFlags(workspace_id="ws1", daemon_mint=True)
-    assert cli.create_identity(daemon) == (None, None)
+    assert cli.create_identity(daemon) == (None, None, None)
     with pytest.raises(
         SystemExit, match="--key-type conflicts with --daemon-mint"
     ):
@@ -645,13 +758,197 @@ def test_create_identity_modes() -> None:
         )
 
 
+def test_create_identity_mints_an_operator_key_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """With no operator key anywhere, the bare create mints one
+    key to <data_dir>/identity (mode 0600, the mint's type set)
+    and every later create reuses it — one key across workspaces,
+    and nothing written per-workspace (#336)."""
+    identity_env(monkeypatch, tmp_path)
+    first_type, first_pub, first_note = cli.create_identity(
+        cli.CreateFlags(workspace_id="ws1")
+    )
+    minted = tmp_path / "data" / "msks" / "identity"
+    assert first_type is None
+    assert minted.exists()
+    assert minted.stat().st_mode & 0o777 == 0o600
+    assert first_note == f"operator identity minted (mode 0600): {minted}"
+    # The mint rung keeps the daemon's own default key type — the
+    # help, docs, and the mint's prose all say "the same
+    # FIPS-approvable default the daemon mints" (#138).
+    assert first_pub.startswith(f"{KEY_TYPES[create.OPERATOR_KEY_TYPE]} ")
+    assert create.OPERATOR_KEY_TYPE == VmmSettings().ssh_key_type
+    # The second create reuses the key: same public half, no new
+    # writes anywhere under the data root.
+    before = sorted(str(p) for p in (tmp_path / "data").rglob("*"))
+    _type, second_pub, second_note = cli.create_identity(
+        cli.CreateFlags(workspace_id="ws2")
+    )
+    assert second_pub == first_pub
+    assert second_note == f"identity: {minted}"
+    assert sorted(str(p) for p in (tmp_path / "data").rglob("*")) == before
+
+
+def test_create_identity_rung_precedence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """identity_file outranks the minted <data_dir>/identity
+    (#336): the operator's explicit choice wins, the minted key
+    stays put for the creates that name nothing."""
+    identity_env(monkeypatch, tmp_path)
+    from msks.client.create import mint_operator_identity, public_line
+
+    mint_pem, minted = mint_operator_identity()
+    mint_public = public_line(mint_pem)
+    _type, pub, _note = cli.create_identity(cli.CreateFlags(workspace_id="ws"))
+    assert pub == mint_public
+    assert minted.read_text() == mint_pem
+    named_pem, named_public = mint("ecdsa")
+    named = tmp_path / "my-key"
+    named.write_text(named_pem)
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(named))
+    _type, pub, note = cli.create_identity(cli.CreateFlags(workspace_id="ws"))
+    assert pub == named_public
+    assert note == f"identity: {named}"
+    assert minted.read_text() == mint_pem
+
+
+def test_create_identity_refuses_a_broken_identity_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A set identity_file that is missing, or a key msks cannot
+    stage (a PEM RSA file — the classic pre-OpenSSH-format key) is
+    one named line before any network roundtrip, naming the format
+    requirement and the conversion (#336)."""
+    identity_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(tmp_path / "gone"))
+    with pytest.raises(SystemExit, match="not readable"):
+        cli.create_identity(cli.CreateFlags(workspace_id="ws1"))
+    pem_rsa = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    classic = tmp_path / "classic"
+    classic.write_text(
+        pem_rsa.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.TraditionalOpenSSL,
+            encryption_algorithm=serialization.NoEncryption(),
+        ).decode()
+    )
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(classic))
+    with pytest.raises(SystemExit, match="ssh-keygen -p"):
+        cli.create_identity(cli.CreateFlags(workspace_id="ws1"))
+
+
+def test_create_identity_stages_a_wide_curve_operator_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An operator key at P-384 plants AND stays enterable: the
+    transient agent signs the wide NIST curves, so identity_file
+    naming such a key works end to end instead of failing at the
+    first msks ssh (#336)."""
+    identity_env(monkeypatch, tmp_path)
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    private = ec.generate_private_key(ec.SECP384R1())
+    pem = private.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.OpenSSH,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode()
+    wide = tmp_path / "wide-key"
+    wide.write_text(pem)
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(wide))
+    _type, pub, note = cli.create_identity(cli.CreateFlags(workspace_id="ws1"))
+    assert pub.startswith("ecdsa-sha2-nistp384 ")
+    assert note == f"identity: {wide}"
+
+
+def test_a_local_refusal_mints_no_operator_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The body builds before the identity resolves: a create the
+    client refuses locally (a bad --user) mints and persists
+    nothing (#336)."""
+    identity_env(monkeypatch, tmp_path)
+    with pytest.raises(SystemExit, match="not a valid login name"):
+        cli.run_create(
+            cli.CreateFlags(workspace_id="ws1", user="Not A Name"), None
+        )
+    assert not (tmp_path / "data").exists()
+
+
+def test_the_mint_claim_reuses_a_concurrent_winner(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Two first-run creates racing the mint both work: the claim
+    is exclusive, and the loser reuses the winner's key — both
+    workspaces plant the same public half, and no private half is
+    overwritten out from under a created workspace (#336)."""
+    identity_env(monkeypatch, tmp_path)
+    winner_pem, _public = mint("ed25519")
+    minted = tmp_path / "data" / "msks" / "identity"
+    minted.parent.mkdir(parents=True)
+    minted.write_text(winner_pem)
+    pem, path = create.mint_operator_identity()
+    assert path == minted
+    assert pem == winner_pem
+    assert minted.read_text() == winner_pem
+    # A torn file (unusable content squatting on the path) is
+    # repaired in place: the next create gets a working key.
+    minted.write_text("torn")
+    pem, _path = create.mint_operator_identity()
+    assert pem != winner_pem
+    assert agent.load_private(minted.read_text()) is not None
+    assert minted.stat().st_mode & 0o777 == 0o600
+
+
+def test_the_mint_publishes_whole_and_leaves_no_temp(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The publish is atomic: the key is written whole to a temp
+    sibling and linked into place, so a racing create that sees
+    the path already there reads a complete key — and no temp
+    sibling outlives the mint (#336)."""
+    identity_env(monkeypatch, tmp_path)
+    pem, path = create.mint_operator_identity()
+    assert path.read_text() == pem
+    assert sorted(p.name for p in path.parent.iterdir()) == ["identity"]
+    # The lost-race signal carries a complete file: link-then-read
+    # is the publish's own order, pinned here by publishing over
+    # an empty path and reading back whole.
+    fresh = tmp_path / "data" / "msks" / "identity"
+    fresh.unlink()
+    other_pem, _public = mint("ed25519")
+    create.publish_exclusive(fresh, other_pem)
+    assert fresh.read_text() == other_pem
+    assert sorted(p.name for p in fresh.parent.iterdir()) == ["identity"]
+
+
+def test_the_mint_names_an_unwritable_data_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A data root the exclusive write cannot open into (here, a
+    read-only directory) is the operator's one-line refusal naming
+    identity_file as the way to bring your own key — before any
+    network activity (#336)."""
+    identity_env(monkeypatch, tmp_path)
+    root = tmp_path / "data" / "msks"
+    root.mkdir(parents=True)
+    root.chmod(0o500)
+    try:
+        with pytest.raises(SystemExit, match="could not be written"):
+            create.mint_operator_identity()
+    finally:
+        root.chmod(0o700)
+
+
 def test_create_identity_pubkey_mode(tmp_path: Path) -> None:
     """--pubkey FILE resolves to (None, line) — no mint — and every
     conflicting pairing is rejected before anything runs."""
     source = tmp_path / "id.pub"
     source.write_text(f"{SUPPLIED_PUBKEY}\n")
     args = cli.CreateFlags(workspace_id="ws1", pubkey=str(source))
-    assert cli.create_identity(args) == (None, SUPPLIED_PUBKEY)
+    assert cli.create_identity(args)[:2] == (None, SUPPLIED_PUBKEY)
     with pytest.raises(
         SystemExit, match="--pubkey conflicts with --daemon-mint"
     ):

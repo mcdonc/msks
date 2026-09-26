@@ -3,9 +3,12 @@
 One-off sugar over the pieces that already exist: the workspace is
 booted when the daemon reports it as not running (the same pre-flight
 as ``msks console``), the workspace identity is fetched over the
-authenticated API — the daemon-minted half pair (#111) or the public
+authenticated API — the daemon-minted half pair (#111), the public
 half of a client-minted one (#121, whose private half then comes
-from the client data root) — and ``ssh`` runs with the forward
+from the client data root), or the public half of an operator-key
+one (#336, the create default, whose private half comes from the
+resolved operator identity: :func:`operator_identity`) — and
+``ssh`` runs with the forward
 websocket (#109) as its ProxyCommand. The session stages the
 private half in a transient in-process ssh-agent
 (:mod:`msks.client.agent`) and ssh authenticates through the agent
@@ -178,6 +181,128 @@ def client_identity_path(workspace_id: str, base: Path | None = None) -> Path:
     return root / "identity"
 
 
+#: The operator identity's setting (#336): the config key
+#: ``identity_file`` / the variable ``MSKSC_IDENTITY_FILE`` name a
+#: private key file — the operator's own ssh key, the one a bare
+#: ``msks create`` plants into every workspace. The config names a
+#: path (the ``token_file`` pattern) and the private material
+#: itself never moves: msks reads the file where it lives and
+#: writes no copy anywhere.
+IDENTITY_FILE_ENV = "MSKSC_IDENTITY_FILE"
+
+
+def configured_identity_file() -> Path | None:
+    """The operator-named identity file (``identity_file`` /
+    ``MSKSC_IDENTITY_FILE``), ``~`` expanded, or None when unset —
+    an empty value counts as unset, the same rule the shell
+    presets apply. A relative value is refused (the same rule the
+    state roots carry): a key that resolves per working directory
+    would plant a different identity from every directory."""
+    value = os.environ.get(IDENTITY_FILE_ENV, "")
+    if not value:
+        return None
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        raise SystemExit(
+            f"msks: {IDENTITY_FILE_ENV} must name an absolute path "
+            f"(got '{value}'); unset it, pass an absolute path, or "
+            "lead with ~"
+        )
+    return path
+
+
+def load_identity_file(path: Path) -> str | None:
+    """One private key file's PEM, or None when the file is
+    missing, unreadable, or holds no key the session agent could
+    stage — the silent form for the data root's minted key. A key
+    that loads but cannot sign (a type or curve the agent has no
+    signer for) counts as unusable: staging it would create a
+    session `msks ssh` cannot complete."""
+    try:
+        pem = path.read_text(encoding="utf-8")
+        private = agent.load_private(pem)
+    except OSError, TypeError, ValueError:
+        return None
+    return pem if agent.signable(private) else None
+
+
+def named_identity_file(path: Path) -> str:
+    """The strict form for the file the operator named: a missing,
+    unreadable, encrypted, or unstagedable key is one line naming
+    the setting and the fix — the operator pointed at it, so a
+    silent skip would read as the key matching nothing."""
+    try:
+        pem = path.read_text(encoding="utf-8")
+        private = agent.load_private(pem)
+    except OSError as exc:
+        raise SystemExit(
+            f"msks: the operator identity file {path} is not readable: "
+            f"{exc} — point identity_file / {IDENTITY_FILE_ENV} at "
+            "your private key file"
+        ) from exc
+    except TypeError as exc:
+        raise SystemExit(
+            f"msks: the operator identity file {path} is encrypted "
+            f"({exc}); msks never types a passphrase. Decrypt a copy "
+            f"(ssh-keygen -p -f <copy> -P <passphrase> -N ''), keep the "
+            "key with your agent, or pass --pubkey at create"
+        ) from exc
+    except ValueError as exc:
+        raise SystemExit(
+            f"msks: the operator identity file {path} is not a private "
+            f"key msks can stage ({exc}). msks stages unencrypted keys "
+            "in the OpenSSH format — ed25519, ecdsa (P-256/P-384/"
+            "P-521), or rsa; convert a copy with ssh-keygen -p -f "
+            "<copy>, or pass --pubkey at create"
+        ) from exc
+    if not agent.signable(private):
+        raise SystemExit(
+            f"msks: the operator identity file {path} holds a key type "
+            "msks cannot stage (msks stages ed25519, ecdsa "
+            "(P-256/P-384/P-521), and rsa keys). Plant its public half "
+            "with --pubkey at create, or keep signing with your own ssh"
+        )
+    return pem
+
+
+def operator_identity() -> tuple[str, Path] | None:
+    """The file-based operator identity: ``(pem, source path)`` or
+    None when no file resolves.
+
+    Two rungs, both deterministic and file-based (#336's non-goal:
+    no agent discovery, and no scanning of the operator's own
+    ``~/.ssh`` — which key of yours msks should use is a choice you
+    make, not a guess msks makes): ``identity_file`` /
+    ``MSKSC_IDENTITY_FILE`` when set (the operator's explicit
+    choice, checked strictly), else the key msks minted to the
+    data root (``<data_dir>/identity`` — a corrupt or missing file
+    simply does not resolve, and the create mints one there).
+    """
+    configured = configured_identity_file()
+    if configured is not None:
+        return named_identity_file(configured), configured
+    minted = data_dir() / "identity"
+    pem = load_identity_file(minted)
+    if pem is not None:
+        return pem, minted
+    return None
+
+
+def operator_match(served: list[str]) -> str | None:
+    """The operator identity's PEM when its public half matches the
+    row's served line — the rung that keeps ``msks ssh``, ``msks
+    rsync``, and the console's pubkey auth working on a workspace
+    planted with the operator's key (#336), including one
+    re-created under the same name (a new id, the same key)."""
+    resolved = operator_identity()
+    if resolved is None:
+        return None
+    pem, _source = resolved
+    if derived_public(agent.load_private(pem)) == served:
+        return pem
+    return None
+
+
 def identity_dir(key: dict, ref: str) -> str:
     """The directory key for a workspace's client-side files: the
     row's immutable id when the daemon serves it (#246), else the
@@ -190,48 +315,91 @@ def resolve_private(key: dict, workspace_id: str) -> str:
 
     A daemon-minted workspace (#111) hands its half over the API; a
     client-minted one (#121) answers ``private_key: null`` — its
-    half lives in the client data root, written at create. The stored
-    half is checked against the served public line before use: a
-    stale cache (the id re-created from another client, a backup
-    restored over a re-created workspace) fails as one named line,
-    not as ssh's opaque ``Permission denied (publickey)``. Losing
-    the file loses ssh and the console alike — a seeded guest
-    challenges the console with the same key: the error names the
-    path and the recovery, not a traceback.
+    half lives in the client data root, written at create. The
+    stored half is checked against the served public line before
+    use: a stale cache (the id re-created from another client, a
+    backup restored over a re-created workspace) falls to the
+    operator identity before it fails — a workspace planted with
+    the operator's key (#336, the create default) has no
+    per-workspace file at all and resolves here, so a workspace
+    re-created under the same name keeps its access (a new id, the
+    same operator key). When nothing local matches, the failure is
+    one named line, not ssh's opaque ``Permission denied
+    (publickey)`` — losing the half loses ssh and the console
+    alike (a seeded guest challenges the console with the same
+    key), so the line names the paths and the recovery.
     """
     if key["private_key"] is not None:
         return key["private_key"]
+    served = key["public_key"].split()[:2]
     path = client_identity_path(identity_dir(key, workspace_id))
     try:
         pem = path.read_text(encoding="utf-8")
         private = agent.load_private(pem)
     except OSError as exc:
-        raise SystemExit(
-            f"msks: the workspace's private half is not on this "
-            f"client — the daemon holds none, and {path} is not "
-            f"readable: {exc}\n"
-            "The key was minted on another client (the file lives at "
-            "that path on that machine), on this client under a "
-            "different state root (MSKSC_DATA_DIR relocates it), or it "
-            "is a key you supplied at create — log in with it "
-            "directly (ssh -i, or the Host msks-* alias), or run the "
-            "console from the client that holds the current key: both "
-            "console and ssh now need this half."
-        ) from exc
+        return operator_or(missing_half_line(path), served, exc)
     except ValueError as exc:
-        raise SystemExit(
-            f"msks ssh: the client-minted identity at {path} is not a "
-            f"usable private key: {exc}"
-        ) from exc
-    if derived_public(private) != key["public_key"].split()[:2]:
-        raise SystemExit(
-            f"msks ssh: the client-minted identity at {path} does not "
-            f"match {workspace_id} — the workspace was re-created since "
-            "that key was stored. Delete that file and re-create the "
-            "workspace (the client that holds the current identity "
-            "keeps working for both ssh and the console)"
-        )
+        return operator_or(corrupt_half_line(path, exc), served, exc)
+    if derived_public(private) != served:
+        return operator_or(stale_half_line(path, workspace_id), served)
     return pem
+
+
+def operator_or(
+    refusal: str, served: list[str], cause: BaseException | None = None
+) -> str:
+    """The matching operator identity's PEM, or the one-line
+    refusal — the rung every per-workspace failure falls to before
+    it exits (#336): a workspace planted with the operator's key
+    keeps working even when the per-workspace half is missing,
+    corrupt, or stale."""
+    operator = operator_match(served)
+    if operator is not None:
+        return operator
+    raise SystemExit(refusal) from cause
+
+
+def corrupt_half_line(path: Path, exc: ValueError) -> str:
+    """The refusal for a per-workspace file that is not a private
+    key at all."""
+    return (
+        f"msks ssh: the client-minted identity at {path} is not a "
+        f"usable private key: {exc}"
+    )
+
+
+def stale_half_line(path: Path, workspace_id: str) -> str:
+    """The refusal for a per-workspace file that loads but pairs
+    with a different public half — the id's earlier incarnation."""
+    return (
+        f"msks ssh: the client-minted identity at {path} does not "
+        f"match {workspace_id} — the workspace was re-created since "
+        "that key was stored. Delete that file and re-create the "
+        "workspace (the client that holds the current identity "
+        "keeps working for both ssh and the console)"
+    )
+
+
+def missing_half_line(path: Path) -> str:
+    """The recovery line for a row whose private half matched
+    nothing on this client: the per-workspace path it looked in,
+    the operator-identity rungs it tried, and the ways back in."""
+    return (
+        f"msks: the workspace's private half is not on this "
+        f"client — the daemon holds none, {path} is not "
+        "readable, and the operator identity matched nothing here "
+        "(identity_file / "
+        f"{IDENTITY_FILE_ENV}, or "
+        f"{data_dir() / 'identity'}).\n"
+        "The key was minted on another client (the file lives at "
+        "that path on that machine), on this client under a "
+        "different state root (MSKSC_DATA_DIR relocates it), or it "
+        "is a key you supplied at create — point identity_file (or "
+        f"{IDENTITY_FILE_ENV}) at that key's private file, log in "
+        "with it directly (ssh -i, or the Host msks-* alias), or "
+        "run the console from the client that holds the current "
+        "key: both console and ssh now need this half."
+    )
 
 
 def derived_public(private) -> list[str]:

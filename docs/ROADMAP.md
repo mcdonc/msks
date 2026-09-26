@@ -74,11 +74,19 @@ no web frontend yet.
   (#108–#112); the vsock console stays the failsafe.** Each workspace
   runs an sshd in the guest image (#110: `PasswordAuthentication no`,
   key-only logins, rsync shipped, host keys in the persistent overlay)
-  and msksd mints a per-workspace identity at create time (#111:
-  Ed25519 by default, #138 — FIPS-approvable per FIPS 186-5, #115 —
-  public half seeded through `user_data`, private half served over
-  the authenticated API and materialized by the client only for the
-  connection's duration). The service plane is the TCP forward
+  and the workspace identity defaults to one operator key across
+  workspaces (#336 — the `identity_file` setting names the
+  operator's own key, else msks mints one under the client data
+  root and reuses it; the public half seeds through `user_data`
+  and the daemon holds public halves only), with the daemon mint
+  (#111: Ed25519 by
+  default, #138 — FIPS-approvable per FIPS 186-5, #115 — both
+  halves escrowed, the private half served over the authenticated
+  API and materialized by the client only for the connection's
+  duration), the per-workspace client mint (#121: minted locally,
+  public half sent, private half kept under the client data root),
+  and an operator-supplied line (#132) as explicit choices at
+  create. The service plane is the TCP forward
   websocket (#109, landed): the caller names a guest port, the daemon
   dials it on the workspace's tap, and pumps raw bytes. Stock ssh then
   provides the shell, pty resize, flow control, agent forwarding,

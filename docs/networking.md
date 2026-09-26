@@ -414,10 +414,14 @@ devenv shell presets for its command forms, #251) moves only the
 block's paths with it only when you edit the block to match.
 `msks ssh` is the command form that
 carries the identity per-session from memory instead — plain `ssh`
-invocations against the alias need the file. For a client-minted
-workspace (#121, the create default) that file is the client-held
-private half itself (`~/.local/share/msks/<id>/identity`, written
-at create); when #123
+invocations against the alias need the file. For a per-workspace
+client-minted workspace (#121, `--key-type`) that file is the
+client-held private half itself (`~/.local/share/msks/<id>/identity`,
+written at create); an operator-key workspace (#336, the create
+default) resolves its half from the operator identity —
+`identity_file`, or the key msks minted at
+`~/.local/share/msks/identity` — which the alias block can name
+with `IdentityFile` directly. When #123
 lands, the alias points at the operator's own key and the minted
 identity retires to a first-boot enrollment credential. The
 ProxyCommand runs `msks` in the user's environment,
@@ -427,12 +431,15 @@ the operator's own agent into the workspace — as does
 `msks ssh -- -A` (#174), which rewrites the request onto the same
 socket without the alias block.
 
-### The client-minted default (no escrow)
+### The client-supplied identity (no escrow)
 
-`msks create` mints the workspace's ssh keypair on the client by
-default (issue #121): the client generates it locally, sends the
-public half with the create request, and keeps the private half —
-the daemon stores the public line and seeds it into the guest's
+`msks create` plants one operator key as every workspace's
+identity by default (issue #336): `identity_file` names your own
+key, or the client mints a key under its data root once and
+reuses it (`--key-type` opts into a fresh per-workspace keypair
+instead, issue #121). Either way the client sends the public half
+with the create request and keeps the private half — the daemon
+stores the public line and seeds it into the guest's
 `authorized_keys` exactly as it seeds its own minted half, and its
 database never holds a private half for the workspace (the API's
 key fetch answers `private_key: null`). The daemon validates the
