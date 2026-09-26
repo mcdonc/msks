@@ -20,14 +20,14 @@
 #                     (default the devenv root; the file is
 #                     generated as the commented template on first
 #                     start, gitignored — edit it freely)
-#   MSKS_DEV_HOST     bind address (default 127.0.0.1)
-#   MSKS_DEV_UPLINK   egress NAT uplink (default eno4 — this dev
+#   DEV_HOST          bind address (default 127.0.0.1)
+#   DEV_UPLINK        egress NAT uplink (default eno4 — this dev
 #                     host's default route; unlike the NixOS module,
 #                     which refuses an uplink default because a wrong
 #                     name installs cleanly and NAT matches nothing,
 #                     the dev script targets this one host)
-#   MSKS_DEV_EGRESS   egress enabled: true|false (default true)
-#   MSKS_DEV_EGRESS_SUBNET  overrides the port-derived subnet
+#   DEV_EGRESS        egress enabled: true|false (default true)
+#   DEV_EGRESS_SUBNET overrides the port-derived subnet
 set -euo pipefail
 
 root="${DEVENV_ROOT:?run me from the devenv shell (msks-dev)}"
@@ -37,7 +37,7 @@ case "$state" in
 *) state="$root/$state" ;;
 esac
 
-caps="${MSKS_DEV_CAPS:-/run/wrappers/bin/msks-caps}"
+caps="${DEV_CAPS:-/run/wrappers/bin/msks-caps}"
 mkdir -p "$state"
 
 # One daemon per state dir: the lock (held through the daemon's
@@ -98,7 +98,7 @@ seed_token
 p="$(cat "$state/port")"
 
 if [ ! -x "$caps" ]; then
-  echo "msks-dev: capability wrapper $caps not executable — the host's NixOS config installs it (MSKS_DEV_CAPS relocates)" >&2
+  echo "msks-dev: capability wrapper $caps not executable — the host's NixOS config installs it (DEV_CAPS relocates)" >&2
   exit 1
 fi
 msksd_bin="$root/.devenv/state/venv/bin/msksd"
@@ -110,11 +110,11 @@ if [ ! -x "$msksd_bin" ]; then
   msksd_bin="$(command -v msksd)"
 fi
 
-egress="${MSKS_DEV_EGRESS:-true}"
+egress="${DEV_EGRESS:-true}"
 case "$egress" in
 true | false) ;;
 *)
-  echo "msks-dev: MSKS_DEV_EGRESS must be true or false, got '$egress'" >&2
+  echo "msks-dev: DEV_EGRESS must be true or false, got '$egress'" >&2
   exit 1
   ;;
 esac
@@ -130,15 +130,15 @@ export MSKSD_STATE_DIR="$state"
 export MSKSD_CONFIG_DIR="${MSKSD_CONFIG_DIR:-$root}"
 MSKSD_BOOTSTRAP_TOKEN="$(cat "$state/bootstrap-token")"
 export MSKSD_BOOTSTRAP_TOKEN
-export MSKSD_HOST="${MSKS_DEV_HOST:-127.0.0.1}"
+export MSKSD_HOST="${DEV_HOST:-127.0.0.1}"
 export MSKSD_PORT="$p"
 export MSKSD_EGRESS_ENABLED="$egress"
-export MSKSD_EGRESS_UPLINK="${MSKS_DEV_UPLINK:-eno4}"
+export MSKSD_EGRESS_UPLINK="${DEV_UPLINK:-eno4}"
 # The egress subnet derives from the port: concurrent instances
 # (distinct ports) allocate disjoint /30 pools, all inside the
 # private 10.0.0.0/8 block (172.16/12 ends at 172.31 — a 172-derived
 # span would leave private space after the first port).
-export MSKSD_EGRESS_SUBNET="${MSKS_DEV_EGRESS_SUBNET:-10.$((p - 8660)).0.0/16}"
+export MSKSD_EGRESS_SUBNET="${DEV_EGRESS_SUBNET:-10.$((p - 8660)).0.0/16}"
 # The image the converged state dir points at (msks-dev-ready /
 # msks-build-guest-archive maintain $state/default-image): a bare
 # `msks create` works with no manual import.

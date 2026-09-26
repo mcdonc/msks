@@ -13,7 +13,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYPROJECT = REPO_ROOT / "pyproject.toml"
-MSKS_PKG = REPO_ROOT / "nix" / "msks-pkg.nix"
+PKG_NIX = REPO_ROOT / "nix" / "msks-pkg.nix"
 TEXTUAL_PKG = REPO_ROOT / "nix" / "textual-pkg.nix"
 
 
@@ -36,7 +36,7 @@ def version_tuple(text: str) -> tuple[int, ...]:
 
 def nix_dependency_block() -> str:
     """The lines of msks-pkg.nix's dependencies list, sans brackets."""
-    nix = strip_comments(MSKS_PKG.read_text())
+    nix = strip_comments(PKG_NIX.read_text())
     start = nix.index("dependencies = [")
     body = nix[start + len("dependencies = [") : nix.index("]", start)]
     return body

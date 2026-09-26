@@ -58,8 +58,8 @@ async def test_local_sshd_and_rsync() -> None:
     untouched by all of this — the no-NIC smokes above run that
     posture on the same image.
     """
-    nft_tool = os.environ.get("MSKSD_TEST_NFT") or shutil.which("nft") or "nft"
-    ip_tool = os.environ.get("MSKSD_TEST_IP") or shutil.which("ip") or "ip"
+    nft_tool = os.environ.get("TEST_NFT") or shutil.which("nft") or "nft"
+    ip_tool = os.environ.get("TEST_IP") or shutil.which("ip") or "ip"
     state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
     token = f"smoke-token-{uuid.uuid4().hex}"
     api_port = free_port()

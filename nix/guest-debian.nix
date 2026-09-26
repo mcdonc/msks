@@ -24,7 +24,7 @@
 #   $out/vmlinux            - Debian's generic kernel (bzImage, PVH
 #                             entry point; CONFIG_PVH=y). Named
 #                             "vmlinux" to match the
-#                             MSKSD_TEST_VMLINUX contract;
+#                             TEST_VMLINUX contract;
 #                             guest-manifest.json records the actual
 #                             format.
 #   $out/initrd             - msks-built minimal initramfs: busybox,

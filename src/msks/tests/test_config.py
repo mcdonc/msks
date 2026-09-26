@@ -863,7 +863,7 @@ def test_reload_latches_the_secret_store_location(tmp_path) -> None:
         )
         + "\n",
     )
-    app.state.secrets._cache["MSKS_X"] = "stale"
+    app.state.secrets._cache["MSKSWS_X"] = "stale"
     main_mod.reload_settings(app, str(tmp_path / "msksd.yaml"))
     store = app.state.settings.secret_store
     assert store.provider == "age"  # latched

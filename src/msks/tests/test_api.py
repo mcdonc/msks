@@ -11,6 +11,7 @@ import pytest
 from msks.app import build_app
 from msks.microvm.errors import MicrovmError, MicrovmTimeoutError
 from msks.microvm.spec import VmInfo, VmSpec, VmStatus
+from msks.secretstore import new_sentinel
 from msks.server import api as api_mod
 from msks.server.api import build_api
 from msks.settings import (
@@ -2409,11 +2410,11 @@ async def test_mint_stores_and_answers_the_sentinel_once(client) -> None:
         app.state.settings.secret_store.root
         / "msks"
         / "default"
-        / "MSKS_WS_SEC_GITHUB_API"
+        / "MSKSWS_WS_SEC_GITHUB_API"
     )
     assert stored.read_text() == "ghp-real-token"
     assert (
-        "MSKS_WS_SEC_GITHUB_API"
+        "MSKSWS_WS_SEC_GITHUB_API"
         in (
             app.state.settings.secret_store.root / "secretspec.toml"
         ).read_text()
@@ -2507,10 +2508,11 @@ async def test_revoke_cleans_row_store_and_manifest(client) -> None:
     listing = await http.get("/api/v1/secrets", headers=auth())
     assert listing.json() == []
     root = app.state.settings.secret_store.root
-    assert (
-        "MSKS_WS_SEC_GITHUB_API" not in (root / "secretspec.toml").read_text()
-    )
-    assert not (root / "msks" / "default" / "MSKS_WS_SEC_GITHUB_API").exists()
+    manifest = (root / "secretspec.toml").read_text()
+    assert "MSKSWS_WS_SEC_GITHUB_API" not in manifest
+    assert not (
+        root / "msks" / "default" / "MSKSWS_WS_SEC_GITHUB_API"
+    ).exists()
     audit = await http.get("/api/v1/secrets/audit", headers=auth())
     kinds = [event["kind"] for event in audit.json()]
     assert kinds == ["revoke", "mint"]
@@ -2594,10 +2596,10 @@ async def test_mint_survives_the_insert_race(client, monkeypatch) -> None:
     assert raced.status_code == 409
     assert "collision" in raced.json()["detail"]
     root = app.state.settings.secret_store.root
-    stored = root / "msks" / "default" / "MSKS_WS_SEC_GITHUB_API"
+    stored = root / "msks" / "default" / "MSKSWS_WS_SEC_GITHUB_API"
     assert stored.read_text() == "ghp-real-token"
     assert (
-        await app.state.secrets.read("MSKS_WS_SEC_GITHUB_API")
+        await app.state.secrets.read("MSKSWS_WS_SEC_GITHUB_API")
         == "ghp-real-token"
     )
     listing = await http.get("/api/v1/secrets", headers=auth())
@@ -2637,10 +2639,10 @@ async def test_mint_answers_409_on_a_ref_collision(client) -> None:
     assert "collides" in second.json()["detail"]
     # The winner's value and the manifest are intact.
     root = app.state.settings.secret_store.root
-    stored = root / "msks" / "default" / "MSKS_WS_SEC_FOO"
+    stored = root / "msks" / "default" / "MSKSWS_WS_SEC_FOO"
     assert stored.read_text() == "first-secret"
     manifest = (root / "secretspec.toml").read_text()
-    assert manifest.count("MSKS_WS_SEC_FOO") == 1
+    assert manifest.count("MSKSWS_WS_SEC_FOO") == 1
 
 
 async def test_mint_refuses_a_whitespace_secret(client) -> None:
@@ -2727,8 +2729,8 @@ async def test_concurrent_mints_leave_one_intact_manifest(client) -> None:
     manifest = (
         app.state.settings.secret_store.root / "secretspec.toml"
     ).read_text()
-    assert "MSKS_WS_SEC_ALPHA" in manifest
-    assert "MSKS_WS_SEC_BETA" in manifest
+    assert "MSKSWS_WS_SEC_ALPHA" in manifest
+    assert "MSKSWS_WS_SEC_BETA" in manifest
 
 
 class RefreshRecorder:
@@ -2871,9 +2873,12 @@ async def test_a_mint_that_cannot_arm_rolls_back_whole(client) -> None:
     assert events == []
     root = app.state.settings.secret_store.root
     assert (
-        "MSKS_WS_SEC_GITHUB_API" not in (root / "secretspec.toml").read_text()
+        "MSKSWS_WS_SEC_GITHUB_API"
+        not in (root / "secretspec.toml").read_text()
     )
-    assert not (root / "msks" / "default" / "MSKS_WS_SEC_GITHUB_API").exists()
+    assert not (
+        root / "msks" / "default" / "MSKSWS_WS_SEC_GITHUB_API"
+    ).exists()
 
 
 async def test_revoke_survives_a_failing_refresh(client) -> None:
@@ -3096,3 +3101,50 @@ async def test_healed_spec_returns_a_token_carrying_row_untouched() -> None:
     assert (await api_mod.healed_spec(app, row)).llm_token == (
         "msksllm1_present"
     )
+
+
+async def test_lifespan_migrates_legacy_backend_refs(tmp_path: Path) -> None:
+    """#335's stored-format rename at the daemon's own layer: a
+    placeholder minted before the rename boots into a daemon that
+    moves its row, its stored value, and the manifest before the
+    first request is served."""
+    store_root = tmp_path / "store"
+    settings = Settings(
+        vmm=VmmSettings(state_dir=tmp_path / "vms"),
+        net=NetSettings(enabled=False),
+        server=ServerSettings(
+            db_path=tmp_path / "db",
+            bootstrap_token=TOKEN,
+            event_poll_s=10.0,
+        ),
+        secret_store=SecretStoreSettings(root=store_root),
+    )
+
+    seed = build_app(settings)
+    seed.state.model.migrate()
+    await seed.state.model.create_placeholder(
+        "ws-a",
+        "github_api",
+        new_sentinel(),
+        ["api.github.com"],
+        "MSKS_WS_A_GITHUB_API",
+        None,
+    )
+    seed.state.secrets.sync_manifest(
+        [("MSKS_WS_A_GITHUB_API", "ws-a/github_api")]
+    )
+    await seed.state.secrets.write("MSKS_WS_A_GITHUB_API", "ghp-old")
+    await seed.state.model.close()
+
+    app = build_app(settings)
+    app.state.microvm = StubMicrovm()
+    api = build_api(app)
+    async with api.router.lifespan_context(api):
+        (row,) = await app.state.model.list_placeholders()
+        assert row["backend_ref"] == "MSKSWS_WS_A_GITHUB_API"
+    stored = store_root / "msks" / "default"
+    assert (stored / "MSKSWS_WS_A_GITHUB_API").read_text() == "ghp-old"
+    assert not (stored / "MSKS_WS_A_GITHUB_API").exists()
+    manifest = (store_root / "secretspec.toml").read_text()
+    assert "MSKSWS_WS_A_GITHUB_API" in manifest
+    assert "MSKS_" not in manifest

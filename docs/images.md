@@ -190,7 +190,7 @@ with byte-stable tar flags (`--sort=name --mtime=@1
 --numeric-owner`). Identical rebuilds hash identically, so the same
 image deduplicates across hosts.
 
-The output lands under `.devenv/state/guest/` (`MSKS_GUEST_DIR`
+The output lands under `.devenv/state/guest/` (`GUEST_DIR`
 relocates it); `scripts/build-guest.sh` and
 `nix/guest-debian.nix` document every step and are the reference for
 what an image build does.
@@ -261,7 +261,7 @@ image itself. The archive carries the same `image.json` schema with
 the same declared capabilities (`cloud-init`, `prelude-v1`): the
 daemon serves it with nothing keyed off the image's name. The
 output lands under `.devenv/state/guest-nixos/`
-(`MSKS_GUEST_NIXOS_DIR` relocates it); `nix/guest-nixos.nix`
+(`GUEST_NIXOS_DIR` relocates it); `nix/guest-nixos.nix`
 documents every step. The image ships the same agent toolchain as
 the Debian one (#268): nixpkgs' own Node and the shared pins
 (`nix/agent-toolchain.nix`) ride the system profile — the

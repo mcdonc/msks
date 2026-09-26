@@ -8,16 +8,16 @@ absent-device and absent-table tolerances).
 
 from pathlib import Path
 
-IP_FAIL_AT = "MSKS_TEST_IP_FAIL_AT"
-IP_STDERR = "MSKS_TEST_IP_STDERR"
-NFT_FAIL_AT = "MSKS_TEST_NFT_FAIL_AT"
-NFT_STDERR = "MSKS_TEST_NFT_STDERR"
+IP_FAIL_AT = "IP_FAIL_AT"
+IP_STDERR = "IP_STDERR"
+NFT_FAIL_AT = "NFT_FAIL_AT"
+NFT_STDERR = "NFT_STDERR"
 
 IP_STUB = """#!/bin/sh
 printf '%s\n' "$*" >> {log}
-fail_at="${{MSKS_TEST_IP_FAIL_AT:-}}"
+fail_at="${{IP_FAIL_AT:-}}"
 if [ -n "$fail_at" ] && [ "$1 $2" = "$fail_at" ]; then
-  printf '%s' "${{MSKS_TEST_IP_STDERR:-boom}}" >&2
+  printf '%s' "${{IP_STDERR:-boom}}" >&2
   exit 1
 fi
 exit 0
@@ -29,9 +29,9 @@ NFT_STUB = """#!/bin/sh
 printf '%s\n' "$*" >> {log}
 printf '%s\n' "--- $*" >> {log}.stdin
 cat >> {log}.stdin
-fail_at="${{MSKS_TEST_NFT_FAIL_AT:-}}"
+fail_at="${{NFT_FAIL_AT:-}}"
 if [ -n "$fail_at" ] && [ "$1 $2" = "$fail_at" ]; then
-  printf '%s' "${{MSKS_TEST_NFT_STDERR:-boom}}" >&2
+  printf '%s' "${{NFT_STDERR:-boom}}" >&2
   exit 1
 fi
 exit 0

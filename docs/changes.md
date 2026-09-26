@@ -11,7 +11,7 @@ tagged `vX.Y.Z`.
 - **The NixOS workspace guest image (#250).** A second catalog image
   built from the devenv-pinned nixpkgs with
   `msks-build-guest nixos` (into `.devenv/state/guest-nixos`;
-  `MSKS_GUEST_NIXOS_DIR` relocates it), registering under the
+  `GUEST_NIXOS_DIR` relocates it), registering under the
   `nixos` name beside `debian`. The archive carries the same
   containerDisk contract and the same declared capabilities —
   cloud-init, the prelude-v1 console — so the daemon serves it
@@ -219,7 +219,7 @@ no`, `PermitRootLogin prohibit-password`) pinned by a config dropin,
   the repo checkout, and `uv sync` — the venv the `unit-tests`
   invocation runs from — all on the persistent root overlay; stop/
   start keeps it, a factory reset re-provisions, re-running is a
-  no-op. Proved end to end by the `MSKSD_TEST_EGRESS=1` root
+  no-op. Proved end to end by the `TEST_EGRESS=1` root
   smokes.
 
 - **`msks shell --user` and the console identity prelude (#63).** The
@@ -266,7 +266,7 @@ no`, `PermitRootLogin prohibit-password`) pinned by a config dropin,
 - **Dev state moved under `.devenv/state/` (#156).** The repo-root
   state dirs — `.guest/`, `.msksd/` — now live at
   `.devenv/state/{guest,msksd}/`, each relocatable via
-  `MSKS_GUEST_DIR` or `MSKSD_STATE_DIR` (the daemon's own setting;
+  `GUEST_DIR` or `MSKSD_STATE_DIR` (the daemon's own setting;
   use an absolute value so the tasks and the daemon land in the same
   place). Existing state does not migrate: move the directory you
   want to keep or rebuild (`devenv processes up -d`,
@@ -293,7 +293,7 @@ no`, `PermitRootLogin prohibit-password`) pinned by a config dropin,
   `msks-preflight`, and the rest) — run it from a devenv shell
   directly or `devenv --quiet -O dotenv.enable:bool false shell --
 <name>` from outside; `msks:uv-sync` remains the one task. The
-  pinned nixpkgs source is exported as `MSKS_GUEST_NIXPKGS` to every
+  pinned nixpkgs source is exported as `GUEST_NIXPKGS` to every
   devenv context, and the build and lifecycle scripts print their
   start and outcome.
 
@@ -344,7 +344,7 @@ no`, `PermitRootLogin prohibit-password`) pinned by a config dropin,
 - **Local-driver and TLS hardening fixes from the first e2e (#10).** The local driver now honors the absent-VM contract on stop/kill (a stale api socket behind a dead VMM reported ECONNREFUSED and delete-after-stop 500'd), the rootfs disk is declared `readonly` + `image_type: Raw` in `vm.create` (v52's autodetection otherwise disables sector-0 writes, and O_RDWR on the read-only store share fails), and `tls._write` loops `os.write` (a short write through virtio-backed storage left a truncated CA key).
 
 - **The `msksd` daemon and its `/api/v1` API (#8).** msksd now serves versioned endpoints over one HTTPS+WSS listener — public health, hashed bearer-token auth with revocation (`MSKSD_BOOTSTRAP_TOKEN` seeds the first credential), workspace create/list/status/start/stop/delete driving cloud-hypervisor through the microvm seam, and a websocket event channel for lifecycle transitions. TLS is operator-provided (`MSKSD_TLS_CERT`/`KEY`) or a self-signed CA generated on first run whose fingerprint is logged for trust-on-first-use pinning; `--no-tls` serves plain HTTP for development. State lives in an SQLite database under the state dir (`MSKSD_STATE_DIR`), managed by Alembic migrations.
-- **Nix-built guest assets (`msks-build-guest`, `msks-demo-vm`).** The devenv now produces everything needed to boot a microvm — kernel, initrd, read-only ext4 rootfs into the guest state dir (`.devenv/state/guest/`) — from the nixpkgs revision devenv itself pins, on any Linux host with nix; the manual-download flow is gone. Boot tests pick the built artifacts up automatically (explicit `MSKSD_TEST_VMLINUX`/`MSKSD_TEST_ROOTFS`/`MSKSD_TEST_INITRD` variables keep precedence) and skip themselves when the guest was never built or `/dev/kvm` is unusable. `msks-demo-vm` boots one interactive VM from the artifacts with `ch-remote` ready (#5).
+- **Nix-built guest assets (`msks-build-guest`, `msks-demo-vm`).** The devenv now produces everything needed to boot a microvm — kernel, initrd, read-only ext4 rootfs into the guest state dir (`.devenv/state/guest/`) — from the nixpkgs revision devenv itself pins, on any Linux host with nix; the manual-download flow is gone. Boot tests pick the built artifacts up automatically (explicit `TEST_VMLINUX`/`TEST_ROOTFS`/`TEST_INITRD` variables keep precedence) and skip themselves when the guest was never built or `/dev/kvm` is unusable. `msks-demo-vm` boots one interactive VM from the artifacts with `ch-remote` ready (#5).
 
 - **`msksd --reload` (development, #144).** The daemon gains a
   development flag that watches the msks package tree it runs from

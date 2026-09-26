@@ -3,11 +3,11 @@
 ``msks-build-guest`` builds the kernel, initrd, and
 ext4 rootfs with nix and copies them next to a JSON manifest into
 the guest state dir — ``.devenv/state/guest`` below the repository
-root by default; ``MSKS_GUEST_DIR`` relocates it (an absolute path
+root by default; ``GUEST_DIR`` relocates it (an absolute path
 is taken as-is, a relative one resolves below the root). This
 module resolves that manifest so smoke tests (and, later, the CLI)
 use the built artifacts without hand-exported environment
-variables. Explicitly exported ``MSKSD_TEST_*`` variables always
+variables. Explicitly exported ``TEST_*`` variables always
 keep precedence over anything discovered here.
 """
 
@@ -20,24 +20,24 @@ from pathlib import Path
 
 MANIFEST_NAME = "guest-manifest.json"
 
-VMLINUX_ENV = "MSKSD_TEST_VMLINUX"
-INITRD_ENV = "MSKSD_TEST_INITRD"
-ROOTFS_ENV = "MSKSD_TEST_ROOTFS"
-CMDLINE_ENV = "MSKSD_TEST_CMDLINE"
+VMLINUX_ENV = "TEST_VMLINUX"
+INITRD_ENV = "TEST_INITRD"
+ROOTFS_ENV = "TEST_ROOTFS"
+CMDLINE_ENV = "TEST_CMDLINE"
 
 #: Relocates the guest state dir (default ``<root>/.devenv/state/guest``).
-GUEST_DIR_ENV = "MSKS_GUEST_DIR"
+GUEST_DIR_ENV = "GUEST_DIR"
 
 #: The guest state dir below ``base`` when the env override is unset.
 DEFAULT_GUEST_DIR = Path(".devenv") / "state" / "guest"
 
 
 def guest_dir(base: Path) -> Path:
-    """The guest state dir for ``base``, honoring ``MSKS_GUEST_DIR``.
+    """The guest state dir for ``base``, honoring ``GUEST_DIR``.
 
     An absolute override is taken as-is; a relative one resolves
     below ``base`` (the same resolution the build scripts apply to
-    ``$MSKS_GUEST_DIR``).
+    ``$GUEST_DIR``).
     """
     override = os.environ.get(GUEST_DIR_ENV)
     if override:
@@ -132,7 +132,7 @@ def kvm_available() -> bool:
 
 
 def smoke_env_defaults(assets: GuestAssets | None) -> dict[str, str]:
-    """``MSKSD_TEST_*`` defaults exposing built assets to the smoke tests.
+    """``TEST_*`` defaults exposing built assets to the smoke tests.
 
     Empty unless the assets exist and ``/dev/kvm`` is usable: the smoke
     tests then still skip themselves when the guest was never built or

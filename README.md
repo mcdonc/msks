@@ -88,7 +88,7 @@ devenv --quiet -O dotenv.enable:bool false shell -- msks-build-guest
 
 The artifacts (plus a `guest-manifest.json` describing them and the
 boot cmdline) land in `.devenv/state/guest/` (relocatable with
-`MSKS_GUEST_DIR`). Boot one interactive VM from them —
+`GUEST_DIR`). Boot one interactive VM from them —
 
 ```bash
 msks-demo-vm
@@ -101,8 +101,8 @@ msks-demo-vm
 Boot tests self-provision: when `.devenv/state/guest/` holds built
 artifacts and
 `/dev/kvm` is usable, the smoke tests find them without any exported
-variables (`MSKSD_TEST_VMLINUX` / `MSKSD_TEST_INITRD` /
-`MSKSD_TEST_ROOTFS` / `MSKSD_TEST_CMDLINE`
+variables (`TEST_VMLINUX` / `TEST_INITRD` /
+`TEST_ROOTFS` / `TEST_CMDLINE`
 keep precedence when you do export them). When the
 artifacts were never built, or `/dev/kvm` is missing or not accessible
 to your user (add yourself to the `kvm` group,
@@ -338,7 +338,7 @@ nothing msks owns.
 The seed's downloads (PyPI, uv's Python builds, the git remote)
 all ride the egress NIC the daemon serves. The end-to-end proof is
 the opt-in root smoke `test_local_dev_workspace_bootstrap`
-(`MSKSD_TEST_EGRESS=1`). A baked dev image — the same substrate the
+(`TEST_EGRESS=1`). A baked dev image — the same substrate the
 guest build uses — remains an optional cold-start accelerator on
 top of the seed, not a prerequisite.
 

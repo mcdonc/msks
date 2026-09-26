@@ -1,13 +1,13 @@
 """Opt-in smoke tests against real infrastructure.
 
-- Local: boots a real cloud-hypervisor VM when MSKSD_TEST_VMLINUX and
-  MSKSD_TEST_ROOTFS point at guest artifacts (and /dev/kvm is
+- Local: boots a real cloud-hypervisor VM when TEST_VMLINUX and
+  TEST_ROOTFS point at guest artifacts (and /dev/kvm is
   accessible); skipped otherwise. The msks-build-guest script
   sets all of these from the guest state dir
   (`.devenv/state/guest` by default) automatically (see conftest.py
   and msks.guestassets); the stock nixpkgs kernel also needs the initrd
-  (MSKSD_TEST_INITRD) and the cmdline the manifest carries
-  (MSKSD_TEST_CMDLINE) to reach userspace.
+  (TEST_INITRD) and the cmdline the manifest carries
+  (TEST_CMDLINE) to reach userspace.
 
 These never count toward the coverage gate (the package is fully
 covered by the faked-transport unit suites).
@@ -37,10 +37,10 @@ from pathlib import Path
 import pytest
 from httpx import AsyncClient
 
-VMLINUX = os.environ.get("MSKSD_TEST_VMLINUX")
-INITRD = os.environ.get("MSKSD_TEST_INITRD")
-ROOTFS = os.environ.get("MSKSD_TEST_ROOTFS")
-CMDLINE = os.environ.get("MSKSD_TEST_CMDLINE")
+VMLINUX = os.environ.get("TEST_VMLINUX")
+INITRD = os.environ.get("TEST_INITRD")
+ROOTFS = os.environ.get("TEST_ROOTFS")
+CMDLINE = os.environ.get("TEST_CMDLINE")
 # The package __init__ sits one level below the old flat module.
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
@@ -49,7 +49,7 @@ def state_dir(env: str, name: str) -> Path:
     """A devenv state dir below the repo, honoring its env override.
 
     #156: the build/run state lives under `.devenv/state/` —
-    `MSKS_GUEST_DIR` relocates the one this suite touches (a
+    `GUEST_DIR` relocates the one this suite touches (a
     relative override resolves below the repo root, the same
     resolution every build/run script applies).
     """
@@ -61,13 +61,13 @@ def state_dir(env: str, name: str) -> Path:
 
 
 #: The guest asset dir (#156).
-GUEST_DIR = state_dir("MSKS_GUEST_DIR", "guest")
+GUEST_DIR = state_dir("GUEST_DIR", "guest")
 
 client = AsyncClient(verify=False, timeout=10.0)
 
 needs_local = pytest.mark.skipif(
     not VMLINUX or not ROOTFS or not os.access("/dev/kvm", os.W_OK),
-    reason="set MSKSD_TEST_VMLINUX/MSKSD_TEST_ROOTFS with /dev/kvm access",
+    reason="set TEST_VMLINUX/TEST_ROOTFS with /dev/kvm access",
 )
 
 #: The serial autologin's root-shell prompt: the last line the
@@ -85,20 +85,16 @@ GUEST_UP_MARKER = "root@msks-guest:~#"
 #: nested-KVM guest runs the same boot several times slower than a
 #: dev host's KVM guest, and CI sets all three explicitly. Defaults
 #: keep the dev-host behavior unchanged.
-GUEST_UP_TIMEOUT_S = float(
-    os.environ.get("MSKSD_TEST_GUEST_UP_TIMEOUT_S", "60")
-)
-CONSOLE_TIMEOUT_S = float(os.environ.get("MSKSD_TEST_CONSOLE_TIMEOUT_S", "30"))
-SHUTDOWN_TIMEOUT_S = float(
-    os.environ.get("MSKSD_TEST_SHUTDOWN_TIMEOUT_S", "60")
-)
+GUEST_UP_TIMEOUT_S = float(os.environ.get("TEST_GUEST_UP_TIMEOUT_S", "60"))
+CONSOLE_TIMEOUT_S = float(os.environ.get("TEST_CONSOLE_TIMEOUT_S", "30"))
+SHUTDOWN_TIMEOUT_S = float(os.environ.get("TEST_SHUTDOWN_TIMEOUT_S", "60"))
 
 #: Fresh console sessions per command (#75): the vsock console can
 #: accept a connection and echo — the pty's line discipline answers
 #: while the shell behind it never reaches its first prompt on a
 #: slow nested-KVM boot. One wedged session must not fail the test;
 #: each retry opens a fresh shell on an already-further-along boot.
-CONSOLE_ATTEMPTS = int(os.environ.get("MSKSD_TEST_CONSOLE_ATTEMPTS", "3"))
+CONSOLE_ATTEMPTS = int(os.environ.get("TEST_CONSOLE_ATTEMPTS", "3"))
 
 
 def created_id(result) -> str:
@@ -399,7 +395,7 @@ async def run_in_console(
             )
 
 
-EGRESS = os.environ.get("MSKSD_TEST_EGRESS")
+EGRESS = os.environ.get("TEST_EGRESS")
 
 
 def default_route_iface() -> str:
@@ -434,8 +430,8 @@ needs_egress = pytest.mark.skipif(
     or not os.access("/dev/kvm", os.W_OK)
     or os.geteuid() != 0,
     reason=(
-        "set MSKSD_TEST_EGRESS=1 as root with /dev/kvm, built guest "
-        "assets, and MSKSD_TEST_VMLINUX/MSKSD_TEST_ROOTFS"
+        "set TEST_EGRESS=1 as root with /dev/kvm, built guest "
+        "assets, and TEST_VMLINUX/TEST_ROOTFS"
     ),
 )
 
@@ -445,7 +441,7 @@ needs_egress = pytest.mark.skipif(
 #: below drive their own deadline; this bounds the whole sequence
 #: (bootstrap downloads + the in-guest suite).
 DEV_BOOTSTRAP_TIMEOUT_S = float(
-    os.environ.get("MSKSD_TEST_DEV_BOOTSTRAP_TIMEOUT_S", "3600")
+    os.environ.get("TEST_DEV_BOOTSTRAP_TIMEOUT_S", "3600")
 )
 
 
@@ -528,7 +524,7 @@ async def await_dev_state(
 #: Host-side ssh/rsync ceilings (#110): the forward is up before the
 #: client runs, so this bounds connection setup + command round-trip
 #: on a slow nested-KVM guest (CI raises it alongside the others).
-SSH_CMD_TIMEOUT_S = float(os.environ.get("MSKSD_TEST_SSH_TIMEOUT_S", "90"))
+SSH_CMD_TIMEOUT_S = float(os.environ.get("TEST_SSH_TIMEOUT_S", "90"))
 
 #: The host-side tools the ssh smoke needs (#110): the devenv shell
 #: ships openssh + rsync; a bare environment without them skips
@@ -559,9 +555,7 @@ needs_git_tools = pytest.mark.skipif(
 #: The git-out legs' ceiling (#81): apt + an HTTPS fetch inside the
 #: guest and the push itself. Download-bound, like the bootstrap
 #: smoke's budget — CI raises it on slow paths.
-GIT_OUT_TIMEOUT_S = float(
-    os.environ.get("MSKSD_TEST_GIT_OUT_TIMEOUT_S", "600")
-)
+GIT_OUT_TIMEOUT_S = float(os.environ.get("TEST_GIT_OUT_TIMEOUT_S", "600"))
 
 
 def free_port() -> int:

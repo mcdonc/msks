@@ -59,8 +59,8 @@ async def test_local_minted_identity() -> None:
     uses), and a stop/start cycle serves the same identity again —
     the halves live on the workspace's row, not in any process.
     """
-    nft_tool = os.environ.get("MSKSD_TEST_NFT") or shutil.which("nft") or "nft"
-    ip_tool = os.environ.get("MSKSD_TEST_IP") or shutil.which("ip") or "ip"
+    nft_tool = os.environ.get("TEST_NFT") or shutil.which("nft") or "nft"
+    ip_tool = os.environ.get("TEST_IP") or shutil.which("ip") or "ip"
     state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
     token = f"smoke-token-{uuid.uuid4().hex}"
     api_port = free_port()
@@ -601,8 +601,8 @@ async def test_local_client_minted_identity() -> None:
     cache alone — the identity the client kept is the identity the
     guest planted.
     """
-    nft_tool = os.environ.get("MSKSD_TEST_NFT") or shutil.which("nft") or "nft"
-    ip_tool = os.environ.get("MSKSD_TEST_IP") or shutil.which("ip") or "ip"
+    nft_tool = os.environ.get("TEST_NFT") or shutil.which("nft") or "nft"
+    ip_tool = os.environ.get("TEST_IP") or shutil.which("ip") or "ip"
     state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
     token = f"smoke-token-{uuid.uuid4().hex}"
     api_port = free_port()
@@ -863,8 +863,8 @@ async def test_local_operator_pubkey() -> None:
     guest accepts ssh with that key alone. ``msks ssh`` cannot serve
     a half it never had: its recovery names the operator's key.
     """
-    nft_tool = os.environ.get("MSKSD_TEST_NFT") or shutil.which("nft") or "nft"
-    ip_tool = os.environ.get("MSKSD_TEST_IP") or shutil.which("ip") or "ip"
+    nft_tool = os.environ.get("TEST_NFT") or shutil.which("nft") or "nft"
+    ip_tool = os.environ.get("TEST_IP") or shutil.which("ip") or "ip"
     state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
     token = f"smoke-token-{uuid.uuid4().hex}"
     api_port = free_port()

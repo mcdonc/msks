@@ -730,7 +730,7 @@ def default_route_iface() -> str:
 def guest_archive() -> Path:
     """The newest built workspace image."""
     guest_dir = Path(
-        os.environ.get("MSKS_GUEST_DIR", ".devenv/state/guest")
+        os.environ.get("GUEST_DIR", ".devenv/state/guest")
     ).resolve()
     archives = sorted(guest_dir.glob("workspace-*.tar"))
     if not archives:

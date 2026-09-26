@@ -74,7 +74,7 @@ class FakeMicrovm:
 
 def pin_attempts_and_timeout(monkeypatch) -> None:
     """Run the retries against pinned values, not env-tunable ones —
-    a CI setting MSKSD_TEST_CONSOLE_ATTEMPTS must not break the pins."""
+    a CI setting TEST_CONSOLE_ATTEMPTS must not break the pins."""
     monkeypatch.setattr(test_smoke, "CONSOLE_TIMEOUT_S", 0.1)
     monkeypatch.setattr(test_smoke, "CONSOLE_ATTEMPTS", 3)
 
