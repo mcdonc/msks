@@ -3527,6 +3527,23 @@ async def test_run_watch_aborts_without_the_subprotocol_echo(
         await eg.run_watch("ws1", decide=False, duration="once")
 
 
+async def test_run_watch_exits_on_a_token_the_handshake_cannot_carry(
+    monkeypatch,
+) -> None:
+    # One line, no reconnect spin, and the token stays off the
+    # message (#116 review).
+    from msks.client import egress as eg
+
+    connect = FakeConnect([])
+    monkeypatch.setattr(eg.websockets, "connect", connect)
+    monkeypatch.setattr(eg, "env_token", lambda: "a b")
+    monkeypatch.setattr(eg, "env_url", lambda: "https://d")
+    with pytest.raises(SystemExit) as caught:
+        await eg.run_watch("ws1", decide=False, duration="once")
+    assert "cannot ride" in str(caught.value)
+    assert "a b" not in str(caught.value)
+
+
 async def test_run_watch_reconnects_after_a_closed_connection(
     monkeypatch,
 ) -> None:

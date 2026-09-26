@@ -1673,6 +1673,22 @@ def test_backoff_and_refused_close() -> None:
     assert not consent_ui.refused_close(clean)
 
 
+async def test_the_link_ends_on_a_token_the_handshake_cannot_carry() -> None:
+    """A token outside the handshake's grammar never becomes callable
+    by retrying (#116): the loop ends with one reason on the state,
+    no token echoed."""
+    from msks.client.wsauth import UnusableToken
+
+    def factory():
+        raise UnusableToken("the token cannot ride the websocket handshake")
+
+    link = DeciderLink(WS, ws_factory=factory)
+    connected, refused, rejected = await link.pump_one()
+    assert (connected, refused, rejected) == (False, False, True)
+    assert link.state == "unusable token"
+    assert "cannot ride" in link.reject_reason
+
+
 async def test_the_link_refuses_an_unechoed_handshake() -> None:
     """A handshake that completes with no subprotocol selection
     carries no authority (#116): the link marks itself refused, sends

@@ -474,6 +474,37 @@ async def test_stdio_session_exits_nonzero_on_a_named_refusal(
         await asyncio.wait_for(fwd.stdio_session("ws://d", "t", None), 5)
 
 
+async def test_stdio_session_exits_on_a_token_the_handshake_cannot_carry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stub = ConnectStub(FakeWs())
+    monkeypatch.setattr(fwd.websockets, "connect", stub)
+    monkeypatch.setattr(sys, "stdin", ClosedFdStdin())
+    monkeypatch.setattr(sys, "stdout", FakeStdout())
+    with pytest.raises(SystemExit) as caught:
+        await asyncio.wait_for(fwd.stdio_session("ws://d", "a b", None), 5)
+    assert "cannot ride" in str(caught.value)
+    assert "a b" not in str(caught.value)
+    assert stub.recorded == {}  # the dial never happened
+
+
+async def test_local_listener_names_an_unusable_token(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    # One stderr line without the token in it, and the listener
+    # stays up for the next connection.
+    stub = ConnectStub(FakeWs())
+    monkeypatch.setattr(fwd.websockets, "connect", stub)
+    server = await fwd.local_listener("ws://d", "a b", None, 0)
+    address = server.sockets[0].getsockname()
+    reader, writer = await asyncio.open_connection(*address)
+    assert await reader.read() == b""
+    err = capsys.readouterr().err
+    assert "cannot ride" in err
+    assert "a b" not in err
+    server.close()
+
+
 async def test_stdio_session_names_an_unreachable_daemon(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

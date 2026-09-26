@@ -513,7 +513,9 @@ def render_template() -> str:
 # event_poll_s: 1.0         # seconds between workspace status
 #                           # scans (applies at startup)
 # bootstrap_token: secret   # seeds the first bearer token at first
-#                           # boot
+#                           # boot; must fit the HTTP token grammar
+#                           # (letters, digits, separators) — it rides
+#                           # the websocket handshake (#116)
 # access_log: false         # uvicorn access logging (request
 #                           # lines: method, path, query — never
 #                           # headers); websocket tokens ride the

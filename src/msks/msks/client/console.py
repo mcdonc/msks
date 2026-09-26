@@ -203,6 +203,21 @@ def _connect(address: str, token: str, ssl_ctx):
     )
 
 
+async def dial(address: str, token: str, ssl_ctx, url: str):
+    """The console websocket connection, or the one-line exit for
+    every dial-time failure: a token the handshake cannot carry
+    (#116, message without the credential in it), a daemon that
+    cannot be reached, a TLS mismatch, a rejected upgrade."""
+    try:
+        connection = _connect(address, token, ssl_ctx)
+    except wsauth.UnusableToken as exc:
+        raise SystemExit(f"msks: {exc}") from None
+    try:
+        return await connection
+    except (OSError, ssl.SSLError, websockets.InvalidStatus) as exc:
+        raise SystemExit(f"msks: cannot reach {url}: {exc}") from exc
+
+
 async def run_shell(
     workspace_id: str,
     url: str,
@@ -214,13 +229,7 @@ async def run_shell(
 ) -> int:
     """One interactive session; 0 on clean detach or session end."""
     address = ws_url(url, workspace_id, user=user, size=size, term=term)
-    connection = _connect(address, token, ssl_ctx)
-    try:
-        ws = await connection
-    except (OSError, ssl.SSLError, websockets.InvalidStatus) as exc:
-        # Daemon down, TLS mismatch, or a rejected upgrade: one line,
-        # not a traceback.
-        raise SystemExit(f"msks: cannot reach {url}: {exc}") from exc
+    ws = await dial(address, token, ssl_ctx, url)
     async with ws:
         # The handshake's echo check (#116): a daemon that did not
         # select the auth subprotocol is closing with its refusal or
@@ -291,7 +300,7 @@ async def open_session(
 
 CLOSE_CODE_REASONS = {
     4400: "console refused (unknown user or bad request)",
-    4401: "authentication failed (bad token?)",
+    4401: wsauth.AUTH_FAILED_MESSAGE,
     4403: "console refused by the guest (auth)",
     4404: "no such workspace",
     # The daemon's own message names the real cause (a refused

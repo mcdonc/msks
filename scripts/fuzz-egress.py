@@ -1366,6 +1366,9 @@ class RawDecider:
                 {"type": "egress.decider", "workspace": self.workspace_id}
             )
         )
+        assert self.ws.subprotocol == "bearer", (
+            "daemon did not echo the websocket auth subprotocol"
+        )
         self._mark = len(self.requests)
         self.reader = asyncio.create_task(self.recv_loop())
 

@@ -492,6 +492,17 @@ async def test_run_shell_offers_the_auth_subprotocol(
     assert stub.recorded_subprotocols == ["bearer", "t"]
 
 
+async def test_require_echo_aborts_on_an_unauthenticated_frame() -> None:
+    # A frame on a connection with no echo is still an
+    # unauthenticated session (#116): aborted, never pumped.
+    from msks.client import wsauth
+
+    ws = FakeWs(incoming=[b"frame"])
+    ws.subprotocol = None
+    with pytest.raises(SystemExit, match="Sec-WebSocket-Protocol"):
+        await asyncio.wait_for(wsauth.require_echo(ws, wait_s=0.05), 5)
+
+
 async def test_run_shell_aborts_without_the_subprotocol_echo(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -512,6 +523,39 @@ async def test_run_shell_aborts_without_the_subprotocol_echo(
     with pytest.raises(SystemExit, match="authentication failed"):
         await asyncio.wait_for(run_shell_via(console), 5)
     assert ws.sent == []
+
+
+def test_subprotocols_offer_shape() -> None:
+    from msks.client import wsauth
+
+    assert wsauth.subprotocols("tok") == ["bearer", "tok"]
+
+
+def test_subprotocols_refuses_a_token_outside_the_grammar() -> None:
+    # A token the handshake's value grammar cannot carry is refused
+    # here, message intact and token unechoed (#116 review): the
+    # websocket library's own refusal embeds the credential whole.
+    from msks.client import wsauth
+
+    for bad in ("a b", "pad=ding", "", "new\nline"):
+        with pytest.raises(wsauth.UnusableToken, match="cannot ride"):
+            wsauth.subprotocols(bad)
+
+
+async def test_run_shell_exits_on_a_token_the_handshake_cannot_carry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stub = ConnectStub(FakeWs())
+    monkeypatch.setattr(console.websockets, "connect", stub)
+    monkeypatch.setattr(sys, "stdout", FakeStdout())
+    with pytest.raises(SystemExit) as caught:
+        await asyncio.wait_for(
+            console.run_shell("wid", "https://d", "a b", None), 5
+        )
+    # One line, no traceback, and the token itself stays off it.
+    assert "cannot ride" in str(caught.value)
+    assert "a b" not in str(caught.value)
+    assert stub.recorded_subprotocols is None  # the dial never happened
 
 
 async def test_require_echo_names_a_nonauth_close() -> None:

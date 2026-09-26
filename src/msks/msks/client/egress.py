@@ -213,16 +213,21 @@ async def run_watch(
     """
     token = env_token()
     url = env_url()
-    async for ws in websockets.connect(**connect_args(url, token)):
-        try:
-            # The handshake's echo check (#116): a daemon that did not
-            # select the auth subprotocol is closing with its refusal
-            # or a middlebox rewrote the handshake — named and exited
-            # here, never pumped.
-            await wsauth.require_echo(ws)
-            await watch_one(ws, workspace_id, decide, duration, url, token)
-        except websockets.ConnectionClosed:
-            continue  # reconnect; the server re-sends the snapshot
+    try:
+        async for ws in websockets.connect(**connect_args(url, token)):
+            try:
+                # The handshake's echo check (#116): a daemon that did not
+                # select the auth subprotocol is closing with its refusal
+                # or a middlebox rewrote the handshake — named and exited
+                # here, never pumped.
+                await wsauth.require_echo(ws)
+                await watch_one(ws, workspace_id, decide, duration, url, token)
+            except websockets.ConnectionClosed:
+                continue  # reconnect; the server re-sends the snapshot
+    except wsauth.UnusableToken as exc:
+        # One line without the token in it — the websocket library's
+        # own refusal embeds the credential whole (#116 review).
+        raise SystemExit(f"msks: {exc}") from None
     return 0
 
 

@@ -155,6 +155,21 @@ def test_websocket_rejects_bad_token(tmp_path: Path) -> None:
         assert caught.value.code == 4401
 
 
+def test_websocket_rejects_a_lone_auth_subprotocol(
+    tmp_path: Path,
+) -> None:
+    # The offer is ["bearer", <token>] (#116): the name without a
+    # token after it authenticates nothing.
+    api, _app, _stub = api_with_stub(tmp_path)
+    with TestClient(api) as client:
+        with client.websocket_connect(
+            "/api/v1/events", subprotocols=["bearer"]
+        ) as ws:
+            with pytest.raises(WebSocketDisconnect) as caught:
+                ws.receive_text()
+        assert caught.value.code == 4401
+
+
 async def test_watch_loop_survives_scan_errors(tmp_path: Path) -> None:
     api, app, stub = api_with_stub(tmp_path)
     async with api.router.lifespan_context(api):

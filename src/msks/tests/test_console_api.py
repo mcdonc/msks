@@ -129,7 +129,10 @@ def test_console_seam_error_closes(console_api) -> None:
 
 def test_console_selects_the_auth_subprotocol(console_api) -> None:
     # The daemon echoes the auth subprotocol on a valid token (#116):
-    # the echo is what a client verifies before pumping.
+    # the echo is what a client verifies before pumping. The session
+    # exchanges one byte before it closes — every console test that
+    # closes on a live bridge does the same, so the endpoint's pump
+    # reaches its clean end instead of racing the teardown.
     api, app, stub = console_api
     with TestClient(api) as client:
         _make_workspace(client)
@@ -138,6 +141,10 @@ def test_console_selects_the_auth_subprotocol(console_api) -> None:
             subprotocols=["bearer", TOKEN],
         ) as socket:
             assert socket.accepted_subprotocol == "bearer"
+            socket.send_bytes(b"x")
+            got = b""
+            while b"X" not in got:
+                got += socket.receive_bytes()
 
 
 def test_console_rejects_a_query_string_token(console_api) -> None:
