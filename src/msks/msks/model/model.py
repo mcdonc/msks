@@ -45,8 +45,9 @@ def new_token() -> str:
     """A fresh bearer token plaintext (shown once, stored hashed).
 
     The plaintext passes the grammar guard: tokens ride the
-    websocket handshake (#116), where a stray separator would break
-    the handshake.
+    ``Authorization`` header on the REST surface and the websocket
+    handshake (#216), where a stray separator would fail the
+    header-form guard before any dial.
     """
     return validate_token_plaintext(secrets.token_urlsafe(TOKEN_ENTROPY_BYTES))
 

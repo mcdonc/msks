@@ -4,10 +4,19 @@ Every msks websocket carries its bearer token in the handshake's
 ``Authorization: Bearer`` header — the same scheme the REST surface
 uses. A URL query string would land the token in access logs, proxy
 logs, browser history, and process listings; an ordinary header
-does not, and every HTTP stack passes it through untouched. There
-is no echo to verify: the daemon accepts a valid token and closes
+does not, and stock proxies forward it with the upgrade. There is
+no echo to verify: the daemon accepts a valid token and closes
 4401 for anything else, and each client names that close at its
 first receive.
+
+Two middlebox shapes read the same from every client as a token
+problem, and are accepted here: a proxy that strips the
+``Authorization`` header from the upgrade produces the daemon's
+4401 (named "authentication failed"), and a middlebox that answers
+the handshake itself leaves the client waiting on a silent
+connection until its ping timeout reconnects. Both fail closed; a
+browser client that cannot set headers at all takes the
+short-lived ticket pattern, not a token in a URL.
 """
 
 import re
@@ -33,7 +42,7 @@ TCHAR_RE = re.compile(r"^[A-Za-z0-9!#$%&'*+\-.^_`|~]+$")
 #: whole, and a traceback would print it.
 UNUSABLE_MESSAGE = (
     "the token cannot ride the websocket handshake (characters "
-    "outside the HTTP header grammar) — check MSKSC_TOKEN or the "
+    "outside the HTTP token grammar) — check MSKSC_TOKEN or the "
     "client token file"
 )
 
@@ -47,9 +56,11 @@ def auth_headers(token: str) -> list[tuple[str, str]]:
     """The handshake headers that carry the bearer token.
 
     Refused here — message intact, token unechoed — when the token
-    cannot fit the header value's grammar: the websocket library
-    would otherwise reject the connect call with the token embedded
-    in its error.
+    cannot fit the credential grammar: a control character makes
+    the websocket library reject the connect call with the token
+    embedded in its error, and a separator would ride the header
+    only to fail as an invalid token at the daemon. The gate names
+    the problem before either.
     """
     if not TCHAR_RE.fullmatch(token):
         raise UnusableToken(UNUSABLE_MESSAGE)

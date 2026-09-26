@@ -184,8 +184,8 @@ class ServerSettings:
     event_poll_s: float = 1.0
     bootstrap_token: str | None = None
     # Off by default to keep the daemon's own log quiet; websocket
-    # tokens ride the handshake's protocol offer (#116), not the
-    # URL, so the access log (request lines only) holds no
+    # tokens ride the handshake's Authorization header (#216), not
+    # the URL, so the access log (request lines only) holds no
     # credentials either way.
     access_log: bool = False
     # HMAC key for consent audit tags (#69): opt-in integrity

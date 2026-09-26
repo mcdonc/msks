@@ -116,9 +116,9 @@ class DeciderLink:
         try:
             ws = await self._ws_factory().__aenter__()
         except UnusableToken as exc:
-            # A token the handshake cannot carry never becomes
-            # callable by retrying: the loop ends with the reason on
-            # the state, one message, no token echoed (#116).
+            # A token the header cannot carry never becomes callable
+            # by retrying: the loop ends with the reason on the
+            # state, one message, no token echoed.
             self.state = UNUSABLE_TOKEN
             self.reject_reason = str(exc)
             return False, False, True
