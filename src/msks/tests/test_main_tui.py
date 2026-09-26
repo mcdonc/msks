@@ -1778,6 +1778,35 @@ async def test_a_long_daemon_url_keeps_the_status_bar_one_line(
         assert status.size.height == 1
 
 
+async def test_a_long_flash_keeps_the_status_bar_one_line(
+    monkeypatch,
+) -> None:
+    """#359: a flash longer than the terminal's width — a refusal
+    that echoes operator-typed references back — renders on the
+    bar's one row, the head of the message readable and an
+    ellipsis marking the cut, so the listing below holds its
+    place through the flash's TTL instead of reflowing on every
+    tick."""
+    scripted_link(monkeypatch, [])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    refusal = "start failed: " + "daemon refused: " * 10 + "no room"
+    assert len(refusal) > 150  # wider than the 80-column terminal
+    async with app.run_test(size=(80, 24)):
+        await wait_for(lambda: list_children(app) == 1)
+        listing_y = app.query_one("#listing").region.y
+        app.flash(refusal)
+        await wait_for(lambda: "start failed" in status_text(app))
+        status = app.query_one("#status", Static)
+        # One row at 80 columns, the listing unmoved below it.
+        assert status.region.height == 1
+        assert app.query_one("#listing").region.y == listing_y
+        line = "".join(s.text for s in status.render_line(0))
+        assert cell_len(line) <= 80
+        assert line.lstrip().startswith("start failed: daemon refused")
+        assert line.rstrip().endswith("…")  # the cut, marked
+
+
 async def test_a_scrolling_list_keeps_the_created_label(
     monkeypatch,
 ) -> None:

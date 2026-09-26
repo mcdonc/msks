@@ -622,7 +622,9 @@ class MsksTuiApp(App):
 
     CSS = """
     Screen { layout: vertical; }
-    #status { padding: 0 1; background: $panel; color: $text-muted; }
+    #status { height: 1; padding: 0 1; background: $panel;
+              color: $text-muted; text-wrap: nowrap;
+              text-overflow: ellipsis; }
     #listing { border: round $primary; background: $panel; }
     #columns { padding: 0 1; color: $text-muted; }
     #rows ListItem { height: 1; padding: 0 1; }
@@ -836,6 +838,10 @@ class MainScreen(Screen):
         """The status line (#349): the workspace count in the bold
         default foreground with the daemon's URL in muted text
         after it; a flash owns the line until its TTL lapses. The
+        bar stands one row whatever the flash carries (#359): the
+        #status CSS crops a long message at the terminal's edge,
+        an ellipsis marking the cut, so the listing below holds
+        its place. The
         listing's header row shows while rows stand; the empty
         state takes its place when they do not. A screen going
         away under the timer or a worker leaves the query empty —

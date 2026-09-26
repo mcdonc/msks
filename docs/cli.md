@@ -256,7 +256,10 @@ between the status bar and the footer. The status bar above it
 sets the workspace count in the bold default foreground with the
 daemon's URL riding after it in muted text (a long URL clips at
 its middle, both ends kept, so the line stays one row); a
-flash message owns the whole line while it lives. Each row's created column reads a
+flash message owns the whole line while it lives, and a flash
+longer than the terminal's width crops at the edge with an
+ellipsis marking the cut, so the bar stays one row whatever a
+refusal echoes back (#359). Each row's created column reads a
 relative label (#350), bucketed by whole calendar days:
 `today`, `yesterday`, then `2d ago` under a week, `3w ago` under
 a month, `1mo ago` under a year, `1y ago` past it — the absolute
