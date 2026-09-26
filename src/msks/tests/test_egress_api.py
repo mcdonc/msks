@@ -713,11 +713,26 @@ async def test_replay_logs_when_it_hits_its_row_limit(
             egress_mode="interactive",
         )
     )
-    for i in range(api_mod.SECRET_REPLAY_LIMIT + 1):
-        await app.state.model.record_audit(
-            "mint",
-            {"workspace_id": "ws-many", "name": f"n{i}", "dests": "[]"},
+    # Seed the limit-plus-one rows in one transaction: this test
+    # reads the replay's truncation of recorded rows, and the
+    # per-row writer (record_audit, with its own session and
+    # commit per call) is covered by its own tests — 101 separate
+    # round-trips dominated the test's runtime.
+    from msks.model.db import sessionmaker_for
+    from msks.model.secrets import SecretAudit
+
+    maker = sessionmaker_for(app.state.model.engine())
+    async with maker() as session:
+        session.add_all(
+            SecretAudit(
+                kind="mint",
+                workspace_id="ws-many",
+                name=f"n{i}",
+                dests="[]",
+            )
+            for i in range(api_mod.SECRET_REPLAY_LIMIT + 1)
         )
+        await session.commit()
 
     class RecordingSocket:
         def __init__(self) -> None:

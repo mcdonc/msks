@@ -44,7 +44,8 @@ def real_litellm():
     litellm's ``__init__`` pulls every provider adapter (~5 s of
     import work, irreducible from here). Requested only by the
     real-Router tests, the tax lands in one named module setup
-    instead of each test's call time."""
+    instead of each test's call time; the xdist group keeps all
+    three on one worker, so the whole suite pays it once."""
     import litellm
 
     return litellm
@@ -253,6 +254,7 @@ async def test_passthrough_stream_forwards_sse_lines() -> None:
     await resp.aclose()
 
 
+@pytest.mark.xdist_group("litellm-import")
 async def test_litellm_mode_builds_a_real_router_and_defaults_the_model(
     tmp_path: Path, real_litellm
 ) -> None:
@@ -983,6 +985,7 @@ def test_a_dict_entry_can_name_passthrough() -> None:
     )
 
 
+@pytest.mark.xdist_group("litellm-import")
 def test_a_dict_list_reaches_a_real_litellm_router(real_litellm) -> None:
     """The dict form is not normalize-only: a configured entry with
     routing knobs constructs the real Router and serves its
@@ -1014,6 +1017,7 @@ def test_a_baseless_passthrough_entry_is_a_named_configure_error() -> None:
         router.ensure(llm_settings(({"model_name": "*"},)))
 
 
+@pytest.mark.xdist_group("litellm-import")
 def test_normalize_copies_deep_between_configures(real_litellm) -> None:
     """The settings entry survives configure: the Router's copy is
     its own, at depth — an entry configured twice reads the same
