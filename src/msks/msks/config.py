@@ -312,11 +312,13 @@ def config_var(key: str, path: str) -> str:
 
 def note_spelling(var: str, key: str, spelled: dict, path: str) -> None:
     """Both spellings of one key in a file is an error naming both
-    (#332) — the same fail-fast rule duplicate keys already carry."""
+    (#332) — the same fail-fast rule duplicate keys already carry,
+    checked before the null-value skip so a null spelling counts
+    too."""
     if var in spelled:
         raise ValueError(
-            f"{path}: duplicate config key {key!r} — already spelled "
-            f"{spelled[var]!r} (a hyphen and an underscore spell the "
+            f"{path}: duplicate config key {key!r} (already spelled "
+            f"{spelled[var]!r}; a hyphen and an underscore spell the "
             f"same key)"
         )
     spelled[var] = key

@@ -276,6 +276,21 @@ def test_both_spellings_of_one_key_rejected(tmp_path) -> None:
         file_env_overrides(path)
 
 
+def test_null_spelling_still_collides(tmp_path) -> None:
+    """A null value is the unset form, but the spelling still
+    counts: a null ``egress_subnet:`` plus a set ``egress-subnet:``
+    is both spellings of one key, the same duplicate error (#332
+    review)."""
+    path = write_config(
+        tmp_path, "egress_subnet:\negress-subnet: 10.9.0.0/16\n"
+    )
+    with pytest.raises(
+        ValueError,
+        match="already spelled 'egress_subnet'",
+    ):
+        file_env_overrides(path)
+
+
 def test_unknown_kebab_key_rejected_with_snake_list(tmp_path) -> None:
     """An unknown key keeps its fail-fast error, and the valid-keys
     list stays snake_case — the canonical spelling (#332)."""
