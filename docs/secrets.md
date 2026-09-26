@@ -72,7 +72,8 @@ name, and a timestamp — the row id is the durable handle, because
 the row itself retires on revoke and expiry. A swap or sighting
 also names the destination the wire saw; a mint names the
 allowlist it was minted with; revoke and expiry carry the
-identity alone. `msks egress tui`'s audit screen (`e`) shows this
+identity alone. The consent overlay's audit screen (`e` from
+`msks tui`'s workspace page) shows this
 workspace's events newest first: the recorded mints, revokes,
 and expiries replay onto it at registration (#305), and swaps and
 sightings stream in live, with the off-allowlist sighting

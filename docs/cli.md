@@ -281,23 +281,44 @@ as the workspace's decider, so holds land on it. Reminting the
 LLM token is a CLI operation — `msks llm-token --remint` prints
 the fresh token, the part the page cannot usefully show.
 
-The page's **Switch the egress mode** action (#344) opens the
-consent decider's mode picker (`allow` / `static` /
-`interactive`, the current mode highlighted) over the page:
-picking a mode switches the posture through the same endpoint
-`msks egress mode` speaks, without leaving the workspace. The
-consent line names the new mode as the switch lands; a pick of
-`static` with nothing effectively allowed asks the same
-offline-workspace confirmation the decider and the CLI ask
-(confirm to switch, decline to decide nothing); a refused
-switch names its reason on the consent line, where the page
-reads it.
+The page's **Egress consent** action (#358) opens the consent
+overlay: a centered panel over the page holding the held-request
+queue with countdowns and the verdict keys — the consent decider
+as a pane inside the tree, not a screen the tree hands the
+terminal to. The page also opens it by itself: the first hold of
+a burst pushes the panel the moment it lands (a hold waits about
+two minutes before it times out denied, so surfacing it loudly is
+the point), while a picker or confirmation already stacked over
+the page holds the open until it leaves. `q` or Escape parks the
+panel — holds keep waiting, and the header's `egress to decide:
+N` keeps counting them — and a panel the page opened closes
+itself when its queue empties; one the operator opened by hand
+stays until the operator closes it, an empty queue included,
+because reviewing rules, revoking, and switching the mode all
+start there. Keys: `a`/`d` allow or deny the focused hold for
+the default duration (`tilrestart`), `A`/`D` pick a duration
+first (`once / 5m / 15m / tilrestart / forever`), `r` pushes the
+rules screen over the panel (the in-effect verdicts with
+countdowns, `x` to revoke the focused rule — the row leaves on
+the daemon's refreshed frame, never optimistically), `e` pushes
+the placeholder-token audit screen, and `m` opens the mode
+picker. Enter carries no verdict — only an explicit letter
+decides — and the panel's keys live on the panel itself, so they
+cannot collide with the page's. See `msks egress` below for what
+verdicts, rules, and the audit screen cover.
 
-The consent decider (`msks egress tui`'s app) owns the whole
-terminal as a chained screen: choosing it hands the terminal over,
-and on exit the tree returns where it left off — the same
-workspace page, its consent state current. The page's **Open a
-shell (new terminal)** action works the other way: it spawns the
+The page's **Switch the egress mode** action (#344) opens the
+mode picker (`allow` / `static` / `interactive`, the current
+mode highlighted) over the page — the same picker the overlay's
+`m` opens: picking a mode switches the posture through the same
+endpoint `msks egress mode` speaks, without leaving the
+workspace. The consent line names the new mode as the switch
+lands; a pick of `static` with nothing effectively allowed asks
+the same offline-workspace confirmation the CLI asks (confirm
+to switch, decline to decide nothing); a refused switch names
+its reason on the consent line, where the page reads it.
+
+The page's **Open a shell (new terminal)** action spawns the
 configured terminal launcher with a `msks ssh` invocation
 appended (see `terminal_open_cmd` below), and the tree keeps
 running beside the window — the spawned shell inherits the tree's
@@ -1036,7 +1057,8 @@ create-time allowlist; `allow` workspaces (the create default)
 record off-list destinations and pass them.
 
 ```text
-msks egress tui ws-dev            # THE decider: a live TUI (see below)
+msks tui                          # THE decider: the workspace page's
+                                  # consent overlay (see `msks` above)
 msks egress rules ws-dev          # the mode, allowlist, and in-effect verdicts
 msks egress requests ws-dev       # the consent rows (audit trail), newest first
 msks egress requests ws-dev --decision pending
@@ -1087,53 +1109,27 @@ with a message naming the fix: pass `--allow` entries, or pass
 `--offline` to run the switch anyway (that posture answers every
 name NXDOMAIN — an offline workspace, reachable only by ssh).
 
-### `msks egress tui` — the decider's screen
+### The decider surface
 
-The TUI is the interface a human decides from: it registers this
-client as the workspace's decider (holds wait only while one is
-connected), shows every held request with its countdown, and sends
-verdicts through the same endpoints the subcommands use. Keys:
-
-- `a` / `d` — allow or deny the focused hold for the default
-  duration (`tilrestart`); `A` / `D` open the duration picker
-  (`once / 5m / 15m / tilrestart / forever`).
-- `↑`/`↓` move the queue; `r` flips to the rules screen (the
-  in-effect verdicts with countdowns, and `x` to revoke the focused
-  rule — the row leaves on the daemon's refreshed frame, never
-  optimistically); `r` or `Escape` returns.
-- `m` opens the mode picker (#280; `m` works on every screen
-  since #301): picking a mode switches it live through the same
-  endpoint the subcommands use, and the refreshed `egress.rules`
-  frame repaints the mode everywhere it shows — the queue's status
-  line names the current mode (`mode interactive`) beside the
-  connection state and held count, and the rules and events
-  screens carry it in their headers. A
-  pick of `static` with nothing effectively allowed asks first
-  (the offline-workspace confirmation); a declined question
-  decides nothing.
-- `e` opens the placeholder-token audit screen (#201, #305): this
-  workspace's `secret.*` events — swaps, mints, revokes,
-  expiries, and off-allowlist sightings — newest first (another
-  workspace's events stay off the screen: a foreign sighting
-  flashing here would be a false alarm). The recorded mints,
-  revokes, and expiries replay onto the screen when it connects
-  (#305); swaps and sightings arrive live as the wire sees them.
-  A sighting row carries the `!` marker and the warning color:
-  the sentinel was seen toward a destination its own allowlist
-  misses, the exfil signal the interceptor exists to catch. The
-  header line states the detection boundary: sightings fire on
-  decrypted flows, and a spliced connection relays undecrypted
-  and reports nothing. A list with nothing to show says so
-  instead of rendering the header line alone. A
-  sighting that arrives while the queue or another full screen is
-  on top flashes the status line for five seconds (while a picker
-  is open the keys stay on the picker — the flash may lapse
-  before it closes, and the events screen keeps the durable
-  rows); `e`, `r`, or `Escape` returns (and `q`, hidden).
-- `q` quits. A dropped connection reconnects with backoff and
-  re-registers (the snapshot re-lands); while disconnected the
-  status line says so — the daemon fail-closes new connects, and
-  in-flight holds run their timeout.
+`msks tui`'s workspace page is the interface a human decides
+from: while the page is open it registers this client as the
+workspace's decider (holds wait only while one is connected), and
+its consent overlay — pushed by the page's **Egress consent**
+action, or by the first hold of a burst — shows every held
+request with its countdown and sends verdicts through the same
+endpoints the subcommands use. Keys: `a`/`d` allow or deny the
+focused hold for the default duration, `A`/`D` open the duration
+picker, `r` the rules screen (with `x` to revoke), `e` the
+placeholder-token audit screen, `m` the mode picker — the
+`msks` section above owns the overlay's full lifecycle (the
+auto-open, the park, the self-close). A dropped link reconnects
+with backoff and re-registers (the snapshot re-lands); while
+disconnected the overlay's status line says so — the daemon
+fail-closes new connects, and in-flight holds run their timeout.
+An off-allowlist sighting flashes the surface that owns the
+terminal: the overlay's status line while it is up, the page's
+consent line when it is not (#201's alarm, carried into the
+tree).
 
 The protocol state (frame parsing, countdowns) is pure and
 unit-tested; the `watch`/`decide`/`revoke` subcommands remain the

@@ -13,7 +13,7 @@ from pathlib import Path
 
 from ..create import create_workspace_core, invoking_user
 from ..rest import api_call, env_token, env_url
-from .consent_app import shared_ssl
+from .consent_ui import shared_ssl
 
 #: The create form's identity mode (#309): the per-workspace
 #: client mint, taken explicitly — the keypair is minted on this
@@ -133,4 +133,36 @@ class TuiData:
             transport=self.transport,
             ssl_ctx=shared_ssl(),
             json_body=body,
+        )
+
+    async def decide(
+        self,
+        workspace_id: str,
+        request_id: str,
+        decision: str,
+        duration: str,
+    ) -> dict:
+        """POST one verdict on a held request — the consent
+        overlay's decide, the same exchange ``msks egress decide``
+        makes."""
+        return await api_call(
+            "POST",
+            env_url(),
+            env_token(),
+            f"/api/v1/workspaces/{workspace_id}/egress/requests/{request_id}",
+            transport=self.transport,
+            ssl_ctx=shared_ssl(),
+            json_body={"decision": decision, "duration": duration},
+        )
+
+    async def revoke(self, workspace_id: str, request_id: str) -> dict:
+        """DELETE one in-effect verdict — the rules screen's
+        revoke, the same exchange ``msks egress revoke`` makes."""
+        return await api_call(
+            "DELETE",
+            env_url(),
+            env_token(),
+            f"/api/v1/workspaces/{workspace_id}/egress/requests/{request_id}",
+            transport=self.transport,
+            ssl_ctx=shared_ssl(),
         )

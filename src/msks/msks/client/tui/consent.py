@@ -1,7 +1,7 @@
 """The consent decider's protocol state (pure, no Textual — #195).
 
 Owns the frame parsing, the pending-hold map, and the countdown math
-for the decider TUI (:mod:`msks.client.tui.consent_app`), so the
+for the decider TUI (:mod:`msks.client.tui.consent_ui`), so the
 protocol logic is unit-testable without the harness. Ported from
 klangk's ``ConsentDeciderController`` with msks's shapes: frames ride
 the events-websocket envelope (``{"event": …, "data": {…}}``),
