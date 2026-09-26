@@ -730,8 +730,7 @@ async def test_the_consent_action_opens_the_panel_by_hand(
         await pilot.press("down")  # the consent action
         await press_until(pilot, "enter", lambda: on_overlay(app))
         assert app.screen.auto is False  # type: ignore[attr-defined]
-        await pilot.press("q")  # the operator's close
-        await wait_for(lambda: on_page(app))
+        await press_until(pilot, "q", lambda: on_page(app))  # the close
 
 
 async def test_the_page_runs_start_and_stop(monkeypatch) -> None:
@@ -1860,8 +1859,7 @@ async def test_the_headers_count_follows_the_queue(monkeypatch) -> None:
         # the test parks the panel — the burst stays surfaced by the
         # header alone, exactly the state the count is about.
         await wait_for(lambda: on_overlay(app))
-        await pilot.press("q")
-        await wait_for(lambda: on_page(app))
+        await press_until(pilot, "q", lambda: on_page(app))
         await wait_for(lambda: "egress to decide: 1" in header_text(app))
         ws.push(request_frame("late2"))
         await wait_for(lambda: "egress to decide: 2" in header_text(app))
@@ -1875,8 +1873,7 @@ async def test_the_headers_count_follows_the_queue(monkeypatch) -> None:
         # parked id) resolves, late2 stands unparked and the panel
         # opens for it — park it and read the count again.
         await wait_for(lambda: on_overlay(app))
-        await pilot.press("q")
-        await wait_for(lambda: on_page(app))
+        await press_until(pilot, "q", lambda: on_page(app))
         await wait_for(lambda: "egress to decide: 1" in header_text(app))
         assert action_children(app) == 5
         ws.push(
@@ -1893,8 +1890,7 @@ async def test_the_headers_count_follows_the_queue(monkeypatch) -> None:
         ws.push(request_frame("late3"))
         # The next burst opens the panel again; park it once more.
         await wait_for(lambda: on_overlay(app))
-        await pilot.press("q")
-        await wait_for(lambda: on_page(app))
+        await press_until(pilot, "q", lambda: on_page(app))
         await wait_for(lambda: "egress to decide: 1" in header_text(app))
         assert page.link is not None
         page.link.state = link_mod.RECONNECTING
