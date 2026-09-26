@@ -79,7 +79,7 @@ from .consent_ui import (
     switch_mode_path,
 )
 from .data import TuiData
-from .link import CONNECTED, REJECTED, DeciderLink
+from .link import CONNECTED, REJECTED, UNUSABLE_TOKEN, DeciderLink
 
 #: The full-terminal flows a page can record (#309): the console
 #: shell as the new-terminal action's dead-launcher fallback. The
@@ -399,7 +399,7 @@ def consent_line(link, row: dict) -> str:
     named whenever it is not connected: a drop never implies that
     silence is data (the controller keeps its last snapshot through
     the backoff ladder, so the line says so beside it)."""
-    if link.state == REJECTED:
+    if link.state in (REJECTED, UNUSABLE_TOKEN):
         return f"egress consent: {escape(link.reject_reason)}"
     rules = link.controller.rules
     if rules is None:
@@ -1669,7 +1669,7 @@ class ConsentOverlay(ModalScreen):
         state, held count; a flash owns it until its TTL lapses. A
         rejected registration names its reason — the daemon refused
         this page as the decider, and the line says why."""
-        if self.link.state == REJECTED:
+        if self.link.state in (REJECTED, UNUSABLE_TOKEN):
             state = escape(self.link.reject_reason or "rejected")
         else:
             state = self.link.state
