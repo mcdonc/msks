@@ -11,6 +11,7 @@ import asyncio
 import json
 import stat
 import sys
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import httpx
@@ -281,6 +282,9 @@ async def test_the_list_rows_open_pages_and_return(monkeypatch) -> None:
         await wait_for(lambda: "2 workspaces" in status_text(app))
         page = await open_page(pilot, app)
         assert WS in meta_text(app)
+        # The header's meta line carries the absolute created date
+        # (#350) — the fact the list's column reads relative.
+        assert "created 2026-01-02" in meta_text(app)
         assert page.link is not None
         # Returning to the list refreshes it (the page's actions may
         # have moved the workspace's status).
@@ -1201,6 +1205,14 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
 # -- the pure helpers ------------------------------------------------------
 
 
+def pinned_clock(monkeypatch, when: str = "2026-01-04T12:00:00") -> None:
+    """Pin the relative labels' clock (#350): the fixture row's
+    stamp (Jan 2) reads ``2d ago`` under the pinned date."""
+    monkeypatch.setattr(
+        main_app, "clock_now", lambda: datetime.fromisoformat(when)
+    )
+
+
 def test_the_line_helpers() -> None:
     assert main_app.workspace_label(row()) == "alpha"
     assert main_app.workspace_label(row(name=None)) == WS
@@ -1230,7 +1242,7 @@ def test_the_line_helpers() -> None:
     assert "identity" in main_app.created_note(row(id="x"), "/tmp/id")
 
 
-def test_the_listing_columns_line_up() -> None:
+def test_the_listing_columns_line_up(monkeypatch) -> None:
     """#347: every field pads to its column's width, so the status,
     egress, image, and date start at the same offset in every row —
     and the header's labels ride the same offsets. A name longer
@@ -1239,6 +1251,7 @@ def test_the_listing_columns_line_up() -> None:
     wide-character name cannot shift the columns either. The
     status and egress cells clip to their columns too, so a
     vocabulary the daemon grows cannot misalign a row."""
+    pinned_clock(monkeypatch)  # the created cell reads "2d ago"
     short = main_app.row_content(row(name="ab")).plain
     long_name = main_app.row_content(row(name="n" * 40)).plain
     wide = main_app.row_content(row(name="北" * 16)).plain
@@ -1250,7 +1263,7 @@ def test_the_listing_columns_line_up() -> None:
         ("STATUS", "stopped"),
         ("EGRESS", "interactive"),
         ("IMAGE", "aaaaa…aaaaaa"),
-        ("CREATED", "2026-01-02"),
+        ("CREATED", "2d ago"),
     ):
         offsets = {
             cell_len(text[: text.index(cell)]) for text in (short, wide)
@@ -1276,6 +1289,44 @@ def test_the_listing_columns_line_up() -> None:
     assert main_app.cell_prefix("北a", 3) == "北a"
 
 
+def test_the_created_column_buckets_by_the_pinned_rule() -> None:
+    """#350: the CREATED column reads a relative label, bucketed
+    by one pinned rule over whole calendar days between the
+    creation and the clock — today and yesterday for the first
+    two days, ``Nd ago`` under a week, ``Nw ago`` under a month
+    (13 days reads ``1w ago``), ``Nmo ago`` under a year, ``Ny
+    ago`` past it. The rule reads calendar days, not 24-hour
+    spans: a stamp 20 hours old that crossed midnight reads
+    yesterday. A clock that trails its stamp (skew) stays at
+    today, and a stamp that is missing or unparseable reads
+    ``-``."""
+    label = main_app.created_label
+    now = datetime(2026, 6, 15, 12, 0, 0, tzinfo=UTC)
+    assert label(None) == "-"
+    assert label("") == "-"
+    assert label("not a stamp") == "-"
+    assert label(now.isoformat(), now) == "today"
+    # Skew: the stamp sits after the clock.
+    assert label("2026-06-16T00:00:00Z", now) == "today"
+    # Calendar days: 20 hours that crossed midnight read
+    # yesterday.
+    assert label("2026-06-14T16:00:00Z", now) == "yesterday"
+    for days, expected in (
+        (2, "2d ago"),
+        (6, "6d ago"),
+        (7, "1w ago"),
+        (13, "1w ago"),
+        (29, "4w ago"),
+        (30, "1mo ago"),
+        (364, "12mo ago"),
+        (365, "1y ago"),
+        (400, "1y ago"),
+        (730, "2y ago"),
+    ):
+        stamp = (now - timedelta(days=days)).isoformat()
+        assert label(stamp, now) == expected, days
+
+
 async def test_the_listing_header_row_shows_with_rows() -> None:
     """#347: the column labels ride above the rows; the empty
     state takes the header's place when the last row leaves."""
@@ -1288,22 +1339,87 @@ async def test_the_listing_header_row_shows_with_rows() -> None:
         # The header's labels line up with the row's cells on the
         # rendered screen — content_region, not region: padding
         # shifts the content box, and region stays 0 under either.
-        assert columns.content_region.x == (
-            app.query_one("#rows").children[0].content_region.x
-        )
+        # The first row needs its layout settled first — the
+        # frame's layout lands one refresh after its content.
+        first = app.query_one("#rows").children[0]
+        await wait_for(lambda: first.content_region.width > 0)
+        assert columns.content_region.x == first.content_region.x
         data.rows = []
         await pilot.press("r")
         await wait_for(lambda: list_children(app) == 0)
         assert not columns.display
 
 
-async def test_the_status_column_carries_its_states_color() -> None:
+async def test_the_listing_renders_inside_a_frame(monkeypatch) -> None:
+    """#349: the listing — header row and rows together — renders
+    inside a rounded border, the same framing the create form
+    carries, so the rows read as one framed table between the
+    status bar and the footer; the status bar above stays a
+    borderless line, and the create form keeps its framing."""
+    scripted_link(monkeypatch, [])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: list_children(app) == 1)
+        listing = app.query_one("#listing")
+        primary = Color.parse(app.theme_variables["primary"])
+        assert listing.styles.border_top == ("round", primary)
+        assert {edge for edge, _color in listing.styles.border} == {"round"}
+        # The rows sit inside the frame: the content starts past
+        # the border's column.
+        assert app.query_one("#columns").content_region.x >= 2
+        # The status bar above stays a borderless line.
+        assert app.query_one("#status").styles.border_top != (
+            "round",
+            primary,
+        )
+        # The create form keeps its own framing.
+        await press_until(
+            pilot, "c", lambda: type(app.screen).__name__ == "CreateScreen"
+        )
+        form = app.screen.query_one("#form")
+        assert form.styles.border_top == ("round", primary)
+
+
+async def test_the_status_bar_weights_the_count_over_the_url(
+    monkeypatch,
+) -> None:
+    """#349: the workspace count reads in the bold default
+    foreground — the fact that moves while the operator works —
+    and the daemon's URL rides after it in muted text; at 80
+    columns the status bar stays one line."""
+    scripted_link(monkeypatch, [])
+    monkeypatch.setenv("MSKSC_URL", "https://127.0.0.1:8660")
+    data = FakeData([row(), row(id="ws-b", name="beta")])
+    app, _ = make_app(data)
+    async with app.run_test():
+        await wait_for(lambda: "2 workspaces" in status_text(app))
+        status = app.query_one("#status", Static)
+
+        def segments():
+            return [s for s in status.render_line(0) if s.text.strip()]
+
+        await wait_for(lambda: len(segments()) >= 2)
+        count = next(s for s in segments() if "2 workspaces" in s.text)
+        url = next(s for s in segments() if "127.0.0.1:8660" in s.text)
+        assert count.style.bold
+        assert not url.style.bold
+        # Muted: dimmer than the count's default foreground.
+        assert sum(url.style.color.triplet) < sum(count.style.color.triplet)
+        # One line at the 80-column terminal.
+        assert status.size.height == 1
+
+
+async def test_the_status_column_carries_its_states_color(
+    monkeypatch,
+) -> None:
     """#348: the status cell alone carries a color — running in
     the theme's success color, stopped in muted text, any other
     state in the warning color — while the name, egress, image,
     and date keep the default foreground. The colors are theme
     variables the render resolves against the active theme, and
     each row carries its status as a class."""
+    pinned_clock(monkeypatch)  # the created cell reads "2d ago"
     data = FakeData(
         [
             row(status="stopped"),
@@ -1376,7 +1492,7 @@ async def test_the_status_column_carries_its_states_color() -> None:
 
             rendered = tuple(segment(status).style.color.triplet)
             name_color = tuple(segment(name).style.color.triplet)
-            date_color = tuple(segment("2026-01-02").style.color.triplet)
+            date_color = tuple(segment("2d ago").style.color.triplet)
             if status == "running":
                 # The focused row composes the highlight over the
                 # span, so its status stands out from its own
