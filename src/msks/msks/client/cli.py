@@ -44,6 +44,7 @@ from ..identity import KEY_TYPES
 from ..imagestore import is_hash_shape, version_key
 from ..storage import MIB
 from . import egress as egress_mod
+from .config import bootstrap
 from .console import run_workspace_shell
 
 # Re-exported for the tests (they drive cli.write_client_identity
@@ -1477,8 +1478,26 @@ app.add_typer(secret_app, name="secret")
 
 
 @app.callback(invoke_without_command=True)
-def root(ctx: typer.Context) -> int:
+def root(
+    ctx: typer.Context,
+    daemon: str = typer.Option(
+        None,
+        "--daemon",
+        help="the daemon to address: an alias from the config file, "
+        "or a raw URL (#314)",
+    ),
+    config: str = typer.Option(
+        None,
+        "--config",
+        help="the client config file to read, or 'none' for "
+        "environment only (#314)",
+    ),
+) -> int:
     """A bare ``msks`` is the workspace tree TUI (#309)."""
+    # The config bootstrap runs before every command body (#314):
+    # the file's and the flag's winners are in the environment by
+    # the time any reader looks.
+    bootstrap(daemon, config)
     if ctx.invoked_subcommand is None:
         # The decorator's edge, same as every command: a Ctrl-C in
         # the tree is one line, not typer's silent 130.

@@ -41,8 +41,10 @@ def env_token() -> str:
     token = os.environ.get("MSKSC_TOKEN", "")
     if not token:
         raise SystemExit(
-            "msks: set MSKSC_TOKEN to a daemon token "
-            "(MSKSC_URL for a non-default daemon)"
+            "msks: set MSKSC_TOKEN to a daemon token, or point "
+            "token_file at a token file in the client config "
+            "(~/.config/msks/msks.yaml; MSKSC_URL for a non-default "
+            "daemon)"
         )
     return token
 

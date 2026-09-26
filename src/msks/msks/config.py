@@ -573,7 +573,17 @@ def generate_template(path: str) -> None:
     between the caller's existence check and now (a concurrent
     ``msksd``).
     """
-    body = render_template()
+    write_exclusive(path, render_template())
+
+
+def write_exclusive(path: str, body: str) -> None:
+    """Write *body* to *path* as a new file (both config files'
+    first-run writer, #46/#314): the parent directory is created
+    0700 when missing, the file itself is written 0600 — the
+    templates' examples name credentials, so the file joins the
+    house pattern of secret-bearing artifacts readable only by
+    its owner — and an existing file is refused (the exclusive
+    create), never overwritten."""
     Path(path).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
