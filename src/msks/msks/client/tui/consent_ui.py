@@ -861,7 +861,7 @@ def ws_connect_kwargs(url: str, token: str, ssl_ctx) -> dict:
     token rides the handshake's Authorization header (#216)."""
     return {
         "uri": events_url(url),
-        "extra_headers": auth_headers(token),
+        "additional_headers": auth_headers(token),
         "ssl": None if url.startswith("http://") else ssl_ctx,
         "max_size": 2**22,
     }

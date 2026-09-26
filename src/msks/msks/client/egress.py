@@ -245,7 +245,7 @@ def connect_args(url: str, token: str) -> dict:
     header beside the URL (a plain-ws URL takes no ssl argument)."""
     return {
         "uri": events_url(url),
-        "extra_headers": wsauth.auth_headers(token),
+        "additional_headers": wsauth.auth_headers(token),
         "ssl": None if url.startswith("http://") else ssl_context(),
         "max_size": 2**22,
     }

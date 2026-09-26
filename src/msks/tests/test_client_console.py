@@ -406,9 +406,9 @@ class ConnectStub:
         self.recorded_ssl = "unset"
         self.recorded_headers = None
 
-    def __call__(self, url, extra_headers=None, ssl=None, max_size=None):
+    def __call__(self, url, additional_headers=None, ssl=None, max_size=None):
         self.recorded_ssl = ssl
-        self.recorded_headers = extra_headers
+        self.recorded_headers = additional_headers
         outer = self
 
         class _Ctx:
@@ -753,7 +753,7 @@ async def test_run_shell_unreachable_daemon_one_liner() -> None:
 
     class RefusingConnect:
         def __call__(
-            self, address, extra_headers=None, ssl=None, max_size=None
+            self, address, additional_headers=None, ssl=None, max_size=None
         ):
             return self
 

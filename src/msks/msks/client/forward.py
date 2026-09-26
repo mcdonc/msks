@@ -73,7 +73,7 @@ def connect(address: str, token: str, ssl_ctx):
     """
     return websockets.connect(
         address,
-        extra_headers=wsauth.auth_headers(token),
+        additional_headers=wsauth.auth_headers(token),
         ssl=None if address.startswith("ws://") else ssl_ctx,
         max_size=MAX_FRAME,
     )

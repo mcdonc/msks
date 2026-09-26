@@ -1745,5 +1745,5 @@ def test_ws_connect_kwargs_and_shared_ssl(monkeypatch) -> None:
     assert kwargs["ssl"] is ctx
     assert kwargs["uri"].endswith("/api/v1/events")
     assert "token" not in kwargs["uri"]
-    assert kwargs["extra_headers"] == [("Authorization", "Bearer t")]
+    assert kwargs["additional_headers"] == [("Authorization", "Bearer t")]
     assert consent_ui.shared_ssl() is ctx

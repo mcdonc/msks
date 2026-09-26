@@ -3437,7 +3437,9 @@ async def test_run_watch_registers_and_streams(monkeypatch, capsys) -> None:
     # header, and the TLS context.
     assert connect.kwargs["uri"].endswith("events")
     assert "token" not in connect.kwargs["uri"]
-    assert connect.kwargs["extra_headers"] == [("Authorization", "Bearer tok")]
+    assert connect.kwargs["additional_headers"] == [
+        ("Authorization", "Bearer tok")
+    ]
     assert connect.kwargs["ssl"] is not None
     out = capsys.readouterr().out
     assert "api.example:443" in out

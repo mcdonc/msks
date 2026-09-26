@@ -207,11 +207,11 @@ class ConnectStub:
         self._ws = ws
         self.recorded: dict = {}
 
-    def __call__(self, url, extra_headers=None, ssl=None, max_size=None):
+    def __call__(self, url, additional_headers=None, ssl=None, max_size=None):
         outer = self
         self.recorded = {
             "url": url,
-            "extra_headers": extra_headers,
+            "additional_headers": additional_headers,
             "ssl": ssl,
         }
 
@@ -237,7 +237,9 @@ def test_connect_offers_the_auth_header(
     assert stub.recorded["ssl"] is None
     fwd.connect("wss://h:1", "tok", "ctx")
     assert stub.recorded["ssl"] == "ctx"
-    assert stub.recorded["extra_headers"] == [("Authorization", "Bearer tok")]
+    assert stub.recorded["additional_headers"] == [
+        ("Authorization", "Bearer tok")
+    ]
 
 
 @pytest.fixture
