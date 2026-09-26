@@ -13,8 +13,9 @@ Two middlebox shapes read the same from every client as a token
 problem, and are accepted here: a proxy that strips the
 ``Authorization`` header from the upgrade produces the daemon's
 4401 (named "authentication failed"), and a middlebox that answers
-the handshake itself leaves the client waiting on a silent
-connection until its ping timeout reconnects. Both fail closed; a
+the handshake itself leaves a silent connection — the link and
+egress watch reconnect after the ping timeout, the console and
+forward surfaces end the connection there. Both fail closed; a
 browser client that cannot set headers at all takes the
 short-lived ticket pattern, not a token in a URL.
 """
@@ -48,8 +49,8 @@ UNUSABLE_MESSAGE = (
 
 
 class UnusableToken(Exception):
-    """A token outside the header value's grammar: it cannot ride
-    the ``Authorization`` header at all, so no retry can help."""
+    """A token outside the credential grammar: it cannot ride the
+    ``Authorization`` header cleanly, so no retry can help."""
 
 
 def auth_headers(token: str) -> list[tuple[str, str]]:

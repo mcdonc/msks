@@ -1682,8 +1682,8 @@ def test_backoff_and_refused_close() -> None:
 
 async def test_the_link_ends_on_a_token_the_handshake_cannot_carry() -> None:
     """A token outside the handshake's grammar never becomes callable
-    by retrying (#116): the loop ends with one reason on the state,
-    no token echoed."""
+    by retrying: the loop ends with one reason on the state, no
+    token echoed."""
     from msks.client.wsauth import UnusableToken
 
     def factory():
