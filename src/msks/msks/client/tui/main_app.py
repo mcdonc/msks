@@ -2,16 +2,17 @@
 workspaces list, launched by ``msks tui``.
 
 The tree's leaves that need the whole terminal — the consent
-decider (#195) and a console shell — run as chained apps: the page
-action records itself on the :class:`TuiFollow` queue and exits the
+decider (#195), and a console shell as the new-terminal action's
+dead-launcher fallback — run as chained apps: the page action
+records itself on the :class:`TuiFollow` queue and exits the
 tree, :func:`run_main_tui` runs the flow, and the tree restarts
 where it left off (the workspace page reopens). The screens talk to
 the daemon through :class:`TuiData` — the same REST surface the
 ``msksc`` commands use — and the workspace page holds a
 :class:`DeciderLink` so pending holds land on it.
 
-The page's new-terminal shell action (#341) is the one shell that
-does not chain: it spawns the operator's terminal launcher with an
+The page's shell action (#341) is the one shell that does not
+chain: it spawns the operator's terminal launcher with an
 ssh invocation appended (:func:`spawn_window`) — ssh, not the
 console, because a live window resizes and only ssh propagates the
 resize to the guest — and the tree keeps running beside the
@@ -59,13 +60,15 @@ from .consent_app import (
 from .data import TuiData
 from .link import CONNECTED, REJECTED, DeciderLink
 
-#: The full-terminal flows a page can ask for (#309).
+#: The full-terminal flows a page can record (#309): the consent
+#: decider asked for directly, the console shell as the new-terminal
+#: action's dead-launcher fallback.
 FLOW_CONSENT = "consent"
 FLOW_SHELL = "shell"
 
-#: The workspace page's new-terminal shell action (#341) — a page
-#: action, not a flow: the tree keeps running while the window
-#: owns its own terminal.
+#: The workspace page's shell action (#341) — a page action, not a
+#: flow: the tree keeps running while the window owns its own
+#: terminal.
 ACTION_SHELL_WINDOW = "shell-window"
 
 #: How many granted scopes the consent line spells out before the
@@ -255,8 +258,8 @@ def run_consent_flow(workspace_id: str) -> None:
 
 
 def run_shell_flow(workspace_id: str) -> None:
-    """A console shell in the workspace — the flow the workspace
-    page opens (the console boots a stopped workspace first)."""
+    """A console shell in the workspace — the dead-launcher
+    fallback's flow (the console boots a stopped workspace first)."""
     run_workspace_shell(workspace_id)
 
 
@@ -668,7 +671,6 @@ class MainScreen(Screen):
 #: The workspace page's fixed actions (#309), top to bottom below
 #: the pending holds.
 PAGE_ACTIONS = (
-    (FLOW_SHELL, "Open a shell (console)"),
     (ACTION_SHELL_WINDOW, "Open a shell (new terminal)"),
     (FLOW_CONSENT, "Egress consent — the decider screen"),
     ("start", "Start"),
@@ -680,9 +682,9 @@ PAGE_ACTIONS = (
 class WorkspaceScreen(Screen):
     """One workspace's page (#309): the consent status line, the
     pending holds highlighted above the actions (Enter on one opens
-    the consent app), and the page's actions — a shell in this
-    terminal, a shell in a new window (#341), the consent app,
-    start, stop, and the LLM token remint."""
+    the consent app), and the page's actions — a shell in a new
+    window (#341), the consent app, start, stop, and the LLM token
+    remint."""
 
     BINDINGS = [
         Binding("enter", "run", "Go", show=False),
@@ -881,7 +883,7 @@ class WorkspaceScreen(Screen):
         kind = self.focused_action()
         if kind is None:
             return
-        if kind in (FLOW_CONSENT, FLOW_SHELL):
+        if kind == FLOW_CONSENT:
             self.app.quit_after(kind, self.row["id"])
             return
         await self.run_page_action(kind)

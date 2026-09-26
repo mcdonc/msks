@@ -232,28 +232,28 @@ The **workspace page** carries the per-workspace loop: a status
 line for egress consent (the mode, the granted scope with its
 expiry, or "no active consent"), the pending holds highlighted at
 the top — Enter on one opens the consent decider — and the
-page's actions: a shell in this terminal, a shell in a new
-terminal window, egress consent, start, stop, and remint the
-workspace's LLM token. A workspace in `interactive`
+page's actions: a shell in a new terminal window, egress
+consent, start, stop, and remint the workspace's LLM token. A
+workspace in `interactive`
 mode holds new flows while the page is open: the page registers
 as the workspace's decider, so holds land on it.
 
-The leaves that own the whole terminal run as chained screens:
-the consent decider (`msks egress tui`'s app) and a console shell
-(`msks console`'s session). Choosing either hands the terminal
-over, and on exit the tree returns where it left off — the same
-workspace page, its consent state current. The page's
-**Open a shell (new terminal)** action works the other way: it
-spawns the configured terminal launcher with a `msks ssh`
-invocation appended (see `terminal_open_cmd` below), and the tree
-keeps running beside the window — the spawned shell inherits the
-tree's resolved connection, so it reaches the same daemon, and
-it rides ssh rather than the console because a fresh window gets
-resized: the console sizes its guest pty once, at connect, while
-ssh carries every resize to the guest. A launcher that cannot
+The consent decider (`msks egress tui`'s app) owns the whole
+terminal as a chained screen: choosing it hands the terminal over,
+and on exit the tree returns where it left off — the same
+workspace page, its consent state current. The page's **Open a
+shell (new terminal)** action works the other way: it spawns the
+configured terminal launcher with a `msks ssh` invocation
+appended (see `terminal_open_cmd` below), and the tree keeps
+running beside the window — the spawned shell inherits the tree's
+resolved connection, so it reaches the same daemon, and it rides
+ssh rather than the console because a fresh window gets resized:
+the console sizes its guest pty once, at connect, while ssh
+carries every resize to the guest. A launcher that cannot
 start — a missing binary, one without the execute bit — names its
 reason on the tree's first flash after the shell hands the
-terminal back, and the shell runs in this terminal instead.
+terminal back, and the shell runs in this terminal instead: a
+chained `msks console` session.
 
 Every screen walks with the arrow keys alone: lists move with
 up/down, the create form's fields move with up/down between them,

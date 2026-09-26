@@ -584,8 +584,8 @@ async def test_pending_holds_top_the_page_and_open_the_decider(
     app, follow = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        # 1 pending entry above the 6 fixed actions.
-        await wait_for(lambda: action_children(app) == 7)
+        # 1 pending entry above the 5 fixed actions.
+        await wait_for(lambda: action_children(app) == 6)
         first = app.screen.query_one("#actions").children[0]
         assert "pending" in first.classes
         text = action_text(app, 0)
@@ -600,11 +600,10 @@ async def test_the_page_runs_start_stop_and_remint(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
-        # The fixed actions in walk order: shell (this terminal),
-        # shell (a new terminal), consent, start, stop, remint.
-        # Down three times lands on start.
-        await pilot.press("down", "down", "down")
+        await wait_for(lambda: action_children(app) == 5)
+        # The fixed actions in walk order: shell (a new terminal),
+        # consent, start, stop, remint. Down twice lands on start.
+        await pilot.press("down", "down")
         await pilot.press("enter")
         await wait_for(lambda: ("start", WS) in data.calls)
         await wait_for(lambda: "running" in header_text(app))
@@ -614,17 +613,6 @@ async def test_the_page_runs_start_stop_and_remint(monkeypatch) -> None:
         await pilot.press("down", "enter")
         await wait_for(lambda: ("remint", WS) in data.calls)
         await wait_for(lambda: "new LLM token: tok-fresh" in status_text(app))
-
-
-async def test_the_page_opens_a_shell(monkeypatch) -> None:
-    scripted_link(monkeypatch, [rules_frame()])
-    data = FakeData([row()])
-    app, follow = make_app(data)
-    async with app.run_test() as pilot:
-        await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
-        await pilot.press("enter")  # the first action: a shell
-        await wait_for(lambda: follow.action == (FLOW_SHELL, WS))
 
 
 # -- the new-terminal shell action (#341) ----------------------------------
@@ -678,9 +666,8 @@ async def test_the_new_terminal_action_spawns_an_ssh_child(
     app = MsksTuiApp(TuiFollow(), data=data, conf=conf)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
-        assert "new terminal" in action_text(app, 1)
-        await pilot.press("down")  # the console row to the window row
+        await wait_for(lambda: action_children(app) == 5)
+        assert "new terminal" in action_text(app, 0)
         await press_until(pilot, "enter", lambda: len(spawned) == 1)
         assert spawned[0] == [
             "kitty",
@@ -722,8 +709,7 @@ async def test_a_dead_launcher_falls_back_to_this_terminal(
     app = MsksTuiApp(follow, data=data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
-        await pilot.press("down")
+        await wait_for(lambda: action_children(app) == 5)
         await pilot.press("enter")
         await pilot.pause()
     assert follow.take() == (FLOW_SHELL, WS)
@@ -1195,9 +1181,9 @@ async def test_a_late_hold_rebuilds_and_repaints(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         ws.push(request_frame("late1"))
-        await wait_for(lambda: action_children(app) == 7)
+        await wait_for(lambda: action_children(app) == 6)
         assert "api.example:443" in action_text(app, 0)
         # A same-set sync repaints the countdowns in place.
         page.sync_actions()
@@ -1211,7 +1197,7 @@ async def test_the_swap_windows_self_heal(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         # Tear the action list away: the next sync rebuilds it, and
         # the paint paths swallow the missing widgets.
         actions = page.query_one("#actions")
@@ -1221,7 +1207,7 @@ async def test_the_swap_windows_self_heal(monkeypatch) -> None:
         page.paint_header()  # swallowed: the worker self-heals
         page.paint_consent()
         page.sync_actions()
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
 
 
 async def test_a_bare_listing_read_in_a_swap_window(monkeypatch) -> None:
@@ -1307,8 +1293,8 @@ async def test_page_action_failures_flash(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
-        await pilot.press("down", "down", "down")
+        await wait_for(lambda: action_children(app) == 5)
+        await pilot.press("down", "down")
         await press_until(pilot, "enter", lambda: ("start", WS) in data.calls)
         await wait_for(lambda: "start failed" in status_text(app))
         await pilot.press("down", "down")
@@ -1325,7 +1311,7 @@ async def test_a_row_that_leaves_the_listing_keeps_the_page(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         data.rows.clear()  # the workspace left between refreshes
         page.refresh_row()
         await pilot.pause()
@@ -1356,7 +1342,7 @@ async def test_a_resolved_hold_leaves_no_stale_row(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 7)
+        await wait_for(lambda: action_children(app) == 6)
         ghost = SimpleNamespace(
             id="ghost",
             dest_host="gone.example",
