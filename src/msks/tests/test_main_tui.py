@@ -1170,7 +1170,7 @@ def test_the_listing_columns_line_up() -> None:
         assert len(offsets) == 1
         assert cell_len(header[: header.index(label)]) == offsets.pop()
     # A clipped name keeps the columns; a wide name pads to the
-    # same display width (48 cells of CJK land at 24 by clipping).
+    # same display width (32 cells of CJK land at 24 by clipping).
     assert "…" in long_name
     assert cell_len(wide[: wide.index("stopped")]) == cell_len(
         short[: short.index("stopped")]
