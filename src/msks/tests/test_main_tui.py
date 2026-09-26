@@ -1808,6 +1808,18 @@ async def test_a_long_flash_keeps_the_status_bar_one_line(
         assert cell_len(line) <= 80
         assert line.lstrip().startswith("start failed: daemon refused")
         assert line.rstrip().endswith("…")  # the cut, marked
+        # A refusal that spans lines crops the same way: flash_safe
+        # collapses it to one line, so the cut stays marked.
+        assert "\n" not in main_app.flash_safe("one\ntwo[/x")
+        app.flash(
+            main_app.flash_safe("start failed: " + "daemon refused:\n" * 10)
+        )
+        await wait_for(lambda: "start failed" in status_text(app))
+        await pilot.pause()  # lay the flashed bar out
+        assert status.region.height == 1
+        line = "".join(s.text for s in status.render_line(0))
+        assert line.lstrip().startswith("start failed: daemon refused")
+        assert line.rstrip().endswith("…")  # the cut, marked
 
 
 async def test_the_pages_consent_line_keeps_one_row(
