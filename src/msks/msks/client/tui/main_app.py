@@ -189,13 +189,15 @@ async def guarded_flash(app, label: str, work):
     """Await one screen action, flashing the failure instead of
     tearing the TUI down (SystemExit included — the REST seam's
     error surface, the daemon's named refusal among them). The
-    refusal text is escaped: the daemon echoes operator-typed
-    references (a workspace name among them) back, and one
-    carrying rich markup would otherwise crash the screen."""
+    refusal text is escaped for a status-line flash (``flash_safe``
+    — the daemon echoes operator-typed references, a workspace
+    name among them, back, and one carrying rich markup — a
+    truncated closing tag included — would otherwise crash the
+    screen)."""
     try:
         return await work
     except (Exception, SystemExit) as exc:
-        app.flash(f"{label} failed: {escape(str(exc))}")
+        app.flash(f"{label} failed: {flash_safe(str(exc))}")
         return None
 
 
@@ -796,9 +798,21 @@ class WorkspaceScreen(Screen):
         seconds — the page's own surface: the app-level flash
         paints the list's status line, which the pushed page hides
         (#343), so a failure this screen raises names itself
-        here."""
+        here. While the flash lives it stands in for the line's
+        state naming (a drop's label included) — a bounded window,
+        failure and outcome messages only."""
         self.flash_line.set(message)
         self.paint_consent()
+
+    async def guarded_page_flash(self, label: str, work):
+        """Await one page action, flashing the failure on the
+        page's consent line — the app-level guard paints the
+        list's status line, which the pushed page hides (#343)."""
+        try:
+            return await work
+        except (Exception, SystemExit) as exc:
+            self.flash(f"{label} failed: {flash_safe(str(exc))}")
+            return None
 
     def refresh_row(self) -> None:
         """Reload this workspace's row (a page's actions change its
@@ -967,8 +981,10 @@ class WorkspaceScreen(Screen):
             self.app.quit_after(FLOW_SHELL, self.row["id"])
             return
         self.app.hold_child(proc)
-        self.app.flash(
-            f"opened a shell window for {escape(workspace_label(self.row))}"
+        self.flash(
+            flash_safe(
+                f"opened a shell window for {workspace_label(self.row)}"
+            )
         )
 
     async def start_workspace(self) -> None:
@@ -979,34 +995,34 @@ class WorkspaceScreen(Screen):
 
     async def power_workspace(self, verb: str) -> None:
         """Boot or power off this workspace; the header and the
-        flash name the outcome."""
+        page's consent line name the outcome."""
         call = self.app.data.start if verb == "start" else self.app.data.stop
-        reply = await guarded_flash(self.app, verb, call(self.row["id"]))
+        reply = await self.guarded_page_flash(verb, call(self.row["id"]))
         if reply is not None:
             self.row["status"] = reply["status"]
             self.paint_header()
-            self.app.flash(
-                f"{escape(workspace_label(self.row))} {reply['status']}"
+            self.flash(
+                flash_safe(f"{workspace_label(self.row)} {reply['status']}")
             )
 
     async def remint_token(self) -> None:
         """Remint the workspace's LLM proxy credential (#259); the
-        fresh token owns the status line."""
-        token = await guarded_flash(
-            self.app,
+        fresh token owns the page's consent line."""
+        token = await self.guarded_page_flash(
             "remint",
             self.app.data.remint_llm_token(self.row["id"]),
         )
         if token is not None:
-            self.app.flash(f"new LLM token: {escape(token)}")
+            self.flash(flash_safe(f"new LLM token: {token}"))
 
     # -- the egress-mode switch (#344) ---------------------------------
 
     def page_rules(self):
-        """The link controller's rules snapshot (the link, made on
-        first use — compose's own accessor; the mode path runs on a
-        mounted page, whose link already exists)."""
-        return self.link_or_stub().controller.rules
+        """The link controller's rules snapshot, or None before the
+        page mounted its link (compose makes it)."""
+        if self.link is None:
+            return None
+        return self.link.controller.rules
 
     async def pick_egress_mode(self) -> None:
         """Open the mode picker over the page (#344) — the decider
@@ -1055,10 +1071,21 @@ class WorkspaceScreen(Screen):
             self.flash(f"mode switch failed: {flash_safe(str(exc))}")
             return
         self.row["egress_mode"] = reply.get("mode") or mode
-        self.link_or_stub().controller.apply_frame(
+        self.land_rules_reply(reply)
+        self.paint_consent()
+
+    def land_rules_reply(self, reply: dict) -> None:
+        """Feed the policy reply's fresh rules frame through the
+        controller's frame applier — the same path the events
+        socket's frames take — so the consent line names the new
+        mode without waiting for the pushed frame, a dropped link
+        included. A page without its link (a reply landing at
+        teardown) keeps the row's update alone."""
+        if self.link is None:
+            return
+        self.link.controller.apply_frame(
             json.dumps({"event": "egress.rules", "data": reply})
         )
-        self.paint_consent()
 
     def action_back(self) -> None:
         """Return to the workspaces list; the page stops deciding

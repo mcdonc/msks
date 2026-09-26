@@ -632,7 +632,7 @@ async def test_the_page_runs_start_stop_and_remint(monkeypatch) -> None:
         await wait_for(lambda: "stopped" in header_text(app))
         await pilot.press("down", "enter")
         await wait_for(lambda: ("remint", WS) in data.calls)
-        await wait_for(lambda: "new LLM token: tok-fresh" in status_text(app))
+        await wait_for(lambda: "new LLM token: tok-fresh" in consent_text(app))
 
 
 # -- the egress-mode switch (#344) -----------------------------------------
@@ -806,7 +806,7 @@ async def test_the_new_terminal_action_spawns_an_ssh_child(
             "ssh",
             WS,
         ]
-        await wait_for(lambda: "opened a shell window" in status_text(app))
+        await wait_for(lambda: "opened a shell window" in consent_text(app))
         assert on_page(app)  # the tree kept running
         # The hold keeps a running window's task referenced; the
         # done-callback drops it once the window has closed.
@@ -1444,6 +1444,10 @@ async def test_a_start_failure_and_a_remove_failure_flash(monkeypatch) -> None:
 
 
 async def test_page_action_failures_flash(monkeypatch) -> None:
+    """A refused page action names itself on the page's consent
+    line — the app-level flash paints the list's status line,
+    which the pushed page hides (#343), so the page's own actions
+    flash on the page."""
     scripted_link(monkeypatch, [rules_frame()])
     data = FakeData([row()])
     data.fail.update({"start", "remint"})
@@ -1453,10 +1457,10 @@ async def test_page_action_failures_flash(monkeypatch) -> None:
         await wait_for(lambda: action_children(app) == 6)
         await pilot.press("down", "down", "down")
         await press_until(pilot, "enter", lambda: ("start", WS) in data.calls)
-        await wait_for(lambda: "start failed" in status_text(app))
+        await wait_for(lambda: "start failed" in consent_text(app))
         await pilot.press("down", "down")
         await press_until(pilot, "enter", lambda: ("remint", WS) in data.calls)
-        await wait_for(lambda: "remint failed" in status_text(app))
+        await wait_for(lambda: "remint failed" in consent_text(app))
         assert "stopped" in header_text(app)  # the row kept its status
 
 
@@ -1477,19 +1481,21 @@ async def test_a_row_that_leaves_the_listing_keeps_the_page(
 
 
 async def test_a_bare_page_paints_and_unmounts_quietly(monkeypatch) -> None:
-    """The paint paths on a never-mounted page (its link is None)
-    decide nothing and crash nothing — the unmount's no-link path
-    included, and a tick under a vanished tree stays quiet."""
+    """A bare, never-mounted page (its link is None) decides
+    nothing and crashes nothing in the paint and mode paths — the
+    unmount's no-link path included, and a tick under a vanished
+    tree stays quiet."""
 
     def boom():
         raise NoMatches("gone")
 
     page = WorkspaceScreen(row())
     page.paint_consent()
-    page.on_unmount()  # no link was ever made: a quiet no-op
+    assert page.page_rules() is None  # no link: nothing to read
+    page.land_rules_reply({"mode": "allow"})  # no link: keeps quiet
     monkeypatch.setattr(page, "paint_consent", boom)
     page.tick()  # swallowed: teardown noise, not a crash
-    assert page.page_rules() is None  # no snapshot: nothing to read
+    page.on_unmount()
 
 
 async def test_a_resolved_hold_leaves_no_stale_row(monkeypatch) -> None:
