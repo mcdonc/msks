@@ -3311,8 +3311,8 @@ async def test_maybe_decide_posts_the_verdict(monkeypatch) -> None:
 
 
 def test_events_url_carries_no_token() -> None:
-    # The token rides the handshake's auth subprotocol (#116), never
-    # the URL: URLs land in logs, handshake headers do not.
+    # The token rides the handshake's Authorization header (#216),
+    # never the URL: URLs land in logs, handshake headers do not.
     from msks.client.egress import events_url
 
     assert events_url("https://d:8660") == "wss://d:8660/api/v1/events"
@@ -3324,10 +3324,6 @@ def test_events_url_carries_no_token() -> None:
 
 class FakeWS:
     """One websocket connection yielding scripted frames."""
-
-    #: The negotiated subprotocol: the fakes model an authenticated
-    #: handshake (#116) unless a test overrides it.
-    subprotocol = "bearer"
 
     def __init__(self, frames: list[str]) -> None:
         self.frames = frames
@@ -3438,10 +3434,10 @@ async def test_run_watch_registers_and_streams(monkeypatch, capsys) -> None:
         json.dumps({"type": "egress.decider", "workspace": "ws1"})
     ]
     # The connection kwargs took the token-free events URL, the auth
-    # subprotocol offer, and the TLS context.
+    # header, and the TLS context.
     assert connect.kwargs["uri"].endswith("events")
     assert "token" not in connect.kwargs["uri"]
-    assert connect.kwargs["subprotocols"] == ["bearer", "tok"]
+    assert connect.kwargs["extra_headers"] == [("Authorization", "Bearer tok")]
     assert connect.kwargs["ssl"] is not None
     out = capsys.readouterr().out
     assert "api.example:443" in out
@@ -3502,19 +3498,24 @@ async def test_handle_frame_prompts_on_decide(monkeypatch, capsys) -> None:
     assert "ask.example:443" in capsys.readouterr().out
 
 
-async def test_run_watch_aborts_without_the_subprotocol_echo(
+async def test_run_watch_exits_on_a_4401_refusal(
     monkeypatch,
 ) -> None:
-    # A handshake that completes with no selection carries no
-    # authority (#116): the watch aborts, and the daemon's 4401
-    # refusal is the message that shows.
+    # A daemon that does not hold the token closes 4401 (#216): the
+    # watch exits with the refusal's message instead of reconnect
+    # spin.
     from msks.client import egress as eg
 
     class RefusedWS:
-        subprotocol = None
         sent: list[str] = []
 
-        async def recv(self):
+        async def send(self, text: str) -> None:
+            self.sent.append(text)
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
             raise eg.websockets.ConnectionClosed(
                 eg.websockets.Close(4401, ""), None
             )
@@ -3550,8 +3551,6 @@ async def test_run_watch_reconnects_after_a_closed_connection(
     from msks.client import egress as eg
 
     class ClosingWS:
-        subprotocol = "bearer"
-
         def __init__(self) -> None:
             self.sent = []
 

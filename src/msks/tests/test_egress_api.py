@@ -247,9 +247,7 @@ def test_events_decider_registration_and_frames(tmp_path: Path) -> None:
         assert reply.status_code == 201
         ids["wid"] = reply.json()["id"]
 
-        with client.websocket_connect(
-            "/api/v1/events", subprotocols=["bearer", TOKEN]
-        ) as ws:
+        with client.websocket_connect("/api/v1/events", headers=auth()) as ws:
             # Registration: the pending snapshot (empty) then the
             # rules view.
             ws.send_text(
@@ -376,7 +374,7 @@ def test_decider_frames_reach_the_snapshot_and_ignore_junk(
         assert held.wait(timeout=10.0), "the off-thread hold never landed"
         try:
             with client.websocket_connect(
-                "/api/v1/events", subprotocols=["bearer", TOKEN]
+                "/api/v1/events", headers=auth()
             ) as ws:
                 ws.send_text(
                     json.dumps(

@@ -754,8 +754,8 @@ def _server_settings_from_env(
     bootstrap = optional_env(env, "MSKSD_BOOTSTRAP_TOKEN")
     if bootstrap is not None:
         # The same grammar guard minting applies (#116): the token
-        # rides the websocket handshake's protocol offer, so a
-        # plaintext with spaces or separators would seed a token
+        # rides the websocket handshake's Authorization header, so
+        # a plaintext with spaces or separators would seed a token
         # that fails every websocket authentication. Refused here,
         # the failure is one startup line naming the variable.
         try:

@@ -138,7 +138,7 @@ async def console_exec(
         try:
             async with websockets.connect(
                 address,
-                subprotocols=["bearer", token],
+                extra_headers=[("Authorization", f"Bearer {token}")],
                 ssl=ssl_ctx,
                 max_size=2**22,
             ) as ws:

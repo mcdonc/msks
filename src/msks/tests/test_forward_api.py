@@ -12,13 +12,12 @@ from msks.app import build_app
 from msks.microvm import MicrovmError
 from msks.server import api as api_module
 from msks.server.api import (
-    AUTH_SUBPROTOCOL,
+    bearer_token,
     bridge_console,
     build_api,
     forward_allowed,
     forward_port,
     pump_streams,
-    subprotocol_token,
 )
 from msks.server.events import EventHub
 from msks.settings import NetSettings, ServerSettings, Settings
@@ -101,9 +100,9 @@ def forward_api(tmp_path):
     # stops the net seam (and its listener) in the portal's loop.
 
 
-def offer(token: str = TOKEN) -> list[str]:
-    """The auth subprotocol offer a client sends with a token (#116)."""
-    return ["bearer", token]
+def offer(token: str = TOKEN) -> dict:
+    """The Authorization header a client sends with a token (#216)."""
+    return auth(token)
 
 
 def _make_workspace(client, egress: bool = True) -> str:
@@ -131,7 +130,7 @@ def test_forward_rejects_bad_token(forward_api) -> None:
         _make_workspace(client)
         with client.websocket_connect(
             "/api/v1/workspaces/ws-f/forward/22",
-            subprotocols=offer("nope"),
+            headers=offer("nope"),
         ) as s:
             with pytest.raises(WebSocketDisconnect) as caught:
                 s.receive_text()
@@ -142,7 +141,7 @@ def test_forward_unknown_workspace_closes(forward_api) -> None:
     api, app, net = forward_api
     with TestClient(api) as client:
         with client.websocket_connect(
-            "/api/v1/workspaces/nope/forward/22", subprotocols=offer()
+            "/api/v1/workspaces/nope/forward/22", headers=offer()
         ) as s:
             with pytest.raises(WebSocketDisconnect) as caught:
                 s.receive_text()
@@ -155,7 +154,7 @@ def test_forward_rejects_non_numeric_port(forward_api) -> None:
         _make_workspace(client)
         with client.websocket_connect(
             "/api/v1/workspaces/ws-f/forward/notaport",
-            subprotocols=offer(),
+            headers=offer(),
         ) as s:
             with pytest.raises(WebSocketDisconnect) as caught:
                 s.receive_text()
@@ -168,7 +167,7 @@ def test_forward_rejects_out_of_range_port(forward_api) -> None:
     with TestClient(api) as client:
         _make_workspace(client)
         with client.websocket_connect(
-            "/api/v1/workspaces/ws-f/forward/70000", subprotocols=offer()
+            "/api/v1/workspaces/ws-f/forward/70000", headers=offer()
         ) as s:
             with pytest.raises(WebSocketDisconnect) as caught:
                 s.receive_text()
@@ -181,7 +180,7 @@ def test_forward_names_the_missing_nic(forward_api) -> None:
     with TestClient(api) as client:
         _make_workspace(client, egress=False)
         with client.websocket_connect(
-            "/api/v1/workspaces/ws-f/forward/22", subprotocols=offer()
+            "/api/v1/workspaces/ws-f/forward/22", headers=offer()
         ) as s:
             with pytest.raises(WebSocketDisconnect) as caught:
                 s.receive_text()
@@ -196,7 +195,7 @@ def test_forward_seam_error_closes(forward_api) -> None:
     with TestClient(api) as client:
         wid = _make_workspace(client)
         with client.websocket_connect(
-            "/api/v1/workspaces/ws-f/forward/22", subprotocols=offer()
+            "/api/v1/workspaces/ws-f/forward/22", headers=offer()
         ) as s:
             with pytest.raises(WebSocketDisconnect) as caught:
                 s.receive_text()
@@ -206,8 +205,8 @@ def test_forward_seam_error_closes(forward_api) -> None:
 
 
 def test_forward_ignores_query_string_tokens(forward_api) -> None:
-    # The token travels in the handshake's auth subprotocol only
-    # (#116): a query-string token authenticates nothing, so it cannot
+    # The token travels in the handshake's Authorization header only
+    # (#216): a query-string token authenticates nothing, so it cannot
     # leak into logs as a habit that works.
     api, app, net = forward_api
     with TestClient(api) as client:
@@ -220,14 +219,15 @@ def test_forward_ignores_query_string_tokens(forward_api) -> None:
         assert caught.value.code == 4401
 
 
-def test_forward_rejects_a_lone_auth_subprotocol(forward_api) -> None:
-    # The offer is ["bearer", <token>] (#116): the name without a
-    # token after it authenticates nothing.
+def test_forward_rejects_a_non_bearer_scheme(forward_api) -> None:
+    # The Authorization header must name the Bearer scheme (#216):
+    # anything else authenticates nothing.
     api, app, net = forward_api
     with TestClient(api) as client:
         _make_workspace(client)
         with client.websocket_connect(
-            "/api/v1/workspaces/ws-f/forward/22", subprotocols=["bearer"]
+            "/api/v1/workspaces/ws-f/forward/22",
+            headers={"Authorization": "Basic zzz"},
         ) as s:
             with pytest.raises(WebSocketDisconnect) as caught:
                 s.receive_text()
@@ -239,7 +239,7 @@ def test_forward_bridges_bytes_both_ways(forward_api) -> None:
     with TestClient(api) as client:
         wid = _make_workspace(client)
         with client.websocket_connect(
-            "/api/v1/workspaces/ws-f/forward/22", subprotocols=offer()
+            "/api/v1/workspaces/ws-f/forward/22", headers=offer()
         ) as socket:
             socket.send_text(
                 ""
@@ -259,10 +259,10 @@ def test_two_forwards_run_concurrently(forward_api) -> None:
         wid = _make_workspace(client)
         with (
             client.websocket_connect(
-                "/api/v1/workspaces/ws-f/forward/22", subprotocols=offer()
+                "/api/v1/workspaces/ws-f/forward/22", headers=offer()
             ) as one,
             client.websocket_connect(
-                "/api/v1/workspaces/ws-f/forward/8022", subprotocols=offer()
+                "/api/v1/workspaces/ws-f/forward/8022", headers=offer()
             ) as two,
         ):
             one.send_bytes(b"first\n")
@@ -297,7 +297,7 @@ def test_forward_publishes_open_and_closed_events(
         wid = _make_workspace(client)
         closed = ("forward.closed", {"id": wid, "port": 22})
         with client.websocket_connect(
-            "/api/v1/workspaces/ws-f/forward/22", subprotocols=offer()
+            "/api/v1/workspaces/ws-f/forward/22", headers=offer()
         ) as socket:
             socket.send_bytes(b"ping\n")
             assert socket.receive_bytes() == b"PING\n"
@@ -315,26 +315,20 @@ def test_forward_port_parses_and_refuses() -> None:
     assert "out of range" in forward_port("65536")[1]
 
 
-def test_subprotocol_token_reads_the_offer() -> None:
+def test_bearer_token_reads_the_header() -> None:
     class Socket:
-        def __init__(self, offered: list[str]) -> None:
-            self.scope = {"subprotocols": offered}
+        def __init__(self, value: str) -> None:
+            self.headers = {"authorization": value}
 
-    assert subprotocol_token(Socket(["bearer", "tok"])) == "tok"
-    # Extra offers after the token change nothing.
-    assert subprotocol_token(Socket(["bearer", "tok", "other"])) == "tok"
-    assert subprotocol_token(Socket(["other", "bearer", "tok"])) == "tok"
-    # The name without a token after it, a bare name elsewhere, and
-    # no offer at all authenticate nothing.
-    assert subprotocol_token(Socket(["bearer"])) is None
-    assert subprotocol_token(Socket(["tok"])) is None
-    assert subprotocol_token(Socket([])) is None
-
-
-def test_the_auth_subprotocol_name_is_bearer() -> None:
-    # The offer leads with the name the daemon echoes (#116): the
-    # client and server agree on it by test, not by convention.
-    assert AUTH_SUBPROTOCOL == "bearer"
+    assert bearer_token(Socket("Bearer tok")) == "tok"
+    # A case-different scheme name and padding-insensitive split
+    # read the same credential the REST surface would.
+    assert bearer_token(Socket("bearer tok")) == "tok"
+    # A non-bearer scheme, a bare scheme with no credential, and
+    # no header at all authenticate nothing.
+    assert bearer_token(Socket("Basic zzz")) is None
+    assert bearer_token(Socket("Bearer ")) is None
+    assert bearer_token(Socket("")) is None
 
 
 def test_forward_allowed_passes_every_port_today(forward_api) -> None:
@@ -390,7 +384,7 @@ def test_forward_refusal_from_the_policy_seam_closes_4403(
     with TestClient(api) as client:
         _make_workspace(client)
         with client.websocket_connect(
-            "/api/v1/workspaces/ws-f/forward/22", subprotocols=offer()
+            "/api/v1/workspaces/ws-f/forward/22", headers=offer()
         ) as s:
             with pytest.raises(WebSocketDisconnect) as caught:
                 s.receive_text()
@@ -426,7 +420,7 @@ def test_forward_tracks_and_releases_its_stream(forward_api) -> None:
     with TestClient(api) as client:
         _make_workspace(client)
         with client.websocket_connect(
-            "/api/v1/workspaces/ws-f/forward/22", subprotocols=offer()
+            "/api/v1/workspaces/ws-f/forward/22", headers=offer()
         ) as socket:
             socket.send_bytes(b"ping\n")
             assert socket.receive_bytes() == b"PING\n"
