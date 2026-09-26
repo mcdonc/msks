@@ -372,48 +372,64 @@ def test_decider_frames_reach_the_snapshot_and_ignore_junk(
         thread = threading.Thread(target=hold_off_thread)
         thread.start()
         assert held.wait(timeout=10.0), "the off-thread hold never landed"
-        with client.websocket_connect(f"/api/v1/events?token={TOKEN}") as ws:
-            ws.send_text(
-                json.dumps({"type": "egress.decider", "workspace": "ws-snap"})
-            )
-            # The rules view lands first (#297: the TUI adopts the
-            # resolved workspace id from it), then the snapshot
-            # replays the other decider's pending hold (the hub's
-            # fanout may also arrive — read until the request frame).
-            frames = []
-            for _ in range(5):
-                frame = json.loads(ws.receive_text())
-                frames.append(frame)
-                if frame["event"] == "egress.request":
-                    break
-            assert frames[0]["event"] == "egress.rules"
-            requests = [f for f in frames if f["event"] == "egress.request"]
-            assert requests
-            assert (
-                requests[0]["data"]["request"]["dest_host"] == "held.example"
-            )
+        try:
+            with client.websocket_connect(
+                f"/api/v1/events?token={TOKEN}"
+            ) as ws:
+                ws.send_text(
+                    json.dumps(
+                        {"type": "egress.decider", "workspace": "ws-snap"}
+                    )
+                )
+                # The rules view lands first (#297: the TUI adopts the
+                # resolved workspace id from it), then the snapshot
+                # replays the other decider's pending hold (the hub's
+                # fanout may also arrive — read until the request frame).
+                frames = []
+                for _ in range(5):
+                    frame = json.loads(ws.receive_text())
+                    frames.append(frame)
+                    if frame["event"] == "egress.request":
+                        break
+                assert frames[0]["event"] == "egress.rules"
+                requests = [
+                    f for f in frames if f["event"] == "egress.request"
+                ]
+                assert requests
+                assert (
+                    requests[0]["data"]["request"]["dest_host"]
+                    == "held.example"
+                )
+                seen.set()
+                # Junk arms: no workspace key, a non-string — ignored
+                # without closing the socket; an unknown workspace is
+                # told it was rejected (a typo'd decider must not wait
+                # on a silent, promptless connection). The channel may
+                # also carry the teardown's resolved frame here — read
+                # until the rejection lands, not exactly one frame.
+                ws.send_text(json.dumps({"type": "egress.decider"}))
+                ws.send_text(
+                    json.dumps({"type": "egress.decider", "workspace": 1234})
+                )
+                ws.send_text(
+                    json.dumps(
+                        {"type": "egress.decider", "workspace": "ghost"}
+                    )
+                )
+                rejected = None
+                for _ in range(5):
+                    frame = json.loads(ws.receive_text())
+                    if frame["event"] == "egress.decider_rejected":
+                        rejected = frame
+                        break
+                assert rejected is not None
+                assert rejected["data"]["reason"] == "unknown workspace"
+        finally:
+            # A failed assertion must release the off-thread
+            # whatever happened inside: it fail-closes the hold
+            # against a live engine instead of dangling past
+            # join's budget.
             seen.set()
-            # Junk arms: no workspace key, a non-string — ignored
-            # without closing the socket; an unknown workspace is
-            # told it was rejected (a typo'd decider must not wait
-            # on a silent, promptless connection). The channel may
-            # also carry the teardown's resolved frame here — read
-            # until the rejection lands, not exactly one frame.
-            ws.send_text(json.dumps({"type": "egress.decider"}))
-            ws.send_text(
-                json.dumps({"type": "egress.decider", "workspace": 1234})
-            )
-            ws.send_text(
-                json.dumps({"type": "egress.decider", "workspace": "ghost"})
-            )
-            rejected = None
-            for _ in range(5):
-                frame = json.loads(ws.receive_text())
-                if frame["event"] == "egress.decider_rejected":
-                    rejected = frame
-                    break
-            assert rejected is not None
-            assert rejected["data"]["reason"] == "unknown workspace"
         thread.join(5.0)
 
 

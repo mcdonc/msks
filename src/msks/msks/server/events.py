@@ -26,11 +26,19 @@ class EventHub:
         self._loop: asyncio.AbstractEventLoop | None = None
 
     def subscribe(self) -> asyncio.Queue:
-        """A bounded queue that will receive every published event."""
+        """A bounded queue that will receive every published event.
+
+        Subscribing requires a running loop — the queue's wakeups
+        are scheduled onto it, and the hub remembers it as the home
+        loop for cross-thread publishes."""
         queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_MAX)
-        self._queues.add(queue)
-        if self._loop is None:
+        if not self._queues:
+            # An empty hub re-homes: every subscriber leaving and a
+            # new one arriving on a fresh loop (a restarted app
+            # sharing the hub object) must not keep publishing onto
+            # the dead loop the last set homed on.
             self._loop = asyncio.get_running_loop()
+        self._queues.add(queue)
         return queue
 
     def subscribers(self) -> set[asyncio.Queue]:
