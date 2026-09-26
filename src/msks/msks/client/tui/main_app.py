@@ -105,9 +105,13 @@ def workspace_label(row: dict) -> str:
 
 #: The listing's columns (#347): the header's label and the
 #: column's width, in row order — every row pads each field to its
-#: column's width, so the columns line up down the list.
+#: column's width, so the columns line up down the list. The name
+#: column pays for the frame's edges (#349): at 80 columns the
+#: border and the scrollbar together leave 74 cells for a row,
+#: and the widest label the created column reads (#350,
+#: ``yesterday``) must fit whole beside the columns before it.
 LIST_COLUMNS = (
-    ("NAME", 24),
+    ("NAME", 22),
     ("STATUS", 10),
     ("EGRESS", 12),
     ("IMAGE", 12),
@@ -433,6 +437,14 @@ def focus_attr(rows: ListView, attr: str, target) -> None:
     ensure_focus(rows)
 
 
+#: The daemon URL's cell budget in the status line (#349): the
+#: URL is a hint, not data — the clip keeps the standing line on
+#: one row at 80 columns whatever the operator's MSKSC_URL
+#: carries, the middle ellipsis keeping the port half of a long
+#: host readable.
+URL_W = 48
+
+
 def status_content(count: int, url: str) -> Content:
     """The status line's standing content (#349): the workspace
     count — the fact that moves while the operator works — set in
@@ -441,7 +453,8 @@ def status_content(count: int, url: str) -> Content:
     theme's foreground answers, not the line's muted base)."""
     plural = "" if count == 1 else "s"
     head = f" {count} workspace{plural}"
-    return Content(f"{head}  ·  {url}", [Span(0, len(head), "$text bold")])
+    line = f"{head}  ·  {clip(url, URL_W)}"
+    return Content(line, [Span(0, len(head), "$text bold")])
 
 
 class FlashLine:
@@ -459,7 +472,7 @@ class FlashLine:
         self.msg = message
         self.until = time.time() + FLASH_TTL
 
-    def text(self, default: str) -> str:
+    def text(self, default: str | Content) -> str | Content:
         """The flash while it lives, else ``default``."""
         if self.until > time.time():
             return self.msg
@@ -599,6 +612,7 @@ class MsksTuiApp(App):
     #listing { border: round $primary; background: $panel; }
     #columns { padding: 0 1; color: $text-muted; }
     #rows ListItem { height: 1; padding: 0 1; }
+    #rows ListItem Static { text-wrap: nowrap; }
     #empty { padding: 1 2; color: $text-muted; }
     #header { height: 1; padding: 0 1; background: $panel;
               text-wrap: nowrap; text-overflow: ellipsis; }

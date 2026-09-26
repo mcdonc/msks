@@ -11,7 +11,7 @@ import asyncio
 import json
 import stat
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import httpx
@@ -1271,7 +1271,7 @@ def test_the_listing_columns_line_up(monkeypatch) -> None:
         assert len(offsets) == 1
         assert cell_len(header[: header.index(label)]) == offsets.pop()
     # A clipped name keeps the columns; a wide name pads to the
-    # same display width (32 cells of CJK land at 24 by clipping).
+    # same display width (32 cells of CJK land at 22 by clipping).
     assert "…" in long_name
     assert cell_len(wide[: wide.index("stopped")]) == cell_len(
         short[: short.index("stopped")]
@@ -1311,6 +1311,12 @@ def test_the_created_column_buckets_by_the_pinned_rule() -> None:
     # Calendar days: 20 hours that crossed midnight read
     # yesterday.
     assert label("2026-06-14T16:00:00Z", now) == "yesterday"
+    # The stamp reads in the clock's own calendar day: the same
+    # stamp, 16:00 UTC on the 14th, is already the 15th at UTC+13
+    # — the operator's day reads it today (a dropped conversion
+    # would read yesterday).
+    late = datetime(2026, 6, 15, 8, 0, 0, tzinfo=timezone(timedelta(hours=13)))
+    assert label("2026-06-14T16:00:00Z", late) == "today"
     for days, expected in (
         (2, "2d ago"),
         (6, "6d ago"),
@@ -1408,6 +1414,67 @@ async def test_the_status_bar_weights_the_count_over_the_url(
         assert sum(url.style.color.triplet) < sum(count.style.color.triplet)
         # One line at the 80-column terminal.
         assert status.size.height == 1
+
+
+async def test_a_long_daemon_url_keeps_the_status_bar_one_line(
+    monkeypatch,
+) -> None:
+    """#349: a long MSKSC_URL clips to its budget (the middle
+    ellipsis keeping the port half) so the standing line stays one
+    row at 80 columns — the URL is a hint, not data."""
+    long_url = "https://msks-daemon.really-long-hostname.example.internal:8660"
+    monkeypatch.setenv("MSKSC_URL", long_url)
+    content = main_app.status_content(2, long_url)
+    assert "…" in content.plain and "8660" in content.plain
+    assert cell_len(content.plain) <= 78
+    scripted_link(monkeypatch, [])
+    data = FakeData([row(), row(id="ws-b", name="beta")])
+    app, _ = make_app(data)
+    async with app.run_test():
+        await wait_for(lambda: "2 workspaces" in status_text(app))
+        status = app.query_one("#status", Static)
+        assert status.size.height == 1
+
+
+async def test_a_scrolling_list_keeps_the_created_label(
+    monkeypatch,
+) -> None:
+    """#349/#350: the frame's border and the scrollbar both spend
+    cells of the 80-column row — the widest label the created
+    column reads (``yesterday``) still renders whole on the first
+    row of a list long enough to scroll."""
+    # The pinned clock sits one day past the fixture stamp (Jan
+    # 2), so the created cell reads "yesterday" — the widest
+    # label the pinned rule renders.
+    monkeypatch.setattr(
+        main_app,
+        "clock_now",
+        lambda: datetime.fromisoformat("2026-01-03T12:00:00"),
+    )
+    rows = [
+        dict(row(), name=f"ws-{i:02d}", id=f"ws-{i:02d}") for i in range(30)
+    ]
+    data = FakeData(rows)
+    app, _ = make_app(data)
+    async with app.run_test(size=(80, 24)):
+        await wait_for(lambda: list_children(app) == 30)
+        first = app.query_one("#rows").children[0]
+
+        def first_static():
+            """The row's inner Static, or None while the compose
+            stream lags the row count (the suite's known rule)."""
+            try:
+                return first.query_one(Static)
+            except NoMatches:
+                return None
+
+        await wait_for(lambda: first_static() is not None)
+        await wait_for(
+            lambda: (s := first_static()) is not None and s.region.width > 0
+        )
+        rendered = "".join(seg.text for seg in first_static().render_line(0))
+        assert "yesterday" in rendered
+        assert cell_len(rendered) <= 74
 
 
 async def test_the_status_column_carries_its_states_color(
