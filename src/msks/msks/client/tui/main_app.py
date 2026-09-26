@@ -637,7 +637,9 @@ class MsksTuiApp(App):
                    text-overflow: ellipsis; }
     #consent { height: 1; padding: 0 1; color: $text-muted;
                text-wrap: nowrap; text-overflow: ellipsis; }
-    #actions ListItem { height: 1; }
+    #actions ListItem { height: 1; padding: 0 1; }
+    #actions ListItem.group-lead { margin-top: 1; }
+    #actions ListItem Static { text-wrap: nowrap; }
     WorkspaceForm { align: center middle; }
     #form { width: 64; height: auto; background: $panel;
             border: round $primary; padding: 1 2; }
@@ -968,18 +970,92 @@ class MainScreen(Screen):
         self.app.exit()
 
 
-#: The workspace page's fixed actions (#309), top to bottom. The
-#: LLM token's remint stays on the CLI (`msks llm-token
-#: --remint` prints the fresh token, the part the page cannot
-#: usefully show) — #343 took the action off the page: its flash
-#: painted the list's status line, which the pushed page hides.
+#: The power verbs' dimming rule (#367): the status that makes
+#: each verb pointless — the row dims with its reason while the
+#: workspace sits in it, and Enter names the reason instead of
+#: calling the daemon. Every other status leaves both rows live
+#: (the daemon owns the vocabulary; a refusal still flashes).
+DIMMED_WHEN = {"start": "running", "stop": "stopped"}
+
+
+def action_note(kind: str, status: str) -> str | None:
+    """The reason a power row stands dimmed (#367), or None
+    while its verb runs: the status that makes it pointless."""
+    if DIMMED_WHEN.get(kind) == status:
+        return f"workspace is {status}"
+    return None
+
+
+def dimmed_action_content(
+    name: str, note: str, marker: str, muted: str
+) -> Content:
+    """A dimmed power row's paint (#367): the whole row muted,
+    its reason riding in the description's place."""
+    text = f"{marker} {name} — {note}"
+    offset = 2 + len(name)
+    return Content(
+        text,
+        [Span(2, offset, muted), Span(offset + 3, len(text), muted)],
+    )
+
+
+def live_action_content(
+    kind: str, name: str, desc: str, marker: str, muted: str
+) -> Content:
+    """A live action row's paint (#367): the name in the default
+    foreground — bold on the shell row, the page's most-used
+    action — the description muted behind an em dash."""
+    text = f"{marker} {name}"
+    spans = []
+    offset = 2 + len(name)
+    if kind == ACTION_SHELL_WINDOW:
+        spans.append(Span(2, offset, "$text bold"))
+    if desc:
+        text += f" — {desc}"
+        spans.append(Span(offset + 3, len(text), muted))
+    return Content(text, spans)
+
+
+def action_content(
+    spec: tuple, status: str, theme_variables: dict | None, focused: bool
+) -> Content:
+    """One action row's paint (#367): a focus marker cell (the
+    highlight bar stays the list's own cue; the marker keeps
+    focus legible where a theme's bar reads weakly) beside the
+    row's tone-painted content. A power row the status dims
+    (#:data:`DIMMED_WHEN`) mutes the whole row behind its reason;
+    every other row rides :func:`live_action_content`. The cells
+    ride a Content's plain text, so a markup-carrying name cannot
+    shift the spans."""
+    kind, name, desc = spec[:3]
+    marker = "▸" if focused else " "
+    muted = muted_style(theme_variables or {})
+    note = action_note(kind, status)
+    if note is not None:
+        return dimmed_action_content(name, note, marker, muted)
+    return live_action_content(kind, name, desc, marker, muted)
+
+
+#: The workspace page's fixed actions (#309), top to bottom in
+#: three groups — use, configure, power — each group's lead row
+#: (``lead`` True) carrying the top margin that separates the
+#: groups (#367). The LLM token's remint stays on the CLI
+#: (`msks llm-token --remint` prints the fresh token, the part
+#: the page cannot usefully show) — #343 took the action off the
+#: page: its flash painted the list's status line, which the
+#: pushed page hides.
 PAGE_ACTIONS = (
-    (ACTION_SHELL_WINDOW, "Open a shell (new terminal)"),
-    (ACTION_CONSENT, "Egress consent — decide holds, review rules and events"),
-    (ACTION_EGRESS_MODE, "Switch the egress mode"),
-    ("edit", "Edit settings — sizes and topology"),
-    ("start", "Start"),
-    ("stop", "Stop"),
+    (ACTION_SHELL_WINDOW, "Open a shell", "in a new terminal", True),
+    (
+        ACTION_CONSENT,
+        "Egress consent",
+        "decide holds, review rules and events",
+        True,
+    ),
+    (ACTION_EGRESS_MODE, "Switch the egress mode", "", False),
+    ("edit", "Edit settings", "sizes and topology", False),
+    ("start", "Start", "", True),
+    ("stop", "Stop", "", False),
 )
 
 
@@ -997,7 +1073,7 @@ class WorkspaceScreen(Screen):
     lifecycle."""
 
     BINDINGS = [
-        Binding("enter", "run", "Go", show=False),
+        Binding("enter", "run", "Run"),
         Binding("q", "back", "Back"),
         Binding("escape", "back", "Back", show=False),
     ]
@@ -1251,6 +1327,7 @@ class WorkspaceScreen(Screen):
         if fresh is not None:
             self.row = fresh
             self.paint_header()
+            self.paint_actions()
 
     # -- the action rows -----------------------------------------------------
 
@@ -1263,14 +1340,50 @@ class WorkspaceScreen(Screen):
             return None
 
     def fixed_items(self) -> list[ListItem]:
-        """The page's actions, each tagged with its kind."""
+        """The page's actions (#367), each tagged with its kind —
+        a group's lead row carrying the class that paints its
+        separating margin."""
         items = []
-        for kind, text in PAGE_ACTIONS:
-            item = ListItem(Static(text))
-            item.page_action = kind
-            item.page_key = ("action", kind)
+        for spec in PAGE_ACTIONS:
+            item = ListItem(Static(self.row_paint(spec, focused=False)))
+            item.page_action = spec[0]
+            item.page_key = ("action", spec[0])
+            if spec[3]:
+                item.add_class("group-lead")
             items.append(item)
         return items
+
+    def row_paint(self, spec: tuple, focused: bool) -> Content:
+        """One spec's content for the row's current state — the
+        row's own status and the page's theme at paint time (a
+        bare, never-mounted page paints against the default
+        theme)."""
+        theme = self.app.theme_variables if self.is_mounted else {}
+        return action_content(
+            spec,
+            self.row.get("status") or "",
+            theme,
+            focused,
+        )
+
+    def paint_actions(self) -> None:
+        """Repaint the action rows in place (#367): the focus
+        marker follows the highlighted row and the power pair's
+        dimming follows the row's status — without rebuilding the
+        list, so focus and identity stay put."""
+        rows = self.actions_widget()
+        if rows is None:
+            return
+        highlighted = rows.highlighted_child
+        try:
+            # Teardown shrinks the list under the paint: the walk
+            # paints the rows that stand, never the specs beyond.
+            for child, spec in zip(rows.children, PAGE_ACTIONS):
+                child.query_one(Static).update(
+                    self.row_paint(spec, focused=child is highlighted)
+                )
+        except NoMatches:
+            pass  # teardown unmounted a row's Static under the paint
 
     async def rebuild_actions(self) -> None:
         """Swap in a freshly-built action list (its mount awaited),
@@ -1284,6 +1397,7 @@ class WorkspaceScreen(Screen):
         await self.query_one("#page", Vertical).mount(fresh)
         fresh.focus()
         focus_attr(fresh, "page_key", focused)
+        self.paint_actions()  # the marker lands on the row focus kept
 
     def sync_actions(self) -> None:
         """The list carries only the fixed actions — a tick has no
@@ -1293,12 +1407,24 @@ class WorkspaceScreen(Screen):
         if self.actions_widget() is None:
             self.rebuilds.request()
 
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        """Focus moved: repaint the rows so the marker follows it
+        (#367) — the paint is in place, so identity and focus stay
+        put."""
+        self.paint_actions()
+
     # -- the actions ---------------------------------------------------
 
     async def action_run(self) -> None:
-        """Enter: the focused row's page action runs."""
+        """Enter: the focused row's page action runs — a dimmed
+        power row (#367) names its reason on the consent line
+        instead of calling the daemon."""
         kind = self.focused_action()
         if kind is None:
+            return
+        note = action_note(kind, self.row.get("status") or "")
+        if note is not None:
+            self.flash(f"{kind} skipped: {note}")
             return
         if kind == ACTION_CONSENT:
             self.push_overlay(auto=False)
@@ -1375,6 +1501,7 @@ class WorkspaceScreen(Screen):
         if reply is not None:
             self.row["status"] = reply["status"]
             self.paint_header()
+            self.paint_actions()
             self.flash(
                 flash_safe(f"{workspace_label(self.row)} {reply['status']}")
             )
