@@ -172,10 +172,11 @@ names another).
 
 ### `terminal_open_cmd`
 
-`terminal_open_cmd` names the launcher a future TUI action will use
-to open a workspace shell in a new terminal window (#314); the msks
-invocation is appended after it, the way most terminals take a
-command after `-e` / `--`:
+`terminal_open_cmd` names the launcher the workspace page's
+**Open a shell (new terminal)** action uses to open a workspace
+shell in a new terminal window (#314, #341); the msks invocation
+is appended after it, the way most terminals take a command after
+`-e` / `--`:
 
 ```yaml
 terminal_open_cmd: konsole -e          # string form (shell-split)
@@ -187,8 +188,8 @@ terminal_open_cmd:                     # list form (no shell quoting)
 ```
 
 `MSKSC_TERMINAL_OPEN_CMD` overrides the file value with the string
-form. The built-in default is `xterm -e` — the terminal most Linux
-distributions carry — so the new-terminal path needs no
+form. The built-in default is `xterm -e` — the terminal most
+Linux distributions carry — so the new-terminal path needs no
 configuration; a launcher that fails to execute (a binary that is
 missing or not executable) shows an inline error and falls back to
 running the shell in the same terminal. A holding variant
@@ -230,8 +231,9 @@ The **workspace page** carries the per-workspace loop: a status
 line for egress consent (the mode, the granted scope with its
 expiry, or "no active consent"), the pending holds highlighted at
 the top — Enter on one opens the consent decider — and the
-page's actions: open a shell, egress consent, start, stop, and
-remint the workspace's LLM token. A workspace in `interactive`
+page's actions: a shell in this terminal, a shell in a new
+terminal window, egress consent, start, stop, and remint the
+workspace's LLM token. A workspace in `interactive`
 mode holds new flows while the page is open: the page registers
 as the workspace's decider, so holds land on it.
 
@@ -239,7 +241,14 @@ The leaves that own the whole terminal run as chained screens:
 the consent decider (`msks egress tui`'s app) and a console shell
 (`msks console`'s session). Choosing either hands the terminal
 over, and on exit the tree returns where it left off — the same
-workspace page, its consent state current.
+workspace page, its consent state current. The page's
+**Open a shell (new terminal)** action works the other way: it
+spawns the configured terminal launcher with a `msks console`
+invocation appended (see `terminal_open_cmd` below), forwards
+the `--daemon`/`--config` flags the tree was started with, and
+the tree keeps running beside the window. A launcher that cannot
+start — a missing binary, one without the execute bit — flashes
+its reason and runs the shell in this terminal instead.
 
 Every screen walks with the arrow keys alone: lists move with
 up/down, the create form's fields move with up/down between them,

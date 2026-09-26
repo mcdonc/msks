@@ -3942,7 +3942,10 @@ def test_typer_commands_route_to_their_bodies(
     assert by_name["forward"] == (("ws1", 22, 2200), {})
     assert by_name["rules"] == (("ws1",), {})
     assert by_name["watch"] == (("ws1", True, "5m"), {})
-    assert by_name["tui"] == (("ws1",), {})
+    assert by_name["tui"][0] == ("ws1",)
+    # The tree's config resolution rides along (#341): the
+    # new-terminal shell action reads the launcher from it.
+    assert by_name["tui"][1]["conf"] is not None
     capsys.readouterr()
 
 
@@ -3969,8 +3972,41 @@ def test_help_exits_through_system_exit_zero(
 
 
 def test_a_bare_msks_is_the_tree_tui(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cli, "run_main_tui", lambda workspace=None: 9)
+    monkeypatch.setattr(
+        cli, "run_main_tui", lambda workspace=None, conf=None: 9
+    )
     assert cli.main([]) == 9
+
+
+def test_the_tree_carries_the_invocations_resolution(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Both TUI entries receive the resolved config (#341) with
+    the raw --daemon/--config values recorded: the new-terminal
+    shell action reads the launcher from it and forwards the flags
+    so the spawned console reaches the same daemon."""
+    seen: list = []
+
+    def routed(workspace=None, conf=None) -> int:
+        seen.append(conf)
+        return 0
+
+    monkeypatch.setattr(cli, "run_main_tui", routed)
+    client_env(monkeypatch)
+    path = tmp_path / "msks.yaml"
+    path.write_text(
+        "daemons:\n  lab:\n    url: https://lab:8660\nactive_daemon: lab\n"
+    )
+    assert (
+        cli.main(["--daemon", "lab", "--config", str(path), "tui", "w"]) == 0
+    )
+    assert cli.main(["--config", str(path)]) == 0
+    flagged, ambient = seen
+    assert flagged.daemon_arg == "lab"
+    assert flagged.config_arg == str(path)
+    assert flagged.terminal_open_cmd == ["xterm", "-e"]
+    assert ambient.daemon_arg is None
+    assert ambient.config_arg == str(path)
 
 
 def test_flag_validation_refusals_exit_two(
@@ -4024,7 +4060,7 @@ def test_a_bare_msks_interrupt_is_one_line(
     the same one line every command prints (the callback's edge,
     not typer's silent 130)."""
 
-    def interrupted() -> int:
+    def interrupted(conf=None) -> int:
         raise KeyboardInterrupt
 
     monkeypatch.setattr(cli, "run_main_tui", interrupted)

@@ -10,12 +10,18 @@ the daemon through :class:`TuiData` — the same REST surface the
 ``msksc`` commands use — and the workspace page holds a
 :class:`DeciderLink` so pending holds land on it.
 
+The page's new-terminal shell action (#341) is the one shell that
+does not chain: it spawns the operator's terminal launcher with a
+console invocation appended (:func:`spawn_window`), and the tree
+keeps running beside the window.
+
 Spatial navigation: every screen is a list the arrows walk, the
 create form's arrows move between its fields, and Escape always
 leaves the screen it is on — no screen traps focus.
 """
 
 import asyncio
+import subprocess
 import sys
 import time
 
@@ -35,6 +41,7 @@ from textual.widgets import (
     Static,
 )
 
+from ..config import DEFAULT_TERMINAL_CMD, ClientConfig
 from ..console import run_workspace_shell
 from ..create import invoking_user
 from ..rest import env_token, env_url
@@ -54,6 +61,11 @@ from .link import CONNECTED, REJECTED, DeciderLink
 #: The full-terminal flows a page can ask for (#309).
 FLOW_CONSENT = "consent"
 FLOW_SHELL = "shell"
+
+#: The workspace page's new-terminal shell action (#341) — a page
+#: action, not a flow: the tree keeps running while the window
+#: owns its own terminal.
+ACTION_SHELL_WINDOW = "shell-window"
 
 #: How many granted scopes the consent line spells out before the
 #: "… (+N more)" cap.
@@ -247,6 +259,40 @@ def run_shell_flow(workspace_id: str) -> None:
     run_workspace_shell(workspace_id)
 
 
+def console_child_argv(
+    workspace_id: str, daemon: str | None, config: str | None
+) -> list[str]:
+    """The console invocation the new-terminal action appends to
+    the launcher (#341): this client's own interpreter and module
+    (an editable checkout spawns itself; an installed client its
+    own environment), the ``--daemon``/``--config`` flags the tree
+    was started with (the environment already carries the
+    bootstrap's materialized values, but a flag's choice outranks
+    the environment without landing in it), then the console
+    command and the workspace.
+    """
+    argv = [sys.executable, "-m", "msks.client.cli"]
+    if daemon is not None:
+        argv += ["--daemon", daemon]
+    if config is not None:
+        argv += ["--config", config]
+    return [*argv, "console", workspace_id]
+
+
+def spawn_window(argv: list[str]):
+    """Run the launcher detached (#341): its own session, its
+    stdio on devnull — the window borrows no terminal the tree
+    holds, and the tree's later exit never takes it down.
+    """
+    return subprocess.Popen(
+        argv,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
 #: The full-terminal flows, keyed by the kind a page records.
 FLOWS = {
     FLOW_CONSENT: run_consent_flow,
@@ -261,7 +307,9 @@ def run_follow_up(action: tuple[str, str]) -> None:
     FLOWS[kind](workspace_id)
 
 
-def run_main_tui(open_ref: str | None = None, data=None) -> int:
+def run_main_tui(
+    open_ref: str | None = None, data=None, conf: ClientConfig | None = None
+) -> int:
     """``msks tui`` (#309): the tree, chaining the full-terminal
     flows.
 
@@ -274,6 +322,10 @@ def run_main_tui(open_ref: str | None = None, data=None) -> int:
     between two runs of the tree; the tree reopens the workspace
     page it was on, and an exit with no recorded flow is the
     operator's quit.
+
+    ``conf`` is the invocation's resolved client config (#341):
+    the page's new-terminal shell action reads its launcher and
+    the ``--daemon``/``--config`` values it forwards to the child.
     """
     if data is None:
         require_terminal()
@@ -283,7 +335,7 @@ def run_main_tui(open_ref: str | None = None, data=None) -> int:
     follow = TuiFollow()
     follow.reopen = open_ref
     while True:
-        MsksTuiApp(follow, data=data).run()
+        MsksTuiApp(follow, data=data, conf=conf).run()
         action = follow.take()
         if action is None:
             return 0
@@ -331,11 +383,26 @@ class MsksTuiApp(App):
         """The tree's root: the workspaces list."""
         return MainScreen()
 
-    def __init__(self, follow: TuiFollow | None = None, data=None) -> None:
+    def __init__(
+        self, follow: TuiFollow | None = None, data=None, conf=None
+    ) -> None:
         super().__init__()
         self.follow = follow or TuiFollow()
         self.data = data or TuiData()
         self.flash_line = FlashLine()
+        # The launch settings (#341): the operator's terminal
+        # launcher and the invocation's ``--daemon``/``--config``
+        # values, read by the page's new-terminal shell action to
+        # spawn a console child that reaches this daemon. A tree
+        # without a resolution (a test's injected data seam)
+        # launches with the built-ins.
+        self.terminal_cmd = (
+            list(conf.terminal_open_cmd)
+            if conf is not None
+            else list(DEFAULT_TERMINAL_CMD)
+        )
+        self.daemon_arg = getattr(conf, "daemon_arg", None)
+        self.config_arg = getattr(conf, "config_arg", None)
 
     def flash(self, message: str) -> None:
         """Give the status lines to a message for FLASH_TTL
@@ -594,6 +661,7 @@ class MainScreen(Screen):
 #: the pending holds.
 PAGE_ACTIONS = (
     (FLOW_SHELL, "Open a shell (console)"),
+    (ACTION_SHELL_WINDOW, "Open a shell (new terminal)"),
     (FLOW_CONSENT, "Egress consent — the decider screen"),
     ("start", "Start"),
     ("stop", "Stop"),
@@ -604,8 +672,9 @@ PAGE_ACTIONS = (
 class WorkspaceScreen(Screen):
     """One workspace's page (#309): the consent status line, the
     pending holds highlighted above the actions (Enter on one opens
-    the consent app), and the page's actions — a shell, the consent
-    app, start, stop, and the LLM token remint."""
+    the consent app), and the page's actions — a shell in this
+    terminal, a shell in a new window (#341), the consent app,
+    start, stop, and the LLM token remint."""
 
     BINDINGS = [
         Binding("enter", "run", "Go", show=False),
@@ -828,11 +897,35 @@ class WorkspaceScreen(Screen):
 
     async def run_page_action(self, kind: str) -> None:
         handler = {
+            ACTION_SHELL_WINDOW: self.open_shell_window,
             "start": self.start_workspace,
             "stop": self.stop_workspace,
             "remint": self.remint_token,
         }[kind]
         await handler()
+
+    async def open_shell_window(self) -> None:
+        """Open the console in a new terminal window (#341): the
+        launcher runs the console invocation as its child and the
+        tree keeps running. A launcher that cannot start — a
+        missing binary, one without the execute bit — flashes its
+        reason and takes the same-terminal shell flow instead (the
+        setting's documented fallback)."""
+        child = console_child_argv(
+            self.row["id"], self.app.daemon_arg, self.app.config_arg
+        )
+        try:
+            spawn_window([*self.app.terminal_cmd, *child])
+        except OSError as exc:
+            self.app.flash(
+                f"shell window failed: {escape(str(exc))}"
+                " — opening in this terminal"
+            )
+            self.app.quit_after(FLOW_SHELL, self.row["id"])
+            return
+        self.app.flash(
+            f"opened a shell window for {escape(workspace_label(self.row))}"
+        )
 
     async def start_workspace(self) -> None:
         await self.power_workspace("start")
