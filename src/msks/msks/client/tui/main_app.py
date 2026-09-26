@@ -281,7 +281,7 @@ def header_meta(row: dict) -> str:
     created = (row.get("created_at") or "")[:10] or "-"
     return (
         f" id {escape(row['id'])}  ·  image {escape(image)}"
-        f"  ·  host {escape(host)}  ·  created {created}"
+        f"  ·  host {escape(host)}  ·  created {escape(created)}"
     )
 
 

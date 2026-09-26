@@ -1217,6 +1217,11 @@ def test_the_line_helpers() -> None:
     assert span.style == main_app.muted_style({})
     assert "egress to decide" not in name.plain
     assert "egress to decide: 2" in main_app.header_name(row(), 2).plain
+    # A wide-character name keeps the span on the status: the
+    # offsets are codepoints, like the listing's span.
+    wide = main_app.header_name(row(name="北" * 16))
+    (wide_span,) = wide.spans
+    assert wide.plain[wide_span.start : wide_span.end] == "stopped"
     # The meta line: the id, the image hash, the host, the date.
     meta = main_app.header_meta(row())
     assert WS in meta and "host-1" in meta and "2026-01-02" in meta
