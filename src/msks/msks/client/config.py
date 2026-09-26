@@ -62,7 +62,7 @@ the readers). ``terminal_open_cmd`` resolves the same way — variable,
 then file, then the built-in ``xterm -e`` — and lands on the
 returned :class:`ClientConfig`, where the workspace TUI's
 new-terminal shell action (#341) reads it: the launcher the
-action appends the console invocation to, falling back to the
+action appends its ssh invocation to, falling back to the
 same-terminal shell when the launcher cannot start.
 """
 

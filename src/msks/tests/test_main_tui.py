@@ -630,17 +630,19 @@ async def test_the_page_opens_a_shell(monkeypatch) -> None:
 # -- the new-terminal shell action (#341) ----------------------------------
 
 
-def test_the_console_child_argv_spawns_this_client() -> None:
-    """The spawned console invocation: this client's own
-    interpreter and module (an editable checkout spawns itself; an
-    installed client its own environment), then the console
-    command and the workspace — the child reaches the same daemon
-    through the environment the tree's bootstrap materialized."""
-    assert main_app.console_child_argv("w1") == [
+def test_the_ssh_child_argv_spawns_this_client() -> None:
+    """The spawned ssh invocation: this client's own interpreter
+    and module (an editable checkout spawns itself; an installed
+    client its own environment), then the ssh command and the
+    workspace — ssh over the console because a fresh window gets
+    resized, and the console sizes its guest pty once, at connect.
+    The child reaches the same daemon through the environment the
+    tree's bootstrap materialized."""
+    assert main_app.ssh_child_argv("w1") == [
         sys.executable,
         "-m",
         "msks.client.cli",
-        "console",
+        "ssh",
         "w1",
     ]
 
@@ -652,11 +654,12 @@ async def test_spawn_window_detaches_quietly() -> None:
     assert await asyncio.wait_for(proc.wait(), 10) == 0
 
 
-async def test_the_new_terminal_action_spawns_a_console_child(
+async def test_the_new_terminal_action_spawns_an_ssh_child(
     monkeypatch,
 ) -> None:
     """Enter on the page's second action (#341): the configured
-    launcher runs with the console invocation appended, and the
+    launcher runs an ssh invocation — ssh carries a live window's
+    resizes; the console sizes its pty once — appended, and the
     tree keeps running beside the window."""
     scripted_link(monkeypatch, [])
     spawned: list[list[str]] = []
@@ -685,7 +688,7 @@ async def test_the_new_terminal_action_spawns_a_console_child(
             sys.executable,
             "-m",
             "msks.client.cli",
-            "console",
+            "ssh",
             WS,
         ]
         await wait_for(lambda: "opened a shell window" in status_text(app))

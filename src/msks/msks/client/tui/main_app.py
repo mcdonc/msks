@@ -11,9 +11,11 @@ the daemon through :class:`TuiData` — the same REST surface the
 :class:`DeciderLink` so pending holds land on it.
 
 The page's new-terminal shell action (#341) is the one shell that
-does not chain: it spawns the operator's terminal launcher with a
-console invocation appended (:func:`spawn_window`), and the tree
-keeps running beside the window.
+does not chain: it spawns the operator's terminal launcher with an
+ssh invocation appended (:func:`spawn_window`) — ssh, not the
+console, because a live window resizes and only ssh propagates the
+resize to the guest — and the tree keeps running beside the
+window.
 
 Spatial navigation: every screen is a list the arrows walk, the
 create form's arrows move between its fields, and Escape always
@@ -258,17 +260,20 @@ def run_shell_flow(workspace_id: str) -> None:
     run_workspace_shell(workspace_id)
 
 
-def console_child_argv(workspace_id: str) -> list[str]:
-    """The console invocation the new-terminal action appends to
-    the launcher (#341): this client's own interpreter and module
-    (an editable checkout spawns itself; an installed client its
-    own environment), then the console command and the workspace.
-    The child needs no connection flags: the tree's bootstrap
-    already materialized every winner — the file's and the
-    ``--daemon`` flag's alike — into the environment the child
-    inherits, so it reaches the same daemon by inheritance.
+def ssh_child_argv(workspace_id: str) -> list[str]:
+    """The ssh invocation the new-terminal action appends to the
+    launcher (#341): this client's own interpreter and module (an
+    editable checkout spawns itself; an installed client its own
+    environment), then the ssh command and the workspace — ssh
+    over the console because a fresh window gets resized, and the
+    console session sizes its guest pty once, at connect, while
+    ssh carries every resize to the guest. The child needs no
+    connection flags: the tree's bootstrap already materialized
+    every winner — the file's and the ``--daemon`` flag's alike —
+    into the environment the child inherits, so it reaches the
+    same daemon by inheritance.
     """
-    return [sys.executable, "-m", "msks.client.cli", "console", workspace_id]
+    return [sys.executable, "-m", "msks.client.cli", "ssh", workspace_id]
 
 
 async def spawn_window(argv: list[str]):
@@ -908,8 +913,10 @@ class WorkspaceScreen(Screen):
         await handler()
 
     async def open_shell_window(self) -> None:
-        """Open the console in a new terminal window (#341): the
-        launcher runs the console invocation as its child — the
+        """Open a workspace shell in a new terminal window (#341):
+        the launcher runs an ssh invocation as its child — ssh, not
+        the console, because the console sizes its guest pty once
+        at connect while ssh carries a live window's resizes — the
         child inherits the tree's materialized connection, so it
         reaches the same daemon — and the tree keeps running. A
         launcher that cannot start — a missing binary, one without
@@ -917,7 +924,7 @@ class WorkspaceScreen(Screen):
         restart's flash with its reason and takes the
         same-terminal shell flow instead (the setting's documented
         fallback)."""
-        child = console_child_argv(self.row["id"])
+        child = ssh_child_argv(self.row["id"])
         try:
             proc = await spawn_window([*self.app.terminal_cmd, *child])
         except (OSError, ValueError) as exc:
