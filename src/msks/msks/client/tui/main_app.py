@@ -248,20 +248,41 @@ def row_content(row: dict, theme_variables: dict | None = None) -> Content:
     return Content(line, [span])
 
 
-def header_line(row: dict, pending: int = 0) -> str:
-    """The workspace page's header: label, immutable id, status,
-    image, host — and, while holds wait on the page's queue, the
-    pending-egress count (#354): the segment leaves with the last
-    hold."""
+def header_name(
+    row: dict, pending: int = 0, theme_variables: dict | None = None
+) -> Content:
+    """The header's first line (#351): the workspace's name in
+    the default foreground, its status beside it in the status
+    color (the list's status coloring), and — while holds wait on
+    the page's queue — the pending-egress count (#354): the
+    segment leaves with the last hold. The name rides a Content's
+    plain text, so a markup-carrying name cannot shift the span."""
+    name = workspace_label(row)
+    status = row["status"]
+    text = f" {name}  ·  {status}"
+    if pending:
+        text += f"  ·  egress to decide: {pending}"
+    offset = 1 + len(name) + len("  ·  ")
+    span = Span(
+        offset,
+        offset + len(status),
+        status_color(status, theme_variables),
+    )
+    return Content(text, [span])
+
+
+def header_meta(row: dict) -> str:
+    """The header's second line (#351): the immutable id, the
+    image hash, the host, and the created date — the page paints
+    the line muted, and it truncates at the terminal's edge
+    (an ellipsis marks the cut) beside the name's own line."""
     image = (row.get("image_hash") or "-")[:12]
     host = row.get("host") or "-"
-    line = (
-        f" {escape(workspace_label(row))} ({row['id']})  ·  {row['status']}"
-        f"  ·  image {image}  ·  host {host}"
+    created = (row.get("created_at") or "")[:10] or "-"
+    return (
+        f" id {escape(row['id'])}  ·  image {escape(image)}"
+        f"  ·  host {escape(host)}  ·  created {escape(created)}"
     )
-    if pending:
-        line += f"  ·  egress to decide: {pending}"
-    return line
 
 
 def grant_text(rule, remaining: float | None) -> str:
@@ -506,7 +527,11 @@ class MsksTuiApp(App):
     #columns { padding: 0 1; color: $text-muted; }
     #rows ListItem { height: 1; padding: 0 1; }
     #empty { padding: 1 2; color: $text-muted; }
-    #header { padding: 0 1; background: $panel; }
+    #header { height: 1; padding: 0 1; background: $panel;
+              text-wrap: nowrap; text-overflow: ellipsis; }
+    #header-meta { height: 1; padding: 0 1; background: $panel;
+                   color: $text-muted; text-wrap: nowrap;
+                   text-overflow: ellipsis; }
     #consent { padding: 0 1; color: $text-muted; }
     #actions ListItem { height: 1; }
     CreateScreen { align: center middle; }
@@ -821,24 +846,28 @@ class MainScreen(Screen):
         self.app.exit()
 
 
-#: The workspace page's fixed actions (#309), top to bottom.
+#: The workspace page's fixed actions (#309), top to bottom. The
+#: LLM token's remint stays on the CLI (`msks llm-token
+#: --remint` prints the fresh token, the part the page cannot
+#: usefully show) — #343 took the action off the page: its flash
+#: painted the list's status line, which the pushed page hides.
 PAGE_ACTIONS = (
     (ACTION_SHELL_WINDOW, "Open a shell (new terminal)"),
     (FLOW_CONSENT, "Egress consent — the decider screen"),
     (ACTION_EGRESS_MODE, "Switch the egress mode"),
     ("start", "Start"),
     ("stop", "Stop"),
-    ("remint", "Remint the LLM token"),
 )
 
 
 class WorkspaceScreen(Screen):
-    """One workspace's page (#309): the consent status line, the
-    header's pending-egress indicator (#354 — the holds waiting on
-    the page's queue, counted; the segment leaves with the last
-    hold), and the page's actions — a shell in a new window
+    """One workspace's page (#309): the header's two lines (#351
+    — the name with its status on the first, the id, image, host,
+    and created date muted on the second, the pending-egress
+    count beside the status while holds wait, #354), the consent
+    status line, and the page's actions — a shell in a new window
     (#341), the consent decider, the egress-mode switch (#344),
-    start, stop, and the LLM token remint."""
+    start, and stop."""
 
     BINDINGS = [
         Binding("enter", "run", "Go", show=False),
@@ -870,7 +899,11 @@ class WorkspaceScreen(Screen):
 
     def compose(self) -> ComposeResult:
         link = self.link_or_stub()
-        yield Static(header_line(self.row), id="header")
+        yield Static(
+            header_name(self.row, theme_variables=self.app.theme_variables),
+            id="header",
+        )
+        yield Static(header_meta(self.row), id="header-meta")
         yield Static(consent_line(link, self.row), id="consent")
         # The action list mounts on the first rebuild (compose
         # yields the container alone).
@@ -932,10 +965,17 @@ class WorkspaceScreen(Screen):
     def paint_header(self) -> None:
         try:
             self.query_one("#header", Static).update(
-                header_line(self.row, self.pending_count())
+                header_name(
+                    self.row,
+                    self.pending_count(),
+                    self.app.theme_variables,
+                )
+            )
+            self.query_one("#header-meta", Static).update(
+                header_meta(self.row)
             )
         except NoMatches:
-            pass  # teardown unmounted the header under the worker
+            pass  # teardown unmounted a header line under the worker
 
     def paint_consent(self) -> None:
         if self.link is not None:
@@ -1057,7 +1097,6 @@ class WorkspaceScreen(Screen):
             ACTION_EGRESS_MODE: self.pick_egress_mode,
             "start": self.start_workspace,
             "stop": self.stop_workspace,
-            "remint": self.remint_token,
         }[kind]
         await handler()
 
@@ -1110,16 +1149,6 @@ class WorkspaceScreen(Screen):
             self.flash(
                 flash_safe(f"{workspace_label(self.row)} {reply['status']}")
             )
-
-    async def remint_token(self) -> None:
-        """Remint the workspace's LLM proxy credential (#259); the
-        fresh token owns the page's consent line."""
-        token = await self.guarded_page_flash(
-            "remint",
-            self.app.data.remint_llm_token(self.row["id"]),
-        )
-        if token is not None:
-            self.flash(flash_safe(f"new LLM token: {token}"))
 
     # -- the egress-mode switch (#344) ---------------------------------
 
