@@ -9,7 +9,8 @@ import httpx
 import pytest
 import yaml
 from msks.client import cli, config
-from msks.client.rest import DEFAULT_URL, env_token
+from msks.client.rest import DEFAULT_URL, env_token, env_url, ssl_context
+from msks.server.tls import generate_ca
 
 # The six connect/state variables the file can feed, plus the
 # terminal launcher's — cleared before any test that lets the
@@ -58,9 +59,9 @@ def token_file(root: Path, token: str = "filetok") -> str:
 
 
 def test_config_dir_reads_the_bootstrap_variables(monkeypatch) -> None:
-    monkeypatch.setenv("MSKS_CONFIG_DIR", "/cfg/msks")
+    monkeypatch.setenv("MSKSC_CONFIG_DIR", "/cfg/msks")
     assert config.config_dir() == "/cfg/msks"
-    monkeypatch.delenv("MSKS_CONFIG_DIR")
+    monkeypatch.delenv("MSKSC_CONFIG_DIR")
     monkeypatch.setenv("XDG_CONFIG_HOME", "/xdg")
     assert config.config_dir() == os.path.join("/xdg", "msks")
     monkeypatch.delenv("XDG_CONFIG_HOME")
@@ -69,7 +70,7 @@ def test_config_dir_reads_the_bootstrap_variables(monkeypatch) -> None:
 
 
 def test_default_config_path_joins_the_filename(monkeypatch) -> None:
-    monkeypatch.setenv("MSKS_CONFIG_DIR", "/cfg/msks")
+    monkeypatch.setenv("MSKSC_CONFIG_DIR", "/cfg/msks")
     assert config.default_config_path() == os.path.join(
         "/cfg/msks", "msks.yaml"
     )
@@ -78,7 +79,7 @@ def test_default_config_path_joins_the_filename(monkeypatch) -> None:
 def test_bare_msks_generates_the_template_on_first_run(
     tmp_path: Path, monkeypatch
 ) -> None:
-    monkeypatch.setenv("MSKS_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setenv("MSKSC_CONFIG_DIR", str(tmp_path / "cfg"))
     path = config.resolve_config_path(None)
     assert path == config.default_config_path()
     body = Path(path).read_text()
@@ -105,7 +106,7 @@ def test_generate_template_refuses_to_overwrite(tmp_path: Path) -> None:
 def test_concurrent_generation_is_the_file_being_there(
     tmp_path: Path, monkeypatch
 ) -> None:
-    monkeypatch.setenv("MSKS_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("MSKSC_CONFIG_DIR", str(tmp_path))
     path = config.default_config_path()
 
     def race(_path: str) -> None:
@@ -523,8 +524,26 @@ def test_an_unreadable_token_file_names_both_places(
     empty = tmp_path / "empty.token"
     empty.write_text("  \n")
     path = write_config(tmp_path, f"url: https://lab\ntoken_file: {empty}\n")
-    with pytest.raises(ValueError, match="is empty"):
+    with pytest.raises(ValueError, match="MSKSC_TOKEN"):
         config.resolve(None, path)
+
+
+def test_config_read_and_write_failures_are_one_line(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The bootstrap contract: an unreadable config file and an
+    unwritable first-run template are one clean line each, not
+    tracebacks."""
+    unreadable = write_config(tmp_path, "url: https://lab\n")
+    os.chmod(unreadable, 0o000)
+    with pytest.raises(ValueError, match="cannot read config file"):
+        config.load_config(unreadable)
+    readonly = tmp_path / "ro-cfg"
+    readonly.mkdir()
+    readonly.chmod(0o555)
+    monkeypatch.setenv("MSKSC_CONFIG_DIR", str(readonly))
+    with pytest.raises(ValueError, match="cannot write the first-run"):
+        config.resolve_config_path(None)
 
 
 def test_a_missing_token_errors_before_network_activity(
@@ -533,6 +552,43 @@ def test_a_missing_token_errors_before_network_activity(
     clean_env(monkeypatch)
     with pytest.raises(SystemExit, match="token_file"):
         env_token()
+
+
+def test_the_cafile_expands_a_leading_tilde(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A home-relative cafile — the spelling the docs and the
+    template's examples ship — verifies instead of dying on a
+    literal ``~/`` path."""
+    ca_cert, _ = generate_ca()
+    (tmp_path / "ca.pem").write_bytes(ca_cert)
+    clean_env(monkeypatch)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("MSKSC_CAFILE", "~/ca.pem")
+    assert ssl_context().verify_mode.name == "CERT_REQUIRED"
+
+
+def test_an_empty_url_export_falls_to_the_default(monkeypatch) -> None:
+    """Empty is the unset form for the URL too — the reader and the
+    resolver agree on the default, never a "" base URL."""
+    clean_env(monkeypatch)
+    monkeypatch.setenv("MSKSC_URL", "")
+    assert env_url() == DEFAULT_URL
+    assert config.resolve(None, "none").url == DEFAULT_URL
+
+
+def test_help_screens_skip_the_config_bootstrap(
+    tmp_path: Path, monkeypatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``msks <cmd> --help`` answers with help even when the config
+    file is broken — the operator's most discoverable tool stays
+    available exactly when it is needed."""
+    monkeypatch.setenv("MSKSC_CONFIG_DIR", str(tmp_path))
+    write_config(tmp_path, "bogus_key: 1\n")
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["ls", "--help"])
+    assert exc.value.code == 0
+    assert "List workspaces" in capsys.readouterr().out
 
 
 # --- terminal_open_cmd ---
@@ -590,7 +646,7 @@ def listing_transport(seen: dict) -> httpx.MockTransport:
 
 def test_the_flag_reaches_the_rest_call(tmp_path, monkeypatch) -> None:
     clean_env(monkeypatch)
-    monkeypatch.setenv("MSKS_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("MSKSC_CONFIG_DIR", str(tmp_path))
     write_config(
         tmp_path,
         "daemons:\n"
@@ -609,7 +665,7 @@ def test_bare_invocation_generates_and_uses_the_template(
     tmp_path: Path, monkeypatch
 ) -> None:
     clean_env(monkeypatch)
-    monkeypatch.setenv("MSKS_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("MSKSC_CONFIG_DIR", str(tmp_path))
     monkeypatch.setenv("MSKSC_URL", "https://preset:8660")
     monkeypatch.setenv("MSKSC_TOKEN", "tok")
     # The devenv-presets shape: exported variables beside a missing
@@ -624,7 +680,7 @@ def test_bare_invocation_generates_and_uses_the_template(
 
 def test_config_none_ignores_the_file_tree(tmp_path, monkeypatch) -> None:
     clean_env(monkeypatch)
-    monkeypatch.setenv("MSKS_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("MSKSC_CONFIG_DIR", str(tmp_path))
     write_config(tmp_path, "url: https://file:8660\n")
     monkeypatch.setenv("MSKSC_URL", "https://env:8660")
     monkeypatch.setenv("MSKSC_TOKEN", "tok")
@@ -638,7 +694,7 @@ def test_an_unknown_flag_daemon_exits_with_one_line(
     tmp_path, monkeypatch, capsys
 ) -> None:
     clean_env(monkeypatch)
-    monkeypatch.setenv("MSKS_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("MSKSC_CONFIG_DIR", str(tmp_path))
     write_config(tmp_path, "daemons:\n  lab:\n    url: https://lab\n")
     with pytest.raises(SystemExit, match="unknown daemon 'ghost'"):
         cli.main(["--daemon", "ghost", "ls"], listing_transport({}))

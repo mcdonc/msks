@@ -94,7 +94,7 @@ anything real.
 ## The client config file (#314)
 
 The environment variables above have a durable home: a YAML file at
-`~/.config/msks/msks.yaml` (relocated by `MSKS_CONFIG_DIR`, or
+`~/.config/msks/msks.yaml` (relocated by `MSKSC_CONFIG_DIR`, or
 `XDG_CONFIG_HOME`). The variables keep working beside it, and each
 one overrides the same key in the file — a fresh devenv shell with its
 presets exported behaves exactly as it does today. Precedence,
@@ -124,7 +124,11 @@ the one key whose variable carries a different shape: the file
 points at a file holding one daemon token, so the config tree stays
 free of inline credentials and the token keeps the permissions of
 the file that holds it — `MSKSC_TOKEN` still carries an inline token
-when the environment is the more convenient place for one. An
+when the environment is the more convenient place for one. For the
+invocation, the token is read out of its file into the process
+environment (the substrate every reader already speaks), where
+child processes — console shells, the terminal launcher — inherit
+it; the file itself stays the durable, permissioned home. An
 unreadable or empty token file is an error before any network
 activity, naming both places a token can come from.
 

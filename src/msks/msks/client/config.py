@@ -40,7 +40,7 @@ key: the second is a duplicate, refused with the rule named.
 
 The file is located through three ``--config`` modes (msksd's):
 
-- bare ``msks`` → ``$MSKS_CONFIG_DIR/msks.yaml`` (default
+- bare ``msks`` → ``$MSKSC_CONFIG_DIR/msks.yaml`` (default
   ``~/.config/msks/msks.yaml``); a missing file is generated as a
   commented template pointing at the docs.
 - ``msks --config /path/to/msks.yaml`` → exactly that file; a
@@ -48,7 +48,7 @@ The file is located through three ``--config`` modes (msksd's):
 - ``msks --config=none`` → environment variables and built-in
   defaults only.
 
-``MSKS_CONFIG_DIR`` is deliberately not a config key: the file
+``MSKSC_CONFIG_DIR`` is deliberately not a config key: the file
 cannot relocate the config tree it lives in (klangkd's bootstrap
 rule, shared with :mod:`msks.config`).
 
@@ -115,7 +115,7 @@ DEFAULT_TERMINAL_CMD = ("xterm", "-e")
 
 
 def config_dir() -> str:
-    """The config-tree root: ``$MSKS_CONFIG_DIR``, else
+    """The config-tree root: ``$MSKSC_CONFIG_DIR``, else
     ``$XDG_CONFIG_HOME/msks`` (XDG fallback ``~/.config/msks``).
 
     Resolved purely from the environment — ``msks.yaml`` cannot
@@ -123,7 +123,7 @@ def config_dir() -> str:
     computable before the file is located (msksd's bootstrap rule,
     #46).
     """
-    override = os.environ.get("MSKS_CONFIG_DIR")
+    override = os.environ.get("MSKSC_CONFIG_DIR")
     if override:
         return override
     xdg = os.environ.get("XDG_CONFIG_HOME") or "~/.config"
@@ -157,7 +157,10 @@ def ensure_default_config() -> str:
     """The default path: generated on first run, else as-is.
 
     A concurrent ``msks`` generating the file between the check
-    and the open is "the file is there now", not an error.
+    and the open is "the file is there now", not an error. A
+    template that cannot be written (a read-only config tree) is
+    a one-line refusal, not a traceback — the operator's fix is
+    at the filesystem, and the line names the path.
     """
     path = default_config_path()
     if os.path.isfile(path):
@@ -166,6 +169,11 @@ def ensure_default_config() -> str:
         generate_template(path)
     except FileExistsError:
         pass
+    except OSError as exc:
+        raise ValueError(
+            f"cannot write the first-run config template at {path}: "
+            f"{exc.strerror or exc}"
+        ) from None
     return path
 
 
@@ -422,8 +430,18 @@ def split_words(value: str, key: str, path: str) -> list[str]:
 
 
 def load_config(path: str) -> dict:
-    """Read and validate the config file at *path* into its keys."""
-    return parse_config_doc(Path(path).read_text(encoding="utf-8"), path)
+    """Read and validate the config file at *path* into its keys.
+
+    An unreadable file is a one-line refusal naming the path —
+    the bootstrap contract every other config problem carries.
+    """
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(
+            f"cannot read config file {path}: {exc.strerror or exc}"
+        ) from None
+    return parse_config_doc(text, path)
 
 
 @dataclass
@@ -465,16 +483,18 @@ def ambient_selection(doc: dict, path: str) -> Selection:
 
 
 def flag_selection(daemon_arg: str, doc: dict, path: str) -> Selection:
-    """The flag's pick: an alias the file defines, or a raw URL."""
+    """The flag's pick: an alias the file defines first, else a raw
+    URL (an alias named like a URL stays reachable — the table is
+    consulted before the scheme sniff)."""
     aliases = doc.get("daemons", {})
-    if "://" in daemon_arg:
-        return Selection(None, True, daemon_arg)
-    if daemon_arg not in aliases:
+    if daemon_arg in aliases:
+        return Selection(daemon_arg, True, None)
+    if "://" not in daemon_arg:
         raise ValueError(
             f"{path}: unknown daemon {daemon_arg!r} "
             f"(defined: {alias_list(aliases)})"
         )
-    return Selection(daemon_arg, True, None)
+    return Selection(None, True, daemon_arg)
 
 
 def alias_list(aliases: dict) -> str:
@@ -546,7 +566,10 @@ def read_token_file(token_file: str, path: str) -> str:
             "export MSKSC_TOKEN"
         ) from None
     if not token:
-        raise ValueError(f"token file {target} is empty")
+        raise ValueError(
+            f"token file {target} is empty; point token_file in {path} "
+            "at a token file with a token in it, or export MSKSC_TOKEN"
+        )
     return token
 
 
@@ -718,7 +741,7 @@ def render_template() -> str:
 #
 # msks looked here because it was started without a --config
 # argument and found no file at
-# ${{MSKS_CONFIG_DIR:-$XDG_CONFIG_HOME/msks}}/msks.yaml.
+# ${{MSKSC_CONFIG_DIR:-$XDG_CONFIG_HOME/msks}}/msks.yaml.
 #
 # This file is the durable home for the client's settings. Every
 # scalar key here also exists as an MSKSC_* environment variable,

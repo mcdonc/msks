@@ -69,14 +69,14 @@ def isolated_client_config(
     """Keep the client's first-run template out of the home tree.
 
     Every ``msks`` invocation reads (and on first run generates)
-    ``msks.yaml`` under ``$MSKS_CONFIG_DIR`` (#314); the suite
+    ``msks.yaml`` under ``$MSKSC_CONFIG_DIR`` (#314); the suite
     points that root at a throwaway directory so a bare
     ``cli.main`` run never writes into the operator's
     ``~/.config``. Tests that exercise the documented default-path
     resolution relocate it themselves, the way the msksd tests
     do.
     """
-    monkeypatch.setenv("MSKS_CONFIG_DIR", str(client_config_root))
+    monkeypatch.setenv("MSKSC_CONFIG_DIR", str(client_config_root))
 
 
 @pytest.fixture(scope="session")
