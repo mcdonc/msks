@@ -56,7 +56,6 @@ from .consent_app import (
     ConsentDeciderApp,
     ModeScreen,
     OneFlight,
-    dest_line,
     duration_label,
     ensure_focus,
     flash_safe,
@@ -180,15 +179,20 @@ def row_line(row: dict) -> str:
     return escape(padded_cells(cells)).rstrip()
 
 
-def header_line(row: dict) -> str:
+def header_line(row: dict, pending: int = 0) -> str:
     """The workspace page's header: label, immutable id, status,
-    image, host."""
+    image, host — and, while holds wait on the page's queue, the
+    pending-egress count (#354): the segment leaves with the last
+    hold."""
     image = (row.get("image_hash") or "-")[:12]
     host = row.get("host") or "-"
-    return (
+    line = (
         f" {escape(workspace_label(row))} ({row['id']})  ·  {row['status']}"
         f"  ·  image {image}  ·  host {host}"
     )
+    if pending:
+        line += f"  ·  egress to decide: {pending}"
+    return line
 
 
 def grant_text(rule, remaining: float | None) -> str:
@@ -233,15 +237,6 @@ def consent_line(link, row: dict) -> str:
     if link.state != CONNECTED:
         line += f" · {link.state}"
     return line
-
-
-def pending_line(controller, request) -> str:
-    """One held request's entry on the page: the queue row's text
-    with the call to decide it."""
-    return (
-        f"pending: {dest_line(request, controller.remaining(request))}"
-        "  — Enter decides"
-    )
 
 
 def created_note(row: dict, path) -> str:
@@ -445,7 +440,6 @@ class MsksTuiApp(App):
     #header { padding: 0 1; background: $panel; }
     #consent { padding: 0 1; color: $text-muted; }
     #actions ListItem { height: 1; }
-    #actions ListItem.pending { color: $warning; text-style: bold; }
     CreateScreen { align: center middle; }
     #form { width: 64; height: auto; background: $panel;
             border: round $primary; padding: 1 2; }
@@ -756,8 +750,7 @@ class MainScreen(Screen):
         self.app.exit()
 
 
-#: The workspace page's fixed actions (#309), top to bottom below
-#: the pending holds.
+#: The workspace page's fixed actions (#309), top to bottom.
 PAGE_ACTIONS = (
     (ACTION_SHELL_WINDOW, "Open a shell (new terminal)"),
     (FLOW_CONSENT, "Egress consent — the decider screen"),
@@ -770,9 +763,10 @@ PAGE_ACTIONS = (
 
 class WorkspaceScreen(Screen):
     """One workspace's page (#309): the consent status line, the
-    pending holds highlighted above the actions (Enter on one opens
-    the consent app), and the page's actions — a shell in a new
-    window (#341), the consent app, the egress-mode switch (#344),
+    header's pending-egress indicator (#354 — the holds waiting on
+    the page's queue, counted; the segment leaves with the last
+    hold), and the page's actions — a shell in a new window
+    (#341), the consent decider, the egress-mode switch (#344),
     start, stop, and the LLM token remint."""
 
     BINDINGS = [
@@ -842,21 +836,31 @@ class WorkspaceScreen(Screen):
             self.link.stop()
 
     def tick(self) -> None:
-        """The per-second repaint: the consent line's countdowns,
-        and a pending-set change rebuilds the action rows. A screen
-        going away under the timer leaves the queries empty —
-        teardown noise, not a crash."""
+        """The per-second repaint: the consent line's countdowns
+        and the header's pending-egress count. A screen going away
+        under the timer leaves the queries empty — teardown noise,
+        not a crash."""
         try:
             self.paint_consent()
+            self.paint_header()
             self.sync_actions()
         except NoMatches:
             pass
 
     # -- the header and the consent line -------------------------------------
 
+    def pending_count(self) -> int:
+        """The holds waiting on the page's queue — the header's
+        indicator count; a bare page (no link yet) counts none."""
+        if self.link is None:
+            return 0
+        return len(self.link.controller.ordered())
+
     def paint_header(self) -> None:
         try:
-            self.query_one("#header", Static).update(header_line(self.row))
+            self.query_one("#header", Static).update(
+                header_line(self.row, self.pending_count())
+            )
         except NoMatches:
             pass  # teardown unmounted the header under the worker
 
@@ -917,20 +921,6 @@ class WorkspaceScreen(Screen):
         except NoMatches:
             return None
 
-    def pending_items(self) -> list[ListItem]:
-        """The pending holds' entries — the highlighted rows at the
-        top of the page (#309)."""
-        items = []
-        for request in self.link.controller.ordered():
-            item = ListItem(
-                Static(pending_line(self.link.controller, request))
-            )
-            item.request_id = request.id
-            item.page_key = ("pending", request.id)
-            item.add_class("pending")
-            items.append(item)
-        return items
-
     def fixed_items(self) -> list[ListItem]:
         """The page's actions, each tagged with its kind."""
         items = []
@@ -947,8 +937,7 @@ class WorkspaceScreen(Screen):
         the consent queue's rebuild rule, carried to the page."""
         old = self.actions_widget()
         focused = focused_attr(old, "page_key")
-        items = self.pending_items() + self.fixed_items()
-        fresh = ListView(*items, id="actions")
+        fresh = ListView(*self.fixed_items(), id="actions")
         if old is not None:
             await old.remove()  # frees the id before the fresh list mounts
         await self.query_one("#page", Vertical).mount(fresh)
@@ -956,46 +945,17 @@ class WorkspaceScreen(Screen):
         focus_attr(fresh, "page_key", focused)
 
     def sync_actions(self) -> None:
-        """Same-set ticks repaint the pending countdowns in place;
-        a membership change (a hold resolved, a new one arrived)
-        rebuilds the list — the consent queue's rule, verbatim."""
-        rows = self.actions_widget()
-        if rows is None or self.link is None:
+        """The list carries only the fixed actions — a tick has no
+        countdowns to repaint and no membership to watch; a list
+        gone missing (a swap window, a teardown race) rebuilds
+        itself."""
+        if self.actions_widget() is None:
             self.rebuilds.request()
-            return
-        pending = self.link.controller.ordered()
-        if self.pending_ids(rows) != {r.id for r in pending}:
-            self.rebuilds.request()
-            return
-        self.repaint_pending(rows, pending)
-
-    def pending_ids(self, rows: ListView) -> set:
-        """The ids of the pending rows currently in the list."""
-        return {
-            child.request_id
-            for child in rows.children
-            if getattr(child, "request_id", None) is not None
-        }
-
-    def repaint_pending(self, rows: ListView, pending: list) -> None:
-        """Repaint each pending row's countdown in place."""
-        by_id = {
-            child.request_id: child
-            for child in rows.children
-            if getattr(child, "request_id", None) is not None
-        }
-        for request in pending:
-            item = by_id.get(request.id)
-            if item is not None:
-                item.query_one(Static).update(
-                    pending_line(self.link.controller, request)
-                )
 
     # -- the actions ---------------------------------------------------
 
     async def action_run(self) -> None:
-        """Enter: the focused row — a pending hold opens the
-        consent app, a page action runs."""
+        """Enter: the focused row's page action runs."""
         kind = self.focused_action()
         if kind is None:
             return
@@ -1010,15 +970,12 @@ class WorkspaceScreen(Screen):
         self.run_worker(self.action_run, exclusive=True)
 
     def focused_action(self) -> str | None:
-        """The focused row's kind: a pending hold counts as the
-        consent flow; an untagged row (or a swap window) is
-        None."""
+        """The focused row's kind; an untagged row (or a swap
+        window) is None."""
         rows = self.actions_widget()
         child = rows.highlighted_child if rows is not None else None
         if child is None:
             return None
-        if getattr(child, "request_id", None) is not None:
-            return FLOW_CONSENT
         return getattr(child, "page_action", None)
 
     async def run_page_action(self, kind: str) -> None:

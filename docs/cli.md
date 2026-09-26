@@ -248,13 +248,14 @@ refresh, and Enter opens the workspace's page).
 
 The **workspace page** carries the per-workspace loop: a status
 line for egress consent (the mode, the granted scope with its
-expiry, or "no active consent"), the pending holds highlighted at
-the top — Enter on one opens the consent decider — and the
-page's actions: a shell in a new terminal window, egress
-consent, a live egress-mode switch, start, stop, and remint the
-workspace's LLM token. A workspace in `interactive`
-mode holds new flows while the page is open: the page registers
-as the workspace's decider, so holds land on it.
+expiry, or "no active consent"), the pending holds counted in
+the header (`egress to decide: N` while any wait, refreshed
+each second) — and the page's actions: a shell in a new
+terminal window, egress consent, a live egress-mode switch,
+start, stop, and remint the workspace's LLM token. A workspace
+in `interactive` mode holds new flows while the page is open:
+the page registers as the workspace's decider, so holds land
+on it.
 
 The page's **Switch the egress mode** action (#344) opens the
 consent decider's mode picker (`allow` / `static` /
