@@ -54,6 +54,7 @@ from textual.widgets import (
 from ..config import DEFAULT_TERMINAL_CMD, ClientConfig
 from ..console import run_workspace_shell
 from ..create import invoking_user
+from ..resize import resize_message
 from ..rest import env_token, env_url
 from .consent_ui import (
     DURATION_DEFAULT,
@@ -633,7 +634,7 @@ class MsksTuiApp(App):
                    text-overflow: ellipsis; }
     #consent { padding: 0 1; color: $text-muted; }
     #actions ListItem { height: 1; }
-    CreateScreen { align: center middle; }
+    WorkspaceForm { align: center middle; }
     #form { width: 64; height: auto; background: $panel;
             border: round $primary; padding: 1 2; }
     #form-note { color: $text-muted; margin-bottom: 1; }
@@ -967,6 +968,7 @@ PAGE_ACTIONS = (
     (ACTION_SHELL_WINDOW, "Open a shell (new terminal)"),
     (ACTION_CONSENT, "Egress consent — decide holds, review rules and events"),
     (ACTION_EGRESS_MODE, "Switch the egress mode"),
+    ("edit", "Edit settings — sizes and topology"),
     ("start", "Start"),
     ("stop", "Stop"),
 )
@@ -1312,6 +1314,7 @@ class WorkspaceScreen(Screen):
         handler = {
             ACTION_SHELL_WINDOW: self.open_shell_window,
             ACTION_EGRESS_MODE: self.pick_egress_mode,
+            "edit": self.edit_workspace,
             "start": self.start_workspace,
             "stop": self.stop_workspace,
         }[kind]
@@ -1366,6 +1369,32 @@ class WorkspaceScreen(Screen):
             self.flash(
                 flash_safe(f"{workspace_label(self.row)} {reply['status']}")
             )
+
+    # -- the edit dialog (#331) ---------------------------------------
+
+    async def edit_workspace(self) -> None:
+        """Push the edit dialog over the page (#331): the create
+        form's own implementation, seeded from this workspace's row
+        — the sizes editable, the create-time fields read-only."""
+        self.app.push_screen(EditScreen(self.row, self.edited))
+
+    async def edited(self, body: dict | None) -> None:
+        """The edit dialog's callback: a body resizes this workspace
+        (the daemon owns the stopped-workspace rule — a refusal
+        names itself on the page's consent line), a cancel decides
+        nothing."""
+        if body is None:
+            return
+        reply = await self.guarded_page_flash(
+            "edit", self.app.data.resize(self.row["id"], body)
+        )
+        if reply is None:
+            return
+        for field in ("root_mib", "home_mib", "cpus", "mem_mib"):
+            if field in reply:
+                self.row[field] = reply[field]
+        self.paint_header()
+        self.flash(flash_safe(resize_message(reply, body)))
 
     # -- the egress-mode switch (#344) ---------------------------------
 
@@ -1812,6 +1841,59 @@ FORM_FIELDS = (
 #: The fields whose values must be whole numbers.
 INT_FIELDS = frozenset({"cpus", "mem_mib", "root_mib", "home_mib"})
 
+#: The fields an edit cannot move (#331): name, image, and user
+#: are create-time — the daemon answers a mutation with its named
+#: 405, and the seed planted them at first boot — so the edit
+#: dialog shows them read-only and a value that moved stays home
+#: with the note naming it, never silently dropped. The sizes are
+#: the editable half: they move through the resize route, which
+#: owns the stopped-workspace rule.
+CREATE_TIME_FIELDS = frozenset({"name", "image", "user"})
+
+
+#: The row keys the edit dialog's fields seed from (#331), in
+#: form-field order — the sizes and topology read the row's own
+#: facts, the image reads its hash, the user reads the login user
+#: (blank on a row created before per-workspace users).
+EDIT_ROW_KEYS = {
+    "name": "name",
+    "image": "image_hash",
+    "cpus": "cpus",
+    "mem_mib": "mem_mib",
+    "root_mib": "root_mib",
+    "home_mib": "home_mib",
+    "user": "login_user",
+}
+
+
+def edit_seeds(row: dict) -> dict[str, str]:
+    """The edit dialog's seeded values (#331): every form field's
+    current value read off the workspace's row, as the field's
+    own text — the sizes and topology as their numbers, a row
+    that predates a field seeding it blank."""
+    seeds: dict[str, str] = {}
+    for field, key in EDIT_ROW_KEYS.items():
+        value = row.get(key)
+        seeds[field] = "" if value is None else str(value)
+    return seeds
+
+
+def edit_note(row: dict) -> str:
+    """The edit dialog's note (#331): the title, then the rule the
+    issue pins — which fields land live (home bytes move at
+    once), which wait for a stop/start cycle (the resize needs
+    the workspace stopped; root growth and the new topology
+    apply at the next boot), and which cannot change (the
+    create-time fields, marked * on their labels). The explicit
+    line breaks keep the form fitting 80x24 terminals whatever
+    the workspace's name carries."""
+    label = clip(workspace_label(row), 40)
+    return (
+        f"edit {label}\n"
+        "stop the workspace to resize · home bytes move at once ·\n"
+        "root growth and topology at next boot · * = create-time"
+    )
+
 
 def whole_number(value: str) -> bool:
     """Whether a form value is a whole number (the sizes and counts
@@ -1875,15 +1957,23 @@ class ImageSelect(Select):
         self.app.action_focus_previous()
 
 
-class CreateScreen(ModalScreen[dict | None]):
-    """The create form (#309): one label-plus-input row per field,
-    in walk order, Enter and the arrows moving between them; the
-    buttons submit and cancel. The form stands 80x24 terminals
-    tall — every control, the buttons included, must stay on
-    screen. The submitted body goes to the callback given at
-    construction (the main screen owns the exchange and its
-    flashes); local checks refuse here so the daemon only sees
-    whole bodies."""
+class WorkspaceForm(ModalScreen[dict | None]):
+    """The workspace form (#309 create, #331 edit): one
+    label-plus-input row per field, in walk order, Enter and the
+    arrows moving between them; the buttons submit and cancel.
+    The form stands 80x24 terminals tall — every control, the
+    buttons included, must stay on screen. The submitted body goes
+    to the callback given at construction (the pushing screen owns
+    the exchange and its flashes); local checks refuse here so the
+    daemon only sees whole bodies.
+
+    One implementation serves both surfaces: the create subclass
+    (:class:`CreateScreen`) leaves every field open and submits
+    the filled body; the edit subclass (:class:`EditScreen`)
+    seeds every field from the workspace's row, marks the
+    create-time fields read-only, and submits the changed sizes as
+    a resize body (#331).
+    """
 
     BINDINGS = [
         Binding("up", "walk_previous", show=False),
@@ -1906,32 +1996,80 @@ class CreateScreen(ModalScreen[dict | None]):
         super().__init__()
         self.submitted = submitted
 
+    # -- the mode's hooks ------------------------------------------
+
+    def form_note(self) -> str:
+        """The note line's standing text: the form's title, or the
+        rule the mode carries."""
+        raise NotImplementedError  # pragma: no cover — abstract hook
+
+    def field_label(self, field: str, label: str) -> str:
+        """One field's label; an edit marks its create-time fields
+        with the note's * legend."""
+        return label
+
+    def image_control(self, hint: str):
+        """The image field's control."""
+        return ImageSelect([], prompt=hint, id="field-image", compact=True)
+
+    def editable(self, field: str) -> bool:
+        """Whether the operator can change the field here (an edit
+        locks its create-time fields read-only)."""
+        return True
+
+    def image_value(self) -> str:
+        """The image field's value — blank is the daemon's default
+        image."""
+        select = self.query_one("#field-image", Select)
+        return "" if select.is_blank() else str(select.value)
+
+    def first_field(self) -> str:
+        """The field the walk starts from."""
+        return "name"
+
+    def form_mounted(self) -> None:
+        """The mode's mount work, after the shared focus."""
+
+    def submit_id(self) -> str:
+        """The submit button's id."""
+        return "do-create"
+
+    def submit_label(self) -> str:
+        """The submit button's label."""
+        return "Create"
+
+    def body(self) -> dict | None:
+        """The submitted body; None (with the note naming the
+        refusal) keeps the form standing."""
+        raise NotImplementedError  # pragma: no cover — abstract hook
+
+    # -- the shared form ---------------------------------------------
+
     def compose(self) -> ComposeResult:
         with Vertical(id="form"):
             yield Static(
-                "create a workspace",
+                self.form_note(),
                 id="form-note",
             )
             for field, label, hint in FORM_FIELDS:
                 with Horizontal(classes="form-row"):
-                    yield Static(label, classes="form-label")
+                    yield Static(
+                        self.field_label(field, label), classes="form-label"
+                    )
                     if field == "image":
-                        yield ImageSelect(
-                            [],
-                            prompt=hint,
-                            id="field-image",
-                            compact=True,
-                        )
+                        yield self.image_control(hint)
                     else:
-                        yield Input(
+                        control = Input(
                             placeholder=hint,
                             id=f"field-{field}",
                             compact=True,
                         )
+                        control.disabled = not self.editable(field)
+                        yield control
             with Horizontal(id="form-buttons"):
                 yield Button(
-                    "Create",
-                    id="do-create",
+                    self.submit_label(),
+                    id=self.submit_id(),
                     variant="primary",
                     compact=True,
                 )
@@ -1939,7 +2077,84 @@ class CreateScreen(ModalScreen[dict | None]):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.query_one("#field-name", Input).focus()
+        self.query_one(f"#field-{self.first_field()}", Input).focus()
+        self.form_mounted()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Enter in a field moves the walk to the next control (the
+        buttons included — the arrows make the same walk; the
+        action is the app's, the screen hosts the binding)."""
+        self.app.action_focus_next()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == self.submit_id():
+            self.submit()
+        else:
+            self.dismiss_with(None)
+
+    def action_cancel(self) -> None:
+        self.dismiss_with(None)
+
+    def note(self, text: str) -> None:
+        """The form's note line: its title, or the local
+        refusal that keeps a half-filled body home."""
+        self.query_one("#form-note", Static).update(text)
+
+    def field_value(self, field: str) -> str:
+        """One field's value, stripped — the image select's blank
+        (no pick) stays the daemon's default image."""
+        if field == "image":
+            return self.image_value()
+        return self.query_one(f"#field-{field}", Input).value.strip()
+
+    def land_value(self, field: str, value: str, body: dict) -> bool:
+        """One filled value into the body; False (with the note
+        naming it) on a local refusal. Blank stays unset."""
+        if not value:
+            return True
+        if field in INT_FIELDS and not whole_number(value):
+            self.note(f"{field}: a whole number, or leave it blank")
+            return False
+        body[field] = int(value) if field in INT_FIELDS else value
+        return True
+
+    def submit(self) -> None:
+        """Hand the body to the callback, or keep the form on a
+        local refusal."""
+        body = self.body()
+        if body is not None:
+            self.dismiss_with(body)
+
+    def dismiss_with(self, body: dict | None) -> None:
+        """Dismiss and hand the body to the callback (async — the
+        exchange runs as a task, so the modal closes without
+        waiting on it)."""
+        self.dismiss()
+        # Referenced: an unreferenced task can be collected mid-await.
+        self._task = asyncio.create_task(self.submitted(body))
+
+
+class CreateScreen(WorkspaceForm):
+    """The create form (#309): every field open, blank fields left
+    to the daemon's defaults, the image picked from the catalog."""
+
+    def form_note(self) -> str:
+        return "create a workspace"
+
+    def body(self) -> dict | None:
+        """The create body: only the fields the operator filled
+        (blank stays the daemon's default), whole numbers checked
+        locally — the daemon's validation stays the authority."""
+        body: dict = {}
+        for field, _label, _hint in FORM_FIELDS:
+            if not self.land_value(field, self.field_value(field), body):
+                return None
+        if "name" not in body:
+            self.note("a workspace name is required")
+            return None
+        return body
+
+    def form_mounted(self) -> None:
         self.query_one("#field-user", Input).placeholder = invoking_user()
         self.run_worker(self.load_hints, exclusive=True)
 
@@ -1971,71 +2186,105 @@ class CreateScreen(ModalScreen[dict | None]):
                 f"#field-{field}", Input
             ).placeholder = f"MiB — {defaults[field]}"
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Enter in a field moves the walk to the next control (the
-        buttons included — the arrows make the same walk; the
-        action is the app's, the screen hosts the binding)."""
-        self.app.action_focus_next()
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "do-create":
-            self.submit()
-        else:
-            self.dismiss_with(None)
+class EditScreen(WorkspaceForm):
+    """The edit dialog (#331): the create form's layout seeded from
+    the workspace's row. The sizes are editable — they submit as a
+    resize body through the route that owns the stopped-workspace
+    rule — and the create-time fields (name, image, user) are
+    marked * and read-only: a value that moved is refused with the
+    note naming it, never silently dropped. The walk skips the
+    read-only rows (a disabled control cannot hold focus), so the
+    arrows move between the sizes and the buttons alone."""
 
-    def action_cancel(self) -> None:
-        self.dismiss_with(None)
+    def __init__(self, row: dict, submitted) -> None:
+        self.row = row
+        self.seeded = edit_seeds(row)
+        super().__init__(submitted)
 
-    def note(self, text: str) -> None:
-        """The form's note line: its title, or the local
-        refusal that keeps a half-filled body home."""
-        self.query_one("#form-note", Static).update(text)
+    def form_note(self) -> str:
+        return edit_note(self.row)
 
-    def field_value(self, field: str) -> str:
-        """One field's value, stripped — the image select's blank
-        (no pick) stays the daemon's default image."""
-        if field == "image":
-            select = self.query_one("#field-image", Select)
-            return "" if select.is_blank() else str(select.value)
-        return self.query_one(f"#field-{field}", Input).value.strip()
+    def field_label(self, field: str, label: str) -> str:
+        if field in CREATE_TIME_FIELDS:
+            return f"{label} *"
+        return label
+
+    def image_control(self, hint: str):
+        """The image field as a read-only line: the row's image
+        hash, not a catalog pick — the create-time image cannot
+        move, so the select that would offer a new one stays out."""
+        control = Input(placeholder=hint, id="field-image", compact=True)
+        control.value = self.seeded["image"]
+        control.disabled = True
+        return control
+
+    def editable(self, field: str) -> bool:
+        return field not in CREATE_TIME_FIELDS
+
+    def image_value(self) -> str:
+        return self.query_one("#field-image", Input).value.strip()
+
+    def first_field(self) -> str:
+        return "cpus"
+
+    def submit_id(self) -> str:
+        return "do-apply"
+
+    def submit_label(self) -> str:
+        return "Apply"
+
+    def form_mounted(self) -> None:
+        """Seed every plain field with the workspace's current
+        values — the prefill the issue pins (the image seeds in
+        its own read-only control)."""
+        for field, _label, _hint in FORM_FIELDS:
+            if field != "image":
+                self.query_one(f"#field-{field}", Input).value = self.seeded[
+                    field
+                ]
 
     def body(self) -> dict | None:
-        """The create body: only the fields the operator filled
-        (blank stays the daemon's default), whole numbers checked
-        locally — the daemon's validation stays the authority."""
+        """The resize body: the changed sizes alone. A create-time
+        field that moved (a programmatic set — the dialog's own
+        fields are read-only) stays home with the note naming it,
+        and a body with nothing changed stays home too: the
+        daemon's nothing-to-resize refusal, said locally where the
+        operator can still edit."""
+        moved = self.refused_create_time()
+        if moved is not None:
+            self.note(
+                f"{moved} is create-time — delete and recreate the "
+                "workspace to change it"
+            )
+            return None
         body: dict = {}
-        for field, _label, _hint in FORM_FIELDS:
-            if not self.land_field(field, body):
-                return None
-        if "name" not in body:
-            self.note("a workspace name is required")
+        if not self.changed_sizes(body):
+            return None
+        if not body:
+            self.note("nothing to resize — change a size, or cancel")
             return None
         return body
 
-    def land_field(self, field: str, body: dict) -> bool:
-        """One filled field into the body; False (with the note
-        naming it) on a local refusal. Blank stays the daemon's
-        default."""
-        value = self.field_value(field)
-        if not value:
-            return True
-        if field in INT_FIELDS and not whole_number(value):
-            self.note(f"{field}: a whole number, or leave it blank")
-            return False
-        body[field] = int(value) if field in INT_FIELDS else value
+    def refused_create_time(self) -> str | None:
+        """The first create-time field whose value moved, else None
+        — the dialog's own fields are read-only, so a move is a
+        programmatic set, and the submit refuses it by name."""
+        for field in sorted(CREATE_TIME_FIELDS):
+            if self.field_value(field) != self.seeded[field]:
+                return field
+        return None
+
+    def changed_sizes(self, body: dict) -> bool:
+        """Land the changed sizes into ``body``; False (with the
+        note naming the refusal) on a junk value. A field left at
+        its seeded value rides nothing — the resize moves only
+        what the operator changed."""
+        for field, _label, _hint in FORM_FIELDS:
+            if field in CREATE_TIME_FIELDS:
+                continue
+            value = self.field_value(field)
+            if value != self.seeded[field]:
+                if not self.land_value(field, value, body):
+                    return False
         return True
-
-    def submit(self) -> None:
-        """Hand the body to the callback, or keep the form on a
-        local refusal."""
-        body = self.body()
-        if body is not None:
-            self.dismiss_with(body)
-
-    def dismiss_with(self, body: dict | None) -> None:
-        """Dismiss and hand the body to the callback (async — the
-        create runs as a task, so the modal closes without waiting
-        on it)."""
-        self.dismiss()
-        # Referenced: an unreferenced task can be collected mid-await.
-        self._task = asyncio.create_task(self.submitted(body))

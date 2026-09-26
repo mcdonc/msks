@@ -80,6 +80,21 @@ class TuiData:
             key_type=TUI_KEY_TYPE,
         )
 
+    async def resize(self, workspace_id: str, body: dict) -> dict:
+        """POST the resize — the edit dialog's sizes and topology
+        (#331), the same exchange ``msks resize`` makes. The daemon
+        owns the stopped-workspace rule: a workspace that is not
+        stopped answers the named 409, which the page flashes."""
+        return await api_call(
+            "POST",
+            env_url(),
+            env_token(),
+            f"/api/v1/workspaces/{workspace_id}/resize",
+            transport=self.transport,
+            ssl_ctx=shared_ssl(),
+            json_body=body,
+        )
+
     async def start(self, workspace_id: str) -> dict:
         """POST the boot — the same call ``msks start`` makes."""
         return await api_call(
