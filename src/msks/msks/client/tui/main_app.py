@@ -33,6 +33,7 @@ from rich.markup import escape
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.content import Content, Span
 from textual.css.query import NoMatches
 from textual.screen import ModalScreen, Screen
 from textual.widgets import (
@@ -162,22 +163,90 @@ def padded_cells(cells: tuple[str, ...]) -> str:
     )
 
 
-def row_line(row: dict) -> str:
-    """One listing row (#347): label, status, egress mode, image,
-    created — each field clipped to its column's width and padded
-    to it, so every column starts at the same offset in every row
-    whatever the daemon's vocabulary grows (a terminal narrower
-    than the columns clips the row's tail). The padding rides the
-    raw text and the escape comes after it: a markup-carrying
-    name cannot shift the columns."""
-    cells = (
+#: The running status's color (#348) and the color every
+#: other unmapped state renders in — a state the map does not
+#: know takes the warning color, so a vocabulary the daemon
+#: grows still stands out.
+RUNNING_COLOR = "$success"
+
+#: The color every status outside the map's two entries renders
+#: in.
+OTHER_STATUS_COLOR = "$warning"
+
+#: The muted ratio a theme spells some other way than Textual's
+#: own "auto 60%" falls back to.
+DEFAULT_MUTED_RATIO = "60%"
+
+
+def muted_style(theme_variables: dict) -> str:
+    """The stopped status's color (#348): the theme's text
+    variable at the theme's own muted ratio — "$text-muted"
+    itself is a widget-css color ("auto 60%"), and a content
+    span parses its style as a rich style, where the auto half
+    does not resolve; riding ``$text`` at the same ratio renders
+    near the same muted text, within a few color values (the
+    auto base composes slightly differently in a span than in
+    widget css). A theme that spells its muted color without a
+    ratio rides the 60% Textual's own themes use."""
+    parts = theme_variables.get("text-muted", "").split()
+    ratio = (
+        parts[1]
+        if len(parts) == 2 and parts[1].endswith("%")
+        else DEFAULT_MUTED_RATIO
+    )
+    return f"$text {ratio}"
+
+
+def status_color(status: str, theme_variables: dict | None = None) -> str:
+    """The status column's color (#348): a theme variable the
+    render resolves against the active theme — running in the
+    success color, stopped in muted text at the theme's own
+    ratio, any other state in the warning color."""
+    if status == "running":
+        return RUNNING_COLOR
+    if status == "stopped":
+        return muted_style(theme_variables or {})
+    return OTHER_STATUS_COLOR
+
+
+def status_class(status: str) -> str:
+    """The class a row's status becomes (#348): the status itself
+    when it reads as one ASCII CSS word (Textual's class names
+    are ASCII — a wider word would raise), else ``other``."""
+    return status if status.isidentifier() and status.isascii() else "other"
+
+
+def row_cells(row: dict) -> tuple[str, ...]:
+    """The row's column cells (#347), each clipped to its
+    column's width whatever the daemon's vocabulary grows."""
+    return (
         clip(workspace_label(row), NAME_W),
         clip(row["status"], STATUS_W),
         clip(row.get("egress_mode") or "-", EGRESS_W),
         clip(row.get("image_hash") or "-", IMAGE_W),
         clip((row.get("created_at") or "")[:CREATED_W] or "-", CREATED_W),
     )
-    return escape(padded_cells(cells)).rstrip()
+
+
+def row_content(row: dict, theme_variables: dict | None = None) -> Content:
+    """One listing row (#348): the padded cells with the status
+    cell alone carrying its state's color. The span's style is a
+    theme variable the render resolves against the active theme
+    (the muted ratio reads the theme's own); the cells ride a
+    Content's plain text — never parsed as markup — so a
+    markup-carrying name cannot shift the columns (the name
+    cell's own length fixes the span's offset: a wide-character
+    name pads with fewer characters than its display width)."""
+    cells = row_cells(row)
+    name, status, *_ = cells
+    line = padded_cells(cells).rstrip()
+    offset = len(cell_pad(name, NAME_W)) + len(COLUMN_GAP)
+    span = Span(
+        offset,
+        offset + len(status),
+        status_color(row["status"], theme_variables),
+    )
+    return Content(line, [span])
 
 
 def header_line(row: dict) -> str:
@@ -615,9 +684,11 @@ class MainScreen(Screen):
         self.sync_status()
 
     def row_item(self, row: dict) -> ListItem:
-        """One listing row, tagged with the workspace's id."""
-        item = ListItem(Static(row_line(row)))
+        """One listing row, tagged with the workspace's id and a
+        class from its status (#348)."""
+        item = ListItem(Static(row_content(row, self.app.theme_variables)))
         item.workspace_id = row["id"]
+        item.add_class(status_class(row["status"]))
         return item
 
     def rows_widget(self) -> ListView | None:

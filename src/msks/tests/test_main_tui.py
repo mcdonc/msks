@@ -40,6 +40,7 @@ from test_consent_tui import (
     rules_frame as shared_rules_frame,
 )
 from test_consent_tui_app import FakeFactory, FakeWS, press_until, wait_for
+from textual.color import Color
 from textual.css.query import NoMatches
 from textual.widgets import Button, Input, OptionList, Select, Static
 
@@ -1134,10 +1135,10 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
 def test_the_line_helpers() -> None:
     assert main_app.workspace_label(row()) == "alpha"
     assert main_app.workspace_label(row(name=None)) == WS
-    listing = main_app.row_line(row())
-    assert "alpha" in listing
-    assert "stopped" in listing
-    assert "interactive" in listing
+    listing = main_app.row_content(row())
+    assert "alpha" in listing.plain
+    assert "stopped" in listing.plain
+    assert "interactive" in listing.plain
     head = main_app.header_line(row())
     assert WS in head and "host-1" in head
     assert main_app.created_note(row(id="x"), None) == "created alpha (id x)"
@@ -1153,10 +1154,12 @@ def test_the_listing_columns_line_up() -> None:
     wide-character name cannot shift the columns either. The
     status and egress cells clip to their columns too, so a
     vocabulary the daemon grows cannot misalign a row."""
-    short = main_app.row_line(row(name="ab"))
-    long_name = main_app.row_line(row(name="n" * 40))
-    wide = main_app.row_line(row(name="北" * 16))
-    long_status = main_app.row_line(row(name="ab", status="provisioning"))
+    short = main_app.row_content(row(name="ab")).plain
+    long_name = main_app.row_content(row(name="n" * 40)).plain
+    wide = main_app.row_content(row(name="北" * 16)).plain
+    long_status = main_app.row_content(
+        row(name="ab", status="provisioning")
+    ).plain
     header = main_app.list_header()
     for label, cell in (
         ("STATUS", "stopped"),
@@ -1207,6 +1210,138 @@ async def test_the_listing_header_row_shows_with_rows() -> None:
         await pilot.press("r")
         await wait_for(lambda: list_children(app) == 0)
         assert not columns.display
+
+
+async def test_the_status_column_carries_its_states_color() -> None:
+    """#348: the status cell alone carries a color — running in
+    the theme's success color, stopped in muted text, any other
+    state in the warning color — while the name, egress, image,
+    and date keep the default foreground. The colors are theme
+    variables the render resolves against the active theme, and
+    each row carries its status as a class."""
+    data = FakeData(
+        [
+            row(status="stopped"),
+            row(id="ws-new", name="gamma", status="created"),
+            row(id="ws-run", name="beta", status="running"),
+        ]
+    )
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: list_children(app) == 3)
+        rows = app.query_one("#rows")
+
+        def row_static(item):
+            """The row's inner Static, or None while it is still
+            mounting (the compose stream lags the row count)."""
+            try:
+                return item.query_one(Static)
+            except NoMatches:
+                return None
+
+        def row_segments(item):
+            """The row's rendered segments, or None before the
+            first render."""
+            static = row_static(item)
+            if static is None:
+                return None
+            segs = [s for s in static.render_line(0) if s.text.strip()]
+            return segs or None
+
+        await wait_for(
+            lambda: all(row_segments(item) for item in rows.children)
+        )
+        # The highlight composes its own color over the row it
+        # sits on, so the exact theme-color checks ride the two
+        # unfocused rows: walk the highlight to the last one.
+        await pilot.press("down", "down")
+        await wait_for(
+            lambda: (
+                "-highlight" in rows.children[2].classes
+                and "-highlight" not in rows.children[0].classes
+            )
+        )
+        muted = main_app.muted_style(app.theme_variables)
+        for item, name, style, status in zip(
+            rows.children,
+            ("alpha", "gamma", "beta"),
+            (muted, "$warning", "$success"),
+            ("stopped", "created", "running"),
+            strict=True,
+        ):
+            static = row_static(item)
+            content = static.content
+            (span,) = content.spans
+            # The span covers the status cell alone, and the row's
+            # class is the status itself.
+            assert content.plain[span.start : span.end] == status
+            assert span.style == style
+            assert status in item.classes
+            # The rendered segments carry the acceptance colors:
+            # the status takes its state's theme color while the
+            # name and the date share the row's default
+            # foreground — the same color both plain columns
+            # share, whatever the highlight does to the row. The
+            # muted entry rides the theme's own ratio (see its
+            # branch below for how the rendered color is pinned).
+            segs = row_segments(item)
+
+            def segment(text):
+                return next(s for s in segs if text in s.text)
+
+            rendered = tuple(segment(status).style.color.triplet)
+            name_color = tuple(segment(name).style.color.triplet)
+            date_color = tuple(segment("2026-01-02").style.color.triplet)
+            if status == "running":
+                # The focused row composes the highlight over the
+                # span, so its status stands out from its own
+                # name without matching the raw theme color.
+                assert rendered != name_color
+            elif status == "created":
+                assert (
+                    rendered == Color.parse(app.theme_variables["warning"]).rgb
+                )
+            else:
+                # Muted text: dimmer than the row's own default
+                # foreground (the muted color rides the theme's
+                # ratio through the span style above — the auto
+                # base of "$text-muted" composes a few values
+                # differently in a span than in widget css, so the
+                # rendered muted color is pinned by luminance,
+                # not by equality with the header's color).
+                assert sum(rendered) < sum(name_color)
+                assert rendered != name_color
+            assert date_color == name_color
+
+
+def test_a_status_outside_the_map_still_names_itself() -> None:
+    """#348: a state the map does not know takes the warning
+    color, and a status that does not read as one ASCII CSS word
+    names the row ``other`` (Textual's class names are ASCII — a
+    wider word would raise, so the guard hands it the bucket
+    class instead)."""
+    assert main_app.status_color("paused") == "$warning"
+    assert main_app.status_color("running") == "$success"
+    assert (
+        main_app.status_color("stopped", {"text-muted": "auto 40%"})
+        == "$text 40%"
+    )
+    assert main_app.status_class("paused") == "paused"
+    assert main_app.status_class("not running") == "other"
+    assert main_app.status_class("") == "other"
+    assert main_app.status_class("статус") == "other"
+    assert main_app.status_class("状態") == "other"
+
+
+def test_the_muted_style_rides_the_theme_ratio() -> None:
+    """#348: the muted color rides the theme's text variable at
+    the theme's own muted ratio, and falls back to the 60%
+    Textual's own themes use when a theme spells its muted color
+    without a ratio."""
+    assert main_app.muted_style({"text-muted": "auto 60%"}) == "$text 60%"
+    assert main_app.muted_style({"text-muted": "auto 40%"}) == "$text 40%"
+    assert main_app.muted_style({"text-muted": "#888888"}) == "$text 60%"
+    assert main_app.muted_style({}) == "$text 60%"
 
 
 def test_the_flash_line_expires() -> None:
