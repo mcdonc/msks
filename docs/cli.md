@@ -753,9 +753,14 @@ The image the daemon designates as default carries the `default`
 flag; a bare `msks create` resolves to it. The `imported` column
 shows the moment the archive entered the catalog, in local time
 to the minute — an entry re-imported under the same reference
-moves the time forward with it. `--json` prints the listing as
-the API returns it (`GET /api/v1/images`, each row's `imported`
-field in ISO 8601 UTC), stable for scripting.
+moves the time forward with it. A renamed row (#340) adds an
+`origin` column beside the ref, showing the archive's own pair
+where it differs from the registered one; rows the archive's own
+pair names keep the column with a dash. `--json` prints the
+listing as the API returns it (`GET /api/v1/images`, each row's
+`imported` field in ISO 8601 UTC, each row's `origin_name`/
+`origin_version` carrying the manifest pair), stable for
+scripting.
 
 ### `msks image import`
 
@@ -770,7 +775,17 @@ imported debian:13 (9f2c41ab77de)
 
 $ msks image import https://images.example.com/debian-13.tar
 imported debian:13 (9f2c41ab77de)
+
+$ msks image import /srv/images/debian-13.tar --name mine --version 1.0
+imported mine:1.0 (9f2c41ab77de)
 ```
+
+A `--name`/`--version` override (#340) registers the archive
+under an operator-chosen pair — either key alone, the other from
+the archive's own manifest, whose pair stays recorded as the
+row's origin (see `docs/images.md`). The archive bytes and the
+content hash stay exactly as they were; a pair another row
+already holds is refused with a named error.
 
 A URL source is fetched into the catalog's staging area under the
 import ceiling and deadline (`MSKSD_IMAGE_IMPORT_MAX_MIB`,
@@ -781,6 +796,32 @@ once regardless of source. The first image imported into an empty
 catalog also becomes the daemon's default. An archive the daemon
 cannot read, parse, or fetch answers 400 with the reason on one
 line.
+
+### `msks image rename`
+
+Changes a cataloged image's registered name/version (#340) — the
+bytes, the hash, the manifest origin, and workspaces already
+booting the image stay put:
+
+```text
+$ msks image rename debian:13 --name mine --version 1.4
+renamed debian:13 to mine:1.4 (9f2c41ab77de)
+
+$ msks image rename mine:1.4 --version 1.5
+renamed mine:1.4 to mine:1.5 (9f2c41ab77de)
+```
+
+Either key alone keeps the other at its registered value; pass
+at least one. The reference forms are the same as `image rm`'s
+— `name:version`, a bare name (its newest version), `name@hash`,
+a full hash, a unique hash prefix — and the rename goes through
+the daemon (`PATCH /api/v1/images/<hash>`) after resolving the
+reference against the listing. A pair another row already holds
+is refused with the daemon's named error (409), and a pair the
+reference forms cannot carry (`:` or `@` inside a value, or an
+empty one) is refused by name too. After a rename the old
+`name:version` stops resolving; `name@hash` (with the new name)
+and bare-hash references keep booting the same bytes.
 
 ### `msks image check`
 
@@ -831,13 +872,15 @@ only the hash forms still identify one of them.)
 
 ### `msks image info`
 
-Prints one image's full record — reference, hash, kernel facts,
-cmdline, the console's vsock port, and the default designation —
-from the same listing data:
+Prints one image's full record — reference, the archive's own
+pair (the origin, #340), hash, kernel facts, cmdline, the
+console's vsock port, and the default designation — from the same
+listing data:
 
 ```text
 $ msks image info debian:13
-ref      debian:13
+ref      mine:1.4
+origin   debian:13
 hash     9f2c41ab77de0000000000000000000000000000000000000000000000000000
 kernel   6.12.107+deb13 (raw)
 cmdline  console=hvc0 root=/dev/vda rw
