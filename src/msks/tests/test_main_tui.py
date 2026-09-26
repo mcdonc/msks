@@ -511,12 +511,9 @@ async def test_the_size_and_user_placeholders_carry_the_defaults(
         root = screen.query_one("#field-root_mib", Input)
         home = screen.query_one("#field-home_mib", Input)
         await wait_for(lambda: "5120" in root.placeholder)
-        assert root.placeholder == "MiB — default 5120"
-        assert home.placeholder == "MiB — default 1024"
-        assert (
-            screen.query_one("#field-user", Input).placeholder
-            == "default: ops"
-        )
+        assert root.placeholder == "MiB — 5120"
+        assert home.placeholder == "MiB — 1024"
+        assert screen.query_one("#field-user", Input).placeholder == "ops"
 
 
 async def test_a_defaults_refusal_keeps_the_form_standing() -> None:

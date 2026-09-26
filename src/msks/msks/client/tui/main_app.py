@@ -879,7 +879,7 @@ FORM_FIELDS = (
     ("name", "name", "workspace name"),
     ("image", "image ref", "the default image"),
     ("cpus", "vcpus", "default 2"),
-    ("mem_mib", "memory", "MiB — default 8192"),
+    ("mem_mib", "memory", "MiB — 8192"),
     ("root_mib", "root", "MiB"),
     ("home_mib", "home", "MiB"),
     ("user", "user", "the account it seeds"),
@@ -1011,9 +1011,7 @@ class CreateScreen(ModalScreen[dict | None]):
 
     def on_mount(self) -> None:
         self.query_one("#field-name", Input).focus()
-        self.query_one(
-            "#field-user", Input
-        ).placeholder = f"default: {invoking_user()}"
+        self.query_one("#field-user", Input).placeholder = invoking_user()
         self.run_worker(self.load_hints, exclusive=True)
 
     async def load_hints(self) -> None:
@@ -1042,7 +1040,7 @@ class CreateScreen(ModalScreen[dict | None]):
         for field in ("root_mib", "home_mib"):
             self.query_one(
                 f"#field-{field}", Input
-            ).placeholder = f"MiB — default {defaults[field]}"
+            ).placeholder = f"MiB — {defaults[field]}"
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Enter in a field moves the walk to the next control (the
