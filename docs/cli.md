@@ -1058,12 +1058,14 @@ cause (no NIC, not running, service not listening, still booting) —
 while a clean end of stream (the guest service closed, stdin EOF)
 leaves exit code 0.
 
-The forward authenticates with the `Authorization` header (the same
-Bearer form as the REST surface), not the query string: URLs land in
-proxy and process logs, headers do not. Only egress workspaces have
-a NIC to forward to — a workspace created `--no-egress` is refused
-with the reason naming it. `forward.opened` and `forward.closed`
-events appear on the daemon's events channel for every session.
+The forward authenticates with the websocket handshake's
+`Sec-WebSocket-Protocol` offer (`bearer, <token>` — the same
+mechanism as every other msks websocket, #116): the token never
+lands in a URL, so proxy and process logs hold no credentials. Only
+egress workspaces have a NIC to forward to — a workspace created
+`--no-egress` is refused with the reason naming it. `forward.opened`
+and `forward.closed` events appear on the daemon's events channel
+for every session.
 
 ## `msks egress`
 

@@ -2033,6 +2033,16 @@ def test_the_consent_line_names_a_rejection() -> None:
     assert "unknown workspace" in main_app.consent_line(link, row())
 
 
+def test_the_consent_line_names_an_unusable_token() -> None:
+    # The unusable-token state carries its reason to the screen
+    # (#116 review): the operator sees where to look, not just a
+    # label.
+    link = DeciderLink(WS)
+    link.state = link_mod.UNUSABLE_TOKEN
+    link.reject_reason = "the token cannot ride the websocket handshake"
+    assert "cannot ride" in main_app.consent_line(link, row())
+
+
 def test_the_default_flow_runners(monkeypatch) -> None:
     ran: list[tuple] = []
 

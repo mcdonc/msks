@@ -53,6 +53,26 @@ def test_negative_stall_timeout_rejected(
         Settings.from_env()
 
 
+def test_bootstrap_token_outside_the_grammar_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bootstrap token rides the websocket handshake's protocol
+    offer (#116): a plaintext with spaces or separators would seed a
+    token that fails every websocket authentication, so loading
+    refuses it with one line naming the variable."""
+    monkeypatch.setenv("MSKSD_BOOTSTRAP_TOKEN", "has space")
+    with pytest.raises(ValueError, match="MSKSD_BOOTSTRAP_TOKEN"):
+        Settings.from_env()
+
+
+def test_bootstrap_token_inside_the_grammar_loads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MSKSD_BOOTSTRAP_TOKEN", "urlsafe-TOKEN_42")
+    settings = Settings.from_env()
+    assert settings.server.bootstrap_token == "urlsafe-TOKEN_42"
+
+
 def test_invalid_driver_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MSKSD_VMM_DRIVER", "firecracker")
     with pytest.raises(ValueError, match="MSKSD_VMM_DRIVER"):

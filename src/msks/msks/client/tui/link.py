@@ -15,6 +15,7 @@ import asyncio
 
 import websockets
 
+from ..wsauth import UnusableToken, echoed
 from .consent import REJECTED as FRAME_REJECTED
 from .consent import SECRET_EVENT, ConsentController, SecretEvent
 from .consent_ui import (
@@ -32,6 +33,7 @@ CONNECTED = "connected"
 RECONNECTING = "reconnecting"
 REFUSED = "refused — bad token?"
 REJECTED = "rejected"
+UNUSABLE_TOKEN = "unusable token"
 
 
 class DeciderLink:
@@ -113,13 +115,32 @@ class DeciderLink:
         the registration outright (stop)."""
         try:
             ws = await self._ws_factory().__aenter__()
+        except UnusableToken as exc:
+            # A token the handshake cannot carry never becomes
+            # callable by retrying: the loop ends with the reason on
+            # the state, one message, no token echoed (#116).
+            self.state = UNUSABLE_TOKEN
+            self.reject_reason = str(exc)
+            return False, False, True
         except Exception:
             self.state = RECONNECTING
             return False, False, False
         try:
+            if not echoed(ws):
+                return self.refuse_unechoed()
             return await self.serve(ws)
         finally:
             await close_ws(ws)
+
+    def refuse_unechoed(self) -> tuple[bool, bool, bool]:
+        """The handshake completed without the auth selection
+        (#116): the connection carries no authority. The daemon's
+        4401 refusal reads the same from here — it never selects
+        the subprotocol for a token it does not hold — so both
+        shapes take the slow refused retry, and no frame is ever
+        pumped through the link."""
+        self.state = REFUSED
+        return False, True, False
 
     async def serve(self, ws) -> tuple[bool, bool, bool]:
         """Register, then feed every frame to the controller; a

@@ -2,10 +2,10 @@
 
 import asyncio
 import json
-import urllib.parse
 
 import websockets
 
+from . import wsauth
 from .rest import api_client, env_token, env_url, request, ssl_context
 from .tabular import listing_text
 
@@ -16,15 +16,16 @@ DURATIONS = ("once", "5m", "15m", "tilrestart", "forever")
 MODES = ("allow", "static", "interactive")
 
 
-def events_url(base_url: str, token: str) -> str:
-    """The events websocket URL for a daemon base URL."""
+def events_url(base_url: str) -> str:
+    """The events websocket URL for a daemon base URL. The token
+    rides the handshake's auth subprotocol offer (#116), never the
+    URL."""
     scheme, sep, rest = base_url.partition("://")
     if sep:
         scheme = "wss" if scheme == "https" else "ws"
     else:
         scheme, rest = "wss", base_url
-    query = urllib.parse.quote_plus(token)
-    return f"{scheme}://{rest.rstrip('/')}/api/v1/events?token={query}"
+    return f"{scheme}://{rest.rstrip('/')}/api/v1/events"
 
 
 def dest_label(row: dict) -> str:
@@ -212,19 +213,30 @@ async def run_watch(
     """
     token = env_token()
     url = env_url()
-    async for ws in websockets.connect(**connect_args(url, token)):
-        try:
-            await watch_one(ws, workspace_id, decide, duration, url, token)
-        except websockets.ConnectionClosed:
-            continue  # reconnect; the server re-sends the snapshot
+    try:
+        async for ws in websockets.connect(**connect_args(url, token)):
+            try:
+                # The handshake's echo check (#116): a daemon that did not
+                # select the auth subprotocol is closing with its refusal
+                # or a middlebox rewrote the handshake — named and exited
+                # here, never pumped.
+                await wsauth.require_echo(ws)
+                await watch_one(ws, workspace_id, decide, duration, url, token)
+            except websockets.ConnectionClosed:
+                continue  # reconnect; the server re-sends the snapshot
+    except wsauth.UnusableToken as exc:
+        # One line without the token in it — the websocket library's
+        # own refusal embeds the credential whole (#116 review).
+        raise SystemExit(f"msks: {exc}") from None
     return 0
 
 
 def connect_args(url: str, token: str) -> dict:
-    """The events websocket's connect kwargs (a plain-ws URL takes
-    no ssl argument)."""
+    """The events websocket's connect kwargs: the auth subprotocol
+    offer beside the URL (a plain-ws URL takes no ssl argument)."""
     return {
-        "uri": events_url(url, token),
+        "uri": events_url(url),
+        "subprotocols": wsauth.subprotocols(token),
         "ssl": None if url.startswith("http://") else ssl_context(),
         "max_size": 2**22,
     }

@@ -18,7 +18,7 @@ from ..microvm.spec import VmSpec
 from .db import Base, engine_for, sessionmaker_for, tighten_db_mode, utcnow
 from .egress_consent import EgressConsentModel
 from .secrets import AUDIT_KINDS, Placeholder, SecretAudit
-from .tokens import Token
+from .tokens import Token, validate_token_plaintext
 from .workspaces import WORKSPACE_STATUSES, Workspace
 
 TOKEN_ENTROPY_BYTES = 32
@@ -42,8 +42,13 @@ def hash_token(plaintext: str) -> str:
 
 
 def new_token() -> str:
-    """A fresh bearer token plaintext (shown once, stored hashed)."""
-    return secrets.token_urlsafe(TOKEN_ENTROPY_BYTES)
+    """A fresh bearer token plaintext (shown once, stored hashed).
+
+    The plaintext passes the grammar guard: tokens ride the
+    websocket handshake (#116), where a stray separator would break
+    the handshake.
+    """
+    return validate_token_plaintext(secrets.token_urlsafe(TOKEN_ENTROPY_BYTES))
 
 
 class Model:
@@ -133,8 +138,17 @@ class Model:
     ) -> tuple[int, str]:
         """Insert a token; returns ``(id, plaintext)``.
 
-        The plaintext is shown once."""
-        token = plaintext if plaintext is not None else new_token()
+        The plaintext is shown once. A caller-supplied plaintext
+        (the bootstrap seed) passes the same grammar guard a minted
+        one does (#116): a token the daemon cannot authenticate on
+        the websocket handshake is refused at insertion, not
+        discovered at first use.
+        """
+        token = (
+            validate_token_plaintext(plaintext)
+            if plaintext is not None
+            else new_token()
+        )
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
             row = Token(name=name, token_hash=hash_token(token))

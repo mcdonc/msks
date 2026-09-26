@@ -1,6 +1,7 @@
-"""Forward client unit tests: URL/header conventions, port checks,
-close-code reporting, and the pump — against fakes (the live dial path
-is exercised by the daemon-side suite; no smoke drive exists yet)."""
+"""Forward client unit tests: URL/subprotocol conventions, port
+checks, close-code reporting, and the pump — against fakes (the live
+dial path is exercised by the daemon-side suite; no smoke drive
+exists yet)."""
 
 import asyncio
 import io
@@ -22,6 +23,10 @@ class FakeStdout:
 
 class FakeWs:
     """Records sends; yields queued messages, then stays quiet."""
+
+    #: The negotiated subprotocol: the fakes model an authenticated
+    #: handshake (#116) unless a test overrides it.
+    subprotocol = "bearer"
 
     def __init__(self, incoming: list | None = None) -> None:
         self.sent: list[bytes] = []
@@ -64,8 +69,8 @@ def fed_stream(data: bytes) -> asyncio.StreamReader:
 
 
 def test_ws_url_carries_no_token() -> None:
-    # The token rides the Authorization header, never the URL (#109):
-    # URLs land in logs, headers do not.
+    # The token rides the handshake's auth subprotocol (#116), never
+    # the URL: URLs land in logs, handshake headers do not.
     assert (
         fwd.ws_url("https://h:1", "ws 1", 22)
         == "wss://h:1/api/v1/workspaces/ws%201/forward/22"
@@ -73,10 +78,6 @@ def test_ws_url_carries_no_token() -> None:
     assert fwd.ws_url("http://h:1", "ws", 8022).startswith("ws://h:1/")
     assert fwd.ws_url("h:1", "ws", 22).startswith("wss://h:1/")
     assert "token" not in fwd.ws_url("https://h:1", "ws", 22)
-
-
-def test_auth_headers_is_the_rest_bearer_form() -> None:
-    assert fwd.auth_headers("sekrit") == {"Authorization": "Bearer sekrit"}
 
 
 def test_check_port_accepts_range_and_exits_outside() -> None:
@@ -210,11 +211,11 @@ class ConnectStub:
         self._ws = ws
         self.recorded: dict = {}
 
-    def __call__(self, url, additional_headers=None, ssl=None, max_size=None):
+    def __call__(self, url, subprotocols=None, ssl=None, max_size=None):
         outer = self
         self.recorded = {
             "url": url,
-            "headers": additional_headers,
+            "subprotocols": subprotocols,
             "ssl": ssl,
         }
 
@@ -231,7 +232,7 @@ class ConnectStub:
         return _Ctx()
 
 
-def test_connect_passes_header_and_scheme_ssl(
+def test_connect_offers_the_auth_subprotocol(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     stub = ConnectStub(FakeWs())
@@ -240,7 +241,7 @@ def test_connect_passes_header_and_scheme_ssl(
     assert stub.recorded["ssl"] is None
     fwd.connect("wss://h:1", "tok", "ctx")
     assert stub.recorded["ssl"] == "ctx"
-    assert stub.recorded["headers"] == {"Authorization": "Bearer tok"}
+    assert stub.recorded["subprotocols"] == ["bearer", "tok"]
 
 
 @pytest.fixture
@@ -326,6 +327,29 @@ async def test_local_server_names_a_refused_connection(
     reader, writer = await asyncio.open_connection(*address)
     assert await reader.read() == b""  # refused: EOF, listener stays up
     assert "cannot reach forward" in capsys.readouterr().err
+    server.close()
+
+
+async def test_local_listener_names_an_unechoed_refusal(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    # A handshake that completes with no selection carries no
+    # authority (#116): the connection closes with one stderr line
+    # naming the daemon's refusal, and the listener stays up.
+    class UnauthenticatedWs(FakeWs):
+        subprotocol = None
+
+        async def recv(self):
+            raise closed_with(4401)
+
+    monkeypatch.setattr(
+        fwd.websockets, "connect", ConnectStub(UnauthenticatedWs())
+    )
+    server = await fwd.local_listener("ws://d", "t", None, 0)
+    address = server.sockets[0].getsockname()
+    reader, writer = await asyncio.open_connection(*address)
+    assert await reader.read() == b""
+    assert "bad token" in capsys.readouterr().err
     server.close()
 
 
@@ -450,6 +474,37 @@ async def test_stdio_session_exits_nonzero_on_a_named_refusal(
         await asyncio.wait_for(fwd.stdio_session("ws://d", "t", None), 5)
 
 
+async def test_stdio_session_exits_on_a_token_the_handshake_cannot_carry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stub = ConnectStub(FakeWs())
+    monkeypatch.setattr(fwd.websockets, "connect", stub)
+    monkeypatch.setattr(sys, "stdin", ClosedFdStdin())
+    monkeypatch.setattr(sys, "stdout", FakeStdout())
+    with pytest.raises(SystemExit) as caught:
+        await asyncio.wait_for(fwd.stdio_session("ws://d", "a b", None), 5)
+    assert "cannot ride" in str(caught.value)
+    assert "a b" not in str(caught.value)
+    assert stub.recorded == {}  # the dial never happened
+
+
+async def test_local_listener_names_an_unusable_token(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    # One stderr line without the token in it, and the listener
+    # stays up for the next connection.
+    stub = ConnectStub(FakeWs())
+    monkeypatch.setattr(fwd.websockets, "connect", stub)
+    server = await fwd.local_listener("ws://d", "a b", None, 0)
+    address = server.sockets[0].getsockname()
+    reader, writer = await asyncio.open_connection(*address)
+    assert await reader.read() == b""
+    err = capsys.readouterr().err
+    assert "cannot ride" in err
+    assert "a b" not in err
+    server.close()
+
+
 async def test_stdio_session_names_an_unreachable_daemon(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -463,6 +518,27 @@ async def test_stdio_session_names_an_unreachable_daemon(
     monkeypatch.setattr(fwd.websockets, "connect", Refusing())
     with pytest.raises(SystemExit, match="cannot reach"):
         await asyncio.wait_for(fwd.stdio_session("ws://d", "t", None), 5)
+
+
+async def test_stdio_session_aborts_without_the_subprotocol_echo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A handshake that completes with no selection carries no
+    # authority (#116): the session aborts without pumping, and the
+    # daemon's 4401 refusal is the message that shows.
+    class UnauthenticatedWs(FakeWs):
+        subprotocol = None
+
+        async def recv(self):
+            raise closed_with(4401)
+
+    ws = UnauthenticatedWs()
+    monkeypatch.setattr(sys, "stdin", ClosedFdStdin())
+    monkeypatch.setattr(sys, "stdout", FakeStdout())
+    monkeypatch.setattr(fwd.websockets, "connect", ConnectStub(ws))
+    with pytest.raises(SystemExit, match="bad token"):
+        await asyncio.wait_for(fwd.stdio_session("ws://d", "t", None), 5)
+    assert ws.sent == []
 
 
 def test_run_workspace_forward_names_a_refused_bind(

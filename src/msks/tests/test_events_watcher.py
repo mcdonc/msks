@@ -70,7 +70,7 @@ def test_websocket_receives_transitions(tmp_path: Path) -> None:
     api, app, stub = api_with_stub(tmp_path)
     with TestClient(api) as client:
         with client.websocket_connect(
-            f"/api/v1/events?token={TOKEN}"
+            "/api/v1/events", subprotocols=["bearer", TOKEN]
         ) as socket:
             # Create a workspace, then flip the seam underneath it: the
             # watcher must publish the transition within a few polls.
@@ -142,11 +142,32 @@ async def test_wait_for_disconnect_returns_on_disconnect() -> None:
 
 
 def test_websocket_rejects_bad_token(tmp_path: Path) -> None:
+    # The bad-token shape changed with #116: the daemon accepts bare
+    # and closes 4401 (the close-code contract the clients' refused
+    # handling keys on) instead of rejecting the HTTP upgrade.
     api, _app, _stub = api_with_stub(tmp_path)
     with TestClient(api) as client:
-        with pytest.raises(WebSocketDisconnect):
-            with client.websocket_connect("/api/v1/events?token=wrong"):
-                pass
+        with client.websocket_connect(
+            "/api/v1/events", subprotocols=["bearer", "wrong"]
+        ) as ws:
+            with pytest.raises(WebSocketDisconnect) as caught:
+                ws.receive_text()
+        assert caught.value.code == 4401
+
+
+def test_websocket_rejects_a_lone_auth_subprotocol(
+    tmp_path: Path,
+) -> None:
+    # The offer is ["bearer", <token>] (#116): the name without a
+    # token after it authenticates nothing.
+    api, _app, _stub = api_with_stub(tmp_path)
+    with TestClient(api) as client:
+        with client.websocket_connect(
+            "/api/v1/events", subprotocols=["bearer"]
+        ) as ws:
+            with pytest.raises(WebSocketDisconnect) as caught:
+                ws.receive_text()
+        assert caught.value.code == 4401
 
 
 async def test_watch_loop_survives_scan_errors(tmp_path: Path) -> None:

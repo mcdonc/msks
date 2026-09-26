@@ -1,8 +1,9 @@
 """``msks console <workspace-id>``: an interactive shell in a workspace.
 
 The connection is the daemon's console websocket (TLS + token, the
-same authentication as the REST surface) bridged to the local tty in
-raw mode. A workspace the daemon reports as not running is booted
+credential riding the handshake's auth subprotocol #116 — the same
+token the REST surface's Bearer header carries) bridged to the
+local tty in raw mode. A workspace the daemon reports as not running is booted
 first. Ctrl-] detaches: it closes the client session — the workspace
 keeps running, and the shell process inside the guest ends when the
 stream closes. Doubling the escape (Ctrl-] Ctrl-], the second press
@@ -32,7 +33,7 @@ from urllib.parse import quote, quote_plus
 import websockets
 
 from ..identity import LEGACY_LOGIN_USER
-from . import consoleauth
+from . import consoleauth, wsauth
 from .rest import (  # noqa: F401
     DEFAULT_URL,
     ensure_running,
@@ -80,22 +81,24 @@ def tty_size(fd: int) -> tuple[int, int] | None:
 def ws_url(
     base_url: str,
     workspace_id: str,
-    token: str,
     user: str = "root",
     size: tuple[int, int] | None = None,
     term: str | None = None,
 ) -> str:
+    """The console websocket's URL — the request's parameters ride
+    the query string; the token never does (#116): it travels in the
+    handshake's auth subprotocol offer instead.
+
+    The id is a path segment: quote with no safe chars (a space must
+    become %20, not + — the server percent-decodes paths only),
+    while the user is a query value where + means space.
+    """
     scheme, sep, rest = base_url.partition("://")
     if sep:
         scheme = "wss" if scheme == "https" else "ws"
     else:
         scheme, rest = "wss", base_url
-    # Minted tokens are urlsafe today; quoting keeps the query string
-    # well-formed for any charset a future minting scheme produces.
-    # The id is a path segment: quote with no safe chars (a space must
-    # become %20, not + — the server percent-decodes paths only),
-    # while the token is a query value where + means space.
-    query = f"token={quote_plus(token)}&user={quote_plus(user)}"
+    query = f"user={quote_plus(user)}"
     if size is not None:
         query += f"&rows={size[0]}&cols={size[1]}"
     if term is not None:
@@ -186,16 +189,33 @@ async def _ws_step(message, ws, stdout):
     return asyncio.create_task(ws.recv())
 
 
-def _connect(address: str, ssl_ctx):
+def _connect(address: str, token: str, ssl_ctx):
     """The websocket connection, in hand for a clean close on failure.
 
+    The token rides the handshake's auth subprotocol offer (#116).
     A plain-ws URL (http daemon) takes no ssl argument.
     """
     return websockets.connect(
         address,
+        subprotocols=wsauth.subprotocols(token),
         ssl=None if address.startswith("ws://") else ssl_ctx,
         max_size=2**22,
     )
+
+
+async def dial(address: str, token: str, ssl_ctx, url: str):
+    """The console websocket connection, or the one-line exit for
+    every dial-time failure: a token the handshake cannot carry
+    (#116, message without the credential in it), a daemon that
+    cannot be reached, a TLS mismatch, a rejected upgrade."""
+    try:
+        connection = _connect(address, token, ssl_ctx)
+    except wsauth.UnusableToken as exc:
+        raise SystemExit(f"msks: {exc}") from None
+    try:
+        return await connection
+    except (OSError, ssl.SSLError, websockets.InvalidStatus) as exc:
+        raise SystemExit(f"msks: cannot reach {url}: {exc}") from exc
 
 
 async def run_shell(
@@ -208,15 +228,14 @@ async def run_shell(
     term: str | None = None,
 ) -> int:
     """One interactive session; 0 on clean detach or session end."""
-    address = ws_url(url, workspace_id, token, user=user, size=size, term=term)
-    connection = _connect(address, ssl_ctx)
-    try:
-        ws = await connection
-    except (OSError, ssl.SSLError, websockets.InvalidStatus) as exc:
-        # Daemon down, TLS mismatch, or a rejected upgrade: one line,
-        # not a traceback.
-        raise SystemExit(f"msks: cannot reach {url}: {exc}") from exc
+    address = ws_url(url, workspace_id, user=user, size=size, term=term)
+    ws = await dial(address, token, ssl_ctx, url)
     async with ws:
+        # The handshake's echo check (#116): a daemon that did not
+        # select the auth subprotocol is closing with its refusal or
+        # a middlebox rewrote the handshake — either way named here,
+        # never pumped.
+        await wsauth.require_echo(ws)
         if not await open_session(ws, workspace_id, url, token, ssl_ctx):
             return 0
         loop = asyncio.get_running_loop()
@@ -281,7 +300,7 @@ async def open_session(
 
 CLOSE_CODE_REASONS = {
     4400: "console refused (unknown user or bad request)",
-    4401: "authentication failed (bad token?)",
+    4401: wsauth.AUTH_FAILED_MESSAGE,
     4403: "console refused by the guest (auth)",
     4404: "no such workspace",
     # The daemon's own message names the real cause (a refused

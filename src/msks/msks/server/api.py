@@ -431,6 +431,14 @@ USER_NAME_RE = LOGIN_NAME_RE
 #: (every terminfo name fits), matching the guest helper's check.
 TERM_RE = re.compile(r"^[!-~]{1,32}$")
 
+#: The websocket handshake's auth subprotocol (#116): the client
+#: offers ``["bearer", <token>]`` in Sec-WebSocket-Protocol and the
+#: daemon's accept selects ``bearer`` back. A query string would
+#: land the token in access logs, proxy logs, and shell history;
+#: a handshake header does not, and it is the one mechanism a
+#: browser's ``new WebSocket()`` can send too.
+AUTH_SUBPROTOCOL = "bearer"
+
 
 def close_reason(text: str, limit: int = 120) -> str:
     """A websocket close reason that fits its wire budget in bytes.
@@ -461,21 +469,41 @@ def console_request(params) -> tuple[str, int, int, str, str | None]:
     return user, rows, cols, term, problem
 
 
-def bearer_token(socket: WebSocket) -> str | None:
-    """The Authorization header's Bearer token, or None.
+def subprotocol_token(socket: WebSocket) -> str | None:
+    """The bearer token from the Sec-WebSocket-Protocol offer, or
+    None.
 
-    The forward websocket (#109) authenticates with the same header
-    form as the REST surface. The console and events websockets carry
-    their token in the query string because a browser cannot attach
-    headers to a websocket; the forward is a CLI/tool endpoint with
-    no browser caller, and a query string would land the token in
-    proxy and process logs.
+    The offer is ``["bearer", <token>]`` (#116): the element after
+    the auth subprotocol's name is the token. Starlette 1.6 keeps
+    the offered list on the ASGI scope (no ``subprotocols``
+    attribute), and the grammar guard at mint time keeps offered
+    tokens free of commas and spaces, so one header element is one
+    token.
     """
-    authorization = socket.headers.get("authorization", "")
-    scheme, _, plaintext = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not plaintext:
-        return None
-    return plaintext
+    offered = socket.scope.get("subprotocols") or []
+    if AUTH_SUBPROTOCOL in offered:
+        rest = offered[offered.index(AUTH_SUBPROTOCOL) + 1 :]
+        if rest:
+            return rest[0]
+    return None
+
+
+async def authed_accept(app, socket: WebSocket) -> bool:
+    """Authenticate the websocket handshake and accept it (#116).
+
+    A valid token accepts with the auth subprotocol selected — the
+    echo every client verifies before pumping, so a handshake a
+    middlebox rewrote never carries a session. Anything else
+    accepts bare and closes 4401: the close-code contract the
+    clients name for a token the daemon does not hold.
+    """
+    token = subprotocol_token(socket)
+    if token is None or not await app.state.model.token_valid(token):
+        await socket.accept()
+        await socket.close(code=4401)
+        return False
+    await socket.accept(subprotocol=AUTH_SUBPROTOCOL)
+    return True
 
 
 def forward_port(raw: str) -> tuple[int, str | None]:
@@ -2155,15 +2183,13 @@ def build_api(app) -> FastAPI:
     async def console(socket: WebSocket, workspace_id: str) -> None:
         # Byte-stream bridge into a running workspace (#21): the
         # client gets an interactive shell over the same TLS + token
-        # as the REST surface. Closing the websocket closes exactly
-        # one guest shell session; the workspace keeps running.
-        # Accept first, then close with a code: the client sees a
-        # specific close reason (4401/4404/4501) instead of a generic
-        # HTTP 403 rejection.
-        await socket.accept()
-        token = socket.query_params.get("token", "")
-        if not await app.state.model.token_valid(token):
-            await socket.close(code=4401)
+        # as the REST surface, the token riding the handshake's
+        # auth subprotocol (#116). Closing the websocket closes
+        # exactly one guest shell session; the workspace keeps
+        # running. Auth accepts with the subprotocol selected or
+        # closes 4401: the client sees a specific close reason
+        # (4401/4404/4501) instead of a generic HTTP 403 rejection.
+        if not await authed_accept(app, socket):
             return
         row = await app.state.model.get_workspace(workspace_id)
         if row is None:
@@ -2224,13 +2250,11 @@ def build_api(app) -> FastAPI:
         # Service-plane bridge (#109): raw bytes between the client
         # and a guest TCP port the caller names — the pipe ssh's
         # ProxyCommand rides. The token authenticates through the
-        # Authorization header (REST's Bearer form): this endpoint's
-        # callers are CLIs and tools, and a query string would put the
-        # token in logs. Each websocket is one guest TCP connection.
-        await socket.accept()
-        token = bearer_token(socket)
-        if token is None or not await app.state.model.token_valid(token):
-            await socket.close(code=4401)
+        # handshake's auth subprotocol (#116), the same mechanism as
+        # every other websocket surface: one form to document and
+        # test, and the token never lands in a URL. Each websocket is
+        # one guest TCP connection.
+        if not await authed_accept(app, socket):
             return
         row = await app.state.model.get_workspace(workspace_id)
         if row is None:
@@ -2288,13 +2312,13 @@ def build_api(app) -> FastAPI:
 
     @api.websocket("/api/v1/events")
     async def events(socket: WebSocket) -> None:
-        # Websockets cannot carry Authorization headers from browsers;
-        # the token rides the query string instead (documented).
-        token = socket.query_params.get("token", "")
-        if not await app.state.model.token_valid(token):
-            await socket.close(code=4401)
+        # The token rides the handshake's auth subprotocol (#116):
+        # browsers cannot set Authorization headers on a websocket,
+        # and a query string would land the token in logs. A bad
+        # token accepts bare and closes 4401 — the close code the
+        # clients' refused handling keys on.
+        if not await authed_accept(app, socket):
             return
-        await socket.accept()
         queue = hub.subscribe()
         client_id = id(queue)
         try:

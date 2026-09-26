@@ -133,11 +133,14 @@ async def console_exec(
     so a marker inside the command text would match the echo and
     pass even when the probe itself found nothing.
     """
-    address = ws_url(url, workspace_id, token)
+    address = ws_url(url, workspace_id)
     for _ in range(CONSOLE_ATTEMPTS):
         try:
             async with websockets.connect(
-                address, ssl=ssl_ctx, max_size=2**22
+                address,
+                subprotocols=["bearer", token],
+                ssl=ssl_ctx,
+                max_size=2**22,
             ) as ws:
                 lead = await consoleauth.auth_exchange(
                     ws, workspace_id, url, token, ssl_ctx
