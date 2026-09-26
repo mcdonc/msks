@@ -601,8 +601,8 @@ async def test_the_page_runs_start_stop_and_remint(monkeypatch) -> None:
     async with app.run_test() as pilot:
         await open_page(pilot, app)
         await wait_for(lambda: action_children(app) == 5)
-        # The fixed actions in walk order: shell, consent, start,
-        # stop, remint. Down twice lands on start.
+        # The fixed actions in walk order: shell (a new terminal),
+        # consent, start, stop, remint. Down twice lands on start.
         await pilot.press("down", "down")
         await pilot.press("enter")
         await wait_for(lambda: ("start", WS) in data.calls)
@@ -615,15 +615,105 @@ async def test_the_page_runs_start_stop_and_remint(monkeypatch) -> None:
         await wait_for(lambda: "new LLM token: tok-fresh" in status_text(app))
 
 
-async def test_the_page_opens_a_shell(monkeypatch) -> None:
-    scripted_link(monkeypatch, [rules_frame()])
+# -- the new-terminal shell action (#341) ----------------------------------
+
+
+def test_the_ssh_child_argv_spawns_this_client() -> None:
+    """The spawned ssh invocation: this client's own interpreter
+    and module (an editable checkout spawns itself; an installed
+    client its own environment), then the ssh command and the
+    workspace — ssh over the console because a fresh window gets
+    resized, and the console sizes its guest pty once, at connect.
+    The child reaches the same daemon through the environment the
+    tree's bootstrap materialized."""
+    assert main_app.ssh_child_argv("w1") == [
+        sys.executable,
+        "-m",
+        "msks.client.cli",
+        "ssh",
+        "w1",
+    ]
+
+
+async def test_spawn_window_detaches_quietly() -> None:
+    """The spawn runs detached with its stdio on devnull: the
+    window borrows no terminal the tree holds."""
+    proc = await main_app.spawn_window([sys.executable, "-c", "pass"])
+    assert await asyncio.wait_for(proc.wait(), 10) == 0
+
+
+async def test_the_new_terminal_action_spawns_an_ssh_child(
+    monkeypatch,
+) -> None:
+    """Enter on the page's second action (#341): the configured
+    launcher runs an ssh invocation — ssh carries a live window's
+    resizes; the console sizes its pty once — appended, and the
+    tree keeps running beside the window."""
+    scripted_link(monkeypatch, [])
+    spawned: list[list[str]] = []
+
+    async def record(argv):
+        spawned.append(argv)
+
+        async def closed():
+            return 0
+
+        return SimpleNamespace(wait=closed)
+
+    monkeypatch.setattr(main_app, "spawn_window", record)
     data = FakeData([row()])
-    app, follow = make_app(data)
+    conf = SimpleNamespace(terminal_open_cmd=["kitty", "-e"])
+    app = MsksTuiApp(TuiFollow(), data=data, conf=conf)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
         await wait_for(lambda: action_children(app) == 5)
-        await pilot.press("enter")  # the first action: a shell
-        await wait_for(lambda: follow.action == (FLOW_SHELL, WS))
+        assert "new terminal" in action_text(app, 0)
+        await press_until(pilot, "enter", lambda: len(spawned) == 1)
+        assert spawned[0] == [
+            "kitty",
+            "-e",
+            sys.executable,
+            "-m",
+            "msks.client.cli",
+            "ssh",
+            WS,
+        ]
+        await wait_for(lambda: "opened a shell window" in status_text(app))
+        assert on_page(app)  # the tree kept running
+        # The hold keeps a running window's task referenced; the
+        # done-callback drops it once the window has closed.
+
+        async def closed():
+            return 0
+
+        app.hold_child(SimpleNamespace(wait=closed))
+        assert len(app.reapers) == 1  # held while the window runs
+        await wait_for(lambda: not app.reapers)  # dropped at close
+
+
+async def test_a_dead_launcher_falls_back_to_this_terminal(
+    monkeypatch,
+) -> None:
+    """A launcher that cannot start (a missing binary) seeds the
+    restarted tree's flash with its reason — the exiting tree's
+    own status line dies with it — and takes the same-terminal
+    shell flow instead, the documented fallback (#341)."""
+    scripted_link(monkeypatch, [])
+
+    async def refused(argv):
+        raise FileNotFoundError("xterm")
+
+    monkeypatch.setattr(main_app, "spawn_window", refused)
+    data = FakeData([row()])
+    follow = TuiFollow()
+    app = MsksTuiApp(follow, data=data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 5)
+        await pilot.press("enter")
+        await pilot.pause()
+    assert follow.take() == (FLOW_SHELL, WS)
+    assert "shell window failed" in (follow.seed or "")
 
 
 async def test_the_page_stops_deciding_when_it_closes(monkeypatch) -> None:
@@ -658,7 +748,7 @@ def test_run_main_tui_chains_the_flows(monkeypatch) -> None:
     flows: list[tuple] = []
 
     class FakeApp:
-        def __init__(self, follow, data=None):
+        def __init__(self, follow, data=None, conf=None):
             self.follow = follow
 
         def run(self):
@@ -696,7 +786,7 @@ def test_run_main_tui_fails_cleanly_without_a_token(
 def test_the_tui_subcommand_dispatches(monkeypatch) -> None:
     launched: list = []
 
-    def fake_run(open_ref=None, data=None):
+    def fake_run(open_ref=None, data=None, conf=None):
         launched.append(open_ref)
         return 0
 
@@ -711,7 +801,7 @@ def test_a_bare_msks_launches_the_tui(monkeypatch) -> None:
     usage error."""
     launched: list = []
 
-    def fake_run(open_ref=None, data=None):
+    def fake_run(open_ref=None, data=None, conf=None):
         launched.append(open_ref)
         return 0
 
@@ -997,7 +1087,7 @@ def test_run_main_tui_pre_flights_the_env(monkeypatch) -> None:
     draws; with them patched, one no-op app run returns success."""
 
     class QuietApp:
-        def __init__(self, follow, data=None):
+        def __init__(self, follow, data=None, conf=None):
             pass
 
         def run(self):
@@ -1316,7 +1406,7 @@ def test_a_refused_flow_returns_to_the_tree(monkeypatch) -> None:
     runs: list[int] = []
 
     class FakeApp:
-        def __init__(self, follow, data=None):
+        def __init__(self, follow, data=None, conf=None):
             self.follow = follow
 
         def run(self):
@@ -1365,7 +1455,7 @@ def test_a_refused_flow_seeds_the_restarted_tree(monkeypatch) -> None:
     runs: list[str | None] = []
 
     class FakeApp:
-        def __init__(self, follow, data=None):
+        def __init__(self, follow, data=None, conf=None):
             self.follow = follow
 
         def run(self):

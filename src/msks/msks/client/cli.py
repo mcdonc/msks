@@ -44,7 +44,7 @@ from ..identity import KEY_TYPES
 from ..imagestore import is_hash_shape, version_key
 from ..storage import MIB
 from . import egress as egress_mod
-from .config import bootstrap
+from .config import ClientConfig, bootstrap
 from .console import run_workspace_shell
 
 # Re-exported for the tests (they drive cli.write_client_identity
@@ -1437,6 +1437,14 @@ body_reached = False
 #: root callback's help-screen check (see set_invocation_tokens).
 invocation_tokens: list[str] = []
 
+#: The invocation's resolved client config (#314), set by the root
+#: callback right after the bootstrap and read by the TUI entry
+#: points: the tree's new-terminal shell action (#341) spawns its
+#: console child with the launcher the resolution carries. None
+#: when no bootstrap ran (a help screen — and then no TUI starts
+#: either).
+invoked_conf: ClientConfig | None = None
+
 
 def one_line_interrupts(fn):
     """A Ctrl-C during a long boot is one line, not a traceback (a
@@ -1503,12 +1511,13 @@ def root(
     # the time any reader looks — except on a help screen, where
     # the operator is reading, not connecting, and a broken config
     # file must not hide the help.
+    global invoked_conf
     if not help_requested(invocation_tokens):
-        bootstrap(daemon, config)
+        invoked_conf = bootstrap(daemon, config)
     if ctx.invoked_subcommand is None:
         # The decorator's edge, same as every command: a Ctrl-C in
         # the tree is one line, not typer's silent 130.
-        return one_line_interrupts(run_main_tui)()
+        return one_line_interrupts(run_main_tui)(conf=invoked_conf)
     return 0
 
 
@@ -1532,7 +1541,7 @@ def tui(
 ) -> int:
     """The full-screen workspace tree (#309): the workspaces list,
     each workspace's page, and the consent decider."""
-    return run_main_tui(workspace)
+    return run_main_tui(workspace, conf=invoked_conf)
 
 
 @app.command("storage")

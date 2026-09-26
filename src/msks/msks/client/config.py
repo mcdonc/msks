@@ -59,10 +59,11 @@ expected-image drift check) keeps working unchanged, and only the
 values the file or the flag contributed are written (an
 environment-provided value is already there; a default is left to
 the readers). ``terminal_open_cmd`` resolves the same way — variable,
-then file, then the built-in ``xterm -e`` — but lands only on the
-returned :class:`ClientConfig`: nothing reads it yet, because its
-consumer is the workspace-shell launch action, which does not
-exist (#314).
+then file, then the built-in ``xterm -e`` — and lands on the
+returned :class:`ClientConfig`, where the workspace TUI's
+new-terminal shell action (#341) reads it: the launcher the
+action appends its ssh invocation to, falling back to the
+same-terminal shell when the launcher cannot start.
 """
 
 from __future__ import annotations
@@ -588,9 +589,8 @@ def terminal_command(doc: dict) -> list[str]:
     else the file's value, else the built-in ``xterm -e`` — so the
     new-window path works without configuration, and a box
     without xterm falls back to the same-terminal path at launch.
-    Nothing consumes the value yet — the workspace-shell launch
-    action is its consumer — so it resolves onto the
-    :class:`ClientConfig` alone."""
+    The workspace TUI's new-terminal shell action (#341) consumes
+    the value from the resolved :class:`ClientConfig`."""
     env = os.environ.get(TERMINAL_ENV_VAR, "")
     if env.strip():
         return split_words(env, TERMINAL_ENV_VAR, "environment")
@@ -775,12 +775,13 @@ def render_template() -> str:
 #                                # against the daemon's /health (#160)
 # cache_dir: ~/.cache/msks      # per-workspace host-key caches (#251)
 # data_dir: ~/.local/share/msks # client-minted identities (#251)
-# terminal_open_cmd: konsole -e # the launcher the shell action opens
-#                                # workspace shells through (#314);
-#                                # string form is shell-split, a list
-#                                # form carries its words as written;
-#                                # unset -> xterm -e, the terminal
-#                                # most Linuxes carry
+# terminal_open_cmd: konsole -e # the launcher the workspace page's
+#                                # new-terminal shell action opens
+#                                # workspace shells through (#314,
+#                                # #341); string form is shell-split,
+#                                # a list form carries its words as
+#                                # written; unset -> xterm -e, the
+#                                # terminal most Linuxes carry
 #
 # --- Named daemon aliases ---
 # One entry per daemon you talk to; url is the one required key,
