@@ -7,6 +7,7 @@ import os
 import shutil
 import tarfile
 import threading
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
@@ -18,12 +19,14 @@ from httpx import ASGITransport, AsyncClient
 from msks.app import build_app
 from msks.imagestore import (
     IMPORTED_STAMP,
+    ImageCollision,
     ImageError,
     default_image,
     import_archive,
     list_images,
     record_from,
     remove,
+    rename_image,
     resolve,
     set_default,
     sweep_crash_leftovers,
@@ -1734,3 +1737,406 @@ async def test_api_concurrent_url_imports_serialize(tmp_path) -> None:
     kinds = [kind for kind, _ in events]
     assert kinds == ["enter", "exit", "enter", "exit"]
     assert len({tag for _, tag in events}) == 2
+
+
+# --- Name/version overrides and renames (#340) ------------------------
+
+
+def test_import_override_registers_the_chosen_pair(tmp_path: Path) -> None:
+    """The override changes the registered pair only: the cache's
+    image.json carries the manifest verbatim, and the manifest pair
+    stays reachable as the origin."""
+    archive = tmp_path / "mine.tar"
+    build_containerdisk(archive, name="debian", version="13.6")
+    record = import_archive(archive, tmp_path, name="mine", version="1.0")
+    assert record.ref == "mine:1.0"
+    assert (record.origin_name, record.origin_version) == ("debian", "13.6")
+    assert record.origin_ref == "debian:13.6"
+    # The manifest copy in the cache stays byte-identical in meaning:
+    # the archive's own pair, untouched by the override.
+    manifest = json.loads(
+        (tmp_path / "images" / record.hash / "image.json").read_text()
+    )
+    assert (manifest["name"], manifest["version"]) == ("debian", "13.6")
+    assert [r.ref for r in list_images(tmp_path)] == ["mine:1.0"]
+    assert resolve("mine:1.0", tmp_path).hash == record.hash
+    assert resolve("debian:13.6", tmp_path) is None
+
+
+def test_import_override_falls_back_per_key(tmp_path: Path) -> None:
+    """A partial override: the given key wins, the other falls back
+    to the manifest value."""
+    archive = tmp_path / "alias.tar"
+    build_containerdisk(archive, name="debian", version="13.6")
+    record = import_archive(archive, tmp_path, name="myorg/debian")
+    assert record.ref == "myorg/debian:13.6"
+    only_version = import_archive(
+        _rebuilt(tmp_path, "alpine", "3.22"), tmp_path, version="3"
+    )
+    assert only_version.ref == "alpine:3"
+
+
+def _rebuilt(directory: Path, name: str, version: str) -> Path:
+    """A second distinct archive under a fresh name."""
+    archive = directory / f"{name}-{version}.tar"
+    build_containerdisk(archive, name=name, version=version)
+    return archive
+
+
+def test_override_survives_plain_reimport_and_warm_import(
+    tmp_path: Path,
+) -> None:
+    """A plain re-import refreshes the cache without resetting the
+    rename the operator made; the warm path serves the renamed
+    pair from the cache."""
+    archive = tmp_path / "keep.tar"
+    build_containerdisk(archive, name="debian", version="13.6")
+    renamed = import_archive(archive, tmp_path, name="mine", version="1.0")
+    refreshed = import_archive(archive, tmp_path)
+    assert refreshed.ref == "mine:1.0"
+    assert refreshed.origin_ref == "debian:13.6"
+    assert refreshed.imported is not None
+    assert refreshed.imported > renamed.imported
+    warm = warm_import(archive, tmp_path)
+    assert warm is not None
+    assert warm.ref == "mine:1.0"
+
+
+def test_reimport_with_a_new_override_renames_the_row(
+    tmp_path: Path,
+) -> None:
+    """The same bytes imported again under a new override rename the
+    row: identity stays the hash, so the hash forms keep resolving."""
+    archive = tmp_path / "twice.tar"
+    build_containerdisk(archive, name="debian", version="13.6")
+    first = import_archive(archive, tmp_path)
+    second = import_archive(archive, tmp_path, name="mine", version="2")
+    assert second.hash == first.hash
+    assert resolve("mine:2", tmp_path).hash == first.hash
+    assert resolve(first.hash, tmp_path).ref == "mine:2"
+    assert resolve("debian:13.6", tmp_path) is None
+
+
+def test_rename_image_in_place(tmp_path: Path) -> None:
+    """Rename changes the registered pair and nothing else: the
+    hash references keep resolving, the origin pair stays, and the
+    cache bytes are untouched (only the override file is added)."""
+    archive = tmp_path / "rename.tar"
+    build_containerdisk(archive, name="debian", version="13.6")
+    record = import_archive(archive, tmp_path)
+    renamed = rename_image(record.hash, tmp_path, name="mine", version="1.1")
+    assert renamed is not None
+    assert renamed.ref == "mine:1.1"
+    assert renamed.origin_ref == "debian:13.6"
+    assert renamed.hash == record.hash
+    assert renamed.imported == record.imported
+    assert renamed.kernel == record.kernel
+    # The old pair stops resolving; the hash forms still do.
+    assert resolve("debian:13.6", tmp_path) is None
+    assert resolve(f"mine@{record.hash}", tmp_path).ref == "mine:1.1"
+    # A version-only rename keeps the registered name.
+    again = rename_image(record.hash, tmp_path, version="1.2")
+    assert again is not None
+    assert again.ref == "mine:1.2"
+
+
+def test_rename_collision_is_refused_naming_both_rows(
+    tmp_path: Path,
+) -> None:
+    a = import_archive(_rebuilt(tmp_path, "debian", "13.6"), tmp_path)
+    b = import_archive(_rebuilt(tmp_path, "alpine", "3.22"), tmp_path)
+    with pytest.raises(ImageCollision) as excinfo:
+        rename_image(b.hash, tmp_path, name="debian", version="13.6")
+    # The refusal names the holding row by hash — the pair repeats
+    # by construction — and by its origin when a rename moved it.
+    assert f"debian:13.6 is already held by {a.hash[:12]}" in str(
+        excinfo.value
+    )
+    rename_image(a.hash, tmp_path, name="mine", version="1")
+    with pytest.raises(ImageCollision) as renamed_hold:
+        rename_image(b.hash, tmp_path, name="mine", version="1")
+    assert "renamed from debian:13.6" in str(renamed_hold.value)
+    # The row is unchanged after the refusal.
+    assert resolve(b.hash, tmp_path).ref == "alpine:3.22"
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["name", "version"],
+)
+@pytest.mark.parametrize(
+    "value",
+    ["", "   ", " spaced ", "with:colon", "with@at"],
+)
+def test_override_validation(tmp_path: Path, field: str, value: str) -> None:
+    """An override passes the same checks at import and rename:
+    non-empty, no surrounding whitespace, and none of the two
+    characters the reference forms key on."""
+    archive = tmp_path / "check.tar"
+    build_containerdisk(archive, name="debian", version="13.6")
+    kwargs = {field: value}
+    with pytest.raises(ImageError, match=f"image {field} override"):
+        import_archive(archive, tmp_path, **kwargs)
+    # Nothing was installed: the refused import leaves no row.
+    assert list_images(tmp_path) == []
+
+
+def test_rename_missing_digest_returns_none(tmp_path: Path) -> None:
+    assert rename_image("f" * 64, tmp_path, name="mine") is None
+
+
+def test_carried_forward_override_skips_the_collision_check(
+    tmp_path: Path,
+) -> None:
+    """The refusal holds for overrides and renames; a plain
+    re-import carries the row's own registration forward without
+    the check — a pair a later plain import duplicated must not
+    strand the row from refreshing."""
+    archive = tmp_path / "a.tar"
+    build_containerdisk(archive, name="debian", version="13.6")
+    record = import_archive(archive, tmp_path, name="mine", version="1")
+    # A rebuilt archive whose manifest carries the same pair:
+    # the long-standing plain-import shape, accepted.
+    duplicate = import_archive(_rebuilt(tmp_path, "mine", "1"), tmp_path)
+    assert duplicate.hash != record.hash
+    assert [r.name for r in list_images(tmp_path)] == ["mine", "mine"]
+    # The renamed row still refreshes: no refusal, no reset.
+    refreshed = import_archive(archive, tmp_path)
+    assert refreshed.ref == "mine:1"
+    assert refreshed.origin_ref == "debian:13.6"
+
+
+async def test_rename_serializes_against_a_reimport(
+    tmp_path, monkeypatch
+) -> None:
+    """The catalog lock (#340 review): a rename arriving while a
+    re-import holds the lock waits its turn — without it, the
+    rename wrote its override into the cache the import then
+    swapped away, a committed rename silently lost."""
+    archive = tmp_path / "race.tar"
+    build_containerdisk(archive, name="debian", version="13.6")
+    state = tmp_path / "vms"
+
+    settings = Settings(
+        vmm=VmmSettings(state_dir=state),
+        server=ServerSettings(
+            db_path=tmp_path / "ws.db",
+            bootstrap_token=TOKEN,
+            event_poll_s=0.05,
+        ),
+    )
+    app = build_app(settings)
+    app.state.microvm = StubMicrovm()
+    api = build_api(app)
+
+    async with api.router.lifespan_context(api):
+        async with AsyncClient(
+            transport=ASGITransport(app=api), base_url="http://t"
+        ) as http:
+            imported = await http.post(
+                "/api/v1/images",
+                json={"source": str(archive)},
+                headers=auth(),
+            )
+            assert imported.status_code == 201, imported.text
+            first = imagestore.list_images(state)[0]
+
+            real_member = imagestore.member
+            loop = asyncio.get_running_loop()
+            rename_future = None
+
+            def racing_member(layer, dest, member_name):
+                nonlocal rename_future
+                # Mid-import, with the catalog lock held: fire the
+                # rename and give it time to reach the lock. Under the
+                # lock it blocks; without one it would commit into the
+                # old cache before the swap destroys it.
+                if dest.name == "kernel" and rename_future is None:
+                    rename_future = asyncio.run_coroutine_threadsafe(
+                        http.patch(
+                            f"/api/v1/images/{first.hash}",
+                            json={"name": "mine", "version": "1"},
+                            headers=auth(),
+                        ),
+                        loop,
+                    )
+                    time.sleep(0.2)
+                return real_member(layer, dest, member_name)
+
+            monkeypatch.setattr(imagestore, "member", racing_member)
+
+            # The re-import goes through the route, so it holds the
+            # catalog lock across its cache swap.
+            refreshed = await http.post(
+                "/api/v1/images",
+                json={"source": str(archive)},
+                headers=auth(),
+            )
+            assert refreshed.status_code == 201, refreshed.text
+            assert refreshed.json()["hash"] == first.hash
+            renamed = await asyncio.wrap_future(rename_future)
+            assert renamed.status_code == 200, renamed.text
+            assert renamed.json()["ref"] == "mine:1"
+    # The committed override survived the import's cache swap.
+    assert imagestore.list_images(state)[0].ref == "mine:1"
+    assert resolve("mine:1", state).hash == first.hash
+
+
+def test_rename_pins_a_derived_import_time(tmp_path: Path) -> None:
+    """A rename writes inside the cache dir, which moves the
+    directory mtime — the fallback import time for entries that
+    predate stamps. The rename freezes that derived moment into a
+    stamp, so the listed time holds (#340 review)."""
+    archive = tmp_path / "stamp.tar"
+    build_containerdisk(archive, name="debian", version="13.6")
+    record = import_archive(archive, tmp_path)
+    cache = tmp_path / "images" / record.hash
+    (cache / IMPORTED_STAMP).unlink()
+    before = list_images(tmp_path)[0].imported
+    assert before is not None and before != record.imported
+    time.sleep(0.01)
+    renamed = rename_image(record.hash, tmp_path, name="mine")
+    assert renamed is not None
+    assert (cache / IMPORTED_STAMP).is_file()
+    after = list_images(tmp_path)[0]
+    assert after.imported == before
+    assert after.ref == "mine:13.6"
+
+
+def test_import_override_collision_is_refused_cleanly(
+    tmp_path: Path,
+) -> None:
+    """An override that would register a pair another row holds
+    fails the import with nothing installed for the new bytes."""
+    import_archive(_rebuilt(tmp_path, "debian", "13.6"), tmp_path)
+    with pytest.raises(ImageCollision, match="debian:13.6"):
+        import_archive(
+            _rebuilt(tmp_path, "alpine", "3.22"),
+            tmp_path,
+            name="debian",
+            version="13.6",
+        )
+    assert [r.ref for r in list_images(tmp_path)] == ["debian:13.6"]
+
+
+@pytest.mark.parametrize(
+    "garbage",
+    ["{", "[1, 2]", '{"name": 5}', '{"name": " spaced "}'],
+)
+def test_corrupt_override_degrades_to_the_manifest_pair(
+    tmp_path: Path, garbage: str
+) -> None:
+    """A hand-mangled override file reads as absent — or as its
+    valid keys only: the entry keeps the manifest's pair, the same
+    degradation a corrupt image.json takes."""
+    archive = tmp_path / "degrade.tar"
+    build_containerdisk(archive, name="debian", version="13.6")
+    record = import_archive(archive, tmp_path, name="mine", version="1.0")
+    (tmp_path / "images" / record.hash / "override.json").write_text(garbage)
+    degraded = list_images(tmp_path)[0]
+    assert degraded.ref == "debian:13.6"
+    assert degraded.origin_ref == "debian:13.6"
+
+
+async def test_image_rename_endpoints(tmp_path) -> None:
+    """The override and rename surface over the API: import under a
+    chosen pair, rename in place, and the named refusals."""
+    settings = Settings(
+        vmm=VmmSettings(state_dir=tmp_path / "vms"),
+        server=ServerSettings(
+            db_path=tmp_path / "ws.db",
+            bootstrap_token=TOKEN,
+            event_poll_s=0.05,
+        ),
+    )
+    app = build_app(settings)
+    app.state.microvm = StubMicrovm()
+    api = build_api(app)
+
+    archive = tmp_path / "in.tar"
+    build_containerdisk(archive, name="debian", version="13.6")
+    other = tmp_path / "other.tar"
+    build_containerdisk(other, name="alpine", version="3.22")
+
+    async with api.router.lifespan_context(api):
+        async with AsyncClient(
+            transport=ASGITransport(app=api), base_url="http://t"
+        ) as http:
+            imported = await http.post(
+                "/api/v1/images",
+                json={"source": str(archive), "name": "mine", "version": "1"},
+                headers=auth(),
+            )
+            assert imported.status_code == 201, imported.text
+            body = imported.json()
+            assert (body["ref"], body["hash"]) == ("mine:1", body["hash"])
+
+            listed = await http.get("/api/v1/images", headers=auth())
+            row = listed.json()[0]
+            assert (row["name"], row["version"]) == ("mine", "1")
+            assert (row["origin_name"], row["origin_version"]) == (
+                "debian",
+                "13.6",
+            )
+
+            # A workspace boots by the renamed reference.
+            made = await http.post(
+                "/api/v1/workspaces",
+                json={"id": "ws-renamed", "image": "mine:1"},
+                headers=auth(),
+            )
+            assert made.status_code == 201, made.text
+
+            # Rename in place: the answer carries both pairs.
+            digest = body["hash"]
+            renamed = await http.patch(
+                f"/api/v1/images/{digest}",
+                json={"version": "2"},
+                headers=auth(),
+            )
+            assert renamed.status_code == 200, renamed.text
+            assert renamed.json() == {
+                "hash": digest,
+                "name": "mine",
+                "version": "2",
+                "ref": "mine:2",
+                "origin": "debian:13.6",
+            }
+            assert renamed.json()["origin"] == "debian:13.6"
+
+            # Misses, collisions, and bad pairs are named.
+            missing = await http.patch(
+                f"/api/v1/images/{'f' * 64}",
+                json={"name": "x"},
+                headers=auth(),
+            )
+            assert missing.status_code == 404
+            assert "no such image" in missing.json()["detail"]
+
+            collision_import = await http.post(
+                "/api/v1/images",
+                json={"source": str(other), "name": "mine", "version": "2"},
+                headers=auth(),
+            )
+            assert collision_import.status_code == 409
+            assert "mine:2" in collision_import.json()["detail"]
+
+            imported_other = await http.post(
+                "/api/v1/images", json={"source": str(other)}, headers=auth()
+            )
+            assert imported_other.status_code == 201
+            collision_rename = await http.patch(
+                f"/api/v1/images/{imported_other.json()['hash']}",
+                json={"name": "mine", "version": "2"},
+                headers=auth(),
+            )
+            assert collision_rename.status_code == 409
+            assert collision_rename.json()["detail"].startswith("mine:2")
+
+            bad = await http.patch(
+                f"/api/v1/images/{digest}",
+                json={"name": "with:colon"},
+                headers=auth(),
+            )
+            assert bad.status_code == 400
+            assert "image name override" in bad.json()["detail"]

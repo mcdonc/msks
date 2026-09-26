@@ -628,23 +628,47 @@ def cmd_resize(
     return 0
 
 
-def image_cells(row: dict) -> list[str]:
-    """One catalog row's cells: ref, short hash, default flag,
+def origin_cell(row: dict) -> str:
+    """The archive's own pair (#340): shown beside a differing
+    registered pair; a dash when the row was never renamed (or a
+    daemon predating the origin fields answers)."""
+    name = row.get("origin_name")
+    version = row.get("origin_version")
+    if not name or not version:
+        return "-"
+    if (name, version) == (row["name"], row["version"]):
+        return "-"
+    return f"{name}:{version}"
+
+
+def image_cells(row: dict, with_origin: bool = False) -> list[str]:
+    """One catalog row's cells: ref, origin (#340) when the
+    listing carries a renamed row, short hash, default flag,
     kernel, and the import time (#283) — the same stamped-or-dash
     cell the storage table renders."""
     flag = "default" if row["default"] else "-"
     kernel = f"{row['kernel_version'] or '-'} ({row['kernel_format'] or '-'})"
     ref = f"{row['name']}:{row['version']}"
-    return [ref, row["hash"][:12], flag, kernel, imported_cell(row)]
+    cells = [ref]
+    if with_origin:
+        cells.append(origin_cell(row))
+    cells.extend([row["hash"][:12], flag, kernel, imported_cell(row)])
+    return cells
 
 
 def render_image_ls(rows: list[dict], as_json: bool) -> str:
-    """The whole catalog: the aligned table, or one JSON document."""
+    """The whole catalog: the aligned table, or one JSON document.
+
+    The origin column (#340) appears when at least one row's
+    registered pair differs from its manifest pair."""
     if as_json:
         return json.dumps(rows, indent=2)
+    with_origin = any(origin_cell(row) != "-" for row in rows)
+    headers = ["ref", "hash", "default", "kernel", "imported"]
+    if with_origin:
+        headers.insert(1, "origin")
     return listing_text(
-        ["ref", "hash", "default", "kernel", "imported"],
-        [image_cells(row) for row in rows],
+        headers, [image_cells(row, with_origin) for row in rows]
     )
 
 
@@ -655,14 +679,23 @@ async def fetch_images(url, token, transport) -> list[dict]:
     )
 
 
-async def import_image(url, token, source, transport) -> dict:
-    """POST the import; print the registered reference and hash."""
+async def import_image(
+    url, token, source, transport, name=None, version=None
+) -> dict:
+    """POST the import; print the registered reference and hash.
+
+    A ``name``/``version`` override (#340) rides the same request
+    — only the given keys are sent."""
+    body = {"source": source}
+    for key, value in (("name", name), ("version", version)):
+        if value is not None:
+            body[key] = value
     record = await api_call(
         "POST",
         url,
         token,
         "/api/v1/images",
-        json_body={"source": source},
+        json_body=body,
         transport=transport,
     )
     print(f"imported {record['ref']} ({record['hash'][:12]})")
@@ -682,6 +715,31 @@ async def remove_image(url, token, ref, transport) -> dict:
             client, "DELETE", f"/api/v1/images/{row['hash']}"
         )
     print(f"{row['name']}:{row['version']} deleted")
+    return result
+
+
+async def rename_image(url, token, ref, name, version, transport) -> dict:
+    """Resolve ``ref`` against the listing, PATCH the rename
+    (#340) — the rm shape: resolution and rename share one client,
+    and every reference form reads as one exchange."""
+    async with api_client(url, token, transport) as client:
+        rows = await request(client, "GET", "/api/v1/images")
+        row = resolve_image_ref(ref, rows)
+        body = {
+            key: value
+            for key, value in (("name", name), ("version", version))
+            if value is not None
+        }
+        result = await request(
+            client,
+            "PATCH",
+            f"/api/v1/images/{row['hash']}",
+            json_body=body,
+        )
+    print(
+        f"renamed {row['name']}:{row['version']} to {result['ref']} "
+        f"({row['hash'][:12]})"
+    )
     return result
 
 
@@ -755,6 +813,7 @@ def info_pairs(row: dict) -> list[list[str]]:
     provisioner = row.get("provisioner") or "- (none declared)"
     return [
         ("ref", f"{row['name']}:{row['version']}"),
+        ("origin", origin_ref_of(row)),
         ("hash", row["hash"]),
         ("kernel", kernel),
         ("cmdline", row["cmdline"]),
@@ -762,6 +821,15 @@ def info_pairs(row: dict) -> list[list[str]]:
         ("seed", f"provisioner {provisioner}"),
         ("default", default),
     ]
+
+
+def origin_ref_of(row: dict) -> str:
+    """The archive's own pair (#340): both pairs always carry, so
+    a renamed row's provenance reads from the record alone. A
+    daemon predating the fields answers the registered pair."""
+    name = row.get("origin_name") or row["name"]
+    version = row.get("origin_version") or row["version"]
+    return f"{name}:{version}"
 
 
 def info_lines(row: dict) -> list[str]:
@@ -1087,10 +1155,18 @@ def cmd_image_ls(as_json: bool = False, transport=None) -> int:
     return 0
 
 
-def cmd_image_import(source: str, transport=None) -> int:
+def cmd_image_import(
+    source: str,
+    name: str | None = None,
+    version: str | None = None,
+    transport=None,
+) -> int:
     """``msks image import``: register a daemon-side archive or
-    fetch one from an https:// URL (#258)."""
-    asyncio.run(import_image(env_url(), env_token(), source, transport))
+    fetch one from an https:// URL (#258), under an optional
+    name/version override (#340)."""
+    asyncio.run(
+        import_image(env_url(), env_token(), source, transport, name, version)
+    )
     return 0
 
 
@@ -1117,6 +1193,29 @@ def cmd_image_rm(ref: str, transport=None) -> int:
 def cmd_image_info(ref: str, transport=None) -> int:
     """``msks image info``: one image's full record."""
     asyncio.run(describe_image(env_url(), env_token(), ref, transport))
+    return 0
+
+
+def checked_rename_args(name: str | None, version: str | None) -> None:
+    """Reject the argument shape that says nothing (#340): a
+    rename with neither key."""
+    if name is None and version is None:
+        raise SystemExit("msks: pass --name and/or --version")
+
+
+def cmd_image_rename(
+    ref: str,
+    name: str | None = None,
+    version: str | None = None,
+    transport=None,
+) -> int:
+    """``msks image rename``: change a cataloged image's registered
+    name/version (#340); the bytes, the hash, and the manifest
+    origin stay."""
+    checked_rename_args(name, version)
+    asyncio.run(
+        rename_image(env_url(), env_token(), ref, name, version, transport)
+    )
     return 0
 
 
@@ -2058,10 +2157,43 @@ def image_import(
         "by this command) or an https:// URL the daemon downloads "
         "itself (#258)",
     ),
+    name: str | None = typer.Option(
+        None,
+        "--name",
+        help="register under this name instead of "
+        "the archive's own (#340); the manifest pair stays recorded "
+        "as the origin",
+    ),
+    version: str | None = typer.Option(
+        None,
+        "--version",
+        help="register under this version instead of the archive's own (#340)",
+    ),
 ) -> int:
     """Register an image archive from a daemon-side path or an
     https:// URL."""
-    return cmd_image_import(source, transport=ctx.obj)
+    return cmd_image_import(source, name, version, transport=ctx.obj)
+
+
+@image_app.command("rename")
+@one_line_interrupts
+def image_rename(
+    ctx: typer.Context,
+    ref: str = typer.Argument(
+        ...,
+        help="name:version, bare name (newest), name@hash, or hash "
+        "(a unique hash prefix works too)",
+    ),
+    name: str | None = typer.Option(
+        None, "--name", help="the registered name moves to this"
+    ),
+    version: str | None = typer.Option(
+        None, "--version", help="the registered version moves to this"
+    ),
+) -> int:
+    """Change a cataloged image's registered name/version (#340);
+    the bytes, the hash, and the manifest origin stay."""
+    return cmd_image_rename(ref, name, version, transport=ctx.obj)
 
 
 @image_app.command("check")

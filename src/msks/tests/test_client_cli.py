@@ -4417,3 +4417,162 @@ def test_help_requested_scans_up_to_the_separator() -> None:
     assert cli.help_requested(["egress", "-h", "watch"])
     assert cli.help_requested(["create", "--", "--help"]) is False
     assert cli.help_requested(["egress"]) is False
+
+
+# --- Image overrides and renames (#340) ---
+
+
+def test_image_import_sends_the_override(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--name/--version ride the import POST; only the given keys
+    are sent."""
+    client_env(monkeypatch)
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(201, json={"hash": "a" * 64, "ref": "mine:1.0"})
+
+    rc = cli.cmd_image_import(
+        "/srv/debian.tar", name="mine", transport=mock(handler)
+    )
+    assert rc == 0
+    assert seen["body"] == {"source": "/srv/debian.tar", "name": "mine"}
+    assert "imported mine:1.0" in capsys.readouterr().out
+
+    rc = cli.cmd_image_import(
+        "/srv/debian.tar",
+        name="mine",
+        version="1.0",
+        transport=mock(handler),
+    )
+    assert rc == 0
+    assert seen["body"] == {
+        "source": "/srv/debian.tar",
+        "name": "mine",
+        "version": "1.0",
+    }
+
+
+def test_image_rename_patches_the_resolved_hash(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The rm shape: resolve the reference against the listing, then
+    PATCH by hash with only the given keys."""
+    client_env(monkeypatch)
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "PATCH":
+            seen["path"] = request.url.path
+            seen["body"] = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json={
+                    "hash": "a" * 64,
+                    "name": "mine",
+                    "version": "1.4",
+                    "ref": "mine:1.4",
+                    "origin": "debian:13",
+                },
+            )
+        return httpx.Response(200, json=IMAGES)
+
+    rc = cli.main(
+        ["image", "rename", "debian:13", "--version", "1.4"],
+        transport=listing_transport(handler),
+    )
+    assert rc == 0
+    assert seen["path"] == f"/api/v1/images/{'a' * 64}"
+    assert seen["body"] == {"version": "1.4"}
+    out = capsys.readouterr().out
+    assert "renamed debian:13 to mine:1.4" in out
+    assert "a" * 12 in out
+
+
+def test_image_rename_refuses_a_rename_that_says_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client_env(monkeypatch)
+    with pytest.raises(SystemExit, match="pass --name and/or --version"):
+        cli.cmd_image_rename("debian:13", transport=listing_transport())
+
+
+def test_image_rename_collision_names_the_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client_env(monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "PATCH"
+        return httpx.Response(
+            409,
+            json={
+                "detail": "mine:1 is already held by "
+                + "c" * 12
+                + " (renamed from alpine:3.20)"
+            },
+        )
+
+    with pytest.raises(SystemExit, match=r"msks: 409: mine:1 is already"):
+        cli.cmd_image_rename(
+            "debian:13",
+            name="mine",
+            version="1",
+            transport=listing_transport(handler),
+        )
+
+
+def test_image_ls_shows_the_origin_column(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A renamed row shows the manifest origin beside its registered
+    pair; unrenamed rows keep the column with the dash."""
+    rows = [
+        {**IMAGES[0], "origin_name": "other", "origin_version": "9"},
+        IMAGES[1],
+    ]
+    client_env(monkeypatch)
+    rc = cli.cmd_image_ls(
+        transport=mock(lambda req: httpx.Response(200, json=rows))
+    )
+    assert rc == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].split()[1] == "origin"
+    assert lines[1].split()[1] == "other:9"
+    assert lines[2].split()[1] == "-"
+
+
+def test_image_ls_without_renames_keeps_the_columns(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The origin column appears only when a row's registered pair
+    differs; equal origin pairs (and a daemon predating the fields)
+    keep the five-column grid."""
+    rows = [
+        {**IMAGES[0], "origin_name": "debian", "origin_version": "13"},
+        IMAGES[1],
+    ]
+    client_env(monkeypatch)
+    rc = cli.cmd_image_ls(
+        transport=mock(lambda req: httpx.Response(200, json=rows))
+    )
+    assert rc == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].split() == ["ref", "hash", "default", "kernel", "imported"]
+
+
+def test_image_info_carries_the_origin_pair(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Both pairs always answer: a renamed row's provenance reads
+    from the record alone; a daemon predating the fields repeats
+    the registered pair."""
+    client_env(monkeypatch)
+    row = {**IMAGES[0], "origin_name": "other", "origin_version": "9"}
+    transport = mock(lambda req: httpx.Response(200, json=[row]))
+    rc = cli.cmd_image_info("debian:13", transport=transport)
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "origin" in out and "other:9" in out

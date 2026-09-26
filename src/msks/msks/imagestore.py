@@ -29,7 +29,7 @@ import tarfile
 import time
 import uuid
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -40,6 +40,15 @@ import httpx
 #: ISO-8601 line, rewritten by every import (a re-import refreshes
 #: the stamp along with the cache it swaps in).
 IMPORTED_STAMP = "imported"
+
+#: The cache file that carries a name/version override (#340): one
+#: JSON object with the registered ``name``/``version`` pair. Absent
+#: — the manifest's own pair is the registered one. The manifest
+#: pair stays recorded in ``image.json`` as the row's origin.
+OVERRIDE_FILE = "override.json"
+
+#: The override's two keys, in record order.
+KEYS = ("name", "version")
 
 #: The floor of import-time ordering: entries whose time is
 #: unreadable sort deterministically — first, before every
@@ -58,6 +67,11 @@ class ImageError(Exception):
     """A catalog operation failed; the message is operator-readable."""
 
 
+class ImageCollision(ImageError):
+    """A name:version another catalog row already holds (#340) —
+    the registered references must stay unambiguous."""
+
+
 @dataclass(frozen=True)
 class ImageRecord:
     """One catalog entry; every path is absolute and launch-ready."""
@@ -65,6 +79,11 @@ class ImageRecord:
     hash: str
     name: str
     version: str
+    #: The pair the archive's own manifest carries (#340) — set at
+    #: import, never changed by an override or a rename. For an
+    #: unrenamed row it equals ``name``/``version``.
+    origin_name: str
+    origin_version: str
     cmdline: str
     vsock_shell_port: int
     kernel_version: str
@@ -90,6 +109,11 @@ class ImageRecord:
     @property
     def ref(self) -> str:
         return f"{self.name}:{self.version}"
+
+    @property
+    def origin_ref(self) -> str:
+        """The archive's own ``name:version`` (#340)."""
+        return f"{self.origin_name}:{self.origin_version}"
 
 
 def images_dir(state_dir: Path) -> Path:
@@ -403,7 +427,160 @@ def member(layer: tarfile.TarFile, dest: Path, member_name: str) -> None:
         shutil.copyfileobj(handle, out)
 
 
-def import_archive(path: Path, state_dir: Path) -> ImageRecord:
+def checked_pair(key: str, value: str) -> str:
+    """One override value, checked (#340): a non-empty string the
+    reference forms can still parse — no ``:`` or ``@`` (both forms
+    key on them), no surrounding whitespace."""
+    shape_error(key, value)
+    delimiter_error(key, value)
+    return value
+
+
+def shape_error(key: str, value: str) -> None:
+    """Refuse a value that is not a plain, trimmed, non-empty
+    string."""
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ImageError(
+            f"image {key} override must be a non-empty string with no "
+            f"surrounding whitespace, got {value!r}"
+        )
+
+
+def delimiter_error(key: str, value: str) -> None:
+    """Refuse a value the reference forms cannot carry: ``:`` and
+    ``@`` key the name:version and name@hash forms."""
+    if ":" in value or "@" in value:
+        raise ImageError(
+            f"image {key} override must not contain ':' or '@' — the "
+            f"reference forms key on them, got {value!r}"
+        )
+
+
+def validated_override(name: str | None, version: str | None) -> dict | None:
+    """The checked override a caller passed (#340): only the given
+    keys, each through :func:`checked_pair`. Neither key given — no
+    override at all."""
+    override: dict = {}
+    for key, value in (("name", name), ("version", version)):
+        if value is not None:
+            override[key] = checked_pair(key, value)
+    return override or None
+
+
+def override_keys(raw: dict) -> dict:
+    """The raw override's keys that pass the checks (#340); a key
+    that fails is skipped, and the entry keeps the manifest's
+    value for it."""
+    override: dict = {}
+    for key in KEYS:
+        with contextlib.suppress(ImageError):
+            override[key] = checked_pair(key, raw.get(key))
+    return override
+
+
+def read_override(cache: Path) -> dict | None:
+    """The cache's override (#340), or None when it carries none.
+
+    A key that fails :func:`checked_pair` reads as absent — the
+    entry keeps the manifest's value for that key, the same
+    degradation a corrupt ``image.json`` takes."""
+    try:
+        raw = json.loads((cache / OVERRIDE_FILE).read_text())
+    except OSError, json.JSONDecodeError:
+        return None
+    if not isinstance(raw, dict):
+        return None
+    return override_keys(raw) or None
+
+
+def write_override(cache: Path, override: dict) -> None:
+    """Install the override atomically: a dot-prefixed ``.tmp``
+    staging name renames onto the override file, so a crash
+    mid-write leaves an inert dot-file inside the cache dir —
+    never a visible catalog artifact."""
+    staging = cache / (
+        f".{OVERRIDE_FILE}.{os.getpid()}-{uuid.uuid4().hex[:8]}.tmp"
+    )
+    staging.write_text(json.dumps(override))
+    staging.rename(cache / OVERRIDE_FILE)
+
+
+def stage_override(
+    staging: Path,
+    override: dict | None,
+    manifest: dict,
+) -> None:
+    """Stage the override the new cache carries (#340): the
+    composed pair over the manifest. A None override stages
+    nothing — the manifest's pair is the registered one."""
+    if override is None:
+        return
+    pair = registered_pair(override, manifest)
+    (staging / OVERRIDE_FILE).write_text(json.dumps(dict(zip(KEYS, pair))))
+
+
+def pin_imported_stamp(cache: Path, imported: datetime | None) -> None:
+    """Freeze a derived import time into a stamp (#340 review): a
+    rename writes inside the cache dir, which moves the directory
+    mtime — the fallback import time for entries that predate
+    stamps. Writing the currently-derived moment as the stamp
+    keeps the listed time stable across the rename."""
+    if imported is None or (cache / IMPORTED_STAMP).is_file():
+        return
+    (cache / IMPORTED_STAMP).write_text(imported.isoformat() + "\n")
+
+
+def registered_pair(override: dict | None, manifest: dict) -> tuple[str, str]:
+    """The pair a row registers under (#340): the override's keys
+    over the manifest's values, so a partial override (one key
+    given) falls back per key."""
+    override = override or {}
+    return (
+        override.get("name", manifest["name"]),
+        override.get("version", str(manifest["version"])),
+    )
+
+
+def refuse_collision(
+    pair: tuple[str, str], own_digest: str, state_dir: Path
+) -> None:
+    """Refuse a pair another catalog row already holds (#340):
+    ``name:version`` references must name one row. The holder is
+    named by hash (the pair repeats by construction) and by its
+    origin pair when a rename moved it there."""
+    name, version = pair
+    for image in list_images(state_dir):
+        if image.hash == own_digest:
+            continue
+        if (image.name, image.version) == (name, version):
+            holder = image.hash[:12]
+            if (image.name, image.version) != (
+                image.origin_name,
+                image.origin_version,
+            ):
+                holder += f" (renamed from {image.origin_ref})"
+            raise ImageCollision(
+                f"{name}:{version} is already held by {holder}"
+            )
+
+
+def refuse_given(
+    given: dict | None, manifest: dict, digest: str, state_dir: Path
+) -> None:
+    """Refuse a caller-passed override whose composed pair another
+    row holds (#340); a carried-forward registration passes — the
+    row already owns the pair legitimately."""
+    if given is not None:
+        refuse_collision(registered_pair(given, manifest), digest, state_dir)
+
+
+def import_archive(
+    path: Path,
+    state_dir: Path,
+    *,
+    name: str | None = None,
+    version: str | None = None,
+) -> ImageRecord:
     """Register one archive: hash it, unpack the boot files, index.
 
     Idempotent in identity; re-importing the same archive refreshes
@@ -413,6 +590,14 @@ def import_archive(path: Path, state_dir: Path) -> ImageRecord:
     staging name (concurrent imports cannot collide), and the swap
     into place is rename-aside (an interrupted re-import can never
     destroy the previously-good cache).
+
+    A ``name``/``version`` override (#340) registers the archive
+    under an operator-chosen pair; the manifest's own pair stays
+    recorded as the origin, and the pair another row already holds
+    is refused. A plain re-import carries the row's current
+    override forward without that check — refreshing an unchanged
+    archive must neither reset a rename the operator made nor
+    strand the row behind a pair a later import duplicated.
     """
     if not path.is_file():
         raise ImageError(f"no such image archive: {path}")
@@ -420,24 +605,29 @@ def import_archive(path: Path, state_dir: Path) -> ImageRecord:
     root.mkdir(parents=True, exist_ok=True)
     attempt = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
     source_copy = root / f".src-{attempt}.tar"
+    given = validated_override(name, version)
     try:
         shutil.copy2(path, source_copy)
         digest = hash_file(source_copy)
         cache = root / digest
+        register = given if given is not None else read_override(cache)
         staging = root / f".{digest}.{attempt}.tmp"
         shutil.rmtree(staging, ignore_errors=True)
         with open_layer(source_copy) as layer:
             manifest = validate_manifest(layer)
+            refuse_given(given, manifest, digest, state_dir)
             staging.mkdir(parents=True)
+            stage_override(staging, register, manifest)
             member(layer, staging / "kernel", BOOT_MEMBERS["kernel"])
             member(layer, staging / "initrd", BOOT_MEMBERS["initrd"])
             member(layer, staging / "rootfs.ext4", BOOT_MEMBERS["rootfs"])
             (staging / "image.json").write_text(json.dumps(manifest))
             now = datetime.now(UTC)
             (staging / IMPORTED_STAMP).write_text(now.isoformat() + "\n")
-            # Concurrent imports of the same archive race here; each
-            # swap is idempotent because every attempt's content is
-            # identical (same digest).
+            # Concurrent imports of the same archive race here; the
+            # boot files are identical (same digest), the override
+            # file is last-writer-wins — a race the API's catalog
+            # lock keeps off the daemon's paths.
             aside = root / f".{digest}.{attempt}.old"
             try:
                 cache.rename(aside)
@@ -483,10 +673,13 @@ def record_from(
     manifest: dict,
     imported: datetime | None = None,
 ) -> ImageRecord:
+    name, version = registered_pair(read_override(cache), manifest)
     return ImageRecord(
         hash=digest,
-        name=manifest["name"],
-        version=str(manifest["version"]),
+        name=name,
+        version=version,
+        origin_name=manifest["name"],
+        origin_version=str(manifest["version"]),
         cmdline=manifest["cmdline"],
         vsock_shell_port=int(manifest["vsock_shell_port"]),
         kernel_version=str(manifest.get("kernel_version", "")),
@@ -651,6 +844,37 @@ def resolve_pinned(ref: str, images: list) -> ImageRecord | None:
     if record is not None and record.name != name:
         return None  # the pin names a different image
     return record
+
+
+def rename_image(
+    digest: str,
+    state_dir: Path,
+    *,
+    name: str | None = None,
+    version: str | None = None,
+) -> ImageRecord | None:
+    """Rename a cataloged image (#340): the registered pair
+    changes, the bytes, the hash, and the origin pair stay.
+
+    Either key given alone leaves the other at its registered
+    value; the composed pair passes the override checks and must
+    not collide with another row's ``name:version``. Returns the
+    renamed record, or None when no complete entry holds the
+    digest."""
+    record = load_record(images_dir(state_dir) / digest)
+    if record is None:
+        return None
+    override = validated_override(name, version) or {}
+    pair = (
+        override.get("name", record.name),
+        override.get("version", record.version),
+    )
+    for key, value in zip(KEYS, pair):
+        checked_pair(key, value)
+    refuse_collision(pair, digest, state_dir)
+    write_override(images_dir(state_dir) / digest, dict(zip(KEYS, pair)))
+    pin_imported_stamp(images_dir(state_dir) / digest, record.imported)
+    return replace(record, name=pair[0], version=pair[1])
 
 
 def remove(digest: str, state_dir: Path) -> None:

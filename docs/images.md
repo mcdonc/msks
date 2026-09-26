@@ -489,6 +489,41 @@ copies privately and hashes that copy, so a source file changing
 underneath the import cannot desync the recorded hash from the
 imported content, and importing the same content twice is idempotent.
 
+An import registers the archive under an operator-chosen pair
+(#340) when `name`/`version` ride the request — `msks image
+import <path> --name mine --version 1.0` on the CLI, or the keys
+beside `source` over HTTP. Either key alone moves; the other
+falls back to the archive's own manifest. The override changes
+the registered record — the listing, `image info`, and
+`name:version` reference resolution. The archive bytes, the
+content hash, and the archive's own `image.json` stay exactly as
+they were; the manifest's pair stays recorded as the row's
+**origin** beside the registered pair, so a usable image's
+provenance reads from the catalog alone.
+
+A cataloged row renames in place under the same rules (#340):
+
+```bash
+msks image rename debian:13 --name mine --version 1.0
+curl -X PATCH .../api/v1/images/<hash> \
+  -H "authorization: Bearer $TOKEN" -d '{"name": "mine", "version": "1.0"}'
+```
+
+Either key alone keeps the other at its registered value. A
+rename validates the new pair the same way an import override
+does (non-empty, and free of `:` and `@` — the reference forms
+key on them), refuses with a named error — naming the holder by
+hash, and by its origin when an override or a rename moved it
+there — a pair another row already holds, keeps the origin pair, and changes
+nothing else: the bytes, the hash, the listed import time, and
+workspaces already booting the image stay put. The refusal holds
+for overrides and renames; a plain import of a rebuilt archive
+under a pair a row already holds stays allowed (the long-standing
+shape — `name@hash` and bare-hash forms resolve the ambiguity).
+Re-importing unchanged bytes carries the row's current
+registration forward; re-importing the same bytes with a new
+override renames the row the same way a rename does.
+
 Rules worth knowing:
 
 - The **first image imported becomes the default** — the one a bare
@@ -517,7 +552,10 @@ curl -X DELETE .../api/v1/images/default \
   daemon only re-checks the hash, not a full re-import.
 - Listing shows every registered image with its hash, name,
   version, kernel facts, which one is default, and when each
-  entered the catalog (the `imported` field, ISO 8601 UTC):
+  entered the catalog (the `imported` field, ISO 8601 UTC); a
+  renamed row additionally carries its origin pair
+  (`origin_name`/`origin_version`, equal to `name`/`version` for
+  an unrenamed row):
 
 ```bash
 curl -H "authorization: Bearer $TOKEN" \

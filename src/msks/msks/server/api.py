@@ -46,7 +46,7 @@ from ..identity import (
     mint,
     normalize_public_key,
 )
-from ..imagestore import ImageError
+from ..imagestore import ImageCollision, ImageError
 from ..llm import mint_token
 from ..microvm.errors import MicrovmError
 from ..microvm.spec import VmSpec, VmStatus
@@ -151,9 +151,16 @@ class ImageImport(BaseModel):
     (``MSKSD_IMAGE_IMPORT_MAX_MIB`` / ``MSKSD_IMAGE_IMPORT_TIMEOUT_S``),
     verified against system TLS roots, and imported from the
     downloaded copy.
+
+    An optional ``name``/``version`` override (#340) registers the
+    archive under an operator-chosen pair — either key alone, the
+    other from the archive's own manifest, whose pair stays
+    recorded as the row's origin.
     """
 
     source: str
+    name: str | None = None
+    version: str | None = None
 
 
 class ImageDefault(BaseModel):
@@ -166,6 +173,21 @@ class ImageDefault(BaseModel):
     """
 
     ref: str
+
+
+class ImageRename(BaseModel):
+    """A rename request (#340): the registered pair a cataloged
+    image moves to.
+
+    Either key alone keeps the other at its registered value; the
+    composed pair must pass the override checks (non-empty, no
+    ``:``/``@``) and must not collide with another row's
+    ``name:version``. The archive's own pair stays recorded as the
+    row's origin, and the hash — the row's identity — never moves.
+    """
+
+    name: str | None = None
+    version: str | None = None
 
 
 class WorkspaceCreate(BaseModel):
@@ -1006,13 +1028,17 @@ def build_api(app) -> FastAPI:
     """
     hub = app.state.hub
     app.state.create_locks: dict[str, asyncio.Lock] = {}
-    # Imports serialize daemon-wide (#258): concurrent URL imports
-    # would each clamp to the same floor headroom and stream real
-    # bytes in parallel — the lock keeps the ceiling's promise that
-    # the disk never dips below the floor mid-download. Path
-    # imports ride the same lock: their floor check has the same
-    # race, just a narrower window.
-    import_lock = asyncio.Lock()
+    # Catalog mutations serialize daemon-wide (#258, #340): the
+    # floor check under concurrent URL imports would each clamp to
+    # the same headroom and stream real bytes in parallel — the
+    # lock keeps the ceiling's promise that the disk never dips
+    # below the floor mid-download. Path imports ride the same
+    # lock: their floor check has the same race, just a narrower
+    # window. Renames join it (#340 review): an import swaps the
+    # whole per-hash cache aside, so an unlocked rename landing in
+    # that window would write its override into the cache the
+    # import then deletes — a committed rename silently lost.
+    catalog_lock = asyncio.Lock()
     app.state.home_locks: dict[str, asyncio.Lock] = {}
 
     @contextlib.asynccontextmanager
@@ -1533,6 +1559,11 @@ def build_api(app) -> FastAPI:
                 "hash": image.hash,
                 "name": image.name,
                 "version": image.version,
+                # The archive's own pair (#340): equal to name/version
+                # for an unrenamed row, the origin beside a differing
+                # registered pair for a renamed one.
+                "origin_name": image.origin_name,
+                "origin_version": image.origin_version,
                 "cmdline": image.cmdline,
                 "vsock_shell_port": image.vsock_shell_port,
                 "console_protocol": image.console_protocol,
@@ -1571,7 +1602,7 @@ def build_api(app) -> FastAPI:
         # the fetched bytes.
         staged: Path | None = None
         try:
-            async with import_lock:
+            async with catalog_lock:
                 if imagestore.is_url(body.source):
                     max_bytes = download_ceiling(vmm)
                     if max_bytes <= 0:
@@ -1610,7 +1641,11 @@ def build_api(app) -> FastAPI:
                 if refusal is not None:
                     raise HTTPException(status_code=507, detail=refusal)
                 record = await asyncio.to_thread(
-                    imagestore.import_archive, source, state_dir
+                    imagestore.import_archive,
+                    source,
+                    state_dir,
+                    name=body.name,
+                    version=body.version,
                 )
                 # The first imported image becomes the default: a fresh
                 # daemon answers a bare workspace create immediately (the
@@ -1621,6 +1656,8 @@ def build_api(app) -> FastAPI:
                 # leave no default designated at all.
                 if len(imagestore.list_images(state_dir)) == 1:
                     imagestore.set_default(record.hash, state_dir)
+        except ImageCollision as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
         except (ImageError, OSError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
         finally:
@@ -1691,6 +1728,48 @@ def build_api(app) -> FastAPI:
                 "version": fallback.version,
                 "ref": fallback.ref,
             }
+        }
+
+    @api.patch(
+        "/api/v1/images/{digest}", dependencies=[Depends(require_token)]
+    )
+    async def rename_image(digest: str, body: ImageRename) -> dict:
+        """Rename a cataloged image (#340).
+
+        The registered ``name``/``version`` pair changes — the
+        bytes, the hash, the origin pair, and workspaces already
+        booting the image stay put, so ``name@hash`` and bare-hash
+        references keep resolving. The rename serializes against
+        imports (the catalog lock): an import swaps the per-hash
+        cache aside, and an unlocked rename in that window would
+        commit into the discarded cache. A composed pair another
+        row already holds answers 409 naming it; a miss is a named
+        404; a pair that fails the override checks is a named 400.
+        """
+        state_dir = app.state.settings.vmm.state_dir
+        try:
+            async with catalog_lock:
+                record = await asyncio.to_thread(
+                    imagestore.rename_image,
+                    digest,
+                    state_dir,
+                    name=body.name,
+                    version=body.version,
+                )
+        except ImageCollision as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        except (ImageError, OSError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        if record is None:
+            raise HTTPException(
+                status_code=404, detail=f"no such image: {digest}"
+            )
+        return {
+            "hash": record.hash,
+            "name": record.name,
+            "version": record.version,
+            "ref": record.ref,
+            "origin": record.origin_ref,
         }
 
     @api.delete(
