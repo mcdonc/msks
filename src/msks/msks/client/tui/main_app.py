@@ -28,6 +28,7 @@ import json
 import sys
 import time
 
+from rich.cells import cell_len
 from rich.markup import escape
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -101,15 +102,82 @@ def workspace_label(row: dict) -> str:
     return row.get("name") or row["id"]
 
 
-def row_line(row: dict) -> str:
-    """One listing row: label, status, egress mode, image, created."""
-    image = (row.get("image_hash") or "-")[:12]
-    mode = row.get("egress_mode") or "-"
-    created = (row.get("created_at") or "")[:10] or "-"
-    return (
-        f"{escape(workspace_label(row))}  ·  {row['status']}"
-        f"  ·  egress {mode}  ·  {image}  ·  {created}"
+#: The listing's columns (#347): the header's label and the
+#: column's width, in row order — every row pads each field to its
+#: column's width, so the columns line up down the list.
+LIST_COLUMNS = (
+    ("NAME", 24),
+    ("STATUS", 10),
+    ("EGRESS", 12),
+    ("IMAGE", 12),
+    ("CREATED", 10),
+)
+
+#: The space between two listing columns.
+COLUMN_GAP = "  "
+
+#: The listing's column widths, in row order.
+NAME_W, STATUS_W, EGRESS_W, IMAGE_W, CREATED_W = (
+    width for _label, width in LIST_COLUMNS
+)
+
+
+def cell_prefix(text: str, width: int) -> str:
+    """The longest head of ``text`` that fits ``width`` display
+    cells (a wide character that would cross the budget stays
+    whole; the head may land a cell short)."""
+    out: list[str] = []
+    used = 0
+    for char in text:
+        wide = cell_len(char)
+        if used + wide > width:
+            break
+        out.append(char)
+        used += wide
+    return "".join(out)
+
+
+def cell_pad(text: str, width: int) -> str:
+    """The text left-justified to ``width`` display cells — a
+    wide-character name cannot shift the columns beside it."""
+    short = width - cell_len(text)
+    return text + " " * short if short > 0 else text
+
+
+def list_header() -> str:
+    """The listing's header row (#347): the column labels, each
+    left-justified to its column's width — the offsets the rows
+    pad their fields to."""
+    return COLUMN_GAP.join(
+        cell_pad(label, width) for label, width in LIST_COLUMNS
+    ).rstrip()
+
+
+def padded_cells(cells: tuple[str, ...]) -> str:
+    """One listing line's cells joined: each left-justified to its
+    column's display width, two spaces between columns."""
+    return COLUMN_GAP.join(
+        cell_pad(cell, width)
+        for cell, (_label, width) in zip(cells, LIST_COLUMNS, strict=True)
     )
+
+
+def row_line(row: dict) -> str:
+    """One listing row (#347): label, status, egress mode, image,
+    created — each field clipped to its column's width and padded
+    to it, so every column starts at the same offset in every row
+    whatever the daemon's vocabulary grows (a terminal narrower
+    than the columns clips the row's tail). The padding rides the
+    raw text and the escape comes after it: a markup-carrying
+    name cannot shift the columns."""
+    cells = (
+        clip(workspace_label(row), NAME_W),
+        clip(row["status"], STATUS_W),
+        clip(row.get("egress_mode") or "-", EGRESS_W),
+        clip(row.get("image_hash") or "-", IMAGE_W),
+        clip((row.get("created_at") or "")[:CREATED_W] or "-", CREATED_W),
+    )
+    return escape(padded_cells(cells)).rstrip()
 
 
 def header_line(row: dict) -> str:
@@ -371,7 +439,8 @@ class MsksTuiApp(App):
     CSS = """
     Screen { layout: vertical; }
     #status { padding: 0 1; background: $panel; color: $text-muted; }
-    #rows ListItem { height: 1; }
+    #columns { padding: 0 1; color: $text-muted; }
+    #rows ListItem { height: 1; padding: 0 1; }
     #empty { padding: 1 2; color: $text-muted; }
     #header { padding: 0 1; background: $panel; }
     #consent { padding: 0 1; color: $text-muted; }
@@ -493,6 +562,7 @@ class MainScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Static(id="status")
         with Vertical(id="listing"):
+            yield Static(list_header(), id="columns")
             yield Static(id="empty")
         yield Footer()
 
@@ -560,15 +630,21 @@ class MainScreen(Screen):
 
     def sync_status(self) -> None:
         """The status line: the workspace count and the daemon's
-        URL; a flash owns it until its TTL lapses. A screen going
-        away under the timer or a worker leaves the query empty —
-        teardown noise, not a crash."""
+        URL; a flash owns it until its TTL lapses. The listing's
+        header row shows while rows stand; the empty state takes
+        its place when they do not. A screen going away under the
+        timer or a worker leaves the query empty — teardown noise,
+        not a crash."""
         try:
             count = len(self.rows)
             plural = "" if count == 1 else "s"
             default = f" {count} workspace{plural}  ·  {env_url()}"
             text = self.app.flash_line.text(default)
             self.query_one("#status", Static).update(text)
+            # The header row owns the listing's top; the empty
+            # state takes its place when the last row leaves.
+            columns = self.query_one("#columns", Static)
+            columns.display = bool(self.rows)
             empty = self.query_one("#empty", Static)
             empty.display = not self.rows
             empty.update("No workspaces — c creates one.")
@@ -1122,13 +1198,18 @@ def whole_number(value: str) -> bool:
 
 def clip(text: str, width: int = 12) -> str:
     """One clipped column: the text, or its head and tail kept
-    around a middle ellipsis when it runs longer (the tail carries
-    the version half of a reference, the part a head-only clip
-    eats)."""
-    if len(text) <= width:
+    around a middle ellipsis when it runs wider than ``width``
+    display cells (the tail carries the version half of a
+    reference, the part a head-only clip eats; a wide character
+    that would cross a budget stays whole, so a clipped cell may
+    land a cell short and the padding fills it)."""
+    if cell_len(text) <= width:
         return text
     head = (width - 1) // 2
-    return f"{text[:head]}…{text[-(width - 1 - head) :]}"
+    return (
+        f"{cell_prefix(text, head)}…"
+        f"{cell_prefix(text[::-1], width - 1 - head)[::-1]}"
+    )
 
 
 def image_options(rows: list[dict]) -> list[tuple[str, str]]:
