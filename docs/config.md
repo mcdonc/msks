@@ -68,6 +68,14 @@ the other by the rule, and the daemon enforces it in code: the
 key↔variable table is derived mechanically, so the two forms cannot
 drift apart.
 
+The underscore is the canonical spelling, and a hyphen may be
+written for it: `egress-dns-upstream` and `egress_dns_upstream` are
+one key spelled two ways (the same rule the `llm_models` entries'
+keys follow), so an operator used to kebab-case YAML can write it
+naturally. Both spellings of one key in the same file is a startup
+error naming the two spellings, and the valid-keys list an unknown
+key reports is the snake_case one.
+
 One mapping detail worth knowing: **`state_dir` places the database
 too.** `MSKSD_STATE_DIR` feeds both the local driver's workspace
 artifacts and the server's sqlite database (`<state_dir>/msks.db`);

@@ -249,6 +249,65 @@ def test_duplicate_key_rejected(tmp_path) -> None:
         file_env_overrides(path)
 
 
+def test_kebab_spelling_is_the_same_key(tmp_path) -> None:
+    """A hyphen and an underscore spell the same key (#332): the
+    kebab spelling reaches the same setting the snake_case one
+    does, both spellings on one file (distinct keys) and one at a
+    time."""
+    path = write_config(
+        tmp_path, "egress-dns-upstream: 1.1.1.1\naccess_log: true\n"
+    )
+    layer = file_env_overrides(path)
+    assert layer["MSKSD_EGRESS_DNS_UPSTREAM"] == "1.1.1.1"
+    assert layer["MSKSD_ACCESS_LOG"] == "true"
+
+
+def test_both_spellings_of_one_key_rejected(tmp_path) -> None:
+    """Distinct YAML keys, one setting: the file fails at startup
+    naming both spellings instead of one silently winning (#332)."""
+    path = write_config(
+        tmp_path,
+        "egress_dns_upstream: 1.1.1.1\negress-dns-upstream: 8.8.8.8\n",
+    )
+    with pytest.raises(
+        ValueError,
+        match="already spelled 'egress_dns_upstream'",
+    ):
+        file_env_overrides(path)
+
+
+def test_null_spelling_still_collides(tmp_path) -> None:
+    """A null value is the unset form, but the spelling still
+    counts: a null ``egress_subnet:`` plus a set ``egress-subnet:``
+    is both spellings of one key, the same duplicate error (#332
+    review)."""
+    path = write_config(
+        tmp_path, "egress_subnet:\negress-subnet: 10.9.0.0/16\n"
+    )
+    with pytest.raises(
+        ValueError,
+        match="already spelled 'egress_subnet'",
+    ):
+        file_env_overrides(path)
+
+
+def test_unknown_kebab_key_rejected_with_snake_list(tmp_path) -> None:
+    """An unknown key keeps its fail-fast error, and the valid-keys
+    list stays snake_case — the canonical spelling (#332)."""
+    path = write_config(tmp_path, "egress-dns-upstreem: 1.1.1.1\n")
+    with pytest.raises(
+        ValueError, match="unknown config key 'egress-dns-upstreem'"
+    ):
+        file_env_overrides(path)
+
+
+def test_kebab_list_key_keeps_its_list(tmp_path) -> None:
+    """The one list-valued key accepts its kebab spelling too — the
+    entries arrive as the list, not stringified (#332)."""
+    path = dump_config(tmp_path, {"llm-models": ["openai/gpt-4o"]})
+    assert file_env_overrides(path) == {"MSKSD_LLM_MODELS": ["openai/gpt-4o"]}
+
+
 def test_merge_keys_refused_with_their_own_message(tmp_path) -> None:
     """The file is flat and every key is spelled out, so ``<<:
     *anchor`` is refused by name (fresh-eyes review) — not by
@@ -533,6 +592,20 @@ def test_every_key_reaches_its_setting(
         assert str(got) == str(expected), f"{key} did not reach {attr}"
 
 
+def test_kebab_spelling_reaches_the_setting(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """The kebab spelling loads end-to-end: the file's
+    ``socket-wait-timeout-s`` lands on the same field
+    ``socket_wait_timeout_s`` does (#332)."""
+    for var in ("MSKSD_SOCKET_WAIT_TIMEOUT_S",):
+        monkeypatch.delenv(var, raising=False)
+    settings = load_settings(
+        dump_config(tmp_path, {"socket-wait-timeout-s": 13.0})
+    )
+    assert settings.vmm.socket_wait_timeout_s == 13.0
+
+
 # --- SIGHUP reload ---
 
 
@@ -545,6 +618,16 @@ def test_reload_swaps_live_settings(tmp_path) -> None:
     write_config(tmp_path, "port: 9004\n")
     main_mod.reload_settings(app, str(tmp_path / "msksd.yaml"))
     assert app.state.settings.server.port == 9004
+
+
+def test_reload_reads_kebab_spelling(tmp_path) -> None:
+    """The reload path parses through the same key walk, so the
+    kebab spelling applies on SIGHUP too (#332)."""
+    app = app_with_file(tmp_path, {"port": 9001})
+    write_config(tmp_path, "port: 9004\negress-mode: interactive\n")
+    main_mod.reload_settings(app, str(tmp_path / "msksd.yaml"))
+    assert app.state.settings.server.port == 9004
+    assert app.state.settings.net.egress_mode == "interactive"
 
 
 def test_reload_refuses_invalid_config(tmp_path, capsys) -> None:
