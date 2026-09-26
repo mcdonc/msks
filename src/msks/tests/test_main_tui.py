@@ -1871,6 +1871,12 @@ async def test_the_headers_count_follows_the_queue(monkeypatch) -> None:
                 {"request_id": "late1", "decision": "allowed"},
             )
         )
+        # late2 joined while the park covered late1: once late1 (the
+        # parked id) resolves, late2 stands unparked and the panel
+        # opens for it — park it and read the count again.
+        await wait_for(lambda: on_overlay(app))
+        await pilot.press("q")
+        await wait_for(lambda: on_page(app))
         await wait_for(lambda: "egress to decide: 1" in header_text(app))
         assert action_children(app) == 5
         ws.push(

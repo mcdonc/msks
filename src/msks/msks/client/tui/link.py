@@ -53,6 +53,13 @@ class DeciderLink:
         )
         self.state = RECONNECTING
         self.reject_reason = ""
+        #: The registration's reset window (#358): True from the
+        #: reset that clears the controller's snapshot until the
+        #: first frame of the replay lands — the queue's truth is
+        #: in flight, and a park recorded against the snapshot
+        #: must outlive the window (the replay re-lands the same
+        #: holds).
+        self.replay_pending = False
         #: The off-allowlist sightings the frames landed since the
         #: host last drained them (#201 over #358): the page's tick
         #: takes them to flash whichever surface owns the terminal.
@@ -123,9 +130,11 @@ class DeciderLink:
         try:
             await ws.send(registration_frame(self.workspace_id))
             self.controller.reset()
+            self.replay_pending = True
             async for raw in ws:
                 if self.land_frame(raw):
                     return True, False, True
+                self.replay_pending = False
         except websockets.ConnectionClosed as exc:
             return self.closed(exc)
         except Exception:

@@ -440,6 +440,13 @@ async def press_until(pilot, key: str, landed, timeout: float = 10.0) -> None:
     raise AssertionError(f"{key!r} never took effect")
 
 
+async def open_screen(pilot, app, key: str, name: str) -> None:
+    """Press a key until its screen stands on top — the press can
+    land inside a rebuild's swap window and no-op (by design), so
+    the tests retry."""
+    await press_until(pilot, key, lambda: type(app.screen).__name__ == name)
+
+
 async def decide_the(controller, rid: str, decision: str = "allowed") -> None:
     """Land one hold's resolution in the controller (the daemon's
     frame the verdict or the timeout produces)."""
@@ -494,8 +501,7 @@ async def test_the_duration_picker() -> None:
     async with app.run_test() as pilot:
         await open_overlay(pilot, app, page)
         await pilot.pause()
-        await pilot.press("A")
-        await wait_for(lambda: type(app.screen).__name__ == "DurationScreen")
+        await open_screen(pilot, app, "A", "DurationScreen")
         # Default highlight is tilrestart; two ups land on 5m.
         await pilot.press("up", "up", "enter")
         await wait_for(lambda: len(data.decided) == 1)
@@ -520,8 +526,7 @@ async def test_the_picker_decides_the_hold_it_opened_on() -> None:
     async with app.run_test() as pilot:
         await open_overlay(pilot, app, page)
         await wait_for(lambda: queue_children(app) == 1)
-        await pilot.press("A")
-        await wait_for(lambda: type(app.screen).__name__ == "DurationScreen")
+        await open_screen(pilot, app, "A", "DurationScreen")
         # The hold resolves while the picker is open (the timeout
         # won the race); the picked duration still names r1.
         await decide_the(page.link.controller, "r1")
@@ -647,9 +652,17 @@ async def test_the_close_waits_while_rules_sits_above() -> None:
         overlay.tick()
         await pilot.pause()
         assert type(app.screen).__name__ == "RulesScreen"  # held off
-        await press_until(pilot, "r", lambda: on_overlay(app))
+        # Back returns to the overlay — or the panel's own timer
+        # tick may already have taken it down once it surfaced
+        # (both orders are the pinned behavior: the close waits for
+        # the rules screen to leave, then lands). The budgets ride
+        # high: under a full parallel suite a worker's event loop
+        # stalls past the default window (#322).
+        await press_until(
+            pilot, "r", lambda: on_overlay(app) or on_page(app), timeout=30
+        )
         overlay.tick()
-        await wait_for(lambda: on_page(app))  # now it closes
+        await wait_for(lambda: on_page(app), timeout=30)  # closes
 
 
 async def test_a_manual_open_stays_until_closed() -> None:
@@ -696,7 +709,7 @@ async def test_a_parked_burst_never_re_pops_until_it_empties() -> None:
         await decide_the(page.link.controller, "r2")
         page.tick()
         await pilot.pause()
-        assert not page.parked
+        assert page.parked_ids is None
         factory.made[0].push(request_frame("r3"))
         await wait_for(lambda: len(page.link.controller.pending) == 1)
         page.tick()
@@ -741,14 +754,60 @@ async def test_a_park_survives_a_link_drop() -> None:
         await wait_for(lambda: on_overlay(app))
         page.link.state = "reconnecting"  # the drop: holds stand
         await pilot.press("q")
-        assert page.parked is True  # recorded against the queue
+        assert page.parked_ids is not None  # recorded against the queue
         page.tick()
-        assert page.parked is True  # the drop's folded count clears
-        # nothing: the reset needs a truly empty queue
+        # the drop's folded count clears nothing: the park reads ids
         page.link.state = "connected"  # the replay re-lands them
+        page.link.replay_pending = True  # mid-window, truth in flight
+        page.tick()
+        assert page.parked_ids is not None
+        page.link.replay_pending = False
         page.tick()
         await pilot.pause()
         assert on_page(app)  # no re-open for a parked burst
+
+
+async def test_a_park_survives_the_reconnects_reset_window() -> None:
+    """The registration's reset wipes the controller's snapshot
+    before the replay re-lands it: a tick inside that window reads
+    an empty queue, and the park must hold anyway — the replay
+    re-lands the same holds, and the panel the operator closed
+    stays closed. The park ends when none of its ids stand in a
+    settled queue; a new burst then opens a panel again."""
+    ws1 = FakeWS([request_frame("r1")])
+    ws2 = FakeWS([])  # the replay arrives after the registration
+    factory = FakeFactory([ws1, ws2])
+    app, page, _data = make_page(factory)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app, page)
+        await wait_for(lambda: len(page.link.controller.pending) == 1)
+        page.tick()
+        await wait_for(lambda: on_overlay(app))
+        await pilot.press("q")  # park on the burst
+        # The link drops and reconnects: the registration resets the
+        # controller, and the replay has not landed yet.
+        await ws1.close()
+        await wait_for(lambda: len(factory.made) == 2)
+        await wait_for(lambda: page.link.replay_pending)
+        page.tick()  # a tick inside the window: empty queue
+        assert page.parked_ids is not None  # the park held
+        # The replay re-lands the same hold: still parked.
+        ws2.push(rules_frame())
+        ws2.push(request_frame("r1"))
+        await wait_for(lambda: not page.link.replay_pending)
+        page.tick()
+        await pilot.pause()
+        assert on_page(app)  # no re-pop for the replayed hold
+        assert page.parked_ids is not None
+        # The hold resolves: the park ends, a new burst may open.
+        await decide_the(page.link.controller, "r1")
+        page.tick()
+        await pilot.pause()
+        assert page.parked_ids is None
+        ws2.push(request_frame("r2"))
+        await wait_for(lambda: len(page.link.controller.pending) == 1)
+        page.tick()
+        await wait_for(lambda: on_overlay(app))  # the new burst opens
 
 
 async def test_the_auto_open_waits_for_a_stacked_modal() -> None:
@@ -852,8 +911,7 @@ async def test_the_rules_screen_revokes() -> None:
     app, page, data = make_page(factory)
     async with app.run_test() as pilot:
         overlay = await open_overlay(pilot, app, page)
-        await pilot.press("r")
-        await wait_for(lambda: type(app.screen).__name__ == "RulesScreen")
+        await open_screen(pilot, app, "r", "RulesScreen")
         await wait_for(lambda: rules_children(app) == 2)
         header = str(app.screen.query_one("#allowlist").content)
         assert "mode interactive" in header
@@ -890,8 +948,7 @@ async def test_a_rules_screen_with_nothing_focused_revokes_nothing() -> None:
     app, page, data = make_page(factory)
     async with app.run_test() as pilot:
         await open_overlay(pilot, app, page)
-        await pilot.press("r")
-        await wait_for(lambda: type(app.screen).__name__ == "RulesScreen")
+        await open_screen(pilot, app, "r", "RulesScreen")
         await wait_for(lambda: rules_children(app) == 0)
         await pilot.press("x")
         await pilot.pause()
@@ -1005,8 +1062,7 @@ async def test_the_rules_screen_refreshes_on_frames() -> None:
         page.link.controller.apply_frame(empty_rules_frame("allow"))
         overlay.tick()
         await wait_for(lambda: rules_children(app) == 0)
-        await pilot.press("m")
-        await wait_for(lambda: type(app.screen).__name__ == "ModeScreen")
+        await open_screen(pilot, app, "m", "ModeScreen")
         await pilot.press("escape")
         await wait_for(lambda: type(app.screen).__name__ == "RulesScreen")
 
@@ -1025,8 +1081,7 @@ async def test_the_events_screen() -> None:
     async with app.run_test() as pilot:
         overlay = await open_overlay(pilot, app, page)
         await wait_for(lambda: len(page.link.controller.events) == 1)
-        await pilot.press("e")
-        await wait_for(lambda: type(app.screen).__name__ == "EventsScreen")
+        await open_screen(pilot, app, "e", "EventsScreen")
         await wait_for(lambda: events_children(app) == 1)
         assert "!" not in str(
             app.screen.query_one("#event-rows")
@@ -1054,8 +1109,7 @@ async def test_the_events_screen_states_when_empty() -> None:
     app, page, _data = make_page(factory)
     async with app.run_test() as pilot:
         await open_overlay(pilot, app, page)
-        await pilot.press("e")
-        await wait_for(lambda: type(app.screen).__name__ == "EventsScreen")
+        await open_screen(pilot, app, "e", "EventsScreen")
         await wait_for(
             lambda: (
                 "No placeholder events"
@@ -1133,8 +1187,7 @@ async def test_the_mode_picker_opens_from_the_overlay() -> None:
     async with app.run_test() as pilot:
         await open_overlay(pilot, app, page)
         await wait_for(lambda: "mode interactive" in status_line(app))
-        await pilot.press("m")
-        await wait_for(lambda: type(app.screen).__name__ == "ModeScreen")
+        await open_screen(pilot, app, "m", "ModeScreen")
         await pilot.press("m")  # under the picker: inert
         await pilot.pause()
         assert (
@@ -1204,8 +1257,7 @@ async def test_m_stays_inert_under_a_modal() -> None:
     async with app.run_test() as pilot:
         await open_overlay(pilot, app, page)
         await wait_for(lambda: queue_children(app) == 1)
-        await pilot.press("A")
-        await wait_for(lambda: type(app.screen).__name__ == "DurationScreen")
+        await open_screen(pilot, app, "A", "DurationScreen")
         await pilot.press("m")
         await pilot.pause()
         assert not [
@@ -1214,8 +1266,7 @@ async def test_m_stays_inert_under_a_modal() -> None:
         await pilot.press("escape")
         await wait_for(lambda: type(app.screen).__name__ != "DurationScreen")
         # The empty-static confirmation: m under it stays inert too.
-        await pilot.press("m")
-        await wait_for(lambda: type(app.screen).__name__ == "ModeScreen")
+        await open_screen(pilot, app, "m", "ModeScreen")
         await pilot.press("down")  # allow -> static
         await pilot.press("enter")
         await wait_for(lambda: type(app.screen).__name__ == "ConfirmScreen")
@@ -1236,7 +1287,7 @@ async def test_mode_picker_confirms_an_empty_static_switch() -> None:
     app, page, data = make_page(factory)
     async with app.run_test() as pilot:
         await open_overlay(pilot, app, page)
-        await pilot.press("m")
+        await open_screen(pilot, app, "m", "ModeScreen")
         await pilot.press("down")  # allow -> static
         await pilot.press("enter")
         await pilot.press("n")  # the confirmation: declined
@@ -1244,7 +1295,7 @@ async def test_mode_picker_confirms_an_empty_static_switch() -> None:
             lambda: not isinstance(app.screen, consent_ui.ConfirmScreen)
         )
         assert data.modes == []
-        await pilot.press("m")
+        await open_screen(pilot, app, "m", "ModeScreen")
         await pilot.press("down")
         await pilot.press("enter")
         await pilot.press("y")  # the confirmation: taken
@@ -1261,7 +1312,7 @@ async def test_mode_picker_without_a_snapshot_confirms_static() -> None:
     app, page, data = make_page(factory)
     async with app.run_test() as pilot:
         await open_overlay(pilot, app, page)
-        await pilot.press("m")
+        await open_screen(pilot, app, "m", "ModeScreen")
         await pilot.press("up")  # the row's interactive -> static
         await pilot.press("enter")
         await pilot.press("y")  # the confirmation: taken
@@ -1282,8 +1333,7 @@ async def test_the_events_screen_skips_rebuilds_when_unchanged() -> None:
     app, page, _data = make_page(factory)
     async with app.run_test() as pilot:
         await open_overlay(pilot, app, page)
-        await pilot.press("e")
-        await wait_for(lambda: type(app.screen).__name__ == "EventsScreen")
+        await open_screen(pilot, app, "e", "EventsScreen")
         await wait_for(lambda: events_children(app) == 1)
         rows = app.screen.query_one("#event-rows")
         # An unchanged log takes the header-only path: the rebuild
@@ -1322,7 +1372,7 @@ async def test_mode_picker_escape_cancels() -> None:
     app, page, data = make_page(factory)
     async with app.run_test() as pilot:
         await open_overlay(pilot, app, page)
-        await pilot.press("m")
+        await open_screen(pilot, app, "m", "ModeScreen")
         await pilot.press("escape")
         await wait_for(
             lambda: not isinstance(app.screen, consent_ui.ModeScreen)
@@ -1338,7 +1388,7 @@ async def test_mode_switch_failure_flashes() -> None:
     data.fail.add("mode")
     async with app.run_test() as pilot:
         await open_overlay(pilot, app, page)
-        await pilot.press("m")
+        await open_screen(pilot, app, "m", "ModeScreen")
         await pilot.press("up")  # interactive -> static
         await pilot.press("enter")
         await wait_for(lambda: len(data.modes) == 1)
@@ -1355,10 +1405,8 @@ async def test_modal_keys_do_not_reach_the_hidden_queue() -> None:
     async with app.run_test() as pilot:
         await open_overlay(pilot, app, page)
         await wait_for(lambda: queue_children(app) == 1)
-        await pilot.press("r")
-        await wait_for(lambda: type(app.screen).__name__ == "RulesScreen")
-        await pilot.press("m")
-        await wait_for(lambda: type(app.screen).__name__ == "ModeScreen")
+        await open_screen(pilot, app, "r", "RulesScreen")
+        await open_screen(pilot, app, "m", "ModeScreen")
         await pilot.press("a")
         await pilot.press("d")
         await pilot.press("e")  # the events screen stays stacked nowhere
@@ -1435,8 +1483,7 @@ async def test_action_revoke_in_a_swap_window() -> None:
     app, page, data = make_page(factory)
     async with app.run_test() as pilot:
         await open_overlay(pilot, app, page)
-        await pilot.press("r")
-        await wait_for(lambda: type(app.screen).__name__ == "RulesScreen")
+        await open_screen(pilot, app, "r", "RulesScreen")
         await wait_for(lambda: rules_children(app) == 2)
         rows = app.screen.query_one("#rule-rows")
         await rows.remove()
@@ -1566,7 +1613,9 @@ async def test_schedule_rebuild_on_a_stopped_app_is_a_noop() -> None:
     assert not flight.scheduled  # the flight never armed
 
 
-async def test_a_flight_dying_at_teardown_stays_quiet() -> None:
+async def test_a_flight_dying_at_teardown_stays_quiet(
+    monkeypatch,
+) -> None:
     """A flight that dies after its owner stopped (teardown unmounted
     the tree under a mid-swap rebuild) stays quiet: no log, no
     carried re-arm — not a bug worth a traceback after exit."""
@@ -1576,10 +1625,13 @@ async def test_a_flight_dying_at_teardown_stays_quiet() -> None:
         def exception(self, *args):
             logged.append(args[0])
 
+    monkeypatch.setattr(consent_ui, "logger", RecordingLog())
     alive = {"go": True}
     gate = asyncio.Event()
+    runs: list[int] = []
 
     async def dying() -> None:
+        runs.append(1)
         await gate.wait()
         raise RuntimeError("teardown race")
 
@@ -1589,7 +1641,8 @@ async def test_a_flight_dying_at_teardown_stays_quiet() -> None:
     alive["go"] = False  # the owner stops mid-flight
     gate.set()
     await wait_for(lambda: not flight.scheduled)
-    assert not logged
+    assert not logged  # the dead owner logs nothing
+    assert runs == [1]  # no re-arm carried the death forward
 
 
 def test_backoff_and_refused_close() -> None:
