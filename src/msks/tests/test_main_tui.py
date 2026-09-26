@@ -74,6 +74,7 @@ def row(
     name: str | None = "alpha",
     status: str = "stopped",
     mode: str = "interactive",
+    host: str = "host-1",
 ) -> dict:
     """One listing row as the daemon serves it."""
     return {
@@ -83,7 +84,7 @@ def row(
         "egress_mode": mode,
         "image_hash": "a" * 64,
         "created_at": "2026-01-02T03:04:05",
-        "host": "host-1",
+        "host": host,
     }
 
 
@@ -95,7 +96,6 @@ class FakeData:
         self.calls: list[tuple] = []
         self.fail: set[str] = set()
         self.fetches = 0
-        self.token = "tok-fresh"
         self.refusal = "daemon away"
         self.images_rows: list[dict] = []
         self.defaults: dict = {"root_mib": 10240, "home_mib": 20480}
@@ -136,10 +136,6 @@ class FakeData:
         self.calls.append(("remove", workspace_id))
         self.rows = [r for r in self.rows if r["id"] != workspace_id]
         return self.reply("remove", {})
-
-    async def remint_llm_token(self, workspace_id: str) -> str:
-        self.calls.append(("remint", workspace_id))
-        return self.reply("remint", self.token)
 
     async def set_egress_mode(
         self, workspace_id: str, mode: str, *, confirm_empty: bool = False
@@ -241,9 +237,18 @@ def consent_text(app) -> str:
 
 
 def header_text(app) -> str:
-    """The header's text; empty while the page still mounts."""
+    """The header's name line; empty while the page still mounts."""
     try:
         return str(app.screen.query_one("#header", Static).content)
+    except Exception:
+        return ""
+
+
+def meta_text(app) -> str:
+    """The header's muted meta line; empty while the page still
+    mounts."""
+    try:
+        return str(app.screen.query_one("#header-meta", Static).content)
     except Exception:
         return ""
 
@@ -275,7 +280,7 @@ async def test_the_list_rows_open_pages_and_return(monkeypatch) -> None:
         assert "beta" in row_text(app, 1)
         await wait_for(lambda: "2 workspaces" in status_text(app))
         page = await open_page(pilot, app)
-        assert WS in header_text(app)
+        assert WS in meta_text(app)
         assert page.link is not None
         # Returning to the list refreshes it (the page's actions may
         # have moved the workspace's status).
@@ -598,6 +603,75 @@ async def test_the_page_names_an_empty_grant_set(monkeypatch) -> None:
         assert "no active consent" in consent_text(app)
 
 
+async def test_the_header_splits_the_name_from_the_metadata(
+    monkeypatch,
+) -> None:
+    """#351: the name and its status own the header's first line —
+    the status in its state's color, as the list colors it — and
+    the id, image hash, host, and created date read muted on the
+    second."""
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: "stopped" in header_text(app))
+        assert "alpha" in header_text(app)
+        assert WS in meta_text(app)
+        assert "host-1" in meta_text(app)
+        assert "2026-01-02" in meta_text(app)
+        header = app.screen.query_one("#header", Static)
+        (span,) = header.content.spans
+        assert header.content.plain[span.start : span.end] == "stopped"
+        assert span.style == main_app.muted_style(app.theme_variables)
+        # The meta line renders dimmer than the name line's default
+        # foreground — muted beside prominent, both on the panel.
+        name = next(s for s in header.render_line(0) if "alpha" in s.text)
+        meta = app.screen.query_one("#header-meta", Static)
+        (meta_seg,) = [s for s in meta.render_line(0) if s.text.strip()]
+        assert sum(meta_seg.style.color.triplet) < sum(
+            name.style.color.triplet
+        )
+
+
+async def test_the_header_truncates_gracefully_at_eighty_columns(
+    monkeypatch,
+) -> None:
+    """#351: at 80 columns — a full id, a 12-character image hash,
+    a full host name — the muted meta line truncates at the
+    terminal's edge (an ellipsis marks the cut) and never wraps,
+    and the name still reads in full on its own line."""
+    scripted_link(monkeypatch, [])
+    data = FakeData(
+        [
+            row(
+                id="a1b2c3d4e5",
+                name="a-very-long-workspace-name",
+                host="workstation-3.lab.example.internal.company.net",
+            )
+        ]
+    )
+    app, _ = make_app(data)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: "a-very-long" in header_text(app))
+        header = app.screen.query_one("#header", Static)
+        meta = app.screen.query_one("#header-meta", Static)
+        assert header.region.height == 1
+        assert meta.region.height == 1  # crops at the edge, never wraps
+        name_line = "".join(s.text for s in header.render_line(0))
+        assert "a-very-long-workspace-name" in name_line  # reads in full
+        meta_line = "".join(s.text for s in meta.render_line(0))
+        assert meta_line.rstrip().endswith("…")  # the cut, marked
+        # The host reads up to the edge and cuts mid-word; the
+        # created date leaves with it.
+        assert "workstation-3.lab.example.inte" in meta_line
+        assert (
+            "workstation-3.lab.example.internal.company.net" not in meta_line
+        )
+        assert "created" not in meta_line
+
+
 async def test_pending_holds_count_themselves_in_the_header(
     monkeypatch,
 ) -> None:
@@ -609,7 +683,7 @@ async def test_pending_holds_count_themselves_in_the_header(
     app, follow = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         await wait_for(lambda: "egress to decide: 1" in header_text(app))
         rows = app.screen.query_one("#actions")
         assert "pending" not in rows.children[0].classes
@@ -617,15 +691,16 @@ async def test_pending_holds_count_themselves_in_the_header(
         await wait_for(lambda: follow.action == (FLOW_CONSENT, WS))
 
 
-async def test_the_page_runs_start_stop_and_remint(monkeypatch) -> None:
+async def test_the_page_runs_start_and_stop(monkeypatch) -> None:
+    """The fixed actions in walk order (#309, re-pinned #343): a
+    shell (a new terminal), consent, the egress-mode switch,
+    start, stop — the LLM token's remint stays on the CLI."""
     scripted_link(monkeypatch, [rules_frame()])
     data = FakeData([row()])
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
-        # The fixed actions in walk order: shell (a new terminal),
-        # consent, the egress-mode switch, start, stop, remint.
+        await wait_for(lambda: action_children(app) == 5)
         # Down three times lands on start.
         await pilot.press("down", "down", "down")
         await pilot.press("enter")
@@ -634,9 +709,6 @@ async def test_the_page_runs_start_stop_and_remint(monkeypatch) -> None:
         await pilot.press("down", "enter")
         await wait_for(lambda: ("stop", WS) in data.calls)
         await wait_for(lambda: "stopped" in header_text(app))
-        await pilot.press("down", "enter")
-        await wait_for(lambda: ("remint", WS) in data.calls)
-        await wait_for(lambda: "new LLM token: tok-fresh" in consent_text(app))
 
 
 # -- the egress-mode switch (#344) -----------------------------------------
@@ -736,7 +808,7 @@ async def test_escape_on_the_picker_decides_nothing(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         await pilot.press("down", "down", "enter")
         await wait_for(lambda: type(app.screen).__name__ == "ModeScreen")
         options = app.screen.query_one("#modes", OptionList)
@@ -798,7 +870,7 @@ async def test_the_new_terminal_action_spawns_an_ssh_child(
     app = MsksTuiApp(TuiFollow(), data=data, conf=conf)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         assert "new terminal" in action_text(app, 0)
         await press_until(pilot, "enter", lambda: len(spawned) == 1)
         assert spawned[0] == [
@@ -841,7 +913,7 @@ async def test_a_dead_launcher_falls_back_to_this_terminal(
     app = MsksTuiApp(follow, data=data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         await pilot.press("enter")
         await pilot.pause()
     assert follow.take() == (FLOW_SHELL, WS)
@@ -1076,8 +1148,6 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
                 201,
                 json={"id": "ws1", "name": "n", "status": "created"},
             )
-        if request.url.path.endswith("/llm-token"):
-            return httpx.Response(200, json={"token": "tok-fresh"})
         if request.method == "PUT" and request.url.path.endswith(
             "/egress/policy"
         ):
@@ -1113,7 +1183,6 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
     assert await data.start("ws1") == {"id": "ws1", "status": "running"}
     assert await data.stop("ws1") == {"id": "ws1", "status": "running"}
     assert await data.remove("ws1") == {"id": "ws1", "status": "running"}
-    assert await data.remint_llm_token("ws1") == "tok-fresh"
     # The policy PUT (#344): confirm_empty rides only when set —
     # the daemon's refusal names it.
     reply = await data.set_egress_mode("ws1", "interactive")
@@ -1139,10 +1208,19 @@ def test_the_line_helpers() -> None:
     assert "alpha" in listing.plain
     assert "stopped" in listing.plain
     assert "interactive" in listing.plain
-    head = main_app.header_line(row())
-    assert WS in head and "host-1" in head
-    assert "egress to decide" not in head
-    assert "egress to decide: 2" in main_app.header_line(row(), 2)
+    # The header's name line (#351): the name in the default
+    # foreground, the status beside it carrying the status color.
+    name = main_app.header_name(row())
+    assert "alpha" in name.plain
+    (span,) = name.spans
+    assert name.plain[span.start : span.end] == "stopped"
+    assert span.style == main_app.muted_style({})
+    assert "egress to decide" not in name.plain
+    assert "egress to decide: 2" in main_app.header_name(row(), 2).plain
+    # The meta line: the id, the image hash, the host, the date.
+    meta = main_app.header_meta(row())
+    assert WS in meta and "host-1" in meta and "2026-01-02" in meta
+    assert f"image {'a' * 12}" in meta
     assert main_app.created_note(row(id="x"), None) == "created alpha (id x)"
     assert "identity" in main_app.created_note(row(id="x"), "/tmp/id")
 
@@ -1526,7 +1604,7 @@ async def test_a_page_that_cannot_refresh_keeps_its_row(monkeypatch) -> None:
         app.push_screen(WorkspaceScreen(data.rows[0]))
         await wait_for(lambda: on_page(app))
         await wait_for(lambda: "api.example:443" in consent_text(app))
-        assert WS in header_text(app)  # the stale row still paints
+        assert WS in meta_text(app)  # the stale row still paints
 
 
 async def test_the_headers_count_follows_the_queue(monkeypatch) -> None:
@@ -1547,7 +1625,7 @@ async def test_the_headers_count_follows_the_queue(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         assert "egress to decide" not in header_text(app)
         ws.push(request_frame("late1"))
         await wait_for(lambda: "egress to decide: 1" in header_text(app))
@@ -1560,7 +1638,7 @@ async def test_the_headers_count_follows_the_queue(monkeypatch) -> None:
             )
         )
         await wait_for(lambda: "egress to decide: 1" in header_text(app))
-        assert action_children(app) == 6
+        assert action_children(app) == 5
         ws.push(
             frame(
                 "egress.resolved",
@@ -1590,17 +1668,18 @@ async def test_the_swap_windows_self_heal(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         # Tear the action list away: the next sync rebuilds it, and
         # the paint paths swallow the missing widgets.
         actions = page.query_one("#actions")
         await actions.remove()
         await page.query_one("#header").remove()
+        await page.query_one("#header-meta").remove()
         await page.query_one("#consent").remove()
         page.paint_header()  # swallowed: the worker self-heals
         page.paint_consent()
         page.sync_actions()
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
 
 
 async def test_a_rebuild_over_a_standing_list_keeps_focus(
@@ -1614,7 +1693,7 @@ async def test_a_rebuild_over_a_standing_list_keeps_focus(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         await pilot.press("down", "down")  # the egress-mode row
         before = page.actions_widget()
         page.rebuilds.request()
@@ -1711,17 +1790,17 @@ async def test_page_action_failures_flash(monkeypatch) -> None:
     flash on the page."""
     scripted_link(monkeypatch, [rules_frame()])
     data = FakeData([row()])
-    data.fail.update({"start", "remint"})
+    data.fail.update({"start", "stop"})
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         await pilot.press("down", "down", "down")
         await press_until(pilot, "enter", lambda: ("start", WS) in data.calls)
         await wait_for(lambda: "start failed" in consent_text(app))
-        await pilot.press("down", "down")
-        await press_until(pilot, "enter", lambda: ("remint", WS) in data.calls)
-        await wait_for(lambda: "remint failed" in consent_text(app))
+        await pilot.press("down")
+        await press_until(pilot, "enter", lambda: ("stop", WS) in data.calls)
+        await wait_for(lambda: "stop failed" in consent_text(app))
         assert "stopped" in header_text(app)  # the row kept its status
 
 
@@ -1733,12 +1812,12 @@ async def test_a_row_that_leaves_the_listing_keeps_the_page(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         data.rows.clear()  # the workspace left between refreshes
         page.refresh_row()
         await pilot.pause()
         await pilot.pause()
-        assert WS in header_text(app)  # the page keeps its row
+        assert WS in meta_text(app)  # the page keeps its row
 
 
 async def test_a_bare_page_paints_and_unmounts_quietly(monkeypatch) -> None:

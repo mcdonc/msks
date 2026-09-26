@@ -250,16 +250,23 @@ the theme's success color, a stopped one in muted text, and any
 other state in the warning color — the rest of the row keeps the
 default foreground, and the colors follow the active theme.
 
-The **workspace page** carries the per-workspace loop: a status
-line for egress consent (the mode, the granted scope with its
-expiry, or "no active consent"), the pending holds counted in
-the header (`egress to decide: N` while any hold waits, refreshed
-each second) — and the page's actions: a shell in a new
-terminal window, egress consent, a live egress-mode switch,
-start, stop, and remint the workspace's LLM token. A workspace
-in `interactive` mode holds new flows while the page is open:
-the page registers as the workspace's decider, so holds land
-on it.
+The **workspace page** carries the per-workspace loop: a
+two-line header — the workspace's name on the first line with
+its status beside it in the state's color (the same coloring the
+list uses), the id, image hash, host, and created date muted on
+the second — a status line for egress consent (the mode, the
+granted scope with its expiry, or "no active consent"), and the
+page's actions: a shell in a new terminal window, egress
+consent, a live egress-mode switch, start, and stop. The
+header's first line also counts pending holds (`egress to
+decide: N` while any hold waits, refreshed each second), and on
+a narrow terminal each header line truncates at the edge with an
+ellipsis while the name keeps its line in full. A workspace in
+`interactive`
+mode holds new flows while the page is open: the page registers
+as the workspace's decider, so holds land on it. Reminting the
+LLM token is a CLI operation — `msks llm-token --remint` prints
+the fresh token, the part the page cannot usefully show.
 
 The page's **Switch the egress mode** action (#344) opens the
 consent decider's mode picker (`allow` / `static` /

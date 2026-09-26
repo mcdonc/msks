@@ -134,16 +134,3 @@ class TuiData:
             ssl_ctx=shared_ssl(),
             json_body=body,
         )
-
-    async def remint_llm_token(self, workspace_id: str) -> str:
-        """POST the token remint (#259) — the workspace page's
-        remint action; returns the fresh token."""
-        reply = await api_call(
-            "POST",
-            env_url(),
-            env_token(),
-            f"/api/v1/workspaces/{workspace_id}/llm-token",
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
-        )
-        return reply["token"]
