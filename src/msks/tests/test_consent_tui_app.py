@@ -395,15 +395,37 @@ async def test_a_clean_close_names_itself_and_reconnects() -> None:
             raise StopAsyncIteration
 
     revived = FakeWS([request_frame("r9")])
-    factory = FakeFactory([CleanClose([rules_frame()]), revived, FakeWS([])])
-    # A backoff the poll can see: the default 10ms window repaints
-    # itself away before the 20ms poll lands on it.
+    released = asyncio.Event()
+
+    class GatedEntering(Entering):
+        """Connection two parks in its context enter until the test
+        releases it: the reconnecting window stays open however long
+        the scheduler starves this worker. A timed backoff alone
+        leaves a window a starved poll can step over entirely."""
+
+        async def __aenter__(self) -> FakeWS:
+            await released.wait()
+            return self.ws
+
+    class GatedFactory(FakeFactory):
+        """The second connection enters through the gate."""
+
+        def __call__(self):
+            entering = super().__call__()
+            if len(self.made) == 2:
+                return GatedEntering(entering.ws)
+            return entering
+
+    factory = GatedFactory([CleanClose([rules_frame()]), revived, FakeWS([])])
     app, _seams = make_app(factory, reconnect_delays=(0.3,))
     async with app.run_test() as pilot:
         await pilot.pause()
-        await wait_for(lambda: "reconnecting" in app._conn_state)
-        assert "connected" not in status_line(app)
+        # made == 2 is stable once true, and while the gate holds,
+        # so is the reconnecting state it is observed against.
         await wait_for(lambda: len(factory.made) == 2)
+        assert "reconnecting" in app._conn_state
+        assert "connected" not in status_line(app)
+        released.set()
         await wait_for(lambda: "r9" in app.controller.pending)
         assert revived.sent  # the re-registration frame
         app.action_quit_screen()

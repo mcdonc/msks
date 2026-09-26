@@ -136,7 +136,7 @@ async def test_serve_drops_queries_from_other_sources(tmp_path: Path) -> None:
     await forwarder.start()
     client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     client.bind(("127.0.0.1", 0))
-    client.settimeout(0.5)
+    client.settimeout(0.3)
     serve = asyncio.create_task(forwarder.serve())
     try:
         # This client's source is 127.0.0.1, not the pinned guest IP.
@@ -148,7 +148,7 @@ async def test_serve_drops_queries_from_other_sources(tmp_path: Path) -> None:
         # And nothing reached the upstream either.
         loop = asyncio.get_running_loop()
         with pytest.raises(TimeoutError):
-            await asyncio.wait_for(loop.sock_recvfrom(upstream, 4096), 0.5)
+            await asyncio.wait_for(loop.sock_recvfrom(upstream, 4096), 0.3)
     finally:
         serve.cancel()
         forwarder.stop()
