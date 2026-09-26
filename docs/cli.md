@@ -54,10 +54,12 @@ expands; an empty value counts as unset).
 private key, read in place. msks derives the public half from it
 at create and stages the private half in memory for `msks ssh`,
 `msks rsync`, and the console's key challenge — the key file
-itself is never copied into msks's state, and an encrypted key
-cannot serve (msks never types a passphrase; keep such keys with
-ssh-agent). The variable and its config form sit beside the
-create default's other rungs below.
+itself is never copied into msks's state. The key must be an
+unencrypted OpenSSH-format key msks can stage (`ed25519`, `ecdsa`
+P-256/P-384/P-521, or `rsa`): msks never types a passphrase, and
+a key outside that set is refused with a line naming the fix
+(keep such keys with ssh-agent, or plant the public half with
+`--pubkey`).
 
 A missing `MSKSC_TOKEN` is an error before any network activity: the
 client names the variable and exits. Tokens come from the daemon:
@@ -465,9 +467,9 @@ key resolves by a fixed order:
 1. `identity_file` (or `MSKSC_IDENTITY_FILE`) — your explicit
    choice, from the config file or the environment;
 2. a single usable key under `~/.ssh` — a `*.pub` file whose
-   private sibling loads (an encrypted key does not count; neither
-   does a `*.pub` with no private half). Several candidates are
-   ambiguous, not a guess: the next rung answers;
+   private sibling loads and signs (an encrypted key does not
+   count; neither does a `*.pub` with no private half). Several
+   candidates are ambiguous, not a guess: the next rung answers;
 3. the key msks minted for you under the client data root —
    `~/.local/share/msks/identity`, honoring `XDG_DATA_HOME` or
    `MSKSC_DATA_DIR`.
@@ -486,9 +488,15 @@ attach with: msks console my-workspace
 
 `msks ssh`, `msks rsync`, and the console's key challenge resolve
 the same order at session time, so a workspace re-created under the
-same name keeps your access — a new id, the same key. An operator
-key of any well-formed type works: the guest's sshd stays the
-authority on which key types it authenticates (#132, #115).
+same name keeps your access — a new id, the same key (the console
+additionally consults your ssh-agent, `$SSH_AUTH_SOCK`, when no
+file holds the half). A key msks stages for its own sessions must
+be an unencrypted OpenSSH-format key — `ed25519`, `ecdsa`
+(P-256/P-384/P-521), or `rsa`; an `identity_file` naming a key
+outside that set is refused with a line saying so. `--pubkey`
+plants any well-formed public line at any type — the guest's sshd
+stays the authority on which key types it authenticates
+(#132, #115).
 
 `--key-type TYPE` opts into the per-workspace client mint (#121):
 `msks create` mints a fresh keypair on this client per workspace,

@@ -25,7 +25,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa
 from cryptography.hazmat.primitives.asymmetric.utils import (
     decode_dss_signature,
 )
@@ -47,7 +47,16 @@ RSA_SHA2_512 = 4
 #: a broken peer, and the connection closes instead of allocating.
 MAX_MESSAGE = 1 << 16
 
-CURVE_NAMES = {ec.SECP256R1: "ecdsa-sha2-nistp256"}
+#: The ECDSA curves the agent signs, by their wire names — the
+#: three NIST curves OpenSSH clients offer (P-256/384/521; the
+#: mint only ever produces P-256, but an operator's own key may
+#: carry the wider curves — the guest's sshd stays the authority,
+#: so the agent follows sshsig's existing set).
+CURVE_NAMES = {
+    ec.SECP256R1: "ecdsa-sha2-nistp256",
+    ec.SECP384R1: "ecdsa-sha2-nistp384",
+    ec.SECP521R1: "ecdsa-sha2-nistp521",
+}
 
 
 def wire_string(data: bytes) -> bytes:
@@ -88,6 +97,20 @@ class Reader:
 def load_private(pem: str):
     """The private key object from its OpenSSH-format PEM half."""
     return serialization.load_ssh_private_key(pem.encode(), password=None)
+
+
+def signable(private) -> bool:
+    """Whether the agent can stage this private half — the check
+    the operator-identity scan uses, so a key that loads but
+    cannot sign (a curve or type this agent has no signer for)
+    declines to the next resolution rung instead of planting a
+    workspace the sugar commands then cannot enter."""
+    if isinstance(private, (ed25519.Ed25519PrivateKey, rsa.RSAPrivateKey)):
+        return True
+    return (
+        isinstance(private, ec.EllipticCurvePrivateKey)
+        and type(private.curve) in CURVE_NAMES
+    )
 
 
 def public_parts(private) -> tuple[bytes, str]:

@@ -20,7 +20,12 @@ from pathlib import Path
 from ..identity import LOGIN_NAME_RE, mint
 from .agent import load_private
 from .rest import api_client, request
-from .ssh import data_dir, derived_public, operator_identity
+from .ssh import (
+    data_dir,
+    derived_public,
+    load_identity_file,
+    operator_identity,
+)
 
 #: The mint rung's key type (#336): the same FIPS-approvable
 #: default the per-workspace client mint and the daemon mint carry
@@ -104,30 +109,67 @@ def public_line(pem: str) -> str:
     return " ".join(derived_public(load_private(pem)))
 
 
-def mint_operator_identity() -> tuple[str, Path]:
-    """One fresh operator key, written mode 0600 to
-    ``<data_dir>/identity`` — the rung that fires when no operator
-    key resolves anywhere.
+#: The mint rung's refusal when its 0600 write cannot land — the
+#: operator's way around an unusable data root is their own key.
+OPERATOR_WRITE_REFUSAL = (
+    "msks: the operator identity could not be written to {path}: {exc}\n"
+    "msks cannot keep a key of its own there — point identity_file "
+    "(or MSKSC_IDENTITY_FILE) at your own private key file, or fix "
+    "the data root (MSKSC_DATA_DIR relocates it)"
+)
 
+
+def mint_operator_identity() -> tuple[str, Path]:
+    """One fresh operator key, claimed at ``<data_dir>/identity``
+    mode 0600 — the rung that fires when no operator key resolves
+    anywhere.
+
+    The claim is exclusive (``O_EXCL``): two first-run creates that
+    race both mint, one file wins, and the loser reuses the
+    winner's key — both workspaces then plant the same public half
+    instead of one holding a private half the other just overwrote.
     The write happens before the create's POST on purpose: the key
     belongs to the operator, not to the workspace, so a refused
     create leaves it for the next create to reuse (rung 3), not an
-    orphan tied to a workspace that never existed. An unusable
-    data root is one named line pointing at ``identity_file`` as
-    the way to bring your own key instead.
+    orphan tied to a workspace that never existed.
     """
     pem, _public = mint(OPERATOR_KEY_TYPE)
     path = data_dir() / "identity"
-    write_private_half(
-        path,
-        pem,
-        "msks: the operator identity could not be written to "
-        "{path}: {exc}\n"
-        "msks cannot keep a key of its own there — point identity_file "
-        "(or MSKSC_IDENTITY_FILE) at your own private key file, or fix "
-        "the data root (MSKSC_DATA_DIR relocates it)",
-    )
+    try:
+        write_exclusive(path, pem)
+    except FileExistsError:
+        return claimed_identity(path, pem), path
     return pem, path
+
+
+def claimed_identity(path: Path, pem: str) -> str:
+    """The key in force at *path* when the exclusive create lost
+    its race: the concurrent winner's key when its file is usable,
+    or *pem* after repairing content no intact winner would have
+    left (a torn write, a corrupt half)."""
+    existing = load_identity_file(path)
+    if existing is not None:
+        return existing
+    write_private_half(path, pem, OPERATOR_WRITE_REFUSAL)
+    return pem
+
+
+def write_exclusive(path: Path, private_pem: str) -> None:
+    """Create *path* mode 0600 holding the PEM — atomically: a
+    file already there raises ``FileExistsError`` (the claim's own
+    signal, re-raised for the caller), and every other failure is
+    the operator's named refusal raised here."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        raise
+    except OSError as exc:
+        raise SystemExit(
+            OPERATOR_WRITE_REFUSAL.format(path=path, exc=exc)
+        ) from exc
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(private_pem)
 
 
 def write_private_half(path: Path, private_pem: str, refusal: str) -> Path:

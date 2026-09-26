@@ -20,8 +20,10 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from msks.app import build_app
-from msks.client import cli, create, rest
+from msks.client import agent, cli, create, rest
 from msks.identity import KEY_TYPES, mint
 from msks.server.api import build_api
 from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
@@ -867,18 +869,107 @@ def test_create_identity_rung_precedence(
 def test_create_identity_refuses_a_broken_identity_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A set identity_file that is missing or not a loadable key
-    is one named line before any network roundtrip — the operator
-    pointed at it, so the refusal names the setting (#336)."""
+    """A set identity_file that is missing, or a key msks cannot
+    stage (a PEM RSA file — the classic pre-OpenSSH-format key) is
+    one named line before any network roundtrip, naming the format
+    requirement and the conversion (#336)."""
     identity_env(monkeypatch, tmp_path)
     monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(tmp_path / "gone"))
     with pytest.raises(SystemExit, match="not readable"):
         cli.create_identity(cli.CreateFlags(workspace_id="ws1"))
-    junk = tmp_path / "junk"
-    junk.write_text("not a key")
-    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(junk))
-    with pytest.raises(SystemExit, match="MSKSC_IDENTITY_FILE"):
+    pem_rsa = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    classic = tmp_path / "classic"
+    classic.write_text(
+        pem_rsa.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.TraditionalOpenSSL,
+            encryption_algorithm=serialization.NoEncryption(),
+        ).decode()
+    )
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(classic))
+    with pytest.raises(SystemExit, match="ssh-keygen -p"):
         cli.create_identity(cli.CreateFlags(workspace_id="ws1"))
+
+
+def test_create_identity_stages_a_wide_curve_operator_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An operator key at P-384 plants AND stays enterable: the
+    transient agent signs the wide NIST curves, so the scan counts
+    such a key instead of silently minting a replacement whose
+    sessions then work while the operator's own key would not
+    (#336)."""
+    home = identity_env(monkeypatch, tmp_path)
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    private = ec.generate_private_key(ec.SECP384R1())
+    pem = private.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.OpenSSH,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode()
+    (home / ".ssh" / "id_ecdsa").write_text(pem)
+    (home / ".ssh" / "id_ecdsa.pub").write_text("wide\n")
+    _type, pub, note = cli.create_identity(cli.CreateFlags(workspace_id="ws1"))
+    assert pub.startswith("ecdsa-sha2-nistp384 ")
+    assert note == f"identity: {home / '.ssh' / 'id_ecdsa'}"
+
+
+def test_a_local_refusal_mints_no_operator_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The body builds before the identity resolves: a create the
+    client refuses locally (a bad --user) mints and persists
+    nothing (#336)."""
+    identity_env(monkeypatch, tmp_path)
+    with pytest.raises(SystemExit, match="not a valid login name"):
+        cli.run_create(
+            cli.CreateFlags(workspace_id="ws1", user="Not A Name"), None
+        )
+    assert not (tmp_path / "data").exists()
+
+
+def test_the_mint_claim_reuses_a_concurrent_winner(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Two first-run creates racing the mint both work: the claim
+    is exclusive, and the loser reuses the winner's key — both
+    workspaces plant the same public half, and no private half is
+    overwritten out from under a created workspace (#336)."""
+    identity_env(monkeypatch, tmp_path)
+    winner_pem, _public = mint("ed25519")
+    minted = tmp_path / "data" / "msks" / "identity"
+    minted.parent.mkdir(parents=True)
+    minted.write_text(winner_pem)
+    pem, path = create.mint_operator_identity()
+    assert path == minted
+    assert pem == winner_pem
+    assert minted.read_text() == winner_pem
+    # A torn write (unusable content squatting on the path) is
+    # repaired in place: the next create gets a working key.
+    minted.write_text("torn")
+    pem, _path = create.mint_operator_identity()
+    assert pem != winner_pem
+    assert agent.load_private(minted.read_text()) is not None
+    assert minted.stat().st_mode & 0o777 == 0o600
+
+
+def test_the_mint_names_an_unwritable_data_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A data root the exclusive write cannot open into (here, a
+    read-only directory) is the operator's one-line refusal naming
+    identity_file as the way to bring your own key — before any
+    network activity (#336)."""
+    identity_env(monkeypatch, tmp_path)
+    root = tmp_path / "data" / "msks"
+    root.mkdir(parents=True)
+    root.chmod(0o500)
+    try:
+        with pytest.raises(SystemExit, match="could not be written"):
+            create.mint_operator_identity()
+    finally:
+        root.chmod(0o700)
 
 
 def test_create_identity_pubkey_mode(tmp_path: Path) -> None:

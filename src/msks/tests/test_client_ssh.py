@@ -138,9 +138,12 @@ def test_rsa_sign_refuses_an_unpinned_digest() -> None:
 
 
 def test_sign_refuses_an_unserved_curve() -> None:
+    """A curve outside the agent's wire map still refuses by name —
+    secp256k1 stands in (no OpenSSH client offers it, so it never
+    reaches a session; P-384/P-521 are served since #336)."""
     from cryptography.hazmat.primitives.asymmetric import ec as ec_curves
 
-    odd = ec_curves.generate_private_key(ec_curves.SECP384R1())
+    odd = ec_curves.generate_private_key(ec_curves.SECP256K1())
     with pytest.raises(ValueError, match="unsupported ECDSA curve"):
         agent.sign(odd, b"x", 0)
 
@@ -678,7 +681,7 @@ def test_resolve_private_matches_a_single_ssh_candidate(
     other_pem, _other_public = mint("ecdsa")
     (home / ".ssh" / "id_ecdsa").write_text(other_pem)
     (home / ".ssh" / "id_ecdsa.pub").write_text("other\n")
-    with pytest.raises(SystemExit, match="does not match"):
+    with pytest.raises(SystemExit, match="matched nothing"):
         ssh.resolve_private(key, "ws1")
 
 
@@ -762,7 +765,7 @@ def test_resolve_private_recovery_names_identity_file(
     # same refusal answers.
     (home / ".ssh" / "id_ed25519").unlink()
     (home / ".ssh" / "id_ed25519.pub").unlink()
-    with pytest.raises(SystemExit, match="does not match"):
+    with pytest.raises(SystemExit, match="matched nothing"):
         ssh.resolve_private(key, "ws1")
 
 
@@ -791,8 +794,87 @@ def test_resolve_private_names_a_broken_identity_file(
     junk = tmp_path / "junk"
     junk.write_text("not a key")
     monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(junk))
-    with pytest.raises(SystemExit, match="can load"):
+    with pytest.raises(SystemExit, match="OpenSSH format"):
         ssh.resolve_private({"public_key": "x", "private_key": None}, "ws1")
+    locked = tmp_path / "locked"
+    unencrypted, _public = mint("ed25519")
+    key_obj = serialization.load_ssh_private_key(
+        unencrypted.encode(), password=b""
+    )
+    locked.write_text(
+        key_obj.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.OpenSSH,
+            encryption_algorithm=serialization.BestAvailableEncryption(b"pw"),
+        ).decode()
+    )
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(locked))
+    with pytest.raises(SystemExit, match="encrypted"):
+        ssh.resolve_private({"public_key": "x", "private_key": None}, "ws1")
+
+
+def test_a_relative_identity_file_is_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A relative identity_file resolves per working directory —
+    a different key planted from every directory — so it is refused
+    with the fix named, the same rule the state roots carry
+    (#336)."""
+    identity_home(monkeypatch, tmp_path)
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", "keys/id_ed25519")
+    with pytest.raises(SystemExit, match="absolute path"):
+        ssh.operator_identity()
+
+
+def test_the_agent_stages_the_wide_nist_curves() -> None:
+    """The transient agent signs P-384 and P-521 keys (#336): an
+    operator's own key at those curves must plant AND let msks ssh
+    in — the mint never produces them, so the keys are built here."""
+    for curve, algo in (
+        (ec.SECP384R1(), "ecdsa-sha2-nistp384"),
+        (ec.SECP521R1(), "ecdsa-sha2-nistp521"),
+    ):
+        private = ec.generate_private_key(curve)
+        pem = private.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.OpenSSH,
+            encryption_algorithm=serialization.NoEncryption(),
+        ).decode()
+        loaded = agent.load_private(pem)
+        assert agent.signable(loaded)
+        _blob, wire_algo = agent.public_parts(loaded)
+        assert wire_algo == algo
+        sig = agent.sign(loaded, b"challenge", 0)
+        assert sig is not None
+        assert sig.startswith(agent.wire_string(algo.encode()))
+
+
+def test_the_scan_stages_only_keys_the_agent_signs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A key that loads but cannot sign declines the scan rung —
+    planting it would create a workspace msks ssh cannot enter. The
+    loader today accepts only signable types, so the guard is
+    driven with a stub key (future cryptography support widens the
+    loader; the guard is what keeps the promise)."""
+    home = identity_home(monkeypatch, tmp_path)
+    pem, _public = mint("ed25519")
+    (home / ".ssh" / "id_ed25519").write_text(pem)
+    (home / ".ssh" / "id_ed25519.pub").write_text("stub\n")
+    real_load = agent.load_private
+
+    def stub_loader(text: str):
+        # The one planted file "loads" to an object the agent has
+        # no signer for; every other text loads for real.
+        return SimpleNamespace() if text == pem else real_load(text)
+
+    monkeypatch.setattr(ssh.agent, "load_private", stub_loader)
+    assert ssh.ssh_candidates() == []
+    monkeypatch.setenv(
+        "MSKSC_IDENTITY_FILE", str(home / ".ssh" / "id_ed25519")
+    )
+    with pytest.raises(SystemExit, match="cannot stage"):
+        ssh.operator_identity()
 
 
 def test_ssh_candidates_skip_unusable_keys(

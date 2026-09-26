@@ -1684,9 +1684,9 @@ def create(
         "keypair minted on this client per workspace — public half "
         "sent, private half kept mode 0600 under the client data root "
         "(`~/.local/share/msks/<id>/identity`, or that root under "
-        "MSKSC_DATA_DIR) where msks ssh finds it. TYPE is one of "
-        f"{', '.join(sorted(KEY_TYPES))} (default ed25519, the same "
-        "FIPS-approvable default the daemon mints)",
+        "MSKSC_DATA_DIR) where msks ssh finds it. TYPE names the mint's "
+        f"key type, one of {', '.join(sorted(KEY_TYPES))} (default "
+        "ed25519, the same FIPS-approvable default the daemon mints)",
     ),
     start: bool = typer.Option(
         False, "--start", help="boot the workspace immediately"
@@ -2496,17 +2496,21 @@ def run_resize(
 
 
 def run_create(args: CreateFlags, transport) -> int:
-    """Resolve the identity mode once — the resolver may read stdin
-    (``--pubkey -``), scan the operator's key files, or reject a
-    flag pairing, so it runs a single time — then create."""
+    """Build the body, then resolve the identity mode once — the
+    body build fails on local grounds (a bad ``--user``, an
+    unreadable ``--user-data``) before the resolver can read stdin
+    (``--pubkey -``), scan the operator's key files, or mint; the
+    resolver may also reject a flag pairing, so it runs a single
+    time — then create."""
     if args.pubkey == "-" and args.user_data == "-":
         raise SystemExit(
             "msks: --pubkey - and --user-data - both read stdin; "
             "pass one of them by file"
         )
+    body = create_body(args)
     key_type, pubkey, note = create_identity(args)
     return cmd_create(
-        create_body(args),
+        body,
         args.start,
         transport=transport,
         key_type=key_type,

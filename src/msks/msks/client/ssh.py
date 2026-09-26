@@ -195,52 +195,73 @@ def configured_identity_file() -> Path | None:
     """The operator-named identity file (``identity_file`` /
     ``MSKSC_IDENTITY_FILE``), ``~`` expanded, or None when unset —
     an empty value counts as unset, the same rule the shell
-    presets apply."""
+    presets apply. A relative value is refused (the same rule the
+    state roots carry): a key that resolves per working directory
+    would plant a different identity from every directory."""
     value = os.environ.get(IDENTITY_FILE_ENV, "")
     if not value:
         return None
-    return Path(value).expanduser()
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        raise SystemExit(
+            f"msks: {IDENTITY_FILE_ENV} must name an absolute path "
+            f"(got '{value}'); unset it, pass an absolute path, or "
+            "lead with ~"
+        )
+    return path
 
 
 def load_identity_file(path: Path) -> str | None:
     """One private key file's PEM, or None when the file is
-    missing, unreadable, or not a key msks can load unattended —
-    the silent form, for scanning candidate locations. An
-    encrypted key (``TypeError`` from the loader, not
-    ``ValueError``) counts as unloadable: msks stages private
-    halves in memory and cannot type a passphrase."""
+    missing, unreadable, or holds no key the session agent could
+    stage — the silent form, for scanning candidate locations. A
+    key that loads but cannot sign (a type or curve the agent has
+    no signer for) counts as unusable: planting it would create a
+    workspace `msks ssh` then cannot enter."""
     try:
         pem = path.read_text(encoding="utf-8")
-        agent.load_private(pem)
+        private = agent.load_private(pem)
     except OSError, TypeError, ValueError:
         return None
-    return pem
+    return pem if agent.signable(private) else None
 
 
 def named_identity_file(path: Path) -> str:
     """The strict form for the file the operator named: a missing,
-    unreadable, or unloadable key is one line naming the setting —
-    the operator pointed at it, so a silent skip would read as the
-    key matching nothing. An encrypted key cannot be staged by
-    msks (the sugar commands hold the private half in memory), so
-    the line names where such a key still works."""
+    unreadable, encrypted, or unstagedable key is one line naming
+    the setting and the fix — the operator pointed at it, so a
+    silent skip would read as the key matching nothing."""
     try:
         pem = path.read_text(encoding="utf-8")
-        agent.load_private(pem)
+        private = agent.load_private(pem)
     except OSError as exc:
         raise SystemExit(
             f"msks: the operator identity file {path} is not readable: "
             f"{exc} — point identity_file / {IDENTITY_FILE_ENV} at "
             "your private key file"
         ) from exc
-    except (TypeError, ValueError) as exc:
+    except TypeError as exc:
+        raise SystemExit(
+            f"msks: the operator identity file {path} is encrypted "
+            f"({exc}); msks never types a passphrase. Decrypt a copy "
+            f"(ssh-keygen -p -f <copy> -P <passphrase> -N ''), keep the "
+            "key with your agent, or pass --pubkey at create"
+        ) from exc
+    except ValueError as exc:
         raise SystemExit(
             f"msks: the operator identity file {path} is not a private "
-            f"key msks can load ({exc}). An encrypted key stays with "
-            "ssh and your agent; point identity_file / "
-            f"{IDENTITY_FILE_ENV} at an unencrypted copy, or pass "
-            "--pubkey at create"
+            f"key msks can stage ({exc}). msks stages unencrypted keys "
+            "in the OpenSSH format — ed25519, ecdsa (P-256/P-384/"
+            "P-521), or rsa; convert a copy with ssh-keygen -p -f "
+            "<copy>, or pass --pubkey at create"
         ) from exc
+    if not agent.signable(private):
+        raise SystemExit(
+            f"msks: the operator identity file {path} holds a key type "
+            "msks cannot stage (msks stages ed25519, ecdsa "
+            "(P-256/P-384/P-521), and rsa keys). Plant its public half "
+            "with --pubkey at create, or keep signing with your own ssh"
+        )
     return pem
 
 
@@ -412,10 +433,10 @@ def missing_half_line(path: Path) -> str:
     return (
         f"msks: the workspace's private half is not on this "
         f"client — the daemon holds none, {path} is not "
-        "readable, and the operator identity (identity_file / "
+        "readable, and the operator identity matched nothing here "
+        "(identity_file / "
         f"{IDENTITY_FILE_ENV}, a single key under ~/.ssh, or "
-        f"{data_dir() / 'identity'}) does not match the workspace's "
-        "public half.\n"
+        f"{data_dir() / 'identity'}).\n"
         "The key was minted on another client (the file lives at "
         "that path on that machine), on this client under a "
         "different state root (MSKSC_DATA_DIR relocates it), or it "
