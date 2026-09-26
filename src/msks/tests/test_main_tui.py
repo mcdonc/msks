@@ -163,11 +163,17 @@ class FakeData:
 
     async def start(self, workspace_id: str) -> dict:
         self.calls.append(("start", workspace_id))
-        return self.reply("start", {"id": workspace_id, "status": "running"})
+        result = self.reply("start", {"id": workspace_id, "status": "running"})
+        fresh = next(r for r in self.rows if r["id"] == workspace_id)
+        fresh["status"] = "running"  # the daemon's row follows the boot
+        return result
 
     async def stop(self, workspace_id: str) -> dict:
         self.calls.append(("stop", workspace_id))
-        return self.reply("stop", {"id": workspace_id, "status": "stopped"})
+        result = self.reply("stop", {"id": workspace_id, "status": "stopped"})
+        fresh = next(r for r in self.rows if r["id"] == workspace_id)
+        fresh["status"] = "stopped"  # the daemon's row follows the shutdown
+        return result
 
     async def remove(self, workspace_id: str) -> dict:
         self.calls.append(("remove", workspace_id))
@@ -2453,15 +2459,20 @@ async def test_page_action_failures_flash(monkeypatch) -> None:
         await pilot.press("down", "down", "down", "down")
         await press_until(pilot, "enter", lambda: ("start", WS) in data.calls)
         await wait_for(lambda: "start failed" in consent_text(app))
-        # The stop half needs a running workspace: the power pair
-        # dims the verb the status makes pointless (#367), so the
-        # page learns a running row before Enter reaches stop.
-        app.screen.row["status"] = "running"
-        app.screen.paint_actions()
+        # A start that lands (the daemon's own answer) flips the
+        # row and the power pair's dimming; the stop half then runs
+        # against a running workspace and names its own refusal.
+        data.fail.remove("start")
+        await press_until(
+            pilot,
+            "enter",
+            lambda: data.calls.count(("start", WS)) == 2,
+        )
+        await wait_for(lambda: "workspace is running" in action_text(app, 4))
         await pilot.press("down")
         await press_until(pilot, "enter", lambda: ("stop", WS) in data.calls)
         await wait_for(lambda: "stop failed" in consent_text(app))
-        assert "stopped" in header_text(app)  # the row kept its status
+        assert "running" in header_text(app)  # the row kept its status
 
 
 async def test_power_rows_dim_with_the_status(monkeypatch) -> None:
@@ -2482,6 +2493,27 @@ async def test_power_rows_dim_with_the_status(monkeypatch) -> None:
         await wait_for(lambda: "workspace is running" in action_text(app, 4))
         assert "workspace is running" not in action_text(app, 5)
         assert page.row["status"] == "running"
+
+
+async def test_the_page_follows_a_status_moved_elsewhere(
+    monkeypatch,
+) -> None:
+    """The review round on #367: the page re-reads the workspace
+    each second, so a start made away from the page — the CLI in
+    another terminal — un-dims the stop row without a rebuild."""
+    scripted_link(monkeypatch, [])
+    data = FakeData([row(status="stopped")])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: "workspace is stopped" in action_text(app, 5))
+        # Another surface boots it: a fresh row object, so only the
+        # page's per-second read can learn it.
+        data.rows[0] = {**data.rows[0], "status": "running"}
+        await wait_for(lambda: "workspace is running" in action_text(app, 4))
+        assert action_text(app, 5).strip() == "Stop"
+        assert "running" in header_text(app)
 
 
 async def test_enter_on_a_dimmed_row_flashes_and_runs_nothing(
