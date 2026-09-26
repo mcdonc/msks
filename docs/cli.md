@@ -244,7 +244,11 @@ my-workspace` opens that workspace's page directly). The tree is
 rooted at the **workspaces list**: every workspace one row, with
 creating, starting, stopping, and removing on its keys (`c` new,
 `s` start, `x` stop, `D` remove — asked and confirmed — `r`
-refresh, and Enter opens the workspace's page).
+refresh, and Enter opens the workspace's page). Each row's status
+column carries the state's color (#348): a running workspace in
+the theme's success color, a stopped one in muted text, and any
+other state in the warning color — the rest of the row keeps the
+default foreground, and the colors follow the active theme.
 
 The **workspace page** carries the per-workspace loop: a status
 line for egress consent (the mode, the granted scope with its
