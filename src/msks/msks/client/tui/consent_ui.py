@@ -1,26 +1,25 @@
-"""The consent decider TUI (#195): a Textual app over the frames.
+"""The consent UI's shared pieces (#195, #358): the view over a
+:class:`ConsentController` that every consent surface in the tree
+renders from.
 
-``msks egress tui <workspace>`` registers this client as the
-workspace's decider on the events websocket, shows the pending-hold
-snapshot and every live hold with its countdown, and sends verdicts
-through the REST decide/revoke endpoints (msks's decider channel is a
-read-only stream — verdicts carry the API's validation). The mode
-picker (#280, on `m` from every screen since #301) switches the
-workspace's egress posture live through the policy endpoint, and the
-current mode stays visible on every screen (the queue's status line,
-the rules header, the events header).
-
-Every side effect has an injectable seam so the tests drive the app
-without a socket or a daemon: ``ws_factory`` yields the connection
-(default: websockets), ``decide``/``revoke`` send the verdicts
-(default: REST via :mod:`msks.client.rest`). The protocol logic lives
-in :mod:`msks.client.tui.consent`; this module is the view.
+The workspace page's consent overlay (the modal over the page,
+``main_app.ConsentOverlay``) owns the held-request queue: it holds
+the verdict keys and pushes the screens below as full-screen
+visits. This module keeps everything those surfaces share — the
+row and focus helpers, the reconnect ladder's constants, the
+mode/duration/confirmation pickers, the rules screen (in-effect
+verdicts, revoke), and the events screen (the placeholder-token
+audit) — plus the connection seams the page's
+:class:`~msks.client.tui.link.DeciderLink` dials through
+(``default_ws_factory``, the one shared TLS context). The
+protocol logic lives in :mod:`msks.client.tui.consent`; this
+module is the view.
 
 Fail-closed while disconnected: the daemon registers a decider only
 while the socket lives, so a dropped connection means new off-list
 connects fail fast and in-flight holds run their timeout — the
-reconnect loop re-registers and re-sends the snapshot, and the status
-line names the state rather than implying silence.
+link's reconnect loop re-registers and re-sends the snapshot, and
+the surfaces name the state rather than implying silence.
 """
 
 import asyncio
@@ -31,7 +30,7 @@ import time
 
 import websockets
 from rich.markup import escape
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.css.query import NoMatches
@@ -39,13 +38,11 @@ from textual.screen import ModalScreen, Screen
 from textual.widgets import Footer, ListItem, ListView, OptionList, Static
 
 from ..egress import events_url
-from ..rest import api_call, env_token, env_url, ssl_context
+from ..rest import env_token, env_url, ssl_context
 from .consent import (
     DURATION_DEFAULT,
     DURATIONS,
     EGRESS_MODES,
-    REJECTED,
-    SECRET_EVENT,
     ConsentController,
     ConsentRequest,
     EgressRules,
@@ -219,34 +216,6 @@ def focus_rule_by_id(rows: ListView, rule_id: str | None) -> None:
 def refused_close(exc: websockets.ConnectionClosed) -> bool:
     """Whether a close was the daemon's token refusal (4401)."""
     return exc.rcvd is not None and exc.rcvd.code == AUTH_CLOSE_CODE
-
-
-#: The keys every modal above the queue shadows (#280 review, the
-#: RulesScreen precedent from #195): the app-level verdict, rules,
-#: and quit bindings must not act on the hidden queue below —
-#: `a`/`d` deciding a hold nobody can see is the bug class, `q`
-#: closing the modal instead of the app is the same rule one level
-#: up (each modal binds `q` itself, to its own cancel). `e` joins
-#: with #201's events screen and `m` with #301's queue-level picker:
-#: opening either under a modal stacks a screen nobody can see.
-SHADOW_BINDINGS = (
-    Binding("a", "noop", show=False),
-    Binding("A", "noop", show=False),
-    Binding("d", "noop", show=False),
-    Binding("D", "noop", show=False),
-    Binding("r", "noop", show=False),
-    Binding("e", "noop", show=False),
-    Binding("m", "noop", show=False),
-)
-
-
-class ModalShadow:
-    """The action half of SHADOW_BINDINGS: swallowing a queue
-    key pressed under a modal. A mixin, because Textual resolves
-    an action as a method on the focused screen."""
-
-    def action_noop(self) -> None:
-        """Swallow a queue-action key pressed under this modal."""
 
 
 def backoff(delays: tuple[float, ...], attempt: int) -> float:
@@ -439,12 +408,6 @@ def flash_safe(text: str) -> str:
     return re.sub(r"(?<!\\)\[/", r"\\\[/", escape(text))
 
 
-def is_sighting(outcome: str, payload) -> bool:
-    """Whether one applied frame surfaced an off-allowlist sighting
-    (#201) — the one audit kind that interrupts the status line."""
-    return outcome == SECRET_EVENT and payload.kind == "sighting"
-
-
 def effective_allows(rules: EgressRules | None) -> bool:
     """Whether anything effectively allows egress under the
     snapshot (#280): a non-empty allowlist or an in-effect allowed
@@ -489,13 +452,12 @@ async def confirmed_static_switch(answer: bool, send) -> None:
         await send("static", confirm_empty=True)
 
 
-class ModeScreen(ModalShadow, ModalScreen[str | None]):
+class ModeScreen(ModalScreen[str | None]):
     """The mode picker (#280): Enter picks, Escape or q cancels.
     The chosen mode (or None) goes to the callback given at
     construction."""
 
     BINDINGS = [
-        *SHADOW_BINDINGS,
         Binding("q", "cancel", show=False),
         Binding("escape", "cancel", "Cancel", show=False),
     ]
@@ -531,13 +493,12 @@ class ModeScreen(ModalShadow, ModalScreen[str | None]):
         self._pick_task = asyncio.create_task(self.picked(mode))
 
 
-class ConfirmScreen(ModalShadow, ModalScreen[bool]):
+class ConfirmScreen(ModalScreen[bool]):
     """A yes/no question (#280): ``y``/Enter answers True, ``n``/
     ``q``/Escape answers False. The callback given at construction
     runs as a task with the answer."""
 
     BINDINGS = [
-        *SHADOW_BINDINGS,
         Binding("y", "yes", "Confirm"),
         Binding("enter", "yes", "Confirm", show=False),
         Binding("n", "no", "Cancel"),
@@ -565,13 +526,12 @@ class ConfirmScreen(ModalShadow, ModalScreen[bool]):
         self._pick_task = asyncio.create_task(self.answered(answer))
 
 
-class DurationScreen(ModalShadow, ModalScreen[str | None]):
+class DurationScreen(ModalScreen[str | None]):
     """The duration picker: Enter picks, Escape or q cancels. The
     chosen duration (or None) goes to the callback given at
     construction."""
 
     BINDINGS = [
-        *SHADOW_BINDINGS,
         Binding("q", "cancel", show=False),
         Binding("escape", "cancel", "Cancel", show=False),
     ]
@@ -610,8 +570,8 @@ class RulesScreen(Screen):
     countdowns, the static allowlist, and revoke on the focused row.
 
     Arrows move the rule list; ``x`` revokes the focused rule, ``r``
-    or Escape returns to the queue — no focus trap anywhere. The
-    per-tick countdown refresh repaints an unchanged row set in
+    or Escape returns to the surface below — no focus trap anywhere.
+    The per-tick countdown refresh repaints an unchanged row set in
     place; only a membership change swaps the list (the swap was
     the once-a-second flash #301 reports)."""
 
@@ -621,23 +581,13 @@ class RulesScreen(Screen):
         Binding("r", "back", "Back"),
         Binding("escape", "back", "Back", show=False),
         Binding("q", "back", "Back", show=False),
-        # Shadows: the app-level verdict keys must not decide the
-        # hidden queue's focused hold from here — a/d/A/D are queue
-        # actions, and bubbling them would silently allow or deny a
-        # live connection behind this screen.
-        Binding("a", "noop", show=False),
-        Binding("A", "noop", show=False),
-        Binding("d", "noop", show=False),
-        Binding("D", "noop", show=False),
     ]
 
-    def action_noop(self) -> None:
-        """Swallow a queue-action key pressed on the rules screen."""
-
-    def __init__(self, controller: ConsentController, revoke) -> None:
+    def __init__(self, controller: ConsentController, revoke, mode) -> None:
         super().__init__()
         self.controller = controller
         self.revoke = revoke
+        self.mode = mode
         self.rebuilds = OneFlight(
             lambda: self.rebuild_rows(),
             lambda: self.app.is_running,
@@ -739,10 +689,10 @@ class RulesScreen(Screen):
             await self.revoke(rule_id)
 
     def action_mode(self) -> None:
-        """Open the mode picker: the app-level action (#301 exposed
-        it on the queue too); the rules screen keeps its key and
-        footer entry."""
-        self.app.action_mode()
+        """Open the mode picker through the host's callback (#301
+        kept the key beside the rules rows); the host owns which
+        picker path runs."""
+        self.mode()
 
     def action_back(self) -> None:
         self.app.pop_screen()
@@ -755,27 +705,17 @@ class EventsScreen(Screen):
     events live. A sighting row carries the ``sighting`` class —
     the highlight that names the exfil signal — beside its ``!``
     marker. Arrows move the list; ``r`` or Escape returns to the
-    queue — no focus trap."""
+    surface below — no focus trap."""
 
     BINDINGS = [
         Binding("r", "back", "Back"),
         Binding("escape", "back", "Back", show=False),
         Binding("q", "back", "Back", show=False),
         # `e` from here returns instead of stacking another events
-        # screen (the app-level binding bubbles otherwise) — the
-        # rules screen's `r` follows the same shape.
+        # screen (the host's key would push otherwise) — the rules
+        # screen's `r` follows the same shape.
         Binding("e", "back", show=False),
-        # Shadows: the app-level verdict keys must not decide the
-        # hidden queue's focused hold from here — same rule as the
-        # rules screen.
-        Binding("a", "noop", show=False),
-        Binding("A", "noop", show=False),
-        Binding("d", "noop", show=False),
-        Binding("D", "noop", show=False),
     ]
-
-    def action_noop(self) -> None:
-        """Swallow a queue-action key pressed on the events screen."""
 
     def __init__(self, controller: ConsentController) -> None:
         super().__init__()
@@ -885,465 +825,6 @@ class EventsScreen(Screen):
         self.app.pop_screen()
 
 
-class ConsentDeciderApp(App):
-    """Live queue of held requests with allow/deny, plus the rules
-    screen — a thin view over :class:`ConsentController`."""
-
-    CSS = """
-    Screen { layout: vertical; }
-    #status { padding: 0 1; background: $panel; color: $text-muted; }
-    #queue { height: 1fr; }
-    #requests ListItem { height: 1; }
-    #empty { padding: 1 2; color: $text-muted; }
-    #events-note { padding: 0 1; color: $text-muted; }
-    #events-empty { padding: 0 1; color: $text-muted; }
-    #event-rows ListItem { height: 1; }
-    #event-rows ListItem.sighting { color: $warning; text-style: bold; }
-    """
-
-    BINDINGS = [
-        Binding("a", "allow", "Allow"),
-        Binding("A", "allow_duration", "Allow…"),
-        Binding("d", "deny", "Deny"),
-        Binding("D", "deny_duration", "Deny…"),
-        Binding("r", "rules", "Rules"),
-        Binding("e", "events", "Events"),
-        Binding("m", "mode", "Mode"),
-        Binding("q", "quit_screen", "Quit"),
-        Binding("escape", "quit_screen", "Quit", show=False),
-    ]
-
-    def __init__(
-        self,
-        workspace_id: str,
-        *,
-        hold_timeout: float = 120.0,
-        ws_factory=None,
-        decide=None,
-        revoke=None,
-        set_mode=None,
-        reconnect_delays: tuple[float, ...] = RECONNECT_DELAYS,
-    ) -> None:
-        super().__init__()
-        self.workspace_id = workspace_id
-        self.reconnect_delays = reconnect_delays
-        self.controller = ConsentController(
-            hold_timeout=hold_timeout, workspace_id=workspace_id
-        )
-        self._ws_factory = ws_factory or default_ws_factory
-        self._decide = decide or rest_decide
-        self._revoke = revoke or rest_revoke
-        self._set_mode = set_mode or rest_set_mode
-        self._conn_state = RECONNECTING
-        self._stop = False
-        self._flash_msg = ""
-        self._flash_until = 0.0
-        self._last_conn_error = ""
-        self.rebuilds = OneFlight(
-            lambda: self.rebuild_queue(self.controller.ordered()),
-            lambda: self.is_running,
-            "queue",
-        )
-
-    # -- lifecycle -----------------------------------------------------------
-
-    def compose(self) -> ComposeResult:
-        yield Static(id="status")
-        with Vertical(id="queue"):
-            yield ListView(id="requests")
-            yield Static("No held requests — connected, waiting.", id="empty")
-        yield Footer()
-
-    def on_mount(self) -> None:
-        self.title = f"msks egress · {self.workspace_id}"
-        self.query_one("#requests", ListView).focus()
-        self.run_worker(
-            self.ws_loop, exclusive=True, group="ws", exit_on_error=False
-        )
-        self.set_interval(1.0, self.safe_repaint)
-
-    # -- the websocket worker ---------------------------------------------
-
-    async def ws_loop(self) -> None:
-        """Connect, register, pump; reconnect until stopped."""
-        attempt = 0
-        while not self._stop:
-            connected, refused = await self.pump_one()
-            if self._stop:
-                return
-            if refused:
-                await asyncio.sleep(REFUSED_RETRY_INTERVAL)
-                self.safe_repaint()
-                continue
-            # A connection that reached serve_connection was healthy:
-            # the next drop starts the backoff ladder over instead of
-            # climbing it for a lifetime of cumulative disconnects.
-            attempt = 0 if connected else attempt + 1
-            await asyncio.sleep(backoff(self.reconnect_delays, attempt))
-            self.safe_repaint()
-
-    async def pump_one(self) -> tuple[bool, bool]:
-        """One connection's lifetime; ``(connected, refused)`` —
-        whether the dial succeeded (resetting the backoff ladder on
-        the next drop) and whether the close was an auth refusal
-        (retry slowly) rather than a drop (backoff)."""
-        try:
-            ws = await self._ws_factory().__aenter__()
-        except Exception as exc:
-            self.on_disconnect()
-            # The exception text is operator-facing free text (a TLS
-            # handshake failure prints bracketed markup): unescaped,
-            # every status update raises inside safe_repaint and the
-            # line stays stale for the flash's TTL.
-            self.flash_once(f"connect failed: {flash_safe(str(exc))}")
-            return False, False
-        try:
-            await self.serve_connection(ws)
-        except websockets.ConnectionClosed as exc:
-            refused = refused_close(exc)
-            self.on_disconnect(refused)
-            return True, refused
-        except Exception:
-            self.on_disconnect(False)
-            return True, False
-        finally:
-            await close_ws(ws)
-        return True, False
-
-    async def serve_connection(self, ws) -> None:
-        """Register, then feed every frame to the controller; render
-        exceptions are isolated so a UI bug never tears down the
-        transport."""
-        self._conn_state = CONNECTED
-        await ws.send(registration_frame(self.workspace_id))
-        self.controller.reset()
-        self.safe_repaint()
-        async for raw in ws:
-            outcome, payload = self.controller.apply_frame(raw)
-            if outcome == REJECTED:
-                # The daemon refused the registration (an unknown
-                # workspace): waiting would be promptless forever.
-                reason = payload or "registration rejected"
-                self.on_disconnect(True)
-                self.flash_once(f"registration rejected: {flash_safe(reason)}")
-                self._stop = True
-                return
-            if is_sighting(outcome, payload):
-                # The exfil signal flashes on every screen (#201):
-                # the events screen highlights it, and the queue's
-                # status line names it while it owns the terminal.
-                self.flash(sighting_flash(payload))
-            self.safe_repaint()
-        # The iterator ended on its own: a clean close (1000/1001 —
-        # websockets exits the async-for normally on OK codes, it
-        # does not raise), a restarting daemon among them. Name the
-        # window here: pump_one's fall-through return is the one
-        # exit that leaves the state on connected (#316).
-        self.on_disconnect()
-
-    def flash_once(self, message: str) -> None:
-        """Flash a connect failure when its text changes: byte-identical
-        retries stay quiet; a cause that flips back and forth (a
-        restarting daemon alternating refusal with TLS failure)
-        re-names itself on each transition — bounded by the reconnect
-        backoff, visible for the flash TTL."""
-        if message != self._last_conn_error:
-            self._last_conn_error = message
-            self.flash(message)
-
-    def on_disconnect(self, refused: bool = False) -> None:
-        """Record the drop (the next loop pass reconnects); an auth
-        refusal holds the refused label through its slow retry —
-        the slow retry sleeps long enough that the label must land
-        here, not after it."""
-        self._conn_state = REFUSED if refused else RECONNECTING
-        self.safe_repaint()
-
-    # -- verdicts -------------------------------------------------------------
-
-    async def action_allow(self) -> None:
-        await self.decide_focused("allow", DURATION_DEFAULT)
-
-    async def action_deny(self) -> None:
-        await self.decide_focused("deny", DURATION_DEFAULT)
-
-    async def action_allow_duration(self) -> None:
-        await self.pick_duration("allow")
-
-    async def action_deny_duration(self) -> None:
-        await self.pick_duration("deny")
-
-    async def pick_duration(self, decision: str) -> None:
-        """Open the duration picker for the FOCUSED hold; a picked
-        duration decides that hold, a cancel decides nothing. The
-        request id is captured here: the focused row can change (or
-        resolve) while the picker is open, and Enter must not land
-        the verdict on whatever holds focus when the pick arrives.
-        The picker reports through a callback (push_screen_wait
-        demands a worker context actions do not have)."""
-        request_id = focused_request_id(self.queue_rows())
-        if request_id is None:
-            self.flash("no hold focused")
-            return
-        await self.push_screen(
-            DurationScreen(self.finish_pick(decision, request_id))
-        )
-
-    def finish_pick(self, decision: str, request_id: str | None):
-        """The callback the picker calls with the picked duration
-        (or None on cancel)."""
-
-        async def picked(duration: str | None) -> None:
-            if duration is None:
-                return
-            # Sent unconditionally: after a reconnect the local
-            # pending set is fresh (empty) while the hold may still
-            # be live server-side — the server is the source of
-            # truth and 404s ids that truly resolved.
-            await self.send_verdict(request_id, decision, duration)
-
-        return picked
-
-    def queue_rows(self) -> ListView | None:
-        """The queue list, or None during a rebuild's swap window (the
-        old list removed, the fresh one not yet mounted)."""
-        try:
-            return self.query_one("#requests", ListView)
-        except Exception:
-            return None
-
-    async def decide_focused(self, decision: str, duration: str) -> None:
-        """Send the verdict for the focused hold through the seam; a
-        failure flashes, never crashes the app. A key pressed inside
-        a rebuild's swap window reads as nothing focused."""
-        rows = self.queue_rows()
-        child = rows.highlighted_child if rows is not None else None
-        request_id = getattr(child, "request_id", None)
-        if request_id is None:
-            self.flash("no hold focused")
-            return
-        await self.send_verdict(request_id, decision, duration)
-
-    async def send_verdict(
-        self, request_id: str, decision: str, duration: str
-    ) -> None:
-        """One decide through the seam, with the flash on failure. The
-        REST layer reports failures as SystemExit (one readable
-        line); catching it too is what makes a lost race — the hold
-        timed out mid-deliberation, the daemon answers 404 — a flash
-        instead of a dead app."""
-        try:
-            await self._decide(
-                self.workspace_id, request_id, decision, duration
-            )
-        except (Exception, SystemExit) as exc:
-            self.flash(f"decide failed: {flash_safe(str(exc))}")
-
-    def action_rules(self) -> None:
-        self.push_screen(RulesScreen(self.controller, self.revoke_rule))
-
-    def action_mode(self) -> None:
-        """Open the mode picker (#301: `m` from the queue, the rules
-        screen, or the events screen — the operator watching holds
-        escalates or relaxes the posture without leaving the
-        decider): the current mode starts highlighted, and the pick
-        goes to the switch path (which owns the empty-static
-        confirmation)."""
-        rules = self.controller.rules
-        current = rules.mode if rules is not None else ""
-        self.push_screen(ModeScreen(current, self.switch_mode))
-
-    async def switch_mode(self, mode: str | None) -> None:
-        """One picked mode from the picker (#280): the pick goes to
-        the shared switch path, which owns the empty-static
-        confirmation."""
-        await switch_mode_path(
-            mode,
-            self.controller.rules,
-            self.ask_empty_static,
-            self.send_mode,
-        )
-
-    def ask_empty_static(self, answered) -> None:
-        """Push the empty-static confirmation with the given
-        callback."""
-        self.push_screen(ConfirmScreen(EMPTY_STATIC_QUESTION, answered))
-
-    async def send_mode(
-        self, mode: str, *, confirm_empty: bool = False
-    ) -> None:
-        """One mode switch through the seam; a failure flashes,
-        never crashes the app (SystemExit included — the REST
-        seam's error surface, the daemon's named refusal among
-        them)."""
-        try:
-            await self._set_mode(
-                self.workspace_id, mode, confirm_empty=confirm_empty
-            )
-        except (Exception, SystemExit) as exc:
-            self.flash(f"mode switch failed: {flash_safe(str(exc))}")
-
-    def action_events(self) -> None:
-        self.push_screen(EventsScreen(self.controller))
-
-    async def revoke_rule(self, request_id: str) -> None:
-        """Revoke through the seam; a failure flashes on the app
-        (SystemExit included — the REST seam's error surface)."""
-        try:
-            await self._revoke(self.workspace_id, request_id)
-        except (Exception, SystemExit) as exc:
-            self.flash(f"revoke failed: {flash_safe(str(exc))}")
-
-    def action_quit_screen(self) -> None:
-        self._stop = True
-        self.exit()
-
-    # -- rendering --------------------------------------------------------
-
-    def flash(self, message: str) -> None:
-        """Give the status line to a message for FLASH_TTL seconds."""
-        self._flash_msg = message
-        self._flash_until = time.time() + FLASH_TTL
-        self.safe_repaint()
-
-    def safe_repaint(self) -> None:
-        """Repaint, isolating render failures (a UI bug must not
-        tear down the transport that would re-trigger it)."""
-        try:
-            self.repaint()
-        except Exception:
-            logger.exception("tui: repaint failed")
-
-    def repaint(self) -> None:
-        """Sync the queue rows and the status line to state, and keep
-        the rules and events screens live when one is the active
-        screen (their rows tick, a fresh frame shows up — the port of
-        klangk's per-tick rules refresh)."""
-        self.refresh_rules_screen()
-        self.refresh_events_screen()
-        self.sync_rows()
-        self.update_status()
-
-    def refresh_rules_screen(self) -> None:
-        """Repaint the rules screen when it is on top (the rebuild
-        awaits widget mounts, so it runs as a task, one flight at a
-        time)."""
-        screen = self.screen
-        if isinstance(screen, RulesScreen):
-            screen.schedule_refresh()
-
-    def refresh_events_screen(self) -> None:
-        """Repaint the events screen when it is on top and the log
-        moved since its last paint: event rows are static (nothing
-        ticks), so an unchanged log takes no rebuild — the per-tick
-        cost is the fingerprint compare, not a list swap."""
-        screen = self.screen
-        if isinstance(screen, EventsScreen) and screen.log_changed():
-            screen.schedule_refresh()
-
-    def empty_line(self) -> str:
-        """The empty-queue line, honest about the connection state."""
-        if self._conn_state == CONNECTED:
-            return "No held requests — connected, waiting."
-        return f"No held requests — {self._conn_state}."
-
-    def sync_rows(self) -> None:
-        """Sync the queue to state. A membership change (a hold
-        resolved, a new one arrived) rebuilds the list fresh —
-        Textual prunes removed children asynchronously, so mutating
-        a live ListView leaves stale copies that shift every index
-        under the highlight; a fresh list keeps the destructive
-        keys' target derivable from children that are all real.
-        Same-set ticks repaint survivors' countdowns in place
-        (no flicker, no index motion). A missing list (a rebuild
-        died mid-swap) schedules a rebuild — the queue self-heals
-        instead of wedging blank."""
-        try:
-            rows = self.query_one("#requests", ListView)
-        except NoMatches:
-            self.schedule_rebuild()
-            return
-        ordered = self.controller.ordered()
-        if row_ids(rows) != {request.id for request in ordered}:
-            # The rebuild awaits the old list's removal and the new
-            # one's mount, so it runs as a task, one flight at a
-            # time; a tick while it is in flight sees the membership
-            # still differ and re-arms after it lands.
-            self.schedule_rebuild()
-            return
-        self.repaint_countdowns(rows, ordered)
-        self.query_one("#empty", Static).display = not ordered
-        self.query_one("#empty", Static).update(self.empty_line())
-
-    def repaint_countdowns(
-        self, rows: ListView, ordered: list[ConsentRequest]
-    ) -> None:
-        """Repaint each survivor's countdown in place."""
-        existing = row_map(rows)
-        for request in ordered:
-            item = existing.get(request.id)
-            if item is not None:
-                item.query_one(Static).update(
-                    dest_line(request, self.controller.remaining(request))
-                )
-
-    def schedule_rebuild(self) -> None:
-        """Arm one queue rebuild; single flight, with a re-arm when a
-        request lands mid-flight (the in-progress rebuild already
-        captured the old membership — the re-arm applies the new one
-        the moment it lands, rather than waiting a tick)."""
-        self.rebuilds.request()
-
-    async def rebuild_queue(self, ordered: list[ConsentRequest]) -> None:
-        """Swap in a freshly-built queue list (its mount awaited),
-        restoring focus by id (the top when the focused hold left)
-        so `a`/`d` never retarget through a shifted index. Focus is
-        read from the live list here, at rebuild time — never
-        captured at arm time — so a re-armed iteration restores the
-        focus the operator set since, not a stale one. A missing old
-        list (a rebuild died mid-swap) is fine: the fresh list
-        mounts anew, the queue self-heals."""
-        queue = self.query_one("#queue", Vertical)
-        old = None
-        try:
-            old = self.query_one("#requests", ListView)
-        except NoMatches:
-            pass
-        focused = focused_request_id(old)
-        items = [self.render_item(request) for request in ordered]
-        fresh = ListView(*items, id="requests")
-        if old is not None:
-            await old.remove()  # frees the id before the fresh list mounts
-        await queue.mount(fresh)
-        fresh.focus()
-        focus_by_id(fresh, focused)  # after mount: index sticks
-        self.query_one("#empty", Static).display = not ordered
-        self.query_one("#empty", Static).update(self.empty_line())
-
-    def render_item(self, request: ConsentRequest) -> ListItem:
-        """One queue row."""
-        item = ListItem(
-            Static(dest_line(request, self.controller.remaining(request)))
-        )
-        item.request_id = request.id
-        return item
-
-    def update_status(self) -> None:
-        """The status line: workspace, current mode (visible on
-        every screen the queue owns — #301), connection state, held
-        count; a flash owns it until its TTL lapses."""
-        if self._flash_until > time.time():
-            text = self._flash_msg
-        else:
-            held = len(self.controller.pending)
-            text = (
-                f" {escape(self.workspace_id)}  ·  mode "
-                f"{mode_label(self.controller.rules)}"
-                f"  ·  {self._conn_state}  ·  {held} held"
-            )
-        self.query_one("#status", Static).update(text)
-
-
 async def close_ws(ws) -> None:
     """Close the connection, swallowing a peer that already went."""
     try:
@@ -1382,62 +863,3 @@ def default_ws_factory():
     return websockets.connect(
         **ws_connect_kwargs(env_url(), env_token(), shared_ssl())
     )
-
-
-async def rest_decide(
-    workspace_id: str, request_id: str, decision: str, duration: str
-) -> dict:
-    """One verdict through the REST endpoint (the shared TLS
-    context — no per-verdict TOFU warning)."""
-    return await api_call(
-        "POST",
-        env_url(),
-        env_token(),
-        f"/api/v1/workspaces/{workspace_id}/egress/requests/{request_id}",
-        json_body={"decision": decision, "duration": duration},
-        ssl_ctx=shared_ssl(),
-    )
-
-
-async def rest_revoke(workspace_id: str, request_id: str) -> dict:
-    """One revoke through the REST endpoint (shared context)."""
-    return await api_call(
-        "DELETE",
-        env_url(),
-        env_token(),
-        f"/api/v1/workspaces/{workspace_id}/egress/requests/{request_id}",
-        ssl_ctx=shared_ssl(),
-    )
-
-
-async def rest_set_mode(
-    workspace_id: str, mode: str, *, confirm_empty: bool = False
-) -> dict:
-    """One mode switch through the REST endpoint (#280; shared
-    context). ``confirm_empty`` rides only when set — the daemon's
-    refusal names it."""
-    body: dict = {"mode": mode}
-    if confirm_empty:
-        body["confirm_empty"] = True
-    return await api_call(
-        "PUT",
-        env_url(),
-        env_token(),
-        f"/api/v1/workspaces/{workspace_id}/egress/policy",
-        json_body=body,
-        ssl_ctx=shared_ssl(),
-    )
-
-
-def run_consent_tui(workspace_id: str) -> int:
-    """``msks egress tui <workspace>``: launch the decider app. The
-    env and TLS context are read before the app starts (a missing
-    token exits with the one readable line every sibling command
-    prints, not a SystemExit tearing down a half-drawn screen — and
-    the TOFU warning prints once here, before the screen owns the
-    terminal)."""
-    env_url()
-    env_token()
-    shared_ssl()  # the TOFU warning (when it prints) lands here, once
-    ConsentDeciderApp(workspace_id).run()
-    return 0

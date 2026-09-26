@@ -77,7 +77,6 @@ from .rest import (
 from .rsync import run_workspace_rsync
 from .ssh import IDENTITY_FILE_ENV, data_dir, run_workspace_ssh
 from .tabular import listing_text
-from .tui.consent_app import run_consent_tui
 from .tui.main_app import run_main_tui
 
 
@@ -2046,15 +2045,6 @@ def egress_mode_command(
             transport=ctx.obj,
         )
     )
-
-
-@egress_app.command("tui")
-@one_line_interrupts
-def egress_tui(
-    workspace_id: str = typer.Argument(..., help="decide for this workspace"),
-) -> int:
-    """The consent decider TUI (#195): live holds, verdicts, rules."""
-    return run_consent_tui(workspace_id)
 
 
 @egress_app.command("watch")

@@ -23,7 +23,6 @@ from msks.client.tui import link as link_mod
 from msks.client.tui import main_app
 from msks.client.tui.link import DeciderLink
 from msks.client.tui.main_app import (
-    FLOW_CONSENT,
     FLOW_SHELL,
     MainScreen,
     MsksTuiApp,
@@ -32,6 +31,7 @@ from msks.client.tui.main_app import (
     image_options,
 )
 from rich.cells import cell_len
+from test_consent_overlay import FakeFactory, FakeWS, press_until, wait_for
 from test_consent_tui import frame
 from test_consent_tui import (
     request_frame as shared_request_frame,
@@ -39,7 +39,6 @@ from test_consent_tui import (
 from test_consent_tui import (
     rules_frame as shared_rules_frame,
 )
-from test_consent_tui_app import FakeFactory, FakeWS, press_until, wait_for
 from textual.color import Color
 from textual.css.query import NoMatches
 from textual.widgets import Button, Input, OptionList, Select, Static
@@ -157,6 +156,20 @@ class FakeData:
             },
         )
 
+    async def decide(
+        self, workspace_id: str, request_id: str, decision: str, duration: str
+    ) -> dict:
+        """The consent overlay's decide — recorded, the named
+        refusal when it fails."""
+        self.calls.append(("decide", workspace_id, request_id, decision))
+        return self.reply("decide", {"request_id": request_id})
+
+    async def revoke(self, workspace_id: str, request_id: str) -> dict:
+        """The rules screen's revoke — recorded, the named refusal
+        when it fails."""
+        self.calls.append(("revoke", workspace_id, request_id))
+        return self.reply("revoke", {"request_id": request_id})
+
     def reply(self, verb: str, value):
         """The scripted reply; the named refusal when the verb fails."""
         if verb in self.fail:
@@ -260,6 +273,12 @@ def on_main(app) -> bool:
 
 def on_page(app) -> bool:
     return isinstance(app.screen, WorkspaceScreen)
+
+
+def on_overlay(app) -> bool:
+    from msks.client.tui.main_app import ConsentOverlay
+
+    return isinstance(app.screen, ConsentOverlay)
 
 
 async def open_page(pilot, app) -> WorkspaceScreen:
@@ -676,12 +695,13 @@ async def test_the_header_truncates_gracefully_at_eighty_columns(
         assert "created" not in meta_line
 
 
-async def test_pending_holds_count_themselves_in_the_header(
+async def test_a_hold_arriving_opens_the_overlay_by_itself(
     monkeypatch,
 ) -> None:
-    """#354: the page's list carries only the fixed actions; a
+    """#358: the page's list carries only the fixed actions; a
     waiting hold counts itself in the header's indicator, and the
-    decider stays reachable through its page action."""
+    burst's first hold opens the consent overlay by itself — the
+    auto-opened panel."""
     scripted_link(monkeypatch, [rules_frame(), request_frame("r9")])
     data = FakeData([row()])
     app, follow = make_app(data)
@@ -691,8 +711,27 @@ async def test_pending_holds_count_themselves_in_the_header(
         await wait_for(lambda: "egress to decide: 1" in header_text(app))
         rows = app.screen.query_one("#actions")
         assert "pending" not in rows.children[0].classes
-        await pilot.press("down", "enter")  # the decider's action
-        await wait_for(lambda: follow.action == (FLOW_CONSENT, WS))
+        await wait_for(lambda: on_overlay(app))
+        assert app.screen.auto is True  # type: ignore[attr-defined]
+
+
+async def test_the_consent_action_opens_the_panel_by_hand(
+    monkeypatch,
+) -> None:
+    """#358: the page's consent action row pushes the overlay by
+    hand — with nothing pending it is the consent panel, and it
+    stays open until the operator closes it."""
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 5)
+        await pilot.press("down")  # the consent action
+        await press_until(pilot, "enter", lambda: on_overlay(app))
+        assert app.screen.auto is False  # type: ignore[attr-defined]
+        await pilot.press("q")  # the operator's close
+        await wait_for(lambda: on_page(app))
 
 
 async def test_the_page_runs_start_and_stop(monkeypatch) -> None:
@@ -945,7 +984,6 @@ async def test_the_page_stops_deciding_when_it_closes(monkeypatch) -> None:
 def test_the_follow_queue_takes_once() -> None:
     follow = TuiFollow()
     assert follow.take() is None
-    follow.request(FLOW_CONSENT, "ws")
     follow.request(FLOW_SHELL, "ws")
     assert follow.take() == (FLOW_SHELL, "ws")
     assert follow.take() is None
@@ -961,11 +999,9 @@ def test_run_main_tui_chains_the_flows(monkeypatch) -> None:
 
         def run(self):
             runs.append(1)
-            # The operator opens the consent app, then a shell,
-            # then quits.
+            # The operator opens a shell window whose launcher is
+            # dead (the fallback chains), then quits.
             if len(runs) == 1:
-                self.follow.request(FLOW_CONSENT, "ws-9")
-            elif len(runs) == 2:
                 self.follow.request(FLOW_SHELL, "ws-9")
 
     monkeypatch.setattr(main_app, "MsksTuiApp", FakeApp)
@@ -973,13 +1009,12 @@ def test_run_main_tui_chains_the_flows(monkeypatch) -> None:
         main_app,
         "FLOWS",
         {
-            FLOW_CONSENT: lambda ws: flows.append(("consent", ws)),
             FLOW_SHELL: lambda ws: flows.append(("shell", ws)),
         },
     )
     assert main_app.run_main_tui(data=object()) == 0
-    assert len(runs) == 3
-    assert flows == [("consent", "ws-9"), ("shell", "ws-9")]
+    assert len(runs) == 2
+    assert flows == [("shell", "ws-9")]
 
 
 def test_run_main_tui_fails_cleanly_without_a_token(
@@ -1199,6 +1234,19 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
     assert (
         "PUT",
         "/api/v1/workspaces/ws1/egress/policy",
+    ) in seen
+    # The verdict seams (#358): the overlay's decide POST and the
+    # rules screen's revoke DELETE — the same exchanges the egress
+    # subcommands make.
+    assert await data.decide("ws1", "r9", "allow", "5m")
+    assert await data.revoke("ws1", "r9")
+    assert (
+        "POST",
+        "/api/v1/workspaces/ws1/egress/requests/r9",
+    ) in seen
+    assert (
+        "DELETE",
+        "/api/v1/workspaces/ws1/egress/requests/r9",
     ) in seen
 
 
@@ -1694,20 +1742,11 @@ def test_the_consent_line_names_a_rejection() -> None:
 def test_the_default_flow_runners(monkeypatch) -> None:
     ran: list[tuple] = []
 
-    class FakeConsent:
-        def __init__(self, workspace_id):
-            self.workspace_id = workspace_id
-
-        def run(self):
-            ran.append(("consent", self.workspace_id))
-
-    monkeypatch.setattr(main_app, "ConsentDeciderApp", FakeConsent)
     monkeypatch.setattr(
         main_app, "run_workspace_shell", lambda ws: ran.append(("shell", ws))
     )
-    main_app.run_follow_up((FLOW_CONSENT, "w1"))
     main_app.run_follow_up((FLOW_SHELL, "w2"))
-    assert ran == [("consent", "w1"), ("shell", "w2")]
+    assert ran == [("shell", "w2")]
 
 
 def test_run_main_tui_pre_flights_the_env(monkeypatch) -> None:
@@ -1816,6 +1855,13 @@ async def test_the_headers_count_follows_the_queue(monkeypatch) -> None:
         await wait_for(lambda: action_children(app) == 5)
         assert "egress to decide" not in header_text(app)
         ws.push(request_frame("late1"))
+        # The burst's first hold opens the consent overlay by itself
+        # (#358); the header the count rides on sits behind it, so
+        # the test parks the panel — the burst stays surfaced by the
+        # header alone, exactly the state the count is about.
+        await wait_for(lambda: on_overlay(app))
+        await pilot.press("q")
+        await wait_for(lambda: on_page(app))
         await wait_for(lambda: "egress to decide: 1" in header_text(app))
         ws.push(request_frame("late2"))
         await wait_for(lambda: "egress to decide: 2" in header_text(app))
@@ -1839,6 +1885,10 @@ async def test_the_headers_count_follows_the_queue(monkeypatch) -> None:
         # re-registration clears it anyway. A live link counts
         # again the moment it stands.
         ws.push(request_frame("late3"))
+        # The next burst opens the panel again; park it once more.
+        await wait_for(lambda: on_overlay(app))
+        await pilot.press("q")
+        await wait_for(lambda: on_page(app))
         await wait_for(lambda: "egress to decide: 1" in header_text(app))
         assert page.link is not None
         page.link.state = link_mod.RECONNECTING
@@ -2092,9 +2142,7 @@ def test_a_refused_flow_returns_to_the_tree(monkeypatch) -> None:
         raise SystemExit("msks: cannot reach the daemon")
 
     monkeypatch.setattr(main_app, "MsksTuiApp", FakeApp)
-    monkeypatch.setattr(
-        main_app, "FLOWS", {FLOW_SHELL: refused, FLOW_CONSENT: refused}
-    )
+    monkeypatch.setattr(main_app, "FLOWS", {FLOW_SHELL: refused})
     assert main_app.run_main_tui(data=object()) == 0
     assert len(runs) == 2  # the tree restarted after the refusal
 
@@ -2141,9 +2189,7 @@ def test_a_refused_flow_seeds_the_restarted_tree(monkeypatch) -> None:
         raise SystemExit("msks: cannot reach the daemon")
 
     monkeypatch.setattr(main_app, "MsksTuiApp", FakeApp)
-    monkeypatch.setattr(
-        main_app, "FLOWS", {FLOW_SHELL: refused, FLOW_CONSENT: refused}
-    )
+    monkeypatch.setattr(main_app, "FLOWS", {FLOW_SHELL: refused})
     assert main_app.run_main_tui(data=object()) == 0
     assert runs == [None, "msks: cannot reach the daemon"]
 

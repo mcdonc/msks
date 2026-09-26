@@ -1,14 +1,14 @@
 """The workspace page's decider connection (#309).
 
 While the workspace screen is open, the page registers as the
-workspace's decider — the same registration ``msks egress tui``
-makes — so interactive holds land on the page (#69: holds exist
+workspace's decider — the same registration the consent overlay's
+host makes — so interactive holds land on the page (#69: holds exist
 only while a decider watches) and the rules frames keep the
 consent status line honest. The frame parsing is
 :mod:`msks.client.tui.consent`'s; the reconnect ladder and the
-close-code meanings are :mod:`msks.client.tui.consent_app`'s;
+close-code meanings are :mod:`msks.client.tui.consent_ui`'s;
 this module owns only the connection's lifecycle for a host that
-is not the consent app itself.
+is not a consent screen itself.
 """
 
 import asyncio
@@ -16,8 +16,8 @@ import asyncio
 import websockets
 
 from .consent import REJECTED as FRAME_REJECTED
-from .consent import ConsentController
-from .consent_app import (
+from .consent import SECRET_EVENT, ConsentController, SecretEvent
+from .consent_ui import (
     RECONNECT_DELAYS,
     REFUSED_RETRY_INTERVAL,
     backoff,
@@ -53,9 +53,20 @@ class DeciderLink:
         )
         self.state = RECONNECTING
         self.reject_reason = ""
+        #: The off-allowlist sightings the frames landed since the
+        #: host last drained them (#201 over #358): the page's tick
+        #: takes them to flash whichever surface owns the terminal.
+        self.sightings: list[SecretEvent] = []
         self.reconnect_delays = reconnect_delays
         self._ws_factory = ws_factory or default_ws_factory
         self._task: asyncio.Task | None = None
+
+    def take_sightings(self) -> list[SecretEvent]:
+        """The sightings that landed since the last drain, taken:
+        the caller flashes them on the surface it owns, and the
+        buffer starts empty for the next burst."""
+        taken, self.sightings = self.sightings, []
+        return taken
 
     def start(self) -> None:
         """Run the connection loop, once (a second call is a
@@ -128,8 +139,13 @@ class DeciderLink:
 
     def land_frame(self, raw: str) -> bool:
         """One frame into the controller; True when it was the
-        daemon's registration refusal (the loop's stop signal)."""
+        daemon's registration refusal (the loop's stop signal). An
+        off-allowlist sighting lands in the sightings buffer beside
+        its controller state: the flash belongs to whichever surface
+        owns the terminal, and the link's host decides that."""
         outcome, payload = self.controller.apply_frame(raw)
+        if outcome == SECRET_EVENT and payload.kind == "sighting":
+            self.sightings.append(payload)
         if outcome != FRAME_REJECTED:
             return False
         self.state = REJECTED

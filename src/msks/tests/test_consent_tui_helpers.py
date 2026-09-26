@@ -6,7 +6,7 @@ live where the scheduler gives them a clean worker.
 """
 
 from msks.client.tui import consent as consent_mod
-from msks.client.tui.consent_app import (
+from msks.client.tui.consent_ui import (
     duration_label,
     ensure_focus,
     event_dest,
@@ -14,7 +14,9 @@ from msks.client.tui.consent_app import (
     event_line,
     event_time,
     events_note,
+    focus_by_id,
     focus_event_by_id,
+    focus_rule_by_id,
     focused_event_id,
     focused_rule_id,
     render_order,
@@ -57,6 +59,18 @@ def test_duration_labels() -> None:
         decided_by=None,
     )
     assert duration_label(forever, None) == "forever"
+    # A timed duration with no clock reading keeps its plain label.
+    timed = consent_mod.ConsentRule(
+        id="t5",
+        dest_host="h",
+        dest_port=443,
+        decision="allowed",
+        duration="5m",
+        decided_at=None,
+        decided_by=None,
+    )
+    assert duration_label(timed, None) == "5m"
+    assert duration_label(timed, 42.0) == "42s left"
 
 
 def test_row_and_focus_helpers() -> None:
@@ -68,6 +82,19 @@ def test_row_and_focus_helpers() -> None:
         focused_rule_id(FakeRows([FakeChild("x"), None], FakeChild("x", "r9")))
         == "r9"
     )
+    focus_by_id(FakeRows([FakeChild("a"), FakeChild("b")]), "b")
+    rows_b = FakeRows([FakeChild("a"), FakeChild("b")])
+    focus_by_id(rows_b, "b")  # the target's own position
+    assert rows_b.index == 1
+    # The rules pair: the target's rule_id keeps its position, and
+    # an absent target leaves a live highlight standing.
+    rules = FakeRows(
+        [FakeChild(None, rule_id="a1"), FakeChild(None, rule_id="d1")]
+    )
+    focus_rule_by_id(rules, "d1")
+    assert rules.index == 1
+    focus_rule_by_id(rules, "gone")
+    assert rules.index == 1
     empty = FakeRows([])
     ensure_focus(empty)
     assert empty.index is None  # nothing to focus
