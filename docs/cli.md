@@ -274,8 +274,8 @@ granted scope with its expiry, or "no active consent"), and the
 page's actions in three groups: a shell in a new terminal
 window, then egress consent, a live egress-mode switch, and an
 edit dialog for the sizes and topology (#331), then start and
-stop. Each action paints its name with its description muted
-behind it, and the row Enter acts on carries a marker beside the
+stop. Each action paints its name with its description — when
+it carries one — muted behind it, and the row Enter acts on carries a marker beside the
 list's own highlight. The start and stop rows dim behind their
 reason while the workspace's status makes the verb pointless —
 stop on a stopped workspace, start on a running one — and Enter
