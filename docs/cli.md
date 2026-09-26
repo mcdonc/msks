@@ -262,7 +262,7 @@ header's first line also counts pending holds (`egress to
 decide: N` while any hold waits, refreshed each second), and on
 a narrow terminal each header line truncates at the edge with an
 ellipsis — the metadata owns its own line, so a name truncates
-only when it alone runs wider than the terminal. A workspace in
+only when it alone no longer fits the line. A workspace in
 `interactive`
 mode holds new flows while the page is open: the page registers
 as the workspace's decider, so holds land on it. Reminting the

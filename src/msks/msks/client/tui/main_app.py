@@ -274,8 +274,8 @@ def header_name(
 def header_meta(row: dict) -> str:
     """The header's second line (#351): the immutable id, the
     image hash, the host, and the created date — the page paints
-    the line muted, and it crops at the terminal's edge while the
-    name keeps its own line in full."""
+    the line muted, and it truncates at the terminal's edge
+    (an ellipsis marks the cut) beside the name's own line."""
     image = (row.get("image_hash") or "-")[:12]
     host = row.get("host") or "-"
     created = (row.get("created_at") or "")[:10] or "-"
