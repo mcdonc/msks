@@ -1181,6 +1181,11 @@ def test_the_listing_columns_line_up() -> None:
     assert cell_len(long_status[: long_status.index("interactive")]) == (
         cell_len(short[: short.index("interactive")])
     )
+    # The head helper keeps a text that already fits its budget
+    # whole (a clip's head call can never exhaust it — the guard
+    # saw the full text wider than the column — so it is pinned
+    # here directly).
+    assert main_app.cell_prefix("北a", 3) == "北a"
 
 
 async def test_the_listing_header_row_shows_with_rows() -> None:
