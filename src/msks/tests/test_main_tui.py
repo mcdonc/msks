@@ -11,7 +11,6 @@ import asyncio
 import json
 import stat
 import sys
-import time
 from types import SimpleNamespace
 
 import httpx
@@ -599,21 +598,22 @@ async def test_the_page_names_an_empty_grant_set(monkeypatch) -> None:
         assert "no active consent" in consent_text(app)
 
 
-async def test_pending_holds_top_the_page_and_open_the_decider(
+async def test_pending_holds_count_themselves_in_the_header(
     monkeypatch,
 ) -> None:
+    """#354: the page's list carries only the fixed actions; a
+    waiting hold counts itself in the header's indicator, and the
+    decider stays reachable through its page action."""
     scripted_link(monkeypatch, [rules_frame(), request_frame("r9")])
     data = FakeData([row()])
     app, follow = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        # 1 pending entry above the 6 fixed actions.
-        await wait_for(lambda: action_children(app) == 7)
-        first = app.screen.query_one("#actions").children[0]
-        assert "pending" in first.classes
-        text = action_text(app, 0)
-        assert "api.example:443" in text and "Enter decides" in text
-        await pilot.press("enter")
+        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: "egress to decide: 1" in header_text(app))
+        rows = app.screen.query_one("#actions")
+        assert "pending" not in rows.children[0].classes
+        await pilot.press("down", "enter")  # the decider's action
         await wait_for(lambda: follow.action == (FLOW_CONSENT, WS))
 
 
@@ -1141,6 +1141,8 @@ def test_the_line_helpers() -> None:
     assert "interactive" in listing.plain
     head = main_app.header_line(row())
     assert WS in head and "host-1" in head
+    assert "egress to decide" not in head
+    assert "egress to decide: 2" in main_app.header_line(row(), 2)
     assert main_app.created_note(row(id="x"), None) == "created alpha (id x)"
     assert "identity" in main_app.created_note(row(id="x"), "/tmp/id")
 
@@ -1527,7 +1529,11 @@ async def test_a_page_that_cannot_refresh_keeps_its_row(monkeypatch) -> None:
         assert WS in header_text(app)  # the stale row still paints
 
 
-async def test_a_late_hold_rebuilds_and_repaints(monkeypatch) -> None:
+async def test_the_headers_count_follows_the_queue(monkeypatch) -> None:
+    """#354: a hold that lands after the page opened raises the
+    header's count within the tick, a resolution lowers it, and
+    the segment leaves with the last hold — the list keeps only
+    its fixed actions throughout."""
     ws = FakeWS([rules_frame()])
     factory = FakeFactory([ws, FakeWS([])])
     monkeypatch.setattr(
@@ -1542,13 +1548,40 @@ async def test_a_late_hold_rebuilds_and_repaints(monkeypatch) -> None:
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
         await wait_for(lambda: action_children(app) == 6)
+        assert "egress to decide" not in header_text(app)
         ws.push(request_frame("late1"))
-        await wait_for(lambda: action_children(app) == 7)
-        assert "api.example:443" in action_text(app, 0)
-        # A same-set sync repaints the countdowns in place.
-        page.sync_actions()
+        await wait_for(lambda: "egress to decide: 1" in header_text(app))
+        ws.push(request_frame("late2"))
+        await wait_for(lambda: "egress to decide: 2" in header_text(app))
+        ws.push(
+            frame(
+                "egress.resolved",
+                {"request_id": "late1", "decision": "allowed"},
+            )
+        )
+        await wait_for(lambda: "egress to decide: 1" in header_text(app))
+        assert action_children(app) == 6
+        ws.push(
+            frame(
+                "egress.resolved",
+                {"request_id": "late2", "decision": "denied"},
+            )
+        )
+        await wait_for(lambda: "egress to decide" not in header_text(app))
+        # A dropped link stops counting: the dead socket's snapshot
+        # may hold holds the server already resolved, and the
+        # re-registration clears it anyway. A live link counts
+        # again the moment it stands.
+        ws.push(request_frame("late3"))
+        await wait_for(lambda: "egress to decide: 1" in header_text(app))
+        assert page.link is not None
+        page.link.state = link_mod.RECONNECTING
+        page.paint_header()
+        assert "egress to decide" not in header_text(app)
+        page.link.state = link_mod.CONNECTED
+        page.paint_header()
+        assert "egress to decide: 1" in header_text(app)
         await pilot.pause()
-        assert "api.example:443" in action_text(app, 0)
 
 
 async def test_the_swap_windows_self_heal(monkeypatch) -> None:
@@ -1568,6 +1601,31 @@ async def test_the_swap_windows_self_heal(monkeypatch) -> None:
         page.paint_consent()
         page.sync_actions()
         await wait_for(lambda: action_children(app) == 6)
+
+
+async def test_a_rebuild_over_a_standing_list_keeps_focus(
+    monkeypatch,
+) -> None:
+    """A rebuild that lands while the list stands (a re-armed
+    flight over the mount window) swaps the list for a fresh one
+    and keeps the focused row by its key."""
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        page = await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        await pilot.press("down", "down")  # the egress-mode row
+        before = page.actions_widget()
+        page.rebuilds.request()
+        await wait_for(
+            lambda: not page.rebuilds.scheduled and not page.rebuilds.pending
+        )
+        await pilot.pause()
+        rows = page.actions_widget()
+        assert rows is not None and rows is not before  # a fresh list
+        assert rows.index == 2  # the focused row kept by its key
+        assert "Switch the egress mode" in action_text(app, 2)
 
 
 async def test_a_bare_listing_read_in_a_swap_window(monkeypatch) -> None:
@@ -1693,32 +1751,14 @@ async def test_a_bare_page_paints_and_unmounts_quietly(monkeypatch) -> None:
         raise NoMatches("gone")
 
     page = WorkspaceScreen(row())
+    assert page.pending_count() == 0  # no link: nothing waiting
     page.paint_consent()
+    page.paint_header()  # no link: zero holds, the swallow holds
     assert page.page_rules() is None  # no link: nothing to read
     page.land_rules_reply({"mode": "allow"})  # no link: keeps quiet
     monkeypatch.setattr(page, "paint_consent", boom)
     page.tick()  # swallowed: teardown noise, not a crash
     page.on_unmount()
-
-
-async def test_a_resolved_hold_leaves_no_stale_row(monkeypatch) -> None:
-    """The same-set repaint skips a request whose row left between
-    the membership check and the pass — a lost race, not a crash."""
-    scripted_link(monkeypatch, [rules_frame(), request_frame("r-live")])
-    data = FakeData([row()])
-    app, _ = make_app(data)
-    async with app.run_test() as pilot:
-        page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 7)
-        ghost = SimpleNamespace(
-            id="ghost",
-            dest_host="gone.example",
-            dest_port=443,
-            requested_at=time.time(),
-        )
-        page.repaint_pending(page.actions_widget(), [ghost])
-        await pilot.pause()
-        assert "gone.example" not in action_text(app, 0)
 
 
 # -- the review fixes -------------------------------------------------------
