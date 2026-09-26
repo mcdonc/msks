@@ -31,6 +31,7 @@ from msks.client.tui.main_app import (
     WorkspaceScreen,
     image_options,
 )
+from rich.cells import cell_len
 from test_consent_tui import frame
 from test_consent_tui import (
     request_frame as shared_request_frame,
@@ -1148,19 +1149,38 @@ def test_the_listing_columns_line_up() -> None:
     egress, image, and date start at the same offset in every row —
     and the header's labels ride the same offsets. A name longer
     than its column clips at its middle instead of pushing the rest
-    of the row sideways."""
+    of the row sideways, and the offsets are display cells: a
+    wide-character name cannot shift the columns either. The
+    status and egress cells clip to their columns too, so a
+    vocabulary the daemon grows cannot misalign a row."""
     short = main_app.row_line(row(name="ab"))
     long_name = main_app.row_line(row(name="n" * 40))
+    wide = main_app.row_line(row(name="北" * 16))
+    long_status = main_app.row_line(row(name="ab", status="provisioning"))
     header = main_app.list_header()
     for label, cell in (
         ("STATUS", "stopped"),
         ("EGRESS", "interactive"),
-        ("IMAGE", "a" * 12),
+        ("IMAGE", "aaaaa…aaaaaa"),
         ("CREATED", "2026-01-02"),
     ):
-        assert short.index(cell) == long_name.index(cell)
-        assert header.index(label) == short.index(cell)
-    assert "…" in long_name  # the name clipped inside its column
+        offsets = {
+            cell_len(text[: text.index(cell)]) for text in (short, wide)
+        }
+        assert len(offsets) == 1
+        assert cell_len(header[: header.index(label)]) == offsets.pop()
+    # A clipped name keeps the columns; a wide name pads to the
+    # same display width (48 cells of CJK land at 24 by clipping).
+    assert "…" in long_name
+    assert cell_len(wide[: wide.index("stopped")]) == cell_len(
+        short[: short.index("stopped")]
+    )
+    # An over-wide status clips inside its column, not past it:
+    # the egress column still starts where the short row's does.
+    assert "…" in long_status
+    assert cell_len(long_status[: long_status.index("interactive")]) == (
+        cell_len(short[: short.index("interactive")])
+    )
 
 
 async def test_the_listing_header_row_shows_with_rows() -> None:
@@ -1173,9 +1193,10 @@ async def test_the_listing_header_row_shows_with_rows() -> None:
         await wait_for(lambda: columns.display)
         await wait_for(lambda: "alpha" in row_text(app, 0))
         # The header's labels line up with the row's cells on the
-        # rendered screen (the padding gives both a left edge).
-        assert columns.region.x == (
-            app.query_one("#rows").children[0].region.x
+        # rendered screen — content_region, not region: padding
+        # shifts the content box, and region stays 0 under either.
+        assert columns.content_region.x == (
+            app.query_one("#rows").children[0].content_region.x
         )
         data.rows = []
         await pilot.press("r")

@@ -28,6 +28,7 @@ import json
 import sys
 import time
 
+from rich.cells import cell_len
 from rich.markup import escape
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -121,37 +122,60 @@ NAME_W, STATUS_W, EGRESS_W, IMAGE_W, CREATED_W = (
 )
 
 
+def cell_prefix(text: str, width: int) -> str:
+    """The longest head of ``text`` that fits ``width`` display
+    cells (a wide character that would cross the budget stays
+    whole; the head may land a cell short)."""
+    out: list[str] = []
+    used = 0
+    for char in text:
+        wide = cell_len(char)
+        if used + wide > width:
+            break
+        out.append(char)
+        used += wide
+    return "".join(out)
+
+
+def cell_pad(text: str, width: int) -> str:
+    """The text left-justified to ``width`` display cells — a
+    wide-character name cannot shift the columns beside it."""
+    short = width - cell_len(text)
+    return text + " " * short if short > 0 else text
+
+
 def list_header() -> str:
     """The listing's header row (#347): the column labels, each
     left-justified to its column's width — the offsets the rows
     pad their fields to."""
     return COLUMN_GAP.join(
-        f"{label:<{width}}" for label, width in LIST_COLUMNS
+        cell_pad(label, width) for label, width in LIST_COLUMNS
     ).rstrip()
 
 
-def padded_cells(cells: tuple) -> str:
+def padded_cells(cells: tuple[str, ...]) -> str:
     """One listing line's cells joined: each left-justified to its
-    column's width, two spaces between columns."""
+    column's display width, two spaces between columns."""
     return COLUMN_GAP.join(
-        f"{cell:<{width}}"
-        for cell, (_label, width) in zip(cells, LIST_COLUMNS)
+        cell_pad(cell, width)
+        for cell, (_label, width) in zip(cells, LIST_COLUMNS, strict=True)
     )
 
 
 def row_line(row: dict) -> str:
     """One listing row (#347): label, status, egress mode, image,
-    created — each field padded to its column's width, a name
-    longer than its column clipped at its middle, so every column
-    starts at the same offset in every row. The padding rides the
-    raw text and the escape comes after it: a markup-carrying name
-    cannot shift the columns."""
+    created — each field clipped to its column's width and padded
+    to it, so every column starts at the same offset in every row
+    whatever the daemon's vocabulary grows (a terminal narrower
+    than the columns clips the row's tail). The padding rides the
+    raw text and the escape comes after it: a markup-carrying
+    name cannot shift the columns."""
     cells = (
         clip(workspace_label(row), NAME_W),
-        row["status"],
-        row.get("egress_mode") or "-",
-        (row.get("image_hash") or "-")[:IMAGE_W],
-        (row.get("created_at") or "")[:CREATED_W] or "-",
+        clip(row["status"], STATUS_W),
+        clip(row.get("egress_mode") or "-", EGRESS_W),
+        clip(row.get("image_hash") or "-", IMAGE_W),
+        clip((row.get("created_at") or "")[:CREATED_W] or "-", CREATED_W),
     )
     return escape(padded_cells(cells)).rstrip()
 
@@ -1174,13 +1198,18 @@ def whole_number(value: str) -> bool:
 
 def clip(text: str, width: int = 12) -> str:
     """One clipped column: the text, or its head and tail kept
-    around a middle ellipsis when it runs longer (the tail carries
-    the version half of a reference, the part a head-only clip
-    eats)."""
-    if len(text) <= width:
+    around a middle ellipsis when it runs wider than ``width``
+    display cells (the tail carries the version half of a
+    reference, the part a head-only clip eats; a wide character
+    that would cross a budget stays whole, so a clipped cell may
+    land a cell short and the padding fills it)."""
+    if cell_len(text) <= width:
         return text
     head = (width - 1) // 2
-    return f"{text[:head]}…{text[-(width - 1 - head) :]}"
+    return (
+        f"{cell_prefix(text, head)}…"
+        f"{cell_prefix(text[::-1], width - 1 - head)[::-1]}"
+    )
 
 
 def image_options(rows: list[dict]) -> list[tuple[str, str]]:
