@@ -24,6 +24,7 @@ leaves the screen it is on — no screen traps focus.
 """
 
 import asyncio
+import json
 import sys
 import time
 
@@ -48,14 +49,18 @@ from ..console import run_workspace_shell
 from ..create import invoking_user
 from ..rest import env_token, env_url
 from .consent_app import (
+    EMPTY_STATIC_QUESTION,
     FLASH_TTL,
     ConfirmScreen,
     ConsentDeciderApp,
+    ModeScreen,
     OneFlight,
     dest_line,
     duration_label,
     ensure_focus,
+    flash_safe,
     shared_ssl,
+    switch_mode_path,
 )
 from .data import TuiData
 from .link import CONNECTED, REJECTED, DeciderLink
@@ -70,6 +75,11 @@ FLOW_SHELL = "shell"
 #: flow: the tree keeps running while the window owns its own
 #: terminal.
 ACTION_SHELL_WINDOW = "shell-window"
+
+#: The workspace page's egress-mode action (#344): the decider
+#: app's mode picker, reused over the page — the posture switches
+#: without leaving the workspace.
+ACTION_EGRESS_MODE = "egress-mode"
 
 #: How many granted scopes the consent line spells out before the
 #: "… (+N more)" cap.
@@ -673,6 +683,7 @@ class MainScreen(Screen):
 PAGE_ACTIONS = (
     (ACTION_SHELL_WINDOW, "Open a shell (new terminal)"),
     (FLOW_CONSENT, "Egress consent — the decider screen"),
+    (ACTION_EGRESS_MODE, "Switch the egress mode"),
     ("start", "Start"),
     ("stop", "Stop"),
     ("remint", "Remint the LLM token"),
@@ -683,8 +694,8 @@ class WorkspaceScreen(Screen):
     """One workspace's page (#309): the consent status line, the
     pending holds highlighted above the actions (Enter on one opens
     the consent app), and the page's actions — a shell in a new
-    window (#341), the consent app, start, stop, and the LLM token
-    remint."""
+    window (#341), the consent app, the egress-mode switch (#344),
+    start, stop, and the LLM token remint."""
 
     BINDINGS = [
         Binding("enter", "run", "Go", show=False),
@@ -697,6 +708,12 @@ class WorkspaceScreen(Screen):
         self.row = row
         self.link_factory = link_factory or self.make_link
         self.link: DeciderLink | None = None
+        # The page's own flash (#344): a message that owns the
+        # consent line for FLASH_TTL seconds. The app-level flash
+        # paints the list's status line, which the pushed page
+        # hides (#343) — a page-raised failure names itself here,
+        # where the operator reads it.
+        self.flash_line = FlashLine()
         self.rebuilds = OneFlight(
             lambda: self.rebuild_actions(),
             lambda: self.app.is_running,
@@ -769,10 +786,19 @@ class WorkspaceScreen(Screen):
         if self.link is not None:
             try:
                 self.query_one("#consent", Static).update(
-                    consent_line(self.link, self.row)
+                    self.flash_line.text(consent_line(self.link, self.row))
                 )
             except NoMatches:
                 pass  # teardown unmounted the line under the timer
+
+    def flash(self, message: str) -> None:
+        """Give the page's consent line to a message for FLASH_TTL
+        seconds — the page's own surface: the app-level flash
+        paints the list's status line, which the pushed page hides
+        (#343), so a failure this screen raises names itself
+        here."""
+        self.flash_line.set(message)
+        self.paint_consent()
 
     def refresh_row(self) -> None:
         """Reload this workspace's row (a page's actions change its
@@ -908,6 +934,7 @@ class WorkspaceScreen(Screen):
     async def run_page_action(self, kind: str) -> None:
         handler = {
             ACTION_SHELL_WINDOW: self.open_shell_window,
+            ACTION_EGRESS_MODE: self.pick_egress_mode,
             "start": self.start_workspace,
             "stop": self.stop_workspace,
             "remint": self.remint_token,
@@ -972,6 +999,66 @@ class WorkspaceScreen(Screen):
         )
         if token is not None:
             self.app.flash(f"new LLM token: {escape(token)}")
+
+    # -- the egress-mode switch (#344) ---------------------------------
+
+    def page_rules(self):
+        """The link controller's rules snapshot (the link, made on
+        first use — compose's own accessor; the mode path runs on a
+        mounted page, whose link already exists)."""
+        return self.link_or_stub().controller.rules
+
+    async def pick_egress_mode(self) -> None:
+        """Open the mode picker over the page (#344) — the decider
+        app's picker, reused: the current mode starts highlighted
+        (the snapshot's mode; the row's until the first rules frame
+        lands), and the pick goes to the switch path, which owns
+        the empty-static confirmation."""
+        rules = self.page_rules()
+        current = (
+            rules.mode
+            if rules is not None
+            else (self.row.get("egress_mode") or "")
+        )
+        self.app.push_screen(ModeScreen(current, self.switch_mode))
+
+    async def switch_mode(self, mode: str | None) -> None:
+        """One picked mode (#344): the pick goes to the shared
+        switch path — the same gate and confirmation the decider
+        app's picker takes."""
+        await switch_mode_path(
+            mode, self.page_rules(), self.ask_empty_static, self.send_mode
+        )
+
+    def ask_empty_static(self, answered) -> None:
+        """Push the empty-static confirmation with the given
+        callback (the page's host is the app's screen stack)."""
+        self.app.push_screen(ConfirmScreen(EMPTY_STATIC_QUESTION, answered))
+
+    async def send_mode(
+        self, mode: str, *, confirm_empty: bool = False
+    ) -> None:
+        """One mode switch through the data seam (#344). The reply
+        carries the fresh rules frame — fed through the
+        controller's frame applier, the consent line names the new
+        mode the moment the switch lands, a dropped link included
+        (the daemon pushes the same frame on the events socket,
+        and it re-lands the same data idempotently). A refusal
+        names itself on the page's consent line: the app-level
+        flash paints the list's status line, which the pushed page
+        hides (#343)."""
+        try:
+            reply = await self.app.data.set_egress_mode(
+                self.row["id"], mode, confirm_empty=confirm_empty
+            )
+        except (Exception, SystemExit) as exc:
+            self.flash(f"mode switch failed: {flash_safe(str(exc))}")
+            return
+        self.row["egress_mode"] = reply.get("mode") or mode
+        self.link_or_stub().controller.apply_frame(
+            json.dumps({"event": "egress.rules", "data": reply})
+        )
+        self.paint_consent()
 
     def action_back(self) -> None:
         """Return to the workspaces list; the page stops deciding

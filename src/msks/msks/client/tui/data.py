@@ -114,6 +114,27 @@ class TuiData:
             ssl_ctx=shared_ssl(),
         )
 
+    async def set_egress_mode(
+        self, workspace_id: str, mode: str, *, confirm_empty: bool = False
+    ) -> dict:
+        """PUT the egress policy (#280) — the workspace page's
+        mode switch (#344), the same exchange ``msks egress mode``
+        makes. ``confirm_empty`` rides only when set — the daemon's
+        refusal names it. Returns the reply: the fresh rules frame
+        with ``applied`` beside it."""
+        body: dict = {"mode": mode}
+        if confirm_empty:
+            body["confirm_empty"] = True
+        return await api_call(
+            "PUT",
+            env_url(),
+            env_token(),
+            f"/api/v1/workspaces/{workspace_id}/egress/policy",
+            transport=self.transport,
+            ssl_ctx=shared_ssl(),
+            json_body=body,
+        )
+
     async def remint_llm_token(self, workspace_id: str) -> str:
         """POST the token remint (#259) — the workspace page's
         remint action; returns the fresh token."""

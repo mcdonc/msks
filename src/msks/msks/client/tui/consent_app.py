@@ -455,6 +455,40 @@ def effective_allows(rules: EgressRules | None) -> bool:
     return bool(rules.allow_list) or bool(rules.allowed)
 
 
+#: The empty-static confirmation's question (#280) — one text for
+#: every surface that asks it: the decider app's picker, and the
+#: workspace page's (#344). It names the posture (every name
+#: answers NXDOMAIN — an offline workspace) and the escape
+#: (switching anyway).
+EMPTY_STATIC_QUESTION = (
+    "static with nothing allowed answers every name NXDOMAIN "
+    "— an offline workspace. Switch anyway?"
+)
+
+
+async def switch_mode_path(mode, rules, confirm, send) -> None:
+    """The mode switch's shared path (#280, #344) — one logic for
+    the decider app and the workspace page, each host supplying
+    its own asker and sender: a cancel decides nothing, ``static``
+    with nothing effectively allowed asks first (the host pushes
+    its own confirmation), and every other pick goes straight
+    through ``send``."""
+    if mode is None:
+        return
+    if mode == "static" and not effective_allows(rules):
+        confirm(lambda answer: confirmed_static_switch(answer, send))
+        return
+    await send(mode)
+
+
+async def confirmed_static_switch(answer: bool, send) -> None:
+    """The empty-static confirmation's answer (#280): a yes sends
+    the confirmed static switch through ``send``, a no decides
+    nothing."""
+    if answer:
+        await send("static", confirm_empty=True)
+
+
 class ModeScreen(ModalShadow, ModalScreen[str | None]):
     """The mode picker (#280): Enter picks, Escape or q cancels.
     The chosen mode (or None) goes to the callback given at
@@ -1120,31 +1154,20 @@ class ConsentDeciderApp(App):
         self.push_screen(ModeScreen(current, self.switch_mode))
 
     async def switch_mode(self, mode: str | None) -> None:
-        """One picked mode from the picker (#280). ``static`` with
-        nothing effectively allowed confirms first — that posture
-        answers every name NXDOMAIN, and the daemon refuses an
-        unconfirmed switch; every other pick (and a confirmed
-        ``static``) goes straight through the seam. The refreshed
-        ``egress.rules`` frame repaints the header — the switch is
-        never reflected optimistically."""
-        if mode is None:
-            return
-        if mode == "static" and not effective_allows(self.controller.rules):
-            await self.push_screen(
-                ConfirmScreen(
-                    "static with nothing allowed answers every name "
-                    "NXDOMAIN — an offline workspace. Switch anyway?",
-                    self.confirmed_switch,
-                )
-            )
-            return
-        await self.send_mode(mode)
+        """One picked mode from the picker (#280): the pick goes to
+        the shared switch path, which owns the empty-static
+        confirmation."""
+        await switch_mode_path(
+            mode,
+            self.controller.rules,
+            self.ask_empty_static,
+            self.send_mode,
+        )
 
-    async def confirmed_switch(self, answer: bool) -> None:
-        """The confirmation's answer: a yes sends the confirmed
-        static switch, a no decides nothing."""
-        if answer:
-            await self.send_mode("static", confirm_empty=True)
+    def ask_empty_static(self, answered) -> None:
+        """Push the empty-static confirmation with the given
+        callback."""
+        self.push_screen(ConfirmScreen(EMPTY_STATIC_QUESTION, answered))
 
     async def send_mode(
         self, mode: str, *, confirm_empty: bool = False

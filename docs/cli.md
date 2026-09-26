@@ -251,10 +251,22 @@ line for egress consent (the mode, the granted scope with its
 expiry, or "no active consent"), the pending holds highlighted at
 the top — Enter on one opens the consent decider — and the
 page's actions: a shell in a new terminal window, egress
-consent, start, stop, and remint the workspace's LLM token. A
-workspace in `interactive`
+consent, a live egress-mode switch, start, stop, and remint the
+workspace's LLM token. A workspace in `interactive`
 mode holds new flows while the page is open: the page registers
 as the workspace's decider, so holds land on it.
+
+The page's **Switch the egress mode** action (#344) opens the
+consent decider's mode picker (`allow` / `static` /
+`interactive`, the current mode highlighted) over the page:
+picking a mode switches the posture through the same endpoint
+`msks egress mode` speaks, without leaving the workspace. The
+consent line names the new mode as the switch lands; a pick of
+`static` with nothing effectively allowed asks the same
+offline-workspace confirmation the decider and the CLI ask
+(confirm to switch, decline to decide nothing); a refused
+switch names its reason on the consent line, where the page
+reads it.
 
 The consent decider (`msks egress tui`'s app) owns the whole
 terminal as a chained screen: choosing it hands the terminal over,
