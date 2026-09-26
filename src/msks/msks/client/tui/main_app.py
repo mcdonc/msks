@@ -440,8 +440,8 @@ def focus_attr(rows: ListView, attr: str, target) -> None:
 #: The daemon URL's cell budget in the status line (#349): the
 #: URL is a hint, not data — the clip keeps the standing line on
 #: one row at 80 columns whatever the operator's MSKSC_URL
-#: carries, the middle ellipsis keeping the port half of a long
-#: host readable.
+#: carries, the middle ellipsis keeping both ends of a long URL
+#: readable.
 URL_W = 48
 
 

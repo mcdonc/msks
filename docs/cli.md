@@ -255,7 +255,7 @@ the create form carries (#349) — so the rows read as one table
 between the status bar and the footer. The status bar above it
 sets the workspace count in the bold default foreground with the
 daemon's URL riding after it in muted text (a long URL clips at
-its middle, keeping the port half, so the line stays one row); a
+its middle, both ends kept, so the line stays one row); a
 flash message owns the whole line while it lives. Each row's created column reads a
 relative label (#350), bucketed by whole calendar days:
 `today`, `yesterday`, then `2d ago` under a week, `3w ago` under
