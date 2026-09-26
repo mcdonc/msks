@@ -93,7 +93,8 @@ def test_console_rejects_bad_token(console_api) -> None:
     with TestClient(api) as client:
         _make_workspace(client)
         with client.websocket_connect(
-            "/api/v1/workspaces/ws-c/console?token=x"
+            "/api/v1/workspaces/ws-c/console",
+            subprotocols=["bearer", "x"],
         ) as s:
             with pytest.raises(WebSocketDisconnect) as caught:
                 s.receive_text()
@@ -104,7 +105,8 @@ def test_console_unknown_workspace_closes(console_api) -> None:
     api, app, stub = console_api
     with TestClient(api) as client:
         with client.websocket_connect(
-            f"/api/v1/workspaces/nope/console?token={TOKEN}"
+            "/api/v1/workspaces/nope/console",
+            subprotocols=["bearer", TOKEN],
         ) as s:
             with pytest.raises(WebSocketDisconnect) as caught:
                 s.receive_text()
@@ -117,11 +119,53 @@ def test_console_seam_error_closes(console_api) -> None:
         wid = _make_workspace(client)
         stub.refusals.add(wid)
         with client.websocket_connect(
-            f"/api/v1/workspaces/ws-c/console?token={TOKEN}"
+            "/api/v1/workspaces/ws-c/console",
+            subprotocols=["bearer", TOKEN],
         ) as s:
             with pytest.raises(WebSocketDisconnect) as caught:
                 s.receive_text()
         assert caught.value.code == 4501
+
+
+def test_console_selects_the_auth_subprotocol(console_api) -> None:
+    # The daemon echoes the auth subprotocol on a valid token (#116):
+    # the echo is what a client verifies before pumping.
+    api, app, stub = console_api
+    with TestClient(api) as client:
+        _make_workspace(client)
+        with client.websocket_connect(
+            "/api/v1/workspaces/ws-c/console",
+            subprotocols=["bearer", TOKEN],
+        ) as socket:
+            assert socket.accepted_subprotocol == "bearer"
+
+
+def test_console_rejects_a_query_string_token(console_api) -> None:
+    # A token in the URL authenticates nothing (#116): the query
+    # string is not an auth channel, so the habit cannot work.
+    api, app, stub = console_api
+    with TestClient(api) as client:
+        _make_workspace(client)
+        with client.websocket_connect(
+            f"/api/v1/workspaces/ws-c/console?token={TOKEN}"
+        ) as s:
+            with pytest.raises(WebSocketDisconnect) as caught:
+                s.receive_text()
+        assert caught.value.code == 4401
+
+
+def test_console_rejects_a_lone_auth_subprotocol(console_api) -> None:
+    # The offer is ["bearer", <token>] (#116): the name without a
+    # token after it authenticates nothing.
+    api, app, stub = console_api
+    with TestClient(api) as client:
+        _make_workspace(client)
+        with client.websocket_connect(
+            "/api/v1/workspaces/ws-c/console", subprotocols=["bearer"]
+        ) as s:
+            with pytest.raises(WebSocketDisconnect) as caught:
+                s.receive_text()
+        assert caught.value.code == 4401
 
 
 def test_console_bridges_bytes_both_ways(console_api) -> None:
@@ -129,8 +173,10 @@ def test_console_bridges_bytes_both_ways(console_api) -> None:
     with TestClient(api) as client:
         _make_workspace(client)
         with client.websocket_connect(
-            f"/api/v1/workspaces/ws-c/console?token={TOKEN}"
+            "/api/v1/workspaces/ws-c/console",
+            subprotocols=["bearer", TOKEN],
         ) as socket:
+            assert socket.accepted_subprotocol == "bearer"
             socket.send_text(
                 ""
             )  # an empty text frame must not break the bridge
@@ -516,7 +562,8 @@ def test_console_default_user_root_legacy(console_api, tmp_path) -> None:
     with TestClient(api) as client:
         wid = _make_workspace(client)
         with client.websocket_connect(
-            f"/api/v1/workspaces/ws-c/console?token={TOKEN}"
+            "/api/v1/workspaces/ws-c/console",
+            subprotocols=["bearer", TOKEN],
         ) as socket:
             socket.send_bytes(b"hello")
             got = b""
@@ -530,7 +577,8 @@ def test_console_unknown_user_closes_4400(console_api) -> None:
     with TestClient(api) as client:
         _make_workspace(client)
         with client.websocket_connect(
-            f"/api/v1/workspaces/ws-c/console?token={TOKEN}&user=nobody"
+            "/api/v1/workspaces/ws-c/console?user=nobody",
+            subprotocols=["bearer", TOKEN],
         ) as s:
             with pytest.raises(WebSocketDisconnect) as caught:
                 s.receive_text()
@@ -544,7 +592,8 @@ def test_console_bad_rows_closes_4400(console_api) -> None:
         _make_workspace(client)
         for query in ("rows=abc", "rows=0", "cols=99999", "user=Bad.Name"):
             with client.websocket_connect(
-                f"/api/v1/workspaces/ws-c/console?token={TOKEN}&{query}"
+                f"/api/v1/workspaces/ws-c/console?{query}",
+                subprotocols=["bearer", TOKEN],
             ) as s:
                 with pytest.raises(WebSocketDisconnect) as caught:
                     s.receive_text()
@@ -560,7 +609,8 @@ def test_console_prelude_image_passes_user_and_size(
     with TestClient(api) as client:
         wid = _make_prelude_workspace(client, tmp_path)
         with client.websocket_connect(
-            f"/api/v1/workspaces/ws-p/console?token={TOKEN}&user=msks&rows=34&cols=120"
+            "/api/v1/workspaces/ws-p/console?user=msks&rows=34&cols=120",
+            subprotocols=["bearer", TOKEN],
         ) as socket:
             socket.send_bytes(b"hello")
             got = b""
@@ -589,7 +639,8 @@ def test_console_admits_the_workspaces_login_user(
         assert response.status_code == 201, response.text
         wid = response.json()["id"]
         with client.websocket_connect(
-            f"/api/v1/workspaces/ws-lu/console?token={TOKEN}&user=alice"
+            "/api/v1/workspaces/ws-lu/console?user=alice",
+            subprotocols=["bearer", TOKEN],
         ) as socket:
             socket.send_bytes(b"hello")
             got = b""
@@ -598,7 +649,8 @@ def test_console_admits_the_workspaces_login_user(
         assert stub.console_calls == [(wid, "alice", 24, 80, "xterm")]
         stub.console_calls.clear()
         with client.websocket_connect(
-            f"/api/v1/workspaces/ws-lu/console?token={TOKEN}&user=nobody"
+            "/api/v1/workspaces/ws-lu/console?user=nobody",
+            subprotocols=["bearer", TOKEN],
         ) as s:
             with pytest.raises(WebSocketDisconnect) as caught:
                 s.receive_text()
@@ -613,7 +665,8 @@ def test_console_bad_term_closes_4400(console_api) -> None:
         _make_workspace(client)
         for query in ("term=bad%20term", "term=" + "x" * 33):
             with client.websocket_connect(
-                f"/api/v1/workspaces/ws-c/console?token={TOKEN}&{query}"
+                f"/api/v1/workspaces/ws-c/console?{query}",
+                subprotocols=["bearer", TOKEN],
             ) as s:
                 with pytest.raises(WebSocketDisconnect) as caught:
                     s.receive_text()
@@ -627,8 +680,8 @@ def test_console_prelude_image_carries_term(console_api, tmp_path) -> None:
     with TestClient(api) as client:
         wid = _make_prelude_workspace(client, tmp_path)
         with client.websocket_connect(
-            f"/api/v1/workspaces/ws-p/console?token={TOKEN}"
-            f"&user=msks&term=tmux-256color"
+            "/api/v1/workspaces/ws-p/console?user=msks&term=tmux-256color",
+            subprotocols=["bearer", TOKEN],
         ) as socket:
             socket.send_bytes(b"hello")
             got = b""
@@ -654,7 +707,8 @@ def test_console_unreadable_image_record_closes_4501(
     )
     with TestClient(api) as client:
         with client.websocket_connect(
-            f"/api/v1/workspaces/ws-p/console?token={TOKEN}"
+            "/api/v1/workspaces/ws-p/console",
+            subprotocols=["bearer", TOKEN],
         ) as s:
             with pytest.raises(WebSocketDisconnect) as caught:
                 s.receive_text()
@@ -678,7 +732,8 @@ def test_console_missing_image_record_closes_4501(
     (imagestore.images_dir(tmp_path) / digest / "image.json").unlink()
     with TestClient(api) as client:
         with client.websocket_connect(
-            f"/api/v1/workspaces/ws-p/console?token={TOKEN}"
+            "/api/v1/workspaces/ws-p/console",
+            subprotocols=["bearer", TOKEN],
         ) as s:
             with pytest.raises(WebSocketDisconnect) as caught:
                 s.receive_text()
@@ -693,7 +748,8 @@ def test_console_prelude_image_default_size(console_api, tmp_path) -> None:
     with TestClient(api) as client:
         wid = _make_prelude_workspace(client, tmp_path)
         with client.websocket_connect(
-            f"/api/v1/workspaces/ws-p/console?token={TOKEN}&user=root"
+            "/api/v1/workspaces/ws-p/console?user=root",
+            subprotocols=["bearer", TOKEN],
         ) as socket:
             socket.send_bytes(b"x")
             got = b""

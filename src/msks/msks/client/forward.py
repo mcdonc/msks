@@ -1,12 +1,12 @@
 """``msks forward <workspace-id> <port>``: a workspace TCP port on stdio.
 
 The connection is the daemon's forward websocket (#109) — TLS plus
-the Authorization header, the same Bearer form as the REST surface —
-bridged to the command's stdio, the shape ssh's ProxyCommand expects.
-With ``--local PORT`` the command binds loopback instead, and every
-accepted connection gets its own forward websocket. A workspace the
-daemon reports as not running is booted first, exactly as ``msks
-console`` does.
+the handshake's auth subprotocol (#116), the same mechanism as
+every other websocket surface — bridged to the command's stdio, the
+shape ssh's ProxyCommand expects. With ``--local PORT`` the command
+binds loopback instead, and every accepted connection gets its own
+forward websocket. A workspace the daemon reports as not running is
+booted first, exactly as ``msks console`` does.
 
 The forward is not a console: bytes pass unexamined both ways, so
 binary protocols (ssh, rsync) ride it cleanly, and the command works
@@ -21,6 +21,7 @@ from urllib.parse import quote
 
 import websockets
 
+from . import wsauth
 from .rest import (
     DEFAULT_URL,  # noqa: F401  (re-exported for callers/tests)
     ensure_running,
@@ -50,7 +51,7 @@ CLOSE_CODE_REASONS = {
 
 def ws_url(base_url: str, workspace_id: str, port: int) -> str:
     """The forward websocket's URL. The token travels in the
-    Authorization header, never the URL."""
+    handshake's auth subprotocol offer (#116), never the URL."""
     scheme, sep, rest = base_url.partition("://")
     if sep:
         scheme = "wss" if scheme == "https" else "ws"
@@ -64,20 +65,15 @@ def ws_url(base_url: str, workspace_id: str, port: int) -> str:
     )
 
 
-def auth_headers(token: str) -> dict[str, str]:
-    """The Authorization header the forward websocket authenticates
-    with — the REST surface's Bearer form."""
-    return {"Authorization": f"Bearer {token}"}
-
-
 def connect(address: str, token: str, ssl_ctx):
     """The websocket connection, in hand for a clean close on failure.
 
+    The token rides the handshake's auth subprotocol offer (#116).
     A plain-ws URL (http daemon) takes no ssl argument.
     """
     return websockets.connect(
         address,
-        additional_headers=auth_headers(token),
+        subprotocols=wsauth.subprotocols(token),
         ssl=None if address.startswith("ws://") else ssl_ctx,
         max_size=MAX_FRAME,
     )
@@ -178,6 +174,11 @@ async def stdio_session(address: str, token: str, ssl_ctx) -> int:
         # not a traceback — the same contract as the console command.
         raise SystemExit(f"msks: cannot reach {address}: {exc}") from exc
     async with ws:
+        # The handshake's echo check (#116): a daemon that did not
+        # select the auth subprotocol is closing with its refusal or
+        # a middlebox rewrote the handshake — either way named here,
+        # never pumped.
+        await wsauth.require_echo(ws)
         transport, stdin = await stdin_transport()
         try:
             await bridge(ws, stdin, _StdoutWriter())
@@ -298,11 +299,16 @@ async def local_listener(address: str, token: str, ssl_ctx, local_port: int):
         try:
             connection = connect(address, token, ssl_ctx)
             async with await connection as ws:
+                await wsauth.require_echo(ws)
                 await bridge(ws, reader, writer)
         except (OSError, ssl.SSLError, websockets.InvalidStatus) as exc:
             print(f"msks: cannot reach forward: {exc}", file=sys.stderr)
         except websockets.ConnectionClosed as closed:
             report_close_stderr(closed)
+        except SystemExit as refusal:
+            # The echo check's refusal, one stderr line — the listener
+            # stays up for the next connection either way.
+            print(str(refusal), file=sys.stderr)
         finally:
             writer.close()
             with contextlib.suppress(Exception):

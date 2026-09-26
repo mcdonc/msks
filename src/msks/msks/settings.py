@@ -27,6 +27,7 @@ from pathlib import Path
 
 from .consent.specs import EGRESS_MODES, MODE_ALLOW
 from .identity import KEY_TYPES
+from .model.tokens import validate_token_plaintext
 
 VALID_DRIVERS = ("local",)
 
@@ -182,8 +183,10 @@ class ServerSettings:
     )
     event_poll_s: float = 1.0
     bootstrap_token: str | None = None
-    # Off by default: the events websocket carries its token in the
-    # query string, which uvicorn's access log would persist.
+    # Off by default to keep the daemon's own log quiet; websocket
+    # tokens ride the handshake's protocol offer (#116), not the
+    # URL, so the access log (request lines only) holds no
+    # credentials either way.
     access_log: bool = False
     # HMAC key for consent audit tags (#69): opt-in integrity
     # protection — unset stores no tags, set tags every consent
@@ -748,6 +751,17 @@ def _server_settings_from_env(
     poll = _env_float(env, "MSKSD_EVENT_POLL_S", cls.event_poll_s)
     if poll <= 0:
         raise ValueError(f"MSKSD_EVENT_POLL_S must be positive, got {poll}")
+    bootstrap = optional_env(env, "MSKSD_BOOTSTRAP_TOKEN")
+    if bootstrap is not None:
+        # The same grammar guard minting applies (#116): the token
+        # rides the websocket handshake's protocol offer, so a
+        # plaintext with spaces or separators would seed a token
+        # that fails every websocket authentication. Refused here,
+        # the failure is one startup line naming the variable.
+        try:
+            validate_token_plaintext(bootstrap)
+        except ValueError as exc:
+            raise ValueError(f"MSKSD_BOOTSTRAP_TOKEN: {exc}") from None
     return cls(
         host=_env(env, "MSKSD_HOST", cls.host),
         port=_parse_int(env, "MSKSD_PORT", cls.port),
@@ -755,7 +769,7 @@ def _server_settings_from_env(
         tls_key=optional_env(env, "MSKSD_TLS_KEY"),
         db_path=state / "msks.db",
         event_poll_s=poll,
-        bootstrap_token=optional_env(env, "MSKSD_BOOTSTRAP_TOKEN"),
+        bootstrap_token=bootstrap,
         access_log=flag_env(env, "MSKSD_ACCESS_LOG", cls.access_log),
         audit_hmac_key=optional_env(env, "MSKSD_AUDIT_HMAC_KEY"),
     )

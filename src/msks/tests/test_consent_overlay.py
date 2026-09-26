@@ -141,6 +141,10 @@ class FakeWS:
     would make the link reconnect and reset its state — the real
     socket holds the connection, so the fake must too."""
 
+    #: The negotiated subprotocol: the fakes model an authenticated
+    #: handshake (#116) unless a test overrides it.
+    subprotocol = "bearer"
+
     def __init__(
         self, frames: list[str] | None = None, close_code: int | None = None
     ) -> None:
@@ -1669,6 +1673,19 @@ def test_backoff_and_refused_close() -> None:
     assert not consent_ui.refused_close(clean)
 
 
+async def test_the_link_refuses_an_unechoed_handshake() -> None:
+    """A handshake that completes with no subprotocol selection
+    carries no authority (#116): the link marks itself refused, sends
+    no registration, and takes the slow refused retry."""
+    ws = FakeWS()
+    ws.subprotocol = None
+    link = DeciderLink(WS, ws_factory=FakeFactory([ws]))
+    connected, refused, rejected = await link.pump_one()
+    assert (connected, refused, rejected) == (False, True, False)
+    assert link.state == "refused — bad token?"
+    assert ws.sent == []
+
+
 async def test_close_ws_swallows_a_dead_peer() -> None:
     class DeadClose:
         async def close(self):
@@ -1695,7 +1712,8 @@ def test_the_default_ws_factory_dials_the_events_url(
 
 def test_ws_connect_kwargs_and_shared_ssl(monkeypatch) -> None:
     """The plain-ws URL takes no ssl argument; the https one rides
-    the shared context."""
+    the shared context. The token rides the handshake's auth
+    subprotocol offer (#116), never the URL."""
     import ssl
 
     ctx = ssl.create_default_context()
@@ -1704,4 +1722,7 @@ def test_ws_connect_kwargs_and_shared_ssl(monkeypatch) -> None:
     assert kwargs["ssl"] is None
     kwargs = consent_ui.ws_connect_kwargs("https://d", "t", ctx)
     assert kwargs["ssl"] is ctx
+    assert kwargs["uri"].endswith("/api/v1/events")
+    assert "token" not in kwargs["uri"]
+    assert kwargs["subprotocols"] == ["bearer", "t"]
     assert consent_ui.shared_ssl() is ctx

@@ -41,6 +41,7 @@ from textual.widgets import Footer, ListItem, ListView, OptionList, Static
 
 from ..egress import events_url
 from ..rest import env_token, env_url, ssl_context
+from ..wsauth import subprotocols
 from .consent import (
     DURATION_DEFAULT,
     DURATIONS,
@@ -852,9 +853,11 @@ def shared_ssl():
 
 def ws_connect_kwargs(url: str, token: str, ssl_ctx) -> dict:
     """The events connection's kwargs (a plain-ws URL takes no ssl
-    argument) — built on the shared context, not a fresh one."""
+    argument) — built on the shared context, not a fresh one. The
+    token rides the handshake's auth subprotocol offer (#116)."""
     return {
-        "uri": events_url(url, token),
+        "uri": events_url(url),
+        "subprotocols": subprotocols(token),
         "ssl": None if url.startswith("http://") else ssl_ctx,
         "max_size": 2**22,
     }

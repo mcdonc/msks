@@ -514,10 +514,12 @@ def render_template() -> str:
 #                           # scans (applies at startup)
 # bootstrap_token: secret   # seeds the first bearer token at first
 #                           # boot
-# access_log: false         # uvicorn access logging; the events
-#                           # websocket carries its token in the
-#                           # query string, which the access log
-#                           # would persist
+# access_log: false         # uvicorn access logging (request
+#                           # lines: method, path, query — never
+#                           # headers); websocket tokens ride the
+#                           # Sec-WebSocket-Protocol handshake
+#                           # (#116), so the log holds no
+#                           # credentials
 #
 # --- The local cloud-hypervisor driver ---
 # vmm_driver: local         # the backend that runs workspaces

@@ -29,6 +29,10 @@ from msks.client.console import (
 class FakeWs:
     """Records sends; yields queued messages, then stays quiet."""
 
+    #: The negotiated subprotocol: the fakes model an authenticated
+    #: handshake (#116) unless a test overrides it.
+    subprotocol = "bearer"
+
     def __init__(self, incoming: list | None = None) -> None:
         self.sent: list[bytes] = []
         self._incoming = list(incoming or [])
@@ -88,15 +92,15 @@ def test_env_token_present(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_ws_url_schemes() -> None:
     assert (
-        ws_url("https://h:1", "wid", "tok")
-        == "wss://h:1/api/v1/workspaces/wid/console?token=tok&user=root"
+        ws_url("https://h:1", "wid")
+        == "wss://h:1/api/v1/workspaces/wid/console?user=root"
     )
     assert (
-        ws_url("http://h:1", "wid", "tok")
-        == "ws://h:1/api/v1/workspaces/wid/console?token=tok&user=root"
+        ws_url("http://h:1", "wid")
+        == "ws://h:1/api/v1/workspaces/wid/console?user=root"
     )
     # A bare host:port (no scheme) means the TLS shape.
-    assert ws_url("h:1", "wid", "tok").startswith("wss://h:1/")
+    assert ws_url("h:1", "wid").startswith("wss://h:1/")
 
 
 def test_tty_size_reads_ioctl(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -141,42 +145,41 @@ def test_tty_size_without_a_terminal_is_none() -> None:
 
 
 def test_ws_url_carries_user_and_size() -> None:
-    url = ws_url("https://d", "ws 1", "tok/en", user="msks", size=(34, 120))
+    url = ws_url("https://d", "ws 1", user="msks", size=(34, 120))
     assert "user=msks" in url
     assert "rows=34" in url
     assert "cols=120" in url
 
 
 def test_ws_url_carries_term() -> None:
-    url = ws_url("https://d", "ws-1", "t", term="tmux-256color")
+    url = ws_url("https://d", "ws-1", term="tmux-256color")
     assert "term=tmux-256color" in url
 
 
 def test_ws_url_omits_term_when_absent() -> None:
-    assert "term=" not in ws_url("https://d", "ws-1", "t")
+    assert "term=" not in ws_url("https://d", "ws-1")
 
 
 def test_ws_url_default_user_root_without_size() -> None:
-    url = ws_url("https://d", "ws-1", "t")
+    url = ws_url("https://d", "ws-1")
     assert "user=root" in url
     assert "rows=" not in url
 
 
 def test_ws_url_quotes_user() -> None:
-    url = ws_url("https://d", "ws-1", "t", user="a b")
+    url = ws_url("https://d", "ws-1", user="a b")
     assert "user=a+b" in url
 
 
-def test_ws_url_quotes_query_unsafe_parts() -> None:
-    quoted = ws_url("https://h:1", "w id", "a+b&c=d%e")
+def test_ws_url_holds_no_token() -> None:
+    # The token never rides the URL (#116): it travels in the
+    # handshake's auth subprotocol offer instead.
+    url = ws_url("https://h:1", "w id", user="a+b&c=d%e")
+    assert "token=" not in url
     # The id is a PATH segment: a space must encode as %20 (a + would
     # reach the server literally, since paths percent-decode only).
-    assert quoted.startswith("wss://h:1/api/v1/workspaces/w%20id/")
-    assert quoted.endswith("?token=a%2Bb%26c%3Dd%25e&user=root")
-    # The token stays one query parameter, whatever it contains; the
-    # user follows it as the next one.
-    tail = quoted.split("?token=", 1)[1]
-    assert tail.count("&") == 1 and tail.endswith("&user=root")
+    assert url.startswith("wss://h:1/api/v1/workspaces/w%20id/")
+    assert url.endswith("?user=a%2Bb%26c%3Dd%25e")
 
 
 def test_ssl_context_unverified_warns(
@@ -405,9 +408,11 @@ class ConnectStub:
     def __init__(self, ws) -> None:
         self._ws = ws
         self.recorded_ssl = "unset"
+        self.recorded_subprotocols = None
 
-    def __call__(self, url, ssl=None, max_size=None):
+    def __call__(self, url, subprotocols=None, ssl=None, max_size=None):
         self.recorded_ssl = ssl
+        self.recorded_subprotocols = subprotocols
         outer = self
 
         class _Ctx:
@@ -471,11 +476,81 @@ async def run_shell_via(mod):
     return await mod.run_shell("wid", "u", "t", None)
 
 
+async def test_run_shell_offers_the_auth_subprotocol(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ws = FakeWs(incoming=[b"hello\n"])
+    pipe = PipeStdin()
+    monkeypatch.setattr(sys, "stdin", pipe)
+    stub = ConnectStub(ws)
+    monkeypatch.setattr(console.websockets, "connect", stub)
+    monkeypatch.setattr(sys, "stdout", FakeStdout())
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(None, lambda: (pipe.feed(b"l"), pipe.feed(DETACH)))
+    await asyncio.wait_for(run_shell_via(console), 5)
+    # The token rides the handshake's offer (#116), never the URL.
+    assert stub.recorded_subprotocols == ["bearer", "t"]
+
+
+async def test_run_shell_aborts_without_the_subprotocol_echo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A handshake that completes with no selection carries no
+    # authority (#116): the session aborts without pumping, and the
+    # daemon's 4401 refusal is the message that shows.
+    ws = FakeWs()
+    ws.subprotocol = None
+    monkeypatch.setattr(console.websockets, "connect", ConnectStub(ws))
+    monkeypatch.setattr(sys, "stdout", FakeStdout())
+
+    async def refused():
+        raise console.websockets.ConnectionClosed(
+            console.websockets.Close(4401, ""), None
+        )
+
+    ws.recv = refused
+    with pytest.raises(SystemExit, match="authentication failed"):
+        await asyncio.wait_for(run_shell_via(console), 5)
+    assert ws.sent == []
+
+
+async def test_require_echo_names_a_nonauth_close() -> None:
+    # A close that is not the 4401 refusal still names itself: the
+    # operator sees which code arrived before authentication.
+    from msks.client import wsauth
+
+    ws = FakeWs()
+    ws.subprotocol = None
+
+    async def closed():
+        raise console.websockets.ConnectionClosed(
+            console.websockets.Close(4404, ""), None
+        )
+
+    ws.recv = closed
+    with pytest.raises(SystemExit, match="code 4404"):
+        await asyncio.wait_for(wsauth.require_echo(ws, wait_s=0.05), 5)
+
+
+async def test_require_echo_names_a_stripping_middlebox() -> None:
+    # No echo and no refusal close: a middlebox answered the
+    # handshake itself — named, exited, never pumped.
+    from msks.client import wsauth
+
+    ws = FakeWs()
+    ws.subprotocol = None
+    with pytest.raises(SystemExit, match="Sec-WebSocket-Protocol"):
+        await asyncio.wait_for(wsauth.require_echo(ws, wait_s=0.05), 5)
+    assert ws.sent == []
+
+
 async def test_run_shell_survives_server_close(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
 
     class ClosingWs:
+        subprotocol = "bearer"
+
         def __init__(self) -> None:
             self._first = True
 
@@ -662,7 +737,9 @@ def test_stdin_pipe_passthrough() -> None:
 async def test_run_shell_unreachable_daemon_one_liner() -> None:
 
     class RefusingConnect:
-        def __call__(self, address, ssl=None, max_size=None):
+        def __call__(
+            self, address, subprotocols=None, ssl=None, max_size=None
+        ):
             return self
 
         def __await__(self):
@@ -674,15 +751,16 @@ async def test_run_shell_unreachable_daemon_one_liner() -> None:
             await console.run_shell("wid", "https://nope:1", "t", None)
 
 
-async def test_connect_plain_ws_takes_no_ssl() -> None:
+async def test_connect_plain_ws_takes_no_ssl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
 
     stub = ConnectStub(FakeWs())
-    console._connect("ws://plain/", None)
-    # The ssl argument is only recorded through the stub's __call__.
-    assert stub.recorded_ssl == "unset"
-    stub("ws://plain/", ssl=None)
+    monkeypatch.setattr(console.websockets, "connect", stub)
+    console._connect("ws://plain/", "t", None)
     assert stub.recorded_ssl is None
-    stub("wss://secure/", ssl="ctx")
+    assert stub.recorded_subprotocols == ["bearer", "t"]
+    console._connect("wss://secure/", "t", "ctx")
     assert stub.recorded_ssl == "ctx"
 
 

@@ -3310,17 +3310,13 @@ async def test_maybe_decide_posts_the_verdict(monkeypatch) -> None:
     assert posted["body"] == {"decision": "deny", "duration": "once"}
 
 
-def test_events_url_shapes_the_query() -> None:
+def test_events_url_carries_no_token() -> None:
+    # The token rides the handshake's auth subprotocol (#116), never
+    # the URL: URLs land in logs, handshake headers do not.
     from msks.client.egress import events_url
 
-    assert (
-        events_url("https://d:8660", "tok")
-        == "wss://d:8660/api/v1/events?token=tok"
-    )
-    assert (
-        events_url("http://d:8660/", "a b")
-        == "ws://d:8660/api/v1/events?token=a+b"
-    )
+    assert events_url("https://d:8660") == "wss://d:8660/api/v1/events"
+    assert events_url("http://d:8660/") == "ws://d:8660/api/v1/events"
 
 
 # --- egress watch: the decider stream (#69) -------------------------------
@@ -3328,6 +3324,10 @@ def test_events_url_shapes_the_query() -> None:
 
 class FakeWS:
     """One websocket connection yielding scripted frames."""
+
+    #: The negotiated subprotocol: the fakes model an authenticated
+    #: handshake (#116) unless a test overrides it.
+    subprotocol = "bearer"
 
     def __init__(self, frames: list[str]) -> None:
         self.frames = frames
@@ -3388,9 +3388,7 @@ def test_egress_requests_without_a_filter(monkeypatch, capsys) -> None:
 def test_events_url_handles_a_bare_host() -> None:
     from msks.client.egress import events_url
 
-    assert events_url("bare.example", "t") == (
-        "wss://bare.example/api/v1/events?token=t"
-    )
+    assert events_url("bare.example") == "wss://bare.example/api/v1/events"
 
 
 async def test_run_watch_registers_and_streams(monkeypatch, capsys) -> None:
@@ -3439,8 +3437,11 @@ async def test_run_watch_registers_and_streams(monkeypatch, capsys) -> None:
     assert ws1.sent == [
         json.dumps({"type": "egress.decider", "workspace": "ws1"})
     ]
-    # The connection kwargs took the events URL and TLS context.
-    assert connect.kwargs["uri"].endswith("events?token=tok")
+    # The connection kwargs took the token-free events URL, the auth
+    # subprotocol offer, and the TLS context.
+    assert connect.kwargs["uri"].endswith("events")
+    assert "token" not in connect.kwargs["uri"]
+    assert connect.kwargs["subprotocols"] == ["bearer", "tok"]
     assert connect.kwargs["ssl"] is not None
     out = capsys.readouterr().out
     assert "api.example:443" in out
@@ -3501,12 +3502,39 @@ async def test_handle_frame_prompts_on_decide(monkeypatch, capsys) -> None:
     assert "ask.example:443" in capsys.readouterr().out
 
 
+async def test_run_watch_aborts_without_the_subprotocol_echo(
+    monkeypatch,
+) -> None:
+    # A handshake that completes with no selection carries no
+    # authority (#116): the watch aborts, and the daemon's 4401
+    # refusal is the message that shows.
+    from msks.client import egress as eg
+
+    class RefusedWS:
+        subprotocol = None
+        sent: list[str] = []
+
+        async def recv(self):
+            raise eg.websockets.ConnectionClosed(
+                eg.websockets.Close(4401, ""), None
+            )
+
+    connect = FakeConnect([RefusedWS()])
+    monkeypatch.setattr(eg.websockets, "connect", connect)
+    monkeypatch.setattr(eg, "env_token", lambda: "tok")
+    monkeypatch.setattr(eg, "env_url", lambda: "https://d")
+    with pytest.raises(SystemExit, match="authentication failed"):
+        await eg.run_watch("ws1", decide=False, duration="once")
+
+
 async def test_run_watch_reconnects_after_a_closed_connection(
     monkeypatch,
 ) -> None:
     from msks.client import egress as eg
 
     class ClosingWS:
+        subprotocol = "bearer"
+
         def __init__(self) -> None:
             self.sent = []
 
