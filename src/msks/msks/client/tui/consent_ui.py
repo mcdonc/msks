@@ -407,8 +407,12 @@ def flash_safe(text: str) -> str:
     bare (``unknown workspace [/dev``) — and the status line's
     Static parses markup at update time, so a bare ``[/`` still
     raises. The second pass backslash-escapes that prefix too,
-    leaving already-escaped tags untouched."""
-    return re.sub(r"(?<!\\)\[/", r"\\\[/", escape(text))
+    leaving already-escaped tags untouched. Newlines collapse to
+    spaces first: the status lines are one row tall, and a message
+    cut between two of its own lines would crop with no ellipsis
+    marking the cut."""
+    flat = " ".join(text.splitlines())
+    return re.sub(r"(?<!\\)\[/", r"\\\[/", escape(flat))
 
 
 def effective_allows(rules: EgressRules | None) -> bool:

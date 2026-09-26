@@ -635,7 +635,8 @@ class MsksTuiApp(App):
     #header-meta { height: 1; padding: 0 1; background: $panel;
                    color: $text-muted; text-wrap: nowrap;
                    text-overflow: ellipsis; }
-    #consent { padding: 0 1; color: $text-muted; }
+    #consent { height: 1; padding: 0 1; color: $text-muted;
+               text-wrap: nowrap; text-overflow: ellipsis; }
     #actions ListItem { height: 1; }
     WorkspaceForm { align: center middle; }
     #form { width: 64; height: auto; background: $panel;
@@ -718,8 +719,9 @@ class MsksTuiApp(App):
             # A refused flow's one-line refusal, carried from the
             # plain terminal the flow owned (a SystemExit prints
             # nowhere until the interpreter's top level — which the
-            # tree's restart would otherwise eat).
-            self.flash(self.follow.seed)
+            # tree's restart would otherwise eat), escaped for the
+            # status line's markup parsing.
+            self.flash(flash_safe(self.follow.seed))
             self.follow.seed = None
         if self.follow.reopen is not None:
             self.run_worker(self.push_remembered, exclusive=True)
@@ -796,7 +798,7 @@ class MainScreen(Screen):
         try:
             rows = await self.app.data.workspaces()
         except (Exception, SystemExit) as exc:
-            self.app.flash(f"listing failed: {escape(str(exc))}")
+            self.app.flash(f"listing failed: {flash_safe(str(exc))}")
             return
         await self.rebuild_rows(rows)
 
