@@ -851,8 +851,10 @@ class WorkspaceScreen(Screen):
 
     def pending_count(self) -> int:
         """The holds waiting on the page's queue — the header's
-        indicator count; a bare page (no link yet) counts none."""
-        if self.link is None:
+        indicator count. A page without a live link counts none:
+        a bare page has no queue yet, and a dead socket's snapshot
+        may hold holds the server already resolved."""
+        if self.link is None or self.link.state != CONNECTED:
             return 0
         return len(self.link.controller.ordered())
 

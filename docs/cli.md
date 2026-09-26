@@ -249,7 +249,7 @@ refresh, and Enter opens the workspace's page).
 The **workspace page** carries the per-workspace loop: a status
 line for egress consent (the mode, the granted scope with its
 expiry, or "no active consent"), the pending holds counted in
-the header (`egress to decide: N` while any wait, refreshed
+the header (`egress to decide: N` while any hold waits, refreshed
 each second) — and the page's actions: a shell in a new
 terminal window, egress consent, a live egress-mode switch,
 start, stop, and remint the workspace's LLM token. A workspace

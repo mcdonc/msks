@@ -597,7 +597,7 @@ async def test_the_page_names_an_empty_grant_set(monkeypatch) -> None:
         assert "no active consent" in consent_text(app)
 
 
-async def test_pending_holds_name_themselves_in_the_header(
+async def test_pending_holds_count_themselves_in_the_header(
     monkeypatch,
 ) -> None:
     """#354: the page's list carries only the fixed actions; a
@@ -1411,7 +1411,7 @@ async def test_the_headers_count_follows_the_queue(monkeypatch) -> None:
     data = FakeData([row()])
     app, _ = make_app(data)
     async with app.run_test() as pilot:
-        await open_page(pilot, app)
+        page = await open_page(pilot, app)
         await wait_for(lambda: action_children(app) == 6)
         assert "egress to decide" not in header_text(app)
         ws.push(request_frame("late1"))
@@ -1433,6 +1433,19 @@ async def test_the_headers_count_follows_the_queue(monkeypatch) -> None:
             )
         )
         await wait_for(lambda: "egress to decide" not in header_text(app))
+        # A dropped link stops counting: the dead socket's snapshot
+        # may hold holds the server already resolved, and the
+        # re-registration clears it anyway. A live link counts
+        # again the moment it stands.
+        ws.push(request_frame("late3"))
+        await wait_for(lambda: "egress to decide: 1" in header_text(app))
+        assert page.link is not None
+        page.link.state = link_mod.RECONNECTING
+        page.paint_header()
+        assert "egress to decide" not in header_text(app)
+        page.link.state = link_mod.CONNECTED
+        page.paint_header()
+        assert "egress to decide: 1" in header_text(app)
         await pilot.pause()
 
 
