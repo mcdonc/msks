@@ -909,7 +909,10 @@ async def test_console_silent_server_times_out(env, monkeypatch) -> None:
     """A wedged CH that never answers the handshake fails with the
     named cause instead of hanging."""
     app, state_dir, _ = env
-    app.state.settings.vmm.vsock_wait_timeout_s = 1.0
+    # The deadline bounds one silent 0.3s reply window (patched
+    # below): the retry-until-deadline loop shape is exercised by
+    # the never-appears test; this one pins the named cause.
+    app.state.settings.vmm.vsock_wait_timeout_s = 0.2
     vm_dir = state_dir / "vms" / WID
     vm_dir.mkdir(parents=True, exist_ok=True)
     stub_vm = await spawn_stub_vmm(app)
@@ -1322,8 +1325,10 @@ async def test_prelude_timeout_fails_closed(
         writer.write(b"OK 5\n")
         await writer.drain()
         assert await reader.readuntil(b"GO\n")
-        # Reads the prelude, then goes silent forever.
-        await asyncio.sleep(10)
+        # Reads the prelude, then stays silent past the reply
+        # deadline (0.2s patched below) — the connection stays open,
+        # so the handshake's failure is the timeout, not a close.
+        await asyncio.sleep(0.5)
 
     monkeypatch.setattr(local_mod, "PRELUDE_REPLY_S", 0.2)
     server = await asyncio.start_unix_server(session, str(path))
@@ -1347,7 +1352,7 @@ async def test_handshake_without_user_sends_no_prelude(tmp_path: Path) -> None:
         # A bounded peek: the legacy path sends no prelude, so nothing
         # arrives before the client hangs up.
         try:
-            data = await asyncio.wait_for(reader.read(64), 1.0)
+            data = await asyncio.wait_for(reader.read(64), 0.3)
         except TimeoutError:
             data = b"<timeout>"
         seen["rest"] = data

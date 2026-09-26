@@ -441,7 +441,7 @@ def test_normalize_public_key_accepts_any_supplied_type() -> None:
 
     lines = [mint(key_type)[1] for key_type in KEY_TYPES]
     lines.append(
-        rsa.generate_private_key(public_exponent=65537, key_size=4096)
+        rsa.generate_private_key(public_exponent=65537, key_size=3072)
         .public_key()
         .public_bytes(
             encoding=serialization.Encoding.OpenSSH,

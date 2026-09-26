@@ -243,8 +243,24 @@ def test_connect_passes_header_and_scheme_ssl(
     assert stub.recorded["headers"] == {"Authorization": "Bearer tok"}
 
 
+@pytest.fixture
+def quick_quiet_drain(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Shrink stdio_session's closing drain for the quiet-ending
+    stubs: the production drain waits its full second for a close
+    frame after stdin EOF, which these tests would pay as tail
+    time. drain_close's own timing stays pinned by the direct
+    tests below."""
+    real = fwd.drain_close
+
+    async def drain_close(ws, timeout_s: float = 0.05) -> None:
+        await real(ws, timeout_s=timeout_s)
+
+    monkeypatch.setattr(fwd, "drain_close", drain_close)
+
+
 async def test_stdio_session_carries_both_directions(
     monkeypatch: pytest.MonkeyPatch,
+    quick_quiet_drain: None,
 ) -> None:
     ws = FakeWs(incoming=[b"from-daemon\n"])
     pipe = StdioPipe()
@@ -260,6 +276,7 @@ async def test_stdio_session_carries_both_directions(
 
 async def test_stdio_session_survives_a_dead_stdin(
     monkeypatch: pytest.MonkeyPatch,
+    quick_quiet_drain: None,
 ) -> None:
     # A stdin that cannot become a pipe (a redirect from a file) means
     # no input: the session still carries output to its end.
@@ -405,6 +422,7 @@ class ClosedFdStdin:
 
 async def test_stdio_session_treats_an_unusable_pipe_as_no_input(
     monkeypatch: pytest.MonkeyPatch,
+    quick_quiet_drain: None,
 ) -> None:
     ws = FakeWs(incoming=[b"ok\n"])
     monkeypatch.setattr(sys, "stdin", ClosedFdStdin())
@@ -563,6 +581,7 @@ async def test_stdio_session_names_a_refusal_landing_after_stdin_eof(
 
 async def test_stdio_session_drain_ends_quietly(
     monkeypatch: pytest.MonkeyPatch,
+    quick_quiet_drain: None,
 ) -> None:
     # A ws that stays quiet after stdin EOF is a clean end: the drain
     # times out and the session exits 0.

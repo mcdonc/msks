@@ -32,5 +32,8 @@ async def test_delete_flows_kills_a_hung_tool(tmp_path) -> None:
     tool.write_text("#!/bin/sh\nsleep 60\n")
     tool.chmod(0o755)
     await asyncio.wait_for(
-        conntrack.delete_flows(str(tool), "172.31.0.1", "10.0.0.9"), 15.0
+        conntrack.delete_flows(
+            str(tool), "172.31.0.1", "10.0.0.9", deadline_s=0.2
+        ),
+        15.0,
     )

@@ -15,10 +15,29 @@ class EventHub:
 
     def __init__(self) -> None:
         self._queues: set[asyncio.Queue] = set()
+        # The loop the subscriber queues live on, captured at the
+        # first subscribe: a publish that arrives on another loop
+        # (the consent engine's holds cross threads) hops through
+        # call_soon_threadsafe so this loop wakes and its relays
+        # deliver. Without the hop the payload lands in the queue
+        # from a foreign thread, and the home loop — parked in its
+        # poll with nothing scheduled — stays asleep until some
+        # unrelated timer fires; frames then deliver seconds late.
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     def subscribe(self) -> asyncio.Queue:
-        """A bounded queue that will receive every published event."""
+        """A bounded queue that will receive every published event.
+
+        Subscribing requires a running loop — the queue's wakeups
+        are scheduled onto it, and the hub remembers it as the home
+        loop for cross-thread publishes."""
         queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_MAX)
+        if not self._queues:
+            # An empty hub re-homes: every subscriber leaving and a
+            # new one arriving on a fresh loop (a restarted app
+            # sharing the hub object) must not keep publishing onto
+            # the dead loop the last set homed on.
+            self._loop = asyncio.get_running_loop()
         self._queues.add(queue)
         return queue
 
@@ -31,8 +50,20 @@ class EventHub:
         self._queues.discard(queue)
 
     async def publish(self, event_type: str, data: dict) -> None:
-        """Deliver one event; a full (stalled) queue drops its oldest."""
+        """Deliver one event; a full (stalled) queue drops its oldest.
+
+        A publish running on a loop other than the home loop hops
+        the delivery through ``call_soon_threadsafe`` — the only
+        wake-up a foreign thread can give the home loop's poll."""
         payload = json.dumps({"event": event_type, "data": data})
+        home = self._loop
+        if home is not None and home is not asyncio.get_running_loop():
+            home.call_soon_threadsafe(self._broadcast, payload)
+        else:
+            self._broadcast(payload)
+
+    def _broadcast(self, payload: str) -> None:
+        """Enqueue the payload to every subscriber (home loop only)."""
         for queue in list(self._queues):
             deliver(queue, payload)
 

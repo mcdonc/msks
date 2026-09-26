@@ -360,12 +360,12 @@ async def test_bridge_answered_input_then_idle_stays_open() -> None:
         reader.feed_data(b"echo hi\nhi\n")
         # Idle past the whole window, twice over: no input, no EOF —
         # only a correctly disarmed clock keeps the session open.
-        await asyncio.sleep(1.2)
+        await asyncio.sleep(0.5)
         reader.feed_eof()
 
     race = asyncio.create_task(answer_then_idle())
     await asyncio.wait_for(
-        bridge_console(socket, reader, writer, stall_timeout_s=0.5), 10
+        bridge_console(socket, reader, writer, stall_timeout_s=0.2), 10
     )
     await race
     # The idle window passed without the stall close; the helper's

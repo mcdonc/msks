@@ -319,6 +319,11 @@ def test_decider_frames_reach_the_snapshot_and_ignore_junk(
     # the socket's registration snapshot then sees it without
     # racing the insert.
     held = threading.Event()
+    # Set by the test body once the socket has read the snapshot:
+    # the hold stays pending exactly as long as the reads need it —
+    # a fixed sleep would either race under parallel-suite load or
+    # pay its full cost every run.
+    seen = threading.Event()
 
     def hold_off_thread() -> None:
         import asyncio
@@ -327,11 +332,18 @@ def test_decider_frames_reach_the_snapshot_and_ignore_junk(
             engine = app.state.consent
             app.state.deciders.register(99, ids["wid"])
             await engine.hold(ids["wid"], "held.example", 443)
+            # Run the private loop to quiescence so the hold's
+            # fire-and-forget hub fanout has crossed onto the app
+            # loop (or found no subscriber) before the test body's
+            # socket connects — the registration reads below stay
+            # in a deterministic order.
+            for _ in range(3):
+                await asyncio.sleep(0)
             held.set()
-            # Leave the hold registered long enough for the test's
-            # socket to register and receive the snapshot under
-            # parallel-suite load.
-            await asyncio.sleep(2.0)
+            # The hold stays registered until the socket has read
+            # the snapshot (bounded, so a failed test body leaves
+            # no thread dangling past join).
+            seen.wait(timeout=10.0)
             # Fail the hold closed before the loop ends: its timeout
             # task must not be torn down mid-sleep by run()'s exit.
             rows = await app.state.model.egress_consent.list_requests(
@@ -360,40 +372,64 @@ def test_decider_frames_reach_the_snapshot_and_ignore_junk(
         thread = threading.Thread(target=hold_off_thread)
         thread.start()
         assert held.wait(timeout=10.0), "the off-thread hold never landed"
-        with client.websocket_connect(f"/api/v1/events?token={TOKEN}") as ws:
-            ws.send_text(
-                json.dumps({"type": "egress.decider", "workspace": "ws-snap"})
-            )
-            # The rules view lands first (#297: the TUI adopts the
-            # resolved workspace id from it), then the snapshot
-            # replays the other decider's pending hold (the hub's
-            # fanout may also arrive — read until the request frame).
-            frames = []
-            for _ in range(5):
-                frame = json.loads(ws.receive_text())
-                frames.append(frame)
-                if frame["event"] == "egress.request":
-                    break
-            assert frames[0]["event"] == "egress.rules"
-            requests = [f for f in frames if f["event"] == "egress.request"]
-            assert requests
-            assert (
-                requests[0]["data"]["request"]["dest_host"] == "held.example"
-            )
-            # Junk arms: no workspace key, a non-string — ignored
-            # without closing the socket; an unknown workspace is
-            # told it was rejected (a typo'd decider must not wait
-            # on a silent, promptless connection).
-            ws.send_text(json.dumps({"type": "egress.decider"}))
-            ws.send_text(
-                json.dumps({"type": "egress.decider", "workspace": 1234})
-            )
-            ws.send_text(
-                json.dumps({"type": "egress.decider", "workspace": "ghost"})
-            )
-            rejected = json.loads(ws.receive_text())
-            assert rejected["event"] == "egress.decider_rejected"
-            assert rejected["data"]["reason"] == "unknown workspace"
+        try:
+            with client.websocket_connect(
+                f"/api/v1/events?token={TOKEN}"
+            ) as ws:
+                ws.send_text(
+                    json.dumps(
+                        {"type": "egress.decider", "workspace": "ws-snap"}
+                    )
+                )
+                # The rules view lands first (#297: the TUI adopts the
+                # resolved workspace id from it), then the snapshot
+                # replays the other decider's pending hold (the hub's
+                # fanout may also arrive — read until the request frame).
+                frames = []
+                for _ in range(5):
+                    frame = json.loads(ws.receive_text())
+                    frames.append(frame)
+                    if frame["event"] == "egress.request":
+                        break
+                assert frames[0]["event"] == "egress.rules"
+                requests = [
+                    f for f in frames if f["event"] == "egress.request"
+                ]
+                assert requests
+                assert (
+                    requests[0]["data"]["request"]["dest_host"]
+                    == "held.example"
+                )
+                seen.set()
+                # Junk arms: no workspace key, a non-string — ignored
+                # without closing the socket; an unknown workspace is
+                # told it was rejected (a typo'd decider must not wait
+                # on a silent, promptless connection). The channel may
+                # also carry the teardown's resolved frame here — read
+                # until the rejection lands, not exactly one frame.
+                ws.send_text(json.dumps({"type": "egress.decider"}))
+                ws.send_text(
+                    json.dumps({"type": "egress.decider", "workspace": 1234})
+                )
+                ws.send_text(
+                    json.dumps(
+                        {"type": "egress.decider", "workspace": "ghost"}
+                    )
+                )
+                rejected = None
+                for _ in range(5):
+                    frame = json.loads(ws.receive_text())
+                    if frame["event"] == "egress.decider_rejected":
+                        rejected = frame
+                        break
+                assert rejected is not None
+                assert rejected["data"]["reason"] == "unknown workspace"
+        finally:
+            # A failed assertion must release the off-thread
+            # whatever happened inside: it fail-closes the hold
+            # against a live engine instead of dangling past
+            # join's budget.
+            seen.set()
         thread.join(5.0)
 
 
@@ -677,11 +713,26 @@ async def test_replay_logs_when_it_hits_its_row_limit(
             egress_mode="interactive",
         )
     )
-    for i in range(api_mod.SECRET_REPLAY_LIMIT + 1):
-        await app.state.model.record_audit(
-            "mint",
-            {"workspace_id": "ws-many", "name": f"n{i}", "dests": "[]"},
+    # Seed the limit-plus-one rows in one transaction: this test
+    # reads the replay's truncation of recorded rows, and the
+    # per-row writer (record_audit, with its own session and
+    # commit per call) is covered by its own tests — 101 separate
+    # round-trips dominated the test's runtime.
+    from msks.model.db import sessionmaker_for
+    from msks.model.secrets import SecretAudit
+
+    maker = sessionmaker_for(app.state.model.engine())
+    async with maker() as session:
+        session.add_all(
+            SecretAudit(
+                kind="mint",
+                workspace_id="ws-many",
+                name=f"n{i}",
+                dests="[]",
+            )
+            for i in range(api_mod.SECRET_REPLAY_LIMIT + 1)
         )
+        await session.commit()
 
     class RecordingSocket:
         def __init__(self) -> None:

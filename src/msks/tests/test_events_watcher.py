@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -373,10 +374,13 @@ async def test_watch_loop_sweeps_consent_on_its_deadline(
 
     app.state.model.egress_consent.prune = fake_prune
     async with api.router.lifespan_context(api):
-        # A full second of patience for a loop ticking every 10ms:
-        # a loaded CI runner can starve a 0.1s window entirely
-        # while the loop itself is perfectly healthy.
-        await asyncio.sleep(1.0)
+        # Poll until the sweep lands instead of sleeping out a
+        # fixed second: the loop ticks every 10ms, so a healthy
+        # run finishes in tens of ms — the 1s bound is only the
+        # patience a loaded CI runner needs.
+        deadline = time.monotonic() + 1.0
+        while not swept and time.monotonic() < deadline:
+            await asyncio.sleep(0.01)
     watcher_mod.PRUNE_INTERVAL_S = 3600.0
     assert swept
 

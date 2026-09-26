@@ -1,6 +1,11 @@
 import os
+import shutil
 
 import pytest
+from msks.app import App
+from msks.model.db import tighten_db_mode
+from msks.model.model import Model
+from msks.settings import ServerSettings, Settings
 
 from msks import guestassets
 
@@ -21,6 +26,39 @@ for _name, _value in guestassets.smoke_env_defaults(
     guestassets.load_guest_assets(),
 ).items():
     os.environ.setdefault(_name, _value)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def preseeded_migrations(tmp_path_factory):
+    """Give every fresh test database a pre-migrated copy.
+
+    ``Model.migrate`` walks the full Alembic chain to head on every
+    app startup, and this suite builds a fresh app (so a fresh
+    database) per test — the walk dominated the suite's setup time
+    while proving nothing per-test that the migration tests do not
+    already pin. The session builds one template at head, and a
+    migrate onto an absent path copies it instead of re-walking the
+    chain. A path that already has a file (the torn-migration and
+    legacy-schema tests prepare their own databases first) keeps
+    the real walk, so the heal and upgrade paths stay exercised.
+    The template is rebuilt from this tree at session start, one
+    per worker, so it always matches the code under test.
+    """
+    template = tmp_path_factory.mktemp("migrated-template") / "head.db"
+    settings = Settings(server=ServerSettings(db_path=template))
+    Model(App(settings)).migrate()
+    real_migrate = Model.migrate
+
+    def migrate(self) -> None:
+        db_path = self._db_path()
+        if db_path.exists():
+            real_migrate(self)
+            return
+        shutil.copyfile(template, db_path)
+        tighten_db_mode(db_path)
+
+    Model.migrate = migrate
+    yield
 
 
 @pytest.fixture(autouse=True)

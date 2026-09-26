@@ -98,9 +98,15 @@ filterwarnings = [
 # 25/69 tests in 600s, all "passing"). 30s is generous against a
 # healthy local average near 1s; the smoke suite (real VM boots)
 # carries its own ceiling via its conftest. --durations=10
+#
+# --dist loadgroup: tests sharing an xdist_group marker run on one
+# worker (unmarked tests distribute individually, exactly as under
+# the default load mode). The litellm real-Router tests group this
+# way so the package's ~5s import is paid once per suite, not once
+# per worker that happens to draw one of them. Inert without -n.
 # names the slowest tests on EVERY run, before a second diagnostic
 # run has to be paid for.
-addopts = "--cov=msks --cov-branch --cov-report=term-missing -ra --timeout=30 --durations=10"
+addopts = "--cov=msks --cov-branch --cov-report=term-missing -ra --timeout=30 --durations=10 --dist loadgroup"
 asyncio_mode = "auto"
 testpaths = ["src/msks/tests"]
 

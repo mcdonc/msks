@@ -43,14 +43,14 @@ async def pair(tmp_path: Path):
     upstream.setblocking(False)
     forwarder = dns.DnsForwarder(
         upstream.getsockname(),
-        1.0,
+        0.3,
         bind=("127.0.0.1", 0),
         client_ip="127.0.0.1",
     )
     await forwarder.start()
     client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     client.bind(("127.0.0.1", 0))
-    client.settimeout(2.0)
+    client.settimeout(0.5)
     serve = asyncio.create_task(forwarder.serve())
     try:
         yield forwarder, client, upstream
@@ -136,7 +136,7 @@ async def test_serve_drops_queries_from_other_sources(tmp_path: Path) -> None:
     await forwarder.start()
     client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     client.bind(("127.0.0.1", 0))
-    client.settimeout(0.5)
+    client.settimeout(0.3)
     serve = asyncio.create_task(forwarder.serve())
     try:
         # This client's source is 127.0.0.1, not the pinned guest IP.
@@ -148,7 +148,7 @@ async def test_serve_drops_queries_from_other_sources(tmp_path: Path) -> None:
         # And nothing reached the upstream either.
         loop = asyncio.get_running_loop()
         with pytest.raises(TimeoutError):
-            await asyncio.wait_for(loop.sock_recvfrom(upstream, 4096), 0.5)
+            await asyncio.wait_for(loop.sock_recvfrom(upstream, 4096), 0.3)
     finally:
         serve.cancel()
         forwarder.stop()
@@ -188,7 +188,7 @@ def test_relay_timeout_teardown_under_uvloop() -> None:
         serve = asyncio.create_task(forwarder.serve())
         client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         client.bind(("127.0.0.1", 0))
-        client.settimeout(2.0)
+        client.settimeout(0.5)
         client.sendto(QUERY, forwarder._sock.getsockname())
         # No reply arrives (upstream silent): the relay times out and
         # its reader must be gone — the client sees nothing.
@@ -255,7 +255,7 @@ async def test_relay_drops_a_failed_reply_send() -> None:
     serve = asyncio.create_task(forwarder.serve())
     client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     client.bind(("127.0.0.1", 0))
-    client.settimeout(3.0)
+    client.settimeout(0.5)
 
     answers = {"n": 0}
 

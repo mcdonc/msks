@@ -408,6 +408,9 @@ def test_migrate_reraises_unrelated_operational_errors(
 
     monkeypatch.setattr(command, "upgrade", boom)
     settings = Settings(server=ServerSettings(db_path=tmp_path / "locked.db"))
+    # An existing file takes the real migration walk (the suite's
+    # session template fast-path only covers absent paths).
+    settings.server.db_path.touch()
     with pytest.raises(OperationalError, match="locked"):
         model_mod.Model(App(settings)).migrate()
 
