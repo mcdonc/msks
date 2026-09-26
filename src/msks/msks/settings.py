@@ -184,8 +184,8 @@ class ServerSettings:
     event_poll_s: float = 1.0
     bootstrap_token: str | None = None
     # Off by default to keep the daemon's own log quiet; websocket
-    # tokens ride the handshake's protocol offer (#116), not the
-    # URL, so the access log (request lines only) holds no
+    # tokens ride the handshake's Authorization header (#216), not
+    # the URL, so the access log (request lines only) holds no
     # credentials either way.
     access_log: bool = False
     # HMAC key for consent audit tags (#69): opt-in integrity
@@ -754,8 +754,8 @@ def _server_settings_from_env(
     bootstrap = optional_env(env, "MSKSD_BOOTSTRAP_TOKEN")
     if bootstrap is not None:
         # The same grammar guard minting applies (#116): the token
-        # rides the websocket handshake's protocol offer, so a
-        # plaintext with spaces or separators would seed a token
+        # rides the websocket handshake's Authorization header, so
+        # a plaintext with spaces or separators would seed a token
         # that fails every websocket authentication. Refused here,
         # the failure is one startup line naming the variable.
         try:

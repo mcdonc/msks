@@ -453,14 +453,6 @@ USER_NAME_RE = LOGIN_NAME_RE
 #: (every terminfo name fits), matching the guest helper's check.
 TERM_RE = re.compile(r"^[!-~]{1,32}$")
 
-#: The websocket handshake's auth subprotocol (#116): the client
-#: offers ``["bearer", <token>]`` in Sec-WebSocket-Protocol and the
-#: daemon's accept selects ``bearer`` back. A query string would
-#: land the token in access logs, proxy logs, and shell history;
-#: a handshake header does not, and it is the one mechanism a
-#: browser's ``new WebSocket()`` can send too.
-AUTH_SUBPROTOCOL = "bearer"
-
 
 def close_reason(text: str, limit: int = 120) -> str:
     """A websocket close reason that fits its wire budget in bytes.
@@ -491,40 +483,38 @@ def console_request(params) -> tuple[str, int, int, str, str | None]:
     return user, rows, cols, term, problem
 
 
-def subprotocol_token(socket: WebSocket) -> str | None:
-    """The bearer token from the Sec-WebSocket-Protocol offer, or
-    None.
+def bearer_token(socket: WebSocket) -> str | None:
+    """The Authorization header's Bearer token, or None (#216).
 
-    The offer is ``["bearer", <token>]`` (#116): the element after
-    the auth subprotocol's name is the token. Starlette 1.6 keeps
-    the offered list on the ASGI scope (no ``subprotocols``
-    attribute), and the grammar guard at mint time keeps offered
-    tokens free of commas and spaces, so one header element is one
-    token.
+    Every websocket surface takes its token from the same header
+    the REST surface reads (:func:`msks.server.auth.require_token`
+    splits it the same way), so the credential never lands in a URL
+    recorder — access log, proxy log, shell history. A future
+    browser client cannot set the header on its native
+    ``WebSocket`` API; when one appears it takes a short-lived
+    ticket over the authenticated REST surface, not a long-lived
+    token in a query string.
     """
-    offered = socket.scope.get("subprotocols") or []
-    if AUTH_SUBPROTOCOL in offered:
-        rest = offered[offered.index(AUTH_SUBPROTOCOL) + 1 :]
-        if rest:
-            return rest[0]
-    return None
+    authorization = socket.headers.get("authorization", "")
+    scheme, _, plaintext = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not plaintext:
+        return None
+    return plaintext
 
 
 async def authed_accept(app, socket: WebSocket) -> bool:
-    """Authenticate the websocket handshake and accept it (#116).
+    """Authenticate the websocket handshake and accept it.
 
-    A valid token accepts with the auth subprotocol selected — the
-    echo every client verifies before pumping, so a handshake a
-    middlebox rewrote never carries a session. Anything else
-    accepts bare and closes 4401: the close-code contract the
-    clients name for a token the daemon does not hold.
+    A valid Bearer token accepts the socket; anything else accepts
+    bare and closes 4401: the close-code contract the clients name
+    for a token the daemon does not hold.
     """
-    token = subprotocol_token(socket)
+    token = bearer_token(socket)
     if token is None or not await app.state.model.token_valid(token):
         await socket.accept()
         await socket.close(code=4401)
         return False
-    await socket.accept(subprotocol=AUTH_SUBPROTOCOL)
+    await socket.accept()
     return True
 
 
@@ -2263,11 +2253,11 @@ def build_api(app) -> FastAPI:
         # Byte-stream bridge into a running workspace (#21): the
         # client gets an interactive shell over the same TLS + token
         # as the REST surface, the token riding the handshake's
-        # auth subprotocol (#116). Closing the websocket closes
+        # Authorization header (#216). Closing the websocket closes
         # exactly one guest shell session; the workspace keeps
-        # running. Auth accepts with the subprotocol selected or
-        # closes 4401: the client sees a specific close reason
-        # (4401/4404/4501) instead of a generic HTTP 403 rejection.
+        # running. Auth accepts or closes 4401: the client sees a
+        # specific close reason (4401/4404/4501) instead of a
+        # generic HTTP 403 rejection.
         if not await authed_accept(app, socket):
             return
         row = await app.state.model.get_workspace(workspace_id)
@@ -2329,8 +2319,8 @@ def build_api(app) -> FastAPI:
         # Service-plane bridge (#109): raw bytes between the client
         # and a guest TCP port the caller names — the pipe ssh's
         # ProxyCommand rides. The token authenticates through the
-        # handshake's auth subprotocol (#116), the same mechanism as
-        # every other websocket surface: one form to document and
+        # handshake's Authorization header (#216), the same scheme
+        # as every other msks surface: one form to document and
         # test, and the token never lands in a URL. Each websocket is
         # one guest TCP connection.
         if not await authed_accept(app, socket):
@@ -2391,11 +2381,10 @@ def build_api(app) -> FastAPI:
 
     @api.websocket("/api/v1/events")
     async def events(socket: WebSocket) -> None:
-        # The token rides the handshake's auth subprotocol (#116):
-        # browsers cannot set Authorization headers on a websocket,
-        # and a query string would land the token in logs. A bad
-        # token accepts bare and closes 4401 — the close code the
-        # clients' refused handling keys on.
+        # The token rides the handshake's Authorization header
+        # (#216) — the same scheme as the REST surface — never the
+        # URL. A bad token accepts bare and closes 4401 — the close
+        # code the clients' refused handling keys on.
         if not await authed_accept(app, socket):
             return
         queue = hub.subscribe()

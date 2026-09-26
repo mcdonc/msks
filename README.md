@@ -125,14 +125,12 @@ MSKSD_STATE_DIR=/tmp/msksd MSKSD_BOOTSTRAP_TOKEN=dev-secret MSKSD_PORT=8660 msks
   the same user (acceptable for a single-user local daemon — unset it after
   minting real tokens). `--no-tls` serves plain HTTP for development.
 - **Events**: `wss://host/api/v1/events` streams workspace status
-  transitions. Browsers cannot set websocket `Authorization` headers,
-  so the token rides the `Sec-WebSocket-Protocol` handshake — the
-  client offers the subprotocols `bearer, <token>` and the daemon
-  echoes `bearer` back on a valid one (#116); the token never lands
-  in a URL. Uvicorn's access log prints request lines (method, path,
-  query) and not headers, so turning it on (`MSKSD_ACCESS_LOG=true`)
-  does not persist credentials. A bad token closes the websocket
-  with code 4401.
+  transitions. The websocket handshake authenticates with the same
+  `Authorization: Bearer` header the REST surface uses (#216), so
+  the token never lands in a URL. Uvicorn's access log prints
+  request lines (method, path, query) and not headers, so turning
+  it on (`MSKSD_ACCESS_LOG=true`) does not persist credentials. A
+  bad token closes the websocket with code 4401.
 - **Rotating the bootstrap token**: setting `MSKSD_BOOTSTRAP_TOKEN` to a
   new value _adds_ a token; the previous bootstrap credential stays valid
   until revoked via the API.

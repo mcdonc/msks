@@ -56,10 +56,11 @@ def test_negative_stall_timeout_rejected(
 def test_bootstrap_token_outside_the_grammar_rejected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The bootstrap token rides the websocket handshake's protocol
-    offer (#116): a plaintext with spaces or separators would seed a
-    token that fails every websocket authentication, so loading
-    refuses it with one line naming the variable."""
+    """The bootstrap token rides the ``Authorization`` header on
+    the REST surface and the websocket handshake (#216): a
+    plaintext with spaces or separators would seed a token that
+    fails every websocket authentication, so loading refuses it
+    with one line naming the variable."""
     monkeypatch.setenv("MSKSD_BOOTSTRAP_TOKEN", "has space")
     with pytest.raises(ValueError, match="MSKSD_BOOTSTRAP_TOKEN"):
         Settings.from_env()

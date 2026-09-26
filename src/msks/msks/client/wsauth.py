@@ -1,23 +1,26 @@
-"""The websocket handshake's authentication (#116).
+"""The websocket handshake's authentication (#216).
 
-Every msks websocket carries its bearer token in the
-Sec-WebSocket-Protocol offer — ``["bearer", <token>]`` — and the
-daemon's accept selects ``bearer`` back. A URL query string would
-land the token in access logs, proxy logs, browser history, and
-process listings; a handshake header does not, and it is the one
-mechanism a browser's ``new WebSocket()`` can send as well. The
-REST surface keeps its ``Authorization: Bearer`` header unchanged.
+Every msks websocket carries its bearer token in the handshake's
+``Authorization: Bearer`` header — the same scheme the REST surface
+uses. A URL query string would land the token in access logs, proxy
+logs, browser history, and process listings; an ordinary header
+does not, and stock proxies forward it with the upgrade. There is
+no echo to verify: the daemon accepts a valid token and closes
+4401 for anything else, and each client names that close at its
+first receive.
+
+Two middlebox shapes read the same from every client as a token
+problem, and are accepted here: a proxy that strips the
+``Authorization`` header from the upgrade produces the daemon's
+4401 (named "authentication failed"), and a middlebox that answers
+the handshake itself leaves a silent connection — the link and
+egress watch reconnect after the ping timeout, the console and
+forward surfaces end the connection there. Both fail closed; a
+browser client that cannot set headers at all takes the
+short-lived ticket pattern, not a token in a URL.
 """
 
-import asyncio
-import contextlib
 import re
-
-import websockets
-
-#: The subprotocol name the offer leads with and the daemon echoes
-#: on a successful handshake.
-BEARER = "bearer"
 
 #: The close code for a token the daemon does not hold — the shared
 #: contract of every msks websocket surface.
@@ -28,14 +31,11 @@ CLOSE_AUTH_FAILED = 4401
 AUTH_FAILED_MESSAGE = "authentication failed (bad token?)"
 
 #: The HTTP ``token`` grammar (RFC 9110): the charset the
-#: Sec-WebSocket-Protocol value carries. The daemon mints inside it
-#: (#116); a client-held token outside it (a padded seed, a stray
-#: space in the environment) cannot ride the handshake at all.
+#: ``Authorization`` value's credential half must fit. The daemon
+#: mints inside it (#116); a client-held token outside it (a padded
+#: seed, a stray space in the environment) cannot ride the header
+#: at all.
 TCHAR_RE = re.compile(r"^[A-Za-z0-9!#$%&'*+\-.^_`|~]+$")
-
-#: How long the failed-echo check waits for the daemon's refusal
-#: close before naming the handshake itself as the problem.
-ECHO_WAIT_S = 5.0
 
 #: The refusal for a token the handshake cannot carry. The message
 #: names the credential's problem without echoing the credential:
@@ -43,74 +43,26 @@ ECHO_WAIT_S = 5.0
 #: whole, and a traceback would print it.
 UNUSABLE_MESSAGE = (
     "the token cannot ride the websocket handshake (characters "
-    "outside the Sec-WebSocket-Protocol grammar) — check MSKSC_TOKEN "
-    "or the client token file"
+    "outside the HTTP token grammar) — check MSKSC_TOKEN or the "
+    "client token file"
 )
 
 
 class UnusableToken(Exception):
-    """A token outside the handshake's value grammar (#116): it
-    cannot ride Sec-WebSocket-Protocol at all, so no retry can
-    help."""
+    """A token outside the credential grammar: it cannot ride the
+    ``Authorization`` header cleanly, so no retry can help."""
 
 
-def subprotocols(token: str) -> list[str]:
-    """The Sec-WebSocket-Protocol offer that carries the token.
+def auth_headers(token: str) -> list[tuple[str, str]]:
+    """The handshake headers that carry the bearer token.
 
     Refused here — message intact, token unechoed — when the token
-    cannot fit the handshake's value grammar: the websocket library
-    would otherwise reject the connect call with the token embedded
-    in its error.
+    cannot fit the credential grammar: a control character makes
+    the websocket library reject the connect call with the token
+    embedded in its error, and a separator would ride the header
+    only to fail as an invalid token at the daemon. The gate names
+    the problem before either.
     """
     if not TCHAR_RE.fullmatch(token):
         raise UnusableToken(UNUSABLE_MESSAGE)
-    return [BEARER, token]
-
-
-def echoed(ws) -> bool:
-    """Whether the handshake selected the bearer subprotocol.
-
-    A handshake that completes without the selection leaves the
-    session unauthenticated — the caller must not pump frames
-    through such a connection.
-    """
-    return getattr(ws, "subprotocol", None) == BEARER
-
-
-async def require_echo(ws, wait_s: float = ECHO_WAIT_S) -> None:
-    """Abort unless the daemon selected the bearer subprotocol.
-
-    The daemon selects it only for a token it holds; otherwise it
-    closes 4401, and that close is awaited here so the operator
-    sees the real refusal. A connection that stays open with no
-    selection means something else answered or rewrote the
-    handshake — a proxy stripping Sec-WebSocket-Protocol — and is
-    named and exited, never pumped.
-    """
-    if echoed(ws):
-        return
-    try:
-        await asyncio.wait_for(ws.recv(), wait_s)
-    except websockets.ConnectionClosed as closed:
-        raise echo_refusal(closed) from None
-    except TimeoutError:
-        pass
-    with contextlib.suppress(Exception):
-        await ws.close()
-    raise SystemExit(
-        "msks: the daemon did not echo the websocket auth protocol — "
-        "a proxy may be stripping Sec-WebSocket-Protocol"
-    )
-
-
-def echo_refusal(closed: websockets.ConnectionClosed) -> SystemExit:
-    """The exit for a daemon close behind a missing echo: the 4401
-    refusal verbatim (the message every surface's close-code table
-    gives it), any other close named with its code."""
-    code = closed.rcvd.code if closed.rcvd is not None else None
-    if code == CLOSE_AUTH_FAILED:
-        return SystemExit(f"msks: {AUTH_FAILED_MESSAGE}")
-    return SystemExit(
-        "msks: the daemon closed the websocket before "
-        f"authenticating (code {code})"
-    )
+    return [("Authorization", f"Bearer {token}")]

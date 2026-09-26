@@ -362,10 +362,10 @@ def test_hash_and_new_tokens() -> None:
 
 
 def test_new_tokens_fit_the_handshake_grammar() -> None:
-    # A bearer token rides the websocket handshake's
-    # Sec-WebSocket-Protocol value (#116), whose grammar (RFC 9110
-    # ``token``) rejects spaces and separators: every minted token
-    # must fit it.
+    # A bearer token rides the ``Authorization`` header on the REST
+    # surface and the websocket handshake (#216): the credential
+    # must fit the HTTP ``token`` grammar (RFC 9110), which rejects
+    # spaces and separators — every minted token must fit it.
     from msks.model.tokens import TCHAR_RE
 
     for _ in range(64):

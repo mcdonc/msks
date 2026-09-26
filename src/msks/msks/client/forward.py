@@ -1,8 +1,8 @@
 """``msks forward <workspace-id> <port>``: a workspace TCP port on stdio.
 
 The connection is the daemon's forward websocket (#109) — TLS plus
-the handshake's auth subprotocol (#116), the same mechanism as
-every other websocket surface — bridged to the command's stdio, the
+the handshake's Authorization header (#216), the same scheme as
+every other msks surface — bridged to the command's stdio, the
 shape ssh's ProxyCommand expects. With ``--local PORT`` the command
 binds loopback instead, and every accepted connection gets its own
 forward websocket. A workspace the daemon reports as not running is
@@ -51,7 +51,7 @@ CLOSE_CODE_REASONS = {
 
 def ws_url(base_url: str, workspace_id: str, port: int) -> str:
     """The forward websocket's URL. The token travels in the
-    handshake's auth subprotocol offer (#116), never the URL."""
+    handshake's Authorization header (#216), never the URL."""
     scheme, sep, rest = base_url.partition("://")
     if sep:
         scheme = "wss" if scheme == "https" else "ws"
@@ -68,12 +68,12 @@ def ws_url(base_url: str, workspace_id: str, port: int) -> str:
 def connect(address: str, token: str, ssl_ctx):
     """The websocket connection, in hand for a clean close on failure.
 
-    The token rides the handshake's auth subprotocol offer (#116).
+    The token rides the handshake's Authorization header (#216).
     A plain-ws URL (http daemon) takes no ssl argument.
     """
     return websockets.connect(
         address,
-        subprotocols=wsauth.subprotocols(token),
+        additional_headers=wsauth.auth_headers(token),
         ssl=None if address.startswith("ws://") else ssl_ctx,
         max_size=MAX_FRAME,
     )
@@ -164,9 +164,9 @@ async def stream_to_ws(reader, ws) -> None:
 
 async def dial(address: str, token: str, ssl_ctx):
     """The forward websocket connection, or the one-line exit for
-    every dial-time failure: a token the handshake cannot carry
-    (#116, message without the credential in it), a daemon that
-    cannot be reached, a TLS mismatch, a rejected upgrade."""
+    every dial-time failure: a token the header cannot carry
+    (message without the credential in it), a daemon that cannot
+    be reached, a TLS mismatch, a rejected upgrade."""
     try:
         connection = connect(address, token, ssl_ctx)
         return await connection
@@ -182,11 +182,6 @@ async def stdio_session(address: str, token: str, ssl_ctx) -> int:
     daemon's named refusals."""
     ws = await dial(address, token, ssl_ctx)
     async with ws:
-        # The handshake's echo check (#116): a daemon that did not
-        # select the auth subprotocol is closing with its refusal or
-        # a middlebox rewrote the handshake — either way named here,
-        # never pumped.
-        await wsauth.require_echo(ws)
         transport, stdin = await stdin_transport()
         try:
             await bridge(ws, stdin, _StdoutWriter())
@@ -307,7 +302,6 @@ async def local_listener(address: str, token: str, ssl_ctx, local_port: int):
         try:
             connection = connect(address, token, ssl_ctx)
             async with await connection as ws:
-                await wsauth.require_echo(ws)
                 await bridge(ws, reader, writer)
         except (OSError, ssl.SSLError, websockets.InvalidStatus) as exc:
             print(f"msks: cannot reach forward: {exc}", file=sys.stderr)
@@ -317,10 +311,6 @@ async def local_listener(address: str, token: str, ssl_ctx, local_port: int):
             # One stderr line without the token in it; the listener
             # stays up for the next connection either way.
             print(f"msks: {refusal}", file=sys.stderr)
-        except SystemExit as refusal:
-            # The echo check's refusal, one stderr line — the listener
-            # stays up for the next connection either way.
-            print(str(refusal), file=sys.stderr)
         finally:
             writer.close()
             with contextlib.suppress(Exception):

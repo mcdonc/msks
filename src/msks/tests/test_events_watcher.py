@@ -70,7 +70,7 @@ def test_websocket_receives_transitions(tmp_path: Path) -> None:
     api, app, stub = api_with_stub(tmp_path)
     with TestClient(api) as client:
         with client.websocket_connect(
-            "/api/v1/events", subprotocols=["bearer", TOKEN]
+            "/api/v1/events", headers=auth()
         ) as socket:
             # Create a workspace, then flip the seam underneath it: the
             # watcher must publish the transition within a few polls.
@@ -142,29 +142,27 @@ async def test_wait_for_disconnect_returns_on_disconnect() -> None:
 
 
 def test_websocket_rejects_bad_token(tmp_path: Path) -> None:
-    # The bad-token shape changed with #116: the daemon accepts bare
-    # and closes 4401 (the close-code contract the clients' refused
-    # handling keys on) instead of rejecting the HTTP upgrade.
+    # The bad-token shape follows the close-code contract: the daemon
+    # accepts bare and closes 4401 (the close code the clients'
+    # refused handling keys on) instead of rejecting the HTTP upgrade.
     api, _app, _stub = api_with_stub(tmp_path)
     with TestClient(api) as client:
         with client.websocket_connect(
-            "/api/v1/events", subprotocols=["bearer", "wrong"]
+            "/api/v1/events", headers=auth("wrong")
         ) as ws:
             with pytest.raises(WebSocketDisconnect) as caught:
                 ws.receive_text()
         assert caught.value.code == 4401
 
 
-def test_websocket_rejects_a_lone_auth_subprotocol(
+def test_websocket_rejects_a_missing_auth_header(
     tmp_path: Path,
 ) -> None:
-    # The offer is ["bearer", <token>] (#116): the name without a
-    # token after it authenticates nothing.
+    # The Authorization header carries the credential (#216): a
+    # handshake without it authenticates nothing.
     api, _app, _stub = api_with_stub(tmp_path)
     with TestClient(api) as client:
-        with client.websocket_connect(
-            "/api/v1/events", subprotocols=["bearer"]
-        ) as ws:
+        with client.websocket_connect("/api/v1/events") as ws:
             with pytest.raises(WebSocketDisconnect) as caught:
                 ws.receive_text()
         assert caught.value.code == 4401

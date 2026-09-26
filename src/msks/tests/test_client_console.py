@@ -29,10 +29,6 @@ from msks.client.console import (
 class FakeWs:
     """Records sends; yields queued messages, then stays quiet."""
 
-    #: The negotiated subprotocol: the fakes model an authenticated
-    #: handshake (#116) unless a test overrides it.
-    subprotocol = "bearer"
-
     def __init__(self, incoming: list | None = None) -> None:
         self.sent: list[bytes] = []
         self._incoming = list(incoming or [])
@@ -172,8 +168,8 @@ def test_ws_url_quotes_user() -> None:
 
 
 def test_ws_url_holds_no_token() -> None:
-    # The token never rides the URL (#116): it travels in the
-    # handshake's auth subprotocol offer instead.
+    # The token never rides the URL: it travels in the handshake's
+    # Authorization header instead (#216).
     url = ws_url("https://h:1", "w id", user="a+b&c=d%e")
     assert "token=" not in url
     # The id is a PATH segment: a space must encode as %20 (a + would
@@ -408,11 +404,11 @@ class ConnectStub:
     def __init__(self, ws) -> None:
         self._ws = ws
         self.recorded_ssl = "unset"
-        self.recorded_subprotocols = None
+        self.recorded_headers = None
 
-    def __call__(self, url, subprotocols=None, ssl=None, max_size=None):
+    def __call__(self, url, additional_headers=None, ssl=None, max_size=None):
         self.recorded_ssl = ssl
-        self.recorded_subprotocols = subprotocols
+        self.recorded_headers = additional_headers
         outer = self
 
         class _Ctx:
@@ -476,7 +472,7 @@ async def run_shell_via(mod):
     return await mod.run_shell("wid", "u", "t", None)
 
 
-async def test_run_shell_offers_the_auth_subprotocol(
+async def test_run_shell_offers_the_auth_header(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ws = FakeWs(incoming=[b"hello\n"])
@@ -488,29 +484,17 @@ async def test_run_shell_offers_the_auth_subprotocol(
     loop = asyncio.get_running_loop()
     loop.run_in_executor(None, lambda: (pipe.feed(b"l"), pipe.feed(DETACH)))
     await asyncio.wait_for(run_shell_via(console), 5)
-    # The token rides the handshake's offer (#116), never the URL.
-    assert stub.recorded_subprotocols == ["bearer", "t"]
+    # The token rides the handshake's header (#216), never the URL.
+    assert stub.recorded_headers == [("Authorization", "Bearer t")]
 
 
-async def test_require_echo_aborts_on_an_unauthenticated_frame() -> None:
-    # A frame on a connection with no echo is still an
-    # unauthenticated session (#116): aborted, never pumped.
-    from msks.client import wsauth
-
-    ws = FakeWs(incoming=[b"frame"])
-    ws.subprotocol = None
-    with pytest.raises(SystemExit, match="Sec-WebSocket-Protocol"):
-        await asyncio.wait_for(wsauth.require_echo(ws, wait_s=0.05), 5)
-
-
-async def test_run_shell_aborts_without_the_subprotocol_echo(
+async def test_run_shell_names_a_4401_refusal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # A handshake that completes with no selection carries no
-    # authority (#116): the session aborts without pumping, and the
-    # daemon's 4401 refusal is the message that shows.
+    # A daemon that does not hold the token closes 4401 at the first
+    # receive (#216): the session aborts without pumping, named from
+    # the close-code table.
     ws = FakeWs()
-    ws.subprotocol = None
     monkeypatch.setattr(console.websockets, "connect", ConnectStub(ws))
     monkeypatch.setattr(sys, "stdout", FakeStdout())
 
@@ -525,21 +509,21 @@ async def test_run_shell_aborts_without_the_subprotocol_echo(
     assert ws.sent == []
 
 
-def test_subprotocols_offer_shape() -> None:
+def test_auth_headers_shape() -> None:
     from msks.client import wsauth
 
-    assert wsauth.subprotocols("tok") == ["bearer", "tok"]
+    assert wsauth.auth_headers("tok") == [("Authorization", "Bearer tok")]
 
 
-def test_subprotocols_refuses_a_token_outside_the_grammar() -> None:
-    # A token the handshake's value grammar cannot carry is refused
+def test_auth_headers_refuse_a_token_outside_the_grammar() -> None:
+    # A token the header value grammar cannot carry is refused
     # here, message intact and token unechoed (#116 review): the
     # websocket library's own refusal embeds the credential whole.
     from msks.client import wsauth
 
     for bad in ("a b", "pad=ding", "", "new\nline"):
         with pytest.raises(wsauth.UnusableToken, match="cannot ride"):
-            wsauth.subprotocols(bad)
+            wsauth.auth_headers(bad)
 
 
 async def test_run_shell_exits_on_a_token_the_handshake_cannot_carry(
@@ -555,16 +539,17 @@ async def test_run_shell_exits_on_a_token_the_handshake_cannot_carry(
     # One line, no traceback, and the token itself stays off it.
     assert "cannot ride" in str(caught.value)
     assert "a b" not in str(caught.value)
-    assert stub.recorded_subprotocols is None  # the dial never happened
+    assert stub.recorded_headers is None  # the dial never happened
 
 
-async def test_require_echo_names_a_nonauth_close() -> None:
+async def test_run_shell_names_a_preauth_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # A close that is not the 4401 refusal still names itself: the
-    # operator sees which code arrived before authentication.
-    from msks.client import wsauth
-
+    # operator sees which code arrived instead of the session.
     ws = FakeWs()
-    ws.subprotocol = None
+    monkeypatch.setattr(console.websockets, "connect", ConnectStub(ws))
+    monkeypatch.setattr(sys, "stdout", FakeStdout())
 
     async def closed():
         raise console.websockets.ConnectionClosed(
@@ -572,20 +557,8 @@ async def test_require_echo_names_a_nonauth_close() -> None:
         )
 
     ws.recv = closed
-    with pytest.raises(SystemExit, match="code 4404"):
-        await asyncio.wait_for(wsauth.require_echo(ws, wait_s=0.05), 5)
-
-
-async def test_require_echo_names_a_stripping_middlebox() -> None:
-    # No echo and no refusal close: a middlebox answered the
-    # handshake itself — named, exited, never pumped.
-    from msks.client import wsauth
-
-    ws = FakeWs()
-    ws.subprotocol = None
-    with pytest.raises(SystemExit, match="Sec-WebSocket-Protocol"):
-        await asyncio.wait_for(wsauth.require_echo(ws, wait_s=0.05), 5)
-    assert ws.sent == []
+    with pytest.raises(SystemExit, match="no such workspace"):
+        await asyncio.wait_for(run_shell_via(console), 5)
 
 
 async def test_run_shell_survives_server_close(
@@ -593,8 +566,6 @@ async def test_run_shell_survives_server_close(
 ) -> None:
 
     class ClosingWs:
-        subprotocol = "bearer"
-
         def __init__(self) -> None:
             self._first = True
 
@@ -782,7 +753,7 @@ async def test_run_shell_unreachable_daemon_one_liner() -> None:
 
     class RefusingConnect:
         def __call__(
-            self, address, subprotocols=None, ssl=None, max_size=None
+            self, address, additional_headers=None, ssl=None, max_size=None
         ):
             return self
 
@@ -803,7 +774,7 @@ async def test_connect_plain_ws_takes_no_ssl(
     monkeypatch.setattr(console.websockets, "connect", stub)
     console._connect("ws://plain/", "t", None)
     assert stub.recorded_ssl is None
-    assert stub.recorded_subprotocols == ["bearer", "t"]
+    assert stub.recorded_headers == [("Authorization", "Bearer t")]
     console._connect("wss://secure/", "t", "ctx")
     assert stub.recorded_ssl == "ctx"
 

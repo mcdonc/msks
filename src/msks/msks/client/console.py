@@ -1,8 +1,8 @@
 """``msks console <workspace-id>``: an interactive shell in a workspace.
 
 The connection is the daemon's console websocket (TLS + token, the
-credential riding the handshake's auth subprotocol #116 — the same
-token the REST surface's Bearer header carries) bridged to the
+credential riding the handshake's Authorization header #216 — the
+same scheme the REST surface's Bearer header uses) bridged to the
 local tty in raw mode. A workspace the daemon reports as not running is booted
 first. Ctrl-] detaches: it closes the client session — the workspace
 keeps running, and the shell process inside the guest ends when the
@@ -86,8 +86,8 @@ def ws_url(
     term: str | None = None,
 ) -> str:
     """The console websocket's URL — the request's parameters ride
-    the query string; the token never does (#116): it travels in the
-    handshake's auth subprotocol offer instead.
+    the query string; the token never does: it travels in the
+    handshake's Authorization header instead (#216).
 
     The id is a path segment: quote with no safe chars (a space must
     become %20, not + — the server percent-decodes paths only),
@@ -192,12 +192,12 @@ async def _ws_step(message, ws, stdout):
 def _connect(address: str, token: str, ssl_ctx):
     """The websocket connection, in hand for a clean close on failure.
 
-    The token rides the handshake's auth subprotocol offer (#116).
+    The token rides the handshake's Authorization header (#216).
     A plain-ws URL (http daemon) takes no ssl argument.
     """
     return websockets.connect(
         address,
-        subprotocols=wsauth.subprotocols(token),
+        additional_headers=wsauth.auth_headers(token),
         ssl=None if address.startswith("ws://") else ssl_ctx,
         max_size=2**22,
     )
@@ -205,9 +205,9 @@ def _connect(address: str, token: str, ssl_ctx):
 
 async def dial(address: str, token: str, ssl_ctx, url: str):
     """The console websocket connection, or the one-line exit for
-    every dial-time failure: a token the handshake cannot carry
-    (#116, message without the credential in it), a daemon that
-    cannot be reached, a TLS mismatch, a rejected upgrade."""
+    every dial-time failure: a token the header cannot carry
+    (message without the credential in it), a daemon that cannot
+    be reached, a TLS mismatch, a rejected upgrade."""
     try:
         connection = _connect(address, token, ssl_ctx)
     except wsauth.UnusableToken as exc:
@@ -227,15 +227,13 @@ async def run_shell(
     size: tuple[int, int] | None = None,
     term: str | None = None,
 ) -> int:
-    """One interactive session; 0 on clean detach or session end."""
+    """One interactive session; 0 on clean detach or session end.
+
+    A token the daemon does not hold closes the websocket 4401 at
+    the first receive — the close-code table below names it."""
     address = ws_url(url, workspace_id, user=user, size=size, term=term)
     ws = await dial(address, token, ssl_ctx, url)
     async with ws:
-        # The handshake's echo check (#116): a daemon that did not
-        # select the auth subprotocol is closing with its refusal or
-        # a middlebox rewrote the handshake — either way named here,
-        # never pumped.
-        await wsauth.require_echo(ws)
         if not await open_session(ws, workspace_id, url, token, ssl_ctx):
             return 0
         loop = asyncio.get_running_loop()

@@ -18,7 +18,7 @@ MODES = ("allow", "static", "interactive")
 
 def events_url(base_url: str) -> str:
     """The events websocket URL for a daemon base URL. The token
-    rides the handshake's auth subprotocol offer (#116), never the
+    rides the handshake's Authorization header (#216), never the
     URL."""
     scheme, sep, rest = base_url.partition("://")
     if sep:
@@ -216,13 +216,14 @@ async def run_watch(
     try:
         async for ws in websockets.connect(**connect_args(url, token)):
             try:
-                # The handshake's echo check (#116): a daemon that did not
-                # select the auth subprotocol is closing with its refusal
-                # or a middlebox rewrote the handshake — named and exited
-                # here, never pumped.
-                await wsauth.require_echo(ws)
                 await watch_one(ws, workspace_id, decide, duration, url, token)
-            except websockets.ConnectionClosed:
+            except websockets.ConnectionClosed as closed:
+                if refused(closed):
+                    # A token the daemon does not hold cannot become
+                    # valid by reconnecting — one line, no spin.
+                    raise SystemExit(
+                        f"msks: {wsauth.AUTH_FAILED_MESSAGE}"
+                    ) from None
                 continue  # reconnect; the server re-sends the snapshot
     except wsauth.UnusableToken as exc:
         # One line without the token in it — the websocket library's
@@ -231,12 +232,20 @@ async def run_watch(
     return 0
 
 
+def refused(closed: websockets.ConnectionClosed) -> bool:
+    """Whether the close is the daemon's 4401 auth refusal."""
+    return (
+        closed.rcvd is not None
+        and closed.rcvd.code == wsauth.CLOSE_AUTH_FAILED
+    )
+
+
 def connect_args(url: str, token: str) -> dict:
-    """The events websocket's connect kwargs: the auth subprotocol
-    offer beside the URL (a plain-ws URL takes no ssl argument)."""
+    """The events websocket's connect kwargs: the Authorization
+    header beside the URL (a plain-ws URL takes no ssl argument)."""
     return {
         "uri": events_url(url),
-        "subprotocols": wsauth.subprotocols(token),
+        "additional_headers": wsauth.auth_headers(token),
         "ssl": None if url.startswith("http://") else ssl_context(),
         "max_size": 2**22,
     }

@@ -1355,7 +1355,9 @@ class RawDecider:
         uri = f"{scheme}/api/v1/events"
         self.ws = await websockets.connect(
             uri,
-            subprotocols=["bearer", self.daemon.token],
+            additional_headers=[
+                ("Authorization", f"Bearer {self.daemon.token}")
+            ],
             ssl=None
             if self.daemon.url.startswith("http://")
             else ssl.create_default_context(cafile=self.daemon.cafile),
@@ -1365,9 +1367,6 @@ class RawDecider:
             json.dumps(
                 {"type": "egress.decider", "workspace": self.workspace_id}
             )
-        )
-        assert self.ws.subprotocol == "bearer", (
-            "daemon did not echo the websocket auth subprotocol"
         )
         self._mark = len(self.requests)
         self.reader = asyncio.create_task(self.recv_loop())
@@ -1521,10 +1520,12 @@ class Console:
 
     def connect(self):
         """The console websocket, with the client's own TLS. The
-        token rides the handshake's auth subprotocol offer (#116)."""
+        token rides the handshake's Authorization header (#216)."""
         return websockets.connect(
             ws_url(self.daemon.url, self.workspace_id),
-            subprotocols=["bearer", self.daemon.token],
+            additional_headers=[
+                ("Authorization", f"Bearer {self.daemon.token}")
+            ],
             ssl=ssl.create_default_context(cafile=self.daemon.cafile),
             max_size=2**22,
         )
