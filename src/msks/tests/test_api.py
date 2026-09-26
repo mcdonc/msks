@@ -1423,6 +1423,19 @@ async def test_workspace_mutation_is_refused_with_a_named_error(
     assert missing.status_code == 404
 
 
+async def test_create_defaults_report_the_settings_sizes(client) -> None:
+    """GET /api/v1/create-defaults names the root/home sizes a
+    create lands on when its body leaves them unset — the settings'
+    values, so a configured daemon hints its own defaults."""
+    http, app, _stub = client
+    reply = await http.get("/api/v1/create-defaults", headers=auth())
+    assert reply.status_code == 200
+    assert reply.json() == {
+        "root_mib": app.state.settings.vmm.root_mib,
+        "home_mib": app.state.settings.vmm.home_mib,
+    }
+
+
 async def test_storage_report_lists_consumers(client) -> None:
     """GET /api/v1/storage names the budget, every workspace's cost
     against its ceilings, and the catalog's (#184) — each image with

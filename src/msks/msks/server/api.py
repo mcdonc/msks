@@ -1513,6 +1513,14 @@ def build_api(app) -> FastAPI:
             for image in imagestore.list_images(state_dir)
         ]
 
+    @api.get("/api/v1/create-defaults", dependencies=[Depends(require_token)])
+    async def create_defaults() -> dict:
+        """The sizes a create lands on when its body leaves them
+        unset: the settings' root/home defaults, MiB — the TUI
+        create form's size placeholders hint them."""
+        vmm = app.state.settings.vmm
+        return {"root_mib": vmm.root_mib, "home_mib": vmm.home_mib}
+
     @api.post("/api/v1/images", dependencies=[Depends(require_token)])
     async def import_image(body: ImageImport) -> Response:
         state_dir = app.state.settings.vmm.state_dir

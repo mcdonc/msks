@@ -97,6 +97,7 @@ class FakeData:
         self.token = "tok-fresh"
         self.refusal = "daemon away"
         self.images_rows: list[dict] = []
+        self.defaults: dict = {"root_mib": 10240, "home_mib": 20480}
 
     async def workspaces(self) -> list[dict]:
         self.fetches += 1
@@ -108,6 +109,11 @@ class FakeData:
         if "images" in self.fail:
             raise RuntimeError(self.refusal)
         return [dict(r) for r in self.images_rows]
+
+    async def create_defaults(self) -> dict:
+        if "defaults" in self.fail:
+            raise RuntimeError(self.refusal)
+        return dict(self.defaults)
 
     async def create(self, body: dict):
         self.calls.append(("create", body))
@@ -336,7 +342,7 @@ async def test_the_create_form_refuses_local_junk() -> None:
         screen.query_one("#field-name", Input).value = ""
         screen.submit()
         await pilot.pause()
-        assert "a name is required" in str(
+        assert "a workspace name is required" in str(
             screen.query_one("#form-note", Static).content
         )
         assert data.calls == []
@@ -366,7 +372,9 @@ async def test_the_create_form_fits_the_small_terminal() -> None:
 
 def test_image_options_mark_the_default_and_pin_duplicate_refs():
     # The select offers one row per catalog entry: the reference
-    # as both label and value, the designated default marked.
+    # and the hash as clipped columns (two refs sharing a clipped
+    # column stay apart in the hash column), the designated
+    # default marked.
     rows = [
         {
             "name": "debian-13",
@@ -382,8 +390,8 @@ def test_image_options_mark_the_default_and_pin_duplicate_refs():
         },
     ]
     assert image_options(rows) == [
-        ("debian-13:2026.01 — default", "debian-13:2026.01"),
-        ("debian-13:2025.12", "debian-13:2025.12"),
+        ("debia…026.01 aaaaa…aaaaaa — default", "debian-13:2026.01"),
+        ("debia…025.12 bbbbb…bbbbbb", "debian-13:2025.12"),
     ]
     # Two entries sharing a reference: the second rides its hash
     # (name@hash resolves to exactly that entry).
@@ -396,8 +404,21 @@ def test_image_options_mark_the_default_and_pin_duplicate_refs():
         }
     )
     assert image_options(rows)[2] == (
+        "debia…026.01 ccccc…cccccc",
         f"debian-13@{'c' * 64}",
-        f"debian-13@{'c' * 64}",
+    )
+    # A reference already inside the column stays whole.
+    rows.append(
+        {
+            "name": "alpine",
+            "version": "3.22",
+            "hash": "d" * 64,
+            "default": False,
+        }
+    )
+    assert image_options(rows)[3] == (
+        "alpine:3.22 ddddd…dddddd",
+        "alpine:3.22",
     )
 
 
@@ -471,6 +492,49 @@ async def test_an_image_listing_refusal_keeps_the_form_standing() -> None:
         screen.submit()
         await wait_for(lambda: data.calls and data.calls[0][0] == "create")
         assert "image" not in data.calls[0][1]
+
+
+async def test_the_size_and_user_placeholders_carry_the_defaults(
+    monkeypatch,
+) -> None:
+    """The root/home placeholders name the daemon's MiB defaults,
+    and the user placeholder names the invoking account — a
+    blank field's landing spot reads off the form itself."""
+    monkeypatch.setattr(main_app, "invoking_user", lambda: "ops")
+    data = FakeData([])
+    data.defaults = {"root_mib": 5120, "home_mib": 1024}
+    app, _ = make_app(data)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.press("c")
+        await wait_for(lambda: type(app.screen).__name__ == "CreateScreen")
+        screen = app.screen
+        root = screen.query_one("#field-root_mib", Input)
+        home = screen.query_one("#field-home_mib", Input)
+        await wait_for(lambda: "5120" in root.placeholder)
+        assert root.placeholder == "MiB — 5120"
+        assert home.placeholder == "MiB — 1024"
+        assert screen.query_one("#field-user", Input).placeholder == "ops"
+
+
+async def test_a_defaults_refusal_keeps_the_form_standing() -> None:
+    """A refused defaults listing keeps the unit-only placeholders
+    and the form standing — blank fields still create against the
+    daemon's defaults."""
+    data = FakeData([])
+    data.fail.add("defaults")
+    app, _ = make_app(data)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.press("c")
+        await wait_for(lambda: type(app.screen).__name__ == "CreateScreen")
+        screen = app.screen
+        await wait_for(
+            lambda: (
+                "defaults failed"
+                in str(screen.query_one("#form-note", Static).content)
+            )
+        )
+        assert screen.query_one("#field-root_mib", Input).placeholder == "MiB"
+        assert screen.query_one("#field-home_mib", Input).placeholder == "MiB"
 
 
 async def test_a_create_failure_flashes_the_daemons_line() -> None:
@@ -767,6 +831,13 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
             return httpx.Response(
                 200, json=[{"name": "debian-13", "version": "2026.01"}]
             )
+        if (
+            request.method == "GET"
+            and request.url.path == "/api/v1/create-defaults"
+        ):
+            return httpx.Response(
+                200, json={"root_mib": 10240, "home_mib": 20480}
+            )
         if request.url.path.endswith("/ssh-key"):
             return httpx.Response(
                 200,
@@ -789,6 +860,10 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
     data = data_mod.TuiData(transport=httpx.MockTransport(handler))
     assert await data.workspaces() == [{"id": "ws1", "name": "n"}]
     assert await data.images() == [{"name": "debian-13", "version": "2026.01"}]
+    assert await data.create_defaults() == {
+        "root_mib": 10240,
+        "home_mib": 20480,
+    }
     created, path = await data.create({"name": "n"})
     assert created["id"] == "ws1"
     # The client mint's no-escrow exchange, in order after the

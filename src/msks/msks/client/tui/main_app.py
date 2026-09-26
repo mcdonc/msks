@@ -36,6 +36,7 @@ from textual.widgets import (
 )
 
 from ..console import run_workspace_shell
+from ..create import invoking_user
 from ..rest import env_token, env_url
 from .consent_app import (
     FLASH_TTL,
@@ -872,15 +873,16 @@ class WorkspaceScreen(Screen):
 #: The create form's fields (#309): the create body's optional
 #: inputs in walk order — a short label at the left of each
 #: row, the hint riding the input's placeholder (the image
-#: select's hint is its blank prompt.
+#: select's hint is its blank prompt; the root/home and user
+#: placeholders name their defaults at mount).
 FORM_FIELDS = (
-    ("name", "name", "the label you address it by"),
+    ("name", "name", "workspace name"),
     ("image", "image ref", "the default image"),
     ("cpus", "vcpus", "default 2"),
-    ("mem_mib", "memory", "MiB — default 8192"),
+    ("mem_mib", "memory", "MiB — 8192"),
     ("root_mib", "root", "MiB"),
     ("home_mib", "home", "MiB"),
-    ("user", "user", "the account it seeds — default: yours"),
+    ("user", "user", "the account it seeds"),
 )
 
 #: The fields whose values must be whole numbers.
@@ -894,21 +896,35 @@ def whole_number(value: str) -> bool:
     return value.isascii() and value.isdigit()
 
 
+def clip(text: str, width: int = 12) -> str:
+    """One clipped column: the text, or its head and tail kept
+    around a middle ellipsis when it runs longer (the tail carries
+    the version half of a reference, the part a head-only clip
+    eats)."""
+    if len(text) <= width:
+        return text
+    head = (width - 1) // 2
+    return f"{text[:head]}…{text[-(width - 1 - head) :]}"
+
+
 def image_options(rows: list[dict]) -> list[tuple[str, str]]:
-    """The image select's options from the catalog listing: each
-    entry its reference, the designated default marked in the
-    label. A reference two entries share rides the hash instead
-    (name@hash resolves to exactly that entry — name:version
+    """The image select's options from the catalog listing: the
+    reference and the hash as two 12-character columns, the
+    designated default marked after them (the hash column keeps
+    references that clip to the same 12 characters apart). A
+    reference two entries share rides the hash in the option's
+    value (name@hash resolves to exactly that entry — name:version
     would pick the oldest of the two)."""
     options: list[tuple[str, str]] = []
     seen: set[str] = set()
     for row in rows:
         ref = f"{row['name']}:{row['version']}"
-        if ref in seen:
-            ref = f"{row['name']}@{row['hash']}"
+        value = f"{row['name']}@{row['hash']}" if ref in seen else ref
         seen.add(ref)
-        label = f"{ref} — default" if row.get("default") else ref
-        options.append((label, ref))
+        label = f"{clip(ref)} {clip(row['hash'])}"
+        if row.get("default"):
+            label += " — default"
+        options.append((label, value))
     return options
 
 
@@ -964,7 +980,7 @@ class CreateScreen(ModalScreen[dict | None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="form"):
             yield Static(
-                "create a workspace — Enter walks the fields",
+                "create a workspace",
                 id="form-note",
             )
             for field, label, hint in FORM_FIELDS:
@@ -995,18 +1011,36 @@ class CreateScreen(ModalScreen[dict | None]):
 
     def on_mount(self) -> None:
         self.query_one("#field-name", Input).focus()
-        self.run_worker(self.load_images, exclusive=True)
+        self.query_one("#field-user", Input).placeholder = invoking_user()
+        self.run_worker(self.load_hints, exclusive=True)
 
-    async def load_images(self) -> None:
-        """The image select's options: the catalog's listing. A
-        refusal keeps the form standing — a blank select still
-        creates against the daemon's default image."""
+    async def load_hints(self) -> None:
+        """The form's daemon hints: the image select's catalog and
+        the size placeholders' defaults. A refusal keeps the form
+        standing — blank fields still create against the daemon's
+        defaults."""
         try:
             rows = await self.app.data.images()
         except (Exception, SystemExit) as exc:
             self.note(f"image list failed: {escape(str(exc))}")
-            return
-        self.query_one("#field-image", Select).set_options(image_options(rows))
+        else:
+            self.query_one("#field-image", Select).set_options(
+                image_options(rows)
+            )
+        try:
+            defaults = await self.app.data.create_defaults()
+        except (Exception, SystemExit) as exc:
+            self.note(f"defaults failed: {escape(str(exc))}")
+        else:
+            self.size_placeholders(defaults)
+
+    def size_placeholders(self, defaults: dict) -> None:
+        """The root/home placeholders: the MiB unit beside the
+        default a blank field lands on."""
+        for field in ("root_mib", "home_mib"):
+            self.query_one(
+                f"#field-{field}", Input
+            ).placeholder = f"MiB — {defaults[field]}"
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Enter in a field moves the walk to the next control (the
@@ -1024,7 +1058,7 @@ class CreateScreen(ModalScreen[dict | None]):
         self.dismiss_with(None)
 
     def note(self, text: str) -> None:
-        """The form's note line: the walk hint, or the local
+        """The form's note line: its title, or the local
         refusal that keeps a half-filled body home."""
         self.query_one("#form-note", Static).update(text)
 
@@ -1045,7 +1079,7 @@ class CreateScreen(ModalScreen[dict | None]):
             if not self.land_field(field, body):
                 return None
         if "name" not in body:
-            self.note("a name is required — the label you address it by")
+            self.note("a workspace name is required")
             return None
         return body
 

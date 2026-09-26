@@ -51,6 +51,19 @@ class TuiData:
             ssl_ctx=shared_ssl(),
         )
 
+    async def create_defaults(self) -> dict:
+        """GET the create defaults — the root/home sizes a create
+        lands on when its body leaves them unset (the create
+        form's size placeholders hint them)."""
+        return await api_call(
+            "GET",
+            env_url(),
+            env_token(),
+            "/api/v1/create-defaults",
+            transport=self.transport,
+            ssl_ctx=shared_ssl(),
+        )
+
     async def create(self, body: dict) -> tuple[dict, Path | None]:
         """POST one workspace (the create form's fields), the client
         mint for its identity — ``(row, private-half path)``."""
