@@ -57,11 +57,7 @@ from .create import (  # noqa: F401
     write_client_identity,
 )
 from .forward import run_workspace_forward
-from .resize import (  # noqa: F401
-    display_name,
-    resize_boot_note,
-    resize_message,
-)
+from .resize import display_name, resize_message
 from .rest import (
     STREAM_WINDOW_B,
     api_call,

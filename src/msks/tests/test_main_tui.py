@@ -913,7 +913,9 @@ def test_edit_seeds_read_every_field_off_the_row() -> None:
     """The prefill (#331): every form field seeded from the row —
     sizes and topology as their numbers, the image as its hash,
     the user as the login user. A row that predates a field seeds
-    that field blank, and the seeds cover the form exactly."""
+    its fallback: a dash for an image (the workspace boots
+    explicit kernel/rootfs paths), the image's own account for a
+    login user, blank for the rest."""
     seeded = edit_seeds(row())
     assert seeded == {
         "name": "alpha",
@@ -925,7 +927,8 @@ def test_edit_seeds_read_every_field_off_the_row() -> None:
         "user": "ops",
     }
     bare = edit_seeds({"id": WS})
-    assert bare == {field: "" for field in seeded}
+    blank = {field: "" for field in seeded}
+    assert bare == {**blank, "image": "-", "user": "msks"}
 
 
 async def test_the_page_opens_the_prefilled_edit_dialog(
@@ -1063,7 +1066,9 @@ async def test_an_older_daemons_resize_reply_keeps_the_rows_facts(
 ) -> None:
     """A resize reply that predates a field (#331's defensive
     merge): the page keeps its row's own value for the missing
-    field — the merge never blanks what the daemon did not send."""
+    field — the merge fills the outcome line from the row, so a
+    partial reply never crashes the flash, even for the field the
+    body itself moved."""
     scripted_link(monkeypatch, [rules_frame()])
     data = FakeData([row()])
     data.resize_omit = {"cpus", "mem_mib"}
@@ -1072,12 +1077,14 @@ async def test_an_older_daemons_resize_reply_keeps_the_rows_facts(
         page = await open_page(pilot, app)
         await wait_for(lambda: action_children(app) == 6)
         screen = await open_edit(pilot, app)
+        screen.query_one("#field-cpus", Input).value = "4"
         screen.query_one("#field-root_mib", Input).value = "20480"
         screen.submit()
         await wait_for(lambda: "resized alpha" in consent_text(app))
         assert page.row["root_mib"] == 20480  # the reply's fact
         assert page.row["cpus"] == 2  # the row's own, kept
         assert page.row["mem_mib"] == 8192
+        assert "cpus 2" in consent_text(app)  # the row's fact, printed
 
 
 async def test_an_edit_refusal_flashes_on_the_page(monkeypatch) -> None:
@@ -1114,7 +1121,9 @@ async def test_the_edit_dialog_fits_the_small_terminal(
         await open_page(pilot, app)
         await wait_for(lambda: action_children(app) == 6)
         screen = await open_edit(pilot, app)
-        assert screen.query_one("#form").outer_size.height <= 24
+        form = screen.query_one("#form")
+        assert form.outer_size.height <= 23  # the footer keeps its row
+        assert screen.query_one("#form-note").region.height == 3
         last = screen.query_one("#field-home_mib", Input)
         buttons = screen.query_one("#form-buttons")
         assert last.region.bottom < 24

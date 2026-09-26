@@ -333,7 +333,8 @@ at the next boot. The name, image, and user fields show their
 current values read-only, marked `*` as create-time — changing
 them is a delete-and-recreate, and the dialog refuses a changed
 value with a note naming the field instead of accepting it
-silently. Escape closes the dialog and decides nothing.
+silently. A size left blank keeps its current value. Escape
+closes the dialog and decides nothing.
 
 The page's **Open a shell (new terminal)** action spawns the
 configured terminal launcher with a `msks ssh` invocation

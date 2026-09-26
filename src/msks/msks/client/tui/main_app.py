@@ -51,6 +51,7 @@ from textual.widgets import (
     Static,
 )
 
+from ...identity import LEGACY_LOGIN_USER
 from ..config import DEFAULT_TERMINAL_CMD, ClientConfig
 from ..console import run_workspace_shell
 from ..create import invoking_user
@@ -1391,8 +1392,13 @@ class WorkspaceScreen(Screen):
         if reply is None:
             return
         for field in ("root_mib", "home_mib", "cpus", "mem_mib"):
-            if field in reply:
-                self.row[field] = reply[field]
+            # A reply from a daemon older than a field omits it; the
+            # row's own fact fills the gap — the page's row keeps a
+            # value and the outcome line prints whole instead of
+            # dying on the missing key.
+            if field not in reply:
+                reply[field] = self.row[field]
+            self.row[field] = reply[field]
         self.paint_header()
         self.flash(flash_safe(resize_message(reply, body)))
 
@@ -1853,8 +1859,7 @@ CREATE_TIME_FIELDS = frozenset({"name", "image", "user"})
 
 #: The row keys the edit dialog's fields seed from (#331), in
 #: form-field order — the sizes and topology read the row's own
-#: facts, the image reads its hash, the user reads the login user
-#: (blank on a row created before per-workspace users).
+#: facts, the image reads its hash, the user reads the login user.
 EDIT_ROW_KEYS = {
     "name": "name",
     "image": "image_hash",
@@ -1865,16 +1870,25 @@ EDIT_ROW_KEYS = {
     "user": "login_user",
 }
 
+#: The seeds' fallbacks for a row that predates the field (#331):
+#: a workspace without an image hash boots explicit kernel/rootfs
+#: paths (the listing's own absent mark), and a row without a
+#: login user predates per-workspace users — its account is the
+#: image's own, the same default the ssh-key endpoint serves.
+EDIT_ROW_FALLBACKS = {"image": "-", "user": LEGACY_LOGIN_USER}
+
 
 def edit_seeds(row: dict) -> dict[str, str]:
     """The edit dialog's seeded values (#331): every form field's
     current value read off the workspace's row, as the field's
     own text — the sizes and topology as their numbers, a row
-    that predates a field seeding it blank."""
+    that predates a field seeding its fallback."""
     seeds: dict[str, str] = {}
     for field, key in EDIT_ROW_KEYS.items():
         value = row.get(key)
-        seeds[field] = "" if value is None else str(value)
+        if value is None:
+            value = EDIT_ROW_FALLBACKS.get(field, "")
+        seeds[field] = str(value)
     return seeds
 
 
