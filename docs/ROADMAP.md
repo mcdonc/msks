@@ -74,11 +74,12 @@ no web frontend yet.
   (#108–#112); the vsock console stays the failsafe.** Each workspace
   runs an sshd in the guest image (#110: `PasswordAuthentication no`,
   key-only logins, rsync shipped, host keys in the persistent overlay)
-  and the workspace identity defaults to the operator's own ssh key
-  (#336 — one key across workspaces: `identity_file`, a single key
-  under `~/.ssh`, or a key msks mints under the client data root;
-  the public half seeds through `user_data` and the daemon holds
-  public halves only), with the daemon mint (#111: Ed25519 by
+  and the workspace identity defaults to one operator key across
+  workspaces (#336 — the `identity_file` setting names the
+  operator's own key, else msks mints one under the client data
+  root and reuses it; the public half seeds through `user_data`
+  and the daemon holds public halves only), with the daemon mint
+  (#111: Ed25519 by
   default, #138 — FIPS-approvable per FIPS 186-5, #115 — both
   halves escrowed, the private half served over the authenticated
   API and materialized by the client only for the connection's

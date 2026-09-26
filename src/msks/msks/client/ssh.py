@@ -214,10 +214,10 @@ def configured_identity_file() -> Path | None:
 def load_identity_file(path: Path) -> str | None:
     """One private key file's PEM, or None when the file is
     missing, unreadable, or holds no key the session agent could
-    stage — the silent form, for scanning candidate locations. A
-    key that loads but cannot sign (a type or curve the agent has
-    no signer for) counts as unusable: planting it would create a
-    workspace `msks ssh` then cannot enter."""
+    stage — the silent form for the data root's minted key. A key
+    that loads but cannot sign (a type or curve the agent has no
+    signer for) counts as unusable: staging it would create a
+    session `msks ssh` cannot complete."""
     try:
         pem = path.read_text(encoding="utf-8")
         private = agent.load_private(pem)
@@ -265,68 +265,22 @@ def named_identity_file(path: Path) -> str:
     return pem
 
 
-def ssh_candidates() -> list[tuple[str, Path]]:
-    """Every usable private key under ``~/.ssh`` that has a ``.pub``
-    sibling: ``(pem, private-path)`` pairs, sorted by path."""
-    found: list[tuple[str, Path]] = []
-    for pub in ssh_pubs():
-        pem = candidate_pem(pub)
-        if pem is not None:
-            found.append((pem, pub.with_suffix("")))
-    return found
-
-
-def ssh_pubs() -> list[Path]:
-    """The ``.pub`` files under ``~/.ssh``, sorted — a ``~/.ssh``
-    this process cannot list (a locked directory, a path that is a
-    file) is simply no candidates."""
-    home = ssh_home()
-    try:
-        entries = os.listdir(home)
-    except OSError:
-        return []
-    return sorted(pub_files(home, entries))
-
-
-def pub_files(home: Path, entries: list[str]) -> list[Path]:
-    """The directory entries that name ``.pub`` files."""
-    pubs = [home / name for name in entries if name.endswith(".pub")]
-    return [p for p in pubs if p.is_file()]
-
-
-def candidate_pem(pub: Path) -> str | None:
-    """One ``.pub`` sibling's private half, when it loads — a
-    private half that is missing or does not load (an encrypted
-    key included) keeps its ``.pub`` from counting, so the scan
-    never offers a key the sugar commands could not stage."""
-    return load_identity_file(pub.with_suffix(""))
-
-
-def ssh_home() -> Path:
-    """The operator's ``~/.ssh`` — where the single-key scan looks."""
-    return Path("~/.ssh").expanduser()
-
-
 def operator_identity() -> tuple[str, Path] | None:
     """The file-based operator identity: ``(pem, source path)`` or
     None when no file resolves.
 
-    The resolution is deterministic and file-based only (#336's
-    non-goal: no agent discovery): ``identity_file`` /
-    ``MSKSC_IDENTITY_FILE`` first (the operator's explicit choice,
-    checked strictly), then a single unambiguous usable candidate
-    under ``~/.ssh``, then the key msks minted to the data root
-    (``<data_dir>/identity`` — a corrupt or missing file simply
-    does not resolve). Several usable ``~/.ssh`` candidates are
-    ambiguous, not a guess: the rung declines and the next one
-    applies.
+    Two rungs, both deterministic and file-based (#336's non-goal:
+    no agent discovery, and no scanning of the operator's own
+    ``~/.ssh`` — which key of yours msks should use is a choice you
+    make, not a guess msks makes): ``identity_file`` /
+    ``MSKSC_IDENTITY_FILE`` when set (the operator's explicit
+    choice, checked strictly), else the key msks minted to the
+    data root (``<data_dir>/identity`` — a corrupt or missing file
+    simply does not resolve, and the create mints one there).
     """
     configured = configured_identity_file()
     if configured is not None:
         return named_identity_file(configured), configured
-    candidates = ssh_candidates()
-    if len(candidates) == 1:
-        return candidates[0]
     minted = data_dir() / "identity"
     pem = load_identity_file(minted)
     if pem is not None:
@@ -435,7 +389,7 @@ def missing_half_line(path: Path) -> str:
         f"client — the daemon holds none, {path} is not "
         "readable, and the operator identity matched nothing here "
         "(identity_file / "
-        f"{IDENTITY_FILE_ENV}, a single key under ~/.ssh, or "
+        f"{IDENTITY_FILE_ENV}, or "
         f"{data_dir() / 'identity'}).\n"
         "The key was minted on another client (the file lives at "
         "that path on that machine), on this client under a "

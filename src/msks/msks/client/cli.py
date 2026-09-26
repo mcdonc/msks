@@ -1660,11 +1660,10 @@ def create(
         "--daemon-mint",
         help="let the daemon mint the workspace's ssh identity and "
         "escrow both halves (#111) — an explicit opt-out; the create "
-        "default (#336) plants your own operator key (identity_file, "
-        "a single key under ~/.ssh, or the key msks mints under the "
-        "client data root — `~/.local/share/msks/identity`, or that "
-        "root under MSKSC_DATA_DIR) and the daemon holds public halves "
-        "only",
+        "default (#336) plants one operator key across workspaces "
+        "(identity_file, or the key msks mints under the client data "
+        "root — `~/.local/share/msks/identity`, or that root under "
+        "MSKSC_DATA_DIR) and the daemon holds public halves only",
     ),
     pubkey: str | None = typer.Option(
         None,
@@ -2384,9 +2383,9 @@ def create_identity(
     line, identity note)``.
 
     The operator key is the default (#336): a bare create plants
-    the operator's own ssh key — ``identity_file`` / a single key
-    under ``~/.ssh`` / the key msks minted under the data root —
-    one key across workspaces, its derived public half on the
+    one operator key across workspaces — the ``identity_file`` /
+    ``MSKSC_IDENTITY_FILE`` setting when set, else the key msks
+    minted under the data root — its derived public half on the
     wire, nothing written per-workspace, and the private file
     never copied anywhere. ``--key-type`` opts into the
     per-workspace client mint (#121, today's default);
@@ -2499,7 +2498,7 @@ def run_create(args: CreateFlags, transport) -> int:
     """Build the body, then resolve the identity mode once — the
     body build fails on local grounds (a bad ``--user``, an
     unreadable ``--user-data``) before the resolver can read stdin
-    (``--pubkey -``), scan the operator's key files, or mint; the
+    (``--pubkey -``), load the operator identity, or mint; the
     resolver may also reject a flag pairing, so it runs a single
     time — then create."""
     if args.pubkey == "-" and args.user_data == "-":

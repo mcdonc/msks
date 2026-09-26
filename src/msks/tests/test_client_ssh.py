@@ -632,65 +632,47 @@ def test_resolve_private_names_a_missing_client_half(
         ssh.resolve_private({"public_key": "x", "private_key": None}, "alpha")
 
 
-def identity_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+def identity_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A deterministic operator-identity environment (#336): a
-    controlled empty ~/.ssh, a fresh data root, no ambient
-    identity_file."""
-    home = tmp_path / "home"
-    (home / ".ssh").mkdir(parents=True)
-    monkeypatch.setenv("HOME", str(home))
+    fresh data root, no ambient identity_file."""
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     monkeypatch.delenv("MSKSC_IDENTITY_FILE", raising=False)
     monkeypatch.delenv("MSKSC_DATA_DIR", raising=False)
-    return home
 
 
-def test_resolve_private_matches_the_configured_identity(
+def plant_operator_key(monkeypatch, tmp_path) -> tuple[str, str, Path]:
+    """One operator key named by identity_file: ``(pem, public,
+    path)``."""
+    pem, public = mint("ed25519")
+    mine = tmp_path / "my-key"
+    mine.write_text(pem)
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(mine))
+    return pem, public, mine
+
+
+def test_identity_file_outranks_the_minted_key(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A workspace planted with the operator's key (#336, the
     create default) has no per-workspace file: the private half
     comes from identity_file, checked against the served public
-    line."""
-    home = identity_home(monkeypatch, tmp_path)
-    pem, public = mint("ed25519")
-    # A decoy candidate under ~/.ssh must lose to identity_file.
-    decoy_pem, _decoy_public = mint("ecdsa")
-    (home / ".ssh" / "id_ed25519").write_text(decoy_pem)
-    (home / ".ssh" / "id_ed25519.pub").write_text("decoy\n")
-    mine = tmp_path / "my-key"
-    mine.write_text(pem)
-    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(mine))
+    line — and the data root's minted key loses to it when both
+    exist."""
+    identity_home(monkeypatch, tmp_path)
+    from msks.client.create import mint_operator_identity
+
+    mint_operator_identity()  # the losing rung
+    pem, public, _mine = plant_operator_key(monkeypatch, tmp_path)
     key = {"public_key": f"{public} msks-client:ws", "private_key": None}
     assert ssh.resolve_private(key, "ws1") == pem
-
-
-def test_resolve_private_matches_a_single_ssh_candidate(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """With identity_file unset, the single usable key under ~/.ssh
-    answers for the operator-key workspace (#336) — and a second
-    candidate makes the scan ambiguous, so the same row then falls
-    to the recovery instead of guessing."""
-    home = identity_home(monkeypatch, tmp_path)
-    pem, public = mint("ed25519")
-    (home / ".ssh" / "id_ed25519").write_text(pem)
-    (home / ".ssh" / "id_ed25519.pub").write_text(f"{public}\n")
-    key = {"public_key": f"{public} msks-client:ws", "private_key": None}
-    assert ssh.resolve_private(key, "ws1") == pem
-    other_pem, _other_public = mint("ecdsa")
-    (home / ".ssh" / "id_ecdsa").write_text(other_pem)
-    (home / ".ssh" / "id_ecdsa.pub").write_text("other\n")
-    with pytest.raises(SystemExit, match="matched nothing"):
-        ssh.resolve_private(key, "ws1")
 
 
 def test_resolve_private_matches_the_minted_operator_identity(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The key msks minted to <data_dir>/identity at create is the
-    third rung: an operator-key workspace resolves through it with
-    no ~/.ssh candidates at all (#336)."""
+    second rung: an operator-key workspace resolves through it with
+    identity_file unset (#336)."""
     identity_home(monkeypatch, tmp_path)
     from msks.client.create import mint_operator_identity, public_line
 
@@ -709,10 +691,8 @@ def test_resolve_private_keeps_access_across_a_recreated_workspace(
     empty and the operator rung answers, so the "re-created since
     that key was stored" failure mode disappears for operator-key
     workspaces (#336)."""
-    home = identity_home(monkeypatch, tmp_path)
-    pem, public = mint("ed25519")
-    (home / ".ssh" / "id_ed25519").write_text(pem)
-    (home / ".ssh" / "id_ed25519.pub").write_text(f"{public}\n")
+    identity_home(monkeypatch, tmp_path)
+    pem, public, _mine = plant_operator_key(monkeypatch, tmp_path)
     # The OLD incarnation's per-workspace half still sits under the
     # old id — a stale half for a row that no longer exists.
     old_pem, _old_public = mint("ecdsa")
@@ -729,15 +709,18 @@ def test_resolve_private_falls_past_a_stale_half_to_the_operator(
     """A stale per-workspace half (the id's earlier incarnation)
     falls through to the operator identity before the refusal: the
     row was re-created as an operator-key workspace (#336)."""
-    home = identity_home(monkeypatch, tmp_path)
-    pem, public = mint("ed25519")
-    (home / ".ssh" / "id_ed25519").write_text(pem)
-    (home / ".ssh" / "id_ed25519.pub").write_text(f"{public}\n")
+    identity_home(monkeypatch, tmp_path)
+    from msks.client.create import mint_operator_identity, public_line
+
+    pem, _path = mint_operator_identity()
     stale_pem, _stale_public = mint("ecdsa")
     path = tmp_path / "data" / "msks" / "ws1" / "identity"
     path.parent.mkdir(parents=True)
     path.write_text(stale_pem)
-    key = {"public_key": f"{public} msks-client:ws", "private_key": None}
+    key = {
+        "public_key": f"{public_line(pem)} msks-client:ws",
+        "private_key": None,
+    }
     assert ssh.resolve_private(key, "ws1") == pem
 
 
@@ -748,37 +731,21 @@ def test_resolve_private_recovery_names_identity_file(
     operator identity that either resolves to a different key or
     does not resolve at all — the recovery line names the
     identity_file setting among the rungs it tried (#336)."""
-    home = identity_home(monkeypatch, tmp_path)
+    identity_home(monkeypatch, tmp_path)
     # A resolving operator key that pairs with a DIFFERENT public
     # half: the rung declines, not guesses.
-    pem, _public = mint("ed25519")
-    (home / ".ssh" / "id_ed25519").write_text(pem)
-    (home / ".ssh" / "id_ed25519.pub").write_text("present\n")
+    _pem, _public, _mine = plant_operator_key(monkeypatch, tmp_path)
     key = {"public_key": "ssh-ed25519 AAAAnomatch x", "private_key": None}
     with pytest.raises(SystemExit) as caught:
         ssh.resolve_private(key, "ws1")
     line = str(caught.value)
     assert "MSKSC_IDENTITY_FILE" in line
-    assert "~/.ssh" in line
     assert "another client" in line
-    # And with ~/.ssh back to empty: nothing resolves at all, the
-    # same refusal answers.
-    (home / ".ssh" / "id_ed25519").unlink()
-    (home / ".ssh" / "id_ed25519.pub").unlink()
+    # And with nothing set at all: no identity resolves, the same
+    # refusal answers.
+    monkeypatch.delenv("MSKSC_IDENTITY_FILE")
     with pytest.raises(SystemExit, match="matched nothing"):
         ssh.resolve_private(key, "ws1")
-
-
-def test_ssh_pubs_treats_an_unlistable_ssh_home_as_empty(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """A ~/.ssh this process cannot list — here, a file squatting
-    on the directory's name — is no candidates, not a traceback
-    (#336)."""
-    home = identity_home(monkeypatch, tmp_path)
-    (home / ".ssh").rmdir()
-    (home / ".ssh").write_text("not a directory")
-    assert ssh.ssh_candidates() == []
 
 
 def test_resolve_private_names_a_broken_identity_file(
@@ -849,60 +816,32 @@ def test_the_agent_stages_the_wide_nist_curves() -> None:
         assert sig.startswith(agent.wire_string(algo.encode()))
 
 
-def test_the_scan_stages_only_keys_the_agent_signs(
+def test_the_staged_key_must_be_signable(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A key that loads but cannot sign declines the scan rung —
-    planting it would create a workspace msks ssh cannot enter. The
-    loader today accepts only signable types, so the guard is
-    driven with a stub key (future cryptography support widens the
-    loader; the guard is what keeps the promise)."""
-    home = identity_home(monkeypatch, tmp_path)
+    """A key that loads but cannot sign never becomes the operator
+    identity: the minted-key rung silently declines it, and an
+    identity_file that names one is a named refusal pointing at
+    --pubkey. The loader today accepts only signable types, so the
+    guard is driven with a stub key (future cryptography support
+    widens the loader; the guard is what keeps the promise)."""
+    identity_home(monkeypatch, tmp_path)
     pem, _public = mint("ed25519")
-    (home / ".ssh" / "id_ed25519").write_text(pem)
-    (home / ".ssh" / "id_ed25519.pub").write_text("stub\n")
+    minted = tmp_path / "data" / "msks" / "identity"
+    minted.parent.mkdir(parents=True)
+    minted.write_text(pem)
     real_load = agent.load_private
 
     def stub_loader(text: str):
-        # The one planted file "loads" to an object the agent has
+        # The one planted key "loads" to an object the agent has
         # no signer for; every other text loads for real.
         return SimpleNamespace() if text == pem else real_load(text)
 
     monkeypatch.setattr(ssh.agent, "load_private", stub_loader)
-    assert ssh.ssh_candidates() == []
-    monkeypatch.setenv(
-        "MSKSC_IDENTITY_FILE", str(home / ".ssh" / "id_ed25519")
-    )
+    assert ssh.operator_identity() is None
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(minted))
     with pytest.raises(SystemExit, match="cannot stage"):
         ssh.operator_identity()
-
-
-def test_ssh_candidates_skip_unusable_keys(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """The ~/.ssh scan counts only private halves that load: a
-    missing sibling or an encrypted key keeps its .pub from
-    counting, so one usable key beside any number of unusable ones
-    stays unambiguous (#336)."""
-    home = identity_home(monkeypatch, tmp_path)
-    # An unusable pair: .pub present, private encrypted.
-    encrypted, _public = mint("ed25519")
-    key = serialization.load_ssh_private_key(encrypted.encode(), password=b"")
-    locked = key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.OpenSSH,
-        encryption_algorithm=serialization.BestAvailableEncryption(b"pw"),
-    ).decode()
-    (home / ".ssh" / "id_locked").write_text(locked)
-    (home / ".ssh" / "id_locked.pub").write_text("locked\n")
-    # A .pub with no private sibling at all.
-    (home / ".ssh" / "id_ghost.pub").write_text("ghost\n")
-    candidates = ssh.ssh_candidates()
-    assert candidates == []
-    pem, _public = mint("ed25519")
-    (home / ".ssh" / "id_ed25519").write_text(pem)
-    (home / ".ssh" / "id_ed25519.pub").write_text("real\n")
-    assert ssh.ssh_candidates() == [(pem, home / ".ssh" / "id_ed25519")]
 
 
 def test_cache_dir_honors_xdg(monkeypatch: pytest.MonkeyPatch) -> None:

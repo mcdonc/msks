@@ -83,16 +83,15 @@ async def verify_no_escrow(client, workspace_id: str, public: str) -> None:
 def operator_pubkey() -> tuple[str, str]:
     """The bare create's identity (#336): ``(public line, note)``.
 
-    The operator's own key becomes every workspace's key: the
-    resolution of :func:`msks.client.ssh.operator_identity` — the
-    ``identity_file`` setting, a single usable key under
-    ``~/.ssh``, or the key msks minted under the data root — and
-    when none of those exists anywhere, one fresh key minted there
-    (mode 0600, once; every later create reuses it). The public
-    half is derived from the private and rides the create body
-    exactly as ``--pubkey``; the operator's private material is
-    never copied anywhere — a resolved key's file stays where it
-    lives, read in place each time.
+    One operator key becomes every workspace's key:
+    ``identity_file`` / ``MSKSC_IDENTITY_FILE`` when set — the
+    operator's explicit choice — else the key msks minted under
+    the data root; when none exists there, one is minted (mode
+    0600, once; every later create reuses it). The public half is
+    derived from the private and rides the create body exactly as
+    ``--pubkey``; the operator's private material is never copied
+    anywhere — a resolved key's file stays where it lives, read in
+    place each time.
     """
     resolved = operator_identity()
     if resolved is not None:
