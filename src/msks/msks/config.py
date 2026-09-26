@@ -10,7 +10,12 @@ variable with the prefix stripped and lowercased — ``MSKSD_PORT`` →
 ``port``, ``MSKSD_EGRESS_SUBNET`` → ``egress_subnet``. The mapping
 is derived from :data:`SETTING_ENV_VARS` by that one rule, so the
 file spelling and the variable spelling cannot drift apart, and
-either is recoverable from the other without a lookup table.
+either is recoverable from the other without a lookup table. A
+hyphen and an underscore spell the same key in the file (#332):
+``egress-dns-upstream`` and ``egress_dns_upstream`` are one setting
+spelled two ways, the same rule the ``MSKSD_LLM_MODELS`` entries'
+keys already follow. The snake_case spelling is the canonical one —
+the template, the docs, and the error messages write it.
 
 Mechanics: the file is parsed into a flat ``MSKSD_*`` variable layer
 and folded under the live environment as :class:`LayeredEnv`, which
@@ -265,29 +270,65 @@ def parse_config_doc(text: str, path: str) -> dict:
 
 
 def key_layer(doc: dict, path: str) -> dict:
-    """The validated key walk of a parsed config document."""
+    """The validated key walk of a parsed config document.
+
+    A hyphen and an underscore spell the same key (#332): each key
+    is normalized (``-`` → ``_``) before the lookup, so
+    ``egress-dns-upstream`` and ``egress_dns_upstream`` are one
+    setting spelled two ways. The snake_case spelling is the
+    canonical one — the template, the docs, and the valid-keys list
+    an unknown key reports write it.
+    """
     layer: dict = {}
+    spelled: dict[str, str] = {}
     for key, value in doc.items():
-        if not isinstance(key, str):
-            raise ValueError(
-                f"{path}: config keys must be strings, got {key!r}"
-            )
-        var = CONFIG_ENV_VARS.get(key)
-        if var is None:
-            valid = ", ".join(sorted(CONFIG_ENV_VARS))
-            raise ValueError(
-                f"{path}: unknown config key {key!r} (valid keys: {valid})"
-            )
+        check_key_string(key, path)
+        var = config_var(key, path)
+        note_spelling(var, key, spelled, path)
         if value is None:
             continue
         layer[var] = layer_value(key, value, var)
     return layer
 
 
+def check_key_string(key: object, path: str) -> None:
+    """One mapping key must be a string, named when it is not."""
+    if not isinstance(key, str):
+        raise ValueError(f"{path}: config keys must be strings, got {key!r}")
+
+
+def config_var(key: str, path: str) -> str:
+    """One key's ``MSKSD_*`` variable: the hyphen-to-underscore
+    normalization (#332) then the one-rule lookup; an unknown key
+    fails naming itself and the snake_case valid-keys list."""
+    var = CONFIG_ENV_VARS.get(key.replace("-", "_"))
+    if var is None:
+        valid = ", ".join(sorted(CONFIG_ENV_VARS))
+        raise ValueError(
+            f"{path}: unknown config key {key!r} (valid keys: {valid})"
+        )
+    return var
+
+
+def note_spelling(var: str, key: str, spelled: dict, path: str) -> None:
+    """Both spellings of one key in a file is an error naming both
+    (#332) — the same fail-fast rule duplicate keys already carry."""
+    if var in spelled:
+        raise ValueError(
+            f"{path}: duplicate config key {key!r} — already spelled "
+            f"{spelled[var]!r} (a hyphen and an underscore spell the "
+            f"same key)"
+        )
+    spelled[var] = key
+
+
 def layer_value(key: str, value: object, var: str):
     """One key's env-layer value: the one list-valued key keeps its
-    validated list; every other key must be a scalar."""
-    if isinstance(value, list) and LIST_KEYS.get(key) == var:
+    validated list (looked up by its normalized spelling, so a
+    kebab-case ``llm-models`` is the same key); every other key
+    must be a scalar."""
+    name = key.replace("-", "_")
+    if isinstance(value, list) and LIST_KEYS.get(name) == var:
         return list_value(key, value)
     return scalar_to_str(key, value)
 
@@ -431,7 +472,10 @@ def render_template() -> str:
 # This file is the durable home for msksd's settings. Every key here
 # also exists as an MSKSD_* environment variable, spelled the same
 # with the prefix stripped and lowercased (MSKSD_PORT -> port,
-# MSKSD_EGRESS_SUBNET -> egress_subnet). A variable set in the
+# MSKSD_EGRESS_SUBNET -> egress_subnet). A hyphen may be written
+# for the underscore (egress-subnet is the same key as
+# egress_subnet); the underscores shown here are the canonical
+# spelling. A variable set in the
 # process overrides the same key in this file, and a key set nowhere
 # uses the built-in default. Precedence:
 #   environment > this file > built-in defaults
