@@ -301,6 +301,8 @@ async def test_start_stop_and_remove_from_the_list(monkeypatch) -> None:
         await wait_for(lambda: list_children(app) == 0)
         assert "alpha deleted" in status_text(app)
         assert "No workspaces" in str(app.query_one("#empty", Static).content)
+        # The empty state replaces the header row (#347).
+        assert not app.query_one("#columns", Static).display
 
 
 async def test_a_listing_failure_flashes() -> None:
@@ -1139,6 +1141,46 @@ def test_the_line_helpers() -> None:
     assert WS in head and "host-1" in head
     assert main_app.created_note(row(id="x"), None) == "created alpha (id x)"
     assert "identity" in main_app.created_note(row(id="x"), "/tmp/id")
+
+
+def test_the_listing_columns_line_up() -> None:
+    """#347: every field pads to its column's width, so the status,
+    egress, image, and date start at the same offset in every row —
+    and the header's labels ride the same offsets. A name longer
+    than its column clips at its middle instead of pushing the rest
+    of the row sideways."""
+    short = main_app.row_line(row(name="ab"))
+    long_name = main_app.row_line(row(name="n" * 40))
+    header = main_app.list_header()
+    for label, cell in (
+        ("STATUS", "stopped"),
+        ("EGRESS", "interactive"),
+        ("IMAGE", "a" * 12),
+        ("CREATED", "2026-01-02"),
+    ):
+        assert short.index(cell) == long_name.index(cell)
+        assert header.index(label) == short.index(cell)
+    assert "…" in long_name  # the name clipped inside its column
+
+
+async def test_the_listing_header_row_shows_with_rows() -> None:
+    """#347: the column labels ride above the rows; the empty
+    state takes the header's place when the last row leaves."""
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        columns = app.query_one("#columns", Static)
+        await wait_for(lambda: columns.display)
+        await wait_for(lambda: "alpha" in row_text(app, 0))
+        # The header's labels line up with the row's cells on the
+        # rendered screen (the padding gives both a left edge).
+        assert columns.region.x == (
+            app.query_one("#rows").children[0].region.x
+        )
+        data.rows = []
+        await pilot.press("r")
+        await wait_for(lambda: list_children(app) == 0)
+        assert not columns.display
 
 
 def test_the_flash_line_expires() -> None:
