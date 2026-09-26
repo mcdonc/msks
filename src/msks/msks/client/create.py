@@ -2,11 +2,14 @@
 
 Shared by the CLI's ``msks create`` (:mod:`msks.client.cli`) and
 the workspace TUI's create form (#309) so both speak the daemon's
-create surface the same way: the client mint (#121) mints locally
-and sends the public half only, an operator-supplied key (#132)
-sends its line, and the daemon mint is the explicit opt-out. Every
-piece is quiet — the callers own the operator surface (prints in
-the CLI, flashes in the TUI).
+create surface the same way: the operator key is the CLI's
+default (#336 — the operator's own ssh key, one key across
+workspaces, public half only on the wire), an operator-supplied
+line (#132) sends its line, the per-workspace client mint (#121,
+``--key-type``) mints locally and sends the public half only, and
+the daemon mint is the explicit opt-out. Every piece is quiet —
+the callers own the operator surface (prints in the CLI, flashes
+in the TUI).
 """
 
 import asyncio
@@ -15,8 +18,15 @@ import os
 from pathlib import Path
 
 from ..identity import LOGIN_NAME_RE, mint
+from .agent import load_private
 from .rest import api_client, request
-from .ssh import data_dir
+from .ssh import data_dir, derived_public, operator_identity
+
+#: The mint rung's key type (#336): the same FIPS-approvable
+#: default the per-workspace client mint and the daemon mint carry
+#: (#115, #138) — the operator identity is minted by msks itself,
+#: so it stays inside the mint's type set.
+OPERATOR_KEY_TYPE = "ed25519"
 
 
 async def identity_material(
@@ -65,34 +75,101 @@ async def verify_no_escrow(client, workspace_id: str, public: str) -> None:
         )
 
 
-def write_client_identity(workspace_id: str, private_pem: str) -> Path:
-    """The client-minted private half, persisted mode 0600 (#121).
+def operator_pubkey() -> tuple[str, str]:
+    """The bare create's identity (#336): ``(public line, note)``.
+
+    The operator's own key becomes every workspace's key: the
+    resolution of :func:`msks.client.ssh.operator_identity` — the
+    ``identity_file`` setting, a single usable key under
+    ``~/.ssh``, or the key msks minted under the data root — and
+    when none of those exists anywhere, one fresh key minted there
+    (mode 0600, once; every later create reuses it). The public
+    half is derived from the private and rides the create body
+    exactly as ``--pubkey``; the operator's private material is
+    never copied anywhere — a resolved key's file stays where it
+    lives, read in place each time.
+    """
+    resolved = operator_identity()
+    if resolved is not None:
+        pem, source = resolved
+        return public_line(pem), f"identity: {source}"
+    pem, path = mint_operator_identity()
+    return public_line(pem), f"operator identity minted (mode 0600): {path}"
+
+
+def public_line(pem: str) -> str:
+    """The authorized_keys line a private half derives — algorithm
+    and key body, no comment (the daemon annotates provenance its
+    own way)."""
+    return " ".join(derived_public(load_private(pem)))
+
+
+def mint_operator_identity() -> tuple[str, Path]:
+    """One fresh operator key, written mode 0600 to
+    ``<data_dir>/identity`` — the rung that fires when no operator
+    key resolves anywhere.
+
+    The write happens before the create's POST on purpose: the key
+    belongs to the operator, not to the workspace, so a refused
+    create leaves it for the next create to reuse (rung 3), not an
+    orphan tied to a workspace that never existed. An unusable
+    data root is one named line pointing at ``identity_file`` as
+    the way to bring your own key instead.
+    """
+    pem, _public = mint(OPERATOR_KEY_TYPE)
+    path = data_dir() / "identity"
+    write_private_half(
+        path,
+        pem,
+        "msks: the operator identity could not be written to "
+        "{path}: {exc}\n"
+        "msks cannot keep a key of its own there — point identity_file "
+        "(or MSKSC_IDENTITY_FILE) at your own private key file, or fix "
+        "the data root (MSKSC_DATA_DIR relocates it)",
+    )
+    return pem, path
+
+
+def write_private_half(path: Path, private_pem: str, refusal: str) -> Path:
+    """The 0600 private-half write shared by the two mints.
 
     The file is created 0600 from the first byte (open-write-chmod
-    would leave a umask-window where the workspace's only private
-    half is group-readable), the mode forced again on a pre-existing
-    file, under the data root (not the cache: this half must survive
-    cache sweeps). No escrow cuts both ways: a failed write is loud —
-    the workspace exists with the public half planted, and the
-    private half exists nowhere on disk.
+    would leave a umask-window where the only private half is
+    group-readable), the mode forced again on a pre-existing file.
+    ``refusal`` is the one-line exit an unusable path raises
+    (formatted with ``{path}`` and ``{exc}``) — each mint names its
+    own recovery.
     """
-    root = data_dir() / workspace_id
-    path = root / "identity"
     try:
-        root.mkdir(parents=True, exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(private_pem)
     except OSError as exc:
-        raise SystemExit(
-            f"msks: {workspace_id} was created, but its client-minted "
-            f"identity could not be written to {path}: {exc}\n"
-            "The private half now exists nowhere on disk — ssh cannot "
-            "use this workspace's identity. Use the console, or delete "
-            "and recreate the workspace"
-        ) from exc
+        raise SystemExit(refusal.format(path=path, exc=exc)) from exc
     return path
+
+
+def write_client_identity(workspace_id: str, private_pem: str) -> Path:
+    """The client-minted private half, persisted mode 0600 (#121).
+
+    The file lands under the data root (not the cache: this half
+    must survive cache sweeps), keyed on the workspace's immutable
+    id. No escrow cuts both ways: a failed write is loud — the
+    workspace exists with the public half planted, and the private
+    half exists nowhere on disk.
+    """
+    path = data_dir() / workspace_id / "identity"
+    return write_private_half(
+        path,
+        private_pem,
+        f"msks: {workspace_id} was created, but its client-minted "
+        "identity could not be written to {{path}}: {{exc}}\n"
+        "The private half now exists nowhere on disk — ssh cannot "
+        "use this workspace's identity. Use the console, or delete "
+        "and recreate the workspace",
+    )
 
 
 def invoking_user() -> str:

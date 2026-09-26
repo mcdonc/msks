@@ -88,6 +88,9 @@ CONFIG_FILENAME = "msks.yaml"
 #: variable that overrides it. ``token_file``'s variable carries
 #: the token itself, not a path — the file form points at a file so
 #: the config tree stays free of inline credentials (#314).
+#: ``identity_file`` names the operator's own private key file
+#: (#336) and is global-only (no per-alias form): an identity
+#: belongs to the operator, not to a daemon connection.
 GLOBAL_ENV_VARS: dict[str, str] = {
     "url": "MSKSC_URL",
     "token_file": "MSKSC_TOKEN",
@@ -95,6 +98,7 @@ GLOBAL_ENV_VARS: dict[str, str] = {
     "expected_image": "MSKSC_EXPECTED_IMAGE",
     "cache_dir": "MSKSC_CACHE_DIR",
     "data_dir": "MSKSC_DATA_DIR",
+    "identity_file": "MSKSC_IDENTITY_FILE",
 }
 
 #: The keys one ``daemons:`` entry may carry. ``url`` is the one
@@ -575,8 +579,9 @@ def read_token_file(token_file: str, path: str) -> str:
 
 
 def global_or_env(key: str, doc: dict):
-    """A global-only key's winner (``cache_dir``, ``data_dir``):
-    the environment first, then the file's global value."""
+    """A global-only key's winner (``cache_dir``, ``data_dir``,
+    ``identity_file``): the environment first, then the file's
+    global value."""
     env = os.environ.get(GLOBAL_ENV_VARS[key], "")
     if env:
         return env, False
@@ -614,6 +619,7 @@ class ClientConfig:
     expected_image: str
     cache_dir: str | None
     data_dir: str | None
+    identity_file: str | None
     terminal_open_cmd: list[str]
     daemon: str | None
     env_layer: dict[str, str] = field(default_factory=dict)
@@ -641,6 +647,7 @@ def resolve(
     image = resolved_scalar("expected_image", entry, selection, doc, layer)
     cache = resolved_global("cache_dir", doc, layer)
     data = resolved_global("data_dir", doc, layer)
+    identity = resolved_global("identity_file", doc, layer)
     return ClientConfig(
         url=url,
         token=token,
@@ -648,6 +655,7 @@ def resolve(
         expected_image=image or "",
         cache_dir=cache,
         data_dir=data,
+        identity_file=identity,
         terminal_open_cmd=terminal_command(doc),
         daemon=selection.alias,
         env_layer=layer,
@@ -707,8 +715,8 @@ def resolved_scalar(
 
 
 def resolved_global(key: str, doc: dict, layer: dict):
-    """One global-only key's winner (``cache_dir``, ``data_dir``),
-    filed when the file provided it."""
+    """One global-only key's winner (``cache_dir``, ``data_dir``,
+    ``identity_file``), filed when the file provided it."""
     value, from_file = global_or_env(key, doc)
     if from_file and value is not None:
         layer[GLOBAL_ENV_VARS[key]] = value
@@ -775,6 +783,12 @@ def render_template() -> str:
 #                                # against the daemon's /health (#160)
 # cache_dir: ~/.cache/msks      # per-workspace host-key caches (#251)
 # data_dir: ~/.local/share/msks # client-minted identities (#251)
+# identity_file: ~/.ssh/id_ed25519  # your own private key — the ssh
+#                                # identity a bare msks create plants
+#                                # into every workspace (#336); msks
+#                                # reads it in place and copies it
+#                                # nowhere. Global-only: a per-alias
+#                                # identity_file is refused
 # terminal_open_cmd: konsole -e # the launcher the workspace page's
 #                                # new-terminal shell action opens
 #                                # workspace shells through (#314,

@@ -94,7 +94,11 @@ def devenv_shell_presets(monkeypatch: pytest.MonkeyPatch) -> None:
     root (#262); tests exercise the documented defaults (the XDG
     roots, the home config tree) and their own explicit overrides,
     so the ambient presets never pick the root for them.
+    MSKSC_IDENTITY_FILE (#336) joins them for the same reason: the
+    operator identity is file-based state an ambient export would
+    pin for every create-resolution test.
     """
     monkeypatch.delenv("MSKSC_CACHE_DIR", raising=False)
     monkeypatch.delenv("MSKSC_DATA_DIR", raising=False)
+    monkeypatch.delenv("MSKSC_IDENTITY_FILE", raising=False)
     monkeypatch.delenv("MSKSD_CONFIG_DIR", raising=False)

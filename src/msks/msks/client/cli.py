@@ -53,6 +53,7 @@ from .create import (  # noqa: F401
     checked_login_name,
     create_workspace_core,
     invoking_user,
+    operator_pubkey,
     write_client_identity,
 )
 from .forward import run_workspace_forward
@@ -74,7 +75,7 @@ from .rest import (
     fetch_ssh_key as rest_fetch_ssh_key,
 )
 from .rsync import run_workspace_rsync
-from .ssh import data_dir, run_workspace_ssh
+from .ssh import IDENTITY_FILE_ENV, data_dir, run_workspace_ssh
 from .tabular import listing_text
 from .tui.consent_app import run_consent_tui
 from .tui.main_app import run_main_tui
@@ -186,17 +187,28 @@ def cmd_create(
     transport=None,
     key_type: str | None = None,
     pubkey: str | None = None,
+    identity_note: str | None = None,
 ) -> int:
     """``msks create``: one workspace, optionally booted.
 
-    ``key_type`` names the client-mint mode (#121): minted locally,
-    public half sent, private half kept. ``pubkey`` is an
-    operator-supplied public line (#132): sent as-is, no private
-    half anywhere msks manages.
+    ``key_type`` names the per-workspace client-mint mode (#121,
+    ``--key-type``): minted locally, public half sent, private half
+    kept. ``pubkey`` is an operator-supplied public line (#132,
+    ``--pubkey`` and the operator-key default #336): sent as-is, no
+    private half anywhere msks manages. ``identity_note`` is the
+    operator-key default's confirmation line (the identity source
+    the create planted).
     """
     asyncio.run(
         create_workspace(
-            env_url(), env_token(), body, start, transport, key_type, pubkey
+            env_url(),
+            env_token(),
+            body,
+            start,
+            transport,
+            key_type,
+            pubkey,
+            identity_note,
         )
     )
     return 0
@@ -210,6 +222,7 @@ async def create_workspace(
     transport,
     key_type: str | None = None,
     pubkey: str | None = None,
+    identity_note: str | None = None,
 ) -> dict:
     """POST the workspace, print its name and id, then boot it when
     asked.
@@ -220,14 +233,17 @@ async def create_workspace(
     start``. The daemon mints the workspace's immutable id (#246);
     the follow-up calls (boot, identity) address the workspace by
     that id, and the label the operator typed stays the day-to-day
-    reference. In the client-mint mode (#121) the keypair is minted
-    by :func:`create_workspace_core` — the private half never
-    crosses the wire — and is persisted (mode 0600, client data
-    root, keyed on the id) only after the create succeeded, so a
-    refused create leaves no orphaned key behind. With an
-    operator-supplied key (#132) only the public line travels and
-    nothing is written client-side: the private half stays wherever
-    the operator keeps it.
+    reference. In the per-workspace client-mint mode (#121,
+    ``--key-type``) the keypair is minted by
+    :func:`create_workspace_core` — the private half never crosses
+    the wire — and is persisted (mode 0600, client data root,
+    keyed on the id) only after the create succeeded, so a refused
+    create leaves no orphaned key behind. With an
+    operator-supplied key (#132, and the operator-key default
+    #336) only the public line travels and nothing is written
+    client-side: the private half stays wherever the operator
+    keeps it, read in place. ``identity_note`` (the operator-key
+    default's source line) prints after the created line.
     """
     # One TLS context serves the create and the boot (an unverified
     # daemon warns once per context — the pair must not warn twice).
@@ -242,6 +258,8 @@ async def create_workspace(
         pubkey=pubkey,
         announce=print_created_line,
     )
+    if identity_note is not None:
+        print(identity_note)
     if path is not None:
         print(f"client identity (mode 0600): {path}")
     if not start:
@@ -407,7 +425,7 @@ def write_private_key(key: dict, out: str) -> None:
 
 def require_daemon_half(key: dict, workspace_id: str) -> None:
     """Refuse the private forms for a workspace whose private half
-    the daemon never held (#121, #132): the error names the two
+    the daemon never held (#121, #132, #336): the error names the
     places that half can be instead of printing nothing."""
     if key["private_key"] is None:
         directory = key.get("id") or workspace_id
@@ -415,7 +433,8 @@ def require_daemon_half(key: dict, workspace_id: str) -> None:
             f"msks key: the daemon holds no private half for {workspace_id}. "
             "The workspace's key was minted on a client (its private half "
             f"lives at {data_dir() / directory / 'identity'} on that "
-            "machine), or supplied from a key you already own — use that "
+            "machine), or it is the operator's own key — point identity_file "
+            f"(or {IDENTITY_FILE_ENV}) at its private file, or use that "
             "key directly"
         )
 
@@ -1640,26 +1659,32 @@ def create(
         False,
         "--daemon-mint",
         help="let the daemon mint the workspace's ssh identity and "
-        "escrow both halves (#111) instead of the client mint — the "
-        "create default (#121) mints on this client, sends the public "
-        "half only, and keeps the private half (mode 0600 under the "
-        "client data root — `~/.local/share/msks/<id>/identity`, or "
-        "that root under MSKSC_DATA_DIR — where msks ssh finds it)",
+        "escrow both halves (#111) — an explicit opt-out; the create "
+        "default (#336) plants your own operator key (identity_file, "
+        "a single key under ~/.ssh, or the key msks mints under the "
+        "client data root — `~/.local/share/msks/identity`, or that "
+        "root under MSKSC_DATA_DIR) and the daemon holds public halves "
+        "only",
     ),
     pubkey: str | None = typer.Option(
         None,
         "--pubkey",
         metavar="FILE",
         help="use a public key you already own as the workspace's ssh "
-        "identity (#132): the file's one line travels to the daemon, "
-        "any well-formed key type, and the private half stays wherever "
-        "you keep it (nothing is written client-side). - reads stdin",
+        "identity (#132), one workspace's worth: the file's one line "
+        "travels to the daemon, any well-formed key type, and the "
+        "private half stays wherever you keep it (nothing is written "
+        "client-side). - reads stdin",
     ),
     key_type: str | None = typer.Option(
         None,
         "--key-type",
         metavar="TYPE",
-        help="the client mint's key type: one of "
+        help="opt into the per-workspace client mint (#121): a fresh "
+        "keypair minted on this client per workspace — public half "
+        "sent, private half kept mode 0600 under the client data root "
+        "(`~/.local/share/msks/<id>/identity`, or that root under "
+        "MSKSC_DATA_DIR) where msks ssh finds it. TYPE is one of "
         f"{', '.join(sorted(KEY_TYPES))} (default ed25519, the same "
         "FIPS-approvable default the daemon mints)",
     ),
@@ -2352,23 +2377,33 @@ def main(argv: list[str] | None = None, transport=None) -> int:
     return code or 0
 
 
-def create_identity(args: CreateFlags) -> tuple[str | None, str | None]:
-    """The create's identity mode: ``(mint key type, supplied line)``.
+def create_identity(
+    args: CreateFlags,
+) -> tuple[str | None, str | None, str | None]:
+    """The create's identity mode: ``(mint key type, supplied
+    line, identity note)``.
 
-    The client mint is the default (#121): absent flags mint locally
-    (ed25519, the same FIPS-approvable default the daemon mints).
-    ``--daemon-mint`` hands the identity to the daemon (escrow on
-    the daemon). ``--pubkey`` supplies an operator key (#132) — any
-    well-formed type, no mint, nothing written client-side. The
-    three modes are exclusive
+    The operator key is the default (#336): a bare create plants
+    the operator's own ssh key — ``identity_file`` / a single key
+    under ``~/.ssh`` / the key msks minted under the data root —
+    one key across workspaces, its derived public half on the
+    wire, nothing written per-workspace, and the private file
+    never copied anywhere. ``--key-type`` opts into the
+    per-workspace client mint (#121, today's default);
+    ``--daemon-mint`` hands the identity to the daemon (#111);
+    ``--pubkey`` supplies a one-off operator line (#132). The
+    three explicit modes are exclusive
     (:func:`check_identity_conflicts` names the pairings).
     """
     check_identity_conflicts(args)
     if args.daemon_mint:
-        return None, None
+        return None, None, None
     if args.pubkey is not None:
-        return None, read_pubkey(args.pubkey)
-    return args.key_type or "ed25519", None
+        return None, read_pubkey(args.pubkey), None
+    if args.key_type is not None:
+        return args.key_type, None, None
+    public, note = operator_pubkey()
+    return None, public, note
 
 
 #: The identity-mode flag conflicts, as message → attribute names:
@@ -2462,20 +2497,21 @@ def run_resize(
 
 def run_create(args: CreateFlags, transport) -> int:
     """Resolve the identity mode once — the resolver may read stdin
-    (``--pubkey -``) or reject a flag pairing, so it runs a single
-    time — then create."""
+    (``--pubkey -``), scan the operator's key files, or reject a
+    flag pairing, so it runs a single time — then create."""
     if args.pubkey == "-" and args.user_data == "-":
         raise SystemExit(
             "msks: --pubkey - and --user-data - both read stdin; "
             "pass one of them by file"
         )
-    key_type, pubkey = create_identity(args)
+    key_type, pubkey, note = create_identity(args)
     return cmd_create(
         create_body(args),
         args.start,
         transport=transport,
         key_type=key_type,
         pubkey=pubkey,
+        identity_note=note,
     )
 
 

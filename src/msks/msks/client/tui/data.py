@@ -15,10 +15,13 @@ from ..create import create_workspace_core, invoking_user
 from ..rest import api_call, env_token, env_url
 from .consent_app import shared_ssl
 
-#: The create form's identity mode (#309): the client mint, the
-#: same default ``msks create`` ships (#121) — the keypair is minted
-#: on this client, the public half travels, the private half is
-#: written mode 0600 under the client data root.
+#: The create form's identity mode (#309): the per-workspace
+#: client mint, taken explicitly — the keypair is minted on this
+#: client, the public half travels, the private half is written
+#: mode 0600 under the client data root. The CLI's bare-create
+#: default (#336) plants the operator's own key instead; the TUI
+#: form keeps the per-workspace mint until it grows an operator-key
+#: surface of its own.
 TUI_KEY_TYPE = "ed25519"
 
 
