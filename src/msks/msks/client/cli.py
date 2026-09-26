@@ -1440,9 +1440,9 @@ invocation_tokens: list[str] = []
 #: The invocation's resolved client config (#314), set by the root
 #: callback right after the bootstrap and read by the TUI entry
 #: points: the tree's new-terminal shell action (#341) spawns its
-#: console child with the launcher and the ``--daemon``/``--config``
-#: values the resolution recorded. None when no bootstrap ran (a
-#: help screen — and then no TUI starts either).
+#: console child with the launcher the resolution carries. None
+#: when no bootstrap ran (a help screen — and then no TUI starts
+#: either).
 invoked_conf: ClientConfig | None = None
 
 

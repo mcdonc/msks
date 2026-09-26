@@ -630,37 +630,26 @@ async def test_the_page_opens_a_shell(monkeypatch) -> None:
 # -- the new-terminal shell action (#341) ----------------------------------
 
 
-def test_the_console_child_argv_forwards_the_invocation() -> None:
+def test_the_console_child_argv_spawns_this_client() -> None:
     """The spawned console invocation: this client's own
-    interpreter and module, the --daemon/--config flags the tree
-    was started with (the bootstrap's materialized environment is
-    not enough — a flag's choice outranks it without landing in
-    it), then the console command and the workspace."""
-    assert main_app.console_child_argv("w1", None, None) == [
+    interpreter and module (an editable checkout spawns itself; an
+    installed client its own environment), then the console
+    command and the workspace — the child reaches the same daemon
+    through the environment the tree's bootstrap materialized."""
+    assert main_app.console_child_argv("w1") == [
         sys.executable,
         "-m",
         "msks.client.cli",
         "console",
         "w1",
     ]
-    assert main_app.console_child_argv("w2", "dev", "none") == [
-        sys.executable,
-        "-m",
-        "msks.client.cli",
-        "--daemon",
-        "dev",
-        "--config",
-        "none",
-        "console",
-        "w2",
-    ]
 
 
-def test_spawn_window_detaches_quietly() -> None:
+async def test_spawn_window_detaches_quietly() -> None:
     """The spawn runs detached with its stdio on devnull: the
     window borrows no terminal the tree holds."""
-    proc = main_app.spawn_window([sys.executable, "-c", "pass"])
-    assert proc.wait(timeout=10) == 0
+    proc = await main_app.spawn_window([sys.executable, "-c", "pass"])
+    assert await asyncio.wait_for(proc.wait(), 10) == 0
 
 
 async def test_the_new_terminal_action_spawns_a_console_child(
@@ -671,13 +660,18 @@ async def test_the_new_terminal_action_spawns_a_console_child(
     tree keeps running beside the window."""
     scripted_link(monkeypatch, [])
     spawned: list[list[str]] = []
-    monkeypatch.setattr(main_app, "spawn_window", spawned.append)
+
+    async def record(argv):
+        spawned.append(argv)
+
+        async def closed():
+            return 0
+
+        return SimpleNamespace(wait=closed)
+
+    monkeypatch.setattr(main_app, "spawn_window", record)
     data = FakeData([row()])
-    conf = SimpleNamespace(
-        terminal_open_cmd=["kitty", "-e"],
-        daemon_arg="dev",
-        config_arg="/tmp/msks.yaml",
-    )
+    conf = SimpleNamespace(terminal_open_cmd=["kitty", "-e"])
     app = MsksTuiApp(TuiFollow(), data=data, conf=conf)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
@@ -691,26 +685,32 @@ async def test_the_new_terminal_action_spawns_a_console_child(
             sys.executable,
             "-m",
             "msks.client.cli",
-            "--daemon",
-            "dev",
-            "--config",
-            "/tmp/msks.yaml",
             "console",
             WS,
         ]
         await wait_for(lambda: "opened a shell window" in status_text(app))
         assert on_page(app)  # the tree kept running
+        # The hold keeps a running window's task referenced; the
+        # done-callback drops it once the window has closed.
+
+        async def closed():
+            return 0
+
+        app.hold_child(SimpleNamespace(wait=closed))
+        assert len(app.reapers) == 1  # held while the window runs
+        await wait_for(lambda: not app.reapers)  # dropped at close
 
 
 async def test_a_dead_launcher_falls_back_to_this_terminal(
     monkeypatch,
 ) -> None:
-    """A launcher that cannot start (a missing binary) flashes its
-    reason and takes the same-terminal shell flow instead — the
-    documented fallback (#341)."""
+    """A launcher that cannot start (a missing binary) seeds the
+    restarted tree's flash with its reason — the exiting tree's
+    own status line dies with it — and takes the same-terminal
+    shell flow instead, the documented fallback (#341)."""
     scripted_link(monkeypatch, [])
 
-    def refused(argv):
+    async def refused(argv):
         raise FileNotFoundError("xterm")
 
     monkeypatch.setattr(main_app, "spawn_window", refused)
@@ -724,6 +724,7 @@ async def test_a_dead_launcher_falls_back_to_this_terminal(
         await pilot.press("enter")
         await pilot.pause()
     assert follow.take() == (FLOW_SHELL, WS)
+    assert "shell window failed" in (follow.seed or "")
 
 
 async def test_the_page_stops_deciding_when_it_closes(monkeypatch) -> None:

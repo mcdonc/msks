@@ -3981,10 +3981,10 @@ def test_a_bare_msks_is_the_tree_tui(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_the_tree_carries_the_invocations_resolution(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Both TUI entries receive the resolved config (#341) with
-    the raw --daemon/--config values recorded: the new-terminal
-    shell action reads the launcher from it and forwards the flags
-    so the spawned console reaches the same daemon."""
+    """Both TUI entries receive the resolved config (#341): the
+    new-terminal shell action reads the terminal launcher from it,
+    and the spawned child inherits the config's materialized
+    connection."""
     seen: list = []
 
     def routed(workspace=None, conf=None) -> int:
@@ -4002,11 +4002,9 @@ def test_the_tree_carries_the_invocations_resolution(
     )
     assert cli.main(["--config", str(path)]) == 0
     flagged, ambient = seen
-    assert flagged.daemon_arg == "lab"
-    assert flagged.config_arg == str(path)
     assert flagged.terminal_open_cmd == ["xterm", "-e"]
-    assert ambient.daemon_arg is None
-    assert ambient.config_arg == str(path)
+    assert flagged.url == "https://lab:8660"
+    assert ambient.url == "https://lab:8660"
 
 
 def test_flag_validation_refusals_exit_two(

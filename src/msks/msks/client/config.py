@@ -63,10 +63,7 @@ then file, then the built-in ``xterm -e`` — and lands on the
 returned :class:`ClientConfig`, where the workspace TUI's
 new-terminal shell action (#341) reads it: the launcher the
 action appends the console invocation to, falling back to the
-same-terminal shell when the launcher cannot start. The
-resolved config also records the raw ``--daemon``/``--config``
-values the invocation carried, so a spawned console child can
-repeat them and reach the same daemon.
+same-terminal shell when the launcher cannot start.
 """
 
 from __future__ import annotations
@@ -619,13 +616,6 @@ class ClientConfig:
     data_dir: str | None
     terminal_open_cmd: list[str]
     daemon: str | None
-    #: The raw ``--daemon`` and ``--config`` values the invocation
-    #: carried (#341), recorded for a spawned child: the child
-    #: must repeat the flags to reach this daemon, because a
-    #: flag's choice outranks the environment without ever
-    #: landing in it.
-    daemon_arg: str | None = None
-    config_arg: str | None = None
     env_layer: dict[str, str] = field(default_factory=dict)
 
 
@@ -660,8 +650,6 @@ def resolve(
         data_dir=data,
         terminal_open_cmd=terminal_command(doc),
         daemon=selection.alias,
-        daemon_arg=daemon,
-        config_arg=config,
         env_layer=layer,
     )
 

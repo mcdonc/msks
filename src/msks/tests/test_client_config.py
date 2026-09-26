@@ -499,20 +499,6 @@ def test_raw_url_flag_beats_the_environment(tmp_path, monkeypatch) -> None:
     assert conf.env_layer["MSKSC_URL"] == "https://raw:8660"
 
 
-def test_resolve_records_the_invocation_flags(monkeypatch) -> None:
-    """The raw --daemon/--config values ride the resolution (#341):
-    a spawned console child repeats them to reach the same daemon —
-    the resolution's winners are not enough, because a flag's
-    choice outranks the environment without landing in it."""
-    clean_env(monkeypatch)
-    bare = config.resolve(None, "none")
-    assert bare.daemon_arg is None
-    assert bare.config_arg == "none"
-    flagged = config.resolve("https://raw:8660", "none")
-    assert flagged.daemon_arg == "https://raw:8660"
-    assert flagged.config_arg == "none"
-
-
 # --- the token file ---
 
 

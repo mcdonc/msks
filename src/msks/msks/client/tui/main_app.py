@@ -21,7 +21,6 @@ leaves the screen it is on — no screen traps focus.
 """
 
 import asyncio
-import subprocess
 import sys
 import time
 
@@ -259,36 +258,31 @@ def run_shell_flow(workspace_id: str) -> None:
     run_workspace_shell(workspace_id)
 
 
-def console_child_argv(
-    workspace_id: str, daemon: str | None, config: str | None
-) -> list[str]:
+def console_child_argv(workspace_id: str) -> list[str]:
     """The console invocation the new-terminal action appends to
     the launcher (#341): this client's own interpreter and module
     (an editable checkout spawns itself; an installed client its
-    own environment), the ``--daemon``/``--config`` flags the tree
-    was started with (the environment already carries the
-    bootstrap's materialized values, but a flag's choice outranks
-    the environment without landing in it), then the console
-    command and the workspace.
+    own environment), then the console command and the workspace.
+    The child needs no connection flags: the tree's bootstrap
+    already materialized every winner — the file's and the
+    ``--daemon`` flag's alike — into the environment the child
+    inherits, so it reaches the same daemon by inheritance.
     """
-    argv = [sys.executable, "-m", "msks.client.cli"]
-    if daemon is not None:
-        argv += ["--daemon", daemon]
-    if config is not None:
-        argv += ["--config", config]
-    return [*argv, "console", workspace_id]
+    return [sys.executable, "-m", "msks.client.cli", "console", workspace_id]
 
 
-def spawn_window(argv: list[str]):
+async def spawn_window(argv: list[str]):
     """Run the launcher detached (#341): its own session, its
     stdio on devnull — the window borrows no terminal the tree
-    holds, and the tree's later exit never takes it down.
+    holds, and the tree's later exit never takes it down. The
+    asyncio child watcher reaps the launcher when it closes, so
+    the tree holds no waitable handle and leaves no zombie.
     """
-    return subprocess.Popen(
-        argv,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+    return await asyncio.create_subprocess_exec(
+        *argv,
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
         start_new_session=True,
     )
 
@@ -324,8 +318,8 @@ def run_main_tui(
     operator's quit.
 
     ``conf`` is the invocation's resolved client config (#341):
-    the page's new-terminal shell action reads its launcher and
-    the ``--daemon``/``--config`` values it forwards to the child.
+    the page's new-terminal shell action reads the terminal
+    launcher from it.
     """
     if data is None:
         require_terminal()
@@ -390,19 +384,28 @@ class MsksTuiApp(App):
         self.follow = follow or TuiFollow()
         self.data = data or TuiData()
         self.flash_line = FlashLine()
-        # The launch settings (#341): the operator's terminal
-        # launcher and the invocation's ``--daemon``/``--config``
-        # values, read by the page's new-terminal shell action to
-        # spawn a console child that reaches this daemon. A tree
-        # without a resolution (a test's injected data seam)
-        # launches with the built-ins.
+        # The operator's terminal launcher (#341), read by the
+        # page's new-terminal shell action. A tree without a
+        # resolution (a test's injected data seam) launches with
+        # the built-in.
         self.terminal_cmd = (
             list(conf.terminal_open_cmd)
             if conf is not None
             else list(DEFAULT_TERMINAL_CMD)
         )
-        self.daemon_arg = getattr(conf, "daemon_arg", None)
-        self.config_arg = getattr(conf, "config_arg", None)
+        # The launchers the page has spawned (#341): held until
+        # they exit, so a running window's Process never collects
+        # with an unawaited exit (the reaper drops each at its
+        # close; the asyncio watcher does the reaping itself).
+        self.reapers: set = set()
+
+    def hold_child(self, proc) -> None:
+        """Hold one spawned launcher until it exits (#341): the
+        referenced task survives collection, and its done-callback
+        drops it from the set once the window has closed."""
+        task = asyncio.create_task(proc.wait())
+        self.reapers.add(task)
+        task.add_done_callback(self.reapers.discard)
 
     def flash(self, message: str) -> None:
         """Give the status lines to a message for FLASH_TTL
@@ -906,23 +909,28 @@ class WorkspaceScreen(Screen):
 
     async def open_shell_window(self) -> None:
         """Open the console in a new terminal window (#341): the
-        launcher runs the console invocation as its child and the
-        tree keeps running. A launcher that cannot start — a
-        missing binary, one without the execute bit — flashes its
-        reason and takes the same-terminal shell flow instead (the
-        setting's documented fallback)."""
-        child = console_child_argv(
-            self.row["id"], self.app.daemon_arg, self.app.config_arg
-        )
+        launcher runs the console invocation as its child — the
+        child inherits the tree's materialized connection, so it
+        reaches the same daemon — and the tree keeps running. A
+        launcher that cannot start — a missing binary, one without
+        the execute bit, a word the exec itself refuses — seeds the
+        restart's flash with its reason and takes the
+        same-terminal shell flow instead (the setting's documented
+        fallback)."""
+        child = console_child_argv(self.row["id"])
         try:
-            spawn_window([*self.app.terminal_cmd, *child])
-        except OSError as exc:
-            self.app.flash(
+            proc = await spawn_window([*self.app.terminal_cmd, *child])
+        except (OSError, ValueError) as exc:
+            # The reason rides the follow queue as the restarted
+            # tree's first flash: this tree exits on the spot, and
+            # its own status line dies with it.
+            self.app.follow.seed = (
                 f"shell window failed: {escape(str(exc))}"
                 " — opening in this terminal"
             )
             self.app.quit_after(FLOW_SHELL, self.row["id"])
             return
+        self.app.hold_child(proc)
         self.app.flash(
             f"opened a shell window for {escape(workspace_label(self.row))}"
         )
