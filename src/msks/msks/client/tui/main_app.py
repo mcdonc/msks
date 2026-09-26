@@ -27,6 +27,7 @@ import asyncio
 import json
 import sys
 import time
+from datetime import UTC, datetime
 
 from rich.cells import cell_len
 from rich.markup import escape
@@ -104,9 +105,13 @@ def workspace_label(row: dict) -> str:
 
 #: The listing's columns (#347): the header's label and the
 #: column's width, in row order — every row pads each field to its
-#: column's width, so the columns line up down the list.
+#: column's width, so the columns line up down the list. The name
+#: column pays for the frame's edges (#349): at 80 columns the
+#: border and the scrollbar together leave 74 cells for a row,
+#: and the widest label the created column reads (#350,
+#: ``yesterday``) must fit whole beside the columns before it.
 LIST_COLUMNS = (
-    ("NAME", 24),
+    ("NAME", 22),
     ("STATUS", 10),
     ("EGRESS", 12),
     ("IMAGE", 12),
@@ -215,15 +220,75 @@ def status_class(status: str) -> str:
     return status if status.isidentifier() and status.isascii() else "other"
 
 
+def clock_now() -> datetime:
+    """The wall clock the relative created labels read (#350) —
+    the tests' seam for a pinned date."""
+    return datetime.now().astimezone()
+
+
+#: The pinned bucketing ladder (#350): a day count under the
+#: bound reads as its days divided by the span, in the span's
+#: unit — under 7 reads ``Nd ago``, under 30 ``Nw ago`` (13 days
+#: reads ``1w ago``), under 365 ``Nmo ago``; past the ladder a
+#: year count reads ``Ny ago``.
+AGE_BUCKETS = (
+    (7, 1, "d"),
+    (30, 7, "w"),
+    (365, 30, "mo"),
+)
+
+
+def age_label(days: int) -> str:
+    """One bucket of the pinned rule (#350) over whole calendar
+    days: ``today`` and ``yesterday`` cover the first two days
+    (a clock that trails its stamp — skew — stays at ``today``),
+    then the AGE_BUCKETS ladder, then ``Ny ago``."""
+    if days <= 0:
+        return "today"
+    if days == 1:
+        return "yesterday"
+    for bound, span, unit in AGE_BUCKETS:
+        if days < bound:
+            return f"{days // span}{unit} ago"
+    return f"{days // 365}y ago"
+
+
+def parse_stamp(created_at: str) -> datetime:
+    """The stamp as an aware datetime — the daemon sends naive
+    UTC, so a bare stamp reads as UTC — or ``None`` when the text
+    does not parse."""
+    try:
+        stamp = datetime.fromisoformat(created_at)
+    except ValueError:
+        return None
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=UTC)
+
+
+def created_label(created_at: str | None, now: datetime | None = None) -> str:
+    """The CREATED column's relative label (#350), the pinned
+    bucketing (:func:`age_label`) over whole calendar days
+    between the creation and the clock. The daemon stamps in
+    UTC; the label reads the creation in the operator's own
+    calendar day. A stamp that is missing or unparseable reads
+    ``-``."""
+    stamp = parse_stamp(created_at) if created_at else None
+    if stamp is None:
+        return "-"
+    when = clock_now() if now is None else now
+    local = stamp.astimezone(when.tzinfo) if when.tzinfo else stamp
+    return age_label((when.date() - local.date()).days)
+
+
 def row_cells(row: dict) -> tuple[str, ...]:
     """The row's column cells (#347), each clipped to its
-    column's width whatever the daemon's vocabulary grows."""
+    column's width whatever the daemon's vocabulary grows; the
+    created cell reads as a relative label (#350)."""
     return (
         clip(workspace_label(row), NAME_W),
         clip(row["status"], STATUS_W),
         clip(row.get("egress_mode") or "-", EGRESS_W),
         clip(row.get("image_hash") or "-", IMAGE_W),
-        clip((row.get("created_at") or "")[:CREATED_W] or "-", CREATED_W),
+        clip(created_label(row.get("created_at")), CREATED_W),
     )
 
 
@@ -372,6 +437,26 @@ def focus_attr(rows: ListView, attr: str, target) -> None:
     ensure_focus(rows)
 
 
+#: The daemon URL's cell budget in the status line (#349): the
+#: URL is a hint, not data — the clip keeps the standing line on
+#: one row at 80 columns whatever the operator's MSKSC_URL
+#: carries, the middle ellipsis keeping both ends of a long URL
+#: readable.
+URL_W = 48
+
+
+def status_content(count: int, url: str) -> Content:
+    """The status line's standing content (#349): the workspace
+    count — the fact that moves while the operator works — set in
+    the bold default foreground, the daemon's URL riding after it
+    in the line's own muted color (the span names ``$text`` so a
+    theme's foreground answers, not the line's muted base)."""
+    plural = "" if count == 1 else "s"
+    head = f" {count} workspace{plural}"
+    line = f"{head}  ·  {clip(url, URL_W)}"
+    return Content(line, [Span(0, len(head), "$text bold")])
+
+
 class FlashLine:
     """A message that owns the TUI's status lines until its TTL
     lapses — the consent app's flash, lifted one level so every
@@ -387,7 +472,7 @@ class FlashLine:
         self.msg = message
         self.until = time.time() + FLASH_TTL
 
-    def text(self, default: str) -> str:
+    def text(self, default: str | Content) -> str | Content:
         """The flash while it lives, else ``default``."""
         if self.until > time.time():
             return self.msg
@@ -524,8 +609,10 @@ class MsksTuiApp(App):
     CSS = """
     Screen { layout: vertical; }
     #status { padding: 0 1; background: $panel; color: $text-muted; }
+    #listing { border: round $primary; background: $panel; }
     #columns { padding: 0 1; color: $text-muted; }
     #rows ListItem { height: 1; padding: 0 1; }
+    #rows ListItem Static { text-wrap: nowrap; }
     #empty { padding: 1 2; color: $text-muted; }
     #header { height: 1; padding: 0 1; background: $panel;
               text-wrap: nowrap; text-overflow: ellipsis; }
@@ -719,16 +806,16 @@ class MainScreen(Screen):
             return None
 
     def sync_status(self) -> None:
-        """The status line: the workspace count and the daemon's
-        URL; a flash owns it until its TTL lapses. The listing's
-        header row shows while rows stand; the empty state takes
-        its place when they do not. A screen going away under the
-        timer or a worker leaves the query empty — teardown noise,
-        not a crash."""
+        """The status line (#349): the workspace count in the bold
+        default foreground with the daemon's URL in muted text
+        after it; a flash owns the line until its TTL lapses. The
+        listing's header row shows while rows stand; the empty
+        state takes its place when they do not. A screen going
+        away under the timer or a worker leaves the query empty —
+        teardown noise, not a crash."""
         try:
             count = len(self.rows)
-            plural = "" if count == 1 else "s"
-            default = f" {count} workspace{plural}  ·  {env_url()}"
+            default = status_content(count, env_url())
             text = self.app.flash_line.text(default)
             self.query_one("#status", Static).update(text)
             # The header row owns the listing's top; the empty
