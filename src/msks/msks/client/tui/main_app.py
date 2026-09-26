@@ -1090,19 +1090,23 @@ class WorkspaceScreen(Screen):
             return
         for event in self.link.take_sightings():
             self.flash_sighting(sighting_flash(event))
-        self.watch_burst(self.pending_count())
+        self.watch_burst(self.pending_count(), self.link.controller)
 
-    def watch_burst(self, holds: int) -> None:
-        """Watch the queue for the overlay's auto-open: it fires
-        while a hold stands and the burst may surface (below), and
-        never for a parked burst — closing the overlay on holds is
-        the operator saying "not now" for the burst, and the
-        header's count keeps naming what waits. An empty queue
-        clears the park, so the next burst opens a panel again."""
-        if holds == 0:
+    def watch_burst(self, holds: int, controller=None) -> None:
+        """Watch the queue for the overlay's auto-open. The park
+        bookkeeping reads the controller's queue — the truth about
+        what waits — because the count folds the connection state
+        (0 on a dropped link whose snapshot still holds holds), and
+        a park recorded against a live queue must survive the drop:
+        the reconnection's replay re-lands the same holds, and the
+        panel the operator closed stays closed. The open itself
+        takes the count: a live link's holds may surface a panel, a
+        stale snapshot may not. A truly empty queue clears the park,
+        so the next burst opens a panel again."""
+        if controller is not None and not controller.ordered():
             self.parked = False
             return
-        if self.burst_surfaces():
+        if holds and self.burst_surfaces():
             self.push_overlay(auto=True)
 
     def burst_surfaces(self) -> bool:
@@ -1129,15 +1133,23 @@ class WorkspaceScreen(Screen):
         """Push the consent overlay over this page — by hand from
         the action row (``auto`` False: it stays until the operator
         closes it) or by the hold watch (``auto`` True: it closes
-        itself when the queue empties)."""
+        itself when the queue empties). One panel stands at a time:
+        a delayed Enter worker landing after the tick auto-opened
+        one no-ops here (the panel the operator asked for is up)."""
+        if self.overlay is not None:
+            return
         self.overlay = ConsentOverlay(self, auto=auto)
         self.app.push_screen(self.overlay)
 
     def overlay_parked(self) -> None:
         """The overlay closed on the operator's key: the burst stays
-        surfaced by the header's count alone until it empties."""
+        surfaced by the header's count alone until it empties. The
+        park reads the controller's queue (a dropped link's folded
+        count reads 0 while its snapshot still holds holds — a park
+        recorded there would be forgotten, and the replay would
+        re-open the panel the operator closed)."""
         self.overlay = None
-        if self.pending_count() > 0:
+        if self.link is not None and self.link.controller.ordered():
             self.parked = True
 
     def overlay_auto_closed(self) -> None:

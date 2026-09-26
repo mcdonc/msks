@@ -3,9 +3,11 @@
 renders from.
 
 The workspace page's consent overlay (the modal over the page,
-``main_app.ConsentOverlay``) owns the held-request queue: it holds
-the verdict keys and pushes the screens below as full-screen
-visits. This module keeps everything those surfaces share — the
+``main_app.ConsentOverlay``) owns the held-request queue and the
+verdict keys; the rules and events screens — the two below in this
+module — push above the overlay as full-screen visits.
+
+This module keeps everything those surfaces share — the
 row and focus helpers, the reconnect ladder's constants, the
 mode/duration/confirmation pickers, the rules screen (in-effect
 verdicts, revoke), and the events screen (the placeholder-token

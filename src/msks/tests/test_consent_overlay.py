@@ -703,6 +703,54 @@ async def test_a_parked_burst_never_re_pops_until_it_empties() -> None:
         await wait_for(lambda: on_overlay(app))
 
 
+async def test_a_delayed_manual_push_never_stacks_a_second_panel() -> None:
+    """One panel stands at a time: the Enter that opens the consent
+    action runs as a worker, and a page tick can auto-open the
+    panel between the keypress and the worker body — the delayed
+    push no-ops instead of stacking a second overlay."""
+    factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
+    app, page, _data = make_page(factory)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app, page)
+        await wait_for(lambda: len(page.link.controller.pending) == 1)
+        page.tick()  # the auto-open wins the race
+        await wait_for(lambda: on_overlay(app))
+        page.push_overlay(auto=False)  # the delayed worker's push
+        await pilot.pause()
+        stacked = [
+            s for s in app.screen_stack if isinstance(s, ConsentOverlay)
+        ]
+        assert len(stacked) == 1
+        assert page.overlay is stacked[0]
+        await pilot.press("q")
+        await wait_for(lambda: on_page(app))  # one q reaches the page
+
+
+async def test_a_park_survives_a_link_drop() -> None:
+    """Parking during a drop holds: the count folds the connection
+    state (0 while disconnected), but the park reads the
+    controller's queue — the replay re-lands the same holds after
+    the reconnection, and the panel the operator closed stays
+    closed."""
+    factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
+    app, page, _data = make_page(factory)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app, page)
+        await wait_for(lambda: len(page.link.controller.pending) == 1)
+        page.tick()
+        await wait_for(lambda: on_overlay(app))
+        page.link.state = "reconnecting"  # the drop: holds stand
+        await pilot.press("q")
+        assert page.parked is True  # recorded against the queue
+        page.tick()
+        assert page.parked is True  # the drop's folded count clears
+        # nothing: the reset needs a truly empty queue
+        page.link.state = "connected"  # the replay re-lands them
+        page.tick()
+        await pilot.pause()
+        assert on_page(app)  # no re-open for a parked burst
+
+
 async def test_the_auto_open_waits_for_a_stacked_modal() -> None:
     """A hold arriving while the mode picker is open stacks nothing
     under it: the open waits for the modal to leave, then lands."""
@@ -1516,6 +1564,32 @@ async def test_schedule_rebuild_on_a_stopped_app_is_a_noop() -> None:
     flight.request()
     await asyncio.sleep(0)
     assert not flight.scheduled  # the flight never armed
+
+
+async def test_a_flight_dying_at_teardown_stays_quiet() -> None:
+    """A flight that dies after its owner stopped (teardown unmounted
+    the tree under a mid-swap rebuild) stays quiet: no log, no
+    carried re-arm — not a bug worth a traceback after exit."""
+    logged: list[str] = []
+
+    class RecordingLog:
+        def exception(self, *args):
+            logged.append(args[0])
+
+    alive = {"go": True}
+    gate = asyncio.Event()
+
+    async def dying() -> None:
+        await gate.wait()
+        raise RuntimeError("teardown race")
+
+    flight = OneFlight(dying, lambda: alive["go"], "test")
+    flight.request()
+    await asyncio.sleep(0)  # the flight parks inside the gate
+    alive["go"] = False  # the owner stops mid-flight
+    gate.set()
+    await wait_for(lambda: not flight.scheduled)
+    assert not logged
 
 
 def test_backoff_and_refused_close() -> None:
