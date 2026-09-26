@@ -375,21 +375,22 @@ async def test_legacy_ref_migration_is_idempotent(tmp_path) -> None:
     assert await fresh.read("MSKSWS_WS_A_GITHUB_API") == "ghp-old"
 
 
-async def test_missing_legacy_value_still_renames_the_row(
+async def test_unreadable_legacy_value_leaves_the_row_for_retry(
     tmp_path, caplog
 ) -> None:
-    """A row whose value cannot be read (a reconfigured provider,
-    a moved store) still lands on the new ref — what remains is a
-    missing value, not a wrong one."""
+    """A value the store cannot answer — a transient outage as
+    much as a moved store, indistinguishable at the CLI — keeps
+    the row on its legacy ref; renaming it would strand the value
+    behind a ref nothing reads again (#335)."""
     app = app_for(tmp_path)
     await seed_legacy_placeholder(app, "ws-a", "github_api", value=None)
 
     with caplog.at_level("WARNING"):
         moved = await app.state.secrets.migrate_legacy_refs()
 
-    assert moved == 1
+    assert moved == 0
     (row,) = await app.state.model.list_placeholders()
-    assert row["backend_ref"] == "MSKSWS_WS_A_GITHUB_API"
+    assert row["backend_ref"] == "MSKS_WS_A_GITHUB_API"
     assert "no readable value" in caplog.text
 
 
@@ -430,7 +431,7 @@ async def test_no_store_configured_migrates_nothing() -> None:
     assert await app.state.secrets.migrate_legacy_refs() == 0
 
 
-async def test_failing_row_copy_leaves_the_row_legacy(tmp_path, monkeypatch):
+async def test_failing_row_rename_leaves_the_row_legacy(tmp_path, monkeypatch):
     """A copy that fails mid-flight logs and leaves the row on its
     legacy ref — reads keep following the row's ref, and the next
     startup retries the move."""
@@ -444,6 +445,79 @@ async def test_failing_row_copy_leaves_the_row_legacy(tmp_path, monkeypatch):
 
     moved = await app.state.secrets.migrate_legacy_refs()
 
-    assert moved == 1
+    assert moved == 0
     (row,) = await app.state.model.list_placeholders()
     assert row["backend_ref"] == ref
+
+
+async def test_write_failure_retries_on_the_next_pass(
+    tmp_path, monkeypatch
+) -> None:
+    """A pass whose copy step fails (here: the value is readable —
+    simulated, the write is real and failing) leaves both the row
+    and the old value intact; a later healthy pass completes the
+    move — the resume story the ordering exists for (#335)."""
+    app = app_for(tmp_path)
+    await seed_legacy_placeholder(app, "ws-a", "github_api", "ghp-old")
+    failing = tmp_path / "failing-cli"
+    failing.write_text("#!/bin/sh\nexit 1\n")
+    failing.chmod(0o755)
+    app.state.settings.secret_store.cli = str(failing)
+
+    async def readable(ref):
+        return "ghp-old"
+
+    monkeypatch.setattr(app.state.secrets, "read", readable)
+    assert await app.state.secrets.migrate_legacy_refs() == 0
+    (row,) = await app.state.model.list_placeholders()
+    assert row["backend_ref"] == "MSKS_WS_A_GITHUB_API"
+
+    healthy = app_for(tmp_path)
+    assert await healthy.state.secrets.migrate_legacy_refs() == 1
+    (row,) = await healthy.state.model.list_placeholders()
+    assert row["backend_ref"] == "MSKSWS_WS_A_GITHUB_API"
+    fresh = app_for(tmp_path).state.secrets
+    assert await fresh.read("MSKSWS_WS_A_GITHUB_API") == "ghp-old"
+    stored = tmp_path / "store" / "msks" / "default"
+    assert not (stored / "MSKS_WS_A_GITHUB_API").exists()
+
+
+async def test_delete_failure_orphans_the_old_value_loudly(
+    tmp_path, monkeypatch, caplog
+) -> None:
+    """The old value drops only after the row repoints, so a failed
+    drop costs an inert orphan — named in the log — never the
+    placeholder (#335)."""
+    app = app_for(tmp_path)
+    await seed_legacy_placeholder(app, "ws-a", "github_api", "ghp-old")
+
+    async def refuse_delete(ref):
+        raise SecretStoreError("delete", "refused")
+
+    monkeypatch.setattr(app.state.secrets, "delete", refuse_delete)
+    with caplog.at_level("WARNING"):
+        moved = await app.state.secrets.migrate_legacy_refs()
+
+    assert moved == 1
+    (row,) = await app.state.model.list_placeholders()
+    assert row["backend_ref"] == "MSKSWS_WS_A_GITHUB_API"
+    stored = tmp_path / "store" / "msks" / "default"
+    assert (stored / "MSKSWS_WS_A_GITHUB_API").read_text() == "ghp-old"
+    assert (stored / "MSKS_WS_A_GITHUB_API").read_text() == "ghp-old"
+    assert "left behind" in caplog.text
+
+
+def test_manifest_staleness_matches_keys_not_substrings(tmp_path) -> None:
+    """A fully migrated store whose ref *contains* the legacy
+    prefix (a workspace named ``msks``) is not stale: the check
+    reads declaration keys, not substrings (#335)."""
+    store = store_for(tmp_path)
+    store.sync_manifest([("MSKSWS_MSKS_KEY", "msks/key")])
+
+    assert store.manifest_declares_legacy() is False
+
+    store.sync_manifest(
+        [("MSKSWS_MSKS_KEY", "msks/key"), ("MSKS_OLD", "msks/old")]
+    )
+
+    assert store.manifest_declares_legacy() is True

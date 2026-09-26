@@ -58,6 +58,12 @@ REF_PREFIX = "MSKSWS_"
 #: migration rewrites any row still holding one.
 LEGACY_REF_PREFIX = "MSKS_"
 
+#: A legacy declaration key at line start in the generated
+#: manifest — a new-format ref can contain the legacy prefix
+#: inside its name (``MSKSWS_MSKS_...``), so the staleness check
+#: matches keys, not substrings.
+_LEGACY_DECLARATION = re.compile(r"(?m)^MSKS_[A-Za-z0-9_]+\s*=")
+
 #: The audit/ref identifier rule SecretSpec enforces on names:
 #: letters, numbers, and underscores, no leading digit.
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -367,7 +373,11 @@ class SecretStore:
         ref — exactly what a pass that renamed every row but died
         before its final re-sync leaves behind (the re-sync is
         change-driven, so an unstale manifest is never rewritten).
-        No configured store root means no manifest."""
+        The check matches declaration keys, not substrings: a
+        new-format ref can contain the legacy prefix inside its
+        name (a workspace named ``msks`` mints
+        ``MSKSWS_MSKS_...``). No configured store root means no
+        manifest."""
         root = self.settings.root
         if root is None:
             return False
@@ -375,7 +385,7 @@ class SecretStore:
             text = (root / MANIFEST_NAME).read_text(encoding="utf-8")
         except OSError:
             return False
-        return LEGACY_REF_PREFIX in text
+        return _LEGACY_DECLARATION.search(text) is not None
 
     async def migrate_legacy_refs(self) -> int:
         """Move placeholders minted before #335 onto ``MSKSWS_`` refs.
@@ -388,22 +398,37 @@ class SecretStore:
         new ref before the old one is dropped, and the row's own
         prefix marks it done (a new-format ref can never start with
         the legacy one), so a pass interrupted at any point simply
-        resumes on the next boot. A row whose value cannot be read
-        (a reconfigured provider, a store that moved) still gets its
-        row and manifest rewritten — reads follow the row's ref, so
-        what remains is a missing value, not a wrong one.
+        resumes on the next boot. A row whose value the store
+        cannot answer stays put and retries too — a transient
+        outage heals itself, and a definitive one (a store that
+        moved) is named in the log every boot until the operator
+        re-mints or repoints.
 
-        Returns the number of legacy rows seen; rows whose store
-        copy failed are named in the log and left otherwise intact.
+        Returns the number of rows moved onto their new refs;
+        rows that stayed are named in the log.
         """
         model = self.app.state.model
         legacy = await self.legacy_placeholder_rows()
         if not legacy and not self.manifest_declares_legacy():
             return 0
-        # Declare every legacy row's new ref beside the old one
-        # before any value copy: ``set`` answers 404 for refs the
-        # manifest does not declare, and the rows still carry the
-        # legacy names until each copy lands.
+        await self.declare_transition_refs(model, legacy)
+        moved = 0
+        for row in legacy:
+            if await self.migrate_legacy_row(row):
+                moved += 1
+        # The final manifest drops the legacy declarations of the
+        # renamed rows: it is re-rendered off the rows alone — the
+        # rows a failing copy left behind keep their declarations.
+        self._cache.clear()
+        refs = await model.placeholder_refs()
+        await asyncio.to_thread(self.sync_manifest, refs)
+        return moved
+
+    async def declare_transition_refs(self, model, legacy) -> None:
+        """Declare every legacy row's new ref beside the old one
+        before any value copy: ``set`` answers 404 for refs the
+        manifest does not declare, and the rows still carry the
+        legacy names until each copy lands."""
         await asyncio.to_thread(
             self.sync_manifest,
             (await model.placeholder_refs())
@@ -415,14 +440,6 @@ class SecretStore:
                 for row in legacy
             ],
         )
-        for row in legacy:
-            await self.migrate_legacy_row(row)
-        # The final manifest drops the legacy declarations: it is
-        # re-rendered off the renamed rows alone.
-        self._cache.clear()
-        refs = await model.placeholder_refs()
-        await asyncio.to_thread(self.sync_manifest, refs)
-        return len(legacy)
 
     async def legacy_placeholder_rows(self) -> list[dict]:
         """Rows still carrying the pre-#335 ref format; empty when
@@ -436,13 +453,22 @@ class SecretStore:
             if row["backend_ref"].startswith(LEGACY_REF_PREFIX)
         ]
 
-    async def migrate_legacy_row(self, row: dict) -> None:
-        """One legacy row: copy its value under the new ref, drop
-        the old one, repoint the row (#335).
+    async def migrate_legacy_row(self, row: dict) -> bool:
+        """One legacy row: copy its value under the new ref, repoint
+        the row, drop the old value (#335).
 
-        Any failure logs and leaves the row on its legacy ref —
-        reads follow the row's ref, so what remains is a retry on
-        the next startup, never a wrong pointer.
+        Returns whether the row landed on its new ref. The order is
+        the crash story: the copy lands before the row moves (a
+        crash between them leaves both values present and the row
+        legacy — the next boot simply redoes the copy), the row
+        moves before the old value drops (a crash between them
+        leaves an inert orphan under the legacy ref, named in the
+        log when the drop fails). Every failure — a value the
+        store cannot answer (a transient outage as much as a moved
+        store: the CLI's errors do not separate them, so both
+        retry), a failed copy, a failed row rename — logs and
+        leaves the row on its legacy ref, where reads keep working
+        and the next startup retries the move.
         """
         model = self.app.state.model
         old = row["backend_ref"]
@@ -450,21 +476,29 @@ class SecretStore:
         try:
             try:
                 value = await self.read(old)
-            except SecretStoreError:
+            except SecretStoreError as exc:
                 LOG.warning(
                     "placeholder %s/%s has no readable value at "
-                    "legacy ref %s; renaming the row without a "
-                    "store copy",
+                    "legacy ref %s (%s); the row stays put and the "
+                    "next startup retries",
                     row["workspace_id"],
                     row["name"],
                     old,
+                    exc,
                 )
-                value = None
-            if value is not None:
-                await self.write(new, value)
-                with contextlib.suppress(SecretStoreError):
-                    await self.delete(old)
+                return False
+            await self.write(new, value)
             await model.rename_placeholder_ref(row["id"], new)
+            try:
+                await self.delete(old)
+            except SecretStoreError:
+                LOG.warning(
+                    "legacy value %s left behind in the store after "
+                    "its copy under %s; the orphan is inert — remove "
+                    "it by hand if the provider bills by entry",
+                    old,
+                    new,
+                )
         except Exception:  # noqa: BLE001 - logged, never fatal
             LOG.exception(
                 "placeholder %s/%s stays on legacy ref %s; "
@@ -473,3 +507,5 @@ class SecretStore:
                 row["name"],
                 old,
             )
+            return False
+        return True
