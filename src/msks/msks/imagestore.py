@@ -495,8 +495,9 @@ def read_override(cache: Path) -> dict | None:
 
 def write_override(cache: Path, override: dict) -> None:
     """Install the override atomically: a dot-prefixed ``.tmp``
-    staging name (crash debris the startup sweep removes) renames
-    onto the override file."""
+    staging name renames onto the override file, so a crash
+    mid-write leaves an inert dot-file inside the cache dir —
+    never a visible catalog artifact."""
     staging = cache / (
         f".{OVERRIDE_FILE}.{os.getpid()}-{uuid.uuid4().hex[:8]}.tmp"
     )
@@ -508,19 +509,25 @@ def stage_override(
     staging: Path,
     override: dict | None,
     manifest: dict,
-    digest: str,
-    state_dir: Path,
 ) -> None:
-    """Validate and stage the override the new cache carries
-    (#340): the composed pair over the manifest, refused before
-    anything installs when another row already holds it. A None
-    override stages nothing — the manifest's pair is the
-    registered one."""
+    """Stage the override the new cache carries (#340): the
+    composed pair over the manifest. A None override stages
+    nothing — the manifest's pair is the registered one."""
     if override is None:
         return
     pair = registered_pair(override, manifest)
-    refuse_collision(pair, digest, state_dir)
     (staging / OVERRIDE_FILE).write_text(json.dumps(dict(zip(KEYS, pair))))
+
+
+def pin_imported_stamp(cache: Path, imported: datetime | None) -> None:
+    """Freeze a derived import time into a stamp (#340 review): a
+    rename writes inside the cache dir, which moves the directory
+    mtime — the fallback import time for entries that predate
+    stamps. Writing the currently-derived moment as the stamp
+    keeps the listed time stable across the rename."""
+    if imported is None or (cache / IMPORTED_STAMP).is_file():
+        return
+    (cache / IMPORTED_STAMP).write_text(imported.isoformat() + "\n")
 
 
 def registered_pair(override: dict | None, manifest: dict) -> tuple[str, str]:
@@ -538,16 +545,33 @@ def refuse_collision(
     pair: tuple[str, str], own_digest: str, state_dir: Path
 ) -> None:
     """Refuse a pair another catalog row already holds (#340):
-    ``name:version`` references must name one row."""
+    ``name:version`` references must name one row. The holder is
+    named by hash (the pair repeats by construction) and by its
+    origin pair when a rename moved it there."""
     name, version = pair
     for image in list_images(state_dir):
         if image.hash == own_digest:
             continue
         if (image.name, image.version) == (name, version):
+            holder = image.hash[:12]
+            if (image.name, image.version) != (
+                image.origin_name,
+                image.origin_version,
+            ):
+                holder += f" (renamed from {image.origin_ref})"
             raise ImageCollision(
-                f"{name}:{version} is already registered by "
-                f"{image.name}:{image.version} ({image.hash[:12]})"
+                f"{name}:{version} is already held by {holder}"
             )
+
+
+def refuse_given(
+    given: dict | None, manifest: dict, digest: str, state_dir: Path
+) -> None:
+    """Refuse a caller-passed override whose composed pair another
+    row holds (#340); a carried-forward registration passes — the
+    row already owns the pair legitimately."""
+    if given is not None:
+        refuse_collision(registered_pair(given, manifest), digest, state_dir)
 
 
 def import_archive(
@@ -569,9 +593,11 @@ def import_archive(
 
     A ``name``/``version`` override (#340) registers the archive
     under an operator-chosen pair; the manifest's own pair stays
-    recorded as the origin. A plain re-import carries the row's
-    current override forward — refreshing an unchanged archive
-    must not reset a rename the operator made.
+    recorded as the origin, and the pair another row already holds
+    is refused. A plain re-import carries the row's current
+    override forward without that check — refreshing an unchanged
+    archive must neither reset a rename the operator made nor
+    strand the row behind a pair a later import duplicated.
     """
     if not path.is_file():
         raise ImageError(f"no such image archive: {path}")
@@ -579,28 +605,29 @@ def import_archive(
     root.mkdir(parents=True, exist_ok=True)
     attempt = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
     source_copy = root / f".src-{attempt}.tar"
-    override = validated_override(name, version)
+    given = validated_override(name, version)
     try:
         shutil.copy2(path, source_copy)
         digest = hash_file(source_copy)
         cache = root / digest
-        if override is None:
-            override = read_override(cache)
+        register = given if given is not None else read_override(cache)
         staging = root / f".{digest}.{attempt}.tmp"
         shutil.rmtree(staging, ignore_errors=True)
         with open_layer(source_copy) as layer:
             manifest = validate_manifest(layer)
+            refuse_given(given, manifest, digest, state_dir)
             staging.mkdir(parents=True)
-            stage_override(staging, override, manifest, digest, state_dir)
+            stage_override(staging, register, manifest)
             member(layer, staging / "kernel", BOOT_MEMBERS["kernel"])
             member(layer, staging / "initrd", BOOT_MEMBERS["initrd"])
             member(layer, staging / "rootfs.ext4", BOOT_MEMBERS["rootfs"])
             (staging / "image.json").write_text(json.dumps(manifest))
             now = datetime.now(UTC)
             (staging / IMPORTED_STAMP).write_text(now.isoformat() + "\n")
-            # Concurrent imports of the same archive race here; each
-            # swap is idempotent because every attempt's content is
-            # identical (same digest).
+            # Concurrent imports of the same archive race here; the
+            # boot files are identical (same digest), the override
+            # file is last-writer-wins — a race the API's catalog
+            # lock keeps off the daemon's paths.
             aside = root / f".{digest}.{attempt}.old"
             try:
                 cache.rename(aside)
@@ -846,6 +873,7 @@ def rename_image(
         checked_pair(key, value)
     refuse_collision(pair, digest, state_dir)
     write_override(images_dir(state_dir) / digest, dict(zip(KEYS, pair)))
+    pin_imported_stamp(images_dir(state_dir) / digest, record.imported)
     return replace(record, name=pair[0], version=pair[1])
 
 

@@ -4509,8 +4509,9 @@ def test_image_rename_collision_names_the_row(
         return httpx.Response(
             409,
             json={
-                "detail": "mine:1 is already registered by alpine:3.20 "
-                "(" + "c" * 12 + ")"
+                "detail": "mine:1 is already held by "
+                + "c" * 12
+                + " (renamed from alpine:3.20)"
             },
         )
 

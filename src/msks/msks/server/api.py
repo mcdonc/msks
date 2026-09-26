@@ -1028,13 +1028,17 @@ def build_api(app) -> FastAPI:
     """
     hub = app.state.hub
     app.state.create_locks: dict[str, asyncio.Lock] = {}
-    # Imports serialize daemon-wide (#258): concurrent URL imports
-    # would each clamp to the same floor headroom and stream real
-    # bytes in parallel — the lock keeps the ceiling's promise that
-    # the disk never dips below the floor mid-download. Path
-    # imports ride the same lock: their floor check has the same
-    # race, just a narrower window.
-    import_lock = asyncio.Lock()
+    # Catalog mutations serialize daemon-wide (#258, #340): the
+    # floor check under concurrent URL imports would each clamp to
+    # the same headroom and stream real bytes in parallel — the
+    # lock keeps the ceiling's promise that the disk never dips
+    # below the floor mid-download. Path imports ride the same
+    # lock: their floor check has the same race, just a narrower
+    # window. Renames join it (#340 review): an import swaps the
+    # whole per-hash cache aside, so an unlocked rename landing in
+    # that window would write its override into the cache the
+    # import then deletes — a committed rename silently lost.
+    catalog_lock = asyncio.Lock()
     app.state.home_locks: dict[str, asyncio.Lock] = {}
 
     @contextlib.asynccontextmanager
@@ -1598,7 +1602,7 @@ def build_api(app) -> FastAPI:
         # the fetched bytes.
         staged: Path | None = None
         try:
-            async with import_lock:
+            async with catalog_lock:
                 if imagestore.is_url(body.source):
                     max_bytes = download_ceiling(vmm)
                     if max_bytes <= 0:
@@ -1735,22 +1739,26 @@ def build_api(app) -> FastAPI:
         The registered ``name``/``version`` pair changes — the
         bytes, the hash, the origin pair, and workspaces already
         booting the image stay put, so ``name@hash`` and bare-hash
-        references keep resolving. A composed pair another row
-        already holds answers 409 naming it; a miss is a named 404;
-        a pair that fails the override checks is a named 400.
+        references keep resolving. The rename serializes against
+        imports (the catalog lock): an import swaps the per-hash
+        cache aside, and an unlocked rename in that window would
+        commit into the discarded cache. A composed pair another
+        row already holds answers 409 naming it; a miss is a named
+        404; a pair that fails the override checks is a named 400.
         """
         state_dir = app.state.settings.vmm.state_dir
         try:
-            record = await asyncio.to_thread(
-                imagestore.rename_image,
-                digest,
-                state_dir,
-                name=body.name,
-                version=body.version,
-            )
+            async with catalog_lock:
+                record = await asyncio.to_thread(
+                    imagestore.rename_image,
+                    digest,
+                    state_dir,
+                    name=body.name,
+                    version=body.version,
+                )
         except ImageCollision as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
-        except ImageError as exc:
+        except (ImageError, OSError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
         if record is None:
             raise HTTPException(

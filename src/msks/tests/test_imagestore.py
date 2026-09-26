@@ -7,6 +7,7 @@ import os
 import shutil
 import tarfile
 import threading
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
@@ -1846,9 +1847,15 @@ def test_rename_collision_is_refused_naming_both_rows(
     b = import_archive(_rebuilt(tmp_path, "alpine", "3.22"), tmp_path)
     with pytest.raises(ImageCollision) as excinfo:
         rename_image(b.hash, tmp_path, name="debian", version="13.6")
-    # The refusal names the row that holds the pair.
-    assert "debian:13.6" in str(excinfo.value)
-    assert a.hash[:12] in str(excinfo.value)
+    # The refusal names the holding row by hash — the pair repeats
+    # by construction — and by its origin when a rename moved it.
+    assert f"debian:13.6 is already held by {a.hash[:12]}" in str(
+        excinfo.value
+    )
+    rename_image(a.hash, tmp_path, name="mine", version="1")
+    with pytest.raises(ImageCollision) as renamed_hold:
+        rename_image(b.hash, tmp_path, name="mine", version="1")
+    assert "renamed from debian:13.6" in str(renamed_hold.value)
     # The row is unchanged after the refusal.
     assert resolve(b.hash, tmp_path).ref == "alpine:3.22"
 
@@ -1876,6 +1883,48 @@ def test_override_validation(tmp_path: Path, field: str, value: str) -> None:
 
 def test_rename_missing_digest_returns_none(tmp_path: Path) -> None:
     assert rename_image("f" * 64, tmp_path, name="mine") is None
+
+
+def test_carried_forward_override_skips_the_collision_check(
+    tmp_path: Path,
+) -> None:
+    """The refusal holds for overrides and renames; a plain
+    re-import carries the row's own registration forward without
+    the check — a pair a later plain import duplicated must not
+    strand the row from refreshing."""
+    archive = tmp_path / "a.tar"
+    build_containerdisk(archive, name="debian", version="13.6")
+    record = import_archive(archive, tmp_path, name="mine", version="1")
+    # A rebuilt archive whose manifest carries the same pair:
+    # the long-standing plain-import shape, accepted.
+    duplicate = import_archive(_rebuilt(tmp_path, "mine", "1"), tmp_path)
+    assert duplicate.hash != record.hash
+    assert [r.name for r in list_images(tmp_path)] == ["mine", "mine"]
+    # The renamed row still refreshes: no refusal, no reset.
+    refreshed = import_archive(archive, tmp_path)
+    assert refreshed.ref == "mine:1"
+    assert refreshed.origin_ref == "debian:13.6"
+
+
+def test_rename_pins_a_derived_import_time(tmp_path: Path) -> None:
+    """A rename writes inside the cache dir, which moves the
+    directory mtime — the fallback import time for entries that
+    predate stamps. The rename freezes that derived moment into a
+    stamp, so the listed time holds (#340 review)."""
+    archive = tmp_path / "stamp.tar"
+    build_containerdisk(archive, name="debian", version="13.6")
+    record = import_archive(archive, tmp_path)
+    cache = tmp_path / "images" / record.hash
+    (cache / IMPORTED_STAMP).unlink()
+    before = list_images(tmp_path)[0].imported
+    assert before is not None and before != record.imported
+    time.sleep(0.01)
+    renamed = rename_image(record.hash, tmp_path, name="mine")
+    assert renamed is not None
+    assert (cache / IMPORTED_STAMP).is_file()
+    after = list_images(tmp_path)[0]
+    assert after.imported == before
+    assert after.ref == "mine:13.6"
 
 
 def test_import_override_collision_is_refused_cleanly(

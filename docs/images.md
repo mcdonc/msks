@@ -512,14 +512,17 @@ curl -X PATCH .../api/v1/images/<hash> \
 Either key alone keeps the other at its registered value. A
 rename validates the new pair the same way an import override
 does (non-empty, and free of `:` and `@` — the reference forms
-key on them), refuses with a named error a pair another row
-already holds (`name:version` references stay unambiguous;
-`name@hash` and bare-hash forms keep working), keeps the origin
-pair, and changes nothing else — the bytes, the hash, and
-workspaces already booting the image stay put. Re-importing
-unchanged bytes carries the row's current registration forward;
-re-importing the same bytes with a new override renames the row
-the same way a rename does.
+key on them), refuses with a named error — naming the holder by
+hash, and by its origin when a rename moved it there — a pair
+another row already holds, keeps the origin pair, and changes
+nothing else: the bytes, the hash, the listed import time, and
+workspaces already booting the image stay put. The refusal holds
+for overrides and renames; a plain import of a rebuilt archive
+under a pair a row already holds stays allowed (the long-standing
+shape — `name@hash` and bare-hash forms resolve the ambiguity).
+Re-importing unchanged bytes carries the row's current
+registration forward; re-importing the same bytes with a new
+override renames the row the same way a rename does.
 
 Rules worth knowing:
 
