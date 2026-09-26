@@ -174,7 +174,7 @@ async def loop_pair():
     server_sock.bind(("127.0.0.1", 0))
     client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     client.bind(("127.0.0.1", 0))
-    client.settimeout(2.0)
+    client.settimeout(0.5)
     await service.start(sock=server_sock)
     task = asyncio.create_task(service.serve())
     try:
@@ -387,7 +387,7 @@ async def test_serve_survives_a_failing_reply_send() -> None:
     server_sock.bind(("127.0.0.1", 0))
     client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     client.bind(("127.0.0.1", 0))
-    client.settimeout(2.0)
+    client.settimeout(0.5)
     await service.start(sock=server_sock)
     task = asyncio.create_task(service.serve())
     try:

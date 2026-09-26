@@ -1322,8 +1322,10 @@ async def test_prelude_timeout_fails_closed(
         writer.write(b"OK 5\n")
         await writer.drain()
         assert await reader.readuntil(b"GO\n")
-        # Reads the prelude, then goes silent forever.
-        await asyncio.sleep(10)
+        # Reads the prelude, then stays silent past the reply
+        # deadline (0.2s patched below) — the connection stays open,
+        # so the handshake's failure is the timeout, not a close.
+        await asyncio.sleep(0.5)
 
     monkeypatch.setattr(local_mod, "PRELUDE_REPLY_S", 0.2)
     server = await asyncio.start_unix_server(session, str(path))

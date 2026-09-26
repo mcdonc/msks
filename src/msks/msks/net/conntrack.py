@@ -23,10 +23,15 @@ from ..microvm.errors import MicrovmError
 ABSENT = b"0 flow entries"
 
 
-async def delete_flows(tool: str, source_ip: str, dest_ip: str) -> None:
+async def delete_flows(
+    tool: str, source_ip: str, dest_ip: str, deadline_s: float = 10.0
+) -> None:
     """Delete the tracked connections between the guest and one
     destination (best-effort; a missing tool or entry is logged at
-    most once by the caller's settings)."""
+    most once by the caller's settings). ``deadline_s`` bounds the
+    tool's runtime before the kill — a parameter so tests can pin
+    the kill against a short deadline instead of paying the
+    production one."""
     try:
         proc = await asyncio.create_subprocess_exec(
             tool,
@@ -45,7 +50,7 @@ async def delete_flows(tool: str, source_ip: str, dest_ip: str) -> None:
             f"tool not found: {tool}"
         ) from None
     try:
-        await asyncio.wait_for(proc.communicate(), timeout=10.0)
+        await asyncio.wait_for(proc.communicate(), timeout=deadline_s)
     except TimeoutError:
         proc.kill()
         with contextlib.suppress(ProcessLookupError):
