@@ -486,11 +486,11 @@ async def test_sweep_retires_expired_and_keeps_live_rows(tmp_path) -> None:
         assert audit[0]["name"] == "expired"
         assert audit[0]["dests"] == ["api.example.com"]
         manifest = (tmp_path / "store" / "secretspec.toml").read_text()
-        assert "MSKS_WS_A_EXPIRED" not in manifest
-        assert "MSKS_WS_B_LIVE" in manifest
+        assert "MSKSWS_WS_A_EXPIRED" not in manifest
+        assert "MSKSWS_WS_B_LIVE" in manifest
         stored = tmp_path / "store" / "msks" / "default"
-        assert not (stored / "MSKS_WS_A_EXPIRED").exists()
-        assert (stored / "MSKS_WS_B_LIVE").exists()
+        assert not (stored / "MSKSWS_WS_A_EXPIRED").exists()
+        assert (stored / "MSKSWS_WS_B_LIVE").exists()
         event = json.loads(queue.get_nowait())
         assert event["event"] == "secret.expiry"
         assert event["data"]["workspace_id"] == "ws-a"

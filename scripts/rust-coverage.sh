@@ -24,7 +24,7 @@ crate="$root/src/console-helper"
 # Version-matched to the pinned nightly rustc (the toolchain's
 # llvm-tools component; an nixpkgs LLVM of the same major can be an
 # -rc whose profdata reads the profiles as garbage).
-tools="${MSKS_RUST_LLVM_TOOLS:-}"
+tools="${RUST_LLVM_TOOLS:-}"
 if [ -n "$tools" ] && [ -x "$tools/llvm-profdata" ]; then
   profdata="$tools/llvm-profdata"
   cov="$tools/llvm-cov"

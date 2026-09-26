@@ -77,7 +77,7 @@ fn spawn_helper(
                 .join(format!("msks-helper-sigdir-i-{}-{id}", std::process::id()));
             let _ = std::fs::remove_dir_all(&sig_dir);
             std::fs::create_dir_all(&sig_dir).unwrap();
-            command.env("MSKS_CONSOLE_SIG_DIR", &sig_dir);
+            command.env("MSKSWS_CONSOLE_SIG_DIR", &sig_dir);
         }
     }
     profile_env(&mut command);
@@ -271,7 +271,7 @@ fn env_is_built_from_passwd_not_the_listener() {
     // containment, not equality.
     let expected = format!("[xterm] [{user}] []");
     client
-        .write_all(b"echo [$TERM] [$USER] [$MSKS_POISON]\n")
+        .write_all(b"echo [$TERM] [$USER] [$POISON_VAR]\n")
         .unwrap();
     client
         .set_read_timeout(Some(Duration::from_secs(10)))

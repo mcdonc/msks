@@ -542,6 +542,26 @@ class Model:
                 for row in rows
             ]
 
+    async def rename_placeholder_ref(
+        self, placeholder_id: int, new_ref: str
+    ) -> bool:
+        """Point one placeholder row at a renamed backend ref (#335).
+
+        False when the row vanished mid-pass. A ref collision raises
+        IntegrityError — impossible from a consistent legacy database
+        (the rename is injective and (workspace, name) is unique), so
+        it reaches the caller's per-row guard rather than being
+        silently dropped.
+        """
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            row = await session.get(Placeholder, placeholder_id)
+            if row is None:
+                return False
+            row.backend_ref = new_ref
+            await session.commit()
+            return True
+
     async def renew_placeholder(self, placeholder_id: int, expires_at) -> bool:
         """Set a new expiry deadline; False when absent."""
         maker = sessionmaker_for(self.engine())

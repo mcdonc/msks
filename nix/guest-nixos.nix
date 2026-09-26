@@ -37,7 +37,7 @@
 #
 #   $out/vmlinux            - the NixOS kernel (bzImage; named
 #                             "vmlinux" to match the
-#                             MSKSD_TEST_VMLINUX contract;
+#                             TEST_VMLINUX contract;
 #                             guest-manifest.json records the
 #                             actual format).
 #   $out/initrd             - NixOS stage-1, gzip, virtio-trimmed.

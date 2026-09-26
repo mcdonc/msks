@@ -2629,15 +2629,15 @@ mod auth {
     }
 
     fn set_sig_dir(dir: &Path) -> Option<String> {
-        let old = std::env::var("MSKS_CONSOLE_SIG_DIR").ok();
-        std::env::set_var("MSKS_CONSOLE_SIG_DIR", dir);
+        let old = std::env::var("MSKSWS_CONSOLE_SIG_DIR").ok();
+        std::env::set_var("MSKSWS_CONSOLE_SIG_DIR", dir);
         old
     }
 
     fn restore_sig_dir(old: Option<String>) {
         match old {
-            Some(v) => std::env::set_var("MSKS_CONSOLE_SIG_DIR", v),
-            None => std::env::remove_var("MSKS_CONSOLE_SIG_DIR"),
+            Some(v) => std::env::set_var("MSKSWS_CONSOLE_SIG_DIR", v),
+            None => std::env::remove_var("MSKSWS_CONSOLE_SIG_DIR"),
         }
     }
 
@@ -2647,14 +2647,14 @@ mod auth {
         let _spawns = SPAWN_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let prior = std::env::var("MSKS_CONSOLE_SIG_DIR").ok();
-        std::env::remove_var("MSKS_CONSOLE_SIG_DIR");
+        let prior = std::env::var("MSKSWS_CONSOLE_SIG_DIR").ok();
+        std::env::remove_var("MSKSWS_CONSOLE_SIG_DIR");
         assert_eq!(
             sig_dir(),
             std::path::PathBuf::from("/run/msks-console-helper")
         );
         if let Some(v) = prior {
-            std::env::set_var("MSKS_CONSOLE_SIG_DIR", v);
+            std::env::set_var("MSKSWS_CONSOLE_SIG_DIR", v);
         }
     }
 

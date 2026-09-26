@@ -42,8 +42,8 @@ async def test_local_dev_workspace_bootstrap() -> None:
     without re-provisioning, and the `unit-tests` invocation runs
     to completion inside the guest.
     """
-    nft_tool = os.environ.get("MSKSD_TEST_NFT") or shutil.which("nft") or "nft"
-    ip_tool = os.environ.get("MSKSD_TEST_IP") or shutil.which("ip") or "ip"
+    nft_tool = os.environ.get("TEST_NFT") or shutil.which("nft") or "nft"
+    ip_tool = os.environ.get("TEST_IP") or shutil.which("ip") or "ip"
     state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
     settings = Settings(
         vmm=VmmSettings(state_dir=state_dir),

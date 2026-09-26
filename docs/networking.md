@@ -282,7 +282,7 @@ grant for `msks-dev` (its uplink default names this dev host's
 interface). An
 operator who sets `MSKSD_EGRESS_ENABLED=false` arms nothing, and
 every egress workspace then refuses to boot with the cause named.
-The dev-host egress smoke (`MSKSD_TEST_EGRESS=1`) runs as root:
+The dev-host egress smoke (`TEST_EGRESS=1`) runs as root:
 ambient capabilities cannot be granted to an arbitrary shell, so
 the harness — which creates real taps, loads nftables rules, and
 binds ports 67 and 53 — runs as full root and sets `ip_forward`
@@ -588,7 +588,7 @@ while `static` and `interactive` gate each destination first (the
 Guest-initiated connections aimed at the host itself stay
 dropped in every mode (only DHCP and the resolver answer it). The
 end-to-end proofs are the `test_local_egress_git_out` smoke
-(`MSKSD_TEST_EGRESS=1` locally, and part of CI's KVM workflow) —
+(`TEST_EGRESS=1` locally, and part of CI's KVM workflow) —
 it installs git in the guest over a plain `allow` egress path and
 pushes a commit, over a test-widened input pin, since the
 host itself stays unreachable from the guest by design, using

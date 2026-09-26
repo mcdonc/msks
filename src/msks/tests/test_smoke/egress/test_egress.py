@@ -68,8 +68,8 @@ from test_smoke import (
 @needs_local
 async def test_local_egress_boot() -> None:
     """DHCP address, daemon resolver, NAT'd TCP — end to end (#52)."""
-    nft_tool = os.environ.get("MSKSD_TEST_NFT") or shutil.which("nft") or "nft"
-    ip_tool = os.environ.get("MSKSD_TEST_IP") or shutil.which("ip") or "ip"
+    nft_tool = os.environ.get("TEST_NFT") or shutil.which("nft") or "nft"
+    ip_tool = os.environ.get("TEST_IP") or shutil.which("ip") or "ip"
     state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
     settings = Settings(
         vmm=VmmSettings(state_dir=state_dir),
@@ -206,8 +206,8 @@ async def test_local_egress_git_out() -> None:
     exactly one widening (this workspace's git port) into its own
     ingress chain and removes it after.
     """
-    nft_tool = os.environ.get("MSKSD_TEST_NFT") or shutil.which("nft") or "nft"
-    ip_tool = os.environ.get("MSKSD_TEST_IP") or shutil.which("ip") or "ip"
+    nft_tool = os.environ.get("TEST_NFT") or shutil.which("nft") or "nft"
+    ip_tool = os.environ.get("TEST_IP") or shutil.which("ip") or "ip"
     uplink_iface = default_route_iface()
     uplink_ip = uplink_address()
     # The listen address and the NAT'd uplink iface must agree:
@@ -993,8 +993,8 @@ async def test_local_egress_consent_interactive() -> None:
     (the RST element); a raw-IP connect prompts with the IP itself;
     and a foreign resolver on :53 drops (the naming-layer lockout).
     """
-    nft_tool = os.environ.get("MSKSD_TEST_NFT") or shutil.which("nft") or "nft"
-    ip_tool = os.environ.get("MSKSD_TEST_IP") or shutil.which("ip") or "ip"
+    nft_tool = os.environ.get("TEST_NFT") or shutil.which("nft") or "nft"
+    ip_tool = os.environ.get("TEST_IP") or shutil.which("ip") or "ip"
     state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
     settings = Settings(
         vmm=VmmSettings(state_dir=state_dir),
@@ -1112,8 +1112,8 @@ async def test_local_egress_consent_static() -> None:
     """Static mode: the allowlist resolves and connects; an off-list
     name never resolves (NXDOMAIN — no resolution oracle); the
     denial is recorded for the audit trail."""
-    nft_tool = os.environ.get("MSKSD_TEST_NFT") or shutil.which("nft") or "nft"
-    ip_tool = os.environ.get("MSKSD_TEST_IP") or shutil.which("ip") or "ip"
+    nft_tool = os.environ.get("TEST_NFT") or shutil.which("nft") or "nft"
+    ip_tool = os.environ.get("TEST_IP") or shutil.which("ip") or "ip"
     state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
     settings = Settings(
         vmm=VmmSettings(state_dir=state_dir),

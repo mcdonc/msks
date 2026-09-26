@@ -11,7 +11,7 @@ tagged `vX.Y.Z`.
 - **The NixOS workspace guest image (#250).** A second catalog image
   built from the devenv-pinned nixpkgs with
   `msks-build-guest nixos` (into `.devenv/state/guest-nixos`;
-  `MSKS_GUEST_NIXOS_DIR` relocates it), registering under the
+  `GUEST_NIXOS_DIR` relocates it), registering under the
   `nixos` name beside `debian`. The archive carries the same
   containerDisk contract and the same declared capabilities —
   cloud-init, the prelude-v1 console — so the daemon serves it
@@ -266,7 +266,7 @@ no`, `PermitRootLogin prohibit-password`) pinned by a config dropin,
 - **Dev state moved under `.devenv/state/` (#156).** The repo-root
   state dirs — `.guest/`, `.msksd/` — now live at
   `.devenv/state/{guest,msksd}/`, each relocatable via
-  `MSKS_GUEST_DIR` or `MSKSD_STATE_DIR` (the daemon's own setting;
+  `GUEST_DIR` or `MSKSD_STATE_DIR` (the daemon's own setting;
   use an absolute value so the tasks and the daemon land in the same
   place). Existing state does not migrate: move the directory you
   want to keep or rebuild (`devenv processes up -d`,
@@ -293,7 +293,7 @@ no`, `PermitRootLogin prohibit-password`) pinned by a config dropin,
   `msks-preflight`, and the rest) — run it from a devenv shell
   directly or `devenv --quiet -O dotenv.enable:bool false shell --
 <name>` from outside; `msks:uv-sync` remains the one task. The
-  pinned nixpkgs source is exported as `MSKS_GUEST_NIXPKGS` to every
+  pinned nixpkgs source is exported as `GUEST_NIXPKGS` to every
   devenv context, and the build and lifecycle scripts print their
   start and outcome.
 

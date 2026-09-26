@@ -62,7 +62,7 @@ pub const AUTH_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30
 /// guest-local process cannot pre-plant or read the path. Tests
 /// point it somewhere they own via the env override.
 pub fn sig_dir() -> std::path::PathBuf {
-    std::env::var_os("MSKS_CONSOLE_SIG_DIR")
+    std::env::var_os("MSKSWS_CONSOLE_SIG_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::PathBuf::from("/run/msks-console-helper"))
 }

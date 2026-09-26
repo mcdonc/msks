@@ -42,14 +42,12 @@ from test_smoke import (
 #: The daemon's startup owns the listener budget: a fresh state dir
 #: imports (hashes) the default image archive before uvicorn binds,
 #: and a slow disk makes that seconds-to-tens-of-seconds.
-HEALTH_TIMEOUT_S = float(
-    os.environ.get("MSKSD_TEST_DAEMON_HEALTH_TIMEOUT_S", "180")
-)
+HEALTH_TIMEOUT_S = float(os.environ.get("TEST_DAEMON_HEALTH_TIMEOUT_S", "180"))
 
 #: SIGTERM → exit: the graceful path covers the console bridge and
 #: the sqlite close; a daemon that hangs on shutdown fails the test.
 DAEMON_EXIT_TIMEOUT_S = float(
-    os.environ.get("MSKSD_TEST_DAEMON_EXIT_TIMEOUT_S", "90")
+    os.environ.get("TEST_DAEMON_EXIT_TIMEOUT_S", "90")
 )
 
 

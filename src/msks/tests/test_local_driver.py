@@ -52,7 +52,7 @@ def env(tmp_path: Path):
     # identity-checked liveness reads /proc/<pid>/cmdline, and an
     # exec'd sleep erases the stub (and --api-socket) from it. The
     # shebang keeps the stub's own path in the cmdline, exactly like
-    # the real binary spawn. With MSKS_STUB_READY set the stub also
+    # the real binary spawn. With STUB_READY set the stub also
     # touches that path once userland runs -- spawn_stub_vmm waits
     # for it, because a shebang exec chain satisfies the /proc
     # identity check mid-chain (env phase) and then briefly reads
@@ -60,7 +60,7 @@ def env(tmp_path: Path):
     stub.write_text(
         "#!/usr/bin/env python3\n"
         "import os, pathlib, time\n"
-        'ready = os.environ.get("MSKS_STUB_READY")\n'
+        'ready = os.environ.get("STUB_READY")\n'
         "if ready:\n"
         "    pathlib.Path(ready).touch()\n"
         "time.sleep(600)\n"
@@ -1380,7 +1380,7 @@ async def spawn_stub_vmm(
     matches exactly. Bare `sleep` reads as a foreign process and
     takes the dead-VMM path (which never signals it).
 
-    The stub announces userland via MSKS_STUB_READY, and only that
+    The stub announces userland via STUB_READY, and only that
     announcement releases this helper: a `#!/usr/bin/env python3`
     shebang runs an exec CHAIN whose env phase carries the same
     stub and --api-socket fields (identity confirms mid-chain), and
@@ -1396,7 +1396,7 @@ async def spawn_stub_vmm(
         str(binary),
         "--api-socket",
         str(vm_dir / "api.sock"),
-        env={**os.environ, "MSKS_STUB_READY": str(ready)},
+        env={**os.environ, "STUB_READY": str(ready)},
     )
     for _ in range(200):
         if ready.exists():

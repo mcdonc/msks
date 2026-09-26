@@ -115,9 +115,9 @@ jobs:
       - name: Smoke tests
         env:
           TMPDIR: /tmp
-          MSKSD_TEST_GUEST_UP_TIMEOUT_S: "180"
-          MSKSD_TEST_CONSOLE_TIMEOUT_S: "120"
-          MSKSD_TEST_SHUTDOWN_TIMEOUT_S: "180"
+          TEST_GUEST_UP_TIMEOUT_S: "180"
+          TEST_CONSOLE_TIMEOUT_S: "120"
+          TEST_SHUTDOWN_TIMEOUT_S: "180"
         run: |
           set -o pipefail
           devenv --quiet -O dotenv.enable:bool false shell -- \

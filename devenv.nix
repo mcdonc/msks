@@ -114,7 +114,7 @@ in
   # the rust-overlay input in devenv.lock. The LLVM 23 tools pair
   # with the pinned rustc's LLVM for the coverage gate's
   # llvm-profdata/llvm-cov.
-  env.MSKS_RUST_LLVM_TOOLS = "${rustLlvmTools}/lib/rustlib/x86_64-unknown-linux-gnu/bin";
+  env.RUST_LLVM_TOOLS = "${rustLlvmTools}/lib/rustlib/x86_64-unknown-linux-gnu/bin";
 
   languages.rust = {
     enable = true;
@@ -199,9 +199,9 @@ in
   # The nixpkgs source the devenv lock pins — the revision every
   # guest build compiles against. Exported to every devenv context
   # (shells, processes, tasks, scripts), so the build scripts'
-  # MSKS_GUEST_NIXPKGS requirement holds however they are reached:
+  # GUEST_NIXPKGS requirement holds however they are reached:
   # the msksd process exec or a hand-run script from a shell.
-  env.MSKS_GUEST_NIXPKGS = pkgs.path;
+  env.GUEST_NIXPKGS = pkgs.path;
 
   # The msks client (#21) targets the DEV DAEMON (#231) by default,
   # so `msks ls` / `msks ssh` work from any devenv shell with no
@@ -311,7 +311,7 @@ in
   # evaluated — the guest toolchain cannot drift from the dev shell,
   # and the build needs nothing from the host but nix.
   scripts.msks-build-guest = {
-    description = "Build the microvm guest assets (kernel, initrd, ext4 rootfs) into the guest state dir (.devenv/state/guest; MSKS_GUEST_DIR relocates it; `msks-build-guest nixos` builds the NixOS guest into .devenv/state/guest-nixos)";
+    description = "Build the microvm guest assets (kernel, initrd, ext4 rootfs) into the guest state dir (.devenv/state/guest; GUEST_DIR relocates it; `msks-build-guest nixos` builds the NixOS guest into .devenv/state/guest-nixos)";
     exec = ''exec bash "$DEVENV_ROOT/scripts/build-guest.sh" "$@"'';
   };
 

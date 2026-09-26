@@ -1,6 +1,6 @@
 # The NixOS real-VM smoke suite (#250): the same unprivileged core
 # suite as smoke-debian.yml, booted against the NixOS guest — the
-# explicit MSKSD_TEST_* exports override the conftest's discovered
+# explicit TEST_* exports override the conftest's discovered
 # Debian defaults. Its own workflow so the image's lane reports
 # separately and runs in parallel with the Debian lane.
 #
@@ -92,9 +92,9 @@ jobs:
       - name: Smoke tests
         env:
           TMPDIR: /tmp
-          MSKSD_TEST_GUEST_UP_TIMEOUT_S: "180"
-          MSKSD_TEST_CONSOLE_TIMEOUT_S: "120"
-          MSKSD_TEST_SHUTDOWN_TIMEOUT_S: "180"
+          TEST_GUEST_UP_TIMEOUT_S: "180"
+          TEST_CONSOLE_TIMEOUT_S: "120"
+          TEST_SHUTDOWN_TIMEOUT_S: "180"
         run: |
           set -o pipefail
           G=.devenv/state/guest-nixos
@@ -104,10 +104,10 @@ jobs:
               "$manifest"
           )
           devenv --quiet -O dotenv.enable:bool false shell -- env \
-            MSKSD_TEST_VMLINUX="$PWD/$G/vmlinux" \
-            MSKSD_TEST_INITRD="$PWD/$G/initrd" \
-            MSKSD_TEST_ROOTFS="$PWD/$G/rootfs.ext4" \
-            MSKSD_TEST_CMDLINE="$cmdline" \
+            TEST_VMLINUX="$PWD/$G/vmlinux" \
+            TEST_INITRD="$PWD/$G/initrd" \
+            TEST_ROOTFS="$PWD/$G/rootfs.ext4" \
+            TEST_CMDLINE="$cmdline" \
             python -m pytest src/msks/tests/test_smoke/core \
             -v -rs -p no:cacheprovider --no-cov 2>&1 \
             | tee /tmp/smoke-nixos.log

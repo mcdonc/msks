@@ -993,6 +993,17 @@ def build_api(app) -> FastAPI:
         try:
             app.state.model.migrate()
             await app.state.model.bootstrap_token()
+            # The #335 ref rename: rewrite legacy placeholder rows,
+            # their stored values, and the manifest before anything
+            # serves or mints — the store lock is unneeded while the
+            # watcher and API are not yet up.
+            moved = await app.state.secrets.migrate_legacy_refs()
+            if moved:
+                LOG.info(
+                    "secret store: migrated %d placeholder(s) onto "
+                    "MSKSWS_ backend refs",
+                    moved,
+                )
             bootstrap_default_image(app)
             await app.state.net.start()
             await app.state.consent.start()

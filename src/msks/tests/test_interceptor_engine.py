@@ -127,7 +127,7 @@ def entry(
         name=name,
         placeholder_id=7,
         dests=dests,
-        backend_ref="MSKS_WS_A_API",
+        backend_ref="MSKSWS_WS_A_API",
     )
 
 

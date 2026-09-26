@@ -396,9 +396,9 @@ def test_import_of_the_real_built_image(tmp_path: Path) -> None:
 
 def nixos_guest_dir() -> Path:
     """The NixOS guest state dir (#250), mirroring the Debian one's
-    resolution: MSKS_GUEST_NIXOS_DIR relocates it (absolute as-is,
+    resolution: GUEST_NIXOS_DIR relocates it (absolute as-is,
     relative below the repo root)."""
-    override = os.environ.get("MSKS_GUEST_NIXOS_DIR")
+    override = os.environ.get("GUEST_NIXOS_DIR")
     base = Path(os.environ.get("DEVENV_ROOT", "."))
     if override is None:
         return base / ".devenv/state/guest-nixos"

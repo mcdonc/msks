@@ -7,6 +7,7 @@ CLI actually does (stderr shape, stdin value handling, the newline
 ``get`` appends on 0.20), not what a stub would echo back.
 """
 
+import re
 import stat
 
 import pytest
@@ -46,9 +47,9 @@ def test_new_sentinel_shape() -> None:
 
 
 def test_backend_ref_sanitizes() -> None:
-    """Dots and dashes become underscores, uppercased, MSKS-prefixed."""
-    assert backend_ref("my-ws", "github_api") == "MSKS_MY_WS_GITHUB_API"
-    assert backend_ref("a.b", "c.d") == "MSKS_A_B_C_D"
+    """Dots and dashes become underscores, uppercased, MSKSWS-prefixed."""
+    assert backend_ref("my-ws", "github_api") == "MSKSWS_MY_WS_GITHUB_API"
+    assert backend_ref("a.b", "c.d") == "MSKSWS_A_B_C_D"
 
 
 def test_valid_name() -> None:
@@ -105,11 +106,11 @@ def test_provider_uris(tmp_path) -> None:
 def test_render_manifest_declarations() -> None:
     """One inline declaration per ref, sorted, against the alias."""
     body = render_manifest(
-        "file:/store", [("MSKS_B_X", "b/x"), ("MSKS_A_Y", "a/y")]
+        "file:/store", [("MSKSWS_B_X", "b/x"), ("MSKSWS_A_Y", "a/y")]
     )
     assert 'name = "msks"' in body
     assert 'store = "file:/store"' in body
-    assert body.index("MSKS_A_Y") < body.index("MSKS_B_X")
+    assert body.index("MSKSWS_A_Y") < body.index("MSKSWS_B_X")
     assert 'providers = ["store"]' in body
 
 
@@ -117,7 +118,7 @@ def test_manifest_modes(tmp_path) -> None:
     """The root is 0700 and the manifest 0600 — real secrets' bytes
     live beside them on the file provider."""
     store = store_for(tmp_path)
-    store.sync_manifest([("MSKS_WS_X", "ws/x")])
+    store.sync_manifest([("MSKSWS_WS_X", "ws/x")])
     root = tmp_path / "store"
     manifest = root / MANIFEST_NAME
     assert stat.S_IMODE(root.stat().st_mode) == 0o700
@@ -127,25 +128,25 @@ def test_manifest_modes(tmp_path) -> None:
 def test_manifest_sync_is_change_driven(tmp_path) -> None:
     """An unchanged body is not rewritten (mtime holds)."""
     store = store_for(tmp_path)
-    store.sync_manifest([("MSKS_WS_X", "ws/x")])
+    store.sync_manifest([("MSKSWS_WS_X", "ws/x")])
     manifest = tmp_path / "store" / MANIFEST_NAME
     first_mtime = manifest.stat().st_mtime_ns
-    store.sync_manifest([("MSKS_WS_X", "ws/x")])
+    store.sync_manifest([("MSKSWS_WS_X", "ws/x")])
     assert manifest.stat().st_mtime_ns == first_mtime
-    store.sync_manifest([("MSKS_WS_X", "ws/x"), ("MSKS_WS_Y", "ws/y")])
-    assert "MSKS_WS_Y" in manifest.read_text()
+    store.sync_manifest([("MSKSWS_WS_X", "ws/x"), ("MSKSWS_WS_Y", "ws/y")])
+    assert "MSKSWS_WS_Y" in manifest.read_text()
 
 
 async def test_write_read_delete_roundtrip(tmp_path) -> None:
     """The daemon's three operations against the real CLI."""
     store = store_for(tmp_path)
-    store.sync_manifest([("MSKS_WS_GITHUB", "ws/github")])
-    await store.write("MSKS_WS_GITHUB", "ghp-real-token-123")
-    stored = tmp_path / "store" / "msks" / "default" / "MSKS_WS_GITHUB"
+    store.sync_manifest([("MSKSWS_WS_GITHUB", "ws/github")])
+    await store.write("MSKSWS_WS_GITHUB", "ghp-real-token-123")
+    stored = tmp_path / "store" / "msks" / "default" / "MSKSWS_WS_GITHUB"
     assert stored.read_text() == "ghp-real-token-123"
     assert stat.S_IMODE(stored.stat().st_mode) & 0o077 == 0
-    assert await store.read("MSKS_WS_GITHUB") == "ghp-real-token-123"
-    await store.delete("MSKS_WS_GITHUB")
+    assert await store.read("MSKSWS_WS_GITHUB") == "ghp-real-token-123"
+    await store.delete("MSKSWS_WS_GITHUB")
     assert not stored.exists()
 
 
@@ -153,20 +154,20 @@ async def test_read_survives_a_cold_cache(tmp_path) -> None:
     """A restarted daemon re-fetches by backend ref: a second store
     object (empty cache) reads what the first one wrote."""
     first = store_for(tmp_path)
-    first.sync_manifest([("MSKS_WS_X", "ws/x")])
-    await first.write("MSKS_WS_X", "value-1")
+    first.sync_manifest([("MSKSWS_WS_X", "ws/x")])
+    await first.write("MSKSWS_WS_X", "value-1")
     second = store_for(tmp_path)
-    assert await second.read("MSKS_WS_X") == "value-1"
+    assert await second.read("MSKSWS_WS_X") == "value-1"
 
 
 async def test_read_uses_the_cache(tmp_path) -> None:
     """After the first fetch the value comes from memory — the file
     can disappear and the swap path still answers."""
     store = store_for(tmp_path)
-    store.sync_manifest([("MSKS_WS_X", "ws/x")])
-    await store.write("MSKS_WS_X", "value-1")
-    (tmp_path / "store" / "msks" / "default" / "MSKS_WS_X").unlink()
-    assert await store.read("MSKS_WS_X") == "value-1"
+    store.sync_manifest([("MSKSWS_WS_X", "ws/x")])
+    await store.write("MSKSWS_WS_X", "value-1")
+    (tmp_path / "store" / "msks" / "default" / "MSKSWS_WS_X").unlink()
+    assert await store.read("MSKSWS_WS_X") == "value-1"
 
 
 async def test_check_probes_and_cleans(tmp_path) -> None:
@@ -186,9 +187,9 @@ async def test_missing_binary_is_a_named_error(tmp_path) -> None:
     store = store_for(
         tmp_path, {"MSKSD_SECRET_STORE_CLI": "/nonexistent/secretspec"}
     )
-    store.sync_manifest([("MSKS_WS_X", "ws/x")])
+    store.sync_manifest([("MSKSWS_WS_X", "ws/x")])
     with pytest.raises(SecretStoreError):
-        await store.write("MSKS_WS_X", "v")
+        await store.write("MSKSWS_WS_X", "v")
 
 
 def test_settings_reject_unknown_provider() -> None:
@@ -239,9 +240,9 @@ async def test_operation_times_out(tmp_path) -> None:
             "MSKSD_SECRET_STORE_TIMEOUT_S": "0.2",
         },
     )
-    store.sync_manifest([("MSKS_WS_X", "ws/x")])
+    store.sync_manifest([("MSKSWS_WS_X", "ws/x")])
     with pytest.raises(SecretStoreError, match="timed out"):
-        await store.write("MSKS_WS_X", "v")
+        await store.write("MSKSWS_WS_X", "v")
 
 
 async def test_check_detects_a_lying_read(tmp_path, monkeypatch) -> None:
@@ -267,17 +268,17 @@ async def test_a_failing_command_carries_stderr(tmp_path) -> None:
     )
     failing.chmod(0o755)
     store = store_for(tmp_path, {"MSKSD_SECRET_STORE_CLI": str(failing)})
-    store.sync_manifest([("MSKS_WS_X", "ws/x")])
+    store.sync_manifest([("MSKSWS_WS_X", "ws/x")])
     with pytest.raises(SecretStoreError, match="the real error"):
-        await store.write("MSKS_WS_X", "v")
+        await store.write("MSKSWS_WS_X", "v")
 
     silent = tmp_path / "silent-cli"
     silent.write_text("#!/bin/sh\nexit 3\n")
     silent.chmod(0o755)
     store = store_for(tmp_path, {"MSKSD_SECRET_STORE_CLI": str(silent)})
-    store.sync_manifest([("MSKS_WS_X", "ws/x")])
+    store.sync_manifest([("MSKSWS_WS_X", "ws/x")])
     with pytest.raises(SecretStoreError, match="unknown error"):
-        await store.read("MSKS_WS_X")
+        await store.read("MSKSWS_WS_X")
 
 
 async def test_check_never_touches_a_real_placeholder(tmp_path) -> None:
@@ -285,9 +286,164 @@ async def test_check_never_touches_a_real_placeholder(tmp_path) -> None:
     workspace literally named `store` with a placeholder `probe`
     keeps its value across a health check."""
     store = store_for(tmp_path)
-    store.sync_manifest([("MSKS_STORE_PROBE", "store/probe")])
-    await store.write("MSKS_STORE_PROBE", "THE-REAL-SECRET")
+    store.sync_manifest([("MSKSWS_STORE_PROBE", "store/probe")])
+    await store.write("MSKSWS_STORE_PROBE", "THE-REAL-SECRET")
     assert await store.check() == {"provider": "file", "ok": True}
-    assert await store.read("MSKS_STORE_PROBE") == "THE-REAL-SECRET"
-    stored = tmp_path / "store" / "msks" / "default" / "MSKS_STORE_PROBE"
+    assert await store.read("MSKSWS_STORE_PROBE") == "THE-REAL-SECRET"
+    stored = tmp_path / "store" / "msks" / "default" / "MSKSWS_STORE_PROBE"
     assert stored.read_text() == "THE-REAL-SECRET"
+
+
+# --- the #335 legacy ref migration ----------------------------------
+
+
+def app_for(tmp_path):
+    """A built app with migrated schema; placeholders insertable."""
+    app = build_app(
+        Settings.from_env(
+            {
+                "MSKSD_STATE_DIR": str(tmp_path),
+                "MSKSD_SECRET_STORE_ROOT": str(tmp_path / "store"),
+            }
+        )
+    )
+    app.state.model.migrate()
+    return app
+
+
+async def seed_legacy_placeholder(app, workspace_id, name, value=None):
+    """One placeholder row as pre-#335 code minted it, with an
+    optional stored value under the legacy ref."""
+    ref = "MSKS_" + "_".join(
+        re.sub(r"[^A-Za-z0-9_]", "_", part).upper()
+        for part in (workspace_id, name)
+    )
+    await app.state.model.create_placeholder(
+        workspace_id=workspace_id,
+        name=name,
+        sentinel=new_sentinel(),
+        dests=["github.com"],
+        backend_ref=ref,
+    )
+    if value is not None:
+        app.state.secrets.sync_manifest([(ref, f"{workspace_id}/{name}")])
+        await app.state.secrets.write(ref, value)
+    return ref
+
+
+async def test_legacy_refs_migrate_rows_values_and_manifest(tmp_path) -> None:
+    """One startup pass moves row, stored value, and manifest onto
+    the MSKSWS_ ref — the pre-#335 stored format, migrated (#335)."""
+    app = app_for(tmp_path)
+    await seed_legacy_placeholder(app, "ws-a", "github_api", "ghp-old")
+    await seed_legacy_placeholder(app, "my-ws", "x", "v2")
+
+    moved = await app.state.secrets.migrate_legacy_refs()
+
+    assert moved == 2
+    refs = {
+        row["backend_ref"] for row in await app.state.model.list_placeholders()
+    }
+    assert refs == {"MSKSWS_WS_A_GITHUB_API", "MSKSWS_MY_WS_X"}
+    # A restarted daemon (cold cache) reads the values at the new
+    # refs; the legacy entries are gone from the provider.
+    fresh = app_for(tmp_path).state.secrets
+    assert await fresh.read("MSKSWS_WS_A_GITHUB_API") == "ghp-old"
+    assert await fresh.read("MSKSWS_MY_WS_X") == "v2"
+    stored = tmp_path / "store" / "msks" / "default"
+    assert set(stored.iterdir()) == {
+        stored / "MSKSWS_WS_A_GITHUB_API",
+        stored / "MSKSWS_MY_WS_X",
+    }
+    manifest = (tmp_path / "store" / MANIFEST_NAME).read_text()
+    assert "MSKSWS_WS_A_GITHUB_API" in manifest
+    assert "MSKS_" not in manifest
+
+
+async def test_legacy_ref_migration_is_idempotent(tmp_path) -> None:
+    """A pass interrupted and re-run leaves nothing half-done: the
+    second pass sees no legacy rows and changes nothing."""
+    app = app_for(tmp_path)
+    await seed_legacy_placeholder(app, "ws-a", "github_api", "ghp-old")
+
+    assert await app.state.secrets.migrate_legacy_refs() == 1
+    body = (tmp_path / "store" / MANIFEST_NAME).read_text()
+
+    assert await app.state.secrets.migrate_legacy_refs() == 0
+    assert (tmp_path / "store" / MANIFEST_NAME).read_text() == body
+    fresh = app_for(tmp_path).state.secrets
+    assert await fresh.read("MSKSWS_WS_A_GITHUB_API") == "ghp-old"
+
+
+async def test_missing_legacy_value_still_renames_the_row(
+    tmp_path, caplog
+) -> None:
+    """A row whose value cannot be read (a reconfigured provider,
+    a moved store) still lands on the new ref — what remains is a
+    missing value, not a wrong one."""
+    app = app_for(tmp_path)
+    await seed_legacy_placeholder(app, "ws-a", "github_api", value=None)
+
+    with caplog.at_level("WARNING"):
+        moved = await app.state.secrets.migrate_legacy_refs()
+
+    assert moved == 1
+    (row,) = await app.state.model.list_placeholders()
+    assert row["backend_ref"] == "MSKSWS_WS_A_GITHUB_API"
+    assert "no readable value" in caplog.text
+
+
+async def test_stale_legacy_manifest_heals_without_legacy_rows(
+    tmp_path,
+) -> None:
+    """A pass that renamed every row but died before its final
+    re-sync leaves a manifest declaring the legacy ref; the next
+    boot re-renders it even with no legacy rows left (#335)."""
+    app = app_for(tmp_path)
+    await app.state.model.create_placeholder(
+        workspace_id="ws-a",
+        name="github_api",
+        sentinel=new_sentinel(),
+        dests=["github.com"],
+        backend_ref="MSKSWS_WS_A_GITHUB_API",
+    )
+    stale = tmp_path / "store" / MANIFEST_NAME
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    stale.write_text(
+        render_manifest(
+            "file:x", [("MSKS_WS_A_GITHUB_API", "ws-a/github_api")]
+        )
+    )
+
+    assert await app.state.secrets.migrate_legacy_refs() == 0
+
+    assert "MSKSWS_WS_A_GITHUB_API" in stale.read_text()
+    assert "MSKS_WS_A_GITHUB_API" not in stale.read_text()
+
+
+async def test_no_store_configured_migrates_nothing() -> None:
+    """A settings object without a store root (the direct
+    construction some test daemons use) has nothing to read or
+    rewrite — the pass is a no-op, not a crash."""
+    app = build_app(Settings())
+    assert app.state.secrets.manifest_declares_legacy() is False
+    assert await app.state.secrets.migrate_legacy_refs() == 0
+
+
+async def test_failing_row_copy_leaves_the_row_legacy(tmp_path, monkeypatch):
+    """A copy that fails mid-flight logs and leaves the row on its
+    legacy ref — reads keep following the row's ref, and the next
+    startup retries the move."""
+    app = app_for(tmp_path)
+    ref = await seed_legacy_placeholder(app, "ws-a", "github_api", "ghp-old")
+
+    async def boom(placeholder_id, new_ref):
+        raise RuntimeError("db gone")
+
+    monkeypatch.setattr(app.state.model, "rename_placeholder_ref", boom)
+
+    moved = await app.state.secrets.migrate_legacy_refs()
+
+    assert moved == 1
+    (row,) = await app.state.model.list_placeholders()
+    assert row["backend_ref"] == ref

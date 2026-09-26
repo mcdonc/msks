@@ -1,29 +1,29 @@
 #!/usr/bin/env bash
 # Build the microvm guest assets with nix and land them in the
-# guest state dir (#5) — .devenv/state/guest by default; MSKS_GUEST_DIR
+# guest state dir (#5) — .devenv/state/guest by default; GUEST_DIR
 # relocates it. `build-guest.sh nixos` (#250) builds the NixOS guest
-# instead — .devenv/state/guest-nixos, relocated by MSKS_GUEST_NIXOS_DIR
+# instead — .devenv/state/guest-nixos, relocated by GUEST_NIXOS_DIR
 # — with the same output surface.
 #
 # Runs against the nixpkgs revision pinned by devenv.lock: the
 # msks-build-guest script passes the pinned source via
-# MSKS_GUEST_NIXPKGS. The build is
+# GUEST_NIXPKGS. The build is
 # pure derivations all the way down, so any Linux host with nix runs
 # it unchanged.
 set -euo pipefail
 
 root="${DEVENV_ROOT:?not running inside the devenv shell}"
-nixpkgs="${MSKS_GUEST_NIXPKGS:?devenv must pass MSKS_GUEST_NIXPKGS}"
+nixpkgs="${GUEST_NIXPKGS:?devenv must pass GUEST_NIXPKGS}"
 
 flavor="${1:-debian}"
 case "$flavor" in
 debian)
   attr=guest
-  guest_dir="${MSKS_GUEST_DIR:-$root/.devenv/state/guest}"
+  guest_dir="${GUEST_DIR:-$root/.devenv/state/guest}"
   ;;
 nixos)
   attr=guest-nixos
-  guest_dir="${MSKS_GUEST_NIXOS_DIR:-$root/.devenv/state/guest-nixos}"
+  guest_dir="${GUEST_NIXOS_DIR:-$root/.devenv/state/guest-nixos}"
   ;;
 *)
   echo "usage: $0 [debian|nixos]" >&2

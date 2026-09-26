@@ -621,3 +621,29 @@ async def test_set_egress_policy_updates_named_columns(app_for) -> None:
     assert row["egress_mode"] == "static"
     assert row["egress_allowlist"] == [".b.de"]
     assert not await app.state.model.set_egress_policy("ghost", "allow", None)
+
+
+async def test_rename_placeholder_ref(app_for) -> None:
+    """#335's stored-format rename: the row repoints at the new
+    backend ref, and a vanished row answers False instead of
+    raising."""
+    app = app_for()
+    model = app.state.model
+    model.migrate()
+    from msks.secretstore import backend_ref, new_sentinel
+
+    row = await model.create_placeholder(
+        "ws1",
+        "github_api",
+        new_sentinel(),
+        ["api.example.com"],
+        backend_ref("ws1", "github_api"),
+        None,
+    )
+    assert (
+        await model.rename_placeholder_ref(row["id"], "MSKSWS_OTHER") is True
+    )
+    assert (await model.get_placeholder(row["id"]))["backend_ref"] == (
+        "MSKSWS_OTHER"
+    )
+    assert await model.rename_placeholder_ref(row["id"] + 1000, "X") is False

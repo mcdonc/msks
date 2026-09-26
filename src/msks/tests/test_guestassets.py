@@ -133,7 +133,7 @@ def test_load_defaults_to_cwd(
     assert guestassets.load_guest_assets() is not None
 
 
-# --- the MSKS_GUEST_DIR relocation (#156) -----------------------------
+# --- the GUEST_DIR relocation (#156) -----------------------------
 
 
 def test_guest_dir_default(tmp_path: Path) -> None:
@@ -157,7 +157,7 @@ def test_guest_dir_env_relative(
 def test_load_honors_guest_dir_env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """MSKS_GUEST_DIR relocates everything the loader reads."""
+    """GUEST_DIR relocates everything the loader reads."""
     moved = tmp_path / "relocated"
     monkeypatch.setenv(guestassets.GUEST_DIR_ENV, str(moved))
     write_manifest(tmp_path, guest=moved)
@@ -206,17 +206,17 @@ def test_smoke_env_with_assets_and_kvm(
     _force_kvm(monkeypatch, True)
     env = guestassets.smoke_env_defaults(_assets())
     assert env == {
-        "MSKSD_TEST_VMLINUX": "/a/vmlinux",
-        "MSKSD_TEST_INITRD": "/a/initrd",
-        "MSKSD_TEST_ROOTFS": "/a/rootfs.ext4",
-        "MSKSD_TEST_CMDLINE": "console=ttyS0",
+        "TEST_VMLINUX": "/a/vmlinux",
+        "TEST_INITRD": "/a/initrd",
+        "TEST_ROOTFS": "/a/rootfs.ext4",
+        "TEST_CMDLINE": "console=ttyS0",
     }
 
 
 def test_smoke_env_without_initrd(monkeypatch: pytest.MonkeyPatch) -> None:
     _force_kvm(monkeypatch, True)
     env = guestassets.smoke_env_defaults(_assets(initrd=None))
-    assert "MSKSD_TEST_INITRD" not in env
+    assert "TEST_INITRD" not in env
 
 
 def test_smoke_env_without_assets(monkeypatch: pytest.MonkeyPatch) -> None:

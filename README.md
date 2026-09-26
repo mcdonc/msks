@@ -88,7 +88,7 @@ devenv --quiet -O dotenv.enable:bool false shell -- msks-build-guest
 
 The artifacts (plus a `guest-manifest.json` describing them and the
 boot cmdline) land in `.devenv/state/guest/` (relocatable with
-`MSKS_GUEST_DIR`). Boot one interactive VM from them —
+`GUEST_DIR`). Boot one interactive VM from them —
 
 ```bash
 msks-demo-vm

@@ -1,5 +1,5 @@
 """The unprivileged real-VM suite: boots a workspace through
-cloud-hypervisor against whichever guest the ``MSKSD_TEST_*``
+cloud-hypervisor against whichever guest the ``TEST_*``
 variables point at (the conftest discovers the built Debian assets;
 the CI workflow exports the NixOS ones).
 

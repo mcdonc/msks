@@ -1618,7 +1618,7 @@ async def test_a_failed_swap_unbinds_the_fresh_consumer(
     await app.state.net.attach(
         "ws-i", want=True, policy=EgressPolicy("ws-i", "static", ())
     )
-    monkeypatch.setenv("MSKS_TEST_NFT_FAIL_AT", "-f -")
+    monkeypatch.setenv("TEST_NFT_FAIL_AT", "-f -")
     try:
         with pytest.raises(MicrovmError):
             await app.state.net.apply_policy(
@@ -1632,7 +1632,7 @@ async def test_a_failed_swap_unbinds_the_fresh_consumer(
                 "ws-i", EgressPolicy("ws-i", "allow", ())
             )
     finally:
-        monkeypatch.delenv("MSKS_TEST_NFT_FAIL_AT")
+        monkeypatch.delenv("TEST_NFT_FAIL_AT")
     # The old posture is still recorded: nothing committed.
     services = app.state.net._services["ws-i"]
     assert services.consumer is None
