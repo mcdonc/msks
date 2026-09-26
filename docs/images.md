@@ -513,8 +513,8 @@ Either key alone keeps the other at its registered value. A
 rename validates the new pair the same way an import override
 does (non-empty, and free of `:` and `@` — the reference forms
 key on them), refuses with a named error — naming the holder by
-hash, and by its origin when a rename moved it there — a pair
-another row already holds, keeps the origin pair, and changes
+hash, and by its origin when an override or a rename moved it
+there — a pair another row already holds, keeps the origin pair, and changes
 nothing else: the bytes, the hash, the listed import time, and
 workspaces already booting the image stay put. The refusal holds
 for overrides and renames; a plain import of a rebuilt archive

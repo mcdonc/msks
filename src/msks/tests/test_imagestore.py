@@ -1906,6 +1906,82 @@ def test_carried_forward_override_skips_the_collision_check(
     assert refreshed.origin_ref == "debian:13.6"
 
 
+async def test_rename_serializes_against_a_reimport(
+    tmp_path, monkeypatch
+) -> None:
+    """The catalog lock (#340 review): a rename arriving while a
+    re-import holds the lock waits its turn — without it, the
+    rename wrote its override into the cache the import then
+    swapped away, a committed rename silently lost."""
+    archive = tmp_path / "race.tar"
+    build_containerdisk(archive, name="debian", version="13.6")
+    state = tmp_path / "vms"
+
+    settings = Settings(
+        vmm=VmmSettings(state_dir=state),
+        server=ServerSettings(
+            db_path=tmp_path / "ws.db",
+            bootstrap_token=TOKEN,
+            event_poll_s=0.05,
+        ),
+    )
+    app = build_app(settings)
+    app.state.microvm = StubMicrovm()
+    api = build_api(app)
+
+    async with api.router.lifespan_context(api):
+        async with AsyncClient(
+            transport=ASGITransport(app=api), base_url="http://t"
+        ) as http:
+            imported = await http.post(
+                "/api/v1/images",
+                json={"source": str(archive)},
+                headers=auth(),
+            )
+            assert imported.status_code == 201, imported.text
+            first = imagestore.list_images(state)[0]
+
+            real_member = imagestore.member
+            loop = asyncio.get_running_loop()
+            rename_future = None
+
+            def racing_member(layer, dest, member_name):
+                nonlocal rename_future
+                # Mid-import, with the catalog lock held: fire the
+                # rename and give it time to reach the lock. Under the
+                # lock it blocks; without one it would commit into the
+                # old cache before the swap destroys it.
+                if dest.name == "kernel" and rename_future is None:
+                    rename_future = asyncio.run_coroutine_threadsafe(
+                        http.patch(
+                            f"/api/v1/images/{first.hash}",
+                            json={"name": "mine", "version": "1"},
+                            headers=auth(),
+                        ),
+                        loop,
+                    )
+                    time.sleep(0.2)
+                return real_member(layer, dest, member_name)
+
+            monkeypatch.setattr(imagestore, "member", racing_member)
+
+            # The re-import goes through the route, so it holds the
+            # catalog lock across its cache swap.
+            refreshed = await http.post(
+                "/api/v1/images",
+                json={"source": str(archive)},
+                headers=auth(),
+            )
+            assert refreshed.status_code == 201, refreshed.text
+            assert refreshed.json()["hash"] == first.hash
+            renamed = await asyncio.wrap_future(rename_future)
+            assert renamed.status_code == 200, renamed.text
+            assert renamed.json()["ref"] == "mine:1"
+    # The committed override survived the import's cache swap.
+    assert imagestore.list_images(state)[0].ref == "mine:1"
+    assert resolve("mine:1", state).hash == first.hash
+
+
 def test_rename_pins_a_derived_import_time(tmp_path: Path) -> None:
     """A rename writes inside the cache dir, which moves the
     directory mtime — the fallback import time for entries that
