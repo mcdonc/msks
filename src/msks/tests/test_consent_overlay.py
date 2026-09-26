@@ -1448,6 +1448,17 @@ async def test_the_countdown_repaint_skips_a_row_that_left() -> None:
         rows = overlay.query_one("#consent-rows")
         ordered = page.link.controller.ordered()
 
+        def row_text(index: int) -> str:
+            """One row's text; empty while its inner Static still
+            mounts (the compose stream lags the row count — the
+            repaint reads the Statics, so it waits for them)."""
+            try:
+                return str(rows.children[index].query_one(Static).content)
+            except Exception:
+                return ""
+
+        await wait_for(lambda: row_text(0) and row_text(1))
+
         class Gone:
             """A hold whose row left between the membership read and
             the pass — the skip the guard exists for."""
