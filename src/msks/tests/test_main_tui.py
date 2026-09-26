@@ -24,10 +24,13 @@ from msks.client.tui import main_app
 from msks.client.tui.link import DeciderLink
 from msks.client.tui.main_app import (
     FLOW_SHELL,
+    EditScreen,
     MainScreen,
     MsksTuiApp,
     TuiFollow,
+    WorkspaceForm,
     WorkspaceScreen,
+    edit_seeds,
     image_options,
 )
 from rich.cells import cell_len
@@ -76,7 +79,8 @@ def row(
     mode: str = "interactive",
     host: str = "host-1",
 ) -> dict:
-    """One listing row as the daemon serves it."""
+    """One listing row as the daemon serves it — the sizes and
+    topology the edit dialog seeds from included (#331)."""
     return {
         "id": id,
         "name": name,
@@ -85,6 +89,11 @@ def row(
         "image_hash": "a" * 64,
         "created_at": "2026-01-02T03:04:05",
         "host": host,
+        "cpus": 2,
+        "mem_mib": 8192,
+        "root_mib": 10240,
+        "home_mib": 20480,
+        "login_user": "ops",
     }
 
 
@@ -99,6 +108,10 @@ class FakeData:
         self.refusal = "daemon away"
         self.images_rows: list[dict] = []
         self.defaults: dict = {"root_mib": 10240, "home_mib": 20480}
+        # The resize reply's omitted fields (#331): a daemon older
+        # than a field answers without it, and the page keeps its
+        # row's own value.
+        self.resize_omit: set[str] = set()
 
     async def workspaces(self) -> list[dict]:
         self.fetches += 1
@@ -123,6 +136,28 @@ class FakeData:
         fresh = dict(row(id="new1", name=body.get("name"), status="created"))
         self.rows.append(fresh)
         return (dict(fresh), None)
+
+    async def resize(self, workspace_id: str, body: dict) -> dict:
+        """The resize POST (#331) — recorded; the reply carries the
+        updated row with a ``changes`` list in the daemon's own
+        vocabulary, so the outcome line's boot note reads the
+        same as the CLI's."""
+        self.calls.append(("resize", workspace_id, body))
+        if "resize" in self.fail:
+            raise RuntimeError(self.refusal)
+        fresh = next(r for r in self.rows if r["id"] == workspace_id)
+        changes = []
+        for field, moved in (
+            ("root_mib", "root grew to {value} MiB"),
+            ("home_mib", "home grew to {value} MiB"),
+            ("cpus", "cpus set to {value}"),
+            ("mem_mib", "mem set to {value} MiB"),
+        ):
+            if body.get(field) is not None and body[field] != fresh[field]:
+                fresh[field] = body[field]
+                changes.append(moved.format(value=body[field]))
+        reply = {k: v for k, v in fresh.items() if k not in self.resize_omit}
+        return {**reply, "changes": changes}
 
     async def start(self, workspace_id: str) -> dict:
         self.calls.append(("start", workspace_id))
@@ -707,7 +742,7 @@ async def test_a_hold_arriving_opens_the_overlay_by_itself(
     app, follow = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         await wait_for(lambda: "egress to decide: 1" in header_text(app))
         rows = app.screen.query_one("#actions")
         assert "pending" not in rows.children[0].classes
@@ -726,7 +761,7 @@ async def test_the_consent_action_opens_the_panel_by_hand(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         await pilot.press("down")  # the consent action
         await press_until(pilot, "enter", lambda: on_overlay(app))
         assert app.screen.auto is False  # type: ignore[attr-defined]
@@ -734,17 +769,18 @@ async def test_the_consent_action_opens_the_panel_by_hand(
 
 
 async def test_the_page_runs_start_and_stop(monkeypatch) -> None:
-    """The fixed actions in walk order (#309, re-pinned #343): a
-    shell (a new terminal), consent, the egress-mode switch,
-    start, stop — the LLM token's remint stays on the CLI."""
+    """The fixed actions in walk order (#309, re-pinned #343,
+    #331): a shell (a new terminal), consent, the egress-mode
+    switch, the edit dialog, start, stop — the LLM token's remint
+    stays on the CLI."""
     scripted_link(monkeypatch, [rules_frame()])
     data = FakeData([row()])
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
-        # Down three times lands on start.
-        await pilot.press("down", "down", "down")
+        await wait_for(lambda: action_children(app) == 6)
+        # Down four times lands on start.
+        await pilot.press("down", "down", "down", "down")
         await pilot.press("enter")
         await wait_for(lambda: ("start", WS) in data.calls)
         await wait_for(lambda: "running" in header_text(app))
@@ -850,7 +886,7 @@ async def test_escape_on_the_picker_decides_nothing(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         await pilot.press("down", "down", "enter")
         await wait_for(lambda: type(app.screen).__name__ == "ModeScreen")
         options = app.screen.query_one("#modes", OptionList)
@@ -859,6 +895,240 @@ async def test_escape_on_the_picker_decides_nothing(monkeypatch) -> None:
         await wait_for(lambda: on_page(app))
         await pilot.pause()
         assert data.calls == []
+
+
+# -- the edit dialog (#331) ---------------------------------------------
+
+
+async def open_edit(pilot, app) -> EditScreen:
+    """Down three times lands on the edit action; Enter opens the
+    prefilled dialog over the page."""
+    await pilot.press("down", "down", "down")
+    await pilot.press("enter")
+    await wait_for(lambda: type(app.screen).__name__ == "EditScreen")
+    return app.screen
+
+
+def test_edit_seeds_read_every_field_off_the_row() -> None:
+    """The prefill (#331): every form field seeded from the row —
+    sizes and topology as their numbers, the image as its hash,
+    the user as the login user. A row that predates a field seeds
+    its fallback: a dash for an image (the workspace boots
+    explicit kernel/rootfs paths), the image's own account for a
+    login user, blank for the rest."""
+    seeded = edit_seeds(row())
+    assert seeded == {
+        "name": "alpha",
+        "image": "a" * 64,
+        "cpus": "2",
+        "mem_mib": "8192",
+        "root_mib": "10240",
+        "home_mib": "20480",
+        "user": "ops",
+    }
+    bare = edit_seeds({"id": WS})
+    blank = {field: "" for field in seeded}
+    assert bare == {**blank, "image": "-", "user": "msks"}
+
+
+async def test_the_page_opens_the_prefilled_edit_dialog(
+    monkeypatch,
+) -> None:
+    """The edit action opens the create form's own implementation
+    seeded from the workspace's row: the sizes editable and
+    focused first, the create-time fields (name, image, user)
+    read-only and marked * — one form, not a forked copy (#331)."""
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        assert "Edit settings" in action_text(app, 3)
+        screen = await open_edit(pilot, app)
+        assert isinstance(screen, WorkspaceForm)
+        assert isinstance(screen, EditScreen)
+        # The editable sizes carry the row's values and the walk
+        # starts on the first of them.
+        for field, value in (
+            ("cpus", "2"),
+            ("mem_mib", "8192"),
+            ("root_mib", "10240"),
+            ("home_mib", "20480"),
+        ):
+            assert screen.query_one(f"#field-{field}", Input).value == value
+            assert not screen.query_one(f"#field-{field}", Input).disabled
+        assert app.focused is screen.query_one("#field-cpus", Input)
+        # The create-time fields show their values, read-only and
+        # marked — the note carries the * legend and the resize
+        # rule (stop first, home live, root and topology at boot).
+        for field, value in (
+            ("name", "alpha"),
+            ("image", "a" * 64),
+            ("user", "ops"),
+        ):
+            assert screen.query_one(f"#field-{field}", Input).value == value
+            assert screen.query_one(f"#field-{field}", Input).disabled
+        note = str(screen.query_one("#form-note", Static).content)
+        assert "edit alpha" in note
+        assert "stop the workspace to resize" in note
+        assert "home bytes move at once" in note
+        assert "* = create-time" in note
+        labels = [
+            str(item.query_one(Static).content)
+            for item in screen.query(".form-row")
+        ]
+        assert labels[0] == "name *"
+        assert labels[1] == "image ref *"
+        assert labels[6] == "user *"
+        assert labels[2] == "vcpus"
+        # Escape closes the dialog and decides nothing.
+        await pilot.press("escape")
+        await wait_for(lambda: on_page(app))
+        assert data.calls == []
+
+
+async def test_the_edit_dialog_resizes_the_changed_sizes(
+    monkeypatch,
+) -> None:
+    """A submit sends the changed sizes alone through the resize
+    exchange — the same route ``msks resize`` speaks — and the
+    page's consent line carries the CLI's own outcome line,
+    boot note included."""
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        page = await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        screen = await open_edit(pilot, app)
+        screen.query_one("#field-cpus", Input).value = "4"
+        screen.query_one("#field-root_mib", Input).value = "20480"
+        screen.submit()
+        await wait_for(
+            lambda: any(call[:2] == ("resize", WS) for call in data.calls)
+        )
+        body = next(call for call in data.calls if call[0] == "resize")[2]
+        assert body == {"cpus": 4, "root_mib": 20480}
+        await wait_for(lambda: "resized alpha" in consent_text(app))
+        assert "root 20480 MiB" in consent_text(app)
+        assert "cpus 4" in consent_text(app)
+        assert "next boot" in consent_text(app)
+        # The page's row keeps the reply's facts: a reopened dialog
+        # seeds the moved sizes.
+        assert page.row["cpus"] == 4
+        assert page.row["root_mib"] == 20480
+
+
+async def test_the_edit_dialog_refuses_create_time_and_empty(
+    monkeypatch,
+) -> None:
+    """A create-time value that moved stays home with the note
+    naming it — refused, never silently dropped — and a body with
+    nothing changed stays home too, so the daemon never sees an
+    empty resize."""
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        screen = await open_edit(pilot, app)
+        # A programmatic move on a read-only field: the submit
+        # refuses it by name.
+        screen.query_one("#field-name", Input).value = "renamed"
+        screen.submit()
+        await pilot.pause()
+        note = str(screen.query_one("#form-note", Static).content)
+        assert "name is create-time" in note
+        assert data.calls == []
+        # Restored, with nothing else changed: the empty body
+        # stays home with the local nothing-to-resize line.
+        screen.query_one("#field-name", Input).value = "alpha"
+        screen.submit()
+        await pilot.pause()
+        assert "nothing to resize" in str(
+            screen.query_one("#form-note", Static).content
+        )
+        assert data.calls == []
+        # Junk in a size still refuses like the create form does.
+        screen.query_one("#field-mem_mib", Input).value = "lots"
+        screen.submit()
+        await pilot.pause()
+        assert "whole number" in str(
+            screen.query_one("#form-note", Static).content
+        )
+        assert data.calls == []
+
+
+async def test_an_older_daemons_resize_reply_keeps_the_rows_facts(
+    monkeypatch,
+) -> None:
+    """A resize reply that predates a field (#331's defensive
+    merge): the page keeps its row's own value for the missing
+    field — the merge fills the outcome line from the row, so a
+    partial reply never crashes the flash, even for the field the
+    body itself moved."""
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([row()])
+    data.resize_omit = {"cpus", "mem_mib"}
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        page = await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        screen = await open_edit(pilot, app)
+        screen.query_one("#field-cpus", Input).value = "4"
+        screen.query_one("#field-root_mib", Input).value = "20480"
+        screen.submit()
+        await wait_for(lambda: "resized alpha" in consent_text(app))
+        assert page.row["root_mib"] == 20480  # the reply's fact
+        assert page.row["cpus"] == 2  # the row's own, kept
+        assert page.row["mem_mib"] == 8192
+        assert "cpus 2" in consent_text(app)  # the row's fact, printed
+
+
+async def test_an_edit_refusal_flashes_on_the_page(monkeypatch) -> None:
+    """A refused resize — a workspace the daemon will not move,
+    a running one among them — names itself on the page's consent
+    line (#343's surface rule), the dialog's own refusal carried
+    by the page that owns the exchange."""
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([row(status="running")])
+    data.fail.add("resize")
+    data.refusal = "workspace ws-a is running; stop it first"
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        screen = await open_edit(pilot, app)
+        screen.query_one("#field-cpus", Input).value = "4"
+        screen.submit()
+        await wait_for(lambda: "edit failed" in consent_text(app))
+        assert "stop it first" in consent_text(app)
+        assert on_page(app)
+
+
+async def test_the_edit_dialog_fits_the_small_terminal(
+    monkeypatch,
+) -> None:
+    """The edit dialog keeps the create form's 80x24 rule (#325,
+    #331): every control, the buttons included, stays on screen
+    above the footer line — the three-line rule note included."""
+    scripted_link(monkeypatch, [])
+    data = FakeData([row(name="a-very-long-workspace-name-here")])
+    app, _ = make_app(data)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        screen = await open_edit(pilot, app)
+        form = screen.query_one("#form")
+        assert form.outer_size.height <= 23  # the footer keeps its row
+        assert screen.query_one("#form-note").region.height == 3
+        last = screen.query_one("#field-home_mib", Input)
+        buttons = screen.query_one("#form-buttons")
+        assert last.region.bottom < 24
+        assert buttons.region.bottom < 24
+        assert screen.query_one("Footer").region.y == 23
 
 
 # -- the new-terminal shell action (#341) ----------------------------------
@@ -912,7 +1182,7 @@ async def test_the_new_terminal_action_spawns_an_ssh_child(
     app = MsksTuiApp(TuiFollow(), data=data, conf=conf)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         assert "new terminal" in action_text(app, 0)
         await press_until(pilot, "enter", lambda: len(spawned) == 1)
         assert spawned[0] == [
@@ -955,7 +1225,7 @@ async def test_a_dead_launcher_falls_back_to_this_terminal(
     app = MsksTuiApp(follow, data=data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         await pilot.press("enter")
         await pilot.pause()
     assert follow.take() == (FLOW_SHELL, WS)
@@ -1152,6 +1422,7 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
     seen: list[tuple] = []
     seen_pub: list[str] = []
     bodies: list[dict] = []
+    resized: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append((request.method, request.url.path))
@@ -1201,6 +1472,23 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
                     "applied": True,
                 },
             )
+        if (
+            request.method == "POST"
+            and request.url.path == "/api/v1/workspaces/ws1/resize"
+        ):
+            resized.append(json.loads(request.content))
+            return httpx.Response(
+                200,
+                json={
+                    "id": "ws1",
+                    "name": "n",
+                    "root_mib": 20480,
+                    "home_mib": 20480,
+                    "cpus": 4,
+                    "mem_mib": 8192,
+                    "changes": ["root grew to 20480 MiB"],
+                },
+            )
         return httpx.Response(200, json={"id": "ws1", "status": "running"})
 
     data = data_mod.TuiData(transport=httpx.MockTransport(handler))
@@ -1247,6 +1535,13 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
         "DELETE",
         "/api/v1/workspaces/ws1/egress/requests/r9",
     ) in seen
+    # The resize seam (#331): the edit dialog's changed sizes POST
+    # the same route ``msks resize`` speaks, the reply carrying
+    # the updated row and its ``changes`` list.
+    reply = await data.resize("ws1", {"root_mib": 20480, "cpus": 4})
+    assert reply["root_mib"] == 20480
+    assert resized == [{"root_mib": 20480, "cpus": 4}]
+    assert ("POST", "/api/v1/workspaces/ws1/resize") in seen
 
 
 # -- the pure helpers ------------------------------------------------------
@@ -1851,7 +2146,7 @@ async def test_the_headers_count_follows_the_queue(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         assert "egress to decide" not in header_text(app)
         ws.push(request_frame("late1"))
         # The burst's first hold opens the consent overlay by itself
@@ -1875,7 +2170,7 @@ async def test_the_headers_count_follows_the_queue(monkeypatch) -> None:
         await wait_for(lambda: on_overlay(app))
         await press_until(pilot, "q", lambda: on_page(app))
         await wait_for(lambda: "egress to decide: 1" in header_text(app))
-        assert action_children(app) == 5
+        assert action_children(app) == 6
         ws.push(
             frame(
                 "egress.resolved",
@@ -1908,7 +2203,7 @@ async def test_the_swap_windows_self_heal(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         # Tear the action list away: the next sync rebuilds it, and
         # the paint paths swallow the missing widgets.
         actions = page.query_one("#actions")
@@ -1919,7 +2214,7 @@ async def test_the_swap_windows_self_heal(monkeypatch) -> None:
         page.paint_header()  # swallowed: the worker self-heals
         page.paint_consent()
         page.sync_actions()
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
 
 
 async def test_a_rebuild_over_a_standing_list_keeps_focus(
@@ -1933,7 +2228,7 @@ async def test_a_rebuild_over_a_standing_list_keeps_focus(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         await pilot.press("down", "down")  # the egress-mode row
         before = page.actions_widget()
         page.rebuilds.request()
@@ -2034,8 +2329,8 @@ async def test_page_action_failures_flash(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
-        await pilot.press("down", "down", "down")
+        await wait_for(lambda: action_children(app) == 6)
+        await pilot.press("down", "down", "down", "down")
         await press_until(pilot, "enter", lambda: ("start", WS) in data.calls)
         await wait_for(lambda: "start failed" in consent_text(app))
         await pilot.press("down")
@@ -2052,7 +2347,7 @@ async def test_a_row_that_leaves_the_listing_keeps_the_page(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         data.rows.clear()  # the workspace left between refreshes
         page.refresh_row()
         await pilot.pause()

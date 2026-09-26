@@ -57,6 +57,7 @@ from .create import (  # noqa: F401
     write_client_identity,
 )
 from .forward import run_workspace_forward
+from .resize import display_name, resize_message
 from .rest import (
     STREAM_WINDOW_B,
     api_call,
@@ -93,12 +94,6 @@ def workspace_cells(row: dict) -> list[str]:
     egress_mode = row.get("egress_mode") or "-"
     created = _created_date(row.get("created_at"))
     return [name, row["id"], row["status"], egress_mode, created, image, host]
-
-
-def display_name(row: dict) -> str:
-    """The human-facing label (#246): the workspace's name, else
-    its immutable id (a nameless workspace is addressed by id)."""
-    return row.get("name") or row["id"]
 
 
 def render_ls(rows: list[dict], as_json: bool) -> str:
@@ -631,38 +626,6 @@ def cmd_resize(
     )
     print(resize_message(row, body))
     return 0
-
-
-def resize_boot_note(changes: list[str]) -> str:
-    """The parenthesized note for what waits for the next boot:
-    empty when nothing does. The daemon's ``changes`` list decides,
-    not the request's flags — home bytes moved at once on the host;
-    the root's guest-side fill and the new topology apply at the
-    next boot."""
-    waits = [
-        note
-        for prefixes, note in (
-            (("root",), "the guest fills the larger root"),
-            (("cpus", "mem"), "the new topology applies"),
-        )
-        if any(change.startswith(prefixes) for change in changes)
-    ]
-    if not waits:
-        return ""
-    return f" ({' and '.join(waits)} on its next boot)"
-
-
-def resize_message(row: dict, body: dict) -> str:
-    """The result line: the new sizes, plus the topology when the
-    request moved it, with the boot note naming what waits for the
-    next boot."""
-    line = (
-        f"resized {display_name(row)}: root {row['root_mib']} MiB, "
-        f"home {row['home_mib']} MiB"
-    )
-    if body.get("cpus") is not None or body.get("mem_mib") is not None:
-        line += f", cpus {row['cpus']}, mem {row['mem_mib']} MiB"
-    return line + resize_boot_note(row.get("changes", []))
 
 
 def image_cells(row: dict) -> list[str]:

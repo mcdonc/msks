@@ -269,7 +269,8 @@ list uses), the id, image hash, host, and created date muted on
 the second — a status line for egress consent (the mode, the
 granted scope with its expiry, or "no active consent"), and the
 page's actions: a shell in a new terminal window, egress
-consent, a live egress-mode switch, start, and stop. The
+consent, a live egress-mode switch, an edit dialog for the
+sizes and topology (#331), start, and stop. The
 header's first line also counts pending holds (`egress to
 decide: N` while any hold waits, refreshed each second), and on
 a narrow terminal each header line truncates at the edge with an
@@ -317,6 +318,23 @@ lands; a pick of `static` with nothing effectively allowed asks
 the same offline-workspace confirmation the CLI asks (confirm
 to switch, decline to decide nothing); a refused switch names
 its reason on the consent line, where the page reads it.
+
+The page's **Edit settings** action (#331) opens the edit
+dialog: the create form's own layout, seeded with the
+workspace's current values. The sizes and topology (root, home,
+vcpus, memory) are editable — a submit sends the changed values
+through the same endpoint `msks resize` speaks, and the page's
+consent line carries the same outcome line the CLI prints,
+including what waits for the next boot. The dialog's note states
+the rule: the workspace must be stopped for a resize (a running
+workspace's refusal names itself on the consent line), home
+bytes move at once, and root growth and the new topology apply
+at the next boot. The name, image, and user fields show their
+current values read-only, marked `*` as create-time — changing
+them is a delete-and-recreate, and the dialog refuses a changed
+value with a note naming the field instead of accepting it
+silently. A size left blank keeps its current value. Escape
+closes the dialog and decides nothing.
 
 The page's **Open a shell (new terminal)** action spawns the
 configured terminal launcher with a `msks ssh` invocation
