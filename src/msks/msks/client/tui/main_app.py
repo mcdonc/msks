@@ -184,10 +184,10 @@ def muted_style(theme_variables: dict) -> str:
     itself is a widget-css color ("auto 60%"), and a content
     span parses its style as a rich style, where the auto half
     does not resolve; riding ``$text`` at the same ratio renders
-    the same muted text (the auto base composes a few color
-    values differently in a span than in widget css). A theme
-    that spells its muted color without a ratio rides the 60%
-    Textual's own themes use."""
+    near the same muted text, within a few color values (the
+    auto base composes slightly differently in a span than in
+    widget css). A theme that spells its muted color without a
+    ratio rides the 60% Textual's own themes use."""
     parts = theme_variables.get("text-muted", "").split()
     ratio = (
         parts[1]

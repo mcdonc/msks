@@ -1282,8 +1282,8 @@ async def test_the_status_column_carries_its_states_color() -> None:
             # name and the date share the row's default
             # foreground — the same color both plain columns
             # share, whatever the highlight does to the row. The
-            # muted entry renders the identical color a
-            # $text-muted widget (the column header) renders.
+            # muted entry rides the theme's own ratio (see its
+            # branch below for how the rendered color is pinned).
             segs = row_segments(item)
 
             def segment(text):
