@@ -41,6 +41,13 @@ class VmSpec:
     # specs are name specs (resolver) and address specs (chain).
     egress_mode: str = "allow"
     egress_allowlist: tuple[str, ...] = ()
+    # The daemon-wide placeholder posture (#339): ``all`` (the
+    # default) takes daemon-wide placeholder coverage — one
+    # sentinel minted for the whole daemon arms this workspace and
+    # swaps on its tap; ``scoped`` takes only placeholders minted
+    # directly at it. Recorded on the workspace row and changeable
+    # there; the microvm seam itself never reads it.
+    secret_coverage: str = "all"
     # First-boot provisioning payload (#41): a shell script (leading
     # ``#!``) or cloud-config YAML, delivered on a per-workspace seed
     # disk labeled ``cidata`` — composed beside the minted identity's

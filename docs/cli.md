@@ -988,24 +988,32 @@ code; the volume moves are for the whole `/home` at once.
 
 ## `msks secret`
 
-Placeholder secrets (#198): mint a sentinel for one workspace, and
-the daemon keeps the real secret in its store — the workspace never
-holds it (the full story, including where the real secret lives per
-provider, is [docs/secrets.md](secrets.md)):
+Placeholder secrets (#198, #339): mint a sentinel — daemon-wide by
+default, scoped with `--workspace` — and the daemon keeps the real
+secret in its store — the workspace never holds it (the full
+story, including where the real secret lives per provider, is
+[docs/secrets.md](secrets.md)):
 
 ```bash
-# from a password manager, nothing touches disk
+# from a password manager, nothing touches disk: daemon-wide,
+# one sentinel for every workspace on the daemon
 op read 'op://Vault/github/credential' \
-  | msks secret mint myws --name github_api \
+  | msks secret mint --name github_api \
       --dest api.github.com --secret-file -
 
-msks secret mint myws --name pypi --dest .pypi.org --dest pypi.org \
-  --ttl 86400 --secret-file ./token   # suffix + exact, one day
+msks secret mint --workspace myws --name pypi \
+  --dest .pypi.org --dest pypi.org \
+  --ttl 86400 --secret-file ./token    # scoped, suffix + exact
 
-msks secret ls                          # placeholders, never sentinels
-msks secret renew myws --name pypi --ttl 86400
-msks secret revoke myws --name github_api
-msks secret check                       # the store answers writes
+msks secret mint --workspace ci,deploy --name pypi \
+  --dest .pypi.org --secret-file ./token   # one row, two workspaces
+
+msks secret ls                           # placeholders + coverage, never sentinels
+msks secret renew --workspace myws --name pypi --ttl 86400
+msks secret revoke --name github_api     # the daemon-wide row of the label
+msks secret revoke --workspace ci,deploy --name pypi
+msks secret coverage myws scoped         # exempt myws from daemon-wide rows
+msks secret check                        # the store answers writes
 ```
 
 `--secret-file` takes a path or `-` for a pipe (the value is
@@ -1014,9 +1022,15 @@ never accepted as a command-line argument (argv lands in process
 lists and shell history), and an empty file is refused before any
 network roundtrip. `--dest` repeats and binds the swap: an exact
 host (`api.github.com`) or a suffix that covers every host under a
-domain (`.github.com`). The mint prints the sentinel exactly once —
+domain (`.github.com`). `--workspace` takes one ref or a comma
+list and repeats; omitted, the mint covers every workspace on the
+daemon — one row, one `mskssec2_` sentinel — while a scoped mint
+prints a `mskssec1_` sentinel, so the string alone names its
+reach. The mint prints the sentinel exactly once —
 every later view omits it, so a lost sentinel is re-minted, not
-recalled. `revoke` takes effect on the next request; `renew`
+recalled. `revoke` and `renew` take the same targeting the mint
+took; `revoke` takes effect on the next request and retires the
+whole row everywhere at once, and `renew`
 extends a `--ttl` lifetime in place with the sentinel unchanged.
 
 ## `msks console`
@@ -1228,6 +1242,12 @@ the DHCP lease hands the guest); address entries accept in the
 per-VM kernel chain. `msks egress mode` switches the posture
 after create (#280); the daemon-wide default new workspaces take
 is `MSKSD_EGRESS_MODE` (`allow` as shipped).
+
+`msks create --secret-coverage scoped` boots the workspace exempt
+from daemon-wide placeholders (#339) — only placeholders minted
+directly at it arm it; the default (`all`) accepts daemon-wide
+coverage, and `msks secret coverage` flips the posture after
+create.
 
 ## `msks key`
 

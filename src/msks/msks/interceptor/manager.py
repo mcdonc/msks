@@ -5,10 +5,12 @@ One master serves every workspace in the daemon's process. Each
 armed workspace contributes one transparent-mode listener bound to
 its own tap address — a ``transparent@<tap ip>:<port>`` mode spec —
 and the addon dispatches by that listener. Arming is placeholder-
-driven: a workspace arms while it has at least one active
-placeholder (minted, unrevoked, unexpired) **and** a live egress
-attachment, and disarms when either half goes away. The nft side is
-a whole-table swap on every arm/disarm, so the redirect and the
+driven: a workspace arms while at least one live placeholder
+(minted, unrevoked, unexpired) covers it — a scoped row listing
+it, or a daemon-wide row while the workspace's ``secret_coverage``
+accepts one (#339) — **and** it has a live egress attachment, and
+disarms when either half goes away. The nft side is a
+whole-table swap on every arm/disarm, so the redirect and the
 listener always appear and disappear together.
 
 The master starts lazily — a daemon that never arms a workspace
@@ -42,7 +44,14 @@ SHUTDOWN_TIMEOUT_S = 10.0
 
 @dataclass(frozen=True)
 class PlaceholderEntry:
-    """One active placeholder, as the addon's hot path sees it."""
+    """One live placeholder, as the addon's hot path sees it.
+
+    ``dests`` doubles as the covers marker (#339): an entry that
+    covers this workspace carries its allowlist (a covered host
+    swaps); an entry held for detection only — a sentinel this
+    workspace holds no covering row for — carries an empty tuple,
+    so no SNI ever matches it and a carried sighting never swaps.
+    """
 
     sentinel: str
     name: str
@@ -66,6 +75,28 @@ class Armed:
         """The mitmproxy mode spec: transparent mode on this
         workspace's tap address."""
         return f"transparent@{self.tap_ip}:{self.port}"
+
+
+def row_covers(row: dict, workspace_id: str, accepts_daemon: bool) -> bool:
+    """Whether a live row's coverage includes one workspace (#339):
+    a scoped row covers its members; the daemon-wide row covers
+    the workspace when the workspace's own posture accepts it."""
+    scoped = row["workspaces"]
+    return workspace_id in scoped if scoped else accepts_daemon
+
+
+def row_entry(row: dict, covers: bool) -> PlaceholderEntry:
+    """One live row as the addon's hot path sees it: its allowlist
+    when it covers the workspace, an empty tuple held for
+    detection alone (#339) — no SNI matches an empty dests tuple,
+    so a foreign sentinel never decrypts or swaps on its own."""
+    return PlaceholderEntry(
+        sentinel=row["sentinel"],
+        name=row["name"],
+        placeholder_id=row["id"],
+        dests=tuple(row["dests"]) if covers else (),
+        backend_ref=row["backend_ref"],
+    )
 
 
 def build_master(owner) -> Master:
@@ -120,7 +151,9 @@ class Interceptor:
         return self._by_tap.get(tap_ip)
 
     def entries_for(self, workspace_id: str) -> dict[str, PlaceholderEntry]:
-        """The workspace's live entries (sentinel-keyed)."""
+        """The workspace's live entries (sentinel-keyed): its
+        covering rows first, then every other live row's sentinel
+        held for detection only (#339)."""
         return self._entries.get(workspace_id, {})
 
     def matching_entry(
@@ -196,22 +229,22 @@ class Interceptor:
 
     async def refresh(self, workspace_id: str) -> None:
         """Re-evaluate one workspace's armed state — after any
-        placeholder change (mint, renew, revoke, expiry) or as the
-        last step of an egress attach."""
+        placeholder change (mint, renew, revoke, expiry, a coverage
+        flip) or as the last step of an egress attach."""
         async with self._lock:
             self.retire_dead_master()
             attachment = self.app.state.net.attachment_for(workspace_id)
             if attachment is None:
                 return  # not running: arming happens at attach
-            entries = await self.active_entries(workspace_id)
-            if not entries:
+            covering, table = await self.entry_tables(workspace_id)
+            if not covering:
                 if workspace_id in self._armed:
                     await self.disarm(workspace_id)
                 return
             if workspace_id in self._armed:
-                self._entries[workspace_id] = entries
+                self._entries[workspace_id] = table
                 return
-            await self.arm(workspace_id, attachment, entries)
+            await self.arm(workspace_id, attachment, table)
 
     def retire_dead_master(self) -> None:
         """Drop a master whose run task ended: it serves nothing,
@@ -231,25 +264,47 @@ class Interceptor:
         self._master = None
         self._task = None
 
+    async def entry_tables(
+        self, workspace_id: str
+    ) -> tuple[dict[str, PlaceholderEntry], dict[str, PlaceholderEntry]]:
+        """The workspace's live entries as two tables (#339):
+        ``(covering, table)``.
+
+        ``covering`` holds the rows whose coverage includes this
+        workspace — scoped rows listing it, and daemon-wide rows
+        while the workspace's ``secret_coverage`` accepts them —
+        with their allowlists; these are the rows that arm and
+        swap. ``table`` adds every other live row's sentinel as a
+        detection-only entry (empty dests): a sentinel a workspace
+        holds no covering row for rides toward the wire as an
+        off-allowlist sighting, never a swap — a cross-workspace
+        leak is announced, not serviced. Covering rows order first,
+        so a request carrying both its own and a foreign sentinel
+        answers to its own. Minted, unrevoked (the row exists),
+        unexpired (the deadline is checked here — the watcher's
+        sweep is only the cleanup half).
+        """
+        rows = await self.app.state.model.list_placeholders()
+        workspace = await self.app.state.model.get_workspace(workspace_id)
+        accepts_daemon = (workspace or {}).get("secret_coverage") != ("scoped")
+        now = datetime.now(UTC)
+        covering: dict[str, PlaceholderEntry] = {}
+        detection: dict[str, PlaceholderEntry] = {}
+        for row in rows:
+            if deadline_passed(row["expires_at"], now):
+                continue
+            covers = row_covers(row, workspace_id, accepts_daemon)
+            entry = row_entry(row, covers)
+            (covering if covers else detection)[row["sentinel"]] = entry
+        return covering, {**covering, **detection}
+
     async def active_entries(
         self, workspace_id: str
     ) -> dict[str, PlaceholderEntry]:
-        """The workspace's live entries: minted, unrevoked (the row
-        exists), unexpired (the deadline is checked here — the
-        watcher's sweep is only the cleanup half)."""
-        rows = await self.app.state.model.workspace_placeholders(workspace_id)
-        now = datetime.now(UTC)
-        return {
-            row["sentinel"]: PlaceholderEntry(
-                sentinel=row["sentinel"],
-                name=row["name"],
-                placeholder_id=row["id"],
-                dests=tuple(row["dests"]),
-                backend_ref=row["backend_ref"],
-            )
-            for row in rows
-            if not deadline_passed(row["expires_at"], now)
-        }
+        """The workspace's swap-eligible entries: the covering half
+        of :meth:`entry_tables` — the rows that arm it (#199/#339)."""
+        covering, _ = await self.entry_tables(workspace_id)
+        return covering
 
     async def arm(self, workspace_id, attachment, entries) -> None:
         """Add this workspace's listener and swap its table in. A

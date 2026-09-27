@@ -190,9 +190,9 @@ async def seed(app, name: str, dests: list[str], secret: str) -> dict:
             )
         )
     sentinel = new_sentinel()
-    ref = backend_ref("ws-live", name)
+    ref = backend_ref(["ws-live"], name)
     row = await app.state.model.create_placeholder(
-        "ws-live", name, sentinel, dests, ref, None
+        ["ws-live"], name, sentinel, dests, ref, None
     )
     app.state.secrets.values[ref] = secret
     return row

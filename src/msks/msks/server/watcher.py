@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 
 from .. import storage
 from ..microvm.spec import VmStatus
+from ..model.secrets import coverage_label
 from .events import EventHub
 
 LOG = logging.getLogger(__name__)
@@ -196,11 +197,14 @@ async def sweep_expired_placeholders(app, hub: EventHub) -> int:
 
 
 async def refresh_disarmed(app, expired: list[dict]) -> None:
-    """Stand each expired workspace's redirect down (#199): the rows
-    are already gone, so every refresh reads the new state. One
-    workspace's failure defers only its own stand-down — the next
-    watch interval retries it — never its siblings'."""
-    for workspace_id in dict.fromkeys(row["workspace_id"] for row in expired):
+    """Stand each expired row's redirects down (#199, #339): the
+    rows are already gone, so every refresh reads the new state.
+    Every attached workspace re-evaluates — the daemon-wide row
+    disarms the workspaces it armed, and every armed table drops
+    the sentinel from its detection half. One workspace's failure
+    defers only its own stand-down — the next watch interval
+    retries it — never its siblings'."""
+    for workspace_id in app.state.net.attached_workspaces():
         try:
             await app.state.interceptor.refresh(workspace_id)
         except Exception:  # noqa: BLE001 - deferred, logged
@@ -245,7 +249,7 @@ async def retire_expired(app, hub: EventHub, row: dict) -> None:
     except Exception:  # noqa: BLE001 - inert leftover, logged below
         LOG.warning(
             "expired placeholder %s/%s: store value left behind at %s",
-            row["workspace_id"],
+            coverage_label(row["workspaces"]),
             row["name"],
             row["backend_ref"],
         )
@@ -254,7 +258,10 @@ async def retire_expired(app, hub: EventHub, row: dict) -> None:
         {
             "placeholder_id": row["id"],
             "audit_id": audit_id,
-            "workspace_id": row["workspace_id"],
+            "workspace_id": (
+                row["workspaces"][0] if row["workspaces"] else "*"
+            ),
+            "workspaces": row["workspaces"],
             "name": row["name"],
             "ts": time.time(),
         },

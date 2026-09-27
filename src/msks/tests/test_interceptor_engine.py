@@ -276,6 +276,25 @@ async def test_request_sights_an_off_allowlist_carrier(authority) -> None:
     assert flow.request.headers.get("authorization").startswith("Bearer msks")
 
 
+async def test_request_sights_a_detection_only_entry(authority) -> None:
+    """#339: a sentinel a workspace holds no covering row for — a
+    daemon-wide sentinel from a scoped workspace, another
+    workspace's scoped sentinel — arrives as a detection-only
+    entry with empty dests: every destination misses it, so the
+    carrier publishes an off-allowlist sighting even toward the
+    host its own row would have covered, and nothing swaps."""
+    daemon_sentinel = "mskssec2_" + "b" * 43
+    detection = entry(sentinel=daemon_sentinel, dests=())
+    owner = FakeOwner({daemon_sentinel: detection}, authority)
+    flow = swap_flow(daemon_sentinel)  # toward SNI, its row's dest
+    await engine.InterceptorAddon(owner).request(flow)
+    assert owner.sightings == [("ws-a", "api", SNI)]
+    assert owner.swaps == []
+    assert flow.request.headers.get("authorization").startswith(
+        f"Bearer {daemon_sentinel[:9]}"
+    )
+
+
 async def test_request_passes_a_revoked_sentinel_through(authority) -> None:
     sentinel = entry().sentinel
     owner = FakeOwner({sentinel: entry()}, authority, live=False)

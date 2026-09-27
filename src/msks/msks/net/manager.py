@@ -452,6 +452,14 @@ class NetManager:
         (the interceptor's arming predicate reads this)."""
         return self._attachments.get(workspace_id)
 
+    def attached_workspaces(self) -> list[str]:
+        """Every workspace with a live attachment, in attach order
+        (#339): the daemon-wide placeholder refresh reads this — a
+        row that covers the whole daemon arms and disarms with
+        every attached workspace, and its sentinel rides every
+        armed tap's entry table."""
+        return list(self._attachments)
+
     async def apply_policy(
         self, workspace_id: str, policy: EgressPolicy
     ) -> bool:

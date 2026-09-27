@@ -39,17 +39,30 @@ def store_for(tmp_path, env=None) -> SecretStore:
 def test_new_sentinel_shape() -> None:
     """The sentinel is the versioned prefix + 43 base64url chars —
     uniform fixed length, so the wire matcher can recognize it
-    without parsing."""
+    without parsing. The daemon-wide row mints under its own
+    prefix (#339), so the string alone names its reach."""
     sentinel = new_sentinel()
     assert sentinel.startswith("mskssec1_")
     assert len(sentinel) == len("mskssec1_") + 43
     assert new_sentinel() != sentinel
+    daemon = new_sentinel(daemon_wide=True)
+    assert daemon.startswith("mskssec2_")
+    assert len(daemon) == len("mskssec2_") + 43
 
 
 def test_backend_ref_sanitizes() -> None:
-    """Dots and dashes become underscores, uppercased, MSKSWS-prefixed."""
-    assert backend_ref("my-ws", "github_api") == "MSKSWS_MY_WS_GITHUB_API"
-    assert backend_ref("a.b", "c.d") == "MSKSWS_A_B_C_D"
+    """Dots and dashes become underscores, uppercased, MSKSWS-prefixed;
+    a daemon-wide coverage carries its own ref family (#339)."""
+    assert backend_ref(["my-ws"], "github_api") == "MSKSWS_MY_WS_GITHUB_API"
+    assert backend_ref(["a.b"], "c.d") == "MSKSWS_A_B_C_D"
+    assert backend_ref([], "github_api") == "MSKSDAEMON_GITHUB_API"
+
+
+def test_backend_ref_joins_a_scoped_coverage_in_sorted_order() -> None:
+    """A multi-workspace coverage is one ref: the sorted ids in
+    order, then the label (#339) — the same spelling the same set
+    mints anywhere, so the store sees one entry per row."""
+    assert backend_ref(["b-ws", "a-ws"], "token") == "MSKSWS_A_WS_B_WS_TOKEN"
 
 
 def test_valid_name() -> None:
@@ -319,7 +332,7 @@ async def seed_legacy_placeholder(app, workspace_id, name, value=None):
         for part in (workspace_id, name)
     )
     await app.state.model.create_placeholder(
-        workspace_id=workspace_id,
+        workspaces=[workspace_id],
         name=name,
         sentinel=new_sentinel(),
         dests=["github.com"],
@@ -402,7 +415,7 @@ async def test_stale_legacy_manifest_heals_without_legacy_rows(
     boot re-renders it even with no legacy rows left (#335)."""
     app = app_for(tmp_path)
     await app.state.model.create_placeholder(
-        workspace_id="ws-a",
+        workspaces=["ws-a"],
         name="github_api",
         sentinel=new_sentinel(),
         dests=["github.com"],

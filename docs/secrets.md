@@ -1,11 +1,22 @@
 # Placeholder secrets
 
 A workspace never holds a real secret. It holds a **placeholder** —
-a sentinel token (`mskssec1_…`) the operator mints once and pastes
-into the workspace — and the daemon swaps the sentinel for the real
-secret on the wire, in flight, only toward the destinations the
-mint named. The real secret lives in msksd's **secret store** and in
+a sentinel token the operator mints once and pastes into the
+workspace — and the daemon swaps the sentinel for the real secret
+on the wire, in flight, only toward the destinations the mint
+named. The real secret lives in msksd's **secret store** and in
 the daemon's memory, nowhere else.
+
+A mint covers **workspaces** (#339). With no target it is the
+**daemon-wide placeholder**: one row, one sentinel, valid on
+every workspace's tap — an operator running several workspaces
+against one daemon mints the credential once and distributes the
+same sentinel everywhere. A `--workspace` target (one name or a
+comma list, repeatable) scopes the row to exactly those
+workspaces: one row, one sentinel, one coverage set. The
+sentinel's prefix names its reach from the string alone —
+`mskssec1_…` scopes to its row's workspaces, `mskssec2_…`
+reaches every accepting workspace on the daemon.
 
 This chapter is about the store and the mint/revoke/renew commands.
 The in-flight swap itself is the **egress interceptor** — the next
@@ -13,10 +24,12 @@ section.
 
 ## The interceptor (the swap on the wire)
 
-A workspace with at least one live placeholder — minted, unrevoked,
-and unexpired — is **armed**: the daemon redirects that workspace's
-TCP flows toward ports 80 and 443 into an in-process HTTPS/HTTP
-proxy, and the swap happens there. The proxy is
+A workspace covered by at least one live placeholder — minted,
+unrevoked, and unexpired; its own scoped placeholders, or any
+daemon-wide placeholder while the workspace accepts one — is
+**armed**: the daemon redirects that workspace's TCP flows toward
+ports 80 and 443 into an in-process HTTPS/HTTP proxy, and the swap
+happens there. The proxy is
 [mitmproxy](https://mitmproxy.org), embedded in msksd — one process
 serving every armed workspace, one listener per workspace's tap,
 so a guest that spoofs another workspace's source address still
@@ -46,9 +59,13 @@ What each request gets:
 - **The sighting.** A sentinel seen toward a destination its own
   allowlist misses — while another placeholder decrypts the flow —
   passes through unrewritten and publishes a `secret.sighting`
-  event on the events channel. A revoked or expired sentinel
-  passes through the same way; its placeholder is gone, so there
-  is nothing to swap and nothing to report.
+  event on the events channel. The same is true for a sentinel a
+  workspace holds no covering row for: a daemon-wide sentinel
+  used from a workspace scoped against it, or another workspace's
+  scoped sentinel, reads as an off-allowlist sighting — the
+  cross-workspace leak is announced, never serviced. A revoked or
+  expired sentinel passes through the same way; its placeholder
+  is gone, so there is nothing to swap and nothing to report.
 - **QUIC stays down while armed.** The workspace's UDP flows toward
   port 443 are dropped, so browsers fall back to the TCP flow the
   redirect owns — nothing routes around the interceptor.
@@ -141,19 +158,34 @@ where the per-VM forward gates do not apply.
 
 ```console
 $ op read 'op://Vault/github/credential' \
-    | msks secret mint myws --name github_api \
+    | msks secret mint --name github_api \
         --dest api.github.com --secret-file -
-minted myws/github_api for api.github.com
-sentinel (shown once): mskssec1_9Jm3...kQ
+minted */github_api for api.github.com
+sentinel (shown once): mskssec2_9Jm3...kQ
 ```
 
+- The mint above carries no workspace target: it is the
+  **daemon-wide** mint — one row, one `mskssec2_` sentinel, valid
+  on every workspace's tap toward the minted destinations. A
+  workspace created later is covered from its first boot;
+  coverage acts as policy, not as a snapshot of the workspace set
+  at mint time.
+- `--workspace` scopes the mint: `--workspace myws` (exactly
+  today's single-workspace placeholder), or a comma list
+  (`--workspace ci,deploy`) for several — one row, one
+  `mskssec1_` sentinel, one coverage set either way. A mint
+  produces a single sentinel whether it targets every workspace
+  or a set of one or several; the same label can live on the
+  daemon-wide row and on scoped rows beside it, one row per label
+  per coverage set.
 - `--secret-file` takes a path, or `-` to read the secret from a
   pipe. The secret is never accepted as a command-line argument:
   arguments land in process lists and shell history.
 - `--dest` repeats: an exact host (`api.github.com`) binds the swap
   to that host; a suffix (`.github.com`) binds it to every host
-  under that domain. A placeholder carries one workspace, one
-  allowlist, one secret; the same secret in N workspaces is N mints.
+  under that domain. A placeholder carries one coverage set, one
+  allowlist, one secret — per-workspace destination scoping stays
+  available by minting a scoped placeholder instead.
 - `--ttl SECONDS` gives the placeholder a lifetime; without it the
   placeholder lives until revoked. `msks secret renew` extends a
   lifetime in place — the sentinel never changes and nothing is
@@ -161,10 +193,24 @@ sentinel (shown once): mskssec1_9Jm3...kQ
 - The sentinel is printed once, at mint. Every later view (list,
   audit, logs) omits it; a lost sentinel is re-minted, not recalled.
 
-`msks secret revoke myws --name github_api` takes effect on the
-next request. `msks secret check` verifies the configured store
-answers writes before the first mint — a typo'd setting fails there,
-loudly.
+`msks secret revoke --name github_api` retires the daemon-wide row
+of that label everywhere at once; `msks secret revoke
+--workspace myws --name github_api` retires the scoped row whose
+coverage is exactly that set — the targeting mirrors the mint's,
+and `msks secret renew` selects its row the same way. `msks
+secret ls` lists every row with its coverage (`*` for the
+daemon-wide row, the workspace list scoped). `msks secret check`
+verifies the configured store answers writes before the first
+mint — a typo'd setting fails there, loudly.
+
+A workspace can exempt itself from daemon-wide placeholders
+(#339): `msks create --secret-coverage scoped` (or
+`msks secret coverage myws scoped` later) means only placeholders
+minted directly at that workspace arm it. A daemon-wide sentinel
+used from a scoped workspace publishes an off-allowlist sighting
+and swaps nothing; every new workspace accepts daemon-wide
+coverage unless its own setting says scoped, and flipping the
+setting back to `all` arms it with any live daemon-wide row.
 
 ## Where the real secret lives
 
@@ -239,12 +285,14 @@ settings; msksd never picks an algorithm itself.
 ## The audit trail
 
 Mint, revoke, and expiry append a row to the daemon database:
-the placeholder's workspace, name, destination allowlist, and a
-timestamp (`msks secret ls` lists placeholders; the audit view is
+the placeholder's coverage (the daemon-wide row, or the workspace
+list), name, destination allowlist, and a timestamp (`msks
+secret ls` lists placeholders; the audit view is
 `/api/v1/secrets/audit`). Expiry fires from the status watcher's
 periodic sweep, which publishes a `secret.expiry` event and
-re-evaluates the workspace's redirect in the same pass — the last
-placeholder's retirement stands the interception down. The secret
-value and the sentinel appear nowhere in the audit or the events:
-the value is not msks's to log, and the sentinel is never shown
-past its single mint-time print.
+re-evaluates the covered workspaces' redirects in the same pass —
+the last placeholder's retirement stands the interception down,
+and one revoke or expiry retires the whole row everywhere at
+once. The secret value and the sentinel appear nowhere in the
+audit or the events: the value is not msks's to log, and the
+sentinel is never shown past its single mint-time print.
