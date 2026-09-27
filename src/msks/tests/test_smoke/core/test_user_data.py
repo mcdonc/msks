@@ -81,15 +81,18 @@ async def test_local_user_data_provisioning() -> None:
             app=app,
             hostname=wid,
         )
-        # The guest resolves its own hostname (#376): the Debian
-        # image maps the name in /etc/hosts (cc_etc_hosts), the
-        # NixOS image's resolver answers it (myhostname) — sudo's
-        # resolve depends on this lookup succeeding.
+        # The guest resolves its own hostname (#376): both images'
+        # resolvers answer it (the myhostname NSS module ships in
+        # each base), and the Debian image's /etc/hosts carries the
+        # name as well (update_etc_hosts' 127.0.1.1 record). The
+        # sentinel is computed — a failed lookup prints nothing,
+        # and the marker cannot match the command's echo or the
+        # prompt.
         await run_in_console(
             microvm,
             wid,
-            "getent hosts $(hostname)",
-            wid,
+            "getent hosts $(hostname) >/dev/null && echo R-$((6*7))",
+            "R-42",
             app=app,
             hostname=wid,
         )
