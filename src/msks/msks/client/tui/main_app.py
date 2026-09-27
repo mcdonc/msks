@@ -716,6 +716,17 @@ class MsksTuiApp(App):
     #event-rows ListItem.sighting { color: $warning; text-style: bold; }
     """
 
+    BINDINGS = [
+        # (#388) Ctrl+C exits from every screen: the tree, a
+        # workspace page, a form, and any modal over them. The
+        # priority carries the key ahead of Textual's Input copy
+        # binding and ahead of its stock ctrl+c nag (a notification
+        # saying to press q), so the terminal reflex lands — the
+        # app exits exactly as the tree's q does, and the follow-up
+        # loop reads the operator's quit.
+        Binding("ctrl+c", "quit", "Quit", priority=True),
+    ]
+
     def get_default_screen(self) -> Screen:
         """The tree's root: the workspaces list."""
         return MainScreen()
