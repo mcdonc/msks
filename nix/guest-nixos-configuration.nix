@@ -91,9 +91,33 @@ in
 
   system.stateVersion = lib.versions.majorMinor lib.version;
 
-  networking.hostName = "msks-guest";
+  # cloud-init owns the hostname (#370): the seed's
+  # local-hostname names the workspace at first boot. A declared
+  # value here would ship /etc/hostname as an immutable store
+  # symlink and re-assert itself at every activation — both walls
+  # the seed cannot get past — so NixOS declares none. The
+  # activation shim below seeds the image default (msks-guest)
+  # for a boot without a seed and applies whatever the plain
+  # /etc/hostname file says; systemd applies it on every later
+  # boot, and cloud-init's set-hostname stage rewrites it from the
+  # seed's local-hostname.
+  networking.hostName = "";
   networking.useDHCP = false;
   networking.useNetworkd = true;
+
+  # The hostname file the comment above names (#370): activation
+  # seeds it for the first boot of a seed-less workspace (systemd
+  # reads /etc/hostname only when the file exists when PID 1
+  # starts, and this image builds without one) and applies the
+  # file's value to the running kernel; systemd does the same on
+  # every later boot, and cloud-init's set-hostname stage rewrites
+  # the file when the seed's local-hostname names the workspace.
+  system.activationScripts.msksHostname.text = ''
+    if [ ! -e /etc/hostname ]; then
+      printf 'msks-guest\n' > /etc/hostname
+    fi
+    ${pkgs.nettools}/bin/hostname -F /etc/hostname
+  '';
 
   # wait-online stays off (the Debian image's posture): a
   # link-less networkd — the no-egress workspace — never reaches
@@ -247,6 +271,27 @@ in
       ];
       network.config = "disabled";
       users = [ ];
+      # The hostname module nixpkgs leaves out (its default list
+      # runs update_hostname only — a declared networking.hostName
+      # made set-hostname broken, and the fix was to drop it).
+      # This image declares no hostname, so the stage works: the
+      # list is nixpkgs' own with set_hostname restored ahead of
+      # update_hostname, matching the Debian image's stock
+      # cloud.cfg.
+      cloud_init_modules = [
+        "migrator"
+        "seed_random"
+        "bootcmd"
+        "write-files"
+        "growpart"
+        "resizefs"
+        "set_hostname"
+        "update_hostname"
+        "resolv_conf"
+        "ca-certs"
+        "rsyslog"
+        "users-groups"
+      ];
     };
   };
 
