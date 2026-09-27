@@ -3,8 +3,10 @@ assets (#5)."""
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -481,6 +483,32 @@ def test_the_extension_bounds_its_single_fetch() -> None:
     assert "AbortSignal.timeout(1500)" in ext
     assert "setTimeout" not in ext
     assert "for (let attempt" not in ext
+
+
+def test_the_extension_prints_a_failure_reason() -> None:
+    """A non-2xx answer's reason rides the failure line (#375):
+    the FastAPI `detail` key first, the OpenAI error shape second,
+    plain text as the fallback — collapsed and capped above the
+    proxy's own longest detail so the recovery text a rotated
+    credential gets is printed whole, not amputated."""
+    ext = (REPO_ROOT / "nix" / "guest-pi-extension.ts").read_text()
+    assert "parsed.detail ?? parsed.error?.message" in ext
+    assert ".slice(0, 320)" in ext
+    # The cap composes with the proxy's 401 detail: the recovery
+    # text must fit under it whole.
+    src = (REPO_ROOT / "src" / "msks" / "msks" / "llm.py").read_text()
+    block = re.search(r"detail=\((.*?)\),\n", src, re.S).group(1)
+    detail = ast.literal_eval("(" + block + ")")
+    assert isinstance(detail, str), (
+        "the proxy's 401 detail must be one string — a tuple "
+        "serializes to a JSON array the extension's string check "
+        "silently drops"
+    )
+    assert len(detail) < 320, (
+        f"the proxy's 401 detail is {len(detail)} chars — the "
+        "extension caps its print at 320; shorten the detail or "
+        "raise the cap together"
+    )
 
 
 def load_integrity_table():

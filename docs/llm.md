@@ -150,7 +150,15 @@ msks llm-token myws --remint   # a fresh one, replacing the row's
 
 A reminted credential does not re-run the seed — the seed is
 immutable create-time input — so export the new one inside the
-workspace by hand after rotating.
+workspace by hand after rotating: `msks llm-token <ws> --remint`
+prints the fresh token on stdout with the update step on stderr
+(`/etc/msks/llm.token`, written as root, picked up by the next
+login shell). A workspace still holding the old credential gets a
+401 whose body names the cause and this recovery (#375) — the
+reason the seeded pi extension prints after the status line at
+startup (an image rebuilt after this change; an older home keeps
+its own copy), so `msks llm-models: fetch failed: 401 — …`
+carries the fix instead of a bare status.
 
 One more create-time fact rides the seed: the port. The planted
 `MSKSWS_BASE_URL` names the port the daemon served when the
