@@ -797,7 +797,7 @@ class LlmProxy:
                     "(a remint, or a daemon newer than the guest); "
                     "run `msks llm-token <workspace>` on the host, "
                     "write its token to /etc/msks/llm.token in the "
-                    "guest as root — the next login shell exports it "
+                    "guest as root; the next login shell exports it "
                     "as MSKSWS_API_KEY"
                 ),
             )

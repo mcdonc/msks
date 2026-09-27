@@ -3,6 +3,7 @@ assets (#5)."""
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import re
@@ -496,8 +497,13 @@ def test_the_extension_prints_a_failure_reason() -> None:
     # The cap composes with the proxy's 401 detail: the recovery
     # text must fit under it whole.
     src = (REPO_ROOT / "src" / "msks" / "msks" / "llm.py").read_text()
-    block = re.search(r"detail=\((.*?)\)", src, re.S).group(1)
-    detail = "".join(re.findall(r'"([^"]*)"', block))
+    block = re.search(r"detail=\((.*?)\),\n", src, re.S).group(1)
+    detail = ast.literal_eval("(" + block + ")")
+    assert isinstance(detail, str), (
+        "the proxy's 401 detail must be one string — a tuple "
+        "serializes to a JSON array the extension's string check "
+        "silently drops"
+    )
     assert len(detail) < 320, (
         f"the proxy's 401 detail is {len(detail)} chars — the "
         "extension caps its print at 320; shorten the detail or "
