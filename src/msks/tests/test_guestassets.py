@@ -1,5 +1,5 @@
-"""Tests for msks.guestassets — discovery of the nix-built guest
-assets (#5)."""
+"""Tests for guestassets — discovery of the nix-built guest
+assets (#5), relocated to the test tree by #403."""
 
 from __future__ import annotations
 
@@ -9,10 +9,9 @@ import json
 import re
 from pathlib import Path
 
+import guestassets
 import pytest
-from msks.guestassets import GuestAssets
-
-from msks import guestassets
+from guestassets import GuestAssets
 
 
 def guest_dir(root: Path) -> Path:

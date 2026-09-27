@@ -5,7 +5,8 @@
   accessible); skipped otherwise. The msks-build-guest script
   sets all of these from the guest state dir
   (`.devenv/state/guest` by default) automatically (see conftest.py
-  and msks.guestassets); the stock nixpkgs kernel also needs the initrd
+  and the tests-tree guestassets module); the stock nixpkgs
+  kernel also needs the initrd
   (TEST_INITRD) and the cmdline the manifest carries
   (TEST_CMDLINE) to reach userspace.
 

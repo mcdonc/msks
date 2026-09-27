@@ -3,12 +3,11 @@ import shutil
 from pathlib import Path
 
 import pytest
+from guestassets import load_guest_assets, smoke_env_defaults
 from msks.app import App
 from msks.model.db import tighten_db_mode
 from msks.model.model import Model
 from msks.settings import ServerSettings, Settings
-
-from msks import guestassets
 
 # Use the sysmon coverage engine — on Python 3.14 sys.monitoring measures
 # branches and tracks greenlet-executed code natively, which is why CI
@@ -23,9 +22,7 @@ os.environ.setdefault("COVERAGE_CORE", "sysmon")
 # TEST_* variables at the built artifacts. Explicitly exported
 # variables win; when nothing was built the smoke tests keep
 # skipping themselves.
-for _name, _value in guestassets.smoke_env_defaults(
-    guestassets.load_guest_assets(),
-).items():
+for _name, _value in smoke_env_defaults(load_guest_assets()).items():
     os.environ.setdefault(_name, _value)
 
 
