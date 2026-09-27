@@ -193,7 +193,9 @@ def test_foreign_workspace_secret_frames_are_ignored() -> None:
     """A foreign workspace's audit frame plants nothing — the #280
     rule carried to secret events: a foreign sighting flashing this
     decider's exfil alarm would be a false one. An empty own-id (the
-    protocol default) accepts every frame."""
+    protocol default) accepts every per-flow and daemon-wide frame;
+    a scoped coverage frame still needs the id among its members
+    (#339)."""
     controller = ConsentController(workspace_id="ws-a")
     sighting = frame(
         "secret.sighting",

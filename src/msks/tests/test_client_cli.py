@@ -4141,6 +4141,60 @@ def test_cmd_secret_ls_empty_prints_nothing(
     assert capsys.readouterr().out == ""
 
 
+def test_cmd_secret_revoke_and_renew_expand_the_same_targeting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#339 review: revoke/renew take the mint's flag grammar — a
+    comma list with spaces resolves the row minted with the same
+    command line."""
+    client_env(monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/workspaces":
+            return httpx.Response(
+                200, json=[*workspace_rows(), {"id": "ws-x", "name": None}]
+            )
+        if request.method == "DELETE":
+            return httpx.Response(
+                200, json={"revoked": 3, "store_cleaned": True}
+            )
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    **secret_rows()[0],
+                    "workspaces": ["ws-sec", "ws-x"],
+                }
+            ],
+        )
+
+    code = cli.main(
+        [
+            "secret",
+            "revoke",
+            "--workspace",
+            "ws-x, ws-sec",
+            "--name",
+            "github_api",
+        ],
+        transport=mock(handler),
+    )
+    assert code == 0
+
+
+def test_cmd_secret_revoke_names_an_empty_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A --workspace whose every segment is empty names no workspace
+    — one local line, before any network roundtrip."""
+    client_env(monkeypatch)
+    with pytest.raises(SystemExit, match="names no workspace"):
+        cli.main(
+            ["secret", "revoke", "--workspace", " ", "--name", "api"],
+            transport=mock(lambda request: httpx.Response(200, json=[])),
+        )
+
+
 def test_cmd_secret_revoke_names_a_missing_label(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

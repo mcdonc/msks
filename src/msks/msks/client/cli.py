@@ -998,10 +998,19 @@ def resolve_coverage(
 ) -> list[str]:
     """The sorted id list a --workspace target names (#339), or the
     named exit when a ref answers to no workspace. No target is
-    the daemon-wide coverage: ``[]``."""
+    the daemon-wide coverage: ``[]``. The refs take the same
+    repeatable, comma-splitting, whitespace-stripping form the
+    mint's flag does, so a row minted with one command line is
+    revoked with the same one."""
     if not refs:
         return []
-    return sorted({resolved_workspace_id(workspaces, ref) for ref in refs})
+    expanded = expand_targets(refs)
+    if not expanded:
+        raise SystemExit(
+            "msks: --workspace names no workspace; omit the flag to "
+            "target the daemon-wide row"
+        )
+    return sorted({resolved_workspace_id(workspaces, ref) for ref in expanded})
 
 
 async def find_placeholder(

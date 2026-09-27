@@ -28,10 +28,17 @@ before the rebuild — it holds nothing the live rows do not.
 The downgrade stages through ``_old`` tables the same way: the
 legacy-shape table is built and filled **from the live new-shape
 rows** before the live table goes away, and 0008/0012's indexes
-come back with the shapes that created them. A daemon-wide row
-downgrades onto the workspace id ``*`` and a daemon-wide audit
-event onto the empty string — the lossy edge a downgrade accepts,
-named here so nobody meets it unawares.
+come back with the shapes that created them. Two lossy edges a
+downgrade accepts, named here so nobody meets them unawares: a
+daemon-wide row lands on the workspace id ``*`` (a daemon-wide
+audit event on the empty string), and two rows sharing a name and
+first coverage member (``{ws1}`` and ``{ws1,ws2}``, both ``api``)
+collide on the legacy single-column uniqueness — the copy aborts,
+the transaction rolls back whole, and the operator re-homes one
+row by hand before retrying. The tear story is the upgrade's
+alone: a downgrade runs by operator hand, fails loudly, and like
+every earlier migration's downgrade leaves its own torn state to
+the operator.
 """
 
 import sqlalchemy as sa
