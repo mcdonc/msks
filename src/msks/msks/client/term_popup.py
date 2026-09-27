@@ -98,6 +98,11 @@ PAINT_DKEY = "31"
 PAINT_ALLOW = "1;32"
 PAINT_DENY = "1;31"
 
+#: The popup key map's quick-form column width: the widest cell
+#: ("[a] until restart") plus a one-space gutter, so the duration
+#: chooser column lines up under itself row over row.
+KEY_COLUMN = 20
+
 #: The modules this package reaches itself through: the pane, the
 #: watcher, and the popup's command all re-invoke this module by
 #: name with the interpreter that is already running it.
@@ -438,19 +443,28 @@ def read_key(prompt: str) -> str:
 
 
 def prompt_text(on: bool = True) -> str:
-    """The popup's key map: a lowercase key takes its quick
-    verdict, the uppercase twin opens the duration chooser for the
-    same verdict, and any other key denies now."""
+    """The popup's key map, one verdict per row: the quick form and
+    the duration chooser each sit in their own column. A key
+    outside the map still denies now — :func:`verdict_for`'s
+    fail-fast rule — but the map no longer says so."""
     return (
         f"  {span(on, PAINT_LABEL, 'allow:')}  "
-        f"{span(on, PAINT_KEY, '[a]')} until restart   "
+        f"{key_cell(on, PAINT_KEY, '[a]', 'until restart')}"
         f"{span(on, PAINT_KEY, '[A]')} choose duration\n"
         f"  {span(on, PAINT_LABEL, 'deny:')}   "
-        f"{span(on, PAINT_DKEY, '[d]')} now   "
-        f"{span(on, PAINT_DKEY, '[D]')} choose duration   "
-        "(any other key denies)\n"
+        f"{key_cell(on, PAINT_DKEY, '[d]', 'now')}"
+        f"{span(on, PAINT_DKEY, '[D]')} choose duration\n"
         f"  {span(on, PAINT_LABEL, '> ')}"
     )
+
+
+def key_cell(on: bool, code: str, key: str, label: str) -> str:
+    """One key-map cell: the painted key, its label, and the pad to
+    :data:`KEY_COLUMN` — computed on the plain width, so paint
+    never shifts the columns."""
+    cell = f"{span(on, code, key)} {label}"
+    pad = KEY_COLUMN - len(key) - 1 - len(label)
+    return f"{cell}{' ' * max(pad, 1)}"
 
 
 def duration_text(on: bool = True) -> str:

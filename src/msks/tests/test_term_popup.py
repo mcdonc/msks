@@ -572,11 +572,13 @@ def test_ansi_follows_the_tty_and_no_color(
 
 def test_prompt_text_plains_and_paints() -> None:
     plain = tp.prompt_text(on=False)
-    assert "[a] until restart" in plain
-    assert "[A] choose duration" in plain
-    assert "[d] now" in plain
-    assert "[D] choose duration" in plain
-    assert "(any other key denies)" in plain
+    lines = plain.splitlines()
+    assert "[a] until restart" in lines[0]
+    assert "[d] now" in lines[1]
+    # The chooser column lines up under itself, row over row.
+    assert lines[0].index("[A]") == lines[1].index("[D]")
+    # The fail-fast default stays a behavior, not a line.
+    assert "any other key" not in plain
     assert "\x1b" not in plain
     painted = tp.prompt_text(on=True)
     assert painted != plain
