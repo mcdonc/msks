@@ -430,9 +430,9 @@ let
         # manage_etc_hosts in `localhost` mode makes the base
         # image's update_etc_hosts module add the conventional
         # 127.0.1.1 record naming the host, in place, whenever the
-        # entry is missing — the file's other entries stay as the
-        # user left them (the `true` mode would re-render the
-        # whole file from the Debian template on every boot).
+        # entry does not already name the host — the file's other
+        # entries stay in place (the `true` mode would re-render
+        # the whole file from the Debian template on every boot).
         # Name resolution does not wait on the record: the base
         # image ships libnss-myhostname and its nsswitch answers
         # the local hostname already — this is the plain

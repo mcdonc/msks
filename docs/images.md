@@ -166,8 +166,11 @@ boots. A guest image must:
   `/etc/hosts` carries the workspace's name as well: the Debian
   image turns on cloud-init's `manage_etc_hosts` in the mode that
   adds the conventional `127.0.1.1` record naming the host, in
-  place, on every boot — the file's other entries stay as the
-  user left them. Name resolution does not wait on the record:
+  place, on every boot — the file's other entries stay in place.
+  (A guest first booted before #370 whose healed seed now carries
+  the name gets the record naming the creation name while its
+  kernel hostname keeps the older one — the module reads the seed,
+  not the kernel.) Name resolution does not wait on the record:
   both images' resolvers answer the local hostname on their own
   (the `myhostname` NSS module — Debian's `genericcloud` base
   ships `libnss-myhostname`, and it is part of the NixOS base
