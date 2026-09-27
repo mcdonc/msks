@@ -269,12 +269,12 @@ The **workspace page** carries the per-workspace loop: a
 two-line header — the workspace's name on the first line with
 its status beside it in the state's color (the same coloring the
 list uses), the id, image hash, host, and created date muted on
-the second, its separators toning with the theme like the
-header's own status color — a status line for egress consent
-(the mode, then one granted scope named with its expiry; five or
-more grants read as a count with the nearest expiry — `5 grants
-· next expires 4h` — so the line stays readable at 80 columns,
-every grant listed one Enter away on the consent overlay's rules
+the second, its separators carrying the same theme-muted span
+style the header's status takes — a status line for egress
+consent (the mode, then one granted scope named with its expiry;
+two or more grants read as a count with the nearest expiry — `5
+grants · next expires 4h` — so the line stays readable at 80
+columns, every grant listed on the consent overlay's rules
 screen), and the page's actions centered in the space the header
 lines and the footer leave — the block capped at 64 columns — in
 three groups: a shell in a new terminal

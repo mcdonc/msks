@@ -372,16 +372,15 @@ def meta_fields(row: dict) -> tuple[str, str, str, str]:
 def header_meta(row: dict, theme_variables: dict | None = None) -> Content:
     """The header's second line (#351): the immutable id, the
     image hash, the host, and the created date — the page paints
-    the line muted, and its ``·`` separators take the same muted
-    span treatment the name line gives the status (#366), so a
-    theme tones both header lines uniformly. The line truncates
-    at the terminal's edge (an ellipsis marks the cut) beside the
-    name's own line."""
+    the line muted, and its ``·`` separators carry the same muted
+    span style the name line gives the status (#366): a theme
+    variable the render resolves, the one expression both header
+    lines' muted accents share. The fields ride a Content's plain
+    text (the name line's rule — no escaping), and the line
+    truncates at the terminal's edge (an ellipsis marks the cut)
+    beside the name's own line."""
     wid, image, host, created = meta_fields(row)
-    text = (
-        f" id {escape(wid)}  ·  image {escape(image)}"
-        f"  ·  host {escape(host)}  ·  created {escape(created)}"
-    )
+    text = f" id {wid}  ·  image {image}  ·  host {host}  ·  created {created}"
     style = muted_style(theme_variables or {})
     spans = [
         Span(mark.start(), mark.end(), style)
@@ -417,8 +416,9 @@ def granted_line(controller) -> str:
     to the count with the nearest expiry (``3 grants · next
     expires 4h``), so a workspace with several grants keeps the
     line readable at 80 columns instead of running it to the
-    terminal's edge — every grant stays spelled out one Enter
-    away, on the consent overlay's rules screen. A stack with no
+    terminal's edge — every grant stays spelled out on the
+    consent overlay's rules screen (``r`` from the overlay). A
+    stack with no
     countdown among its grants (open-ended verdicts alone)
     carries the count alone. The honest absence when nothing is
     in effect."""
@@ -681,7 +681,8 @@ class MsksTuiApp(App):
     #consent { height: 1; padding: 0 1; color: $text-muted;
                text-wrap: nowrap; text-overflow: ellipsis; }
     #page { height: 1fr; align: center middle; }
-    #actions { width: 64; height: auto; max-height: 100%; }
+    #actions { width: 64; height: auto; max-width: 100%;
+              max-height: 100%; }
     #actions ListItem { height: 1; padding: 0 1; }
     #actions ListItem.group-lead { margin-top: 1; }
     #actions ListItem Static { text-wrap: nowrap;
