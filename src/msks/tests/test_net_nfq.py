@@ -353,6 +353,30 @@ async def test_verdict_cache_bound_clears(consumer_app) -> None:
     assert len(flow._verdicts) == 1
 
 
+async def test_a_deny_without_a_decided_ttl_still_rsts(
+    consumer_app,
+) -> None:
+    """A malformed verdict — one that arrives without the decided
+    TTL every emitter sets — still pins the fail-fast RST within
+    the once window: the RST is what keeps a refused connect()
+    off the kernel's ~127 s retransmit timer, so a missing key
+    must not lose it (#401 review)."""
+    app, net = consumer_app
+    flow = consumer(app, net)
+    pkt = FakePkt(syn_packet())
+    await flow.apply_verdict(
+        pkt,
+        (40000, "203.0.113.7", 443),
+        "203.0.113.7",
+        443,
+        {"decision": "deny", "reason": "malformed"},
+        False,
+    )
+    assert pkt.verdict == "drop"
+    _ws, ip, port, ttl, _sport, _named = net.rejects[-1]
+    assert (ip, port, ttl) == ("203.0.113.7", 443, nfq.ONCE_REJECT_S)
+
+
 async def test_hold_error_fails_the_packet_closed(consumer_app) -> None:
     app, _net = consumer_app
     flow = consumer(app, app.state.net)

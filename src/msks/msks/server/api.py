@@ -2756,7 +2756,17 @@ def build_api(app) -> FastAPI:
                 status_code=404,
                 detail="no held request with that id",
             )
-        return {"id": request_id, "verdict": verdict}
+        return {
+            "id": request_id,
+            # The decided enforcement TTL the verdict also carries
+            # is the data plane's business (#401); the decider sees
+            # the verdict itself.
+            "verdict": {
+                key: verdict[key]
+                for key in ("decision", "reason", "duration")
+                if key in verdict
+            },
+        }
 
     @api.delete(
         "/api/v1/workspaces/{workspace_id}/egress/requests/{request_id}",

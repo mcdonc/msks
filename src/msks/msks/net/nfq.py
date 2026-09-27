@@ -477,15 +477,19 @@ class FlowConsumer:
     ) -> None:
         """Drop the SYN and pin a fail-fast RST for the retransmit
         (TCP only — an RST is meaningless for anything else) for
-        the decided TTL. A named deny on a shared address pins the
-        per-flow element (#304): the co-resident's connections
-        keep gating."""
-        if dport and ttl is not None:
+        the decided TTL. A verdict that arrives without one still
+        RSTs within the once window — the RST is what keeps a
+        refused connect() off the kernel's ~127 s retransmit
+        timer, so a malformed verdict must not lose it. A named
+        deny on a shared address pins the per-flow element
+        (#304): the co-resident's connections keep gating."""
+        reject_ttl = ONCE_REJECT_S if ttl is None else ttl
+        if dport:
             await self._net.consent_reject(
                 self.workspace_id,
                 dst,
                 dport,
-                ttl,
+                reject_ttl,
                 sport=flow[0],
                 named=named,
             )

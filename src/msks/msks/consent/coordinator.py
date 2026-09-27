@@ -50,20 +50,18 @@ logger = logging.getLogger(__name__)
 VERDICT_ALLOW = "allow"
 VERDICT_DENY = "deny"
 
-# The decided enforcement TTL every verdict this engine resolves
-# carries (``pin_ttl_s``): an allow pins for its duration (``once``
-# pins nothing — a reconnect re-prompts); a deny's fail-fast RST
-# falls back to the once window when the verdict itself carries no
-# window. The consumer installs the number without re-deriving it
-# (#401: consent decides, the data plane applies).
-
 
 def decided_ttl(decision: str, duration: str) -> float | None:
-    """The enforcement TTL a verdict's kernel element lives for.
+    """The decided enforcement TTL every verdict this engine
+    resolves carries (``pin_ttl_s``): the number of seconds the
+    verdict's kernel element lives, which the data plane installs
+    without re-deriving it (#401: consent decides, net applies).
 
-    The deny fallback is the once window: a ``once`` deny still
-    answers its own retransmit with an RST, and an unknown
-    duration fail-closes the same narrow way."""
+    An allow pins for its duration (``once`` pins nothing — a
+    reconnect re-prompts); a deny's fail-fast RST falls back to
+    the once window when the verdict itself carries no window
+    (a ``once`` deny still answers its own retransmit, and an
+    unknown duration fail-closes the same narrow way)."""
     ttl = duration_ttl(duration)
     if decision == DECISION_ALLOWED:
         return ttl
