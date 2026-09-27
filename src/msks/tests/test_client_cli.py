@@ -4381,21 +4381,69 @@ def test_create_refuses_when_no_invoking_name(
 def test_cmd_image_check_routes_to_the_conformance_pass(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``msks image check`` delegates to the local conformance pass
-    (#258); its exit code is the command's."""
+    """``msks image check`` runs the standalone conformance entry as
+    a child process (#397) and passes the exit code through."""
+    from types import SimpleNamespace
+
     from msks.conformance_args import CheckOptions
 
-    from msks import conformance
+    seen: list[list[str]] = []
 
-    seen: list[CheckOptions] = []
+    def fake_run(argv, **kwargs):
+        seen.append(argv)
+        return SimpleNamespace(returncode=7)
 
-    def fake_run(args):
-        seen.append(args)
-        return 1
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+    assert cli.cmd_image_check(CheckOptions(archive="x.tar")) == 7
+    assert seen[0][1:] == [
+        "-m",
+        "msks.conformance",
+        "x.tar",
+        "--boot-timeout-s",
+        "120.0",
+        "--shutdown-timeout-s",
+        "120.0",
+    ]
 
-    monkeypatch.setattr(conformance, "run_check", fake_run)
-    assert cli.cmd_image_check(CheckOptions(archive="x.tar")) == 1
-    assert seen[0].archive == "x.tar"
+
+def test_cmd_image_check_passes_the_full_surface(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every flag crosses into the child's argv (#397)."""
+    from types import SimpleNamespace
+
+    from msks.conformance_args import CheckOptions
+
+    seen: list[list[str]] = []
+
+    def fake_run(argv, **kwargs):
+        seen.append(argv)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+    cli.cmd_image_check(
+        CheckOptions(
+            archive="a.tar",
+            egress=True,
+            uplink="eth9",
+            boot_timeout_s=30.0,
+            shutdown_timeout_s=45.0,
+            keep=True,
+        )
+    )
+    assert seen[0][1:] == [
+        "-m",
+        "msks.conformance",
+        "a.tar",
+        "--egress",
+        "--uplink",
+        "eth9",
+        "--boot-timeout-s",
+        "30.0",
+        "--shutdown-timeout-s",
+        "45.0",
+        "--keep",
+    ]
 
 
 def test_cmd_llm_token_prints_and_remints(

@@ -815,7 +815,8 @@ def test_cmd_image_check_defers_the_daemon_stack(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Importing the client CLI pulls no server-side composition;
-    only running the check does (the client/server boundary)."""
+    the check runs as its own process, so running it never does
+    either (the client/server boundary, #397)."""
     import subprocess
     import sys
 

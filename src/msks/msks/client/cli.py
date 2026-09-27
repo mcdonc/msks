@@ -15,6 +15,7 @@ import enum
 import functools
 import json
 import os
+import subprocess
 import sys
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -41,8 +42,7 @@ from ..conformance_args import (
     CheckOptions,
 )
 from ..identity import KEY_TYPES
-from ..imagestore import is_hash_shape, version_key
-from ..storage import MIB
+from ..spec.images import is_hash_shape, version_key
 from . import egress as egress_mod
 from .config import ClientConfig, bootstrap
 from .console import run_workspace_shell
@@ -477,6 +477,11 @@ def cmd_key(
 # --- The image catalog (#65) ---
 
 HEX_DIGITS = set("0123456789abcdef")
+
+#: One mebibyte, the unit the API's MiB-denominated sizes render in
+#: (the client's local copy of the unit; #397 keeps the client off
+#: daemon modules for a constant).
+MIB = 1024 * 1024
 
 #: How many refs an error line spells out before "… (+N more)".
 CATALOG_REF_CAP = 8
@@ -1283,17 +1288,23 @@ def cmd_image_import(
 
 
 def cmd_image_check(args: CheckOptions) -> int:
-    """``msks image check``: the local conformance pass (#258).
+    """``msks image check``: the local conformance pass (#258), run
+    as its own process.
 
-    The import stays inside the command: conformance composes the
-    daemon's app (msks.app), and a module-scope import would load
-    the whole server stack into every ``msks`` invocation — the
-    client/server boundary is a standing decision, so this is the
-    one deliberate deferral in the client.
-    """
-    from .. import conformance  # allow-deferred-import
-
-    return conformance.run_check(args)
+    The engine composes the daemon's app (msks.app); the client
+    runs it as ``python -m msks.conformance`` and passes the exit
+    code and output through, so the daemon composition never loads
+    in the client process (#397)."""
+    argv = [sys.executable, "-m", "msks.conformance", args.archive]
+    if args.egress:
+        argv.append("--egress")
+    if args.uplink is not None:
+        argv += ["--uplink", args.uplink]
+    argv += ["--boot-timeout-s", str(args.boot_timeout_s)]
+    argv += ["--shutdown-timeout-s", str(args.shutdown_timeout_s)]
+    if args.keep:
+        argv.append("--keep")
+    return subprocess.run(argv).returncode
 
 
 def cmd_image_rm(ref: str, transport=None) -> int:

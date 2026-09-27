@@ -36,6 +36,8 @@ from urllib.parse import urlparse
 
 import httpx
 
+from .spec.images import is_hash_shape, version_key
+
 #: The cache file that carries an entry's import time (#186): one
 #: ISO-8601 line, rewritten by every import (a re-import refreshes
 #: the stamp along with the cache it swaps in).
@@ -799,23 +801,9 @@ def resolve_name_version(ref: str, images: list) -> ImageRecord | None:
     return None
 
 
-def version_key(version: str) -> tuple:
-    """Numeric version ordering: 13.10 sorts after 13.9."""
-    parts = []
-    for piece in version.replace("-", ".").split("."):
-        # Tagged so segments never compare int-to-str (13.9 vs 13.rc).
-        parts.append((0, int(piece)) if piece.isdigit() else (1, piece))
-    return tuple(parts)
-
-
 def resolve_newest(name: str, images: list) -> ImageRecord | None:
     candidates = [image for image in images if image.name == name]
     return max(candidates, key=lambda i: version_key(i.version), default=None)
-
-
-def is_hash_shape(ref: str) -> bool:
-    """64 lowercase hex characters."""
-    return len(ref) == 64 and all(c in "0123456789abcdef" for c in ref)
 
 
 def resolve(ref: str, state_dir: Path) -> ImageRecord | None:
