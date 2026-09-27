@@ -17,6 +17,10 @@ module for the same walk so the two never drift.
 Runs at commit time (the generated pre-commit hook) and inside
 ``msks-preflight``; exit status 1 names the cycle's chain with the
 file:line of each import along it.
+
+Star imports create no edge (ruff's F403 rejects them before this
+gate ever runs); everything else the ``ast`` walker sees, this gate
+sees.
 """
 
 import ast
@@ -83,11 +87,16 @@ def from_targets(
     node: ast.ImportFrom, base: tuple[str, ...]
 ) -> list[tuple[str, ...]]:
     """Dotted targets of ``from <module> import names`` resolved
-    under ``base``."""
+    under ``base``.
+
+    The module itself is always a target — the statement executes
+    it — so cycles through it close. Each imported name appends a
+    leaf beneath it: a name that is a submodule imports it, and any
+    other is a phantom that can never be a cycle's source."""
     mod = resolved_module(node, base)
     if not mod:
         return [(n,) for n in public_names(node)]
-    return [mod + (n,) for n in public_names(node)]
+    return [mod, *(mod + (n,) for n in public_names(node))]
 
 
 def import_targets(

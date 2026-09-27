@@ -555,7 +555,7 @@ in
       enable = true;
       name = "import-cycles";
       entry = "${config.languages.python.package}/bin/python scripts/check_import_cycles.py";
-      files = "^src/msks/msks/.*\\.py$";
+      files = "^src/msks/msks/.*\\.py$|^scripts/.*\\.py$";
       language = "system";
       pass_filenames = false;
     };

@@ -144,7 +144,8 @@ def test_package_edges_are_whitelisted():
         for pair, sites in found.items()
         if pair not in ALLOWED_EDGES
     }
-    if unknown:
+    stale = set(ALLOWED_EDGES) - set(found)
+    if unknown or stale:
         lines = ["package edges outside the layering whitelist (#387):"]
         for (src, dst), sites in sorted(unknown.items()):
             allowed = sorted(d for s, d in ALLOWED_EDGES if s == src)
@@ -153,5 +154,10 @@ def test_package_edges_are_whitelisted():
                 f" import: {', '.join(allowed) or '(nothing)'} — import from"
                 " one of those, or widen the whitelist in test_layering.py"
                 " deliberately"
+            )
+        for src, dst in sorted(stale):
+            lines.append(
+                f"  {src} -> {dst} is whitelisted but no such edge exists —"
+                " prune it so the contract matches the tree"
             )
         assert False, "\n".join(lines)
