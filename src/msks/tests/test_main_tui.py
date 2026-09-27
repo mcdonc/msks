@@ -22,6 +22,7 @@ from msks.client import cli
 from msks.client.tui import data as data_mod
 from msks.client.tui import link as link_mod
 from msks.client.tui import main_app
+from msks.client.tui.consent import ConsentController
 from msks.client.tui.link import DeciderLink
 from msks.client.tui.main_app import (
     FLOW_SHELL,
@@ -715,13 +716,17 @@ async def test_the_header_splits_the_name_from_the_metadata(
         assert header.content.plain[span.start : span.end] == "stopped"
         assert span.style == main_app.muted_style(app.theme_variables)
         # The meta line renders dimmer than the name line's default
-        # foreground — muted beside prominent, both on the panel.
+        # foreground — muted beside prominent, both on the panel —
+        # with its `·` separators carrying the muted span treatment
+        # (#366), the same ride the name line gives the status, so
+        # a theme tones both lines uniformly.
         name = next(s for s in header.render_line(0) if "alpha" in s.text)
         meta = app.screen.query_one("#header-meta", Static)
-        (meta_seg,) = [s for s in meta.render_line(0) if s.text.strip()]
-        assert sum(meta_seg.style.color.triplet) < sum(
-            name.style.color.triplet
-        )
+        segs = [s for s in meta.render_line(0) if s.text.strip()]
+        marks = [seg for seg in segs if seg.text == "·"]
+        assert len(marks) == 3
+        for seg in segs:
+            assert sum(seg.style.color.triplet) < sum(name.style.color.triplet)
 
 
 async def test_the_header_truncates_gracefully_at_eighty_columns(
@@ -760,6 +765,33 @@ async def test_the_header_truncates_gracefully_at_eighty_columns(
             "workstation-3.lab.example.internal.company.net" not in meta_line
         )
         assert "created" not in meta_line
+
+
+async def test_the_page_centers_its_action_block(monkeypatch) -> None:
+    """#366: the page's action block rides centered under the
+    header lines — its width capped at 64 (the form's and the
+    consent panel's own width), the block set in the middle of
+    the pane the header lines and the footer leave — so a tall
+    terminal reads as a page, not content packed at the top edge
+    with an empty lower half."""
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test(size=(80, 40)) as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        await pilot.pause()  # lay the centered block out
+        page = app.screen.query_one("#page")
+        actions = app.screen.query_one("#actions")
+        assert actions.region.width == 64
+        assert actions.region.x == 8  # centered at 80 columns
+        # The block sits in the middle of the pane, not packed at
+        # its top edge, and it never overflows the pane.
+        assert actions.region.y > page.region.y
+        above = actions.region.y - page.region.y
+        below = page.region.bottom - actions.region.bottom
+        assert abs(above - below) <= 1
+        assert actions.region.bottom <= page.region.bottom
 
 
 async def test_a_hold_arriving_opens_the_overlay_by_itself(
@@ -1608,10 +1640,15 @@ def test_the_line_helpers() -> None:
     wide = main_app.header_name(row(name="北" * 16))
     (wide_span,) = wide.spans
     assert wide.plain[wide_span.start : wide_span.end] == "stopped"
-    # The meta line: the id, the image hash, the host, the date.
+    # The meta line: the id, the image hash, the host, the date,
+    # with its separators carrying the muted span treatment
+    # (#366) — the same ride the name line gives the status.
     meta = main_app.header_meta(row())
-    assert WS in meta and "host-1" in meta and "2026-01-02" in meta
-    assert f"image {'a' * 12}" in meta
+    plain = meta.plain
+    assert WS in plain and "host-1" in plain and "2026-01-02" in plain
+    assert f"image {'a' * 12}" in plain
+    assert [plain[s.start : s.end] for s in meta.spans] == ["·", "·", "·"]
+    assert all(span.style == main_app.muted_style({}) for span in meta.spans)
     assert main_app.created_note(row(id="x"), None) == "created alpha (id x)"
     assert "identity" in main_app.created_note(row(id="x"), "/tmp/id")
 
@@ -1857,12 +1894,13 @@ async def test_a_long_flash_keeps_the_status_bar_one_line(
 async def test_the_pages_consent_line_keeps_one_row(
     monkeypatch,
 ) -> None:
-    """#359: the page's consent line — the surface the page's own
-    flashes own — carries the same one-row guarantee as the list's
-    status bar: standing grants longer than the terminal and a
-    long refusal flash both crop at the edge with an ellipsis
-    marking the cut, so the page's layout holds and the action
-    list keeps its place."""
+    """#359/#366: the page's consent line — the surface the page's
+    own flashes own — keeps its one row. A stack of five grants
+    collapses to the count with the nearest expiry (#366), so the
+    standing line reads whole at 80 columns — no hostname run to
+    the terminal's edge — and a long refusal flash still crops at
+    the edge with an ellipsis marking the cut, so the page's
+    layout holds and the action list keeps its place."""
     long_grants = frame(
         "egress.rules",
         {
@@ -1875,11 +1913,11 @@ async def test_the_pages_consent_line_keeps_one_row(
                     "dest_host": f"service-{i}.internal.example.corp",
                     "dest_port": 443,
                     "decision": "allowed",
-                    "duration": "1h",
-                    "decided_at": 200.0,
+                    "duration": "5m",
+                    "decided_at": time.time() + 90,  # nearest expiry: 6m
                     "decided_by": "token",
                 }
-                for i in range(3)
+                for i in range(5)
             ],
             "denied": [],
         },
@@ -1890,21 +1928,25 @@ async def test_the_pages_consent_line_keeps_one_row(
     refusal = "start failed: " + "daemon refused: " * 10 + "no room"
     async with app.run_test(size=(80, 24)) as pilot:
         page = await open_page(pilot, app)
-        await wait_for(
-            lambda: "service-0.internal.example.corp" in consent_text(app)
-        )
-        await pilot.pause()  # lay the long standing line out
+        await wait_for(lambda: "5 grants" in consent_text(app))
+        await pilot.pause()  # lay the standing line out
         consent = app.screen.query_one("#consent", Static)
         assert consent.region.height == 1
         line = "".join(s.text for s in consent.render_line(0))
-        assert "service-0.internal.example.corp" in line
-        assert line.rstrip().endswith("…")  # the cut, marked
+        # The summary reads whole: no grant run to the edge, no cut.
+        assert "5 grants · next expires 6m" in line
+        assert "service-0.internal.example.corp" not in line
+        assert not line.rstrip().endswith("…")
+        assert cell_len(line) <= 80
         actions_y = app.screen.query_one("#page").region.y
         page.flash(refusal)
         await wait_for(lambda: "start failed" in consent_text(app))
         await pilot.pause()  # lay the flashed line out
         assert consent.region.height == 1
         assert app.screen.query_one("#page").region.y == actions_y
+        line = "".join(s.text for s in consent.render_line(0))
+        assert line.lstrip().startswith("start failed: daemon refused")
+        assert line.rstrip().endswith("…")  # the cut, marked
 
 
 async def test_a_scrolling_list_keeps_the_created_label(
@@ -2170,6 +2212,81 @@ def test_the_consent_line_names_an_unusable_token() -> None:
     link.state = link_mod.UNUSABLE_TOKEN
     link.reject_reason = "the token cannot ride the websocket handshake"
     assert "cannot ride" in main_app.consent_line(link, row())
+
+
+def grant_row(
+    host: str, duration: str = "5m", decided_at: float | None = 900.0
+) -> dict:
+    """One allowed rule row for a scripted stack."""
+    return {
+        "id": host,
+        "dest_host": host,
+        "dest_port": 443,
+        "decision": "allowed",
+        "duration": duration,
+        "decided_at": decided_at,
+        "decided_by": "token",
+    }
+
+
+def grant_stack(allowed: list[dict]) -> str:
+    """One rules frame carrying the given allowed rows."""
+    return frame(
+        "egress.rules",
+        {
+            "workspace_id": WS,
+            "mode": "interactive",
+            "allow_list": [],
+            "allowed": allowed,
+            "denied": [],
+        },
+    )
+
+
+def pinned_controller(frames: list[str]):
+    """A controller under a pinned clock — the countdown labels
+    read the same on every run."""
+    controller = ConsentController(clock=lambda: 1000.0, workspace_id=WS)
+    for raw in frames:
+        controller.apply_frame(raw)
+    return controller
+
+
+def test_the_consent_line_counts_a_stack_of_grants() -> None:
+    """#366: one grant names itself — host, port, expiry; two or
+    more collapse to the count with the nearest expiry (the
+    open-ended verdicts out of the countdown), so a stack of
+    grants keeps the line readable at 80 columns — every grant
+    stays spelled out on the consent overlay's rules screen. A
+    stack with no countdown at all carries the count alone, and
+    nothing in effect stays the honest absence."""
+    controller = pinned_controller([])
+    assert main_app.granted_line(controller) == "no active consent"
+    controller = pinned_controller([grant_stack([grant_row("api.example")])])
+    assert main_app.granted_line(controller) == "api.example:443 (3m left)"
+    controller = pinned_controller(
+        [
+            grant_stack(
+                [
+                    grant_row("one.example", "15m", 800.0),
+                    grant_row("two.example"),
+                    grant_row("three.example", "forever", None),
+                ]
+            )
+        ]
+    )
+    assert main_app.granted_line(controller) == "3 grants · next expires 3m"
+    controller = pinned_controller(
+        [
+            grant_stack(
+                [
+                    grant_row("one.example", "forever", None),
+                    grant_row("two.example", "tilrestart", None),
+                ]
+            )
+        ]
+    )
+    assert main_app.granted_line(controller) == "2 grants"
 
 
 def test_the_default_flow_runners(monkeypatch) -> None:
