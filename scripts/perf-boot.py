@@ -40,9 +40,16 @@ import uuid
 from pathlib import Path
 
 from msks.app import build_app
-from msks.guestassets import load_guest_assets
 from msks.microvm import VmSpec
 from msks.settings import Settings, VmmSettings
+
+# The guest-asset loader lives in the test tree (#403); a dev script
+# reaches it by path, the same way pytest puts src/msks/tests on
+# sys.path for the suite.
+sys.path.insert(
+    0, str(Path(__file__).resolve().parent.parent / "src" / "msks" / "tests")
+)
+from guestassets import load_guest_assets  # noqa: E402
 
 LOGIN_MARKER = "msks-guest login:"
 PROMPT_MARKER = b"root@msks-guest"

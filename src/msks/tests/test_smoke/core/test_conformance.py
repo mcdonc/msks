@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+from guestassets import load_guest_assets
 from msks.conformance import (
     ACPI_SHUTDOWN,
     ARCHIVE,
@@ -14,7 +15,6 @@ from msks.conformance import (
     check_image,
 )
 
-from msks import guestassets
 from test_smoke import (
     GUEST_UP_TIMEOUT_S,
     SHUTDOWN_TIMEOUT_S,
@@ -25,7 +25,7 @@ from test_smoke import (
 def guest_archive() -> Path:
     """The built image archive the checker consumes — whichever
     flavor the surrounding suite's guest assets carry."""
-    assets = guestassets.load_guest_assets()
+    assets = load_guest_assets()
     if assets is None or assets.vmlinux is None:
         pytest.skip("guest assets not built")
     archives = sorted(assets.vmlinux.parent.glob("workspace-*.tar"))

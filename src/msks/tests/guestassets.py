@@ -1,14 +1,19 @@
-"""Discovery of the nix-built guest VM assets (#5).
+"""Discovery of the nix-built guest VM assets (#5, relocated to the
+test tree by #403).
 
 ``msks-build-guest`` builds the kernel, initrd, and
 ext4 rootfs with nix and copies them next to a JSON manifest into
 the guest state dir — ``.devenv/state/guest`` below the repository
 root by default; ``GUEST_DIR`` relocates it (an absolute path
 is taken as-is, a relative one resolves below the root). This
-module resolves that manifest so smoke tests (and, later, the CLI)
-use the built artifacts without hand-exported environment
-variables. Explicitly exported ``TEST_*`` variables always
-keep precedence over anything discovered here.
+module resolves that manifest so the smoke tests (and dev
+scripts, via a sys.path entry) use the built artifacts without
+hand-exported environment variables. Explicitly exported ``TEST_*``
+variables always keep precedence over anything discovered here.
+
+The module lives beside the suite's conftest because every consumer
+is test or dev tooling — the shipped ``msks`` package carries only
+daemon- and client-facing code.
 """
 
 from __future__ import annotations

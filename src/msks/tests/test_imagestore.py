@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 
+import guestassets
 import pytest
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
@@ -37,7 +38,7 @@ from msks.server.api import build_api
 from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
 from test_api import TOKEN, StubMicrovm, auth
 
-from msks import guestassets, imagestore
+from msks import imagestore
 
 
 def build_containerdisk(
