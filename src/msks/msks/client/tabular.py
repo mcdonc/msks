@@ -1,4 +1,5 @@
-"""The client's aligned output (#271): the listings.
+"""The client's tabular output: the plain listings (#271) and
+the framed capacity tables (#381).
 
 Rich measures every cell — the header row included — and fits each
 column's width to the values present, so a long value widens its
@@ -47,6 +48,19 @@ def listing_table(headers: list[str] | None, rows: list[list[str]]) -> Table:
     return table
 
 
+def framed_table(headers: list[str], rows: list[list[str]]) -> Table:
+    """The rows as rich frames a table by default: box rules
+    around and between the columns, the header row inside the top
+    rule, padded cells — the capacity tables' look (#381). The
+    render is plain text, so the rules carry the look, not ANSI
+    styling."""
+    table = Table()
+    for header in headers:
+        table.add_column(header, overflow="fold")
+    verbatim_rows(table, rows)
+    return table
+
+
 def rendered(table: Table, width: int) -> str:
     """The table as text at a width, each line right-trimmed."""
     console = Console(file=io.StringIO(), width=width)
@@ -69,3 +83,18 @@ def listing_text(
     if not rows:
         return ""
     return rendered(listing_table(headers, rows), width)
+
+
+def framed_text(
+    headers: list[str],
+    rows: list[list[str]],
+    width: int = UNFOLDED,
+) -> str:
+    """The rows as one framed table.
+
+    A rowless table renders nothing, the same empty contract the
+    listings carry.
+    """
+    if not rows:
+        return ""
+    return rendered(framed_table(headers, rows), width)

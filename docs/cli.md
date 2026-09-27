@@ -423,13 +423,19 @@ image's cost:
 $ msks storage
 state disk    used 23.4G of 40G    free 16.6G    pressure ok
 
-workspace  root cost/ceiling  home cost/ceiling  cost
-ws4        3.1G / 10G         812M / 2G          3.9G
-scratch    61M / 10G          12M / 2G           73M
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━┓
+┃ workspace ┃ root cost/ceiling ┃ home cost/ceiling ┃ cost ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━┩
+│ ws4       │ 3.1G / 10G        │ 812M / 2G         │ 3.9G │
+│ scratch   │ 61M / 10G         │ 12M / 2G          │ 73M  │
+└───────────┴───────────────────┴───────────────────┴──────┘
 
-image      imported          cost
-debian:13  2026-09-21 12:03  3G
-debian:13  2026-08-02 05:11  3G
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━┓
+┃ image     ┃ imported         ┃ cost ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━┩
+│ debian:13 │ 2026-09-21 12:03 │ 3G   │
+│ debian:13 │ 2026-08-02 05:11 │ 3G   │
+└───────────┴───────────────────┴──────┘
 ```
 
 - **cost** is the disk blocks the artifact occupies on the state

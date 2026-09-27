@@ -1,7 +1,8 @@
-"""The tabular helpers (#271): the measured listings. The help
-screens render through typer's own rich formatting (#315)."""
+"""The tabular helpers (#271): the measured listings, and the
+framed capacity tables (#381). The help screens render through
+typer's own rich formatting (#315)."""
 
-from msks.client.tabular import listing_text
+from msks.client.tabular import framed_text, listing_text
 
 
 def test_listing_text_fits_columns_to_the_values() -> None:
@@ -48,6 +49,51 @@ def test_listing_text_renders_markup_verbatim() -> None:
     )
     assert "x[/]y:443" in text
     assert "x[bold]y.z (all ports)" in text
+
+
+def test_framed_text_renders_richs_table_look() -> None:
+    """The capacity tables' look (#381): rich's own framing — box
+    rules around and between the columns, the header row inside
+    the top rule — and a guest-controlled cell stays literal,
+    never markup to parse."""
+    text = framed_text(
+        ["ref", "cost"],
+        [["debian:13", "3G"], ["nixos:26.05", "x[/]1G"]],
+    )
+    assert text.splitlines() == [
+        "┏━━━━━━━━━━━━━┳━━━━━━━━┓",
+        "┃ ref         ┃ cost   ┃",
+        "┡━━━━━━━━━━━━━╇━━━━━━━━┩",
+        "│ debian:13   │ 3G     │",
+        "│ nixos:26.05 │ x[/]1G │",
+        "└─────────────┴────────┘",
+    ]
+
+
+def test_framed_text_without_rows_prints_nothing() -> None:
+    """The listings' empty-table contract holds framed too: no
+    rows, no frame."""
+    assert framed_text(["ref"], []) == ""
+
+
+def test_framed_text_folds_at_a_bounded_width() -> None:
+    """A framed render folds inside its width; every continued
+    line keeps the frame's left rules, so the grid holds through
+    the fold."""
+    text = framed_text(
+        ["cmd", "help"],
+        [["run", "one two three four five six seven eight"]],
+        width=26,
+    )
+    assert text.splitlines() == [
+        "┏━━━━━┳━━━━━━━━━━━━━━━━━━┓",
+        "┃ cmd ┃ help             ┃",
+        "┡━━━━━╇━━━━━━━━━━━━━━━━━━┩",
+        "│ run │ one two three    │",
+        "│     │ four five six    │",
+        "│     │ seven eight      │",
+        "└─────┴──────────────────┘",
+    ]
 
 
 def test_listing_text_folds_at_a_bounded_width() -> None:
