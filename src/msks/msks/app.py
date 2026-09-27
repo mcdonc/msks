@@ -9,13 +9,13 @@ propagates without per-subsystem reconfiguration.
 
 from .consent.coordinator import ConsentEngine
 from .consent.deciders import DeciderRegistry
+from .events import EventHub
 from .interceptor import Interceptor
 from .llm import LlmProxy
 from .microvm import Microvm
 from .model import Model
 from .net import NetManager
 from .secretstore import SecretStore
-from .server.events import EventHub
 from .settings import Settings
 
 

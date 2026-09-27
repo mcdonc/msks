@@ -3,6 +3,11 @@
 One pub/sub hub behind ``GET /api/v1/events``: the status watcher
 publishes workspace lifecycle transitions, every connected client
 socket receives them. Same listener/port as HTTPS — one surface.
+
+A root leaf module (#408): the composition layer (``app.py``) and
+the HTTP surface (``server``) both import it, so the package graph
+between them stays one-way. Runtime publishers that reach the hub
+through ``app.state.hub`` import nothing here.
 """
 
 import asyncio

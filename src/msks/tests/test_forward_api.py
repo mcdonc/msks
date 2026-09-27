@@ -9,6 +9,7 @@ import pytest
 from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 from msks.app import build_app
+from msks.events import EventHub
 from msks.microvm import MicrovmError
 from msks.server import api as api_module
 from msks.server.api import (
@@ -19,7 +20,6 @@ from msks.server.api import (
     forward_port,
     pump_streams,
 )
-from msks.server.events import EventHub
 from msks.settings import NetSettings, ServerSettings, Settings
 from test_api import TOKEN, StubMicrovm, auth
 from test_console_api import _SilentWriter, _StallSocket
