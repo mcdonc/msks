@@ -20,7 +20,8 @@
  * #375 — and any other detail-bearing answer rides the same
  * path): FastAPI's `detail` key first, the OpenAI error shape
  * second, plain text as the fallback, each capped so a hostile
- * body cannot flood the terminal.
+ * body cannot flood the terminal (the bound sits above the
+ * proxy's own longest detail with margin).
  *
  * The image ships this file in /etc/skel (every seed-provisioned
  * account copies it into ~/.pi/agent/extensions/ — pi discovers
@@ -68,7 +69,7 @@ async function failureReason(response: Response): Promise<string> {
   } catch {
     reason = body;
   }
-  return reason.replace(/\s+/g, " ").trim().slice(0, 240);
+  return reason.replace(/\s+/g, " ").trim().slice(0, 320);
 }
 
 async function fetchModels(

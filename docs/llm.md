@@ -155,9 +155,10 @@ prints the fresh token on stdout with the update step on stderr
 (`/etc/msks/llm.token`, written as root, picked up by the next
 login shell). A workspace still holding the old credential gets a
 401 whose body names the cause and this recovery (#375) — the
-same body the seeded pi extension prints after the status line at
-startup, so `msks llm-models: fetch failed: 401 — …` carries the
-fix instead of a bare status.
+reason the seeded pi extension prints after the status line at
+startup (an image rebuilt after this change; an older home keeps
+its own copy), so `msks llm-models: fetch failed: 401 — …`
+carries the fix instead of a bare status.
 
 One more create-time fact rides the seed: the port. The planted
 `MSKSWS_BASE_URL` names the port the daemon served when the

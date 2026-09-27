@@ -793,14 +793,12 @@ class LlmProxy:
             raise HTTPException(
                 status_code=401,
                 detail=(
-                    "invalid workspace token — the daemon's credential "
-                    "for this workspace differs from the one its seed "
-                    "planted (a remint, or a daemon catalog created "
-                    "after the guest). Run `msks llm-token "
-                    "<workspace>` on the host, write the token it "
-                    "prints to /etc/msks/llm.token as root in the "
-                    "guest, and open a new login shell (it exports the "
-                    "file as MSKSWS_API_KEY)."
+                    "the LLM credential differs from its seeded copy "
+                    "(a remint, or a daemon newer than the guest); "
+                    "run `msks llm-token <workspace>` on the host, "
+                    "write its token to /etc/msks/llm.token in the "
+                    "guest as root — the next login shell exports it "
+                    "as MSKSWS_API_KEY"
                 ),
             )
 

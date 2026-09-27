@@ -392,8 +392,8 @@ def cmd_llm_token(
         print(
             f"msks: the workspace keeps serving the old token until "
             f"updated — write this one to /etc/msks/llm.token as "
-            f"root in {workspace_id} (msks console or msks ssh -l "
-            f"root), then open a new login shell",
+            f"root in {workspace_id} (msks console --user root, or "
+            f"msks ssh -l root), then open a new login shell",
             file=sys.stderr,
         )
         return 0
