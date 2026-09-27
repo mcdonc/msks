@@ -2774,7 +2774,268 @@ async def test_mint_publishes_and_refreshes_the_interceptor(client) -> None:
         events.append(await queue.get())
     kinds = [json.loads(event)["event"] for event in events]
     assert kinds == ["secret.mint", "secret.revoke"]
-    assert recorder.refreshes == ["ws-sec", "ws-sec"]
+    # The mint refreshed its covered workspace; the revoke's
+    # stand-down iterates attachments (#339), and none are live
+    # here, so the recorder sees the mint's refresh alone.
+    assert recorder.refreshes == ["ws-sec"]
+
+
+async def test_daemon_wide_mint_covers_every_workspace(client) -> None:
+    """#339: a mint with no target is one daemon-wide row — the
+    mskssec2_ sentinel, the MSKSDAEMON_ ref, coverage [] in every
+    view — and the same label lives beside a scoped row."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    response = await http.post(
+        "/api/v1/secrets",
+        json={
+            "name": "github_api",
+            "dests": ["api.github.com"],
+            "secret": "ghp-shared",
+        },
+        headers=auth(),
+    )
+    assert response.status_code == 201
+    row = response.json()
+    assert row["workspaces"] == []
+    assert row["sentinel"].startswith("mskssec2_")
+    stored = (
+        app.state.settings.secret_store.root
+        / "msks"
+        / "default"
+        / "MSKSDAEMON_GITHUB_API"
+    )
+    assert stored.read_text() == "ghp-shared"
+    # The audit row records the daemon-wide coverage.
+    audit = await http.get("/api/v1/secrets/audit", headers=auth())
+    assert audit.json()[0]["workspaces"] == []
+    # The same label beside it on a scoped coverage set is a
+    # different row — one row per label per coverage set.
+    scoped = await http.post(
+        "/api/v1/secrets",
+        json=mint_body(),
+        headers=auth(),
+    )
+    assert scoped.status_code == 201
+    assert scoped.json()["workspaces"] == ["ws-sec"]
+    assert scoped.json()["sentinel"].startswith("mskssec1_")
+    again = await http.post(
+        "/api/v1/secrets",
+        json={
+            "name": "github_api",
+            "dests": ["api.github.com"],
+            "secret": "ghp-shared",
+        },
+        headers=auth(),
+    )
+    assert again.status_code == 409
+
+
+async def test_multi_workspace_mint_is_one_row(client) -> None:
+    """#339: --workspaces a,b mints one row covering exactly that
+    set — one sentinel, one store entry, the mskssec1_ prefix —
+    and the coverage resolves name refs to ids."""
+    http, app, _stub = client
+    await seed_workspace(app, "ws-a")
+    await seed_workspace(app, "ws-b")
+    response = await http.post(
+        "/api/v1/secrets",
+        json={
+            "workspaces": ["ws-b", "ws-a", "ws-a"],
+            "name": "pair_api",
+            "dests": ["api.example.com"],
+            "secret": "pair-token",
+        },
+        headers=auth(),
+    )
+    assert response.status_code == 201
+    row = response.json()
+    assert row["workspaces"] == ["ws-a", "ws-b"]  # sorted, deduped
+    assert row["sentinel"].startswith("mskssec1_")
+    assert (
+        app.state.settings.secret_store.root
+        / "msks"
+        / "default"
+        / "MSKSWS_WS_A_WS_B_PAIR_API"
+    ).read_text() == "pair-token"
+    # The legacy single-workspace spelling still mints, and the
+    # two spellings cannot mix.
+    legacy = await http.post(
+        "/api/v1/secrets",
+        json=mint_body(name="legacy", workspace_id="ws-a"),
+        headers=auth(),
+    )
+    assert legacy.status_code == 201
+    assert legacy.json()["workspaces"] == ["ws-a"]
+    mixed = await http.post(
+        "/api/v1/secrets",
+        json=mint_body(name="mixed", workspaces=["ws-a"]),
+        headers=auth(),
+    )
+    assert mixed.status_code == 422
+    unknown = await http.post(
+        "/api/v1/secrets",
+        json={
+            "workspaces": ["nope"],
+            "name": "ghost",
+            "dests": ["api.example.com"],
+            "secret": "s",
+        },
+        headers=auth(),
+    )
+    assert unknown.status_code == 404
+
+
+async def test_secret_coverage_flips_record_and_reevaluate(client) -> None:
+    """#339: the workspace's posture rides the create body onto the
+    row, the flip endpoint changes it, and an unknown value is a
+    named 400."""
+    http, app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "kernel": "/k",
+            "rootfs": "/r",
+            "secret_coverage": "scoped",
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    wid = created.json()["id"]
+    assert created.json()["secret_coverage"] == "scoped"
+    flipped = await http.put(
+        f"/api/v1/workspaces/{wid}/secret-coverage",
+        json={"secret_coverage": "all"},
+        headers=auth(),
+    )
+    assert flipped.status_code == 200
+    assert flipped.json()["secret_coverage"] == "all"
+    row = await app.state.model.get_workspace(wid)
+    assert row["secret_coverage"] == "all"
+    bad = await http.put(
+        f"/api/v1/workspaces/{wid}/secret-coverage",
+        json={"secret_coverage": "sometimes"},
+        headers=auth(),
+    )
+    assert bad.status_code == 400
+    assert "secret_coverage" in bad.json()["detail"]
+    missing = await http.put(
+        "/api/v1/workspaces/ghost/secret-coverage",
+        json={"secret_coverage": "all"},
+        headers=auth(),
+    )
+    assert missing.status_code == 404
+    invalid_create = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "kernel": "/k",
+            "rootfs": "/r",
+            "secret_coverage": "sometimes",
+        },
+        headers=auth(),
+    )
+    assert invalid_create.status_code == 400
+
+
+async def test_a_coverage_flip_that_cannot_rearm_restores_the_posture(
+    client,
+) -> None:
+    """A flip that cannot re-evaluate the armed state restores the
+    posture it changed (#339): a live daemon-wide row without its
+    redirect would leak the raw sentinel toward the wire — the
+    outcome the mint rollback exists to prevent."""
+    http, app, _stub = client
+    await seed_workspace(app)
+
+    class RefusingInterceptor:
+        async def refresh(self, workspace_id: str) -> None:
+            raise RuntimeError("nft down")
+
+        async def on_detach(self, ws):  # pragma: no cover
+            raise AssertionError
+
+        async def stop(self):  # pragma: no cover
+            raise AssertionError
+
+    real = app.state.interceptor
+    app.state.interceptor = RefusingInterceptor()
+    try:
+        flipped = await http.put(
+            "/api/v1/workspaces/ws-sec/secret-coverage",
+            json={"secret_coverage": "scoped"},
+            headers=auth(),
+        )
+    finally:
+        app.state.interceptor = real
+    assert flipped.status_code == 503
+    assert "rolled back" in flipped.json()["detail"]
+    row = await app.state.model.get_workspace("ws-sec")
+    assert row["secret_coverage"] == "all"
+
+
+async def test_a_coverage_flip_losing_its_row_answers_404(client) -> None:
+    """A flip whose row vanishes between the read and the write is
+    a 404, not a silent success (#339)."""
+    http, app, _stub = client
+    await seed_workspace(app)
+
+    async def unwrite(workspace_id, coverage):
+        return False
+
+    real = app.state.model.set_secret_coverage
+    app.state.model.set_secret_coverage = unwrite
+    try:
+        flipped = await http.put(
+            "/api/v1/workspaces/ws-sec/secret-coverage",
+            json={"secret_coverage": "scoped"},
+            headers=auth(),
+        )
+    finally:
+        app.state.model.set_secret_coverage = real
+    assert flipped.status_code == 404
+
+
+async def test_daemon_wide_mint_arms_every_attached_workspace(client) -> None:
+    """#339's arming consequence: a daemon-wide mint refreshes
+    every attached workspace (the arm half), and a scoped mint
+    refreshes its covered set alone; the refresh with no
+    attachment is the no-op half."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    recorder = RefreshRecorder()
+    real = app.state.interceptor
+    app.state.interceptor = recorder
+    attached = {"ws-sec": object(), "ws-other": object()}
+
+    class AttachedNet:
+        def attached_workspaces(self):
+            return list(attached)
+
+    real_net = app.state.net
+    app.state.net = AttachedNet()
+    try:
+        wide = await http.post(
+            "/api/v1/secrets",
+            json={
+                "name": "wide",
+                "dests": ["api.github.com"],
+                "secret": "s",
+            },
+            headers=auth(),
+        )
+        assert wide.status_code == 201
+        assert recorder.refreshes == ["ws-sec", "ws-other"]
+        recorder.refreshes.clear()
+        scoped = await http.post(
+            "/api/v1/secrets",
+            json=mint_body(name="scoped"),
+            headers=auth(),
+        )
+        assert scoped.status_code == 201
+        assert recorder.refreshes == ["ws-sec", "ws-other"]
+    finally:
+        app.state.net = real_net
+        app.state.interceptor = real
 
 
 async def test_mint_and_revoke_events_carry_the_placeholder_identity(
@@ -2904,11 +3165,20 @@ async def test_revoke_survives_a_failing_refresh(client) -> None:
 
     real = app.state.interceptor
     app.state.interceptor = RefusingInterceptor()
+    attached = {"ws-sec": object()}
+
+    class AttachedNet:
+        def attached_workspaces(self):
+            return list(attached)
+
+    real_net = app.state.net
+    app.state.net = AttachedNet()
     try:
         revoked = await http.delete(
             f"/api/v1/secrets/{row['id']}", headers=auth()
         )
     finally:
+        app.state.net = real_net
         app.state.interceptor = real
     assert revoked.status_code == 200
     listing = await http.get("/api/v1/secrets", headers=auth())
@@ -3123,7 +3393,7 @@ async def test_lifespan_migrates_legacy_backend_refs(tmp_path: Path) -> None:
     seed = build_app(settings)
     seed.state.model.migrate()
     await seed.state.model.create_placeholder(
-        "ws-a",
+        ["ws-a"],
         "github_api",
         new_sentinel(),
         ["api.github.com"],

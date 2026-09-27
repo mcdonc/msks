@@ -3224,6 +3224,34 @@ def test_create_carries_the_consent_flags(monkeypatch) -> None:
     ]
 
 
+def test_create_sends_the_secret_coverage_posture(monkeypatch, capsys) -> None:
+    """#339: --secret-coverage rides the create body; omitted, the
+    daemon takes its default."""
+    client_env(monkeypatch)
+    seen = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(req.read())
+        return httpx.Response(201, json={"id": "ws1"})
+
+    rc = cli.main(
+        [
+            "create",
+            "ws1",
+            "--kernel",
+            "/k",
+            "--rootfs",
+            "/r",
+            "--secret-coverage",
+            "scoped",
+            "--daemon-mint",
+        ],
+        transport=mock(handler),
+    )
+    assert rc == 0
+    assert seen["body"]["secret_coverage"] == "scoped"
+
+
 async def test_handle_frame_prints_and_prompts(capsys, monkeypatch) -> None:
     from msks.client import egress as eg
 
@@ -3640,7 +3668,7 @@ def secret_rows() -> list[dict]:
     return [
         {
             "id": 3,
-            "workspace_id": "ws-sec",
+            "workspaces": ["ws-sec"],
             "name": "github_api",
             "dests": ["api.github.com"],
             "created_at": "2026-01-01T00:00:00+00:00",
@@ -3684,6 +3712,7 @@ def test_cmd_secret_mint_posts_and_prints_the_sentinel_once(
         [
             "secret",
             "mint",
+            "--workspace",
             "ws-sec",
             "--name",
             "github_api",
@@ -3697,6 +3726,7 @@ def test_cmd_secret_mint_posts_and_prints_the_sentinel_once(
     assert code == 0
     assert seen["path"] == "/api/v1/secrets"
     assert seen["body"]["secret"] == "ghp-real-token"
+    assert seen["body"]["workspaces"] == ["ws-sec"]
     assert "ttl_s" not in seen["body"]
     out = capsys.readouterr().out
     assert "mskssec1_abc" in out
@@ -3724,6 +3754,7 @@ def test_cmd_secret_mint_reads_stdin_and_sends_ttl(
         [
             "secret",
             "mint",
+            "--workspace",
             "ws-sec",
             "--name",
             "github_api",
@@ -3753,6 +3784,7 @@ def test_cmd_secret_mint_refuses_a_tty_stdin(
             [
                 "secret",
                 "mint",
+                "--workspace",
                 "ws-sec",
                 "--name",
                 "x",
@@ -3777,6 +3809,7 @@ def test_cmd_secret_mint_refuses_an_empty_secret(
             [
                 "secret",
                 "mint",
+                "--workspace",
                 "ws-sec",
                 "--name",
                 "x",
@@ -3831,7 +3864,7 @@ def test_cmd_secret_revoke_and_renew_resolve_the_label(
         return httpx.Response(200, json=secret_rows())
 
     code = cli.main(
-        ["secret", "revoke", "ws-sec", "--name", "github_api"],
+        ["secret", "revoke", "--workspace", "ws-sec", "--name", "github_api"],
         transport=mock(handler),
     )
     assert code == 0
@@ -3842,6 +3875,7 @@ def test_cmd_secret_revoke_and_renew_resolve_the_label(
         [
             "secret",
             "renew",
+            "--workspace",
             "ws-sec",
             "--name",
             "github_api",
@@ -3870,7 +3904,7 @@ def test_cmd_secret_revoke_reports_a_leftover_value(
         return httpx.Response(200, json=secret_rows())
 
     code = cli.main(
-        ["secret", "revoke", "ws-sec", "--name", "github_api"],
+        ["secret", "revoke", "--workspace", "ws-sec", "--name", "github_api"],
         transport=mock(handler),
     )
     assert code == 0
@@ -3906,6 +3940,133 @@ def test_cmd_secret_ls_json(
     assert json.loads(capsys.readouterr().out) == secret_rows()
 
 
+def test_cmd_secret_mint_daemon_wide_when_no_target_given(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#339: a mint with no --workspace is the daemon-wide mint —
+    the body carries no coverage field, and the daemon's answer
+    (workspaces: []) prints as the * coverage label with the
+    mskssec2_ sentinel shown once."""
+    client_env(monkeypatch)
+    monkeypatch.setattr(sys.stdin, "read", lambda: "wide-token\n")
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(
+            201,
+            json={
+                **secret_rows()[0],
+                "workspaces": [],
+                "sentinel": "mskssec2_wide",
+            },
+        )
+
+    code = cli.main(
+        [
+            "secret",
+            "mint",
+            "--name",
+            "github_api",
+            "--dest",
+            "api.github.com",
+            "--secret-file",
+            "-",
+        ],
+        transport=mock(handler),
+    )
+    assert code == 0
+    assert "workspaces" not in seen["body"]
+    assert "workspace_id" not in seen["body"]
+    out = capsys.readouterr().out
+    assert "minted */github_api" in out
+    assert out.count("mskssec2_wide") == 1
+
+
+def test_cmd_secret_mint_splits_and_repeats_workspace_targets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#339: --workspace takes a comma list and repeats; the refs
+    ride the body in order."""
+    client_env(monkeypatch)
+    monkeypatch.setattr(sys.stdin, "read", lambda: "scoped-token\n")
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(201, json={**secret_rows()[0], "sentinel": "s"})
+
+    cli.main(
+        [
+            "secret",
+            "mint",
+            "--workspace",
+            "ws-a,ws-b",
+            "--workspace",
+            "ws-c",
+            "--name",
+            "api",
+            "--dest",
+            "a.com",
+            "--secret-file",
+            "-",
+        ],
+        transport=mock(handler),
+    )
+    assert seen["body"]["workspaces"] == ["ws-a", "ws-b", "ws-c"]
+
+
+def test_cmd_secret_revoke_targets_the_daemon_wide_row(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#339: revoke with no --workspace matches the daemon-wide row
+    of the label — coverage [] — and the daemon-wide hint appears
+    when the label names nothing."""
+    client_env(monkeypatch)
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if request.url.path == "/api/v1/workspaces":
+            return httpx.Response(200, json=workspace_rows())
+        return httpx.Response(200, json=[])
+
+    with pytest.raises(SystemExit, match="no placeholder api covering"):
+        cli.main(
+            ["secret", "revoke", "--name", "api"], transport=mock(handler)
+        )
+
+
+def test_cmd_secret_coverage_flips_the_posture(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#339: the coverage command PUTs the posture and prints the
+    daemon's answer."""
+    client_env(monkeypatch)
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(
+            200, json={"workspace_id": "ws-sec", "secret_coverage": "scoped"}
+        )
+
+    code = cli.main(
+        ["secret", "coverage", "ws-sec", "scoped"], transport=mock(handler)
+    )
+    assert code == 0
+    assert (seen["method"], seen["path"]) == (
+        "PUT",
+        "/api/v1/workspaces/ws-sec/secret-coverage",
+    )
+    assert seen["body"] == {"secret_coverage": "scoped"}
+    assert "secret coverage: scoped" in capsys.readouterr().out
+
+
 def test_cmd_secret_ls_empty_prints_nothing(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -3931,12 +4092,19 @@ def test_cmd_secret_revoke_names_a_missing_label(
             return httpx.Response(200, json=workspace_rows())
         # A listing that neither starts with nor holds the match: the
         # scan walks every row before naming the absence.
-        other = {**secret_rows()[0], "workspace_id": "ws-other"}
+        other = {**secret_rows()[0], "workspaces": ["ws-other"]}
         return httpx.Response(200, json=[other])
 
     with pytest.raises(SystemExit, match="no placeholder missing_api"):
         cli.main(
-            ["secret", "revoke", "ws-sec", "--name", "missing_api"],
+            [
+                "secret",
+                "revoke",
+                "--workspace",
+                "ws-sec",
+                "--name",
+                "missing_api",
+            ],
             transport=mock(handler),
         )
 
@@ -3951,6 +4119,7 @@ def test_cmd_secret_mint_names_an_unreadable_file(
             [
                 "secret",
                 "mint",
+                "--workspace",
                 "ws-sec",
                 "--name",
                 "x",
@@ -4372,7 +4541,7 @@ def test_a_help_shaped_option_value_is_not_a_help_exit(
     monkeypatch.setattr(
         cli,
         "cmd_secret_mint",
-        lambda ws, name, dests, ttl, sf, transport=None: (
+        lambda refs, name, dests, ttl, sf, transport=None: (
             ran.append(name),
             0,
         )[1],
@@ -4381,6 +4550,7 @@ def test_a_help_shaped_option_value_is_not_a_help_exit(
         [
             "secret",
             "mint",
+            "--workspace",
             "ws",
             "--name",
             "-h",

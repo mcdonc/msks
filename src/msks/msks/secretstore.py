@@ -39,20 +39,36 @@ import re
 import secrets as pysecrets
 from pathlib import Path
 
+from .model.secrets import coverage_label
+
 LOG = logging.getLogger(__name__)
 
-#: The sentinel format: versioned prefix + 32 random bytes
+#: The scoped sentinel format: versioned prefix + 32 random bytes
 #: base64url — uniform fixed length, so the wire matcher can
 #: recognize it without parsing (#198).
 SENTINEL_PREFIX = "mskssec1_"
 
+#: The daemon-wide sentinel format (#339): the same body under a
+#: distinct prefix, so an operator who finds a sentinel in a log
+#: or a guest can tell its reach from the string alone —
+#: ``mskssec1_`` swaps on its row's workspaces, ``mskssec2_`` on
+#: every accepting workspace's tap.
+DAEMON_SENTINEL_PREFIX = "mskssec2_"
+
 #: The manifest the daemon generates and owns, inside the store root.
 MANIFEST_NAME = "secretspec.toml"
 
-#: The prefix every minted backend ref carries. The resolved
+#: The prefix every scoped backend ref carries. The resolved
 #: values are read inside workspaces, so the ref carries the
 #: workspace family's prefix (#335).
 REF_PREFIX = "MSKSWS_"
+
+#: The prefix a daemon-wide row's backend ref carries (#339): a
+#: ref family of its own, so the store's namespace names the
+#: row's reach the same way the sentinel prefix does. It shares no
+#: spelling with the legacy ``MSKS_`` family (the fifth character
+#: differs), so the #335 startup migration never claims one.
+DAEMON_REF_PREFIX = "MSKSDAEMON_"
 
 #: The prefix refs minted before #335's rename carry; the startup
 #: migration rewrites any row still holding one.
@@ -130,24 +146,33 @@ async def spawn(
     return out
 
 
-def new_sentinel() -> str:
-    """A fresh placeholder sentinel (#198)."""
-    return SENTINEL_PREFIX + pysecrets.token_urlsafe(32)
+def new_sentinel(daemon_wide: bool = False) -> str:
+    """A fresh placeholder sentinel (#198, #339): the
+    daemon-wide row mints under ``mskssec2_``, a scoped row under
+    ``mskssec1_``."""
+    prefix = DAEMON_SENTINEL_PREFIX if daemon_wide else SENTINEL_PREFIX
+    return prefix + pysecrets.token_urlsafe(32)
 
 
-def backend_ref(workspace_id: str, name: str) -> str:
-    """The SecretSpec declaration name for one placeholder.
+def backend_ref(workspaces: list[str], name: str) -> str:
+    """The SecretSpec declaration name for one placeholder (#339:
+    *workspaces* is the row's coverage set).
 
-    ``MSKSWS_<WS>_<NAME>``: identifier-safe (dashes and dots become
-    underscores), uppercase. Two (workspace, name) pairs that
-    sanitize identically collide on the unique index — the mint
-    answers 409 rather than silently sharing a backend ref.
+    Scoped: ``MSKSWS_<WS...>_<NAME>`` — identifier-safe (dashes
+    and dots become underscores), uppercase, the coverage's sorted
+    ids in order. Daemon-wide (an empty coverage): a ref of its
+    own family, ``MSKSDAEMON_<NAME>``. Two coverage/name pairs
+    that sanitize identically collide on the unique index — the
+    mint answers 409 rather than silently sharing a backend ref.
     """
     parts = [
         re.sub(r"[^A-Za-z0-9_]", "_", part).upper()
-        for part in (workspace_id, name)
+        for part in (
+            [*sorted(set(workspaces)), name] if workspaces else [name]
+        )
     ]
-    return REF_PREFIX + "_".join(parts)
+    prefix = REF_PREFIX if workspaces else DAEMON_REF_PREFIX
+    return prefix + "_".join(parts)
 
 
 def valid_name(name: str) -> bool:
@@ -434,8 +459,8 @@ class SecretStore:
             (await model.placeholder_refs())
             + [
                 (
-                    backend_ref(row["workspace_id"], row["name"]),
-                    f"{row['workspace_id']}/{row['name']}",
+                    backend_ref(row["workspaces"], row["name"]),
+                    f"{coverage_label(row['workspaces'])}/{row['name']}",
                 )
                 for row in legacy
             ],
@@ -468,11 +493,14 @@ class SecretStore:
         store: the CLI's errors do not separate them, so both
         retry), a failed copy, a failed row rename — logs and
         leaves the row on its legacy ref, where reads keep working
-        and the next startup retries the move.
+        and the next startup retries the move. A legacy row is
+        single-workspace by construction (every pre-#335 row was),
+        so the label names its one id.
         """
         model = self.app.state.model
         old = row["backend_ref"]
-        new = backend_ref(row["workspace_id"], row["name"])
+        label = coverage_label(row["workspaces"])
+        new = backend_ref(row["workspaces"], row["name"])
         try:
             try:
                 value = await self.read(old)
@@ -481,7 +509,7 @@ class SecretStore:
                     "placeholder %s/%s has no readable value at "
                     "legacy ref %s (%s); the row stays put and the "
                     "next startup retries",
-                    row["workspace_id"],
+                    label,
                     row["name"],
                     old,
                     exc,
@@ -503,7 +531,7 @@ class SecretStore:
             LOG.exception(
                 "placeholder %s/%s stays on legacy ref %s; "
                 "the next startup retries it",
-                row["workspace_id"],
+                label,
                 row["name"],
                 old,
             )

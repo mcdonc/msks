@@ -17,6 +17,16 @@ from msks.server.events import EventHub
 from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
 
 TAP_IP = "172.31.0.2"
+_TAPS = {"ws-a": "172.31.0.2", "ws-b": "172.31.0.3", "ws-c": "172.31.0.4"}
+
+
+def tap_ip(workspace_id: str) -> str:
+    """One stable fake tap address per workspace (#339): the
+    daemon-wide arm binds one listener per tap, so two attached
+    workspaces must not share an address."""
+    if workspace_id in _TAPS:
+        return _TAPS[workspace_id]
+    return f"172.31.{sum(workspace_id.encode()) % 250}.{len(workspace_id)}"
 
 
 class FakeProxyserver:
@@ -63,7 +73,7 @@ class HangingMaster(FakeMaster):
 
 
 class FakeNet:
-    """The two NetManager seams the manager reads."""
+    """The three NetManager seams the manager reads."""
 
     def __init__(self, live: set[str] | None = None) -> None:
         self.live = live if live is not None else {"ws-a"}
@@ -72,7 +82,11 @@ class FakeNet:
     def attachment_for(self, workspace_id: str):
         if workspace_id not in self.live:
             return None
-        return SimpleNamespace(tap_ip=TAP_IP)
+        return SimpleNamespace(tap_ip=tap_ip(workspace_id))
+
+    def attached_workspaces(self) -> list[str]:
+        """Attach order (#339): the daemon-wide refresh's read."""
+        return [wid for wid in ("ws-a", "ws-b", "ws-c") if wid in self.live]
 
     async def apply_interception(self, workspace_id, port) -> None:
         self.interceptions.append((workspace_id, port))
@@ -112,21 +126,36 @@ def app(tmp_path):
     return app
 
 
-async def mint_placeholder(app, workspace_id="ws-a", name="api", **kw):
+async def ensure_workspace(app, workspace_id: str, **spec_kw) -> None:
+    """The workspace row a coverage read needs (the manager reads
+    its secret_coverage setting, #339)."""
     if await app.state.model.get_workspace(workspace_id) is None:
         await app.state.model.create_workspace(
             VmSpec(
                 workspace_id=workspace_id,
                 kernel=Path("/k"),
                 rootfs=Path("/r"),
+                **spec_kw,
             )
         )
+
+
+async def mint_placeholder(
+    app, workspace_id="ws-a", name="api", coverage=None, **kw
+):
+    """One placeholder row (#339: *coverage* is the row's set —
+    ``[]`` mints the daemon-wide row, the default scopes it to one
+    workspace)."""
+    if coverage is None:
+        coverage = [workspace_id]
+    for wid in coverage:
+        await ensure_workspace(app, wid)
     return await app.state.model.create_placeholder(
-        workspace_id,
+        coverage,
         name,
-        new_sentinel(),
+        new_sentinel(daemon_wide=not coverage),
         kw.get("dests", ["api.example.com"]),
-        backend_ref(workspace_id, name),
+        backend_ref(coverage, name),
         kw.get("expires_at"),
     )
 
@@ -188,7 +217,7 @@ async def test_refresh_disarms_when_the_last_placeholder_goes(app) -> None:
     await mint_placeholder(app)
     await app.state.interceptor.refresh("ws-a")
     master = FakeMaster.built[0]
-    for row in await app.state.model.workspace_placeholders("ws-a"):
+    for row in await app.state.model.covering_placeholders("ws-a"):
         await app.state.model.delete_placeholder(row["id"])
     await app.state.interceptor.refresh("ws-a")
     assert master.options.mode == []
@@ -257,6 +286,96 @@ async def test_matching_entry_answers_the_hello_question(app) -> None:
     found = app.state.interceptor.matching_entry("ws-a", "deep.example.com")
     assert found is not None and found.dests == (".example.com",)
     assert app.state.interceptor.matching_entry("ws-a", "other.net") is None
+
+
+async def test_a_daemon_wide_row_arms_every_attached_workspace(app) -> None:
+    """#339: one daemon-wide row, one sentinel — every attached
+    workspace arms on it, one listener per tap, and a workspace
+    that attaches later arms at its first refresh (the first-boot
+    story: coverage is policy, not a mint-time snapshot)."""
+    app.state.net = FakeNet(live={"ws-a", "ws-b"})
+    await ensure_workspace(app, "ws-a")
+    await ensure_workspace(app, "ws-b")
+    row = await mint_placeholder(app, coverage=[])
+    await app.state.interceptor.refresh("ws-a")
+    await app.state.interceptor.refresh("ws-b")
+    modes = FakeMaster.built[0].options.mode
+    assert sorted(modes) == sorted(
+        [f"transparent@{tap_ip(ws)}:8643" for ws in ("ws-a", "ws-b")]
+    )
+    for ws in ("ws-a", "ws-b"):
+        entries = app.state.interceptor.entries_for(ws)
+        assert entries[row["sentinel"]].dests == ("api.example.com",)
+        assert (
+            app.state.interceptor.matching_entry(ws, "api.example.com")
+            is not None
+        )
+    # A workspace created after the mint arms with it on first
+    # refresh (#339's decision).
+    app.state.net.live = {"ws-a", "ws-b", "ws-c"}
+    await ensure_workspace(app, "ws-c")
+    await app.state.interceptor.refresh("ws-c")
+    modes = FakeMaster.built[0].options.mode
+    assert f"transparent@{tap_ip('ws-c')}:8643" in modes
+    assert app.state.interceptor.entries_for("ws-c")[
+        row["sentinel"]
+    ].dests == ("api.example.com",)
+
+
+async def test_a_scoped_workspace_takes_daemon_wide_detection_only(
+    app,
+) -> None:
+    """#339's escape hatch: a workspace with secret_coverage
+    ``scoped`` never arms from a daemon-wide row, and the sentinel
+    appears in its table for detection alone — empty dests, so no
+    destination ever matches it (a carried sighting, never a
+    swap)."""
+    await ensure_workspace(app, "ws-a")
+    row = await mint_placeholder(app, coverage=[])
+    await app.state.model.set_secret_coverage("ws-a", "scoped")
+    await app.state.interceptor.refresh("ws-a")
+    assert FakeMaster.built == []  # nothing covers it: no arm
+    covering, table = await app.state.interceptor.entry_tables("ws-a")
+    assert covering == {}
+    detection = table[row["sentinel"]]
+    assert detection.dests == ()
+    assert (
+        app.state.interceptor.matching_entry("ws-a", "api.example.com") is None
+    )
+    # Flipping back to all arms it with any live daemon-wide row.
+    await app.state.model.set_secret_coverage("ws-a", "all")
+    await app.state.interceptor.refresh("ws-a")
+    assert app.state.interceptor.workspace_for_tap(tap_ip("ws-a")) == "ws-a"
+    assert app.state.interceptor.entries_for("ws-a")[
+        row["sentinel"]
+    ].dests == ("api.example.com",)
+
+
+async def test_a_foreign_scoped_sentinel_is_detection_only(app) -> None:
+    """A scoped row's sentinel swaps only on its workspaces' taps
+    and reads as an off-allowlist sighting elsewhere (#339): the
+    other workspace's table carries it with empty dests."""
+    await ensure_workspace(app, "ws-a")
+    await ensure_workspace(app, "ws-b")
+    foreign = await mint_placeholder(app, workspace_id="ws-b")
+    await app.state.interceptor.refresh("ws-a")
+    covering, table = await app.state.interceptor.entry_tables("ws-a")
+    assert covering == {}  # ws-b's row does not arm ws-a
+    assert table[foreign["sentinel"]].dests == ()
+
+
+async def test_the_scoped_escape_hatch_keeps_direct_mints(app) -> None:
+    """A scoped workspace still arms from placeholders minted
+    directly at it (#339) — the hatch exempts only daemon-wide
+    rows."""
+    await ensure_workspace(app, "ws-a")
+    await app.state.model.set_secret_coverage("ws-a", "scoped")
+    await mint_placeholder(app, name="direct")
+    await mint_placeholder(app, name="wide", coverage=[])
+    await app.state.interceptor.refresh("ws-a")
+    covering, table = await app.state.interceptor.entry_tables("ws-a")
+    assert [entry.name for entry in covering.values()] == ["direct"]
+    assert len(table) == 2  # the daemon-wide sentinel stays detectable
 
 
 async def test_sentinel_live_reads_the_row(app) -> None:

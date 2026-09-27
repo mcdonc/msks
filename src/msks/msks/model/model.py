@@ -10,16 +10,29 @@ from alembic import command
 from alembic.config import Config as AlembicConfig
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine, select, update
+from sqlalchemy import create_engine, or_, select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ..microvm.spec import VmSpec
 from .db import Base, engine_for, sessionmaker_for, tighten_db_mode, utcnow
 from .egress_consent import EgressConsentModel
-from .secrets import AUDIT_KINDS, Placeholder, SecretAudit
+from .secrets import (
+    AUDIT_KINDS,
+    Placeholder,
+    SecretAudit,
+    coverage_label,
+)
 from .tokens import Token, validate_token_plaintext
 from .workspaces import WORKSPACE_STATUSES, Workspace
+
+
+def coverage_key(workspaces: list[str]) -> str:
+    """The canonical stored form of a coverage set: sorted,
+    de-duplicated ids as JSON (#339). An empty list is the
+    daemon-wide row and stays ``[]``."""
+    return json.dumps(sorted(set(workspaces)))
+
 
 TOKEN_ENTROPY_BYTES = 32
 
@@ -369,6 +382,23 @@ class Model:
             await session.commit()
             return result.rowcount > 0
 
+    async def set_secret_coverage(
+        self, workspace_id: str, coverage: str
+    ) -> bool:
+        """Record a workspace's daemon-wide placeholder posture
+        (#339); False when the row is absent. The interceptor's
+        next refresh reads the new setting — a live workspace's
+        armed state re-evaluates with it."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            result = await session.execute(
+                update(Workspace)
+                .where(Workspace.id == workspace_id)
+                .values(secret_coverage=coverage)
+            )
+            await session.commit()
+            return result.rowcount > 0
+
     async def egress_slice(self, workspace_id: str) -> int | None:
         """The workspace's recorded egress pool slice, None when never
         attached (#70 review)."""
@@ -464,19 +494,21 @@ class Model:
 
     async def create_placeholder(
         self,
-        workspace_id: str,
+        workspaces: list[str],
         name: str,
         sentinel: str,
         dests: list[str],
         backend_ref: str,
         expires_at=None,
     ) -> dict:
-        """Insert a placeholder row; raises IntegrityError on a
-        (workspace, name) or backend-ref collision."""
+        """Insert a placeholder row (#339: *workspaces* is the
+        coverage set — ``[]`` mints the daemon-wide row); raises
+        IntegrityError on a (coverage, name) or backend-ref
+        collision."""
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
             row = Placeholder(
-                workspace_id=workspace_id,
+                workspaces=coverage_key(workspaces),
                 name=name,
                 sentinel=sentinel,
                 dests=json.dumps(dests),
@@ -504,31 +536,34 @@ class Model:
             return None if row is None else placeholder_dict(row)
 
     async def placeholder_for(
-        self, workspace_id: str, name: str
+        self, workspaces: list[str], name: str
     ) -> dict | None:
-        """The workspace's placeholder by label, None when absent."""
+        """The placeholder with this exact coverage set and label,
+        None when absent — the mint's collision read (#339: one row
+        per label per coverage set, so the same label can live on
+        the daemon-wide row and on a scoped row beside it)."""
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
             row = await session.scalar(
                 select(Placeholder).where(
-                    Placeholder.workspace_id == workspace_id,
+                    Placeholder.workspaces == coverage_key(workspaces),
                     Placeholder.name == name,
                 )
             )
             return None if row is None else placeholder_dict(row)
 
-    async def workspace_placeholders(self, workspace_id: str) -> list[dict]:
-        """Every placeholder row of one workspace, insertion order —
-        the interceptor's arming read (#199): a row per active
-        placeholder arms the workspace's tap."""
-        maker = sessionmaker_for(self.engine())
-        async with maker() as session:
-            rows = await session.scalars(
-                select(Placeholder)
-                .where(Placeholder.workspace_id == workspace_id)
-                .order_by(Placeholder.id)
-            )
-            return [placeholder_dict(row) for row in rows]
+    async def covering_placeholders(self, workspace_id: str) -> list[dict]:
+        """Every live row whose coverage includes one workspace,
+        insertion order — the daemon-wide row beside scoped ones.
+        The interceptor's arming read (#199/#339) filters the
+        daemon-wide half against the workspace's own
+        ``secret_coverage`` setting; the caller that wants the raw
+        coverage reads ``list_placeholders``."""
+        return [
+            row
+            for row in await self.list_placeholders()
+            if not row["workspaces"] or workspace_id in row["workspaces"]
+        ]
 
     async def placeholder_by_ref(self, ref: str) -> dict | None:
         """The placeholder owning a backend ref, None when none does.
@@ -546,14 +581,21 @@ class Model:
             return None if row is None else placeholder_dict(row)
 
     async def placeholder_refs(self) -> list[tuple[str, str]]:
-        """Every (backend_ref, description) pair — the manifest body."""
+        """Every (backend_ref, description) pair — the manifest body.
+        The description carries the row's coverage beside its label
+        (``*/name`` for the daemon-wide row, ``ws/name`` scoped), so
+        a human reading the store sees msks's naming, not just an
+        identifier."""
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
             rows = await session.scalars(
                 select(Placeholder).order_by(Placeholder.id)
             )
             return [
-                (row.backend_ref, f"{row.workspace_id}/{row.name}")
+                (
+                    row.backend_ref,
+                    f"{coverage_label(json.loads(row.workspaces))}/{row.name}",
+                )
                 for row in rows
             ]
 
@@ -633,7 +675,7 @@ class Model:
         async with maker() as session:
             entry = SecretAudit(
                 kind=kind,
-                workspace_id=row["workspace_id"],
+                workspaces=coverage_key(row["workspaces"]),
                 name=row["name"],
                 dests=(
                     json.dumps(row["dests"])
@@ -665,16 +707,23 @@ class Model:
     async def list_workspace_audit(
         self, workspace_id: str, limit: int = 100
     ) -> list[dict]:
-        """One workspace's audit events, oldest first (#305): the
-        decider registration replays them so the events screen
-        opens on the recorded lifecycle. The newest ``limit`` rows
-        arrive in recording order — replay sends oldest first, so
-        the client log lands newest last."""
+        """The audit events whose coverage includes one workspace,
+        oldest first (#305, #339): the decider registration replays
+        them so the events screen opens on the recorded lifecycle —
+        a daemon-wide row's events land on every workspace's
+        screen, a scoped row's on its members'. The newest
+        ``limit`` rows arrive in recording order — replay sends
+        oldest first, so the client log lands newest last."""
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
             rows = await session.scalars(
                 select(SecretAudit)
-                .where(SecretAudit.workspace_id == workspace_id)
+                .where(
+                    or_(
+                        SecretAudit.workspaces == "[]",
+                        SecretAudit.workspaces.like(f'%"{workspace_id}"%'),
+                    )
+                )
                 .order_by(SecretAudit.id.desc())
                 .limit(limit)
             )
@@ -717,6 +766,7 @@ def workspace_fields(
         "home_mib": spec.home_mib,
         "egress": spec.egress,
         "egress_mode": spec.egress_mode,
+        "secret_coverage": spec.secret_coverage,
         "egress_allowlist": json.dumps(spec.egress_allowlist)
         if spec.egress_allowlist
         else None,
@@ -734,10 +784,12 @@ def placeholder_dict(row: Placeholder) -> dict:
 
     The sentinel is included — mint's response prints it once — but
     list views built from these dicts drop it ("never shown again").
+    ``workspaces`` is the coverage set (#339): ``[]`` is the
+    daemon-wide row.
     """
     return {
         "id": row.id,
-        "workspace_id": row.workspace_id,
+        "workspaces": json.loads(row.workspaces),
         "name": row.name,
         "sentinel": row.sentinel,
         "dests": json.loads(row.dests),
@@ -750,11 +802,12 @@ def placeholder_dict(row: Placeholder) -> dict:
 
 
 def audit_dict(row: SecretAudit) -> dict:
-    """The API-facing dict for an audit row."""
+    """The API-facing dict for an audit row; ``workspaces`` is the
+    placeholder's coverage at the event (#339)."""
     return {
         "id": row.id,
         "kind": row.kind,
-        "workspace_id": row.workspace_id,
+        "workspaces": json.loads(row.workspaces),
         "name": row.name,
         "dests": json.loads(row.dests),
         "created_at": row.created_at.isoformat(),
@@ -779,6 +832,7 @@ def workspace_dict(row: Workspace) -> dict:
         "egress": row.egress,
         "egress_slice": row.egress_slice,
         "egress_mode": row.egress_mode or "allow",
+        "secret_coverage": row.secret_coverage or "all",
         "egress_allowlist": json.loads(row.egress_allowlist)
         if row.egress_allowlist
         else [],

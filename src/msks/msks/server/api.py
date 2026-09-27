@@ -51,6 +51,7 @@ from ..llm import mint_token
 from ..microvm.errors import MicrovmError
 from ..microvm.spec import VmSpec, VmStatus
 from ..model.egress_consent import DECISION_ALLOWED, DECISIONS, DURATIONS
+from ..model.secrets import SECRET_COVERAGES, coverage_label
 from ..secretstore import (
     SecretStoreError,
     backend_ref,
@@ -67,21 +68,33 @@ class TokenCreate(BaseModel):
 
 
 class SecretMint(BaseModel):
-    """A mint request (#198): one placeholder for one workspace.
+    """A mint request (#198, #339): one placeholder row.
 
-    ``workspace_id`` names the workspace by id or name (#246) — the
-    placeholder itself binds to the row's immutable id. The real
-    secret rides the request body (the client read it from
+    Coverage (#339): an empty or absent ``workspaces`` mints the
+    **daemon-wide** placeholder — one row, one sentinel, valid on
+    every accepting workspace's tap; a non-empty list scopes the
+    row to exactly those workspaces (each entry an id or name,
+    #246). ``workspace_id`` is the pre-#339 single-workspace
+    spelling and stays accepted; the two spellings cannot mix. The
+    real secret rides the request body (the client read it from
     a file or stdin); it is never echoed in a response.
     """
 
-    workspace_id: str
+    workspaces: list[str] | None = Field(default=None, max_length=32)
+    workspace_id: str | None = None
     name: str = Field(min_length=1, max_length=128)
     dests: list[str] = Field(min_length=1, max_length=32)
     # The same cap user_data carries: far more than any token or
     # key, small enough that a runaway upload fails validation.
     secret: str = Field(min_length=1, max_length=65536)
     ttl_s: int | None = Field(default=None, ge=1)
+
+
+class SecretCoverageSet(BaseModel):
+    """A coverage flip (#339): ``all`` accepts daemon-wide
+    placeholders, ``scoped`` exempts the workspace from them."""
+
+    secret_coverage: str
 
 
 class SecretRenew(BaseModel):
@@ -239,6 +252,14 @@ class WorkspaceCreate(BaseModel):
     # per-VM chain.
     egress_mode: str | None = None
     egress_allowlist: list[str] | None = Field(default=None, max_length=256)
+    # The daemon-wide placeholder posture (#339): ``all`` (the
+    # default — daemon-wide placeholder coverage arms this
+    # workspace and its sentinel swaps on its tap) or ``scoped``
+    # (only placeholders minted directly at it arm it; a
+    # daemon-wide sentinel used from it reads as an off-allowlist
+    # sighting). Set at create and changeable later through
+    # /secret-coverage.
+    secret_coverage: str | None = None
     # First-boot provisioning (#41): a shell script (leading "#!") or
     # cloud-config YAML — cloud-init runs both — delivered on the
     # workspace's read-only cidata seed disk, composed beside the
@@ -685,6 +706,7 @@ def spec_for(row: dict) -> VmSpec:
         home_mib=row["home_mib"],
         egress=bool(row.get("egress", False)),
         egress_mode=row.get("egress_mode") or "allow",
+        secret_coverage=row.get("secret_coverage") or "all",
         egress_allowlist=tuple(row.get("egress_allowlist") or ()),
         user_data=row.get("user_data"),
         ssh_pubkey=row.get("ssh_pubkey"),
@@ -996,10 +1018,12 @@ def placeholder_view(row: dict, sentinel: bool = True) -> dict:
 
     The sentinel appears only when *sentinel* is set — mint's 201
     carries it exactly once; every later view omits it.
+    "workspaces`` is the row's coverage (#339): ``[]`` is the
+    daemon-wide row.
     """
     view = {
         "id": row["id"],
-        "workspace_id": row["workspace_id"],
+        "workspaces": row["workspaces"],
         "name": row["name"],
         "dests": row["dests"],
         "created_at": row["created_at"],
@@ -1008,6 +1032,19 @@ def placeholder_view(row: dict, sentinel: bool = True) -> dict:
     if sentinel:
         view["sentinel"] = row["sentinel"]
     return view
+
+
+def coverage_fields(row: dict) -> dict:
+    """A lifecycle event's coverage members (#339): the full list,
+    plus the legacy ``workspace_id`` string every frame keeps —
+    ``*`` for the daemon-wide row, the first covered id scoped —
+    so an older client's parser still keys the row while the list
+    carries the truth."""
+    workspaces = row["workspaces"]
+    return {
+        "workspace_id": workspaces[0] if workspaces else "*",
+        "workspaces": workspaces,
+    }
 
 
 def build_api(app) -> FastAPI:
@@ -1138,6 +1175,28 @@ def build_api(app) -> FastAPI:
                 workspace_id,
             )
 
+    def arm_targets(coverage: list[str]) -> list[str]:
+        """The workspaces a placeholder's landing must arm (#339):
+        its covered set, or every attached workspace for the
+        daemon-wide row — a refresh with no attachment is a no-op,
+        so stopped workspaces ride along harmlessly."""
+        return coverage or app.state.net.attached_workspaces()
+
+    def detection_targets(coverage: list[str]) -> list[str]:
+        """Attached workspaces outside a row's coverage (#339): their
+        entry tables gain the row's sentinel for detection only, so
+        a foreign sentinel used from them publishes an
+        off-allowlist sighting. A daemon-wide row covers them all,
+        so it has none."""
+        if not coverage:
+            return []
+        covered = set(coverage)
+        return [
+            workspace_id
+            for workspace_id in app.state.net.attached_workspaces()
+            if workspace_id not in covered
+        ]
+
     def validated_dests(dests: list[str]) -> list[str]:
         """Lowercased, de-duplicated, pattern-checked destinations."""
         seen = []
@@ -1170,24 +1229,42 @@ def build_api(app) -> FastAPI:
         if not body.secret.strip():
             raise HTTPException(status_code=422, detail="the secret is empty")
         dests = validated_dests(body.dests)
-        row = await app.state.model.get_workspace(body.workspace_id)
-        if row is None:
-            raise HTTPException(status_code=404, detail="no such workspace")
-        # The ref (name or id, #246) resolved: the placeholder row
-        # binds to the workspace's immutable id.
-        workspace_id = row["id"]
+        # Coverage resolution (#339): the two spellings cannot mix;
+        # neither given mints the daemon-wide row (the default), a
+        # non-empty list scopes the row to exactly those ids (each
+        # ref resolved name-or-id, #246, to the immutable id).
+        if body.workspace_id is not None and body.workspaces is not None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "workspace_id and workspaces are two spellings of "
+                    "the mint's coverage; send one"
+                ),
+            )
+        refs = list(body.workspaces or [])
+        if body.workspace_id is not None:
+            refs = [body.workspace_id]
+        coverage: list[str] = []
+        for ref in refs:
+            workspace = await app.state.model.get_workspace(ref)
+            if workspace is None:
+                raise HTTPException(
+                    status_code=404, detail=f"no such workspace: {ref}"
+                )
+            coverage.append(workspace["id"])
+        coverage = sorted(set(coverage))
+        label = coverage_label(coverage)
         if (
-            await app.state.model.placeholder_for(workspace_id, body.name)
+            await app.state.model.placeholder_for(coverage, body.name)
             is not None
         ):
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    f"workspace {workspace_id} already has a "
-                    f"placeholder named {body.name}"
+                    f"{label} already has a placeholder named {body.name}"
                 ),
             )
-        ref = backend_ref(workspace_id, body.name)
+        ref = backend_ref(coverage, body.name)
         if await app.state.model.placeholder_by_ref(ref) is not None:
             # Distinct labels can sanitize to one ref; the collision
             # is answered before anything touches the shared store
@@ -1195,7 +1272,7 @@ def build_api(app) -> FastAPI:
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    f"{workspace_id}/{body.name} collides with an"
+                    f"{label}/{body.name} collides with an"
                     f" existing placeholder on backend ref {ref};"
                     " pick another name"
                 ),
@@ -1205,7 +1282,7 @@ def build_api(app) -> FastAPI:
             if body.ttl_s is not None
             else None
         )
-        sentinel = new_sentinel()
+        sentinel = new_sentinel(daemon_wide=not coverage)
         async with app.state.store_lock:
             # Row before value, all under the store lock: an
             # uncertified byte can never land behind a ref a winning
@@ -1214,7 +1291,7 @@ def build_api(app) -> FastAPI:
             # and a failed write rolls its own row back.
             try:
                 row = await app.state.model.create_placeholder(
-                    workspace_id,
+                    coverage,
                     body.name,
                     sentinel,
                     dests,
@@ -1238,15 +1315,17 @@ def build_api(app) -> FastAPI:
                 await sync_store_manifest()
                 raise HTTPException(status_code=503, detail=str(exc)) from None
         # The sentinel appears in exactly one response: this one.
-        # Arming is placeholder-driven (#199): a mint against a
-        # running workspace redirects its web egress from here. A
-        # mint that cannot arm stands or falls whole — a live
-        # placeholder leaking its raw sentinel toward the wire is
-        # the one outcome this feature exists to prevent — so the
+        # Arming is placeholder-driven (#199): a scoped mint against
+        # a running workspace redirects its web egress from here;
+        # a daemon-wide mint redirects every attached workspace's
+        # (#339). A mint that cannot arm stands or falls whole — a
+        # live placeholder leaking its raw sentinel toward the wire
+        # is the one outcome this feature exists to prevent — so the
         # row and its value roll back and the refusal names the
         # cause (#260 review).
         try:
-            await app.state.interceptor.refresh(workspace_id)
+            for workspace_id in arm_targets(coverage):
+                await app.state.interceptor.refresh(workspace_id)
         except Exception as exc:  # noqa: BLE001 - rolled back below
             async with app.state.store_lock:
                 await app.state.model.delete_placeholder(row["id"])
@@ -1256,10 +1335,16 @@ def build_api(app) -> FastAPI:
             raise HTTPException(
                 status_code=503,
                 detail=(
-                    "mint rolled back: the workspace's interceptor "
+                    "mint rolled back: the coverage's interceptor "
                     f"could not arm ({exc})"
                 ),
             ) from exc
+        # Every other armed workspace's entry table gains the new
+        # sentinel for detection (#339): a foreign sentinel used
+        # from it reads as an off-allowlist sighting. Best-effort —
+        # the row stands, and the next placeholder event retries.
+        for workspace_id in detection_targets(coverage):
+            await refresh_quietly(workspace_id)
         # The mint record and its event trail the arm: a rolled-back
         # mint never existed, so the audit table and the stream say
         # nothing about it (#260 review). The reverse edge is
@@ -1276,7 +1361,7 @@ def build_api(app) -> FastAPI:
             {
                 "placeholder_id": row["id"],
                 "audit_id": audit_id,
-                "workspace_id": workspace_id,
+                **coverage_fields(row),
                 "name": body.name,
                 "dests": dests,
                 "ts": time.time(),
@@ -1322,9 +1407,11 @@ def build_api(app) -> FastAPI:
         # (re)arm restores the deadline it extended: a live
         # placeholder without its redirect would leak the raw
         # sentinel toward the wire — the outcome the mint rollback
-        # exists to prevent (#260 review, round 5).
+        # exists to prevent (#260 review, round 5). A daemon-wide
+        # row's renew re-arms every attached workspace (#339).
         try:
-            await app.state.interceptor.refresh(row["workspace_id"])
+            for workspace_id in arm_targets(row["workspaces"]):
+                await app.state.interceptor.refresh(workspace_id)
         except Exception as exc:  # noqa: BLE001 - rolled back below
             await app.state.model.renew_placeholder(
                 placeholder_id, prior_deadline(prior)
@@ -1332,7 +1419,7 @@ def build_api(app) -> FastAPI:
             raise HTTPException(
                 status_code=503,
                 detail=(
-                    "renew rolled back: the workspace's interceptor "
+                    "renew rolled back: the coverage's interceptor "
                     f"could not arm ({exc})"
                 ),
             ) from exc
@@ -1369,16 +1456,20 @@ def build_api(app) -> FastAPI:
             {
                 "placeholder_id": placeholder_id,
                 "audit_id": audit_id,
-                "workspace_id": row["workspace_id"],
+                **coverage_fields(row),
                 "name": row["name"],
                 "ts": time.time(),
             },
         )
         # The redirect stands down when the last placeholder went
         # (#199) — the row is already gone, so refresh reads the new
-        # state. The revoke stands even when the re-evaluation
-        # fails: the row is deleted, so nothing swaps either way.
-        await refresh_quietly(row["workspace_id"])
+        # state. Every attached workspace re-evaluates (#339): the
+        # covered set disarms when the row was its last, and every
+        # other armed table drops the sentinel from its detection
+        # half. The revoke stands even when a re-evaluation fails:
+        # the row is deleted, so nothing swaps either way.
+        for workspace_id in app.state.net.attached_workspaces():
+            await refresh_quietly(workspace_id)
         return {"revoked": placeholder_id, "store_cleaned": cleaned}
 
     @api.get("/api/v1/secrets/audit", dependencies=[Depends(require_token)])
@@ -1441,6 +1532,19 @@ def build_api(app) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from None
         boot["egress_mode"] = mode
         boot["egress_allowlist"] = specs
+        # The daemon-wide placeholder posture (#339), fixed at
+        # create and changeable later: an unknown value is a named
+        # 400 here, like the consent posture above.
+        coverage = body.secret_coverage or "all"
+        if coverage not in SECRET_COVERAGES:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"secret_coverage must be one of "
+                    f"{list(SECRET_COVERAGES)}, got {coverage!r}"
+                ),
+            )
+        boot["secret_coverage"] = coverage
         # The identity (#111) mints before the artifacts: its public
         # half rides the seed (an artifact), its private half goes
         # straight into the row. A bad key type on a
@@ -2533,6 +2637,60 @@ def build_api(app) -> FastAPI:
             "applied": applied,
         }
 
+    @api.put(
+        "/api/v1/workspaces/{workspace_id}/secret-coverage",
+        dependencies=[Depends(require_token)],
+    )
+    async def set_secret_coverage(
+        workspace_id: str, body: SecretCoverageSet
+    ) -> dict:
+        """Flip a workspace's daemon-wide placeholder posture
+        (#339): ``all`` takes daemon-wide placeholder coverage — a
+        live daemon-wide row arms the workspace from the flip on —
+        and ``scoped`` exempts it (only placeholders minted directly
+        at it arm it; a daemon-wide sentinel used from it reads as
+        an off-allowlist sighting).
+
+        The armed state re-evaluates with the flip. A flip that
+        cannot (re)arm restores the prior setting: a live
+        daemon-wide row without its redirect would leak the raw
+        sentinel toward the wire — the outcome the mint rollback
+        exists to prevent.
+        """
+        row = await _workspace_or_404(app, workspace_id)
+        workspace_id = row["id"]
+        if body.secret_coverage not in SECRET_COVERAGES:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "secret_coverage must be one of "
+                    f"{list(SECRET_COVERAGES)}, got "
+                    f"{body.secret_coverage!r}"
+                ),
+            )
+        prior = row.get("secret_coverage") or "all"
+        wrote = await app.state.model.set_secret_coverage(
+            workspace_id, body.secret_coverage
+        )
+        if not wrote:
+            raise HTTPException(status_code=404, detail="no such workspace")
+        try:
+            await app.state.interceptor.refresh(workspace_id)
+        except Exception as exc:  # noqa: BLE001 - rolled back below
+            with contextlib.suppress(Exception):
+                await app.state.model.set_secret_coverage(workspace_id, prior)
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "coverage flip rolled back: the workspace's "
+                    f"interceptor could not re-arm ({exc})"
+                ),
+            ) from exc
+        return {
+            "workspace_id": workspace_id,
+            "secret_coverage": body.secret_coverage,
+        }
+
     @api.get(
         "/api/v1/workspaces/{workspace_id}/egress/requests",
         dependencies=[Depends(require_token)],
@@ -3024,15 +3182,33 @@ async def register_decider(app, socket, client_id: int, message: dict):
     await replay_secret_audit(app, socket, workspace)
 
 
+def audit_frame(row: dict) -> dict:
+    """One audit row as a ``secret.*`` frame's data (#305, #339):
+    the coverage list and its legacy single-workspace spelling
+    (``*`` for the daemon-wide row) beside the identity, with the
+    mint kind alone naming its allowlist — the live shapes the
+    replay matches."""
+    data = {
+        "audit_id": row["id"],
+        "workspace_id": row["workspaces"][0] if row["workspaces"] else "*",
+        "workspaces": row["workspaces"],
+        "name": row["name"],
+        "ts": audit_epoch(row["created_at"]),
+    }
+    if row["kind"] == "mint":
+        data["dests"] = row["dests"]
+    return data
+
+
 async def replay_secret_audit(app, socket, workspace_id: str) -> None:
     """The workspace's recorded placeholder lifecycle (#305): the
-    audit table's newest rows, oldest first, as ``secret.*``
-    frames — the decider's events screen opens on the recorded
-    mints, revokes, and expiries instead of an empty live tail.
-    Swaps and sightings stay live-only: they are per-request wire
-    events, and the audit table records lifecycle alone. A read
-    failure skips the replay and logs — registration keeps the
-    rules view and pending snapshot it already landed."""
+    audit table's newest rows covering it, oldest first, as
+    ``secret.*`` frames — the decider's events screen opens on the
+    recorded mints, revokes, and expiries instead of an empty live
+    tail. Swaps and sightings stay live-only: they are per-request
+    wire events, and the audit table records lifecycle alone. A
+    read failure skips the replay and logs — registration keeps
+    the rules view and pending snapshot it already landed."""
     try:
         rows = await app.state.model.list_workspace_audit(
             workspace_id, limit=SECRET_REPLAY_LIMIT
@@ -3054,18 +3230,8 @@ async def replay_secret_audit(app, socket, workspace_id: str) -> None:
             SECRET_REPLAY_LIMIT,
         )
     for row in rows:
-        data = {
-            "audit_id": row["id"],
-            "workspace_id": row["workspace_id"],
-            "name": row["name"],
-            "ts": audit_epoch(row["created_at"]),
-        }
-        if row["kind"] == "mint":
-            # The live mint names its allowlist; the exit kinds carry
-            # identity alone, and the replay matches the live shapes.
-            data["dests"] = row["dests"]
         await socket.send_json(
-            {"event": f"secret.{row['kind']}", "data": data}
+            {"event": f"secret.{row['kind']}", "data": audit_frame(row)}
         )
 
 

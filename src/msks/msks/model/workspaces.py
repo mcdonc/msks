@@ -97,6 +97,16 @@ class Workspace(Base):
     egress_mode: Mapped[str] = mapped_column(
         String, default="allow", server_default="allow"
     )
+    # The daemon-wide placeholder posture (#339): ``all`` (the
+    # default — daemon-wide placeholders arm this workspace and
+    # their sentinels swap on its tap) or ``scoped`` (the workspace
+    # takes only placeholders minted directly at it; a daemon-wide
+    # sentinel used from it reads as an off-allowlist sighting).
+    # Set at create and changeable later; a change re-evaluates the
+    # workspace's armed state.
+    secret_coverage: Mapped[str] = mapped_column(
+        String, default="all", server_default="all"
+    )
     # The workspace's LLM proxy credential (#259): minted at create,
     # seeded into the guest through the #41 seed, and checked by the
     # proxy on the workspace's own tap. Stored like the ssh private

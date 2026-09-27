@@ -629,19 +629,19 @@ async def test_register_decider_replays_the_recorded_lifecycle(
     model = app.state.model
     await model.record_audit(
         "mint",
-        {"workspace_id": "ws-re", "name": "api", "dests": ["api.example"]},
+        {"workspaces": ["ws-re"], "name": "api", "dests": ["api.example"]},
     )
     await model.record_audit(
         "mint",
         {
-            "workspace_id": "ws-other",
-            "name": "api",
+            "workspaces": [],
+            "name": "daemon_wide",
             "dests": ["elsewhere.example"],
         },
     )
     await model.record_audit(
         "revoke",
-        {"workspace_id": "ws-re", "name": "api", "dests": "[]"},
+        {"workspaces": ["ws-re"], "name": "api", "dests": "[]"},
     )
 
     class RecordingSocket:
@@ -661,10 +661,20 @@ async def test_register_decider_replays_the_recorded_lifecycle(
     assert [f["event"] for f in socket.sent] == [
         "egress.rules",
         "secret.mint",
+        "secret.mint",
         "secret.revoke",
     ]
-    mint, revoke = socket.sent[1]["data"], socket.sent[2]["data"]
+    mint, daemon_wide, revoke = (
+        socket.sent[1]["data"],
+        socket.sent[2]["data"],
+        socket.sent[3]["data"],
+    )
     assert mint["workspace_id"] == "ws-re"
+    assert mint["workspaces"] == ["ws-re"]
+    # A daemon-wide row replays onto every workspace's screen, its
+    # coverage named (#339).
+    assert daemon_wide["workspace_id"] == "*"
+    assert daemon_wide["workspaces"] == []
     assert mint["name"] == "api"
     assert mint["dests"] == ["api.example"]
     assert mint["ts"] > 0.0
@@ -726,7 +736,7 @@ async def test_replay_logs_when_it_hits_its_row_limit(
         session.add_all(
             SecretAudit(
                 kind="mint",
-                workspace_id="ws-many",
+                workspaces='["ws-many"]',
                 name=f"n{i}",
                 dests="[]",
             )

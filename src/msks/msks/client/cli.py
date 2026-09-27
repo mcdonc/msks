@@ -986,27 +986,49 @@ def read_secret(path: str) -> str:
     return value
 
 
-async def find_placeholder(
-    url: str, token: str, ref: str, name: str, transport
-) -> dict:
-    """The (workspace, name) pair's row, or a named exit.
+def coverage_label(workspaces: list[str]) -> str:
+    """The display name of a row's coverage (#339, duplicated from
+    the daemon per the CLI-isolation rule): ``*`` is the
+    daemon-wide row, a comma-joined list is scoped."""
+    return ",".join(sorted(set(workspaces))) if workspaces else "*"
 
-    ``ref`` names the workspace by id or name (#246); the listing's
-    workspace rows carry both, and the placeholder row binds to the
-    immutable id, so the ref resolves against the listing before
-    the pair matches.
+
+def resolve_coverage(
+    workspaces: list[dict], refs: list[str] | None
+) -> list[str]:
+    """The sorted id list a --workspace target names (#339), or the
+    named exit when a ref answers to no workspace. No target is
+    the daemon-wide coverage: ``[]``."""
+    if not refs:
+        return []
+    return sorted({resolved_workspace_id(workspaces, ref) for ref in refs})
+
+
+async def find_placeholder(
+    url: str, token: str, refs: list[str] | None, name: str, transport
+) -> dict:
+    """The (coverage, name) pair's row, or a named exit (#339).
+
+    ``refs`` carry the same targeting the mint took — absent names
+    the daemon-wide row, a list names the row whose coverage is
+    exactly that set. Each ref names a workspace by id or name
+    (#246); the listing's workspace rows carry both, and the
+    placeholder row binds to the immutable ids, so the refs
+    resolve against the listing before the pair matches.
     """
     workspaces = await api_call(
         "GET", url, token, "/api/v1/workspaces", transport=transport
     )
-    workspace_id = resolved_workspace_id(workspaces, ref)
+    coverage = resolve_coverage(workspaces, refs)
     rows = await api_call(
         "GET", url, token, "/api/v1/secrets", transport=transport
     )
     for row in rows:
-        if row["workspace_id"] == workspace_id and row["name"] == name:
+        if sorted(set(row["workspaces"])) == coverage and row["name"] == name:
             return row
-    raise SystemExit(f"msks: no placeholder {name} on workspace {ref}")
+    label = coverage_label(coverage)
+    hint = " (a --workspace target narrows the search)" if not refs else ""
+    raise SystemExit(f"msks: no placeholder {name} covering {label}{hint}")
 
 
 def resolved_workspace_id(workspaces: list[dict], ref: str) -> str:
@@ -1019,21 +1041,24 @@ def resolved_workspace_id(workspaces: list[dict], ref: str) -> str:
 
 
 def cmd_secret_mint(
-    workspace_id: str,
+    workspace_refs: list[str] | None,
     name: str,
     dests: list[str],
     ttl: int | None,
     secret_file: str,
     transport=None,
 ) -> int:
-    """``msks secret mint``: one step; prints the sentinel once."""
+    """``msks secret mint`` (#339): one step; prints the sentinel
+    once. No ``--workspace`` mints the daemon-wide row; a target
+    scopes it."""
     secret = read_secret(secret_file)
-    body = {
-        "workspace_id": workspace_id,
+    body: dict = {
         "name": name,
         "dests": dests,
         "secret": secret,
     }
+    if workspace_refs:
+        body["workspaces"] = expand_targets(workspace_refs)
     if ttl is not None:
         body["ttl_s"] = ttl
     row = asyncio.run(
@@ -1046,24 +1071,35 @@ def cmd_secret_mint(
             transport=transport,
         )
     )
-    print(f"minted {workspace_id}/{name} for {', '.join(row['dests'])}")
+    print(
+        f"minted {coverage_label(row['workspaces'])}/{name} "
+        f"for {', '.join(row['dests'])}"
+    )
     print(f"sentinel (shown once): {row['sentinel']}")
     return 0
 
 
+def expand_targets(refs: list[str]) -> list[str]:
+    """The flat ref list a repeatable, comma-splitting flag carries
+    (#339): ``--workspace a,b --workspace c`` becomes
+    ``[a, b, c]``."""
+    return [ref for ref in ",".join(refs).split(",") if ref]
+
+
 def secret_cells(row: dict) -> list[str]:
-    """One placeholder row's cells: id, workspace/name,
+    """One placeholder row's cells: id, coverage/name,
     destinations, expiry."""
     return [
         str(row["id"]),
-        f"{row['workspace_id']}/{row['name']}",
+        f"{coverage_label(row['workspaces'])}/{row['name']}",
         ", ".join(row["dests"]),
         row["expires_at"] or "never",
     ]
 
 
 def cmd_secret_ls(as_json: bool = False, transport=None) -> int:
-    """``msks secret ls``: every placeholder, no sentinels."""
+    """``msks secret ls``: every placeholder with its coverage, no
+    sentinels."""
     rows = asyncio.run(
         api_call(
             "GET",
@@ -1077,7 +1113,7 @@ def cmd_secret_ls(as_json: bool = False, transport=None) -> int:
         print(json.dumps(rows, indent=2))
         return 0
     text = listing_text(
-        ["id", "workspace", "destinations", "expires"],
+        ["id", "coverage", "destinations", "expires"],
         [secret_cells(row) for row in rows],
     )
     if text:
@@ -1085,11 +1121,14 @@ def cmd_secret_ls(as_json: bool = False, transport=None) -> int:
     return 0
 
 
-def cmd_secret_revoke(workspace_id: str, name: str, transport=None) -> int:
-    """``msks secret revoke``: effective on the next request."""
+def cmd_secret_revoke(
+    workspace_refs: list[str] | None, name: str, transport=None
+) -> int:
+    """``msks secret revoke`` (#339): effective on the next
+    request; the targeting mirrors the mint's."""
     url, token = env_url(), env_token()
     row = asyncio.run(
-        find_placeholder(url, token, workspace_id, name, transport)
+        find_placeholder(url, token, workspace_refs, name, transport)
     )
     result = asyncio.run(
         api_call(
@@ -1105,17 +1144,21 @@ def cmd_secret_revoke(workspace_id: str, name: str, transport=None) -> int:
         if result.get("store_cleaned", True)
         else (" (store value left behind; msks secret check reports it)")
     )
-    print(f"revoked {workspace_id}/{name}{suffix}")
+    print(f"revoked {coverage_label(row['workspaces'])}/{name}{suffix}")
     return 0
 
 
 def cmd_secret_renew(
-    workspace_id: str, name: str, ttl: int, transport=None
+    workspace_refs: list[str] | None,
+    name: str,
+    ttl: int,
+    transport=None,
 ) -> int:
-    """``msks secret renew``: extends in place, sentinel unchanged."""
+    """``msks secret renew`` (#339): extends in place, sentinel
+    unchanged; the targeting mirrors the mint's."""
     url, token = env_url(), env_token()
     row = asyncio.run(
-        find_placeholder(url, token, workspace_id, name, transport)
+        find_placeholder(url, token, workspace_refs, name, transport)
     )
     updated = asyncio.run(
         api_call(
@@ -1127,7 +1170,33 @@ def cmd_secret_renew(
             transport=transport,
         )
     )
-    print(f"renewed {workspace_id}/{name}; expires {updated['expires_at']}")
+    print(
+        f"renewed {coverage_label(row['workspaces'])}/{name}; "
+        f"expires {updated['expires_at']}"
+    )
+    return 0
+
+
+def cmd_secret_coverage(
+    workspace_id: str, coverage: str, transport=None
+) -> int:
+    """``msks secret coverage`` (#339): flip a workspace's
+    daemon-wide placeholder posture — ``all`` takes daemon-wide
+    coverage, ``scoped`` exempts the workspace from it."""
+    result = asyncio.run(
+        api_call(
+            "PUT",
+            env_url(),
+            env_token(),
+            f"/api/v1/workspaces/{workspace_id}/secret-coverage",
+            json_body={"secret_coverage": coverage},
+            transport=transport,
+        )
+    )
+    print(
+        f"workspace {workspace_id} secret coverage: "
+        f"{result['secret_coverage']}"
+    )
     return 0
 
 
@@ -1427,11 +1496,14 @@ def create_user(args: CreateFlags) -> str:
 
 
 def consent_fields(args: CreateFlags) -> dict:
-    """The egress-consent create fields the operator set (#69):
-    the mode and the repeated allowlist entries."""
+    """The create fields the operator set that ride beside the
+    specs: the consent posture and allowlist (#69), and the
+    daemon-wide placeholder posture (#339)."""
     fields = {}
     if getattr(args, "egress_mode", None) is not None:
         fields["egress_mode"] = args.egress_mode
+    if getattr(args, "secret_coverage", None) is not None:
+        fields["secret_coverage"] = args.secret_coverage
     if getattr(args, "allow", None):
         fields["egress_allowlist"] = args.allow
     return fields
@@ -1455,6 +1527,7 @@ class CreateFlags:
     home_mib: int | None = None
     egress: bool | None = None
     egress_mode: str | None = None
+    secret_coverage: str | None = None
     allow: list[str] | None = None
     user_data: str | None = None
     user: str | None = None
@@ -1470,6 +1543,13 @@ class PostureChoice(enum.StrEnum):
     allow = "allow"
     static = "static"
     interactive = "interactive"
+
+
+class CoverageChoice(enum.StrEnum):
+    """The daemon-wide placeholder postures (#339)."""
+
+    all = "all"
+    scoped = "scoped"
 
 
 class DecisionFilter(enum.StrEnum):
@@ -1699,6 +1779,15 @@ def create(
         "only), or cidr[:port]. Names gate at the daemon's resolver; "
         "address specs accept in the per-VM chain",
     ),
+    secret_coverage: CoverageChoice | None = typer.Option(
+        None,
+        "--secret-coverage",
+        metavar="POSTURE",
+        help="the daemon-wide placeholder posture (#339): all "
+        "(the default — one sentinel minted for the whole daemon "
+        "arms this workspace and swaps on its tap) or scoped "
+        "(only placeholders minted directly at it arm it)",
+    ),
     user_data: str | None = typer.Option(
         None,
         "--user-data",
@@ -1766,8 +1855,11 @@ def create(
             mem_mib=mem_mib,
             root_mib=root_mib,
             home_mib=home_mib,
-            egress=egress,
+            egress=(None if egress is None else egress),
             egress_mode=(None if egress_mode is None else egress_mode.value),
+            secret_coverage=(
+                None if secret_coverage is None else secret_coverage.value
+            ),
             allow=allow,
             user_data=user_data,
             user=user,
@@ -2310,10 +2402,17 @@ def home_import(
 @one_line_interrupts
 def secret_mint(
     ctx: typer.Context,
-    workspace_id: str = typer.Argument(
-        ..., help="the workspace the placeholder binds to"
-    ),
     name: str = typer.Option(..., "--name", help="the placeholder's label"),
+    workspace: list[str] | None = typer.Option(
+        None,
+        "--workspace",
+        metavar="REF",
+        help=(
+            "a workspace the placeholder binds to, by name or id; "
+            "commas split and the flag repeats. Omitted, the mint "
+            "covers every workspace on the daemon (#339)"
+        ),
+    ),
     dests: list[str] = typer.Option(
         ...,
         "--dest",
@@ -2339,9 +2438,10 @@ def secret_mint(
         ),
     ),
 ) -> int:
-    """Mint a placeholder for one workspace."""
+    """Mint a placeholder: daemon-wide by default, scoped with
+    --workspace."""
     return cmd_secret_mint(
-        workspace_id, name, dests, ttl, secret_file, transport=ctx.obj
+        workspace, name, dests, ttl, secret_file, transport=ctx.obj
     )
 
 
@@ -2359,19 +2459,35 @@ def secret_ls(
 @one_line_interrupts
 def secret_revoke(
     ctx: typer.Context,
-    workspace_id: str = typer.Argument(...),
     name: str = typer.Option(..., "--name", help="the placeholder's label"),
+    workspace: list[str] | None = typer.Option(
+        None,
+        "--workspace",
+        metavar="REF",
+        help=(
+            "the mint's workspace target (repeatable, commas "
+            "split); omitted, the daemon-wide row of this label"
+        ),
+    ),
 ) -> int:
     """Revoke a placeholder (effective next request)."""
-    return cmd_secret_revoke(workspace_id, name, transport=ctx.obj)
+    return cmd_secret_revoke(workspace, name, transport=ctx.obj)
 
 
 @secret_app.command("renew")
 @one_line_interrupts
 def secret_renew(
     ctx: typer.Context,
-    workspace_id: str = typer.Argument(...),
     name: str = typer.Option(..., "--name", help="the placeholder's label"),
+    workspace: list[str] | None = typer.Option(
+        None,
+        "--workspace",
+        metavar="REF",
+        help=(
+            "the mint's workspace target (repeatable, commas "
+            "split); omitted, the daemon-wide row of this label"
+        ),
+    ),
     ttl: int = typer.Option(
         ...,
         "--ttl",
@@ -2380,7 +2496,24 @@ def secret_renew(
     ),
 ) -> int:
     """Extend a placeholder's lifetime in place."""
-    return cmd_secret_renew(workspace_id, name, ttl, transport=ctx.obj)
+    return cmd_secret_renew(workspace, name, ttl, transport=ctx.obj)
+
+
+@secret_app.command("coverage")
+@one_line_interrupts
+def secret_coverage(
+    ctx: typer.Context,
+    workspace_id: str = typer.Argument(
+        ..., help="the workspace whose posture flips"
+    ),
+    coverage: CoverageChoice = typer.Argument(
+        ...,
+        help="all (default posture) or scoped (daemon-wide "
+        "placeholders exempt this workspace)",
+    ),
+) -> int:
+    """Flip a workspace's daemon-wide placeholder posture (#339)."""
+    return cmd_secret_coverage(workspace_id, coverage.value, transport=ctx.obj)
 
 
 @secret_app.command("check")

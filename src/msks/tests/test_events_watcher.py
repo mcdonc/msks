@@ -442,11 +442,11 @@ async def seed_placeholder(
         VmSpec(workspace_id=workspace_id, kernel=Path("/k"), rootfs=Path("/r"))
     )
     row = await app.state.model.create_placeholder(
-        workspace_id,
+        [workspace_id],
         name,
         new_sentinel(),
         ["api.example.com"],
-        backend_ref(workspace_id, name),
+        backend_ref([workspace_id], name),
         expires_at,
     )
     return row
@@ -593,7 +593,7 @@ async def test_list_workspace_audit_scopes_orders_and_bounds(
         await model.record_audit("expiry", row_a)
         scoped = await model.list_workspace_audit("ws-a")
         assert [row["kind"] for row in scoped] == ["mint", "revoke", "expiry"]
-        assert all(row["workspace_id"] == "ws-a" for row in scoped)
+        assert all(row["workspaces"] == ["ws-a"] for row in scoped)
         newest = await model.list_workspace_audit("ws-a", limit=2)
         assert [row["kind"] for row in newest] == ["revoke", "expiry"]
 
@@ -661,17 +661,17 @@ async def test_sweep_refreshes_the_interceptor_once_per_workspace(
                 datetime.now(UTC) - timedelta(seconds=1),
             )
             await app.state.model.create_placeholder(
-                "ws-a",
+                ["ws-a"],
                 "expired2",
                 new_sentinel(),
                 ["api.example.com"],
-                backend_ref("ws-a", "expired2"),
+                backend_ref(["ws-a"], "expired2"),
                 datetime.now(UTC) - timedelta(seconds=1),
             )
             await sweep_expired_placeholders(app, api.state.hub)
         finally:
             app.state.interceptor = real
-    assert recorder.refreshes == ["ws-a"]
+    assert recorder.refreshes == []
 
 
 async def test_refresh_disarmed_defers_one_workspace_not_its_siblings(
@@ -704,10 +704,21 @@ async def test_refresh_disarmed_defers_one_workspace_not_its_siblings(
     recorder.refuse = {"ws-a"}
     real = app.state.interceptor
     app.state.interceptor = recorder
+    # The stand-down iterates live attachments (#339): a daemon-wide
+    # row's expiry disarms whatever it armed, so the read comes from
+    # the net seam, not the expired rows' own coverage.
+    real_net = app.state.net
+    attached = {"ws-a": object(), "ws-b": object()}
+
+    class AttachedNet:
+        def attached_workspaces(self):
+            return list(attached)
+
     from msks.server.watcher import refresh_disarmed
 
     async with api.router.lifespan_context(api):
         api.state.watcher.cancel()
+        app.state.net = AttachedNet()
         try:
             expired = [
                 {"workspace_id": "ws-a"},
@@ -715,5 +726,6 @@ async def test_refresh_disarmed_defers_one_workspace_not_its_siblings(
             ]
             await refresh_disarmed(app, expired)
         finally:
+            app.state.net = real_net
             app.state.interceptor = real
     assert recorder.refreshes == ["ws-a", "ws-b"]

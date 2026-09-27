@@ -94,6 +94,90 @@ async def test_workspace_names_are_unique(app_for) -> None:
         await app.state.model.create_workspace(spec("two"), name="ws")
 
 
+async def test_migration_moves_coverage_into_the_workspaces_column(
+    tmp_path: Path, app_for
+) -> None:
+    """A database stamped at 0012 upgrades in place (#339): every
+    placeholder row's single workspace id becomes its one-element
+    coverage list, the audit rows carry the same shape, and the
+    (name, coverage) unique constraint rides along — a second row
+    cannot take a label another coverage set-free mint owns. The
+    workspaces table gains its secret_coverage posture with the
+    shipped default."""
+    from sqlalchemy.exc import IntegrityError
+
+    app = app_for()
+    db_path = tmp_path / "t.db"
+    config = alembic_config(db_path)
+    command.upgrade(config, "0012")
+    engine = sa.create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as conn:
+            placeholders = sa.Table(
+                "placeholders", sa.MetaData(), autoload_with=conn
+            )
+            audit = sa.Table("secret_audit", sa.MetaData(), autoload_with=conn)
+            assert "workspaces" not in placeholders.columns
+            conn.execute(
+                placeholders.insert().values(
+                    id=1,
+                    workspace_id="legacy",
+                    name="github_api",
+                    sentinel="mskssec1_old",
+                    dests='["api.github.com"]',
+                    backend_ref="MSKSWS_LEGACY_GITHUB_API",
+                    created_at=datetime(2026, 1, 1),
+                    expires_at=None,
+                )
+            )
+            conn.execute(
+                audit.insert().values(
+                    id=1,
+                    kind="mint",
+                    workspace_id="legacy",
+                    name="github_api",
+                    dests='["api.github.com"]',
+                    created_at=datetime(2026, 1, 1),
+                )
+            )
+    finally:
+        engine.dispose()
+    app.state.model.migrate()
+    row = await app.state.model.get_placeholder(1)
+    assert row["workspaces"] == ["legacy"]
+    assert (
+        await app.state.model.placeholder_for(["legacy"], "github_api")
+        is not None
+    )
+    # The (name, coverage) unique constraint rode along on the
+    # rebuild: a second row cannot take a label another row's
+    # coverage set already owns.
+    with pytest.raises(IntegrityError):
+        await app.state.model.create_placeholder(
+            ["legacy"],
+            "github_api",
+            "mskssec1_dup",
+            [],
+            "MSKSWS_DUP",
+            None,
+        )
+    (audit_row,) = await app.state.model.list_audit()
+    assert audit_row["workspaces"] == ["legacy"]
+    assert [
+        row["name"]
+        for row in await app.state.model.list_workspace_audit("legacy")
+    ] == ["github_api"]
+    # The posture column arrives at its shipped default, and a
+    # scoped flip survives the round-trip.
+    await app.state.model.create_workspace(spec("fresh"))
+    fresh = await app.state.model.get_workspace("fresh")
+    assert fresh["secret_coverage"] == "all"
+    assert await app.state.model.set_secret_coverage("fresh", "scoped")
+    assert (await app.state.model.get_workspace("fresh"))[
+        "secret_coverage"
+    ] == "scoped"
+
+
 async def test_migration_gives_legacy_rows_a_null_name(
     tmp_path: Path, app_for
 ) -> None:
@@ -591,9 +675,10 @@ async def test_workspace_row_carries_the_consent_posture(app_for) -> None:
     )
 
 
-async def test_workspace_placeholders_scope_and_order(app_for) -> None:
-    """The interceptor's arming read (#199): one workspace's rows,
-    insertion order, another workspace's rows excluded."""
+async def test_covering_placeholders_read_the_coverage(app_for) -> None:
+    """The interceptor's arming read (#199/#339): a workspace's
+    covering rows in insertion order — its scoped rows beside the
+    daemon-wide row, another workspace's scoped rows excluded."""
     app = app_for()
     model = app.state.model
     model.migrate()
@@ -603,27 +688,101 @@ async def test_workspace_placeholders_scope_and_order(app_for) -> None:
 
     for name in ("alpha", "beta"):
         await model.create_placeholder(
-            "ws1",
+            ["ws1"],
             name,
             new_sentinel(),
             ["api.example.com"],
-            backend_ref("ws1", name),
+            backend_ref(["ws1"], name),
             None,
         )
     await model.create_placeholder(
-        "ws2",
+        ["ws2"],
         "gamma",
         new_sentinel(),
         ["api.example.com"],
-        backend_ref("ws2", "gamma"),
+        backend_ref(["ws2"], "gamma"),
         None,
     )
-    rows = await model.workspace_placeholders("ws1")
-    assert [row["name"] for row in rows] == ["alpha", "beta"]
+    await model.create_placeholder(
+        [],
+        "shared",
+        new_sentinel(daemon_wide=True),
+        ["api.example.com"],
+        backend_ref([], "shared"),
+        None,
+    )
+    rows = await model.covering_placeholders("ws1")
+    assert [row["name"] for row in rows] == ["alpha", "beta", "shared"]
     assert [
-        row["name"] for row in await model.workspace_placeholders("ws2")
-    ] == ["gamma"]
-    assert await model.workspace_placeholders("missing") == []
+        row["name"] for row in await model.covering_placeholders("ws2")
+    ] == ["gamma", "shared"]
+    # A multi-workspace scoped row covers each member (#339).
+    await model.create_placeholder(
+        ["ws1", "ws2"],
+        "pair",
+        new_sentinel(),
+        ["api.example.com"],
+        backend_ref(["ws1", "ws2"], "pair"),
+        None,
+    )
+    names = {row["name"] for row in await model.covering_placeholders("ws1")}
+    assert "pair" in names
+    assert await model.covering_placeholders("missing") == [
+        row for row in await model.list_placeholders() if not row["workspaces"]
+    ]
+
+
+async def test_placeholder_for_keys_on_the_exact_coverage(app_for) -> None:
+    """One row per label per coverage set (#339): the same label
+    lives on the daemon-wide row and a scoped row beside it, and
+    the mint's collision read matches only its own set."""
+    app = app_for()
+    model = app.state.model
+    model.migrate()
+    from msks.secretstore import backend_ref, new_sentinel
+
+    for coverage in ([], ["ws1"], ["ws1", "ws2"]):
+        row = await model.create_placeholder(
+            coverage,
+            "api",
+            new_sentinel(),
+            ["api.example.com"],
+            backend_ref(coverage, "api"),
+            None,
+        )
+        assert row["workspaces"] == sorted(coverage)
+        assert await model.placeholder_for(coverage, "api") is not None
+    assert await model.placeholder_for(["ws2"], "api") is None
+    # A mint's coverage normalizes: order and duplicates collapse
+    # onto the same row.
+    normalized = await model.placeholder_for(["ws1", "ws1", "ws2"], "api")
+    assert normalized["id"] == row["id"]
+
+
+async def test_workspace_audit_matches_coverage(app_for) -> None:
+    """The decider replay's read (#305/#339): rows whose coverage
+    includes the workspace — a daemon-wide event on every
+    workspace's screen, a scoped event on its members' alone."""
+    app = app_for()
+    model = app.state.model
+    model.migrate()
+    await model.record_audit(
+        "mint", {"workspaces": [], "name": "a", "dests": []}
+    )
+    await model.record_audit(
+        "mint", {"workspaces": ["ws1", "ws2"], "name": "b", "dests": []}
+    )
+    await model.record_audit(
+        "mint", {"workspaces": ["ws3"], "name": "c", "dests": []}
+    )
+    names = [row["name"] for row in await model.list_workspace_audit("ws1")]
+    assert names == ["a", "b"]
+    assert [
+        row["name"] for row in await model.list_workspace_audit("ws2")
+    ] == ["a", "b"]
+    assert [
+        row["name"] for row in await model.list_workspace_audit("ws3")
+    ] == ["a", "c"]
 
 
 async def test_set_egress_policy_updates_named_columns(app_for) -> None:
@@ -665,11 +824,11 @@ async def test_rename_placeholder_ref(app_for) -> None:
     from msks.secretstore import backend_ref, new_sentinel
 
     row = await model.create_placeholder(
-        "ws1",
+        ["ws1"],
         "github_api",
         new_sentinel(),
         ["api.example.com"],
-        backend_ref("ws1", "github_api"),
+        backend_ref(["ws1"], "github_api"),
         None,
     )
     assert (
