@@ -549,8 +549,8 @@ def narrowed(workspaces: list[dict], ref: str | None) -> list[dict]:
 
 
 def workspace_table(workspaces: list[dict]) -> str:
-    """The per-workspace cost/ceiling table, framed — empty when
-    none."""
+    """The framed per-workspace cost/ceiling table — empty
+    when none."""
     return framed_text(
         ["workspace", "root cost/ceiling", "home cost/ceiling", "cost"],
         [storage_cells(ws) for ws in workspaces],

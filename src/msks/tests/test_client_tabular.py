@@ -76,6 +76,26 @@ def test_framed_text_without_rows_prints_nothing() -> None:
     assert framed_text(["ref"], []) == ""
 
 
+def test_framed_text_folds_at_a_bounded_width() -> None:
+    """A framed render folds inside its width; every continued
+    line keeps the frame's left rules, so the grid holds through
+    the fold."""
+    text = framed_text(
+        ["cmd", "help"],
+        [["run", "one two three four five six seven eight"]],
+        width=26,
+    )
+    assert text.splitlines() == [
+        "┏━━━━━┳━━━━━━━━━━━━━━━━━━┓",
+        "┃ cmd ┃ help             ┃",
+        "┡━━━━━╇━━━━━━━━━━━━━━━━━━┩",
+        "│ run │ one two three    │",
+        "│     │ four five six    │",
+        "│     │ seven eight      │",
+        "└─────┴──────────────────┘",
+    ]
+
+
 def test_listing_text_folds_at_a_bounded_width() -> None:
     """Help-shaped renders wrap inside their width; every continued
     line still starts at its column's offset."""

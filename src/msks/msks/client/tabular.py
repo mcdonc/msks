@@ -49,9 +49,11 @@ def listing_table(headers: list[str] | None, rows: list[list[str]]) -> Table:
 
 
 def framed_table(headers: list[str], rows: list[list[str]]) -> Table:
-    """The rows as rich frames a table by default: a styled header
-    row, box rules around and between the columns, padded cells —
-    the capacity tables' look (#381)."""
+    """The rows as rich frames a table by default: box rules
+    around and between the columns, the header row inside the top
+    rule, padded cells — the capacity tables' look (#381). The
+    render is plain text, so the rules carry the look, not ANSI
+    styling."""
     table = Table()
     for header in headers:
         table.add_column(header, overflow="fold")

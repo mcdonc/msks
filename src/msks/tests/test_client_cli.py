@@ -2758,6 +2758,30 @@ def test_cmd_storage_json_is_verbatim(
     assert json.loads(out) == STORAGE_BODY
 
 
+def test_workspace_table_is_framed() -> None:
+    """The per-workspace cost/ceiling table carries rich's frame
+    (#381): rules around and between the columns, the header row
+    inside the top rule, the budget line's plain look untouched."""
+    g = 1024**3
+    assert cli.workspace_table(
+        [
+            {
+                "id": "ws1",
+                "root_mib": 10240,
+                "home_mib": 2048,
+                "root_bytes": int(3.1 * g),
+                "home_bytes": 812 * 1024**2,
+            }
+        ]
+    ).splitlines() == [
+        "┏━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━┓",
+        "┃ workspace ┃ root cost/ceiling ┃ home cost/ceiling ┃ cost ┃",
+        "┡━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━┩",
+        "│ ws1       │ 3.1G / 10G        │ 812M / 2G         │ 3.9G │",
+        "└───────────┴───────────────────┴───────────────────┴──────┘",
+    ]
+
+
 def test_image_cost_table_shows_import_times() -> None:
     """Same-reference rows read as distinct through their import
     times (#186), rendered in the operator's local time; a row
