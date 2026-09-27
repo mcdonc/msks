@@ -163,6 +163,14 @@ boots. A guest image must:
   the hostname it already has — cloud-init sets the hostname per
   instance, and its per-boot update leaves a hostname it never set
   untouched, so only a factory reset moves an older workspace's.
+  `/etc/hosts` follows the hostname the same per-instance way: the
+  Debian image turns on cloud-init's `manage_etc_hosts`, so the
+  first boot writes a `127.0.1.1` line naming the workspace and a
+  renamed guest resolves itself (`sudo` stays quiet). The NixOS
+  image ships no hosts rewrite — its resolver answers the local
+  hostname on its own (the `myhostname` NSS module, part of the
+  base system), so a workspace there resolves its name without a
+  hosts entry.
   The image ships cloud-init
   (the Debian `genericcloud` base does), and two dropins pin the
   behavior the msks contract needs: `datasource_list: [ NoCloud,

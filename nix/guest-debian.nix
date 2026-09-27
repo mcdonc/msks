@@ -426,6 +426,21 @@ let
           '# msks: networkd (see 80-msks-egress.network) owns the NIC.' \
           'network: {config: disabled}' \
           > $out/etc/cloud/cloud.cfg.d/99-msks-network.cfg
+        # /etc/hosts follows the hostname (#376): the base image's
+        # module list already runs cc_etc_hosts (update_etc_hosts,
+        # right after the hostname modules in the same init stage);
+        # it rewrites /etc/hosts from the Debian template — a
+        # 127.0.1.1 line naming the host — whenever this flag is on.
+        # The stock hosts file carries no hostname line, so a
+        # renamed guest could not resolve itself and sudo printed a
+        # resolve warning on every call. `true` selects the distro
+        # template; the literal `localhost` would name a hosts
+        # template this image does not ship.
+        printf '%s\n' \
+          '# msks (#376): /etc/hosts follows the hostname the' \
+          '# seed set — cc_etc_hosts writes the Debian template.' \
+          'manage_etc_hosts: true' \
+          > $out/etc/cloud/cloud.cfg.d/99-msks-etc-hosts.cfg
         # cloud-init creates no accounts (#171): the image ships the
         # msks workspace user (#63), and the identity seed makes its
         # home. The genericcloud image's own default account — the
@@ -1359,6 +1374,8 @@ let
         # in the opt-in smoke.
         grep -q '^users: \[\]' \
           "$root"/etc/cloud/cloud.cfg.d/99-msks-users.cfg
+        grep -q '^manage_etc_hosts: true' \
+          "$root"/etc/cloud/cloud.cfg.d/99-msks-etc-hosts.cfg
         # The image's own trees carry no home for the workspace user
         # (the seed makes it on the persistent volume) and none for
         # a cloud-image default account either (#171).

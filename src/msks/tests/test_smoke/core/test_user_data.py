@@ -81,6 +81,18 @@ async def test_local_user_data_provisioning() -> None:
             app=app,
             hostname=wid,
         )
+        # The guest resolves its own hostname (#376): the Debian
+        # image maps the name in /etc/hosts (cc_etc_hosts), the
+        # NixOS image's resolver answers it (myhostname) — sudo's
+        # resolve depends on this lookup succeeding.
+        await run_in_console(
+            microvm,
+            wid,
+            "getent hosts $(hostname)",
+            wid,
+            app=app,
+            hostname=wid,
+        )
         # The seed reaches the guest as a labeled, read-only disk.
         await run_in_console(
             microvm,
