@@ -33,18 +33,21 @@ facades = [
 
 # Package-level cycles the DAG gate exempts. The module-level graph
 # is acyclic regardless; an exemption whose pair stops cycling both
-# ways fails as stale, so this list only shrinks.
+# ways fails as stale, so this list only shrinks. The list is empty
+# since #411 moved EventHub to the events root leaf and dropped the
+# last package cycle (app <-> server); a new entry needs a shared-leaf
+# extraction first and a reason here.
 [exempt_pairs]
-app = ["server"] # server/main.py pulls the composer; PR #408 moves
-# EventHub out, after which app -> server goes and this entry prunes.
 
 # Layer ranks: every cross-package import runs from a higher rank
 # to a lower one. Rank 0 is the shared-leaf vocabulary and the
-# root modules nothing imports; conformance (the local checker)
+# root modules nothing imports; server pulls the composer (app)
+# at its entry point, and conformance — the local checker —
 # composes the daemon, so it sits on top.
 [ranks]
 configio = 0
 conformance_args = 0
+events = 0
 identity = 0
 llm = 0
 msks = 0
@@ -62,21 +65,21 @@ consent = 2
 microvm = 2
 secretstore = 2
 app = 3
-server = 3
-conformance = 4
+server = 4
+conformance = 5
 
 # Exact cross-package import-statement counts, per pair. A count
 # that grows or shrinks fails until this file is updated in the
 # same commit — re-coupling is always a deliberate edit.
 [snapshot.app]
 consent = 4
+events = 2
 interceptor = 2
 llm = 2
 microvm = 2
 model = 2
 net = 2
 secretstore = 2
-server = 2
 settings = 2
 
 [snapshot.client]
@@ -126,6 +129,7 @@ model = 2
 [snapshot.server]
 app = 2
 config = 2
+events = 4
 identity = 5
 imagestore = 19
 llm = 2
