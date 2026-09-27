@@ -337,11 +337,12 @@ async def test_import_disk_failure_is_503(home_api, monkeypatch) -> None:
     """An install-side failure (a full state disk) answers 503 with
     the named cause; the workspace keeps its row and its volume."""
     from msks.microvm.errors import MicrovmError
+    from msks.server import api as api_mod
 
     async def boom(state_dir, workspace_id, chunks):
         raise MicrovmError("could not install the volume: no space")
 
-    monkeypatch.setattr(persist, "import_home_volume", boom)
+    monkeypatch.setattr(api_mod, "import_home_volume_from_stream", boom)
     await create_workspace(home_api, "ws-full")
     response = await home_api.http.put(
         "/api/v1/workspaces/ws-full/home", content=IMAGE, headers=auth()

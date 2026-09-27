@@ -1568,15 +1568,18 @@ async def test_image_import_refused_by_incoming_size(
     """Free space above the floor still refuses an import whose
     incoming bytes cannot fit: the archive is counted twice (the
     retained copy plus its unpacked cache)."""
-    from msks.server import api as api_module
+
+    from msks import storage
 
     http, app, _stub = client
     app.state.settings.vmm.state_dir.mkdir(parents=True, exist_ok=True)
     archive = tmp_path / "big.tar"
     with archive.open("wb") as handle:
         handle.truncate(100 * 1024 * 1024)  # sparse: only st_size matters
+    # floor_refusal reads the probe from its defining module, so
+    # the patch lands on storage's own name.
     monkeypatch.setattr(
-        api_module.storage,
+        storage,
         "state_usage",
         lambda path: {
             "total": 40 * 1024**3,
@@ -1598,7 +1601,8 @@ async def test_home_import_refused_by_content_length(
 ) -> None:
     """A sized upload is admitted only when free space covers the
     floor plus the body's bytes."""
-    from msks.server import api as api_module
+
+    from msks import storage
 
     http, app, _stub = client
     app.state.settings.vmm.state_dir.mkdir(parents=True, exist_ok=True)
@@ -1608,8 +1612,10 @@ async def test_home_import_refused_by_content_length(
         headers=auth(),
     )
     assert created.status_code == 201
+    # The sized-upload admission runs floor_refusal, which reads
+    # the probe from storage's own namespace.
     monkeypatch.setattr(
-        api_module.storage,
+        storage,
         "state_usage",
         lambda path: {
             "total": 40 * 1024**3,
@@ -2363,7 +2369,7 @@ async def test_resize_names_a_vanished_volume(client, monkeypatch) -> None:
     async def vanish(target, home_mib, settings):
         raise FileNotFoundError(str(target))
 
-    monkeypatch.setattr(api_module.persist, "volume_move", vanish)
+    monkeypatch.setattr(api_module, "volume_move", vanish)
     failed = await http.post(
         "/api/v1/workspaces/ws-van/resize",
         json={"home_mib": 128},

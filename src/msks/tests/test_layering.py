@@ -32,11 +32,18 @@ The whitelist reads bottom-up:
 - ``microvm``, ``net`` — the drivers and the data plane; their
   vocabulary (spec types, decided pins, the shared failure class)
   comes from ``spec`` alone (#401: net hands policy translation
-  to consent and takes decided values back)
-- ``interceptor``, ``conformance``, ``conformance_args`` — tooling
-  over the drivers (the conformance check composes the daemon it
-  inspects; ``conformance_args`` is the surface the client shares)
-- ``server`` — the HTTP surface, orchestrating everything below
+  to consent and takes decided values back); microvm reads its
+  storage through ``persist`` directly (#407) — routing through
+  the package root was the last root edge
+- ``interceptor`` — tooling over the drivers' vocabulary: spec
+  alone since #407 (the failure class lives in ``spec.vm``, so the
+  interceptor's driver edge went with it)
+- ``conformance``, ``conformance_args`` — the conformance check
+  composes the daemon it inspects; ``conformance_args`` is the
+  surface the client shares
+- ``server`` — the HTTP surface, orchestrating everything below;
+  it reads its version from ``spec.version``, not the package
+  root (#407)
 - ``app`` — composition; the entry point (``server.main``) pulls it
 - ``client`` — the REST client (#397): it imports its own
   siblings, stdlib, third-party packages, and the allowlist
@@ -89,11 +96,9 @@ ALLOWED_EDGES = {
     # verdict policy over the model, vocabulary from spec
     ("consent", "model"),
     ("consent", "spec"),
-    # interceptor over the drivers
-    ("interceptor", "microvm"),
+    # interceptor: vocabulary from spec (#407 pruned the driver edge)
     ("interceptor", "spec"),
-    # the local driver: vocabulary, storage, the package root
-    ("microvm", "msks"),
+    # the local driver: vocabulary and storage read directly (#407)
     ("microvm", "persist"),
     ("microvm", "spec"),
     # the ORM's vocabulary
@@ -101,9 +106,9 @@ ALLOWED_EDGES = {
     # the data plane: vocabulary and decided pins from spec alone
     # (#401 — the consent side decides, net applies)
     ("net", "spec"),
-    # seeding and volume bookkeeping
+    # seeding and volume bookkeeping; the failure class is
+    # spec vocabulary since #401, imported from there since #407
     ("persist", "identity"),
-    ("persist", "microvm"),
     ("persist", "spec"),
     # the secret store over the model
     ("secretstore", "model"),
@@ -117,7 +122,6 @@ ALLOWED_EDGES = {
     ("server", "llm"),
     ("server", "microvm"),
     ("server", "model"),
-    ("server", "msks"),
     ("server", "persist"),
     ("server", "secretstore"),
     ("server", "settings"),

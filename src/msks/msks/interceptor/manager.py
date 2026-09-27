@@ -31,8 +31,8 @@ from mitmproxy import options
 from mitmproxy.addons import default_addons
 from mitmproxy.master import Master
 
-from ..microvm.errors import MicrovmError
 from ..spec.time import deadline_passed
+from ..spec.vm import MicrovmError
 from . import ca
 from .engine import InterceptorAddon, LogBridge, host_matches
 

@@ -1491,6 +1491,8 @@ def test_api_import_from_url_stages_and_unlinks(tmp_path: Path) -> None:
     """A URL source: the daemon stages the download privately,
     imports from the staged copy (the hash keys the fetched bytes),
     and unlinks the staging file."""
+    from msks.server import api as api_mod
+
     archive = tmp_path / "ws.tar"
     build_containerdisk(archive)
     staged_names: list[str] = []
@@ -1515,7 +1517,7 @@ def test_api_import_from_url_stages_and_unlinks(tmp_path: Path) -> None:
     app = build_app(settings)
     app.state.microvm = StubMicrovm()
     monkey = pytest.MonkeyPatch()
-    monkey.setattr(imagestore, "fetch_archive", fake_fetch)
+    monkey.setattr(api_mod, "fetch_archive", fake_fetch)
     try:
         with TestClient(build_api(app)) as client:
             made = client.post(
@@ -1539,6 +1541,7 @@ def test_api_import_from_url_names_fetch_failures(
     tmp_path: Path,
 ) -> None:
     """A fetch that fails answers 400 with the named cause."""
+    from msks.server import api as api_mod
 
     def fake_fetch(url, state_dir, *, timeout_s, max_bytes, transport=None):
         raise ImageError("image download answered 404: gone")
@@ -1553,7 +1556,7 @@ def test_api_import_from_url_names_fetch_failures(
     app = build_app(settings)
     app.state.microvm = StubMicrovm()
     monkey = pytest.MonkeyPatch()
-    monkey.setattr(imagestore, "fetch_archive", fake_fetch)
+    monkey.setattr(api_mod, "fetch_archive", fake_fetch)
     try:
         with TestClient(build_api(app)) as client:
             made = client.post(
@@ -1638,9 +1641,9 @@ def test_download_ceiling_clamps_to_floor_headroom(
 
     vmm = VmmSettings(state_dir=Path("/tmp/ceiling"), storage_floor_mib=512)
     tight = {"free": 600 * 1024 * 1024, "total": 1 << 40, "used": 0}
-    monkeypatch.setattr(api_mod.storage, "state_usage", lambda d: tight)
+    monkeypatch.setattr(api_mod, "state_usage", lambda d: tight)
     assert api_mod.download_ceiling(vmm) == 88 * 1024 * 1024
-    monkeypatch.setattr(api_mod.storage, "state_usage", lambda d: None)
+    monkeypatch.setattr(api_mod, "state_usage", lambda d: None)
     assert api_mod.download_ceiling(vmm) == vmm.image_import_max_mib * (
         1024 * 1024
     )
@@ -1650,6 +1653,8 @@ def test_api_url_import_answers_507_at_the_floor(tmp_path: Path) -> None:
     """A URL import on a disk sitting at the floor answers the named
     507 before any bytes are fetched."""
     from msks.server import api as api_mod
+
+    from msks import storage
 
     settings = Settings(
         vmm=VmmSettings(
@@ -1669,8 +1674,12 @@ def test_api_url_import_answers_507_at_the_floor(tmp_path: Path) -> None:
 
     tight = {"free": 100 << 20, "total": 1 << 40, "used": 0}
     monkey = pytest.MonkeyPatch()
-    monkey.setattr(api_mod.storage, "state_usage", lambda d: tight)
-    monkey.setattr(imagestore, "fetch_archive", must_not_fetch)
+    monkey.setattr(api_mod, "state_usage", lambda d: tight)
+    # The refusal names itself through floor_refusal, which probes
+    # via storage's own state_usage — patch the defining module too
+    # or the fallback string answers instead of the named refusal.
+    monkey.setattr(storage, "state_usage", lambda d: tight)
+    monkey.setattr(api_mod, "fetch_archive", must_not_fetch)
     try:
         with TestClient(build_api(app)) as client:
             made = client.post(
@@ -1689,6 +1698,8 @@ async def test_api_concurrent_url_imports_serialize(tmp_path) -> None:
     stage at the same time — the floor clamp one measured while the
     other streams would be a lie."""
     import time as time_mod
+
+    from msks.server import api as api_mod
 
     archive = tmp_path / "ws.tar"
     build_containerdisk(archive)
@@ -1715,7 +1726,7 @@ async def test_api_concurrent_url_imports_serialize(tmp_path) -> None:
     app.state.microvm = StubMicrovm()
     api = build_api(app)
     monkey = pytest.MonkeyPatch()
-    monkey.setattr(imagestore, "fetch_archive", slow_fetch)
+    monkey.setattr(api_mod, "fetch_archive", slow_fetch)
     try:
         async with api.router.lifespan_context(api):
             async with AsyncClient(

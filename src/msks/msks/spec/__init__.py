@@ -15,6 +15,8 @@ the daemon's layers speak to each other:
 - ``tokens`` — the bearer-token grammar every minting and parsing
   site validates against
 - ``time`` — deadline predicates over naive-UTC stored deadlines
+- ``version`` — the daemon's version string, its single home
+  since #407 moved it off the package root
 
 Layers above import from here; modules here import nothing from the
 daemon. ``src/msks/tests/test_layering.py`` holds the layering to

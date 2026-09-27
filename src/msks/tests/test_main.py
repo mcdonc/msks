@@ -8,8 +8,7 @@ import pytest
 from msks.app import build_app
 from msks.server.main import main, server_config, ssl_paths
 from msks.settings import ServerSettings, Settings
-
-from msks import __version__
+from msks.spec.version import __version__
 
 
 def app_with(server: ServerSettings):
