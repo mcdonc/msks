@@ -382,7 +382,8 @@ trust record lives on the client that ran the install (under its
 `MSKSC_DATA_DIR`) and names the CA it installed: another
 operator's page reads untrusted until they install from theirs,
 and a CA the daemon re-minted (its state restored, the cert file
-deleted) reads untrusted again. A
+deleted) reads untrusted again — on the page's next open, when
+its one CA fetch lands. A
 workspace that is not running, or a console the guest refuses,
 prints the hand-run recipe instead — the same commands with the
 workspace's real CA path. The page's actions sit centered in the

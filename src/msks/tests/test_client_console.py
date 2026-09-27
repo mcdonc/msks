@@ -697,7 +697,7 @@ def _closed(code: int, reason: str = ""):
     return console.websockets.ConnectionClosed(close, None)
 
 
-def testreport_close_4400() -> None:
+def test_report_close_4400() -> None:
     closed = _closed(4400, "console user 'x' is not served")
     with pytest.raises(SystemExit) as caught:
         console.report_close(closed)
@@ -705,19 +705,19 @@ def testreport_close_4400() -> None:
     assert "'x'" in str(caught.value)
 
 
-def testreport_close_4401() -> None:
+def test_report_close_4401() -> None:
 
     with pytest.raises(SystemExit, match="authentication failed"):
         console.report_close(_closed(4401))
 
 
-def testreport_close_carries_reason() -> None:
+def test_report_close_carries_reason() -> None:
 
     with pytest.raises(SystemExit, match="workspace stopped"):
         console.report_close(_closed(4501, "workspace stopped"))
 
 
-def testreport_close_4501_keeps_its_hint_only_without_a_reason() -> None:
+def test_report_close_4501_keeps_its_hint_only_without_a_reason() -> None:
     """A reason-bearing 4501 names the cause alone; the generic
     is-the-workspace-running hint would read as the cause itself
     beside a specific refusal (#248 review)."""
@@ -731,13 +731,13 @@ def testreport_close_4501_keeps_its_hint_only_without_a_reason() -> None:
     assert "refused user 'sync'" in line
 
 
-def testreport_close_4502_names_the_stall() -> None:
+def test_report_close_4502_names_the_stall() -> None:
 
     with pytest.raises(SystemExit, match="console stalled"):
         console.report_close(_closed(4502))
 
 
-def testreport_close_clean_end_is_quiet() -> None:
+def test_report_close_clean_end_is_quiet() -> None:
 
     assert console.report_close(_closed(1000)) is None
 

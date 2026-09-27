@@ -49,10 +49,11 @@ CA_CERT_NAME = "interceptor-ca.crt"
 #: The trust marker's file name under the client data root.
 TRUSTED_FILE = "interceptor-ca.trusted"
 
-#: The install's whole window — the connect, the challenge answer
-#: when the guest serves one, and the guest's own
-#: ``update-ca-certificates`` run: one deadline bounds every read
-#: in it, so a chatty console cannot stretch the wait without end.
+#: The install's marker-wait window — one deadline for the whole
+#: wait, so output the guest keeps printing cannot stretch it.
+#: (The connect and the challenge answer ahead of it carry their
+#: own windows: websockets' open timeout and the challenge's
+#: arrival window.)
 INSTALL_TIMEOUT_S = 60.0
 
 #: The success marker the guest prints once the install lands.
@@ -188,9 +189,11 @@ async def install_ca(
 
 
 #: One recipe chunk's base64 budget: a whole shell line that fits
-#: the recipe panel's 64 columns without wrapping, so a copy of
-#: any line is a whole command however the terminal pastes.
-RECIPE_CHUNK = 28
+#: the recipe panel's rows without wrapping (an 80-column panel
+#: leaves 74 content columns, and the recipe's 2-space indent
+#: takes two more), so a copy of any line is a whole command
+#: however the terminal pastes.
+RECIPE_CHUNK = 40
 
 #: The recipe's guest-side scratch for the assembled blob.
 RECIPE_SCRATCH = "/tmp/msks-ca.b64"
@@ -218,6 +221,7 @@ def recipe_commands(ca_pem: str) -> list[str]:
         f"base64 -d {RECIPE_SCRATCH} > {RECIPE_STAGING}",
         f"cp {RECIPE_STAGING} {CA_DEST}",
         "update-ca-certificates",
+        f"rm -f {RECIPE_SCRATCH} {RECIPE_STAGING}",
     ]
     return lines
 

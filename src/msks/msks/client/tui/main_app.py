@@ -39,7 +39,7 @@ from rich.cells import cell_len
 from rich.markup import escape
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content, Span
 from textual.css.query import NoMatches
 from textual.screen import ModalScreen, Screen
@@ -696,8 +696,10 @@ class MsksTuiApp(App):
     #ca { height: 1; padding: 0 1; color: $text-muted;
           text-wrap: nowrap; text-overflow: ellipsis; }
     RecipeScreen { align: center middle; }
-    #recipe { width: 64; height: auto; background: $panel;
-              border: round $primary; padding: 1 2; }
+    #recipe-scroll { width: 80; height: auto; max-height: 14;
+                     max-width: 100%; background: $panel;
+                     border: round $primary; padding: 1 2; }
+    #recipe { text-wrap: nowrap; }
     #page { height: 1fr; align: center middle; }
     #actions { width: 64; height: auto; max-width: 100%;
               max-height: 100%; }
@@ -1876,19 +1878,16 @@ class WorkspaceScreen(Screen):
         self.app.pop_screen()
 
 
-class RecipeText(Static, can_focus=True):
-    """The recipe's text — focusable so the modal holds the keys
-    (a Static the page below could otherwise keep focused, its
-    Enter reaching the action list through the modal)."""
-
-
 class RecipeScreen(ModalScreen):
     """The hand-run recipe over the workspace page (#392): the
-    CA's real daemon-side path and the guest-side line that
-    installs it — what the install action prints when the console
-    channel cannot run (a stopped workspace, a refused console) or
-    the operator prefers a hand run. The recipe holds focus so its
-    leaving keys close it without reaching the page below."""
+    CA's real daemon-side path and the short whole shell lines
+    that install it — what the install action prints when the
+    console channel cannot run (a stopped workspace, a refused
+    console) or the operator prefers a hand run. The panel is a
+    scrollable one (a real CA's chunked lines outnumber any
+    screen): the scroll container holds focus, so its arrows
+    walk the lines and the leaving keys close it without
+    reaching the page below."""
 
     BINDINGS = [
         Binding("enter", "close", "Close"),
@@ -1901,10 +1900,11 @@ class RecipeScreen(ModalScreen):
         self.lines = lines
 
     def compose(self) -> ComposeResult:
-        yield RecipeText("\n".join(self.lines), id="recipe")
+        with VerticalScroll(id="recipe-scroll"):
+            yield Static("\n".join(self.lines), id="recipe")
 
     def on_mount(self) -> None:
-        self.query_one("#recipe", RecipeText).focus()
+        self.query_one("#recipe-scroll", VerticalScroll).focus()
 
     def action_close(self) -> None:
         self.app.pop_screen()

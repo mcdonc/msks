@@ -1055,6 +1055,30 @@ async def test_escape_on_the_picker_decides_nothing(monkeypatch) -> None:
 # -- the interceptor-CA line and install (#392) -----------------------
 
 
+async def test_the_recipe_fits_its_panel_at_eighty_columns() -> None:
+    """The recipe's lines fit the panel they render in (#392
+    review): a line wider than the panel's content region wraps or
+    clips — a copy across either is a broken command — so a real
+    CA's chunked lines must land whole inside the measured
+    region."""
+    pem = (
+        "-----BEGIN CERTIFICATE-----\n"
+        + "A" * 1180
+        + "\n-----END CERTIFICATE-----\n"
+    )
+    lines = main_app.recipe_lines(
+        {"path": "/state/vms/ws-a/interceptor-ca.crt", "ca_pem": pem}, WS
+    )
+    app, _ = make_app(FakeData([row()]))
+    async with app.run_test(size=(80, 30)) as pilot:
+        app.push_screen(main_app.RecipeScreen(lines))
+        await pilot.pause()
+        scroll = app.screen.query_one("#recipe-scroll")
+        budget = scroll.content_region.width - 2  # the lines' indent
+        for line in lines:
+            assert cell_len(line) <= budget, line[:40]
+
+
 @pytest.fixture
 def ca_data_root(monkeypatch, tmp_path):
     """The trust marker's client data root, relocated: the tests

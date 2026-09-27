@@ -150,6 +150,10 @@ async def test_the_session_waits_for_the_marker(
     assert console.auth_calls == ["ws-a"]
     assert console.sent == [install_command(PEM).encode() + b"\n"]
     assert console.closed is True
+    # Every scripted frame was consumed — the wait ran to the
+    # marker's own frame, not to an echo of the command line (the
+    # echo arrives first and must not satisfy it).
+    assert console._incoming == []
     # The trust record is the install's caller's job — the session
     # itself only runs the line.
     assert ca_trusted("ws-a", PEM) is False
@@ -232,14 +236,18 @@ def test_the_recipes_commands_paste_whole() -> None:
     across soft wraps carries whole commands), and the chunk chain
     assembles the CA exactly."""
     commands = recipe_commands(PEM)
-    assert commands[-3:] == [
+    assert commands[-4:] == [
         "base64 -d /tmp/msks-ca.b64 > /tmp/msks-ws.crt",
         f"cp /tmp/msks-ws.crt {CA_DEST}",
         "update-ca-certificates",
+        "rm -f /tmp/msks-ca.b64 /tmp/msks-ws.crt",
     ]
     blob = ""
-    for line in commands[:-3]:
-        assert len(line) <= 58  # fits the 64-column panel's rows
+    for line in commands[:-4]:
+        # 70 is the measured budget: the recipe panel leaves 74
+        # content columns (80-column panel, border and padding
+        # taken) and the recipe's indent takes two more.
+        assert len(line) <= 70
         assert line.startswith(("printf %s ",))
         blob += line.split()[2]
     assert interceptor_ca.base64.b64decode(blob).decode() == PEM
