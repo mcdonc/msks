@@ -26,11 +26,11 @@ import socket
 from pathlib import Path
 
 from .. import persist
-from ..consent.specs import EgressPolicy
+from ..spec.egress import EgressPolicy
+from ..spec.vm import VmInfo, VmSpec, VmStatus
 from .chapi import API_ROOT, CloudHypervisorApi
 from .driver import MicrovmDriver
 from .errors import MicrovmError, MicrovmTimeoutError
-from .spec import VmInfo, VmSpec, VmStatus
 
 # Bound on the OK reply once the handshake bytes are sent.
 VSOCK_REPLY_S = 5.0

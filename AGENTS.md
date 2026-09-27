@@ -118,7 +118,8 @@ commit attempt, all offenders at once:
 devenv --quiet -O dotenv.enable:bool false shell -- msks-preflight
 ```
 
-It prints every ruff violation, every deferred import, every xenon
+It prints every ruff violation, every deferred import, every
+import cycle (`scripts/check_import_cycles.py`), every xenon
 block above rank A, and the jscpd clone report over the full tree.
 When anything under `src/msks/` differs from the fork point on
 `origin/main` (committed or working tree), it then runs the gated

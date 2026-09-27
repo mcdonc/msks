@@ -1,7 +1,7 @@
 """Allowlist spec validation and matching (#69)."""
 
 import pytest
-from msks.consent.specs import (
+from msks.spec.egress import (
     MODE_ALLOW,
     MODE_INTERACTIVE,
     MODE_STATIC,
@@ -83,7 +83,7 @@ def test_host_matches_under_each_scope() -> None:
 
 
 def test_ports_for_splits_the_three_answers() -> None:
-    from msks.consent.specs import HostSpec
+    from msks.spec.egress import HostSpec
 
     exact443 = HostSpec("example.com", 443, SCOPE_EXACT)
     sub8443 = HostSpec("api.example", 8443, SCOPE_SUBDOMAINS)
@@ -153,7 +153,7 @@ def test_is_ipv4_and_the_loud_zero_cidr() -> None:
     assert not is_ipv4("::1")
     import ipaddress
 
-    from msks.consent.specs import IpSpec
+    from msks.spec.egress import IpSpec
 
     zero = (IpSpec(ipaddress.IPv4Network("0.0.0.0/0"), None),)
     wide = (IpSpec(ipaddress.IPv4Network("10.0.0.0/8"), None),)
@@ -164,7 +164,7 @@ def test_is_ipv4_and_the_loud_zero_cidr() -> None:
 def test_ip_spec_matches_addresses() -> None:
     import ipaddress
 
-    from msks.consent.specs import IpSpec
+    from msks.spec.egress import IpSpec
 
     spec = IpSpec(ipaddress.IPv4Network("10.0.0.0/8"), 443)
     assert spec.matches("10.1.2.3")

@@ -12,8 +12,9 @@ import time
 from datetime import UTC, datetime
 
 from .. import storage
-from ..microvm.spec import VmStatus
 from ..model.secrets import coverage_label
+from ..spec.time import deadline_passed
+from ..spec.vm import VmStatus
 from .events import EventHub
 
 LOG = logging.getLogger(__name__)
@@ -219,16 +220,6 @@ async def refresh_disarmed(app, expired: list[dict]) -> None:
 #: lock for a CLI call, so the cap bounds the loop's worst-case
 #: stall; the remainder retires on the next pass.
 SWEEP_CAP = 16
-
-
-def deadline_passed(expires_at: str | None, now: datetime) -> bool:
-    """Whether a placeholder's deadline is past. The stored deadline
-    is naive UTC on the sqlite round-trip (the dialect strips
-    tzinfo at bind); replace() unconditionally normalizes."""
-    if expires_at is None:
-        return False
-    deadline = datetime.fromisoformat(expires_at).replace(tzinfo=UTC)
-    return deadline <= now
 
 
 async def retire_expired(app, hub: EventHub, row: dict) -> None:

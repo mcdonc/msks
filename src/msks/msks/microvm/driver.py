@@ -9,8 +9,8 @@ this line on the driver's side.
 
 import abc
 
+from ..spec.vm import VmInfo, VmSpec
 from .errors import MicrovmError
-from .spec import VmInfo, VmSpec
 
 
 class MicrovmDriver(abc.ABC):

@@ -34,12 +34,6 @@ from sqlalchemy.exc import IntegrityError
 from starlette.requests import ClientDisconnect
 
 from .. import __version__, imagestore, persist, storage
-from ..consent.specs import (
-    EGRESS_MODES,
-    MODE_STATIC,
-    EgressPolicy,
-    parse_allowlist,
-)
 from ..identity import (
     LEGACY_LOGIN_USER,
     LOGIN_NAME_RE,
@@ -49,8 +43,6 @@ from ..identity import (
 from ..imagestore import ImageCollision, ImageError
 from ..llm import mint_token
 from ..microvm.errors import MicrovmError
-from ..microvm.spec import VmSpec, VmStatus
-from ..model.egress_consent import DECISION_ALLOWED, DECISIONS, DURATIONS
 from ..model.secrets import SECRET_COVERAGES, coverage_label
 from ..secretstore import (
     SecretStoreError,
@@ -58,6 +50,16 @@ from ..secretstore import (
     new_sentinel,
     valid_name,
 )
+from ..spec.egress import (
+    DECISION_ALLOWED,
+    DECISIONS,
+    DURATIONS,
+    EGRESS_MODES,
+    MODE_STATIC,
+    EgressPolicy,
+    parse_allowlist,
+)
+from ..spec.vm import VmSpec, VmStatus
 from .auth import require_token
 from .events import relay
 from .watcher import watch_loop

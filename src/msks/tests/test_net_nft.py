@@ -260,7 +260,7 @@ def test_disarmed_ruleset_carries_no_interception() -> None:
 
 
 def policy(mode: str, specs=()):
-    from msks.consent.specs import EgressPolicy
+    from msks.spec.egress import EgressPolicy
 
     return EgressPolicy("ws-a", mode, tuple(specs))
 
@@ -517,7 +517,7 @@ def test_rejects_flow_ships_with_the_queue() -> None:
     """#304: the per-flow reject set and its match ride only the
     interactive posture — a name verdict on a shared address
     refuses just its own connection."""
-    from msks.consent.specs import EgressPolicy
+    from msks.spec.egress import EgressPolicy
 
     interactive = nft.vm_ruleset(
         "ws-a",
@@ -659,8 +659,8 @@ def test_posture_sets_name_the_sets_each_mode_carries() -> None:
     """The mode switch's carry filter (#280): both gated postures
     pin allows, only interactive keeps the reject machinery, and
     allow carries nothing."""
-    from msks.consent.specs import EgressPolicy
     from msks.net.nft import CONSENT_SETS, posture_sets
+    from msks.spec.egress import EgressPolicy
 
     assert posture_sets(EgressPolicy("w", "allow", ())) == ()
     assert posture_sets(EgressPolicy("w", "static", ())) == (

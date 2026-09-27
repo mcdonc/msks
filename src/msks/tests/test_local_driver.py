@@ -22,11 +22,11 @@ from msks.microvm import MicrovmError, MicrovmTimeoutError, VmSpec
 from msks.microvm import local as local_mod
 from msks.microvm.driver import MicrovmDriver
 from msks.microvm.local import disk_entries, map_ch_state, vm_config
-from msks.microvm.spec import VmStatus
 from msks.net import alloc
 from msks.net import manager as manager_mod
 from msks.net.manager import NetManager
 from msks.settings import NetSettings, Settings, VmmSettings
+from msks.spec.vm import VmStatus
 from netstubs import stub_ip, stub_nft
 from test_net_manager import FakeService
 

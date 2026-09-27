@@ -28,44 +28,21 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Mapped, mapped_column
 
-from .audit_hmac import compute_egress_consent_hmac
-from .db import Base, sessionmaker_for
-
-# --- lifecycle -------------------------------------------------------------
-
-DECISION_PENDING = "pending"
-DECISION_ALLOWED = "allowed"
-DECISION_DENIED = "denied"
-DECISION_EXPIRED = "expired"
-DECISION_REVOKED = "revoked"
-DECISIONS = (
-    DECISION_PENDING,
+from ..spec.egress import (
     DECISION_ALLOWED,
     DECISION_DENIED,
     DECISION_EXPIRED,
+    DECISION_PENDING,
     DECISION_REVOKED,
-)
-
-# --- durations (#69's five) --------------------------------------------------
-
-DURATION_ONCE = "once"
-DURATION_5M = "5m"
-DURATION_15M = "15m"
-DURATION_TILRESTART = "tilrestart"
-DURATION_FOREVER = "forever"
-DURATIONS = (
-    DURATION_ONCE,
-    DURATION_5M,
-    DURATION_15M,
-    DURATION_TILRESTART,
+    DURATION_DEFAULT,
     DURATION_FOREVER,
+    DURATION_ONCE,
+    DURATION_SECONDS,
+    DURATION_TILRESTART,
+    DURATIONS,
 )
-DURATION_DEFAULT = DURATION_TILRESTART
-
-#: Timed durations in seconds; ``once``/``tilrestart``/``forever``
-#: are not time-bounded (they are governed by connection, table
-#: lifetime, and the row itself).
-DURATION_SECONDS = {DURATION_5M: 300, DURATION_15M: 900}
+from .audit_hmac import compute_egress_consent_hmac
+from .db import Base, sessionmaker_for
 
 
 class EgressConsent(Base):
@@ -139,12 +116,6 @@ def row_dict(row: EgressConsent) -> dict:
         "revoked_by": row.revoked_by,
         "hmac": row.hmac,
     }
-
-
-def public_row(row: dict) -> dict:
-    """A row dict without the verification-internal ``hmac`` tag —
-    the shape that crosses to deciders."""
-    return {k: v for k, v in row.items() if k != "hmac"}
 
 
 def duration_in_effect(

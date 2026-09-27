@@ -56,7 +56,7 @@ from pathlib import Path
 
 from .identity import compose_user_data
 from .microvm.errors import MicrovmError
-from .microvm.spec import VmSpec
+from .spec.vm import VmSpec
 
 MIB = 1024 * 1024
 HOME_VOLUME_LABEL = "msks-home"

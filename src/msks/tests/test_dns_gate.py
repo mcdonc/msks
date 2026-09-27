@@ -7,11 +7,16 @@ from pathlib import Path
 
 import pytest
 from msks.app import build_app
-from msks.consent.specs import MODE_ALLOW, MODE_INTERACTIVE, MODE_STATIC
 from msks.microvm import VmSpec
-from msks.model.egress_consent import DECISION_ALLOWED, DECISION_DENIED
 from msks.net import dns, dnsmsg
 from msks.settings import ServerSettings, Settings
+from msks.spec.egress import (
+    DECISION_ALLOWED,
+    DECISION_DENIED,
+    MODE_ALLOW,
+    MODE_INTERACTIVE,
+    MODE_STATIC,
+)
 
 
 def query_for(name: str, ident: int = 0xABCD, qtype: int = 1) -> bytes:
@@ -93,7 +98,7 @@ async def gated(tmp_path: Path):
 def gate_for(
     app, net, workspace_id: str, mode: str, specs=()
 ) -> dns.ResolverGate:
-    from msks.consent.specs import EgressPolicy
+    from msks.spec.egress import EgressPolicy
 
     return dns.ResolverGate(
         EgressPolicy(workspace_id, mode, tuple(specs)),
@@ -480,7 +485,7 @@ async def test_a_fresh_deny_overrides_a_cached_answer(gated) -> None:
     import socket
 
     app, net = gated
-    from msks.model.egress_consent import DECISION_DENIED
+    from msks.spec.egress import DECISION_DENIED
 
     upstream = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     upstream.bind(("127.0.0.1", 0))

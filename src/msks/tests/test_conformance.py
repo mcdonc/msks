@@ -30,8 +30,8 @@ from msks.conformance import (
     skipped,
 )
 from msks.microvm import MicrovmError, VmInfo, VmSpec
-from msks.microvm.spec import VmStatus
 from msks.settings import Settings
+from msks.spec.vm import VmStatus
 from test_imagestore import build_containerdisk
 
 from msks import conformance

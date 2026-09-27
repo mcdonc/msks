@@ -546,6 +546,19 @@ in
       pass_filenames = true;
       require_serial = true;
     };
+    # Import-cycle gate (#387): the module-level walk lives in
+    # scripts/check_import_cycles.py, shared with the suite's
+    # layering test (which adds the package-edge whitelist).
+    # Whole-tree check, so pass_filenames = false; `files` is the
+    # run trigger, matching the xenon idiom above.
+    import-cycles = {
+      enable = true;
+      name = "import-cycles";
+      entry = "${config.languages.python.package}/bin/python scripts/check_import_cycles.py";
+      files = "^src/msks/msks/.*\\.py$|^scripts/.*\\.py$";
+      language = "system";
+      pass_filenames = false;
+    };
     # Shell (#72, klangk settings): format + static analysis + the
     # shebang guard on executable text files.
     shfmt.enable = true;

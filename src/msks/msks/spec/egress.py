@@ -1,4 +1,8 @@
-"""Egress spec validation and matching (#69), ported from klangk.
+"""Egress spec validation and matching (#69), ported from klangk,
+plus the consent lifecycle vocabulary every consent speaker shares
+(#387): decision and duration words and the decider-facing row
+shape, kept below the model so the layers above — model, consent,
+net, server — import one vocabulary instead of each other.
 
 A workspace's static allowlist is a list of specs:
 
@@ -293,3 +297,53 @@ def allow_all_cidrs(specs: tuple[IpSpec, ...]) -> tuple[str, ...]:
         for spec in specs
         if spec.network.prefixlen == 0
     )
+
+
+# --- consent lifecycle (#69, relocated #387) --------------------------------
+#
+# One row per consented destination moves
+# ``pending → allowed | denied | expired | revoked``:
+# ``allowed``/``denied`` a decider's verdict or a policy record,
+# ``expired`` a hold that timed out, ``revoked`` a verdict undone.
+
+DECISION_PENDING = "pending"
+DECISION_ALLOWED = "allowed"
+DECISION_DENIED = "denied"
+DECISION_EXPIRED = "expired"
+DECISION_REVOKED = "revoked"
+DECISIONS = (
+    DECISION_PENDING,
+    DECISION_ALLOWED,
+    DECISION_DENIED,
+    DECISION_EXPIRED,
+    DECISION_REVOKED,
+)
+
+# Durations (how long enforcement honors a verdict): ``once`` (this
+# connection), ``5m``, ``15m``, ``tilrestart`` (until the workspace
+# VM stops — the flow rules die with the per-VM table), ``forever``
+# (the workspace's lifetime — replayed at every attach).
+DURATION_ONCE = "once"
+DURATION_5M = "5m"
+DURATION_15M = "15m"
+DURATION_TILRESTART = "tilrestart"
+DURATION_FOREVER = "forever"
+DURATIONS = (
+    DURATION_ONCE,
+    DURATION_5M,
+    DURATION_15M,
+    DURATION_TILRESTART,
+    DURATION_FOREVER,
+)
+DURATION_DEFAULT = DURATION_TILRESTART
+
+#: Timed durations in seconds; ``once``/``tilrestart``/``forever``
+#: are not time-bounded (they are governed by connection, table
+#: lifetime, and the row itself).
+DURATION_SECONDS = {DURATION_5M: 300, DURATION_15M: 900}
+
+
+def public_row(row: dict) -> dict:
+    """A row dict without the verification-internal ``hmac`` tag —
+    the shape that crosses to deciders."""
+    return {k: v for k, v in row.items() if k != "hmac"}

@@ -44,7 +44,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..consent.specs import MODE_ALLOW, MODE_STATIC, ports_for
+from ..spec.egress import MODE_ALLOW, MODE_STATIC, ports_for
 from . import dnsmsg
 from .loopio import recvfrom, sendto
 

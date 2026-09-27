@@ -6,10 +6,10 @@ setting ``settings.vmm.driver``, so swapping the backend that runs
 workspaces changes no code above this seam.
 """
 
+from ..spec.vm import VmInfo, VmSpec
 from .driver import MicrovmDriver
 from .errors import MicrovmError, MicrovmTimeoutError
 from .local import LocalCloudHypervisor
-from .spec import VmInfo, VmSpec
 
 __all__ = [
     "LocalCloudHypervisor",

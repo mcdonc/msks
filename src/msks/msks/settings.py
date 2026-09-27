@@ -25,9 +25,9 @@ from dataclasses import dataclass, field
 from ipaddress import IPv4Network
 from pathlib import Path
 
-from .consent.specs import EGRESS_MODES, MODE_ALLOW
 from .identity import KEY_TYPES
-from .model.tokens import validate_token_plaintext
+from .spec.egress import EGRESS_MODES, MODE_ALLOW
+from .spec.tokens import validate_token_plaintext
 
 VALID_DRIVERS = ("local",)
 
