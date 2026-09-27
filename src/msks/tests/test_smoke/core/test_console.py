@@ -63,7 +63,7 @@ async def test_local_console_identity_drop() -> None:
                 ssh_pubkey=public,
             )
         )
-        await await_guest_up(serial_log)
+        await await_guest_up(serial_log, hostname=wid)
         # The identity seed made the home before any console connect
         # (#171): owned by the user — and cloud-init created no
         # `debian` account alongside the shipped msks one. The
@@ -84,6 +84,7 @@ async def test_local_console_identity_drop() -> None:
             "&& echo S-$((6*7))",
             "S-42",
             signer=signer,
+            hostname=wid,
         )
         # The real drop: uid 1000, the persistent home, and root
         # alongside.
@@ -94,6 +95,7 @@ async def test_local_console_identity_drop() -> None:
             "I-1000",
             user="msks",
             signer=signer,
+            hostname=wid,
         )
         await run_in_console(
             microvm,
@@ -102,6 +104,7 @@ async def test_local_console_identity_drop() -> None:
             "H-/home/msks",
             user="msks",
             signer=signer,
+            hostname=wid,
         )
         await run_in_console(
             microvm,
@@ -109,6 +112,7 @@ async def test_local_console_identity_drop() -> None:
             "echo R-$(id -u)",
             "R-0",
             signer=signer,
+            hostname=wid,
         )
         await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
     except BaseException:

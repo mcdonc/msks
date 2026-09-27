@@ -90,16 +90,17 @@ async def test_local_dev_workspace_bootstrap() -> None:
             f"{probe_cmd} && echo {marker_prefix}-$((6*7))",
             f"{marker_prefix}-42",
             app=app,
+            hostname=wid,
         )
 
     try:
         await app.state.net.start()
         await app.state.model.create_workspace(spec)
         await microvm.launch(spec)
-        await await_guest_up(serial_log)
+        await await_guest_up(serial_log, hostname=wid)
         # First boot: the seed runs in cloud-final; poll its state
         # trail to "done" (each tool's marker gated on its presence).
-        await await_dev_state(microvm, app, wid, b"done")
+        await await_dev_state(microvm, app, wid, b"done", hostname=wid)
         await probe("UV", "command -v uv")
         await probe(
             "CLONE", "git -C /root/msks rev-parse --is-inside-work-tree"
@@ -112,8 +113,8 @@ async def test_local_dev_workspace_bootstrap() -> None:
         await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
         serial_log.unlink(missing_ok=True)
         await microvm.launch(spec)
-        await await_guest_up(serial_log)
-        await await_dev_state(microvm, app, wid, b"done")
+        await await_guest_up(serial_log, hostname=wid)
+        await await_dev_state(microvm, app, wid, b"done", hostname=wid)
         # Console-readiness after the reboot plus the persistence
         # proof: the venv survives, and the rerun log does not exist
         # — the seed executed exactly once (cloud-init state rode the
@@ -134,8 +135,9 @@ async def test_local_dev_workspace_bootstrap() -> None:
             "echo R-$?",
             "R-0",
             app=app,
+            hostname=wid,
         )
-        await await_dev_state(microvm, app, wid, b"done")
+        await await_dev_state(microvm, app, wid, b"done", hostname=wid)
 
         # The suite, inside the guest, the way the `unit-tests` task
         # runs it (the task's exec line, from the venv uv built) —
@@ -162,8 +164,9 @@ async def test_local_dev_workspace_bootstrap() -> None:
             ">/dev/null 2>&1 & echo BG-$((6*7)); fi",
             "BG-42",
             app=app,
+            hostname=wid,
         )
-        await await_dev_state(microvm, app, wid, b"done-0")
+        await await_dev_state(microvm, app, wid, b"done-0", hostname=wid)
         await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
         final = await microvm.info(wid)
         assert final.status.value in ("stopped", "absent")

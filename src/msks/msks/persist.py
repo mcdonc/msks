@@ -146,7 +146,15 @@ async def ensure_seed(
 ) -> None:
     """Build the #41 seed when the workspace carries a payload — its
     own or the minted identity's (#111) — and the file is absent; a
-    fresh build joins the rollback list."""
+    fresh build joins the rollback list.
+
+    The token leg (#259) is wider than disk_entries' attach
+    condition (user_data or ssh_pubkey): an llm_token-only spec
+    builds a seed the VM never sees. No product row has that shape
+    — every create records a public key, minted or the client's
+    own — so the seed's local-hostname (#370) reaches every
+    attached disk either way.
+    """
     if spec.user_data is None and spec.ssh_pubkey is None:
         if spec.llm_token is None:
             return
@@ -228,18 +236,29 @@ async def create_overlay(spec: VmSpec, settings, overlay: Path) -> None:
         scratch.unlink(missing_ok=True)
 
 
-def seed_metadata(workspace_id: str) -> str:
+def seed_metadata(workspace_id: str, name: str | None) -> str:
     """The seed's ``meta-data``: cloud-init NoCloud keys.
 
     ``instance-id`` is the workspace id, so cloud-init's run-once
     semantics key off the workspace: a stop/start or a daemon restart
     never re-provisions. A factory reset DOES re-provision — the
     "already ran" state (/var/lib/cloud) lives on the overlay the
-    reset drops. No ``local-hostname``: the image's own hostname
-    (msks-guest) stays stable across workspaces, and per-workspace
-    identity is what the id column is for.
+    reset drops. ``local-hostname`` is the workspace's creation
+    name (#370), the minted id standing in for a nameless
+    workspace, so the guest's hostname and shell prompt identify
+    the workspace — DNS-label safe by construction, because the
+    create endpoint's WORKSPACE_ID_PATTERN (the only writer of
+    row names) admits [a-z0-9-] alone, which cannot break the
+    YAML line it lands on. The name lands at first boot, and a
+    factory reset re-provisions from the seed with it; a launch
+    heal rebuilds a lost seed carrying the name too, but a guest
+    that booted before #370 keeps the hostname it already has
+    there — cloud-init sets the hostname per instance, and its
+    per-boot update leaves a hostname it never set untouched, so
+    only a factory reset moves an older workspace's.
     """
-    return f"instance-id: {workspace_id}\n"
+    hostname = name or workspace_id
+    return f"instance-id: {workspace_id}\nlocal-hostname: {hostname}\n"
 
 
 async def create_seed(spec: VmSpec, settings, llm_port: int = 0) -> None:
@@ -278,7 +297,7 @@ async def create_seed(spec: VmSpec, settings, llm_port: int = 0) -> None:
             encoding="utf-8",
         )
         (stage / "meta-data").write_text(
-            seed_metadata(spec.workspace_id), encoding="utf-8"
+            seed_metadata(spec.workspace_id, spec.name), encoding="utf-8"
         )
         image = stage / "seed.img"
         await run_tool(

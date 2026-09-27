@@ -675,6 +675,10 @@ def spec_for(row: dict) -> VmSpec:
     initrd = None if row["initrd"] is None else Path(row["initrd"])
     return VmSpec(
         workspace_id=row["id"],
+        # The creation name rides the spec for one consumer — the
+        # seed's local-hostname (#370). The minted id keeps owning
+        # every path and row key.
+        name=row.get("name"),
         kernel=Path(row["kernel"]),
         rootfs=Path(row["rootfs"]),
         cmdline=row["cmdline"],
@@ -1476,6 +1480,10 @@ def build_api(app) -> FastAPI:
         # workspace's LLM clients point at the daemon's proxy with
         # zero manual steps.
         boot["llm_token"] = mint_token()
+        # The creation name rides the seed's meta-data as the
+        # guest's hostname (#370); a nameless workspace seeds the
+        # minted id there instead (seed_metadata's fallback).
+        boot["name"] = name
         # The persistent artifacts (#14) come before the row: a refused
         # create (a leftover artifact from a previous workspace of this
         # id) answers 503 with nothing written and nothing removed, and

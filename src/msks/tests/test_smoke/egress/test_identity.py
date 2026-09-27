@@ -232,7 +232,7 @@ async def test_local_minted_identity() -> None:
         assert stopped.returncode == 0, stopped.stderr
 
     async def boot_and_wait(app=None) -> None:
-        await await_guest_up(serial_log)
+        await await_guest_up(serial_log, hostname=wid)
         # The seed's script runs in cloud-init's user-scripts stage
         # (cloud_final); wait for cloud-init to be done before any
         # login or authorized_keys assertion, so the stage's ordering
@@ -243,6 +243,7 @@ async def test_local_minted_identity() -> None:
             "cloud-init status --wait",
             "done",
             app=app,
+            hostname=wid,
         )
         await run_in_console(
             microvm,
@@ -255,6 +256,7 @@ async def test_local_minted_identity() -> None:
             "&& systemctl is-active ssh >/dev/null 2>&1 && echo U-$((6*7))",
             "U-42",
             app=app,
+            hostname=wid,
         )
 
     async def fetch_key(out: Path) -> str:
@@ -360,6 +362,7 @@ async def test_local_minted_identity() -> None:
             "&& echo AK-$((6*7))",
             "AK-42",
             app=app,
+            hostname=wid,
         )
         # The operator payload landed beside the identity — the
         # composed document ran whole through cloud-init.
@@ -369,6 +372,7 @@ async def test_local_minted_identity() -> None:
             "cat /root/payload",
             payload_marker,
             app=app,
+            hostname=wid,
         )
 
         # Logins: root, the image's workspace user, and the
@@ -737,13 +741,14 @@ async def test_local_client_minted_identity() -> None:
         # authorized_keys carry the client's line.
         started = await cli("start", wid)
         assert started.returncode == 0, started.stderr
-        await await_guest_up(serial_log)
+        await await_guest_up(serial_log, hostname=wid)
         await run_in_console(
             microvm,
             vm_id,
             "cloud-init status --wait",
             "done",
             app=app,
+            hostname=wid,
         )
         await run_in_console(
             microvm,
@@ -756,6 +761,7 @@ async def test_local_client_minted_identity() -> None:
             "&& systemctl is-active ssh >/dev/null 2>&1 && echo U-$((6*7))",
             "U-42",
             app=app,
+            hostname=wid,
         )
         await run_in_console(
             microvm,
@@ -765,6 +771,7 @@ async def test_local_client_minted_identity() -> None:
             f"&& echo AK-$((6*7))",
             "AK-42",
             app=app,
+            hostname=wid,
         )
         # The console challenge (#123): the seed planted the
         # allowed_signers trust store beside authorized_keys, so a
@@ -783,6 +790,7 @@ async def test_local_client_minted_identity() -> None:
             f"&& echo AS-$((6*7))",
             "AS-42",
             app=app,
+            hostname=wid,
         )
         attacker_reader, attacker_writer = await microvm.console(
             vm_id, user="root"
@@ -1023,7 +1031,7 @@ async def test_local_operator_pubkey() -> None:
 
         started = await cli("start", wid)
         assert started.returncode == 0, started.stderr
-        await await_guest_up(serial_log)
+        await await_guest_up(serial_log, hostname=wid)
         await run_in_console(
             microvm,
             vm_id,
@@ -1031,6 +1039,7 @@ async def test_local_operator_pubkey() -> None:
             "done",
             app=app,
             signer=operator_signer,
+            hostname=wid,
         )
         await run_in_console(
             microvm,
@@ -1044,6 +1053,7 @@ async def test_local_operator_pubkey() -> None:
             "U-42",
             app=app,
             signer=operator_signer,
+            hostname=wid,
         )
         await run_in_console(
             microvm,
@@ -1054,6 +1064,7 @@ async def test_local_operator_pubkey() -> None:
             "AK-42",
             app=app,
             signer=operator_signer,
+            hostname=wid,
         )
 
         forward_port = free_port()

@@ -61,7 +61,7 @@ async def test_local_user_data_provisioning() -> None:
 
     async def boot_and_probe(expected_count: int, app=None) -> None:
         await microvm.launch(spec)
-        await await_guest_up(serial_log)
+        await await_guest_up(serial_log, hostname=wid)
         # Payloads run in cloud-final, which can lag the login getty;
         # wait for cloud-init to be done before asserting on files it
         # was supposed to write.
@@ -71,6 +71,7 @@ async def test_local_user_data_provisioning() -> None:
             "cloud-init status --wait",
             "done",
             app=app,
+            hostname=wid,
         )
         await run_in_console(
             microvm,
@@ -78,6 +79,7 @@ async def test_local_user_data_provisioning() -> None:
             "cat /root/firstboot-count",
             str(expected_count),
             app=app,
+            hostname=wid,
         )
         # The seed reaches the guest as a labeled, read-only disk.
         await run_in_console(
@@ -86,6 +88,7 @@ async def test_local_user_data_provisioning() -> None:
             "blkid -o value -s LABEL /dev/vdc",
             "cidata",
             app=app,
+            hostname=wid,
         )
         await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
 
@@ -147,13 +150,14 @@ async def test_local_user_data_cloud_config() -> None:
     )
     try:
         await microvm.launch(spec)
-        await await_guest_up(serial_log)
+        await await_guest_up(serial_log, hostname=wid)
         await run_in_console(
             microvm,
             wid,
             "cloud-init status --wait",
             "done",
             app=app,
+            hostname=wid,
         )
         await run_in_console(
             microvm,
@@ -161,6 +165,7 @@ async def test_local_user_data_cloud_config() -> None:
             "cat /root/provisioned.txt",
             marker,
             app=app,
+            hostname=wid,
         )
         await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
     except BaseException:
