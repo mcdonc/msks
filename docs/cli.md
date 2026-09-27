@@ -222,10 +222,13 @@ closes itself when the session disconnects.
 appended shell inside a local tmux session and answers the
 workspace's egress consent prompts right there: while the session
 lives, it registers as a decider for the workspace, and a held
-egress request raises a popup over the shell — one keypress
-allows (choosing the duration: `1` once, `2` 5m, `3` 15m, `4`
-until restart, `5` forever) or denies, and the popup closes. The
-session ends with its window, and the decider registration ends
+egress request raises a popup over the shell: `a` allows until
+restart and `d` denies — any other key denies — while the
+uppercase twins `A` and `D` pick a duration for their verdict
+(`1` once, `2` 5m, `3` 15m, `4` until restart, `5` forever). The
+popup paints its rows — a bold destination, green allow bindings,
+red deny — and `NO_COLOR` leaves it plain. The session ends with
+its window, and the decider registration ends
 with the session. It works with any terminal that runs a command:
 name your terminal and its command flag in `terminal_open_cmd`,
 and `msks-term-popup` right after it (tmux 3.2 or newer must be on
