@@ -1394,6 +1394,7 @@ def test_a_remembered_socket_rides_untouched(
         (["-voForwardAgent=yes", "-T"], ["-T"]),
         (["-o", "User=root"], ["-o", "User=root"]),
         (["-vJA"], ["-vJA"]),
+        (["-vo"], ["-vo"]),  # a dangling -o names no setting to drop
     ],
 )
 def test_without_forwarding_lifts_every_spelling(
