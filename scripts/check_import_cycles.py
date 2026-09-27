@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Import-cycle gate over the daemon sources (#387).
 
-Walks every import under ``src/msks/msks`` with ``ast`` and fails
-when the module-level import graph has a cycle — the class of
-fragility #387 closed (``model → microvm → consent → model``),
-where Python must resolve the loop by partial initialization.
+Walks every import under ``src/msks/msks`` with ``ast`` — module
+level, deferred, typing-only alike; for a layering contract every
+import the tree carries is an edge — and fails when the module
+import graph has a cycle: the class of fragility #387 closed
+(``model → microvm → consent → model``), where Python must resolve
+the loop by partial initialization.
 
 The walk counts an import as a module edge only when it can loop:
 a module importing itself or its own ancestor package is the
@@ -18,9 +20,10 @@ Runs at commit time (the generated pre-commit hook) and inside
 ``msks-preflight``; exit status 1 names the cycle's chain with the
 file:line of each import along it.
 
-Star imports create no edge (ruff's F403 rejects them before this
-gate ever runs); everything else the ``ast`` walker sees, this gate
-sees.
+A star import creates only the edge on the module itself; the
+names it spreads create none (ruff's F403 rejects star imports
+before this gate ever runs). Everything else the ``ast`` walker
+sees, this gate sees.
 """
 
 import ast

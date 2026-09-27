@@ -35,8 +35,9 @@ The whitelist reads bottom-up:
   inspects; ``conformance_args`` is the surface the client shares)
 - ``server`` — the HTTP surface, orchestrating everything below
 - ``app`` — composition; the entry point (``server.main``) pulls it
-- ``client`` — the REST client; it touches the daemon only through
-  the root leaves above (#397 tracks shrinking that set)
+- ``client`` — the REST client; it imports the root leaves plus the
+  local conformance check (which composes the daemon — #397 tracks
+  shrinking the set)
 """
 
 import importlib.util
@@ -62,7 +63,8 @@ ALLOWED_EDGES = {
     ("app", "secretstore"),
     ("app", "server"),
     ("app", "settings"),
-    # client: the REST consumer (root leaves only; #397)
+    # client: the REST consumer plus the local conformance check
+    # (#397 tracks shrinking this set)
     ("client", "config"),
     ("client", "conformance"),
     ("client", "conformance_args"),
