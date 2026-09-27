@@ -149,8 +149,9 @@ def test_client_imports_stay_within_the_allowlist():
     if extra or unused:
         lines = ["client imports outside the isolation allowlist (#397):"]
         for pkg in sorted(extra):
+            sites = ", ".join(sorted(set(found[pkg])))
             lines.append(
-                f"  client -> {pkg} at {', '.join(sorted(found[pkg]))} — the"
+                f"  client -> {pkg} at {sites} — the"
                 " client is a standalone REST consumer; import the API's"
                 " data, or extend CLIENT_ALLOWED in test_layering.py with a"
                 " shared-leaf reason"
@@ -192,8 +193,9 @@ def test_package_edges_are_whitelisted():
         lines = ["package edges outside the layering whitelist (#387):"]
         for (src, dst), sites in sorted(unknown.items()):
             allowed = sorted(d for s, d in ALLOWED_EDGES if s == src)
+            site_list = ", ".join(sorted(set(sites)))
             lines.append(
-                f"  {src} -> {dst} at {', '.join(sorted(sites))}; {src} may"
+                f"  {src} -> {dst} at {site_list}; {src} may"
                 f" import: {', '.join(allowed) or '(nothing)'} — import from"
                 " one of those, or widen the whitelist in test_layering.py"
                 " deliberately"
