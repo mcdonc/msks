@@ -235,13 +235,12 @@ class AuditLink(DeciderLink):
         unregistered subscriber would otherwise hoard holds it can
         never resolve, unbounded: the log has its bound, the
         pending map has none). No registration was sent, so no
-        rejection can arrive. The sightings buffer stays empty —
+        rejection can arrive; the sightings buffer stays empty —
         the audit screen's rows carry the sightings, and each
         workspace page's own link owns the flash."""
         msg = decode_frame(raw)
-        if not isinstance(msg, dict):
-            return False
-        if not str(msg.get("event") or "").startswith("secret."):
-            return False
-        outcome, _payload = self.controller.apply_frame(raw)
-        return outcome == FRAME_REJECTED
+        if msg is not None and str(msg.get("event") or "").startswith(
+            "secret."
+        ):
+            self.controller.apply_frame(raw)
+        return False

@@ -280,10 +280,9 @@ async def test_the_page_lists_rows_with_the_live_countdown(
     app, _follow = make_app(data)
     async with app.run_test() as pilot:
         await open_secrets(pilot, app)
-        await wait_for(lambda: secrets_children(app) == 2)
+        await wait_for(lambda: "github_api" in secret_text(app, 0))
         wide = secret_text(app, 0)
         assert wide.startswith("*")  # the daemon-wide row's coverage
-        assert "github_api" in wide
         assert "api.github.com" in wide
         assert "59m" in wide  # an hour out, at the pinned clock
         scoped = secret_text(app, 1)
@@ -509,9 +508,10 @@ async def test_the_audit_view_replays_and_streams() -> None:
     app, _follow = make_app(data)
     async with app.run_test() as pilot:
         await open_audit(pilot, app, link_factory)
-        await wait_for(lambda: audit_children(app) == 3)
-        # Newest first: the live swap (now), the revoke, the mint.
-        assert "swap" in audit_text(app, 0)
+        # Newest first: the live swap (now), the revoke, the mint —
+        # waited on their text, not the row count (the compose
+        # stream lags the count; the count alone races the reads).
+        await wait_for(lambda: "swap" in audit_text(app, 0))
         assert "revoke" in audit_text(app, 1)
         assert "mint" in audit_text(app, 2)
         assert "*/github_api" in audit_text(app, 1)  # daemon-wide coverage
@@ -621,8 +621,7 @@ async def test_the_audit_view_filters_by_kind_and_workspace() -> None:
             pilot, "k", lambda: type(app.screen).__name__ == "PickerScreen"
         )
         await pick_option(pilot, app, 3)  # all -> mint
-        await wait_for(lambda: audit_children(app) == 1)
-        assert "mint" in audit_text(app, 0)
+        await wait_for(lambda: "mint" in audit_text(app, 0))
         assert "kind mint" in audit_status(app)
         # Cancel keeps the filter.
         await press_until(
@@ -655,8 +654,9 @@ async def test_the_audit_view_filters_by_kind_and_workspace() -> None:
         # ws-b sees its scoped revoke and its tap's sighting; the
         # daemon-wide rule needs no rows here, the scoped mint stays
         # hidden.
+        await wait_for(lambda: "ws-b" in audit_text(app, 0))
         texts = " | ".join(audit_text(app, i) for i in range(2))
-        assert "ws-b" in texts and "mint" not in texts
+        assert "mint" not in texts
         # Both filters together can match nothing: the empty line
         # names the filters, not the log's emptiness.
         view.kind = "mint"
