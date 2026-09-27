@@ -7,7 +7,7 @@ modules that only need *where* to connect (the config file layer,
 the TUI) import this module, while the REST transport
 (:mod:`msks.client.rest`) keeps the calls. The YAML file layer
 (:mod:`msks.client.config`) materializes its winners into the
-environment these readers poll.
+environment these readers read.
 """
 
 import os
