@@ -170,6 +170,9 @@ in
     ruff
     socat # AF_UNIX <-> pty/stdio plumbing for CH socket debugging
     tcpdump # packet-level debugging of the egress path (tap vs uplink)
+    tmux # the #379 terminal_open_cmd launcher runs the workspace
+    # shell in a local tmux session and raises consent popups
+    # (display-popup) over it when a verdict is required
     # cyclomatic-complexity gate tool: built against python3.14 because
     # nixpkgs' top-level xenon runs on an older python whose parser can
     # reject syntax ruff format writes for a 3.14 codebase, silently

@@ -71,6 +71,7 @@ build-backend = "hatchling.build"
 [project.scripts]
 msks = "msks.client.cli:main"
 msksd = "msks.server.main:main"
+msks-term-popup = "msks.client.term_popup:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/msks/msks"]
