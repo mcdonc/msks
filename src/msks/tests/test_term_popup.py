@@ -527,15 +527,70 @@ def test_session_alive_reads_has_session(
 
 
 def test_verdict_for_maps_the_keys() -> None:
-    assert tp.verdict_for("1") == ("allow", "once")
-    assert tp.verdict_for("2") == ("allow", "5m")
-    assert tp.verdict_for("3") == ("allow", "15m")
-    assert tp.verdict_for("4") == ("allow", "tilrestart")
-    assert tp.verdict_for("5") == ("allow", "forever")
-    assert tp.verdict_for("n") == ("deny", "once")
+    # The quick forms: a allows until restart, d denies now.
+    assert tp.verdict_for("a") == ("allow", "tilrestart")
+    assert tp.verdict_for("d") == ("deny", "once")
+    # The uppercase twins hand their duration to the chooser.
+    assert tp.verdict_for("A") is None
+    assert tp.verdict_for("D") is None
     # Any other key — Enter, EOF, a stray letter — denies now.
     assert tp.verdict_for("") == ("deny", "once")
     assert tp.verdict_for("x") == ("deny", "once")
+    assert tp.verdict_for("1") == ("deny", "once")
+
+
+def test_duration_for_maps_the_chooser_keys() -> None:
+    assert tp.duration_for("1") == "once"
+    assert tp.duration_for("2") == "5m"
+    assert tp.duration_for("3") == "15m"
+    assert tp.duration_for("4") == "tilrestart"
+    assert tp.duration_for("5") == "forever"
+    # A stray key keeps until restart, the chooser's common case.
+    assert tp.duration_for("x") == "tilrestart"
+
+
+def test_span_paints_only_when_on() -> None:
+    assert tp.span(True, "32", "go") == "\x1b[32mgo\x1b[0m"
+    assert tp.span(False, "32", "go") == "go"
+
+
+def test_ansi_follows_the_tty_and_no_color(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Tty(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    monkeypatch.setattr(tp.sys, "stdout", Tty())
+    assert tp.ansi() is True
+    monkeypatch.setenv("NO_COLOR", "1")
+    assert tp.ansi() is False
+    monkeypatch.delenv("NO_COLOR")
+    monkeypatch.setattr(tp.sys, "stdout", io.StringIO())
+    assert tp.ansi() is False
+
+
+def test_prompt_text_plains_and_paints() -> None:
+    plain = tp.prompt_text(on=False)
+    lines = plain.splitlines()
+    assert "[a] until restart" in lines[0]
+    assert "[d] now" in lines[1]
+    # The chooser column lines up under itself, row over row.
+    assert lines[0].index("[A]") == lines[1].index("[D]")
+    # The fail-fast default stays a behavior, not a line.
+    assert "any other key" not in plain
+    assert "\x1b" not in plain
+    painted = tp.prompt_text(on=True)
+    assert painted != plain
+    assert "\x1b[32m[a]" in painted
+    assert "\x1b[31m[d]" in painted
+
+
+def test_duration_text_lists_the_durations() -> None:
+    plain = tp.duration_text(on=False)
+    assert "[1] once" in plain
+    assert "[5] forever" in plain
+    assert "\x1b" not in plain
 
 
 def test_read_key_falls_back_to_a_line_when_not_a_tty(
@@ -598,14 +653,44 @@ def test_run_decide_posts_the_verdict(
         posted.update(method=method, path=path, body=json_body)
 
     monkeypatch.setattr(tp, "request", fake_request)
-    monkeypatch.setattr(tp, "read_key", lambda prompt: "2")
+    monkeypatch.setattr(tp, "read_key", lambda prompt: "a")
     rc = tp.run_decide(["-w", "ws1", "-r", "r1", "-d", "api.example:443"])
     assert rc == 0
     assert posted["method"] == "POST"
     assert posted["path"] == "/api/v1/workspaces/ws1/egress/requests/r1"
-    assert posted["body"] == {"decision": "allow", "duration": "5m"}
+    assert posted["body"] == {"decision": "allow", "duration": "tilrestart"}
     out = capsys.readouterr().out
     assert "destination: api.example:443" in out
+    assert "allow (tilrestart)" in out
+
+
+def test_run_decide_uppercase_opens_the_duration_chooser(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    client_env(monkeypatch)
+    monkeypatch.setattr(tp, "linger", lambda: None)
+    posted = {}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+    monkeypatch.setattr(tp, "api_client", lambda *_a, **_k: FakeClient())
+
+    async def fake_request(client, method, path, json_body=None):
+        posted.update(method=method, path=path, body=json_body)
+
+    monkeypatch.setattr(tp, "request", fake_request)
+    keys = iter(["A", "2"])
+    monkeypatch.setattr(tp, "read_key", lambda prompt: next(keys))
+    rc = tp.run_decide(["-w", "ws1", "-r", "r1", "-d", "api.example:443"])
+    assert rc == 0
+    assert posted["body"] == {"decision": "allow", "duration": "5m"}
+    out = capsys.readouterr().out
     assert "allow (5m)" in out
 
 

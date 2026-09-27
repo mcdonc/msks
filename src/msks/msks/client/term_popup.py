@@ -54,7 +54,7 @@ import tty
 import websockets
 
 from . import wsauth
-from .egress import connect_args, dest_label, refused
+from .egress import DURATIONS, connect_args, dest_label, refused
 from .rest import api_client, env_token, env_url, request
 
 #: The popup geometry: fixed cells, sized for the 80-column window
@@ -72,18 +72,36 @@ OUTCOME_LINGER_S = 1.2
 #: closed window retires the watcher within one tick.
 LIVENESS_TICK_S = 5.0
 
-#: One popup keypress's verdict: the five allow durations, ``n``
-#: for deny. Enter, an unknown key, EOF — anything else — denies
-#: now: a popup left alone fails the held connection fast instead
-#: of waiting out the timeout (the ``--decide`` prompt's rule).
+#: The popup's quick verdicts: ``a`` allows until restart (the
+#: common case), ``d`` denies now — and so does every other key,
+#: the fail-fast default a popup left alone must take (the
+#: ``--decide`` prompt's rule). The uppercase twins (``A``, ``D``)
+#: open the duration chooser for the same verdict.
 CHOICES = {
-    "1": ("allow", "once"),
-    "2": ("allow", "5m"),
-    "3": ("allow", "15m"),
-    "4": ("allow", "tilrestart"),
-    "5": ("allow", "forever"),
-    "n": ("deny", "once"),
+    "a": ("allow", "tilrestart"),
+    "d": ("deny", "once"),
 }
+
+#: The duration chooser's keys, in :data:`egress.DURATIONS` order.
+DURATION_KEYS = {str(i): duration for i, duration in enumerate(DURATIONS, 1)}
+
+#: The popup's ANSI paint codes: bold labels, a bold-cyan
+#: destination, a faint request id, green allow bindings, red deny
+#: bindings. :func:`span` applies a code only while :func:`ansi`
+#: says stdout takes paint (a terminal that did not opt out with
+#: NO_COLOR).
+PAINT_LABEL = "1"
+PAINT_FACT = "1;36"
+PAINT_ID = "2"
+PAINT_KEY = "32"
+PAINT_DKEY = "31"
+PAINT_ALLOW = "1;32"
+PAINT_DENY = "1;31"
+
+#: The popup key map's quick-form column width: the widest cell
+#: ("[a] until restart") plus a one-space gutter, so the duration
+#: chooser column lines up under itself row over row.
+KEY_COLUMN = 20
 
 #: The modules this package reaches itself through: the pane, the
 #: watcher, and the popup's command all re-invoke this module by
@@ -174,17 +192,24 @@ def run_decide(argv: list[str]) -> int:
             "usage: msks.client.term_popup decide "
             "-w WORKSPACE -r REQUEST -d DESTINATION"
         )
-    print(f"  destination: {dest}")
-    print(f"  request:     {request_id}")
-    key = read_key(prompt_text())
-    decision, duration = verdict_for(key)
+    on = ansi()
+    print(
+        f"  {span(on, PAINT_LABEL, 'destination:')}"
+        f" {span(on, PAINT_FACT, dest)}"
+    )
+    print(
+        f"  {span(on, PAINT_LABEL, 'request:')}"
+        f"     {span(on, PAINT_ID, request_id)}"
+    )
+    decision, duration = read_verdict(on)
     try:
         asyncio.run(post_verdict(workspace_id, request_id, decision, duration))
     except SystemExit as exc:
-        print(f"  {exc}")
+        print(f"  {span(on, PAINT_DENY, str(exc))}")
         linger()
         return 1
-    print(f"  {decision} ({duration})")
+    paint = PAINT_ALLOW if decision == "allow" else PAINT_DENY
+    print(f"  {span(on, paint, f'{decision} ({duration})')}")
     linger()
     return 0
 
@@ -388,6 +413,18 @@ async def post_verdict(
         )
 
 
+def read_verdict(on: bool) -> tuple[str, str]:
+    """The popup's keypress exchange: one key takes its quick
+    verdict; an uppercase twin reads a second key and takes that
+    duration for the same verdict."""
+    key = read_key(prompt_text(on))
+    verdict = verdict_for(key)
+    if verdict is None:
+        choice = read_key(duration_text(on))
+        return ("allow" if key == "A" else "deny", duration_for(choice))
+    return verdict
+
+
 def read_key(prompt: str) -> str:
     """Read one keypress without waiting for Enter — the popup's
     single-key contract. A stdin that is not a terminal (a test, a
@@ -405,21 +442,75 @@ def read_key(prompt: str) -> str:
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
 
 
-def prompt_text() -> str:
-    """The popup's key map, in the order the rows read."""
+def prompt_text(on: bool = True) -> str:
+    """The popup's key map, one verdict per row: the quick form and
+    the duration chooser each sit in their own column. A key
+    outside the map still denies now — :func:`verdict_for`'s
+    fail-fast rule — but the map no longer says so."""
     return (
-        "  allow for:  1 once   2 5m   3 15m   4 until restart"
-        "   5 forever\n"
-        "  deny now:   n (or any other key)\n"
-        "  > "
+        f"  {span(on, PAINT_LABEL, 'allow:')}  "
+        f"{key_cell(on, PAINT_KEY, '[a]', 'until restart')}"
+        f"{span(on, PAINT_KEY, '[A]')} choose duration\n"
+        f"  {span(on, PAINT_LABEL, 'deny:')}   "
+        f"{key_cell(on, PAINT_DKEY, '[d]', 'now')}"
+        f"{span(on, PAINT_DKEY, '[D]')} choose duration\n"
+        f"  {span(on, PAINT_LABEL, '> ')}"
     )
 
 
-def verdict_for(key: str) -> tuple[str, str]:
-    """One pressed key's ``(decision, duration)``: the five allow
-    durations, ``n`` denies — and so does everything else, the
-    fail-fast default a popup left alone must take."""
-    return CHOICES.get(key, ("deny", "once"))
+def key_cell(on: bool, code: str, key: str, label: str) -> str:
+    """One key-map cell: the painted key, its label, and the pad to
+    :data:`KEY_COLUMN` — computed on the plain width, so paint
+    never shifts the columns."""
+    cell = f"{span(on, code, key)} {label}"
+    pad = KEY_COLUMN - len(key) - 1 - len(label)
+    return f"{cell}{' ' * max(pad, 1)}"
+
+
+def duration_text(on: bool = True) -> str:
+    """The duration chooser's key map, in :data:`egress.DURATIONS`
+    order."""
+    keys = "  ".join(
+        f"{span(on, PAINT_KEY, f'[{i}]')} {duration}"
+        for i, duration in enumerate(DURATIONS, 1)
+    )
+    return (
+        f"  {span(on, PAINT_LABEL, 'duration:')} {keys}\n"
+        f"  {span(on, PAINT_LABEL, '> ')}"
+    )
+
+
+def verdict_for(key: str) -> tuple[str, str] | None:
+    """One pressed key's ``(decision, duration)``: the lowercase
+    quick forms, or None for the uppercase forms (their verdict's
+    duration comes from the chooser). Every key outside the map
+    denies now — the fail-fast default a popup left alone must
+    take."""
+    if key in CHOICES:
+        return CHOICES[key]
+    if key in ("A", "D"):
+        return None
+    return ("deny", "once")
+
+
+def duration_for(key: str) -> str:
+    """One duration-chooser keypress; a stray key keeps until
+    restart, the chooser's common case."""
+    return DURATION_KEYS.get(key, "tilrestart")
+
+
+def ansi() -> bool:
+    """Whether the popup's stdout takes paint: a terminal that did
+    not opt out with NO_COLOR."""
+    return sys.stdout.isatty() and "NO_COLOR" not in os.environ
+
+
+def span(on: bool, code: str, text: str) -> str:
+    """One painted span — code, text, reset — or the bare text when
+    paint is off."""
+    if not on:
+        return text
+    return f"\x1b[{code}m{text}\x1b[0m"
 
 
 def session_argv(
