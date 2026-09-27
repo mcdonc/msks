@@ -164,6 +164,37 @@ enforces the rule (`test_client_imports_stay_within_the_allowlist`);
 widening the allowlist is a deliberate edit there and in
 `ALLOWED_EDGES`, with a shared-leaf reason.
 
+## Import-graph gates
+
+The import graph is checked by gates. Each gate is a rule plus a
+small config file, so any codebase can adopt them by writing config,
+not code.
+
+- **No cycles.** Modules must not import in circles. Neither may
+  packages. A package cycle needs a named exemption; exemptions only
+  shrink, never grow.
+- **Imports point down.** Each package has a rank number. An import
+  may only go from a higher rank to a lower one. A new package gets
+  a rank before it gets imports.
+- **Coupling only shrinks.** Import counts between each package pair
+  are stored in a snapshot file. A count may not grow unless the
+  snapshot is updated in the same commit, with the reason.
+- **No module is imported by too many others.** A ceiling is recorded
+  in a file. When a module hits it, split the module. The ceiling
+  only goes down.
+- **Shipped code must be reachable.** Every module in the shipped
+  package must be imported, directly or indirectly, from a declared
+  entry point. Test-only code lives in the test tree.
+- **Config files must match the code.** An allowlist entry nothing
+  uses fails the gate. Remove it in the same PR that removed its last
+  use.
+- **Import names from the module that defines them.** Importing
+  through a module that only re-exports fails, unless that module is
+  on the facade list.
+
+Run the gates after writing code and fix all findings in one pass.
+Widening a config file is a deliberate edit: the diff states why.
+
 ## TUI spatial navigation (no focus traps)
 
 The textual TUI must use **spatial navigation** — arrow keys move focus
