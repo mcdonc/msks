@@ -33,12 +33,14 @@ from ..spec.egress import (
     DECISION_EXPIRED,
     DECISION_PENDING,
     DECISION_REVOKED,
-    DURATION_FOREVER,
     DURATION_ONCE,
-    DURATION_SECONDS,
-    DURATION_TILRESTART,
+    LONG_TTL_S,
     MODE_ALLOW,
     MODE_STATIC,
+    ONCE_REJECT_S,
+    VerdictPin,
+    duration_ttl,
+    is_ipv4,
     public_row,
 )
 
@@ -48,29 +50,24 @@ logger = logging.getLogger(__name__)
 VERDICT_ALLOW = "allow"
 VERDICT_DENY = "deny"
 
-#: How long a ``once`` deny's fail-fast reject rule lives: enough to
-#: catch the SYN's retransmit (one RTO), short enough that a new
-#: connection to the same destination is not refused above the
-#: queue (klangk's CONSENT_REJECT_TTL).
-ONCE_REJECT_S = 10.0
-
-#: The kernel's connect timeout is ~127 s (tcp_syn_retries); a hold
-#: must answer inside it, and a session/flow rule standing in for
-#: ``forever`` needs only outlive the table it dies with anyway.
-LONG_TTL_S = 30 * 86400.0
+# The decided enforcement TTL every verdict this engine resolves
+# carries (``pin_ttl_s``): an allow pins for its duration (``once``
+# pins nothing — a reconnect re-prompts); a deny's fail-fast RST
+# falls back to the once window when the verdict itself carries no
+# window. The consumer installs the number without re-deriving it
+# (#401: consent decides, the data plane applies).
 
 
-def duration_ttl(duration: str) -> float | None:
-    """Seconds a verdict's enforcement lives, or None for ``once``.
+def decided_ttl(decision: str, duration: str) -> float | None:
+    """The enforcement TTL a verdict's kernel element lives for.
 
-    ``tilrestart``/``forever`` map to a long TTL — the real boundary
-    for the first is the per-VM table's deletion at stop, and for
-    the second the row's replay at every attach."""
-    if duration in DURATION_SECONDS:
-        return float(DURATION_SECONDS[duration])
-    if duration in (DURATION_TILRESTART, DURATION_FOREVER):
-        return LONG_TTL_S
-    return None
+    The deny fallback is the once window: a ``once`` deny still
+    answers its own retransmit with an RST, and an unknown
+    duration fail-closes the same narrow way."""
+    ttl = duration_ttl(duration)
+    if decision == DECISION_ALLOWED:
+        return ttl
+    return ONCE_REJECT_S if ttl is None else ttl
 
 
 def grouped(rows: list[dict], decision: str) -> list[dict]:
@@ -90,13 +87,17 @@ def built_verdict(
 ) -> tuple[dict, str]:
     """``(verdict, resolved_label)`` for a decide step: a missing
     row fail-closes deny/expired; otherwise the decision maps to
-    its wire verdict carrying the duration."""
+    its wire verdict carrying the duration and the decided
+    enforcement TTL (``pin_ttl_s`` — the number the data plane
+    installs, resolved here so it consumes no verdict vocabulary,
+    #401)."""
     if row is None:
         return (
             {
                 "decision": VERDICT_DENY,
                 "reason": "gone",
                 "duration": DURATION_ONCE,
+                "pin_ttl_s": ONCE_REJECT_S,
             },
             DECISION_EXPIRED,
         )
@@ -106,6 +107,7 @@ def built_verdict(
                 "decision": VERDICT_ALLOW,
                 "reason": "decided",
                 "duration": duration,
+                "pin_ttl_s": decided_ttl(decision, duration),
             },
             DECISION_ALLOWED,
         )
@@ -114,9 +116,25 @@ def built_verdict(
             "decision": VERDICT_DENY,
             "reason": "decided",
             "duration": duration,
+            "pin_ttl_s": decided_ttl(decision, duration),
         },
         DECISION_DENIED,
     )
+
+
+def pin_for_row(row: dict) -> VerdictPin | None:
+    """One forever row as a decided pin, None when it pins
+    nothing: a name-keyed verdict enforces at the resolver gate
+    (its row is read live there), and a deny without a port has
+    no RST to pin."""
+    host = row["dest_host"]
+    if not is_ipv4(host):
+        return None
+    port = None if row["dest_port"] == 0 else row["dest_port"]
+    allowed = row["decision"] == DECISION_ALLOWED
+    if not allowed and port is None:
+        return None
+    return VerdictPin(allowed, host, port, LONG_TTL_S)
 
 
 def hold_owner(
@@ -368,7 +386,11 @@ class ConsentEngine:
                 # The workspace vanished under the hold: fail
                 # closed, not open — a missing row is not consent.
                 return completed_verdict(
-                    {"decision": VERDICT_DENY, "reason": "gone"}
+                    {
+                        "decision": VERDICT_DENY,
+                        "reason": "gone",
+                        "pin_ttl_s": ONCE_REJECT_S,
+                    }
                 )
             return await self.mode_verdict(
                 row.get("egress_mode") or MODE_ALLOW,
@@ -381,7 +403,11 @@ class ConsentEngine:
             # consumer awaits this future; answer deny.
             logger.exception("consent: hold failed; fail-closing to deny")
             return completed_verdict(
-                {"decision": VERDICT_DENY, "reason": "error"}
+                {
+                    "decision": VERDICT_DENY,
+                    "reason": "error",
+                    "pin_ttl_s": ONCE_REJECT_S,
+                }
             )
 
     async def mode_verdict(
@@ -395,14 +421,22 @@ class ConsentEngine:
                 DECISION_ALLOWED, workspace_id, host, port
             )
             return completed_verdict(
-                {"decision": VERDICT_ALLOW, "reason": "allow_mode"}
+                {
+                    "decision": VERDICT_ALLOW,
+                    "reason": "allow_mode",
+                    "pin_ttl_s": None,
+                }
             )
         if mode == MODE_STATIC:
             await self.model.record_policy(
                 DECISION_DENIED, workspace_id, host, port
             )
             return completed_verdict(
-                {"decision": VERDICT_DENY, "reason": "static"}
+                {
+                    "decision": VERDICT_DENY,
+                    "reason": "static",
+                    "pin_ttl_s": ONCE_REJECT_S,
+                }
             )
         return await self.interactive_hold(workspace_id, host, port)
 
@@ -418,18 +452,30 @@ class ConsentEngine:
                 DECISION_DENIED, workspace_id, host, port
             )
             return completed_verdict(
-                {"decision": VERDICT_DENY, "reason": "static"}
+                {
+                    "decision": VERDICT_DENY,
+                    "reason": "static",
+                    "pin_ttl_s": ONCE_REJECT_S,
+                }
             )
         if self.rate_limit > 0 and (
             await self.model.count_pending(workspace_id) >= self.rate_limit
         ):
             return completed_verdict(
-                {"decision": VERDICT_DENY, "reason": "rate_limited"}
+                {
+                    "decision": VERDICT_DENY,
+                    "reason": "rate_limited",
+                    "pin_ttl_s": ONCE_REJECT_S,
+                }
             )
         request = await self.model.create_request(workspace_id, host, port)
         if request is None:
             return completed_verdict(
-                {"decision": VERDICT_DENY, "reason": "duplicate"}
+                {
+                    "decision": VERDICT_DENY,
+                    "reason": "duplicate",
+                    "pin_ttl_s": ONCE_REJECT_S,
+                }
             )
         return self.register_hold(request)
 
@@ -604,6 +650,7 @@ class ConsentEngine:
                 "decision": VERDICT_DENY,
                 "reason": reason,
                 "duration": DURATION_ONCE,
+                "pin_ttl_s": ONCE_REJECT_S,
             }
         )
         self.publish(
@@ -682,6 +729,29 @@ class ConsentEngine:
         if clear is None:
             return
         await clear(row["workspace_id"], row["dest_host"], row["dest_port"])
+
+    async def forever_pins(self, workspace_id: str) -> list[VerdictPin]:
+        """The workspace's durable verdicts as decided pins (#401):
+        every in-effect ``forever`` verdict given by *address*, its
+        enforcement resolved to action, destination, and TTL — the
+        data plane installs the pins without speaking the verdict
+        vocabulary they came from. Best-effort: a failed read
+        returns no pins (a missed pin re-prompts, which is the
+        correct fallback, not a leak)."""
+        try:
+            rows = await self.model.forever_rows(workspace_id)
+        except Exception:
+            logger.exception(
+                "consent replay for %s failed; verdicts re-prompt",
+                workspace_id,
+            )
+            return []
+        pins: list[VerdictPin] = []
+        for row in rows:
+            pin = pin_for_row(row)
+            if pin is not None:
+                pins.append(pin)
+        return pins
 
     # --- frames -------------------------------------------------------------
 

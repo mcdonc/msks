@@ -2,7 +2,10 @@
 plus the consent lifecycle vocabulary every consent speaker shares
 (#387): decision and duration words and the decider-facing row
 shape, kept below the model so the layers above — model, consent,
-net, server — import one vocabulary instead of each other.
+net, server — import one vocabulary instead of each other. #401
+added the decided side: the verdict TTL resolution and the pin
+shape consent hands the data plane, so ``net`` consumes final
+enforcement values and no consent module.
 
 A workspace's static allowlist is a list of specs:
 
@@ -341,6 +344,47 @@ DURATION_DEFAULT = DURATION_TILRESTART
 #: are not time-bounded (they are governed by connection, table
 #: lifetime, and the row itself).
 DURATION_SECONDS = {DURATION_5M: 300, DURATION_15M: 900}
+
+#: How long a ``once`` deny's fail-fast reject rule lives: enough to
+#: catch the SYN's retransmit (one RTO), short enough that a new
+#: connection to the same destination is not refused above the
+#: queue (klangk's CONSENT_REJECT_TTL).
+ONCE_REJECT_S = 10.0
+
+#: The kernel's connect timeout is ~127 s (tcp_syn_retries); a hold
+#: must answer inside it, and a session/flow rule standing in for
+#: ``forever`` needs only outlive the table it dies with anyway.
+LONG_TTL_S = 30 * 86400.0
+
+
+def duration_ttl(duration: str) -> float | None:
+    """Seconds a verdict's enforcement lives, or None for ``once``.
+
+    ``tilrestart``/``forever`` map to a long TTL — the real boundary
+    for the first is the per-VM table's deletion at stop, and for
+    the second the row's replay at every attach."""
+    if duration in DURATION_SECONDS:
+        return float(DURATION_SECONDS[duration])
+    if duration in (DURATION_TILRESTART, DURATION_FOREVER):
+        return LONG_TTL_S
+    return None
+
+
+@dataclass(frozen=True)
+class VerdictPin:
+    """One decided verdict's kernel enforcement (#401): consent
+    resolves a verdict to its final enforcement shape — action,
+    destination, TTL — and the data plane installs it without
+    speaking the verdict vocabulary it came from.
+
+    Address-literal by construction: a name-keyed verdict enforces
+    at the resolver gate, which reads its row live, so it never
+    becomes a pin."""
+
+    allowed: bool
+    ip: str
+    port: int | None
+    ttl_s: float
 
 
 def public_row(row: dict) -> dict:

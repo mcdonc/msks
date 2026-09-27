@@ -1063,21 +1063,18 @@ async def test_dest_addresses_without_a_services_record(gated_app) -> None:
     ]
 
 
-async def test_replay_row_skips_portless_denies(gated_app) -> None:
+async def test_forever_pins_skip_portless_denies(gated_app) -> None:
     """A forever deny given by address without a port pins nothing:
     an RST needs a port; the row still blocks the name at the
     resolver."""
     app, _consumers, nft_log = gated_app
     await app.state.net.start()
     open(nft_log, "w").close()
-    await app.state.net.replay_row(
-        "ws-i",
-        {
-            "dest_host": "198.51.100.9",
-            "dest_port": 0,
-            "decision": "denied",
-        },
-    )
+    model = app.state.model.egress_consent
+    row = await model.create_request("ws-i", "198.51.100.9", 0)
+    await model.decide(row["id"], "denied", "token", "forever")
+    assert await app.state.consent.forever_pins("ws-i") == []
+    await app.state.net.replay_forever("ws-i")
     assert log_lines(nft_log) == []
 
 

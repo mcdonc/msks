@@ -21,9 +21,8 @@ from dataclasses import dataclass
 from ipaddress import IPv4Network
 from pathlib import Path
 
-from ..consent.coordinator import LONG_TTL_S
-from ..microvm.errors import MicrovmError
-from ..spec.egress import DECISION_ALLOWED, EgressPolicy, is_ipv4
+from ..spec.egress import EgressPolicy, VerdictPin, is_ipv4
+from ..spec.vm import MicrovmError
 from . import alloc, conntrack, dns, nft, taps
 from .dhcp import DhcpServer
 from .dns import DnsForwarder, ResolverGate
@@ -901,51 +900,27 @@ class NetManager:
             await self.replay_forever(workspace_id)
 
     async def replay_forever(self, workspace_id: str) -> None:
-        """Pin a fresh boot's durable verdicts: every in-effect
-        ``forever`` allow/deny given by *address* re-pins its flow
-        element (name-keyed verdicts need nothing here — the
-        resolver gate reads their rows live). Best-effort: a missed
-        pin re-prompts, which is the correct fallback, not a leak."""
-        rows = await self.forever_rows_quietly(workspace_id)
-        for row in rows:
-            await self.replay_row(workspace_id, row)
+        """Pin a fresh boot's durable verdicts: the consent side
+        hands over decided pins — action, destination, TTL — for
+        every in-effect ``forever`` verdict given by address; the
+        resolver gate reads name-keyed verdicts from their rows
+        live. Best-effort: a missed pin re-prompts, which is the
+        correct fallback, not a leak."""
+        for pin in await self.app.state.consent.forever_pins(workspace_id):
+            await self.apply_pin(workspace_id, pin)
 
-    async def forever_rows_quietly(self, workspace_id: str) -> list[dict]:
-        """The workspace's forever verdicts, or [] when the read
-        fails (a missed pin re-prompts — the correct fallback, not
-        a leak)."""
-        try:
-            return await self.app.state.model.egress_consent.forever_rows(
-                workspace_id
-            )
-        except Exception:
-            logger.exception(
-                "consent replay for %s failed; verdicts re-prompt",
-                workspace_id,
-            )
-            return []
-
-    async def replay_row(self, workspace_id: str, row: dict) -> None:
-        """Re-pin one forever verdict given by address."""
-        if not is_ipv4(row["dest_host"]):
-            return  # a name: the resolver gate reads its row live
-        port = None if row["dest_port"] == 0 else row["dest_port"]
-        if row["decision"] == DECISION_ALLOWED:
+    async def apply_pin(self, workspace_id: str, pin: VerdictPin) -> None:
+        """Install one decided verdict pin (#401): address-literal
+        by construction, so the pin's destination is the address
+        itself."""
+        if pin.allowed:
             await self.consent_allow(
-                workspace_id,
-                row["dest_host"],
-                port,
-                LONG_TTL_S,
-                named=False,
+                workspace_id, pin.ip, pin.port, pin.ttl_s, named=False
             )
-        elif port is not None:
-            await self.consent_reject(
-                workspace_id,
-                row["dest_host"],
-                port,
-                LONG_TTL_S,
-                named=False,
-            )
+            return
+        await self.consent_reject(
+            workspace_id, pin.ip, pin.port, pin.ttl_s, named=False
+        )
 
     async def _build(
         self, workspace_id: str, policy: EgressPolicy

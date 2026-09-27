@@ -29,7 +29,10 @@ The whitelist reads bottom-up:
   ``secretstore``, ``llm`` — storage and configuration over the
   vocabulary
 - ``consent`` — verdict policy over the model
-- ``microvm``, ``net`` — the drivers and the data plane
+- ``microvm``, ``net`` — the drivers and the data plane; their
+  vocabulary (spec types, decided pins, the shared failure class)
+  comes from ``spec`` alone (#401: net hands policy translation
+  to consent and takes decided values back)
 - ``interceptor``, ``conformance``, ``conformance_args`` — tooling
   over the drivers (the conformance check composes the daemon it
   inspects; ``conformance_args`` is the surface the client shares)
@@ -95,9 +98,8 @@ ALLOWED_EDGES = {
     ("microvm", "spec"),
     # the ORM's vocabulary
     ("model", "spec"),
-    # the data plane
-    ("net", "consent"),
-    ("net", "microvm"),
+    # the data plane: vocabulary and decided pins from spec alone
+    # (#401 — the consent side decides, net applies)
     ("net", "spec"),
     # seeding and volume bookkeeping
     ("persist", "identity"),
