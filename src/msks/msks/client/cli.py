@@ -1027,7 +1027,10 @@ async def find_placeholder(
         if sorted(set(row["workspaces"])) == coverage and row["name"] == name:
             return row
     label = coverage_label(coverage)
-    hint = " (a --workspace target narrows the search)" if not refs else ""
+    hint = (
+        " (no --workspace targets the daemon-wide row; a target "
+        "names the row whose coverage is exactly that set)"
+    )
     raise SystemExit(f"msks: no placeholder {name} covering {label}{hint}")
 
 
@@ -1038,6 +1041,23 @@ def resolved_workspace_id(workspaces: list[dict], ref: str) -> str:
         if ref in (row["id"], row.get("name")):
             return row["id"]
     raise SystemExit(f"msks: no such workspace: {ref}")
+
+
+def mint_targets(workspace_refs: list[str] | None) -> list[str] | None:
+    """The mint's coverage refs (#339): None (no --workspace) is
+    the daemon-wide mint; a flag whose every segment is empty
+    names no workspace — and an empty target list is the daemon-
+    wide mint, the broadest row there is, so the mismatch is
+    refused here, not minted."""
+    if workspace_refs is None:
+        return None
+    targets = expand_targets(workspace_refs)
+    if not targets:
+        raise SystemExit(
+            "msks: --workspace names no workspace; omit the flag to "
+            "mint the daemon-wide placeholder"
+        )
+    return targets
 
 
 def cmd_secret_mint(
@@ -1052,13 +1072,14 @@ def cmd_secret_mint(
     once. No ``--workspace`` mints the daemon-wide row; a target
     scopes it."""
     secret = read_secret(secret_file)
+    targets = mint_targets(workspace_refs)
     body: dict = {
         "name": name,
         "dests": dests,
         "secret": secret,
     }
-    if workspace_refs:
-        body["workspaces"] = expand_targets(workspace_refs)
+    if targets:
+        body["workspaces"] = targets
     if ttl is not None:
         body["ttl_s"] = ttl
     row = asyncio.run(
@@ -1082,8 +1103,9 @@ def cmd_secret_mint(
 def expand_targets(refs: list[str]) -> list[str]:
     """The flat ref list a repeatable, comma-splitting flag carries
     (#339): ``--workspace a,b --workspace c`` becomes
-    ``[a, b, c]``."""
-    return [ref for ref in ",".join(refs).split(",") if ref]
+    ``[a, b, c]``, each ref whitespace-stripped, empty segments
+    dropped."""
+    return [ref.strip() for ref in ",".join(refs).split(",") if ref.strip()]
 
 
 def secret_cells(row: dict) -> list[str]:

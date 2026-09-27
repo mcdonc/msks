@@ -552,19 +552,6 @@ class Model:
             )
             return None if row is None else placeholder_dict(row)
 
-    async def covering_placeholders(self, workspace_id: str) -> list[dict]:
-        """Every live row whose coverage includes one workspace,
-        insertion order — the daemon-wide row beside scoped ones.
-        The interceptor's arming read (#199/#339) filters the
-        daemon-wide half against the workspace's own
-        ``secret_coverage`` setting; the caller that wants the raw
-        coverage reads ``list_placeholders``."""
-        return [
-            row
-            for row in await self.list_placeholders()
-            if not row["workspaces"] or workspace_id in row["workspaces"]
-        ]
-
     async def placeholder_by_ref(self, ref: str) -> dict | None:
         """The placeholder owning a backend ref, None when none does.
 

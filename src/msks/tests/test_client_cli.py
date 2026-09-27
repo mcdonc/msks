@@ -3822,6 +3822,66 @@ def test_cmd_secret_mint_refuses_an_empty_secret(
         )
 
 
+def test_cmd_secret_mint_refuses_an_all_empty_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#339: a --workspace whose every segment is empty names no
+    workspace, and an empty target list would mint the daemon-wide
+    row — the broadest there is. The mismatch is refused locally,
+    before any network roundtrip."""
+    client_env(monkeypatch)
+    monkeypatch.setattr(sys.stdin, "read", lambda: "tok\n")
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
+    with pytest.raises(SystemExit, match="names no workspace"):
+        cli.main(
+            [
+                "secret",
+                "mint",
+                "--workspace",
+                " ",
+                "--name",
+                "x",
+                "--dest",
+                "a.com",
+                "--secret-file",
+                "-",
+            ],
+            transport=mock(lambda request: httpx.Response(201, json={})),
+        )
+
+
+def test_cmd_secret_mint_strips_ref_whitespace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#339: ``--workspace "a, b"`` is the coverage [a, b], not a
+    failed lookup of ``" b"``."""
+    client_env(monkeypatch)
+    monkeypatch.setattr(sys.stdin, "read", lambda: "tok\n")
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(201, json={**secret_rows()[0], "sentinel": "s"})
+
+    cli.main(
+        [
+            "secret",
+            "mint",
+            "--workspace",
+            "ws-a, ws-b",
+            "--name",
+            "api",
+            "--dest",
+            "a.com",
+            "--secret-file",
+            "-",
+        ],
+        transport=mock(handler),
+    )
+    assert seen["body"]["workspaces"] == ["ws-a", "ws-b"]
+
+
 def test_cmd_secret_ls_lists_without_sentinels(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

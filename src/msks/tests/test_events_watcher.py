@@ -625,12 +625,13 @@ async def test_sweep_caps_retirements_per_pass(tmp_path, monkeypatch) -> None:
         assert kinds == ["expiry", "expiry"]
 
 
-async def test_sweep_refreshes_the_interceptor_once_per_workspace(
+async def test_sweep_stands_down_through_live_attachments(
     tmp_path,
 ) -> None:
-    """A workspace whose last live placeholder expired stands its
-    redirect down (#199): one refresh per workspace, however many of
-    its rows retired."""
+    """The sweep's stand-down (#199/#339) iterates live attachments,
+    not the retired rows' own coverage — a daemon-wide row's expiry
+    disarms whatever it armed. No attachment is live in this
+    fixture, so no refresh runs at all."""
     api, app = sweep_app(tmp_path)
 
     class Recorder:

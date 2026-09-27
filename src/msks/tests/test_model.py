@@ -178,6 +178,72 @@ async def test_migration_moves_coverage_into_the_workspaces_column(
     ] == "scoped"
 
 
+async def test_migration_survives_a_torn_0013_and_downgrades(
+    tmp_path: Path, app_for
+) -> None:
+    """#339 review pins: a torn 0013 (schema at head, alembic stamp
+    lost at 0012 — the #10 story healing exists for) re-runs as a
+    no-op and stamps head, because the upgrade inspects the live
+    columns instead of trusting the stamp. The downgrade stages
+    through shadow tables: rows survive it with their first
+    workspace back in the legacy column, and a re-upgrade returns
+    to the coverage shape."""
+    app = app_for()
+    db_path = tmp_path / "t.db"
+    config = alembic_config(db_path)
+    command.upgrade(config, "0012")
+    engine = sa.create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as conn:
+            placeholders = sa.Table(
+                "placeholders", sa.MetaData(), autoload_with=conn
+            )
+            conn.execute(
+                placeholders.insert().values(
+                    id=1,
+                    workspace_id="legacy",
+                    name="api",
+                    sentinel="mskssec1_old",
+                    dests="[]",
+                    backend_ref="MSKSWS_LEGACY_API",
+                    created_at=datetime(2026, 1, 1),
+                    expires_at=None,
+                )
+            )
+    finally:
+        engine.dispose()
+    # Complete the migration, then rewind ONLY the stamp: the torn
+    # shape a hard cut between the committed DDL and the version
+    # write leaves behind.
+    command.upgrade(config, "head")
+    command.stamp(config, "0012")
+    app.state.model.migrate()  # re-runs 0013 onto the finished shape
+    row = await app.state.model.get_placeholder(1)
+    assert row["workspaces"] == ["legacy"]
+    # The downgrade keeps the rows: first workspace back in the
+    # legacy column, daemon-wide rows onto the lossy "*" id.
+    await app.state.model.create_placeholder(
+        [], "wide", "mskssec2_w", [], "MSKSDAEMON_WIDE", None
+    )
+    command.downgrade(config, "0012")
+    engine = sa.create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(
+                sa.text("SELECT workspace_id, name FROM placeholders")
+            ).all()
+            assert set(rows) == {("legacy", "api"), ("*", "wide")}
+    finally:
+        engine.dispose()
+    command.upgrade(config, "head")
+    # The lossy edge the downgrade names: the daemon-wide row came
+    # back scoped to a workspace literally called "*" — a scoped
+    # row on an id no workspace can own, not the daemon-wide row.
+    starred = await app.state.model.placeholder_for(["*"], "wide")
+    assert starred is not None
+    assert starred["backend_ref"] == "MSKSDAEMON_WIDE"
+
+
 async def test_migration_gives_legacy_rows_a_null_name(
     tmp_path: Path, app_for
 ) -> None:
@@ -673,63 +739,6 @@ async def test_workspace_row_carries_the_consent_posture(app_for) -> None:
     assert (
         await app.state.model.egress_consent.list_requests("ws-consent") == []
     )
-
-
-async def test_covering_placeholders_read_the_coverage(app_for) -> None:
-    """The interceptor's arming read (#199/#339): a workspace's
-    covering rows in insertion order — its scoped rows beside the
-    daemon-wide row, another workspace's scoped rows excluded."""
-    app = app_for()
-    model = app.state.model
-    model.migrate()
-    await model.create_workspace(spec("ws1"))
-    await model.create_workspace(spec("ws2"))
-    from msks.secretstore import backend_ref, new_sentinel
-
-    for name in ("alpha", "beta"):
-        await model.create_placeholder(
-            ["ws1"],
-            name,
-            new_sentinel(),
-            ["api.example.com"],
-            backend_ref(["ws1"], name),
-            None,
-        )
-    await model.create_placeholder(
-        ["ws2"],
-        "gamma",
-        new_sentinel(),
-        ["api.example.com"],
-        backend_ref(["ws2"], "gamma"),
-        None,
-    )
-    await model.create_placeholder(
-        [],
-        "shared",
-        new_sentinel(daemon_wide=True),
-        ["api.example.com"],
-        backend_ref([], "shared"),
-        None,
-    )
-    rows = await model.covering_placeholders("ws1")
-    assert [row["name"] for row in rows] == ["alpha", "beta", "shared"]
-    assert [
-        row["name"] for row in await model.covering_placeholders("ws2")
-    ] == ["gamma", "shared"]
-    # A multi-workspace scoped row covers each member (#339).
-    await model.create_placeholder(
-        ["ws1", "ws2"],
-        "pair",
-        new_sentinel(),
-        ["api.example.com"],
-        backend_ref(["ws1", "ws2"], "pair"),
-        None,
-    )
-    names = {row["name"] for row in await model.covering_placeholders("ws1")}
-    assert "pair" in names
-    assert await model.covering_placeholders("missing") == [
-        row for row in await model.list_placeholders() if not row["workspaces"]
-    ]
 
 
 async def test_placeholder_for_keys_on_the_exact_coverage(app_for) -> None:

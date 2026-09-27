@@ -2873,6 +2873,20 @@ async def test_multi_workspace_mint_is_one_row(client) -> None:
         headers=auth(),
     )
     assert mixed.status_code == 422
+    # An explicitly empty target list is refused: an operator who
+    # named a target meant to narrow, and an empty list is the
+    # daemon-wide mint (#339 review).
+    empty = await http.post(
+        "/api/v1/secrets",
+        json={
+            "workspaces": [],
+            "name": "empty",
+            "dests": ["api.example.com"],
+            "secret": "s",
+        },
+        headers=auth(),
+    )
+    assert empty.status_code == 422
     unknown = await http.post(
         "/api/v1/secrets",
         json={
@@ -3036,6 +3050,59 @@ async def test_daemon_wide_mint_arms_every_attached_workspace(client) -> None:
     finally:
         app.state.net = real_net
         app.state.interceptor = real
+
+
+async def test_a_partial_daemon_wide_arm_disarms_on_rollback(client) -> None:
+    """#339 review: a daemon-wide mint whose arm loop arms one
+    workspace and fails on the next rolls the row back AND disarms
+    the workspace that had armed — the covering set is empty after
+    the delete, so the quiet sweep stands the first target down."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    refreshes: list[str] = []
+
+    class HalfRefusingInterceptor:
+        async def refresh(self, workspace_id: str) -> None:
+            refreshes.append(workspace_id)
+            if workspace_id == "ws-other":
+                raise RuntimeError("nft down")
+
+        async def on_detach(self, ws):  # pragma: no cover
+            raise AssertionError
+
+        async def stop(self):  # pragma: no cover
+            raise AssertionError
+
+    real = app.state.interceptor
+    app.state.interceptor = HalfRefusingInterceptor()
+    attached = {"ws-sec": object(), "ws-other": object()}
+
+    class AttachedNet:
+        def attached_workspaces(self):
+            return list(attached)
+
+    real_net = app.state.net
+    app.state.net = AttachedNet()
+    try:
+        failed = await http.post(
+            "/api/v1/secrets",
+            json={
+                "name": "wide",
+                "dests": ["api.github.com"],
+                "secret": "s",
+            },
+            headers=auth(),
+        )
+    finally:
+        app.state.net = real_net
+        app.state.interceptor = real
+    assert failed.status_code == 503
+    assert "rolled back" in failed.json()["detail"]
+    # Arm pass (ws-sec ok, ws-other raises), then the quiet sweep
+    # over the same targets — ws-sec's disarm included.
+    assert refreshes == ["ws-sec", "ws-other", "ws-sec", "ws-other"]
+    listing = await http.get("/api/v1/secrets", headers=auth())
+    assert listing.json() == []
 
 
 async def test_mint_and_revoke_events_carry_the_placeholder_identity(

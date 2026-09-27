@@ -122,7 +122,26 @@ class SecretEvent:
     audit_id: int | None = None  # the recorded row's identity
     host: str | None = None  # the swap/sighting destination
     dests: tuple[str, ...] = ()  # the mint's allowlist
+    # The placeholder's coverage as the frame carried it (#339):
+    # () on an older daemon or a per-flow event (a swap or sighting
+    # names the workspace whose tap saw the flow, not a coverage).
+    workspaces: tuple[str, ...] = ()
     ts: float = 0.0  # epoch; 0.0 when the frame carried none
+
+    def covers(self, workspace_id: str) -> bool:
+        """Whether a lifecycle event's row covers one workspace
+        (#339): the daemon-wide row covers every workspace, a
+        scoped row its members. A frame without a coverage list (an
+        older daemon, or a per-flow swap/sighting naming the tap
+        that saw the flow) falls back to the legacy single-id field
+        — whose ``*`` spelling is the daemon-wide row, so it covers
+        every workspace too."""
+        if not self.workspaces:
+            return self.workspace_id == "*" or workspace_id in (
+                "",
+                self.workspace_id,
+            )
+        return workspace_id in self.workspaces
 
 
 def parse_request(obj: object) -> ConsentRequest | None:
@@ -256,6 +275,13 @@ def land_secret_event(
         del events[:overflow]
 
 
+def string_tuple(value: object) -> tuple[str, ...]:
+    """A frame field as a tuple of strings, () for anything else."""
+    return (
+        tuple(str(entry) for entry in value) if isinstance(value, list) else ()
+    )
+
+
 def parse_secret_event(seq: int, kind: str, obj: object) -> SecretEvent | None:
     """One secret frame's data, or None on an unusable shape (no
     workspace/name pair to key the row). Fields the frame does not
@@ -267,6 +293,7 @@ def parse_secret_event(seq: int, kind: str, obj: object) -> SecretEvent | None:
     if fields is None:
         return None
     dests = obj.get("dests")
+    workspaces = obj.get("workspaces")
     return SecretEvent(
         seq=seq,
         kind=kind,
@@ -275,11 +302,8 @@ def parse_secret_event(seq: int, kind: str, obj: object) -> SecretEvent | None:
         placeholder_id=int_field(obj.get("placeholder_id")),
         audit_id=int_field(obj.get("audit_id")),
         host=text_or_none(obj.get("host")),
-        dests=(
-            tuple(str(entry) for entry in dests)
-            if isinstance(dests, list)
-            else ()
-        ),
+        dests=string_tuple(dests),
+        workspaces=string_tuple(workspaces),
         ts=numeric_field(obj.get("ts")) or 0.0,
     )
 
@@ -394,16 +418,18 @@ class ConsentController:
         self, kind: str, data: object
     ) -> tuple[str, object]:
         """One interceptor audit frame: parse, append to the bounded
-        log, report. A foreign workspace's frame is ignored — the
-        #280 rule for requests and rules, and the same stake: a
-        foreign sighting flashing this decider's exfil alarm is a
-        false one. A recorded row's second delivery (the replay of
-        a fact the live stream already landed, or the live frame
-        after a replay that read the row mid-commit) is dropped on
-        its shared audit identity (#305). An unusable shape is
-        ignored with no slot used."""
+        log, report. A frame whose row covers neither this workspace
+        nor — for a per-flow swap or sighting — the tap that saw it
+        is ignored: a foreign sighting flashing this decider's exfil
+        alarm is a false one (#339: a daemon-wide row's lifecycle
+        covers every workspace, a scoped row its members). A
+        recorded row's second delivery (the replay of a fact the
+        live stream already landed, or the live frame after a
+        replay that read the row mid-commit) is dropped on its
+        shared audit identity (#305). An unusable shape is ignored
+        with no slot used."""
         event = parse_secret_event(self._event_seq + 1, kind, data)
-        if event is None or not self.owns(event.workspace_id):
+        if event is None or not event.covers(self.workspace_id):
             return IGNORED, None
         if audit_already_landed(self._audit_ids, event.audit_id):
             return IGNORED, None

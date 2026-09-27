@@ -80,7 +80,7 @@ class SecretMint(BaseModel):
     a file or stdin); it is never echoed in a response.
     """
 
-    workspaces: list[str] | None = Field(default=None, max_length=32)
+    workspaces: list[str] = Field(default=None, min_length=1, max_length=32)
     workspace_id: str | None = None
     name: str = Field(min_length=1, max_length=128)
     dests: list[str] = Field(min_length=1, max_length=32)
@@ -1018,7 +1018,7 @@ def placeholder_view(row: dict, sentinel: bool = True) -> dict:
 
     The sentinel appears only when *sentinel* is set — mint's 201
     carries it exactly once; every later view omits it.
-    "workspaces`` is the row's coverage (#339): ``[]`` is the
+    ``workspaces`` is the row's coverage (#339): ``[]`` is the
     daemon-wide row.
     """
     view = {
@@ -1332,6 +1332,12 @@ def build_api(app) -> FastAPI:
                 with contextlib.suppress(SecretStoreError):
                     await app.state.secrets.delete(ref)
                 await sync_store_manifest()
+            # A target that armed before a sibling's refresh failed
+            # keeps its redirect over a row that no longer exists —
+            # the covering set is empty now, so the quiet sweep
+            # disarms it (#339 review).
+            for workspace_id in arm_targets(coverage):
+                await refresh_quietly(workspace_id)
             raise HTTPException(
                 status_code=503,
                 detail=(

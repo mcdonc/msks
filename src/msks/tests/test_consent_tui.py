@@ -212,6 +212,48 @@ def test_foreign_workspace_secret_frames_are_ignored() -> None:
     assert unscoped.apply_frame(sighting)[0] == consent.SECRET_EVENT
 
 
+def test_coverage_frames_land_on_every_covered_workspace() -> None:
+    """#339: a lifecycle frame's coverage decides ownership, not the
+    legacy single-id field — a daemon-wide mint (``*``, empty
+    coverage list) lands on every workspace's screen, a
+    multi-workspace row's on each member's, a scoped row's on
+    nobody else's. A per-flow swap or sighting still keys on the
+    tap that saw it."""
+    controller = ConsentController(workspace_id="ws-b")
+    wide = frame(
+        "secret.mint",
+        {
+            "workspace_id": "*",
+            "workspaces": [],
+            "name": "shared",
+            "dests": ["api.example"],
+        },
+    )
+    outcome, payload = controller.apply_frame(wide)
+    assert outcome == consent.SECRET_EVENT
+    assert payload.workspaces == ()
+    member = frame(
+        "secret.revoke",
+        {
+            "workspace_id": "ws-a",
+            "workspaces": ["ws-a", "ws-b"],
+            "name": "pair",
+        },
+    )
+    assert controller.apply_frame(member)[0] == consent.SECRET_EVENT
+    outsider = frame(
+        "secret.mint",
+        {
+            "workspace_id": "ws-a",
+            "workspaces": ["ws-a"],
+            "name": "solo",
+            "dests": [],
+        },
+    )
+    assert controller.apply_frame(outsider) == (consent.IGNORED, None)
+    assert [e.name for e in controller.events] == ["shared", "pair"]
+
+
 def test_an_unhashable_event_value_is_ignored() -> None:
     """A frame whose event field is a list (unhashable) is ignored,
     not raised into: the dict lookup would take the connection down

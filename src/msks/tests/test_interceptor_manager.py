@@ -217,7 +217,7 @@ async def test_refresh_disarms_when_the_last_placeholder_goes(app) -> None:
     await mint_placeholder(app)
     await app.state.interceptor.refresh("ws-a")
     master = FakeMaster.built[0]
-    for row in await app.state.model.covering_placeholders("ws-a"):
+    for row in await app.state.model.list_placeholders():
         await app.state.model.delete_placeholder(row["id"])
     await app.state.interceptor.refresh("ws-a")
     assert master.options.mode == []
