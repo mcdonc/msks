@@ -110,6 +110,11 @@ DAEMON_ENTRY_KEYS = ("url", "token_file", "cafile", "expected_image")
 #: of the file value, overriding it for one shell.
 TERMINAL_ENV_VAR = "MSKSC_TERMINAL_OPEN_CMD"
 
+#: The remembered-passthrough setting's variable (#385): the string
+#: form of the file value (shell-split), overriding it for one
+#: shell — the same shape :data:`TERMINAL_ENV_VAR` carries.
+SSH_OPTIONS_ENV = "MSKSC_SSH_OPTIONS"
+
 #: The built-in launcher (#314): ``xterm -e``, the one terminal
 #: most Linux distributions carry, with the msks invocation
 #: appended after ``-e``. A box without it hits the launch
@@ -253,12 +258,9 @@ def validated_pair(key: str, spelling: str, value: object, path: str) -> dict:
     """One top-level key's checked {key: value} pair — *key* the
     normalized name, *spelling* the operator's own, echoed by the
     refusal."""
-    if key == "daemons":
-        return {key: daemons_section(value, path)}
-    if key == "active_daemon":
-        return {key: active_value(value, path)}
-    if key == "terminal_open_cmd":
-        return optional_pair(key, terminal_value(value, path))
+    pair = sectioned_pair(key, value, path)
+    if pair is not None:
+        return pair
     if key in GLOBAL_ENV_VARS:
         return optional_pair(key, scalar_value(key, value, path))
     valid = ", ".join(valid_top_level_keys())
@@ -268,6 +270,21 @@ def validated_pair(key: str, spelling: str, value: object, path: str) -> dict:
     )
 
 
+def sectioned_pair(key: str, value: object, path: str) -> dict | None:
+    """The structural and list-valued keys' checked pairs — None
+    when the key is none of them, handing the scalar globals and
+    the refusal back to :func:`validated_pair`."""
+    if key == "daemons":
+        return {key: daemons_section(value, path)}
+    if key == "active_daemon":
+        return {key: active_value(value, path)}
+    if key == "terminal_open_cmd":
+        return optional_pair(key, terminal_value(value, path))
+    if key == "ssh_options":
+        return optional_pair(key, ssh_options_value(value, path))
+    return None
+
+
 def optional_pair(key: str, value) -> dict:
     """A pair whose unset form (null, empty) simply drops out."""
     return {key: value} if value is not None else {}
@@ -275,7 +292,9 @@ def optional_pair(key: str, value) -> dict:
 
 def valid_top_level_keys() -> list[str]:
     """Every accepted top-level key, sorted for the error message."""
-    return sorted([*GLOBAL_ENV_VARS, "daemons", "active_daemon"])
+    return sorted(
+        [*GLOBAL_ENV_VARS, "daemons", "active_daemon", "ssh_options"]
+    )
 
 
 def scalar_value(key: str, value: object, path: str) -> str | None:
@@ -411,19 +430,49 @@ def terminal_list(value: list, path: str) -> list[str]:
         raise ValueError(
             f"{path}: terminal_open_cmd must name a command, got []"
         )
-    return terminal_words(value, path)
+    return nonempty_words(value, "terminal_open_cmd", path)
 
 
-def terminal_words(value: list, path: str) -> list[str]:
-    """The list form's entries: non-empty strings only."""
+def nonempty_words(value: list, key: str, path: str) -> list[str]:
+    """A list form's entries: non-empty strings only."""
     words = []
     for word in value:
         if not isinstance(word, str) or not word:
             raise ValueError(
-                f"{path}: terminal_open_cmd entries must be non-empty strings"
+                f"{path}: {key} entries must be non-empty strings"
             )
         words.append(word)
     return words
+
+
+def ssh_options_value(value: object, path: str) -> list[str] | None:
+    """``ssh_options`` (#385): ssh option tokens, string or list
+    form — the tokens an operator would type after ``--`` on the
+    ``msks ssh`` command line, remembered.
+
+    The string form is shell-split (the operator writes it the way
+    the shell would take it); the list form is taken verbatim —
+    flag tokens like ``-A`` stay whole with no quoting to reason
+    about. The empty list is the unset form: no options ride.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return ssh_options_string(value, path)
+    if isinstance(value, list):
+        return nonempty_words(value, "ssh_options", path) or None
+    kind = type(value).__name__
+    raise ValueError(
+        f"{path}: ssh_options must be a string or a list of strings, "
+        f"got {kind}"
+    )
+
+
+def ssh_options_string(value: str, path: str) -> list[str] | None:
+    """The string form: shell-split, empty meaning unset."""
+    if not value.strip():
+        return None
+    return split_words(value, "ssh_options", path)
 
 
 def split_words(value: str, key: str, path: str) -> list[str]:
@@ -602,6 +651,24 @@ def terminal_command(doc: dict) -> list[str]:
     return doc.get("terminal_open_cmd") or list(DEFAULT_TERMINAL_CMD)
 
 
+def resolved_ssh_options(doc: dict, layer: dict) -> list[str]:
+    """The remembered ssh passthrough (#385): the variable's string
+    form, else the file's value, else none. The file's winner is
+    materialized into the environment (shell-joined — a faithful
+    round trip through the reader's shell split) because the
+    readers live deep in the ssh and rsync call paths, the same
+    substrate :func:`apply` gives every other file-derived value —
+    and the terminal launcher's child and the ProxyCommand child
+    inherit it whole."""
+    env = os.environ.get(SSH_OPTIONS_ENV, "")
+    if env.strip():
+        return split_words(env, SSH_OPTIONS_ENV, "environment")
+    options = doc.get("ssh_options") or []
+    if options:
+        layer[SSH_OPTIONS_ENV] = shlex.join(options)
+    return list(options)
+
+
 @dataclass
 class ClientConfig:
     """One invocation's resolved client settings (#314).
@@ -621,6 +688,7 @@ class ClientConfig:
     data_dir: str | None
     identity_file: str | None
     terminal_open_cmd: list[str]
+    ssh_options: list[str]
     daemon: str | None
     env_layer: dict[str, str] = field(default_factory=dict)
 
@@ -657,6 +725,7 @@ def resolve(
         data_dir=data,
         identity_file=identity,
         terminal_open_cmd=terminal_command(doc),
+        ssh_options=resolved_ssh_options(doc, layer),
         daemon=selection.alias,
         env_layer=layer,
     )
@@ -796,6 +865,20 @@ def render_template() -> str:
 #                                # a list form carries its words as
 #                                # written; unset -> xterm -e, the
 #                                # terminal most Linuxes carry
+# ssh_options:                  # ssh options remembered for every ssh
+#                                # session msks runs — msks ssh, the
+#                                # new-terminal shell, msks rsync's
+#                                # transport (#385). The tokens are
+#                                # the ones you would type after --
+#                                # on the command line, and the
+#                                # command line still overrides them;
+#                                # MSKSC_SSH_OPTIONS carries the string
+#                                # form for one shell
+# ssh_options: -A -o ServerAliveInterval=30   # string (shell-split)
+# ssh_options:                  # list form (tokens stay whole)
+#   - -A
+#   - -o
+#   - ServerAliveInterval=30
 #
 # --- Named daemon aliases ---
 # One entry per daemon you talk to; url is the one required key,

@@ -112,10 +112,30 @@ def test_config_directives_skip_words_that_name_no_directive() -> None:
 
 
 def test_rsh_string_is_one_quoting_level() -> None:
-    assert rsync.rsh_string("/tmp/msks-agent-x/ssh_config") == (
+    assert rsync.rsh_string("/tmp/msks-agent-x/ssh_config", []) == (
         "ssh -F /tmp/msks-agent-x/ssh_config"
     )
-    assert rsync.rsh_string("/tmp/known cfg") == 'ssh -F "/tmp/known cfg"'
+    assert rsync.rsh_string("/tmp/known cfg", []) == 'ssh -F "/tmp/known cfg"'
+
+
+def test_rsh_string_carries_the_remembered_options() -> None:
+    """The config's remembered ssh options (#385) ride the ``-e``
+    value behind ``-F`` — ssh command-line tokens, so they outrank
+    the settings the config file states the stock way."""
+    extra = ["-A", "-o", "ServerAliveInterval=30"]
+    assert rsync.rsh_string("/cfg", extra) == (
+        "ssh -F /cfg -A -o ServerAliveInterval=30"
+    )
+
+
+def test_rsh_word_escapes_the_quotes_it_wraps() -> None:
+    """A remembered option value that already carries ssh's config
+    quoting (:func:`msks.client.ssh.config_quote`) rides the one
+    quoting level rsync splits with its quotes intact."""
+    assert rsync.rsh_word('ForwardAgent="/a b"') == (
+        '"ForwardAgent=\\"/a b\\""'
+    )
+    assert rsync.rsh_word("back\\slash word") == '"back\\\\slash word"'
 
 
 def test_write_ssh_config_carries_user_and_transport(tmp_path: Path) -> None:
@@ -583,7 +603,7 @@ def test_rsync_copies_both_directions_through_the_agent(
                 )
                 + "\n"
             )
-            rsh = rsync.rsh_string(str(ssh_config))
+            rsh = rsync.rsh_string(str(ssh_config), [])
             src = tmp_path / "src"
             src.mkdir()
             (src / "payload.txt").write_text("over the forward\n")

@@ -49,7 +49,10 @@ with no ssh-option quoting to nest inside it (rsync splits the
 ``-e`` value on whitespace honoring double quotes, one level
 only). An explicit ``-e`` in the passthrough replaces msks's
 remote shell entirely (rsync takes the last ``-e``), the same
-override shape ssh passthrough options have.
+override shape ssh passthrough options have. The config file's
+remembered ssh options (#385) ride the ``-e`` value behind ``-F``
+— ssh takes command-line tokens over the config the path names,
+so they outrank the session settings the stock way.
 """
 
 import time
@@ -59,11 +62,13 @@ from .ssh import (
     SSH_SEED_WAIT_S,
     config_quote,
     exec_child,
+    forward_agent_args,
     passthrough_args,
     probe_args,
     session_options,
     staged_session,
     wait_for_identity,
+    with_config_options,
 )
 
 
@@ -147,32 +152,47 @@ def rsh_word(word: str) -> str:
     """One ssh argv word for the ``-e`` string: double-quoted when
     it carries whitespace, because rsync splits the ``-e`` value on
     whitespace honoring double quotes (one level — which is why the
-    ``-e`` value stays at ``ssh -F <path>`` and every other setting
-    rides the config file the path names)."""
-    return f'"{word}"' if any(c.isspace() for c in word) else word
+    ``-e`` value stays at ``ssh -F <path>`` plus remembered option
+    tokens and every other setting rides the config file the path
+    names). A quoted word's own double quotes and backslashes are
+    backslash-escaped, the way rsync's splitter reads them, so a
+    remembered option value that already carries ssh's config
+    quoting (:func:`msks.client.ssh.config_quote`) survives the
+    ride with its quotes intact for ssh's own parser."""
+    if not any(c.isspace() for c in word):
+        return word
+    escaped = word.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
 
 
-def rsh_string(config_path: str) -> str:
+def rsh_string(config_path: str, extra: list[str]) -> str:
     """The ``-e`` value: the ssh command rsync runs per connection.
     Every setting rides the per-session config the path names — the
     same transport and host-key posture ``msks ssh`` carries, plus
-    the default login user."""
-    return " ".join(rsh_word(word) for word in ("ssh", "-F", config_path))
+    the default login user — and the config file's remembered ssh
+    options (#385) ride after it as ssh command-line tokens: ssh
+    takes command-line options over the ``-F`` config, so the
+    remembered options outrank the session settings the config
+    file states, the stock precedence."""
+    words = ("ssh", "-F", config_path, *extra)
+    return " ".join(rsh_word(word) for word in words)
 
 
 def build_args(
     workspace_id: str,
     config_path: str,
     passthrough: list[str],
+    extra: list[str] | None = None,
 ) -> list[str]:
     """rsync's argv: msks's remote shell first, then the passthrough
     verbatim (empty hosts filled). rsync takes the last ``-e`` it
     receives, so a passthrough ``-e`` overrides msks's transport —
-    the same override shape ssh passthrough options have."""
+    the same override shape ssh passthrough options have. ``extra``
+    is the remembered-options tail of the ``-e`` value (#385)."""
     return [
         "rsync",
         "-e",
-        rsh_string(config_path),
+        rsh_string(config_path, list(extra or [])),
         *rsync_paths(passthrough, workspace_id),
     ]
 
@@ -206,6 +226,7 @@ def run_workspace_rsync(
         known_hosts,
         user,
     ):
+        extra = forward_agent_args(with_config_options([]), "msks rsync")
         config_path = write_ssh_config(
             served,
             session_options(
@@ -226,11 +247,12 @@ def run_workspace_rsync(
                     known_hosts,
                     [],
                     user,
+                    "msks rsync",
                 ),
                 time.monotonic() + SSH_SEED_WAIT_S,
                 "msks rsync",
             )
         return exec_child(
-            build_args(workspace_id, config_path, passthrough),
+            build_args(workspace_id, config_path, passthrough, extra),
             "msks rsync: rsync not found on PATH",
         )

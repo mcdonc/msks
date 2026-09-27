@@ -10,6 +10,7 @@ agent, proving the IdentityAgent path ssh itself will take.
 import asyncio
 import base64
 import os
+import shlex
 import shutil
 import socket
 import struct
@@ -1281,6 +1282,186 @@ def test_probe_args_skips_a_dangling_login_before_agent_resolution(
     monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
     assert probe_argv_of(["-l"]) is None
     assert probe_argv_of(["-l", "-A"]) is None
+
+
+# --- the remembered ssh passthrough (#385) ---
+
+
+def remember(monkeypatch: pytest.MonkeyPatch, *tokens: str) -> None:
+    """Point MSKSC_SSH_OPTIONS at the config file's value — the
+    form the CLI's bootstrap materializes (shell-joined)."""
+    monkeypatch.setenv(ssh.SSH_OPTIONS_ENV, shlex.join(list(tokens)))
+
+
+def test_remembered_options_ride_behind_the_command_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The config's tokens are defaults: they land after the CLI's
+    # own options and before msks's transport, the same seat the
+    # passthrough's overrides hold.
+    remember(monkeypatch, "-o", "ServerAliveInterval=30")
+    argv = ssh.build_args(
+        "alpha", "/agent.sock", "/id.pub", "/kh", ["-T"], "alice"
+    )
+    assert argv[0:3] == ["ssh", "-T", "-o"]
+    assert argv[3] == "ServerAliveInterval=30"
+    assert argv[4] == "-o"  # msks's transport options follow
+
+
+def test_a_command_line_value_beats_the_remembered_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # First-obtained wins for -o values, and the command line is
+    # obtained first — a remembered ForwardAgent=yes cannot turn
+    # forwarding the operator typed no back on.
+    monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
+    remember(monkeypatch, "-o", "ForwardAgent=yes")
+    argv = ssh.build_args(
+        "alpha",
+        "/agent.sock",
+        "/id.pub",
+        "/kh",
+        ["-o", "ForwardAgent=no"],
+        "alice",
+    )
+    joined = " ".join(argv)
+    assert "ForwardAgent=no" in joined
+    assert "ForwardAgent=yes" not in joined  # dropped, not overridden
+
+
+def test_a_command_line_flag_beats_the_remembered_flag(
+    agent_env: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A remembered -A assigns unconditionally behind the CLI's own
+    # -a in stock ssh, so the config's forwarding is lifted out
+    # when the command line names a setting — both directions.
+    remember(monkeypatch, "-A")
+    argv = ssh.build_args(
+        "alpha", "/agent.sock", "/id.pub", "/kh", ["-a"], "alice"
+    )
+    assert "-A" not in argv
+    assert f"ForwardAgent={agent_env}" not in " ".join(argv)
+
+    remember(monkeypatch, "-a")
+    argv = ssh.build_args(
+        "alpha", "/agent.sock", "/id.pub", "/kh", ["-A"], "alice"
+    )
+    assert argv[0:2] == ["ssh", "-o"]
+    assert argv[2] == f"ForwardAgent={agent_env}"
+
+
+def test_a_remembered_forwarding_reaches_the_operators_agent(
+    agent_env: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The #174 rewrite answers a remembered request exactly as a
+    # typed one: the operator's socket stated at the front, ahead
+    # of the remembered tokens it resolves.
+    remember(monkeypatch, "-o", "ForwardAgent=yes", "-T")
+    argv = ssh.build_args(
+        "alpha", "/agent.sock", "/id.pub", "/kh", [], "alice"
+    )
+    assert argv[0:3] == ["ssh", "-o", f"ForwardAgent={agent_env}"]
+    assert argv[3:6] == ["-o", "ForwardAgent=yes", "-T"]
+
+
+def test_a_remembered_socket_rides_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A ForwardAgent value naming a socket is sticky in stock ssh:
+    # the rewrite stands down, the operator's spelling rides, and
+    # no live agent is needed to resolve one.
+    monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
+    remember(monkeypatch, "-o", "ForwardAgent=/own.sock")
+    argv = ssh.build_args(
+        "alpha", "/agent.sock", "/id.pub", "/kh", [], "alice"
+    )
+    assert "-oForwardAgent=/own.sock" in " ".join(
+        argv
+    ) or "ForwardAgent=/own.sock" in " ".join(argv)
+
+
+@pytest.mark.parametrize(
+    ("raw", "kept"),
+    [
+        (["-A"], []),
+        (["-a"], []),
+        (["-vA"], ["-v"]),
+        (["-va"], ["-v"]),
+        (["-aA"], []),
+        (["-o", "ForwardAgent=yes", "-T"], ["-T"]),
+        (["-oForwardAgent=yes", "-T"], ["-T"]),
+        (["-vo", "ForwardAgent=yes", "-T"], ["-T"]),
+        (["-voForwardAgent=yes", "-T"], ["-T"]),
+        (["-o", "User=root"], ["-o", "User=root"]),
+        (["-vJA"], ["-vJA"]),
+    ],
+)
+def test_without_forwarding_lifts_every_spelling(
+    raw: list[str], kept: list[str]
+) -> None:
+    # The dropped -o takes its value with it — a value left behind
+    # would land in the remote command's place — and a bundle's
+    # attached value (the A of -vJA is J's) keeps every character.
+    assert ssh.without_forwarding(list(raw)) == kept
+
+
+def test_config_forwarding_rides_when_the_cli_names_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No forwarding setting on the command line: the remembered
+    # options ride as written and the merged line resolves with
+    # the stock rules.
+    monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
+    remember(monkeypatch, "-o", "ForwardAgent=yes")
+    merged = ssh.with_config_options(["-T"])
+    assert merged == ["-T", "-o", "ForwardAgent=yes"]
+
+
+def test_a_remembered_user_prevents_the_default_injection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The remembered options shape the session like the CLI's own:
+    # a user named there is the user ssh logs in as.
+    remember(monkeypatch, "-l", "root")
+    argv = ssh.build_args(
+        "alpha", "/agent.sock", "/id.pub", "/kh", [], "alice"
+    )
+    assert "-l" in argv
+    assert "alice" not in argv
+
+
+def test_the_probe_carries_a_remembered_forwarding(
+    agent_env: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The first-boot probe dials with the session's forwarding —
+    # remembered or typed, the same one setting either way.
+    remember(monkeypatch, "-A")
+    argv = probe_argv_of([])
+    assert argv[2:4] == front_pair(agent_env)
+
+
+def test_the_probe_carries_a_remembered_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    remember(monkeypatch, "-o", "User=root")
+    argv = probe_argv_of([])
+    assert "-o" in argv and "User=root" in argv
+
+
+def test_an_unparseable_remembered_line_is_one_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(ssh.SSH_OPTIONS_ENV, '-o "ForwardAgent=yes')
+    with pytest.raises(SystemExit, match="shell-parseable"):
+        ssh.configured_ssh_options()
+
+
+def test_a_missing_agent_names_the_calling_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SSH_AUTH_SOCK", "/no/such/agent.sock")
+    with pytest.raises(SystemExit, match="msks rsync:"):
+        ssh.forward_agent_args(["-A"], "msks rsync")
 
 
 # --- prepare: the boot pre-flight and the key fetch ---
