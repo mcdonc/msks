@@ -225,6 +225,22 @@ async def test_ca_record_serves_the_ca_the_arm_will_serve(app) -> None:
     assert authority is not None and authority.chain_file == path
 
 
+async def test_concurrent_ca_records_mint_one_ca(app) -> None:
+    """The API's fetch holds the arm path's lock (#392 review): two
+    concurrent load-or-mints on one workspace would mint two CAs
+    — the operator installs one while the interceptor serves
+    leaves under the other — so concurrent fetches (and a fetch
+    racing an arm) agree on one cert."""
+    first, second = await asyncio.gather(
+        app.state.interceptor.ca_record("ws-a"),
+        app.state.interceptor.ca_record("ws-a"),
+    )
+    assert first[0] == second[0]
+    vm_dir = app.state.settings.vmm.state_dir / "vms" / "ws-a"
+    assert (vm_dir / "interceptor-ca.key").exists()
+    assert (vm_dir / "interceptor-ca.crt").read_bytes() == first[0]
+
+
 async def test_a_later_refresh_updates_entries_in_place(app) -> None:
     await mint_placeholder(app, name="one")
     await app.state.interceptor.refresh("ws-a")

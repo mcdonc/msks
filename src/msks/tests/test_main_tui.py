@@ -111,6 +111,11 @@ class FakeData:
         self.calls: list[tuple] = []
         self.fail: set[str] = set()
         self.fetches = 0
+        # The CA fetches (#392): a read counter, like the listing —
+        # the page pulls the CA once as it opens, and the action
+        # pulls it again, none of it a power verb the call log
+        # pins.
+        self.ca_fetches = 0
         self.refusal = "daemon away"
         self.images_rows: list[dict] = []
         self.defaults: dict = {"root_mib": 10240, "home_mib": 20480}
@@ -196,9 +201,10 @@ class FakeData:
         return self.reply("remove", {})
 
     async def interceptor_ca(self, workspace_id: str) -> dict:
-        """The CA fetch (#392) — recorded; the reply carries the
-        PEM and the real state-dir path."""
-        self.calls.append(("ca", workspace_id))
+        """The CA fetch (#392) — counted, the named refusal when it
+        fails; the reply carries the PEM and the real state-dir
+        path."""
+        self.ca_fetches += 1
         return self.reply("ca", dict(self.ca_reply, workspace=workspace_id))
 
     async def set_egress_mode(
@@ -1074,8 +1080,18 @@ async def test_the_page_names_the_ca_trust_state(
             "interceptor CA: untrusted — HTTPS toward allowlisted "
             "destinations fails validation"
         )
-        main_app.mark_ca_trusted(WS)
+        main_app.mark_ca_trusted(WS, data.ca_reply["ca_pem"])
         await wait_for(lambda: ca_text(app) == "interceptor CA: trusted")
+        # A daemon-side re-mint (a different PEM) reads untrusted
+        # again: the marker names the CA it trusts, and the page's
+        # fetched copy of the daemon's answer is what it compares
+        # against.
+        data.ca_reply["ca_pem"] = data.ca_reply["ca_pem"].replace(
+            "MIIB", "MIIC"
+        )
+        page.ca_pem = data.ca_reply["ca_pem"]
+        page.paint_ca()
+        assert ca_text(app).startswith("interceptor CA: untrusted")
         # A repaint after teardown unmounted the line (the page's
         # own guard) is quiet, not a crash.
         await page.query_one("#ca", Static).remove()
@@ -1104,7 +1120,7 @@ async def test_the_install_action_runs_the_console_install(
         assert "Install the interceptor CA" in action_text(app, 2)
         await pilot.press("down", "down", "enter")
         await wait_for(lambda: installed == [(WS, data.ca_reply["ca_pem"])])
-        assert ("ca", WS) in data.calls
+        assert data.ca_fetches >= 2  # the open's pull, then the action's
         await wait_for(lambda: ca_text(app) == "interceptor CA: trusted")
         assert "interceptor CA installed" in consent_text(app)
 

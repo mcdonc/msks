@@ -1202,6 +1202,11 @@ class WorkspaceScreen(Screen):
         # hides (#343) — a page-raised failure names itself here,
         # where the operator reads it.
         self.flash_line = FlashLine()
+        # The daemon's current CA PEM (#392), fetched once as the
+        # page opens: the trust line's marker names the CA it
+        # trusts, so the comparison needs the PEM beside it. None
+        # until the fetch lands — the line reads the record alone.
+        self.ca_pem: str | None = None
         # The edit waiting on the stop-and-resize answer (#380):
         # the body a running workspace's Apply parked while the
         # confirmation asks. None when no question stands.
@@ -1252,10 +1257,12 @@ class WorkspaceScreen(Screen):
         self.call_after_refresh(self.page_started)
 
     def page_started(self) -> None:
-        """The compose has settled: build the action rows and pull a
-        fresh row for the header."""
+        """The compose has settled: build the action rows, pull a
+        fresh row for the header, and pull the CA once for the
+        trust line's comparison."""
         self.rebuilds.request()
         self.refresh_row()
+        self.run_worker(self.load_ca, group="page-ca", exclusive=True)
 
     def on_unmount(self) -> None:
         """The page is gone: stop deciding for the workspace (the
@@ -1405,11 +1412,13 @@ class WorkspaceScreen(Screen):
 
     def paint_ca(self) -> None:
         """Repaint the interceptor-CA trust line (#392) — the line
-        flips when an install lands; the marker it reads is client
-        state, so the per-tick paint is the drift cover for a mark
-        another surface made."""
+        flips when an install lands, and the marker it reads names
+        the CA it trusts against the page's fetched PEM, so a
+        re-minted CA reads untrusted again."""
         try:
-            self.query_one("#ca", Static).update(ca_line(self.row["id"]))
+            self.query_one("#ca", Static).update(
+                ca_line(self.row["id"], self.ca_pem)
+            )
         except NoMatches:
             pass  # teardown unmounted the line under the timer
 
@@ -1456,6 +1465,18 @@ class WorkspaceScreen(Screen):
         self.row = fresh
         self.paint_header()
         self.paint_actions()
+
+    async def load_ca(self) -> None:
+        """The page's one CA fetch (#392): the PEM the trust line's
+        marker compares against. A refused fetch leaves the line on
+        the record alone — the install action's own fetch will
+        name a refusal where it matters."""
+        try:
+            info = await self.app.data.interceptor_ca(self.row["id"])
+        except Exception, SystemExit:
+            return
+        self.ca_pem = info.get("ca_pem")
+        self.paint_ca()
 
     def close_removed(self) -> None:
         """A listing that cannot see the workspace names its removal
@@ -1668,6 +1689,7 @@ class WorkspaceScreen(Screen):
         )
         if info is None:
             return
+        self.ca_pem = info["ca_pem"]
         if self.row.get("status") != "running":
             self.show_recipe(info)
             return
@@ -1680,7 +1702,7 @@ class WorkspaceScreen(Screen):
             )
             self.show_recipe(info)
             return
-        mark_ca_trusted(self.row["id"])
+        mark_ca_trusted(self.row["id"], info["ca_pem"])
         self.paint_ca()
         self.flash(
             flash_safe(

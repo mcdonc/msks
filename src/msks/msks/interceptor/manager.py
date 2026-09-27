@@ -176,11 +176,18 @@ class Interceptor:
         the files stand, minted and written when they do not (the
         same load-or-mint the arm path runs, so a CA the operator
         pre-installs from the workspace page is the CA the
-        interceptor serves once a placeholder arms it)."""
-        vm_dir = self.app.state.settings.vmm.state_dir / "vms" / workspace_id
-        authority = await asyncio.to_thread(
-            ca.load_or_mint, vm_dir, workspace_id
-        )
+        interceptor serves once a placeholder arms it). The lock
+        is the arm path's own: two concurrent mints on one
+        workspace (a fetch racing an arm) would serve the operator
+        one CA while the interceptor registers another — under
+        the lock there is one."""
+        async with self._lock:
+            vm_dir = (
+                self.app.state.settings.vmm.state_dir / "vms" / workspace_id
+            )
+            authority = await asyncio.to_thread(
+                ca.load_or_mint, vm_dir, workspace_id
+            )
         return ca.cert_pem(authority.cert), authority.chain_file
 
     def mint_leaf(self, workspace_id: str, sni: str):

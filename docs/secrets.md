@@ -129,6 +129,10 @@ console channel cannot run: the CA's file in the daemon's state
 dir (`.devenv/state/msksd/vms/<id>/interceptor-ca.crt` under the
 dev daemon) copied into the guest's
 `/usr/local/share/ca-certificates/`, then `update-ca-certificates`.
+The trust record lives on the client that ran the install and
+names the CA it installed, so a re-minted CA reads untrusted
+again and another operator's page reads untrusted until they
+install from theirs.
 The splice
 leg needs none of this: it presents the origin's own certificate. Arming and disarming swap the workspace's firewall
 table in one nft transaction — the redirect, the widened input

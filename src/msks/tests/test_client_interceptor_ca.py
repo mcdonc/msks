@@ -16,11 +16,13 @@ from msks.client.interceptor_ca import (
     install_ca,
     install_command,
     mark_ca_trusted,
+    recipe_commands,
     recipe_lines,
     trusted_path,
 )
 
 PEM = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+OTHER_PEM = PEM.replace("MIIB", "MIIC")
 
 
 @pytest.fixture
@@ -38,9 +40,10 @@ class ScriptedConsole:
     """The console surface install_ca rides, scripted: the dial's
     websocket and the challenge exchange, both recorded."""
 
-    def __init__(self, incoming: list[bytes] | None = None) -> None:
+    def __init__(self, incoming: list | None = None, chatter=False) -> None:
         self.sent: list[bytes] = []
         self._incoming = list(incoming or [])
+        self._chatter = chatter
         self.closed = False
         self.auth_calls: list[str] = []
 
@@ -55,6 +58,8 @@ class ScriptedConsole:
     async def recv(self):
         if self._incoming:
             return self._incoming.pop(0)
+        if self._chatter:
+            return b"still printing\n"  # output that never carries the marker
         await asyncio.sleep(3600)
 
     async def send(self, data: bytes) -> None:
@@ -68,36 +73,45 @@ class ScriptedConsole:
         return False
 
 
-def script_console(monkeypatch, incoming=None) -> ScriptedConsole:
-    console = ScriptedConsole(incoming)
+def script_console(monkeypatch, incoming=None, **kw) -> ScriptedConsole:
+    console = ScriptedConsole(incoming, **kw)
     monkeypatch.setattr(interceptor_ca, "dial", console.dial)
     monkeypatch.setattr(interceptor_ca, "auth_exchange", console.auth_exchange)
     return console
 
 
-def test_the_trust_marker_round_trips(data_root) -> None:
-    """The marker is client state: absent until an install records
-    it, present after, under the workspace's own directory."""
+def test_the_trust_marker_names_the_ca_it_trusts(data_root) -> None:
+    """The marker is client state carrying the installed PEM's
+    digest: absent until an install records it, present after —
+    and a re-minted CA (a different PEM) reads untrusted again, so
+    the line cannot lie through a daemon-side re-mint."""
     assert ca_trusted("ws-a") is False
-    mark_ca_trusted("ws-a")
-    assert ca_trusted("ws-a") is True
+    mark_ca_trusted("ws-a", PEM)
+    assert ca_trusted("ws-a", PEM) is True
     assert trusted_path("ws-a") == (
         data_root / "ws-a" / "interceptor-ca.trusted"
     )
+    # Without the PEM beside it, the record stands alone: this
+    # client installed some CA of the workspace's.
+    assert ca_trusted("ws-a") is True
+    # The daemon's current PEM differs (a re-mint): untrusted.
+    assert ca_trusted("ws-a", OTHER_PEM) is False
     # A marker is per-workspace: one workspace's install says
     # nothing about another's guest.
-    assert ca_trusted("ws-b") is False
+    assert ca_trusted("ws-b", PEM) is False
 
 
 def test_the_trust_line_names_both_states(data_root) -> None:
     """The line names the symptom while untrusted — the failure
     reads as the trust it is — and the plain state once trusted."""
-    assert ca_line("ws-a") == (
+    assert ca_line("ws-a", PEM) == (
         "interceptor CA: untrusted — HTTPS toward allowlisted "
         "destinations fails validation"
     )
-    mark_ca_trusted("ws-a")
-    assert ca_line("ws-a") == "interceptor CA: trusted"
+    mark_ca_trusted("ws-a", PEM)
+    assert ca_line("ws-a", PEM) == "interceptor CA: trusted"
+    assert ca_line("ws-a") == "interceptor CA: trusted"  # the record alone
+    assert ca_line("ws-a", OTHER_PEM).startswith("interceptor CA: untrusted")
 
 
 def test_the_install_command_decodes_into_the_store() -> None:
@@ -120,20 +134,25 @@ async def test_the_session_waits_for_the_marker(
     monkeypatch, data_root
 ) -> None:
     """The session sends the install line and reads until the
-    marker lands, whatever the guest prints around it — a text
-    frame included (the relay normalizes nothing; bytes are bytes
-    on a tty, and the wait encodes the same way)."""
+    marker lands, whatever the guest prints around it — the pty's
+    own echo of the command line included (it precedes the run and
+    must not satisfy the wait), a text frame included (the relay
+    normalizes nothing; bytes are bytes on a tty, and the wait
+    encodes the same way)."""
+    echoed = install_command(PEM).encode() + b"\r\n"  # the tty's echo
     console = script_console(
         monkeypatch,
-        incoming=[b"Updating certificates", "1 added, 0 removed.\n", MARKER],
+        incoming=[echoed, b"Updating certificates", "1 added, 0 removed.\n"],
     )
+    # The marker arrives last, as its own frame after the run.
+    console._incoming.append(MARKER + b"\r\n")
     await install_ca("ws-a", PEM, ssl_ctx=None)
     assert console.auth_calls == ["ws-a"]
     assert console.sent == [install_command(PEM).encode() + b"\n"]
     assert console.closed is True
     # The trust record is the install's caller's job — the session
     # itself only runs the line.
-    assert ca_trusted("ws-a") is False
+    assert ca_trusted("ws-a", PEM) is False
 
 
 async def test_the_session_names_a_stalled_guest(
@@ -146,6 +165,18 @@ async def test_the_session_names_a_stalled_guest(
     with pytest.raises(SystemExit, match="did not finish the CA install"):
         await install_ca("ws-a", PEM, ssl_ctx=None)
     assert console.sent == [install_command(PEM).encode() + b"\n"]
+
+
+async def test_a_chatty_guest_cannot_stretch_the_window(
+    monkeypatch, data_root
+) -> None:
+    """The window is one deadline for the whole install, not a
+    fresh budget per read: a console that keeps printing output
+    without the marker still ends at the window's edge."""
+    monkeypatch.setattr(interceptor_ca, "INSTALL_TIMEOUT_S", 0.1)
+    script_console(monkeypatch, incoming=[], chatter=True)
+    with pytest.raises(SystemExit, match="did not finish the CA install"):
+        await install_ca("ws-a", PEM, ssl_ctx=None)
 
 
 async def test_the_session_names_the_daemons_close(
@@ -195,15 +226,35 @@ async def test_the_session_names_a_guest_that_refused(
     assert console.sent == []  # nothing reached the guest
 
 
-def test_the_recipe_carries_the_real_path_and_line() -> None:
+def test_the_recipes_commands_paste_whole() -> None:
+    """The hand-run install as short whole shell lines: each line
+    a complete command that fits the recipe panel's width (a copy
+    across soft wraps carries whole commands), and the chunk chain
+    assembles the CA exactly."""
+    commands = recipe_commands(PEM)
+    assert commands[-3:] == [
+        "base64 -d /tmp/msks-ca.b64 > /tmp/msks-ws.crt",
+        f"cp /tmp/msks-ws.crt {CA_DEST}",
+        "update-ca-certificates",
+    ]
+    blob = ""
+    for line in commands[:-3]:
+        assert len(line) <= 58  # fits the 64-column panel's rows
+        assert line.startswith(("printf %s ",))
+        blob += line.split()[2]
+    assert interceptor_ca.base64.b64decode(blob).decode() == PEM
+
+
+def test_the_recipe_carries_the_real_path_and_commands() -> None:
     """The hand-run recipe names the daemon-side file the reply
-    carried and the guest-side line — the same install, spelled
+    carried and the guest-side commands — the same install, spelled
     for the operator."""
     info = {"path": "/state/vms/ws-a/interceptor-ca.crt", "ca_pem": PEM}
     lines = recipe_lines(info, "ws-a")
     joined = "\n".join(lines)
     assert "/state/vms/ws-a/interceptor-ca.crt" in joined
-    assert install_command(PEM) in joined
+    assert recipe_commands(PEM)[0] in joined
+    assert "update-ca-certificates" in joined
     assert "root" in joined
     # A reply that carried no path still names the file's place.
     fallback = recipe_lines({"ca_pem": PEM}, "ws-a")
