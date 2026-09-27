@@ -242,11 +242,16 @@ terminal_open_cmd:                     # list form (no shell quoting)
   - msks-term-popup
 ```
 
-Each popup answers only requests still pending — a request decided
-in another decider window (the consent TUI, another popup) is
-recorded and skipped — and requests queue one popup at a time. The
-watcher keeps its diagnostics in a `msks-consent-*` log under the
-tmp dir; the window's own hold flags (`konsole --hold`, xterm's
+Each popup answers one request at a time — a second request
+waits for the popup ahead of it. A request that another decider
+window (the consent TUI, another popup) answers while its popup
+is open fails at the post and the popup names the reason — the
+request is already resolved; a request decided before this window
+raises its popup still pops, and answering it reports the same
+line. The watcher keeps its diagnostics in a `msks-consent-*` log
+under the tmp dir (a registration the daemon refuses — a
+workspace id that names nothing — stops the watcher with one line
+there); the window's own hold flags (`konsole --hold`, xterm's
 `-hold`) keep the window open after the session ends as they do
 for a plain shell window.
 

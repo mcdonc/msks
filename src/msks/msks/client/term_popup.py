@@ -16,8 +16,12 @@ Four roles share this module, spelled as the first argument:
 
 ``launch``
     The console entry the operator's prefix runs. Validates tmux,
-    names a fresh session after the workspace, and becomes the
-    tmux client attached to it (``tmux new-session ... pane ...``).
+    names a fresh session after the workspace on a dedicated
+    socket (a server of its own, so the pane inherits this
+    process's environment — an operator's already-running tmux
+    server would otherwise substitute its own — and the session
+    stays out of their window list), and becomes the attached
+    tmux client (``tmux -L <socket> new-session ... pane ...``).
 ``pane``
     The tmux session's first process. Starts the watcher beside the
     shell (its own process group membership takes it down with the
@@ -118,8 +122,11 @@ def run_launch(argv: list[str]) -> int:
     it."""
     if shutil.which("tmux") is None:
         raise SystemExit("msks-term-popup: tmux is not on PATH")
-    session = session_name(workspace_from_argv(argv))
-    os.execvp("tmux", session_argv(argv, session))
+    workspace_id = workspace_from_argv(argv)
+    os.execvp(
+        "tmux",
+        session_argv(argv, session_name(workspace_id), workspace_id),
+    )
     return 0  # pragma: no cover — execvp replaces the process
 
 
@@ -150,9 +157,7 @@ def run_watch(argv: list[str]) -> int:
         raise SystemExit(
             "usage: msks.client.term_popup watch -s SESSION -w WORKSPACE"
         )
-    return asyncio.run(
-        watch_loop(workspace_id, session or session_name(workspace_id))
-    )
+    return asyncio.run(watch_loop(workspace_id, session))
 
 
 def run_decide(argv: list[str]) -> int:
@@ -211,12 +216,12 @@ async def watch_connection(
     """One connection's lifetime: announce as decider, then idle
     no longer than one liveness tick so a closed window retires
     the watcher even with no traffic flowing. False means retired;
-    True means the server closed the connection and the loop
-    reconnects."""
-    await sock.send(
-        json.dumps({"type": "egress.decider", "workspace": workspace_id})
-    )
+    True means the server closed the connection — at the announce
+    or mid-stream — and the loop reconnects."""
     try:
+        await sock.send(
+            json.dumps({"type": "egress.decider", "workspace": workspace_id})
+        )
         while True:
             try:
                 raw = await asyncio.wait_for(
@@ -247,8 +252,13 @@ async def watch_frame(
     """One events frame (#379): a fresh request raises the decider
     popup over the shell — the blocking popup queues a second
     request behind the first — and every resolution records its id,
-    so a request decided in another decider window never pops here
-    (nor does one that timed out while its popup was queued)."""
+    so a reconnect's re-sent snapshot does not re-raise a request
+    this window already decided. A request resolved while its
+    popup is up answers at the POST with the daemon's one-line
+    reason; a request resolved between its frame and its popup
+    still pops (the resolution frame sits unread behind it). A
+    refused decider registration — the workspace id names nothing —
+    stops the watcher with the log's one line."""
     event = frame.get("event")
     data = frame.get("data", {})
     if event == "egress.request":
@@ -257,6 +267,13 @@ async def watch_frame(
             await asyncio.to_thread(raise_popup, row, workspace_id, session)
     elif event == "egress.resolved":
         resolved.add(data["request_id"])
+    elif event == "egress.decider_rejected":
+        print(
+            f"decider registration refused: {data.get('workspace', '')}"
+            " — no such workspace; stopping",
+            flush=True,
+        )
+        raise SystemExit(1)
 
 
 def raise_popup(row: dict, workspace_id: str, session: str) -> int:
@@ -264,7 +281,7 @@ def raise_popup(row: dict, workspace_id: str, session: str) -> int:
     tmux client (the terminal window's own client) gets the popup,
     and it closes itself when the decide role exits (``-E``). No
     attached client — the window closed between the frame and here
-    — reports its nonzero returncode to the log."""
+    — reports its nonzero returncode; the caller moves on."""
     client = popup_client(session)
     if client is None:
         return 1
@@ -325,30 +342,35 @@ def session_alive(session: str) -> bool:
 
 
 def start_watcher(session: str, workspace_id: str) -> None:
-    """Spawn the watcher beside the pane's command, its output to a
-    log file under the tmp dir (the pane's own stdio belongs to the
-    shell). The same process group and $TMUX environment the pane
-    holds are what the watcher rides to its grave and to the server
-    socket."""
+    """Spawn the watcher beside the pane's command, its output to
+    a log file under the tmp dir (the pane's own stdio belongs to
+    the shell; the file is the watcher's one diagnostic surface —
+    the refused-registration line, the auth refusal — and tmp
+    reapers collect it). The child inherits the open file
+    descriptor, and the same process group and $TMUX environment
+    the pane holds are what the watcher rides to its grave and to
+    the server socket."""
     log = tempfile.NamedTemporaryFile(
         prefix=f"msks-consent-{workspace_id}-", suffix=".log", delete=False
     )
-    log.close()
-    subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            MODULE,
-            "watch",
-            "-s",
-            session,
-            "-w",
-            workspace_id,
-        ],
-        stdin=subprocess.DEVNULL,
-        stdout=log.name,
-        stderr=subprocess.STDOUT,
-    )
+    try:
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                MODULE,
+                "watch",
+                "-s",
+                session,
+                "-w",
+                workspace_id,
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+        )
+    finally:
+        log.close()
 
 
 async def post_verdict(
@@ -399,17 +421,22 @@ def verdict_for(key: str) -> tuple[str, str]:
     return CHOICES.get(key, ("deny", "once"))
 
 
-def session_argv(child: list[str], session: str) -> list[str]:
-    """The tmux argv: one client attached to a fresh session whose
-    command is this module's pane role with the appended command —
-    shell-joined as tmux takes its command, so a child path with
-    spaces survives the join. The client owns the terminal window
-    the operator's prefix already opened, and
-    ``destroy-unattached`` tears the session down with that window
-    — the shell ends with its window (the bare ``msks ssh``
-    behavior) and the consent watcher retires with it (the prefix's
-    own hold flags — ``konsole --hold``, xterm's ``-hold`` — still
-    apply around the tmux client)."""
+def session_argv(
+    child: list[str], session: str, workspace_id: str | None
+) -> list[str]:
+    """The tmux argv: one client on this launch's dedicated socket,
+    attached to a fresh session whose pane runs this module's pane
+    role with the workspace id and the appended command — the
+    watcher the pane starts is the feature, so the id rides the
+    pane argv explicitly. The pane command is shell-joined as tmux
+    takes its command, so a child path with spaces survives the
+    join; the client owns the terminal window the operator's
+    prefix already opened, and ``destroy-unattached`` tears the
+    session down with that window — the shell ends with its window
+    (the bare ``msks ssh`` behavior) and the consent watcher
+    retires with it (the prefix's own hold flags — ``konsole
+    --hold``, xterm's ``-hold`` — still apply around the tmux
+    client)."""
     pane = [
         sys.executable,
         "-m",
@@ -417,11 +444,14 @@ def session_argv(child: list[str], session: str) -> list[str]:
         "pane",
         "-s",
         session,
+        *(["-w", workspace_id] if workspace_id else []),
         "--",
         *child,
     ]
     return [
         "tmux",
+        "-L",
+        socket_name(workspace_id),
         "new-session",
         "-s",
         session,
@@ -464,21 +494,35 @@ def workspace_from_argv(argv: list[str]) -> str | None:
     return None
 
 
-def session_name(workspace_id: str | None, token: int | None = None) -> str:
-    """The tmux session name: the workspace plus a per-launch
-    discriminator, so a second window on the same workspace opens
-    its own session instead of attaching to the first (two
-    operators, two shells)."""
+def session_name(workspace_id: str | None) -> str:
+    """The tmux session name on this launch's socket: the
+    workspace, or ``shell`` for a child naming none."""
+    return workspace_id or "shell"
+
+
+def socket_name(workspace_id: str | None, token: int | None = None) -> str:
+    """This launch's dedicated tmux socket name: the workspace plus
+    a per-launch discriminator, so a second window on the same
+    workspace opens its own server (two operators, two shells)
+    instead of sharing a session. A server of its own is what
+    carries the launcher's environment to the pane — a shared
+    server keeps the environment of whoever started it."""
     suffix = os.getpid() if token is None else token
     return f"msks-{workspace_id or 'shell'}-{suffix}"
 
 
 def take_option(flag: str, argv: list[str]) -> tuple[str | None, list[str]]:
-    """Pull ``flag VALUE`` out of argv wherever it sits; the value
-    must exist or the role's own usage check refuses."""
-    if flag in argv:
-        i = argv.index(flag)
-        return argv[i + 1], argv[:i] + argv[i + 2 :]
+    """Pull ``flag VALUE`` out of argv wherever it sits before the
+    ``--`` separator — the appended command's own ``-s``/``-w``
+    words belong to it, and parsing past the separator would hand
+    the role the wrong session or workspace. A trailing flag with
+    no value refuses with a usage line."""
+    head = argv[: argv.index("--")] if "--" in argv else argv
+    if flag in head:
+        i = head.index(flag)
+        if i + 1 >= len(head):
+            raise SystemExit(f"msks-term-popup: {flag} needs a value")
+        return head[i + 1], argv[:i] + argv[i + 2 :]
     return None, argv
 
 

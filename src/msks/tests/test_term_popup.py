@@ -11,6 +11,7 @@ import asyncio
 import io
 import os
 import pty
+import shlex
 import subprocess
 import threading
 from types import SimpleNamespace
@@ -48,28 +49,52 @@ def test_workspace_from_argv_finds_the_ssh_target() -> None:
     assert tp.workspace_from_argv(["/venv/bin/python", "-m", "cli"]) is None
 
 
-def test_session_name_carries_the_workspace_and_a_discriminator() -> None:
-    assert tp.session_name("a1b2c3d4e5", 4242) == "msks-a1b2c3d4e5-4242"
-    assert tp.session_name(None, 7) == "msks-shell-7"
+def test_session_and_socket_names_carry_the_workspace() -> None:
+    # One server per launch: the socket carries the discriminator
+    # (a server of its own carries the launcher's env to the pane),
+    # so the session name is the plain workspace id.
+    assert tp.session_name("a1b2c3d4e5") == "a1b2c3d4e5"
+    assert tp.session_name(None) == "shell"
+    assert tp.socket_name("a1b2c3d4e5", 4242) == "msks-a1b2c3d4e5-4242"
+    assert tp.socket_name(None, 7) == "msks-shell-7"
 
 
-def test_session_argv_names_tmux_the_session_and_the_pane() -> None:
-    argv = tp.session_argv(SSH_CHILD, session="msks-w-1")
-    assert argv[:4] == ["tmux", "new-session", "-s", "msks-w-1"]
-    # One shell-joined command string: tmux runs it via sh, and a
-    # child path with spaces survives the join.
-    assert argv[5:] == [";", "set-option", "destroy-unattached", "on"]
-    joined = argv[4]
+def test_session_argv_names_the_socket_the_pane_and_the_workspace() -> None:
+    argv = tp.session_argv(
+        SSH_CHILD, session="a1b2c3d4e5", workspace_id="a1b2c3d4e5"
+    )
+    assert argv[0:2] == ["tmux", "-L"]
+    assert argv[2].startswith("msks-a1b2c3d4e5-")
+    assert argv[3:6] == ["new-session", "-s", "a1b2c3d4e5"]
+    assert argv[7:] == [";", "set-option", "destroy-unattached", "on"]
+    joined = argv[6]
     assert joined.startswith(f"{tp.sys.executable} -m msks.client.term_popup")
-    assert joined.endswith(
-        " pane -s msks-w-1 -- /venv/bin/python -m"
-        " msks.client.cli ssh a1b2c3d4e5"
+    # The pane argv carries the workspace: the watcher is the
+    # feature, and nothing else can re-derive the id.
+    assert (
+        " pane -s a1b2c3d4e5 -w a1b2c3d4e5 -- /venv/bin/python -m"
+        " msks.client.cli ssh a1b2c3d4e5" in joined
     )
 
 
-def test_take_option_and_child_argv() -> None:
+def test_session_argv_without_a_workspace_ships_no_watcher() -> None:
+    argv = tp.session_argv(["top"], session="shell", workspace_id=None)
+    assert " pane -s shell -- top" in argv[6]
+    assert " -w " not in argv[6]
+
+
+def test_take_option_stops_at_the_separator() -> None:
     assert tp.take_option("-s", ["a", "-s", "b", "c"]) == ("b", ["a", "c"])
     assert tp.take_option("-s", ["a"]) == (None, ["a"])
+    # The child's own -w belongs to the child, whatever follows --.
+    argv = ["-s", "sess", "--", "python", "-m", "foo", "-w", "other"]
+    assert tp.take_option("-w", argv) == (None, argv)
+    assert tp.take_option("-s", argv) == ("sess", argv[2:])
+    with pytest.raises(SystemExit, match="needs a value"):
+        tp.take_option("-w", ["-s", "sess", "-w"])
+
+
+def test_child_argv() -> None:
     assert tp.child_argv(["-w", "ws", "--", "a", "b"]) == ["a", "b"]
     assert tp.child_argv(["a"]) == ["a"]
 
@@ -125,8 +150,35 @@ def test_run_launch_execs_the_tmux_client(
     )
     assert tp.run_launch(list(SSH_CHILD)) == 0
     assert seen["binname"] == "tmux"
-    assert seen["argv"][:3] == ["tmux", "new-session", "-s"]
-    assert seen["argv"][3].startswith("msks-a1b2c3d4e5-")
+    assert seen["argv"][:2] == ["tmux", "-L"]
+    assert seen["argv"][3] == "new-session"
+    assert seen["argv"][2].startswith("msks-a1b2c3d4e5-")
+    assert seen["argv"][5] == "a1b2c3d4e5"
+
+
+def test_the_launch_line_meets_the_pane_role(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The boundary the shipped chain crosses: the pane argv that
+    # session_argv shell-joins is exactly what the pane role
+    # parses, and it starts the watcher for the appended command's
+    # workspace (strip the leading interpreter invocation, then
+    # spell the pane role the way tmux's sh would hand it over).
+    monkeypatch.setenv("TMUX", "/tmp/tmux-0/default,1,sess")
+    started = {}
+    monkeypatch.setattr(
+        tp,
+        "start_watcher",
+        lambda session, ws: started.update(session=session, ws=ws),
+    )
+    monkeypatch.setattr(tp.os, "execvp", lambda binname, argv: None)
+    joined = tp.session_argv(
+        SSH_CHILD, session="a1b2c3d4e5", workspace_id="a1b2c3d4e5"
+    )[6]
+    words = shlex.split(joined)[3:]  # past python -m msks.client.term_popup
+    assert words[0] == "pane"
+    tp.main(["pane", *words[1:]])
+    assert started == {"session": "a1b2c3d4e5", "ws": "a1b2c3d4e5"}
 
 
 def test_run_watch_validates_and_runs_the_loop(
@@ -171,7 +223,7 @@ def test_run_pane_starts_the_watcher_then_execs_the_child(
     assert started == {}
     tp.run_pane(["-w", "ws1", "--", *SSH_CHILD])
     assert started["ws"] == "ws1"
-    assert started["session"].startswith("msks-ws1-")
+    assert started["session"] == "ws1"
     started.clear()
     monkeypatch.delenv("TMUX")
     tp.run_pane(["-s", "sess", "-w", "ws1", "--", *SSH_CHILD])
@@ -207,6 +259,8 @@ def test_start_watcher_popens_this_module(
         "ws1",
     ]
     assert spawned["kwargs"]["stdin"] == subprocess.DEVNULL
+    # The child inherits the open log file object, not a path.
+    assert spawned["kwargs"]["stdout"] is not None
 
 
 # --- the watcher's frame handling ------------------------------------------
@@ -240,6 +294,21 @@ async def test_watch_frame_raises_popups_and_records_resolutions(
     assert popped == ["r1"]  # decided elsewhere: no second popup
     other = {"event": "egress.rules", "data": {}}
     await tp.watch_frame(other, "ws1", "sess", seen)
+
+
+async def test_watch_frame_stops_on_a_refused_registration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A workspace id that names nothing: the server refuses the
+    # decider frame, and the watcher stops instead of sitting
+    # connected and useless.
+    rejected = {
+        "event": "egress.decider_rejected",
+        "data": {"workspace": "nope"},
+    }
+    monkeypatch.setattr(tp, "raise_popup", lambda *a: None)
+    with pytest.raises(SystemExit):
+        await tp.watch_frame(rejected, "nope", "sess", set())
 
 
 class FakeWS:
