@@ -23,9 +23,12 @@ msks rm ws                    # delete it (and its data)
 
 ## Client environment
 
-The client reads seven environment variables. They are prefixed
+The client reads environment variables prefixed
 `MSKSC_` (client) to stay apart from the daemon's `MSKSD_*` (server)
 namespace — a box that runs both can export each side independently.
+The list-valued settings (`MSKSC_TERMINAL_OPEN_CMD`,
+`MSKSC_SSH_OPTIONS`) carry their string form and are documented with
+their file keys below.
 
 | Variable               | Meaning                                                                                                                           | Default                  |
 | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
@@ -215,6 +218,54 @@ the same terminal. A holding variant
 (`konsole --hold -e`, xterm's `-hold`) keeps the window open after
 the session ends, for reading final output; without one the window
 closes itself when the session disconnects.
+
+### `ssh_options`
+
+`ssh_options` remembers ssh options for every ssh session msks
+runs — `msks ssh`, the workspace page's new-terminal shell action
+(which runs `msks ssh` in the new window), and `msks rsync`'s ssh
+transport (#385). The value is the ssh options you would type
+after `--` on the `msks ssh` command line — the options
+themselves; a `--` token in the value is refused, because msks
+adds the options to its own and a remembered separator would turn
+msks's transport into the remote command:
+
+```yaml
+ssh_options: -A -o ServerAliveInterval=30   # string form (shell-split)
+ssh_options:                                # list form (tokens stay whole)
+  - -A
+  - -o
+  - ServerAliveInterval=30
+```
+
+`MSKSC_SSH_OPTIONS` overrides the file value with the string form.
+
+The remembered options ride behind the command line's own, so an
+option you pass for one invocation wins over the remembered one —
+and msks's own transport settings (the forward as ProxyCommand,
+the per-workspace known_hosts, the identity) stay defaults beneath
+both, the same first-obtained precedence stock ssh applies. Agent
+forwarding gets the one extra rule the ordering alone cannot give:
+when the command line names any forwarding setting (`-A`, `-a`, or
+a `ForwardAgent` value), the remembered forwarding options are
+dropped for that invocation and the command line decides alone —
+otherwise a remembered `-A` would reassign a typed `-a`, because
+ssh's flags assign in order. A remembered `-A` forwards your
+agent, the one `SSH_AUTH_SOCK` names, exactly as a typed one does
+(#174) — the guest receives your keys, not the workspace
+identity.
+
+The remembered options carry the command-line passthrough's full
+power, including the ability to override msks's transport for
+every session (a remembered `ProxyCommand=`, `UserKnownHostsFile=`,
+or `IdentityAgent=` re-routes or re-keys every ssh msks runs). The
+command-line passthrough has the same power per invocation; the
+remembered form persists it, so the key is the one to check first
+when a remembered option breaks the seam.
+
+`msks console` and the workspace page's same-terminal shell are
+websocket sessions, not ssh — `ssh_options` applies to the ssh
+surfaces above and leaves them untouched.
 
 ### `msks-term-popup`: the consent-decider terminal (#379)
 
@@ -1368,6 +1419,10 @@ msks ssh my-workspace -- -l root   # the recovery login
 msks ssh my-workspace -- -A        # forward your agent ($SSH_AUTH_SOCK)
 msks ssh my-workspace -- -L 8080:localhost:80
 ```
+
+Options you pass here win for the invocation; the config file's
+`ssh_options` key remembers a set for every session instead — see
+[its section](#ssh_options) for the precedence between the two.
 
 The command boots the workspace first when the daemon reports it as
 not running (the same notices as `msks console`), fetches the

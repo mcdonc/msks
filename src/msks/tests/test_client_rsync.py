@@ -112,10 +112,38 @@ def test_config_directives_skip_words_that_name_no_directive() -> None:
 
 
 def test_rsh_string_is_one_quoting_level() -> None:
-    assert rsync.rsh_string("/tmp/msks-agent-x/ssh_config") == (
+    assert rsync.rsh_string("/tmp/msks-agent-x/ssh_config", []) == (
         "ssh -F /tmp/msks-agent-x/ssh_config"
     )
-    assert rsync.rsh_string("/tmp/known cfg") == 'ssh -F "/tmp/known cfg"'
+    assert rsync.rsh_string("/tmp/known cfg", []) == 'ssh -F "/tmp/known cfg"'
+
+
+def test_rsh_string_carries_the_remembered_options() -> None:
+    """The config's remembered ssh options (#385) ride the ``-e``
+    value behind ``-F`` — ssh command-line tokens, so they outrank
+    the settings the config file states the stock way."""
+    extra = ["-A", "-o", "ServerAliveInterval=30"]
+    assert rsync.rsh_string("/cfg", extra) == (
+        "ssh -F /cfg -A -o ServerAliveInterval=30"
+    )
+
+
+def test_rsh_word_doubles_the_quotes_rsync_reads() -> None:
+    """rsync's remote-shell splitter tracks quote characters alone
+    (no backslash escapes), so an inner quote survives as a
+    doubled quote and a backslash rides literally — verified
+    against the real binary in the stand-in test below."""
+    assert rsync.rsh_word('ForwardAgent="/a b"') == ('"ForwardAgent=""/a b"""')
+    assert rsync.rsh_word("back\\slash word") == '"back\\slash word"'
+    assert rsync.rsh_word("plain") == "plain"
+
+
+def test_rsh_word_quotes_a_bare_quote_character() -> None:
+    # A quote character in an otherwise plain word opens rsync's
+    # quote mode and dies as a missing trailing quote — so any
+    # word carrying one rides wrapped.
+    assert rsync.rsh_word("it's") == '"it\'s"'
+    assert rsync.rsh_word('say"hi') == '"say""hi"'
 
 
 def test_write_ssh_config_carries_user_and_transport(tmp_path: Path) -> None:
@@ -465,6 +493,17 @@ def test_stock_rsync_shapes_the_remote_shell_argv(tmp_path: Path) -> None:
     # ^ the empty host passes an EMPTY host word — ssh would then
     # parse rsync's first remote-command word as its destination,
     # which is why msks fills the host
+
+    # The remembered-options tail rides the same one level: a
+    # token carrying ssh's config quoting (a spaced ForwardAgent
+    # socket) arrives at ssh with its quotes intact (#385).
+    extra = ["-o", f'ForwardAgent="{tmp_path}/my agent/sock"', "-A"]
+    tail = " ".join(rsync.rsh_word(word) for word in extra)
+    argv = recorded(
+        "-e", f'{standin} -F "{spaced}" {tail}', str(source), "alpha:/x"
+    )
+    assert argv[0:2] == ["-F", str(spaced)]
+    assert argv[2:5] == extra
     later = tmp_path / "later-shell"
     later.write_text("#!/bin/sh\nexit 42\n")
     later.chmod(0o755)
@@ -583,7 +622,7 @@ def test_rsync_copies_both_directions_through_the_agent(
                 )
                 + "\n"
             )
-            rsh = rsync.rsh_string(str(ssh_config))
+            rsh = rsync.rsh_string(str(ssh_config), [])
             src = tmp_path / "src"
             src.mkdir()
             (src / "payload.txt").write_text("over the forward\n")

@@ -36,6 +36,16 @@ workspace id (or after ``--``) is passed to ssh verbatim; ssh's own
 ``--`` inside it separates options from a remote command
 (``msks ssh <ws> -- -A -- uname -a``).
 
+The config file's ``ssh_options`` key (#385, materialized as
+``MSKSC_SSH_OPTIONS`` by the CLI's config bootstrap) remembers a
+passthrough for every session :func:`build_args` shapes — the same
+tokens, riding behind the command line's own so an explicit
+setting still wins (:func:`with_config_options`), with agent
+forwarding's precedence decided by the command line alone when it
+names any forwarding setting at all. `msks rsync` rides the same
+list on its remote shell, so one key covers every ssh invocation
+msks runs.
+
 A session whose pre-flight booted the workspace first waits out the
 guest's first-boot identity seed (#168): the daemon reports
 ``running`` while the guest's sshd is up but cloud-init has yet to
@@ -67,6 +77,12 @@ from .rest import (
     fetch_ssh_key,
     ssl_context,
 )
+
+#: The remembered-passthrough setting's variable (#385): the
+#: config file's ``ssh_options`` value, shell-joined by the config
+#: bootstrap — the same string form the operator would export
+#: directly.
+SSH_OPTIONS_ENV = "MSKSC_SSH_OPTIONS"
 
 #: The guest port sshd listens on (#110).
 SSH_PORT = 22
@@ -541,22 +557,49 @@ def names_user(value: str) -> bool:
     return lowered.startswith("user=") or lowered.startswith("user ")
 
 
-def operator_agent_socket() -> str:
+def configured_ssh_options() -> list[str]:
+    """The remembered ssh passthrough (#385): the tokens the
+    config file's ``ssh_options`` key (or its variable) carries —
+    the same tokens an operator would type after ``--`` on the
+    ``msks ssh`` command line. The variable holds the string form,
+    shell-split here; unset or blank means no options ride.
+    """
+    value = os.environ.get(SSH_OPTIONS_ENV, "")
+    if not value.strip():
+        return []
+    try:
+        words = shlex.split(value)
+    except ValueError as exc:
+        raise SystemExit(
+            f"msks: {SSH_OPTIONS_ENV} is not shell-parseable "
+            f"({exc}); quote its tokens the way the shell would "
+            "take them"
+        ) from None
+    if "--" in words:
+        raise SystemExit(
+            f"msks: {SSH_OPTIONS_ENV} carries the ssh options, not "
+            "the -- separator — export the options themselves"
+        )
+    return words
+
+
+def operator_agent_socket(command: str = "msks ssh") -> str:
     """The operator's agent socket, for forwarding into the guest —
     the one the operator's environment names
     (:func:`msks.client.agent.environment_agent`).
 
-    Forwarding was asked for on the command line, so an environment
-    that names no live agent is an error here: ssh would otherwise
-    forward the session's transient agent, and the operator's keys —
-    the whole point of ``-A`` — would quietly not be there.
+    Forwarding was asked for — on the command line or through the
+    config's remembered options — so an environment that names no
+    live agent is an error here: ssh would otherwise forward the
+    session's transient agent, and the operator's keys — the whole
+    point of ``-A`` — would quietly not be there.
     """
     socket = agent.environment_agent()
     if socket is None:
         named = os.environ.get("SSH_AUTH_SOCK", "") or "unset"
         raise SystemExit(
-            "msks ssh: -A (or ForwardAgent=yes) forwards the "
-            "operator's agent, and "
+            f"{command}: -A (or ForwardAgent=yes, or the config's "
+            "ssh_options) forwards the operator's agent, and "
             f"SSH_AUTH_SOCK ({named}) names no agent socket — start "
             "one (ssh-agent, or the desktop agent) or drop the "
             "forwarding option"
@@ -723,7 +766,9 @@ def effective_forwarding(options: list[str]) -> bool | None:
     return None
 
 
-def forward_agent_args(options: list[str]) -> list[str]:
+def forward_agent_args(
+    options: list[str], command: str = "msks ssh"
+) -> list[str]:
     """The passthrough's ssh options with command-line agent
     forwarding pointed at the operator's agent socket, mirroring
     stock ssh's own precedence exactly:
@@ -753,6 +798,9 @@ def forward_agent_args(options: list[str]) -> list[str]:
     authenticate through the operator's agent or an identity file;
     the rewrite then states the same socket ssh would forward
     anyway, and this pass reads as a no-op.
+
+    ``command`` names the calling command for the missing-agent
+    refusal (``msks rsync`` asks through here too, #385).
     """
     if named_forward_agent_target(options) is not None:
         return list(options)
@@ -760,9 +808,152 @@ def forward_agent_args(options: list[str]) -> list[str]:
         return list(options)
     return [
         "-o",
-        "ForwardAgent=" + config_quote(operator_agent_socket()),
+        "ForwardAgent=" + config_quote(operator_agent_socket(command)),
         *options,
     ]
+
+
+def without_forwarding(options: list[str]) -> list[str]:
+    """The config's options with every ForwardAgent setting
+    dropped — plain ``-A``/``-a`` tokens, ``ForwardAgent`` ``-o``
+    pairs in both spellings, the ``-o`` a flag bundle carries with
+    its value, and the ``A``/``a`` characters of remaining bundles'
+    flag clusters.
+
+    :func:`with_config_options` calls this when the command line
+    names a forwarding setting of its own: stock ssh resolves a
+    stated socket over every later flag and lets a later ``-A``
+    reassign a plain ``-a``, so a remembered ``-A`` riding behind
+    the operator's own ``-a`` would win by stock's own rules — the
+    one precedence the "command line overrides the config" rule
+    cannot get by ordering alone, so the config's forwarding is
+    lifted out instead. A bundle whose flag cluster holds nothing
+    but ``A``/``a`` (``-aA``) drops whole; one that keeps other
+    flags (``-vA`` → ``-v``) keeps them.
+    """
+    out: list[str] = []
+    index = 0
+    while index < len(options):
+        kept, step = forwarding_step(index, options[index], options)
+        out += kept
+        index += step
+    return out
+
+
+def forwarding_step(
+    index: int, arg: str, options: list[str]
+) -> tuple[list[str], int]:
+    """One argument's (surviving tokens, argv advance): a
+    ForwardAgent setting's span drops with its value consumed, a
+    forwarding flag drops alone, a bundle keeps its other flags,
+    and everything else rides untouched."""
+    span = forwarding_span(index, arg, options)
+    if span is not None:
+        return [], span
+    return forwarding_kept(arg), 1
+
+
+def forwarding_kept(arg: str) -> list[str]:
+    """One non-setting argument's surviving form."""
+    if arg in ("-A", "-a"):
+        return []
+    if is_flag_bundle(arg):
+        stripped = strip_bundle_a(arg)
+        return [stripped] if stripped is not None else []
+    return [arg]
+
+
+def forwarding_span(index: int, arg: str, options: list[str]) -> int | None:
+    """The argv span to drop for a ForwardAgent setting at *index*:
+    the ``-o`` — plain or bundle-carried — with its value, two
+    tokens when the value sits in the next argv slot, one when it
+    is attached — or None when the argument names no ForwardAgent
+    setting. A dropped ``-o`` takes its value with it: the value
+    left behind would land in the remote command's place."""
+    value = option_value(index, arg, options)
+    if value is not None:
+        return plain_forwarding_span(arg, value)
+    if is_flag_bundle(arg):
+        return bundle_forwarding_span(index, arg, options)
+    return None
+
+
+def plain_forwarding_span(arg: str, value: str) -> int | None:
+    """The span of a plain or inline ``-o`` carrying a ForwardAgent
+    setting — its value sits beside a plain ``-o`` or rides
+    attached (``-oForwardAgent=...``)."""
+    if forward_agent_value(value) is None:
+        return None
+    return 2 if arg == "-o" else 1
+
+
+def bundle_forwarding_span(
+    index: int, arg: str, options: list[str]
+) -> int | None:
+    """The span of a flag bundle whose flag cluster ends in ``o``
+    (``-vo ForwardAgent=yes``): the value rides attached or in the
+    next argv slot."""
+    flags = flags_until_value(arg[1:])
+    rest = arg[1 + len(flags) :]
+    if not rest.startswith("o"):
+        return None
+    if rest[1:]:
+        return setting_span(forward_agent_value(rest[1:]), 1)
+    return beside_forwarding_span(index, options)
+
+
+def beside_forwarding_span(index: int, options: list[str]) -> int | None:
+    """The span when the setting's value sits in the next argv
+    slot — a dangling end of argv names no setting to drop."""
+    if index + 1 >= len(options):
+        return None
+    return setting_span(forward_agent_value(options[index + 1]), 2)
+
+
+def setting_span(target: str | None, span: int) -> int | None:
+    """*span* when the value names a ForwardAgent setting, None
+    when it names none."""
+    return span if target is not None else None
+
+
+def strip_bundle_a(arg: str) -> str | None:
+    """A flag bundle with its ``A``/``a`` characters gone — None
+    when nothing of the token survives (the cluster held nothing
+    but forwarding flags). Only the cluster's flag characters are
+    touched: an attached value (``-vJA`` — ``A`` belongs to
+    ``J``'s value) keeps every character it had."""
+    flags = flags_until_value(arg[1:])
+    rest = arg[1 + len(flags) :]
+    kept = flags.replace("A", "").replace("a", "")
+    if not kept:
+        return None
+    return "-" + kept + rest
+
+
+def with_config_options(options: list[str]) -> list[str]:
+    """The command line's options with the config's remembered
+    options riding behind them (#385) — the remembered passthrough
+    is a default, so it lands after the command line's own the way
+    msks's transport options do, and stock ssh's first-obtained
+    rule makes an explicit command-line value win over a
+    remembered one.
+
+    Agent forwarding is the one setting this order cannot decide:
+    flags assign unconditionally, so a remembered ``-A`` behind the
+    operator's own ``-a`` would reassign it. When the command line
+    names any forwarding setting at all — flag or value — the
+    config's forwarding settings are dropped wholesale
+    (:func:`without_forwarding`) and the command line decides
+    alone; when it names none, the remembered options ride as
+    written and :func:`forward_agent_args` resolves the merged
+    line with its stock-precedence rules.
+    """
+    configured = configured_ssh_options()
+    if not configured:
+        return list(options)
+    if effective_forwarding(options) is not None:
+        configured = without_forwarding(configured)
+    return [*options, *configured]
 
 
 def forward_agent_option(options: list[str]) -> list[str]:
@@ -864,10 +1055,11 @@ def build_args(
     the private half, and under ``IdentitiesOnly`` ssh offers that
     one key and nothing else. ``user`` is the workspace's login
     user (:func:`workspace_user`) — injected as ``-l`` only when
-    the passthrough names no user of its own.
+    neither the passthrough nor the config's remembered options
+    name a user.
     """
     options, command = split_command(passthrough)
-    options = forward_agent_args(options)
+    options = forward_agent_args(with_config_options(options))
     argv = [
         "ssh",
         *options,
@@ -893,6 +1085,7 @@ def probe_args(
     known_hosts: str,
     passthrough: list[str],
     user: str,
+    command: str = "msks ssh",
 ) -> list[str] | None:
     """The readiness probe's argv: msks's own transport and agent
     settings, the session's login user and agent-forwarding setting,
@@ -924,12 +1117,13 @@ def probe_args(
     error, so it runs at once.
     """
     options, _ = split_command(passthrough)
+    options = with_config_options(options)
     user_fragments = probe_user(options)
     if wants_user(options) and not user_fragments:
         return None
     # After the refusal check: a session ssh rejects outright names
     # no agent to resolve — its own usage error is the answer.
-    options = forward_agent_args(options)
+    options = forward_agent_args(options, command)
     forwarded = forward_agent_option(options)
     argv = [
         "ssh",

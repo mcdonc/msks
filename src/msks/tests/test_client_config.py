@@ -25,6 +25,7 @@ CLIENT_VARS = (
     "MSKSC_DATA_DIR",
     "MSKSC_IDENTITY_FILE",
     "MSKSC_TERMINAL_OPEN_CMD",
+    "MSKSC_SSH_OPTIONS",
 )
 
 
@@ -336,6 +337,42 @@ def test_terminal_open_cmd_refuses_junk(tmp_path: Path) -> None:
             config.load_config(path)
 
 
+def test_ssh_options_takes_both_forms(tmp_path: Path) -> None:
+    """The remembered passthrough (#385): string form shell-split,
+    list form verbatim — flag tokens like ``-A`` stay whole."""
+    doc = config.load_config(
+        write_config(tmp_path, "ssh_options: -A -o ServerAliveInterval=30\n")
+    )
+    assert doc["ssh_options"] == ["-A", "-o", "ServerAliveInterval=30"]
+    doc = config.load_config(
+        write_config(
+            tmp_path,
+            "ssh_options:\n  - -A\n  - -o\n  - ServerAliveInterval=30\n",
+        )
+    )
+    assert doc["ssh_options"] == ["-A", "-o", "ServerAliveInterval=30"]
+
+
+def test_ssh_options_unset_and_refused_forms(tmp_path: Path) -> None:
+    # Null, blank, and the empty list are the unset form: no
+    # options ride. The -- separator is refused: msks appends the
+    # options to its own, so a remembered separator would hand ssh
+    # msks's transport as the remote command.
+    for body in ("ssh_options:\n", "ssh_options: ''\n", "ssh_options: []\n"):
+        assert config.load_config(write_config(tmp_path, body)) == {}
+    for body, message in (
+        ('ssh_options: -o "ForwardAgent=yes\n', "ssh_options"),
+        ("ssh_options:\n  - -A\n  - 3\n", "non-empty strings"),
+        ("ssh_options:\n  - -A\n  - ''\n", "non-empty strings"),
+        ("ssh_options: 3\n", "string or a list of strings"),
+        ("ssh_options: -- -A\n", "separator"),
+        ("ssh_options:\n  - --\n", "separator"),
+    ):
+        path = write_config(tmp_path, body)
+        with pytest.raises(ValueError, match=message):
+            config.load_config(path)
+
+
 # --- daemon selection ---
 
 
@@ -608,6 +645,56 @@ def test_terminal_command_prefers_the_variable(tmp_path, monkeypatch) -> None:
     with pytest.raises(ValueError, match="MSKSC_TERMINAL_OPEN_CMD"):
         monkeypatch.setenv("MSKSC_TERMINAL_OPEN_CMD", 'wezterm "')
         config.resolve(None, path)
+
+
+# --- ssh_options ---
+
+
+def test_ssh_options_prefer_the_variable(tmp_path, monkeypatch) -> None:
+    """The remembered passthrough resolves the way every file key
+    does: the variable's string form over the file's value, the
+    file's value over none (#385) — and only the winner the file
+    provided is materialized."""
+    clean_env(monkeypatch)
+    path = write_config(tmp_path, "ssh_options: -A -o User=root\n")
+    assert config.resolve(None, path).ssh_options == ["-A", "-o", "User=root"]
+    monkeypatch.setenv("MSKSC_SSH_OPTIONS", "-T")
+    conf = config.resolve(None, path)
+    assert conf.ssh_options == ["-T"]
+    assert "MSKSC_SSH_OPTIONS" not in conf.env_layer
+    with pytest.raises(ValueError, match="MSKSC_SSH_OPTIONS"):
+        monkeypatch.setenv("MSKSC_SSH_OPTIONS", '-o "ForwardAgent=yes')
+        config.resolve(None, path)
+
+
+def test_no_ssh_options_answer_none(tmp_path, monkeypatch) -> None:
+    clean_env(monkeypatch)
+    conf = config.resolve(None, write_config(tmp_path, "url: https://x\n"))
+    assert conf.ssh_options == []
+    assert "MSKSC_SSH_OPTIONS" not in conf.env_layer
+
+
+def test_apply_materializes_the_file_derived_options(
+    tmp_path, monkeypatch
+) -> None:
+    """The reader lives deep in the ssh and rsync call paths, so the
+    file's winner reaches it the substrate every other file value
+    rides: the environment, shell-joined — a join/split round trip
+    that keeps a token's own quoting intact."""
+    clean_env(monkeypatch)
+    path = write_config(
+        tmp_path,
+        "ssh_options:\n  - -o\n  - 'ForwardAgent=\"/a b\"'\n  - -A\n",
+    )
+    conf = config.resolve(None, path)
+    config.apply(conf)
+    import shlex
+
+    assert shlex.split(os.environ["MSKSC_SSH_OPTIONS"]) == [
+        "-o",
+        'ForwardAgent="/a b"',
+        "-A",
+    ]
 
 
 # --- materialization and the CLI entry ---
