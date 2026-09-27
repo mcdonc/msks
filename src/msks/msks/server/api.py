@@ -33,17 +33,51 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from starlette.requests import ClientDisconnect
 
-from .. import __version__, imagestore, persist, storage
 from ..identity import (
     LEGACY_LOGIN_USER,
     LOGIN_NAME_RE,
     mint,
     normalize_public_key,
 )
-from ..imagestore import ImageCollision, ImageError
+from ..imagestore import (
+    ImageCollision,
+    ImageError,
+    default_image,
+    fetch_archive,
+    images_dir,
+    import_archive,
+    is_url,
+    load_record,
+    remove,
+    resolve,
+    set_default,
+    sweep_crash_leftovers,
+    unset_default,
+    warm_import,
+)
+from ..imagestore import (
+    list_images as list_catalog_images,
+)
+from ..imagestore import (
+    rename_image as rename_catalog_image,
+)
 from ..llm import mint_token
 from ..microvm.errors import MicrovmError
 from ..model.secrets import SECRET_COVERAGES, coverage_label
+from ..persist import (
+    base_info,
+    grow_overlay,
+    home_volume_path,
+    open_sized,
+    overlay_path,
+    read_volume,
+    volume_check,
+    volume_direction,
+    volume_move,
+)
+from ..persist import (
+    import_home_volume as import_home_volume_from_stream,
+)
 from ..secretstore import (
     SecretStoreError,
     backend_ref,
@@ -59,7 +93,15 @@ from ..spec.egress import (
     EgressPolicy,
     parse_allowlist,
 )
+from ..spec.version import __version__
 from ..spec.vm import VmSpec, VmStatus
+from ..storage import (
+    MIB,
+    create_refusal,
+    floor_refusal,
+    state_usage,
+    storage_report,
+)
 from .auth import require_token
 from .events import relay
 from .watcher import watch_loop
@@ -300,10 +342,10 @@ def download_ceiling(vmm) -> int:
     floor check still runs with the archive's real size — the
     import counts it twice (retained copy plus boot cache)."""
     max_bytes = vmm.image_import_max_mib * 1024 * 1024
-    usage = storage.state_usage(vmm.state_dir)
+    usage = state_usage(vmm.state_dir)
     if usage is None:
         return max_bytes
-    protected = vmm.storage_floor_mib * storage.MIB
+    protected = vmm.storage_floor_mib * MIB
     headroom = max(usage["free"] - protected, 0)
     return min(max_bytes, headroom)
 
@@ -332,12 +374,12 @@ def bootstrap_default_image(app) -> None:
     if not source:
         return
     state_dir = app.state.settings.vmm.state_dir
-    imagestore.sweep_crash_leftovers(state_dir)
+    sweep_crash_leftovers(state_dir)
     try:
-        warm = imagestore.warm_import(Path(source), state_dir)
+        warm = warm_import(Path(source), state_dir)
         if warm is not None:
             return
-        record = imagestore.import_archive(Path(source), state_dir)
+        record = import_archive(Path(source), state_dir)
     except (ImageError, OSError) as exc:
         # Genuinely non-fatal: a bad pointer or a full state disk must
         # not take the daemon down with it (import remains available
@@ -353,7 +395,7 @@ def bootstrap_default_image(app) -> None:
     # booting the old default. A warm hit (content unchanged) leaves
     # the pointer alone, so an operator's later API designation is
     # never stolen back by a restart.
-    imagestore.set_default(record.hash, state_dir)
+    set_default(record.hash, state_dir)
     print(f"msksd: default image {record.ref} ({record.hash[:12]}) imported")
 
 
@@ -362,7 +404,7 @@ def image_record(app, body: WorkspaceCreate):
     state_dir = app.state.settings.vmm.state_dir
     if body.image is not None:
         try:
-            record = imagestore.resolve(body.image, state_dir)
+            record = resolve(body.image, state_dir)
         except ImageError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
         if record is None:
@@ -370,7 +412,7 @@ def image_record(app, body: WorkspaceCreate):
                 status_code=404, detail=f"no such image: {body.image}"
             )
         return record
-    return imagestore.default_image(state_dir)
+    return default_image(state_dir)
 
 
 def create_name(body: WorkspaceCreate) -> str | None:
@@ -605,14 +647,14 @@ def console_image_policy(
     image_hash = row.get("image_hash")
     if not image_hash:
         return "legacy", ("root",), None
-    cache = imagestore.images_dir(state_dir) / image_hash
+    cache = images_dir(state_dir) / image_hash
     if not (cache / "image.json").is_file():
         return (
             "legacy",
             ("root",),
             f"image record unreadable: {image_hash[:12]}",
         )
-    record = imagestore.load_record(cache)
+    record = load_record(cache)
     if record is None:
         return (
             "legacy",
@@ -899,7 +941,7 @@ async def locked_export(app, hub, workspace_id: str, home: Path) -> Response:
     try:
         await rechecked_row(app, workspace_id)
         try:
-            fd, size = await asyncio.to_thread(persist.open_sized, home)
+            fd, size = await asyncio.to_thread(open_sized, home)
         except OSError:
             raise HTTPException(
                 status_code=404,
@@ -930,7 +972,7 @@ async def export_body(hub, workspace_id: str, fd: int) -> AsyncIterator[bytes]:
     fires only on a clean end of file — a client that disconnects
     mid-download cancelled no export."""
     moved = 0
-    async for window in persist.read_volume(fd):
+    async for window in read_volume(fd):
         moved += len(window)
         yield window
     await hub.publish("home.exported", {"id": workspace_id, "bytes": moved})
@@ -946,7 +988,7 @@ async def installed_volume(
     three leave the workspace's existing volume in place.
     """
     try:
-        return await persist.import_home_volume(
+        return await import_home_volume_from_stream(
             state_dir, workspace_id, request.stream()
         )
     except ValueError as exc:
@@ -1521,7 +1563,7 @@ def build_api(app) -> FastAPI:
         # The state-disk floor (#184): a create below it is the #180
         # failure mode in the making, so it answers a named 507 with
         # the reclaim path spelled out instead of wedging later.
-        refusal = storage.create_refusal(app.state.settings.vmm)
+        refusal = create_refusal(app.state.settings.vmm)
         if refusal is not None:
             raise HTTPException(status_code=507, detail=refusal)
         boot = resolve_boot(app, body, workspace_id)
@@ -1649,9 +1691,9 @@ def build_api(app) -> FastAPI:
         """
         vmm = app.state.settings.vmm
         rows = await app.state.model.list_workspaces()
-        images = await asyncio.to_thread(imagestore.list_images, vmm.state_dir)
+        images = await asyncio.to_thread(list_catalog_images, vmm.state_dir)
         return await asyncio.to_thread(
-            storage.storage_report,
+            storage_report,
             vmm.state_dir,
             vmm.storage_warn_pct,
             vmm.storage_floor_mib,
@@ -1662,7 +1704,7 @@ def build_api(app) -> FastAPI:
     @api.get("/api/v1/images", dependencies=[Depends(require_token)])
     async def list_images() -> list[dict]:
         state_dir = app.state.settings.vmm.state_dir
-        default = imagestore.default_image(state_dir)
+        default = default_image(state_dir)
         default_hash = default.hash if default is not None else None
         return [
             {
@@ -1690,7 +1732,7 @@ def build_api(app) -> FastAPI:
                     else None
                 ),
             }
-            for image in imagestore.list_images(state_dir)
+            for image in list_catalog_images(state_dir)
         ]
 
     @api.get("/api/v1/create-defaults", dependencies=[Depends(require_token)])
@@ -1713,22 +1755,20 @@ def build_api(app) -> FastAPI:
         staged: Path | None = None
         try:
             async with catalog_lock:
-                if imagestore.is_url(body.source):
+                if is_url(body.source):
                     max_bytes = download_ceiling(vmm)
                     if max_bytes <= 0:
                         # The disk sits at or below the floor: the
                         # same named 507 a path import answers,
                         # before any bytes are fetched.
-                        refusal = storage.floor_refusal(
-                            vmm, "importing images"
-                        )
+                        refusal = floor_refusal(vmm, "importing images")
                         raise HTTPException(
                             status_code=507,
                             detail=refusal
                             or "the state disk sits at the storage floor",
                         )
                     staged = await asyncio.to_thread(
-                        imagestore.fetch_archive,
+                        fetch_archive,
                         body.source,
                         state_dir,
                         timeout_s=vmm.image_import_timeout_s,
@@ -1745,13 +1785,11 @@ def build_api(app) -> FastAPI:
                 incoming_b = 0
                 with contextlib.suppress(OSError):
                     incoming_b = 2 * source.stat().st_size
-                refusal = storage.floor_refusal(
-                    vmm, "importing images", incoming_b
-                )
+                refusal = floor_refusal(vmm, "importing images", incoming_b)
                 if refusal is not None:
                     raise HTTPException(status_code=507, detail=refusal)
                 record = await asyncio.to_thread(
-                    imagestore.import_archive,
+                    import_archive,
                     source,
                     state_dir,
                     name=body.name,
@@ -1764,8 +1802,8 @@ def build_api(app) -> FastAPI:
                 # imports). Inside the lock: two imports into an empty
                 # catalog otherwise both observe the other's row and
                 # leave no default designated at all.
-                if len(imagestore.list_images(state_dir)) == 1:
-                    imagestore.set_default(record.hash, state_dir)
+                if len(list_catalog_images(state_dir)) == 1:
+                    set_default(record.hash, state_dir)
         except ImageCollision as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
         except (ImageError, OSError) as exc:
@@ -1801,14 +1839,14 @@ def build_api(app) -> FastAPI:
         """
         state_dir = app.state.settings.vmm.state_dir
         try:
-            record = imagestore.resolve(body.ref, state_dir)
+            record = resolve(body.ref, state_dir)
         except ImageError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
         if record is None:
             raise HTTPException(
                 status_code=404, detail=f"no such image: {body.ref}"
             )
-        imagestore.set_default(record.hash, state_dir)
+        set_default(record.hash, state_dir)
         return {
             "hash": record.hash,
             "name": record.name,
@@ -1827,8 +1865,8 @@ def build_api(app) -> FastAPI:
         without a designation refuses a bare create by name).
         """
         state_dir = app.state.settings.vmm.state_dir
-        imagestore.unset_default(state_dir)
-        fallback = imagestore.default_image(state_dir)
+        unset_default(state_dir)
+        fallback = default_image(state_dir)
         return {
             "fallback": None
             if fallback is None
@@ -1860,7 +1898,7 @@ def build_api(app) -> FastAPI:
         try:
             async with catalog_lock:
                 record = await asyncio.to_thread(
-                    imagestore.rename_image,
+                    rename_catalog_image,
                     digest,
                     state_dir,
                     name=body.name,
@@ -1890,7 +1928,7 @@ def build_api(app) -> FastAPI:
         record = next(
             (
                 image
-                for image in imagestore.list_images(state_dir)
+                for image in list_catalog_images(state_dir)
                 if image.hash == digest
             ),
             None,
@@ -1909,7 +1947,7 @@ def build_api(app) -> FastAPI:
                     status_code=409,
                     detail=f"workspace {row['id']} boots this image",
                 )
-        imagestore.remove(digest, state_dir)
+        remove(digest, state_dir)
         return {"removed": digest}
 
     @api.get("/api/v1/workspaces", dependencies=[Depends(require_token)])
@@ -2066,8 +2104,8 @@ def build_api(app) -> FastAPI:
             row = await rechecked_row(app, workspace_id)
             vmm = app.state.settings.vmm
             state_dir = vmm.state_dir
-            home = persist.home_volume_path(state_dir, workspace_id)
-            overlay = persist.overlay_path(state_dir, workspace_id)
+            home = home_volume_path(state_dir, workspace_id)
+            overlay = overlay_path(state_dir, workspace_id)
             moved: list[str] = []
             if body.root_mib is not None:
                 # The files are the truth, not the row: create clamps
@@ -2076,7 +2114,7 @@ def build_api(app) -> FastAPI:
                 # grows only — its partition table and filesystem
                 # belong to the guest. (#187.)
                 if overlay.is_file():
-                    virtual_b, image_format = await persist.base_info(
+                    virtual_b, image_format = await base_info(
                         overlay, vmm.qemu_img, "the root overlay"
                     )
                     if image_format != "qcow2" or virtual_b == 0:
@@ -2107,7 +2145,7 @@ def build_api(app) -> FastAPI:
                             ),
                         )
                     if body.root_mib > ceiling_mib:
-                        await persist.grow_overlay(overlay, body.root_mib, vmm)
+                        await grow_overlay(overlay, body.root_mib, vmm)
                         moved.append(f"root grew to {body.root_mib} MiB")
                     # Equal to the file: only the row catches up.
                     await app.state.model.set_sizes(
@@ -2128,13 +2166,12 @@ def build_api(app) -> FastAPI:
                         # the executed shrink's refusal is the
                         # client's to fix (data must move out of the
                         # tail).
-                        await persist.volume_check(home, vmm)
+                        await volume_check(home, vmm)
                         executed_shrink = (
-                            persist.volume_direction(home, body.home_mib)
-                            == "shrank"
+                            volume_direction(home, body.home_mib) == "shrank"
                         )
                         try:
-                            direction = await persist.volume_move(
+                            direction = await volume_move(
                                 home, body.home_mib, vmm
                             )
                         except MicrovmError as exc:
@@ -2306,7 +2343,7 @@ def build_api(app) -> FastAPI:
         if guard is not None:
             raise HTTPException(*guard)
         state_dir = app.state.settings.vmm.state_dir
-        home = persist.home_volume_path(state_dir, workspace_id)
+        home = home_volume_path(state_dir, workspace_id)
         return await locked_export(app, hub, workspace_id, home)
 
     @api.put(
@@ -2333,7 +2370,7 @@ def build_api(app) -> FastAPI:
         length = request.headers.get("content-length", "")
         if length.isdigit():
             incoming_b = int(length)
-        refusal = storage.create_refusal(
+        refusal = create_refusal(
             app.state.settings.vmm, "importing a home volume", incoming_b
         )
         if refusal is not None:

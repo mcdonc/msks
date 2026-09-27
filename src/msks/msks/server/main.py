@@ -8,10 +8,10 @@ from pathlib import Path
 
 import uvicorn
 
-from .. import __version__
 from ..app import build_app
 from ..config import load_settings
 from ..settings import Settings
+from ..spec.version import __version__
 from .api import build_api
 from .reload import arm_reload_watcher
 from .tls import load_or_generate

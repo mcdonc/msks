@@ -11,10 +11,10 @@ import logging
 import time
 from datetime import UTC, datetime
 
-from .. import storage
 from ..model.secrets import coverage_label
 from ..spec.time import deadline_passed
 from ..spec.vm import VmStatus
+from ..storage import MIB, pressure_for, state_usage
 from .events import EventHub
 
 LOG = logging.getLogger(__name__)
@@ -102,7 +102,7 @@ def pressure_warning(pressure: str, usage: dict | None, vmm) -> str | None:
     """The named log line for a disk past its thresholds, or None."""
     if pressure not in ("warn", "critical"):
         return None
-    free_mib = max((usage or {}).get("free", 0) // storage.MIB, 0)
+    free_mib = max((usage or {}).get("free", 0) // MIB, 0)
     return (
         f"state disk pressure is {pressure}: {free_mib} MiB free "
         f"(warn past {vmm.storage_warn_pct}% used, floor "
@@ -118,10 +118,8 @@ async def scan_storage(app, hub: EventHub) -> bool:
     too (an operator watching the event stream sees the all-clear).
     """
     vmm = app.state.settings.vmm
-    usage = await asyncio.to_thread(storage.state_usage, vmm.state_dir)
-    pressure = storage.pressure_for(
-        usage, vmm.storage_warn_pct, vmm.storage_floor_mib
-    )
+    usage = await asyncio.to_thread(state_usage, vmm.state_dir)
+    pressure = pressure_for(usage, vmm.storage_warn_pct, vmm.storage_floor_mib)
     previous = getattr(app.state, "storage_pressure", None)
     if pressure == previous:
         return False

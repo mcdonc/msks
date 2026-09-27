@@ -25,7 +25,14 @@ import signal
 import socket
 from pathlib import Path
 
-from .. import persist
+from ..persist import (
+    ensure_artifacts,
+    home_volume_path,
+    overlay_path,
+    remove_home_volume,
+    remove_overlay,
+    seed_path,
+)
 from ..spec.egress import EgressPolicy
 from ..spec.vm import VmInfo, VmSpec, VmStatus
 from .chapi import API_ROOT, CloudHypervisorApi
@@ -313,13 +320,13 @@ def disk_entries(
     """
     disks = [
         {
-            "path": str(persist.overlay_path(state_dir, workspace_id)),
+            "path": str(overlay_path(state_dir, workspace_id)),
             "readonly": False,
             "image_type": "Qcow2",
             "backing_files": True,
         },
         {
-            "path": str(persist.home_volume_path(state_dir, workspace_id)),
+            "path": str(home_volume_path(state_dir, workspace_id)),
             "readonly": False,
             "image_type": "Raw",
         },
@@ -327,7 +334,7 @@ def disk_entries(
     if user_data is not None or ssh_pubkey is not None:
         disks.append(
             {
-                "path": str(persist.seed_path(state_dir, workspace_id)),
+                "path": str(seed_path(state_dir, workspace_id)),
                 "readonly": True,
                 "image_type": "Raw",
             }
@@ -411,9 +418,9 @@ class LocalCloudHypervisor(MicrovmDriver):
         vmm = self._settings().vmm
         self._dir(spec.workspace_id)
         for artifact in (
-            persist.overlay_path(vmm.state_dir, spec.workspace_id),
-            persist.home_volume_path(vmm.state_dir, spec.workspace_id),
-            persist.seed_path(vmm.state_dir, spec.workspace_id),
+            overlay_path(vmm.state_dir, spec.workspace_id),
+            home_volume_path(vmm.state_dir, spec.workspace_id),
+            seed_path(vmm.state_dir, spec.workspace_id),
         ):
             if artifact.exists():
                 raise MicrovmError(
@@ -421,7 +428,7 @@ class LocalCloudHypervisor(MicrovmDriver):
                     f"already exists: {artifact}; "
                     "remove it (or restore the workspace row) first"
                 )
-        await persist.ensure_artifacts(spec, vmm, self._settings().llm.port)
+        await ensure_artifacts(spec, vmm, self._settings().llm.port)
 
     async def launch(self, spec: VmSpec) -> None:
         async with self._guard(spec.workspace_id):
@@ -487,7 +494,7 @@ class LocalCloudHypervisor(MicrovmDriver):
         # Boots heal their artifacts (#14): a workspace row whose
         # overlay or volume is missing (a crash mid-create, or a row
         # that predates #14) gets them back before the VM starts.
-        await persist.ensure_artifacts(spec, vmm, self._settings().llm.port)
+        await ensure_artifacts(spec, vmm, self._settings().llm.port)
         socket_path = vm_dir / "api.sock"
         serial_log = vm_dir / "serial.log"
         proc = await self._spawn(
@@ -915,7 +922,7 @@ class LocalCloudHypervisor(MicrovmDriver):
                 f"workspace {workspace_id} still runs; stop it before reset"
             )
         await self._net_detach(workspace_id)
-        persist.remove_overlay(self._settings().vmm.state_dir, workspace_id)
+        remove_overlay(self._settings().vmm.state_dir, workspace_id)
 
     async def cleanup(self, workspace_id: str) -> None:
         # Deleting a workspace stops its VMM first: the unlocked kill
@@ -926,9 +933,7 @@ class LocalCloudHypervisor(MicrovmDriver):
             shutil.rmtree(self._dir(workspace_id), ignore_errors=True)
         # The home volume lives outside the vm dir so stop/start
         # cycles and resets cannot lose it; cleanup owns its removal.
-        persist.remove_home_volume(
-            self._settings().vmm.state_dir, workspace_id
-        )
+        remove_home_volume(self._settings().vmm.state_dir, workspace_id)
 
 
 __all__ = [
