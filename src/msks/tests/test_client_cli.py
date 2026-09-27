@@ -2800,7 +2800,16 @@ def test_image_cost_table_shows_import_times() -> None:
     ]
     text = cli.image_cost_table(rows)
     lines = text.splitlines()
-    assert lines[0].split() == ["image", "imported", "cost"]
+    # The framed render (#381): rich's rules around and between
+    # the columns, the header row inside the top rule.
+    assert lines[0].startswith("┏")
+    assert lines[2].startswith("┡")
+    assert [cell.strip() for cell in lines[1].split("┃") if cell] == [
+        "image",
+        "imported",
+        "cost",
+    ]
+    data_rows = [line for line in lines if line.startswith("│")]
     expect = when.astimezone().strftime("%Y-%m-%d %H:%M")
     older = (
         datetime.fromisoformat("2026-08-01T09:00:00+00:00")
@@ -2809,9 +2818,9 @@ def test_image_cost_table_shows_import_times() -> None:
     )
     # Every row's cost column starts at the same offset — the
     # measured grid holds across the rows (#271).
-    costs = [line.index("3G") for line in lines[1:]]
+    costs = [line.index("3G") for line in data_rows]
     assert costs == [costs[0]] * 5
-    assert [line.split("  ")[1] for line in lines[1:]] == [
+    assert [row.split("│")[2].strip() for row in data_rows] == [
         expect,
         older,
         "-",
@@ -2849,8 +2858,11 @@ def test_image_cost_table_without_times_keeps_two_columns() -> None:
     two-column shape, without a column of dashes."""
     rows = [{"name": "debian", "version": "13", "bytes": int(3.0 * 1024**3)}]
     assert cli.image_cost_table(rows).splitlines() == [
-        "image      cost",
-        "debian:13  3G",
+        "┏━━━━━━━━━━━┳━━━━━━┓",
+        "┃ image     ┃ cost ┃",
+        "┡━━━━━━━━━━━╇━━━━━━┩",
+        "│ debian:13 │ 3G   │",
+        "└───────────┴──────┘",
     ]
 
 

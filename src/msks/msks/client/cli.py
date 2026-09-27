@@ -77,7 +77,7 @@ from .rest import (
 )
 from .rsync import run_workspace_rsync
 from .ssh import IDENTITY_FILE_ENV, data_dir, run_workspace_ssh
-from .tabular import listing_text
+from .tabular import framed_text, listing_text
 from .tui.main_app import run_main_tui
 
 
@@ -549,8 +549,9 @@ def narrowed(workspaces: list[dict], ref: str | None) -> list[dict]:
 
 
 def workspace_table(workspaces: list[dict]) -> str:
-    """The per-workspace cost/ceiling table — empty when none."""
-    return listing_text(
+    """The per-workspace cost/ceiling table, framed — empty when
+    none."""
+    return framed_text(
         ["workspace", "root cost/ceiling", "home cost/ceiling", "cost"],
         [storage_cells(ws) for ws in workspaces],
     )
@@ -592,7 +593,7 @@ def image_cost_table(images: list[dict]) -> str:
         ]
         for image in images
     ]
-    return listing_text(headers, rows)
+    return framed_text(headers, rows)
 
 
 def cmd_storage(
