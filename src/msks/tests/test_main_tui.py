@@ -466,6 +466,21 @@ async def test_ctrl_c_quits_over_a_form_input() -> None:
         assert app.return_code == 0
 
 
+async def test_ctrl_c_quits_over_the_consent_overlay(monkeypatch) -> None:
+    # The docs promise the exit over a stacked panel; the consent
+    # overlay over an open page is that panel. A hold arrives, the
+    # overlay opens by itself, and Ctrl+C still takes the whole
+    # client down.
+    scripted_link(monkeypatch, [rules_frame(), request_frame("r9")])
+    app, _ = make_app(FakeData([row()]))
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: on_overlay(app))
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert app.return_code == 0
+
+
 async def test_the_create_form_posts_and_the_list_refreshes() -> None:
     data = FakeData([])
     app, _ = make_app(data)

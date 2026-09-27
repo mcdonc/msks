@@ -422,7 +422,7 @@ at the workspaces list, Escape is the tree itself quitting).
 Ctrl+C exits the client from any screen — the tree, a page, a
 form field, or a panel stacked over them — the same clean exit
 `q` takes at the workspaces list, and it takes priority over the
-terminal's copy shortcut while a form field holds the focus. The TUI speaks the same REST
+form field's copy shortcut while a form field holds the focus. The TUI speaks the same REST
 surface the `msksc` commands speak (`MSKSC_URL`, `MSKSC_TOKEN`,
 `MSKSC_CAFILE`) and reads no daemon state directly.
 
