@@ -3079,6 +3079,9 @@ async def test_launch_heals_a_lost_seed_with_the_row_token(
     )
     assert started.status_code == 200, started.text
     assert stub.seen_specs[wid].llm_token == minted
+    # The creation name rides the healed spec too (#370): the seed
+    # it rebuilds carries it as local-hostname.
+    assert stub.seen_specs[wid].name == "ws-heal"
 
 
 async def test_healed_spec_returns_a_token_carrying_row_untouched() -> None:
@@ -3088,6 +3091,7 @@ async def test_healed_spec_returns_a_token_carrying_row_untouched() -> None:
     app = build_app(Settings(server=ServerSettings(db_path=Path("/dev/null"))))
     row = {
         "id": "ws-x",
+        "name": "ws-x-name",
         "kernel": "/k",
         "initrd": None,
         "rootfs": "/r",
@@ -3098,9 +3102,9 @@ async def test_healed_spec_returns_a_token_carrying_row_untouched() -> None:
         "home_mib": 8,
         "llm_token": "msksllm1_present",
     }
-    assert (await api_mod.healed_spec(app, row)).llm_token == (
-        "msksllm1_present"
-    )
+    healed = await api_mod.healed_spec(app, row)
+    assert healed.llm_token == "msksllm1_present"
+    assert healed.name == "ws-x-name"
 
 
 async def test_lifespan_migrates_legacy_backend_refs(tmp_path: Path) -> None:

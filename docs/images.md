@@ -152,9 +152,14 @@ boots. A guest image must:
   labeled `cidata` carrying `user-data` (the operator payload,
   composed beside the identity's seeding script when a key was
   minted) and `meta-data`
-  (`instance-id`, keyed off the workspace id) at its root — exactly
-  cloud-init's NoCloud seed layout. The image ships cloud-init (the
-  Debian `genericcloud` base does), and two dropins pin the
+  (`instance-id`, keyed off the workspace id, and
+  `local-hostname`, the workspace's creation name (#370) — the
+  minted id when the workspace was created without one) at its
+  root — exactly cloud-init's NoCloud seed layout. The hostname is
+  create-time input like the payload: the guest keeps the hostname
+  its seed was built with, and a workspace that predates #370 keeps
+  the hostname it already booted with. The image ships cloud-init
+  (the Debian `genericcloud` base does), and two dropins pin the
   behavior the msks contract needs: `datasource_list: [ NoCloud,
 None ]` (the seed disk answers immediately — no EC2 or OpenStack
   probing, no network timeouts) and `network: {config: disabled}`

@@ -79,7 +79,18 @@ needs_local = pytest.mark.skipif(
 #: strongest guest-side signal the console probes can build on
 #: (the vsock console's own shell can stall behind an echo-alive
 #: pty on a slow nested-KVM boot, long after its service started).
-GUEST_UP_MARKER = "root@msks-guest:~#"
+#
+#: Every needle's hostname is the workspace's creation name (#370)
+#: — the minted id for a nameless one — passed in by the probes
+#: that know it; a guest booted without a seed (a direct spec with
+#: no payload) keeps the image's own hostname, the default here.
+IMAGE_HOSTNAME = "msks-guest"
+
+
+def guest_up_marker(hostname: str | None = None) -> str:
+    """The serial-log "guest is usable" prompt for one hostname."""
+    return f"root@{hostname or IMAGE_HOSTNAME}:~#"
+
 
 #: Per-phase timeouts, env-tunable for slow hosts (#64): a runner's
 #: nested-KVM guest runs the same boot several times slower than a
@@ -191,18 +202,21 @@ def collect_failure_evidence(
 
 
 async def await_guest_up(
-    serial_log: Path, timeout_s: float | None = None
+    serial_log: Path,
+    timeout_s: float | None = None,
+    hostname: str | None = None,
 ) -> None:
     """Block until the guest announces itself on the serial console."""
+    marker = guest_up_marker(hostname)
     timeout_s = timeout_s if timeout_s is not None else GUEST_UP_TIMEOUT_S
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_s
     while loop.time() < deadline:
-        if GUEST_UP_MARKER in serial_tail(serial_log):
+        if marker in serial_tail(serial_log):
             return
         await asyncio.sleep(0.2)
     raise AssertionError(
-        f"guest serial never showed {GUEST_UP_MARKER!r} within {timeout_s}s; "
+        f"guest serial never showed {marker!r} within {timeout_s}s; "
         f"serial log tail:\n{serial_tail(serial_log)}"
     )
 
@@ -254,24 +268,31 @@ async def read_until(
 #: before fingers move). The tests wait for the prompt first.
 PROMPT_NEEDLE = b"root@msks-guest:/# "
 
-#: The vsock console's first prompt (#63): the prelude helper execs a
-#: login shell with cwd=$HOME, so a fresh session's prompt reads ~,
-#: not / — and bash's interactive rc files may emit terminal control
-#: sequences around it, which read_until's contains-scan tolerates.
-CONSOLE_PROMPT_NEEDLE = b"root@msks-guest:~# "
 
-#: The same prompt for the image's workspace user (#63): a login
-#: shell as uid 1000 whose HOME is /home/msks.
-USER_CONSOLE_PROMPT_NEEDLE = b"msks@msks-guest:~$ "
+def root_prompt_needle(hostname: str | None = None) -> bytes:
+    """The vsock console's first root prompt (#63): the prelude
+    helper execs a login shell with cwd=$HOME, so a fresh session's
+    prompt reads ~, not / — and bash's interactive rc files may
+    emit terminal control sequences around it, which read_until's
+    contains-scan tolerates."""
+    return f"root@{hostname or IMAGE_HOSTNAME}:~# ".encode()
 
 
-def user_prompt_needle(user: str) -> bytes:
+#: The default-hostname spelling, for probes on seed-less guests
+#: and the harness's own unit pins.
+CONSOLE_PROMPT_NEEDLE = root_prompt_needle()
+
+
+def user_prompt_needle(user: str, hostname: str | None = None) -> bytes:
     """The first-prompt needle for any non-root session (#248): a
     login user's prompt carries ITS name — same shape, same
     hostname, the user the session negotiated."""
-    if user == "msks":
-        return USER_CONSOLE_PROMPT_NEEDLE
-    return f"{user}@msks-guest:~$ ".encode()
+    return f"{user}@{hostname or IMAGE_HOSTNAME}:~$ ".encode()
+
+
+#: The same prompt for the image's workspace user (#63): a login
+#: shell as uid 1000 whose HOME is /home/msks.
+USER_CONSOLE_PROMPT_NEEDLE = user_prompt_needle("msks")
 
 
 async def answer_console_auth(
@@ -334,6 +355,7 @@ async def run_in_console(
     user: str = "root",
     app=None,
     signer=None,
+    hostname: str | None = None,
 ) -> None:
     """Run one shell command over the vsock console and wait for its
     marker, in a fresh guest shell session per attempt (#75).
@@ -366,9 +388,9 @@ async def run_in_console(
                         reader, writer, workspace_id, app, signer
                     )
                 needle = (
-                    CONSOLE_PROMPT_NEEDLE
+                    root_prompt_needle(hostname)
                     if user in (None, "root")
-                    else user_prompt_needle(user)
+                    else user_prompt_needle(user, hostname)
                 )
                 await read_until(reader, needle)
                 writer.write(command.encode() + b"\n")
@@ -452,7 +474,7 @@ def dev_workspace_seed() -> str:
 
 
 async def await_dev_state(
-    microvm, app, workspace_id: str, needle: bytes
+    microvm, app, workspace_id: str, needle: bytes, hostname: str | None = None
 ) -> bytes:
     """Poll the guest's bootstrap state trail until it says ``needle``.
 
@@ -483,7 +505,7 @@ async def await_dev_state(
             reader, writer = await microvm.console(workspace_id, user="root")
             try:
                 await answer_console_auth(reader, writer, workspace_id, app)
-                await read_until(reader, CONSOLE_PROMPT_NEEDLE)
+                await read_until(reader, root_prompt_needle(hostname))
                 writer.write(
                     b"cat /root/.msks-bootstrap/state "
                     b"/root/.msks-bootstrap/unit-tests.rc 2>/dev/null; "
@@ -572,6 +594,7 @@ async def await_guest_trail(
     probe: str,
     needle: bytes,
     timeout_s: float,
+    hostname: str | None = None,
 ) -> None:
     """Poll a guest-side probe command until its output carries
     ``needle``.
@@ -594,7 +617,7 @@ async def await_guest_trail(
             reader, writer = await microvm.console(workspace_id, user="root")
             try:
                 await answer_console_auth(reader, writer, workspace_id, app)
-                await read_until(reader, CONSOLE_PROMPT_NEEDLE)
+                await read_until(reader, root_prompt_needle(hostname))
                 writer.write(f"{probe}; echo E-$((21*2))\n".encode())
                 await writer.drain()
                 data = await read_until(

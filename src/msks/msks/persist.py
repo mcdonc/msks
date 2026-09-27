@@ -228,18 +228,22 @@ async def create_overlay(spec: VmSpec, settings, overlay: Path) -> None:
         scratch.unlink(missing_ok=True)
 
 
-def seed_metadata(workspace_id: str) -> str:
+def seed_metadata(workspace_id: str, name: str | None) -> str:
     """The seed's ``meta-data``: cloud-init NoCloud keys.
 
     ``instance-id`` is the workspace id, so cloud-init's run-once
     semantics key off the workspace: a stop/start or a daemon restart
     never re-provisions. A factory reset DOES re-provision — the
     "already ran" state (/var/lib/cloud) lives on the overlay the
-    reset drops. No ``local-hostname``: the image's own hostname
-    (msks-guest) stays stable across workspaces, and per-workspace
-    identity is what the id column is for.
+    reset drops. ``local-hostname`` is the workspace's creation
+    name (#370), the minted id standing in for a nameless
+    workspace, so the guest's hostname and shell prompt identify
+    the workspace. It is create-time input like the rest of the
+    seed: a live workspace keeps the hostname its seed was built
+    with, because the seed file is never rebuilt for one.
     """
-    return f"instance-id: {workspace_id}\n"
+    hostname = name or workspace_id
+    return f"instance-id: {workspace_id}\nlocal-hostname: {hostname}\n"
 
 
 async def create_seed(spec: VmSpec, settings, llm_port: int = 0) -> None:
@@ -278,7 +282,7 @@ async def create_seed(spec: VmSpec, settings, llm_port: int = 0) -> None:
             encoding="utf-8",
         )
         (stage / "meta-data").write_text(
-            seed_metadata(spec.workspace_id), encoding="utf-8"
+            seed_metadata(spec.workspace_id, spec.name), encoding="utf-8"
         )
         image = stage / "seed.img"
         await run_tool(

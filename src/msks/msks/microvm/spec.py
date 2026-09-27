@@ -14,8 +14,9 @@ class VmSpec:
     the workspace's immutable, daemon-minted instance id (#246);
     ``rootfs`` names the *base* image: the VM boots the
     per-workspace overlay backed by it (#14), and the overlay path
-    is derived from the workspace id. The operator-chosen name
-    never reaches this layer.
+    is derived from the workspace id. ``name`` is the operator-
+    chosen creation label: it owns no path or row key — the seed
+    turns it into the guest's hostname (#370).
     """
 
     workspace_id: str
@@ -65,6 +66,11 @@ class VmSpec:
     # at the daemon's proxy on this workspace's tap). None is a
     # workspace created before the proxy existed.
     llm_token: str | None = None
+    # The creation name (#246): the seed's ``local-hostname``
+    # (#370) — the minted id stands in for a nameless workspace.
+    # None is a spec built outside the row path (conformance
+    # checkers, direct launches); the seed falls back to the id.
+    name: str | None = None
 
 
 class VmStatus(StrEnum):

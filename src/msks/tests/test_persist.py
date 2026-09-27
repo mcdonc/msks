@@ -121,9 +121,11 @@ def spec(
     user_data=None,
     ssh_pubkey=None,
     llm_token=None,
+    name=None,
 ) -> VmSpec:
     return VmSpec(
         workspace_id=WID,
+        name=name,
         kernel=base.parent / "vmlinux",
         rootfs=base,
         root_mib=root_mib,
@@ -339,11 +341,16 @@ def test_remove_sweeps_crashed_scratch_files(tmp_path: Path) -> None:
     assert list(home.parent.glob("*.tmp")) == []
 
 
-def test_seed_metadata_keys_off_the_workspace() -> None:
+def test_seed_metadata_sets_the_hostname_from_the_name() -> None:
     """NoCloud meta-data: instance-id drives cloud-init's run-once
-    semantics. No local-hostname — the image's hostname stays stable
-    across workspaces."""
-    assert persist.seed_metadata("ws-41") == "instance-id: ws-41\n"
+    semantics; local-hostname is the creation name (#370), the
+    minted id standing in for a nameless workspace."""
+    assert persist.seed_metadata("ws-41", "dev-box") == (
+        "instance-id: ws-41\nlocal-hostname: dev-box\n"
+    )
+    assert persist.seed_metadata("ws-41", None) == (
+        "instance-id: ws-41\nlocal-hostname: ws-41\n"
+    )
 
 
 async def test_ensure_builds_seed_when_user_data_set(tools) -> None:
@@ -362,7 +369,8 @@ async def test_ensure_builds_seed_when_user_data_set(tools) -> None:
     assert "-volid cidata" in log
     assert f"--- user-data ---\n{payload}" in log
     assert "--- meta-data ---\ninstance-id: ws-persist\n" in log
-    assert "local-hostname" not in log
+    # The nameless fallback (#370): the minted id is the hostname.
+    assert "local-hostname: ws-persist\n" in log
     assert persist.overlay_path(settings.state_dir, WID).is_file()
     assert persist.home_volume_path(settings.state_dir, WID).is_file()
     assert not tmp_debris(settings)
@@ -375,6 +383,17 @@ async def test_ensure_skips_seed_without_user_data(tools) -> None:
     await persist.ensure_artifacts(spec(base), settings)
     assert not persist.seed_path(settings.state_dir, WID).exists()
     assert "mkisofs" not in record.read_text()
+
+
+async def test_seed_carries_the_creation_name(tools) -> None:
+    """The hostname (#370): a named workspace's seed carries
+    local-hostname: <name>, so the guest identifies itself by its
+    creation name."""
+    settings, record, base = tools
+    await persist.ensure_artifacts(
+        spec(base, user_data="#!/bin/sh\ntrue\n", name="dev-box"), settings
+    )
+    assert "local-hostname: dev-box\n" in record.read_text()
 
 
 async def test_seed_is_idempotent(tools) -> None:
