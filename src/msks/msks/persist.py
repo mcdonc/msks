@@ -150,9 +150,10 @@ async def ensure_seed(
 
     The token leg (#259) is wider than disk_entries' attach
     condition (user_data or ssh_pubkey): an llm_token-only spec
-    builds a seed the VM never sees. No product row has that shape —
-    every create mints an identity — so the seed's local-hostname
-    (#370) reaches every attached disk either way.
+    builds a seed the VM never sees. No product row has that shape
+    — every create records a public key, minted or the client's
+    own — so the seed's local-hostname (#370) reaches every
+    attached disk either way.
     """
     if spec.user_data is None and spec.ssh_pubkey is None:
         if spec.llm_token is None:
@@ -248,12 +249,13 @@ def seed_metadata(workspace_id: str, name: str | None) -> str:
     the workspace — DNS-label safe by construction, because the
     create endpoint's WORKSPACE_ID_PATTERN (the only writer of
     row names) admits [a-z0-9-] alone, which cannot break the
-    YAML line it lands on. instance-id never changes, so
-    stop/start and daemon restarts never re-provision; cloud-init's
-    per-boot set-hostname stage still reads the seed each boot, so
-    a launch heal that rebuilds a lost seed carries the hostname
-    again — an existing workspace takes its name at such a heal
-    (or a factory reset), and not otherwise.
+    YAML line it lands on. The name lands at first boot, and a
+    factory reset re-provisions from the seed with it; a launch
+    heal rebuilds a lost seed carrying the name too, but a guest
+    that booted before #370 keeps the hostname it already has
+    there — cloud-init sets the hostname per instance, and its
+    per-boot update leaves a hostname it never set untouched, so
+    only a factory reset moves an older workspace's.
     """
     hostname = name or workspace_id
     return f"instance-id: {workspace_id}\nlocal-hostname: {hostname}\n"

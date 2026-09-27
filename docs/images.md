@@ -156,12 +156,14 @@ boots. A guest image must:
   `local-hostname`, the workspace's creation name (#370) — the
   minted id when the workspace was created without one) at its
   root — exactly cloud-init's NoCloud seed layout. The hostname
-  follows the seed's own lifecycle: a stop/start never
-  re-provisions (instance-id never changes), a factory reset
-  re-provisions from the seed, and a launch heal that rebuilds a
-  lost seed carries the hostname — cloud-init applies it on the
-  next boot, so a workspace created before #370 takes its name at
-  such a heal. The image ships cloud-init
+  lands at first boot, and a factory reset re-provisions from the
+  seed with it; a stop/start never re-provisions (instance-id
+  never changes). A launch heal that rebuilds a lost seed carries
+  the hostname as well, but a guest that booted before #370 keeps
+  the hostname it already has — cloud-init sets the hostname per
+  instance, and its per-boot update leaves a hostname it never set
+  untouched, so only a factory reset moves an older workspace's.
+  The image ships cloud-init
   (the Debian `genericcloud` base does), and two dropins pin the
   behavior the msks contract needs: `datasource_list: [ NoCloud,
 None ]` (the seed disk answers immediately — no EC2 or OpenStack
