@@ -4976,9 +4976,12 @@ def test_cmd_image_check_waits_out_the_childs_interrupt(
 
     monkeypatch.setattr(cli.signal, "signal", fake_signal)
 
+    waited: list[int] = []
+
     class FakeProc:
         def wait(self):
             installed[0](signal_mod.SIGINT, None)  # Ctrl-C mid-wait
+            waited.append(3)
             return 3
 
     monkeypatch.setattr(cli.subprocess, "Popen", lambda argv, **kw: FakeProc())
@@ -4986,12 +4989,17 @@ def test_cmd_image_check_waits_out_the_childs_interrupt(
         cli.cmd_image_check(CheckOptions(archive="x.tar"))
     # the note handler was installed and the previous one restored
     assert len(installed) == 2 and installed[1] is previous
+    # and the note was only a note: the wait ran to the child's exit
+    assert waited == [3]
 
 
-def test_cmd_image_check_spawns_the_real_child() -> None:
+def test_cmd_image_check_spawns_the_real_child(capfd) -> None:
     """The bridge runs for real (no mock): the standalone entry
     starts, and its named refusal for a missing archive arrives as
-    the command's exit code."""
+    the command's exit code with its message — the stderr assert
+    separates the archive refusal from an argparse drift exit 2
+    (capfd, not capsys: the message comes from the child's fd)."""
     from msks.conformance_args import CheckOptions
 
     assert cli.cmd_image_check(CheckOptions(archive="/nonexistent/x.tar")) == 2
+    assert "no such archive" in capfd.readouterr().err
