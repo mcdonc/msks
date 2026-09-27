@@ -6,8 +6,9 @@ socket receives them. Same listener/port as HTTPS — one surface.
 
 A root leaf module (#408): the composition layer (``app.py``) and
 the HTTP surface (``server``) both import it, so the package graph
-between them stays one-way. Runtime publishers that reach the hub
-through ``app.state.hub`` import nothing here.
+between them stays one-way. The consent engine and interceptor
+publish through ``app.state.hub`` at runtime without importing
+this module; the watcher imports only the ``EventHub`` type.
 """
 
 import asyncio

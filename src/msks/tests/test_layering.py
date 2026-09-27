@@ -17,9 +17,12 @@ The two granularities are both real on purpose: a package-collapsed
 pair can hide runtime composition behind an entry-point edge — the
 ``app`` ↔ ``server`` pair #408 dissolved by relocating the event
 hub (``server.events``) to the root leaf ``events.py``; today
-``server/main.py → app`` is the one edge between the components,
-and the table below reads strictly bottom-up. A genuine module
-cycle fails the first test whatever the whitelist says.
+``server/main.py → app`` is the one edge between the components.
+The table below reads bottom-up, with two sanctioned upward edges:
+``server.main`` and ``conformance`` each pull the composer (the
+process entry point, and the local check composing the daemon it
+inspects). A genuine module cycle fails the first test whatever
+the whitelist says.
 
 The whitelist reads bottom-up:
 
