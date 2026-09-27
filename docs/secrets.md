@@ -116,24 +116,10 @@ trust arrives with [#200]'s first-boot seeding; until it lands,
 nothing installs the CA into a guest — a workspace minted a
 placeholder against does not validate HTTPS toward allowlisted
 destinations at all, across reboots, until #200 ships and the
-workspace is recreated. Until then the workspace page carries
-the state and the install (#392): its interceptor-CA line names
-the trust — `interceptor CA: untrusted — HTTPS toward allowlisted
-destinations fails validation` — beside the consent line, and
-its **Install the interceptor CA** action writes the CA into the
-running guest through the console channel (a scripted root
-session: the CA's bytes in, `update-ca-certificates` run, the
-line flipped to `interceptor CA: trusted` on success) or prints
-the hand-run recipe with the workspace's real CA path when the
-console channel cannot run: the CA's file in the daemon's state
-dir (`.devenv/state/msksd/vms/<id>/interceptor-ca.crt` under the
-dev daemon) copied into the guest's
-`/usr/local/share/ca-certificates/`, then `update-ca-certificates`.
-The trust record lives on the client that ran the install and
-names the CA it installed, so a re-minted CA reads untrusted
-again and another operator's page reads untrusted until they
-install from theirs.
-The splice
+workspace is recreated (or the operator installs the CA by hand —
+`.devenv/state/msksd/vms/<id>/interceptor-ca.crt` into
+`/usr/local/share/ca-certificates/` + `update-ca-certificates`;
+the interactive recipe on the issue does exactly that). The splice
 leg needs none of this: it presents the origin's own certificate. Arming and disarming swap the workspace's firewall
 table in one nft transaction — the redirect, the widened input
 rule for the listener, and the QUIC drop appear and disappear

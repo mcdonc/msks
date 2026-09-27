@@ -2050,29 +2050,6 @@ def build_api(app) -> FastAPI:
         await app.state.model.set_llm_token(row["id"], token)
         return {"workspace": row["id"], "token": token}
 
-    @api.get(
-        "/api/v1/workspaces/{workspace_id}/interceptor-ca",
-        dependencies=[Depends(require_token)],
-    )
-    async def workspace_interceptor_ca(workspace_id: str) -> dict:
-        """The workspace's interceptor CA (#392), token-gated: the
-        cert's PEM and the state-dir file it lives in — the bytes
-        the workspace page's install action copies into the guest,
-        and the path its hand-run recipe names. The cert is public
-        material (the key never leaves the daemon), and the fetch
-        runs the arm path's own load-or-mint: a CA served before
-        the first placeholder arms is the CA the interceptor later
-        serves, so an install ahead of arming still trusts the
-        leaves that arrive."""
-        row = await _workspace_or_404(app, workspace_id)
-        pem, path = await app.state.interceptor.ca_record(row["id"])
-        return {
-            "workspace": row["id"],
-            "name": row.get("name"),
-            "ca_pem": pem.decode(),
-            "path": str(path),
-        }
-
     # The #41 immutability contract, said out loud: the create-time
     # shape (user_data above all) never changes — a mutation attempt
     # gets a named error instead of a bare 405 from the router's

@@ -248,7 +248,7 @@ async def run_shell(
         try:
             await pump(stdin, ws, sys.stdout)
         except websockets.ConnectionClosed as closed:
-            report_close(closed)
+            _report_close(closed)
         finally:
             for task in asyncio.all_tasks(loop) - {asyncio.current_task()}:
                 task.cancel()
@@ -272,7 +272,7 @@ async def open_session(
             ws, workspace_id, url, token, ssl_ctx
         )
     except websockets.ConnectionClosed as closed:
-        report_close(closed)
+        _report_close(closed)
         return False
     if isinstance(lead, str):
         # A text frame from the relay: bytes are bytes on a tty.
@@ -324,7 +324,7 @@ def close_label(code: int, reason: str) -> str:
     return CLOSE_CODE_REASONS[code]
 
 
-def report_close(closed: websockets.ConnectionClosed) -> None:
+def _report_close(closed: websockets.ConnectionClosed) -> None:
     """Name the daemon's close codes; anything else is a clean end.
 
     A clean detach or session end must stay exit 0 — only the named

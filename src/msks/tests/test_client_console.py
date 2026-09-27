@@ -700,7 +700,7 @@ def _closed(code: int, reason: str = ""):
 def test_report_close_4400() -> None:
     closed = _closed(4400, "console user 'x' is not served")
     with pytest.raises(SystemExit) as caught:
-        console.report_close(closed)
+        console._report_close(closed)
     assert "console refused" in str(caught.value)
     assert "'x'" in str(caught.value)
 
@@ -708,13 +708,13 @@ def test_report_close_4400() -> None:
 def test_report_close_4401() -> None:
 
     with pytest.raises(SystemExit, match="authentication failed"):
-        console.report_close(_closed(4401))
+        console._report_close(_closed(4401))
 
 
 def test_report_close_carries_reason() -> None:
 
     with pytest.raises(SystemExit, match="workspace stopped"):
-        console.report_close(_closed(4501, "workspace stopped"))
+        console._report_close(_closed(4501, "workspace stopped"))
 
 
 def test_report_close_4501_keeps_its_hint_only_without_a_reason() -> None:
@@ -722,10 +722,10 @@ def test_report_close_4501_keeps_its_hint_only_without_a_reason() -> None:
     is-the-workspace-running hint would read as the cause itself
     beside a specific refusal (#248 review)."""
     with pytest.raises(SystemExit) as bare:
-        console.report_close(_closed(4501))
+        console._report_close(_closed(4501))
     assert "is the workspace running" in str(bare.value)
     with pytest.raises(SystemExit) as named:
-        console.report_close(_closed(4501, "console refused user 'sync'"))
+        console._report_close(_closed(4501, "console refused user 'sync'"))
     line = str(named.value)
     assert "is the workspace running" not in line
     assert "refused user 'sync'" in line
@@ -734,12 +734,12 @@ def test_report_close_4501_keeps_its_hint_only_without_a_reason() -> None:
 def test_report_close_4502_names_the_stall() -> None:
 
     with pytest.raises(SystemExit, match="console stalled"):
-        console.report_close(_closed(4502))
+        console._report_close(_closed(4502))
 
 
 def test_report_close_clean_end_is_quiet() -> None:
 
-    assert console.report_close(_closed(1000)) is None
+    assert console._report_close(_closed(1000)) is None
 
 
 def test_stdin_pipe_passthrough() -> None:
