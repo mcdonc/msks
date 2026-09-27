@@ -1165,6 +1165,10 @@ class WorkspaceScreen(Screen):
         # hides (#343) — a page-raised failure names itself here,
         # where the operator reads it.
         self.flash_line = FlashLine()
+        # The edit waiting on the stop-and-resize answer (#380):
+        # the body a running workspace's Apply parked while the
+        # confirmation asks. None when no question stands.
+        self.pending_edit: dict | None = None
         self.rebuilds = OneFlight(
             lambda: self.rebuild_actions(),
             lambda: self.app.is_running,
@@ -1611,9 +1615,52 @@ class WorkspaceScreen(Screen):
         """The edit dialog's callback: a body resizes this workspace
         (the daemon owns the stopped-workspace rule — a refusal
         names itself on the page's consent line), a cancel decides
-        nothing."""
+        nothing. A running workspace asks first (#380): the sizes
+        move only while it is stopped, so Apply offers the stop
+        instead of losing the edit to a refusal the operator never
+        reads."""
         if body is None:
             return
+        if self.row["status"] not in EDIT_FREE_STATUSES:
+            self.pending_edit = body
+            self.app.push_screen(
+                ConfirmScreen(
+                    edit_stop_question(self.row), self.edit_stop_answered
+                )
+            )
+            return
+        await self.apply_edit(body)
+
+    async def edit_stop_answered(self, yes: bool) -> None:
+        """The stop-and-resize answer (#380): a yes stops the
+        workspace through the page's own stop exchange and applies
+        the edit that waited for it; a no keeps the workspace as
+        it is, sizes untouched."""
+        body = self.pending_edit
+        self.pending_edit = None
+        if not yes:
+            self.flash(
+                flash_safe(
+                    f"edit skipped — {workspace_label(self.row)} "
+                    "keeps its sizes"
+                )
+            )
+            return
+        # power_workspace's exchange minus its flash: the resize's
+        # outcome line owns the consent line after the stop.
+        stop = await self.guarded_page_flash(
+            "stop", self.app.data.stop(self.row["id"])
+        )
+        if stop is None:
+            return
+        self.row["status"] = stop["status"]
+        self.paint_header()
+        self.paint_actions()
+        await self.apply_edit(body)
+
+    async def apply_edit(self, body: dict) -> None:
+        """The resize exchange (#331): the reply's sizes land in the
+        page's row and the outcome line names what moved."""
         reply = await self.guarded_page_flash(
             "edit", self.app.data.resize(self.row["id"], body)
         )
@@ -2105,6 +2152,12 @@ EDIT_ROW_KEYS = {
 #: image's own, the same default the ssh-key endpoint serves.
 EDIT_ROW_FALLBACKS = {"image": "-", "user": LEGACY_LOGIN_USER}
 
+#: The statuses the resize route serves (#380) — the daemon's own
+#: allow-list, mirrored here for the ask: a workspace in any other
+#: status may keep a live volume attached, so its edit takes the
+#: stop-and-resize question before the route can refuse it.
+EDIT_FREE_STATUSES = frozenset({"created", "stopped", "absent"})
+
 
 def edit_seeds(row: dict) -> dict[str, str]:
     """The edit dialog's seeded values (#331): every form field's
@@ -2120,20 +2173,28 @@ def edit_seeds(row: dict) -> dict[str, str]:
     return seeds
 
 
+def edit_stop_question(row: dict) -> str:
+    """The stop-and-resize question (#380): the workspace runs, its
+    sizes move only while it is stopped, and Apply hands the stop
+    to the operator to confirm instead of losing the edit to the
+    refusal the stop answers."""
+    return f"stop {workspace_label(row)} and resize?"
+
+
 def edit_note(row: dict) -> str:
     """The edit dialog's note (#331): the title, then the rule the
     issue pins — which fields land live (home bytes move at
-    once), which wait for a stop/start cycle (the resize needs
-    the workspace stopped; root growth and the new topology
-    apply at the next boot), and which cannot change (the
-    create-time fields, marked * on their labels). The explicit
+    once), which wait for a boot (root growth and the new
+    topology), and what Apply does with a running workspace (asks
+    to stop it, #380), and which fields cannot change (the
+    create-time ones, marked * on their labels). The explicit
     line breaks keep the form fitting 80x24 terminals whatever
     the workspace's name carries."""
     label = clip(workspace_label(row), 40)
     return (
         f"edit {label}\n"
-        "stop the workspace to resize · home bytes move at once ·\n"
-        "root growth and topology at next boot · * = create-time"
+        "Apply asks to stop a running VM · home bytes move at once\n"
+        "· root growth and topology at next boot · * = create-time"
     )
 
 

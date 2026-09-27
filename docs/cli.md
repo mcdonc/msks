@@ -385,12 +385,15 @@ workspace's current values. The sizes and topology (root, home,
 vcpus, memory) are editable — a submit sends the changed values
 through the same endpoint `msks resize` speaks, and the page's
 consent line carries the same outcome line the CLI prints,
-including what waits for the next boot. The dialog's note states
-the rule: the workspace must be stopped for a resize (a running
-workspace's refusal names itself on the consent line), home
-bytes move at once, and root growth and the new topology apply
-at the next boot. The name, image, and user fields show their
-current values read-only, marked `*` as create-time — changing
+including what waits for the next boot. A workspace that is
+running when Apply lands asks first (#380): confirm and the page
+stops the workspace, then applies the resize — decline and the
+workspace keeps running with its sizes as they were. Home bytes
+move at once, and root growth and the new topology apply at the
+next boot; a resize the daemon still refuses — a root shrink,
+among them — names its reason on the consent line. The name,
+image, and user fields show their current values read-only,
+marked `*` as create-time — changing
 them is a delete-and-recreate, and the dialog refuses a changed
 value with a note naming the field instead of accepting it
 silently. A size left blank keeps its current value. Escape

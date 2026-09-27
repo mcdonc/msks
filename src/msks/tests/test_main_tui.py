@@ -25,6 +25,7 @@ from msks.client.tui import main_app
 from msks.client.tui.consent import ConsentController
 from msks.client.tui.link import DeciderLink
 from msks.client.tui.main_app import (
+    EDIT_FREE_STATUSES,
     FLOW_SHELL,
     PAGE_ACTIONS,
     EditScreen,
@@ -36,6 +37,7 @@ from msks.client.tui.main_app import (
     edit_seeds,
     image_options,
 )
+from msks.server.api import HOME_FREE_STATUSES
 from rich.cells import cell_len
 from test_consent_overlay import FakeFactory, FakeWS, press_until, wait_for
 from test_consent_tui import frame
@@ -973,6 +975,14 @@ async def open_edit(pilot, app) -> EditScreen:
     return app.screen
 
 
+def test_the_asks_status_mirror_matches_the_daemons_allow_list() -> None:
+    """The statuses whose edit takes the stop-and-resize question
+    (#380) mirror the resize route's own allow-list exactly: the
+    page asks exactly where the daemon refuses, whatever either
+    side names next."""
+    assert EDIT_FREE_STATUSES == frozenset(HOME_FREE_STATUSES)
+
+
 def test_edit_seeds_read_every_field_off_the_row() -> None:
     """The prefill (#331): every form field seeded from the row —
     sizes and topology as their numbers, the image as its hash,
@@ -1035,7 +1045,7 @@ async def test_the_page_opens_the_prefilled_edit_dialog(
             assert screen.query_one(f"#field-{field}", Input).disabled
         note = str(screen.query_one("#form-note", Static).content)
         assert "edit alpha" in note
-        assert "stop the workspace to resize" in note
+        assert "Apply asks to stop a running VM" in note
         assert "home bytes move at once" in note
         assert "* = create-time" in note
         labels = [
@@ -1152,14 +1162,14 @@ async def test_an_older_daemons_resize_reply_keeps_the_rows_facts(
 
 
 async def test_an_edit_refusal_flashes_on_the_page(monkeypatch) -> None:
-    """A refused resize — a workspace the daemon will not move,
-    a running one among them — names itself on the page's consent
-    line (#343's surface rule), the dialog's own refusal carried
-    by the page that owns the exchange."""
+    """A refused resize — a stopped workspace the daemon will not
+    move, a refused root shrink among them — names itself on the
+    page's consent line (#343's surface rule), the dialog's own
+    refusal carried by the page that owns the exchange."""
     scripted_link(monkeypatch, [rules_frame()])
-    data = FakeData([row(status="running")])
+    data = FakeData([row(status="stopped")])
     data.fail.add("resize")
-    data.refusal = "workspace ws-a is running; stop it first"
+    data.refusal = "the root overlay only grows"
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
@@ -1168,7 +1178,121 @@ async def test_an_edit_refusal_flashes_on_the_page(monkeypatch) -> None:
         screen.query_one("#field-cpus", Input).value = "4"
         screen.submit()
         await wait_for(lambda: "edit failed" in consent_text(app))
-        assert "stop it first" in consent_text(app)
+        assert "the root overlay only grows" in consent_text(app)
+        assert on_page(app)
+
+
+async def test_an_edit_on_a_running_workspace_asks_and_stops_first(
+    monkeypatch,
+) -> None:
+    """Apply on a running workspace asks to stop it (#380): a yes
+    runs the page's stop exchange and then the resize — the
+    operator's edit cannot die as a refused flash the stop was
+    meant to answer — and the row follows the stopped status."""
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([row(status="running")])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        page = await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        screen = await open_edit(pilot, app)
+        screen.query_one("#field-home_mib", Input).value = "40960"
+        screen.submit()
+        await wait_for(lambda: type(app.screen).__name__ == "ConfirmScreen")
+        assert "stop alpha and resize?" in str(
+            app.screen.query_one("#question", Static).content
+        )
+        await pilot.press("y")
+        await wait_for(
+            lambda: any(call[:2] == ("resize", WS) for call in data.calls)
+        )
+        # The property, not the pair: the stop precedes the resize.
+        assert data.calls.index(("stop", WS)) < next(
+            i for i, call in enumerate(data.calls) if call[0] == "resize"
+        )
+        body = next(call for call in data.calls if call[0] == "resize")[2]
+        assert body == {"home_mib": 40960}
+        await wait_for(lambda: "resized alpha" in consent_text(app))
+        assert "home 40960 MiB" in consent_text(app)
+        assert page.row["status"] == "stopped"
+        assert on_page(app)
+
+
+async def test_a_failed_stop_names_itself_and_skips_the_resize(
+    monkeypatch,
+) -> None:
+    """A stop that fails mid stop-and-resize (#380): the stop's
+    refusal names itself on the consent line and the resize never
+    runs — the workspace keeps its sizes and the operator can
+    stop it by hand and edit again."""
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([row(status="running")])
+    data.fail.add("stop")
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        page = await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        screen = await open_edit(pilot, app)
+        screen.query_one("#field-cpus", Input).value = "4"
+        screen.submit()
+        await wait_for(lambda: type(app.screen).__name__ == "ConfirmScreen")
+        await pilot.press("y")
+        await wait_for(lambda: "stop failed" in consent_text(app))
+        assert not any(call[0] == "resize" for call in data.calls)
+        assert page.row["status"] == "running"
+        assert on_page(app)
+
+
+async def test_a_refused_resize_after_the_stop_names_itself(
+    monkeypatch,
+) -> None:
+    """The stop-and-resize leg the daemon still refuses (#380): a
+    stop that lands and a resize that answers a named refusal — a
+    root shrink among them — leaves the workspace stopped, its
+    sizes as they were, and the reason on the consent line."""
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([row(status="running")])
+    data.fail.add("resize")
+    data.refusal = "the root overlay only grows"
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        page = await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        screen = await open_edit(pilot, app)
+        screen.query_one("#field-cpus", Input).value = "4"
+        screen.submit()
+        await wait_for(lambda: type(app.screen).__name__ == "ConfirmScreen")
+        await pilot.press("y")
+        await wait_for(lambda: "edit failed" in consent_text(app))
+        assert "the root overlay only grows" in consent_text(app)
+        assert page.row["status"] == "stopped"
+        assert page.row["cpus"] == 2  # the row keeps its fact
+        assert page.pending_edit is None  # the parked body is spent
+        assert on_page(app)
+
+
+async def test_a_declined_stop_keeps_the_workspace_running(
+    monkeypatch,
+) -> None:
+    """The stop-and-resize question declined (#380): no stop, no
+    resize — the consent line names the skipped edit and the
+    workspace keeps running with its sizes as they were."""
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([row(status="running")])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        page = await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        screen = await open_edit(pilot, app)
+        screen.query_one("#field-cpus", Input).value = "4"
+        screen.submit()
+        await wait_for(lambda: type(app.screen).__name__ == "ConfirmScreen")
+        await pilot.press("n")
+        await wait_for(lambda: "edit skipped" in consent_text(app))
+        assert "alpha keeps its sizes" in consent_text(app)
+        assert page.pending_edit is None  # the parked body is spent
+        assert data.calls == []
+        assert page.row["status"] == "running"
         assert on_page(app)
 
 
