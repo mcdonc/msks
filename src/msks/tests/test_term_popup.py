@@ -240,13 +240,15 @@ def test_start_watcher_popens_this_module(
         return "proc"
 
     monkeypatch.setattr(tp.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(
-        tp.tempfile,
-        "NamedTemporaryFile",
-        lambda **kwargs: SimpleNamespace(
-            name="/tmp/consent.log", close=lambda: None
-        ),
-    )
+    logs = []
+
+    def fake_log(**kwargs):
+        logs.append(
+            SimpleNamespace(name="/tmp/consent.log", close=lambda: None)
+        )
+        return logs[-1]
+
+    monkeypatch.setattr(tp.tempfile, "NamedTemporaryFile", fake_log)
     tp.start_watcher("sess", "ws1")
     assert spawned["argv"] == [
         tp.sys.executable,
@@ -259,8 +261,9 @@ def test_start_watcher_popens_this_module(
         "ws1",
     ]
     assert spawned["kwargs"]["stdin"] == subprocess.DEVNULL
-    # The child inherits the open log file object, not a path.
-    assert spawned["kwargs"]["stdout"] is not None
+    # The child inherits the open log file object, not a path —
+    # the fd stays valid whatever happens to the file.
+    assert spawned["kwargs"]["stdout"] is logs[0]
 
 
 # --- the watcher's frame handling ------------------------------------------
@@ -298,17 +301,23 @@ async def test_watch_frame_raises_popups_and_records_resolutions(
 
 async def test_watch_frame_stops_on_a_refused_registration(
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     # A workspace id that names nothing: the server refuses the
-    # decider frame, and the watcher stops instead of sitting
-    # connected and useless.
+    # decider frame with its reason, and the watcher stops instead
+    # of sitting connected and useless. The frame shape is the
+    # daemon's own (api.py): a reason, no workspace key — the
+    # watcher's own id parameter is what names the typo.
     rejected = {
         "event": "egress.decider_rejected",
-        "data": {"workspace": "nope"},
+        "data": {"reason": "unknown workspace"},
     }
     monkeypatch.setattr(tp, "raise_popup", lambda *a: None)
     with pytest.raises(SystemExit):
         await tp.watch_frame(rejected, "nope", "sess", set())
+    out = capsys.readouterr().out
+    assert "decider registration refused: nope" in out
+    assert "unknown workspace" in out
 
 
 class FakeWS:

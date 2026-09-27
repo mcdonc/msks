@@ -258,7 +258,8 @@ async def watch_frame(
     reason; a request resolved between its frame and its popup
     still pops (the resolution frame sits unread behind it). A
     refused decider registration — the workspace id names nothing —
-    stops the watcher with the log's one line."""
+    stops the watcher with the log's one line naming the id and the
+    daemon's reason."""
     event = frame.get("event")
     data = frame.get("data", {})
     if event == "egress.request":
@@ -269,8 +270,8 @@ async def watch_frame(
         resolved.add(data["request_id"])
     elif event == "egress.decider_rejected":
         print(
-            f"decider registration refused: {data.get('workspace', '')}"
-            " — no such workspace; stopping",
+            f"decider registration refused: {workspace_id}"
+            f" ({data.get('reason', 'no reason given')}); stopping",
             flush=True,
         )
         raise SystemExit(1)
@@ -281,7 +282,7 @@ def raise_popup(row: dict, workspace_id: str, session: str) -> int:
     tmux client (the terminal window's own client) gets the popup,
     and it closes itself when the decide role exits (``-E``). No
     attached client — the window closed between the frame and here
-    — reports its nonzero returncode; the caller moves on."""
+    — returns 1; the caller moves on."""
     client = popup_client(session)
     if client is None:
         return 1
@@ -506,7 +507,10 @@ def socket_name(workspace_id: str | None, token: int | None = None) -> str:
     workspace opens its own server (two operators, two shells)
     instead of sharing a session. A server of its own is what
     carries the launcher's environment to the pane — a shared
-    server keeps the environment of whoever started it."""
+    server keeps the environment of whoever started it. The
+    server's socket file lands in the tmp tmux dir and outlives
+    the server by whatever the tmp reapers take; one small file
+    per window is the accepted cost."""
     suffix = os.getpid() if token is None else token
     return f"msks-{workspace_id or 'shell'}-{suffix}"
 
