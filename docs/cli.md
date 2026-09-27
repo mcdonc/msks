@@ -418,7 +418,11 @@ chained `msks console` session.
 Every screen walks with the arrow keys alone: lists move with
 up/down, the create form's fields move with up/down between them,
 and Escape leaves the screen it is on (`q` backs out of a page;
-at the workspaces list, Escape is the tree itself quitting). The TUI speaks the same REST
+at the workspaces list, Escape is the tree itself quitting).
+Ctrl+C exits the client from any screen — the tree, a page, a
+form field, or a panel stacked over them — the same clean exit
+`q` takes at the workspaces list, and it takes priority over the
+form field's copy shortcut while a form field holds the focus. The TUI speaks the same REST
 surface the `msksc` commands speak (`MSKSC_URL`, `MSKSC_TOKEN`,
 `MSKSC_CAFILE`) and reads no daemon state directly.
 

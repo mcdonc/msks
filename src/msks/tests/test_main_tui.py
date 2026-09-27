@@ -425,6 +425,62 @@ async def test_keys_without_a_focused_row_flash() -> None:
         assert "remove" not in [call[0] for call in data.calls]
 
 
+async def test_ctrl_c_quits_the_tree(monkeypatch) -> None:
+    # (#388) Ctrl+C exits the client from the tree's root, the
+    # same clean exit q takes. The binding stays live on every
+    # screen — the footer draws its key hint from the same map.
+    scripted_link(monkeypatch, [])
+    app, _ = make_app(FakeData([row()]))
+    async with app.run_test() as pilot:
+        await wait_for(lambda: list_children(app) == 1)
+        assert "ctrl+c" in app.screen.active_bindings
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert app.return_code == 0
+
+
+async def test_ctrl_c_quits_from_a_workspace_page(monkeypatch) -> None:
+    scripted_link(monkeypatch, [])
+    app, _ = make_app(FakeData([row()]))
+    async with app.run_test() as pilot:
+        await wait_for(lambda: "alpha" in row_text(app, 0))
+        await open_page(pilot, app)
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert app.return_code == 0
+
+
+async def test_ctrl_c_quits_over_a_form_input() -> None:
+    # The priority binding takes Ctrl+C ahead of the create form's
+    # focused Input — which binds the key to copy — so the reflex
+    # exits instead of copying an empty selection.
+    data = FakeData([])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: list_children(app) == 0)
+        await pilot.press("c")
+        await wait_for(lambda: type(app.screen).__name__ == "CreateScreen")
+        assert app.focused is not None
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert app.return_code == 0
+
+
+async def test_ctrl_c_quits_over_the_consent_overlay(monkeypatch) -> None:
+    # The docs promise the exit over a stacked panel; the consent
+    # overlay over an open page is that panel. A hold arrives, the
+    # overlay opens by itself, and Ctrl+C still takes the whole
+    # client down.
+    scripted_link(monkeypatch, [rules_frame(), request_frame("r9")])
+    app, _ = make_app(FakeData([row()]))
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: on_overlay(app))
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert app.return_code == 0
+
+
 async def test_the_create_form_posts_and_the_list_refreshes() -> None:
     data = FakeData([])
     app, _ = make_app(data)
