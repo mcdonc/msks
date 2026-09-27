@@ -22,13 +22,13 @@ from urllib.parse import quote
 import websockets
 
 from . import wsauth
-from .rest import (
+from .env import (
     DEFAULT_URL,  # noqa: F401  (re-exported for callers/tests)
-    ensure_running,
     env_token,
     env_url,
     ssl_context,
 )
+from .rest import ensure_running
 
 #: Input is read up to this many bytes per websocket frame.
 READ_CHUNK = 4096

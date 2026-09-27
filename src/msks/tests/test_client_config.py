@@ -9,7 +9,7 @@ import httpx
 import pytest
 import yaml
 from msks.client import cli, config
-from msks.client.rest import DEFAULT_URL, env_token, env_url, ssl_context
+from msks.client.env import DEFAULT_URL, env_token, env_url, ssl_context
 from msks.server.tls import generate_ca
 
 # The connect/state variables the file can feed, plus the

@@ -55,7 +55,8 @@ import websockets
 
 from . import wsauth
 from .egress import DURATIONS, connect_args, dest_label, refused
-from .rest import api_client, env_token, env_url, request
+from .env import env_token, env_url
+from .rest import api_client, request
 
 #: The popup geometry: fixed cells, sized for the 80-column window
 #: the consent screens already target; tmux clips it to a smaller

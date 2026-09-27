@@ -57,8 +57,8 @@ from ...identity import LEGACY_LOGIN_USER
 from ..config import DEFAULT_TERMINAL_CMD, ClientConfig
 from ..console import run_workspace_shell
 from ..create import invoking_user
+from ..env import env_token, env_url
 from ..resize import resize_message
-from ..rest import env_token, env_url
 from .consent_ui import (
     DURATION_DEFAULT,
     EMPTY_STATIC_QUESTION,

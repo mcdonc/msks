@@ -70,12 +70,10 @@ from cryptography.hazmat.primitives import serialization
 
 from ..identity import LEGACY_LOGIN_USER
 from . import agent
+from .env import env_token, env_url, ssl_context
 from .rest import (
     ensure_running,
-    env_token,
-    env_url,
     fetch_ssh_key,
-    ssl_context,
 )
 
 #: The remembered-passthrough setting's variable (#385): the

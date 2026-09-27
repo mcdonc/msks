@@ -54,7 +54,7 @@ rule, shared with :mod:`msks.config`).
 
 The resolved values are **materialized into the environment** by
 :func:`bootstrap` — every existing ``os.environ`` reader
-(:func:`msks.client.rest.env_url`, the ssh state roots, the
+(:func:`msks.client.env.env_url`, the ssh state roots, the
 expected-image drift check) keeps working unchanged, and only the
 values the file or the flag contributed are written (an
 environment-provided value is already there; a default is left to
@@ -76,7 +76,7 @@ from pathlib import Path
 import yaml
 
 from ..configio import UniqueKeyLoader, write_exclusive
-from .rest import DEFAULT_URL
+from .env import DEFAULT_URL
 
 # The ``--config=none`` sentinel: env vars + built-in defaults only.
 NO_CONFIG = "none"
@@ -629,7 +629,7 @@ def read_token_file(token_file: str, path: str) -> str:
 
     A missing or unreadable file names both places a token can
     come from — the file key and the variable — the same pair
-    :func:`msks.client.rest.env_token` names when nothing at all
+    :func:`msks.client.env.env_token` names when nothing at all
     provides one.
     """
     target = Path(token_file).expanduser()
@@ -817,7 +817,7 @@ def resolved_global(key: str, doc: dict, layer: dict):
 def apply(conf: ClientConfig) -> None:
     """Materialize the file-derived winners into the environment.
 
-    The readers (:func:`msks.client.rest.env_url` and its kin) stay
+    The readers (:func:`msks.client.env.env_url` and its kin) stay
     environment-driven — one materialization point instead of a
     config object threaded through every call, and a value the
     environment already provided is never rewritten (it won its

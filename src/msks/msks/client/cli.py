@@ -57,6 +57,10 @@ from .create import (  # noqa: F401
     operator_pubkey,
     write_client_identity,
 )
+
+# cli binds the env-layer names itself: the tests call
+# cli.env_url/cli.env_token and patch cli.ssl_context directly.
+from .env import env_token, env_url, ssl_context
 from .forward import run_workspace_forward
 from .resize import display_name, resize_message
 from .rest import (
@@ -64,10 +68,7 @@ from .rest import (
     api_call,
     api_client,
     download,
-    env_token,
-    env_url,
     request,
-    ssl_context,
     upload,
 )
 from .rest import (
