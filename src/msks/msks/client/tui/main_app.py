@@ -1634,17 +1634,20 @@ class WorkspaceScreen(Screen):
     async def edit_stop_answered(self, yes: bool) -> None:
         """The stop-and-resize answer (#380): a yes stops the
         workspace through the page's own stop exchange and applies
-        the edit that waited for it; a no keeps the workspace
-        running and its sizes as they were."""
+        the edit that waited for it; a no keeps the workspace as
+        it is, sizes untouched."""
         body = self.pending_edit
         self.pending_edit = None
         if not yes:
             self.flash(
                 flash_safe(
-                    f"edit skipped — {workspace_label(self.row)} stays running"
+                    f"edit skipped — {workspace_label(self.row)} "
+                    "keeps its sizes"
                 )
             )
             return
+        # power_workspace's exchange minus its flash: the resize's
+        # outcome line owns the consent line after the stop.
         stop = await self.guarded_page_flash(
             "stop", self.app.data.stop(self.row["id"])
         )
@@ -2190,7 +2193,7 @@ def edit_note(row: dict) -> str:
     label = clip(workspace_label(row), 40)
     return (
         f"edit {label}\n"
-        "Apply stops a running workspace · home bytes move at once\n"
+        "Apply asks to stop a running VM · home bytes move at once\n"
         "· root growth and topology at next boot · * = create-time"
     )
 
