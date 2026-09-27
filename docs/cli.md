@@ -216,6 +216,45 @@ the same terminal. A holding variant
 the session ends, for reading final output; without one the window
 closes itself when the session disconnects.
 
+### `msks-term-popup`: the consent-decider terminal (#379)
+
+`msks-term-popup` is a shipped client command that runs the
+appended shell inside a local tmux session and answers the
+workspace's egress consent prompts right there: while the session
+lives, it registers as a decider for the workspace, and a held
+egress request raises a popup over the shell — one keypress
+allows (choosing the duration: `1` once, `2` 5m, `3` 15m, `4`
+until restart, `5` forever) or denies, and the popup closes. The
+session ends with its window, and the decider registration ends
+with the session. It works with any terminal that runs a command:
+name your terminal and its command flag in `terminal_open_cmd`,
+and `msks-term-popup` right after it (tmux 3.2 or newer must be on
+PATH):
+
+```yaml
+terminal_open_cmd: konsole -e msks-term-popup
+terminal_open_cmd: xterm -e msks-term-popup
+terminal_open_cmd:                     # list form (no shell quoting)
+  - alacritty
+  - -T
+  - msks ssh
+  - -e
+  - msks-term-popup
+```
+
+Each popup answers one request at a time — a second request
+waits for the popup ahead of it. A request that another decider
+window (the consent TUI, another popup) answers while its popup
+is open fails at the post and the popup names the reason — the
+request is already resolved; a request decided before this window
+raises its popup still pops, and answering it reports the same
+line. The watcher keeps its diagnostics in a `msks-consent-*` log
+under the tmp dir (a registration the daemon refuses — a
+workspace id that names nothing — stops the watcher with one line
+there); the window's own hold flags (`konsole --hold`, xterm's
+`-hold`) keep the window open after the session ends as they do
+for a plain shell window.
+
 ## Workspace identity: a name and an id (#246)
 
 A workspace carries two identity fields. The **name** is the label
