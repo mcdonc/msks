@@ -14,7 +14,8 @@ from sqlalchemy import create_engine, or_, select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from ..microvm.spec import VmSpec
+from ..spec.tokens import validate_token_plaintext
+from ..spec.vm import VmSpec
 from .db import Base, engine_for, sessionmaker_for, tighten_db_mode, utcnow
 from .egress_consent import EgressConsentModel
 from .secrets import (
@@ -23,7 +24,7 @@ from .secrets import (
     SecretAudit,
     coverage_label,
 )
-from .tokens import Token, validate_token_plaintext
+from .tokens import Token
 from .workspaces import WORKSPACE_STATUSES, Workspace
 
 

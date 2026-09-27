@@ -516,7 +516,7 @@ def test_new_tokens_fit_the_handshake_grammar() -> None:
     # surface and the websocket handshake (#216): the credential
     # must fit the HTTP ``token`` grammar (RFC 9110), which rejects
     # spaces and separators — every minted token must fit it.
-    from msks.model.tokens import TCHAR_RE
+    from msks.spec.tokens import TCHAR_RE
 
     for _ in range(64):
         assert TCHAR_RE.fullmatch(new_token())
@@ -528,7 +528,7 @@ async def test_supplied_plaintext_outside_the_grammar_is_refused(
     # Seeding (the bootstrap path) passes the same guard minting
     # does (#116): a token the daemon cannot authenticate on the
     # websocket handshake is refused at insertion.
-    from msks.model.tokens import validate_token_plaintext
+    from msks.spec.tokens import validate_token_plaintext
 
     app = app_for()
     await app.state.model.create_all()
@@ -711,7 +711,7 @@ async def test_workspace_row_carries_the_consent_posture(app_for) -> None:
     workspace delete cascades its consent rows."""
     app = app_for()
     await app.state.model.create_all()
-    from msks.model.egress_consent import DECISION_ALLOWED
+    from msks.spec.egress import DECISION_ALLOWED
 
     await app.state.model.create_workspace(
         spec(

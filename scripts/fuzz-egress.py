@@ -104,8 +104,9 @@ import httpx
 import websockets
 from msks.client import consoleauth
 from msks.client.console import ws_url
-from msks.consent.specs import EgressPolicy, ports_for
-from msks.model.egress_consent import (
+from msks.net import dnsmsg
+from msks.net.dns import covers
+from msks.spec.egress import (
     DECISION_ALLOWED,
     DECISION_DENIED,
     DECISION_EXPIRED,
@@ -113,9 +114,9 @@ from msks.model.egress_consent import (
     DURATION_FOREVER,
     DURATION_ONCE,
     DURATION_TILRESTART,
+    EgressPolicy,
+    ports_for,
 )
-from msks.net import dnsmsg
-from msks.net.dns import covers
 
 # -- statuses and expectations ----------------------------------------------
 

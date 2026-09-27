@@ -7,11 +7,15 @@ import pytest
 from msks.app import build_app
 from msks.consent import coordinator as coordinator_mod
 from msks.consent.coordinator import duration_ttl
-from msks.consent.specs import MODE_ALLOW, MODE_INTERACTIVE, MODE_STATIC
 from msks.microvm import VmSpec
-from msks.model.egress_consent import DECISION_ALLOWED
 from msks.server.events import EventHub
 from msks.settings import NetSettings, ServerSettings, Settings
+from msks.spec.egress import (
+    DECISION_ALLOWED,
+    MODE_ALLOW,
+    MODE_INTERACTIVE,
+    MODE_STATIC,
+)
 
 
 class RecordingNet:

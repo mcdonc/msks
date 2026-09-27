@@ -595,7 +595,7 @@ async def gated_app(tmp_path: Path, monkeypatch):
 
 
 def interactive_policy():
-    from msks.consent.specs import EgressPolicy
+    from msks.spec.egress import EgressPolicy
 
     return EgressPolicy("ws-i", "interactive", ())
 
@@ -623,7 +623,7 @@ async def test_interactive_attach_binds_the_queue_before_the_chain(
 async def test_allow_attach_runs_no_consumer(gated_app) -> None:
     app, consumers, _nft_log = gated_app
     await app.state.net.start()
-    from msks.consent.specs import EgressPolicy
+    from msks.spec.egress import EgressPolicy
 
     await app.state.net.attach(
         "ws-i", want=True, policy=EgressPolicy("ws-i", "allow", ())
@@ -780,7 +780,7 @@ async def test_static_pins_survive_a_shared_address(gated_app) -> None:
     app, _consumers, nft_log = gated_app
     net = app.state.net
     await net.start()
-    from msks.consent.specs import EgressPolicy
+    from msks.spec.egress import EgressPolicy
 
     await net.attach(
         "ws-a", want=True, policy=EgressPolicy("ws-a", "static", ())
@@ -899,7 +899,7 @@ async def test_host_for_reads_the_services_naming(gated_app) -> None:
 async def test_replay_forever_pins_address_verdicts(gated_app) -> None:
     app, _consumers, nft_log = gated_app
     await app.state.net.start()
-    from msks.model.egress_consent import DECISION_ALLOWED
+    from msks.spec.egress import DECISION_ALLOWED
 
     model = app.state.model.egress_consent
     allow = await model.create_request("ws-i", "203.0.113.7", 443)
@@ -969,7 +969,7 @@ async def test_revoke_flushes_the_per_flow_rsts(gated_app) -> None:
     )
     # A static workspace defines no per-flow set: its revoke clears
     # its elements without a flush.
-    from msks.consent.specs import EgressPolicy
+    from msks.spec.egress import EgressPolicy
 
     await net.attach(
         "ws-a", want=True, policy=EgressPolicy("ws-a", "static", ())
@@ -1444,7 +1444,7 @@ async def test_apply_policy_switches_a_live_workspace_into_interactive(
 ) -> None:
     app, consumers, nft_log = gated_app
     await app.state.net.start()
-    from msks.consent.specs import EgressPolicy
+    from msks.spec.egress import EgressPolicy
 
     await app.state.net.attach(
         "ws-i", want=True, policy=EgressPolicy("ws-i", "static", (".a.de",))
@@ -1472,7 +1472,7 @@ async def test_apply_policy_out_of_interactive_fail_closes_and_unbinds(
     app, consumers, nft_log = gated_app
     await app.state.net.start()
     await app.state.net.attach("ws-i", want=True, policy=interactive_policy())
-    from msks.consent.specs import EgressPolicy
+    from msks.spec.egress import EgressPolicy
 
     request = await held_request(app, "ws-i", "203.0.113.9")
     hold = app.state.consent.register_hold(request)
@@ -1501,7 +1501,7 @@ async def test_apply_policy_carries_elements_between_gated_modes(
     app, _consumers, nft_log = gated_app
     await app.state.net.start()
     await app.state.net.attach("ws-i", want=True, policy=interactive_policy())
-    from msks.consent.specs import EgressPolicy
+    from msks.spec.egress import EgressPolicy
 
     async def dumped(settings, workspace_id):
         return {"allows_any": [("10.1.2.3", 60)]}
@@ -1525,7 +1525,7 @@ async def test_apply_policy_into_gated_replays_address_verdicts(
 ) -> None:
     app, _consumers, nft_log = gated_app
     await app.state.net.start()
-    from msks.consent.specs import EgressPolicy
+    from msks.spec.egress import EgressPolicy
 
     await app.state.net.attach(
         "ws-i", want=True, policy=EgressPolicy("ws-i", "allow", ())
@@ -1553,7 +1553,7 @@ async def test_apply_policy_interactive_to_interactive_keeps_the_consumer(
     app, consumers, nft_log = gated_app
     await app.state.net.start()
     await app.state.net.attach("ws-i", want=True, policy=interactive_policy())
-    from msks.consent.specs import EgressPolicy
+    from msks.spec.egress import EgressPolicy
 
     await app.state.net.apply_policy(
         "ws-i", EgressPolicy("ws-i", "interactive", (".b.de",))
@@ -1572,7 +1572,7 @@ async def test_apply_policy_without_an_attachment_is_row_only(
 ) -> None:
     app, _consumers, nft_log = gated_app
     await app.state.net.start()
-    from msks.consent.specs import EgressPolicy
+    from msks.spec.egress import EgressPolicy
 
     before = len(log_lines(nft_log))
     switched = await app.state.net.apply_policy(
@@ -1587,7 +1587,7 @@ async def test_allow_mode_boot_skips_the_forever_replay(
 ) -> None:
     app, _consumers, nft_log = gated_app
     await app.state.net.start()
-    from msks.consent.specs import EgressPolicy
+    from msks.spec.egress import EgressPolicy
 
     request = await app.state.model.egress_consent.create_request(
         "ws-i", "198.51.100.7", 0
@@ -1611,7 +1611,7 @@ async def test_a_failed_swap_unbinds_the_fresh_consumer(
     enforcing and unbinds a consumer the failed chain never
     referenced — a bound queue no chain points at is a leak
     (#280)."""
-    from msks.consent.specs import EgressPolicy
+    from msks.spec.egress import EgressPolicy
 
     app, consumers, _nft_log = gated_app
     await app.state.net.start()
@@ -1647,7 +1647,7 @@ async def test_the_switch_pins_bind_before_reference_and_unbind_after(
     queue-referencing chain applies; leaving records the queue-less
     table BEFORE the unbind — an unbound queue drops, so the order
     is the whole rule."""
-    from msks.consent.specs import EgressPolicy
+    from msks.spec.egress import EgressPolicy
 
     app, _consumers, _nft_log = gated_app
     await app.state.net.start()
@@ -1686,7 +1686,7 @@ async def test_the_carry_drops_rejects_leaving_interactive(
     carry into static must not emit an element statement naming
     it — real nft would abort the whole transaction, leaving the
     row and the live table divergent."""
-    from msks.consent.specs import EgressPolicy
+    from msks.spec.egress import EgressPolicy
 
     app, _consumers, nft_log = gated_app
     await app.state.net.start()
@@ -1713,7 +1713,7 @@ async def test_allow_mode_pins_no_elements(gated_app) -> None:
     workspace (#280 review): the resolver still LEARNs under a
     carried forever allow, and the pin would spawn a doomed nft
     run per answer into a table with no consent sets."""
-    from msks.consent.specs import EgressPolicy
+    from msks.spec.egress import EgressPolicy
 
     app, _consumers, nft_log = gated_app
     await app.state.net.start()
@@ -1768,7 +1768,7 @@ async def test_apply_interception_takes_the_workspace_guard(
     """The interception swap runs under the guard: a mode switch in
     flight holds it off, so a placeholder sweep's install cannot
     land on the switch's table shape (#280 review, round 2)."""
-    from msks.consent.specs import EgressPolicy
+    from msks.spec.egress import EgressPolicy
 
     app, _consumers, _nft_log = gated_app
     await app.state.net.start()

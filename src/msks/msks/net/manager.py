@@ -22,9 +22,8 @@ from ipaddress import IPv4Network
 from pathlib import Path
 
 from ..consent.coordinator import LONG_TTL_S
-from ..consent.specs import EgressPolicy, is_ipv4
 from ..microvm.errors import MicrovmError
-from ..model.egress_consent import DECISION_ALLOWED
+from ..spec.egress import DECISION_ALLOWED, EgressPolicy, is_ipv4
 from . import alloc, conntrack, dns, nft, taps
 from .dhcp import DhcpServer
 from .dns import DnsForwarder, ResolverGate

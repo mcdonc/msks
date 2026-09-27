@@ -10,7 +10,6 @@ import httpx
 import pytest
 from msks.app import build_app
 from msks.microvm.errors import MicrovmError, MicrovmTimeoutError
-from msks.microvm.spec import VmInfo, VmSpec, VmStatus
 from msks.secretstore import new_sentinel
 from msks.server import api as api_mod
 from msks.server.api import build_api
@@ -21,6 +20,7 @@ from msks.settings import (
     Settings,
     VmmSettings,
 )
+from msks.spec.vm import VmInfo, VmSpec, VmStatus
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 TOKEN = "test-token"

@@ -26,7 +26,8 @@ import contextlib
 import logging
 import time
 
-from ..model.egress_consent import (
+from ..model.egress_consent import EgressConsentModel
+from ..spec.egress import (
     DECISION_ALLOWED,
     DECISION_DENIED,
     DECISION_EXPIRED,
@@ -36,10 +37,10 @@ from ..model.egress_consent import (
     DURATION_ONCE,
     DURATION_SECONDS,
     DURATION_TILRESTART,
-    EgressConsentModel,
+    MODE_ALLOW,
+    MODE_STATIC,
     public_row,
 )
-from .specs import MODE_ALLOW, MODE_STATIC
 
 logger = logging.getLogger(__name__)
 

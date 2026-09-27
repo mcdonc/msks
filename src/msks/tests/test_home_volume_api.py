@@ -16,9 +16,9 @@ import httpx
 import pytest
 from msks.app import build_app
 from msks.client import cli
-from msks.microvm.spec import VmStatus
 from msks.server.api import build_api, home_volume_lock
 from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
+from msks.spec.vm import VmStatus
 from test_api import TOKEN, StubMicrovm, auth
 from test_persist import ext4_image
 

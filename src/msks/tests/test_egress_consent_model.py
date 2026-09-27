@@ -6,7 +6,9 @@ from pathlib import Path
 import pytest
 from msks.app import build_app
 from msks.microvm import VmSpec
-from msks.model.egress_consent import (
+from msks.model.egress_consent import duration_in_effect
+from msks.settings import NetSettings, ServerSettings, Settings
+from msks.spec.egress import (
     DECISION_ALLOWED,
     DECISION_DENIED,
     DECISION_EXPIRED,
@@ -17,9 +19,7 @@ from msks.model.egress_consent import (
     DURATION_FOREVER,
     DURATION_ONCE,
     DURATION_TILRESTART,
-    duration_in_effect,
 )
-from msks.settings import NetSettings, ServerSettings, Settings
 
 
 @pytest.fixture

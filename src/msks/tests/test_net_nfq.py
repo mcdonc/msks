@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 from msks.app import build_app
-from msks.consent.specs import MODE_INTERACTIVE
 from msks.microvm import VmSpec
 from msks.microvm.errors import MicrovmError
 from msks.net import nfq
 from msks.settings import NetSettings, ServerSettings, Settings
+from msks.spec.egress import MODE_INTERACTIVE
 
 
 def syn_packet(

@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 from msks.microvm.errors import MicrovmError
-from msks.microvm.spec import VmSpec
 from msks.settings import VmmSettings
+from msks.spec.vm import VmSpec
 
 from msks import persist
 
