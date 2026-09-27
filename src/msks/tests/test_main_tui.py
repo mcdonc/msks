@@ -1267,6 +1267,7 @@ async def test_a_refused_resize_after_the_stop_names_itself(
         assert "the root overlay only grows" in consent_text(app)
         assert page.row["status"] == "stopped"
         assert page.row["cpus"] == 2  # the row keeps its fact
+        assert page.pending_edit is None  # the parked body is spent
         assert on_page(app)
 
 
@@ -1289,6 +1290,7 @@ async def test_a_declined_stop_keeps_the_workspace_running(
         await pilot.press("n")
         await wait_for(lambda: "edit skipped" in consent_text(app))
         assert "alpha keeps its sizes" in consent_text(app)
+        assert page.pending_edit is None  # the parked body is spent
         assert data.calls == []
         assert page.row["status"] == "running"
         assert on_page(app)
