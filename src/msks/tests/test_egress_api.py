@@ -134,6 +134,9 @@ async def test_decide_and_revoke_endpoints(consent_client) -> None:
         )
         assert reply.status_code == 200
         assert reply.json()["verdict"]["decision"] == "allow"
+        # The decided enforcement TTL stays the data plane's
+        # business (#401): the decider sees the verdict itself.
+        assert "pin_ttl_s" not in reply.json()["verdict"]
         assert (await asyncio_wait(future))["duration"] == "5m"
         # The rules view shows the in-effect verdict.
         reply = await http.get(

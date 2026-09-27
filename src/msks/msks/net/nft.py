@@ -41,8 +41,8 @@ import asyncio
 import json
 import logging
 
-from ..microvm.errors import MicrovmError
 from ..spec.egress import EgressPolicy, IpSpec
+from ..spec.vm import MicrovmError
 from .alloc import table_name
 
 logger = logging.getLogger(__name__)

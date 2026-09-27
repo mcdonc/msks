@@ -17,7 +17,7 @@ failed delete are ones conntrack no longer tracks anyway.
 import asyncio
 import contextlib
 
-from ..microvm.errors import MicrovmError
+from ..spec.vm import MicrovmError
 
 # conntrack's stderr for a delete that matched nothing.
 ABSENT = b"0 flow entries"

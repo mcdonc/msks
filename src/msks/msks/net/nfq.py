@@ -46,8 +46,8 @@ import contextlib
 import logging
 import time
 
-from ..consent.coordinator import ONCE_REJECT_S, duration_ttl
-from ..microvm.errors import MicrovmError
+from ..spec.egress import ONCE_REJECT_S
+from ..spec.vm import MicrovmError
 
 logger = logging.getLogger(__name__)
 
@@ -400,7 +400,11 @@ class FlowConsumer:
         except Exception:
             # The engine's own gate never raises (it fail-closes),
             # but a bug there must not eat the packet: deny.
-            verdict = {"decision": "deny", "reason": "error"}
+            verdict = {
+                "decision": "deny",
+                "reason": "error",
+                "pin_ttl_s": ONCE_REJECT_S,
+            }
         try:
             await self.apply_verdict(pkt, flow, dst, dport, verdict, named)
         except Exception:
@@ -428,29 +432,34 @@ class FlowConsumer:
         verdict: dict,
         named: bool,
     ) -> None:
-        """Apply one verdict to its held SYN (and cache it)."""
+        """Apply one verdict to its held SYN (and cache it). The
+        verdict arrives decided (#401): consent resolved its
+        duration to the enforcement TTL the chain installs
+        (``pin_ttl_s`` — None when the verdict pins nothing, an
+        allow given ``once``), so this side applies final values
+        and re-derives none."""
         now = time.time()
         if len(self._verdicts) > VERDICT_CACHE_MAX:
             self._verdicts.clear()
-        duration = verdict.get("duration") or "once"
+        ttl = verdict.get("pin_ttl_s")
         self._verdicts[flow] = (
             "allow" if verdict["decision"] == "allow" else "deny",
             now + VERDICT_CACHE_TTL,
             named,
         )
         if verdict["decision"] == "allow":
-            await self.apply_allow(pkt, dst, dport, duration, named)
+            await self.apply_allow(pkt, dst, dport, ttl, named)
             return
-        await self.apply_deny(pkt, flow, dst, dport, duration, named)
+        await self.apply_deny(pkt, flow, dst, dport, ttl, named)
 
     async def apply_allow(
-        self, pkt, dst: str, dport: int, duration: str, named: bool
+        self, pkt, dst: str, dport: int, ttl: float | None, named: bool
     ) -> None:
-        """Accept the SYN, pinning the destination for a duration
-        that outlives this connection (``once`` pins nothing — a
-        reconnect re-prompts; a named verdict on a shared address
-        pins nothing either, #304 — the session gate covers it)."""
-        ttl = duration_ttl(duration)
+        """Accept the SYN, pinning the destination for the decided
+        TTL when the verdict pins at all (``once`` pins nothing —
+        a reconnect re-prompts; a named verdict on a shared
+        address pins nothing either, #304 — the session gate
+        covers it)."""
         if ttl is not None:
             await self._net.consent_allow(
                 self.workspace_id, dst, dport or None, ttl, named=named
@@ -463,17 +472,19 @@ class FlowConsumer:
         flow: tuple[int, str, int],
         dst: str,
         dport: int,
-        duration: str,
+        ttl: float | None,
         named: bool,
     ) -> None:
         """Drop the SYN and pin a fail-fast RST for the retransmit
-        (TCP only — an RST is meaningless for anything else). A
-        named deny on a shared address pins the per-flow element
+        (TCP only — an RST is meaningless for anything else) for
+        the decided TTL. A verdict that arrives without one still
+        RSTs within the once window — the RST is what keeps a
+        refused connect() off the kernel's ~127 s retransmit
+        timer, so a malformed verdict must not lose it. A named
+        deny on a shared address pins the per-flow element
         (#304): the co-resident's connections keep gating."""
+        reject_ttl = ONCE_REJECT_S if ttl is None else ttl
         if dport:
-            reject_ttl = duration_ttl(duration)
-            if reject_ttl is None:
-                reject_ttl = ONCE_REJECT_S
             await self._net.consent_reject(
                 self.workspace_id,
                 dst,
