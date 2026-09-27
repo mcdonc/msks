@@ -559,6 +559,21 @@ in
       language = "system";
       pass_filenames = false;
     };
+    # Import-graph gates (AGENTS.md, "Import-graph gates"): six
+    # invariants over the same walk, each driven by the checked-in
+    # import-graph.toml — the package DAG with a shrinking exemption
+    # list, the layer rank map, exact per-pair import counts, the
+    # fan-in ceiling, entry-point reachability, and the re-export
+    # facade list. Whole-tree check like import-cycles: it triggers
+    # on the tree, the walker scripts, or the config file.
+    import-graph = {
+      enable = true;
+      name = "import-graph";
+      entry = "${config.languages.python.package}/bin/python scripts/check_import_graph.py";
+      files = "^src/msks/msks/.*\\.py$|^scripts/.*\\.py$|^import-graph\\.toml$";
+      language = "system";
+      pass_filenames = false;
+    };
     # Shell (#72, klangk settings): format + static analysis + the
     # shebang guard on executable text files.
     shfmt.enable = true;

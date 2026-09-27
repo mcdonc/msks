@@ -1,0 +1,146 @@
+# The import-graph gates' config (AGENTS.md, "Import-graph gates").
+# Rule plus config: scripts/check_import_graph.py enforces these
+# entries over the same AST walk scripts/check_import_cycles.py
+# performs, at commit time (the generated pre-commit hook), in
+# msks-preflight, and in the suite (src/msks/tests/
+# test_import_graph.py). Widening anything below is a deliberate
+# edit: the diff states why.
+
+# Ceiling of distinct importers per module; only goes down. The
+# current record holder is msks.spec.vm (14).
+fan_in_ceiling = 14
+
+# Production entry points (pyproject [project.scripts] plus the
+# standalone conformance entry `python -m msks.conformance`). Every
+# module under src/msks/msks must be reachable from these.
+entry_points = [
+  "msks.server.main",
+  "msks.client.cli",
+  "msks.client.term_popup",
+  "msks.conformance",
+]
+
+# Re-export surfaces: modules whose re-exported names may be
+# imported from elsewhere. Each entry re-exports at least one name.
+facades = [
+  "msks.client.tui.consent_ui",
+  "msks.interceptor",
+  "msks.microvm",
+  "msks.microvm.errors",
+  "msks.model",
+  "msks.net",
+]
+
+# Package-level cycles the DAG gate exempts. The module-level graph
+# is acyclic regardless; an exemption whose pair stops cycling both
+# ways fails as stale, so this list only shrinks. The list is empty
+# since #411 moved EventHub to the events root leaf and dropped the
+# last package cycle (app <-> server); a new entry needs a shared-leaf
+# extraction first and a reason here.
+[exempt_pairs]
+
+# Layer ranks: every cross-package import runs from a higher rank
+# to a lower one. Rank 0 is the shared-leaf vocabulary and the
+# root modules nothing imports; server pulls the composer (app)
+# at its entry point, and conformance — the local checker —
+# composes the daemon, so it sits on top.
+[ranks]
+configio = 0
+conformance_args = 0
+events = 0
+identity = 0
+llm = 0
+msks = 0
+spec = 0
+storage = 0
+client = 1
+imagestore = 1
+interceptor = 1
+model = 1
+net = 1
+persist = 1
+settings = 1
+config = 2
+consent = 2
+microvm = 2
+secretstore = 2
+app = 3
+server = 4
+conformance = 5
+
+# Exact cross-package import-statement counts, per pair. A count
+# that grows or shrinks fails until this file is updated in the
+# same commit — re-coupling is always a deliberate edit.
+[snapshot.app]
+consent = 4
+events = 2
+interceptor = 2
+llm = 2
+microvm = 2
+model = 2
+net = 2
+secretstore = 2
+settings = 2
+
+[snapshot.client]
+configio = 3
+conformance_args = 8
+identity = 11
+spec = 3
+
+[snapshot.config]
+configio = 3
+settings = 2
+
+[snapshot.conformance]
+app = 3
+conformance_args = 3
+imagestore = 4
+microvm = 2
+settings = 5
+
+[snapshot.consent]
+model = 2
+spec = 15
+
+[snapshot.imagestore]
+spec = 3
+
+[snapshot.interceptor]
+spec = 4
+
+[snapshot.microvm]
+persist = 7
+spec = 14
+
+[snapshot.model]
+spec = 16
+
+[snapshot.net]
+spec = 23
+
+[snapshot.persist]
+identity = 2
+spec = 3
+
+[snapshot.secretstore]
+model = 2
+
+[snapshot.server]
+app = 2
+config = 2
+events = 4
+identity = 5
+imagestore = 19
+llm = 2
+microvm = 2
+model = 5
+persist = 12
+secretstore = 5
+settings = 2
+spec = 19
+storage = 10
+
+[snapshot.settings]
+identity = 2
+spec = 5
