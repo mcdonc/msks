@@ -119,7 +119,10 @@ devenv --quiet -O dotenv.enable:bool false shell -- msks-preflight
 ```
 
 It prints every ruff violation, every deferred import, every
-import cycle (`scripts/check_import_cycles.py`), every xenon
+import cycle (`scripts/check_import_cycles.py`), every import-graph
+gate violation (`scripts/check_import_graph.py` over
+`import-graph.toml` — package DAG, ranks, snapshot counts, fan-in
+ceiling, reachability, facades), every xenon
 block above rank A, and the jscpd clone report over the full tree.
 When anything under `src/msks/` differs from the fork point on
 `origin/main` (committed or working tree), it then runs the gated
