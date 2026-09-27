@@ -11,6 +11,7 @@
 #   - every ruff check violation and every file ruff format would
 #     rewrite, over every Python file in the tree, tracked or untracked
 #   - every deferred import scripts/check_deferred_imports.py finds
+#   - every import cycle scripts/check_import_cycles.py names (#387)
 #   - every xenon offender in the graded set (scripts/xenon-gate.sh)
 #   - the jscpd clone report (scripts/jscpd-gate.sh)
 #   - when anything under src/msks/ differs from the fork point on
@@ -84,6 +85,7 @@ fi
 run_section "ruff check" ruff check ${pyfiles[@]+"${pyfiles[@]}"}
 run_section "ruff format" ruff format --check ${pyfiles[@]+"${pyfiles[@]}"}
 run_section "deferred-imports" "$venv_python" scripts/check_deferred_imports.py ${pyfiles[@]+"${pyfiles[@]}"}
+run_section "import-cycles" "$venv_python" scripts/check_import_cycles.py
 run_section "xenon" bash scripts/xenon-gate.sh
 run_section "jscpd" bash scripts/jscpd-gate.sh
 
