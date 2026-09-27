@@ -75,7 +75,7 @@ from pathlib import Path
 
 import yaml
 
-from ..config import UniqueKeyLoader, write_exclusive
+from ..configio import UniqueKeyLoader, write_exclusive
 from .rest import DEFAULT_URL
 
 # The ``--config=none`` sentinel: env vars + built-in defaults only.
@@ -206,7 +206,7 @@ def parse_config_doc(text: str, path: str) -> dict:
     null value (``key:`` with nothing after it) is the unset form —
     the environment (or the default) applies, exactly as an unset
     variable would. Duplicate keys are refused by the loader
-    (:class:`msks.config.UniqueKeyLoader`), shared with msksd so
+    (:class:`msks.configio.UniqueKeyLoader`), shared with msksd so
     the two files carry one duplicate-key story.
     """
     try:

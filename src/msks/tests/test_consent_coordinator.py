@@ -245,6 +245,10 @@ async def test_revoke_clears_enforcement_and_memory(engine_app) -> None:
     app, _frames, _queue = engine_app
     engine = app.state.consent
     app.state.deciders.register(1, "ws-interactive")
+    # A live hold, so a comfortable timeout (the fixture's 50ms is
+    # for the expiry tests; a loaded runner can stall past it
+    # between two awaits and expire the hold mid-test).
+    app.state.settings.net.consent_timeout_s = 30.0
     future = await engine.hold("ws-interactive", "api.example", 443)
     request_id = None
     rows = await app.state.model.egress_consent.list_requests(
@@ -278,6 +282,8 @@ async def test_resolve_fail_closes_on_a_decide_error(engine_app) -> None:
         raise RuntimeError("db down")
 
     engine.model.decide = explode
+    # A live hold: same comfortable-timeout rule as the revoke test.
+    app.state.settings.net.consent_timeout_s = 30.0
     await engine.hold("ws-interactive", "boom.example", 443)
     verdict = await engine.resolve(
         (

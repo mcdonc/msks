@@ -23,8 +23,8 @@ The whitelist reads bottom-up:
 
 - ``spec`` — the shared leaf vocabulary (#387): value types,
   grammars, predicates; imports nothing from the daemon
-- ``identity``, ``storage``, ``config`` — root leaves (keys, units,
-  file loading)
+- ``identity``, ``storage``, ``configio`` — root leaves (keys,
+  units, config-file reading and first-run writing)
 - ``model``, ``settings``, ``persist``, ``imagestore``,
   ``secretstore``, ``llm`` — storage and configuration over the
   vocabulary
@@ -35,9 +35,14 @@ The whitelist reads bottom-up:
   inspects; ``conformance_args`` is the surface the client shares)
 - ``server`` — the HTTP surface, orchestrating everything below
 - ``app`` — composition; the entry point (``server.main``) pulls it
-- ``client`` — the REST client; it imports the root leaves plus the
-  local conformance check (which composes the daemon — #397 tracks
-  shrinking the set)
+- ``client`` — the REST client (#397): it imports its own
+  siblings, stdlib, third-party packages, and the allowlist
+  ``identity``, ``conformance_args``, ``spec``, ``configio`` — the
+  shared leaves. The local ``image check`` runs the standalone
+  conformance entry as a child process, so the daemon composition
+  stays out of the client process. ``test_client_imports_stay_within
+  _the_allowlist`` holds the rule; widening it is a deliberate edit
+  there and in ``ALLOWED_EDGES``.
 """
 
 import importlib.util
@@ -63,17 +68,15 @@ ALLOWED_EDGES = {
     ("app", "secretstore"),
     ("app", "server"),
     ("app", "settings"),
-    # client: the REST consumer plus the local conformance check
-    # (#397 tracks shrinking this set)
-    ("client", "config"),
-    ("client", "conformance"),
+    # client: the REST consumer — only the shared-leaf allowlist
+    # (#397; enforced separately by the client test below)
+    ("client", "configio"),
     ("client", "conformance_args"),
     ("client", "identity"),
-    ("client", "imagestore"),
-    ("client", "msks"),
-    ("client", "storage"),
+    ("client", "spec"),
     # root leaves
     ("config", "settings"),
+    ("config", "configio"),
     # the local conformance check composes the daemon it inspects
     ("conformance", "app"),
     ("conformance", "conformance_args"),
@@ -102,6 +105,8 @@ ALLOWED_EDGES = {
     ("persist", "spec"),
     # the secret store over the model
     ("secretstore", "model"),
+    # the image catalog's ref grammar comes from the leaf vocabulary
+    ("imagestore", "spec"),
     # the HTTP surface orchestrates; main.py pulls the composer
     ("server", "app"),
     ("server", "config"),
@@ -120,6 +125,43 @@ ALLOWED_EDGES = {
     ("settings", "identity"),
     ("settings", "spec"),
 }
+
+
+# The client-isolation allowlist (#397): the packages outside
+# ``client`` its modules may import. Widening this is a deliberate
+# contract edit — a new entry needs a shared-leaf reason, not a
+# convenience import.
+CLIENT_ALLOWED = {"configio", "conformance_args", "identity", "spec"}
+
+
+def test_client_imports_stay_within_the_allowlist():
+    found: dict[str, list[str]] = {}
+    for path, lineno, src, dst in check_import_cycles.intra_package_imports():
+        if check_import_cycles.package_of(src) != "client":
+            continue
+        dst_pkg = check_import_cycles.package_of(dst)
+        if dst_pkg != "client":
+            site = f"{path.relative_to(check_import_cycles.PKG_ROOT)}:{lineno}"
+            found.setdefault(dst_pkg, []).append(site)
+
+    extra = set(found) - CLIENT_ALLOWED
+    unused = CLIENT_ALLOWED - set(found)
+    if extra or unused:
+        lines = ["client imports outside the isolation allowlist (#397):"]
+        for pkg in sorted(extra):
+            sites = ", ".join(sorted(set(found[pkg])))
+            lines.append(
+                f"  client -> {pkg} at {sites} — the"
+                " client is a standalone REST consumer; import the API's"
+                " data, or extend CLIENT_ALLOWED in test_layering.py with a"
+                " shared-leaf reason"
+            )
+        for pkg in sorted(unused):
+            lines.append(
+                f"  {pkg} is allowlisted but no client import uses it —"
+                " prune it so the contract matches the tree"
+            )
+        assert False, "\n".join(lines)
 
 
 def test_module_import_graph_is_acyclic():
@@ -151,8 +193,9 @@ def test_package_edges_are_whitelisted():
         lines = ["package edges outside the layering whitelist (#387):"]
         for (src, dst), sites in sorted(unknown.items()):
             allowed = sorted(d for s, d in ALLOWED_EDGES if s == src)
+            site_list = ", ".join(sorted(set(sites)))
             lines.append(
-                f"  {src} -> {dst} at {', '.join(sorted(sites))}; {src} may"
+                f"  {src} -> {dst} at {site_list}; {src} may"
                 f" import: {', '.join(allowed) or '(nothing)'} — import from"
                 " one of those, or widen the whitelist in test_layering.py"
                 " deliberately"

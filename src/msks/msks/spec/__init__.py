@@ -6,6 +6,8 @@ the daemon's layers speak to each other:
 - ``vm`` — the backend-neutral workspace spec and status types
 - ``egress`` — the allowlist grammar plus the consent lifecycle
   vocabulary (decisions, durations, the decider-facing row shape)
+- ``images`` — the image-reference grammar (hash shape, version
+  ordering) the catalog and the client share (#397)
 - ``tokens`` — the bearer-token grammar every minting and parsing
   site validates against
 - ``time`` — deadline predicates over naive-UTC stored deadlines

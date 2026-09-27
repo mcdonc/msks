@@ -145,6 +145,25 @@ Triage a coverage gap at write time, not after a red gate:
   schedulable through a race the suite cannot arrange) takes
   `# pragma: no cover` with a comment naming the reason.
 
+## Client subpackage isolation (`msks.client`)
+
+Code in `src/msks/msks/client/` (the `msks` client: CLI, TUI, term
+popup, forward helpers) imports stdlib, third-party packages, sibling
+modules within `client/` itself, and a named allowlist of shared
+leaves: `msks.identity` (key minting and vocabulary, used by the
+daemon too), `msks.conformance_args` (the `image check` surface,
+shared with the standalone parser), `msks.spec` (the leaf
+vocabulary), and `msks.configio` (config-file reading and first-run
+writing). The client ships in the same wheel but runs in the user's
+environment against the daemon's HTTP API: it reaches app.state,
+settings, and process-local singletons only through API responses.
+The local `image check` runs the standalone conformance entry as a
+child process (`python -m msks.conformance`), so the engine's daemon
+composition never loads in the client. `src/msks/tests/test_layering.py`
+enforces the rule (`test_client_imports_stay_within_the_allowlist`);
+widening the allowlist is a deliberate edit there and in
+`ALLOWED_EDGES`, with a shared-leaf reason.
+
 ## TUI spatial navigation (no focus traps)
 
 The textual TUI must use **spatial navigation** — arrow keys move focus

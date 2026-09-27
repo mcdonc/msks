@@ -4381,21 +4381,73 @@ def test_create_refuses_when_no_invoking_name(
 def test_cmd_image_check_routes_to_the_conformance_pass(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``msks image check`` delegates to the local conformance pass
-    (#258); its exit code is the command's."""
+    """``msks image check`` runs the standalone conformance entry as
+    a child process (#397) and passes the exit code through."""
     from msks.conformance_args import CheckOptions
 
-    from msks import conformance
+    seen: list[list[str]] = []
 
-    seen: list[CheckOptions] = []
+    class FakeProc:
+        def __init__(self, argv, **kwargs):
+            seen.append(argv)
+            self.returncode = 7
 
-    def fake_run(args):
-        seen.append(args)
-        return 1
+        def wait(self):
+            return self.returncode
 
-    monkeypatch.setattr(conformance, "run_check", fake_run)
-    assert cli.cmd_image_check(CheckOptions(archive="x.tar")) == 1
-    assert seen[0].archive == "x.tar"
+    monkeypatch.setattr(cli.subprocess, "Popen", FakeProc)
+    assert cli.cmd_image_check(CheckOptions(archive="x.tar")) == 7
+    assert seen[0][1:] == [
+        "-m",
+        "msks.conformance",
+        "x.tar",
+        "--boot-timeout-s",
+        "120.0",
+        "--shutdown-timeout-s",
+        "120.0",
+    ]
+
+
+def test_cmd_image_check_passes_the_full_surface(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every flag crosses into the child's argv (#397)."""
+    from msks.conformance_args import CheckOptions
+
+    seen: list[list[str]] = []
+
+    class FakeProc:
+        def __init__(self, argv, **kwargs):
+            seen.append(argv)
+            self.returncode = 0
+
+        def wait(self):
+            return self.returncode
+
+    monkeypatch.setattr(cli.subprocess, "Popen", FakeProc)
+    cli.cmd_image_check(
+        CheckOptions(
+            archive="a.tar",
+            egress=True,
+            uplink="eth9",
+            boot_timeout_s=30.0,
+            shutdown_timeout_s=45.0,
+            keep=True,
+        )
+    )
+    assert seen[0][1:] == [
+        "-m",
+        "msks.conformance",
+        "a.tar",
+        "--egress",
+        "--uplink",
+        "eth9",
+        "--boot-timeout-s",
+        "30.0",
+        "--shutdown-timeout-s",
+        "45.0",
+        "--keep",
+    ]
 
 
 def test_cmd_llm_token_prints_and_remints(
@@ -4903,3 +4955,51 @@ def test_image_info_carries_the_origin_pair(
     assert rc == 0
     out = capsys.readouterr().out
     assert "origin" in out and "other:9" in out
+
+
+def test_cmd_image_check_waits_out_the_childs_interrupt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Ctrl-C note holds the parent's kill path off: the wait keeps
+    going until the child's own graceful SIGINT teardown exits, and
+    the interrupt then surfaces to the CLI's one-line handler."""
+    import signal as signal_mod
+
+    from msks.conformance_args import CheckOptions
+
+    installed: list = []
+    previous = object()
+
+    def fake_signal(signum, handler):
+        installed.append(handler)
+        return previous
+
+    monkeypatch.setattr(cli.signal, "signal", fake_signal)
+
+    waited: list[int] = []
+
+    class FakeProc:
+        def wait(self):
+            installed[0](signal_mod.SIGINT, None)  # Ctrl-C mid-wait
+            waited.append(3)
+            return 3
+
+    monkeypatch.setattr(cli.subprocess, "Popen", lambda argv, **kw: FakeProc())
+    with pytest.raises(KeyboardInterrupt):
+        cli.cmd_image_check(CheckOptions(archive="x.tar"))
+    # the note handler was installed and the previous one restored
+    assert len(installed) == 2 and installed[1] is previous
+    # and the note was only a note: the wait ran to the child's exit
+    assert waited == [3]
+
+
+def test_cmd_image_check_spawns_the_real_child(capfd) -> None:
+    """The bridge runs for real (no mock): the standalone entry
+    starts, and its named refusal for a missing archive arrives as
+    the command's exit code with its message — the stderr assert
+    separates the archive refusal from an argparse drift exit 2
+    (capfd, not capsys: the message comes from the child's fd)."""
+    from msks.conformance_args import CheckOptions
+
+    assert cli.cmd_image_check(CheckOptions(archive="/nonexistent/x.tar")) == 2
+    assert "no such archive" in capfd.readouterr().err
