@@ -474,6 +474,45 @@ async def test_ssh_key_endpoint_auth_and_missing(client) -> None:
     assert "no minted identity" in legacy.json()["detail"]
 
 
+async def test_interceptor_ca_endpoint(client) -> None:
+    """The interceptor-CA fetch (#392): token-gated, serving the
+    cert's PEM with the state-dir file it lives in; the mint is
+    once — a second fetch serves the same CA the interceptor will
+    sign its leaves with."""
+    http, app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"name": "ca-holder", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    wid = created.json()["id"]
+    unauthorized = await http.get(f"/api/v1/workspaces/{wid}/interceptor-ca")
+    assert unauthorized.status_code == 401
+    absent = await http.get(
+        "/api/v1/workspaces/ghost/interceptor-ca", headers=auth()
+    )
+    assert absent.status_code == 404
+    assert "no such workspace" in absent.json()["detail"]
+    first = await http.get(
+        f"/api/v1/workspaces/{wid}/interceptor-ca", headers=auth()
+    )
+    assert first.status_code == 200, first.text
+    body = first.json()
+    assert body["workspace"] == wid
+    assert body["name"] == "ca-holder"
+    assert body["ca_pem"].startswith("-----BEGIN CERTIFICATE-----")
+    path = (
+        app.state.settings.vmm.state_dir / "vms" / wid / "interceptor-ca.crt"
+    )
+    assert body["path"] == str(path)
+    assert path.read_text() == body["ca_pem"]
+    second = await http.get(
+        f"/api/v1/workspaces/{wid}/interceptor-ca", headers=auth()
+    )
+    assert second.json()["ca_pem"] == body["ca_pem"]
+
+
 async def test_create_with_client_supplied_pubkey(client) -> None:
     """The no-escrow create (#121): the daemon validates the supplied
     public line, seeds and stores it annotated with its own provenance

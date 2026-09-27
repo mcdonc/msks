@@ -368,12 +368,30 @@ consent (the mode, then one granted scope named with its expiry;
 two or more grants read as a count with the nearest expiry — `5
 grants · next expires 4h` — so the line stays readable at 80
 columns, every grant listed on the consent overlay's rules
-screen), and the page's actions centered in the space the header
-lines and the footer leave — the block capped at 64 columns — in
-three groups: a shell in a new terminal
-window, then egress consent, a live egress-mode switch, and an
-edit dialog for the sizes and topology (#331), then start and
-stop. Each action paints its name with its description — when
+screen), and a status line naming the guest's interceptor-CA
+trust (#392): `interceptor CA: trusted` once an install landed,
+`interceptor CA: untrusted — HTTPS toward allowlisted
+destinations fails validation` until then, so the failure the
+wire shows reads as the trust it is. The guest's trust store is
+unreadable from the host, so the operator's install is the
+confirmation — the page's **Install the interceptor CA** action
+runs it through the console channel: a scripted root session
+that copies the CA's bytes in and runs the guest's
+`update-ca-certificates`, flipping the line on success. The
+trust record lives on the client that ran the install (under its
+`MSKSC_DATA_DIR`) and names the CA it installed: another
+operator's page reads untrusted until they install from theirs,
+and a CA the daemon re-minted (its state restored, the cert file
+deleted) reads untrusted again — on the page's next open, when
+its one CA fetch lands. A
+workspace that is not running, or a console the guest refuses,
+prints the hand-run recipe instead — the same commands with the
+workspace's real CA path. The page's actions sit centered in the
+space the header lines and the footer leave — the block capped at
+64 columns — in three groups: a shell in a new terminal
+window, then egress consent, the interceptor-CA
+install, a live egress-mode switch, and an edit dialog for the
+sizes and topology (#331), then start and stop. Each action paints its name with its description — when
 it carries one — muted behind it, and the row Enter acts on carries a marker beside the
 list's own highlight. The start and stop rows dim behind their
 reason while the workspace's status makes the verb pointless —

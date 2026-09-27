@@ -39,7 +39,7 @@ from rich.cells import cell_len
 from rich.markup import escape
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content, Span
 from textual.css.query import NoMatches
 from textual.screen import ModalScreen, Screen
@@ -58,6 +58,12 @@ from ..config import DEFAULT_TERMINAL_CMD, ClientConfig
 from ..console import run_workspace_shell
 from ..create import invoking_user
 from ..env import env_token, env_url
+from ..interceptor_ca import (
+    ca_line,
+    install_ca,
+    mark_ca_trusted,
+    recipe_lines,
+)
 from ..resize import resize_message
 from .consent_ui import (
     DURATION_DEFAULT,
@@ -106,6 +112,13 @@ ACTION_EGRESS_MODE = "egress-mode"
 #: — the held-request queue as a panel over the page, opened by
 #: hand; the page also opens it by itself when a hold arrives.
 ACTION_CONSENT = "egress-consent"
+
+#: The workspace page's interceptor-CA action (#392): the install
+#: through the console channel — the trust the guest's HTTPS
+#: validation toward allowlisted destinations needs until #200
+#: seeds it at create. #200 retires the action and keeps the
+#: line.
+ACTION_CA_INSTALL = "ca-install"
 
 
 def require_terminal() -> None:
@@ -680,6 +693,13 @@ class MsksTuiApp(App):
                    text-overflow: ellipsis; }
     #consent { height: 1; padding: 0 1; color: $text-muted;
                text-wrap: nowrap; text-overflow: ellipsis; }
+    #ca { height: 1; padding: 0 1; color: $text-muted;
+          text-wrap: nowrap; text-overflow: ellipsis; }
+    RecipeScreen { align: center middle; }
+    #recipe-scroll { width: 80; height: auto; max-height: 14;
+                     max-width: 100%; background: $panel;
+                     border: round $primary; padding: 1 2; }
+    #recipe { text-wrap: nowrap; }
     #page { height: 1fr; align: center middle; }
     #actions { width: 64; height: auto; max-width: 100%;
               max-height: 100%; }
@@ -1126,6 +1146,12 @@ PAGE_ACTIONS = (
         "decide holds, review rules and events",
         True,
     ),
+    PageAction(
+        ACTION_CA_INSTALL,
+        "Install the interceptor CA",
+        "through the console channel",
+        False,
+    ),
     PageAction(ACTION_EGRESS_MODE, "Switch the egress mode", "", False),
     PageAction("edit", "Edit settings", "sizes and topology", False),
     PageAction("start", "Start", "", True),
@@ -1138,13 +1164,15 @@ class WorkspaceScreen(Screen):
     — the name with its status on the first, the id, image, host,
     and created date muted on the second, the pending-egress
     count beside the status while holds wait, #354), the consent
-    status line, and the page's actions — a shell in a new window
-    (#341), the consent overlay (#358), the egress-mode switch
-    (#344), start, and stop. The page is the workspace's decider
-    while it is open: holds land on its link, the header counts
-    them, and the first hold of a burst opens the consent overlay
-    by itself — the overlay's own docstring owns the panel's
-    lifecycle."""
+    status line, the interceptor-CA trust line beside it (#392 —
+    where the interceptor's armed-status line lands when #391
+    ships), and the page's actions — a shell in a new window
+    (#341), the consent overlay (#358), the interceptor-CA install
+    (#392), the egress-mode switch (#344), start, and stop. The
+    page is the workspace's decider while it is open: holds land
+    on its link, the header counts them, and the first hold of a
+    burst opens the consent overlay by itself — the overlay's own
+    docstring owns the panel's lifecycle."""
 
     BINDINGS = [
         Binding("enter", "run", "Run"),
@@ -1176,6 +1204,11 @@ class WorkspaceScreen(Screen):
         # hides (#343) — a page-raised failure names itself here,
         # where the operator reads it.
         self.flash_line = FlashLine()
+        # The daemon's current CA PEM (#392), fetched once as the
+        # page opens: the trust line's marker names the CA it
+        # trusts, so the comparison needs the PEM beside it. None
+        # until the fetch lands — the line reads the record alone.
+        self.ca_pem: str | None = None
         # The edit waiting on the stop-and-resize answer (#380):
         # the body a running workspace's Apply parked while the
         # confirmation asks. None when no question stands.
@@ -1202,6 +1235,7 @@ class WorkspaceScreen(Screen):
             id="header-meta",
         )
         yield Static(consent_line(link, self.row), id="consent")
+        yield Static(ca_line(self.row["id"]), id="ca")
         # The action list mounts on the first rebuild (compose
         # yields the container alone).
         yield Vertical(id="page")
@@ -1225,10 +1259,12 @@ class WorkspaceScreen(Screen):
         self.call_after_refresh(self.page_started)
 
     def page_started(self) -> None:
-        """The compose has settled: build the action rows and pull a
-        fresh row for the header."""
+        """The compose has settled: build the action rows, pull a
+        fresh row for the header, and pull the CA once for the
+        trust line's comparison."""
         self.rebuilds.request()
         self.refresh_row()
+        self.run_worker(self.load_ca, group="page-ca", exclusive=True)
 
     def on_unmount(self) -> None:
         """The page is gone: stop deciding for the workspace (the
@@ -1249,6 +1285,7 @@ class WorkspaceScreen(Screen):
             if self.is_mounted:
                 self.refresh_row()
             self.paint_consent()
+            self.paint_ca()
             self.paint_header()
             self.sync_actions()
         except NoMatches:
@@ -1375,6 +1412,18 @@ class WorkspaceScreen(Screen):
             except NoMatches:
                 pass  # teardown unmounted the line under the timer
 
+    def paint_ca(self) -> None:
+        """Repaint the interceptor-CA trust line (#392) — the line
+        flips when an install lands, and the marker it reads names
+        the CA it trusts against the page's fetched PEM, so a
+        re-minted CA reads untrusted again."""
+        try:
+            self.query_one("#ca", Static).update(
+                ca_line(self.row["id"], self.ca_pem)
+            )
+        except NoMatches:
+            pass  # teardown unmounted the line under the timer
+
     def flash(self, message: str) -> None:
         """Give the page's consent line to a message for FLASH_TTL
         seconds — the page's own surface: the app-level flash
@@ -1418,6 +1467,18 @@ class WorkspaceScreen(Screen):
         self.row = fresh
         self.paint_header()
         self.paint_actions()
+
+    async def load_ca(self) -> None:
+        """The page's one CA fetch (#392): the PEM the trust line's
+        marker compares against. A refused fetch leaves the line on
+        the record alone — the install action's own fetch will
+        name a refusal where it matters."""
+        try:
+            info = await self.app.data.interceptor_ca(self.row["id"])
+        except Exception, SystemExit:
+            return
+        self.ca_pem = info.get("ca_pem")
+        self.paint_ca()
 
     def close_removed(self) -> None:
         """A listing that cannot see the workspace names its removal
@@ -1557,6 +1618,7 @@ class WorkspaceScreen(Screen):
         handler = {
             ACTION_SHELL_WINDOW: self.open_shell_window,
             ACTION_EGRESS_MODE: self.pick_egress_mode,
+            ACTION_CA_INSTALL: self.install_ca_action,
             "edit": self.edit_workspace,
             "start": self.start_workspace,
             "stop": self.stop_workspace,
@@ -1613,6 +1675,48 @@ class WorkspaceScreen(Screen):
             self.flash(
                 flash_safe(f"{workspace_label(self.row)} {reply['status']}")
             )
+
+    # -- the interceptor-CA install (#392) -----------------------------
+
+    async def install_ca_action(self) -> None:
+        """The page's interceptor-CA action (#392): the CA's bytes
+        come from the daemon, the install runs through the console
+        channel into the running guest, and a landing install
+        flips the trust line. A workspace that is not running, a
+        refused console, or a failed exchange prints the hand-run
+        recipe — the same commands with the workspace's real CA
+        path."""
+        info = await self.guarded_page_flash(
+            "CA fetch", self.app.data.interceptor_ca(self.row["id"])
+        )
+        if info is None:
+            return
+        self.ca_pem = info["ca_pem"]
+        if self.row.get("status") != "running":
+            self.show_recipe(info)
+            return
+        self.flash("installing the interceptor CA…")
+        try:
+            await install_ca(self.row["id"], info["ca_pem"], shared_ssl())
+        except (Exception, SystemExit) as exc:
+            self.flash(
+                f"interceptor CA install failed: {flash_safe(str(exc))}"
+            )
+            self.show_recipe(info)
+            return
+        mark_ca_trusted(self.row["id"], info["ca_pem"])
+        self.paint_ca()
+        self.flash(
+            flash_safe(
+                f"interceptor CA installed — {workspace_label(self.row)} "
+                "validates HTTPS toward allowlisted destinations"
+            )
+        )
+
+    def show_recipe(self, info: dict) -> None:
+        """Push the hand-run recipe over the page (#392) — the
+        install spelled for a shell the operator drives."""
+        self.app.push_screen(RecipeScreen(recipe_lines(info, self.row["id"])))
 
     # -- the edit dialog (#331) ---------------------------------------
 
@@ -1771,6 +1875,38 @@ class WorkspaceScreen(Screen):
         for the workspace as it goes (unmount closes the link)."""
         self.app.follow.reopen = None
         self.overlay = None
+        self.app.pop_screen()
+
+
+class RecipeScreen(ModalScreen):
+    """The hand-run recipe over the workspace page (#392): the
+    CA's real daemon-side path and the short whole shell lines
+    that install it — what the install action prints when the
+    console channel cannot run (a stopped workspace, a refused
+    console) or the operator prefers a hand run. The panel is a
+    scrollable one (a real CA's chunked lines outnumber any
+    screen): the scroll container holds focus, so its arrows
+    walk the lines and the leaving keys close it without
+    reaching the page below."""
+
+    BINDINGS = [
+        Binding("enter", "close", "Close"),
+        Binding("q", "close", "Close", show=False),
+        Binding("escape", "close", "Close", show=False),
+    ]
+
+    def __init__(self, lines: list[str]) -> None:
+        super().__init__()
+        self.lines = lines
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="recipe-scroll"):
+            yield Static("\n".join(self.lines), id="recipe")
+
+    def on_mount(self) -> None:
+        self.query_one("#recipe-scroll", VerticalScroll).focus()
+
+    def action_close(self) -> None:
         self.app.pop_screen()
 
 

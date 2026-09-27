@@ -111,9 +111,25 @@ class FakeData:
         self.calls: list[tuple] = []
         self.fail: set[str] = set()
         self.fetches = 0
+        # The CA fetches (#392): a read counter, like the listing —
+        # the page pulls the CA once as it opens, and the action
+        # pulls it again, none of it a power verb the call log
+        # pins.
+        self.ca_fetches = 0
         self.refusal = "daemon away"
         self.images_rows: list[dict] = []
         self.defaults: dict = {"root_mib": 10240, "home_mib": 20480}
+        # The CA fetch's scripted reply (#392) — the PEM and the
+        # state-dir path the daemon serves.
+        self.ca_reply: dict = {
+            "workspace": WS,
+            "name": "alpha",
+            "ca_pem": (
+                "-----BEGIN CERTIFICATE-----\nMIIB\n"
+                "-----END CERTIFICATE-----\n"
+            ),
+            "path": f"/state/vms/{WS}/interceptor-ca.crt",
+        }
         # The resize reply's omitted fields (#331): a daemon older
         # than a field answers without it, and the page keeps its
         # row's own value.
@@ -183,6 +199,13 @@ class FakeData:
         self.calls.append(("remove", workspace_id))
         self.rows = [r for r in self.rows if r["id"] != workspace_id]
         return self.reply("remove", {})
+
+    async def interceptor_ca(self, workspace_id: str) -> dict:
+        """The CA fetch (#392) — counted, the named refusal when it
+        fails; the reply carries the PEM and the real state-dir
+        path."""
+        self.ca_fetches += 1
+        return self.reply("ca", dict(self.ca_reply, workspace=workspace_id))
 
     async def set_egress_mode(
         self, workspace_id: str, mode: str, *, confirm_empty: bool = False
@@ -301,6 +324,15 @@ def consent_text(app) -> str:
     """The consent line's text; empty while the page still mounts."""
     try:
         return str(app.screen.query_one("#consent", Static).content)
+    except Exception:
+        return ""
+
+
+def ca_text(app) -> str:
+    """The interceptor-CA trust line's text (#392); empty while
+    the page still mounts."""
+    try:
+        return str(app.screen.query_one("#ca", Static).content)
     except Exception:
         return ""
 
@@ -837,7 +869,7 @@ async def test_the_page_centers_its_action_block(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test(size=(80, 40)) as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 7)
         await pilot.pause()  # lay the centered block out
         page = app.screen.query_one("#page")
         actions = app.screen.query_one("#actions")
@@ -864,7 +896,7 @@ async def test_a_hold_arriving_opens_the_overlay_by_itself(
     app, follow = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 7)
         await wait_for(lambda: "egress to decide: 1" in header_text(app))
         rows = app.screen.query_one("#actions")
         assert "pending" not in rows.children[0].classes
@@ -883,7 +915,7 @@ async def test_the_consent_action_opens_the_panel_by_hand(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 7)
         await pilot.press("down")  # the consent action
         await press_until(pilot, "enter", lambda: on_overlay(app))
         assert app.screen.auto is False  # type: ignore[attr-defined]
@@ -892,17 +924,18 @@ async def test_the_consent_action_opens_the_panel_by_hand(
 
 async def test_the_page_runs_start_and_stop(monkeypatch) -> None:
     """The fixed actions in walk order (#309, re-pinned #343,
-    #331): a shell (a new terminal), consent, the egress-mode
-    switch, the edit dialog, start, stop — the LLM token's remint
-    stays on the CLI."""
+    #331, #392): a shell (a new terminal), consent, the
+    interceptor-CA install, the egress-mode switch, the edit
+    dialog, start, stop — the LLM token's remint stays on the
+    CLI."""
     scripted_link(monkeypatch, [rules_frame()])
     data = FakeData([row()])
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
-        # Down four times lands on start.
-        await pilot.press("down", "down", "down", "down")
+        await wait_for(lambda: action_children(app) == 7)
+        # Down five times lands on start.
+        await pilot.press("down", "down", "down", "down", "down")
         await pilot.press("enter")
         await wait_for(lambda: ("start", WS) in data.calls)
         await wait_for(lambda: "running" in header_text(app))
@@ -926,8 +959,8 @@ async def test_the_page_switches_the_egress_mode(monkeypatch) -> None:
     async with app.run_test() as pilot:
         await open_page(pilot, app)
         await wait_for(lambda: "mode interactive" in consent_text(app))
-        assert "Switch the egress mode" in action_text(app, 2)
-        await pilot.press("down", "down", "enter")
+        assert "Switch the egress mode" in action_text(app, 3)
+        await pilot.press("down", "down", "down", "enter")
         await wait_for(lambda: type(app.screen).__name__ == "ModeScreen")
         options = app.screen.query_one("#modes", OptionList)
         assert options.highlighted == 2  # interactive, the snapshot's
@@ -951,7 +984,7 @@ async def test_a_static_pick_with_nothing_allowed_confirms_first(
     async with app.run_test() as pilot:
         await open_page(pilot, app)
         await wait_for(lambda: "mode allow" in consent_text(app))
-        await pilot.press("down", "down", "enter")
+        await pilot.press("down", "down", "down", "enter")
         await wait_for(lambda: type(app.screen).__name__ == "ModeScreen")
         options = app.screen.query_one("#modes", OptionList)
         assert options.highlighted == 0  # allow, the snapshot's mode
@@ -990,7 +1023,7 @@ async def test_a_refused_switch_names_itself_on_the_page(
     async with app.run_test() as pilot:
         await open_page(pilot, app)
         await wait_for(lambda: "mode interactive" in consent_text(app))
-        await pilot.press("down", "down", "enter")
+        await pilot.press("down", "down", "down", "enter")
         await wait_for(lambda: type(app.screen).__name__ == "ModeScreen")
         await pilot.press("up", "up")  # allow
         await pilot.press("enter")
@@ -1008,8 +1041,8 @@ async def test_escape_on_the_picker_decides_nothing(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
-        await pilot.press("down", "down", "enter")
+        await wait_for(lambda: action_children(app) == 7)
+        await pilot.press("down", "down", "down", "enter")
         await wait_for(lambda: type(app.screen).__name__ == "ModeScreen")
         options = app.screen.query_one("#modes", OptionList)
         assert options.highlighted == 1  # static, the row's mode
@@ -1019,13 +1052,176 @@ async def test_escape_on_the_picker_decides_nothing(monkeypatch) -> None:
         assert data.calls == []
 
 
+# -- the interceptor-CA line and install (#392) -----------------------
+
+
+async def test_the_recipe_fits_its_panel_at_eighty_columns() -> None:
+    """The recipe's lines fit the panel they render in (#392
+    review): a line wider than the panel's content region wraps or
+    clips — a copy across either is a broken command — so a real
+    CA's chunked lines must land whole inside the measured
+    region."""
+    pem = (
+        "-----BEGIN CERTIFICATE-----\n"
+        + "A" * 1180
+        + "\n-----END CERTIFICATE-----\n"
+    )
+    lines = main_app.recipe_lines(
+        {"path": "/state/vms/ws-a/interceptor-ca.crt", "ca_pem": pem}, WS
+    )
+    app, _ = make_app(FakeData([row()]))
+    async with app.run_test(size=(80, 30)) as pilot:
+        app.push_screen(main_app.RecipeScreen(lines))
+        await pilot.pause()
+        scroll = app.screen.query_one("#recipe-scroll")
+        budget = scroll.content_region.width - 2  # the lines' indent
+        for line in lines:
+            assert cell_len(line) <= budget, line[:40]
+
+
+@pytest.fixture
+def ca_data_root(monkeypatch, tmp_path):
+    """The trust marker's client data root, relocated: the tests
+    write nowhere near the operator's real one."""
+    monkeypatch.setenv("MSKSC_DATA_DIR", str(tmp_path))
+    return tmp_path
+
+
+async def test_the_page_names_the_ca_trust_state(
+    monkeypatch, ca_data_root
+) -> None:
+    """#392: the page carries the interceptor-CA trust line beside
+    the consent line — untrusted, with the symptom it names, until
+    an install lands; trusted after (the per-tick repaint flips
+    it, so a mark another surface made lands within a second)."""
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        page = await open_page(pilot, app)
+        await wait_for(lambda: "untrusted" in ca_text(app))
+        assert ca_text(app) == (
+            "interceptor CA: untrusted — HTTPS toward allowlisted "
+            "destinations fails validation"
+        )
+        main_app.mark_ca_trusted(WS, data.ca_reply["ca_pem"])
+        await wait_for(lambda: ca_text(app) == "interceptor CA: trusted")
+        # A daemon-side re-mint (a different PEM) reads untrusted
+        # again: the marker names the CA it trusts, and the page's
+        # fetched copy of the daemon's answer is what it compares
+        # against.
+        data.ca_reply["ca_pem"] = data.ca_reply["ca_pem"].replace(
+            "MIIB", "MIIC"
+        )
+        page.ca_pem = data.ca_reply["ca_pem"]
+        page.paint_ca()
+        assert ca_text(app).startswith("interceptor CA: untrusted")
+        # A repaint after teardown unmounted the line (the page's
+        # own guard) is quiet, not a crash.
+        await page.query_one("#ca", Static).remove()
+        page.paint_ca()
+
+
+async def test_the_install_action_runs_the_console_install(
+    monkeypatch, ca_data_root
+) -> None:
+    """The install action (#392): the CA's bytes come from the
+    daemon, the install runs through the console channel on a
+    running guest, and a landing install flips the line to
+    trusted."""
+    scripted_link(monkeypatch, [rules_frame()])
+    installed: list[tuple] = []
+
+    async def fake_install(workspace_id, ca_pem, ssl_ctx):
+        installed.append((workspace_id, ca_pem))
+
+    monkeypatch.setattr(main_app, "install_ca", fake_install)
+    data = FakeData([row(status="running")])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 7)
+        assert "Install the interceptor CA" in action_text(app, 2)
+        await pilot.press("down", "down", "enter")
+        await wait_for(lambda: installed == [(WS, data.ca_reply["ca_pem"])])
+        assert data.ca_fetches >= 2  # the open's pull, then the action's
+        await wait_for(lambda: ca_text(app) == "interceptor CA: trusted")
+        assert "interceptor CA installed" in consent_text(app)
+
+
+async def test_the_install_action_prints_the_recipe_when_not_running(
+    monkeypatch, ca_data_root
+) -> None:
+    """A workspace that is not running keeps the console channel
+    closed: the action prints the hand-run recipe — the
+    workspace's real CA path and the guest-side line — and the
+    trust line stays untrusted."""
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([row(status="stopped")])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 7)
+        await pilot.press("down", "down", "enter")
+        await wait_for(lambda: type(app.screen).__name__ == "RecipeScreen")
+        recipe = str(app.screen.query_one("#recipe", Static).content)
+        assert data.ca_reply["path"] in recipe
+        assert "update-ca-certificates" in recipe
+        await press_until(pilot, "escape", lambda: on_page(app))
+        assert ca_text(app).startswith("interceptor CA: untrusted")
+
+
+async def test_a_failed_install_names_itself_and_prints_the_recipe(
+    monkeypatch, ca_data_root
+) -> None:
+    """A refused console names itself on the consent line, and the
+    recipe stands in for the install — the operator's hand run
+    carries the same commands the channel would have run."""
+    scripted_link(monkeypatch, [rules_frame()])
+
+    async def refused(workspace_id, ca_pem, ssl_ctx):
+        raise SystemExit("msks: console unavailable")
+
+    monkeypatch.setattr(main_app, "install_ca", refused)
+    data = FakeData([row(status="running")])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        page = await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 7)
+        await pilot.press("down", "down", "enter")
+        await wait_for(lambda: type(app.screen).__name__ == "RecipeScreen")
+        # The flash names the failure on the page's consent line,
+        # behind the recipe the failure raised.
+        page_consent = str(page.query_one("#consent", Static).content)
+        assert "install failed" in page_consent
+        assert ca_text(page).startswith("interceptor CA: untrusted")
+
+
+async def test_a_refused_ca_fetch_names_itself(
+    monkeypatch, ca_data_root
+) -> None:
+    """A CA fetch the daemon refuses names itself on the consent
+    line and the page stands as it was — no recipe without the
+    CA's facts."""
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([row(status="running")])
+    data.fail = {"ca"}
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 7)
+        await pilot.press("down", "down", "enter")
+        await wait_for(lambda: "CA fetch failed" in consent_text(app))
+        assert on_page(app)
+
+
 # -- the edit dialog (#331) ---------------------------------------------
 
 
 async def open_edit(pilot, app) -> EditScreen:
-    """Down three times lands on the edit action; Enter opens the
+    """Down four times lands on the edit action; Enter opens the
     prefilled dialog over the page."""
-    await pilot.press("down", "down", "down")
+    await pilot.press("down", "down", "down", "down")
     await pilot.press("enter")
     await wait_for(lambda: type(app.screen).__name__ == "EditScreen")
     return app.screen
@@ -1073,8 +1269,8 @@ async def test_the_page_opens_the_prefilled_edit_dialog(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
-        assert "Edit settings" in action_text(app, 3)
+        await wait_for(lambda: action_children(app) == 7)
+        assert "Edit settings" in action_text(app, 4)
         screen = await open_edit(pilot, app)
         assert isinstance(screen, WorkspaceForm)
         assert isinstance(screen, EditScreen)
@@ -1130,7 +1326,7 @@ async def test_the_edit_dialog_resizes_the_changed_sizes(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 7)
         screen = await open_edit(pilot, app)
         screen.query_one("#field-cpus", Input).value = "4"
         screen.query_one("#field-root_mib", Input).value = "20480"
@@ -1162,7 +1358,7 @@ async def test_the_edit_dialog_refuses_create_time_and_empty(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 7)
         screen = await open_edit(pilot, app)
         # A programmatic move on a read-only field: the submit
         # refuses it by name.
@@ -1205,7 +1401,7 @@ async def test_an_older_daemons_resize_reply_keeps_the_rows_facts(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 7)
         screen = await open_edit(pilot, app)
         screen.query_one("#field-cpus", Input).value = "4"
         screen.query_one("#field-root_mib", Input).value = "20480"
@@ -1229,7 +1425,7 @@ async def test_an_edit_refusal_flashes_on_the_page(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 7)
         screen = await open_edit(pilot, app)
         screen.query_one("#field-cpus", Input).value = "4"
         screen.submit()
@@ -1250,7 +1446,7 @@ async def test_an_edit_on_a_running_workspace_asks_and_stops_first(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 7)
         screen = await open_edit(pilot, app)
         screen.query_one("#field-home_mib", Input).value = "40960"
         screen.submit()
@@ -1287,7 +1483,7 @@ async def test_a_failed_stop_names_itself_and_skips_the_resize(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 7)
         screen = await open_edit(pilot, app)
         screen.query_one("#field-cpus", Input).value = "4"
         screen.submit()
@@ -1313,7 +1509,7 @@ async def test_a_refused_resize_after_the_stop_names_itself(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 7)
         screen = await open_edit(pilot, app)
         screen.query_one("#field-cpus", Input).value = "4"
         screen.submit()
@@ -1338,7 +1534,7 @@ async def test_a_declined_stop_keeps_the_workspace_running(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 7)
         screen = await open_edit(pilot, app)
         screen.query_one("#field-cpus", Input).value = "4"
         screen.submit()
@@ -1363,7 +1559,7 @@ async def test_the_edit_dialog_fits_the_small_terminal(
     app, _ = make_app(data)
     async with app.run_test(size=(80, 24)) as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 7)
         screen = await open_edit(pilot, app)
         form = screen.query_one("#form")
         assert form.outer_size.height <= 23  # the footer keeps its row
@@ -1426,7 +1622,7 @@ async def test_the_new_terminal_action_spawns_an_ssh_child(
     app = MsksTuiApp(TuiFollow(), data=data, conf=conf)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 7)
         assert "new terminal" in action_text(app, 0)
         await press_until(pilot, "enter", lambda: len(spawned) == 1)
         assert spawned[0] == [
@@ -1469,7 +1665,7 @@ async def test_a_dead_launcher_falls_back_to_this_terminal(
     app = MsksTuiApp(follow, data=data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 7)
         await pilot.press("enter")
         await pilot.pause()
     assert follow.take() == (FLOW_SHELL, WS)
@@ -1694,6 +1890,16 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
                     "private_key": None,
                 },
             )
+        if request.url.path.endswith("/interceptor-ca"):
+            return httpx.Response(
+                200,
+                json={
+                    "workspace": "ws1",
+                    "name": "n",
+                    "ca_pem": "-----BEGIN CERTIFICATE-----\n",
+                    "path": "/state/vms/ws1/interceptor-ca.crt",
+                },
+            )
         if request.url.path == "/api/v1/workspaces":
             body = json.loads(request.content)
             seen_pub.append(body["ssh_pubkey"])
@@ -1753,6 +1959,11 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
     assert await data.start("ws1") == {"id": "ws1", "status": "running"}
     assert await data.stop("ws1") == {"id": "ws1", "status": "running"}
     assert await data.remove("ws1") == {"id": "ws1", "status": "running"}
+    # The interceptor-CA fetch (#392): the page's install action
+    # reads the same token-guarded surface, PEM and path.
+    ca = await data.interceptor_ca("ws1")
+    assert ca["ca_pem"].startswith("-----BEGIN CERTIFICATE-----")
+    assert ("GET", "/api/v1/workspaces/ws1/interceptor-ca") in seen
     # The policy PUT (#344): confirm_empty rides only when set —
     # the daemon's refusal names it.
     reply = await data.set_egress_mode("ws1", "interactive")
@@ -2582,7 +2793,7 @@ async def test_the_headers_count_follows_the_queue(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 7)
         assert "egress to decide" not in header_text(app)
         ws.push(request_frame("late1"))
         # The burst's first hold opens the consent overlay by itself
@@ -2606,7 +2817,7 @@ async def test_the_headers_count_follows_the_queue(monkeypatch) -> None:
         await wait_for(lambda: on_overlay(app))
         await press_until(pilot, "q", lambda: on_page(app))
         await wait_for(lambda: "egress to decide: 1" in header_text(app))
-        assert action_children(app) == 6
+        assert action_children(app) == 7
         ws.push(
             frame(
                 "egress.resolved",
@@ -2639,7 +2850,7 @@ async def test_the_swap_windows_self_heal(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 7)
         # Tear the action list away: the next sync rebuilds it, and
         # the paint paths swallow the missing widgets.
         actions = page.query_one("#actions")
@@ -2653,7 +2864,7 @@ async def test_the_swap_windows_self_heal(monkeypatch) -> None:
         page.paint_consent()
         page.paint_actions()
         page.sync_actions()
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 7)
 
 
 async def test_a_rebuild_over_a_standing_list_keeps_focus(
@@ -2667,8 +2878,8 @@ async def test_a_rebuild_over_a_standing_list_keeps_focus(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
-        await pilot.press("down", "down")  # the egress-mode row
+        await wait_for(lambda: action_children(app) == 7)
+        await pilot.press("down", "down", "down")  # the egress-mode row
         before = page.actions_widget()
         page.rebuilds.request()
         await wait_for(
@@ -2677,8 +2888,8 @@ async def test_a_rebuild_over_a_standing_list_keeps_focus(
         await pilot.pause()
         rows = page.actions_widget()
         assert rows is not None and rows is not before  # a fresh list
-        assert rows.index == 2  # the focused row kept by its key
-        assert "Switch the egress mode" in action_text(app, 2)
+        assert rows.index == 3  # the focused row kept by its key
+        assert "Switch the egress mode" in action_text(app, 3)
 
 
 async def test_a_bare_listing_read_in_a_swap_window(monkeypatch) -> None:
@@ -2768,8 +2979,8 @@ async def test_page_action_failures_flash(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
-        await pilot.press("down", "down", "down", "down")
+        await wait_for(lambda: action_children(app) == 7)
+        await pilot.press("down", "down", "down", "down", "down")
         await press_until(pilot, "enter", lambda: ("start", WS) in data.calls)
         await wait_for(lambda: "start failed" in consent_text(app))
         # A start that lands (the daemon's own answer) flips the
@@ -2781,7 +2992,7 @@ async def test_page_action_failures_flash(monkeypatch) -> None:
             "enter",
             lambda: data.calls.count(("start", WS)) == 2,
         )
-        await wait_for(lambda: "workspace is running" in action_text(app, 4))
+        await wait_for(lambda: "workspace is running" in action_text(app, 5))
         await pilot.press("down")
         await press_until(pilot, "enter", lambda: ("stop", WS) in data.calls)
         await wait_for(lambda: "stop failed" in consent_text(app))
@@ -2798,13 +3009,13 @@ async def test_power_rows_dim_with_the_status(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
-        await wait_for(lambda: "workspace is stopped" in action_text(app, 5))
-        assert "workspace is stopped" not in action_text(app, 4)
-        await pilot.press("down", "down", "down", "down")
+        await wait_for(lambda: action_children(app) == 7)
+        await wait_for(lambda: "workspace is stopped" in action_text(app, 6))
+        assert "workspace is stopped" not in action_text(app, 5)
+        await pilot.press("down", "down", "down", "down", "down")
         await press_until(pilot, "enter", lambda: ("start", WS) in data.calls)
-        await wait_for(lambda: "workspace is running" in action_text(app, 4))
-        assert "workspace is running" not in action_text(app, 5)
+        await wait_for(lambda: "workspace is running" in action_text(app, 5))
+        assert "workspace is running" not in action_text(app, 6)
         assert page.row["status"] == "running"
 
 
@@ -2819,13 +3030,13 @@ async def test_the_page_follows_a_status_moved_elsewhere(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
-        await wait_for(lambda: "workspace is stopped" in action_text(app, 5))
+        await wait_for(lambda: action_children(app) == 7)
+        await wait_for(lambda: "workspace is stopped" in action_text(app, 6))
         # Another surface boots it: a fresh row object, so only the
         # page's per-second read can learn it.
         data.rows[0] = {**data.rows[0], "status": "running"}
-        await wait_for(lambda: "workspace is running" in action_text(app, 4))
-        assert action_text(app, 5).strip() == "Stop"
+        await wait_for(lambda: "workspace is running" in action_text(app, 5))
+        assert action_text(app, 6).strip() == "Stop"
         assert "running" in header_text(app)
 
 
@@ -2839,9 +3050,9 @@ async def test_enter_on_a_dimmed_row_flashes_and_runs_nothing(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
-        await wait_for(lambda: "workspace is stopped" in action_text(app, 5))
-        await pilot.press("down", "down", "down", "down", "down")
+        await wait_for(lambda: action_children(app) == 7)
+        await wait_for(lambda: "workspace is stopped" in action_text(app, 6))
+        await pilot.press("down", "down", "down", "down", "down", "down")
         await pilot.press("enter")
         await wait_for(
             lambda: "stop skipped: workspace is stopped" in consent_text(app)
@@ -2859,7 +3070,7 @@ async def test_the_focused_row_carries_the_marker(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 7)
         await wait_for(lambda: action_text(app, 0).startswith("▸"))
         before = page_actions(app)
         await pilot.press("down")
@@ -2876,6 +3087,7 @@ def test_the_groups_lead_rows_carry_the_class() -> None:
     assert [i.page_action for i in items] == [
         "shell-window",
         "egress-consent",
+        "ca-install",
         "egress-mode",
         "edit",
         "start",
@@ -2886,7 +3098,7 @@ def test_the_groups_lead_rows_carry_the_class() -> None:
         for index, item in enumerate(items)
         if "group-lead" in item.classes
     ]
-    assert leads == [0, 1, 4]
+    assert leads == [0, 1, 5]
 
 
 def test_action_rows_paint_two_tones() -> None:
@@ -2901,11 +3113,11 @@ def test_action_rows_paint_two_tones() -> None:
     assert Span(2, 14, "$text bold") in shell.spans
     assert Span(17, 34, muted) in shell.spans
     mode = main_app.action_content(
-        PAGE_ACTIONS[2], "running", {}, focused=False
+        PAGE_ACTIONS[3], "running", {}, focused=False
     )
     assert str(mode).startswith("  Switch the egress mode")
     assert mode.spans == []
-    stop = main_app.action_content(PAGE_ACTIONS[5], "stopped", {}, False)
+    stop = main_app.action_content(PAGE_ACTIONS[6], "stopped", {}, False)
     assert str(stop).startswith("  Stop — workspace is stopped")
     assert Span(2, 6, muted) in stop.spans
     assert Span(9, 29, muted) in stop.spans
@@ -2929,7 +3141,7 @@ async def test_a_row_that_leaves_the_listing_closes_the_page(
         # over the removal's) and not one bare press (a press in
         # the list's swap window no-ops).
         await open_quietly(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 7)
         data.rows.clear()  # removed from another terminal
         await wait_for(lambda: "removed" in status_text(app), timeout=15.0)
         assert on_main(app)
@@ -2956,7 +3168,7 @@ async def test_a_removal_under_an_open_overlay_waits_for_it(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_quietly(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 7)
         ws.push(request_frame("late1"))  # the burst opens the panel
         await wait_for(lambda: on_overlay(app))
         data.rows.clear()  # removed while the panel is up

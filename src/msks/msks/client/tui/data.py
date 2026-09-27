@@ -151,6 +151,19 @@ class TuiData:
             json_body=body,
         )
 
+    async def interceptor_ca(self, workspace_id: str) -> dict:
+        """GET the workspace's interceptor CA (#392) — the cert's
+        PEM bytes and the state-dir file it lives in, the same
+        surface the page's install action reads."""
+        return await api_call(
+            "GET",
+            env_url(),
+            env_token(),
+            f"/api/v1/workspaces/{workspace_id}/interceptor-ca",
+            transport=self.transport,
+            ssl_ctx=shared_ssl(),
+        )
+
     async def decide(
         self,
         workspace_id: str,
