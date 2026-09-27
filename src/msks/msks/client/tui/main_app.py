@@ -29,6 +29,7 @@ leaves the screen it is on — no screen traps focus.
 
 import asyncio
 import json
+import re
 import sys
 import time
 from datetime import UTC, datetime
@@ -72,6 +73,7 @@ from .consent_ui import (
     duration_label,
     ensure_focus,
     flash_safe,
+    fmt_duration,
     focus_by_id,
     focused_request_id,
     mode_label,
@@ -104,10 +106,6 @@ ACTION_EGRESS_MODE = "egress-mode"
 #: — the held-request queue as a panel over the page, opened by
 #: hand; the page also opens it by itself when a hold arrives.
 ACTION_CONSENT = "egress-consent"
-
-#: How many granted scopes the consent line spells out before the
-#: "… (+N more)" cap.
-GRANT_CAP = 3
 
 
 def require_terminal() -> None:
@@ -358,18 +356,37 @@ def header_name(
     return Content(text, [span])
 
 
-def header_meta(row: dict) -> str:
+def meta_fields(row: dict) -> tuple[str, str, str, str]:
+    """The meta line's fields: the immutable id, the image
+    hash's head, the host, and the created date — each with its
+    honest fallback for a row that predates it."""
+    created = (row.get("created_at") or "")[:10]
+    return (
+        row["id"],
+        (row.get("image_hash") or "-")[:12],
+        row.get("host") or "-",
+        created or "-",
+    )
+
+
+def header_meta(row: dict, theme_variables: dict | None = None) -> Content:
     """The header's second line (#351): the immutable id, the
     image hash, the host, and the created date — the page paints
-    the line muted, and it truncates at the terminal's edge
-    (an ellipsis marks the cut) beside the name's own line."""
-    image = (row.get("image_hash") or "-")[:12]
-    host = row.get("host") or "-"
-    created = (row.get("created_at") or "")[:10] or "-"
-    return (
-        f" id {escape(row['id'])}  ·  image {escape(image)}"
-        f"  ·  host {escape(host)}  ·  created {escape(created)}"
-    )
+    the line muted, and its ``·`` separators carry the same muted
+    span style the name line gives the status (#366): a theme
+    variable the render resolves, the one expression both header
+    lines' muted accents share. The fields ride a Content's plain
+    text (the name line's rule — no escaping), and the line
+    truncates at the terminal's edge (an ellipsis marks the cut)
+    beside the name's own line."""
+    wid, image, host, created = meta_fields(row)
+    text = f" id {wid}  ·  image {image}  ·  host {host}  ·  created {created}"
+    style = muted_style(theme_variables or {})
+    spans = [
+        Span(mark.start(), mark.end(), style)
+        for mark in re.finditer("·", text)
+    ]
+    return Content(text, spans)
 
 
 def grant_text(rule, remaining: float | None) -> str:
@@ -380,26 +397,51 @@ def grant_text(rule, remaining: float | None) -> str:
     return f"{escape(rule.dest_host)}{port} ({label})"
 
 
+def next_expiry(controller, rules) -> float | None:
+    """The grant stack's nearest countdown, or None while no
+    grant carries one (open-ended verdicts alone)."""
+    timed = [
+        remaining
+        for remaining in (
+            controller.rule_remaining(rule) for rule in rules.allowed
+        )
+        if remaining is not None
+    ]
+    return min(timed, default=None)
+
+
 def granted_line(controller) -> str:
-    """The granted scopes for the consent status line, capped; the
-    honest absence when nothing is in effect."""
+    """The granted scopes for the consent status line (#366): one
+    grant names itself — host, port, expiry; two or more collapse
+    to the count with the nearest expiry (``3 grants · next
+    expires 4h``), so a workspace with several grants keeps the
+    line readable at 80 columns instead of running it to the
+    terminal's edge — every grant stays spelled out on the
+    consent overlay's rules screen (``r`` from the overlay). A
+    stack with no
+    countdown among its grants (open-ended verdicts alone)
+    carries the count alone. The honest absence when nothing is
+    in effect."""
     rules = controller.rules
     if rules is None or not rules.allowed:
         return "no active consent"
-    grants = [
-        grant_text(rule, controller.rule_remaining(rule))
-        for rule in rules.allowed[:GRANT_CAP]
-    ]
-    extra = len(rules.allowed) - GRANT_CAP
-    suffix = f" (+{extra} more)" if extra > 0 else ""
-    return ", ".join(grants) + suffix
+    if len(rules.allowed) == 1:
+        return grant_text(
+            rules.allowed[0], controller.rule_remaining(rules.allowed[0])
+        )
+    summary = f"{len(rules.allowed)} grants"
+    expiry = next_expiry(controller, rules)
+    if expiry is not None:
+        summary += f" · next expires {fmt_duration(expiry)}"
+    return summary
 
 
 def consent_line(link, row: dict) -> str:
     """The workspace page's consent status line (#309): the granted
-    scope with its expiry, or the honest absence — the row's
-    recorded mode until the first rules frame lands. The state is
-    named whenever it is not connected: a drop never implies that
+    scopes — one named, several counted (#366) — or the honest
+    absence, prefixed by the mode; the row's recorded mode stands
+    in until the first rules frame lands. The state is named
+    whenever it is not connected: a drop never implies that
     silence is data (the controller keeps its last snapshot through
     the backoff ladder, so the line says so beside it)."""
     if link.state in (REJECTED, UNUSABLE_TOKEN):
@@ -638,6 +680,9 @@ class MsksTuiApp(App):
                    text-overflow: ellipsis; }
     #consent { height: 1; padding: 0 1; color: $text-muted;
                text-wrap: nowrap; text-overflow: ellipsis; }
+    #page { height: 1fr; align: center middle; }
+    #actions { width: 64; height: auto; max-width: 100%;
+              max-height: 100%; }
     #actions ListItem { height: 1; padding: 0 1; }
     #actions ListItem.group-lead { margin-top: 1; }
     #actions ListItem Static { text-wrap: nowrap;
@@ -1137,7 +1182,10 @@ class WorkspaceScreen(Screen):
             header_name(self.row, theme_variables=self.app.theme_variables),
             id="header",
         )
-        yield Static(header_meta(self.row), id="header-meta")
+        yield Static(
+            header_meta(self.row, self.app.theme_variables),
+            id="header-meta",
+        )
         yield Static(consent_line(link, self.row), id="consent")
         # The action list mounts on the first rebuild (compose
         # yields the container alone).
@@ -1298,7 +1346,7 @@ class WorkspaceScreen(Screen):
                 )
             )
             self.query_one("#header-meta", Static).update(
-                header_meta(self.row)
+                header_meta(self.row, self.app.theme_variables)
             )
         except NoMatches:
             pass  # teardown unmounted a header line under the worker

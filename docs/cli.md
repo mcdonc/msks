@@ -269,9 +269,15 @@ The **workspace page** carries the per-workspace loop: a
 two-line header — the workspace's name on the first line with
 its status beside it in the state's color (the same coloring the
 list uses), the id, image hash, host, and created date muted on
-the second — a status line for egress consent (the mode, the
-granted scope with its expiry, or "no active consent"), and the
-page's actions in three groups: a shell in a new terminal
+the second, its separators carrying the same theme-muted span
+style the header's status takes — a status line for egress
+consent (the mode, then one granted scope named with its expiry;
+two or more grants read as a count with the nearest expiry — `5
+grants · next expires 4h` — so the line stays readable at 80
+columns, every grant listed on the consent overlay's rules
+screen), and the page's actions centered in the space the header
+lines and the footer leave — the block capped at 64 columns — in
+three groups: a shell in a new terminal
 window, then egress consent, a live egress-mode switch, and an
 edit dialog for the sizes and topology (#331), then start and
 stop. Each action paints its name with its description — when
@@ -289,11 +295,9 @@ header's first line also counts pending holds (`egress to
 decide: N` while any hold waits, refreshed each second), and on
 a narrow terminal each header line truncates at the edge with an
 ellipsis — the metadata owns its own line, so a name truncates
-only when it alone no longer fits the line — and the consent
-status line truncates at the edge the same way, so the page's
-layout holds steady whatever the granted scopes — or a flashed
-refusal — carry. A workspace in
-`interactive`
+only when it alone no longer fits the line — and a flashed
+refusal on the consent line truncates at the edge the same way,
+so the page's layout holds steady. A workspace in `interactive`
 mode holds new flows while the page is open: the page registers
 as the workspace's decider, so holds land on it. Reminting the
 LLM token is a CLI operation — `msks llm-token --remint` prints
