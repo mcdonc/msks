@@ -1349,10 +1349,29 @@ class WorkspaceScreen(Screen):
         fresh = next(
             (row for row in rows if row["id"] == self.row["id"]), None
         )
-        if fresh is not None:
-            self.row = fresh
-            self.paint_header()
-            self.paint_actions()
+        if fresh is None:
+            self.close_removed()
+            return
+        self.row = fresh
+        self.paint_header()
+        self.paint_actions()
+
+    def close_removed(self) -> None:
+        """A listing that cannot see the workspace names its removal
+        — another surface deleted it — and the page closes behind
+        a notice on the list's status line: a page for a workspace
+        that no longer exists offers only refusals. A modal above
+        the page (the consent overlay, the edit form) holds the
+        close until it goes; the per-second read tries again."""
+        if self.app.screen is not self:
+            return
+        self.app.follow.reopen = None
+        self.app.flash(
+            flash_safe(
+                f"{workspace_label(self.row)} removed — closing its page"
+            )
+        )
+        self.app.pop_screen()
 
     # -- the action rows -----------------------------------------------------
 

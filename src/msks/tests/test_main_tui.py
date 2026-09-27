@@ -11,6 +11,7 @@ import asyncio
 import json
 import stat
 import sys
+import time
 from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -337,6 +338,21 @@ async def open_page(pilot, app) -> WorkspaceScreen:
     await wait_for(lambda: list_children(app) >= 1)
     await press_until(pilot, "enter", lambda: on_page(app))
     return app.screen
+
+
+async def open_quietly(pilot, app) -> None:
+    """Open the page with one enter at a time, each press given
+    its own window — a tight retry loop can queue a second enter
+    that lands on the page (or, after a later close, on the
+    emptied list), while a bare press inside a swap window
+    no-ops."""
+    await wait_for(lambda: list_children(app) >= 1)
+    while not on_page(app):
+        await pilot.press("enter")
+        try:
+            await wait_for(lambda: on_page(app), timeout=1.0)
+        except AssertionError:
+            continue  # the press fell in a swap window
 
 
 # -- the workspaces list --------------------------------------------------
@@ -2598,20 +2614,73 @@ def test_action_rows_paint_two_tones() -> None:
     assert Span(9, 29, muted) in stop.spans
 
 
-async def test_a_row_that_leaves_the_listing_keeps_the_page(
+async def test_a_row_that_leaves_the_listing_closes_the_page(
     monkeypatch,
 ) -> None:
+    """The review round on #367: a successful listing that cannot
+    see the workspace names its removal — deleted from another
+    surface — and the page closes behind a notice on the list's
+    status line, so no ghost page offers actions the daemon
+    would only refuse."""
     scripted_link(monkeypatch, [rules_frame()])
     data = FakeData([row()])
     app, _ = make_app(data)
     async with app.run_test() as pilot:
-        page = await open_page(pilot, app)
+        # Enter with a window after each press — not open_page's
+        # tight retry loop (a queued second enter lands on the
+        # emptied list after the close and stamps its own flash
+        # over the removal's) and not one bare press (a press in
+        # the list's swap window no-ops).
+        await open_quietly(pilot, app)
         await wait_for(lambda: action_children(app) == 6)
-        data.rows.clear()  # the workspace left between refreshes
-        page.refresh_row()
-        await pilot.pause()
-        await pilot.pause()
-        assert WS in meta_text(app)  # the page keeps its row
+        data.rows.clear()  # removed from another terminal
+        await wait_for(lambda: "removed" in status_text(app), timeout=15.0)
+        assert on_main(app)
+        assert app.follow.reopen is None  # no ghost page on restart
+
+
+async def test_a_removal_under_an_open_overlay_waits_for_it(
+    monkeypatch,
+) -> None:
+    """The overlay holds the close: a removal that lands while the
+    consent panel is up keeps the page (and the panel) standing
+    until the operator parks the panel — the next per-second read
+    then closes the page behind the same notice."""
+    ws = FakeWS([rules_frame()])
+    factory = FakeFactory([ws, FakeWS([])])
+    monkeypatch.setattr(
+        main_app,
+        "DeciderLink",
+        lambda ws_id: DeciderLink(
+            ws_id, ws_factory=factory, reconnect_delays=(0.01, 0.01, 0.01)
+        ),
+    )
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_quietly(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        ws.push(request_frame("late1"))  # the burst opens the panel
+        await wait_for(lambda: on_overlay(app))
+        data.rows.clear()  # removed while the panel is up
+        await asyncio.sleep(1.2)  # a read (or two) lands under the panel
+        assert on_overlay(app)  # the close waits
+        # Park the panel: one q at a time, each press given its own
+        # window — a tight press_until loop can outrun the park and
+        # feed the page's own back binding a queued q, while a
+        # press inside the queue's swap window no-ops and wants a
+        # retry.
+        deadline = time.monotonic() + 10.0
+        while not on_page(app):
+            if time.monotonic() > deadline:
+                raise AssertionError("the panel never parked")
+            await pilot.press("q")
+            try:
+                await wait_for(lambda: on_page(app), timeout=2.0)
+            except AssertionError:
+                continue  # the press fell in a swap window
+        await wait_for(lambda: "removed" in status_text(app), timeout=15.0)
+        assert on_main(app)
 
 
 async def test_a_bare_page_paints_and_unmounts_quietly(monkeypatch) -> None:

@@ -281,7 +281,10 @@ reason while the workspace's status makes the verb pointless —
 stop on a stopped workspace, start on a running one — and Enter
 on a dimmed row names that reason on the consent line; the page
 re-reads the workspace each second, so the dimming follows a
-start or stop made anywhere, not only on the page. The
+start or stop made anywhere, not only on the page. A workspace
+the listing no longer sees — removed from another surface —
+closes its page and names the removal on the list's status
+line. The
 header's first line also counts pending holds (`egress to
 decide: N` while any hold waits, refreshed each second), and on
 a narrow terminal each header line truncates at the edge with an
