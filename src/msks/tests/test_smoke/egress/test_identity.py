@@ -526,6 +526,39 @@ async def test_local_minted_identity() -> None:
             assert forwarded.stdout.strip() == host_list.stdout.strip(), (
                 f"guest:\n{forwarded.stdout}\nhost:\n{host_list.stdout}"
             )
+
+            # The remembered passthrough (#385): the same session
+            # with the forwarding remembered in a real client
+            # config file instead of typed — the CLI's bootstrap
+            # reads the file, and the remembered -A forwards the
+            # operator's agent exactly as the typed one did.
+            cfg_dir = workdir / "client-config"
+            cfg_dir.mkdir()
+            (cfg_dir / "msks.yaml").write_text(
+                "ssh_options:\n  - -A\n", encoding="utf-8"
+            )
+            remembered_env = dict(agent_env, MSKSC_CONFIG_DIR=str(cfg_dir))
+            remembered = await run_msks_ssh(
+                command="ssh-add -l", env=remembered_env
+            )
+            assert remembered.returncode == 0, (
+                f"{remembered.stdout}\n{remembered.stderr}"
+            )
+            assert remembered.stdout.strip() == host_list.stdout.strip(), (
+                f"guest:\n{remembered.stdout}\nhost:\n{host_list.stdout}"
+            )
+            # A typed -a overrides the remembered -A: the config's
+            # forwarding is lifted out for the invocation, and the
+            # guest session runs with no agent socket at all.
+            declined = await run_msks_ssh(
+                "-a",
+                command='test -z "$SSH_AUTH_SOCK" && echo NOAGENT-$((6*7))',
+                env=remembered_env,
+            )
+            assert declined.returncode == 0, (
+                f"{declined.stdout}\n{declined.stderr}"
+            )
+            assert "NOAGENT-42" in declined.stdout, declined.stdout
         finally:
             if "SSH_AGENT_PID" in agent_vars:
                 with contextlib.suppress(ProcessLookupError):
