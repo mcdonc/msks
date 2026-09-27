@@ -791,7 +791,17 @@ class LlmProxy:
         row = await self.app.state.model.get_llm_token(workspace_id)
         if row is None or not token_matches(presented, row.get("llm_token")):
             raise HTTPException(
-                status_code=401, detail="invalid workspace token"
+                status_code=401,
+                detail=(
+                    "invalid workspace token — the daemon's credential "
+                    "for this workspace differs from the one its seed "
+                    "planted (a remint, or a daemon catalog created "
+                    "after the guest). Run `msks llm-token "
+                    "<workspace>` on the host, write the token it "
+                    "prints to /etc/msks/llm.token as root in the "
+                    "guest, and open a new login shell (it exports the "
+                    "file as MSKSWS_API_KEY)."
+                ),
             )
 
 

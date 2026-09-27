@@ -15,6 +15,13 @@
  * abort bounds the request; a peer that answers headers fast and
  * trickles its body can hold the read a little past the bound.
  *
+ * A failure that carries a body prints it after the status line
+ * (the proxy's 401 names a rotated credential and its recovery —
+ * #375 — and any other detail-bearing answer rides the same
+ * path): FastAPI's `detail` key first, the OpenAI error shape
+ * second, plain text as the fallback, each capped so a hostile
+ * body cannot flood the terminal.
+ *
  * The image ships this file in /etc/skel (every seed-provisioned
  * account copies it into ~/.pi/agent/extensions/ — pi discovers
  * extensions from per-user directories only) and in /root's home.
@@ -40,6 +47,30 @@ interface OpenAIModelsResponse {
   data: OpenAIModel[];
 }
 
+/** The reason a non-2xx answer carries, from the shapes a
+ * FastAPI or OpenAI-shaped server sends; capped so a hostile
+ * body cannot flood the terminal. */
+async function failureReason(response: Response): Promise<string> {
+  let body: string;
+  try {
+    body = await response.text();
+  } catch {
+    return ""; // the read raced the abort; the status is the answer
+  }
+  let reason = "";
+  try {
+    const parsed = JSON.parse(body) as {
+      detail?: unknown;
+      error?: { message?: unknown };
+    };
+    const detail = parsed.detail ?? parsed.error?.message;
+    reason = typeof detail === "string" ? detail : "";
+  } catch {
+    reason = body;
+  }
+  return reason.replace(/\s+/g, " ").trim().slice(0, 240);
+}
+
 async function fetchModels(
   baseUrl: string,
   apiKey: string,
@@ -50,9 +81,11 @@ async function fetchModels(
       signal: AbortSignal.timeout(1500),
     });
     if (!response.ok) {
+      const why = await failureReason(response);
       console.error(
         "msks llm-models: fetch failed: " +
-          `${response.status} ${response.statusText}`,
+          `${response.status} ${response.statusText}` +
+          (why ? ` — ${why}` : ""),
       );
       return null;
     }

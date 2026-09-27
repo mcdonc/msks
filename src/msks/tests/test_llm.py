@@ -440,6 +440,13 @@ async def test_proxy_auth_rejects_everything_but_the_workspace_token() -> None:
             "/v1/models", headers={"authorization": "Bearer nope"}
         )
         assert wrong.status_code == 401
+        # The mismatch 401 names the rotated credential and the
+        # recovery (#375): the file the guest re-reads at login and
+        # the host-side command that prints the current token.
+        detail = wrong.json()["detail"]
+        assert "msks llm-token" in detail
+        assert "/etc/msks/llm.token" in detail
+        assert "MSKSWS_API_KEY" in detail
         bare = await http.get("/v1/models", headers={"authorization": TOKEN})
         assert bare.status_code == 401
     async with async_client(proxy, "10.9.9.9", mapped=False) as http:

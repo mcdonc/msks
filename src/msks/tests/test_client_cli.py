@@ -4388,7 +4388,13 @@ def test_cmd_llm_token_prints_and_remints(
     rc = cli.cmd_llm_token("alpha", remint=True, transport=mock(handler))
     assert rc == 0
     assert seen["method"] == "POST"
-    assert capsys.readouterr().out.strip() == "msksllm1_new"
+    # stdout stays the bare token for scripts that pipe it; the
+    # update step rides stderr (#375) and names the guest file and
+    # the login shell that re-reads it.
+    outerr = capsys.readouterr()
+    assert outerr.out.strip() == "msksllm1_new"
+    assert "/etc/msks/llm.token" in outerr.err
+    assert "msks console" in outerr.err
 
 
 def test_cmd_llm_token_explains_a_missing_token(

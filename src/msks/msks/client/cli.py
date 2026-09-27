@@ -385,6 +385,17 @@ def cmd_llm_token(
             )
         )
         print(reply["token"])
+        # The update step rides stderr so stdout stays the bare
+        # token for scripts that pipe it (#375); the seed is
+        # immutable create-time input, so the guest's copy keeps
+        # serving the old credential until this lands.
+        print(
+            f"msks: the workspace keeps serving the old token until "
+            f"updated — write this one to /etc/msks/llm.token as "
+            f"root in {workspace_id} (msks console or msks ssh -l "
+            f"root), then open a new login shell",
+            file=sys.stderr,
+        )
         return 0
     reply = asyncio.run(
         rest_fetch_llm_token(url, token, workspace_id, transport)
