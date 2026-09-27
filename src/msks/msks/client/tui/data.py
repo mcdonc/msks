@@ -12,7 +12,8 @@ the tests.
 from pathlib import Path
 
 from ..create import create_workspace_core, invoking_user
-from ..rest import api_call, env_token, env_url
+from ..env import env_token, env_url
+from ..rest import api_call
 from .consent_ui import shared_ssl
 
 #: The create form's identity mode (#309): the per-workspace

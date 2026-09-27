@@ -40,7 +40,7 @@ from textual.screen import ModalScreen, Screen
 from textual.widgets import Footer, ListItem, ListView, OptionList, Static
 
 from ..egress import events_url
-from ..rest import env_token, env_url, ssl_context
+from ..env import env_token, env_url, ssl_context
 from ..wsauth import auth_headers
 from .consent import (
     DURATION_DEFAULT,

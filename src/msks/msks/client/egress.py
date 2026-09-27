@@ -6,7 +6,8 @@ import json
 import websockets
 
 from . import wsauth
-from .rest import api_client, env_token, env_url, request, ssl_context
+from .env import env_token, env_url, ssl_context
+from .rest import api_client, request
 from .tabular import listing_text
 
 DURATIONS = ("once", "5m", "15m", "tilrestart", "forever")

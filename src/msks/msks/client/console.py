@@ -34,17 +34,16 @@ import websockets
 
 from ..identity import LEGACY_LOGIN_USER
 from . import consoleauth, wsauth
-from .rest import (  # noqa: F401
-    DEFAULT_URL,
-    ensure_running,
+from .env import (
+    DEFAULT_URL,  # noqa: F401  (re-exported for callers/tests)
     env_token,
     env_url,
     ssl_context,
-    workspace_row,
 )
+from .rest import ensure_running, workspace_row
 
 # Re-exported for the tests and for callers that expect the client's
-# env/TLS helpers on the console module (they moved to rest.py).
+# env/TLS helpers on the console module (they live in env.py).
 
 # The detach escape (like telnet/ssh -e): Ctrl-], byte 0x1d. Ctrl-C
 # and Ctrl-D belong to the guest. A doubled escape — Ctrl-] Ctrl-],
