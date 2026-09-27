@@ -33,6 +33,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from starlette.requests import ClientDisconnect
 
+from ..events import relay
 from ..identity import (
     LEGACY_LOGIN_USER,
     LOGIN_NAME_RE,
@@ -103,7 +104,6 @@ from ..storage import (
     storage_report,
 )
 from .auth import require_token
-from .events import relay
 from .watcher import watch_loop
 
 

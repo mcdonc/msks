@@ -1,4 +1,4 @@
-"""The msksd API server: FastAPI app, auth, events, TLS, entry point.
+"""The msksd API server: FastAPI app, auth, TLS, entry point.
 
 Nothing UI-shaped links in here — this package *is* the server side of
 the client/server split. A future ``msks.client`` package may not

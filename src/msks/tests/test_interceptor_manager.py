@@ -8,12 +8,12 @@ from types import SimpleNamespace
 
 import pytest
 from msks.app import build_app
+from msks.events import EventHub
 from msks.interceptor import Interceptor, PlaceholderEntry
 from msks.interceptor import manager as manager_mod
 from msks.microvm import VmSpec
 from msks.microvm.errors import MicrovmError
 from msks.secretstore import backend_ref, new_sentinel
-from msks.server.events import EventHub
 from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
 
 TAP_IP = "172.31.0.2"

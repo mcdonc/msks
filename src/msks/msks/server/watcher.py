@@ -11,11 +11,11 @@ import logging
 import time
 from datetime import UTC, datetime
 
+from ..events import EventHub
 from ..model.secrets import coverage_label
 from ..spec.time import deadline_passed
 from ..spec.vm import VmStatus
 from ..storage import MIB, pressure_for, state_usage
-from .events import EventHub
 
 LOG = logging.getLogger(__name__)
 

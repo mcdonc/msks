@@ -13,18 +13,25 @@ share one analyzer. Two assertions:
   source may import today, so widening the contract is a deliberate
   whitelist edit, not an accident that slipped in.
 
-The two granularities are both real on purpose: package-collapsed
-pairs such as ``app`` ↔ ``server`` (``server/main.py`` pulls the
-composer, ``app.py`` composes ``server.events``) are not runtime
-cycles and live on the whitelist; a genuine module cycle fails the
-first test whatever the whitelist says.
+The two granularities are both real on purpose: a package-collapsed
+pair can hide runtime composition behind an entry-point edge — the
+``app`` ↔ ``server`` pair #408 dissolved by relocating the event
+hub (``server.events``) to the root leaf ``events.py``; today
+``server/main.py → app`` is the one edge between the components.
+The table below reads bottom-up, with two sanctioned upward edges:
+``server.main`` and ``conformance`` each pull the composer (the
+process entry point, and the local check composing the daemon it
+inspects). A genuine module cycle fails the first test whatever
+the whitelist says.
 
 The whitelist reads bottom-up:
 
 - ``spec`` — the shared leaf vocabulary (#387): value types,
   grammars, predicates; imports nothing from the daemon
-- ``identity``, ``storage``, ``configio`` — root leaves (keys,
-  units, config-file reading and first-run writing)
+- ``identity``, ``storage``, ``configio``, ``events`` — root leaves
+  (keys, units, config-file reading and first-run writing; the WSS
+  event hub #408, shared by the composition layer and the HTTP
+  surface)
 - ``model``, ``settings``, ``persist``, ``imagestore``,
   ``secretstore``, ``llm`` — storage and configuration over the
   vocabulary
@@ -44,7 +51,9 @@ The whitelist reads bottom-up:
 - ``server`` — the HTTP surface, orchestrating everything below;
   it reads its version from ``spec.version``, not the package
   root (#407)
-- ``app`` — composition; the entry point (``server.main``) pulls it
+- ``app`` — composition; the entry point (``server.main``) pulls
+  it, and that is the only edge between the two components since
+  #408 (the hub the composer builds is a root leaf)
 - ``client`` — the REST client (#397): it imports its own
   siblings, stdlib, third-party packages, and the allowlist
   ``identity``, ``conformance_args``, ``spec``, ``configio`` — the
@@ -68,15 +77,15 @@ sys.modules["check_import_cycles"] = check_import_cycles
 spec.loader.exec_module(check_import_cycles)
 
 ALLOWED_EDGES = {
-    # app composes the daemon
+    # app composes the daemon; the hub is a root leaf (#408)
     ("app", "consent"),
+    ("app", "events"),
     ("app", "interceptor"),
     ("app", "llm"),
     ("app", "microvm"),
     ("app", "model"),
     ("app", "net"),
     ("app", "secretstore"),
-    ("app", "server"),
     ("app", "settings"),
     # client: the REST consumer — only the shared-leaf allowlist
     # (#397; enforced separately by the client test below)
@@ -114,9 +123,11 @@ ALLOWED_EDGES = {
     ("secretstore", "model"),
     # the image catalog's ref grammar comes from the leaf vocabulary
     ("imagestore", "spec"),
-    # the HTTP surface orchestrates; main.py pulls the composer
+    # the HTTP surface orchestrates; main.py pulls the composer,
+    # the hub relay comes from the events root leaf (#408)
     ("server", "app"),
     ("server", "config"),
+    ("server", "events"),
     ("server", "identity"),
     ("server", "imagestore"),
     ("server", "llm"),
