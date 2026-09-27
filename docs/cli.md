@@ -271,9 +271,20 @@ its status beside it in the state's color (the same coloring the
 list uses), the id, image hash, host, and created date muted on
 the second — a status line for egress consent (the mode, the
 granted scope with its expiry, or "no active consent"), and the
-page's actions: a shell in a new terminal window, egress
-consent, a live egress-mode switch, an edit dialog for the
-sizes and topology (#331), start, and stop. The
+page's actions in three groups: a shell in a new terminal
+window, then egress consent, a live egress-mode switch, and an
+edit dialog for the sizes and topology (#331), then start and
+stop. Each action paints its name with its description — when
+it carries one — muted behind it, and the row Enter acts on carries a marker beside the
+list's own highlight. The start and stop rows dim behind their
+reason while the workspace's status makes the verb pointless —
+stop on a stopped workspace, start on a running one — and Enter
+on a dimmed row names that reason on the consent line; the page
+re-reads the workspace each second, so the dimming follows a
+start or stop made anywhere, not only on the page. A workspace
+the listing no longer sees — removed from another surface —
+closes its page and names the removal on the list's status
+line. The
 header's first line also counts pending holds (`egress to
 decide: N` while any hold waits, refreshed each second), and on
 a narrow terminal each header line truncates at the edge with an

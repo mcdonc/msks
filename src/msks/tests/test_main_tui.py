@@ -11,6 +11,7 @@ import asyncio
 import json
 import stat
 import sys
+import time
 from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -24,6 +25,7 @@ from msks.client.tui import main_app
 from msks.client.tui.link import DeciderLink
 from msks.client.tui.main_app import (
     FLOW_SHELL,
+    PAGE_ACTIONS,
     EditScreen,
     MainScreen,
     MsksTuiApp,
@@ -43,6 +45,7 @@ from test_consent_tui import (
     rules_frame as shared_rules_frame,
 )
 from textual.color import Color
+from textual.content import Span
 from textual.css.query import NoMatches
 from textual.widgets import Button, Input, OptionList, Select, Static
 
@@ -161,11 +164,17 @@ class FakeData:
 
     async def start(self, workspace_id: str) -> dict:
         self.calls.append(("start", workspace_id))
-        return self.reply("start", {"id": workspace_id, "status": "running"})
+        result = self.reply("start", {"id": workspace_id, "status": "running"})
+        fresh = next(r for r in self.rows if r["id"] == workspace_id)
+        fresh["status"] = "running"  # the daemon's row follows the boot
+        return result
 
     async def stop(self, workspace_id: str) -> dict:
         self.calls.append(("stop", workspace_id))
-        return self.reply("stop", {"id": workspace_id, "status": "stopped"})
+        result = self.reply("stop", {"id": workspace_id, "status": "stopped"})
+        fresh = next(r for r in self.rows if r["id"] == workspace_id)
+        fresh["status"] = "stopped"  # the daemon's row follows the shutdown
+        return result
 
     async def remove(self, workspace_id: str) -> dict:
         self.calls.append(("remove", workspace_id))
@@ -248,6 +257,14 @@ def action_children(app) -> int:
         return -1
 
 
+def page_actions(app):
+    """The workspace page's action list; None in a swap window."""
+    try:
+        return app.screen.query_one("#actions")
+    except Exception:
+        return None
+
+
 def action_text(app, index: int) -> str:
     """One action row's text; empty while its inner widget is
     still mounting."""
@@ -321,6 +338,21 @@ async def open_page(pilot, app) -> WorkspaceScreen:
     await wait_for(lambda: list_children(app) >= 1)
     await press_until(pilot, "enter", lambda: on_page(app))
     return app.screen
+
+
+async def open_quietly(pilot, app) -> None:
+    """Open the page with one enter at a time, each press given
+    its own window — a tight retry loop can queue a second enter
+    that lands on the page (or, after a later close, on the
+    emptied list), while a bare press inside a swap window
+    no-ops."""
+    await wait_for(lambda: list_children(app) >= 1)
+    while not on_page(app):
+        await pilot.press("enter")
+        try:
+            await wait_for(lambda: on_page(app), timeout=1.0)
+        except AssertionError:
+            continue  # the press fell in a swap window
 
 
 # -- the workspaces list --------------------------------------------------
@@ -2314,12 +2346,15 @@ async def test_the_swap_windows_self_heal(monkeypatch) -> None:
         # Tear the action list away: the next sync rebuilds it, and
         # the paint paths swallow the missing widgets.
         actions = page.query_one("#actions")
+        await actions.children[0].query_one(Static).remove()
+        page.paint_actions()  # swallowed: a row lost its Static
         await actions.remove()
         await page.query_one("#header").remove()
         await page.query_one("#header-meta").remove()
         await page.query_one("#consent").remove()
         page.paint_header()  # swallowed: the worker self-heals
         page.paint_consent()
+        page.paint_actions()
         page.sync_actions()
         await wait_for(lambda: action_children(app) == 6)
 
@@ -2440,26 +2475,212 @@ async def test_page_action_failures_flash(monkeypatch) -> None:
         await pilot.press("down", "down", "down", "down")
         await press_until(pilot, "enter", lambda: ("start", WS) in data.calls)
         await wait_for(lambda: "start failed" in consent_text(app))
+        # A start that lands (the daemon's own answer) flips the
+        # row and the power pair's dimming; the stop half then runs
+        # against a running workspace and names its own refusal.
+        data.fail.remove("start")
+        await press_until(
+            pilot,
+            "enter",
+            lambda: data.calls.count(("start", WS)) == 2,
+        )
+        await wait_for(lambda: "workspace is running" in action_text(app, 4))
         await pilot.press("down")
         await press_until(pilot, "enter", lambda: ("stop", WS) in data.calls)
         await wait_for(lambda: "stop failed" in consent_text(app))
-        assert "stopped" in header_text(app)  # the row kept its status
+        assert "running" in header_text(app)  # the row kept its status
 
 
-async def test_a_row_that_leaves_the_listing_keeps_the_page(
-    monkeypatch,
-) -> None:
-    scripted_link(monkeypatch, [rules_frame()])
-    data = FakeData([row()])
+async def test_power_rows_dim_with_the_status(monkeypatch) -> None:
+    """#367: the power pair carries the reason its verb cannot run
+    — Stop dimmed beside a stopped workspace, Start beside a
+    running one — and a successful start flips the dimming in
+    place."""
+    scripted_link(monkeypatch, [])
+    data = FakeData([row(status="stopped")])
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
         await wait_for(lambda: action_children(app) == 6)
-        data.rows.clear()  # the workspace left between refreshes
-        page.refresh_row()
+        await wait_for(lambda: "workspace is stopped" in action_text(app, 5))
+        assert "workspace is stopped" not in action_text(app, 4)
+        await pilot.press("down", "down", "down", "down")
+        await press_until(pilot, "enter", lambda: ("start", WS) in data.calls)
+        await wait_for(lambda: "workspace is running" in action_text(app, 4))
+        assert "workspace is running" not in action_text(app, 5)
+        assert page.row["status"] == "running"
+
+
+async def test_the_page_follows_a_status_moved_elsewhere(
+    monkeypatch,
+) -> None:
+    """The review round on #367: the page re-reads the workspace
+    each second, so a start made away from the page — the CLI in
+    another terminal — un-dims the stop row without a rebuild."""
+    scripted_link(monkeypatch, [])
+    data = FakeData([row(status="stopped")])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: "workspace is stopped" in action_text(app, 5))
+        # Another surface boots it: a fresh row object, so only the
+        # page's per-second read can learn it.
+        data.rows[0] = {**data.rows[0], "status": "running"}
+        await wait_for(lambda: "workspace is running" in action_text(app, 4))
+        assert action_text(app, 5).strip() == "Stop"
+        assert "running" in header_text(app)
+
+
+async def test_enter_on_a_dimmed_row_flashes_and_runs_nothing(
+    monkeypatch,
+) -> None:
+    """#367: Enter on a dimmed power row names the reason on the
+    page's consent line and calls nothing."""
+    scripted_link(monkeypatch, [])
+    data = FakeData([row(status="stopped")])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: "workspace is stopped" in action_text(app, 5))
+        await pilot.press("down", "down", "down", "down", "down")
+        await pilot.press("enter")
+        await wait_for(
+            lambda: "stop skipped: workspace is stopped" in consent_text(app)
+        )
         await pilot.pause()
-        await pilot.pause()
-        assert WS in meta_text(app)  # the page keeps its row
+        assert ("stop", WS) not in data.calls
+
+
+async def test_the_focused_row_carries_the_marker(monkeypatch) -> None:
+    """#367: the focused action row reads a marker beside the
+    highlight bar, and the marker follows focus without a list
+    rebuild."""
+    scripted_link(monkeypatch, [])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_text(app, 0).startswith("▸"))
+        before = page_actions(app)
+        await pilot.press("down")
+        await wait_for(lambda: action_text(app, 1).startswith("▸"))
+        assert not action_text(app, 0).startswith("▸")
+        assert page_actions(app) is before  # repainted, not rebuilt
+
+
+def test_the_groups_lead_rows_carry_the_class() -> None:
+    """#367: the three groups' lead rows — use, configure, power
+    — carry the class that paints the separating margin."""
+    page = WorkspaceScreen(row())
+    items = page.fixed_items()
+    assert [i.page_action for i in items] == [
+        "shell-window",
+        "egress-consent",
+        "egress-mode",
+        "edit",
+        "start",
+        "stop",
+    ]
+    leads = [
+        index
+        for index, item in enumerate(items)
+        if "group-lead" in item.classes
+    ]
+    assert leads == [0, 1, 4]
+
+
+def test_action_rows_paint_two_tones() -> None:
+    """#367: the name stands in the default foreground (bold on
+    the shell row), the description rides muted, and a dimmed
+    power row mutes the whole row behind its reason."""
+    muted = main_app.muted_style({})
+    shell = main_app.action_content(
+        PAGE_ACTIONS[0], "stopped", {}, focused=True
+    )
+    assert str(shell).startswith("▸ Open a shell — in a new terminal")
+    assert Span(2, 14, "$text bold") in shell.spans
+    assert Span(17, 34, muted) in shell.spans
+    mode = main_app.action_content(
+        PAGE_ACTIONS[2], "running", {}, focused=False
+    )
+    assert str(mode).startswith("  Switch the egress mode")
+    assert mode.spans == []
+    stop = main_app.action_content(PAGE_ACTIONS[5], "stopped", {}, False)
+    assert str(stop).startswith("  Stop — workspace is stopped")
+    assert Span(2, 6, muted) in stop.spans
+    assert Span(9, 29, muted) in stop.spans
+
+
+async def test_a_row_that_leaves_the_listing_closes_the_page(
+    monkeypatch,
+) -> None:
+    """The review round on #367: a successful listing that cannot
+    see the workspace names its removal — deleted from another
+    surface — and the page closes behind a notice on the list's
+    status line, so no ghost page offers actions the daemon
+    would only refuse."""
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        # Enter with a window after each press — not open_page's
+        # tight retry loop (a queued second enter lands on the
+        # emptied list after the close and stamps its own flash
+        # over the removal's) and not one bare press (a press in
+        # the list's swap window no-ops).
+        await open_quietly(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        data.rows.clear()  # removed from another terminal
+        await wait_for(lambda: "removed" in status_text(app), timeout=15.0)
+        assert on_main(app)
+        assert app.follow.reopen is None  # no ghost page on restart
+
+
+async def test_a_removal_under_an_open_overlay_waits_for_it(
+    monkeypatch,
+) -> None:
+    """The overlay holds the close: a removal that lands while the
+    consent panel is up keeps the page (and the panel) standing
+    until the operator parks the panel — the next per-second read
+    then closes the page behind the same notice."""
+    ws = FakeWS([rules_frame()])
+    factory = FakeFactory([ws, FakeWS([])])
+    monkeypatch.setattr(
+        main_app,
+        "DeciderLink",
+        lambda ws_id: DeciderLink(
+            ws_id, ws_factory=factory, reconnect_delays=(0.01, 0.01, 0.01)
+        ),
+    )
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_quietly(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        ws.push(request_frame("late1"))  # the burst opens the panel
+        await wait_for(lambda: on_overlay(app))
+        data.rows.clear()  # removed while the panel is up
+        await asyncio.sleep(1.2)  # a read (or two) lands under the panel
+        assert on_overlay(app)  # the close waits
+        # Park the panel: one q at a time, each press given its own
+        # window — a tight press_until loop can outrun the park and
+        # feed the page's own back binding a queued q, while a
+        # press inside the queue's swap window no-ops and wants a
+        # retry.
+        deadline = time.monotonic() + 10.0
+        while not on_page(app):
+            if time.monotonic() > deadline:
+                raise AssertionError("the panel never parked")
+            await pilot.press("q")
+            try:
+                await wait_for(lambda: on_page(app), timeout=2.0)
+            except AssertionError:
+                continue  # the press fell in a swap window
+        await wait_for(lambda: "removed" in status_text(app), timeout=15.0)
+        assert on_main(app)
 
 
 async def test_a_bare_page_paints_and_unmounts_quietly(monkeypatch) -> None:
@@ -2475,6 +2696,7 @@ async def test_a_bare_page_paints_and_unmounts_quietly(monkeypatch) -> None:
     assert page.pending_count() == 0  # no link: nothing waiting
     page.paint_consent()
     page.paint_header()  # no link: zero holds, the swallow holds
+    page.paint_actions()  # no list mounted: the quiet return
     assert page.page_rules() is None  # no link: nothing to read
     page.land_rules_reply({"mode": "allow"})  # no link: keeps quiet
     monkeypatch.setattr(page, "paint_consent", boom)
