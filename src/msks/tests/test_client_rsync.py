@@ -128,14 +128,22 @@ def test_rsh_string_carries_the_remembered_options() -> None:
     )
 
 
-def test_rsh_word_escapes_the_quotes_it_wraps() -> None:
-    """A remembered option value that already carries ssh's config
-    quoting (:func:`msks.client.ssh.config_quote`) rides the one
-    quoting level rsync splits with its quotes intact."""
-    assert rsync.rsh_word('ForwardAgent="/a b"') == (
-        '"ForwardAgent=\\"/a b\\""'
-    )
-    assert rsync.rsh_word("back\\slash word") == '"back\\\\slash word"'
+def test_rsh_word_doubles_the_quotes_rsync_reads() -> None:
+    """rsync's remote-shell splitter tracks quote characters alone
+    (no backslash escapes), so an inner quote survives as a
+    doubled quote and a backslash rides literally — verified
+    against the real binary in the stand-in test below."""
+    assert rsync.rsh_word('ForwardAgent="/a b"') == ('"ForwardAgent=""/a b"""')
+    assert rsync.rsh_word("back\\slash word") == '"back\\slash word"'
+    assert rsync.rsh_word("plain") == "plain"
+
+
+def test_rsh_word_quotes_a_bare_quote_character() -> None:
+    # A quote character in an otherwise plain word opens rsync's
+    # quote mode and dies as a missing trailing quote — so any
+    # word carrying one rides wrapped.
+    assert rsync.rsh_word("it's") == '"it\'s"'
+    assert rsync.rsh_word('say"hi') == '"say""hi"'
 
 
 def test_write_ssh_config_carries_user_and_transport(tmp_path: Path) -> None:
@@ -485,6 +493,17 @@ def test_stock_rsync_shapes_the_remote_shell_argv(tmp_path: Path) -> None:
     # ^ the empty host passes an EMPTY host word — ssh would then
     # parse rsync's first remote-command word as its destination,
     # which is why msks fills the host
+
+    # The remembered-options tail rides the same one level: a
+    # token carrying ssh's config quoting (a spaced ForwardAgent
+    # socket) arrives at ssh with its quotes intact (#385).
+    extra = ["-o", f'ForwardAgent="{tmp_path}/my agent/sock"', "-A"]
+    tail = " ".join(rsync.rsh_word(word) for word in extra)
+    argv = recorded(
+        "-e", f'{standin} -F "{spaced}" {tail}', str(source), "alpha:/x"
+    )
+    assert argv[0:2] == ["-F", str(spaced)]
+    assert argv[2:5] == extra
     later = tmp_path / "later-shell"
     later.write_text("#!/bin/sh\nexit 42\n")
     later.chmod(0o755)

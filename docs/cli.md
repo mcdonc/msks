@@ -23,9 +23,12 @@ msks rm ws                    # delete it (and its data)
 
 ## Client environment
 
-The client reads seven environment variables. They are prefixed
+The client reads environment variables prefixed
 `MSKSC_` (client) to stay apart from the daemon's `MSKSD_*` (server)
 namespace — a box that runs both can export each side independently.
+The list-valued settings (`MSKSC_TERMINAL_OPEN_CMD`,
+`MSKSC_SSH_OPTIONS`) carry their string form and are documented with
+their file keys below.
 
 | Variable               | Meaning                                                                                                                           | Default                  |
 | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
@@ -221,8 +224,11 @@ closes itself when the session disconnects.
 `ssh_options` remembers ssh options for every ssh session msks
 runs — `msks ssh`, the workspace page's new-terminal shell action
 (which runs `msks ssh` in the new window), and `msks rsync`'s ssh
-transport (#385). The value is the tokens you would type after
-`--` on the `msks ssh` command line:
+transport (#385). The value is the ssh options you would type
+after `--` on the `msks ssh` command line — the options
+themselves; a `--` token in the value is refused, because msks
+adds the options to its own and a remembered separator would turn
+msks's transport into the remote command:
 
 ```yaml
 ssh_options: -A -o ServerAliveInterval=30   # string form (shell-split)

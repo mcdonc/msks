@@ -355,7 +355,9 @@ def test_ssh_options_takes_both_forms(tmp_path: Path) -> None:
 
 def test_ssh_options_unset_and_refused_forms(tmp_path: Path) -> None:
     # Null, blank, and the empty list are the unset form: no
-    # options ride.
+    # options ride. The -- separator is refused: msks appends the
+    # options to its own, so a remembered separator would hand ssh
+    # msks's transport as the remote command.
     for body in ("ssh_options:\n", "ssh_options: ''\n", "ssh_options: []\n"):
         assert config.load_config(write_config(tmp_path, body)) == {}
     for body, message in (
@@ -363,6 +365,8 @@ def test_ssh_options_unset_and_refused_forms(tmp_path: Path) -> None:
         ("ssh_options:\n  - -A\n  - 3\n", "non-empty strings"),
         ("ssh_options:\n  - -A\n  - ''\n", "non-empty strings"),
         ("ssh_options: 3\n", "string or a list of strings"),
+        ("ssh_options: -- -A\n", "separator"),
+        ("ssh_options:\n  - --\n", "separator"),
     ):
         path = write_config(tmp_path, body)
         with pytest.raises(ValueError, match=message):

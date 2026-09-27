@@ -447,8 +447,8 @@ def nonempty_words(value: list, key: str, path: str) -> list[str]:
 
 def ssh_options_value(value: object, path: str) -> list[str] | None:
     """``ssh_options`` (#385): ssh option tokens, string or list
-    form — the tokens an operator would type after ``--`` on the
-    ``msks ssh`` command line, remembered.
+    form — the ssh options an operator would type after ``--`` on
+    the ``msks ssh`` command line, remembered.
 
     The string form is shell-split (the operator writes it the way
     the shell would take it); the list form is taken verbatim —
@@ -457,6 +457,15 @@ def ssh_options_value(value: object, path: str) -> list[str] | None:
     """
     if value is None:
         return None
+    words = ssh_options_words(value, path)
+    if words is not None:
+        refuse_separator(words, path)
+    return words
+
+
+def ssh_options_words(value: object, path: str) -> list[str] | None:
+    """The value's token list in either form; the caller checks
+    the separator."""
     if isinstance(value, str):
         return ssh_options_string(value, path)
     if isinstance(value, list):
@@ -466,6 +475,19 @@ def ssh_options_value(value: object, path: str) -> list[str] | None:
         f"{path}: ssh_options must be a string or a list of strings, "
         f"got {kind}"
     )
+
+
+def refuse_separator(words: list[str], path: str) -> None:
+    """Refuse the ssh options/command separator among the
+    remembered options: msks appends the list to its own options,
+    so a remembered ``--`` would hand ssh msks's transport options
+    and the workspace id as the remote command."""
+    if "--" in words:
+        raise ValueError(
+            f"{path}: ssh_options carries the ssh options, not the "
+            "-- separator — list the options themselves (-A, -o "
+            "ServerAliveInterval=30)"
+        )
 
 
 def ssh_options_string(value: str, path: str) -> list[str] | None:

@@ -1375,9 +1375,21 @@ def test_a_remembered_socket_rides_untouched(
     argv = ssh.build_args(
         "alpha", "/agent.sock", "/id.pub", "/kh", [], "alice"
     )
-    assert "-oForwardAgent=/own.sock" in " ".join(
-        argv
-    ) or "ForwardAgent=/own.sock" in " ".join(argv)
+    assert "ForwardAgent=/own.sock" in " ".join(argv)
+
+
+def test_a_command_line_flag_beats_a_remembered_socket(
+    agent_env: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The socket value is a forwarding setting like any other: the
+    # command line naming one (-A) lifts the remembered socket out
+    # and the rewrite answers with the operator's agent.
+    remember(monkeypatch, "-o", "ForwardAgent=/own.sock")
+    argv = ssh.build_args(
+        "alpha", "/agent.sock", "/id.pub", "/kh", ["-A"], "alice"
+    )
+    assert "/own.sock" not in " ".join(argv)
+    assert argv[2] == f"ForwardAgent={agent_env}"
 
 
 @pytest.mark.parametrize(
@@ -1454,6 +1466,16 @@ def test_an_unparseable_remembered_line_is_one_refusal(
 ) -> None:
     monkeypatch.setenv(ssh.SSH_OPTIONS_ENV, '-o "ForwardAgent=yes')
     with pytest.raises(SystemExit, match="shell-parseable"):
+        ssh.configured_ssh_options()
+
+
+def test_a_remembered_separator_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # msks appends the remembered options to its own — a remembered
+    # -- would hand ssh msks's transport as the remote command.
+    monkeypatch.setenv(ssh.SSH_OPTIONS_ENV, "-- -A")
+    with pytest.raises(SystemExit, match="separator"):
         ssh.configured_ssh_options()
 
 

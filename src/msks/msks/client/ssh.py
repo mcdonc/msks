@@ -568,13 +568,19 @@ def configured_ssh_options() -> list[str]:
     if not value.strip():
         return []
     try:
-        return shlex.split(value)
+        words = shlex.split(value)
     except ValueError as exc:
         raise SystemExit(
             f"msks: {SSH_OPTIONS_ENV} is not shell-parseable "
             f"({exc}); quote its tokens the way the shell would "
             "take them"
         ) from None
+    if "--" in words:
+        raise SystemExit(
+            f"msks: {SSH_OPTIONS_ENV} carries the ssh options, not "
+            "the -- separator — export the options themselves"
+        )
+    return words
 
 
 def operator_agent_socket(command: str = "msks ssh") -> str:

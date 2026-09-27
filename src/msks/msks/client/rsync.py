@@ -149,20 +149,24 @@ def write_ssh_config(served, options: list[str], user: str) -> str:
 
 
 def rsh_word(word: str) -> str:
-    """One ssh argv word for the ``-e`` string: double-quoted when
-    it carries whitespace, because rsync splits the ``-e`` value on
-    whitespace honoring double quotes (one level — which is why the
-    ``-e`` value stays at ``ssh -F <path>`` plus remembered option
-    tokens and every other setting rides the config file the path
-    names). A quoted word's own double quotes and backslashes are
-    backslash-escaped, the way rsync's splitter reads them, so a
-    remembered option value that already carries ssh's config
-    quoting (:func:`msks.client.ssh.config_quote`) survives the
-    ride with its quotes intact for ssh's own parser."""
-    if not any(c.isspace() for c in word):
+    """One ssh argv word for the ``-e`` string, quoted the way
+    rsync's remote-shell splitter reads it: wrapped in double
+    quotes with every inner double quote doubled, applied when the
+    word needs it — whitespace to split on, or any quote character
+    (a bare quote in an unquoted word opens rsync's quote mode and
+    dies as a missing trailing quote).
+
+    rsync's splitter tracks quote characters alone: it honors no
+    backslash escapes, so a doubled quote is the one spelling an
+    inner quote survives and a backslash rides as the literal
+    character it already is. A remembered option value that
+    carries ssh's config quoting
+    (:func:`msks.client.ssh.config_quote`) therefore arrives at
+    ssh with its quotes intact, for ssh's own parser to strip.
+    """
+    if not (any(c.isspace() for c in word) or '"' in word or "'" in word):
         return word
-    escaped = word.replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{escaped}"'
+    return f'"{word.replace('"', '""')}"'
 
 
 def rsh_string(config_path: str, extra: list[str]) -> str:
