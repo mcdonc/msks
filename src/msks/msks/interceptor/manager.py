@@ -170,6 +170,19 @@ class Interceptor:
         """The workspace's CA, or None when disarmed mid-handshake."""
         return self._cas.get(workspace_id)
 
+    async def ca_record(self, workspace_id: str) -> tuple[bytes, Path]:
+        """The workspace's CA as the API serves it (#392): the
+        cert's PEM bytes and the chain file's path — loaded when
+        the files stand, minted and written when they do not (the
+        same load-or-mint the arm path runs, so a CA the operator
+        pre-installs from the workspace page is the CA the
+        interceptor serves once a placeholder arms it)."""
+        vm_dir = self.app.state.settings.vmm.state_dir / "vms" / workspace_id
+        authority = await asyncio.to_thread(
+            ca.load_or_mint, vm_dir, workspace_id
+        )
+        return ca.cert_pem(authority.cert), authority.chain_file
+
     def mint_leaf(self, workspace_id: str, sni: str):
         """One connection's leaf from the workspace CA (SNI-keyed)."""
         return ca.mint_leaf(self._cas[workspace_id], sni)

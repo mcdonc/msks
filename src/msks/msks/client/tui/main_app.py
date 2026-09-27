@@ -58,6 +58,12 @@ from ..config import DEFAULT_TERMINAL_CMD, ClientConfig
 from ..console import run_workspace_shell
 from ..create import invoking_user
 from ..env import env_token, env_url
+from ..interceptor_ca import (
+    ca_line,
+    install_ca,
+    mark_ca_trusted,
+    recipe_lines,
+)
 from ..resize import resize_message
 from .consent_ui import (
     DURATION_DEFAULT,
@@ -106,6 +112,13 @@ ACTION_EGRESS_MODE = "egress-mode"
 #: — the held-request queue as a panel over the page, opened by
 #: hand; the page also opens it by itself when a hold arrives.
 ACTION_CONSENT = "egress-consent"
+
+#: The workspace page's interceptor-CA action (#392): the install
+#: through the console channel — the trust the guest's HTTPS
+#: validation toward allowlisted destinations needs until #200
+#: seeds it at create. #200 retires the action and keeps the
+#: line.
+ACTION_CA_INSTALL = "ca-install"
 
 
 def require_terminal() -> None:
@@ -680,6 +693,11 @@ class MsksTuiApp(App):
                    text-overflow: ellipsis; }
     #consent { height: 1; padding: 0 1; color: $text-muted;
                text-wrap: nowrap; text-overflow: ellipsis; }
+    #ca { height: 1; padding: 0 1; color: $text-muted;
+          text-wrap: nowrap; text-overflow: ellipsis; }
+    RecipeScreen { align: center middle; }
+    #recipe { width: 64; height: auto; background: $panel;
+              border: round $primary; padding: 1 2; }
     #page { height: 1fr; align: center middle; }
     #actions { width: 64; height: auto; max-width: 100%;
               max-height: 100%; }
@@ -1126,6 +1144,12 @@ PAGE_ACTIONS = (
         "decide holds, review rules and events",
         True,
     ),
+    PageAction(
+        ACTION_CA_INSTALL,
+        "Install the interceptor CA",
+        "through the console channel",
+        False,
+    ),
     PageAction(ACTION_EGRESS_MODE, "Switch the egress mode", "", False),
     PageAction("edit", "Edit settings", "sizes and topology", False),
     PageAction("start", "Start", "", True),
@@ -1138,13 +1162,15 @@ class WorkspaceScreen(Screen):
     — the name with its status on the first, the id, image, host,
     and created date muted on the second, the pending-egress
     count beside the status while holds wait, #354), the consent
-    status line, and the page's actions — a shell in a new window
-    (#341), the consent overlay (#358), the egress-mode switch
-    (#344), start, and stop. The page is the workspace's decider
-    while it is open: holds land on its link, the header counts
-    them, and the first hold of a burst opens the consent overlay
-    by itself — the overlay's own docstring owns the panel's
-    lifecycle."""
+    status line, the interceptor-CA trust line beside it (#392 —
+    where the interceptor's armed-status line lands when #391
+    ships), and the page's actions — a shell in a new window
+    (#341), the consent overlay (#358), the interceptor-CA install
+    (#392), the egress-mode switch (#344), start, and stop. The
+    page is the workspace's decider while it is open: holds land
+    on its link, the header counts them, and the first hold of a
+    burst opens the consent overlay by itself — the overlay's own
+    docstring owns the panel's lifecycle."""
 
     BINDINGS = [
         Binding("enter", "run", "Run"),
@@ -1202,6 +1228,7 @@ class WorkspaceScreen(Screen):
             id="header-meta",
         )
         yield Static(consent_line(link, self.row), id="consent")
+        yield Static(ca_line(self.row["id"]), id="ca")
         # The action list mounts on the first rebuild (compose
         # yields the container alone).
         yield Vertical(id="page")
@@ -1249,6 +1276,7 @@ class WorkspaceScreen(Screen):
             if self.is_mounted:
                 self.refresh_row()
             self.paint_consent()
+            self.paint_ca()
             self.paint_header()
             self.sync_actions()
         except NoMatches:
@@ -1374,6 +1402,16 @@ class WorkspaceScreen(Screen):
                 )
             except NoMatches:
                 pass  # teardown unmounted the line under the timer
+
+    def paint_ca(self) -> None:
+        """Repaint the interceptor-CA trust line (#392) — the line
+        flips when an install lands; the marker it reads is client
+        state, so the per-tick paint is the drift cover for a mark
+        another surface made."""
+        try:
+            self.query_one("#ca", Static).update(ca_line(self.row["id"]))
+        except NoMatches:
+            pass  # teardown unmounted the line under the timer
 
     def flash(self, message: str) -> None:
         """Give the page's consent line to a message for FLASH_TTL
@@ -1557,6 +1595,7 @@ class WorkspaceScreen(Screen):
         handler = {
             ACTION_SHELL_WINDOW: self.open_shell_window,
             ACTION_EGRESS_MODE: self.pick_egress_mode,
+            ACTION_CA_INSTALL: self.install_ca_action,
             "edit": self.edit_workspace,
             "start": self.start_workspace,
             "stop": self.stop_workspace,
@@ -1613,6 +1652,47 @@ class WorkspaceScreen(Screen):
             self.flash(
                 flash_safe(f"{workspace_label(self.row)} {reply['status']}")
             )
+
+    # -- the interceptor-CA install (#392) -----------------------------
+
+    async def install_ca_action(self) -> None:
+        """The page's interceptor-CA action (#392): the CA's bytes
+        come from the daemon, the install runs through the console
+        channel into the running guest, and a landing install
+        flips the trust line. A workspace that is not running, a
+        refused console, or a failed exchange prints the hand-run
+        recipe — the same commands with the workspace's real CA
+        path."""
+        info = await self.guarded_page_flash(
+            "CA fetch", self.app.data.interceptor_ca(self.row["id"])
+        )
+        if info is None:
+            return
+        if self.row.get("status") != "running":
+            self.show_recipe(info)
+            return
+        self.flash("installing the interceptor CA…")
+        try:
+            await install_ca(self.row["id"], info["ca_pem"], shared_ssl())
+        except (Exception, SystemExit) as exc:
+            self.flash(
+                f"interceptor CA install failed: {flash_safe(str(exc))}"
+            )
+            self.show_recipe(info)
+            return
+        mark_ca_trusted(self.row["id"])
+        self.paint_ca()
+        self.flash(
+            flash_safe(
+                f"interceptor CA installed — {workspace_label(self.row)} "
+                "validates HTTPS toward allowlisted destinations"
+            )
+        )
+
+    def show_recipe(self, info: dict) -> None:
+        """Push the hand-run recipe over the page (#392) — the
+        install spelled for a shell the operator drives."""
+        self.app.push_screen(RecipeScreen(recipe_lines(info, self.row["id"])))
 
     # -- the edit dialog (#331) ---------------------------------------
 
@@ -1771,6 +1851,40 @@ class WorkspaceScreen(Screen):
         for the workspace as it goes (unmount closes the link)."""
         self.app.follow.reopen = None
         self.overlay = None
+        self.app.pop_screen()
+
+
+class RecipeText(Static, can_focus=True):
+    """The recipe's text — focusable so the modal holds the keys
+    (a Static the page below could otherwise keep focused, its
+    Enter reaching the action list through the modal)."""
+
+
+class RecipeScreen(ModalScreen):
+    """The hand-run recipe over the workspace page (#392): the
+    CA's real daemon-side path and the guest-side line that
+    installs it — what the install action prints when the console
+    channel cannot run (a stopped workspace, a refused console) or
+    the operator prefers a hand run. The recipe holds focus so its
+    leaving keys close it without reaching the page below."""
+
+    BINDINGS = [
+        Binding("enter", "close", "Close"),
+        Binding("q", "close", "Close", show=False),
+        Binding("escape", "close", "Close", show=False),
+    ]
+
+    def __init__(self, lines: list[str]) -> None:
+        super().__init__()
+        self.lines = lines
+
+    def compose(self) -> ComposeResult:
+        yield RecipeText("\n".join(self.lines), id="recipe")
+
+    def on_mount(self) -> None:
+        self.query_one("#recipe", RecipeText).focus()
+
+    def action_close(self) -> None:
         self.app.pop_screen()
 
 
