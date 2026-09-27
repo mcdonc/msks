@@ -163,8 +163,21 @@ boots. A guest image must:
   the hostname it already has — cloud-init sets the hostname per
   instance, and its per-boot update leaves a hostname it never set
   untouched, so only a factory reset moves an older workspace's.
+  `/etc/hosts` carries the workspace's name as well: the Debian
+  image turns on cloud-init's `manage_etc_hosts` in the mode that
+  adds the conventional `127.0.1.1` record naming the host, in
+  place, on every boot — the file's other entries stay in place.
+  (A guest first booted before #370 whose healed seed now carries
+  the name gets the record naming the creation name while its
+  kernel hostname keeps the older one — the module reads the seed,
+  not the kernel.) Name resolution does not wait on the record:
+  both images' resolvers answer the local hostname on their own
+  (the `myhostname` NSS module — Debian's `genericcloud` base
+  ships `libnss-myhostname`, and it is part of the NixOS base
+  system), so the record is the plain files-source entry a tool
+  reading `/etc/hosts` directly still finds.
   The image ships cloud-init
-  (the Debian `genericcloud` base does), and two dropins pin the
+  (the Debian `genericcloud` base does), and dropins pin the
   behavior the msks contract needs: `datasource_list: [ NoCloud,
 None ]` (the seed disk answers immediately — no EC2 or OpenStack
   probing, no network timeouts) and `network: {config: disabled}`

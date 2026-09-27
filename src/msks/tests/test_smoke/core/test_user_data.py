@@ -81,6 +81,33 @@ async def test_local_user_data_provisioning() -> None:
             app=app,
             hostname=wid,
         )
+        # The guest resolves its own hostname (#376): both images'
+        # resolvers answer it (the myhostname NSS module ships in
+        # each base), and the Debian image's /etc/hosts carries the
+        # name as well (update_etc_hosts' 127.0.1.1 record — the
+        # NixOS hosts file stays generated, its resolver answers
+        # the name alone, so the record check runs only where the
+        # image ships it). The sentinels are computed — a failed
+        # lookup or grep prints nothing, and the markers cannot
+        # match the command's echo or the prompt.
+        await run_in_console(
+            microvm,
+            wid,
+            "getent hosts $(hostname) >/dev/null && echo R-$((6*7))",
+            "R-42",
+            app=app,
+            hostname=wid,
+        )
+        await run_in_console(
+            microvm,
+            wid,
+            "if [ -e /etc/debian_version ]; then"
+            ' grep -q "^127.0.1.1.*$(hostname)" /etc/hosts;'
+            "fi && echo H-$((6*7))",
+            "H-42",
+            app=app,
+            hostname=wid,
+        )
         # The seed reaches the guest as a labeled, read-only disk.
         await run_in_console(
             microvm,
