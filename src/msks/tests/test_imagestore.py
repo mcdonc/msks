@@ -1654,6 +1654,8 @@ def test_api_url_import_answers_507_at_the_floor(tmp_path: Path) -> None:
     507 before any bytes are fetched."""
     from msks.server import api as api_mod
 
+    from msks import storage
+
     settings = Settings(
         vmm=VmmSettings(
             state_dir=tmp_path / "vms",
@@ -1673,6 +1675,10 @@ def test_api_url_import_answers_507_at_the_floor(tmp_path: Path) -> None:
     tight = {"free": 100 << 20, "total": 1 << 40, "used": 0}
     monkey = pytest.MonkeyPatch()
     monkey.setattr(api_mod, "state_usage", lambda d: tight)
+    # The refusal names itself through floor_refusal, which probes
+    # via storage's own state_usage — patch the defining module too
+    # or the fallback string answers instead of the named refusal.
+    monkey.setattr(storage, "state_usage", lambda d: tight)
     monkey.setattr(api_mod, "fetch_archive", must_not_fetch)
     try:
         with TestClient(build_api(app)) as client:
