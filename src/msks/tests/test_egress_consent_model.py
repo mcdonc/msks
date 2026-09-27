@@ -6,7 +6,12 @@ from pathlib import Path
 import pytest
 from msks.app import build_app
 from msks.microvm import VmSpec
-from msks.model.egress_consent import duration_in_effect
+from msks.model.egress_consent import (
+    canonical_pairs,
+    compute_egress_consent_hmac,
+    duration_in_effect,
+    resolve_audit_key,
+)
 from msks.settings import NetSettings, ServerSettings, Settings
 from msks.spec.egress import (
     DECISION_ALLOWED,
@@ -241,6 +246,49 @@ async def test_hmac_stamped_when_key_set(tmp_path: Path) -> None:
         assert row is not None and row["hmac"] is not None
     finally:
         await app.state.model.close()
+
+
+def hmac_settings(key: str | None) -> Settings:
+    """Settings carrying only the audit HMAC key (#69)."""
+    return Settings(server=ServerSettings(audit_hmac_key=key))
+
+
+def test_hmac_tagging_is_opt_in() -> None:
+    assert resolve_audit_key(hmac_settings(None)) is None
+    assert resolve_audit_key(hmac_settings("")) is None
+    assert resolve_audit_key(hmac_settings("k1")) == b"k1"
+
+
+def test_hmac_compute_tags_when_a_key_is_set() -> None:
+    row = {
+        "id": "r1",
+        "workspace_id": "ws",
+        "dest_host": "example.com",
+        "dest_port": 443,
+        "decision": "allowed",
+        "duration": "forever",
+        "requested_at": 1.0,
+        "decided_at": 2.0,
+        "decided_by": "token",
+        "revoked_at": None,
+        "revoked_by": None,
+    }
+    assert compute_egress_consent_hmac(hmac_settings(None), row) is None
+    tag = compute_egress_consent_hmac(hmac_settings("k1"), row)
+    assert tag is not None and len(tag) == 64
+    # Deterministic: same row, same tag; a changed field, new tag.
+    assert compute_egress_consent_hmac(hmac_settings("k1"), row) == tag
+    row["decision"] = "denied"
+    assert compute_egress_consent_hmac(hmac_settings("k1"), row) != tag
+
+
+def test_hmac_canonical_pairs_is_prefix_free_and_injective() -> None:
+    columns = ["a", "b"]
+    one = canonical_pairs("t", {"a": "x", "b": None}, columns)
+    other = canonical_pairs("t", {"a": "x=1", "b": "n"}, columns)
+    assert one == b"t\x00a=1:x\x00b=n"
+    assert other == b"t\x00a=3:x=1\x00b=1:n"
+    assert one != other  # a literal "n" cannot impersonate a NULL
 
 
 async def test_active_verdict_for_none_when_nothing_in_effect(consent) -> None:
