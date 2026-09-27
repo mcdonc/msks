@@ -697,9 +697,9 @@ class Model:
     ) -> list[dict]:
         """The audit events whose coverage includes one workspace,
         oldest first (#305, #339): the decider registration replays
-        them so the events screen opens on the recorded lifecycle —
-        a daemon-wide row's events land on every workspace's
-        screen, a scoped row's on its members'. The newest
+        them so the connection opens on the recorded lifecycle — a
+        daemon-wide row's events land on every workspace's
+        replay, a scoped row's on its members'. The newest
         ``limit`` rows arrive in recording order — replay sends
         oldest first, so the client log lands newest last."""
         maker = sessionmaker_for(self.engine())

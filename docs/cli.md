@@ -377,13 +377,14 @@ picker over TTL-appropriate choices — an hour to thirty days,
 the choice nearest the row's remaining lifetime highlighted —
 and extends the row in place: the sentinel and the row's identity
 stay as they are. `e` opens the daemon-wide audit view: the
-recorded mints, revokes, and expiries replayed from the audit
-table at open, newest first, then the wire events streaming in
-live beside them, with the off-allowlist sighting highlighted as
-the exfil signal and `k`/`w` picking the kind and workspace
-filters (a daemon-wide row's events cover every workspace, a
-scoped row's its members). The audit view holds a plain
-subscription — no decider registration — so it claims no holds.
+newest hundred recorded mints, revokes, and expiries replayed
+from the audit table at open, newest first, then the wire events
+streaming in live beside them, with the off-allowlist sighting
+highlighted as the exfil signal and `k`/`w` picking the kind and
+workspace filters (a daemon-wide row's events cover every
+workspace, a scoped row's its members). The audit view holds a
+plain subscription — no decider registration — so it claims no
+holds.
 Mint stays on the CLI for now (`msks secret mint` prints the
 sentinel once); the form lands on this page (#393), and the
 placeholder-to-workspace navigation lands with the

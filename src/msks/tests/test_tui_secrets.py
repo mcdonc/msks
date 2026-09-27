@@ -782,6 +782,44 @@ def test_an_unmounted_view_closes_nothing() -> None:
     view.on_unmount()
 
 
+async def test_the_audit_link_ignores_decider_traffic() -> None:
+    """The audit connection lands audit frames alone: the hub's
+    other traffic — a foreign workspace's hold, its rules frame —
+    is not the view's state, and an unregistered subscriber would
+    otherwise hoard holds it can never resolve (the log has its
+    bound; the pending map has none)."""
+    link = AuditLink()
+    hold = json.dumps(
+        {
+            "event": "egress.request",
+            "data": {
+                "request": {
+                    "id": "r1",
+                    "workspace_id": "ws-a",
+                    "dest_host": "api.example",
+                    "dest_port": 443,
+                    "requested_at": 1.0,
+                }
+            },
+        }
+    )
+    rules = json.dumps(
+        {
+            "event": "egress.rules",
+            "data": {"workspace_id": "ws-a", "mode": "allow"},
+        }
+    )
+    sighting = live_frame(
+        "sighting", workspace_id="ws-b", host="evil.example", ts=1.0
+    )
+    for frame in (hold, rules, sighting, "junk"):
+        assert link.land_frame(frame) is False
+    assert link.controller.pending == {}
+    assert link.controller.rules is None
+    assert len(link.controller.events) == 1
+    assert link.sightings == []  # the page's own link owns the flash
+
+
 async def test_the_audit_link_survives_every_close_kind() -> None:
     """The audit connection takes the decider link's own ladder
     over every close kind — a refused-code close, a clean close,

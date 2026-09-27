@@ -330,16 +330,28 @@ def audit_stamp_epoch(iso: object) -> float:
     return moment.timestamp()
 
 
+def audit_dests(kind: str, row: dict) -> tuple[str, ...]:
+    """The recorded row's allowlist — the mint's alone (the
+    daemon's own replay rule: revoke and expiry carry the identity
+    alone, so a replayed row renders exactly as its live
+    delivery)."""
+    if kind != "mint":
+        return ()
+    return string_tuple(row.get("dests"))
+
+
 def audit_event(seq: int, row: object) -> SecretEvent | None:
     """One REST audit row (``GET /api/v1/secrets/audit``, #390) as
     a log event, or None on an unusable shape: the same shape a
     live ``secret.*`` frame lands, keyed on the audit identity the
-    live publish shares, so the two deliveries of one fact dedup.
-    The recorded row names no placeholder id — the audit record
-    holds the row's identity, not the placeholder's — and its
-    coverage reads as the live frame's spellings: the legacy
-    single-id field carries the first covered id, ``*`` on the
-    daemon-wide row."""
+    live publish shares, so the two deliveries of one fact dedup
+    and render alike. The recorded row names no placeholder id —
+    the audit record holds the row's identity, not the
+    placeholder's — and only the mint carries its allowlist
+    (revoke and expiry carry the identity alone, the daemon's own
+    replay rule). Its coverage reads as the live frame's
+    spellings: the legacy single-id field carries the first
+    covered id, ``*`` on the daemon-wide row."""
     if not isinstance(row, dict):
         return None
     kind = row.get("kind")
@@ -353,7 +365,7 @@ def audit_event(seq: int, row: object) -> SecretEvent | None:
         workspace_id=workspaces[0] if workspaces else "*",
         name=name,
         audit_id=int_field(row.get("id")),
-        dests=string_tuple(row.get("dests")),
+        dests=audit_dests(kind, row),
         workspaces=workspaces,
         ts=audit_stamp_epoch(row.get("created_at")),
     )

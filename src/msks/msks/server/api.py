@@ -3277,20 +3277,21 @@ def audit_frame(row: dict) -> dict:
 async def replay_secret_audit(app, socket, workspace_id: str) -> None:
     """The workspace's recorded placeholder lifecycle (#305): the
     audit table's newest rows covering it, oldest first, as
-    ``secret.*`` frames — the decider's events screen opens on the
-    recorded mints, revokes, and expiries instead of an empty live
-    tail. Swaps and sightings stay live-only: they are per-request
-    wire events, and the audit table records lifecycle alone. A
-    read failure skips the replay and logs — registration keeps
-    the rules view and pending snapshot it already landed."""
+    ``secret.*`` frames — the decider's connection opens on the
+    recorded mints, revokes, and expiries instead of an empty
+    live tail. Swaps and sightings stay live-only: they are
+    per-request wire events, and the audit table records
+    lifecycle alone. A read failure skips the replay and logs —
+    registration keeps the rules view and pending snapshot it
+    already landed."""
     try:
         rows = await app.state.model.list_workspace_audit(
             workspace_id, limit=SECRET_REPLAY_LIMIT
         )
     except Exception:  # noqa: BLE001 - best-effort, logged
         LOG.warning(
-            "secret-audit replay for %s failed; the events screen "
-            "opens on the live stream alone",
+            "secret-audit replay for %s failed; the decider opens "
+            "on the live stream alone",
             workspace_id,
             exc_info=True,
         )

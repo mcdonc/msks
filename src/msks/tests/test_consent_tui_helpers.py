@@ -262,8 +262,11 @@ def test_watch_all_takes_every_frame() -> None:
 def test_seed_audit_lands_rows_oldest_first() -> None:
     """The endpoint serves newest first; the seed lands oldest
     first behind any live tail — the row order the renderer's
-    newest-first flip expects — with the coverage spellings and
-    the epoch timestamp the live frames carry."""
+    newest-first flip expects — with the coverage spellings, the
+    epoch timestamp the live frames carry, and the mint alone
+    naming its allowlist (the daemon's own replay rule: revoke
+    and expiry carry the identity alone, so a replayed row
+    renders exactly as its live delivery)."""
     controller = consent_mod.ConsentController(watch_all=True)
     controller.seed_audit(
         [
@@ -282,8 +285,11 @@ def test_seed_audit_lands_rows_oldest_first() -> None:
     assert mint.workspace_id == "ws-a"
     assert mint.audit_id == 1
     assert mint.placeholder_id is None  # the record holds no placeholder id
+    assert mint.dests == ("api.example",)
     assert mint.ts == datetime(2030, 1, 1, 3, 4, 5, tzinfo=UTC).timestamp()
-    assert controller.events[1].workspace_id == "*"
+    revoke = controller.events[1]
+    assert revoke.workspace_id == "*"
+    assert revoke.dests == ()
 
 
 def test_seed_audit_dedups_the_live_tail() -> None:

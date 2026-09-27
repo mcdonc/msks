@@ -91,10 +91,11 @@ also names the destination the wire saw; a mint names the
 allowlist it was minted with; revoke and expiry carry the
 identity alone. The `msks tui` secrets page's audit view (`e`
 from the page) shows every workspace's events newest first,
-daemon-wide: the recorded mints, revokes, and expiries replay
-onto it when the view opens, and swaps and sightings stream in
-live, with the off-allowlist sighting highlighted as the exfil
-signal and a header line stating the detection boundary above.
+daemon-wide: the newest hundred recorded mints, revokes, and
+expiries replay onto it when the view opens, and swaps and
+sightings stream in live, with the off-allowlist sighting
+highlighted as the exfil signal and a header line stating the
+detection boundary above.
 Kind and workspace filters narrow the view — a daemon-wide row's
 events cover every workspace, a scoped row's its members. Each
 lifecycle event carries its audit row's id on both the live

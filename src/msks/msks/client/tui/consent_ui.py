@@ -129,9 +129,8 @@ def allowlist_text(rules: EgressRules | None) -> str:
 
 def mode_label(rules: EgressRules | None) -> str:
     """The workspace's current egress mode as a label; ``—`` until
-    the first rules frame names it (the queue's status line and the
-    events screen's header share it — the mode stays visible on
-    every screen, #301)."""
+    the first rules frame names it (the queue's status line shares
+    it — the mode stays visible on every screen, #301)."""
     if rules is None or not rules.mode:
         return "—"
     return rules.mode
@@ -235,7 +234,7 @@ def backoff(delays: tuple[float, ...], attempt: int) -> float:
 
 class OneFlight:
     """A re-armable single-flight rebuild (#201), the one mechanism
-    the rules screen, the events screen, and the queue share: one
+    the rules screen, the audit view, and the queue share: one
     rebuild is in the air at a time, a request landing mid-flight
     re-arms, and the in-air flight loops to apply the newer state
     the moment it lands — never two concurrent rebuilds over one
@@ -285,10 +284,10 @@ class OneFlight:
         unmounts the tree under a mid-swap flight — not a bug worth
         a traceback after exit), and say whether a request armed
         while the flight was dying must be carried: the loop honors
-        ``pending`` only after a successful rebuild, and the events
-        screen has no per-tick re-request to recover the loss (an
-        unchanged log takes no rebuild) — a dropped request would
-        leave its rows unmounted until the next frame landed."""
+        ``pending`` only after a successful rebuild, and the audit
+        view's unchanged-log path takes no rebuild from a later
+        tick — a dropped request would leave its rows unmounted
+        until the next frame landed."""
         if self._alive():
             logger.exception("%s rebuild failed", self._label)
             return self.pending
@@ -391,7 +390,7 @@ def events_note() -> str:
 def sighting_flash(event: SecretEvent) -> str:
     """The status line an off-allowlist sighting takes while the
     queue (or picker) is on top: the exfil signal surfaces on every
-    screen of the app, not only the events screen."""
+    screen of the app, not only the audit view."""
     return (
         f"! sighting: {escape(event.workspace_id)}/{escape(event.name)}"
         f" → {escape(event.host or '?')}"

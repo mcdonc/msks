@@ -1459,18 +1459,19 @@ FILTER_ALL = "all"
 class SecretAuditScreen(Screen):
     """The daemon-wide audit view (#390): every workspace's
     placeholder lifecycle and wire events, newest first — the
-    recorded rows replayed from the audit listing at open, the
-    live kinds streaming in beside them over the events socket
-    (a plain subscriber: no decider registration, so no hold ever
-    waits on this view). One fact lands once however it arrives —
-    the audit identity dedups the live frame against the replayed
-    row (#305). A sighting row carries the highlight beside its
-    ``!`` marker — the exfil signal. ``k`` and ``w`` pick the kind
-    and workspace filters: a daemon-wide row's events cover every
-    workspace, a scoped row's its members, a per-flow swap or
-    sighting the tap that saw it (#305's replay rule carried to
-    the filter). Arrows move the list; ``r`` or Escape returns to
-    the secrets page — no focus trap.
+    newest hundred recorded rows replayed from the audit listing
+    at open (the endpoint's bound), the live kinds streaming in
+    beside them over the events socket (a plain subscriber: no
+    decider registration, so no hold ever waits on this view).
+    One fact lands once however it arrives — the audit identity
+    dedups the live frame against the replayed row (#305). A
+    sighting row carries the highlight beside its ``!`` marker —
+    the exfil signal. ``k`` and ``w`` pick the kind and workspace
+    filters: a daemon-wide row's events cover every workspace, a
+    scoped row's its members, a per-flow swap or sighting the tap
+    that saw it (#305's replay rule carried to the filter).
+    Arrows move the list; ``r`` or Escape returns to the secrets
+    page — no focus trap.
     """
 
     BINDINGS = [
@@ -1615,8 +1616,9 @@ class SecretAuditScreen(Screen):
     async def swap_rows(self, rows: list) -> None:
         """Swap in a freshly-built list (its mount awaited), newest
         first, preserving the focused row by seq (the top when it
-        left) — the events screen's swap rule, carried to the
-        daemon-wide view."""
+        left): a mutating ListView carries asynchronously-pruned
+        stale children that shift indexes, so positions come from
+        children that are all real."""
         body = self.query_one("#audit-body", Vertical)
         old = None
         try:
@@ -1702,7 +1704,9 @@ class SecretAuditScreen(Screen):
     def workspace_options(self) -> tuple[str, ...]:
         """The workspace filter's choices: every workspace the
         log's rows name — their coverage lists and the taps that
-        saw per-flow events — beside the all-rows choice."""
+        saw per-flow events — beside the all-rows choice. The
+        names are workspace ids (the daemon mints them as hex), so
+        the all-rows label can never collide with a choice."""
         events = self.link_or_stub().controller.events
         names = {
             event.workspace_id for event in events if event.workspace_id != "*"

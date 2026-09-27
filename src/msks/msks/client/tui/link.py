@@ -19,7 +19,12 @@ import websockets
 
 from ..wsauth import UnusableToken
 from .consent import REJECTED as FRAME_REJECTED
-from .consent import SECRET_EVENT, ConsentController, SecretEvent
+from .consent import (
+    SECRET_EVENT,
+    ConsentController,
+    SecretEvent,
+    decode_frame,
+)
 from .consent_ui import (
     RECONNECT_DELAYS,
     REFUSED_RETRY_INTERVAL,
@@ -50,10 +55,13 @@ class DeciderLink:
         hold_timeout: float = 120.0,
         ws_factory=None,
         reconnect_delays: tuple[float, ...] = RECONNECT_DELAYS,
+        watch_all: bool = False,
     ) -> None:
         self.workspace_id = workspace_id
         self.controller = ConsentController(
-            hold_timeout=hold_timeout, workspace_id=workspace_id
+            hold_timeout=hold_timeout,
+            workspace_id=workspace_id,
+            watch_all=watch_all,
         )
         self.state = RECONNECTING
         self.reject_reason = ""
@@ -197,9 +205,11 @@ class AuditLink(DeciderLink):
         self, *, ws_factory=None, reconnect_delays=RECONNECT_DELAYS
     ) -> None:
         super().__init__(
-            "", ws_factory=ws_factory, reconnect_delays=reconnect_delays
+            "",
+            ws_factory=ws_factory,
+            reconnect_delays=reconnect_delays,
+            watch_all=True,
         )
-        self.controller = ConsentController(watch_all=True)
 
     async def serve(self, ws) -> tuple[bool, bool, bool]:
         """Pump without registering: every published frame the hub
@@ -219,9 +229,19 @@ class AuditLink(DeciderLink):
         return True, False, False
 
     def land_frame(self, raw: str) -> bool:
-        """One frame into the controller alone: no registration was
-        sent, so no rejection can arrive. The sightings buffer
-        stays empty — the audit screen's rows carry the sightings,
-        and each workspace page's own link owns the flash."""
+        """One audit frame into the controller alone: the hub's
+        other traffic — every workspace's holds and rules frames —
+        is not this view's state, so it lands nowhere (an
+        unregistered subscriber would otherwise hoard holds it can
+        never resolve, unbounded: the log has its bound, the
+        pending map has none). No registration was sent, so no
+        rejection can arrive. The sightings buffer stays empty —
+        the audit screen's rows carry the sightings, and each
+        workspace page's own link owns the flash."""
+        msg = decode_frame(raw)
+        if not isinstance(msg, dict):
+            return False
+        if not str(msg.get("event") or "").startswith("secret."):
+            return False
         outcome, _payload = self.controller.apply_frame(raw)
         return outcome == FRAME_REJECTED
