@@ -5,6 +5,9 @@ pilot loses sysmon events for later code, so the direct assertions
 live where the scheduler gives them a clean worker.
 """
 
+import json
+from datetime import UTC, datetime
+
 from msks.client.tui import consent as consent_mod
 from msks.client.tui.consent_ui import (
     duration_label,
@@ -184,7 +187,8 @@ def test_events_note_and_sighting_flash() -> None:
     and host."""
     note = events_note()
     assert "!" in note and "decrypted" in note
-    assert "recorded mints" in note and "as they happen" in note
+    assert "every workspace's recorded mints" in note
+    assert "as they happen" in note
     flash = sighting_flash(event(kind="sighting", host=None))
     assert flash == "! sighting: ws-a/api → ?"
     assert sighting_flash(event(kind="sighting")) == (
@@ -208,3 +212,115 @@ def test_event_focus_helpers() -> None:
     empty = FakeRows([])
     focus_event_by_id(empty, 5)  # nothing to focus
     assert empty.index is None
+
+
+# -- the daemon-wide audit posture (#390) ---------------------------------
+
+
+def audit_listing_row(
+    id: int,
+    kind: str,
+    *,
+    workspaces: list[str] | None = None,
+    name: str = "api",
+    created_at: str = "2030-01-02T03:04:05",
+) -> dict:
+    """One REST audit row as the endpoint serves it."""
+    return {
+        "id": id,
+        "kind": kind,
+        "workspaces": list(workspaces or []),
+        "name": name,
+        "dests": ["api.example"],
+        "created_at": created_at,
+    }
+
+
+def live_secret_frame(kind: str, **data) -> str:
+    """One interceptor audit frame as the daemon publishes it."""
+    payload = {"name": "api"}
+    payload.update(data)
+    return json.dumps({"event": f"secret.{kind}", "data": payload})
+
+
+def test_watch_all_takes_every_frame() -> None:
+    """A watch-all controller lands scoped foreign rows a
+    workspace-scoped one filters out (#390): the daemon-wide view
+    carries the whole daemon."""
+    watcher = consent_mod.ConsentController(watch_all=True)
+    scoped = live_secret_frame(
+        "mint", workspace_id="ws-a", workspaces=["ws-a"]
+    )
+    assert watcher.apply_frame(scoped) == (
+        consent_mod.SECRET_EVENT,
+        watcher.events[0],
+    )
+    one_workspace = consent_mod.ConsentController(workspace_id="ws-b")
+    assert one_workspace.apply_frame(scoped)[0] == consent_mod.IGNORED
+
+
+def test_seed_audit_lands_rows_oldest_first() -> None:
+    """The endpoint serves newest first; the seed lands oldest
+    first behind any live tail — the row order the renderer's
+    newest-first flip expects — with the coverage spellings and
+    the epoch timestamp the live frames carry."""
+    controller = consent_mod.ConsentController(watch_all=True)
+    controller.seed_audit(
+        [
+            audit_listing_row(2, "revoke"),
+            audit_listing_row(
+                1,
+                "mint",
+                workspaces=["ws-a"],
+                created_at="2030-01-01T03:04:05",
+            ),
+        ]
+    )
+    kinds = [row.kind for row in controller.events]
+    assert kinds == ["mint", "revoke"]
+    mint = controller.events[0]
+    assert mint.workspace_id == "ws-a"
+    assert mint.audit_id == 1
+    assert mint.placeholder_id is None  # the record holds no placeholder id
+    assert mint.ts == datetime(2030, 1, 1, 3, 4, 5, tzinfo=UTC).timestamp()
+    assert controller.events[1].workspace_id == "*"
+
+
+def test_seed_audit_dedups_the_live_tail() -> None:
+    """A live frame that raced the read drops the replayed row's
+    second delivery (#305 carried to the seed); a row nobody
+    delivered live still lands."""
+    controller = consent_mod.ConsentController(watch_all=True)
+    controller.apply_frame(
+        live_secret_frame(
+            "mint", workspace_id="ws-a", workspaces=["ws-a"], audit_id=1
+        )
+    )
+    controller.seed_audit(
+        [
+            audit_listing_row(2, "revoke"),
+            audit_listing_row(1, "mint", workspaces=["ws-a"]),
+        ]
+    )
+    assert [row.kind for row in controller.events] == ["mint", "revoke"]
+
+
+def test_seed_audit_skips_unusable_rows() -> None:
+    """A row without the kind-name pair lands nowhere — the frame
+    parser's own rule, carried to the seed."""
+    controller = consent_mod.ConsentController(watch_all=True)
+    controller.seed_audit(
+        [{"id": 1, "workspaces": [], "name": "api"}, "junk", None]
+    )
+    assert controller.events == []
+
+
+def test_audit_stamp_epoch_reads_naive_utc_and_offsets() -> None:
+    """The stored naive-UTC stamp converts as UTC; a stamped
+    offset converts; junk reads 0.0 (the undated rendering)."""
+    naive = consent_mod.audit_stamp_epoch("2030-01-01T03:04:05")
+    assert naive == datetime(2030, 1, 1, 3, 4, 5, tzinfo=UTC).timestamp()
+    offset = consent_mod.audit_stamp_epoch("2030-01-01T03:04:05+02:00")
+    assert offset == datetime(2030, 1, 1, 1, 4, 5, tzinfo=UTC).timestamp()
+    assert consent_mod.audit_stamp_epoch(None) == 0.0
+    assert consent_mod.audit_stamp_epoch("junk") == 0.0

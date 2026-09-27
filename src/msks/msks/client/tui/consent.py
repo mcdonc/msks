@@ -9,7 +9,10 @@ destinations carry a port with 0 meaning all ports (a non-TCP/UDP
 flow), and rows have no process identity (msks sees flows at the
 kernel, not processes inside the guest). The same controller keeps
 the interceptor audit log (#201) — the ``secret.*`` frames the
-daemon publishes for placeholder lifecycle and wire sightings.
+daemon publishes for placeholder lifecycle and wire sightings —
+and seeds that log from the audit listing the REST surface serves
+(#390), so the daemon-wide view replays the recorded rows beside
+the live tail.
 
 The clock defaults to :func:`time.time` because the daemon stamps
 ``requested_at``/``decided_at`` in epoch wall-clock; the countdowns
@@ -19,6 +22,7 @@ are only meaningful when both timestamps share that domain.
 import json
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 # Frame-application outcomes (what apply_frame tells the view).
 ADDED = "added"  # a held request arrived; payload = ConsentRequest
@@ -308,6 +312,53 @@ def parse_secret_event(seq: int, kind: str, obj: object) -> SecretEvent | None:
     )
 
 
+def audit_stamp_epoch(iso: object) -> float:
+    """A recorded audit row's ISO stamp as epoch — the live frames'
+    ``ts`` domain (#390), so the replay and the stream sort
+    together. The daemon stores naive UTC (the sqlite round-trip's
+    shape); a value that carries an offset converts, and one that
+    does not parse reads 0.0 (the row renders undated, the way an
+    older daemon's frame does)."""
+    if not isinstance(iso, str):
+        return 0.0
+    try:
+        moment = datetime.fromisoformat(iso)
+    except ValueError:
+        return 0.0
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    return moment.timestamp()
+
+
+def audit_event(seq: int, row: object) -> SecretEvent | None:
+    """One REST audit row (``GET /api/v1/secrets/audit``, #390) as
+    a log event, or None on an unusable shape: the same shape a
+    live ``secret.*`` frame lands, keyed on the audit identity the
+    live publish shares, so the two deliveries of one fact dedup.
+    The recorded row names no placeholder id — the audit record
+    holds the row's identity, not the placeholder's — and its
+    coverage reads as the live frame's spellings: the legacy
+    single-id field carries the first covered id, ``*`` on the
+    daemon-wide row."""
+    if not isinstance(row, dict):
+        return None
+    kind = row.get("kind")
+    name = row.get("name")
+    if not isinstance(kind, str) or not isinstance(name, str):
+        return None
+    workspaces = string_tuple(row.get("workspaces"))
+    return SecretEvent(
+        seq=seq,
+        kind=kind,
+        workspace_id=workspaces[0] if workspaces else "*",
+        name=name,
+        audit_id=int_field(row.get("id")),
+        dests=string_tuple(row.get("dests")),
+        workspaces=workspaces,
+        ts=audit_stamp_epoch(row.get("created_at")),
+    )
+
+
 class ConsentController:
     """The decider's state machine over the events frames (#195)."""
 
@@ -317,6 +368,7 @@ class ConsentController:
         *,
         clock=time.time,
         workspace_id: str = "",
+        watch_all: bool = False,
     ) -> None:
         self.hold_timeout = hold_timeout
         self._clock = clock
@@ -326,6 +378,10 @@ class ConsentController:
         # Empty accepts every frame — the protocol-level default
         # the pure tests run under.
         self.workspace_id = workspace_id
+        # The daemon-wide audit posture (#390): every secret frame
+        # lands, whatever its coverage — the secrets page's audit
+        # view carries the whole daemon, not one workspace's slice.
+        self.watch_all = watch_all
         self.pending: dict[str, ConsentRequest] = {}
         self.rules: EgressRules | None = None
         # The interceptor audit log (#201): newest last, bounded by
@@ -420,22 +476,44 @@ class ConsentController:
         """One interceptor audit frame: parse, append to the bounded
         log, report. A frame whose row covers neither this workspace
         nor — for a per-flow swap or sighting — the tap that saw it
-        is ignored: a foreign sighting flashing this decider's exfil
-        alarm is a false one (#339: a daemon-wide row's lifecycle
-        covers every workspace, a scoped row its members). A
-        recorded row's second delivery (the replay of a fact the
-        live stream already landed, or the live frame after a
-        replay that read the row mid-commit) is dropped on its
+        is ignored (a daemon-wide watcher — :attr:`watch_all` —
+        takes every frame instead): a foreign sighting flashing this
+        decider's exfil alarm is a false one (#339: a daemon-wide
+        row's lifecycle covers every workspace, a scoped row its
+        members). A recorded row's second delivery (the replay of a
+        fact the live stream already landed, or the live frame after
+        a replay that read the row mid-commit) is dropped on its
         shared audit identity (#305). An unusable shape is ignored
         with no slot used."""
         event = parse_secret_event(self._event_seq + 1, kind, data)
-        if event is None or not event.covers(self.workspace_id):
+        if event is None:
+            return IGNORED, None
+        if not self.watch_all and not event.covers(self.workspace_id):
             return IGNORED, None
         if audit_already_landed(self._audit_ids, event.audit_id):
             return IGNORED, None
         self._event_seq += 1
         land_secret_event(self.events, self._audit_ids, event)
         return SECRET_EVENT, event
+
+    def seed_audit(self, rows: list) -> None:
+        """Seed the audit log from the REST listing (#390): the
+        endpoint serves its rows newest first (the operator's
+        order), and the seed lands them oldest first behind any
+        live tail that already arrived — render order sorts by
+        timestamp, so arrival order only breaks ties. A live frame
+        that raced the read drops on its shared audit identity
+        (the same dedup the replay rides, #305), and a row the
+        daemon recorded before the log's window opened fills the
+        window the live tail cannot."""
+        for row in reversed(rows):
+            event = audit_event(self._event_seq + 1, row)
+            if event is None:
+                continue
+            if audit_already_landed(self._audit_ids, event.audit_id):
+                continue
+            self._event_seq += 1
+            land_secret_event(self.events, self._audit_ids, event)
 
     def ordered(self) -> list[ConsentRequest]:
         """Pending requests oldest-first (stable UI order)."""

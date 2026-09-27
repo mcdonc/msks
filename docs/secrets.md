@@ -89,18 +89,20 @@ name, and a timestamp — the row id is the durable handle, because
 the row itself retires on revoke and expiry. A swap or sighting
 also names the destination the wire saw; a mint names the
 allowlist it was minted with; revoke and expiry carry the
-identity alone. The consent overlay's audit screen (`e` from
-`msks tui`'s workspace page) shows this
-workspace's events newest first: the recorded mints, revokes,
-and expiries replay onto it at registration (#305), and swaps and
-sightings stream in live, with the off-allowlist sighting
-highlighted as the exfil signal and a header line stating the
-detection boundary above. Each lifecycle event carries its audit
-row's id on both the live stream and the replay, so one fact
-lands once on the screen however it arrives; a replayed row
-keeps no placeholder row-id suffix (the audit record holds the
-identity, not the placeholder's id). An empty list says so — the
-screen never renders the header line alone.
+identity alone. The `msks tui` secrets page's audit view (`e`
+from the page) shows every workspace's events newest first,
+daemon-wide: the recorded mints, revokes, and expiries replay
+onto it when the view opens, and swaps and sightings stream in
+live, with the off-allowlist sighting highlighted as the exfil
+signal and a header line stating the detection boundary above.
+Kind and workspace filters narrow the view — a daemon-wide row's
+events cover every workspace, a scoped row's its members. Each
+lifecycle event carries its audit row's id on both the live
+stream and the replay, so one fact lands once on the screen
+however it arrives; a replayed row keeps no placeholder row-id
+suffix (the audit record holds the identity, not the
+placeholder's id). An empty view says so — the screen never
+renders the header line alone.
 
 Fail-closed on the swap path: a secret the store cannot serve, or a
 row the database cannot read, answers the request locally with a
