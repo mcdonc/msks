@@ -24,6 +24,11 @@ from textual.screen import ModalScreen, Screen
 from textual.widgets import Footer, ListItem, ListView, Static
 
 from ..resize import resize_message
+
+# The ``follow`` module-object import below is load-bearing: the
+# page calls ``follow.spawn_window``/``follow.ssh_child_argv``
+# through it, so the tests' patches on the follow module reach
+# the page's calls.
 from . import follow
 from .consent_ui import (
     DURATION_DEFAULT,
