@@ -672,6 +672,7 @@ async def test_the_panel_copies_over_osc52(tmp_path, monkeypatch) -> None:
         monkeypatch.setattr(main_app, "osc52_copy", lambda app, text: False)
         await pilot.press("c")
         assert "the copy did not land" in panel_text(app)
+        assert "no terminal to write through" in panel_text(app)
 
 
 async def test_local_refusals_keep_the_body_home(tmp_path) -> None:

@@ -1288,7 +1288,7 @@ def sentinel_reach(row: dict) -> str:
     duplicated here per the client-isolation rule)."""
     sentinel = row.get("sentinel") or ""
     if sentinel.startswith(SCOPED_SENTINEL):
-        return f"the chosen workspaces: {coverage_text(row)}"
+        return f"the chosen workspaces: {escape(coverage_text(row))}"
     return "every accepting workspace"
 
 
@@ -2348,7 +2348,7 @@ class SentinelPanel(ModalScreen):
         self.query_one("#panel-note", Static).update(
             "copied to the clipboard — where the terminal honors OSC 52"
             if copied
-            else "the copy did not land — the panel is closing"
+            else "the copy did not land — no terminal to write through"
         )
 
     def action_close(self) -> None:
