@@ -196,6 +196,22 @@ sentinel (shown once): mskssec2_9Jm3...kQ
 - The sentinel is printed once, at mint. Every later view (list,
   audit, logs) omits it; a lost sentinel is re-minted, not recalled.
 
+The `msks tui` secrets page mints too (#393): `c` opens the form
+— name, repeatable destinations, coverage (the daemon-wide row,
+or a multi-select of the workspaces the tree's own list offers),
+the lifetime (`unbounded` by default, an hour to thirty days
+beside it), and the secret's file path; the bytes ride the file,
+never the terminal's state. The submit checks the store
+(`msks secret check`'s endpoint) before it mints, and a refusal
+— a store that cannot answer writes, a name collision on the
+chosen coverage set — names itself on the form with the fields
+kept for a retry. A successful mint answers with the sentinel's
+one-time panel: the sentinel, its reach decoded from its prefix,
+an OSC 52 clipboard copy (over ssh included, where the terminal
+honors it), and the rule that the display ends with the panel —
+a lost sentinel is re-minted, never recalled. Closing the panel
+clears its text.
+
 `msks secret revoke --name github_api` retires the daemon-wide row
 of that label everywhere at once; `msks secret revoke
 --workspace myws --name github_api` retires the scoped row whose
