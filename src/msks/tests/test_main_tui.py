@@ -114,6 +114,11 @@ class FakeData:
         self.refusal = "daemon away"
         self.images_rows: list[dict] = []
         self.defaults: dict = {"root_mib": 10240, "home_mib": 20480}
+        # The secrets page's surface (#390): the placeholder rows,
+        # the recorded audit rows, and the calls the page makes.
+        self.secret_rows: list[dict] = []
+        self.audit_rows: list[dict] = []
+        self.secret_calls: list[tuple] = []
         # The resize reply's omitted fields (#331): a daemon older
         # than a field answers without it, and the page keeps its
         # row's own value.
@@ -217,6 +222,43 @@ class FakeData:
         self.calls.append(("revoke", workspace_id, request_id))
         return self.reply("revoke", {"request_id": request_id})
 
+    async def secrets(self) -> list[dict]:
+        """The placeholder listing (#390) — the same rows the
+        daemon serves, no sentinels."""
+        if "secrets" in self.fail:
+            raise RuntimeError(self.refusal)
+        return [dict(r) for r in self.secret_rows]
+
+    async def revoke_secret(self, placeholder_id: int) -> dict:
+        """The secrets page's revoke (#390) — recorded; the row
+        leaves with the listing."""
+        self.secret_calls.append(("revoke", placeholder_id))
+        if "revoke-secret" in self.fail:
+            raise RuntimeError(self.refusal)
+        self.secret_rows = [
+            r for r in self.secret_rows if r["id"] != placeholder_id
+        ]
+        return {"revoked": placeholder_id, "store_cleaned": True}
+
+    async def renew_secret(self, placeholder_id: int, ttl_s: int) -> dict:
+        """The secrets page's renew (#390) — recorded; the reply
+        carries the extended row the daemon returns."""
+        self.secret_calls.append(("renew", placeholder_id, ttl_s))
+        if "renew-secret" in self.fail:
+            raise RuntimeError(self.refusal)
+        fresh = next(r for r in self.secret_rows if r["id"] == placeholder_id)
+        fresh["expires_at"] = (
+            datetime.now(UTC) + timedelta(seconds=ttl_s)
+        ).isoformat()
+        return dict(fresh)
+
+    async def secret_audit(self) -> list[dict]:
+        """The recorded audit rows (#390), newest first — the
+        daemon's own order."""
+        if "secret-audit" in self.fail:
+            raise RuntimeError(self.refusal)
+        return [dict(r) for r in self.audit_rows]
+
     def reply(self, verb: str, value):
         """The scripted reply; the named refusal when the verb fails."""
         if verb in self.fail:
@@ -245,11 +287,16 @@ def scripted_link(monkeypatch, frames: list[str]) -> FakeFactory:
 
 
 def list_children(app) -> int:
-    """The workspaces list's row count; -1 in a swap window."""
+    """The workspaces list's workspace-row count; -1 in a swap
+    window. The secrets branch row (#390) is not a workspace and
+    does not count."""
     try:
-        return len(app.query_one("#rows").children)
+        rows = app.query_one("#rows")
     except Exception:
         return -1
+    return sum(
+        1 for child in rows.children if getattr(child, "workspace_id", None)
+    )
 
 
 def action_children(app) -> int:
@@ -929,7 +976,7 @@ async def test_the_page_switches_the_egress_mode(monkeypatch) -> None:
         assert "Switch the egress mode" in action_text(app, 2)
         await pilot.press("down", "down", "enter")
         await wait_for(lambda: type(app.screen).__name__ == "ModeScreen")
-        options = app.screen.query_one("#modes", OptionList)
+        options = app.screen.query_one("#pick-options", OptionList)
         assert options.highlighted == 2  # interactive, the snapshot's
         await pilot.press("up", "up")  # allow
         await pilot.press("enter")
@@ -953,7 +1000,7 @@ async def test_a_static_pick_with_nothing_allowed_confirms_first(
         await wait_for(lambda: "mode allow" in consent_text(app))
         await pilot.press("down", "down", "enter")
         await wait_for(lambda: type(app.screen).__name__ == "ModeScreen")
-        options = app.screen.query_one("#modes", OptionList)
+        options = app.screen.query_one("#pick-options", OptionList)
         assert options.highlighted == 0  # allow, the snapshot's mode
         await pilot.press("down")  # static
         await pilot.press("enter")
@@ -1011,7 +1058,7 @@ async def test_escape_on_the_picker_decides_nothing(monkeypatch) -> None:
         await wait_for(lambda: action_children(app) == 6)
         await pilot.press("down", "down", "enter")
         await wait_for(lambda: type(app.screen).__name__ == "ModeScreen")
-        options = app.screen.query_one("#modes", OptionList)
+        options = app.screen.query_one("#pick-options", OptionList)
         assert options.highlighted == 1  # static, the row's mode
         await pilot.press("escape")
         await wait_for(lambda: on_page(app))
@@ -1686,6 +1733,57 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
             return httpx.Response(
                 200, json={"root_mib": 10240, "home_mib": 20480}
             )
+        if request.method == "GET" and request.url.path == "/api/v1/secrets":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": 7,
+                        "workspaces": [],
+                        "name": "github_api",
+                        "dests": ["api.github.com"],
+                        "created_at": "2030-01-02T03:04:05",
+                        "expires_at": None,
+                    }
+                ],
+            )
+        if request.method == "DELETE" and request.url.path == (
+            "/api/v1/secrets/7"
+        ):
+            return httpx.Response(
+                200, json={"revoked": 7, "store_cleaned": True}
+            )
+        if request.method == "POST" and request.url.path == (
+            "/api/v1/secrets/7/renew"
+        ):
+            return httpx.Response(
+                200,
+                json={
+                    "id": 7,
+                    "workspaces": [],
+                    "name": "github_api",
+                    "dests": ["api.github.com"],
+                    "created_at": "2030-01-02T03:04:05",
+                    "expires_at": "2030-02-02T03:04:05",
+                },
+            )
+        if (
+            request.method == "GET"
+            and request.url.path == "/api/v1/secrets/audit"
+        ):
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": 1,
+                        "kind": "mint",
+                        "workspaces": [],
+                        "name": "github_api",
+                        "dests": ["api.github.com"],
+                        "created_at": "2030-01-02T03:04:05",
+                    }
+                ],
+            )
         if request.url.path.endswith("/ssh-key"):
             return httpx.Response(
                 200,
@@ -1786,6 +1884,21 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
     assert reply["root_mib"] == 20480
     assert resized == [{"root_mib": 20480, "cpus": 4}]
     assert ("POST", "/api/v1/workspaces/ws1/resize") in seen
+    # The secrets seams (#390): the listing, the revoke, the renew
+    # with its ttl body, and the audit listing — the same
+    # exchanges the secret subcommands make.
+    assert (await data.secrets())[0]["name"] == "github_api"
+    assert await data.revoke_secret(7) == {
+        "revoked": 7,
+        "store_cleaned": True,
+    }
+    reply = await data.renew_secret(7, 2592000)
+    assert reply["expires_at"] == "2030-02-02T03:04:05"
+    assert (await data.secret_audit())[0]["kind"] == "mint"
+    assert ("GET", "/api/v1/secrets") in seen
+    assert ("DELETE", "/api/v1/secrets/7") in seen
+    assert ("POST", "/api/v1/secrets/7/renew") in seen
+    assert ("GET", "/api/v1/secrets/audit") in seen
 
 
 # -- the pure helpers ------------------------------------------------------
@@ -2191,6 +2304,13 @@ async def test_the_status_column_carries_its_states_color(
     async with app.run_test() as pilot:
         await wait_for(lambda: list_children(app) == 3)
         rows = app.query_one("#rows")
+        # The listing's workspace rows alone — the secrets branch
+        # (#390) rides the list's foot and paints its own row.
+        workspace_rows = [
+            child
+            for child in rows.children
+            if getattr(child, "workspace_id", None)
+        ]
 
         def row_static(item):
             """The row's inner Static, or None while it is still
@@ -2210,7 +2330,7 @@ async def test_the_status_column_carries_its_states_color(
             return segs or None
 
         await wait_for(
-            lambda: all(row_segments(item) for item in rows.children)
+            lambda: all(row_segments(item) for item in workspace_rows)
         )
         # The highlight composes its own color over the row it
         # sits on, so the exact theme-color checks ride the two
@@ -2218,13 +2338,13 @@ async def test_the_status_column_carries_its_states_color(
         await pilot.press("down", "down")
         await wait_for(
             lambda: (
-                "-highlight" in rows.children[2].classes
-                and "-highlight" not in rows.children[0].classes
+                "-highlight" in workspace_rows[2].classes
+                and "-highlight" not in workspace_rows[0].classes
             )
         )
         muted = main_app.muted_style(app.theme_variables)
         for item, name, style, status in zip(
-            rows.children,
+            workspace_rows,
             ("alpha", "gamma", "beta"),
             (muted, "$warning", "$success"),
             ("stopped", "created", "running"),

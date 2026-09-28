@@ -8,7 +8,9 @@ consent status line honest. The frame parsing is
 :mod:`msks.client.tui.consent`'s; the reconnect ladder and the
 close-code meanings are :mod:`msks.client.tui.consent_ui`'s;
 this module owns only the connection's lifecycle for a host that
-is not a consent screen itself.
+is not a consent screen itself. The :class:`AuditLink` below is
+the same lifecycle without the registration — a plain subscriber
+for the secrets page's daemon-wide audit view (#390).
 """
 
 import asyncio
@@ -17,7 +19,12 @@ import websockets
 
 from ..wsauth import UnusableToken
 from .consent import REJECTED as FRAME_REJECTED
-from .consent import SECRET_EVENT, ConsentController, SecretEvent
+from .consent import (
+    SECRET_EVENT,
+    ConsentController,
+    SecretEvent,
+    decode_frame,
+)
 from .consent_ui import (
     RECONNECT_DELAYS,
     REFUSED_RETRY_INTERVAL,
@@ -48,10 +55,13 @@ class DeciderLink:
         hold_timeout: float = 120.0,
         ws_factory=None,
         reconnect_delays: tuple[float, ...] = RECONNECT_DELAYS,
+        watch_all: bool = False,
     ) -> None:
         self.workspace_id = workspace_id
         self.controller = ConsentController(
-            hold_timeout=hold_timeout, workspace_id=workspace_id
+            hold_timeout=hold_timeout,
+            workspace_id=workspace_id,
+            watch_all=watch_all,
         )
         self.state = RECONNECTING
         self.reject_reason = ""
@@ -178,3 +188,59 @@ class DeciderLink:
         refused = refused_close(exc)
         self.state = REFUSED if refused else RECONNECTING
         return True, refused, False
+
+
+class AuditLink(DeciderLink):
+    """The daemon-wide audit connection (#390): the events socket
+    as a plain subscriber. The socket's relay carries every
+    published frame to every subscriber, so no registration is
+    sent — a registration would claim a workspace's holds, and the
+    audit view holds no authority. The controller takes every
+    secret frame whatever its coverage (``watch_all``), and the
+    audit log spans reconnects: the REST replay seeded it once at
+    open, the audit-id dedup keeps the live tail honest, and a
+    reconnect adds no new replay to wait on."""
+
+    def __init__(
+        self, *, ws_factory=None, reconnect_delays=RECONNECT_DELAYS
+    ) -> None:
+        super().__init__(
+            "",
+            ws_factory=ws_factory,
+            reconnect_delays=reconnect_delays,
+            watch_all=True,
+        )
+
+    async def serve(self, ws) -> tuple[bool, bool, bool]:
+        """Pump without registering: every published frame the hub
+        relays lands in the controller, and nothing resets — the
+        seeded replay and the live tail keep their slots across a
+        reconnect."""
+        self.state = CONNECTED
+        try:
+            async for raw in ws:
+                self.land_frame(raw)
+        except websockets.ConnectionClosed as exc:
+            return self.closed(exc)
+        except Exception:
+            self.state = RECONNECTING
+            return True, False, False
+        self.state = RECONNECTING
+        return True, False, False
+
+    def land_frame(self, raw: str) -> bool:
+        """One audit frame into the controller alone: the hub's
+        other traffic — every workspace's holds and rules frames —
+        is not this view's state, so it lands nowhere (an
+        unregistered subscriber would otherwise hoard holds it can
+        never resolve, unbounded: the log has its bound, the
+        pending map has none). No registration was sent, so no
+        rejection can arrive; the sightings buffer stays empty —
+        the audit screen's rows carry the sightings, and each
+        workspace page's own link owns the flash."""
+        msg = decode_frame(raw)
+        if msg is not None and str(msg.get("event") or "").startswith(
+            "secret."
+        ):
+            self.controller.apply_frame(raw)
+        return False

@@ -346,15 +346,6 @@ def rules_children(app) -> int:
         return -1
 
 
-def events_children(app) -> int:
-    """The events screen's row count; -1 inside a rebuild's swap
-    window (or when the events screen is not on top)."""
-    try:
-        return len(app.screen.query_one("#event-rows").children)
-    except Exception:
-        return -1
-
-
 def status_line(app) -> str:
     return str(overlay_in(app).query_one("#consent-status").content)
 
@@ -1034,22 +1025,6 @@ async def test_rules_rebuild_self_heals_without_an_old_list() -> None:
         await wait_for(lambda: rules_children(app) == 2)
 
 
-async def test_events_rebuild_self_heals_without_an_old_list() -> None:
-    """The events screen's rebuild heals the same way: a missing
-    list always rebuilds, unchanged log or not."""
-    factory = FakeFactory(
-        [FakeWS([rules_frame(), secret_frame("swap")]), FakeWS([])]
-    )
-    app, page, _data = make_page(factory)
-    async with app.run_test() as pilot:
-        await open_overlay(pilot, app, page)
-        await pilot.press("e")
-        await wait_for(lambda: events_children(app) == 1)
-        await app.screen.query_one("#event-rows").remove()
-        app.screen.schedule_refresh()
-        await wait_for(lambda: events_children(app) == 1)
-
-
 async def test_the_rules_screen_refreshes_on_frames() -> None:
     """The rules screen refreshes while it is on top of the
     overlay: a frame landing repaints the rows without a visit,
@@ -1069,55 +1044,20 @@ async def test_the_rules_screen_refreshes_on_frames() -> None:
         await open_screen(pilot, app, "escape", "RulesScreen")
 
 
-# -- the events screen -----------------------------------------------------
+# -- the events screen's retirement (#390) -------------------------------
 
 
-async def test_the_events_screen() -> None:
-    factory = FakeFactory(
-        [
-            FakeWS([rules_frame(), secret_frame("swap", host="a.example")]),
-            FakeWS([]),
-        ]
-    )
-    app, page, _data = make_page(factory)
-    async with app.run_test() as pilot:
-        overlay = await open_overlay(pilot, app, page)
-        await wait_for(lambda: len(page.link.controller.events) == 1)
-        await open_screen(pilot, app, "e", "EventsScreen")
-        await wait_for(lambda: events_children(app) == 1)
-        assert "!" not in str(
-            app.screen.query_one("#event-rows")
-            .children[0]
-            .query_one(Static)
-            .content
-        )
-        # A live sighting lands: the row carries the marker.
-        factory.made[0].push(secret_frame("sighting", host="evil.example"))
-        overlay.tick()
-        await wait_for(lambda: events_children(app) == 2)
-        assert str(
-            app.screen.query_one("#event-rows")
-            .children[0]
-            .query_one(Static)
-            .content
-        ).startswith("! ")
-        # e or r returns to the overlay.
-        await pilot.press("r")
-        await wait_for(lambda: on_overlay(app))
-
-
-async def test_the_events_screen_states_when_empty() -> None:
+async def test_the_overlay_carries_no_events_key() -> None:
+    """The placeholder audit moved to the tree's secrets page
+    (#390): the overlay's keymap covers the holds, the rules, and
+    the mode — `e` decides nothing and stacks nothing."""
     factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
     app, page, _data = make_page(factory)
     async with app.run_test() as pilot:
         await open_overlay(pilot, app, page)
-        await open_screen(pilot, app, "e", "EventsScreen")
-        await wait_for(
-            lambda: (
-                "No placeholder events"
-                in str(app.screen.query_one("#events-empty").content)
-            )
-        )
+        await pilot.press("e")
+        await asyncio.sleep(0.05)
+        assert on_overlay(app)  # the key closed nothing, stacked nothing
 
 
 # -- the sightings' flash (#201 over #358) ---------------------------------
@@ -1325,31 +1265,6 @@ async def test_mode_picker_without_a_snapshot_confirms_static() -> None:
         assert data.modes == [(WS, "static", True)]
 
 
-async def test_the_events_screen_skips_rebuilds_when_unchanged() -> None:
-    """An unchanged log takes no list rebuild — event rows are
-    static (nothing ticks), so the per-tick cost is the fingerprint
-    compare, and a reading operator's list keeps its identity."""
-    factory = FakeFactory(
-        [
-            FakeWS([rules_frame(), secret_frame("swap", host="a.example")]),
-            FakeWS([]),
-        ]
-    )
-    app, page, _data = make_page(factory)
-    async with app.run_test() as pilot:
-        await open_overlay(pilot, app, page)
-        await open_screen(pilot, app, "e", "EventsScreen")
-        await wait_for(lambda: events_children(app) == 1)
-        rows = app.screen.query_one("#event-rows")
-        # An unchanged log takes the header-only path: the rebuild
-        # runs (forced here — the tick's fingerprint gate keeps an
-        # unchanged log from even scheduling) and the list keeps
-        # its identity.
-        app.screen.schedule_refresh()
-        await wait_for(lambda: app.screen.query_one("#event-rows") is rows)
-        assert events_children(app) == 1
-
-
 async def test_the_picker_with_an_unknown_current() -> None:
     """A current mode the picker does not know (a row without a
     recorded mode and no snapshot yet) leaves the default
@@ -1363,7 +1278,7 @@ async def test_the_picker_with_an_unknown_current() -> None:
 
         def highlight():
             try:
-                return app.screen.query_one("#modes").highlighted
+                return app.screen.query_one("#pick-options").highlighted
             except Exception:
                 return "pending"  # the compose stream settles async
 
@@ -1415,16 +1330,12 @@ async def test_modal_keys_do_not_reach_the_hidden_queue() -> None:
         await open_screen(pilot, app, "m", "ModeScreen")
         await pilot.press("a")
         await pilot.press("d")
-        await pilot.press("e")  # the events screen stays stacked nowhere
         await asyncio.sleep(0.05)
         assert data.decided == []  # the hidden hold stays undecided
         await open_screen(
             pilot, app, "q", "RulesScreen"
         )  # the modal's own binding
         assert app.is_running  # q closed the modal, not the tree
-        assert not [
-            s for s in app.screen_stack if type(s).__name__ == "EventsScreen"
-        ]
 
 
 # -- the swap windows and the rebuild flights ------------------------------

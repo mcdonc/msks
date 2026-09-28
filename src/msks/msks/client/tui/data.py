@@ -182,3 +182,57 @@ class TuiData:
             transport=self.transport,
             ssl_ctx=shared_ssl(),
         )
+
+    async def secrets(self) -> list[dict]:
+        """GET the placeholder rows (#390) — the secrets page's
+        rows, the same listing ``msks secret ls`` prints (no
+        sentinels)."""
+        return await api_call(
+            "GET",
+            env_url(),
+            env_token(),
+            "/api/v1/secrets",
+            transport=self.transport,
+            ssl_ctx=shared_ssl(),
+        )
+
+    async def revoke_secret(self, placeholder_id: int) -> dict:
+        """DELETE one placeholder row (#390) — the secrets page's
+        revoke, the same exchange ``msks secret revoke`` makes: the
+        row retires everywhere at once."""
+        return await api_call(
+            "DELETE",
+            env_url(),
+            env_token(),
+            f"/api/v1/secrets/{placeholder_id}",
+            transport=self.transport,
+            ssl_ctx=shared_ssl(),
+        )
+
+    async def renew_secret(self, placeholder_id: int, ttl_s: int) -> dict:
+        """POST one placeholder's renewal (#390) — the secrets
+        page's renew, the same exchange ``msks secret renew``
+        makes: the lifetime extends in place, the sentinel and the
+        row's identity stay as they are."""
+        return await api_call(
+            "POST",
+            env_url(),
+            env_token(),
+            f"/api/v1/secrets/{placeholder_id}/renew",
+            transport=self.transport,
+            ssl_ctx=shared_ssl(),
+            json_body={"ttl_s": ttl_s},
+        )
+
+    async def secret_audit(self) -> list[dict]:
+        """GET the recorded audit rows (#390) — the secrets page's
+        audit view replays them newest first, the same listing
+        ``/api/v1/secrets/audit`` serves."""
+        return await api_call(
+            "GET",
+            env_url(),
+            env_token(),
+            "/api/v1/secrets/audit",
+            transport=self.transport,
+            ssl_ctx=shared_ssl(),
+        )

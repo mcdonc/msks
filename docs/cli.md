@@ -358,6 +358,38 @@ relative label (#350), bucketed by whole calendar days:
 a month, `1mo ago` under a year, `1y ago` past it — the absolute
 created date reads on the workspace page's header.
 
+Below the workspaces the listing carries one branch row: the
+**secrets** page (#390) — muted, set off by a margin, reached by
+arrows and Enter like any workspace row. A placeholder row is a
+daemon-wide object (its coverage set crosses workspaces, and the
+daemon-wide row belongs to none of them), so the page lives at
+the tree's level beside the list, not inside a workspace.
+
+The **secrets page** lists every placeholder row the daemon
+holds, in the listing's own five-column shape: coverage (`*` for
+the daemon-wide row, the workspace ids scoped), name,
+destinations, the remaining lifetime, the created date. The
+lifetime cell is a live countdown — `2h`, then `1h`, repainted
+every second — and reads `never` on an unbounded row. `x` revokes
+the focused row after a confirmation that names what a revoke
+does (the row retires everywhere at once); `r` opens the duration
+picker over TTL-appropriate choices — an hour to thirty days,
+the choice nearest the row's remaining lifetime highlighted —
+and extends the row in place: the sentinel and the row's identity
+stay as they are. `e` opens the daemon-wide audit view: the
+newest hundred recorded mints, revokes, and expiries replayed
+from the audit table at open, newest first, then the wire events
+streaming in live beside them, with the off-allowlist sighting
+highlighted as the exfil signal and `k`/`w` picking the kind and
+workspace filters (a daemon-wide row's events cover every
+workspace, a scoped row's its members). The audit view holds a
+plain subscription — no decider registration — so it claims no
+holds.
+Mint stays on the CLI for now (`msks secret mint` prints the
+sentinel once); the form lands on this page (#393), and the
+placeholder-to-workspace navigation lands with the
+cross-references (#394).
+
 The **workspace page** carries the per-workspace loop: a
 two-line header — the workspace's name on the first line with
 its status beside it in the state's color (the same coloring the
@@ -415,12 +447,13 @@ the default duration (`tilrestart`), `A`/`D` pick a duration
 first (`once / 5m / 15m / tilrestart / forever`), `r` pushes the
 rules screen over the panel (the in-effect verdicts with
 countdowns, `x` to revoke the focused rule — the row leaves on
-the daemon's refreshed frame, never optimistically), `e` pushes
-the placeholder-token audit screen, and `m` opens the mode
-picker. Enter carries no verdict — only an explicit letter
-decides — and the panel's keys live on the panel itself, so they
-cannot collide with the page's. See `msks egress` below for what
-verdicts, rules, and the audit screen cover.
+the daemon's refreshed frame, never optimistically), and `m`
+opens the mode picker. Enter carries no verdict — only an
+explicit letter decides — and the panel's keys live on the panel
+itself, so they cannot collide with the page's. The
+placeholder-token audit moved to the secrets page (#390): the
+overlay keeps the holds, the rules, and the mode. See `msks
+egress` below for what verdicts and rules cover.
 
 The page's **Switch the egress mode** action (#344) opens the
 mode picker (`allow` / `static` / `interactive`, the current
@@ -1322,10 +1355,11 @@ action, or by the first hold of a burst — shows every held
 request with its countdown and sends verdicts through the same
 endpoints the subcommands use. Keys: `a`/`d` allow or deny the
 focused hold for the default duration, `A`/`D` open the duration
-picker, `r` the rules screen (with `x` to revoke), `e` the
-placeholder-token audit screen, `m` the mode picker — the
-`msks` section above owns the overlay's full lifecycle (the
-auto-open, the park, the self-close). A dropped link reconnects
+picker, `r` the rules screen (with `x` to revoke), `m` the mode
+picker — the `msks` section above owns the overlay's full
+lifecycle (the auto-open, the park, the self-close). The
+placeholder-token audit is the secrets page's daemon-wide view
+(#390). A dropped link reconnects
 with backoff and re-registers (the snapshot re-lands); while
 disconnected the overlay's status line says so — the daemon
 fail-closes new connects, and in-flight holds run their timeout.

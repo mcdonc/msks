@@ -3,19 +3,22 @@
 renders from.
 
 The workspace page's consent overlay (the modal over the page,
-``main_app.ConsentOverlay``) owns the held-request queue and the
-verdict keys; the rules and events screens — the two below in this
-module — push above the overlay as full-screen visits.
+``main_app.ConsentOverlay`) owns the held-request queue and the
+verdict keys; the rules screen — below in this module — pushes
+above the overlay as a full-screen visit. The placeholder audit
+moved to the tree's secrets page (#390): its daemon-wide view lives
+in ``main_app`` beside the page that opens it, rendering through
+this module's row helpers.
 
-This module keeps everything those surfaces share — the
-row and focus helpers, the reconnect ladder's constants, the
-mode/duration/confirmation pickers, the rules screen (in-effect
-verdicts, revoke), and the events screen (the placeholder-token
-audit) — plus the connection seams the page's
+This module keeps everything those surfaces share — the row and
+focus helpers, the reconnect ladder's constants, the pickers (mode,
+duration, and the generic one the audit view's filters take), the
+rules screen (in-effect verdicts, revoke), and the audit row
+rendering — plus the connection seams the page's
 :class:`~msks.client.tui.link.DeciderLink` dials through
-(``default_ws_factory``, the one shared TLS context). The
-protocol logic lives in :mod:`msks.client.tui.consent`; this
-module is the view.
+(``default_ws_factory``, the one shared TLS context). The protocol
+logic lives in :mod:`msks.client.tui.consent`; this module is the
+view.
 
 Fail-closed while disconnected: the daemon registers a decider only
 while the socket lives, so a dropped connection means new off-list
@@ -126,9 +129,8 @@ def allowlist_text(rules: EgressRules | None) -> str:
 
 def mode_label(rules: EgressRules | None) -> str:
     """The workspace's current egress mode as a label; ``—`` until
-    the first rules frame names it (the queue's status line and the
-    events screen's header share it — the mode stays visible on
-    every screen, #301)."""
+    the first rules frame names it (the queue's status line shares
+    it — the mode stays visible on every screen, #301)."""
     if rules is None or not rules.mode:
         return "—"
     return rules.mode
@@ -232,7 +234,7 @@ def backoff(delays: tuple[float, ...], attempt: int) -> float:
 
 class OneFlight:
     """A re-armable single-flight rebuild (#201), the one mechanism
-    the rules screen, the events screen, and the queue share: one
+    the rules screen, the audit view, and the queue share: one
     rebuild is in the air at a time, a request landing mid-flight
     re-arms, and the in-air flight loops to apply the newer state
     the moment it lands — never two concurrent rebuilds over one
@@ -282,10 +284,10 @@ class OneFlight:
         unmounts the tree under a mid-swap flight — not a bug worth
         a traceback after exit), and say whether a request armed
         while the flight was dying must be carried: the loop honors
-        ``pending`` only after a successful rebuild, and the events
-        screen has no per-tick re-request to recover the loss (an
-        unchanged log takes no rebuild) — a dropped request would
-        leave its rows unmounted until the next frame landed."""
+        ``pending`` only after a successful rebuild, and the audit
+        view's unchanged-log path takes no rebuild from a later
+        tick — a dropped request would leave its rows unmounted
+        until the next frame landed."""
         if self._alive():
             logger.exception("%s rebuild failed", self._label)
             return self.pending
@@ -372,11 +374,11 @@ def event_item(event: SecretEvent) -> ListItem:
 
 
 def events_note() -> str:
-    """The events screen's explanatory line, in operator language
-    (#305): what the rows are, what the marker means, and where
-    detection stops (#201)."""
+    """The audit view's explanatory line, in operator language
+    (#305, widened daemon-wide by #390): what the rows are, what
+    the marker means, and where detection stops (#201)."""
     return (
-        "Placeholder-token audit — this workspace's recorded mints, "
+        "Placeholder-token audit — every workspace's recorded mints, "
         "revokes, and expiries, then wire events as they happen. "
         "! marks a sighting: a placeholder token reached a host its "
         "mint did not allow — the exfiltration signal. Wire events "
@@ -385,16 +387,10 @@ def events_note() -> str:
     )
 
 
-def events_header(rules: EgressRules | None) -> str:
-    """The events screen's header line: the workspace's current
-    mode (visible on every screen, #301) beside the stream note."""
-    return f"mode {mode_label(rules)}  ·  {events_note()}"
-
-
 def sighting_flash(event: SecretEvent) -> str:
     """The status line an off-allowlist sighting takes while the
     queue (or picker) is on top: the exfil signal surfaces on every
-    screen of the app, not only the events screen."""
+    screen of the app, not only the audit view."""
     return (
         f"! sighting: {escape(event.workspace_id)}/{escape(event.name)}"
         f" → {escape(event.host or '?')}"
@@ -459,29 +455,32 @@ async def confirmed_static_switch(answer: bool, send) -> None:
         await send("static", confirm_empty=True)
 
 
-class ModeScreen(ModalScreen[str | None]):
-    """The mode picker (#280): Enter picks, Escape or q cancels.
-    The chosen mode (or None) goes to the callback given at
-    construction."""
+class PickerScreen(ModalScreen[str | None]):
+    """One pick from a short, static list: Enter picks, Escape or q
+    cancels, and the current choice starts highlighted. The chosen
+    string (or None) goes to the callback given at construction.
+    The mode picker (#280), the duration picker, and the audit
+    view's filters (#390) all ride this one shape."""
 
     BINDINGS = [
         Binding("q", "cancel", show=False),
         Binding("escape", "cancel", "Cancel", show=False),
     ]
 
-    def __init__(self, current: str, picked) -> None:
+    def __init__(self, options, current, picked) -> None:
         super().__init__()
+        self.options = tuple(options)
         self.current = current
         self.picked = picked
 
     def compose(self) -> ComposeResult:
-        yield OptionList(*EGRESS_MODES, id="modes")
+        yield OptionList(*self.options, id="pick-options")
 
     def on_mount(self) -> None:
-        options = self.query_one("#modes", OptionList)
+        options = self.query_one("#pick-options", OptionList)
         options.focus()
-        if self.current in EGRESS_MODES:
-            options.highlighted = list(EGRESS_MODES).index(self.current)
+        if self.current in self.options:
+            options.highlighted = list(self.options).index(self.current)
 
     def on_option_list_option_selected(
         self, event: OptionList.OptionSelected
@@ -491,13 +490,22 @@ class ModeScreen(ModalScreen[str | None]):
     def action_cancel(self) -> None:
         self.dismiss_with(None)
 
-    def dismiss_with(self, mode: str | None) -> None:
+    def dismiss_with(self, pick: str | None) -> None:
         """Dismiss and hand the pick to the callback (async — the
-        switch runs as a task, so the modal closes without waiting
-        on it)."""
+        exchange runs as a task, so the modal closes without
+        waiting on it)."""
         self.dismiss()
         # Referenced: an unreferenced task can be collected mid-await.
-        self._pick_task = asyncio.create_task(self.picked(mode))
+        self._pick_task = asyncio.create_task(self.picked(pick))
+
+
+class ModeScreen(PickerScreen):
+    """The mode picker (#280): Enter picks, Escape or q cancels.
+    The chosen mode (or None) goes to the callback given at
+    construction."""
+
+    def __init__(self, current: str, picked) -> None:
+        super().__init__(EGRESS_MODES, current, picked)
 
 
 class ConfirmScreen(ModalScreen[bool]):
@@ -533,43 +541,21 @@ class ConfirmScreen(ModalScreen[bool]):
         self._pick_task = asyncio.create_task(self.answered(answer))
 
 
-class DurationScreen(ModalScreen[str | None]):
+class DurationScreen(PickerScreen):
     """The duration picker: Enter picks, Escape or q cancels. The
     chosen duration (or None) goes to the callback given at
-    construction."""
+    construction. The verdict picker rides the consent durations
+    with ``tilrestart`` highlighted; the secrets page's renew
+    picker (#390) rides TTL-appropriate choices with its own
+    default."""
 
-    BINDINGS = [
-        Binding("q", "cancel", show=False),
-        Binding("escape", "cancel", "Cancel", show=False),
-    ]
-
-    def __init__(self, picked) -> None:
-        super().__init__()
-        self.picked = picked
-
-    def compose(self) -> ComposeResult:
-        yield OptionList(*DURATIONS, id="durations")
-
-    def on_mount(self) -> None:
-        options = self.query_one("#durations", OptionList)
-        options.focus()
-        options.highlighted = list(DURATIONS).index(DURATION_DEFAULT)
-
-    def on_option_list_option_selected(
-        self, event: OptionList.OptionSelected
+    def __init__(
+        self,
+        picked,
+        choices: tuple[str, ...] = DURATIONS,
+        default: str = DURATION_DEFAULT,
     ) -> None:
-        self.dismiss_with(str(event.option.prompt))
-
-    def action_cancel(self) -> None:
-        self.dismiss_with(None)
-
-    def dismiss_with(self, duration: str | None) -> None:
-        """Dismiss and hand the pick to the callback (the callback is
-        async — the deciding runs as a task, so the modal closes
-        without waiting on it)."""
-        self.dismiss()
-        # Referenced: an unreferenced task can be collected mid-await.
-        self._pick_task = asyncio.create_task(self.picked(duration))
+        super().__init__(choices, default, picked)
 
 
 class RulesScreen(Screen):
@@ -700,133 +686,6 @@ class RulesScreen(Screen):
         kept the key beside the rules rows); the host owns which
         picker path runs."""
         self.mode()
-
-    def action_back(self) -> None:
-        self.app.pop_screen()
-
-
-class EventsScreen(Screen):
-    """The placeholder-token audit (#201, #305): swap, mint,
-    revoke, expiry, and off-allowlist sighting rows, newest first —
-    the recorded lifecycle replayed at registration, the wire
-    events live. A sighting row carries the ``sighting`` class —
-    the highlight that names the exfil signal — beside its ``!``
-    marker. Arrows move the list; ``r`` or Escape returns to the
-    surface below — no focus trap."""
-
-    BINDINGS = [
-        Binding("r", "back", "Back"),
-        Binding("escape", "back", "Back", show=False),
-        Binding("q", "back", "Back", show=False),
-        # `e` from here returns instead of stacking another events
-        # screen (the host's key would push otherwise) — the rules
-        # screen's `r` follows the same shape.
-        Binding("e", "back", show=False),
-    ]
-
-    def __init__(self, controller: ConsentController) -> None:
-        super().__init__()
-        self.controller = controller
-        self.rebuilds = OneFlight(
-            lambda: self.rebuild_rows(),
-            lambda: self.app.is_running,
-            "events",
-        )
-        # The log fingerprint this screen last painted: the per-tick
-        # repaint rebuilds only on a change (event rows are static —
-        # unlike the rules screen's countdowns, nothing ticks).
-        self._built: tuple[tuple[int, int], str] | None = None
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="events-body"):
-            yield Static(id="events-note")
-            yield Static(
-                "No placeholder events yet — mints, revokes, and "
-                "expiries appear here.",
-                id="events-empty",
-            )
-            yield ListView(id="event-rows")
-        yield Footer()
-
-    def on_mount(self) -> None:
-        self.query_one("#event-rows", ListView).focus()
-
-    def on_show(self) -> None:
-        self.schedule_refresh()
-
-    def schedule_refresh(self) -> None:
-        """Arm one rows rebuild; single flight, with a re-arm when a
-        frame lands mid-flight (same rule as the rules screen — a
-        frame landing mid-flight applies the moment the flight
-        lands)."""
-        self.rebuilds.request()
-
-    async def rebuild_rows(self) -> None:
-        """Repaint the screen from the log: the header line always,
-        and the rows list only when it moved. An unchanged log (a
-        mode switch with no event landing) takes the header-only
-        path — a list swap under a reading operator is the flash
-        this PR removes elsewhere. A missing list (a rebuild that
-        died mid-swap) always rebuilds, unchanged log or not: the
-        swap is also the heal."""
-        rows_id = self.rows_fingerprint()
-        self.query_one("#events-note", Static).update(
-            events_header(self.controller.rules)
-        )
-        old = None
-        try:
-            old = self.query_one("#event-rows", ListView)
-        except NoMatches:
-            pass  # a died-mid-swap rebuild: mount the fresh list anew
-        if (
-            old is not None
-            and self._built is not None
-            and self._built[0] == rows_id
-        ):
-            self._built = self.log_fingerprint()
-            return
-        await self.swap_event_rows(old)
-
-    async def swap_event_rows(self, old: ListView | None) -> None:
-        """Swap in a freshly-built list (its mount awaited), newest
-        first, preserving the focused row by seq (the top when it
-        left): a mutating ListView carries asynchronously-pruned
-        stale children that shift indexes, so positions come from
-        children that are all real."""
-        focused = focused_event_id(old)
-        items = [
-            event_item(event)
-            for event in reversed(render_order(self.controller.events))
-        ]
-        # The empty state rides beside the list (#305): a screen
-        # that holds nothing says so, instead of rendering the
-        # header line alone.
-        self.query_one("#events-empty", Static).display = not items
-        fresh = ListView(*items, id="event-rows")
-        if old is not None:
-            await old.remove()  # frees the id before the fresh list mounts
-        await self.query_one("#events-body", Vertical).mount(fresh)
-        fresh.focus()
-        focus_event_by_id(fresh, focused)  # after mount: index sticks
-        self._built = self.log_fingerprint()
-
-    def rows_fingerprint(self) -> tuple[int, int]:
-        """The log's rows identity: length and newest seq (seq is
-        monotonic, appends grow it, the bound's trims shrink the
-        length — equal values mean equal rows)."""
-        events = self.controller.events
-        return (len(events), events[-1].seq if events else 0)
-
-    def log_fingerprint(self) -> tuple[tuple[int, int], str]:
-        """The log's identity for repaint gating: its rows identity
-        and the mode — a switch repaints the header's mode label
-        even when no event landed (#301)."""
-        return (self.rows_fingerprint(), mode_label(self.controller.rules))
-
-    def log_changed(self) -> bool:
-        """Whether the log moved since this screen last painted it
-        (never-painted counts as changed)."""
-        return self.log_fingerprint() != self._built
 
     def action_back(self) -> None:
         self.app.pop_screen()

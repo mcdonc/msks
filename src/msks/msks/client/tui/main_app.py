@@ -65,18 +65,23 @@ from .consent_ui import (
     FLASH_TTL,
     ConfirmScreen,
     DurationScreen,
-    EventsScreen,
     ModeScreen,
     OneFlight,
+    PickerScreen,
     RulesScreen,
     dest_line,
     duration_label,
     ensure_focus,
+    event_item,
+    events_note,
     flash_safe,
     fmt_duration,
     focus_by_id,
+    focus_event_by_id,
+    focused_event_id,
     focused_request_id,
     mode_label,
+    render_order,
     row_ids,
     row_map,
     shared_ssl,
@@ -84,7 +89,7 @@ from .consent_ui import (
     switch_mode_path,
 )
 from .data import TuiData
-from .link import CONNECTED, REJECTED, UNUSABLE_TOKEN, DeciderLink
+from .link import CONNECTED, REJECTED, UNUSABLE_TOKEN, AuditLink, DeciderLink
 
 #: The full-terminal flows a page can record (#309): the console
 #: shell as the new-terminal action's dead-launcher fallback. The
@@ -169,21 +174,22 @@ def cell_pad(text: str, width: int) -> str:
     return text + " " * short if short > 0 else text
 
 
-def list_header() -> str:
+def list_header(columns=LIST_COLUMNS) -> str:
     """The listing's header row (#347): the column labels, each
     left-justified to its column's width — the offsets the rows
-    pad their fields to."""
+    pad their fields to. The secrets page's own columns ride the
+    same shape (#390)."""
     return COLUMN_GAP.join(
-        cell_pad(label, width) for label, width in LIST_COLUMNS
+        cell_pad(label, width) for label, width in columns
     ).rstrip()
 
 
-def padded_cells(cells: tuple[str, ...]) -> str:
+def padded_cells(cells: tuple[str, ...], columns=LIST_COLUMNS) -> str:
     """One listing line's cells joined: each left-justified to its
     column's display width, two spaces between columns."""
     return COLUMN_GAP.join(
         cell_pad(cell, width)
-        for cell, (_label, width) in zip(cells, LIST_COLUMNS, strict=True)
+        for cell, (_label, width) in zip(cells, columns, strict=True)
     )
 
 
@@ -509,14 +515,15 @@ def focus_attr(rows: ListView, attr: str, target) -> None:
 URL_W = 48
 
 
-def status_content(count: int, url: str) -> Content:
-    """The status line's standing content (#349): the workspace
-    count — the fact that moves while the operator works — set in
-    the bold default foreground, the daemon's URL riding after it
-    in the line's own muted color (the span names ``$text`` so a
-    theme's foreground answers, not the line's muted base)."""
+def status_content(count: int, url: str, noun: str = "workspace") -> Content:
+    """The status line's standing content (#349): the row count —
+    the fact that moves while the operator works — set in the bold
+    default foreground, the daemon's URL riding after it in the
+    line's own muted color (the span names ``$text`` so a theme's
+    foreground answers, not the line's muted base). The secrets
+    page's placeholder count rides the same shape (#390)."""
     plural = "" if count == 1 else "s"
-    head = f" {count} workspace{plural}"
+    head = f" {count} {noun}{plural}"
     line = f"{head}  ·  {clip(url, URL_W)}"
     return Content(line, [Span(0, len(head), "$text bold")])
 
@@ -710,10 +717,19 @@ class MsksTuiApp(App):
     #consent-rows { height: auto; max-height: 12; }
     #consent-rows ListItem { height: 1; }
     #consent-empty { height: 1; padding: 0 1; color: $text-muted; }
-    #events-note { padding: 0 1; color: $text-muted; }
-    #events-empty { padding: 0 1; color: $text-muted; }
-    #event-rows ListItem { height: 1; }
-    #event-rows ListItem.sighting { color: $warning; text-style: bold; }
+    #rows ListItem.branch-row { margin-top: 1; }
+    #rows ListItem.branch-row Static { color: $text-muted; }
+    #secrets-listing { border: round $primary; background: $panel; }
+    #secret-columns { padding: 0 1; color: $text-muted; }
+    #secret-rows ListItem { height: 1; padding: 0 1; }
+    #secret-rows ListItem Static { text-wrap: nowrap; }
+    #secret-empty { padding: 1 2; color: $text-muted; }
+    #audit-note { padding: 0 1; color: $text-muted; }
+    #audit-status { height: 1; padding: 0 1; color: $text-muted;
+                    text-wrap: nowrap; text-overflow: ellipsis; }
+    #audit-empty { padding: 0 1; color: $text-muted; }
+    #audit-rows ListItem { height: 1; }
+    #audit-rows ListItem.sighting { color: $warning; text-style: bold; }
     """
 
     BINDINGS = [
@@ -804,6 +820,17 @@ class MsksTuiApp(App):
                 return
 
 
+#: The main screen's secrets branch (#390): the pinned row
+#: below the workspaces — the tree's reading order keeps the
+#: workspaces above, the branch under them. Enter opens the
+#: secrets page.
+BRANCH_SECRETS = "secrets"
+
+#: The branch row's label — the page's offer, in the page action's
+#: own name — description shape.
+BRANCH_TEXT = "Secrets — placeholders, revoke and renew, the audit stream"
+
+
 class MainScreen(Screen):
     """The tree's root (#309): every workspace one row; create,
     start, stop, and remove happen here; Enter opens the
@@ -864,20 +891,22 @@ class MainScreen(Screen):
 
     async def rebuild_rows(self, rows: list[dict]) -> None:
         """Swap in a freshly-built list (its mount awaited),
-        preserving the focused workspace by id (the top when it
-        left) — the consent queue's rebuild rule, carried to the
-        listing."""
+        preserving the focused row by key (the top when it left) —
+        the consent queue's rebuild rule, carried to the listing.
+        The secrets branch rides the list's foot (#390): the
+        workspaces above it, the branch below, in reading order."""
         self.rows = rows
         listing = self.query_one("#listing", Vertical)
         old = self.rows_widget()
-        focused = focused_attr(old, "workspace_id")
+        focused = focused_attr(old, "row_key")
         items = [self.row_item(row) for row in rows]
+        items.append(self.branch_item())
         fresh = ListView(*items, id="rows")
         if old is not None:
             await old.remove()  # frees the id before the fresh list mounts
         await listing.mount(fresh)
         fresh.focus()
-        focus_attr(fresh, "workspace_id", focused)
+        focus_attr(fresh, "row_key", focused)
         self.sync_status()
 
     def row_item(self, row: dict) -> ListItem:
@@ -885,7 +914,18 @@ class MainScreen(Screen):
         class from its status (#348)."""
         item = ListItem(Static(row_content(row, self.app.theme_variables)))
         item.workspace_id = row["id"]
+        item.row_key = ("workspace", row["id"])
         item.add_class(status_class(row["status"]))
+        return item
+
+    def branch_item(self) -> ListItem:
+        """The secrets branch row (#390): the listing's one entry
+        that is not a workspace — muted, set off by a top margin,
+        Enter opens the secrets page."""
+        item = ListItem(Static(BRANCH_TEXT))
+        item.branch = BRANCH_SECRETS
+        item.row_key = ("branch", BRANCH_SECRETS)
+        item.add_class("branch-row")
         return item
 
     def rows_widget(self) -> ListView | None:
@@ -934,7 +974,11 @@ class MainScreen(Screen):
         return next((row for row in self.rows if row["id"] == ws_id), None)
 
     def action_open(self) -> None:
-        """Enter: the focused workspace's page."""
+        """Enter: the focused workspace's page — or the secrets
+        page, on the branch row (#390)."""
+        if focused_attr(self.rows_widget(), "branch") == BRANCH_SECRETS:
+            self.app.push_screen(SecretsScreen())
+            return
         row = self.focused_row()
         if row is None:
             self.app.flash("no workspace focused")
@@ -1026,6 +1070,655 @@ class MainScreen(Screen):
 
     def action_quit(self) -> None:
         self.app.exit()
+
+
+#: The secrets page's columns (#390): the header's label and the
+#: column's width, in row order — the listing's own rule (#347)
+#: over the placeholder row: coverage (``*`` for the daemon-wide
+#: row, the scoped id list), name, destination allowlist, the
+#: remaining lifetime, the created date. At 80 columns the frame's
+#: edges and the scrollbar leave 74 cells; the columns and their
+#: gaps together are exactly that wide.
+SECRET_COLUMNS = (
+    ("COVERAGE", 14),
+    ("NAME", 16),
+    ("DESTS", 20),
+    ("EXPIRES", 8),
+    ("CREATED", 8),
+)
+
+#: The secrets page's column widths, in row order.
+(
+    SECRET_COVERAGE_W,
+    SECRET_NAME_W,
+    SECRET_DESTS_W,
+    SECRET_EXPIRES_W,
+    SECRET_CREATED_W,
+) = (width for _label, width in SECRET_COLUMNS)
+
+#: The renew picker's TTL choices (#390): the duration picker over
+#: TTL-appropriate labels — the hours-to-a-month span a shared
+#: credential lives, not the verdict picker's minutes-to-forever.
+SECRET_TTLS = ("1h", "6h", "1d", "7d", "30d")
+
+#: Each choice's seconds — the ``ttl_s`` the renew endpoint takes.
+SECRET_TTL_SECONDS = {
+    "1h": 3600,
+    "6h": 21600,
+    "1d": 86400,
+    "7d": 604800,
+    "30d": 2592000,
+}
+
+
+def coverage_text(row: dict) -> str:
+    """The row's coverage label (#390): ``*`` for the daemon-wide
+    row, the covered workspace ids joined for a scoped one — the
+    client's own copy of the CLI's label (the client-isolation
+    rule keeps the daemon's table out of this process)."""
+    workspaces = row.get("workspaces") or []
+    return ",".join(sorted(set(workspaces))) if workspaces else "*"
+
+
+def ttl_text(row: dict, now: datetime | None = None) -> str:
+    """The EXPIRES cell (#390): the remaining lifetime's compact
+    label — a live countdown the tick repaints — ``never`` for an
+    unbounded row, ``expired`` past the deadline, ``-`` for a
+    stamp that does not parse."""
+    expires = row.get("expires_at")
+    if not expires:
+        return "never"
+    stamp = parse_stamp(expires)
+    if stamp is None:
+        return "-"
+    when = clock_now() if now is None else now
+    remaining = (stamp - when).total_seconds()
+    return fmt_duration(remaining) if remaining > 0 else "expired"
+
+
+def secret_row_cells(
+    row: dict, now: datetime | None = None
+) -> tuple[str, ...]:
+    """The placeholder row's column cells (#390), each clipped to
+    its column's width; the created cell reads the listing's own
+    relative label (#350)."""
+    return (
+        clip(coverage_text(row), SECRET_COVERAGE_W),
+        clip(row.get("name") or "-", SECRET_NAME_W),
+        clip(", ".join(row.get("dests") or []) or "-", SECRET_DESTS_W),
+        clip(ttl_text(row, now), SECRET_EXPIRES_W),
+        clip(created_label(row.get("created_at")), SECRET_CREATED_W),
+    )
+
+
+def secret_row_text(row: dict, now: datetime | None = None) -> str:
+    """One placeholder listing row's text (#390): the padded cells
+    — plain text, never markup, so a markup-carrying name cannot
+    shift the columns."""
+    return padded_cells(secret_row_cells(row, now), SECRET_COLUMNS).rstrip()
+
+
+def ttl_default(row: dict) -> str:
+    """The renew picker's highlighted choice (#390): the choice
+    nearest the row's remaining lifetime — a bounded row renews
+    onto something like what it had — the longest choice for an
+    unbounded one (the endpoint takes a ttl; the picker offers no
+    unbounded renew)."""
+    expires = row.get("expires_at")
+    stamp = parse_stamp(expires) if expires else None
+    if stamp is None:
+        return SECRET_TTLS[-1]
+    remaining = (stamp - clock_now()).total_seconds()
+    return min(
+        SECRET_TTLS,
+        key=lambda label: abs(SECRET_TTL_SECONDS[label] - remaining),
+    )
+
+
+def revoke_note(row: dict, reply: dict) -> str:
+    """The revoke's outcome line (#390): the retired row's label,
+    plus the store's leftover note when the value stayed behind
+    (the CLI's own wording — ``msks secret check`` reports it)."""
+    note = f"revoked {escape(coverage_text(row))}/{escape(row['name'])}"
+    if not reply.get("store_cleaned", True):
+        note += " (store value left behind; msks secret check reports it)"
+    return note
+
+
+def renew_note(row: dict, reply: dict) -> str:
+    """The renew's outcome line (#390): the extended row's label
+    with its new remaining lifetime — the page speaks the
+    countdown's vocabulary, not the CLI's absolute stamp."""
+    label = f"{escape(coverage_text(row))}/{escape(row['name'])}"
+    return f"renewed {label} · expires {ttl_text(reply)}"
+
+
+class SecretsScreen(Screen):
+    """The secrets page (#390): every placeholder row the daemon
+    holds — coverage, name, destinations, a live TTL countdown,
+    the created date — with revoke and renew on the focused row
+    and the audit stream one key away. Mint stays on the CLI
+    (``msks secret mint`` prints the sentinel once; the form is
+    #393's), and the coverage flip stays on the workspace page
+    (a picker beside the egress-mode row); Enter on a row owns
+    nothing yet — the placeholder-to-workspace links land with the
+    cross-references (#394).
+    """
+
+    BINDINGS = [
+        Binding("x", "revoke", "Revoke"),
+        Binding("r", "renew", "Renew"),
+        Binding("e", "audit", "Audit"),
+        Binding("q", "back", "Back"),
+        Binding("escape", "back", "Back", show=False),
+    ]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.rows: list[dict] = []
+        self.flash_line = FlashLine()
+        self.shown_once = False
+
+    def compose(self) -> ComposeResult:
+        yield Static(id="status")
+        with Vertical(id="secrets-listing"):
+            yield Static(list_header(SECRET_COLUMNS), id="secret-columns")
+            yield Static(id="secret-empty")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.set_interval(1.0, self.tick)
+        # call_after_refresh: the first rebuild waits for the
+        # screen's compose stream to settle — the main screen's
+        # own rule.
+        self.call_after_refresh(self.refresh_rows)
+
+    def on_screen_resume(self) -> None:
+        """Refresh on every return to the page (rows may have moved
+        while the audit view stood above, or from another surface);
+        the first resume rides on_mount's own refresh."""
+        if self.shown_once:
+            self.refresh_rows()
+        self.shown_once = True
+
+    def tick(self) -> None:
+        """The per-second repaint: the TTL cells' live countdown and
+        the status line — the rows themselves refresh on mount, on
+        resume, and after an action (the listing's own rule, not
+        the workspace page's per-second re-read: the countdown is
+        paint-time math over the cached rows)."""
+        self.sync_rows()
+        self.sync_status()
+
+    # -- the listing -------------------------------------------------------
+
+    def refresh_rows(self) -> None:
+        """Reload the listing; one flight at a time."""
+        self.run_worker(self.load_rows, exclusive=True)
+
+    async def load_rows(self) -> None:
+        try:
+            rows = await self.app.data.secrets()
+        except (Exception, SystemExit) as exc:
+            self.flash(f"listing failed: {flash_safe(str(exc))}")
+            return
+        await self.rebuild_rows(rows)
+
+    async def rebuild_rows(self, rows: list[dict]) -> None:
+        """Swap in a freshly-built list (its mount awaited),
+        preserving the focused placeholder by id (the top when it
+        left) — the consent queue's rebuild rule, carried to the
+        listing."""
+        self.rows = rows
+        listing = self.query_one("#secrets-listing", Vertical)
+        old = self.rows_widget()
+        focused = focused_attr(old, "secret_id")
+        items = [self.row_item(row) for row in rows]
+        fresh = ListView(*items, id="secret-rows")
+        if old is not None:
+            await old.remove()  # frees the id before the fresh list mounts
+        await listing.mount(fresh)
+        fresh.focus()
+        focus_attr(fresh, "secret_id", focused)
+        self.sync_status()
+
+    def row_item(self, row: dict) -> ListItem:
+        """One placeholder row, tagged with the row's id."""
+        item = ListItem(Static(secret_row_text(row)))
+        item.secret_id = row["id"]
+        return item
+
+    def rows_widget(self) -> ListView | None:
+        """The rows list, or None during a rebuild's swap window."""
+        try:
+            return self.query_one("#secret-rows", ListView)
+        except NoMatches:
+            return None
+
+    def sync_rows(self) -> None:
+        """Repaint the standing rows' TTL cells in place — the
+        countdown moves, the membership does not (a refresh swaps
+        the whole list when the daemon's rows moved)."""
+        rows = self.rows_widget()
+        if rows is None:
+            return
+        now = clock_now()
+        for child, row in zip(rows.children, self.rows):
+            try:
+                child.query_one(Static).update(secret_row_text(row, now))
+            except NoMatches:
+                pass  # teardown unmounted this row's Static
+
+    def sync_status(self) -> None:
+        """The status line: the placeholder count and the daemon's
+        URL (the listing's own shape); a flash owns the line until
+        its TTL lapses; the empty state names the page's own
+        absence — nothing minted. A teardown race leaves the
+        queries empty — noise, not a crash."""
+        try:
+            count = len(self.rows)
+            default = status_content(count, env_url(), "placeholder")
+            self.query_one("#status", Static).update(
+                self.flash_line.text(default)
+            )
+            columns = self.query_one("#secret-columns", Static)
+            columns.display = bool(self.rows)
+            empty = self.query_one("#secret-empty", Static)
+            empty.display = not self.rows
+            empty.update(
+                "No placeholders — msks secret mint creates one; "
+                "the form lands on this page (#393)."
+            )
+        except NoMatches:
+            pass
+
+    def flash(self, message: str) -> None:
+        """Give the page's status line to a message for FLASH_TTL
+        seconds — the page's own surface: the app-level flash
+        paints the list's status line, which the pushed page hides
+        (#343)."""
+        self.flash_line.set(message)
+        self.sync_status()
+
+    async def guarded(self, label: str, work):
+        """Await one page action, flashing the failure on this
+        page's status line — the app-level guard paints the list's
+        status line, which the pushed page hides (#343)."""
+        try:
+            return await work
+        except (Exception, SystemExit) as exc:
+            self.flash(f"{label} failed: {flash_safe(str(exc))}")
+            return None
+
+    # -- the focused row into actions ---------------------------------------
+
+    def focused_row(self) -> dict | None:
+        """The focused row's dict, or None when nothing is focused
+        (an empty listing, or a rebuild's swap window)."""
+        secret_id = focused_attr(self.rows_widget(), "secret_id")
+        if secret_id is None:
+            return None
+        return next((row for row in self.rows if row["id"] == secret_id), None)
+
+    def action_revoke(self) -> None:
+        """Ask first (#390: a revoke retires the row everywhere at
+        once), then delete through the data seam."""
+        row = self.focused_row()
+        if row is None:
+            self.flash("no placeholder focused")
+            return
+        question = (
+            f"revoke {coverage_text(row)}/{row['name']}? the row "
+            "retires everywhere at once"
+        )
+        self.app.push_screen(
+            ConfirmScreen(question, self.revoke_answered(row))
+        )
+
+    def revoke_answered(self, row: dict):
+        """The confirmation's callback: a yes deletes, a no decides
+        nothing."""
+
+        async def answered(yes: bool) -> None:
+            if not yes:
+                return
+            reply = await self.guarded(
+                "revoke", self.app.data.revoke_secret(row["id"])
+            )
+            if reply is not None:
+                self.flash(revoke_note(row, reply))
+                self.refresh_rows()
+
+        return answered
+
+    def action_renew(self) -> None:
+        """Open the duration picker over TTL-appropriate choices
+        (#390); the picked duration extends the row's lifetime in
+        place — the sentinel and the row's identity stay as they
+        are."""
+        row = self.focused_row()
+        if row is None:
+            self.flash("no placeholder focused")
+            return
+        self.app.push_screen(
+            DurationScreen(
+                self.renew_picked(row),
+                choices=SECRET_TTLS,
+                default=ttl_default(row),
+            )
+        )
+
+    def renew_picked(self, row: dict):
+        """The picker's callback: a pick renews through the data
+        seam, a cancel decides nothing."""
+
+        async def picked(duration: str | None) -> None:
+            if duration is None:
+                return
+            reply = await self.guarded(
+                "renew",
+                self.app.data.renew_secret(
+                    row["id"], SECRET_TTL_SECONDS[duration]
+                ),
+            )
+            if reply is not None:
+                self.flash(renew_note(row, reply))
+                self.refresh_rows()
+
+        return picked
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        """Enter on a row decides nothing yet: the
+        placeholder-to-workspace navigation lands with the
+        cross-references (#394)."""
+
+    def action_audit(self) -> None:
+        """Push the daemon-wide audit view (#390)."""
+        self.app.push_screen(
+            SecretAuditScreen(self.app.data, link_factory=self.audit_link)
+        )
+
+    def audit_link(self) -> AuditLink:
+        """The audit view's connection — the tests' seam for a
+        scripted one."""
+        return AuditLink()
+
+    def action_back(self) -> None:
+        """Return to the workspaces list."""
+        self.app.pop_screen()
+
+
+#: The audit view's kind filter choices (#390): every kind a row
+#: can carry, in the issue's own order.
+AUDIT_KINDS = ("swap", "sighting", "mint", "revoke", "expiry")
+
+#: The pickers' no-filter label.
+FILTER_ALL = "all"
+
+
+class SecretAuditScreen(Screen):
+    """The daemon-wide audit view (#390): every workspace's
+    placeholder lifecycle and wire events, newest first — the
+    newest hundred recorded rows replayed from the audit listing
+    at open (the endpoint's bound), the live kinds streaming in
+    beside them over the events socket (a plain subscriber: no
+    decider registration, so no hold ever waits on this view).
+    One fact lands once however it arrives — the audit identity
+    dedups the live frame against the replayed row (#305). A
+    sighting row carries the highlight beside its ``!`` marker —
+    the exfil signal. ``k`` and ``w`` pick the kind and workspace
+    filters: a daemon-wide row's events cover every workspace, a
+    scoped row's its members, a per-flow swap or sighting the tap
+    that saw it (#305's replay rule carried to the filter).
+    Arrows move the list; ``r`` or Escape returns to the secrets
+    page — no focus trap.
+    """
+
+    BINDINGS = [
+        Binding("k", "kind", "Kind"),
+        Binding("w", "workspace", "Workspace"),
+        Binding("r", "back", "Back"),
+        Binding("escape", "back", "Back", show=False),
+        Binding("q", "back", "Back", show=False),
+        # `e` from here returns instead of stacking another audit
+        # view (the page's key would push otherwise) — the rules
+        # screen's `r` follows the same shape.
+        Binding("e", "back", show=False),
+    ]
+
+    def __init__(self, data, *, link_factory=None) -> None:
+        super().__init__()
+        self.data = data
+        self.link_factory = link_factory or AuditLink
+        self.link: AuditLink | None = None
+        self.kind: str | None = None
+        self.workspace: str | None = None
+        # The replay failure's one-line reason (#390): empty when
+        # the listing served its rows.
+        self.seed_failed = ""
+        self.rebuilds = OneFlight(
+            lambda: self.rebuild_rows(),
+            lambda: self.app.is_running,
+            "secret-audit",
+        )
+        self._built: tuple | None = None
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="audit-body"):
+            yield Static(events_note(), id="audit-note")
+            yield Static(id="audit-status")
+            yield Static(id="audit-empty")
+            yield ListView(id="audit-rows")
+        yield Footer()
+
+    def link_or_stub(self) -> AuditLink:
+        """The link, made on first use (compose runs before mount,
+        and the link starts with the screen)."""
+        if self.link is None:
+            self.link = self.link_factory()
+        return self.link
+
+    def on_mount(self) -> None:
+        self.link_or_stub().start()
+        self.set_interval(1.0, self.tick)
+        # call_after_refresh: the rows list and the seed worker both
+        # wait for the compose stream to settle — a worker racing it
+        # queries widgets that are not mounted yet (the overlay's
+        # own rule).
+        self.call_after_refresh(self.started)
+
+    def started(self) -> None:
+        """The compose has settled: focus the rows, pull the
+        replay."""
+        self.query_one("#audit-rows", ListView).focus()
+        self.run_worker(self.load_audit, exclusive=True)
+
+    def on_unmount(self) -> None:
+        """The view is gone: the subscription closes with the
+        link."""
+        if self.link is not None:
+            self.link.stop()
+
+    async def load_audit(self) -> None:
+        """Seed the replay from the audit listing (#390): the
+        recorded lifecycle rows land oldest first behind any live
+        tail, deduped on their audit identity. A listing the
+        daemon cannot serve names itself on the status line — the
+        live stream alone still stands."""
+        try:
+            rows = await self.data.secret_audit()
+        except (Exception, SystemExit) as exc:
+            self.seed_failed = flash_safe(str(exc))
+            self.sync_status()
+            return
+        self.link_or_stub().controller.seed_audit(rows)
+        self.rebuilds.request()
+
+    def tick(self) -> None:
+        """The per-second repaint: a moved log rebuilds the rows
+        (single flight), the status line repaints beside it — its
+        own guard swallows a teardown race."""
+        if self.log_changed():
+            self.rebuilds.request()
+        self.sync_status()
+
+    # -- the rows ----------------------------------------------------------
+
+    def log_fingerprint(self) -> tuple:
+        """The view's identity for repaint gating: the log's rows
+        identity (length and newest seq) and the filters — a
+        filter change repaints the rows even when the log stands
+        still."""
+        events = self.link_or_stub().controller.events
+        rows_id = (len(events), events[-1].seq if events else 0)
+        return (rows_id, self.kind, self.workspace)
+
+    def log_changed(self) -> bool:
+        """Whether the view moved since it last painted (never
+        painted counts as moved)."""
+        return self.log_fingerprint() != self._built
+
+    def filtered(self) -> list:
+        """The log's rows in render order under the standing
+        filters, oldest first (the newest-first flip is the
+        render's)."""
+        rows = render_order(self.link_or_stub().controller.events)
+        return [event for event in rows if self.shows(event)]
+
+    def shows(self, event) -> bool:
+        """Whether one row stands under the standing filters: the
+        kind filter matches the row's kind, the workspace filter
+        its coverage."""
+        if self.kind is not None and event.kind != self.kind:
+            return False
+        return self.workspace is None or event.covers(self.workspace)
+
+    async def rebuild_rows(self) -> None:
+        """Repaint the view: the status line always, the rows list
+        only when it moved — a list swap under a reading operator
+        only when the rows changed, and never while the standing
+        list is the truth (a missing list always rebuilds: the
+        swap is also the heal)."""
+        self.sync_status()
+        rows_id = self.log_fingerprint()
+        if self._built == rows_id and self.rows_widget() is not None:
+            return
+        await self.swap_rows(self.filtered())
+        self._built = rows_id
+
+    def rows_widget(self) -> ListView | None:
+        """The rows list, or None during a rebuild's swap window."""
+        try:
+            return self.query_one("#audit-rows", ListView)
+        except NoMatches:
+            return None
+
+    async def swap_rows(self, rows: list) -> None:
+        """Swap in a freshly-built list (its mount awaited), newest
+        first, preserving the focused row by seq (the top when it
+        left): a mutating ListView carries asynchronously-pruned
+        stale children that shift indexes, so positions come from
+        children that are all real."""
+        body = self.query_one("#audit-body", Vertical)
+        old = None
+        try:
+            old = self.query_one("#audit-rows", ListView)
+        except NoMatches:
+            pass  # a died-mid-swap rebuild: mount the fresh list anew
+        focused = focused_event_id(old)
+        items = [event_item(event) for event in reversed(rows)]
+        empty = self.query_one("#audit-empty", Static)
+        empty.display = not items
+        if not items:
+            empty.update(self.empty_line())
+        fresh = ListView(*items, id="audit-rows")
+        if old is not None:
+            await old.remove()  # frees the id before the fresh list mounts
+        await body.mount(fresh)
+        fresh.focus()
+        focus_event_by_id(fresh, focused)  # after mount: index sticks
+
+    def empty_line(self) -> str:
+        """The empty state: honest about whether rows stand behind
+        the filters or the log itself holds none."""
+        if self.link_or_stub().controller.events:
+            return "No events match the filters."
+        return (
+            "No placeholder events yet — mints, revokes, and "
+            "expiries appear here."
+        )
+
+    def sync_status(self) -> None:
+        """The status line: the standing filters and the
+        connection's state, with the seed failure named when the
+        replay never landed. A teardown race leaves the query
+        empty — noise, not a crash."""
+        try:
+            link = self.link_or_stub()
+            line = (
+                f" kind {self.kind or FILTER_ALL}"
+                f"  ·  workspace {self.workspace or FILTER_ALL}"
+                f"  ·  {link.state}"
+            )
+            if self.seed_failed:
+                line += f"  ·  replay failed: {self.seed_failed}"
+            self.query_one("#audit-status", Static).update(line)
+        except NoMatches:
+            pass
+
+    # -- the filters -------------------------------------------------------
+
+    def action_kind(self) -> None:
+        """Pick the kind filter: every kind, or one."""
+        current = self.kind or FILTER_ALL
+        self.app.push_screen(
+            PickerScreen((FILTER_ALL, *AUDIT_KINDS), current, self.kind_picked)
+        )
+
+    async def kind_picked(self, pick: str | None) -> None:
+        """The kind picker's callback: a pick swaps the filter, a
+        cancel keeps it."""
+        if pick is None:
+            return
+        self.kind = None if pick == FILTER_ALL else pick
+        self.rebuilds.request()
+
+    def action_workspace(self) -> None:
+        """Pick the workspace filter: every workspace, or one the
+        log names — coverage decides what shows (#305's rule)."""
+        current = self.workspace or FILTER_ALL
+        self.app.push_screen(
+            PickerScreen(
+                self.workspace_options(), current, self.workspace_picked
+            )
+        )
+
+    async def workspace_picked(self, pick: str | None) -> None:
+        """The workspace picker's callback: a pick swaps the
+        filter, a cancel keeps it."""
+        if pick is None:
+            return
+        self.workspace = None if pick == FILTER_ALL else pick
+        self.rebuilds.request()
+
+    def workspace_options(self) -> tuple[str, ...]:
+        """The workspace filter's choices: every workspace the
+        log's rows name — their coverage lists and the taps that
+        saw per-flow events — beside the all-rows choice. The
+        names are workspace ids (the daemon mints them as hex), so
+        the all-rows label can never collide with a choice."""
+        events = self.link_or_stub().controller.events
+        names = {
+            event.workspace_id for event in events if event.workspace_id != "*"
+        }
+        names.update(
+            workspace for event in events for workspace in event.workspaces
+        )
+        return (FILTER_ALL, *sorted(names))
+
+    def action_back(self) -> None:
+        """Return to the secrets page."""
+        self.app.pop_screen()
 
 
 #: The power verbs' dimming rule (#367): the status that makes
@@ -1123,7 +1816,7 @@ PAGE_ACTIONS = (
     PageAction(
         ACTION_CONSENT,
         "Egress consent",
-        "decide holds, review rules and events",
+        "decide holds and review rules",
         True,
     ),
     PageAction(ACTION_EGRESS_MODE, "Switch the egress mode", "", False),
@@ -1787,16 +2480,18 @@ class ConsentOverlay(ModalScreen):
     Escape parks it — holds keep waiting, the header's count keeps
     naming them — and an overlay the page opened closes itself
     when its queue empties, whichever way the last hold resolved;
-    the close waits while the rules or events screen sits stacked
-    above, so back returns here first.
+    the close waits while the rules screen sits stacked above, so
+    back returns here first. The placeholder audit moved to the
+    tree's secrets page (#390); the overlay keeps the holds, the
+    rules, and the mode.
 
     Keys: ``a``/``d`` decide the focused hold for the default
     duration, ``A``/``D`` pick a duration first, ``m`` opens the
-    page's mode picker, ``r``/``e`` push the rules and events
-    screens, ``q``/Escape close. Enter carries no verdict — the
-    queue is a ListView, and a stray Enter aimed at the page when
-    the hold arrived must not decide anything; only an explicit
-    letter decides. The bindings live on this screen, so the page's
+    page's mode picker, ``r`` pushes the rules screen, ``q``/
+    Escape close. Enter carries no verdict — the queue is a
+    ListView, and a stray Enter aimed at the page when the hold
+    arrived must not decide anything; only an explicit letter
+    decides. The bindings live on this screen, so the page's
     keymap and the overlay's cannot collide (Textual routes keys to
     the active screen alone), and pickers pushed above work without
     shadow bindings.
@@ -1809,7 +2504,6 @@ class ConsentOverlay(ModalScreen):
         Binding("D", "deny_duration", "Deny…"),
         Binding("m", "mode", "Mode"),
         Binding("r", "rules", "Rules"),
-        Binding("e", "events", "Events"),
         Binding("q", "park", "Close"),
         Binding("escape", "park", "Close", show=False),
     ]
@@ -1858,10 +2552,10 @@ class ConsentOverlay(ModalScreen):
 
     def tick(self) -> None:
         """The per-second repaint: the countdowns, the status line,
-        the rules/events screens while one is on top (their rows
-        tick and a fresh frame shows up — the decider app's repaint
-        rule, one owner), and the self-close check. A teardown race
-        leaves the queries empty — noise, not a crash."""
+        the rules screen while it is on top (its rows tick and a
+        fresh frame shows up — the decider app's repaint rule, one
+        owner), and the self-close check. A teardown race leaves
+        the queries empty — noise, not a crash."""
         try:
             self.sync_rows()
             self.update_status()
@@ -1871,14 +2565,13 @@ class ConsentOverlay(ModalScreen):
             pass
 
     def refresh_screens(self) -> None:
-        """Repaint the rules or events screen while it is on top of
-        this overlay (the rebuilds await widget mounts, so they run
-        as tasks, one flight at a time; the events screen skips an
-        unchanged log — its rows are static, nothing ticks)."""
+        """Repaint the rules screen while it is on top of this
+        overlay (its rebuild awaits widget mounts, so it runs as a
+        task, one flight at a time). The placeholder audit moved to
+        the tree's secrets page (#390): the overlay no longer
+        hosts an events screen beside it."""
         screen = self.app.screen
         if isinstance(screen, RulesScreen):
-            screen.schedule_refresh()
-        elif isinstance(screen, EventsScreen) and screen.log_changed():
             screen.schedule_refresh()
 
     def maybe_autoclose(self) -> None:
@@ -2097,10 +2790,6 @@ class ConsentOverlay(ModalScreen):
                 self.controller, self.revoke_rule, self.host.open_mode_picker
             )
         )
-
-    def action_events(self) -> None:
-        """Push the events screen over the overlay."""
-        self.app.push_screen(EventsScreen(self.controller))
 
     def action_mode(self) -> None:
         """Open the page's mode picker — the same path the page's
