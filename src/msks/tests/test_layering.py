@@ -43,8 +43,8 @@ The whitelist reads bottom-up:
   storage through ``persist`` directly (#407) — routing through
   the package root was the last root edge
 - ``interceptor`` — tooling over the drivers' vocabulary: spec
-  alone since #407 (the failure class lives in ``spec.vm``, so the
-  interceptor's driver edge went with it)
+  alone since #407 (the failure class lives in ``spec.failures``,
+  so the interceptor's driver edge went with it)
 - ``conformance``, ``conformance_args`` — the conformance check
   composes the daemon it inspects; ``conformance_args`` is the
   surface the client shares

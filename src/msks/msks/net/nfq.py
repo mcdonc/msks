@@ -47,7 +47,7 @@ import logging
 import time
 
 from ..spec.egress import ONCE_REJECT_S
-from ..spec.vm import MicrovmError
+from ..spec.failures import MicrovmError
 
 logger = logging.getLogger(__name__)
 

@@ -55,7 +55,8 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 from .identity import compose_user_data
-from .spec.vm import MicrovmError, VmSpec
+from .spec.failures import MicrovmError
+from .spec.vm import VmSpec
 
 MIB = 1024 * 1024
 HOME_VOLUME_LABEL = "msks-home"
