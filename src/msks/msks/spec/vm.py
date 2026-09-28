@@ -1,8 +1,7 @@
 """The VM spec and status types shared by every driver backend
-(#1), plus the failure type the driver boundary and the egress
-data plane raise (#401 — both surfaces fail a workspace boot with
-one operator-shaped error, so the class lives in the vocabulary
-below both and neither imports the other)."""
+(#1). The failure class the surfaces below share lives one leaf
+over, in :mod:`msks.spec.failures` (#416), so a module that only
+raises ``MicrovmError`` pulls none of this vocabulary."""
 
 from dataclasses import dataclass
 from enum import StrEnum
@@ -102,18 +101,3 @@ class VmInfo:
     workspace_id: str
     status: VmStatus
     pid: int | None = None
-
-
-class MicrovmError(Exception):
-    """A workspace-surface failure (klangk PodmanError analogue).
-
-    Raised by the driver boundary (a CH API transport failure, a
-    lifecycle refusal) and by the egress data plane (a tap, chain,
-    queue, or service that could not arm or operate). ``status``
-    carries the transport status when one exists (a CH API HTTP
-    status), ``None`` otherwise.
-    """
-
-    def __init__(self, message: str, status: int | None = None) -> None:
-        super().__init__(message)
-        self.status = status

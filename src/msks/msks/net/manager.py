@@ -22,7 +22,7 @@ from ipaddress import IPv4Network
 from pathlib import Path
 
 from ..spec.egress import EgressPolicy, VerdictPin, is_ipv4
-from ..spec.vm import MicrovmError
+from ..spec.failures import MicrovmError
 from . import alloc, conntrack, dns, nft, taps
 from .dhcp import DhcpServer
 from .dns import DnsForwarder, ResolverGate

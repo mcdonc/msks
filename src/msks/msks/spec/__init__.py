@@ -3,9 +3,10 @@
 Every module here is stdlib-only and owns a piece of the language
 the daemon's layers speak to each other:
 
-- ``vm`` — the backend-neutral workspace spec and status types,
-  plus the failure class the driver boundary and the data plane
-  raise (#401)
+- ``vm`` — the backend-neutral workspace spec and status types
+- ``failures`` — the workspace failure class the driver boundary
+  and the data plane raise (#401; its own leaf since #416, so an
+  error-only importer pulls no VM vocabulary)
 - ``egress`` — the allowlist grammar plus the consent lifecycle
   vocabulary (decisions, durations, the decider-facing row shape)
   and the decided side #401 added: verdict TTL resolution and the

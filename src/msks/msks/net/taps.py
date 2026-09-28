@@ -10,7 +10,7 @@ race each other's teardown).
 
 import asyncio
 
-from ..spec.vm import MicrovmError
+from ..spec.failures import MicrovmError
 
 # `ip link del` answers this on stderr when the device is already
 # gone — the one removal failure that means success.

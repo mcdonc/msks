@@ -42,7 +42,7 @@ import json
 import logging
 
 from ..spec.egress import EgressPolicy, IpSpec
-from ..spec.vm import MicrovmError
+from ..spec.failures import MicrovmError
 from .alloc import table_name
 
 logger = logging.getLogger(__name__)
