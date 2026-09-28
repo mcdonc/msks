@@ -45,14 +45,8 @@ from .config import ClientConfig, bootstrap
 from .console import run_workspace_shell
 
 # Re-exported for the tests (they drive cli.write_client_identity
-# directly); cli itself now calls it inside create_workspace_core.
-from .create import (  # noqa: F401
-    checked_login_name,
-    create_workspace_core,
-    invoking_user,
-    operator_pubkey,
-    write_client_identity,
-)
+# directly); the create core's own callers live in the groups now.
+from .create import write_client_identity  # noqa: F401
 from .forward import run_workspace_forward
 from .images import (  # noqa: F401
     cmd_image_check,
@@ -112,18 +106,14 @@ from .workspaces import (  # noqa: F401
     cmd_stop,
     create_body,
     create_identity,
+    created_date,
     created_line,
-    fetch_ssh_key,
     read_pubkey,
     read_user_data,
-    render_ls,
     run_create,
     run_resize,
     stale_image_notice,
     workspace_cells,
-)
-from .workspaces import (  # noqa: F401
-    created_date as _created_date,
 )
 
 

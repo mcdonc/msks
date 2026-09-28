@@ -213,9 +213,9 @@ def test_cmd_ls_rows_fit_the_values(
 
 def test_created_date_falls_back_to_dash() -> None:
     """#296: missing created_at renders as a dash."""
-    assert cli._created_date(None) == "-"
-    assert cli._created_date("") == "-"
-    assert cli._created_date("2026-05-14T12:00:00") == "2026-05-14"
+    assert cli.created_date(None) == "-"
+    assert cli.created_date("") == "-"
+    assert cli.created_date("2026-05-14T12:00:00") == "2026-05-14"
 
 
 def test_display_name_prefers_the_label() -> None:

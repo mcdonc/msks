@@ -1,9 +1,8 @@
 """The workspace tree's row rendering (#309, #347–#351): the
 listing's columns, the status colors, the relative created labels,
 and the header/status lines' content — pure text arithmetic over
-daemon rows, with no Textual and no daemon imports, so every
-screen (:mod:`msks.client.tui.main_app` and its siblings) renders
-through one vocabulary.
+daemon rows: no Textual widgets, no screens, and no daemon
+imports, so every screen module renders through one vocabulary.
 """
 
 import re

@@ -11,12 +11,12 @@ shared-client exchanges — resolve-a-reference-then-mutate, the
 volume streams — keep their explicit url/token seams on
 :mod:`msks.client.rest`), bound together so a group imports one
 module instead of pointing its own import at every shared leaf.
-The fan-in ceiling is the hard edge: four groups importing
+The fan-in ceiling is the hard edge: the groups importing
 :mod:`msks.client.env` directly would push it past the recorded
-ceiling, while the one edge through here keeps it where it
-stands. The module is declared a facade in ``import-graph.toml``
-for the same reason — the env names it binds are the groups' to
-import through it.
+ceiling (11 importers against 12), while the one edge through
+here keeps it where it stands. The module is declared a facade
+in ``import-graph.toml`` for the same reason — the env names it
+binds are the groups' to import through it.
 """
 
 from .env import (
