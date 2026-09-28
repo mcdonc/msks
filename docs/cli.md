@@ -385,10 +385,27 @@ workspace filters (a daemon-wide row's events cover every
 workspace, a scoped row's its members). The audit view holds a
 plain subscription — no decider registration — so it claims no
 holds.
-Mint stays on the CLI for now (`msks secret mint` prints the
-sentinel once); the form lands on this page (#393), and the
-placeholder-to-workspace navigation lands with the
-cross-references (#394).
+`c` opens the mint form (#393): name, repeatable destinations
+(an exact host or a label-anchored suffix, comma-separated in
+one field), coverage — the daemon-wide row, or a multi-select
+fed by the tree's own workspace list — the lifetime (`unbounded`
+by default, an hour to thirty days beside it), and the file path
+holding the secret. The payload rides the file's bytes: the
+secret reaches the wire from disk, so it lands in neither the
+form's fields nor the terminal's state. The submit checks the
+secret store first (`msks secret check`'s endpoint), then mints;
+a refusal names itself on the form's note line and the fields
+stay filled for a retry. A mint that lands replaces the form
+with the sentinel's one-time panel: the sentinel itself, its
+reach decoded from its prefix (`mskssec1_` scoped to the chosen
+workspaces, `mskssec2_` every accepting workspace), a `c` copy
+action that writes the sentinel to the terminal's clipboard over
+OSC 52 — the copy path a terminal that honors the sequence
+answers, over ssh included — and the closing rule: the display
+ends with the panel, and a lost sentinel is re-minted, never
+recalled. Closing the panel clears its text, and the minted row
+stands on the page's list. The placeholder-to-workspace
+navigation lands with the cross-references (#394).
 
 The **workspace page** carries the per-workspace loop: a
 two-line header — the workspace's name on the first line with

@@ -119,6 +119,14 @@ class FakeData:
         self.secret_rows: list[dict] = []
         self.audit_rows: list[dict] = []
         self.secret_calls: list[tuple] = []
+        # The mint form's surface (#393): the scripted refusal a
+        # failed mint raises (the daemon's own one-line shape), and
+        # the gate a test holds a mint mid-flight on (the flight
+        # guard's seam — None mints straight through).
+        self.mint_refusal = (
+            "msks: 409: * already has a placeholder named github_api"
+        )
+        self.mint_gate: object | None = None
         # The resize reply's omitted fields (#331): a daemon older
         # than a field answers without it, and the page keeps its
         # row's own value.
@@ -258,6 +266,39 @@ class FakeData:
         if "secret-audit" in self.fail:
             raise RuntimeError(self.refusal)
         return [dict(r) for r in self.audit_rows]
+
+    async def secret_check(self) -> dict:
+        """The mint form's store pre-flight (#393) — recorded; a
+        scripted failure names itself on the form and the mint
+        never runs."""
+        self.calls.append(("secret-check",))
+        if "secret-check" in self.fail:
+            raise RuntimeError(self.refusal)
+        return {"provider": "files", "ok": True}
+
+    async def mint_secret(self, body: dict) -> dict:
+        """The mint form's mint (#393) — recorded with its raw
+        body (the secret rides the record the way the wire does);
+        the reply carries the sentinel exactly once and the row
+        lands on the page's listing without it."""
+        self.secret_calls.append(("mint", dict(body)))
+        if self.mint_gate is not None:
+            await self.mint_gate.wait()
+        if "mint" in self.fail:
+            raise RuntimeError(self.mint_refusal)
+        sentinel = (
+            "mskssec2_" if not body.get("workspaces") else "mskssec1_"
+        ) + "s" * 43
+        row = {
+            "id": 99,
+            "workspaces": sorted(body.get("workspaces") or []),
+            "name": body["name"],
+            "dests": list(body["dests"]),
+            "created_at": "2030-01-02T03:04:05",
+            "expires_at": None,
+        }
+        self.secret_rows.append(dict(row))
+        return {**row, "sentinel": sentinel}
 
     def reply(self, verb: str, value):
         """The scripted reply; the named refusal when the verb fails."""
@@ -1713,6 +1754,7 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
     seen: list[tuple] = []
     seen_pub: list[str] = []
     bodies: list[dict] = []
+    minted: list[dict] = []
     resized: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -1746,6 +1788,27 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
                         "expires_at": None,
                     }
                 ],
+            )
+        if (
+            request.method == "POST"
+            and request.url.path == "/api/v1/secrets/check"
+        ):
+            return httpx.Response(200, json={"provider": "files", "ok": True})
+        if request.method == "POST" and request.url.path == (
+            "/api/v1/secrets"
+        ):
+            minted.append(json.loads(request.content))
+            return httpx.Response(
+                201,
+                json={
+                    "id": 8,
+                    "workspaces": ["ws1"],
+                    "name": "github_api",
+                    "dests": ["api.github.com"],
+                    "created_at": "2030-01-02T03:04:05",
+                    "expires_at": None,
+                    "sentinel": "mskssec1_shown_once",
+                },
             )
         if request.method == "DELETE" and request.url.path == (
             "/api/v1/secrets/7"
@@ -1899,6 +1962,29 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
     assert ("DELETE", "/api/v1/secrets/7") in seen
     assert ("POST", "/api/v1/secrets/7/renew") in seen
     assert ("GET", "/api/v1/secrets/audit") in seen
+    # The mint seams (#393): the store pre-flight and the mint
+    # itself — the same exchanges the secret subcommands make,
+    # the reply carrying the sentinel exactly once.
+    assert await data.secret_check() == {"provider": "files", "ok": True}
+    row = await data.mint_secret(
+        {
+            "name": "github_api",
+            "dests": ["api.github.com"],
+            "workspaces": ["ws1"],
+            "secret": "hunter2",
+        }
+    )
+    assert row["sentinel"] == "mskssec1_shown_once"
+    assert minted == [
+        {
+            "name": "github_api",
+            "dests": ["api.github.com"],
+            "workspaces": ["ws1"],
+            "secret": "hunter2",
+        }
+    ]
+    assert ("POST", "/api/v1/secrets/check") in seen
+    assert ("POST", "/api/v1/secrets") in seen
 
 
 # -- the pure helpers ------------------------------------------------------

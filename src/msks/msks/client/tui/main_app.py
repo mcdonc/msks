@@ -28,11 +28,13 @@ leaves the screen it is on — no screen traps focus.
 """
 
 import asyncio
+import base64
 import json
 import re
 import sys
 import time
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import NamedTuple
 
 from rich.cells import cell_len
@@ -50,8 +52,10 @@ from textual.widgets import (
     ListItem,
     ListView,
     Select,
+    SelectionList,
     Static,
 )
+from textual.widgets.selection_list import Selection
 
 from ...identity import LEGACY_LOGIN_USER
 from ..config import DEFAULT_TERMINAL_CMD, ClientConfig
@@ -697,7 +701,8 @@ class MsksTuiApp(App):
     WorkspaceForm { align: center middle; }
     #form { width: 64; height: auto; background: $panel;
             border: round $primary; padding: 1 2; }
-    #form-note { color: $text-muted; margin-bottom: 1; }
+    #form-note { color: $text-muted; margin-bottom: 1;
+                 text-wrap: nowrap; text-overflow: ellipsis; }
     .form-row { height: 1; margin-bottom: 1; }
     .form-label { width: 12; color: $text-muted; }
     .form-row Input, .form-row Select { width: 1fr; }
@@ -730,6 +735,23 @@ class MsksTuiApp(App):
     #audit-empty { padding: 0 1; color: $text-muted; }
     #audit-rows ListItem { height: 1; }
     #audit-rows ListItem.sighting { color: $warning; text-style: bold; }
+    MintScreen { align: center middle; }
+    .form-row.tall { height: auto; }
+    .form-row.tall SelectionList { width: 1fr; height: 4;
+                                   border: none; padding: 0;
+                                   background: $boost; }
+    SentinelPanel { align: center middle; }
+    #sentinel-panel { width: 64; height: auto; background: $panel;
+                      border: round $primary; padding: 1 2; }
+    #panel-note { color: $text-muted; margin-bottom: 1;
+                  text-wrap: nowrap; text-overflow: ellipsis; }
+    #panel-sentinel { text-style: bold; text-wrap: nowrap;
+                      text-overflow: ellipsis; margin-bottom: 1; }
+    #panel-reach { margin-bottom: 1; }
+    #panel-rule { color: $text-muted; margin-bottom: 1; }
+    #panel-buttons { height: auto; align-horizontal: center;
+                     margin-top: 1; }
+    #panel-buttons Button { margin: 0 2; }
     """
 
     BINDINGS = [
@@ -1193,15 +1215,197 @@ def renew_note(row: dict, reply: dict) -> str:
     return f"renewed {label} · expires {ttl_text(reply)}"
 
 
+#: The mint form's daemon-wide choice (#393): one row every
+#: accepting workspace honors — the CLI's mint without a
+#: ``--workspace`` target, the daemon's own default.
+COVERAGE_WIDE = "daemon-wide"
+
+#: The mint form's scoped choice (#393): one row whose coverage
+#: set is the workspaces the form's picker holds.
+COVERAGE_SCOPED = "scoped"
+
+#: The coverage select's choices (#393): the label names what each
+#: pick mints.
+COVERAGE_CHOICES = (
+    ("daemon-wide — every accepting workspace", COVERAGE_WIDE),
+    ("scoped — the picked workspaces", COVERAGE_SCOPED),
+)
+
+#: The mint form's TTL choices (#393): the unbounded row first —
+#: the daemon's default when a mint carries no ttl — then the
+#: renew picker's own span (#390).
+MINT_TTLS = ("unbounded", *SECRET_TTLS)
+
+#: The TTL select's choices (#393): the label is the choice.
+MINT_TTL_CHOICES = tuple((label, label) for label in MINT_TTLS)
+
+#: The scoped sentinel's prefix (#393): the client's own copy of
+#: the daemon's spelling (the client-isolation rule keeps the
+#: daemon's secretstore out of this process) — the panel's reach
+#: line decodes it.
+SCOPED_SENTINEL = "mskssec1_"
+
+#: The daemon-wide sentinel's prefix (#393): every accepting
+#: workspace's tap swaps it.
+WIDE_SENTINEL = "mskssec2_"
+
+#: The mint name's pattern (#393): the client's own copy of the
+#: store's identifier rule — letters, numbers, and underscores,
+#: no leading digit.
+MINT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+#: One destination entry's pattern (#393): an exact hostname or a
+#: label-anchored suffix — the client's own copy of the daemon's
+#: rule, so a junk entry is refused on the form where the
+#: operator can still edit it.
+DEST_ENTRY = re.compile(
+    r"^\.?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$"
+)
+
+
+def split_entries(value: str) -> list[str]:
+    """The repeatable entries one comma-separated field carries
+    (#393): ``a, b , , c`` becomes ``[a, b, c]`` — the CLI's own
+    repeatable, comma-splitting flag shape, held in one input."""
+    return [entry.strip() for entry in value.split(",") if entry.strip()]
+
+
+def refused_dest(dests: list[str]) -> str | None:
+    """The first destination entry the daemon's pattern refuses
+    (#393), or None — the check lands here, on the form, so a
+    junk entry is named where the operator can still edit it."""
+    for entry in dests:
+        if not DEST_ENTRY.match(entry.lower().rstrip(".")):
+            return entry
+    return None
+
+
+def sentinel_reach(row: dict) -> str:
+    """The sentinel's reach line (#393), decoded from its prefix:
+    ``mskssec2_`` swaps on every accepting workspace's tap,
+    ``mskssec1_`` on the row's own coverage set — the prefix names
+    the reach from the string alone (the daemon's own rule,
+    duplicated here per the client-isolation rule)."""
+    sentinel = row.get("sentinel") or ""
+    if sentinel.startswith(SCOPED_SENTINEL):
+        return f"the chosen workspaces: {escape(coverage_text(row))}"
+    return "every accepting workspace"
+
+
+def read_secret_file(path: str) -> tuple[str, str]:
+    """The mint's payload read from its file path (#393):
+    ``(value, "")`` on success, ``("", reason)`` on a refusal the
+    form names on its note — the CLI's own rule (``--secret-file``)
+    carried to the form: whitespace strips at both ends, and the
+    secret rides the file's bytes, never the terminal's state."""
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return "", f"cannot read secret file {path}: {exc}"
+    value = text.strip()
+    if not value:
+        return "", f"the secret file {path} is empty"
+    return value, ""
+
+
+def osc52_sequence(text: str) -> str:
+    """The OSC 52 clipboard-copy sequence (#393): the payload
+    base64-encoded inside the ``52;c;`` selection — a terminal
+    that honors OSC 52 answers it by filling its clipboard, over
+    ssh included."""
+    payload = base64.b64encode(text.encode("utf-8")).decode("ascii")
+    return f"\x1b]52;c;{payload}\x07"
+
+
+def osc52_copy(app, text: str) -> bool:
+    """Write the copy sequence through the app's driver (#393):
+    the sequence rides beside the frame the driver flushes — a
+    terminal that ignores OSC 52 shows nothing and copies
+    nothing, and the sentinel stays on the panel. Returns whether
+    the sequence left through a driver (a teardown race holds no
+    device to write through)."""
+    driver = getattr(app, "_driver", None)
+    if driver is None:  # a teardown race — nothing to write through
+        return False
+    driver.write(osc52_sequence(text))
+    driver.flush()
+    return True
+
+
+def minted_note(row: dict) -> str:
+    """The mint's outcome line (#393): the row's label in the
+    page's own vocabulary — the sentinel itself stays on the
+    one-time panel above the page."""
+    return f"minted {escape(coverage_text(row))}/{escape(row['name'])}"
+
+
+class FormSelect(Select):
+    """A form's select: stock Select with the walk's arrows kept
+    — a closed select answers up/down by walking the form's fields
+    (Enter or space opens the list; an open list keeps the stock
+    arrows for its own rows). The create form's image select and
+    the mint form's coverage and TTL selects (#393) ride this one
+    shape."""
+
+    BINDINGS = [
+        Binding("up", "walk_previous", show=False),
+        Binding("down", "walk_next", show=False),
+    ]
+
+    def action_walk_next(self) -> None:
+        self.app.action_focus_next()
+
+    def action_walk_previous(self) -> None:
+        self.app.action_focus_previous()
+
+
+class FormWalk:
+    """The form screens' shared walk (#309, #393): the arrows and
+    Enter move between a form's controls in walk order, and
+    Escape or q cancels — the app's own focus order supplies the
+    walk (a hidden control holds no focus, so a row a mode hides
+    — the mint form's picker under the daemon-wide default — is
+    skipped; a select keeps its own down while its list is open,
+    and the mint form's picker leaves the walk at its edges).
+    The screens re-declare the key bindings themselves: Textual
+    merges ``BINDINGS`` from ``DOMNode`` bases alone, so a plain
+    mixin's list would never reach the screen."""
+
+    def __init__(self, submitted) -> None:
+        super().__init__()
+        self.submitted = submitted
+
+    BINDINGS = [
+        Binding("up", "walk_previous", show=False),
+        Binding("down", "walk_next", show=False),
+        Binding("escape", "cancel", "Cancel", show=False),
+        Binding("q", "cancel", show=False),
+    ]
+
+    def action_walk_next(self) -> None:
+        """Down walks the form — the same walk Enter makes."""
+        self.app.action_focus_next()
+
+    def action_walk_previous(self) -> None:
+        """Up walks the form back."""
+        self.app.action_focus_previous()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Enter in a field moves the walk to the next control (the
+        buttons included — the arrows make the same walk; the
+        action is the app's, the screen hosts the binding)."""
+        self.app.action_focus_next()
+
+
 class SecretsScreen(Screen):
     """The secrets page (#390): every placeholder row the daemon
     holds — coverage, name, destinations, a live TTL countdown,
-    the created date — with revoke and renew on the focused row
-    and the audit stream one key away. Mint stays on the CLI
-    (``msks secret mint`` prints the sentinel once; the form is
-    #393's), and the coverage flip stays on the workspace page
-    (a picker beside the egress-mode row); Enter on a row owns
-    nothing yet — the placeholder-to-workspace links land with the
+    the created date — with revoke and renew on the focused row,
+    the audit stream one key away, and the mint form on `c` (#393
+    — its one-time sentinel panel replaces the form). The
+    coverage flip stays on the workspace page (a picker beside
+    the egress-mode row); Enter on a row owns nothing yet — the
+    placeholder-to-workspace links land with the
     cross-references (#394).
     """
 
@@ -1209,6 +1413,7 @@ class SecretsScreen(Screen):
         Binding("x", "revoke", "Revoke"),
         Binding("r", "renew", "Renew"),
         Binding("e", "audit", "Audit"),
+        Binding("c", "create", "New"),
         Binding("q", "back", "Back"),
         Binding("escape", "back", "Back", show=False),
     ]
@@ -1326,8 +1531,7 @@ class SecretsScreen(Screen):
             empty = self.query_one("#secret-empty", Static)
             empty.display = not self.rows
             empty.update(
-                "No placeholders — msks secret mint creates one; "
-                "the form lands on this page (#393)."
+                "No placeholders — c mints one; the sentinel shows once."
             )
         except NoMatches:
             pass
@@ -1446,6 +1650,22 @@ class SecretsScreen(Screen):
     def action_back(self) -> None:
         """Return to the workspaces list."""
         self.app.pop_screen()
+
+    def action_create(self) -> None:
+        """`c`: the mint form (#393) — the create form's pattern
+        over the mint's own fields."""
+        self.app.push_screen(MintScreen(self.minted))
+
+    async def minted(self, row: dict | None) -> None:
+        """The mint form's callback (#393): a mint that lands
+        dismisses with its reply — the page refreshes so the row
+        stands on the list, and the sentinel's one-time panel
+        replaces the form; a cancel decides nothing."""
+        if row is None:
+            return
+        self.refresh_rows()
+        self.flash(minted_note(row))
+        self.app.push_screen(SentinelPanel(row))
 
 
 #: The audit view's kind filter choices (#390): every kind a row
@@ -1719,6 +1939,434 @@ class SecretAuditScreen(Screen):
     def action_back(self) -> None:
         """Return to the secrets page."""
         self.app.pop_screen()
+
+
+class WorkspacePicker(SelectionList):
+    """The mint form's workspace multi-select (#393): space
+    toggles the highlighted option, and the arrows keep the
+    stock walk through the options — leaving the list at its
+    edges: up from the first option returns to the field above,
+    down from the last moves to the field below (the
+    spatial-navigation rule: the arrows alone reach every field
+    in reading order)."""
+
+    BINDINGS = [
+        Binding("up", "edge_previous", show=False),
+        Binding("down", "edge_next", show=False),
+    ]
+
+    def on_focus(self) -> None:
+        """A freshly-seeded picker holds no highlight (its options
+        land after construction), so the focus puts one on the
+        first option — space toggles from the first press."""
+        if self.highlighted is None and self.option_count:
+            self.highlighted = 0
+
+    def at_top(self) -> bool:
+        """Whether the walk leaves upward from here: no options,
+        nothing highlighted, or the first option highlighted."""
+        return self.option_count == 0 or self.highlighted in (None, 0)
+
+    def at_bottom(self) -> bool:
+        """Whether the walk leaves downward from here: no options,
+        nothing highlighted, or the last option highlighted."""
+        return self.option_count == 0 or self.highlighted == (
+            self.option_count - 1
+        )
+
+    def action_edge_previous(self) -> None:
+        """Up: the interior walks the options, the top edge
+        returns the walk to the form."""
+        if self.at_top():
+            self.app.action_focus_previous()
+        else:
+            self.action_cursor_up()
+
+    def action_edge_next(self) -> None:
+        """Down: the interior walks the options, the bottom edge
+        hands the walk back to the form."""
+        if self.at_bottom():
+            self.app.action_focus_next()
+        else:
+            self.action_cursor_down()
+
+
+class MintScreen(FormWalk, ModalScreen[dict | None]):
+    """The mint form (#393): the create form's pattern over the
+    mint's own fields — name, repeatable destinations, coverage
+    (the daemon-wide row, or the workspaces a multi-select picks
+    from the tree's own list), the TTL (unbounded, the daemon's
+    default, or the renew picker's span), and the secret's file
+    path: the payload rides the file's bytes, never the
+    terminal's state. Submit checks the store first (``msks
+    secret check``'s endpoint), then mints; a refusal anywhere
+    names itself on the note and the fields stay for a retry. A
+    mint that lands dismisses with its reply — the row carrying
+    the sentinel exactly once — and the page replaces the form
+    with the one-time panel."""
+
+    # The walk's keys: named here, not on FormWalk — Textual
+    # merges BINDINGS from DOMNode bases alone (the mixin's
+    # note records the rule), and the actions live there.
+    BINDINGS = [
+        Binding("up", "walk_previous", show=False),
+        Binding("down", "walk_next", show=False),
+        Binding("escape", "cancel", "Cancel", show=False),
+        Binding("q", "cancel", show=False),
+    ]
+
+    #: Whether the mint's exchange is in the air (#393): the
+    #: sentinel rides exactly one reply, so the flight owns the
+    #: form until it lands — a second submit or a cancel in the
+    #: air would drop the reply on a mint the daemon already took
+    #: (and the retry would find the name taken).
+    flighting = False
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="form"):
+            yield Static(
+                "mint a placeholder — the sentinel shows once",
+                id="form-note",
+            )
+            with Horizontal(classes="form-row"):
+                yield Static("name", classes="form-label")
+                yield Input(
+                    placeholder="letters, numbers, underscores",
+                    id="field-name",
+                    compact=True,
+                )
+            with Horizontal(classes="form-row"):
+                yield Static("dests", classes="form-label")
+                yield Input(
+                    placeholder="host or .suffix, comma-separated",
+                    id="field-dests",
+                    compact=True,
+                )
+            with Horizontal(classes="form-row"):
+                yield Static("coverage", classes="form-label")
+                yield FormSelect(
+                    COVERAGE_CHOICES,
+                    value=COVERAGE_WIDE,
+                    allow_blank=False,
+                    id="field-coverage",
+                    compact=True,
+                )
+            with Horizontal(classes="form-row tall", id="workspaces-row"):
+                yield Static("workspaces", classes="form-label")
+                yield WorkspacePicker(id="field-workspaces")
+            with Horizontal(classes="form-row"):
+                yield Static("ttl", classes="form-label")
+                yield FormSelect(
+                    MINT_TTL_CHOICES,
+                    value=MINT_TTLS[0],
+                    allow_blank=False,
+                    id="field-ttl",
+                    compact=True,
+                )
+            with Horizontal(classes="form-row"):
+                yield Static("secret file", classes="form-label")
+                yield Input(
+                    placeholder="path to the file holding the secret",
+                    id="field-path",
+                    compact=True,
+                )
+            with Horizontal(id="form-buttons"):
+                yield Button(
+                    "Mint", id="do-mint", variant="primary", compact=True
+                )
+                yield Button("Cancel", id="do-cancel", compact=True)
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.query_one("#field-name", Input).focus()
+        # The daemon-wide default hides the picker row — a hidden
+        # control holds no focus, so the walk skips it.
+        self.sync_coverage()
+        self.run_worker(self.load_workspaces, exclusive=True)
+
+    async def load_workspaces(self) -> None:
+        """Seed the picker from the tree's own workspace list
+        (#393); a refusal names itself on the note — the form
+        stands, and the daemon-wide mint needs no list."""
+        try:
+            rows = await self.app.data.workspaces()
+        except (Exception, SystemExit) as exc:
+            self.note(f"workspace list failed: {flash_safe(str(exc))}")
+            return
+        self.query_one("#field-workspaces", WorkspacePicker).add_options(
+            Selection(workspace_label(row), row["id"]) for row in rows
+        )
+
+    # -- the fields ------------------------------------------------------
+
+    def field_value(self, field: str) -> str:
+        """One plain field's value, stripped."""
+        return self.query_one(f"#field-{field}", Input).value.strip()
+
+    def coverage_value(self) -> str:
+        """The coverage select's choice."""
+        return str(self.query_one("#field-coverage", Select).value)
+
+    def ttl_value(self) -> str | None:
+        """The TTL select's choice — the unbounded pick rides no
+        ``ttl_s``, the daemon's own default."""
+        value = str(self.query_one("#field-ttl", Select).value)
+        return None if value == MINT_TTLS[0] else value
+
+    def picked_workspaces(self) -> list[str]:
+        """The picker's selected workspace ids, sorted — the
+        coverage set the mint scopes to."""
+        picker = self.query_one("#field-workspaces", WorkspacePicker)
+        return sorted(picker.selected)
+
+    # -- the coverage toggle -----------------------------------------------
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        """The coverage select's pick drives the picker row (#393):
+        the daemon-wide row needs no workspaces, so the row hides;
+        a scoped pick shows it."""
+        if event.select.id == "field-coverage":
+            self.sync_coverage()
+
+    def sync_coverage(self) -> None:
+        """Show the picker row only for a scoped pick."""
+        self.query_one("#workspaces-row", Horizontal).display = (
+            self.coverage_value() == COVERAGE_SCOPED
+        )
+
+    # -- the submit --------------------------------------------------------
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "do-mint":
+            self.submit()
+        else:
+            self.action_cancel()
+
+    def action_cancel(self) -> None:
+        """Cancel — never mid-flight (#393): the reply the daemon
+        already owes this form would land on a screen nobody is
+        reading, and the retry would find the name taken. The
+        flight lands first (it names its own refusal, or the
+        panel replaces the form)."""
+        if self.flighting:
+            return
+        self.dismiss_with(None)
+
+    def submit(self) -> None:
+        """The mint: the local checks first (a refusal keeps the
+        fields), then the store check and the mint through the
+        data seam — one worker, one flight, and a submit while a
+        flight is in the air is a no-op (its reply is the one the
+        daemon already owes this form)."""
+        if self.flighting:
+            return
+        self.run_worker(self.do_mint, exclusive=True)
+
+    def note(self, text: str) -> None:
+        """The form's note line: its title, or the refusal that
+        keeps a half-filled body home."""
+        self.query_one("#form-note", Static).update(text)
+
+    def body(self) -> dict | None:
+        """The mint body (#393): the daemon only sees whole bodies
+        — the name's shape, at least one destination, the scoped
+        coverage's non-empty pick, and a readable non-empty secret
+        file are checked piecewise, each refusal naming itself on
+        the note."""
+        identity = self.identity()
+        if identity is None:
+            return None
+        name, dests = identity
+        body: dict = {"name": name, "dests": dests}
+        if not self.coverage_body(body):
+            return None
+        ttl = self.ttl_value()
+        if ttl is not None:
+            body["ttl_s"] = SECRET_TTL_SECONDS[ttl]
+        secret = self.secret_value()
+        if secret is None:
+            return None
+        body["secret"] = secret
+        return body
+
+    def identity(self) -> tuple[str, list[str]] | None:
+        """The name and the destinations, checked locally (#393);
+        None (with the note naming the refusal) when either fails
+        its check."""
+        name = self.field_value("name")
+        if not name:
+            self.note("a name is required")
+            return None
+        if not MINT_NAME.match(name):
+            self.note(
+                "name: letters, numbers, or underscores, no leading digit"
+            )
+            return None
+        dests = split_entries(self.field_value("dests"))
+        if not dests:
+            self.note("at least one destination is required")
+            return None
+        bad = refused_dest(dests)
+        if bad is not None:
+            self.note(
+                f"dest {flash_safe(bad)}: an exact hostname or a "
+                "label-anchored suffix like .example.com"
+            )
+            return None
+        return name, dests
+
+    def coverage_body(self, body: dict) -> bool:
+        """The scoped coverage's pick into ``body``; False (with
+        the note naming the refusal) when a scoped pick holds
+        nothing."""
+        if self.coverage_value() != COVERAGE_SCOPED:
+            return True
+        workspaces = self.picked_workspaces()
+        if not workspaces:
+            self.note(
+                "scoped coverage picks at least one workspace — space toggles"
+            )
+            return False
+        body["workspaces"] = workspaces
+        return True
+
+    def secret_value(self) -> str | None:
+        """The secret's bytes read from the path field (#393);
+        None (with the note naming the refusal) when the path is
+        blank or the file cannot serve the payload."""
+        path = self.field_value("path")
+        if not path:
+            self.note("the secret's file path is required")
+            return None
+        secret, reason = read_secret_file(path)
+        if reason:
+            self.note(flash_safe(reason))
+            return None
+        return secret
+
+    async def do_mint(self) -> None:
+        """The mint's flight: the local checks first (a refusal
+        keeps the fields and never takes off), then the exchange
+        with the flight owning the form until it lands."""
+        body = self.body()
+        if body is None:
+            return
+        self.flighting = True
+        try:
+            await self.mint_flight(body)
+        finally:
+            self.flighting = False
+
+    async def mint_flight(self, body: dict) -> None:
+        """The exchange proper: the store check names a broken
+        store before a doomed mint runs; a refused mint names
+        itself on the note with the fields kept for a retry; a
+        mint that lands dismisses with its reply (#393 — the
+        sentinel rides the reply exactly once)."""
+        self.note("checking the secret store…")
+        try:
+            await self.app.data.secret_check()
+        except (Exception, SystemExit) as exc:
+            self.note(f"secret store check failed: {flash_safe(str(exc))}")
+            return
+        self.note("minting…")
+        try:
+            row = await self.app.data.mint_secret(body)
+        except (Exception, SystemExit) as exc:
+            self.note(f"mint failed: {flash_safe(str(exc))}")
+            return
+        self.dismiss_with(row)
+
+    def dismiss_with(self, row: dict | None) -> None:
+        """Dismiss and hand the reply to the callback (async — the
+        exchange runs as a task, so the modal closes without
+        waiting on it)."""
+        self.dismiss()
+        # Referenced: an unreferenced task can be collected mid-await.
+        self._task = asyncio.create_task(self.submitted(row))
+
+
+class SentinelPanel(ModalScreen):
+    """The sentinel's one-time panel (#393): the mint's reply
+    replaces the form with the sentinel, its reach decoded from
+    the prefix, and the closing rule — the display ends with the
+    panel, and a lost sentinel is re-minted, never recalled. `c`
+    (or the Copy button) writes the sentinel to the terminal's
+    clipboard over OSC 52 — the copy path a terminal that honors
+    the sequence answers, over ssh included; a terminal that
+    does not honors nothing and the sentinel stays on the panel
+    until it closes. Closing clears the panel's text: the
+    sentinel leaves no trace in the widget tree behind it."""
+
+    BINDINGS = [
+        Binding("c", "copy", "Copy"),
+        Binding("q", "close", "Close"),
+        Binding("escape", "close", "Close", show=False),
+    ]
+
+    def __init__(self, row: dict) -> None:
+        super().__init__()
+        self.row = row
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="sentinel-panel"):
+            yield Static(
+                f"minted {escape(coverage_text(self.row))}/"
+                f"{escape(self.row['name'])}",
+                id="panel-note",
+            )
+            yield Static("sentinel (shown once):", id="panel-label")
+            yield Static(self.row.get("sentinel") or "", id="panel-sentinel")
+            yield Static(
+                f"reach: {sentinel_reach(self.row)}", id="panel-reach"
+            )
+            yield Static(
+                "a lost sentinel is re-minted, never recalled — "
+                "this display ends with the panel",
+                id="panel-rule",
+            )
+            with Horizontal(id="panel-buttons"):
+                yield Button(
+                    "Copy", id="do-copy", variant="primary", compact=True
+                )
+                yield Button("Close", id="do-close", compact=True)
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.query_one("#do-copy", Button).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "do-copy":
+            self.action_copy()
+        else:
+            self.action_close()
+
+    def action_copy(self) -> None:
+        """The OSC 52 copy (#393): the sequence rides the driver
+        beside the frame; the note names what happened."""
+        copied = osc52_copy(self.app, self.row.get("sentinel") or "")
+        self.query_one("#panel-note", Static).update(
+            "copied to the clipboard — where the terminal honors OSC 52"
+            if copied
+            else "the copy did not land — no terminal to write through"
+        )
+
+    def action_close(self) -> None:
+        """Close: the panel's text clears first (#393) — the
+        sentinel leaves the widget tree with the display."""
+        for widget_id in (
+            "panel-note",
+            "panel-label",
+            "panel-sentinel",
+            "panel-reach",
+            "panel-rule",
+        ):
+            try:
+                self.query_one(f"#{widget_id}", Static).update("")
+            except NoMatches:
+                pass  # teardown unmounted this line first
+        self.row = {}
+        self.dismiss()
 
 
 #: The power verbs' dimming rule (#367): the status that makes
@@ -2942,25 +3590,7 @@ def image_options(rows: list[dict]) -> list[tuple[str, str]]:
     return options
 
 
-class ImageSelect(Select):
-    """The create form's image select: stock Select with the
-    walk's arrows kept — a closed select answers up/down by
-    walking the form's fields (Enter or space opens the list;
-    an open list keeps the stock arrows for its own rows)."""
-
-    BINDINGS = [
-        Binding("up", "walk_previous", show=False),
-        Binding("down", "walk_next", show=False),
-    ]
-
-    def action_walk_next(self) -> None:
-        self.app.action_focus_next()
-
-    def action_walk_previous(self) -> None:
-        self.app.action_focus_previous()
-
-
-class WorkspaceForm(ModalScreen[dict | None]):
+class WorkspaceForm(FormWalk, ModalScreen[dict | None]):
     """The workspace form (#309 create, #331 edit): one
     label-plus-input row per field, in walk order, Enter and the
     arrows moving between them; the buttons submit and cancel.
@@ -2978,26 +3608,15 @@ class WorkspaceForm(ModalScreen[dict | None]):
     a resize body (#331).
     """
 
+    # The walk's keys: named here, not on FormWalk — Textual
+    # merges BINDINGS from DOMNode bases alone (the mixin's
+    # note records the rule), and the actions live there.
     BINDINGS = [
         Binding("up", "walk_previous", show=False),
         Binding("down", "walk_next", show=False),
         Binding("escape", "cancel", "Cancel", show=False),
         Binding("q", "cancel", show=False),
     ]
-
-    def action_walk_next(self) -> None:
-        """Down walks the form — the same walk Enter makes (the
-        arrows own the walk from a plain input; the image select
-        carries its own down that opens its list)."""
-        self.app.action_focus_next()
-
-    def action_walk_previous(self) -> None:
-        """Up walks the form back."""
-        self.app.action_focus_previous()
-
-    def __init__(self, submitted) -> None:
-        super().__init__()
-        self.submitted = submitted
 
     # -- the mode's hooks ------------------------------------------
 
@@ -3013,7 +3632,7 @@ class WorkspaceForm(ModalScreen[dict | None]):
 
     def image_control(self, hint: str):
         """The image field's control."""
-        return ImageSelect([], prompt=hint, id="field-image", compact=True)
+        return FormSelect([], prompt=hint, id="field-image", compact=True)
 
     def editable(self, field: str) -> bool:
         """Whether the operator can change the field here (an edit
@@ -3082,12 +3701,6 @@ class WorkspaceForm(ModalScreen[dict | None]):
     def on_mount(self) -> None:
         self.query_one(f"#field-{self.first_field()}", Input).focus()
         self.form_mounted()
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Enter in a field moves the walk to the next control (the
-        buttons included — the arrows make the same walk; the
-        action is the app's, the screen hosts the binding)."""
-        self.app.action_focus_next()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == self.submit_id():
