@@ -8,7 +8,8 @@ from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 from msks.app import build_app
 from msks.microvm import MicrovmError
-from msks.server.api import _RefusalScan, bridge_console, build_api
+from msks.server.api import build_api
+from msks.server.api.console import RefusalScan, bridge_console
 from msks.settings import NetSettings, ServerSettings, Settings
 from test_api import TOKEN, StubMicrovm, auth
 
@@ -287,7 +288,7 @@ async def test_refusal_scan_distrusts_buffer_start_after_slide() -> None:
     mid-stream position: a refusal line arriving WITHOUT a leading
     newline (cut exactly at a chunk boundary) does not read as a
     line start."""
-    scan = _RefusalScan()
+    scan = RefusalScan()
     scan.feed(b"x" * 300)  # the tail slid; the stream start is gone
     assert scan._at_start is False
     scan.feed(b"MSKS ERR auth\r\n")
@@ -298,7 +299,7 @@ async def test_refusal_scan_distrusts_buffer_start_after_slide() -> None:
 async def test_refusal_scan_stands_down_after_auth_ok() -> None:
     """The gate: once the helper says AUTH OK, later `MSKS ERR` text
     in shell output (a log catted, journalctl) is not a refusal."""
-    scan = _RefusalScan()
+    scan = RefusalScan()
     scan.feed(b"AUTH OK\r\n")
     scan.feed(b"$ cat helper.log\r\nMSKS ERR auth\r\n")
     assert scan.text is None
@@ -321,7 +322,7 @@ async def test_bridge_stays_open_after_auth_ok_despite_err_text() -> None:
 async def test_refusal_scan_ignores_bytes_after_the_match() -> None:
     """Post-match chunks are dropped: the scan records the refusal
     once and never re-arms (the bridge closes on the first one)."""
-    scan = _RefusalScan()
+    scan = RefusalScan()
     scan.feed(b"MSKS ERR auth\r\n")
     assert scan.text == "MSKS ERR auth"
     scan.feed(b"more bytes\r\n")

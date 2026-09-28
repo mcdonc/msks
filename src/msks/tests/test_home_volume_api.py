@@ -16,7 +16,8 @@ import httpx
 import pytest
 from msks.app import build_app
 from msks.client import cli
-from msks.server.api import build_api, home_volume_lock
+from msks.server.api import build_api
+from msks.server.api.volumes import home_volume_lock
 from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
 from msks.spec.vm import VmStatus
 from test_api import TOKEN, StubMicrovm, auth
@@ -337,12 +338,13 @@ async def test_import_disk_failure_is_503(home_api, monkeypatch) -> None:
     """An install-side failure (a full state disk) answers 503 with
     the named cause; the workspace keeps its row and its volume."""
     from msks.microvm.errors import MicrovmError
-    from msks.server import api as api_mod
 
     async def boom(state_dir, workspace_id, chunks):
         raise MicrovmError("could not install the volume: no space")
 
-    monkeypatch.setattr(api_mod, "import_home_volume_from_stream", boom)
+    monkeypatch.setattr(
+        "msks.server.api.volumes.import_home_volume_from_stream", boom
+    )
     await create_workspace(home_api, "ws-full")
     response = await home_api.http.put(
         "/api/v1/workspaces/ws-full/home", content=IMAGE, headers=auth()
@@ -550,7 +552,7 @@ async def test_holding_response_tears_down_on_send_failure() -> None:
     loop, not the body iterator's fate: a transport that dies
     mid-stream unwinds __call__ deterministically, on both the
     spec-2.4 path and the older task-group path (#80 review)."""
-    from msks.server.api import HoldingStreamingResponse
+    from msks.server.api.volumes import HoldingStreamingResponse
 
     for asgi in (
         {"version": "3.0", "spec_version": "2.4"},
