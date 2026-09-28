@@ -8,7 +8,11 @@ from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 from msks.app import build_app
 from msks.microvm import MicrovmError
-from msks.server.api import _RefusalScan, bridge_console, build_api
+from msks.server.api import build_api
+from msks.server.api.console import (
+    RefusalScan as _RefusalScan,
+)
+from msks.server.api.console import bridge_console
 from msks.settings import NetSettings, ServerSettings, Settings
 from test_api import TOKEN, StubMicrovm, auth
 

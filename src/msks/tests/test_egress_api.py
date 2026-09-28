@@ -8,8 +8,8 @@ import pytest
 from fastapi.testclient import TestClient
 from msks.app import build_app
 from msks.microvm import VmSpec
-from msks.server import api as api_mod
 from msks.server.api import build_api
+from msks.server.api import events as events_mod
 from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
 from test_api import TOKEN, StubMicrovm, auth
 
@@ -283,7 +283,7 @@ def test_events_decider_registration_and_frames(tmp_path: Path) -> None:
 
 
 def test_decider_loop_stops_on_disconnect(tmp_path: Path) -> None:
-    from msks.server.api import decider_loop
+    from msks.server.api.events import decider_loop
     from starlette.websockets import WebSocketDisconnect
 
     class Closing:
@@ -582,7 +582,7 @@ async def test_register_decider_lands_the_snapshot_directly(
             self.sent.append(payload)
 
     socket = RecordingSocket()
-    await api_mod.register_decider(
+    await events_mod.register_decider(
         app,
         socket,
         client_id=1,
@@ -594,7 +594,7 @@ async def test_register_decider_lands_the_snapshot_directly(
     # An unknown workspace is told so (one rejection frame) — never
     # registered.
     empty = RecordingSocket()
-    await api_mod.register_decider(
+    await events_mod.register_decider(
         app, empty, client_id=1, message={"workspace": "ghost"}
     )
     assert [f["event"] for f in empty.sent] == ["egress.decider_rejected"]
@@ -655,7 +655,7 @@ async def test_register_decider_replays_the_recorded_lifecycle(
             self.sent.append(payload)
 
     socket = RecordingSocket()
-    await api_mod.register_decider(
+    await events_mod.register_decider(
         app,
         socket,
         client_id=1,
@@ -692,9 +692,9 @@ def test_audit_epoch_converts_aware_timestamps() -> None:
     """audit_epoch reads naive UTC as UTC and converts a value that
     carries an offset — it never reinterprets an aware timestamp
     as UTC (#305 review)."""
-    naive = api_mod.audit_epoch("2026-09-24T10:00:00")
-    assert api_mod.audit_epoch("2026-09-24T12:00:00+02:00") == naive
-    assert api_mod.audit_epoch("2026-09-24T08:00:00-02:00") == naive
+    naive = events_mod.audit_epoch("2026-09-24T10:00:00")
+    assert events_mod.audit_epoch("2026-09-24T12:00:00+02:00") == naive
+    assert events_mod.audit_epoch("2026-09-24T08:00:00-02:00") == naive
 
 
 async def test_replay_logs_when_it_hits_its_row_limit(
@@ -743,7 +743,7 @@ async def test_replay_logs_when_it_hits_its_row_limit(
                 name=f"n{i}",
                 dests="[]",
             )
-            for i in range(api_mod.SECRET_REPLAY_LIMIT + 1)
+            for i in range(events_mod.SECRET_REPLAY_LIMIT + 1)
         )
         await session.commit()
 
@@ -754,20 +754,20 @@ async def test_replay_logs_when_it_hits_its_row_limit(
         async def send_json(self, payload) -> None:
             self.sent.append(payload)
 
-    with caplog.at_level(logging.INFO, logger="msks.server.api"):
+    with caplog.at_level(logging.INFO, logger="msks.server.api.events"):
         socket = RecordingSocket()
-        await api_mod.register_decider(
+        await events_mod.register_decider(
             app,
             socket,
             client_id=1,
             message={"workspace": "ws-many"},
         )
     frames = [f for f in socket.sent if f["event"].startswith("secret.")]
-    assert len(frames) == api_mod.SECRET_REPLAY_LIMIT
+    assert len(frames) == events_mod.SECRET_REPLAY_LIMIT
     # The newest SECRET_REPLAY_LIMIT rows, oldest first: the first
     # replayed row is the second row ever recorded.
     assert frames[0]["data"]["name"] == "n1"
-    assert frames[-1]["data"]["name"] == f"n{api_mod.SECRET_REPLAY_LIMIT}"
+    assert frames[-1]["data"]["name"] == f"n{events_mod.SECRET_REPLAY_LIMIT}"
     assert any("row limit" in record.message for record in caplog.records)
 
 
@@ -811,7 +811,7 @@ async def test_register_decider_survives_a_failed_audit_read(
             self.sent.append(payload)
 
     socket = RecordingSocket()
-    await api_mod.register_decider(
+    await events_mod.register_decider(
         app,
         socket,
         client_id=1,
@@ -858,7 +858,7 @@ async def test_register_decider_when_rules_read_fails(tmp_path: Path) -> None:
             self.sent.append(payload)
 
     socket = RecordingSocket()
-    await api_mod.register_decider(
+    await events_mod.register_decider(
         app, socket, client_id=1, message={"workspace": "ws-rr"}
     )
     assert socket.sent == []  # nothing held; rules skipped

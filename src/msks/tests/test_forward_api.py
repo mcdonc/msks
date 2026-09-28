@@ -11,15 +11,11 @@ from fastapi.testclient import TestClient
 from msks.app import build_app
 from msks.events import EventHub
 from msks.microvm import MicrovmError
-from msks.server import api as api_module
-from msks.server.api import (
-    bearer_token,
-    bridge_console,
-    build_api,
-    forward_allowed,
-    forward_port,
-    pump_streams,
-)
+from msks.server.api import build_api
+from msks.server.api.console import bridge_console
+from msks.server.api.deps import bearer_token
+from msks.server.api.forward import forward_allowed, forward_port
+from msks.server.api.streams import pump_streams
 from msks.settings import NetSettings, ServerSettings, Settings
 from test_api import TOKEN, StubMicrovm, auth
 from test_console_api import _SilentWriter, _StallSocket
@@ -380,7 +376,7 @@ def test_forward_refusal_from_the_policy_seam_closes_4403(
     def scoped(_app, _row, _port):
         return "token does not reach port 22"
 
-    monkeypatch.setattr(api_module, "forward_allowed", scoped)
+    monkeypatch.setattr("msks.server.api.forward.forward_allowed", scoped)
     with TestClient(api) as client:
         _make_workspace(client)
         with client.websocket_connect(

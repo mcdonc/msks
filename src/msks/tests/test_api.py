@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import json
+import secrets as secrets_mod
 from datetime import UTC
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from msks.microvm.errors import MicrovmError, MicrovmTimeoutError
 from msks.secretstore import new_sentinel
 from msks.server import api as api_mod
 from msks.server.api import build_api
+from msks.server.api.rows import healed_spec as healed_spec_row
 from msks.settings import (
     NetSettings,
     SecretStoreSettings,
@@ -335,7 +337,6 @@ async def test_minted_id_rerolls_past_live_collisions(
     the daemon (#246): a live workspace's id AND its name both block
     — ref resolution prefers the id, so a workspace named like
     another's id would be shadowed by it."""
-    from msks.server import api as api_module
 
     http, app, _stub = client
     await app.state.model.create_workspace(
@@ -346,9 +347,7 @@ async def test_minted_id_rerolls_past_live_collisions(
         name="cafe1234",
     )
     rolled = iter(("deadbeef01", "cafe1234", "0123abcd56"))
-    monkeypatch.setattr(
-        api_module.secrets, "token_hex", lambda _: next(rolled)
-    )
+    monkeypatch.setattr(secrets_mod, "token_hex", lambda _: next(rolled))
     created = await http.post(
         "/api/v1/workspaces",
         json={"name": "fresh", "kernel": "/k", "rootfs": "/r"},
@@ -2349,7 +2348,6 @@ async def test_a_resized_topology_boots(client) -> None:
 async def test_resize_names_a_vanished_volume(client, monkeypatch) -> None:
     """A volume that vanishes between the check and the move answers
     a named 503, not a bare 500."""
-    from msks.server import api as api_module
 
     http, app, _stub = client
     created = await http.post(
@@ -2369,7 +2367,7 @@ async def test_resize_names_a_vanished_volume(client, monkeypatch) -> None:
     async def vanish(target, home_mib, settings):
         raise FileNotFoundError(str(target))
 
-    monkeypatch.setattr(api_module, "volume_move", vanish)
+    monkeypatch.setattr("msks.server.api.volumes.volume_move", vanish)
     failed = await http.post(
         "/api/v1/workspaces/ws-van/resize",
         json={"home_mib": 128},
@@ -3445,7 +3443,7 @@ async def test_healed_spec_returns_a_token_carrying_row_untouched() -> None:
         "home_mib": 8,
         "llm_token": "msksllm1_present",
     }
-    healed = await api_mod.healed_spec(app, row)
+    healed = await healed_spec_row(app, row)
     assert healed.llm_token == "msksllm1_present"
     assert healed.name == "ws-x-name"
 

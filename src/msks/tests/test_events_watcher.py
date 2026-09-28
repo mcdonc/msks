@@ -12,7 +12,8 @@ from msks.app import build_app
 from msks.events import EventHub, close_all, relay
 from msks.microvm import MicrovmError, VmSpec
 from msks.server import watcher as watcher_mod
-from msks.server.api import build_api, decider_loop
+from msks.server.api import build_api
+from msks.server.api.events import decider_loop
 from msks.server.watcher import scan_once, scan_workspace, watch_loop
 from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
 from msks.spec.vm import VmInfo, VmStatus

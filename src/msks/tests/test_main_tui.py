@@ -37,7 +37,7 @@ from msks.client.tui.main_app import (
     edit_seeds,
     image_options,
 )
-from msks.server.api import HOME_FREE_STATUSES
+from msks.server.api.rows import HOME_FREE_STATUSES
 from rich.cells import cell_len
 from test_consent_overlay import FakeFactory, FakeWS, press_until, wait_for
 from test_consent_tui import frame

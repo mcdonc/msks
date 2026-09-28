@@ -130,16 +130,16 @@ model = 2
 app = 2
 config = 2
 events = 4
-identity = 5
-imagestore = 19
+identity = 8
+imagestore = 24
 llm = 2
-microvm = 2
-model = 5
+microvm = 10
+model = 7
 persist = 12
 secretstore = 5
 settings = 2
-spec = 19
-storage = 10
+spec = 22
+storage = 13
 
 [snapshot.settings]
 identity = 2
