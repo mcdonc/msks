@@ -16,6 +16,7 @@ import httpx
 import pytest
 from msks.app import build_app
 from msks.client import cli
+from msks.client.env import env_token, env_url
 from msks.server.api import build_api
 from msks.server.api.volumes import home_volume_lock
 from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
@@ -293,7 +294,7 @@ async def test_client_layer_round_trips(
     planted_volume(home_api, wid_ws_b["id"], b"blank" * 100)
     monkeypatch.setenv("MSKSC_URL", "https://daemon")
     monkeypatch.setenv("MSKSC_TOKEN", TOKEN)
-    url, token = cli.env_url(), cli.env_token()
+    url, token = env_url(), env_token()
     image = tmp_path / "vol.ext4"
     exported = await cli.run_home_export(
         url, token, "ws-a", str(image), home_api.transport
@@ -312,7 +313,7 @@ async def test_client_export_error_is_one_line(home_api, monkeypatch) -> None:
     monkeypatch.setenv("MSKSC_TOKEN", TOKEN)
     with pytest.raises(SystemExit, match="msks: 404: no such workspace"):
         await cli.run_home_export(
-            cli.env_url(), cli.env_token(), "ghost", "-", home_api.transport
+            env_url(), env_token(), "ghost", "-", home_api.transport
         )
 
 
@@ -326,8 +327,8 @@ async def test_client_import_refused_volume_is_one_line(
     bad.write_bytes(b"not-an-ext4" * 100)
     with pytest.raises(SystemExit, match="msks: 400: the request body is not"):
         await cli.run_home_import(
-            cli.env_url(),
-            cli.env_token(),
+            env_url(),
+            env_token(),
             "ws-ref",
             str(bad),
             home_api.transport,

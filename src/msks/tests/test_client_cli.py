@@ -23,7 +23,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from msks.app import build_app
-from msks.client import agent, cli, create, rest
+from msks.client import agent, cli, create, images, rest, workspaces
 from msks.identity import KEY_TYPES, mint
 from msks.server.api import build_api
 from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
@@ -213,9 +213,9 @@ def test_cmd_ls_rows_fit_the_values(
 
 def test_created_date_falls_back_to_dash() -> None:
     """#296: missing created_at renders as a dash."""
-    assert cli._created_date(None) == "-"
-    assert cli._created_date("") == "-"
-    assert cli._created_date("2026-05-14T12:00:00") == "2026-05-14"
+    assert cli.created_date(None) == "-"
+    assert cli.created_date("") == "-"
+    assert cli.created_date("2026-05-14T12:00:00") == "2026-05-14"
 
 
 def test_display_name_prefers_the_label() -> None:
@@ -1322,7 +1322,7 @@ def test_api_call_non_detail_json_falls_back_to_body() -> None:
     transport = mock(lambda req: httpx.Response(500, json={"nope": 1}))
     with pytest.raises(SystemExit, match="nope"):
         asyncio.run(
-            cli.api_call("GET", "https://d", "t", "/x", transport=transport)
+            rest.api_call("GET", "https://d", "t", "/x", transport=transport)
         )
 
 
@@ -1330,7 +1330,7 @@ def test_api_call_non_json_body_falls_back_to_text() -> None:
     transport = mock(lambda req: httpx.Response(503, text="boom"))
     with pytest.raises(SystemExit, match="boom"):
         asyncio.run(
-            cli.api_call("GET", "https://d", "t", "/x", transport=transport)
+            rest.api_call("GET", "https://d", "t", "/x", transport=transport)
         )
 
 
@@ -4395,7 +4395,7 @@ def test_cmd_image_check_routes_to_the_conformance_pass(
         def wait(self):
             return self.returncode
 
-    monkeypatch.setattr(cli.subprocess, "Popen", FakeProc)
+    monkeypatch.setattr(images.subprocess, "Popen", FakeProc)
     assert cli.cmd_image_check(CheckOptions(archive="x.tar")) == 7
     assert seen[0][1:] == [
         "-m",
@@ -4424,7 +4424,7 @@ def test_cmd_image_check_passes_the_full_surface(
         def wait(self):
             return self.returncode
 
-    monkeypatch.setattr(cli.subprocess, "Popen", FakeProc)
+    monkeypatch.setattr(images.subprocess, "Popen", FakeProc)
     cli.cmd_image_check(
         CheckOptions(
             archive="a.tar",
@@ -4587,8 +4587,8 @@ def test_create_with_start_builds_one_tls_context(
             return {"public_key": "k c", "private_key": None}
         return {"id": "ws1", "status": "created"}
 
-    monkeypatch.setattr(cli, "ssl_context", counting_context)
-    monkeypatch.setattr(cli, "request", fake_request)
+    monkeypatch.setattr(workspaces, "ssl_context", counting_context)
+    monkeypatch.setattr(rest, "request", fake_request)
     monkeypatch.setattr(create, "request", fake_request)
     rc = cli.cmd_create({"id": "ws1"}, start=True)
     assert rc == 0
@@ -4974,7 +4974,7 @@ def test_cmd_image_check_waits_out_the_childs_interrupt(
         installed.append(handler)
         return previous
 
-    monkeypatch.setattr(cli.signal, "signal", fake_signal)
+    monkeypatch.setattr(images.signal, "signal", fake_signal)
 
     waited: list[int] = []
 
@@ -4984,7 +4984,9 @@ def test_cmd_image_check_waits_out_the_childs_interrupt(
             waited.append(3)
             return 3
 
-    monkeypatch.setattr(cli.subprocess, "Popen", lambda argv, **kw: FakeProc())
+    monkeypatch.setattr(
+        images.subprocess, "Popen", lambda argv, **kw: FakeProc()
+    )
     with pytest.raises(KeyboardInterrupt):
         cli.cmd_image_check(CheckOptions(archive="x.tar"))
     # the note handler was installed and the previous one restored

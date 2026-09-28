@@ -38,6 +38,7 @@ from rich.markup import escape
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
+from textual.content import Content
 from textual.css.query import NoMatches
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Footer, ListItem, ListView, OptionList, Static
@@ -205,6 +206,49 @@ def ensure_focus(rows: ListView) -> None:
     a hold is always decidable from the keyboard."""
     if rows.index is None and rows.children:
         rows.index = 0
+
+
+def focused_attr(rows: ListView | None, attr: str):
+    """The focused row's ``attr`` value, or None when nothing is
+    focused (a None rows is a rebuild's swap window) — the tree's
+    listing rebuild rule, carried beside the consent queue's own
+    focus helpers."""
+    child = rows.highlighted_child if rows is not None else None
+    return getattr(child, attr, None) if child is not None else None
+
+
+def focus_attr(rows: ListView, attr: str, target) -> None:
+    """Highlight the row carrying ``target`` (the top when it left
+    or was never set) — positions come from a freshly-built list,
+    so every child under the index is real."""
+    for position, child in enumerate(rows.children):
+        if target is not None and getattr(child, attr, None) == target:
+            rows.index = position
+            return
+    ensure_focus(rows)
+
+
+class FlashLine:
+    """A message that owns a status line until its TTL lapses —
+    the consent app's flash, lifted one level (#309) so every
+    screen's status line shows it: the tree app's standing line
+    and the pushed pages' own lines."""
+
+    def __init__(self) -> None:
+        self.msg = ""
+        self.until = 0.0
+
+    def set(self, message: str) -> None:
+        """Give the status line to a message for FLASH_TTL
+        seconds."""
+        self.msg = message
+        self.until = time.time() + FLASH_TTL
+
+    def text(self, default: str | Content) -> str | Content:
+        """The flash while it lives, else ``default``."""
+        if self.until > time.time():
+            return self.msg
+        return default
 
 
 def focus_rule_by_id(rows: ListView, rule_id: str | None) -> None:

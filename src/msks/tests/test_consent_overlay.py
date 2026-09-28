@@ -16,13 +16,10 @@ import websockets
 from msks.client.tui import consent as consent_mod
 from msks.client.tui import consent_ui
 from msks.client.tui.consent_ui import OneFlight, RulesScreen
+from msks.client.tui.follow import TuiFollow
 from msks.client.tui.link import DeciderLink
-from msks.client.tui.main_app import (
-    ConsentOverlay,
-    MsksTuiApp,
-    TuiFollow,
-    WorkspaceScreen,
-)
+from msks.client.tui.main_app import MsksTuiApp
+from msks.client.tui.workspace import ConsentOverlay, WorkspaceScreen
 from test_consent_tui import (
     request_frame as shared_request_frame,
 )

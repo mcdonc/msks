@@ -24,7 +24,12 @@ entry_points = [
 
 # Re-export surfaces: modules whose re-exported names may be
 # imported from elsewhere. Each entry re-exports at least one name.
+# msks.client.context (#418): the command groups' connection
+# seam — the env readers bound beside the call shapes, so the
+# four groups import one module instead of pushing
+# msks.client.env past the fan-in ceiling.
 facades = [
+  "msks.client.context",
   "msks.client.tui.consent_ui",
   "msks.interceptor",
   "msks.microvm",
