@@ -701,7 +701,8 @@ class MsksTuiApp(App):
     WorkspaceForm { align: center middle; }
     #form { width: 64; height: auto; background: $panel;
             border: round $primary; padding: 1 2; }
-    #form-note { color: $text-muted; margin-bottom: 1; }
+    #form-note { color: $text-muted; margin-bottom: 1;
+                 text-wrap: nowrap; text-overflow: ellipsis; }
     .form-row { height: 1; margin-bottom: 1; }
     .form-label { width: 12; color: $text-muted; }
     .form-row Input, .form-row Select { width: 1fr; }
@@ -1286,9 +1287,9 @@ def sentinel_reach(row: dict) -> str:
     the reach from the string alone (the daemon's own rule,
     duplicated here per the client-isolation rule)."""
     sentinel = row.get("sentinel") or ""
-    if sentinel.startswith(WIDE_SENTINEL):
-        return "every accepting workspace"
-    return f"the chosen workspaces: {coverage_text(row)}"
+    if sentinel.startswith(SCOPED_SENTINEL):
+        return f"the chosen workspaces: {coverage_text(row)}"
+    return "every accepting workspace"
 
 
 def read_secret_file(path: str) -> tuple[str, str]:
@@ -1316,16 +1317,19 @@ def osc52_sequence(text: str) -> str:
     return f"\x1b]52;c;{payload}\x07"
 
 
-def osc52_copy(app, text: str) -> None:
+def osc52_copy(app, text: str) -> bool:
     """Write the copy sequence through the app's driver (#393):
     the sequence rides beside the frame the driver flushes — a
     terminal that ignores OSC 52 shows nothing and copies
-    nothing, and the sentinel stays on the panel."""
+    nothing, and the sentinel stays on the panel. Returns whether
+    the sequence left through a driver (a teardown race holds no
+    device to write through)."""
     driver = getattr(app, "_driver", None)
     if driver is None:  # a teardown race — nothing to write through
-        return
+        return False
     driver.write(osc52_sequence(text))
     driver.flush()
+    return True
 
 
 def minted_note(row: dict) -> str:
@@ -2011,6 +2015,13 @@ class MintScreen(FormWalk, ModalScreen[dict | None]):
         Binding("q", "cancel", show=False),
     ]
 
+    #: Whether the mint's exchange is in the air (#393): the
+    #: sentinel rides exactly one reply, so the flight owns the
+    #: form until it lands — a second submit or a cancel in the
+    #: air would drop the reply on a mint the daemon already took
+    #: (and the retry would find the name taken).
+    flighting = False
+
     def compose(self) -> ComposeResult:
         with Vertical(id="form"):
             yield Static(
@@ -2129,12 +2140,26 @@ class MintScreen(FormWalk, ModalScreen[dict | None]):
         if event.button.id == "do-mint":
             self.submit()
         else:
-            self.dismiss_with(None)
+            self.action_cancel()
+
+    def action_cancel(self) -> None:
+        """Cancel — never mid-flight (#393): the reply the daemon
+        already owes this form would land on a screen nobody is
+        reading, and the retry would find the name taken. The
+        flight lands first (it names its own refusal, or the
+        panel replaces the form)."""
+        if self.flighting:
+            return
+        self.dismiss_with(None)
 
     def submit(self) -> None:
         """The mint: the local checks first (a refusal keeps the
         fields), then the store check and the mint through the
-        data seam — one worker, one flight."""
+        data seam — one worker, one flight, and a submit while a
+        flight is in the air is a no-op (its reply is the one the
+        daemon already owes this form)."""
+        if self.flighting:
+            return
         self.run_worker(self.do_mint, exclusive=True)
 
     def note(self, text: str) -> None:
@@ -2184,7 +2209,7 @@ class MintScreen(FormWalk, ModalScreen[dict | None]):
         bad = refused_dest(dests)
         if bad is not None:
             self.note(
-                f"dest {bad}: an exact hostname or a "
+                f"dest {flash_safe(bad)}: an exact hostname or a "
                 "label-anchored suffix like .example.com"
             )
             return None
@@ -2220,14 +2245,24 @@ class MintScreen(FormWalk, ModalScreen[dict | None]):
         return secret
 
     async def do_mint(self) -> None:
-        """The exchange: the store check names a broken store
-        before a doomed mint runs; a refused mint names itself on
-        the note with the fields kept for a retry; a mint that
-        lands dismisses with its reply (#393 — the sentinel rides
-        the reply exactly once)."""
+        """The mint's flight: the local checks first (a refusal
+        keeps the fields and never takes off), then the exchange
+        with the flight owning the form until it lands."""
         body = self.body()
         if body is None:
             return
+        self.flighting = True
+        try:
+            await self.mint_flight(body)
+        finally:
+            self.flighting = False
+
+    async def mint_flight(self, body: dict) -> None:
+        """The exchange proper: the store check names a broken
+        store before a doomed mint runs; a refused mint names
+        itself on the note with the fields kept for a retry; a
+        mint that lands dismisses with its reply (#393 — the
+        sentinel rides the reply exactly once)."""
         self.note("checking the secret store…")
         try:
             await self.app.data.secret_check()
@@ -2241,9 +2276,6 @@ class MintScreen(FormWalk, ModalScreen[dict | None]):
             self.note(f"mint failed: {flash_safe(str(exc))}")
             return
         self.dismiss_with(row)
-
-    def action_cancel(self) -> None:
-        self.dismiss_with(None)
 
     def dismiss_with(self, row: dict | None) -> None:
         """Dismiss and hand the reply to the callback (async — the
@@ -2312,9 +2344,11 @@ class SentinelPanel(ModalScreen):
     def action_copy(self) -> None:
         """The OSC 52 copy (#393): the sequence rides the driver
         beside the frame; the note names what happened."""
-        osc52_copy(self.app, self.row.get("sentinel") or "")
+        copied = osc52_copy(self.app, self.row.get("sentinel") or "")
         self.query_one("#panel-note", Static).update(
             "copied to the clipboard — where the terminal honors OSC 52"
+            if copied
+            else "the copy did not land — the panel is closing"
         )
 
     def action_close(self) -> None:

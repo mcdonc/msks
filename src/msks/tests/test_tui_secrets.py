@@ -650,9 +650,12 @@ async def test_the_panel_copies_over_osc52(tmp_path, monkeypatch) -> None:
     secret_file.write_text("hunter2")
     data = FakeData([])
     copied: list[str] = []
-    monkeypatch.setattr(
-        main_app, "osc52_copy", lambda app, text: copied.append(text)
-    )
+
+    def record_copy(app, text) -> bool:
+        copied.append(text)
+        return True
+
+    monkeypatch.setattr(main_app, "osc52_copy", record_copy)
     app, _follow = make_app(data)
     async with app.run_test() as pilot:
         await open_secrets(pilot, app)
@@ -665,6 +668,10 @@ async def test_the_panel_copies_over_osc52(tmp_path, monkeypatch) -> None:
         assert copied == [sentinel]
         assert "copied to the clipboard" in panel_text(app)
         assert "OSC 52" in panel_text(app)
+        # A copy with no driver to write through names that.
+        monkeypatch.setattr(main_app, "osc52_copy", lambda app, text: False)
+        await pilot.press("c")
+        assert "the copy did not land" in panel_text(app)
 
 
 async def test_local_refusals_keep_the_body_home(tmp_path) -> None:
@@ -753,6 +760,19 @@ async def test_the_form_fits_the_small_terminal(tmp_path) -> None:
         buttons = form.query_one("#form-buttons")
         assert buttons.region.bottom < 24
         assert form.query_one("Footer").region.y == 23
+        # The refusal path fits too: a note echoing a long path
+        # clips at one row instead of pushing the form off-screen.
+        form.query_one("#field-coverage", Select).value = "daemon-wide"
+        await pilot.pause()
+        form.query_one("#field-name", Input).value = "github_api"
+        form.query_one("#field-dests", Input).value = "api.github.com"
+        form.query_one("#field-path", Input).value = str(
+            tmp_path / ("nope" + "x" * 120)
+        )
+        form.submit()
+        await wait_for(lambda: "cannot read" in mint_note(app))
+        assert form.query_one("#form").outer_size.height <= 23
+        assert buttons.region.bottom < 24
 
 
 async def test_the_arrows_walk_the_form_and_leave_the_picker_at_its_edges(
@@ -1259,8 +1279,82 @@ def test_osc52_copy_writes_through_the_driver() -> None:
     driver = SimpleNamespace(write=written.append, flush=lambda: None)
     osc52_copy(SimpleNamespace(_driver=driver), "hunter2")
     assert written == [osc52_sequence("hunter2")]
-    osc52_copy(SimpleNamespace(), "hunter2")
+    assert osc52_copy(SimpleNamespace(), "hunter2") is False
     assert len(written) == 1
+
+
+async def test_a_junk_dest_carrying_markup_refuses_without_crashing(
+    tmp_path,
+) -> None:
+    """A pasted fragment with a stray closing tag is operator
+    input echoed on a markup-parsing line (#393): the refusal
+    names it escaped, and the app stands."""
+    secret_file = tmp_path / "token"
+    secret_file.write_text("hunter2")
+    data = FakeData([])
+    app, _follow = make_app(data)
+    async with app.run_test() as pilot:
+        await open_secrets(pilot, app)
+        form = await open_mint(pilot, app)
+        fill_mint(form, secret_file)
+        form.query_one("#field-dests", Input).value = "api.github.com,x[/y"
+        form.submit()
+        await pilot.pause()
+        await wait_for(lambda: "an exact hostname" in mint_note(app))
+        assert on_mint(app)
+        assert app._exception is None  # the echo raised nowhere
+        assert data.secret_calls == []
+
+
+async def test_the_flight_owns_the_form_until_its_reply_lands(
+    tmp_path,
+) -> None:
+    """The sentinel rides exactly one reply (#393): a second
+    submit or a cancel while the exchange is in the air decides
+    nothing, and the reply still reaches its panel."""
+    import asyncio
+
+    secret_file = tmp_path / "token"
+    secret_file.write_text("hunter2")
+    data = FakeData([])
+    data.mint_gate = asyncio.Event()
+    app, _follow = make_app(data)
+    async with app.run_test() as pilot:
+        await open_secrets(pilot, app)
+        form = await open_mint(pilot, app)
+        fill_mint(form, secret_file)
+        form.submit()
+        await wait_for(lambda: "minting" in mint_note(app))
+        form.submit()  # a second Mint press mid-flight
+        await pilot.press("escape")  # a cancel mid-flight
+        await pilot.pause()
+        assert on_mint(app)  # the flight keeps the form standing
+        assert len(data.secret_calls) == 1
+        data.mint_gate.set()
+        await wait_for(lambda: on_panel(app))
+        assert "mskssec2_" in panel_text(app)
+
+
+async def test_the_keyboard_path_picks_the_scoped_coverage(
+    tmp_path,
+) -> None:
+    """The coverage select's own keyboard leg (#393): Enter opens
+    the list, the arrows move it, Enter picks — the operator's
+    path, not the programmatic set."""
+    data = FakeData([row(), row(id="ws-b", name="beta")])
+    app, _follow = make_app(data)
+    async with app.run_test() as pilot:
+        await open_secrets(pilot, app, workspaces=2)
+        form = await open_mint(pilot, app)
+        picker = form.query_one("#field-workspaces", WorkspacePicker)
+        await wait_for(lambda: picker.option_count == 2)
+        form.query_one("#field-coverage", Select).focus()
+        await pilot.pause()
+        await pilot.press("enter")  # open the list
+        await pilot.press("down")  # the scoped choice
+        await pilot.press("enter")  # pick it
+        await wait_for(lambda: form.query_one("#workspaces-row").display)
+        assert form.query_one("#field-coverage", Select).value == "scoped"
 
 
 async def test_a_refused_workspace_listing_names_itself_on_the_form() -> None:

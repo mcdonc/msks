@@ -120,10 +120,13 @@ class FakeData:
         self.audit_rows: list[dict] = []
         self.secret_calls: list[tuple] = []
         # The mint form's surface (#393): the scripted refusal a
-        # failed mint raises (the daemon's own one-line shape).
+        # failed mint raises (the daemon's own one-line shape), and
+        # the gate a test holds a mint mid-flight on (the flight
+        # guard's seam — None mints straight through).
         self.mint_refusal = (
             "msks: 409: * already has a placeholder named github_api"
         )
+        self.mint_gate: object | None = None
         # The resize reply's omitted fields (#331): a daemon older
         # than a field answers without it, and the page keeps its
         # row's own value.
@@ -279,6 +282,8 @@ class FakeData:
         the reply carries the sentinel exactly once and the row
         lands on the page's listing without it."""
         self.secret_calls.append(("mint", dict(body)))
+        if self.mint_gate is not None:
+            await self.mint_gate.wait()
         if "mint" in self.fail:
             raise RuntimeError(self.mint_refusal)
         sentinel = (
