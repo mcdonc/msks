@@ -12,9 +12,11 @@ import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
-from msks.client.tui import main_app
+from msks.client.tui import main_screen as main_screen_mod
+from msks.client.tui import rows as rows_mod
+from msks.client.tui import secrets as secrets_mod
 from msks.client.tui.link import AuditLink
-from msks.client.tui.main_app import (
+from msks.client.tui.secrets import (
     SECRET_TTLS,
     MintScreen,
     SecretAuditScreen,
@@ -104,7 +106,7 @@ def branch_row(app):
         (
             child
             for child in rows.children
-            if getattr(child, "branch", None) == main_app.BRANCH_SECRETS
+            if getattr(child, "branch", None) == main_screen_mod.BRANCH_SECRETS
         ),
         None,
     )
@@ -262,7 +264,7 @@ async def test_the_branch_holds_focus_through_a_refresh(
         # The branch row keeps the focus across the resume refresh.
         rows = app.query_one("#rows")
         assert getattr(rows.highlighted_child, "branch", None) == (
-            main_app.BRANCH_SECRETS
+            main_screen_mod.BRANCH_SECRETS
         )
 
 
@@ -275,7 +277,8 @@ async def test_the_page_lists_rows_with_the_live_countdown(
     """Every row shows coverage, name, destinations, the TTL, and
     the created label; the TTL repaints as the clock moves (#390)."""
     now = {"at": datetime(2030, 6, 1, 12, 0, 0, tzinfo=UTC)}
-    monkeypatch.setattr(main_app, "clock_now", lambda: now["at"])
+    monkeypatch.setattr(rows_mod, "clock_now", lambda: now["at"])
+    monkeypatch.setattr(secrets_mod, "clock_now", lambda: now["at"])
     data = FakeData([])
     data.secret_rows = [
         secret_row(id=1, expires_at="2030-06-01T12:59:00"),
@@ -655,7 +658,7 @@ async def test_the_panel_copies_over_osc52(tmp_path, monkeypatch) -> None:
         copied.append(text)
         return True
 
-    monkeypatch.setattr(main_app, "osc52_copy", record_copy)
+    monkeypatch.setattr(secrets_mod, "osc52_copy", record_copy)
     app, _follow = make_app(data)
     async with app.run_test() as pilot:
         await open_secrets(pilot, app)
@@ -669,7 +672,7 @@ async def test_the_panel_copies_over_osc52(tmp_path, monkeypatch) -> None:
         assert "copied to the clipboard" in panel_text(app)
         assert "OSC 52" in panel_text(app)
         # A copy with no driver to write through names that.
-        monkeypatch.setattr(main_app, "osc52_copy", lambda app, text: False)
+        monkeypatch.setattr(secrets_mod, "osc52_copy", lambda app, text: False)
         await pilot.press("c")
         assert "the copy did not land" in panel_text(app)
         assert "no terminal to write through" in panel_text(app)

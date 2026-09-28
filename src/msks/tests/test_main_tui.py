@@ -20,22 +20,34 @@ import pytest
 import websockets
 from msks.client import cli
 from msks.client.tui import data as data_mod
+from msks.client.tui import follow as follow_mod
+from msks.client.tui import forms as forms_mod
 from msks.client.tui import link as link_mod
 from msks.client.tui import main_app
+from msks.client.tui import main_screen as main_screen_mod
+from msks.client.tui import rows as rows_mod
+from msks.client.tui import workspace as page_mod
 from msks.client.tui.consent import ConsentController
-from msks.client.tui.link import DeciderLink
-from msks.client.tui.main_app import (
+from msks.client.tui.consent_ui import FlashLine
+from msks.client.tui.follow import FLOW_SHELL, TuiFollow, run_follow_up
+from msks.client.tui.forms import (
     EDIT_FREE_STATUSES,
-    FLOW_SHELL,
-    PAGE_ACTIONS,
     EditScreen,
-    MainScreen,
-    MsksTuiApp,
-    TuiFollow,
     WorkspaceForm,
-    WorkspaceScreen,
     edit_seeds,
     image_options,
+)
+from msks.client.tui.link import DeciderLink
+from msks.client.tui.main_app import (
+    MainScreen,
+    MsksTuiApp,
+)
+from msks.client.tui.workspace import (
+    PAGE_ACTIONS,
+    WorkspaceScreen,
+    action_content,
+    consent_line,
+    granted_line,
 )
 from msks.server.api.rows import HOME_FREE_STATUSES
 from rich.cells import cell_len
@@ -318,7 +330,7 @@ def scripted_link(monkeypatch, frames: list[str]) -> FakeFactory:
     connection carries the frames; later ones stay quiet)."""
     factory = FakeFactory([FakeWS(frames), FakeWS([])])
     monkeypatch.setattr(
-        main_app,
+        page_mod,
         "DeciderLink",
         lambda ws_id: DeciderLink(
             ws_id, ws_factory=factory, reconnect_delays=(0.01, 0.01, 0.01)
@@ -419,7 +431,7 @@ def on_page(app) -> bool:
 
 
 def on_overlay(app) -> bool:
-    from msks.client.tui.main_app import ConsentOverlay
+    from msks.client.tui.workspace import ConsentOverlay
 
     return isinstance(app.screen, ConsentOverlay)
 
@@ -764,7 +776,7 @@ async def test_the_size_and_user_placeholders_carry_the_defaults(
     """The root/home placeholders name the daemon's MiB defaults,
     and the user placeholder names the invoking account — a
     blank field's landing spot reads off the form itself."""
-    monkeypatch.setattr(main_app, "invoking_user", lambda: "ops")
+    monkeypatch.setattr(forms_mod, "invoking_user", lambda: "ops")
     data = FakeData([])
     data.defaults = {"root_mib": 5120, "home_mib": 1024}
     app, _ = make_app(data)
@@ -860,7 +872,7 @@ async def test_the_header_splits_the_name_from_the_metadata(
         header = app.screen.query_one("#header", Static)
         (span,) = header.content.spans
         assert header.content.plain[span.start : span.end] == "stopped"
-        assert span.style == main_app.muted_style(app.theme_variables)
+        assert span.style == rows_mod.muted_style(app.theme_variables)
         # The meta line renders dimmer than the name line's default
         # foreground — muted beside prominent, both on the panel —
         # with its `·` separators carrying the muted span treatment
@@ -1474,7 +1486,7 @@ def test_the_ssh_child_argv_spawns_this_client() -> None:
     resized, and the console sizes its guest pty once, at connect.
     The child reaches the same daemon through the environment the
     tree's bootstrap materialized."""
-    assert main_app.ssh_child_argv("w1") == [
+    assert follow_mod.ssh_child_argv("w1") == [
         sys.executable,
         "-m",
         "msks.client.cli",
@@ -1486,7 +1498,7 @@ def test_the_ssh_child_argv_spawns_this_client() -> None:
 async def test_spawn_window_detaches_quietly() -> None:
     """The spawn runs detached with its stdio on devnull: the
     window borrows no terminal the tree holds."""
-    proc = await main_app.spawn_window([sys.executable, "-c", "pass"])
+    proc = await follow_mod.spawn_window([sys.executable, "-c", "pass"])
     assert await asyncio.wait_for(proc.wait(), 10) == 0
 
 
@@ -1508,7 +1520,7 @@ async def test_the_new_terminal_action_spawns_an_ssh_child(
 
         return SimpleNamespace(wait=closed)
 
-    monkeypatch.setattr(main_app, "spawn_window", record)
+    monkeypatch.setattr(follow_mod, "spawn_window", record)
     data = FakeData([row()])
     conf = SimpleNamespace(terminal_open_cmd=["kitty", "-e"])
     app = MsksTuiApp(TuiFollow(), data=data, conf=conf)
@@ -1551,7 +1563,7 @@ async def test_a_dead_launcher_falls_back_to_this_terminal(
     async def refused(argv):
         raise FileNotFoundError("xterm")
 
-    monkeypatch.setattr(main_app, "spawn_window", refused)
+    monkeypatch.setattr(follow_mod, "spawn_window", refused)
     data = FakeData([row()])
     follow = TuiFollow()
     app = MsksTuiApp(follow, data=data)
@@ -1607,7 +1619,7 @@ def test_run_main_tui_chains_the_flows(monkeypatch) -> None:
 
     monkeypatch.setattr(main_app, "MsksTuiApp", FakeApp)
     monkeypatch.setattr(
-        main_app,
+        follow_mod,
         "FLOWS",
         {
             FLOW_SHELL: lambda ws: flows.append(("shell", ws)),
@@ -1994,42 +2006,45 @@ def pinned_clock(monkeypatch, when: str = "2026-01-04T12:00:00") -> None:
     """Pin the relative labels' clock (#350): the fixture row's
     stamp (Jan 2) reads ``2d ago`` under the pinned date."""
     monkeypatch.setattr(
-        main_app, "clock_now", lambda: datetime.fromisoformat(when)
+        rows_mod, "clock_now", lambda: datetime.fromisoformat(when)
     )
 
 
 def test_the_line_helpers() -> None:
-    assert main_app.workspace_label(row()) == "alpha"
-    assert main_app.workspace_label(row(name=None)) == WS
-    listing = main_app.row_content(row())
+    assert rows_mod.workspace_label(row()) == "alpha"
+    assert rows_mod.workspace_label(row(name=None)) == WS
+    listing = rows_mod.row_content(row())
     assert "alpha" in listing.plain
     assert "stopped" in listing.plain
     assert "interactive" in listing.plain
     # The header's name line (#351): the name in the default
     # foreground, the status beside it carrying the status color.
-    name = main_app.header_name(row())
+    name = rows_mod.header_name(row())
     assert "alpha" in name.plain
     (span,) = name.spans
     assert name.plain[span.start : span.end] == "stopped"
-    assert span.style == main_app.muted_style({})
+    assert span.style == rows_mod.muted_style({})
     assert "egress to decide" not in name.plain
-    assert "egress to decide: 2" in main_app.header_name(row(), 2).plain
+    assert "egress to decide: 2" in rows_mod.header_name(row(), 2).plain
     # A wide-character name keeps the span on the status: the
     # offsets are codepoints, like the listing's span.
-    wide = main_app.header_name(row(name="北" * 16))
+    wide = rows_mod.header_name(row(name="北" * 16))
     (wide_span,) = wide.spans
     assert wide.plain[wide_span.start : wide_span.end] == "stopped"
     # The meta line: the id, the image hash, the host, the date,
     # with its separators carrying the muted span treatment
     # (#366) — the same ride the name line gives the status.
-    meta = main_app.header_meta(row())
+    meta = rows_mod.header_meta(row())
     plain = meta.plain
     assert WS in plain and "host-1" in plain and "2026-01-02" in plain
     assert f"image {'a' * 12}" in plain
     assert [plain[s.start : s.end] for s in meta.spans] == ["·", "·", "·"]
-    assert all(span.style == main_app.muted_style({}) for span in meta.spans)
-    assert main_app.created_note(row(id="x"), None) == "created alpha (id x)"
-    assert "identity" in main_app.created_note(row(id="x"), "/tmp/id")
+    assert all(span.style == rows_mod.muted_style({}) for span in meta.spans)
+    assert (
+        main_screen_mod.created_note(row(id="x"), None)
+        == "created alpha (id x)"
+    )
+    assert "identity" in main_screen_mod.created_note(row(id="x"), "/tmp/id")
 
 
 def test_the_listing_columns_line_up(monkeypatch) -> None:
@@ -2042,13 +2057,13 @@ def test_the_listing_columns_line_up(monkeypatch) -> None:
     status and egress cells clip to their columns too, so a
     vocabulary the daemon grows cannot misalign a row."""
     pinned_clock(monkeypatch)  # the created cell reads "2d ago"
-    short = main_app.row_content(row(name="ab")).plain
-    long_name = main_app.row_content(row(name="n" * 40)).plain
-    wide = main_app.row_content(row(name="北" * 16)).plain
-    long_status = main_app.row_content(
+    short = rows_mod.row_content(row(name="ab")).plain
+    long_name = rows_mod.row_content(row(name="n" * 40)).plain
+    wide = rows_mod.row_content(row(name="北" * 16)).plain
+    long_status = rows_mod.row_content(
         row(name="ab", status="provisioning")
     ).plain
-    header = main_app.list_header()
+    header = rows_mod.list_header()
     for label, cell in (
         ("STATUS", "stopped"),
         ("EGRESS", "interactive"),
@@ -2076,7 +2091,7 @@ def test_the_listing_columns_line_up(monkeypatch) -> None:
     # whole (a clip's head call can never exhaust it — the guard
     # saw the full text wider than the column — so it is pinned
     # here directly).
-    assert main_app.cell_prefix("北a", 3) == "北a"
+    assert rows_mod.cell_prefix("北a", 3) == "北a"
 
 
 def test_the_created_column_buckets_by_the_pinned_rule() -> None:
@@ -2090,7 +2105,7 @@ def test_the_created_column_buckets_by_the_pinned_rule() -> None:
     yesterday. A clock that trails its stamp (skew) stays at
     today, and a stamp that is missing or unparseable reads
     ``-``."""
-    label = main_app.created_label
+    label = rows_mod.created_label
     now = datetime(2026, 6, 15, 12, 0, 0, tzinfo=UTC)
     assert label(None) == "-"
     assert label("") == "-"
@@ -2214,7 +2229,7 @@ async def test_a_long_daemon_url_keeps_the_status_bar_one_line(
     row at 80 columns — the URL is a hint, not data."""
     long_url = "https://msks-daemon.really-long-hostname.example.internal:8660"
     monkeypatch.setenv("MSKSC_URL", long_url)
-    content = main_app.status_content(2, long_url)
+    content = rows_mod.status_content(2, long_url)
     assert "…" in content.plain and "8660" in content.plain
     assert cell_len(content.plain) <= 78
     scripted_link(monkeypatch, [])
@@ -2339,7 +2354,7 @@ async def test_a_scrolling_list_keeps_the_created_label(
     # 2), so the created cell reads "yesterday" — the widest
     # label the pinned rule renders.
     monkeypatch.setattr(
-        main_app,
+        rows_mod,
         "clock_now",
         lambda: datetime.fromisoformat("2026-01-03T12:00:00"),
     )
@@ -2428,7 +2443,7 @@ async def test_the_status_column_carries_its_states_color(
                 and "-highlight" not in workspace_rows[0].classes
             )
         )
-        muted = main_app.muted_style(app.theme_variables)
+        muted = rows_mod.muted_style(app.theme_variables)
         for item, name, style, status in zip(
             workspace_rows,
             ("alpha", "gamma", "beta"),
@@ -2487,17 +2502,17 @@ def test_a_status_outside_the_map_still_names_itself() -> None:
     names the row ``other`` (Textual's class names are ASCII — a
     wider word would raise, so the guard hands it the bucket
     class instead)."""
-    assert main_app.status_color("paused") == "$warning"
-    assert main_app.status_color("running") == "$success"
+    assert rows_mod.status_color("paused") == "$warning"
+    assert rows_mod.status_color("running") == "$success"
     assert (
-        main_app.status_color("stopped", {"text-muted": "auto 40%"})
+        rows_mod.status_color("stopped", {"text-muted": "auto 40%"})
         == "$text 40%"
     )
-    assert main_app.status_class("paused") == "paused"
-    assert main_app.status_class("not running") == "other"
-    assert main_app.status_class("") == "other"
-    assert main_app.status_class("статус") == "other"
-    assert main_app.status_class("状態") == "other"
+    assert rows_mod.status_class("paused") == "paused"
+    assert rows_mod.status_class("not running") == "other"
+    assert rows_mod.status_class("") == "other"
+    assert rows_mod.status_class("статус") == "other"
+    assert rows_mod.status_class("状態") == "other"
 
 
 def test_the_muted_style_rides_the_theme_ratio() -> None:
@@ -2505,14 +2520,14 @@ def test_the_muted_style_rides_the_theme_ratio() -> None:
     the theme's own muted ratio, and falls back to the 60%
     Textual's own themes use when a theme spells its muted color
     without a ratio."""
-    assert main_app.muted_style({"text-muted": "auto 60%"}) == "$text 60%"
-    assert main_app.muted_style({"text-muted": "auto 40%"}) == "$text 40%"
-    assert main_app.muted_style({"text-muted": "#888888"}) == "$text 60%"
-    assert main_app.muted_style({}) == "$text 60%"
+    assert rows_mod.muted_style({"text-muted": "auto 60%"}) == "$text 60%"
+    assert rows_mod.muted_style({"text-muted": "auto 40%"}) == "$text 40%"
+    assert rows_mod.muted_style({"text-muted": "#888888"}) == "$text 60%"
+    assert rows_mod.muted_style({}) == "$text 60%"
 
 
 def test_the_flash_line_expires() -> None:
-    flash = main_app.FlashLine()
+    flash = FlashLine()
     assert flash.text("default") == "default"
     flash.set("held")
     assert flash.text("default") == "held"
@@ -2587,7 +2602,7 @@ def test_the_consent_line_names_a_rejection() -> None:
     link = DeciderLink(WS)
     link.state = link_mod.REJECTED
     link.reject_reason = "unknown workspace"
-    assert "unknown workspace" in main_app.consent_line(link, row())
+    assert "unknown workspace" in consent_line(link, row())
 
 
 def test_the_consent_line_names_an_unusable_token() -> None:
@@ -2597,7 +2612,7 @@ def test_the_consent_line_names_an_unusable_token() -> None:
     link = DeciderLink(WS)
     link.state = link_mod.UNUSABLE_TOKEN
     link.reject_reason = "the token cannot ride the websocket handshake"
-    assert "cannot ride" in main_app.consent_line(link, row())
+    assert "cannot ride" in consent_line(link, row())
 
 
 def grant_row(
@@ -2647,9 +2662,9 @@ def test_the_consent_line_counts_a_stack_of_grants() -> None:
     stack with no countdown at all carries the count alone, and
     nothing in effect stays the honest absence."""
     controller = pinned_controller([])
-    assert main_app.granted_line(controller) == "no active consent"
+    assert granted_line(controller) == "no active consent"
     controller = pinned_controller([grant_stack([grant_row("api.example")])])
-    assert main_app.granted_line(controller) == "api.example:443 (3m left)"
+    assert granted_line(controller) == "api.example:443 (3m left)"
     controller = pinned_controller(
         [
             grant_stack(
@@ -2661,7 +2676,7 @@ def test_the_consent_line_counts_a_stack_of_grants() -> None:
             )
         ]
     )
-    assert main_app.granted_line(controller) == "3 grants · next expires 3m"
+    assert granted_line(controller) == "3 grants · next expires 3m"
     controller = pinned_controller(
         [
             grant_stack(
@@ -2672,16 +2687,16 @@ def test_the_consent_line_counts_a_stack_of_grants() -> None:
             )
         ]
     )
-    assert main_app.granted_line(controller) == "2 grants"
+    assert granted_line(controller) == "2 grants"
 
 
 def test_the_default_flow_runners(monkeypatch) -> None:
     ran: list[tuple] = []
 
     monkeypatch.setattr(
-        main_app, "run_workspace_shell", lambda ws: ran.append(("shell", ws))
+        follow_mod, "run_workspace_shell", lambda ws: ran.append(("shell", ws))
     )
-    main_app.run_follow_up((FLOW_SHELL, "w2"))
+    run_follow_up((FLOW_SHELL, "w2"))
     assert ran == [("shell", "w2")]
 
 
@@ -2778,7 +2793,7 @@ async def test_the_headers_count_follows_the_queue(monkeypatch) -> None:
     ws = FakeWS([rules_frame()])
     factory = FakeFactory([ws, FakeWS([])])
     monkeypatch.setattr(
-        main_app,
+        page_mod,
         "DeciderLink",
         lambda ws_id: DeciderLink(
             ws_id, ws_factory=factory, reconnect_delays=(0.01, 0.01)
@@ -3099,19 +3114,15 @@ def test_action_rows_paint_two_tones() -> None:
     """#367: the name stands in the default foreground (bold on
     the shell row), the description rides muted, and a dimmed
     power row mutes the whole row behind its reason."""
-    muted = main_app.muted_style({})
-    shell = main_app.action_content(
-        PAGE_ACTIONS[0], "stopped", {}, focused=True
-    )
+    muted = rows_mod.muted_style({})
+    shell = action_content(PAGE_ACTIONS[0], "stopped", {}, focused=True)
     assert str(shell).startswith("▸ Open a shell — in a new terminal")
     assert Span(2, 14, "$text bold") in shell.spans
     assert Span(17, 34, muted) in shell.spans
-    mode = main_app.action_content(
-        PAGE_ACTIONS[2], "running", {}, focused=False
-    )
+    mode = action_content(PAGE_ACTIONS[2], "running", {}, focused=False)
     assert str(mode).startswith("  Switch the egress mode")
     assert mode.spans == []
-    stop = main_app.action_content(PAGE_ACTIONS[5], "stopped", {}, False)
+    stop = action_content(PAGE_ACTIONS[5], "stopped", {}, False)
     assert str(stop).startswith("  Stop — workspace is stopped")
     assert Span(2, 6, muted) in stop.spans
     assert Span(9, 29, muted) in stop.spans
@@ -3152,7 +3163,7 @@ async def test_a_removal_under_an_open_overlay_waits_for_it(
     ws = FakeWS([rules_frame()])
     factory = FakeFactory([ws, FakeWS([])])
     monkeypatch.setattr(
-        main_app,
+        page_mod,
         "DeciderLink",
         lambda ws_id: DeciderLink(
             ws_id, ws_factory=factory, reconnect_delays=(0.01, 0.01, 0.01)
@@ -3236,20 +3247,20 @@ async def test_the_consent_line_names_a_drop_after_rules() -> None:
     link = DeciderLink(WS)
     link.controller.apply_frame(rules_frame())
     link.state = link_mod.RECONNECTING
-    line = main_app.consent_line(link, row())
+    line = consent_line(link, row())
     assert "mode interactive" in line
     assert "api.example:443" in line
     assert "reconnecting" in line
     link.state = link_mod.CONNECTED
-    assert "connected" not in main_app.consent_line(link, row())
+    assert "connected" not in consent_line(link, row())
 
 
 def test_whole_number_refuses_unicode_digits() -> None:
     """A pasted ④ passes isdigit but crashes int — the local check
     refuses what the conversion cannot take."""
-    assert main_app.whole_number("4096")
-    assert not main_app.whole_number("④")
-    assert not main_app.whole_number("-1")
+    assert forms_mod.whole_number("4096")
+    assert not forms_mod.whole_number("④")
+    assert not forms_mod.whole_number("-1")
 
 
 def test_a_refused_flow_returns_to_the_tree(monkeypatch) -> None:
@@ -3271,7 +3282,7 @@ def test_a_refused_flow_returns_to_the_tree(monkeypatch) -> None:
         raise SystemExit("msks: cannot reach the daemon")
 
     monkeypatch.setattr(main_app, "MsksTuiApp", FakeApp)
-    monkeypatch.setattr(main_app, "FLOWS", {FLOW_SHELL: refused})
+    monkeypatch.setattr(follow_mod, "FLOWS", {FLOW_SHELL: refused})
     assert main_app.run_main_tui(data=object()) == 0
     assert len(runs) == 2  # the tree restarted after the refusal
 
@@ -3318,7 +3329,7 @@ def test_a_refused_flow_seeds_the_restarted_tree(monkeypatch) -> None:
         raise SystemExit("msks: cannot reach the daemon")
 
     monkeypatch.setattr(main_app, "MsksTuiApp", FakeApp)
-    monkeypatch.setattr(main_app, "FLOWS", {FLOW_SHELL: refused})
+    monkeypatch.setattr(follow_mod, "FLOWS", {FLOW_SHELL: refused})
     assert main_app.run_main_tui(data=object()) == 0
     assert runs == [None, "msks: cannot reach the daemon"]
 
