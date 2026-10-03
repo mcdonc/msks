@@ -62,6 +62,12 @@ from test_smoke.egress.test_daemon_e2e import (
 #: not seconds, the same class the fold e2e budgets for.
 NIX_PROBE_TIMEOUT_S = float(os.environ.get("TEST_NIX_PROBE_TIMEOUT_S", "480"))
 
+#: The window a session's shell has to answer its liveness ping
+#: (#75): a fresh session on a loaded guest reaches its first
+#: prompt in seconds-to-tens-of-seconds, and a session still
+#: silent past this is a wedge, not a slow shell.
+LIVENESS_WINDOW_S = float(os.environ.get("TEST_LIVENESS_WINDOW_S", "90"))
+
 NIXOS_ARCHIVES = sorted(GUEST_DIR.glob("workspace-nixos-*.tar"))
 
 
@@ -81,14 +87,18 @@ async def console_exec_as(
     per-call budget (a nix command is minutes of guest work, not the
     console's own interactivity window).
 
-    Connection-level hiccups retry on a fresh session; a chunk
-    that stays silent past its own 15 s window only keeps the
-    per-call budget ticking (a nix command with every byte
-    redirected is silent for minutes, and re-running it from a
-    fresh session would both burn the attempt and duplicate its
-    side effects) — a marker the budget outlives fails the probe
-    with the session's tail, and the command's own redirected
-    output rides a follow-up probe.
+    Connection-level hiccups and wedged sessions retry on a fresh
+    one. The wedge (#75) needs its own probe: the pty's line
+    discipline echoes the sent command even when the shell behind
+    it never starts, so the echo proves nothing — each attempt
+    first sends a guest-computed liveness ping whose output only a
+    reading shell can produce, and silence past that window is a
+    dead session retried fresh, not a working command waited on.
+    Once the ping answers, the real command runs with every byte
+    redirected — silence for minutes is the command working, and
+    the per-call budget (not any chunk window) bounds the wait;
+    its end fails the probe with the session's tail, and the
+    command's own redirected output rides a follow-up probe.
     """
     address = ws_url(url, workspace_id, user=user)
     for _ in range(CONSOLE_ATTEMPTS):
@@ -105,9 +115,30 @@ async def console_exec_as(
                 buf = lead.encode() if isinstance(lead, str) else bytes(lead)
                 if marker in buf:
                     return
+                # The liveness ping: a reading shell answers a
+                # builtin instantly, however loaded the guest is —
+                # and the echoed command text cannot contain the
+                # evaluated marker, so the match is the shell's
+                # own output.
+                ping = b"ALIVE-" + str(6 * 7).encode()
+                await ws.send(b"echo ALIVE-$((6*7))\n")
+                loop = asyncio.get_running_loop()
+                ping_deadline = loop.time() + LIVENESS_WINDOW_S
+                while loop.time() < ping_deadline:
+                    try:
+                        chunk = await asyncio.wait_for(ws.recv(), 15)
+                    except TimeoutError:
+                        continue
+                    if isinstance(chunk, str):
+                        chunk = chunk.encode()
+                    buf += chunk
+                    if ping in buf:
+                        break
+                else:
+                    continue  # a wedged session: a fresh one retries
                 await ws.send(command.encode() + b"\n")
-                deadline = asyncio.get_running_loop().time() + timeout_s
-                while asyncio.get_running_loop().time() < deadline:
+                deadline = loop.time() + timeout_s
+                while loop.time() < deadline:
                     try:
                         chunk = await asyncio.wait_for(ws.recv(), 15)
                     except TimeoutError:
