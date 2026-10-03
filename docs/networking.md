@@ -282,13 +282,15 @@ placeholders (no covering row of its own) never arms, so its
 direct dial to `secretprobe.msks:443` finds nothing admitted and
 times out; that posture is the documented way to opt a workspace
 out of interception entirely. And the guest's trust in its own
-interception CA is installed at first boot: Debian guests link it
-into the system trust store, while NixOS guests (whose store
-bundle is immutable and whose `/etc/profile` reads no
-`profile.d`) get the certificate staged under `/etc/msks` with
-`SSL_CERT_FILE` and `NODE_EXTRA_CA_CERTS` exported through its
-`/etc/profile.local` hook — which also brings the LLM proxy's
-environment alive there.
+interception CA is installed at first boot on both images:
+Debian guests link it into the system trust store, and both
+guests export `SSL_CERT_FILE` (a bundle built from the platform's
+own roots with the CA appended — the variable replaces the
+default lookup, so it must carry both) and `NODE_EXTRA_CA_CERTS`
+for node-based clients. NixOS's `/etc/profile` reads no
+`profile.d`, so its sanctioned `/etc/profile.local` hook sources
+the same exports — which also brings the LLM proxy's environment
+alive there.
 
 ## What runs where
 

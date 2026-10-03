@@ -288,50 +288,72 @@ def ca_seed_block(ca_pem: str) -> str:
     """The #424/#200 block: the workspace's interceptor CA, staged
     and named so every client family trusts it.
 
-    Both distros get the staged certificate (/etc/msks) and the
-    export bundle beside the system roots (``SSL_CERT_FILE``
-    replaces the default lookup, so it carries both; node adds the
-    root itself through ``NODE_EXTRA_CA_CERTS``). Debian-family
-    guests additionally link the CA into the system trust store
-    with ``update-ca-certificates`` — every client, login shell or
-    not. NixOS's store bundle is immutable and its ``/etc/profile``
-    reads no ``profile.d``: the same exports ride its sanctioned
-    ``/etc/profile.local`` hook (whose one rule also brings the
-    LLM block's exports alive there). Every step is best-effort —
-    a guest with no writable target keeps booting and says so on
-    stderr."""
+    Every guest stages the certificate under /etc/msks and links it
+    into the system trust store when the distro's linker exists
+    (Debian's ``update-ca-certificates`` — every client, login
+    shell or not). The exports name the CA beside the **platform
+    roots**: ``SSL_CERT_FILE`` replaces the OpenSSL/Go default
+    lookup, so it points at a bundle built from the platform's own
+    bundle — whichever name the distro ships (``ca-bundle.crt``
+    NixOS-style, ``ca-certificates.crt`` Debian-style) — with the
+    CA appended, and it exports only when that bundle was built; a
+    CA-only bundle would break TLS to every real service. Node adds
+    the root itself through ``NODE_EXTRA_CA_CERTS``. NixOS's
+    ``/etc/profile`` reads no ``profile.d``: the same exports ride
+    its sanctioned ``/etc/profile.local`` hook (whose one rule also
+    brings the LLM block's exports alive there). Every step is
+    best-effort — a guest with no writable target keeps booting and
+    says so on stderr."""
     return (
         f"ca_cert='{ca_pem}'\n"
         "install -d -m 0755 -o root -g root /etc/msks\n"
         "printf '%s\\n' \"$ca_cert\" > /etc/msks/interceptor-ca.crt\n"
-        "if [ -r /etc/ssl/certs/ca-bundle.crt ]; then\n"
-        "  cat /etc/ssl/certs/ca-bundle.crt \\\n"
-        "      /etc/msks/interceptor-ca.crt > /etc/msks/ca-bundle.crt\n"
-        "else\n"
-        "  cp /etc/msks/interceptor-ca.crt /etc/msks/ca-bundle.crt\n"
+        # The system-trust link, when the distro has a linker:
+        # checked FIRST so a NixOS guest stages nothing under
+        # /usr/local that nothing there consumes.
+        "if command -v update-ca-certificates >/dev/null 2>&1 \\\n"
+        "   && install -d -m 0755 /usr/local/share/ca-certificates \\\n"
+        "   && printf '%s\\n' \"$ca_cert\" > \\\n"
+        "      /usr/local/share/ca-certificates/msks-interceptor.crt\n"
+        "then\n"
+        "  update-ca-certificates >/dev/null\n"
+        "fi\n"
+        # The export bundle: the platform roots under whichever name
+        # the distro ships them, with the CA appended — never the
+        # CA alone (SSL_CERT_FILE replaces the default lookup).
+        "ca_base=''\n"
+        "for bundle in /etc/ssl/certs/ca-bundle.crt \\\n"
+        "             /etc/ssl/certs/ca-certificates.crt\n"
+        "do\n"
+        '  [ -r "$bundle" ] && ca_base=$bundle && break\n'
+        "done\n"
+        'if [ -n "$ca_base" ]; then\n'
+        '  cat "$ca_base" /etc/msks/interceptor-ca.crt \\\n'
+        "      > /etc/msks/ca-bundle.crt 2>/dev/null || true\n"
         "fi\n"
         "install -d -m 0755 /etc/profile.d\n"
         "cat > /etc/profile.d/msks-ca.sh <<'MSEOF'\n"
         "# msks (#424): name this workspace's interception CA beside\n"
-        "# the system roots. SSL_CERT_FILE for the OpenSSL and Go\n"
-        "# clients; NODE_EXTRA_CA_CERTS for node (which adds the\n"
-        "# root on top of its own bundled roots).\n"
-        "export SSL_CERT_FILE=/etc/msks/ca-bundle.crt\n"
-        "export NODE_EXTRA_CA_CERTS=/etc/msks/interceptor-ca.crt\n"
+        "# the system roots. SSL_CERT_FILE (only when the bundle was\n"
+        "# built — it REPLACES the default lookup, so it must carry\n"
+        "# the platform roots too) for the OpenSSL and Go clients;\n"
+        "# NODE_EXTRA_CA_CERTS for node, which adds the root on top\n"
+        "# of its own bundled roots.\n"
+        "if [ -r /etc/msks/ca-bundle.crt ]; then\n"
+        "  export SSL_CERT_FILE=/etc/msks/ca-bundle.crt\n"
+        "fi\n"
+        "if [ -r /etc/msks/interceptor-ca.crt ]; then\n"
+        "  export NODE_EXTRA_CA_CERTS=/etc/msks/interceptor-ca.crt\n"
+        "fi\n"
         "MSEOF\n"
+        # NixOS's hook: /etc/profile.local. Idempotent by marker.
         "if [ ! -e /etc/profile.local ] || \\\n"
         "   ! grep -q 'for i in /etc/profile.d' /etc/profile.local\n"
         "then\n"
         '  echo \'for i in /etc/profile.d/*.sh; do [ -r "$i" ] \\\n'
         '    && . "$i"; done\' >> /etc/profile.local\n'
         "fi\n"
-        "if install -d -m 0755 /usr/local/share/ca-certificates \\\n"
-        "   2>/dev/null && printf '%s\\n' \"$ca_cert\" > \\\n"
-        "      /usr/local/share/ca-certificates/msks-interceptor.crt \\\n"
-        "   && command -v update-ca-certificates >/dev/null 2>&1\n"
-        "then\n"
-        "  update-ca-certificates >/dev/null\n"
-        "else\n"
+        "if ! command -v update-ca-certificates >/dev/null 2>&1; then\n"
         "  echo 'msks: the interceptor CA is staged and exported;' \\\n"
         "    'this guest links no system trust store' >&2\n"
         "fi\n"

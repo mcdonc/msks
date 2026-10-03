@@ -616,7 +616,10 @@ def test_seed_script_installs_the_interceptor_ca() -> None:
     script = seed_script(PUBLIC, "ws-id", ca_pem=CA_PEM)
     assert f"ca_cert='{CA_PEM}'" in script
     assert "> /etc/msks/interceptor-ca.crt" in script
-    assert "cat /etc/ssl/certs/ca-bundle.crt" in script
+    # The export bundle builds from whichever platform bundle name
+    # the distro ships — never the CA alone.
+    assert "/etc/ssl/certs/ca-bundle.crt" in script
+    assert "/etc/ssl/certs/ca-certificates.crt" in script
     assert "/etc/msks/ca-bundle.crt" in script
     assert "export SSL_CERT_FILE=/etc/msks/ca-bundle.crt" in script
     assert "export NODE_EXTRA_CA_CERTS=/etc/msks/interceptor-ca.crt" in script
@@ -710,23 +713,38 @@ def test_the_ca_block_executes_on_a_nixos_shaped_sandbox(
     exports = sandbox / "profile.d" / "msks-ca.sh"
     assert "SSL_CERT_FILE" in exports.read_text()
     assert "profile.d/*.sh" in (sandbox / "profile.local").read_text()
-    # No update-ca-certificates on this guest: the Debian-shaped
-    # staging happened but nothing linked it — the note says so.
-    assert (sandbox / "usr-local-ca" / "msks-interceptor.crt").exists()
+    # No update-ca-certificates on this guest: nothing staged under
+    # /usr/local at all (the linker check gates the staging), and
+    # the note says so.
+    assert not (sandbox / "usr-local-ca").exists()
     assert "links no system trust store" in done.stderr
 
 
 def test_the_ca_block_executes_the_debian_link(tmp_path) -> None:
     """The Debian guest's shape (#424): update-ca-certificates
-    present — the seed stages, exports, and links the system
-    trust store."""
+    present — the seed stages, links the system trust store, and
+    builds the export bundle from Debian's OWN bundle name (the
+    ca-certificates.crt spelling — a ca-bundle.crt-only probe would
+    leave SSL_CERT_FILE holding the interceptor CA alone, breaking
+    login-shell TLS to every real service)."""
     sandbox = prepare_sandbox(tmp_path / "deb")
+    ssl = sandbox / "ssl-certs"
+    ssl.mkdir()
+    (ssl / "ca-certificates.crt").write_text("DEBIAN-ROOTS\n")
     done = run_seed(sandbox, "", ca_pem=CA_PEM)
     assert done.returncode == 0, done.stderr
     stub_log = (sandbox / "stub.log").read_text()
     assert "update-ca-certificates" in stub_log
     staged = sandbox / "usr-local-ca" / "msks-interceptor.crt"
     assert staged.read_text().strip() == CA_PEM.strip()
+    bundle = (sandbox / "msks" / "ca-bundle.crt").read_text()
+    assert bundle.startswith("DEBIAN-ROOTS\n")
+    assert "ZmFrZQ==" in bundle
+    exports = (sandbox / "profile.d" / "msks-ca.sh").read_text()
+    # The export is guarded: no bundle, no SSL_CERT_FILE (an unguarded
+    # export of a missing or CA-only bundle breaks real TLS).
+    assert "export SSL_CERT_FILE=" in exports
+    assert "if [ -r " in exports
 
 
 def test_compose_user_data_carries_the_ca() -> None:
