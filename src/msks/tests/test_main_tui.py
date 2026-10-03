@@ -341,9 +341,7 @@ def scripted_link(monkeypatch, frames: list[str]) -> FakeFactory:
 
 
 def list_children(app) -> int:
-    """The workspaces list's workspace-row count; -1 in a swap
-    window. The secrets branch row (#390) is not a workspace and
-    does not count."""
+    """The workspaces list's row count; -1 in a swap window."""
     try:
         rows = app.query_one("#rows")
     except Exception:
@@ -483,13 +481,46 @@ async def test_the_list_rows_open_pages_and_return(monkeypatch) -> None:
         await wait_for(lambda: on_main(app) and data.fetches > fetches)
 
 
+async def test_a_refresh_keeps_the_focused_workspace_row() -> None:
+    """A refresh rebuilds the listing with the focused row kept
+    by its key — the consent queue's rebuild rule, carried to the
+    listing."""
+    data = FakeData([row(), row(id="ws-b", name="beta")])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: list_children(app) == 2)
+        before = app.query_one("#rows")
+
+        def focused_key():
+            """The standing list's highlighted row key, or None."""
+            child = before.highlighted_child
+            return getattr(child, "row_key", None) if child else None
+
+        # The first press takes the focus; the walk needs a
+        # highlight to move (the operator's own path).
+        await press_until(
+            pilot, "down", lambda: focused_key() == ("workspace", "ws-b")
+        )
+        await pilot.press("r")
+
+        def fresh():
+            """The rebuilt list, or None before the swap lands."""
+            rows = app.screen.query("#rows")
+            return rows[0] if rows else None
+
+        await wait_for(lambda: fresh() is not None and fresh() is not before)
+        await wait_for(
+            lambda: fresh().highlighted_child.row_key == ("workspace", "ws-b")
+        )
+
+
 async def test_start_stop_and_remove_from_the_list(monkeypatch) -> None:
     scripted_link(monkeypatch, [])
     data = FakeData([row()])
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await wait_for(lambda: list_children(app) == 1)
-        await press_until(pilot, "s", lambda: data.calls == [("start", WS)])
+        await press_until(pilot, "e", lambda: data.calls == [("start", WS)])
         await wait_for(lambda: "alpha running" in status_text(app))
         await press_until(pilot, "x", lambda: ("stop", WS) in data.calls)
         await wait_for(lambda: "alpha stopped" in status_text(app))
@@ -519,7 +550,7 @@ async def test_keys_without_a_focused_row_flash() -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await wait_for(lambda: list_children(app) == 0)
-        await pilot.press("s")
+        await pilot.press("e")
         await wait_for(lambda: "no workspace focused" in status_text(app))
         await pilot.press("D")
         await pilot.pause()
@@ -2406,8 +2437,8 @@ async def test_the_status_column_carries_its_states_color(
     async with app.run_test() as pilot:
         await wait_for(lambda: list_children(app) == 3)
         rows = app.query_one("#rows")
-        # The listing's workspace rows alone — the secrets branch
-        # (#390) rides the list's foot and paints its own row.
+        # The listing's rows are the workspaces alone (#431: the
+        # branch row is gone; `s` opens the secrets page).
         workspace_rows = [
             child
             for child in rows.children
@@ -2961,7 +2992,7 @@ async def test_a_start_failure_and_a_remove_failure_flash(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await wait_for(lambda: "alpha" in row_text(app, 0))
-        await press_until(pilot, "s", lambda: ("start", WS) in data.calls)
+        await press_until(pilot, "e", lambda: ("start", WS) in data.calls)
         await wait_for(lambda: "start failed" in status_text(app))
         await press_until(
             pilot, "D", lambda: type(app.screen).__name__ == "ConfirmScreen"

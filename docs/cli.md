@@ -336,8 +336,9 @@ workspace tree (`msks tui` names the same command, and `msks tui
 my-workspace` opens that workspace's page directly). The tree is
 rooted at the **workspaces list**: every workspace one row, with
 creating, starting, stopping, and removing on its keys (`c` new,
-`s` start, `x` stop, `D` remove — asked and confirmed — `r`
-refresh, and Enter opens the workspace's page). Each row's status
+`e` start, `x` stop, `D` remove — asked and confirmed — `r`
+refresh, and Enter opens the workspace's page). `s` opens the
+**secrets** page (#431). Each row's status
 column carries the state's color (#348): a running workspace in
 the theme's success color, a stopped one in muted text, and any
 other state in the warning color — the rest of the row keeps the
@@ -358,12 +359,10 @@ relative label (#350), bucketed by whole calendar days:
 a month, `1mo ago` under a year, `1y ago` past it — the absolute
 created date reads on the workspace page's header.
 
-Below the workspaces the listing carries one branch row: the
-**secrets** page (#390) — muted, set off by a margin, reached by
-arrows and Enter like any workspace row. A placeholder row is a
-daemon-wide object (its coverage set crosses workspaces, and the
-daemon-wide row belongs to none of them), so the page lives at
-the tree's level beside the list, not inside a workspace.
+A placeholder row is a daemon-wide object (its coverage set
+crosses workspaces, and the daemon-wide row belongs to none of
+them), so the secrets page lives at the tree's level: `s` on the
+workspaces list opens it.
 
 The **secrets page** lists every placeholder row the daemon
 holds, in the listing's own five-column shape: coverage (`*` for
