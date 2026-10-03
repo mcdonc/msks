@@ -309,6 +309,21 @@ there); the window's own hold flags (`konsole --hold`, xterm's
 `-hold`) keep the window open after the session ends as they do
 for a plain shell window.
 
+The pane keeps 10000 lines of scrollback and takes the mouse
+wheel (#434): wheel up scrolls into the pane's history, wheel
+down scrolls back toward the live output, and reaching the bottom
+— or pressing `q` — returns to the plain shell. The keyboard path
+covers the same history: `Ctrl-b [` (or `Ctrl-b PageUp`) opens
+tmux's copy mode, where the arrow keys and PageUp/PageDown move
+through it. These settings ride the window's own tmux server (the
+launch's dedicated socket); an operator's own running tmux server
+keeps its own settings. With tmux's mouse mode on, a plain drag
+selects text in tmux's buffer, and holding Shift while dragging
+selects the terminal's native text (most terminals hand Shift
+drags to their own selection). A consent popup raised while the
+pane is scrolled still takes its verdict keys: the popup overlays
+the scrolled pane, and the next keypress answers it.
+
 ## Workspace identity: a name and an id (#246)
 
 A workspace carries two identity fields. The **name** is the label

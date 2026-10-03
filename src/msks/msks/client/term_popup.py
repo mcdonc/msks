@@ -109,6 +109,19 @@ KEY_COLUMN = 20
 #: name with the interpreter that is already running it.
 MODULE = "msks.client.term_popup"
 
+#: The pane's scrollback depth (#434): the session runs in tmux's
+#: alternate screen, which leaves the terminal window's own
+#: scrollbar nothing to scroll — the wheel and copy mode scroll
+#: the session's history instead, and this is how deep that
+#: history reaches. The option must sit on the server before the
+#: session exists (a pane adopts its history limit only at
+#: creation), which is why the launch line starts the server and
+#: sets its options ahead of ``new-session``. The cost is memory
+#: that grows with use, not with the setting: tmux allocates a
+#: history line only when output scrolls one off the screen, so
+#: the depth is the ceiling, not the starting footprint.
+HISTORY_LINES = 10000
+
 ROLES = ("launch", "pane", "watch", "decide")
 
 
@@ -529,7 +542,15 @@ def session_argv(
     (the bare ``msks ssh`` behavior) and the consent watcher
     retires with it (the prefix's own hold flags — ``konsole
     --hold``, xterm's ``-hold`` — still apply around the tmux
-    client)."""
+    client).
+
+    The server starts and takes its scrollback options (#434)
+    before the session exists, because a pane adopts its history
+    limit only at creation: mouse mode turns the wheel into
+    scrolling, and the raised history line count is how far back
+    it reaches. The options land on this launch's own server (the
+    dedicated socket carries them), so the operator's own tmux
+    server, when one runs, keeps its own settings."""
     pane = [
         sys.executable,
         "-m",
@@ -545,6 +566,18 @@ def session_argv(
         "tmux",
         "-L",
         socket_name(workspace_id),
+        "start-server",
+        ";",
+        "set-option",
+        "-g",
+        "mouse",
+        "on",
+        ";",
+        "set-option",
+        "-g",
+        "history-limit",
+        str(HISTORY_LINES),
+        ";",
         "new-session",
         "-s",
         session,
