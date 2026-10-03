@@ -2510,6 +2510,32 @@ async def test_mint_rolls_back_on_an_os_error_in_the_store_half(
     assert operator_rows(listing.json()) == []
 
 
+async def test_mint_rolls_back_when_the_identity_mint_is_refused(
+    client, monkeypatch
+) -> None:
+    """The write leg's own OSError: the identity mint can raise
+    PermissionError from an unwritable root mid-write — the same
+    rollback answers it (the store half's sync stood, the value
+    never landed)."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    monkeypatch.setattr(app.state.secrets, "sync_manifest", lambda refs: None)
+
+    def refuse_identity(path):
+        raise PermissionError(13, "Permission denied", str(path))
+
+    monkeypatch.setattr(
+        "msks.secretstore.ensure_age_identity", refuse_identity
+    )
+    failed = await http.post(
+        "/api/v1/secrets", json=mint_body(), headers=auth()
+    )
+    assert failed.status_code == 503
+    assert "Permission denied" in failed.json()["detail"]
+    listing = await http.get("/api/v1/secrets", headers=auth())
+    assert operator_rows(listing.json()) == []
+
+
 async def test_a_stale_client_sending_a_secret_is_refused_by_name(
     client,
 ) -> None:
@@ -2600,6 +2626,21 @@ async def test_store_check_names_a_broken_store(client) -> None:
     app.state.settings.secret_store.cli = "/nonexistent/secretspec"
     failed = await http.post("/api/v1/secrets/check", headers=auth())
     assert failed.status_code == 503
+
+
+async def test_store_check_names_an_unwritable_root(client) -> None:
+    """The OSError sibling answers the check as a named 503 — the
+    unwritable root is the misconfig the endpoint exists to catch,
+    and it is not an Internal Server Error (#423 review, round 2)."""
+    http, app, _stub = client
+    root = app.state.settings.secret_store.root
+    root.chmod(0o555)
+    try:
+        failed = await http.post("/api/v1/secrets/check", headers=auth())
+    finally:
+        root.chmod(0o755)
+    assert failed.status_code == 503
+    assert "Permission denied" in failed.json()["detail"]
 
 
 async def test_secret_routes_require_a_token(client) -> None:

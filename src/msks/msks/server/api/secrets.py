@@ -339,9 +339,10 @@ def router(app, hub) -> APIRouter:
         except Exception as exc:  # noqa: BLE001 - rolled back below
             async with app.state.store_lock:
                 await app.state.model.delete_placeholder(row["id"])
-                with contextlib.suppress(SecretStoreError):
+                with contextlib.suppress(SecretStoreError, OSError):
                     await app.state.secrets.delete(ref)
-                await sync_store_manifest()
+                with contextlib.suppress(SecretStoreError, OSError):
+                    await sync_store_manifest()
             # A target that armed before a sibling's refresh failed
             # keeps its redirect over a row that no longer exists —
             # the covering set is empty now, so the quiet sweep
@@ -441,10 +442,13 @@ def router(app, hub) -> APIRouter:
         # The store lock serializes concurrent checks: two probes
         # share the root's probe manifest path, and an interleaved
         # pair would clobber each other's declarations mid-probe.
+        # The OSError siblings (an unwritable root, a full disk)
+        # answer the same way — the unwritable root is the
+        # misconfig this endpoint exists to name (#423 review).
         async with app.state.store_lock:
             try:
                 return await app.state.secrets.check()
-            except SecretStoreError as exc:
+            except (SecretStoreError, OSError) as exc:
                 raise HTTPException(status_code=503, detail=str(exc)) from None
 
     @api.post(
@@ -500,7 +504,7 @@ def router(app, hub) -> APIRouter:
             await app.state.model.delete_placeholder(placeholder_id)
             try:
                 await app.state.secrets.delete(row["backend_ref"])
-            except SecretStoreError:
+            except SecretStoreError, OSError:
                 # The row is gone, so the leftover value is inert; the
                 # operator sees it in the response and can re-run
                 # check.
