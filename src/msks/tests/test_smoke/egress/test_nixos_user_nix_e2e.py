@@ -62,9 +62,6 @@ from test_smoke.egress.test_daemon_e2e import (
 #: not seconds, the same class the fold e2e budgets for.
 NIX_PROBE_TIMEOUT_S = float(os.environ.get("TEST_NIX_PROBE_TIMEOUT_S", "480"))
 
-#: Poll cadence for the probe-wait loop below.
-NIX_POLL_S = 5.0
-
 NIXOS_ARCHIVES = sorted(GUEST_DIR.glob("workspace-nixos-*.tar"))
 
 
@@ -84,9 +81,14 @@ async def console_exec_as(
     per-call budget (a nix command is minutes of guest work, not the
     console's own interactivity window).
 
-    Connection-level hiccups retry on a fresh session; a marker the
-    budget outlives fails the probe with the session's tail — the
-    command's own redirected output rides a follow-up probe.
+    Connection-level hiccups retry on a fresh session; a chunk
+    that stays silent past its own 15 s window only keeps the
+    per-call budget ticking (a nix command with every byte
+    redirected is silent for minutes, and re-running it from a
+    fresh session would both burn the attempt and duplicate its
+    side effects) — a marker the budget outlives fails the probe
+    with the session's tail, and the command's own redirected
+    output rides a follow-up probe.
     """
     address = ws_url(url, workspace_id, user=user)
     for _ in range(CONSOLE_ATTEMPTS):
@@ -106,7 +108,10 @@ async def console_exec_as(
                 await ws.send(command.encode() + b"\n")
                 deadline = asyncio.get_running_loop().time() + timeout_s
                 while asyncio.get_running_loop().time() < deadline:
-                    chunk = await asyncio.wait_for(ws.recv(), 15)
+                    try:
+                        chunk = await asyncio.wait_for(ws.recv(), 15)
+                    except TimeoutError:
+                        continue
                     if isinstance(chunk, str):
                         chunk = chunk.encode()
                     buf += chunk

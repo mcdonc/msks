@@ -138,9 +138,11 @@ jobs:
       # folds the CA into the system bundle and proves it with a
       # curl under `env -i`. The user-nix e2e (#433) proves nix
       # from the console as the unprivileged workspace user and
-      # the shipped /etc/nixos chain. `set -e` carries a pytest
-      # failure to the step's exit — the guarded greps below only
-      # catch a quietly skipped run, never a failed one.
+      # the shipped /etc/nixos chain. The pipeline runs INSIDE the
+      # bash -c, which starts with default shell options — the
+      # `set -eo pipefail` there is what carries a pytest failure
+      # to the step's exit; the guarded grep below only catches a
+      # quietly skipped run, never a failed one.
       - name: Probe e2e (root)
         run: |
           set -eo pipefail
@@ -153,6 +155,7 @@ jobs:
           )
           IMG="$PWD/$G"
           devenv --quiet -O dotenv.enable:bool false shell -- bash -c "
+          set -eo pipefail;
           sudo -n env TEST_EGRESS=1 TMPDIR=/tmp \
             GUEST_DIR='$IMG' \
             TEST_VMLINUX='$IMG/vmlinux' \
