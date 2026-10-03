@@ -390,8 +390,8 @@ holds.
 one field), coverage — the daemon-wide row, or a multi-select
 fed by the tree's own workspace list — the lifetime (`unbounded`
 by default, an hour to thirty days beside it), and the value: a
-masked field the operator types or pastes into — no file path
-to name. The submit checks the secret store first (`msks secret
+masked field the operator types or pastes into — the form takes
+the secret's bytes directly. The submit checks the secret store first (`msks secret
 check`'s endpoint), then mints; a refusal names itself on the
 form's note line and the fields stay filled for a retry. A mint
 that lands replaces the form

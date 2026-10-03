@@ -891,14 +891,17 @@ class MintScreen(FormWalk, ModalScreen[dict | None]):
     (the daemon-wide row, or the workspaces a multi-select picks
     from the tree's own list), the TTL (unbounded, the daemon's
     default, or the renew picker's span), and the value: a masked
-    input the operator types or pastes into (no file path to name
-    — the original #393 complaint). The value rides the request
+    input the operator types or pastes into — the form takes the
+    secret's bytes directly (the original #393 complaint). The
+    value rides the request
     and is never echoed back. Submit checks the store first
     (``msks secret check``'s endpoint), then mints; a refusal
     anywhere names itself on the note and the fields stay for a
     retry. A mint that lands dismisses with its reply — the row
     carrying the sentinel exactly once — and the page replaces
-    the form with the one-time panel."""
+    the form with the one-time panel; the dismiss clears the
+    value field, so the typed secret leaves the widget tree with
+    the form (the panel's own closing rule)."""
 
     # The walk's keys: named here, not on FormWalk — Textual
     # merges BINDINGS from DOMNode bases alone (the mixin's
@@ -1164,7 +1167,12 @@ class MintScreen(FormWalk, ModalScreen[dict | None]):
     def dismiss_with(self, row: dict | None) -> None:
         """Dismiss and hand the reply to the callback (async — the
         exchange runs as a task, so the modal closes without
-        waiting on it)."""
+        waiting on it). The value field clears first: the typed
+        secret leaves the widget tree with the form."""
+        try:
+            self.query_one("#field-value", Input).value = ""
+        except NoMatches:
+            pass  # a teardown race unmounted the field first
         self.dismiss()
         # Referenced: an unreferenced task can be collected mid-await.
         self._task = asyncio.create_task(self.submitted(row))

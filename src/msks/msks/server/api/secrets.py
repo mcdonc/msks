@@ -232,6 +232,12 @@ def router(app, hub) -> APIRouter:
             )
         if not body.value.strip():
             raise HTTPException(status_code=422, detail="the value is empty")
+        # Stripped here, at the daemon, exactly as both clients
+        # strip it: the store's secretspec `set` trims stdin itself
+        # (0.20), so an unstripped value would leave the daemon's
+        # cache and the agefile holding different bytes (#423
+        # follow-up review) — one strip at the door keeps them one.
+        value = body.value.strip()
         dests = validated_dests(body.dests)
         # Coverage resolution (#339): the two spellings cannot mix;
         # neither given mints the daemon-wide row (the default), a
@@ -314,7 +320,7 @@ def router(app, hub) -> APIRouter:
             # valueless live row behind — both roll back here too.
             try:
                 await sync_store_manifest()
-                await app.state.secrets.write(ref, body.value)
+                await app.state.secrets.write(ref, value)
             except (SecretStoreError, OSError) as exc:
                 # Roll the row back: a placeholder whose value never
                 # landed would swap empty on the wire.

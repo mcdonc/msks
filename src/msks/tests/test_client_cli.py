@@ -3881,6 +3881,60 @@ def test_cmd_secret_mint_names_an_unreadable_file(
         )
 
 
+def test_cmd_secret_mint_drops_a_bom(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A UTF-8 BOM rides no value: an export saved with one (a
+    Windows-side password manager) mints the credential alone —
+    the BOM would send every swap an invisible prefix the
+    external service refuses."""
+    client_env(monkeypatch)
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(201, json={**secret_rows()[0], "sentinel": "s"})
+
+    bom_file = tmp_path / "bom-token"
+    bom_file.write_bytes("\ufeffbom-token\n".encode("utf-8"))
+    code = cli.main(
+        [
+            "secret",
+            "mint",
+            "--workspace",
+            "ws-sec",
+            "--name",
+            "x",
+            "--dest",
+            "a.com",
+            "--secret-file",
+            str(bom_file),
+        ],
+        transport=mock(handler),
+    )
+    assert code == 0
+    assert seen["body"]["value"] == "bom-token"
+
+    monkeypatch.setattr(sys.stdin, "read", lambda: "\ufeffpiped-bom\n")
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
+    cli.main(
+        [
+            "secret",
+            "mint",
+            "--workspace",
+            "ws-sec",
+            "--name",
+            "y",
+            "--dest",
+            "a.com",
+            "--secret-file",
+            "-",
+        ],
+        transport=mock(handler),
+    )
+    assert seen["body"]["value"] == "piped-bom"
+
+
 def test_cmd_secret_mint_refuses_an_all_empty_target(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

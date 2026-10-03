@@ -21,10 +21,11 @@ class SecretMint(BaseModel):
     #246). ``workspace_id`` is the pre-#339 single-workspace
     spelling and stays accepted; the two spellings cannot mix.
     The value is the operator's own secret (a file or stdin on the
-    CLI, a masked field on the TUI); it is stored verbatim and
-    never echoed in a response. Extra fields are refused by name:
-    a pre-#423 client sending ``secret`` gets a 422 naming the
-    field instead of a mint that stores the wrong body.
+    CLI, a masked field on the TUI); it is whitespace-stripped at
+    both ends and never echoed in a response. Extra fields are
+    refused by name: a pre-#423 client sending ``secret`` gets a
+    422 naming the field instead of a mint that stores the wrong
+    body.
     """
 
     # The stale-client catch (#423): pydantic's default silently

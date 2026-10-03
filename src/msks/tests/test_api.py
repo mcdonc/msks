@@ -2448,6 +2448,50 @@ async def test_mint_refuses_a_whitespace_value(client) -> None:
     assert "value is empty" in response.json()["detail"]
 
 
+async def test_mint_strips_the_value_at_both_ends(client) -> None:
+    """The daemon strips the value itself — both shipped clients
+    strip, and secretspec's `set` trims its stdin, so an unstripped
+    raw-API value would leave the daemon's cache and the agefile
+    holding different bytes after a restart (#423 follow-up
+    review). One strip at the door keeps them one."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    response = await http.post(
+        "/api/v1/secrets",
+        json=mint_body(value="  ghp-padded  \n"),
+        headers=auth(),
+    )
+    assert response.status_code == 201
+    assert (
+        await app.state.secrets.read("MSKSWS_WS_SEC_GITHUB_API")
+        == "ghp-padded"
+    )
+
+
+async def test_validation_refusals_never_echo_the_input(client) -> None:
+    """A refused body names its fields without echoing them: the
+    422 detail carries type, loc, and msg alone — pydantic's
+    default handler would return the raw ``input``, a whole
+    secret long (#423 follow-up review)."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    oversized = await http.post(
+        "/api/v1/secrets",
+        json=mint_body(value="x" * 65537),
+        headers=auth(),
+    )
+    assert oversized.status_code == 422
+    assert "xxxx" not in oversized.text
+    stale = await http.post(
+        "/api/v1/secrets",
+        json={**mint_body(), "secret": "ghp-old-client"},
+        headers=auth(),
+    )
+    assert stale.status_code == 422
+    assert "ghp-old-client" not in stale.text
+    assert "ghp-real-token" not in stale.text
+
+
 async def test_mint_validates_name_dests_and_workspace(client) -> None:
     http, app, _stub = client
     await seed_workspace(app)
@@ -2672,9 +2716,10 @@ async def test_revoke_unknown_placeholder_is_a_404(client) -> None:
 async def test_mint_survives_the_insert_race(client, monkeypatch) -> None:
     """Two same-label mints racing past both pre-checks: the
     loser's row insert answers 409 on the unique index, and the
-    winner's certified value owns the store entry (the winner
-    re-writes after its insert, so a last-write by the loser
-    cannot stand)."""
+    winner's certified value owns the store entry — the row lands
+    before its value, all under the store lock, so a loser that
+    slips past the pre-checks still never writes behind a row it
+    does not own."""
     http, app, _stub = client
     await seed_workspace(app)
     first = await http.post(

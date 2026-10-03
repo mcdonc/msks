@@ -542,6 +542,7 @@ async def test_the_form_mints_a_daemon_wide_row_and_the_sentinel_shows_once(
     async with app.run_test() as pilot:
         await open_secrets(pilot, app)
         form = await open_mint(pilot, app)
+        assert form.query_one("#field-value", Input).password  # masked
         fill_mint(form)
         await pilot.click("#do-mint")
         await wait_for(lambda: on_panel(app))
@@ -565,6 +566,14 @@ async def test_the_form_mints_a_daemon_wide_row_and_the_sentinel_shows_once(
         await pilot.press("q")
         await wait_for(lambda: on_secrets(app))
         assert str(sentinel_line.content) == ""  # closed: text cleared
+        # The form's value field cleared on its own dismiss (or the
+        # whole form unmounted first): the typed secret leaves the
+        # widget tree with the form either way.
+        try:
+            leftover = form.query_one("#field-value", Input).value
+        except Exception:
+            leftover = ""  # the form unmounted with the field
+        assert leftover == ""
         await wait_for(lambda: secrets_children(app) == 1)
         assert "minted */github_api" in secrets_status(app)
 
@@ -1359,15 +1368,22 @@ async def test_a_refused_workspace_listing_names_itself_on_the_form() -> None:
 async def test_the_form_cancels_without_an_exchange(tmp_path) -> None:
     """Every way out without a mint decides nothing (#393):
     Escape and the Cancel button both dismiss with no reply, and
-    no call leaves the page."""
+    no call leaves the page. The dismiss clears the value field —
+    and closes over a field already gone (a teardown race, read
+    as noise) the same way."""
     data = FakeData([])
     app, _follow = make_app(data)
     async with app.run_test() as pilot:
         await open_secrets(pilot, app)
-        await open_mint(pilot, app)
+        form = await open_mint(pilot, app)
+        form.query_one("#field-value", Input).value = "typed-secret"
         await pilot.press("escape")
         await wait_for(lambda: on_secrets(app))
-        await open_mint(pilot, app)
+        form = await open_mint(pilot, app)
+        await form.query_one("#field-value", Input).remove()
+        await pilot.press("escape")
+        await wait_for(lambda: on_secrets(app))
+        form = await open_mint(pilot, app)
         await pilot.click("#do-cancel")
         await wait_for(lambda: on_secrets(app))
         assert data.calls == []

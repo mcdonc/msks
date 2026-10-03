@@ -22,7 +22,10 @@ def read_secret(path: str) -> str:
     Whitespace-stripped at both ends — a token file's trailing
     newline (or a password manager's) is not part of the secret —
     and never accepted as a command-line argument, which lands in
-    process lists and shell history.
+    process lists and shell history. A UTF-8 BOM is dropped the
+    same way: an export saved with one (a Windows-side password
+    manager) would otherwise mint a credential with an invisible
+    prefix that no external service accepts.
     """
     try:
         if path == "-":
@@ -33,12 +36,12 @@ def read_secret(path: str) -> str:
                 )
             text = sys.stdin.read()
         else:
-            text = Path(path).read_text(encoding="utf-8")
+            text = Path(path).read_text(encoding="utf-8-sig")
     except (OSError, UnicodeDecodeError) as exc:
         raise SystemExit(
             f"msks: cannot read secret file {path}: {exc}"
         ) from None
-    value = text.strip()
+    value = text.strip().lstrip("\ufeff").strip()
     if not value:
         raise SystemExit("msks: the secret file is empty")
     return value

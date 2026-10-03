@@ -199,7 +199,8 @@ sentinel (shown once): mskssec2_9Jm3...kQ
   password manager, so it never touches disk). It is
   whitespace-stripped at both ends, never accepted as a
   command-line argument (argv lands in process lists and shell
-  history), stored verbatim in the agefile, and never echoed —
+  history), whitespace-stripped and stored in the agefile, and
+  never echoed —
   the mint reply carries the sentinel alone. The client and the
   daemon may sit on different machines: the value rides the
   token-authenticated TLS API, and the agefile and the age
@@ -236,7 +237,7 @@ The `msks tui` secrets page mints too (#393): `c` opens the form
 or a multi-select of the workspaces the tree's own list offers),
 the lifetime (`unbounded` by default, an hour to thirty days
 beside it), and the value: a masked field the operator types or
-pastes into — no file path to name, the form takes the secret's
+pastes into — the form takes the secret's
 bytes directly. The submit checks the store (`msks secret
 check`'s endpoint) before it mints, and a refusal — a store that
 cannot answer writes, a name collision on the chosen coverage
