@@ -1,12 +1,12 @@
-"""The tree's root screen (#309): the workspaces listing with the
-secrets branch at its foot — extracted from the app shell so
-:mod:`msks.client.tui.main_app` composes it. Create, start, stop,
-and remove happen here; Enter opens the focused workspace's page
-or the secrets page.
+"""The tree's root screen (#309): the workspaces listing —
+extracted from the app shell so :mod:`msks.client.tui.main_app`
+composes it. Create, start, stop, and remove happen here; Enter
+opens the focused workspace's page, and ``s`` opens the secrets
+page (#431).
 
-Spatial navigation: arrows walk the rows (workspaces above, the
-secrets branch below, in reading order), the page keys act on the
-focused row, and ``q`` or Escape quits the tree — no trap.
+Spatial navigation: arrows walk the rows in reading order, the
+page keys act on the focused row, and ``q`` or Escape quits the
+tree — no trap.
 """
 
 from rich.markup import escape
@@ -33,16 +33,6 @@ from .rows import (
 )
 from .secrets import SecretsScreen
 from .workspace import WorkspaceScreen
-
-#: The main screen's secrets branch (#390): the pinned row
-#: below the workspaces — the tree's reading order keeps the
-#: workspaces above, the branch under them. Enter opens the
-#: secrets page.
-BRANCH_SECRETS = "secrets"
-
-#: The branch row's label — the page's offer, in the page action's
-#: own name — description shape.
-BRANCH_TEXT = "Secrets — placeholders, revoke and renew, the audit stream"
 
 
 def created_note(row: dict, path) -> str:
@@ -73,12 +63,13 @@ async def guarded_flash(app, label: str, work):
 class MainScreen(Screen):
     """The tree's root (#309): every workspace one row; create,
     start, stop, and remove happen here; Enter opens the
-    workspace's page."""
+    workspace's page, ``s`` the secrets page (#431)."""
 
     BINDINGS = [
         Binding("enter", "open", "Open", show=False),
         Binding("c", "create", "New"),
-        Binding("s", "start", "Start"),
+        Binding("s", "secrets", "Secrets"),
+        Binding("e", "start", "Start"),
         Binding("x", "stop", "Stop"),
         Binding("D", "remove", "Remove"),
         Binding("r", "refresh", "Refresh"),
@@ -131,15 +122,12 @@ class MainScreen(Screen):
     async def rebuild_rows(self, rows: list[dict]) -> None:
         """Swap in a freshly-built list (its mount awaited),
         preserving the focused row by key (the top when it left) —
-        the consent queue's rebuild rule, carried to the listing.
-        The secrets branch rides the list's foot (#390): the
-        workspaces above it, the branch below, in reading order."""
+        the consent queue's rebuild rule, carried to the listing."""
         self.rows = rows
         listing = self.query_one("#listing", Vertical)
         old = self.rows_widget()
         focused = focused_attr(old, "row_key")
         items = [self.row_item(row) for row in rows]
-        items.append(self.branch_item())
         fresh = ListView(*items, id="rows")
         if old is not None:
             await old.remove()  # frees the id before the fresh list mounts
@@ -155,16 +143,6 @@ class MainScreen(Screen):
         item.workspace_id = row["id"]
         item.row_key = ("workspace", row["id"])
         item.add_class(status_class(row["status"]))
-        return item
-
-    def branch_item(self) -> ListItem:
-        """The secrets branch row (#390): the listing's one entry
-        that is not a workspace — muted, set off by a top margin,
-        Enter opens the secrets page."""
-        item = ListItem(Static(BRANCH_TEXT))
-        item.branch = BRANCH_SECRETS
-        item.row_key = ("branch", BRANCH_SECRETS)
-        item.add_class("branch-row")
         return item
 
     def rows_widget(self) -> ListView | None:
@@ -213,11 +191,7 @@ class MainScreen(Screen):
         return next((row for row in self.rows if row["id"] == ws_id), None)
 
     def action_open(self) -> None:
-        """Enter: the focused workspace's page — or the secrets
-        page, on the branch row (#390)."""
-        if focused_attr(self.rows_widget(), "branch") == BRANCH_SECRETS:
-            self.app.push_screen(SecretsScreen())
-            return
+        """Enter: the focused workspace's page."""
         row = self.focused_row()
         if row is None:
             self.app.flash("no workspace focused")
@@ -232,6 +206,11 @@ class MainScreen(Screen):
 
     def action_refresh(self) -> None:
         self.refresh_rows()
+
+    def action_secrets(self) -> None:
+        """`s`: the secrets page (#431) — the branch row's
+        replacement."""
+        self.app.push_screen(SecretsScreen())
 
     def action_start(self) -> None:
         self.run_worker(self.start_focused, exclusive=True)

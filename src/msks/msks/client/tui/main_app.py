@@ -147,8 +147,6 @@ class MsksTuiApp(App):
     #consent-rows { height: auto; max-height: 12; }
     #consent-rows ListItem { height: 1; }
     #consent-empty { height: 1; padding: 0 1; color: $text-muted; }
-    #rows ListItem.branch-row { margin-top: 1; }
-    #rows ListItem.branch-row Static { color: $text-muted; }
     #secrets-listing { border: round $primary; background: $panel; }
     #secret-columns { padding: 0 1; color: $text-muted; }
     #secret-rows ListItem { height: 1; padding: 0 1; }

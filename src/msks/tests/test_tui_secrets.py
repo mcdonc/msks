@@ -12,7 +12,6 @@ import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
-from msks.client.tui import main_screen as main_screen_mod
 from msks.client.tui import rows as rows_mod
 from msks.client.tui import secrets as secrets_mod
 from msks.client.tui.link import AuditLink
@@ -95,30 +94,10 @@ def on_audit(app) -> bool:
     return isinstance(app.screen, SecretAuditScreen)
 
 
-def branch_row(app):
-    """The listing's secrets branch row (#390), or None while the
-    list still mounts."""
-    try:
-        rows = app.query_one("#rows")
-    except Exception:
-        return None
-    return next(
-        (
-            child
-            for child in rows.children
-            if getattr(child, "branch", None) == main_screen_mod.BRANCH_SECRETS
-        ),
-        None,
-    )
-
-
 async def open_secrets(pilot, app, workspaces: int = 0) -> SecretsScreen:
-    """Walk the list to the branch row and Enter — the operator's
-    own path (#390): the workspaces above, the branch below."""
-    await wait_for(lambda: branch_row(app) is not None)
-    for _ in range(workspaces + 1):
-        await pilot.press("down")
-    await press_until(pilot, "enter", lambda: on_secrets(app))
+    """Press `s` on the workspaces list — the operator's own path
+    (#431): the branch row's replacement."""
+    await press_until(pilot, "s", lambda: on_secrets(app))
     return app.screen
 
 
@@ -220,52 +199,30 @@ async def pick_option(pilot, app, downs: int) -> None:
     await pilot.press("enter")
 
 
-# -- the main screen's branch ---------------------------------------------
+# -- the main screen's path to the page -----------------------------------
 
 
-async def test_the_branch_row_opens_the_page_and_back() -> None:
-    """The branch rides the listing's foot in reading order
-    (#390): arrows reach it past the workspaces, Enter opens the
-    page, Escape returns to the list."""
+async def test_s_opens_the_page_and_back() -> None:
+    """`s` on the workspaces list opens the secrets page (#431),
+    Escape returns to the list."""
     data = FakeData([row(), row(id="ws-b", name="beta")])
     data.secret_rows = [secret_row()]
     app, _follow = make_app(data)
     async with app.run_test() as pilot:
-        await wait_for(lambda: branch_row(app) is not None)
-        branch = branch_row(app)
-        assert branch is app.query_one("#rows").children[-1]
-        assert "branch-row" in branch.classes
-
-        def branch_text() -> str:
+        # The listing holds the workspaces alone (#431): the
+        # branch row is gone.
+        def standing_rows() -> int:
+            """The list's row count, or -1 while it mounts."""
             try:
-                return str(branch.query_one(Static).content)
+                return len(app.query_one("#rows").children)
             except Exception:
-                return ""  # the compose stream lags the row count
+                return -1
 
-        await wait_for(lambda: "Secrets" in branch_text())
-        page = await open_secrets(pilot, app, workspaces=2)
+        await wait_for(lambda: standing_rows() == 2)
+        page = await open_secrets(pilot, app)
         assert page is app.screen
         await pilot.press("escape")
         await wait_for(lambda: not on_secrets(app))
-
-
-async def test_the_branch_holds_focus_through_a_refresh(
-    monkeypatch,
-) -> None:
-    """A refresh rebuilds the list with the branch's focus kept —
-    the row_key rule, carried past workspace rows."""
-    data = FakeData([row()])
-    data.secret_rows = [secret_row()]
-    app, _follow = make_app(data)
-    async with app.run_test() as pilot:
-        await open_secrets(pilot, app, workspaces=1)
-        await pilot.press("escape")
-        await wait_for(lambda: not on_secrets(app))
-        # The branch row keeps the focus across the resume refresh.
-        rows = app.query_one("#rows")
-        assert getattr(rows.highlighted_child, "branch", None) == (
-            main_screen_mod.BRANCH_SECRETS
-        )
 
 
 # -- the page -------------------------------------------------------------
