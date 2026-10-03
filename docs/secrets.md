@@ -279,11 +279,17 @@ time a store operation needs it — a plaintext age-keygen X25519
 file, 0600, named by `secret_store_age_identity` (default
 `<store root>/age.key`) — the same self-minting pattern the
 per-workspace ssh identities use (#138). Plaintext, because the
-daemon must decrypt unattended; a copy of the store root without
-the identity file cannot read the agefile. Back the identity up
-beside the state dir (the file carries its recipient on a comment
-line, so a backup can be checked without decrypting anything); a
-lost identity takes the values with it — re-mint them.
+daemon must decrypt unattended. Under the default layout the
+identity sits inside the store root beside the agefile, so a
+copy of the whole root carries its own key; when the at-rest
+protection is meant to count for backups, name an identity path
+outside the store root (`secret_store_age_identity`) and back
+that path up separately (the file carries its recipient on a
+comment line, so a backup can be checked without decrypting
+anything). The identity's mint is named in the daemon's log — a
+second one means a repointed path or a moved vault, and a value
+encrypted under another identity never decrypts; a lost identity
+takes the values with it, so re-mint them.
 
 msksd never decrypts anything itself: every store operation
 spawns `secretspec get/set/delete --provider
@@ -298,10 +304,12 @@ daemon's user.
 ### Worked example
 
 ```yaml
-secret_store_root: "" # default <state_dir>/secrets
-secret_store_age_identity:
-  "" # default <store root>/age.key,
-  # minted when absent
+# the store's root: default <state_dir>/secrets
+secret_store_root: ""
+# the age identity: default <store root>/age.key, minted when
+# absent — name a path outside the root when backups of the root
+# must stay ciphertext
+secret_store_age_identity: ""
 ```
 
 ## At-rest encryption

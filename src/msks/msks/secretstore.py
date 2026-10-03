@@ -329,7 +329,10 @@ def ensure_age_identity(path: Path) -> None:
     already did — two concurrent first operations can never mint
     two identities, a fate under which a value encrypted by one
     would never decrypt under the other. The parent joins the
-    store root's 0700 posture.
+    store root's 0700 posture. The mint is named in the log: a
+    fresh state dir expects exactly one, and a reload that
+    repointed the identity path at a typo names the fresh vault
+    it just made instead of failing silently on the old values.
     """
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     try:
@@ -338,6 +341,13 @@ def ensure_age_identity(path: Path) -> None:
         return
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(mint_age_identity())
+    LOG.warning(
+        "minted a new age identity at %s — this file owns the agefile's "
+        "decryption; if an existing vault was expected, restore the "
+        "previous identity file (a value encrypted under another "
+        "identity never decrypts)",
+        path,
+    )
 
 
 def render_manifest(uri: str, refs: list[tuple[str, str]]) -> str:

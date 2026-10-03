@@ -188,13 +188,20 @@ def test_minted_identity_matches_the_age_tooling(tmp_path) -> None:
     assert comment == f"# public key: {encode_bech32('age', public)}"
 
 
-def test_ensure_age_identity_mints_once(tmp_path) -> None:
-    """Absent, the identity is minted (0600, parent 0700); present,
-    it is left untouched — an operator's own age-keygen identity
-    and a re-run against an existing vault both keep what stood."""
+def test_ensure_age_identity_mints_once(tmp_path, caplog) -> None:
+    """Absent, the identity is minted (0600, parent 0700) and the
+    mint names itself in the log — a repointed path or a moved
+    vault stays diagnosable; present, it is left untouched — an
+    operator's own age-keygen identity and a re-run against an
+    existing vault both keep what stood."""
+    import logging
+
     path = tmp_path / "vault" / "age.key"
-    ensure_age_identity(path)
+    with caplog.at_level(logging.WARNING):
+        ensure_age_identity(path)
     body = path.read_text()
+    assert "minted a new age identity" in caplog.text
+    assert str(path) in caplog.text
     assert stat.S_IMODE(path.stat().st_mode) & 0o077 == 0
     assert stat.S_IMODE(path.parent.stat().st_mode) & 0o077 == 0
     ensure_age_identity(path)

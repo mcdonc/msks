@@ -52,8 +52,10 @@ async def seed_probe_placeholder(app) -> None:
     (an operator's mints, or a migrated state) keeps them
     untouched. A store that cannot serve rolls the row back and
     the daemon stays up without it (loud, non-fatal — the
-    bootstrap default image's posture: the operator can mint by
-    hand).
+    bootstrap default image's posture: fixing the store and
+    restarting with an empty table is the recovery, because a
+    row minted by hand cannot carry the probe's fixed credential
+    (#423 — values are daemon-minted)).
 
     Runs before any workspace can be attached, so no arming step
     belongs here: the placeholder-driven arm happens at each
@@ -308,15 +310,19 @@ def router(app, hub) -> APIRouter:
                 ) from None
             # The manifest must declare the ref before the CLI can
             # write it; the row is in, so the live-rows sync carries
-            # it.
-            await sync_store_manifest()
+            # it. The identity mint and the manifest write raise
+            # OSError siblings of the store's own errors (an
+            # unwritable root, a full disk) and leave the same
+            # valueless live row behind — both roll back here too.
             try:
+                await sync_store_manifest()
                 await app.state.secrets.write(ref, value)
-            except SecretStoreError as exc:
+            except (SecretStoreError, OSError) as exc:
                 # Roll the row back: a placeholder whose value never
                 # landed would swap empty on the wire.
                 await app.state.model.delete_placeholder(row["id"])
-                await sync_store_manifest()
+                with contextlib.suppress(SecretStoreError, OSError):
+                    await sync_store_manifest()
                 raise HTTPException(status_code=503, detail=str(exc)) from None
         # The sentinel appears in exactly one response: this one.
         # Arming is placeholder-driven (#199): a scoped mint against
@@ -432,10 +438,14 @@ def router(app, hub) -> APIRouter:
 
     @api.post("/api/v1/secrets/check", dependencies=[Depends(require_token)])
     async def check_secret_store() -> dict:
-        try:
-            return await app.state.secrets.check()
-        except SecretStoreError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from None
+        # The store lock serializes concurrent checks: two probes
+        # share the root's probe manifest path, and an interleaved
+        # pair would clobber each other's declarations mid-probe.
+        async with app.state.store_lock:
+            try:
+                return await app.state.secrets.check()
+            except SecretStoreError as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from None
 
     @api.post(
         "/api/v1/secrets/{placeholder_id}/renew",

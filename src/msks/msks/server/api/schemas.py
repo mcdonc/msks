@@ -2,7 +2,7 @@
 
 import re
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ...identity import LOGIN_NAME_RE
 
@@ -22,8 +22,16 @@ class SecretMint(BaseModel):
     spelling and stays accepted; the two spellings cannot mix.
     The value itself is never sent: the daemon mints it (#423)
     and answers with it — beside the sentinel — in exactly one
-    response, this request's.
+    response, this request's. Extra fields are refused by name: a
+    pre-#423 client sending ``secret`` gets a 422 naming the field
+    instead of a mint whose one-time value that client never
+    prints.
     """
+
+    # The stale-client catch (#423): pydantic's default silently
+    # drops unknown fields, which would let a pre-#423 CLI mint
+    # successfully while never showing the value it answered.
+    model_config = ConfigDict(extra="forbid")
 
     workspaces: list[str] = Field(default=None, min_length=1, max_length=32)
     workspace_id: str | None = None

@@ -2486,6 +2486,50 @@ async def test_mint_reports_an_unreachable_store(client) -> None:
     assert "secret store" in failed.json()["detail"]
 
 
+async def test_mint_rolls_back_on_an_os_error_in_the_store_half(
+    client, monkeypatch
+) -> None:
+    """The identity mint and the manifest write raise OSError
+    siblings of the store's own errors (an unwritable root, a full
+    disk); both roll the row back like a store failure — the
+    valueless live row would otherwise fail-close its
+    destinations on every swap (#423 review)."""
+    http, app, _stub = client
+    await seed_workspace(app)
+
+    def refuse_sync(refs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(app.state.secrets, "sync_manifest", refuse_sync)
+    failed = await http.post(
+        "/api/v1/secrets", json=mint_body(), headers=auth()
+    )
+    assert failed.status_code == 503
+    assert "disk full" in failed.json()["detail"]
+    listing = await http.get("/api/v1/secrets", headers=auth())
+    assert operator_rows(listing.json()) == []
+
+
+async def test_a_stale_client_sending_a_secret_is_refused_by_name(
+    client,
+) -> None:
+    """A pre-#423 CLI still sending ``secret`` gets a 422 naming
+    the field — not a silent mint whose one-time value that client
+    never prints."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    stale = await http.post(
+        "/api/v1/secrets",
+        json={**mint_body(), "secret": "ghp-old-client"},
+        headers=auth(),
+    )
+    assert stale.status_code == 422
+    detail = stale.json()["detail"]
+    assert "secret" in [field for error in detail for field in error["loc"]]
+    listing = await http.get("/api/v1/secrets", headers=auth())
+    assert operator_rows(listing.json()) == []
+
+
 async def test_renew_extends_in_place(client) -> None:
     http, app, _stub = client
     await seed_workspace(app)
@@ -2771,6 +2815,12 @@ async def test_mint_publishes_and_refreshes_the_interceptor(client) -> None:
         events.append(await queue.get())
     kinds = [json.loads(event)["event"] for event in events]
     assert kinds == ["secret.mint", "secret.revoke"]
+    # Neither one-time string rides the stream (#423): the value
+    # answers its mint reply alone, the sentinel its.
+    for event in events:
+        frame = json.loads(event)
+        assert "value" not in frame["data"]
+        assert "sentinel" not in frame["data"]
     # The mint refreshed its covered workspace; the revoke's
     # stand-down iterates attachments (#339), and none are live
     # here, so the recorder sees the mint's refresh alone.

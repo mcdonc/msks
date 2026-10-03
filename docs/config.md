@@ -220,6 +220,10 @@ reload naming a new one changes nothing:
   and the local driver resolves every workspace's artifacts from the
   state dir live — moving it mid-run would orphan running
   workspaces, so the daemon latches the startup value)
+- `secret_store_root` (the store's manifest and values were never
+  migrated, so a reload naming a new root changes nothing until a
+  restart; the age identity path reloads live, and its mint names
+  itself in the log)
 - `default_image` (imported into the catalog once, at first boot)
 - the watcher scan's `event_poll_s` (sampled at loop start): both the
   workspace status reconcile and the state-disk pressure probe
