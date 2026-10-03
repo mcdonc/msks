@@ -286,11 +286,20 @@ interception CA is installed at first boot on both images:
 Debian guests link it into the system trust store, and both
 guests export `SSL_CERT_FILE` (a bundle built from the platform's
 own roots with the CA appended — the variable replaces the
-default lookup, so it must carry both) and `NODE_EXTRA_CA_CERTS`
-for node-based clients. NixOS's `/etc/profile` reads no
+default lookup, so it must carry both) and
+`NODE_EXTRA_CA_CERTS` for node-based clients, plus
+`GIT_SSL_CAINFO` naming that same bundle for git. NixOS's
+`/etc/profile` reads no
 `profile.d`, so its sanctioned `/etc/profile.local` hook sources
 the same exports — which also brings the LLM proxy's environment
-alive there.
+alive there. On the NixOS image the trust then completes the
+NixOS way (#427): a background oneshot (`msks-interceptor-ca`,
+ordered after cloud-init, one rebuild per fresh certificate —
+a marker no-ops later boots) runs `nixos-rebuild switch`, whose
+evaluation reads the staged certificate into `security.pki`, so
+the system bundle itself carries the CA and every client trusts
+it — the exports remain the first-boot bridge that keeps the
+workspace usable while that rebuild runs.
 
 ## What runs where
 

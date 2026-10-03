@@ -333,7 +333,17 @@ against:
 A rebuild that changes nothing but re-activates keeps every msks
 contract item — the vsock console, the sshd posture, cloud-init
 seed handling, the agent toolchain on PATH — because the
-configuration it evaluates is the one that shipped. A workspace
+configuration it evaluates is the one that shipped. The image
+ships one background consumer of this readiness (#427): the
+`msks-interceptor-ca` oneshot folds the workspace's interception
+CA (staged by the identity seed under `/etc/msks`) into the
+system trust bundle — the module reads the staged certificate at
+evaluation time, the unit runs one `nixos-rebuild switch` per
+fresh certificate after `cloud-final`, and a hash marker keeps
+later boots no-ops. The image build itself refuses a host that
+carries `/etc/msks/interceptor-ca.crt` (the module's assertion
+fails the build), since that evaluation would bake a foreign CA
+into every guest. A workspace
 with egress fetches substitutes from `cache.nixos.org` through the
 workspace's egress path like any other traffic; a no-egress
 workspace rebuilds against what is already in the store (new

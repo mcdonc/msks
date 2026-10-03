@@ -622,6 +622,7 @@ def test_seed_script_installs_the_interceptor_ca() -> None:
     assert "/etc/ssl/certs/ca-certificates.crt" in script
     assert "/etc/msks/ca-bundle.crt" in script
     assert "export SSL_CERT_FILE=/etc/msks/ca-bundle.crt" in script
+    assert "export GIT_SSL_CAINFO=/etc/msks/ca-bundle.crt" in script
     assert "export NODE_EXTRA_CA_CERTS=/etc/msks/interceptor-ca.crt" in script
     assert "/etc/profile.local" in script
     assert "update-ca-certificates" in script

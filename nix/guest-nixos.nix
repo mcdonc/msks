@@ -96,9 +96,21 @@ let
   '';
 
   nixos =
-    (import (pkgs.path + "/nixos") {
+    (import (pkgs.path + "/nixos/lib/eval-config.nix") {
       system = "x86_64-linux";
-      configuration = ./guest-nixos-configuration.nix;
+      # The module (the same file the guest's rebuild imports)
+      # plus the image-build marker (#427), which ships nowhere.
+      # eval-config directly, not nixos/default.nix — the wrapper
+      # nests a list configuration one level deep. The marker lets
+      # the module's assertion refuse an image built on a host
+      # that carries /etc/msks/interceptor-ca.crt — evaluation
+      # reads that path at rebuild time in the guest (after the
+      # seed staged it), and an image-build host carrying it would
+      # fold a foreign CA into every guest's trust store.
+      modules = [
+        ./guest-nixos-configuration.nix
+        { _module.args.imageBuild = true; }
+      ];
     }).config;
 
   toplevel = nixos.system.build.toplevel;
