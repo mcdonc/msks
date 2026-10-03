@@ -17,8 +17,9 @@ import logging
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi import __version__ as fastapi_version
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from ...microvm.errors import MicrovmError
@@ -64,6 +65,25 @@ def cmdline_image() -> str | None:
 
 async def microvm_error(_request, exc: MicrovmError) -> JSONResponse:
     return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+
+def redacted_validation_error(
+    _request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    """A validation refusal without the offending input (#423).
+
+    FastAPI's default handler echoes pydantic's ``input`` — the
+    raw field value — back in the response body, and a refused
+    mint body can carry a whole secret in it. The answer keeps
+    the type, the location, and the message, drops the input (and
+    the request's url): the caller already holds what it sent,
+    and nothing between should learn it.
+    """
+    errors = [
+        {key: error[key] for key in ("type", "loc", "msg") if key in error}
+        for error in exc.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": errors})
 
 
 def build_api(app) -> FastAPI:
@@ -151,6 +171,9 @@ def build_api(app) -> FastAPI:
         }
 
     api.add_exception_handler(MicrovmError, microvm_error)
+    api.add_exception_handler(
+        RequestValidationError, redacted_validation_error
+    )
     for sub_router in (
         tokens.router(app),
         secrets.router(app, hub),

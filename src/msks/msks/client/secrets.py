@@ -8,9 +8,43 @@ rule (the daemon's tables stay in its own process).
 
 import asyncio
 import json
+import sys
+from pathlib import Path
 
 from .context import call
 from .tabular import listing_text
+
+
+def read_secret(path: str) -> str:
+    """The mint's payload (#198, #423): a file's contents, or
+    stdin for ``-``.
+
+    Whitespace-stripped at both ends — a token file's trailing
+    newline (or a password manager's) is not part of the secret —
+    and never accepted as a command-line argument, which lands in
+    process lists and shell history. A UTF-8 BOM is dropped the
+    same way: an export saved with one (a Windows-side password
+    manager) would otherwise mint a credential with an invisible
+    prefix that no external service accepts.
+    """
+    try:
+        if path == "-":
+            if sys.stdin.isatty():
+                raise SystemExit(
+                    "msks: --secret-file - expects the secret on stdin "
+                    "(pipe it in; it is never read interactively)"
+                )
+            text = sys.stdin.read()
+        else:
+            text = Path(path).read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise SystemExit(
+            f"msks: cannot read secret file {path}: {exc}"
+        ) from None
+    value = text.strip().lstrip("\ufeff").strip()
+    if not value:
+        raise SystemExit("msks: the secret file is empty")
+    return value
 
 
 def coverage_label(workspaces: list[str]) -> str:
@@ -105,16 +139,19 @@ def cmd_secret_mint(
     name: str,
     dests: list[str],
     ttl: int | None,
+    secret_file: str,
     transport=None,
 ) -> int:
-    """``msks secret mint`` (#339, #423): one step; the daemon
-    mints the value, and this prints it once beside the sentinel.
-    No ``--workspace`` mints the daemon-wide row; a target scopes
-    it."""
+    """``msks secret mint`` (#339, #423): one step; the operator's
+    value rides the request and is never echoed — the sentinel
+    prints once. No ``--workspace`` mints the daemon-wide row; a
+    target scopes it."""
+    value = read_secret(secret_file)
     targets = mint_targets(workspace_refs)
     body: dict = {
         "name": name,
         "dests": dests,
+        "value": value,
     }
     if targets:
         body["workspaces"] = targets
@@ -127,7 +164,6 @@ def cmd_secret_mint(
         f"minted {coverage_label(row['workspaces'])}/{name} "
         f"for {', '.join(row['dests'])}"
     )
-    print(f"value (shown once): {row['value']}")
     print(f"sentinel (shown once): {row['sentinel']}")
     return 0
 

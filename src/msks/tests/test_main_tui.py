@@ -290,9 +290,10 @@ class FakeData:
 
     async def mint_secret(self, body: dict) -> dict:
         """The mint form's mint (#393) — recorded with its raw
-        body; the reply carries the value and the sentinel exactly
-        once each (the daemon mints both) and the row lands on the
-        page's listing without either."""
+        body (the value rides the record the way the wire does);
+        the reply carries the sentinel exactly once and never the
+        value, and the row lands on the page's listing without
+        it."""
         self.secret_calls.append(("mint", dict(body)))
         if self.mint_gate is not None:
             await self.mint_gate.wait()
@@ -301,7 +302,6 @@ class FakeData:
         sentinel = (
             "mskssec2_" if not body.get("workspaces") else "mskssec1_"
         ) + "s" * 43
-        value = "msksval1_" + "s" * 43
         row = {
             "id": 99,
             "workspaces": sorted(body.get("workspaces") or []),
@@ -311,7 +311,7 @@ class FakeData:
             "expires_at": None,
         }
         self.secret_rows.append(dict(row))
-        return {**row, "sentinel": sentinel, "value": value}
+        return {**row, "sentinel": sentinel}
 
     def reply(self, verb: str, value):
         """The scripted reply; the named refusal when the verb fails."""
@@ -1852,7 +1852,6 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
                     "created_at": "2030-01-02T03:04:05",
                     "expires_at": None,
                     "sentinel": "mskssec1_shown_once",
-                    "value": "msksval1_shown_once",
                 },
             )
         if request.method == "DELETE" and request.url.path == (
@@ -2016,15 +2015,17 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
             "name": "github_api",
             "dests": ["api.github.com"],
             "workspaces": ["ws1"],
+            "value": "hunter2",
         }
     )
     assert row["sentinel"] == "mskssec1_shown_once"
-    assert row["value"] == "msksval1_shown_once"
+    assert "value" not in row  # the operator's value never echoes
     assert minted == [
         {
             "name": "github_api",
             "dests": ["api.github.com"],
             "workspaces": ["ws1"],
+            "value": "hunter2",
         }
     ]
     assert ("POST", "/api/v1/secrets/check") in seen
