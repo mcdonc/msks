@@ -18,9 +18,12 @@ shape) and proves the two #433 halves on one workspace:
 The rebuild half of #433 — that the shipped configuration evaluates
 and activates — is the fold e2e's ground: its unit runs a full
 ``nixos-rebuild switch`` inside the booted workspace, and this file
-rides the same lane beside it. The Debian egress lane collects this
-file and skips it: the nix posture is the NixOS image's, and the gate
-keys on the NixOS archives being present.
+rides the same lane beside it, waiting the fold active in its own
+workspace before probing so the nix evaluations below run on a
+settled guest rather than against the fold's in-flight rebuild.
+The Debian egress lane collects this file and skips it: the nix
+posture is the NixOS image's, and the gate keys on the NixOS
+archives being present.
 """
 
 import asyncio
@@ -56,9 +59,13 @@ from test_smoke.egress.test_daemon_e2e import (
     daemon_log_tail,
 )
 
+#: The fold-wait budget, the fold e2e's own: the in-guest rebuild
+#: evaluates nixpkgs on the guest's two vCPUs — minutes, not
+#: seconds.
+FOLD_TIMEOUT_S = float(os.environ.get("TEST_FOLD_TIMEOUT_S", "480"))
+
 #: The per-probe budget: the nix-shell probe substitutes toolchain
-#: paths from cache.nixos.org on the guest's two vCPUs while the
-#: fold rebuild (low-weighted, but running) shares them — minutes,
+#: paths from cache.nixos.org on the guest's two vCPUs — minutes,
 #: not seconds, the same class the fold e2e budgets for.
 NIX_PROBE_TIMEOUT_S = float(os.environ.get("TEST_NIX_PROBE_TIMEOUT_S", "480"))
 
@@ -248,6 +255,38 @@ async def test_nixos_user_nix_e2e() -> None:
             b"CFG-42",
             "root",
         )
+
+        # The quiet-guest gate: the #427 fold rebuild runs in this
+        # workspace too, and the nix probes below are heavyweight
+        # evaluations on the same two vCPUs — racing the fold's
+        # evaluation and activation makes the probes' timing (and
+        # the daemon's load) noisy for minutes, and a CI run met a
+        # transient half-open-store failure exactly in that window.
+        # The fold unit going active (the fold e2e's own gate, in
+        # this VM) settles the guest first.
+        loop = asyncio.get_running_loop()
+        fold_deadline = loop.time() + FOLD_TIMEOUT_S
+        while loop.time() < fold_deadline:
+            try:
+                await console_exec_as(
+                    url,
+                    token,
+                    ssl_ctx,
+                    wid,
+                    "A=$(systemctl is-active msks-interceptor-ca); "
+                    "echo ACT-$A-$((6*7))",
+                    b"ACT-active-42",
+                    "root",
+                    timeout_s=60.0,
+                )
+                break
+            except AssertionError, websockets.WebSocketException, OSError:
+                await asyncio.sleep(5.0)
+        else:
+            raise AssertionError(
+                f"the fold unit never went active within {FOLD_TIMEOUT_S}s "
+                "— see the workspace serial log"
+            )
 
         # Item 2: the session NIX_PATH carries the search path the
         # image ships — nixpkgs and the rebuild's own entries — so
