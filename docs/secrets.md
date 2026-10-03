@@ -199,8 +199,8 @@ sentinel (shown once): mskssec2_9Jm3...kQ
   password manager, so it never touches disk). It is
   whitespace-stripped at both ends, never accepted as a
   command-line argument (argv lands in process lists and shell
-  history), whitespace-stripped and stored in the agefile, and
-  never echoed —
+  history), stripped at both ends (a UTF-8 BOM drops too) and
+  stored in the agefile, and never echoed —
   the mint reply carries the sentinel alone. The client and the
   daemon may sit on different machines: the value rides the
   token-authenticated TLS API, and the agefile and the age

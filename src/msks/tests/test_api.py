@@ -2466,6 +2466,16 @@ async def test_mint_strips_the_value_at_both_ends(client) -> None:
         await app.state.secrets.read("MSKSWS_WS_SEC_GITHUB_API")
         == "ghp-padded"
     )
+    # The BOM drops at the same door, whatever surface sent it —
+    # a pasted or piped export with one would otherwise swap an
+    # invisible prefix no external service accepts.
+    bom = await http.post(
+        "/api/v1/secrets",
+        json=mint_body(name="bommed", value="\ufeffbom-token"),
+        headers=auth(),
+    )
+    assert bom.status_code == 201
+    assert await app.state.secrets.read("MSKSWS_WS_SEC_BOMMED") == "bom-token"
 
 
 async def test_validation_refusals_never_echo_the_input(client) -> None:
