@@ -1,11 +1,25 @@
-"""The secret store behind placeholder rows (#198).
+"""The secret store behind placeholder rows (#198, #423).
 
-Real secrets live in a SecretSpec provider; this module is the
-daemon's one route to them. The provider is a setting
-(``MSKSD_SECRET_STORE_*``, :class:`~msks.settings.SecretStoreSettings`)
-so at-rest encryption (``age``) or a managed vault (``awssm``,
-``bws``) is a configuration change, never code — the crypto posture
-the repo keeps everywhere.
+Real secrets live in one age-encrypted **agefile** under the
+store root, and every value in it is msks-minted: the daemon
+generates the value itself at mint time (the platform CSPRNG),
+stores it through SecretSpec's ``age`` provider, and hands it to
+the operator exactly once — in the mint reply, beside the
+sentinel. The operator never supplies a value, so nothing
+outside the daemon ever writes the agefile, and the operator's
+paste target is the external service the mint's destinations
+name; workspaces keep receiving only the sentinel.
+
+The age identity is the daemon's own, minted on the spot the
+first store operation needs it (the #138 key-minting pattern):
+a plaintext age-keygen X25519 file, 0600, named by
+``MSKSD_SECRET_STORE_AGE_IDENTITY`` (default
+``<store root>/age.key``). Plaintext, because the daemon must
+decrypt unattended; the agefile itself stays ciphertext at
+rest. msksd never decrypts anything itself — every store
+operation spawns the SecretSpec CLI
+(``secretspec get/set/delete --provider "age://<root>/secrets.age?identity=<path>"``)
+and the agefile is decrypted inside that child process.
 
 The SecretSpec **CLI** is the integration surface, not the Python
 SDK: the SDK's native ABI exposes only the resolve path, while
@@ -17,16 +31,16 @@ piped stdin (text-trimmed in 0.20; exact bytes arrive with the
 0.21+ ``--from-file`` flag the pin can move to).
 
 The daemon owns a generated manifest (``<root>/secretspec.toml``)
-declaring every placeholder's backend ref against the configured
+declaring every placeholder's backend ref against the age
 provider — regenerated whenever placeholder rows change, because
-the database, not the manifest, is the source of truth. Provider
-credentials never pass through msksd settings: the subprocess
-inherits the daemon's environment, so each provider reads its own
-chain (the AWS SDK chain, ``BWS_ACCESS_TOKEN``, …).
+the database, not the manifest, is the source of truth.
 
 Resolved values are cached in memory (the interceptor's #199 swap
-path reads this cache); a daemon restart starts the cache empty and
-re-fetches by backend ref on first use.
+path reads this cache); with the agefile msks-owned, staleness
+stops being an operator concern. The cache clears per-ref on
+write and delete, and wholesale on a settings swap; a daemon
+restart starts it empty and re-fetches by backend ref on first
+use.
 """
 
 import asyncio
@@ -39,9 +53,17 @@ import re
 import secrets as pysecrets
 from pathlib import Path
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import x25519
+
 from .model.secrets import coverage_label
 
 LOG = logging.getLogger(__name__)
+
+#: The minted value's prefix (#423): the same provenance story
+#: the sentinel prefixes carry — a value found in a log or a
+#: paste names its origin from the string alone.
+VALUE_PREFIX = "msksval1_"
 
 #: The scoped sentinel format: versioned prefix + 32 random bytes
 #: base64url — uniform fixed length, so the wire matcher can
@@ -54,6 +76,12 @@ SENTINEL_PREFIX = "mskssec1_"
 #: ``mskssec1_`` swaps on its row's workspaces, ``mskssec2_`` on
 #: every accepting workspace's tap.
 DAEMON_SENTINEL_PREFIX = "mskssec2_"
+
+#: The encrypted vault's file name, inside the store root.
+AGEFILE_NAME = "secrets.age"
+
+#: The age identity's default file name, inside the store root.
+AGE_IDENTITY_NAME = "age.key"
 
 #: The manifest the daemon generates and owns, inside the store root.
 MANIFEST_NAME = "secretspec.toml"
@@ -115,12 +143,10 @@ async def spawn(
 ) -> bytes:
     """One CLI invocation; returns stdout bytes.
 
-    The subprocess inherits the daemon's environment, so each
-    provider's own credential chain resolves (the AWS SDK chain,
-    ``BWS_ACCESS_TOKEN``). An unrunnable binary — the classic
-    misspelled ``secret_store_cli`` — surfaces as the named error
-    instead of a bare FileNotFoundError; a non-zero exit carries
-    the stderr tail; a hang answers the timeout.
+    An unrunnable binary — the classic misspelled
+    ``secret_store_cli`` — surfaces as the named error instead of
+    a bare FileNotFoundError; a non-zero exit carries the stderr
+    tail; a hang answers the timeout.
     """
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -154,6 +180,16 @@ def new_sentinel(daemon_wide: bool = False) -> str:
     return prefix + pysecrets.token_urlsafe(32)
 
 
+def new_secret_value() -> str:
+    """A fresh minted value (#423): 32 platform-CSPRNG bytes,
+    URL-safe base64 under a versioned prefix. This is the secret
+    the operator pastes into the external service — generated by
+    the daemon, never supplied by the operator — and it reaches
+    the operator exactly once, in the mint reply beside the
+    sentinel."""
+    return VALUE_PREFIX + pysecrets.token_urlsafe(32)
+
+
 def backend_ref(workspaces: list[str], name: str) -> str:
     """The SecretSpec declaration name for one placeholder (#339:
     *workspaces* is the row's coverage set).
@@ -181,32 +217,17 @@ def valid_name(name: str) -> bool:
 
 
 def provider_uri(store) -> str:
-    """The SecretSpec provider URI for the live settings.
-
-    Read live (``app.state.settings``) so a SIGHUP settings swap
-    applies to subsequent operations without a restart.
+    """The SecretSpec provider URI — the agefile vault — for the
+    live settings (read live so a SIGHUP settings swap applies to
+    subsequent operations without a restart). The identity is
+    ensured first: the secretspec child cannot use a URI whose
+    identity file is absent, so the first operation against a
+    fresh state dir is the one that mints it.
     """
     s = store.settings
-    builders = {
-        "file": lambda: f"file:{s.root}",
-        "age": lambda: (
-            f"age://{s.root / 'secrets.age'}?identity={s.age_identity}"
-        ),
-        "awssm": lambda: awssm_uri(s),
-        "bws": lambda: f"bws://{s.project}",
-    }
-    return builders[s.provider]()
-
-
-def awssm_uri(s) -> str:
-    """The awssm URI: optional profile, required region, optional
-    prefix option."""
-    uri = f"awssm://{s.region}"
-    if s.profile:
-        uri = f"awssm://{s.profile}@{s.region}"
-    if s.prefix:
-        uri += f"?prefix={s.prefix}"
-    return uri
+    identity = Path(s.age_identity or (s.root / AGE_IDENTITY_NAME))
+    ensure_age_identity(identity)
+    return f"age://{s.root / AGEFILE_NAME}?identity={identity}"
 
 
 def write_private(path: Path, body: str) -> None:
@@ -222,6 +243,101 @@ def cli_error(operation: str, err: bytes) -> SecretStoreError:
     return SecretStoreError(
         operation, detail[-1] if detail else "unknown error"
     )
+
+
+#: The bech32 character set (BIP-173): age identities and
+#: recipients encode with it.
+BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+
+
+def bech32_polymod(values: list[int]) -> int:
+    """The bech32 checksum accumulator over *values* (5-bit)."""
+    gen = [0x3B6A57B2, 0x26508E6D, 0x1EA119FA, 0x3D4233DD, 0x2A1462B3]
+    chk = 1
+    for value in values:
+        top = chk >> 25
+        chk = (chk & 0x1FFFFFF) << 5 ^ value
+        for i in range(5):
+            chk ^= gen[i] if ((top >> i) & 1) else 0
+    return chk
+
+
+def bech32_checksum(hrp: str, data: list[int]) -> list[int]:
+    """The six 5-bit checksum words for *data* under *hrp* (the
+    bech32 const-1 variant age uses)."""
+    expanded = [ord(c) >> 5 for c in hrp] + [0]
+    expanded += [ord(c) & 31 for c in hrp]
+    polymod = bech32_polymod(expanded + data + [0] * 6) ^ 1
+    return [(polymod >> 5 * (5 - i)) & 31 for i in range(6)]
+
+
+def convertbits(data: bytes, frombits: int, tobits: int) -> list[int]:
+    """Re-group *data*'s bits: 8-bit bytes into 5-bit words
+    (zero-padded at the tail, as age's fixed-size keys need)."""
+    acc = 0
+    bits = 0
+    words = []
+    maxv = (1 << tobits) - 1
+    for value in data:
+        acc = (acc << frombits) | value
+        bits += frombits
+        while bits >= tobits:
+            bits -= tobits
+            words.append((acc >> bits) & maxv)
+    if bits:
+        words.append((acc << (tobits - bits)) & maxv)
+    return words
+
+
+def encode_bech32(hrp: str, data: bytes) -> str:
+    """*data* as a bech32 string under the lowercase *hrp*."""
+    words = convertbits(data, 8, 5)
+    payload = words + bech32_checksum(hrp, words)
+    return hrp + "1" + "".join(BECH32_CHARSET[w] for w in payload)
+
+
+def mint_age_identity() -> str:
+    """A fresh age-keygen-shaped identity file body: the X25519
+    private key bech32-encoded as ``AGE-SECRET-KEY-1…`` with its
+    recipient on a comment line (the shape ``age-keygen`` writes,
+    so the file reads as a native age identity everywhere — the
+    recipient line lets an operator re-key or back up without
+    decrypting anything).
+    """
+    private = x25519.X25519PrivateKey.generate()
+    scalar = private.private_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PrivateFormat.Raw,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    recipient = encode_bech32(
+        "age",
+        private.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        ),
+    )
+    identity = encode_bech32("age-secret-key-", scalar).upper()
+    return f"# public key: {recipient}\n{identity}\n"
+
+
+def ensure_age_identity(path: Path) -> None:
+    """Create the age identity at *path* when it does not exist.
+
+    ``O_EXCL`` makes the create atomic against a concurrent
+    caller: either this process created the file or another
+    already did — two concurrent first operations can never mint
+    two identities, a fate under which a value encrypted by one
+    would never decrypt under the other. The parent joins the
+    store root's 0700 posture.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(mint_age_identity())
 
 
 def render_manifest(uri: str, refs: list[tuple[str, str]]) -> str:
@@ -279,10 +395,10 @@ class SecretStore:
 
         Called with every placeholder row (mint, revoke, and expiry
         sweep re-sync); the root is created 0700 and the manifest
-        written 0600 — the store holds real secrets' bytes on the
-        ``file`` provider, so its directory joins the house pattern
-        of secret-bearing artifacts readable only by the daemon's
-        user.
+        written 0600 — the store root holds the encrypted agefile
+        and the age identity, so its directory joins the house
+        pattern of secret-bearing artifacts readable only by the
+        daemon's user.
         """
         body = render_manifest(provider_uri(self), refs)
         path = self.manifest_path()
@@ -351,18 +467,19 @@ class SecretStore:
         self._cache.pop(ref, None)
 
     async def check(self) -> dict:
-        """Probe the configured store: write, read back, delete.
+        """Probe the store: write, read back, delete.
 
-        A green run means the provider URI is reachable and writable
-        before the first mint — a typo'd setting fails here, loudly,
-        instead of at first use. The probe ref is unreachable by any
-        minted placeholder (lowercase; backend_ref uppercases), the
-        probe manifest is 0600 like the synced one (it carries the
-        provider URI), and its value lands in — and is removed from
-        — the real provider. A cleanup failure after a failed probe
-        is suppressed so the ORIGINAL error is the one raised; a
-        cleanup failure after a green probe propagates (residue is
-        inert, but the operator should hear about it).
+        A green run means the agefile vault is reachable and
+        writable before the first mint — a typo'd setting fails
+        here, loudly, instead of at first use. The probe ref is
+        unreachable by any minted placeholder (lowercase;
+        backend_ref uppercases), the probe manifest is 0600 like
+        the synced one (it carries the provider URI), and its
+        value lands in — and is removed from — the agefile itself.
+        A cleanup failure after a failed probe is suppressed so
+        the ORIGINAL error is the one raised; a cleanup failure
+        after a green probe propagates (residue is inert, but the
+        operator should hear about it).
         """
         ref = f"{PROBE_REF}_{pysecrets.token_hex(4)}"
         token = SENTINEL_PREFIX + pysecrets.token_urlsafe(8)
@@ -389,7 +506,7 @@ class SecretStore:
             raise
         await self.run(["delete", ref], manifest=probe)
         probe.unlink(missing_ok=True)
-        return {"provider": self.settings.provider, "ok": True}
+        return {"provider": "age", "ok": True}
 
     # --- legacy ref migration (#335) ---------------------------------
 
@@ -523,7 +640,7 @@ class SecretStore:
                 LOG.warning(
                     "legacy value %s left behind in the store after "
                     "its copy under %s; the orphan is inert — remove "
-                    "it by hand if the provider bills by entry",
+                    "it by hand if it lingers",
                     old,
                     new,
                 )

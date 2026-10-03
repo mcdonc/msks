@@ -290,9 +290,9 @@ class FakeData:
 
     async def mint_secret(self, body: dict) -> dict:
         """The mint form's mint (#393) — recorded with its raw
-        body (the secret rides the record the way the wire does);
-        the reply carries the sentinel exactly once and the row
-        lands on the page's listing without it."""
+        body; the reply carries the value and the sentinel exactly
+        once each (the daemon mints both) and the row lands on the
+        page's listing without either."""
         self.secret_calls.append(("mint", dict(body)))
         if self.mint_gate is not None:
             await self.mint_gate.wait()
@@ -301,6 +301,7 @@ class FakeData:
         sentinel = (
             "mskssec2_" if not body.get("workspaces") else "mskssec1_"
         ) + "s" * 43
+        value = "msksval1_" + "s" * 43
         row = {
             "id": 99,
             "workspaces": sorted(body.get("workspaces") or []),
@@ -310,7 +311,7 @@ class FakeData:
             "expires_at": None,
         }
         self.secret_rows.append(dict(row))
-        return {**row, "sentinel": sentinel}
+        return {**row, "sentinel": sentinel, "value": value}
 
     def reply(self, verb: str, value):
         """The scripted reply; the named refusal when the verb fails."""
@@ -1820,6 +1821,7 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
                     "created_at": "2030-01-02T03:04:05",
                     "expires_at": None,
                     "sentinel": "mskssec1_shown_once",
+                    "value": "msksval1_shown_once",
                 },
             )
         if request.method == "DELETE" and request.url.path == (
@@ -1976,23 +1978,22 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
     assert ("GET", "/api/v1/secrets/audit") in seen
     # The mint seams (#393): the store pre-flight and the mint
     # itself — the same exchanges the secret subcommands make,
-    # the reply carrying the sentinel exactly once.
+    # the reply carrying the value and the sentinel exactly once.
     assert await data.secret_check() == {"provider": "files", "ok": True}
     row = await data.mint_secret(
         {
             "name": "github_api",
             "dests": ["api.github.com"],
             "workspaces": ["ws1"],
-            "secret": "hunter2",
         }
     )
     assert row["sentinel"] == "mskssec1_shown_once"
+    assert row["value"] == "msksval1_shown_once"
     assert minted == [
         {
             "name": "github_api",
             "dests": ["api.github.com"],
             "workspaces": ["ws1"],
-            "secret": "hunter2",
         }
     ]
     assert ("POST", "/api/v1/secrets/check") in seen

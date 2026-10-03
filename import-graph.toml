@@ -153,7 +153,9 @@ llm = 2
 microvm = 10
 model = 7
 persist = 12
-secretstore = 5
+# #423: the mint route imports new_secret_value beside the
+# sentinel minters — the daemon generates the value at mint time.
+secretstore = 6
 settings = 2
 # spec grew by one statement: the secret routes seed and serve the
 # probe placeholder (#424)

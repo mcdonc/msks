@@ -388,22 +388,22 @@ holds.
 `c` opens the mint form (#393): name, repeatable destinations
 (an exact host or a label-anchored suffix, comma-separated in
 one field), coverage — the daemon-wide row, or a multi-select
-fed by the tree's own workspace list — the lifetime (`unbounded`
-by default, an hour to thirty days beside it), and the file path
-holding the secret. The payload rides the file's bytes: the
-secret reaches the wire from disk, so it lands in neither the
-form's fields nor the terminal's state. The submit checks the
-secret store first (`msks secret check`'s endpoint), then mints;
-a refusal names itself on the form's note line and the fields
-stay filled for a retry. A mint that lands replaces the form
-with the sentinel's one-time panel: the sentinel itself, its
-reach decoded from its prefix (`mskssec1_` scoped to the chosen
-workspaces, `mskssec2_` every accepting workspace), a `c` copy
-action that writes the sentinel to the terminal's clipboard over
-OSC 52 — the copy path a terminal that honors the sequence
-answers, over ssh included — and the closing rule: the display
-ends with the panel, and a lost sentinel is re-minted, never
-recalled. Closing the panel clears its text, and the minted row
+fed by the tree's own workspace list — and the lifetime
+(`unbounded` by default, an hour to thirty days beside it).
+There is no value field: the daemon mints the value itself
+(#423). The submit checks the secret store first (`msks secret
+check`'s endpoint), then mints; a refusal names itself on the
+form's note line and the fields stay filled for a retry. A mint
+that lands replaces the form
+with the one-time panel: the value (the secret to paste into
+the external service), the sentinel, its reach decoded from its
+prefix (`mskssec1_` scoped to the chosen
+workspaces, `mskssec2_` every accepting workspace), copy actions
+that write the value (`c`) and the sentinel (`s`) to the
+terminal's clipboard over OSC 52 — the copy path a terminal that
+honors the sequence answers, over ssh included — and the closing
+rule: the display ends with the panel, and a lost value or
+sentinel is re-minted, never recalled. Closing the panel clears its text, and the minted row
 stands on the page's list. The placeholder-to-workspace
 navigation lands with the cross-references (#394).
 
@@ -1144,27 +1144,26 @@ code; the volume moves are for the whole `/home` at once.
 
 ## `msks secret`
 
-Placeholder secrets (#198, #339): mint a sentinel — daemon-wide by
-default, scoped with `--workspace` — and the daemon keeps the real
-secret in its store — the workspace never holds it (the full
-story, including where the real secret lives per provider, is
+Placeholder secrets (#198, #339, #423): mint a sentinel — daemon-wide by
+default, scoped with `--workspace` — and the daemon mints the real
+value itself and keeps it in its agefile — the workspace never holds
+it, and the operator's paste target is the external service
+(the full story is
 [docs/secrets.md](secrets.md)):
 
 ```bash
-# from a password manager, nothing touches disk: daemon-wide,
-# one sentinel for every workspace on the daemon
-op read 'op://Vault/github/credential' \
-  | msks secret mint --name github_api \
-      --dest api.github.com --secret-file -
+# daemon-wide: one row, one value, one sentinel for every
+# workspace on the daemon
+msks secret mint --name github_api --dest api.github.com
 
 msks secret mint --workspace myws --name pypi \
   --dest .pypi.org --dest pypi.org \
-  --ttl 86400 --secret-file ./token    # scoped, suffix + exact
+  --ttl 86400                           # scoped, suffix + exact
 
 msks secret mint --workspace ci,deploy --name pypi \
-  --dest .pypi.org --secret-file ./token   # one row, two workspaces
+  --dest .pypi.org                      # one row, two workspaces
 
-msks secret ls                           # placeholders + coverage, never sentinels
+msks secret ls                           # placeholders + coverage, never values
 msks secret renew --workspace myws --name pypi --ttl 86400
 msks secret revoke --name github_api     # the daemon-wide row of the label
 msks secret revoke --workspace ci,deploy --name pypi
@@ -1172,18 +1171,16 @@ msks secret coverage myws scoped         # exempt myws from daemon-wide rows
 msks secret check                        # the store answers writes
 ```
 
-`--secret-file` takes a path or `-` for a pipe (the value is
-whitespace-stripped at both ends); the secret is
-never accepted as a command-line argument (argv lands in process
-lists and shell history), and an empty file is refused before any
-network roundtrip. `--dest` repeats and binds the swap: an exact
-host (`api.github.com`) or a suffix that covers every host under a
+`--dest` repeats and binds the swap: an exact host
+(`api.github.com`) or a suffix that covers every host under a
 domain (`.github.com`). `--workspace` takes one ref or a comma
 list and repeats; omitted, the mint covers every workspace on the
 daemon — one row, one `mskssec2_` sentinel — while a scoped mint
 prints a `mskssec1_` sentinel, so the string alone names its
-reach. The mint prints the sentinel exactly once —
-every later view omits it, so a lost sentinel is re-minted, not
+reach. The daemon mints the value (`msksval1_…`, 32 CSPRNG
+bytes) and the mint prints it exactly once, beside the sentinel —
+paste it into the external service then; every later view omits
+both, so a lost value or sentinel is re-minted, not
 recalled. `revoke` and `renew` take the same targeting the mint
 took; `revoke` takes effect on the next request and retires the
 whole row everywhere at once, and `renew`

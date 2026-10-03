@@ -31,10 +31,6 @@ from .spec.tokens import validate_token_plaintext
 
 VALID_DRIVERS = ("local",)
 
-#: The secret-store providers v1 wires (#198): the SecretSpec CLI
-#: URIs the daemon knows how to build from settings.
-VALID_SECRET_PROVIDERS = ("file", "age", "awssm", "bws")
-
 
 def live_env(env: Mapping[str, str] | None) -> Mapping[str, str]:
     """The env to read: an explicit mapping, or the live environment."""
@@ -265,28 +261,23 @@ class NetSettings:
 
 @dataclass
 class SecretStoreSettings:
-    """The placeholder secret store (#198).
+    """The placeholder secret store (#198, #423): one
+    age-encrypted agefile under *root*, every value msks-minted.
 
-    Real secrets live behind SecretSpec; the provider is a setting,
-    not code, so at-rest encryption (``age``) or a managed vault
-    (``awssm``, ``bws``) is a configuration change. The store is
-    driven through the ``secretspec`` CLI (its Python SDK exposes
-    only the resolve path — every write lives in the CLI), with a
-    generated manifest under *root*; values ride stdin, never
-    argv. Provider credentials are deliberately not settings:
-    each provider reads its own chain from the daemon's process
-    environment (the AWS SDK chain, ``BWS_ACCESS_TOKEN``).
+    The store is driven through the ``secretspec`` CLI (its
+    Python SDK exposes only the resolve path — every write lives
+    in the CLI), with a generated manifest under *root*; values
+    ride stdin, never argv. The age identity is minted by the
+    daemon itself the first time a store operation needs it (a
+    plaintext age-keygen X25519 file, 0600 — plaintext because
+    the daemon must decrypt unattended).
     """
 
-    provider: str = "file"
     # None means <state_dir>/secrets (derived at parse time, like
     # the server's db_path).
     root: Path | None = None
-    age_identity: str | None = None
-    region: str | None = None
-    profile: str | None = None
-    prefix: str | None = None
-    project: str | None = None
+    # None means <root>/age.key (derived at use time).
+    age_identity: Path | None = None
     cli: str = "secretspec"
     timeout_s: float = 30.0
 
@@ -481,16 +472,7 @@ def secret_store_settings_from_env(
 ) -> SecretStoreSettings:
     """Build SecretStoreSettings from the environment (helper: keeps
     the class block itself at xenon rank A, like its siblings)."""
-    provider = _env(env, "MSKSD_SECRET_STORE_PROVIDER", cls.provider)
-    if provider not in VALID_SECRET_PROVIDERS:
-        raise ValueError(
-            f"MSKSD_SECRET_STORE_PROVIDER must be one of "
-            f"{VALID_SECRET_PROVIDERS}, got {provider!r}"
-        )
-    # Per-provider required keys: checked in one named error at
-    # load, so a typo'd or half-written config fails before the
-    # first mint, not at it.
-    check_provider_keys(provider, env)
+    refuse_removed_provider_settings(env)
     timeout = _env_float(env, "MSKSD_SECRET_STORE_TIMEOUT_S", cls.timeout_s)
     if timeout <= 0:
         raise ValueError(
@@ -501,7 +483,6 @@ def secret_store_settings_from_env(
     ).expanduser()
     root = _env(env, "MSKSD_SECRET_STORE_ROOT", "")
     return cls(
-        provider=provider,
         root=Path(root).expanduser() if root else state / "secrets",
         **secret_store_options(env),
         timeout_s=timeout,
@@ -509,39 +490,36 @@ def secret_store_settings_from_env(
 
 
 def secret_store_options(env: Mapping[str, str]) -> dict:
-    """The optional per-provider fields, straight off the env."""
-    pairs = {
-        "age_identity": "MSKSD_SECRET_STORE_AGE_IDENTITY",
-        "region": "MSKSD_SECRET_STORE_REGION",
-        "profile": "MSKSD_SECRET_STORE_PROFILE",
-        "prefix": "MSKSD_SECRET_STORE_PREFIX",
-        "project": "MSKSD_SECRET_STORE_PROJECT",
+    """The optional fields, straight off the env."""
+    identity = _env(env, "MSKSD_SECRET_STORE_AGE_IDENTITY", "")
+    return {
+        "age_identity": Path(identity).expanduser() if identity else None,
+        "cli": _env(env, "MSKSD_SECRET_STORE_CLI", SecretStoreSettings.cli),
     }
-    options = {
-        field: _env(env, name, "") or None for field, name in pairs.items()
-    }
-    options["cli"] = _env(
-        env, "MSKSD_SECRET_STORE_CLI", SecretStoreSettings.cli
-    )
-    return options
 
 
-#: Per-provider required keys (#198): named at settings load so a
-#: typo'd or half-written config fails before the first mint.
-PROVIDER_REQUIRED_KEYS = {
-    "age": "MSKSD_SECRET_STORE_AGE_IDENTITY",
-    "awssm": "MSKSD_SECRET_STORE_REGION",
-    "bws": "MSKSD_SECRET_STORE_PROJECT",
-}
+#: Store settings #423 removed: the store is the agefile, so a
+#: config that still names a provider or its connection details
+#: names behavior msksd no longer has. Refused at load with the
+#: removal named — not silently ignored — so a stale half-written
+#: config fails before the first mint, not at it.
+REMOVED_SECRET_STORE_KEYS = (
+    "MSKSD_SECRET_STORE_PROVIDER",
+    "MSKSD_SECRET_STORE_REGION",
+    "MSKSD_SECRET_STORE_PROFILE",
+    "MSKSD_SECRET_STORE_PREFIX",
+    "MSKSD_SECRET_STORE_PROJECT",
+)
 
 
-def check_provider_keys(provider: str, env: Mapping[str, str]) -> None:
-    """Refuse a provider whose required key is absent."""
-    name = PROVIDER_REQUIRED_KEYS.get(provider)
-    if name is not None and not env.get(name):
+def refuse_removed_provider_settings(env: Mapping[str, str]) -> None:
+    """Name every #423-removed store setting still set."""
+    stale = [name for name in REMOVED_SECRET_STORE_KEYS if env.get(name)]
+    if stale:
         raise ValueError(
-            f"{name} is required when "
-            f"MSKSD_SECRET_STORE_PROVIDER is {provider!r}"
+            f"{' and '.join(stale)} no longer exist: the secret store is "
+            "the agefile (docs/secrets.md) — remove the settings; the "
+            "identity is a setting, the vault needs none of these"
         )
 
 

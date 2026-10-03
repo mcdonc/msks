@@ -518,29 +518,26 @@ def panel_text(app) -> str:
         return ""
 
 
-def fill_mint(screen, path, *, name: str = "github_api") -> None:
+def fill_mint(screen, *, name: str = "github_api") -> None:
     """Fill the form's plain fields with a body that mints."""
     screen.query_one("#field-name", Input).value = name
     screen.query_one("#field-dests", Input).value = "api.github.com,.gh"
-    screen.query_one("#field-path", Input).value = str(path)
 
 
-async def test_the_form_mints_a_daemon_wide_row_and_the_sentinel_shows_once(
+async def test_the_form_mints_a_daemon_wide_row_and_the_one_times_show_once(
     tmp_path,
 ) -> None:
-    """The create action's whole path (#393): the store check
+    """The create action's whole path (#393, #423): the store check
     rides ahead of the mint, the daemon-wide body carries neither
-    a coverage list nor a ttl, the sentinel lands once on the
-    panel, and closing it clears the text and lands the row on
-    the page."""
-    secret_file = tmp_path / "token"
-    secret_file.write_text("hunter2\n")
+    a coverage list, a ttl, nor a value (the daemon mints it),
+    the value and the sentinel land once each on the panel, and
+    closing it clears the text and lands the row on the page."""
     data = FakeData([])
     app, _follow = make_app(data)
     async with app.run_test() as pilot:
         await open_secrets(pilot, app)
         form = await open_mint(pilot, app)
-        fill_mint(form, secret_file)
+        fill_mint(form)
         await pilot.click("#do-mint")
         await wait_for(lambda: on_panel(app))
         # The store check rode ahead of the mint.
@@ -551,16 +548,21 @@ async def test_the_form_mints_a_daemon_wide_row_and_the_sentinel_shows_once(
         assert body["dests"] == ["api.github.com", ".gh"]
         assert "workspaces" not in body  # the daemon-wide default
         assert "ttl_s" not in body  # unbounded, the daemon's default
-        assert body["secret"] == "hunter2"  # stripped of its newline
-        # The sentinel shows exactly once, with its reach decoded.
+        assert "secret" not in body  # the daemon mints the value (#423)
+        # The value and the sentinel show exactly once each, with
+        # the reach decoded.
         sentinel = "mskssec2_" + "s" * 43
+        value = "msksval1_" + "s" * 43
         await wait_for(lambda: sentinel in panel_text(app))
         assert panel_text(app).count(sentinel) == 1
+        assert panel_text(app).count(value) == 1
         assert "every accepting workspace" in panel_text(app)
         sentinel_line = app.screen.query_one("#panel-sentinel", Static)
+        value_line = app.screen.query_one("#panel-value", Static)
         await pilot.press("q")
         await wait_for(lambda: on_secrets(app))
         assert str(sentinel_line.content) == ""  # closed: text cleared
+        assert str(value_line.content) == ""
         await wait_for(lambda: secrets_children(app) == 1)
         assert "minted */github_api" in secrets_status(app)
 
@@ -570,8 +572,6 @@ async def test_a_scoped_mint_picks_workspaces_from_the_tree(tmp_path) -> None:
     workspace list (#393); the toggled ids ride the body as its
     coverage set, and the sentinel's prefix and reach line name
     the scoped row."""
-    secret_file = tmp_path / "token"
-    secret_file.write_text("hunter2")
     data = FakeData([row(), row(id="ws-b", name="beta")])
     app, _follow = make_app(data)
     async with app.run_test() as pilot:
@@ -588,7 +588,7 @@ async def test_a_scoped_mint_picks_workspaces_from_the_tree(tmp_path) -> None:
         await pilot.press("space")  # alpha — highlighted on focus
         await pilot.press("down")
         await pilot.press("space")  # beta
-        fill_mint(form, secret_file)
+        fill_mint(form)
         form.query_one("#field-ttl", Select).value = "7d"
         form.submit()
         await wait_for(lambda: on_panel(app))
@@ -606,15 +606,13 @@ async def test_a_failed_mint_keeps_the_form_and_names_the_cause(
     """A refused mint names itself on the note with the fields
     kept for a retry (#393); the retry lands once the daemon
     takes the body."""
-    secret_file = tmp_path / "token"
-    secret_file.write_text("hunter2")
     data = FakeData([])
     data.fail.add("mint")
     app, _follow = make_app(data)
     async with app.run_test() as pilot:
         await open_secrets(pilot, app)
         form = await open_mint(pilot, app)
-        fill_mint(form, secret_file)
+        fill_mint(form)
         form.submit()
         await wait_for(lambda: "mint failed" in mint_note(app))
         assert "placeholder named github_api" in mint_note(app)
@@ -631,26 +629,25 @@ async def test_a_refused_store_check_names_itself_and_the_mint_never_runs(
 ) -> None:
     """The store pre-flight (#393): a store that cannot answer
     writes names itself on the form, and no mint leaves."""
-    secret_file = tmp_path / "token"
-    secret_file.write_text("hunter2")
     data = FakeData([])
     data.fail.add("secret-check")
     app, _follow = make_app(data)
     async with app.run_test() as pilot:
         await open_secrets(pilot, app)
         form = await open_mint(pilot, app)
-        fill_mint(form, secret_file)
+        fill_mint(form)
         form.submit()
         await wait_for(lambda: "secret store check failed" in mint_note(app))
         assert on_mint(app)
         assert data.secret_calls == []
 
 
-async def test_the_panel_copies_over_osc52(tmp_path, monkeypatch) -> None:
-    """`c` on the panel hands the sentinel to the OSC 52 copy
-    (#393) and names the copy on the note."""
-    secret_file = tmp_path / "token"
-    secret_file.write_text("hunter2")
+async def test_the_panel_copies_value_and_sentinel_over_osc52(
+    tmp_path, monkeypatch
+) -> None:
+    """`c` on the panel hands the value and `s` the sentinel to
+    the OSC 52 copy (#393, #423), each naming its copy on the
+    note."""
     data = FakeData([])
     copied: list[str] = []
 
@@ -663,13 +660,17 @@ async def test_the_panel_copies_over_osc52(tmp_path, monkeypatch) -> None:
     async with app.run_test() as pilot:
         await open_secrets(pilot, app)
         form = await open_mint(pilot, app)
-        fill_mint(form, secret_file)
+        fill_mint(form)
         form.submit()
         await wait_for(lambda: on_panel(app))
-        await pilot.press("c")
         sentinel = "mskssec2_" + "s" * 43
-        assert copied == [sentinel]
-        assert "copied to the clipboard" in panel_text(app)
+        value = "msksval1_" + "s" * 43
+        await pilot.press("c")
+        assert copied == [value]
+        assert "copied the value" in panel_text(app)
+        await pilot.press("s")
+        assert copied == [value, sentinel]
+        assert "copied the sentinel" in panel_text(app)
         assert "OSC 52" in panel_text(app)
         # A copy with no driver to write through names that.
         monkeypatch.setattr(secrets_mod, "osc52_copy", lambda app, text: False)
@@ -680,12 +681,8 @@ async def test_the_panel_copies_over_osc52(tmp_path, monkeypatch) -> None:
 
 async def test_local_refusals_keep_the_body_home(tmp_path) -> None:
     """Every local check refuses on the note with no exchange
-    (#393): the name's shape, the destinations, the scoped pick,
-    the path, and the file's own bytes."""
-    empty = tmp_path / "empty"
-    empty.write_text("  \n")
-    good = tmp_path / "good"
-    good.write_text("hunter2")
+    (#393): the name's shape, the destinations, and the scoped
+    pick."""
     data = FakeData([])
     app, _follow = make_app(data)
     async with app.run_test() as pilot:
@@ -694,7 +691,6 @@ async def test_local_refusals_keep_the_body_home(tmp_path) -> None:
         await wait_for(lambda: picker_seeded(form))
         # No name.
         form.query_one("#field-dests", Input).value = "api.github.com"
-        form.query_one("#field-path", Input).value = str(good)
         form.submit()
         await wait_for(lambda: "a name is required" in mint_note(app))
         # A junk name.
@@ -718,17 +714,6 @@ async def test_local_refusals_keep_the_body_home(tmp_path) -> None:
         await wait_for(lambda: "at least one workspace" in mint_note(app))
         form.query_one("#field-coverage", Select).value = "daemon-wide"
         await pilot.pause()
-        # No path.
-        form.query_one("#field-path", Input).value = ""
-        form.submit()
-        await wait_for(lambda: "file path is required" in mint_note(app))
-        # A missing file, and an empty one.
-        form.query_one("#field-path", Input).value = str(tmp_path / "nope")
-        form.submit()
-        await wait_for(lambda: "cannot read" in mint_note(app))
-        form.query_one("#field-path", Input).value = str(empty)
-        form.submit()
-        await wait_for(lambda: "is empty" in mint_note(app))
         assert data.calls == []
         assert data.secret_calls == []
         # Escape cancels: no exchange either.
@@ -750,8 +735,6 @@ async def test_the_form_fits_the_small_terminal(tmp_path) -> None:
     """The form with its picker shown stands 80x24 terminals
     (#393): every control and the buttons stay inside the screen,
     above the footer line."""
-    secret_file = tmp_path / "token"
-    secret_file.write_text("hunter2")
     data = FakeData([row(), row(id="ws-b", name="beta")])
     app, _follow = make_app(data)
     async with app.run_test(size=(80, 24)) as pilot:
@@ -764,17 +747,15 @@ async def test_the_form_fits_the_small_terminal(tmp_path) -> None:
         buttons = form.query_one("#form-buttons")
         assert buttons.region.bottom < 24
         assert form.query_one("Footer").region.y == 23
-        # The refusal path fits too: a note echoing a long path
-        # clips at one row instead of pushing the form off-screen.
+        # The refusal path fits too: a note echoing a long junk
+        # destination clips at one row instead of pushing the form
+        # off-screen.
         form.query_one("#field-coverage", Select).value = "daemon-wide"
         await pilot.pause()
         form.query_one("#field-name", Input).value = "github_api"
-        form.query_one("#field-dests", Input).value = "api.github.com"
-        form.query_one("#field-path", Input).value = str(
-            tmp_path / ("nope" + "x" * 120)
-        )
+        form.query_one("#field-dests", Input).value = "-" + "x" * 120
         form.submit()
-        await wait_for(lambda: "cannot read" in mint_note(app))
+        await wait_for(lambda: "an exact hostname" in mint_note(app))
         assert form.query_one("#form").outer_size.height <= 23
         assert buttons.region.bottom < 24
 
@@ -1293,14 +1274,12 @@ async def test_a_junk_dest_carrying_markup_refuses_without_crashing(
     """A pasted fragment with a stray closing tag is operator
     input echoed on a markup-parsing line (#393): the refusal
     names it escaped, and the app stands."""
-    secret_file = tmp_path / "token"
-    secret_file.write_text("hunter2")
     data = FakeData([])
     app, _follow = make_app(data)
     async with app.run_test() as pilot:
         await open_secrets(pilot, app)
         form = await open_mint(pilot, app)
-        fill_mint(form, secret_file)
+        fill_mint(form)
         form.query_one("#field-dests", Input).value = "api.github.com,x[/y"
         form.submit()
         await pilot.pause()
@@ -1313,20 +1292,18 @@ async def test_a_junk_dest_carrying_markup_refuses_without_crashing(
 async def test_the_flight_owns_the_form_until_its_reply_lands(
     tmp_path,
 ) -> None:
-    """The sentinel rides exactly one reply (#393): a second
-    submit or a cancel while the exchange is in the air decides
-    nothing, and the reply still reaches its panel."""
+    """The value and sentinel ride exactly one reply (#393): a
+    second submit or a cancel while the exchange is in the air
+    decides nothing, and the reply still reaches its panel."""
     import asyncio
 
-    secret_file = tmp_path / "token"
-    secret_file.write_text("hunter2")
     data = FakeData([])
     data.mint_gate = asyncio.Event()
     app, _follow = make_app(data)
     async with app.run_test() as pilot:
         await open_secrets(pilot, app)
         form = await open_mint(pilot, app)
-        fill_mint(form, secret_file)
+        fill_mint(form)
         form.submit()
         await wait_for(lambda: "minting" in mint_note(app))
         form.submit()  # a second Mint press mid-flight
@@ -1396,21 +1373,20 @@ async def test_the_form_cancels_without_an_exchange(tmp_path) -> None:
 
 async def test_the_panel_closes_on_its_button(tmp_path) -> None:
     """The Close button clears the panel's text and returns the
-    page (#393); the mint's Copy button copies first."""
-    secret_file = tmp_path / "token"
-    secret_file.write_text("hunter2")
+    page (#393); the panel's Copy value button copies first."""
     data = FakeData([])
     app, _follow = make_app(data)
     async with app.run_test() as pilot:
         await open_secrets(pilot, app)
         form = await open_mint(pilot, app)
-        fill_mint(form, secret_file)
+        fill_mint(form)
         form.submit()
         await wait_for(lambda: on_panel(app))
         panel = app.screen
         sentinel_line = panel.query_one("#panel-sentinel", Static)
-        await pilot.press("enter")  # the focused Copy button
-        assert "copied to the clipboard" in panel_text(app)
+        await pilot.press("enter")  # the focused Copy value button
+        assert "copied the value" in panel_text(app)
+        await pilot.press("tab")
         await pilot.press("tab")
         await panel.query_one("#panel-rule", Static).remove()
         # The Close button closes over a line already gone — a

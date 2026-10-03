@@ -11,7 +11,7 @@ import httpx
 import pytest
 from msks.app import build_app
 from msks.microvm.errors import MicrovmError, MicrovmTimeoutError
-from msks.secretstore import new_sentinel
+from msks.secretstore import SecretStoreError, new_sentinel
 from msks.server import api as api_mod
 from msks.server.api import build_api
 from msks.server.api.rows import healed_spec as healed_spec_row
@@ -2398,13 +2398,12 @@ def mint_body(**overrides) -> dict:
         "workspace_id": "ws-sec",
         "name": "github_api",
         "dests": ["api.github.com"],
-        "secret": "ghp-real-token",
     }
     body.update(overrides)
     return body
 
 
-async def test_mint_stores_and_answers_the_sentinel_once(client) -> None:
+async def test_mint_stores_and_answers_the_value_once(client) -> None:
     http, app, _stub = client
     await seed_workspace(app)
     response = await http.post(
@@ -2413,28 +2412,28 @@ async def test_mint_stores_and_answers_the_sentinel_once(client) -> None:
     assert response.status_code == 201
     row = response.json()
     assert row["sentinel"].startswith("mskssec1_")
+    assert row["value"].startswith("msksval1_")
     assert "secret" not in row
     assert row["dests"] == ["api.github.com"]
-    # The real value landed in the store, under the derived ref.
-    stored = (
-        app.state.settings.secret_store.root
-        / "msks"
-        / "default"
-        / "MSKSWS_WS_SEC_GITHUB_API"
+    # The minted value landed in the store, under the derived ref.
+    assert (
+        await app.state.secrets.read("MSKSWS_WS_SEC_GITHUB_API")
+        == row["value"]
     )
-    assert stored.read_text() == "ghp-real-token"
     assert (
         "MSKSWS_WS_SEC_GITHUB_API"
         in (
             app.state.settings.secret_store.root / "secretspec.toml"
         ).read_text()
     )
-    # Mint is the only view that ever carries the sentinel.
+    # Mint is the only view that ever carries the sentinel or the
+    # value.
     listing = await http.get("/api/v1/secrets", headers=auth())
     assert "sentinel" not in listing.json()[0]
+    assert "value" not in listing.json()[0]
     audit = await http.get("/api/v1/secrets/audit", headers=auth())
     assert audit.json()[0]["kind"] == "mint"
-    assert audit.json()[0]["dests"] == ["api.github.com"]
+    assert "value" not in audit.json()[0]
 
 
 async def test_mint_validates_name_dests_and_workspace(client) -> None:
@@ -2520,9 +2519,8 @@ async def test_revoke_cleans_row_store_and_manifest(client) -> None:
     root = app.state.settings.secret_store.root
     manifest = (root / "secretspec.toml").read_text()
     assert "MSKSWS_WS_SEC_GITHUB_API" not in manifest
-    assert not (
-        root / "msks" / "default" / "MSKSWS_WS_SEC_GITHUB_API"
-    ).exists()
+    with pytest.raises(SecretStoreError):
+        await app.state.secrets.read("MSKSWS_WS_SEC_GITHUB_API")
     audit = await http.get("/api/v1/secrets/audit", headers=auth())
     kinds = [event["kind"] for event in audit.json()]
     # The seeded probe row's startup mint rides the trail (#424).
@@ -2550,7 +2548,7 @@ async def test_store_check_endpoint(client) -> None:
     http, _app, _stub = client
     ok = await http.post("/api/v1/secrets/check", headers=auth())
     assert ok.status_code == 200
-    assert ok.json() == {"provider": "file", "ok": True}
+    assert ok.json() == {"provider": "age", "ok": True}
 
 
 async def test_store_check_names_a_broken_store(client) -> None:
@@ -2577,9 +2575,9 @@ async def test_revoke_unknown_placeholder_is_a_404(client) -> None:
 async def test_mint_survives_the_insert_race(client, monkeypatch) -> None:
     """Two same-label mints racing past both pre-checks: the
     loser's row insert answers 409 on the unique index, and the
-    winner's certified value owns the store entry (the winner
-    re-writes after its insert, so a last-write by the loser
-    cannot stand)."""
+    winner's certified row owns the store entry — the daemon
+    minted it, so the loser never had bytes to plant (#423); the
+    stored value is the winner's reply."""
     http, app, _stub = client
     await seed_workspace(app)
     first = await http.post(
@@ -2598,21 +2596,16 @@ async def test_mint_survives_the_insert_race(client, monkeypatch) -> None:
 
     monkeypatch.setattr(app.state.model, "placeholder_for", blind)
     monkeypatch.setattr(app.state.model, "placeholder_by_ref", blind_by_ref)
-    # The loser carries DIFFERENT bytes: nothing it sends may ever
-    # reach the store behind the winner's certified row.
     raced = await http.post(
         "/api/v1/secrets",
-        json=mint_body(secret="LOSER-UNCERTIFIED"),
+        json=mint_body(),
         headers=auth(),
     )
     assert raced.status_code == 409
     assert "collision" in raced.json()["detail"]
-    root = app.state.settings.secret_store.root
-    stored = root / "msks" / "default" / "MSKSWS_WS_SEC_GITHUB_API"
-    assert stored.read_text() == "ghp-real-token"
     assert (
         await app.state.secrets.read("MSKSWS_WS_SEC_GITHUB_API")
-        == "ghp-real-token"
+        == first.json()["value"]
     )
     listing = await http.get("/api/v1/secrets", headers=auth())
     assert len(operator_rows(listing.json())) == 1
@@ -2638,33 +2631,25 @@ async def test_mint_answers_409_on_a_ref_collision(client) -> None:
     await seed_workspace(app)
     first = await http.post(
         "/api/v1/secrets",
-        json=mint_body(name="foo", secret="first-secret"),
+        json=mint_body(name="foo"),
         headers=auth(),
     )
     assert first.status_code == 201
     second = await http.post(
         "/api/v1/secrets",
-        json=mint_body(name="FOO", secret="second-secret"),
+        json=mint_body(name="FOO"),
         headers=auth(),
     )
     assert second.status_code == 409
     assert "collides" in second.json()["detail"]
     # The winner's value and the manifest are intact.
     root = app.state.settings.secret_store.root
-    stored = root / "msks" / "default" / "MSKSWS_WS_SEC_FOO"
-    assert stored.read_text() == "first-secret"
+    assert (
+        await app.state.secrets.read("MSKSWS_WS_SEC_FOO")
+        == first.json()["value"]
+    )
     manifest = (root / "secretspec.toml").read_text()
     assert manifest.count("MSKSWS_WS_SEC_FOO") == 1
-
-
-async def test_mint_refuses_a_whitespace_secret(client) -> None:
-    http, app, _stub = client
-    await seed_workspace(app)
-    response = await http.post(
-        "/api/v1/secrets", json=mint_body(secret="  \n"), headers=auth()
-    )
-    assert response.status_code == 422
-    assert "empty" in response.json()["detail"]
 
 
 async def test_renew_loses_gracefully_to_the_expiry_sweep(
@@ -2803,7 +2788,6 @@ async def test_daemon_wide_mint_covers_every_workspace(client) -> None:
         json={
             "name": "github_api",
             "dests": ["api.github.com"],
-            "secret": "ghp-shared",
         },
         headers=auth(),
     )
@@ -2811,13 +2795,10 @@ async def test_daemon_wide_mint_covers_every_workspace(client) -> None:
     row = response.json()
     assert row["workspaces"] == []
     assert row["sentinel"].startswith("mskssec2_")
-    stored = (
-        app.state.settings.secret_store.root
-        / "msks"
-        / "default"
-        / "MSKSDAEMON_GITHUB_API"
+    assert row["value"].startswith("msksval1_")
+    assert (
+        await app.state.secrets.read("MSKSDAEMON_GITHUB_API") == row["value"]
     )
-    assert stored.read_text() == "ghp-shared"
     # The audit row records the daemon-wide coverage.
     audit = await http.get("/api/v1/secrets/audit", headers=auth())
     assert audit.json()[0]["workspaces"] == []
@@ -2836,7 +2817,6 @@ async def test_daemon_wide_mint_covers_every_workspace(client) -> None:
         json={
             "name": "github_api",
             "dests": ["api.github.com"],
-            "secret": "ghp-shared",
         },
         headers=auth(),
     )
@@ -2856,7 +2836,6 @@ async def test_multi_workspace_mint_is_one_row(client) -> None:
             "workspaces": ["ws-b", "ws-a", "ws-a"],
             "name": "pair_api",
             "dests": ["api.example.com"],
-            "secret": "pair-token",
         },
         headers=auth(),
     )
@@ -2865,11 +2844,9 @@ async def test_multi_workspace_mint_is_one_row(client) -> None:
     assert row["workspaces"] == ["ws-a", "ws-b"]  # sorted, deduped
     assert row["sentinel"].startswith("mskssec1_")
     assert (
-        app.state.settings.secret_store.root
-        / "msks"
-        / "default"
-        / "MSKSWS_WS_A_WS_B_PAIR_API"
-    ).read_text() == "pair-token"
+        await app.state.secrets.read("MSKSWS_WS_A_WS_B_PAIR_API")
+        == row["value"]
+    )
     # The legacy single-workspace spelling still mints, and the
     # two spellings cannot mix.
     legacy = await http.post(
@@ -2894,7 +2871,6 @@ async def test_multi_workspace_mint_is_one_row(client) -> None:
             "workspaces": [],
             "name": "empty",
             "dests": ["api.example.com"],
-            "secret": "s",
         },
         headers=auth(),
     )
@@ -2905,7 +2881,6 @@ async def test_multi_workspace_mint_is_one_row(client) -> None:
             "workspaces": ["nope"],
             "name": "ghost",
             "dests": ["api.example.com"],
-            "secret": "s",
         },
         headers=auth(),
     )
@@ -3045,7 +3020,6 @@ async def test_daemon_wide_mint_arms_every_attached_workspace(client) -> None:
             json={
                 "name": "wide",
                 "dests": ["api.github.com"],
-                "secret": "s",
             },
             headers=auth(),
         )
@@ -3101,7 +3075,6 @@ async def test_a_partial_daemon_wide_arm_disarms_on_rollback(client) -> None:
             json={
                 "name": "wide",
                 "dests": ["api.github.com"],
-                "secret": "s",
             },
             headers=auth(),
         )
@@ -3497,9 +3470,13 @@ async def test_lifespan_migrates_legacy_backend_refs(tmp_path: Path) -> None:
     async with api.router.lifespan_context(api):
         (row,) = await app.state.model.list_placeholders()
         assert row["backend_ref"] == "MSKSWS_WS_A_GITHUB_API"
-    stored = store_root / "msks" / "default"
-    assert (stored / "MSKSWS_WS_A_GITHUB_API").read_text() == "ghp-old"
-    assert not (stored / "MSKS_WS_A_GITHUB_API").exists()
+        # The moved value answers at the new ref; the legacy one is
+        # gone from the vault.
+        assert (
+            await app.state.secrets.read("MSKSWS_WS_A_GITHUB_API") == "ghp-old"
+        )
+        with pytest.raises(SecretStoreError):
+            await app.state.secrets.read("MSKS_WS_A_GITHUB_API")
     manifest = (store_root / "secretspec.toml").read_text()
     assert "MSKSWS_WS_A_GITHUB_API" in manifest
     assert "MSKS_" not in manifest

@@ -17,6 +17,7 @@ from ...model.secrets import SECRET_COVERAGES, coverage_label
 from ...secretstore import (
     SecretStoreError,
     backend_ref,
+    new_secret_value,
     new_sentinel,
     valid_name,
 )
@@ -113,7 +114,9 @@ def placeholder_view(row: dict, sentinel: bool = True) -> dict:
     """The API-facing view of a placeholder row (#198).
 
     The sentinel appears only when *sentinel* is set — mint's 201
-    carries it exactly once; every later view omits it.
+    carries it exactly once; every later view omits it. The minted
+    value rides that one reply too (#423): the route injects it
+    beside the sentinel, and no later view carries it either.
     ``workspaces`` is the row's coverage (#339): ``[]`` is the
     daemon-wide row.
     """
@@ -228,8 +231,6 @@ def router(app, hub) -> APIRouter:
                     "without a leading digit"
                 ),
             )
-        if not body.secret.strip():
-            raise HTTPException(status_code=422, detail="the secret is empty")
         dests = validated_dests(body.dests)
         # Coverage resolution (#339): the two spellings cannot mix;
         # neither given mints the daemon-wide row (the default), a
@@ -285,6 +286,7 @@ def router(app, hub) -> APIRouter:
             else None
         )
         sentinel = new_sentinel(daemon_wide=not coverage)
+        value = new_secret_value()
         async with app.state.store_lock:
             # Row before value, all under the store lock: an
             # uncertified byte can never land behind a ref a winning
@@ -309,7 +311,7 @@ def router(app, hub) -> APIRouter:
             # it.
             await sync_store_manifest()
             try:
-                await app.state.secrets.write(ref, body.secret)
+                await app.state.secrets.write(ref, value)
             except SecretStoreError as exc:
                 # Roll the row back: a placeholder whose value never
                 # landed would swap empty on the wire.
@@ -375,9 +377,15 @@ def router(app, hub) -> APIRouter:
                 "ts": time.time(),
             },
         )
+        # The value and the sentinel appear in exactly one
+        # response: this one (#423). The operator pastes the value
+        # into the external service; workspaces keep receiving
+        # only the sentinel.
+        view = placeholder_view(row)
+        view["value"] = value
         return Response(
             status_code=201,
-            content=json.dumps(placeholder_view(row)),
+            content=json.dumps(view),
             media_type="application/json",
         )
 

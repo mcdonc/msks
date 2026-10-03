@@ -55,10 +55,13 @@ def test_keys_derive_from_variables_by_one_rule() -> None:
 def test_setting_vars_match_the_settings_source() -> None:
     """SETTING_ENV_VARS is exactly the set of ``MSKSD_*`` variables
     settings.py reads — a variable added there without a tuple entry
-    fails here (its config key would die as unknown)."""
+    fails here (its config key would die as unknown). The #423
+    refusal list names variables no setting reads; it is subtracted
+    before the comparison."""
     text = Path(msks_settings.__file__).read_text()
     read_vars = set(re.findall(r'"(MSKSD_[A-Z0-9_]+)"', text))
-    assert read_vars == set(SETTING_ENV_VARS)
+    removed = set(getattr(msks_settings, "REMOVED_SECRET_STORE_KEYS", ()))
+    assert read_vars - removed == set(SETTING_ENV_VARS)
 
 
 def test_config_dir_var_is_not_a_config_key() -> None:
@@ -519,12 +522,6 @@ KEY_CASES = [
         60.0,
     ),
     (
-        "secret_store_provider",
-        "file",
-        "secret_store.provider",
-        "file",
-    ),
-    (
         "secret_store_root",
         "/srv/msks-secrets",
         "secret_store.root",
@@ -535,25 +532,6 @@ KEY_CASES = [
         "/etc/msksd/age.key",
         "secret_store.age_identity",
         "/etc/msksd/age.key",
-    ),
-    (
-        "secret_store_region",
-        "eu-west-1",
-        "secret_store.region",
-        "eu-west-1",
-    ),
-    ("secret_store_profile", "prod", "secret_store.profile", "prod"),
-    (
-        "secret_store_prefix",
-        "myteam",
-        "secret_store.prefix",
-        "myteam",
-    ),
-    (
-        "secret_store_project",
-        "uuid-42",
-        "secret_store.project",
-        "uuid-42",
     ),
     (
         "secret_store_cli",
@@ -838,16 +816,15 @@ def test_settings_from_env_still_reads_plain_environment(
 
 
 def test_reload_latches_the_secret_store_location(tmp_path) -> None:
-    """A SIGHUP naming a new secret-store provider or root changes
-    nothing: the manifest and values were never migrated, so the
-    store keeps its startup location until a restart (the same
-    reasoning as vmm.state_dir). Connection details (region, the age
-    identity path) reload live — and the value cache empties either
-    way so the next read re-fetches."""
+    """A SIGHUP naming a new secret-store root changes nothing:
+    the manifest and values were never migrated, so the store
+    keeps its startup location until a restart (the same reasoning
+    as vmm.state_dir). The age identity path reloads live — and
+    the value cache empties either way so the next read
+    re-fetches."""
     app = app_with_file(
         tmp_path,
         {
-            "secret_store_provider": "age",
             "secret_store_age_identity": "/old/key",
             "secret_store_root": str(tmp_path / "old-root"),
         },
@@ -856,7 +833,6 @@ def test_reload_latches_the_secret_store_location(tmp_path) -> None:
         tmp_path,
         "\n".join(
             [
-                "secret_store_provider: file",
                 f"secret_store_root: {tmp_path}/new-root",
                 "secret_store_age_identity: /new/key",
             ]
@@ -866,9 +842,8 @@ def test_reload_latches_the_secret_store_location(tmp_path) -> None:
     app.state.secrets._cache["MSKSWS_X"] = "stale"
     main_mod.reload_settings(app, str(tmp_path / "msksd.yaml"))
     store = app.state.settings.secret_store
-    assert store.provider == "age"  # latched
     assert str(store.root) == str(tmp_path / "old-root")  # latched
-    assert store.age_identity == "/new/key"  # connection detail: live
+    assert str(store.age_identity) == "/new/key"  # connection detail: live
     assert app.state.secrets._cache == {}  # the swap emptied the cache
 
 

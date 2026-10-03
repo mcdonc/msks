@@ -985,21 +985,11 @@ def secret_mint(
         metavar="SECONDS",
         help="the placeholder's lifetime (default: unbounded)",
     ),
-    secret_file: str = typer.Option(
-        ...,
-        "--secret-file",
-        metavar="PATH",
-        help=(
-            "the file holding the real secret; - reads stdin "
-            "(pipe it from a password manager)"
-        ),
-    ),
 ) -> int:
-    """Mint a placeholder: daemon-wide by default, scoped with
-    --workspace."""
-    return cmd_secret_mint(
-        workspace, name, dests, ttl, secret_file, transport=ctx.obj
-    )
+    """Mint a placeholder: the daemon mints the value and the
+    sentinel, each printed once. Daemon-wide by default, scoped
+    with --workspace."""
+    return cmd_secret_mint(workspace, name, dests, ttl, transport=ctx.obj)
 
 
 @secret_app.command("ls")

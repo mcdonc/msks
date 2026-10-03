@@ -12,25 +12,23 @@ class TokenCreate(BaseModel):
 
 
 class SecretMint(BaseModel):
-    """A mint request (#198, #339): one placeholder row.
+    """A mint request (#198, #339, #423): one placeholder row.
 
     Coverage (#339): an empty or absent ``workspaces`` mints the
     **daemon-wide** placeholder — one row, one sentinel, valid on
     every accepting workspace's tap; a non-empty list scopes the
     row to exactly those workspaces (each entry an id or name,
     #246). ``workspace_id`` is the pre-#339 single-workspace
-    spelling and stays accepted; the two spellings cannot mix. The
-    real secret rides the request body (the client read it from
-    a file or stdin); it is never echoed in a response.
+    spelling and stays accepted; the two spellings cannot mix.
+    The value itself is never sent: the daemon mints it (#423)
+    and answers with it — beside the sentinel — in exactly one
+    response, this request's.
     """
 
     workspaces: list[str] = Field(default=None, min_length=1, max_length=32)
     workspace_id: str | None = None
     name: str = Field(min_length=1, max_length=128)
     dests: list[str] = Field(min_length=1, max_length=32)
-    # The same cap user_data carries: far more than any token or
-    # key, small enough that a runaway upload fails validation.
-    secret: str = Field(min_length=1, max_length=65536)
     ttl_s: int | None = Field(default=None, ge=1)
 
 

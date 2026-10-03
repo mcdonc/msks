@@ -1,46 +1,16 @@
-"""The placeholder-secret commands (#339): ``msks secret mint``,
-``ls``, ``revoke``, ``renew``, ``coverage``, and ``check`` — the
-group the CLI's typer layer (:mod:`msks.client.cli`) dispatches
-into. The client duplicates the coverage and identifier vocabulary
-per the CLI-isolation rule (the daemon's tables stay in its own
-process).
+"""The placeholder-secret commands (#339, #423): ``msks secret
+mint``, ``ls``, ``revoke``, ``renew``, ``coverage``, and
+``check`` — the group the CLI's typer layer
+(:mod:`msks.client.cli`) dispatches into. The client duplicates
+the coverage and identifier vocabulary per the CLI-isolation
+rule (the daemon's tables stay in its own process).
 """
 
 import asyncio
 import json
-import sys
-from pathlib import Path
 
 from .context import call
 from .tabular import listing_text
-
-
-def read_secret(path: str) -> str:
-    """The #198 payload: a file's contents, or stdin for ``-``.
-
-    Whitespace-stripped at both ends — a token file's trailing
-    newline (or a password manager's) is not part of the secret —
-    and never accepted as a command-line argument, which lands in
-    process lists and shell history.
-    """
-    try:
-        if path == "-":
-            if sys.stdin.isatty():
-                raise SystemExit(
-                    "msks: --secret-file - expects the secret on stdin "
-                    "(pipe it in; it is never read interactively)"
-                )
-            text = sys.stdin.read()
-        else:
-            text = Path(path).read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        raise SystemExit(
-            f"msks: cannot read secret file {path}: {exc}"
-        ) from None
-    value = text.strip()
-    if not value:
-        raise SystemExit("msks: the secret file is empty")
-    return value
 
 
 def coverage_label(workspaces: list[str]) -> str:
@@ -135,18 +105,16 @@ def cmd_secret_mint(
     name: str,
     dests: list[str],
     ttl: int | None,
-    secret_file: str,
     transport=None,
 ) -> int:
-    """``msks secret mint`` (#339): one step; prints the sentinel
-    once. No ``--workspace`` mints the daemon-wide row; a target
-    scopes it."""
-    secret = read_secret(secret_file)
+    """``msks secret mint`` (#339, #423): one step; the daemon
+    mints the value, and this prints it once beside the sentinel.
+    No ``--workspace`` mints the daemon-wide row; a target scopes
+    it."""
     targets = mint_targets(workspace_refs)
     body: dict = {
         "name": name,
         "dests": dests,
-        "secret": secret,
     }
     if targets:
         body["workspaces"] = targets
@@ -159,6 +127,7 @@ def cmd_secret_mint(
         f"minted {coverage_label(row['workspaces'])}/{name} "
         f"for {', '.join(row['dests'])}"
     )
+    print(f"value (shown once): {row['value']}")
     print(f"sentinel (shown once): {row['sentinel']}")
     return 0
 

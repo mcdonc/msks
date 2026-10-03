@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from msks.app import build_app
 from msks.events import EventHub, close_all, relay
 from msks.microvm import MicrovmError, VmSpec
+from msks.secretstore import SecretStoreError
 from msks.server import watcher as watcher_mod
 from msks.server.api import build_api
 from msks.server.api.events import decider_loop
@@ -516,9 +517,9 @@ async def test_sweep_retires_expired_and_keeps_live_rows(tmp_path) -> None:
         manifest = (tmp_path / "store" / "secretspec.toml").read_text()
         assert "MSKSWS_WS_A_EXPIRED" not in manifest
         assert "MSKSWS_WS_B_LIVE" in manifest
-        stored = tmp_path / "store" / "msks" / "default"
-        assert not (stored / "MSKSWS_WS_A_EXPIRED").exists()
-        assert (stored / "MSKSWS_WS_B_LIVE").exists()
+        with pytest.raises(SecretStoreError):
+            await app.state.secrets.read("MSKSWS_WS_A_EXPIRED")
+        assert await app.state.secrets.read("MSKSWS_WS_B_LIVE") == "value"
         event = json.loads(queue.get_nowait())
         assert event["event"] == "secret.expiry"
         assert event["data"]["workspace_id"] == "ws-a"
