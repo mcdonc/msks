@@ -120,13 +120,8 @@ SETTING_ENV_VARS: tuple[str, ...] = (
     # The egress interceptor's shared listener port (#199).
     "MSKSD_INTERCEPTOR_PORT",
     # SecretStoreSettings — the placeholder secret store (#198).
-    "MSKSD_SECRET_STORE_PROVIDER",
     "MSKSD_SECRET_STORE_ROOT",
     "MSKSD_SECRET_STORE_AGE_IDENTITY",
-    "MSKSD_SECRET_STORE_REGION",
-    "MSKSD_SECRET_STORE_PROFILE",
-    "MSKSD_SECRET_STORE_PREFIX",
-    "MSKSD_SECRET_STORE_PROJECT",
     "MSKSD_SECRET_STORE_CLI",
     "MSKSD_SECRET_STORE_TIMEOUT_S",
     # LlmSettings — the workspace LLM proxy (#259).
@@ -541,19 +536,13 @@ def render_template() -> str:
 #                           # resolver
 #
 # --- The placeholder secret store (#198) ---
-# secret_store_provider: file  # file | age | awssm | bws — where
-#                           # real secrets live behind the
-#                           # placeholder swap (docs/secrets.md)
 # secret_store_root: ""     # the store's root; empty ->
-#                           # <state_dir>/secrets
-# secret_store_age_identity: ""  # the age identity file (required
-#                           # when the provider is age)
-# secret_store_region: ""   # awssm region (required when the
-#                           # provider is awssm)
-# secret_store_profile: ""  # optional AWS profile name
-# secret_store_prefix: ""   # optional awssm name prefix
-# secret_store_project: ""  # bws project UUID (required when the
-#                           # provider is bws)
+#                           # <state_dir>/secrets (holds the
+#                           # encrypted agefile, the age
+#                           # identity, and the manifest)
+# secret_store_age_identity: ""  # the age identity file; empty ->
+#                           # <store root>/age.key, minted by
+#                           # the daemon when absent
 # secret_store_cli: secretspec  # the SecretSpec CLI binary
 # secret_store_timeout_s: 30.0  # seconds per store call
 #

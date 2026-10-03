@@ -1,22 +1,34 @@
-"""Secret store tests (#198): manifest, URIs, and the real CLI.
+"""Secret store tests (#198, #423): manifest, the agefile vault,
+and the real CLI.
 
 The subprocess round-trips run the real ``secretspec`` binary from
-the devenv shell against the ``file`` provider in a tmp root — the
-same integration the daemon ships — so these tests assert what the
-CLI actually does (stderr shape, stdin value handling, the newline
-``get`` appends on 0.20), not what a stub would echo back.
+the devenv shell against the ``age`` provider in a tmp root — the
+same integration the daemon ships, with a daemon-minted identity —
+so these tests assert what the CLI actually does (stderr shape,
+stdin value handling, the newline ``get`` appends on 0.20), not
+what a stub would echo back.
 """
 
 import re
 import stat
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import x25519
 from msks.app import build_app
 from msks.secretstore import (
+    AGE_IDENTITY_NAME,
+    AGEFILE_NAME,
+    BECH32_CHARSET,
     MANIFEST_NAME,
     SecretStore,
     SecretStoreError,
     backend_ref,
+    convertbits,
+    encode_bech32,
+    ensure_age_identity,
+    mint_age_identity,
+    new_secret_value,
     new_sentinel,
     provider_uri,
     render_manifest,
@@ -26,7 +38,7 @@ from msks.settings import Settings
 
 
 def store_for(tmp_path, env=None) -> SecretStore:
-    """A store on the file provider under *tmp_path*."""
+    """A store on the age provider under *tmp_path*."""
     variables = {
         "MSKSD_STATE_DIR": str(tmp_path),
         "MSKSD_SECRET_STORE_ROOT": str(tmp_path / "store"),
@@ -34,6 +46,30 @@ def store_for(tmp_path, env=None) -> SecretStore:
     variables.update(env or {})
     app = build_app(Settings.from_env(variables))
     return app.state.secrets
+
+
+def decode_bech32(text: str) -> tuple[str, list[int], list[int]]:
+    """A bech32 string split into (hrp, data words, checksum
+    words) — the verifier's half of the codec, for pinning the
+    encoder against vectors the real age tooling minted."""
+    lowered = text.lower()
+    pos = lowered.rfind("1")
+    values = [BECH32_CHARSET.index(c) for c in lowered[pos + 1 :]]
+    return lowered[:pos], values[:-6], values[-6:]
+
+
+def words_to_bytes(words: list[int]) -> bytes:
+    """5-bit words regrouped into bytes, dropping the tail pad."""
+    acc = 0
+    bits = 0
+    out = bytearray()
+    for word in words:
+        acc = (acc << 5) | word
+        bits += 5
+        while bits >= 8:
+            bits -= 8
+            out.append((acc >> bits) & 0xFF)
+    return bytes(out)
 
 
 def test_new_sentinel_shape() -> None:
@@ -48,6 +84,17 @@ def test_new_sentinel_shape() -> None:
     daemon = new_sentinel(daemon_wide=True)
     assert daemon.startswith("mskssec2_")
     assert len(daemon) == len("mskssec2_") + 43
+
+
+def test_new_secret_value_shape() -> None:
+    """The minted value (#423) is the sentinel's own shape — a
+    versioned prefix plus 43 URL-safe bytes — so a value found in
+    a log or a paste names its origin from the string alone, and
+    each mint draws fresh bytes."""
+    value = new_secret_value()
+    assert value.startswith("msksval1_")
+    assert len(value) == len("msksval1_") + 43
+    assert new_secret_value() != value
 
 
 def test_backend_ref_sanitizes() -> None:
@@ -73,69 +120,119 @@ def test_valid_name() -> None:
     assert not valid_name("has-dash")
 
 
-def test_provider_uris(tmp_path) -> None:
-    """Each provider maps to its documented URI form."""
+def test_provider_uri_is_the_agefile(tmp_path) -> None:
+    """One provider, one URI: the agefile under the store root with
+    the identity beside it. The derived identity path lands at
+    <root>/age.key; an explicit setting wins; and the URI call is
+    what mints the identity when it is absent — 0600, and never
+    rewritten on a second call."""
     store = store_for(tmp_path)
-    assert provider_uri(store) == f"file:{tmp_path / 'store'}"
+    assert (
+        provider_uri(store) == f"age://{tmp_path / 'store' / AGEFILE_NAME}"
+        f"?identity={tmp_path / 'store' / AGE_IDENTITY_NAME}"
+    )
+    derived = tmp_path / "store" / AGE_IDENTITY_NAME
+    assert derived.exists()
+    assert stat.S_IMODE(derived.stat().st_mode) & 0o077 == 0
+    body = derived.read_text()
+    assert provider_uri(store)  # idempotent: the file stands
+    assert derived.read_text() == body
+    explicit = tmp_path / "elsewhere.key"
     store = store_for(
         tmp_path,
-        {
-            "MSKSD_SECRET_STORE_PROVIDER": "age",
-            "MSKSD_SECRET_STORE_AGE_IDENTITY": "/etc/age.key",
-        },
+        {"MSKSD_SECRET_STORE_AGE_IDENTITY": str(explicit)},
     )
     assert (
-        provider_uri(store)
-        == f"age://{tmp_path / 'store' / 'secrets.age'}?identity=/etc/age.key"
+        provider_uri(store) == f"age://{tmp_path / 'store' / AGEFILE_NAME}"
+        f"?identity={explicit}"
     )
-    store = store_for(
-        tmp_path,
-        {
-            "MSKSD_SECRET_STORE_PROVIDER": "awssm",
-            "MSKSD_SECRET_STORE_REGION": "eu-west-1",
-        },
-    )
-    assert provider_uri(store) == "awssm://eu-west-1"
-    store = store_for(
-        tmp_path,
-        {
-            "MSKSD_SECRET_STORE_PROVIDER": "awssm",
-            "MSKSD_SECRET_STORE_REGION": "eu-west-1",
-            "MSKSD_SECRET_STORE_PROFILE": "prod",
-            "MSKSD_SECRET_STORE_PREFIX": "team",
-        },
-    )
-    assert provider_uri(store) == "awssm://prod@eu-west-1?prefix=team"
-    store = store_for(
-        tmp_path,
-        {
-            "MSKSD_SECRET_STORE_PROVIDER": "bws",
-            "MSKSD_SECRET_STORE_PROJECT": "uuid-1",
-        },
-    )
-    assert provider_uri(store) == "bws://uuid-1"
+    assert explicit.exists()
 
 
-def test_render_manifest_declarations() -> None:
-    """One inline declaration per ref, sorted, against the alias."""
-    body = render_manifest(
-        "file:/store", [("MSKSWS_B_X", "b/x"), ("MSKSWS_A_Y", "a/y")]
+def test_convertbits_regroups_with_and_without_tail_pad() -> None:
+    """8-bit bytes into 5-bit words: a length divisible by 5 bits'
+    word size carries no pad word (5 bytes = exactly 8 words), a
+    longer one pads the tail (32 bytes = 51 words + the pad)."""
+    assert convertbits(b"12345", 8, 5) == convertbits(b"12345", 8, 5)
+    assert len(convertbits(b"12345", 8, 5)) == 8
+    assert len(convertbits(bytes(32), 8, 5)) == 52
+
+
+def test_minted_identity_matches_the_age_tooling(tmp_path) -> None:
+    """The daemon-minted identity is the age tooling's own shape:
+    a scalar pinned against a real ``age-keygen`` output encodes
+    to the same identity string, and the recipient on the comment
+    line is the scalar's X25519 public half."""
+    # Pinned from `age-keygen`: this scalar is that identity.
+    scalar = bytes.fromhex(
+        "9018ec3804901996535f3820bf8090d3c1ada24306ee6f8b479ad946df8fc8c4"
     )
-    assert 'name = "msks"' in body
-    assert 'store = "file:/store"' in body
-    assert body.index("MSKSWS_A_Y") < body.index("MSKSWS_B_X")
-    assert 'providers = ["store"]' in body
+    pinned = (
+        "AGE-SECRET-KEY-1JQVWCWQYJQVEV56L8QSTLQYS60Q6MGJRQMHXLZ68NTV5DHU0"
+        "ERZQWKV3K4"
+    )
+    assert encode_bech32("age-secret-key-", scalar).upper() == pinned
+    body = mint_age_identity()
+    comment, identity = body.splitlines()
+    assert comment.startswith("# public key: age1")
+    assert identity.startswith("AGE-SECRET-KEY-1")
+    hrp, words, _checksum = decode_bech32(identity)
+    assert hrp == "age-secret-key-"
+    minted_scalar = words_to_bytes(words)
+    assert len(minted_scalar) == 32
+    private = x25519.X25519PrivateKey.from_private_bytes(minted_scalar)
+    public = private.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    assert comment == f"# public key: {encode_bech32('age', public)}"
+
+
+def test_ensure_age_identity_mints_once(tmp_path, caplog) -> None:
+    """Absent, the identity is minted (0600, parent 0700) and the
+    mint names itself in the log — a repointed path or a moved
+    vault stays diagnosable; present, it is left untouched — an
+    operator's own age-keygen identity and a re-run against an
+    existing vault both keep what stood."""
+    import logging
+
+    path = tmp_path / "vault" / "age.key"
+    with caplog.at_level(logging.WARNING):
+        ensure_age_identity(path)
+    body = path.read_text()
+    assert "minted a new age identity" in caplog.text
+    assert str(path) in caplog.text
+    assert stat.S_IMODE(path.stat().st_mode) & 0o077 == 0
+    assert stat.S_IMODE(path.parent.stat().st_mode) & 0o077 == 0
+    ensure_age_identity(path)
+    assert path.read_text() == body
+    hand_minted = tmp_path / "operator.key"
+    hand_minted.write_text("AGE-SECRET-KEY-1OPERATOR\n")
+    ensure_age_identity(hand_minted)
+    assert hand_minted.read_text() == "AGE-SECRET-KEY-1OPERATOR\n"
 
 
 def test_manifest_modes(tmp_path) -> None:
-    """The root is 0700 and the manifest 0600 — real secrets' bytes
-    live beside them on the file provider."""
+    """The root is 0700 and the manifest 0600 — the agefile and
+    the age identity live beside them in the same root."""
     store = store_for(tmp_path)
     store.sync_manifest([("MSKSWS_WS_X", "ws/x")])
     root = tmp_path / "store"
     manifest = root / MANIFEST_NAME
     assert stat.S_IMODE(root.stat().st_mode) == 0o700
     assert stat.S_IMODE(manifest.stat().st_mode) == 0o600
+
+
+def test_render_manifest_declarations() -> None:
+    """One inline declaration per ref, sorted, against the alias."""
+    body = render_manifest(
+        "age:/store/secrets.age?identity=/store/age.key",
+        [("MSKSWS_B_X", "b/x"), ("MSKSWS_A_Y", "a/y")],
+    )
+    assert 'name = "msks"' in body
+    assert 'store = "age:/store/secrets.age?identity=/store/age.key"' in body
+    assert body.index("MSKSWS_A_Y") < body.index("MSKSWS_B_X")
+    assert 'providers = ["store"]' in body
 
 
 def test_manifest_sync_is_change_driven(tmp_path) -> None:
@@ -151,16 +248,19 @@ def test_manifest_sync_is_change_driven(tmp_path) -> None:
 
 
 async def test_write_read_delete_roundtrip(tmp_path) -> None:
-    """The daemon's three operations against the real CLI."""
+    """The daemon's three operations against the real CLI: the
+    value lands in — and leaves — the encrypted agefile, read back
+    through the same provider the daemon ships."""
     store = store_for(tmp_path)
     store.sync_manifest([("MSKSWS_WS_GITHUB", "ws/github")])
     await store.write("MSKSWS_WS_GITHUB", "ghp-real-token-123")
-    stored = tmp_path / "store" / "msks" / "default" / "MSKSWS_WS_GITHUB"
-    assert stored.read_text() == "ghp-real-token-123"
-    assert stat.S_IMODE(stored.stat().st_mode) & 0o077 == 0
+    agefile = tmp_path / "store" / AGEFILE_NAME
+    assert agefile.exists()
+    assert b"ghp-real-token-123" not in agefile.read_bytes()
     assert await store.read("MSKSWS_WS_GITHUB") == "ghp-real-token-123"
     await store.delete("MSKSWS_WS_GITHUB")
-    assert not stored.exists()
+    with pytest.raises(SecretStoreError):
+        await store.read("MSKSWS_WS_GITHUB")
 
 
 async def test_read_survives_a_cold_cache(tmp_path) -> None:
@@ -174,12 +274,12 @@ async def test_read_survives_a_cold_cache(tmp_path) -> None:
 
 
 async def test_read_uses_the_cache(tmp_path) -> None:
-    """After the first fetch the value comes from memory — the file
-    can disappear and the swap path still answers."""
+    """After the first fetch the value comes from memory — the
+    agefile can disappear and the swap path still answers."""
     store = store_for(tmp_path)
     store.sync_manifest([("MSKSWS_WS_X", "ws/x")])
     await store.write("MSKSWS_WS_X", "value-1")
-    (tmp_path / "store" / "msks" / "default" / "MSKSWS_WS_X").unlink()
+    (tmp_path / "store" / AGEFILE_NAME).unlink()
     assert await store.read("MSKSWS_WS_X") == "value-1"
 
 
@@ -188,10 +288,9 @@ async def test_check_probes_and_cleans(tmp_path) -> None:
     root holds no probe residue after a green run."""
     store = store_for(tmp_path)
     result = await store.check()
-    assert result == {"provider": "file", "ok": True}
+    assert result == {"provider": "age", "ok": True}
     assert not (tmp_path / "store" / "probe.toml").exists()
-    stored = tmp_path / "store" / "msks" / "default"
-    assert not stored.exists() or not any(stored.iterdir())
+    assert (tmp_path / "store" / AGEFILE_NAME).exists()
 
 
 async def test_missing_binary_is_a_named_error(tmp_path) -> None:
@@ -205,26 +304,25 @@ async def test_missing_binary_is_a_named_error(tmp_path) -> None:
         await store.write("MSKSWS_WS_X", "v")
 
 
-def test_settings_reject_unknown_provider() -> None:
-    with pytest.raises(ValueError, match="MSKSD_SECRET_STORE_PROVIDER"):
-        Settings.from_env({"MSKSD_SECRET_STORE_PROVIDER": "vault"})
-
-
-def test_settings_per_provider_required_keys() -> None:
-    """Each provider's required key is named when absent."""
-    for provider, name in (
-        ("age", "MSKSD_SECRET_STORE_AGE_IDENTITY"),
-        ("awssm", "MSKSD_SECRET_STORE_REGION"),
-        ("bws", "MSKSD_SECRET_STORE_PROJECT"),
+def test_settings_refuse_removed_provider_keys() -> None:
+    """#423 removed the provider switch and its connection details:
+    each one still set is named at load, so a stale config fails
+    loudly instead of silently ignoring half a vault setup."""
+    for name in (
+        "MSKSD_SECRET_STORE_PROVIDER",
+        "MSKSD_SECRET_STORE_REGION",
+        "MSKSD_SECRET_STORE_PROFILE",
+        "MSKSD_SECRET_STORE_PREFIX",
+        "MSKSD_SECRET_STORE_PROJECT",
     ):
         with pytest.raises(ValueError, match=name):
-            Settings.from_env({"MSKSD_SECRET_STORE_PROVIDER": provider})
+            Settings.from_env({name: "whatever"})
 
 
 def test_settings_root_derives_from_state_dir(tmp_path) -> None:
     settings = Settings.from_env({"MSKSD_STATE_DIR": str(tmp_path)})
     assert settings.secret_store.root == tmp_path / "secrets"
-    assert settings.secret_store.provider == "file"
+    assert settings.secret_store.age_identity is None
     assert settings.secret_store.cli == "secretspec"
 
 
@@ -301,10 +399,8 @@ async def test_check_never_touches_a_real_placeholder(tmp_path) -> None:
     store = store_for(tmp_path)
     store.sync_manifest([("MSKSWS_STORE_PROBE", "store/probe")])
     await store.write("MSKSWS_STORE_PROBE", "THE-REAL-SECRET")
-    assert await store.check() == {"provider": "file", "ok": True}
+    assert await store.check() == {"provider": "age", "ok": True}
     assert await store.read("MSKSWS_STORE_PROBE") == "THE-REAL-SECRET"
-    stored = tmp_path / "store" / "msks" / "default" / "MSKSWS_STORE_PROBE"
-    assert stored.read_text() == "THE-REAL-SECRET"
 
 
 # --- the #335 legacy ref migration ----------------------------------
@@ -363,11 +459,9 @@ async def test_legacy_refs_migrate_rows_values_and_manifest(tmp_path) -> None:
     fresh = app_for(tmp_path).state.secrets
     assert await fresh.read("MSKSWS_WS_A_GITHUB_API") == "ghp-old"
     assert await fresh.read("MSKSWS_MY_WS_X") == "v2"
-    stored = tmp_path / "store" / "msks" / "default"
-    assert set(stored.iterdir()) == {
-        stored / "MSKSWS_WS_A_GITHUB_API",
-        stored / "MSKSWS_MY_WS_X",
-    }
+    for legacy in ("MSKS_WS_A_GITHUB_API", "MSKS_MY_WS_X"):
+        with pytest.raises(SecretStoreError):
+            await fresh.read(legacy)
     manifest = (tmp_path / "store" / MANIFEST_NAME).read_text()
     assert "MSKSWS_WS_A_GITHUB_API" in manifest
     assert "MSKS_" not in manifest
@@ -514,9 +608,13 @@ async def test_delete_failure_orphans_the_old_value_loudly(
     assert moved == 1
     (row,) = await app.state.model.list_placeholders()
     assert row["backend_ref"] == "MSKSWS_WS_A_GITHUB_API"
-    stored = tmp_path / "store" / "msks" / "default"
-    assert (stored / "MSKSWS_WS_A_GITHUB_API").read_text() == "ghp-old"
-    assert (stored / "MSKS_WS_A_GITHUB_API").read_text() == "ghp-old"
+    fresh = app_for(tmp_path).state.secrets
+    assert await fresh.read("MSKSWS_WS_A_GITHUB_API") == "ghp-old"
+    # The orphan is a stored value behind a ref no manifest declares
+    # (the re-sync dropped it); declaring it reads it back, proving
+    # the copy left the original in the vault.
+    fresh.sync_manifest([("MSKS_WS_A_GITHUB_API", "ws-a/github_api")])
+    assert await fresh.read("MSKS_WS_A_GITHUB_API") == "ghp-old"
     assert "left behind" in caplog.text
 
 

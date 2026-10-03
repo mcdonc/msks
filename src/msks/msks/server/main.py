@@ -104,9 +104,9 @@ def reload_settings(app, config: str | None) -> None:
         return
     keep_startup_bound(app.state.settings, settings)
     app.state.settings = settings
-    # A provider or root swap invalidates every cached value: the
+    # A root or identity swap invalidates every cached value: the
     # next read re-fetches from the new settings' store instead of
-    # serving the old provider's bytes until a restart.
+    # serving the old vault's bytes until a restart.
     app.state.secrets.cache_clear()
 
 
@@ -128,12 +128,11 @@ def keep_startup_bound(old: Settings, new: Settings) -> None:
         new.server.tls_key = old.server.tls_key
     new.vmm.state_dir = old.vmm.state_dir
     new.server.db_path = old.server.db_path
-    # The secret store's location is startup-bound the same way: a
-    # root or provider swap would point reads at a store whose
-    # manifest and values were never migrated (connection details —
-    # region, profile, identity path — reload live, the way
-    # dns_upstream does).
-    new.secret_store.provider = old.secret_store.provider
+    # The secret store's root is startup-bound the same way: a
+    # root swap would point reads at an agefile whose manifest and
+    # values were never migrated. The age identity path reloads
+    # live (the way dns_upstream does) — an operator moving the
+    # key file keeps the same vault.
     new.secret_store.root = old.secret_store.root
 
 

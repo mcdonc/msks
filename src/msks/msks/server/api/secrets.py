@@ -17,6 +17,7 @@ from ...model.secrets import SECRET_COVERAGES, coverage_label
 from ...secretstore import (
     SecretStoreError,
     backend_ref,
+    new_secret_value,
     new_sentinel,
     valid_name,
 )
@@ -51,8 +52,10 @@ async def seed_probe_placeholder(app) -> None:
     (an operator's mints, or a migrated state) keeps them
     untouched. A store that cannot serve rolls the row back and
     the daemon stays up without it (loud, non-fatal — the
-    bootstrap default image's posture: the operator can mint by
-    hand).
+    bootstrap default image's posture: fixing the store and
+    restarting with an empty table is the recovery, because a
+    row minted by hand cannot carry the probe's fixed credential
+    (#423 — values are daemon-minted)).
 
     Runs before any workspace can be attached, so no arming step
     belongs here: the placeholder-driven arm happens at each
@@ -113,7 +116,9 @@ def placeholder_view(row: dict, sentinel: bool = True) -> dict:
     """The API-facing view of a placeholder row (#198).
 
     The sentinel appears only when *sentinel* is set — mint's 201
-    carries it exactly once; every later view omits it.
+    carries it exactly once; every later view omits it. The minted
+    value rides that one reply too (#423): the route injects it
+    beside the sentinel, and no later view carries it either.
     ``workspaces`` is the row's coverage (#339): ``[]`` is the
     daemon-wide row.
     """
@@ -228,8 +233,6 @@ def router(app, hub) -> APIRouter:
                     "without a leading digit"
                 ),
             )
-        if not body.secret.strip():
-            raise HTTPException(status_code=422, detail="the secret is empty")
         dests = validated_dests(body.dests)
         # Coverage resolution (#339): the two spellings cannot mix;
         # neither given mints the daemon-wide row (the default), a
@@ -285,6 +288,7 @@ def router(app, hub) -> APIRouter:
             else None
         )
         sentinel = new_sentinel(daemon_wide=not coverage)
+        value = new_secret_value()
         async with app.state.store_lock:
             # Row before value, all under the store lock: an
             # uncertified byte can never land behind a ref a winning
@@ -306,15 +310,19 @@ def router(app, hub) -> APIRouter:
                 ) from None
             # The manifest must declare the ref before the CLI can
             # write it; the row is in, so the live-rows sync carries
-            # it.
-            await sync_store_manifest()
+            # it. The identity mint and the manifest write raise
+            # OSError siblings of the store's own errors (an
+            # unwritable root, a full disk) and leave the same
+            # valueless live row behind — both roll back here too.
             try:
-                await app.state.secrets.write(ref, body.secret)
-            except SecretStoreError as exc:
+                await sync_store_manifest()
+                await app.state.secrets.write(ref, value)
+            except (SecretStoreError, OSError) as exc:
                 # Roll the row back: a placeholder whose value never
                 # landed would swap empty on the wire.
                 await app.state.model.delete_placeholder(row["id"])
-                await sync_store_manifest()
+                with contextlib.suppress(SecretStoreError, OSError):
+                    await sync_store_manifest()
                 raise HTTPException(status_code=503, detail=str(exc)) from None
         # The sentinel appears in exactly one response: this one.
         # Arming is placeholder-driven (#199): a scoped mint against
@@ -331,9 +339,10 @@ def router(app, hub) -> APIRouter:
         except Exception as exc:  # noqa: BLE001 - rolled back below
             async with app.state.store_lock:
                 await app.state.model.delete_placeholder(row["id"])
-                with contextlib.suppress(SecretStoreError):
+                with contextlib.suppress(SecretStoreError, OSError):
                     await app.state.secrets.delete(ref)
-                await sync_store_manifest()
+                with contextlib.suppress(SecretStoreError, OSError):
+                    await sync_store_manifest()
             # A target that armed before a sibling's refresh failed
             # keeps its redirect over a row that no longer exists —
             # the covering set is empty now, so the quiet sweep
@@ -375,9 +384,15 @@ def router(app, hub) -> APIRouter:
                 "ts": time.time(),
             },
         )
+        # The value and the sentinel appear in exactly one
+        # response: this one (#423). The operator pastes the value
+        # into the external service; workspaces keep receiving
+        # only the sentinel.
+        view = placeholder_view(row)
+        view["value"] = value
         return Response(
             status_code=201,
-            content=json.dumps(placeholder_view(row)),
+            content=json.dumps(view),
             media_type="application/json",
         )
 
@@ -398,16 +413,19 @@ def router(app, hub) -> APIRouter:
         so serving it over the authenticated API costs nothing a
         token holder does not already hold (the llm-token route's
         rationale). A revoked or re-scoped row answers 404 with the
-        re-mint recipe in the detail.
+        reason in the detail: values are daemon-minted (#423), so a
+        row minted by hand cannot carry the probe's fixed
+        credential — the seed is the only mint that can.
         """
         row = await app.state.model.placeholder_for([], PROBE_NAME)
         if row is None:
             raise HTTPException(
                 status_code=404,
                 detail=(
-                    "the probe placeholder is absent; it is seeded at "
-                    "daemon startup, or mint it by hand with dests "
-                    f"[{PROBE_HOST!r}] and the credential blob secret"
+                    "the probe placeholder is absent; the daemon seeds "
+                    "it at startup when the placeholder table is empty — "
+                    "values are daemon-minted, so a row minted by hand "
+                    "cannot carry the probe's fixed credential"
                 ),
             )
         return {
@@ -421,10 +439,17 @@ def router(app, hub) -> APIRouter:
 
     @api.post("/api/v1/secrets/check", dependencies=[Depends(require_token)])
     async def check_secret_store() -> dict:
-        try:
-            return await app.state.secrets.check()
-        except SecretStoreError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from None
+        # The store lock serializes concurrent checks: two probes
+        # share the root's probe manifest path, and an interleaved
+        # pair would clobber each other's declarations mid-probe.
+        # The OSError siblings (an unwritable root, a full disk)
+        # answer the same way — the unwritable root is the
+        # misconfig this endpoint exists to name (#423 review).
+        async with app.state.store_lock:
+            try:
+                return await app.state.secrets.check()
+            except (SecretStoreError, OSError) as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from None
 
     @api.post(
         "/api/v1/secrets/{placeholder_id}/renew",
@@ -479,7 +504,7 @@ def router(app, hub) -> APIRouter:
             await app.state.model.delete_placeholder(placeholder_id)
             try:
                 await app.state.secrets.delete(row["backend_ref"])
-            except SecretStoreError:
+            except SecretStoreError, OSError:
                 # The row is gone, so the leftover value is inert; the
                 # operator sees it in the response and can re-run
                 # check.

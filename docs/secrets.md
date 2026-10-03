@@ -4,8 +4,10 @@ A workspace never holds a real secret. It holds a **placeholder** —
 a sentinel token the operator mints once and pastes into the
 workspace — and the daemon swaps the sentinel for the real secret
 on the wire, in flight, only toward the destinations the mint
-named. The real secret lives in msksd's **secret store** and in
-the daemon's memory, nowhere else.
+named. The real secret is minted by the daemon itself (#423): it
+lives in msksd's **secret store** — one age-encrypted agefile —
+and in the daemon's memory, and it reaches the operator exactly
+once, in the mint reply, to be pasted into the external service.
 
 A mint covers **workspaces** (#339). With no target it is the
 **daemon-wide placeholder**: one row, one sentinel, valid on
@@ -175,18 +177,31 @@ endpoint's recipe — and revoke it like any other placeholder when
 you do not want it. The seed runs exactly when the placeholder
 table is empty: a daemon that already holds rows seeds nothing,
 and a revoked probe row stays gone while the operator's rows hold
-the table. The seed's mint rides the audit trail like any other.
+the table (it returns on the next startup that finds the table
+empty — values are daemon-minted, so a row minted by hand cannot
+carry the probe's fixed credential). The seed's mint rides the
+audit trail like any other.
 
 ## The mint flow
 
 ```console
-$ op read 'op://Vault/github/credential' \
-    | msks secret mint --name github_api \
-        --dest api.github.com --secret-file -
+$ msks secret mint --name github_api --dest api.github.com
 minted */github_api for api.github.com
+value (shown once): msksval1_9Jm3...kQ
 sentinel (shown once): mskssec2_9Jm3...kQ
 ```
 
+- The mint **generates the value** (#423): the daemon creates a
+  strong random value (the platform CSPRNG — `msksval1_` plus 32
+  URL-safe bytes), stores it in the agefile, and answers with it
+  exactly once, beside the sentinel. Paste the value into the
+  external service then; every later view omits it, and a lost
+  value is re-minted, not recalled. The operator never supplies
+  a value, and the client — on another machine — receives the
+  one-time reply over the existing token-authenticated TLS API;
+  the agefile and the age identity stay on the daemon's host, and
+  the exposure point is the client's terminal, the same exposure
+  the sentinel has always had.
 - The mint above carries no workspace target: it is the
   **daemon-wide** mint — one row, one `mskssec2_` sentinel, valid
   on every workspace's tap toward the minted destinations. A
@@ -201,9 +216,6 @@ sentinel (shown once): mskssec2_9Jm3...kQ
   or a set of one or several; the same label can live on the
   daemon-wide row and on scoped rows beside it, one row per label
   per coverage set.
-- `--secret-file` takes a path, or `-` to read the secret from a
-  pipe. The secret is never accepted as a command-line argument:
-  arguments land in process lists and shell history.
 - `--dest` repeats: an exact host (`api.github.com`) binds the swap
   to that host; a suffix (`.github.com`) binds it to every host
   under that domain. A placeholder carries one coverage set, one
@@ -213,23 +225,24 @@ sentinel (shown once): mskssec2_9Jm3...kQ
   placeholder lives until revoked. `msks secret renew` extends a
   lifetime in place — the sentinel never changes and nothing is
   re-delivered.
-- The sentinel is printed once, at mint. Every later view (list,
-  audit, logs) omits it; a lost sentinel is re-minted, not recalled.
+- The value and the sentinel are printed once, at mint. Every
+  later view (list, audit, logs) omits them; a lost value or
+  sentinel is re-minted, not recalled.
 
 The `msks tui` secrets page mints too (#393): `c` opens the form
 — name, repeatable destinations, coverage (the daemon-wide row,
 or a multi-select of the workspaces the tree's own list offers),
-the lifetime (`unbounded` by default, an hour to thirty days
-beside it), and the secret's file path; the bytes ride the file,
-never the terminal's state. The submit checks the store
-(`msks secret check`'s endpoint) before it mints, and a refusal
-— a store that cannot answer writes, a name collision on the
-chosen coverage set — names itself on the form with the fields
-kept for a retry. A successful mint answers with the sentinel's
-one-time panel: the sentinel, its reach decoded from its prefix,
-an OSC 52 clipboard copy (over ssh included, where the terminal
-honors it), and the rule that the display ends with the panel —
-a lost sentinel is re-minted, never recalled. Closing the panel
+and the lifetime (`unbounded` by default, an hour to thirty days
+beside it). There is no value field — the daemon mints the value
+(#423). The submit checks the store (`msks secret check`'s
+endpoint) before it mints, and a refusal — a store that cannot
+answer writes, a name collision on the chosen coverage set —
+names itself on the form with the fields kept for a retry. A
+successful mint answers with the one-time panel: the value, the
+sentinel, its reach decoded from its prefix, OSC 52 clipboard
+copies for each (over ssh included, where the terminal honors
+it), and the rule that the display ends with the panel — a lost
+value or sentinel is re-minted, never recalled. Closing the panel
 clears its text.
 
 `msks secret revoke --name github_api` retires the daemon-wide row
@@ -254,72 +267,63 @@ setting back to `all` arms it with any live daemon-wide row.
 ## Where the real secret lives
 
 The store is [SecretSpec](https://secretspec.dev) driven through its
-CLI (`secretspec`, named by `secret_store_cli`). The **provider is a
-setting** — where the bytes live is a configuration choice, not
-code, so moving from a local file to at-rest encryption or a managed
-vault changes no msks code:
+CLI (`secretspec`, named by `secret_store_cli`): one
+age-encrypted **agefile** — `<store root>/secrets.age`, default
+`<state_dir>/secrets/secrets.age` — holding every value msks
+itself minted. Values exist in plaintext only in the daemon's
+memory, the one-time mint reply, and the `secretspec` child's
+pipe; at rest they are ciphertext.
 
-| Provider | Setting value    | Where the secret lives                                                                                                | The credential the daemon holds                                                                   |
-| -------- | ---------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `file`   | `file` (default) | One file per secret under the store root (`<state_dir>/secrets`), filesystem permissions only                         | none                                                                                              |
-| `age`    | `age`            | One age-encrypted file under the store root; the identity lives outside it, so a copy of the root alone is ciphertext | an age identity file beside the state dir                                                         |
-| `awssm`  | `awssm`          | AWS Secrets Manager, under the `secretspec/msks/` name prefix                                                         | the AWS SDK credential chain — on AWS hosts an instance profile role, no stored credential at all |
-| `bws`    | `bws`            | A Bitwarden Secrets Manager project                                                                                   | a machine-account access token (`BWS_ACCESS_TOKEN`) in the daemon's environment                   |
+The age identity is the daemon's own (#423): minted the first
+time a store operation needs it — a plaintext age-keygen X25519
+file, 0600, named by `secret_store_age_identity` (default
+`<store root>/age.key`) — the same self-minting pattern the
+per-workspace ssh identities use (#138). Plaintext, because the
+daemon must decrypt unattended. Under the default layout the
+identity sits inside the store root beside the agefile, so a
+copy of the whole root carries its own key; when the at-rest
+protection is meant to count for backups, name an identity path
+outside the store root (`secret_store_age_identity`) and back
+that path up separately (the file carries its recipient on a
+comment line, so a backup can be checked without decrypting
+anything). The identity's mint is named in the daemon's log — a
+second one means a repointed path or a moved vault, and a value
+encrypted under another identity never decrypts; a lost identity
+takes the values with it, so re-mint them.
 
-Plain Bitwarden Password Manager (`bw`) keeps its session only
-while an operator holds it unlocked, so it serves interactive use;
-an unattended daemon uses `bws`.
+msksd never decrypts anything itself: every store operation
+spawns `secretspec get/set/delete --provider
+"age://<root>/secrets.age?identity=<path>"` and the agefile is
+decrypted inside that child process. Decryption runs once per ref
+per daemon lifetime — the first tap-time `get`, with the
+in-memory value cache serving every later rewrite — and the store
+root (`0700`) holds the agefile, the identity, and the generated
+manifest (`secretspec.toml`) beside them, readable only by the
+daemon's user.
 
-Provider credentials are deliberately **not msksd settings**: the
-`secretspec` subprocess inherits the daemon's environment, so each
-provider resolves its own chain (the AWS SDK chain, `BWS_ACCESS_TOKEN`).
-Nothing doubles through msksd's configuration.
-
-### Worked examples
-
-`file` — the default; one file per secret under the state dir:
-
-```yaml
-secret_store_provider: file
-# secret_store_root defaults to <state_dir>/secrets
-```
-
-`age` — at-rest encryption of the store (protects copies of the
-state dir; the identity file itself is the daemon's one bootstrap
-secret):
-
-```yaml
-secret_store_provider: age
-secret_store_age_identity: /var/lib/msksd/secrets/age.key
-# generate once: age-keygen -o /var/lib/msksd/secrets/age.key
-```
-
-`awssm` — secrets in AWS; an instance profile role scopes to the
-`secretspec/msks/*` names and no credential is stored on the host:
+### Worked example
 
 ```yaml
-secret_store_provider: awssm
-secret_store_region: eu-west-1
-# optional: secret_store_profile and secret_store_prefix
+# the store's root: default <state_dir>/secrets
+secret_store_root: ""
+# the age identity: default <store root>/age.key, minted when
+# absent — name a path outside the root when backups of the root
+# must stay ciphertext
+secret_store_age_identity: ""
 ```
 
-`bws` — a Bitwarden Secrets Manager project, token via the daemon's
-environment:
+## At-rest encryption
 
-```yaml
-secret_store_provider: bws
-secret_store_project: 5f8a-...-project-uuid
-# systemd unit: Environment=BWS_ACCESS_TOKEN=...
-```
+The agefile is the store: every value msks mints lands in it
+encrypted, and no configuration choice changes that posture — the
+`age` provider is the one store. The ssh identities, the
+database, and the token hashes keep their own house postures; the
+agefile names the secrets' one.
 
-## At-rest encryption is a provider choice
-
-The `file` provider stores plaintext bytes behind filesystem
-permissions — the same posture as every other secret-bearing
-artifact in the state dir (the database, the ssh identities). When
-that is not enough, `age` encrypts the store in place and `awssm` /
-`bws` move the bytes off the daemon host entirely. All three are
-settings; msksd never picks an algorithm itself.
+Moving a vault to another daemon host means moving the store root
+whole — agefile and identity together — while the daemon is
+stopped; the root's manifest regenerates from the database, and
+the values answer the moved identity.
 
 ## The audit trail
 
@@ -333,5 +337,5 @@ re-evaluates the covered workspaces' redirects in the same pass —
 the last placeholder's retirement stands the interception down,
 and one revoke or expiry retires the whole row everywhere at
 once. The secret value and the sentinel appear nowhere in the
-audit or the events: the value is not msks's to log, and the
-sentinel is never shown past its single mint-time print.
+audit or the events: the value answers its single mint-time
+reply alone, and the sentinel is never shown past its own.

@@ -1,7 +1,7 @@
 """The tree's secrets page (#390, #393): every placeholder row the
 daemon holds with revoke and renew on the focused row, the
 daemon-wide audit stream one key away, the mint form, and the
-sentinel's one-time panel — extracted from the app shell so
+mint's one-time panel — extracted from the app shell so
 :mod:`msks.client.tui.main_app` composes them.
 
 Spatial navigation: arrows walk the rows, ``k``/``w`` pick the
@@ -14,7 +14,6 @@ import asyncio
 import base64
 import re
 from datetime import datetime
-from pathlib import Path
 
 from rich.markup import escape
 from textual.app import ComposeResult
@@ -261,22 +260,6 @@ def sentinel_reach(row: dict) -> str:
     return "every accepting workspace"
 
 
-def read_secret_file(path: str) -> tuple[str, str]:
-    """The mint's payload read from its file path (#393):
-    ``(value, "")`` on success, ``("", reason)`` on a refusal the
-    form names on its note — the CLI's own rule (``--secret-file``)
-    carried to the form: whitespace strips at both ends, and the
-    secret rides the file's bytes, never the terminal's state."""
-    try:
-        text = Path(path).read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        return "", f"cannot read secret file {path}: {exc}"
-    value = text.strip()
-    if not value:
-        return "", f"the secret file {path} is empty"
-    return value, ""
-
-
 def osc52_sequence(text: str) -> str:
     """The OSC 52 clipboard-copy sequence (#393): the payload
     base64-encoded inside the ``52;c;`` selection — a terminal
@@ -302,9 +285,9 @@ def osc52_copy(app, text: str) -> bool:
 
 
 def minted_note(row: dict) -> str:
-    """The mint's outcome line (#393): the row's label in the
-    page's own vocabulary — the sentinel itself stays on the
-    one-time panel above the page."""
+    """The mint's outcome line (#393, #423): the row's label in
+    the page's own vocabulary — the value and the sentinel stay
+    on the one-time panel above the page."""
     return f"minted {escape(coverage_text(row))}/{escape(row['name'])}"
 
 
@@ -313,10 +296,10 @@ class SecretsScreen(Screen):
     holds — coverage, name, destinations, a live TTL countdown,
     the created date — with revoke and renew on the focused row,
     the audit stream one key away, and the mint form on `c` (#393
-    — its one-time sentinel panel replaces the form). The
-    coverage flip stays on the workspace page (a picker beside
-    the egress-mode row); Enter on a row owns nothing yet — the
-    placeholder-to-workspace links land with the
+    — its one-time panel, the value beside the sentinel, replaces
+    the form). The coverage flip stays on the workspace page (a
+    picker beside the egress-mode row); Enter on a row owns
+    nothing yet — the placeholder-to-workspace links land with the
     cross-references (#394).
     """
 
@@ -568,10 +551,11 @@ class SecretsScreen(Screen):
         self.app.push_screen(MintScreen(self.minted))
 
     async def minted(self, row: dict | None) -> None:
-        """The mint form's callback (#393): a mint that lands
+        """The mint form's callback (#393, #423): a mint that lands
         dismisses with its reply — the page refreshes so the row
-        stands on the list, and the sentinel's one-time panel
-        replaces the form; a cancel decides nothing."""
+        stands on the list, and the one-time panel (the value
+        beside the sentinel) replaces the form; a cancel decides
+        nothing."""
         if row is None:
             return
         self.refresh_rows()
@@ -903,18 +887,18 @@ class WorkspacePicker(SelectionList):
 
 
 class MintScreen(FormWalk, ModalScreen[dict | None]):
-    """The mint form (#393): the create form's pattern over the
-    mint's own fields — name, repeatable destinations, coverage
+    """The mint form (#393, #423): the create form's pattern over
+    the mint's own fields — name, repeatable destinations, coverage
     (the daemon-wide row, or the workspaces a multi-select picks
-    from the tree's own list), the TTL (unbounded, the daemon's
-    default, or the renew picker's span), and the secret's file
-    path: the payload rides the file's bytes, never the
-    terminal's state. Submit checks the store first (``msks
-    secret check``'s endpoint), then mints; a refusal anywhere
-    names itself on the note and the fields stay for a retry. A
-    mint that lands dismisses with its reply — the row carrying
-    the sentinel exactly once — and the page replaces the form
-    with the one-time panel."""
+    from the tree's own list), and the TTL (unbounded, the
+    daemon's default, or the renew picker's span). There is no
+    value field: the daemon mints the value itself. Submit checks
+    the store first (``msks secret check``'s endpoint), then
+    mints; a refusal anywhere names itself on the note and the
+    fields stay for a retry. A mint that lands dismisses with its
+    reply — the row carrying the value and the sentinel exactly
+    once — and the page replaces the form with the one-time
+    panel."""
 
     # The walk's keys: named here, not on FormWalk — Textual
     # merges BINDINGS from DOMNode bases alone (the mixin's
@@ -936,7 +920,7 @@ class MintScreen(FormWalk, ModalScreen[dict | None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="form"):
             yield Static(
-                "mint a placeholder — the sentinel shows once",
+                "mint a placeholder — the value and sentinel show once",
                 id="form-note",
             )
             with Horizontal(classes="form-row"):
@@ -972,13 +956,6 @@ class MintScreen(FormWalk, ModalScreen[dict | None]):
                     value=MINT_TTLS[0],
                     allow_blank=False,
                     id="field-ttl",
-                    compact=True,
-                )
-            with Horizontal(classes="form-row"):
-                yield Static("secret file", classes="form-label")
-                yield Input(
-                    placeholder="path to the file holding the secret",
-                    id="field-path",
                     compact=True,
                 )
             with Horizontal(id="form-buttons"):
@@ -1079,11 +1056,12 @@ class MintScreen(FormWalk, ModalScreen[dict | None]):
         self.query_one("#form-note", Static).update(text)
 
     def body(self) -> dict | None:
-        """The mint body (#393): the daemon only sees whole bodies
-        — the name's shape, at least one destination, the scoped
-        coverage's non-empty pick, and a readable non-empty secret
-        file are checked piecewise, each refusal naming itself on
-        the note."""
+        """The mint body (#393, #423): the daemon only sees whole
+        bodies — the name's shape, at least one destination, and
+        the scoped coverage's non-empty pick are checked
+        piecewise, each refusal naming itself on the note. The
+        value is none of the form's business: the daemon mints
+        it."""
         identity = self.identity()
         if identity is None:
             return None
@@ -1094,10 +1072,6 @@ class MintScreen(FormWalk, ModalScreen[dict | None]):
         ttl = self.ttl_value()
         if ttl is not None:
             body["ttl_s"] = SECRET_TTL_SECONDS[ttl]
-        secret = self.secret_value()
-        if secret is None:
-            return None
-        body["secret"] = secret
         return body
 
     def identity(self) -> tuple[str, list[str]] | None:
@@ -1141,20 +1115,6 @@ class MintScreen(FormWalk, ModalScreen[dict | None]):
         body["workspaces"] = workspaces
         return True
 
-    def secret_value(self) -> str | None:
-        """The secret's bytes read from the path field (#393);
-        None (with the note naming the refusal) when the path is
-        blank or the file cannot serve the payload."""
-        path = self.field_value("path")
-        if not path:
-            self.note("the secret's file path is required")
-            return None
-        secret, reason = read_secret_file(path)
-        if reason:
-            self.note(flash_safe(reason))
-            return None
-        return secret
-
     async def do_mint(self) -> None:
         """The mint's flight: the local checks first (a refusal
         keeps the fields and never takes off), then the exchange
@@ -1173,7 +1133,7 @@ class MintScreen(FormWalk, ModalScreen[dict | None]):
         store before a doomed mint runs; a refused mint names
         itself on the note with the fields kept for a retry; a
         mint that lands dismisses with its reply (#393 — the
-        sentinel rides the reply exactly once)."""
+        value and the sentinel ride the reply exactly once)."""
         self.note("checking the secret store…")
         try:
             await self.app.data.secret_check()
@@ -1198,19 +1158,22 @@ class MintScreen(FormWalk, ModalScreen[dict | None]):
 
 
 class SentinelPanel(ModalScreen):
-    """The sentinel's one-time panel (#393): the mint's reply
-    replaces the form with the sentinel, its reach decoded from
-    the prefix, and the closing rule — the display ends with the
-    panel, and a lost sentinel is re-minted, never recalled. `c`
-    (or the Copy button) writes the sentinel to the terminal's
-    clipboard over OSC 52 — the copy path a terminal that honors
-    the sequence answers, over ssh included; a terminal that
-    does not honors nothing and the sentinel stays on the panel
-    until it closes. Closing clears the panel's text: the
-    sentinel leaves no trace in the widget tree behind it."""
+    """The mint's one-time panel (#393, #423): the reply replaces
+    the form with the value — the secret the operator pastes into
+    the external service — and the sentinel, each with its reach
+    line, and the closing rule: the display ends with the panel,
+    and a lost value or sentinel is re-minted, never recalled.
+    `c` copies the value and `s` the sentinel over OSC 52 — the
+    copy path a terminal that honors the sequence answers, over
+    ssh included; a terminal that does not honors nothing and the
+    strings stay on the panel until it closes. Closing clears the
+    panel's text: neither leaves a trace in the widget tree
+    behind it.
+    """
 
     BINDINGS = [
-        Binding("c", "copy", "Copy"),
+        Binding("c", "copy_value", "Copy value"),
+        Binding("s", "copy_sentinel", "Copy sentinel"),
         Binding("q", "close", "Close"),
         Binding("escape", "close", "Close", show=False),
     ]
@@ -1226,47 +1189,77 @@ class SentinelPanel(ModalScreen):
                 f"{escape(self.row['name'])}",
                 id="panel-note",
             )
+            yield Static("value (shown once):", id="panel-value-label")
+            yield Static(self.row.get("value") or "", id="panel-value")
             yield Static("sentinel (shown once):", id="panel-label")
             yield Static(self.row.get("sentinel") or "", id="panel-sentinel")
             yield Static(
                 f"reach: {sentinel_reach(self.row)}", id="panel-reach"
             )
             yield Static(
-                "a lost sentinel is re-minted, never recalled — "
+                "a lost value or sentinel is re-minted, never recalled — "
                 "this display ends with the panel",
                 id="panel-rule",
             )
             with Horizontal(id="panel-buttons"):
                 yield Button(
-                    "Copy", id="do-copy", variant="primary", compact=True
+                    "Copy value",
+                    id="do-copy-value",
+                    variant="primary",
+                    compact=True,
+                )
+                yield Button(
+                    "Copy sentinel", id="do-copy-sentinel", compact=True
                 )
                 yield Button("Close", id="do-close", compact=True)
         yield Footer()
 
     def on_mount(self) -> None:
-        self.query_one("#do-copy", Button).focus()
+        self.query_one("#do-copy-value", Button).focus()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "do-copy":
-            self.action_copy()
+        if event.button.id == "do-copy-value":
+            self.action_copy_value()
+        elif event.button.id == "do-copy-sentinel":
+            self.action_copy_sentinel()
         else:
             self.action_close()
 
-    def action_copy(self) -> None:
-        """The OSC 52 copy (#393): the sequence rides the driver
-        beside the frame; the note names what happened."""
+    def copied_note(self, what: str) -> str:
+        """The copy's outcome line: what copied, and where the
+        terminal honors the sequence."""
+        return (
+            f"copied the {what} to the clipboard — where the terminal "
+            "honors OSC 52"
+        )
+
+    def action_copy_value(self) -> None:
+        """The value's OSC 52 copy (#423): the sequence rides the
+        driver beside the frame; the note names what happened."""
+        copied = osc52_copy(self.app, self.row.get("value") or "")
+        self.query_one("#panel-note", Static).update(
+            self.copied_note("value")
+            if copied
+            else "the copy did not land — no terminal to write through"
+        )
+
+    def action_copy_sentinel(self) -> None:
+        """The sentinel's OSC 52 copy (#393), beside the value's."""
         copied = osc52_copy(self.app, self.row.get("sentinel") or "")
         self.query_one("#panel-note", Static).update(
-            "copied to the clipboard — where the terminal honors OSC 52"
+            self.copied_note("sentinel")
             if copied
             else "the copy did not land — no terminal to write through"
         )
 
     def action_close(self) -> None:
-        """Close: the panel's text clears first (#393) — the
-        sentinel leaves the widget tree with the display."""
+        """Close: the panel's text clears first (#393, #423) — the
+        value and the sentinel leave the widget tree with the
+        display."""
         for widget_id in (
             "panel-note",
+            "panel-value-label",
+            "panel-value",
             "panel-label",
             "panel-sentinel",
             "panel-reach",

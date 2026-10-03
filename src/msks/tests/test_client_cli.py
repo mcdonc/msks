@@ -3739,11 +3739,14 @@ def test_cmd_secret_mint_posts_and_prints_the_sentinel_once(
         seen["path"] = request.url.path
         seen["body"] = json.loads(request.content)
         return httpx.Response(
-            201, json={**secret_rows()[0], "sentinel": "mskssec1_abc"}
+            201,
+            json={
+                **secret_rows()[0],
+                "sentinel": "mskssec1_abc",
+                "value": "msksval1_abc",
+            },
         )
 
-    secret_file = tmp_path / "token"
-    secret_file.write_text("ghp-real-token\n")
     code = cli.main(
         [
             "secret",
@@ -3754,38 +3757,37 @@ def test_cmd_secret_mint_posts_and_prints_the_sentinel_once(
             "github_api",
             "--dest",
             "api.github.com",
-            "--secret-file",
-            str(secret_file),
         ],
         transport=mock(handler),
     )
     assert code == 0
     assert seen["path"] == "/api/v1/secrets"
-    assert seen["body"]["secret"] == "ghp-real-token"
+    assert "secret" not in seen["body"]  # the daemon mints it (#423)
     assert seen["body"]["workspaces"] == ["ws-sec"]
     assert "ttl_s" not in seen["body"]
     out = capsys.readouterr().out
     assert "mskssec1_abc" in out
     assert out.count("mskssec1_abc") == 1
+    # The value prints once, beside the sentinel (#423).
+    assert "msksval1_abc" in out
+    assert out.count("msksval1_abc") == 1
 
 
-def test_cmd_secret_mint_reads_stdin_and_sends_ttl(
+def test_cmd_secret_mint_sends_ttl(
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """``--secret-file -`` consumes piped stdin; ``--ttl`` rides the
-    body."""
+    """``--ttl`` rides the body; the value arrives from the reply,
+    never from the operator (#423)."""
     client_env(monkeypatch)
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["body"] = json.loads(request.content)
         return httpx.Response(
-            201, json={**secret_rows()[0], "sentinel": "mskssec1_x"}
+            201,
+            json={**secret_rows()[0], "sentinel": "mskssec1_x", "value": "v"},
         )
 
-    monkeypatch.setattr(sys.stdin, "read", lambda: "piped-token\n")
-    monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
     code = cli.main(
         [
             "secret",
@@ -3798,64 +3800,13 @@ def test_cmd_secret_mint_reads_stdin_and_sends_ttl(
             ".github.com",
             "--ttl",
             "3600",
-            "--secret-file",
-            "-",
         ],
         transport=mock(handler),
     )
     assert code == 0
-    assert seen["body"]["secret"] == "piped-token"
     assert seen["body"]["ttl_s"] == 3600
     assert seen["body"]["dests"] == [".github.com"]
-
-
-def test_cmd_secret_mint_refuses_a_tty_stdin(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """No pipe, no hang: a terminal stdin is a named error."""
-    client_env(monkeypatch)
-    monkeypatch.setattr(sys.stdin, "isatty", lambda: True, raising=False)
-    with pytest.raises(SystemExit, match="expects the secret on stdin"):
-        cli.main(
-            [
-                "secret",
-                "mint",
-                "--workspace",
-                "ws-sec",
-                "--name",
-                "x",
-                "--dest",
-                "a.com",
-                "--secret-file",
-                "-",
-            ],
-            transport=mock(lambda request: httpx.Response(201, json={})),
-        )
-
-
-def test_cmd_secret_mint_refuses_an_empty_secret(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """An empty file fails before any network roundtrip."""
-    client_env(monkeypatch)
-    empty = tmp_path / "empty"
-    empty.write_text("  \n")
-    with pytest.raises(SystemExit, match="empty"):
-        cli.main(
-            [
-                "secret",
-                "mint",
-                "--workspace",
-                "ws-sec",
-                "--name",
-                "x",
-                "--dest",
-                "a.com",
-                "--secret-file",
-                str(empty),
-            ],
-            transport=mock(lambda request: httpx.Response(201, json={})),
-        )
+    assert "secret" not in seen["body"]
 
 
 def test_cmd_secret_mint_refuses_an_all_empty_target(
@@ -3866,8 +3817,6 @@ def test_cmd_secret_mint_refuses_an_all_empty_target(
     row — the broadest there is. The mismatch is refused locally,
     before any network roundtrip."""
     client_env(monkeypatch)
-    monkeypatch.setattr(sys.stdin, "read", lambda: "tok\n")
-    monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
     with pytest.raises(SystemExit, match="names no workspace"):
         cli.main(
             [
@@ -3879,8 +3828,6 @@ def test_cmd_secret_mint_refuses_an_all_empty_target(
                 "x",
                 "--dest",
                 "a.com",
-                "--secret-file",
-                "-",
             ],
             transport=mock(lambda request: httpx.Response(201, json={})),
         )
@@ -3892,13 +3839,13 @@ def test_cmd_secret_mint_strips_ref_whitespace(
     """#339: ``--workspace "a, b"`` is the coverage [a, b], not a
     failed lookup of ``" b"``."""
     client_env(monkeypatch)
-    monkeypatch.setattr(sys.stdin, "read", lambda: "tok\n")
-    monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["body"] = json.loads(request.content)
-        return httpx.Response(201, json={**secret_rows()[0], "sentinel": "s"})
+        return httpx.Response(
+            201, json={**secret_rows()[0], "sentinel": "s", "value": "v"}
+        )
 
     cli.main(
         [
@@ -3910,8 +3857,6 @@ def test_cmd_secret_mint_strips_ref_whitespace(
             "api",
             "--dest",
             "a.com",
-            "--secret-file",
-            "-",
         ],
         transport=mock(handler),
     )
@@ -4056,6 +4001,7 @@ def test_cmd_secret_mint_daemon_wide_when_no_target_given(
                 **secret_rows()[0],
                 "workspaces": [],
                 "sentinel": "mskssec2_wide",
+                "value": "msksval1_wide",
             },
         )
 
@@ -4067,8 +4013,6 @@ def test_cmd_secret_mint_daemon_wide_when_no_target_given(
             "github_api",
             "--dest",
             "api.github.com",
-            "--secret-file",
-            "-",
         ],
         transport=mock(handler),
     )
@@ -4086,13 +4030,13 @@ def test_cmd_secret_mint_splits_and_repeats_workspace_targets(
     """#339: --workspace takes a comma list and repeats; the refs
     ride the body in order."""
     client_env(monkeypatch)
-    monkeypatch.setattr(sys.stdin, "read", lambda: "scoped-token\n")
-    monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["body"] = json.loads(request.content)
-        return httpx.Response(201, json={**secret_rows()[0], "sentinel": "s"})
+        return httpx.Response(
+            201, json={**secret_rows()[0], "sentinel": "s", "value": "v"}
+        )
 
     cli.main(
         [
@@ -4106,8 +4050,6 @@ def test_cmd_secret_mint_splits_and_repeats_workspace_targets(
             "api",
             "--dest",
             "a.com",
-            "--secret-file",
-            "-",
         ],
         transport=mock(handler),
     )
@@ -4256,29 +4198,6 @@ def test_cmd_secret_revoke_names_a_missing_label(
                 "missing_api",
             ],
             transport=mock(handler),
-        )
-
-
-def test_cmd_secret_mint_names_an_unreadable_file(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """A missing secret file fails before any network roundtrip."""
-    client_env(monkeypatch)
-    with pytest.raises(SystemExit, match="cannot read secret file"):
-        cli.main(
-            [
-                "secret",
-                "mint",
-                "--workspace",
-                "ws-sec",
-                "--name",
-                "x",
-                "--dest",
-                "a.com",
-                "--secret-file",
-                str(tmp_path / "absent"),
-            ],
-            transport=mock(lambda request: httpx.Response(201, json={})),
         )
 
 
@@ -4749,7 +4668,7 @@ def test_a_help_shaped_option_value_is_not_a_help_exit(
     monkeypatch.setattr(
         cli,
         "cmd_secret_mint",
-        lambda refs, name, dests, ttl, sf, transport=None: (
+        lambda refs, name, dests, ttl, transport=None: (
             ran.append(name),
             0,
         )[1],
@@ -4764,8 +4683,6 @@ def test_a_help_shaped_option_value_is_not_a_help_exit(
             "-h",
             "--dest",
             "h",
-            "--secret-file",
-            "f",
         ]
     )
     assert rc == 0
