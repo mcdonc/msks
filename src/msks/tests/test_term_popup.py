@@ -65,9 +65,33 @@ def test_session_argv_names_the_socket_the_pane_and_the_workspace() -> None:
     )
     assert argv[0:2] == ["tmux", "-L"]
     assert argv[2].startswith("msks-a1b2c3d4e5-")
-    assert argv[3:6] == ["new-session", "-s", "a1b2c3d4e5"]
-    assert argv[7:] == [";", "set-option", "destroy-unattached", "on"]
-    joined = argv[6]
+    joined = argv[18]
+    assert argv[3:] == [
+        # The scrollback options (#434) land on this launch's own
+        # server ahead of the session: a pane adopts its history
+        # limit only at creation, and the wheel needs mouse mode
+        # from the first draw.
+        "start-server",
+        ";",
+        "set-option",
+        "-g",
+        "mouse",
+        "on",
+        ";",
+        "set-option",
+        "-g",
+        "history-limit",
+        str(tp.HISTORY_LINES),
+        ";",
+        "new-session",
+        "-s",
+        "a1b2c3d4e5",
+        joined,
+        ";",
+        "set-option",
+        "destroy-unattached",
+        "on",
+    ]
     assert joined.startswith(f"{tp.sys.executable} -m msks.client.term_popup")
     # The pane argv carries the workspace: the watcher is the
     # feature, and nothing else can re-derive the id.
@@ -79,8 +103,8 @@ def test_session_argv_names_the_socket_the_pane_and_the_workspace() -> None:
 
 def test_session_argv_without_a_workspace_ships_no_watcher() -> None:
     argv = tp.session_argv(["top"], session="shell", workspace_id=None)
-    assert " pane -s shell -- top" in argv[6]
-    assert " -w " not in argv[6]
+    assert " pane -s shell -- top" in argv[18]
+    assert " -w " not in argv[18]
 
 
 def test_take_option_stops_at_the_separator() -> None:
@@ -151,9 +175,9 @@ def test_run_launch_execs_the_tmux_client(
     assert tp.run_launch(list(SSH_CHILD)) == 0
     assert seen["binname"] == "tmux"
     assert seen["argv"][:2] == ["tmux", "-L"]
-    assert seen["argv"][3] == "new-session"
+    assert seen["argv"][15] == "new-session"
     assert seen["argv"][2].startswith("msks-a1b2c3d4e5-")
-    assert seen["argv"][5] == "a1b2c3d4e5"
+    assert seen["argv"][17] == "a1b2c3d4e5"
 
 
 def test_the_launch_line_meets_the_pane_role(
@@ -174,7 +198,7 @@ def test_the_launch_line_meets_the_pane_role(
     monkeypatch.setattr(tp.os, "execvp", lambda binname, argv: None)
     joined = tp.session_argv(
         SSH_CHILD, session="a1b2c3d4e5", workspace_id="a1b2c3d4e5"
-    )[6]
+    )[18]
     words = shlex.split(joined)[3:]  # past python -m msks.client.term_popup
     assert words[0] == "pane"
     tp.main(["pane", *words[1:]])
