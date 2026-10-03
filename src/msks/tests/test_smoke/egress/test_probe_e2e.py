@@ -1,7 +1,9 @@
 """The probe endpoint e2e (#424): curl from inside a workspace VM.
 
 The full operator verification against a real msksd process and a
-real workspace VM: read the probe placeholder the daemon seeded at
+real workspace VM — whichever guest image GUEST_DIR names (the
+Debian lane points it at the Debian assets, the NixOS lane at the
+NixOS ones): read the probe placeholder the daemon seeded at
 first-time startup, then invoke curl from inside the guest against
 ``https://secretprobe.msks/`` with the sentinel as the raw Basic blob —
 and assert the service answers ``ok``. The answer can only exist
@@ -100,15 +102,19 @@ async def test_probe_e2e_curl_from_the_workspace() -> None:
         assert response.status_code == 200, response.text
 
         # curl first (plain NAT path; nothing intercepts yet): the
-        # image may or may not ship it, and the probe needs it.
+        # image may or may not ship it, and the probe needs it. The
+        # Debian image installs it on demand; an image with no
+        # package manager must already carry it (the NixOS image
+        # ships it).
         await console_exec(
             url,
             token,
             ssl_ctx,
             wid,
-            "command -v curl >/dev/null 2>&1 || "
-            "(apt-get update -qq && apt-get install -y -qq curl) ; "
-            "command -v curl >/dev/null 2>&1 && echo CURL-$((6*7))",
+            "if ! command -v curl >/dev/null 2>&1; then "
+            "command -v apt-get >/dev/null 2>&1 "
+            "&& apt-get update -qq && apt-get install -y -qq curl; "
+            "fi; command -v curl >/dev/null 2>&1 && echo CURL-$((6*7))",
             b"CURL-42",
         )
 
