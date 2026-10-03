@@ -271,14 +271,13 @@ def seed_script(
 def keyless_seed_script(
     llm_token: str | None, llm_port: int, ca_pem: str | None
 ) -> str:
-    """The identity-less seed: the LLM credential block alone (a
-    pre-#111 row whose seed is healing), plus the interceptor CA
+    """The identity-less seed: the LLM credential block when a
+    token rides (a pre-#111 row whose seed is healing — a tokenless
+    spec names no proxy to configure), plus the interceptor CA
     block when one rides (#424)."""
-    script = (
-        "#!/bin/sh\n"
-        "# msks (#259): the workspace's LLM proxy credential.\n"
-        "set -eu\n" + llm_seed_block(llm_token, llm_port)
-    )
+    script = "#!/bin/sh\n# msks (#424): the workspace's seed.\nset -eu\n"
+    if llm_token is not None:
+        script += llm_seed_block(llm_token, llm_port)
     if ca_pem is not None:
         script += ca_seed_block(ca_pem)
     return script
@@ -376,6 +375,10 @@ def llm_seed_block(token: str, port: int) -> str:
     return (
         f"llm_token='{token}'\n"
         "install -d -m 0755 -o root -g root /etc/msks\n"
+        # The block owns its profile.d target: the NixOS base ships
+        # no /etc/profile.d, and the heredoc below aborts a set -eu
+        # seed against a missing directory.
+        "install -d -m 0755 /etc/profile.d\n"
         "printf '%s\\n' \"$llm_token\" > /etc/msks/llm.token\n"
         "chmod 0644 /etc/msks/llm.token\n"
         "cat > /etc/profile.d/msks-llm.sh <<'MSEOF'\n"
