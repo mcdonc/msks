@@ -32,7 +32,7 @@ from msks.client.tui.secrets import (
     ttl_text,
 )
 from test_consent_overlay import FakeFactory, FakeWS, press_until, wait_for
-from test_main_tui import FakeData, make_app, row
+from test_main_tui import FakeData, list_children, make_app, row
 from textual.widgets import Input, Select, Static
 
 
@@ -94,9 +94,8 @@ def on_audit(app) -> bool:
     return isinstance(app.screen, SecretAuditScreen)
 
 
-async def open_secrets(pilot, app, workspaces: int = 0) -> SecretsScreen:
-    """Press `s` on the workspaces list — the operator's own path
-    (#431): the branch row's replacement."""
+async def open_secrets(pilot, app) -> SecretsScreen:
+    """Press `s` on the workspaces list (#431)."""
     await press_until(pilot, "s", lambda: on_secrets(app))
     return app.screen
 
@@ -211,14 +210,7 @@ async def test_s_opens_the_page_and_back() -> None:
     async with app.run_test() as pilot:
         # The listing holds the workspaces alone (#431): the
         # branch row is gone.
-        def standing_rows() -> int:
-            """The list's row count, or -1 while it mounts."""
-            try:
-                return len(app.query_one("#rows").children)
-            except Exception:
-                return -1
-
-        await wait_for(lambda: standing_rows() == 2)
+        await wait_for(lambda: list_children(app) == 2)
         page = await open_secrets(pilot, app)
         assert page is app.screen
         await pilot.press("escape")
@@ -532,7 +524,7 @@ async def test_a_scoped_mint_picks_workspaces_from_the_tree(tmp_path) -> None:
     data = FakeData([row(), row(id="ws-b", name="beta")])
     app, _follow = make_app(data)
     async with app.run_test() as pilot:
-        await open_secrets(pilot, app, workspaces=2)
+        await open_secrets(pilot, app)
         form = await open_mint(pilot, app)
         picker = form.query_one("#field-workspaces", WorkspacePicker)
         await wait_for(lambda: picker.option_count == 2)
@@ -695,7 +687,7 @@ async def test_the_form_fits_the_small_terminal(tmp_path) -> None:
     data = FakeData([row(), row(id="ws-b", name="beta")])
     app, _follow = make_app(data)
     async with app.run_test(size=(80, 24)) as pilot:
-        await open_secrets(pilot, app, workspaces=2)
+        await open_secrets(pilot, app)
         form = await open_mint(pilot, app)
         form.query_one("#field-coverage", Select).value = "scoped"
         await pilot.pause()
@@ -727,7 +719,7 @@ async def test_the_arrows_walk_the_form_and_leave_the_picker_at_its_edges(
     data = FakeData([row(), row(id="ws-b", name="beta")])
     app, _follow = make_app(data)
     async with app.run_test() as pilot:
-        await open_secrets(pilot, app, workspaces=2)
+        await open_secrets(pilot, app)
         form = await open_mint(pilot, app)
         await wait_for(lambda: picker_seeded(form))
         assert form.focused is form.query_one("#field-name", Input)
@@ -1282,7 +1274,7 @@ async def test_the_keyboard_path_picks_the_scoped_coverage(
     data = FakeData([row(), row(id="ws-b", name="beta")])
     app, _follow = make_app(data)
     async with app.run_test() as pilot:
-        await open_secrets(pilot, app, workspaces=2)
+        await open_secrets(pilot, app)
         form = await open_mint(pilot, app)
         picker = form.query_one("#field-workspaces", WorkspacePicker)
         await wait_for(lambda: picker.option_count == 2)

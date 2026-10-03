@@ -481,6 +481,39 @@ async def test_the_list_rows_open_pages_and_return(monkeypatch) -> None:
         await wait_for(lambda: on_main(app) and data.fetches > fetches)
 
 
+async def test_a_refresh_keeps_the_focused_workspace_row() -> None:
+    """A refresh rebuilds the listing with the focused row kept
+    by its key — the consent queue's rebuild rule, carried to the
+    listing."""
+    data = FakeData([row(), row(id="ws-b", name="beta")])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: list_children(app) == 2)
+        before = app.query_one("#rows")
+
+        def focused_key():
+            """The standing list's highlighted row key, or None."""
+            child = before.highlighted_child
+            return getattr(child, "row_key", None) if child else None
+
+        # The first press takes the focus; the walk needs a
+        # highlight to move (the operator's own path).
+        await press_until(
+            pilot, "down", lambda: focused_key() == ("workspace", "ws-b")
+        )
+        await pilot.press("r")
+
+        def fresh():
+            """The rebuilt list, or None before the swap lands."""
+            rows = app.screen.query("#rows")
+            return rows[0] if rows else None
+
+        await wait_for(lambda: fresh() is not None and fresh() is not before)
+        await wait_for(
+            lambda: fresh().highlighted_child.row_key == ("workspace", "ws-b")
+        )
+
+
 async def test_start_stop_and_remove_from_the_list(monkeypatch) -> None:
     scripted_link(monkeypatch, [])
     data = FakeData([row()])

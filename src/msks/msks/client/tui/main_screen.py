@@ -208,8 +208,7 @@ class MainScreen(Screen):
         self.refresh_rows()
 
     def action_secrets(self) -> None:
-        """`s`: the secrets page (#431) — the branch row's
-        replacement."""
+        """`s`: the secrets page (#431)."""
         self.app.push_screen(SecretsScreen())
 
     def action_start(self) -> None:
