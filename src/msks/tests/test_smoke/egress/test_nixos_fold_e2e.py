@@ -33,7 +33,13 @@ import httpx
 import pytest
 from msks.spec.probe import PROBE_HOST
 
-from test_smoke import GUEST_DIR, default_route_iface, free_port, needs_egress
+from test_smoke import (
+    GUEST_DIR,
+    collect_failure_evidence,
+    default_route_iface,
+    free_port,
+    needs_egress,
+)
 from test_smoke.egress.test_daemon_e2e import (
     DAEMON_EXIT_TIMEOUT_S,
     await_ca,
@@ -93,6 +99,7 @@ async def test_nixos_fold_e2e_system_trust() -> None:
 
     client = None
     wid = f"fold-e2e-{uuid.uuid4().hex[:8]}"
+    serial_log = state_dir / "vms" / wid / "serial.log"
     try:
         await await_ca(proc, state_dir)
         client = httpx.AsyncClient(
@@ -144,12 +151,37 @@ async def test_nixos_fold_e2e_system_trust() -> None:
                 # fail now, naming the observed state; the CI
                 # evidence step carries the serial log.
                 if "ACT-failed-42" in str(exc):
+                    # Best-effort journal capture before the raise:
+                    # nixos-rebuild's stderr lives in the unit's
+                    # journal, not on the serial console.
+                    with contextlib.suppress(Exception):
+                        await console_exec(
+                            url,
+                            token,
+                            ssl_ctx,
+                            wid,
+                            "journalctl -u msks-interceptor-ca "
+                            "--no-pager -n 50; true; "
+                            "echo J-$((6*7))",
+                            b"J-42",
+                        )
                     raise AssertionError(
                         "the fold unit failed on the guest — see the "
                         "serial log"
                     ) from exc
                 await asyncio.sleep(FOLD_POLL_S)
         else:
+            with contextlib.suppress(Exception):
+                await console_exec(
+                    url,
+                    token,
+                    ssl_ctx,
+                    wid,
+                    "journalctl -u msks-interceptor-ca "
+                    "--no-pager -n 50; true; "
+                    "echo J-$((6*7))",
+                    b"J-42",
+                )
             raise AssertionError(
                 f"the fold unit never went active within "
                 f"{FOLD_TIMEOUT_S}s — see the guest serial log"
@@ -186,11 +218,36 @@ async def test_nixos_fold_e2e_system_trust() -> None:
             b"MK-42",
         )
 
+        # The later-boot no-op: a stop/start cycle re-boots the
+        # same guest (the marker and the folded profile survive on
+        # the overlay), and the unit must go active WITHOUT a new
+        # generation — the fold's rebuild left system-2-link; a
+        # marker that failed to match would rebuild again and
+        # mint system-3-link, minutes of a 2-vCPU boot the no-op
+        # exists to spare.
+        response = await client.post(f"/api/v1/workspaces/{wid}/stop")
+        assert response.status_code == 200, response.text
+        response = await client.post(f"/api/v1/workspaces/{wid}/start")
+        assert response.status_code == 200, response.text
+        await console_exec(
+            url,
+            token,
+            ssl_ctx,
+            wid,
+            "systemctl is-active msks-interceptor-ca "
+            ">/dev/null && test -e "
+            "/nix/var/nix/profiles/system-2-link "
+            "&& test ! -e /nix/var/nix/profiles/system-3-link "
+            "&& echo NOOP-$((6*7))",
+            b"NOOP-42",
+        )
+
         response = await client.post(f"/api/v1/workspaces/{wid}/stop")
         assert response.status_code == 200, response.text
         response = await client.delete(f"/api/v1/workspaces/{wid}")
         assert response.status_code == 200, response.text
     except BaseException:
+        collect_failure_evidence(state_dir, wid, serial_log)
         print(daemon_log_tail(state_dir))
         raise
     finally:

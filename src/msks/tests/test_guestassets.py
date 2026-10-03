@@ -495,7 +495,7 @@ def test_the_nixos_image_folds_the_interceptor_ca() -> None:
     # seed (and the image build, on a clean host) evaluating the
     # shipped configuration exactly.
     assert "security.pki.certificates" in configuration
-    assert "builtins.pathExists interceptorCA" in configuration
+    assert "hasInterceptorCA" in configuration
     assert "builtins.readFile interceptorCA" in configuration
     # node ignores the system trust store; its extra-root
     # variable rides the session environment once the fold ran.
@@ -522,10 +522,7 @@ def test_the_nixos_image_folds_the_interceptor_ca() -> None:
     # evaluation would fold a host-carried certificate into every
     # guest's trust store.
     assert "_module.args.imageBuild = true" in build
-    assert (
-        "!imageBuild || config.security.pki.certificates == [ ]"
-        in configuration
-    )
+    assert "!imageBuild || !hasInterceptorCA" in configuration
     # The Debian image has no fold unit.
     assert "msks-interceptor-ca" not in debian
 

@@ -297,9 +297,10 @@ NixOS way (#427): a background oneshot (`msks-interceptor-ca`,
 ordered after cloud-init, one rebuild per fresh certificate —
 a marker no-ops later boots) runs `nixos-rebuild switch`, whose
 evaluation reads the staged certificate into `security.pki`, so
-the system bundle itself carries the CA and every client trusts
-it — the exports remain the first-boot bridge that keeps the
-workspace usable while that rebuild runs.
+the system bundle itself carries the CA and every client that
+reads the system bundle trusts it — node keeps its own exported
+variable, and the exports remain the first-boot bridge that keeps
+the workspace usable while that rebuild runs.
 
 ## What runs where
 

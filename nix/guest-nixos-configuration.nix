@@ -49,6 +49,14 @@ let
   # The model-discovery extension (#266, #268): the shared source
   # file the tmpfiles rules below plant inside the guest.
   piExtension = ./guest-pi-extension.ts;
+
+  # The workspace's interception CA (#427): the identity seed
+  # stages it at /etc/msks at first boot, and the rebuild-time
+  # evaluation inside the guest reads it (below). One probe of
+  # the path, shared by every consumer, so no evaluation can see
+  # the file appear mid-eval twice over.
+  interceptorCA = /etc/msks/interceptor-ca.crt;
+  hasInterceptorCA = builtins.pathExists interceptorCA;
 in
 {
   nixpkgs.hostPlatform = "x86_64-linux";
@@ -311,24 +319,18 @@ in
   # otherwise bake a foreign CA into every guest. The path is the
   # guest's own reserved namespace — the seed's files under
   # /etc/msks are the only writers.
-  security.pki.certificates =
-    let
-      interceptorCA = /etc/msks/interceptor-ca.crt;
-    in
-    lib.optionals (builtins.pathExists interceptorCA) [
-      (builtins.readFile interceptorCA)
-    ];
+  security.pki.certificates = lib.optionals hasInterceptorCA [
+    (builtins.readFile interceptorCA)
+  ];
 
   # Node stays env-driven after the fold too: it ignores the
   # system trust store and adds roots through this variable
   # (#424), so the rebuilt system sets it declaratively — the
   # same value the seed's profile.d export carried, present for
   # every session shape once the fold has run.
-  environment.sessionVariables =
-    lib.optionalAttrs (builtins.pathExists /etc/msks/interceptor-ca.crt)
-      {
-        NODE_EXTRA_CA_CERTS = "/etc/msks/interceptor-ca.crt";
-      };
+  environment.sessionVariables = lib.optionalAttrs hasInterceptorCA {
+    NODE_EXTRA_CA_CERTS = "/etc/msks/interceptor-ca.crt";
+  };
 
   # The fold trigger (#427): one background rebuild per fresh
   # certificate. A oneshot after cloud-final (the stage that runs
@@ -519,7 +521,7 @@ in
   # to start.
   assertions = [
     {
-      assertion = !imageBuild || config.security.pki.certificates == [ ];
+      assertion = !imageBuild || !hasInterceptorCA;
       message =
         ""
         + "this image build host carries /etc/msks/interceptor-ca.crt — "
