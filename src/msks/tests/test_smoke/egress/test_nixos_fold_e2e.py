@@ -59,6 +59,36 @@ FOLD_POLL_S = 5.0
 NIXOS_ARCHIVES = sorted(GUEST_DIR.glob("workspace-nixos-*.tar"))
 
 
+async def dump_fold_journal(
+    url: str, token: str, ssl_ctx: ssl.SSLContext, workspace_id: str
+) -> None:
+    """Print the fold unit's journal tail on a failure path.
+
+    nixos-rebuild's stderr lives in the unit's journal, not on the
+    serial console. ``console_exec`` swallows its buffer on a
+    marker hit, so the probe asks for a marker the output can
+    never contain — the resulting ``AssertionError`` carries the
+    last 2000 bytes of pty output, which is the journal tail; a
+    dead console prints nothing (the evidence collection in the
+    handler below still copies the serial log).
+    """
+    try:
+        await console_exec(
+            url,
+            token,
+            ssl_ctx,
+            workspace_id,
+            "journalctl -u msks-interceptor-ca --no-pager "
+            "-n 40; true; echo J-$((6*7))",
+            b"J-42-NEVER",
+        )
+    except AssertionError as exc:
+        print(
+            f"fold e2e — msks-interceptor-ca journal tail:\n{exc}",
+            flush=True,
+        )
+
+
 @needs_egress
 @pytest.mark.skipif(
     not NIXOS_ARCHIVES,
@@ -98,8 +128,8 @@ async def test_nixos_fold_e2e_system_trust() -> None:
     forwarding.write_text("1")
 
     client = None
+    minted: str | None = None
     wid = f"fold-e2e-{uuid.uuid4().hex[:8]}"
-    serial_log = state_dir / "vms" / wid / "serial.log"
     try:
         await await_ca(proc, state_dir)
         client = httpx.AsyncClient(
@@ -117,6 +147,13 @@ async def test_nixos_fold_e2e_system_trust() -> None:
 
         response = await client.post("/api/v1/workspaces", json={"name": wid})
         assert response.status_code == 201, response.text
+        # The daemon mints its own instance id — the artifacts
+        # (serial log, vm dir) key on it, while the name this test
+        # typed keeps addressing every API surface
+        # (test_daemon_e2e's minted pattern).
+        minted = response.json()["id"]
+        assert minted != wid
+        serial_log = state_dir / "vms" / minted / "serial.log"
         response = await client.post(f"/api/v1/workspaces/{wid}/start")
         assert response.status_code == 200, response.text
 
@@ -151,37 +188,14 @@ async def test_nixos_fold_e2e_system_trust() -> None:
                 # fail now, naming the observed state; the CI
                 # evidence step carries the serial log.
                 if "ACT-failed-42" in str(exc):
-                    # Best-effort journal capture before the raise:
-                    # nixos-rebuild's stderr lives in the unit's
-                    # journal, not on the serial console.
-                    with contextlib.suppress(Exception):
-                        await console_exec(
-                            url,
-                            token,
-                            ssl_ctx,
-                            wid,
-                            "journalctl -u msks-interceptor-ca "
-                            "--no-pager -n 50; true; "
-                            "echo J-$((6*7))",
-                            b"J-42",
-                        )
+                    await dump_fold_journal(url, token, ssl_ctx, wid)
                     raise AssertionError(
                         "the fold unit failed on the guest — see the "
                         "serial log"
                     ) from exc
                 await asyncio.sleep(FOLD_POLL_S)
         else:
-            with contextlib.suppress(Exception):
-                await console_exec(
-                    url,
-                    token,
-                    ssl_ctx,
-                    wid,
-                    "journalctl -u msks-interceptor-ca "
-                    "--no-pager -n 50; true; "
-                    "echo J-$((6*7))",
-                    b"J-42",
-                )
+            await dump_fold_journal(url, token, ssl_ctx, wid)
             raise AssertionError(
                 f"the fold unit never went active within "
                 f"{FOLD_TIMEOUT_S}s — see the guest serial log"
@@ -247,7 +261,8 @@ async def test_nixos_fold_e2e_system_trust() -> None:
         response = await client.delete(f"/api/v1/workspaces/{wid}")
         assert response.status_code == 200, response.text
     except BaseException:
-        collect_failure_evidence(state_dir, wid, serial_log)
+        if minted is not None:
+            collect_failure_evidence(state_dir, minted, serial_log)
         print(daemon_log_tail(state_dir))
         raise
     finally:
