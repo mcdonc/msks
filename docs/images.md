@@ -313,13 +313,23 @@ against:
   `nix/guest-nixos-configuration.nix` — the very module the image
   build evaluated — with the module's whole import chain (its
   package files, the shrinkwrap pair, the console helper's
-  sources) shipped beside it at the same relative paths. A rebuild
-  re-evaluates the shipped configuration; edit the module or add
-  settings in `configuration.nix` and run:
+  sources) shipped beside it at the same relative paths, and the
+  image build evaluates the shipped chain exactly as a rebuild
+  does, so a configuration a rebuild cannot evaluate fails the
+  build, not a workspace's first boot. A rebuild re-evaluates the
+  shipped configuration; edit the module or add settings in
+  `configuration.nix` and run:
 
   ```bash
   sudo nixos-rebuild switch
   ```
+
+- **The nix search path.** The same four entries — `nixpkgs`,
+  `nixos-config`, the `nixos-system` entrypoint the rebuild tool
+  prefers, and the channels profile — ship in `/etc/nix/nix.conf`
+  and in every login shell's `NIX_PATH`, so `<nixpkgs>` resolves
+  identically for the root rebuild path and for the workspace
+  user at the console (#433).
 
 - **The system profile as the boot's init.** The kernel cmdline
   names `init=/nix/var/nix/profiles/system/init` — the
@@ -333,7 +343,14 @@ against:
 A rebuild that changes nothing but re-activates keeps every msks
 contract item — the vsock console, the sshd posture, cloud-init
 seed handling, the agent toolchain on PATH — because the
-configuration it evaluates is the one that shipped. The image
+configuration it evaluates is the one that shipped. nix works the
+same way for the unprivileged workspace user logged in on the
+console (#433): `nix-build '<nixpkgs>' -A <pkg>` builds from the
+baked pin through the daemon, `nix-env -iA nixpkgs.<pkg>` installs
+into the user's own profile, and `nix-shell -p <pkg>` builds and
+enters an environment — fetching what the shipped store lacks
+from `cache.nixos.org` through the workspace's egress path. The
+image
 ships one background consumer of this readiness (#427): the
 `msks-interceptor-ca` oneshot folds the workspace's interception
 CA (staged by the identity seed under `/etc/msks`) into the

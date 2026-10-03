@@ -123,6 +123,7 @@ jobs:
         run: >-
           sudo apt-get update -qq && sudo apt-get install -y -qq nftables &&
           devenv --quiet -O dotenv.enable:bool false shell -- bash -c "
+          set -eo pipefail;
           sudo -n env TEST_EGRESS=1 TMPDIR=/tmp
           TEST_GUEST_UP_TIMEOUT_S=180
           TEST_CONSOLE_TIMEOUT_S=120

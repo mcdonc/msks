@@ -35,6 +35,7 @@ on:
       - src/msks/tests/test_smoke/core/**
       - src/msks/tests/test_smoke/egress/test_probe_e2e.py
       - src/msks/tests/test_smoke/egress/test_nixos_fold_e2e.py
+      - src/msks/tests/test_smoke/egress/test_nixos_user_nix_e2e.py
   pull_request:
     paths:
       - .github/workflows/smoke-nixos.yml
@@ -58,6 +59,7 @@ on:
       - src/msks/tests/test_smoke/core/**
       - src/msks/tests/test_smoke/egress/test_probe_e2e.py
       - src/msks/tests/test_smoke/egress/test_nixos_fold_e2e.py
+      - src/msks/tests/test_smoke/egress/test_nixos_user_nix_e2e.py
 
 permissions:
   contents: read
@@ -105,7 +107,7 @@ jobs:
           TEST_CONSOLE_TIMEOUT_S: "120"
           TEST_SHUTDOWN_TIMEOUT_S: "180"
         run: |
-          set -o pipefail
+          set -eo pipefail
           G=.devenv/state/guest-nixos
           manifest="$G/guest-manifest.json"
           cmdline=$(
@@ -134,10 +136,14 @@ jobs:
       # here) verifies against the seed's bundle. The fold e2e
       # (#427) then waits out the background nixos-rebuild that
       # folds the CA into the system bundle and proves it with a
-      # curl under `env -i`.
+      # curl under `env -i`. The user-nix e2e (#433) proves nix
+      # from the console as the unprivileged workspace user and
+      # the shipped /etc/nixos chain. `set -e` carries a pytest
+      # failure to the step's exit — the guarded greps below only
+      # catch a quietly skipped run, never a failed one.
       - name: Probe e2e (root)
         run: |
-          set -o pipefail
+          set -eo pipefail
           sudo apt-get update -qq && sudo apt-get install -y -qq nftables
           G=.devenv/state/guest-nixos
           manifest="$G/guest-manifest.json"
@@ -156,9 +162,10 @@ jobs:
             PATH=\"\$PATH\" HOME=/root \
             python -m pytest src/msks/tests/test_smoke/egress/test_probe_e2e.py \
             src/msks/tests/test_smoke/egress/test_nixos_fold_e2e.py \
+            src/msks/tests/test_smoke/egress/test_nixos_user_nix_e2e.py \
             -v -rs -p no:cacheprovider --no-cov 2>&1 | tee /tmp/smoke-nixos-e2e.log
           "
-          ! grep -q 'test_probe_e2e.*SKIPPED\|test_nixos_fold_e2e.*SKIPPED' /tmp/smoke-nixos-e2e.log
+          ! grep -q 'test_probe_e2e.*SKIPPED\|test_nixos_fold_e2e.*SKIPPED\|test_nixos_user_nix_e2e.*SKIPPED' /tmp/smoke-nixos-e2e.log
 
       - name: Collect smoke state on failure
         if: failure() || cancelled()

@@ -137,7 +137,9 @@ async def test_nixos_fold_e2e_system_trust() -> None:
             verify=ssl.create_default_context(
                 cafile=str(state_dir / "msks-ca.pem")
             ),
-            timeout=httpx.Timeout(connect=10.0, read=180.0, write=10.0),
+            timeout=httpx.Timeout(
+                connect=10.0, read=180.0, write=10.0, pool=10.0
+            ),
             headers={"Authorization": f"Bearer {token}"},
         )
         await await_health(client, proc, state_dir)
