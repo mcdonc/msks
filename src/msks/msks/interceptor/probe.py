@@ -12,10 +12,10 @@ itself only ever sees a well-formed basic-auth credential.
 
 The verification recipe (docs/networking.md): mint a placeholder
 whose allowlist carries the probe host and whose **secret is the
-base64 of the whole credential** — ``base64("msks:12345")`` — then
+base64 of the whole credential** — ``base64("msks:msks")`` — then
 from the workspace send the sentinel as the raw Basic blob::
 
-    curl -H "Authorization: Basic <sentinel>" https://probe.msks/
+    curl -H "Authorization: Basic <sentinel>" https://secretprobe.msks/
 
 The swap rewrites the blob into the credential, the service
 validates it like any external service would, and ``ok`` is the
@@ -37,6 +37,7 @@ import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import certifi
 from cryptography import x509
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse, Response
@@ -58,6 +59,13 @@ PROBE_DIR = "probe"
 #: The service leaf's files inside the probe directory.
 LEAF_CERT_FILE = "service.crt"
 LEAF_KEY_FILE = "service.key"
+
+#: The upstream trust bundle mitmproxy loads (#424): setting the
+#: option REPLACES the default lookup, so the file carries the
+#: probe CA appended to the platform roots — verification holds
+#: for the daemon's own service and every real public-CA service
+#: alike.
+BUNDLE_FILE = "upstream-bundle.pem"
 
 #: The service leaf's validity window and the freshness line: a
 #: leaf with less than this left is reminted at the next listener.
@@ -133,16 +141,22 @@ def credentials_match(username: str, password: str) -> bool:
 
     The encoded forms compare, because HTTP header bytes are
     latin-1-decoded and a digest comparison refuses non-ASCII
-    strings — a crafted header must answer 401, never a 500. The
-    values are the fixed probe credential (#424), which is why the
-    comparison lines carry the hardcoded-credentials suppression.
+    strings — a crafted header must answer 401, never a 500. Both
+    halves always compare (``&``, never ``and``'s short circuit):
+    the halves' timing stays flat whichever mismatched. The
+    values are the fixed probe credential (#424), which is why
+    the comparison lines carry the hardcoded-credentials
+    suppression.
     """
     # lgtm[py/hardcoded-credentials]
-    return hmac.compare_digest(
+    user_ok = hmac.compare_digest(
         username.encode("utf-8", "replace"), PROBE_USERNAME.encode()
-    ) and hmac.compare_digest(
+    )
+    # lgtm[py/hardcoded-credentials]
+    pass_ok = hmac.compare_digest(
         password.encode("utf-8", "replace"), PROBE_PASSWORD.encode()
     )
+    return user_ok & pass_ok
 
 
 def unauthorized() -> Response:
@@ -153,6 +167,25 @@ def unauthorized() -> Response:
         content="invalid credentials",
         media_type="text/plain",
     )
+
+
+def upstream_bundle(settings) -> str:
+    """The trust bundle's path, written atomically (#424): the
+    probe CA appended to certifi's platform bundle. mitmproxy's
+    ``ssl_verify_upstream_trusted_ca`` replaces its default
+    lookup (certifi, when the option is unset) with exactly the
+    named file — a bundle holding the probe CA alone would break
+    verification for every real public-CA service, so the file
+    carries both.
+    """
+    authority = service_material(settings)
+    path = probe_dir(settings) / BUNDLE_FILE
+    scratch = path.with_name(path.name + ".tmp")
+    scratch.write_bytes(
+        ca.cert_pem(authority.cert) + Path(certifi.where()).read_bytes()
+    )
+    scratch.replace(path)
+    return str(path)
 
 
 def build_probe_app() -> FastAPI:
@@ -190,6 +223,7 @@ class ProbeService:
         self._listeners: dict[str, TapListener] = {}
         self._lock: asyncio.Lock | None = None
         self._material: tuple[str, str] | None = None
+        self._bundle: str | None = None
 
     async def material(self) -> tuple[str, str]:
         """``(cert_path, key_path)`` for the TLS listeners, minted
@@ -208,6 +242,23 @@ class ProbeService:
                     str(directory / LEAF_KEY_FILE),
                 )
         return self._material
+
+    async def upstream_trust_bundle(self) -> str:
+        """The upstream trust bundle's path, minted once through
+        the same serialized path as the listener material (#424
+        review: two unsynchronized entry points could interleave
+        the cert/key writes into a mismatched pair)."""
+        if self._bundle is not None:
+            return self._bundle
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        async with self._lock:
+            if self._bundle is None:
+                settings = self.app.state.settings
+                self._bundle = await asyncio.to_thread(
+                    upstream_bundle, settings
+                )
+        return self._bundle
 
     def listener_for(self, attachment, certfile: str, keyfile: str):
         """The attachment's listener: its tap address on 443, the

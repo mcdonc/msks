@@ -68,18 +68,28 @@ async def seed_probe_placeholder(app) -> None:
         return
     sentinel = new_sentinel(daemon_wide=True)
     ref = backend_ref([], PROBE_NAME)
-    row = await model.create_placeholder(
-        [], PROBE_NAME, sentinel, [PROBE_HOST], ref, None
-    )
-    await sync_probe_manifest(app)
     try:
-        await app.state.secrets.write(ref, PROBE_SECRET_B64)
-    except SecretStoreError as exc:
-        await model.delete_placeholder(row["id"])
-        await sync_probe_manifest(app)
-        LOG.error("probe placeholder seed failed: %s", exc)
+        row = await model.create_placeholder(
+            [], PROBE_NAME, sentinel, [PROBE_HOST], ref, None
+        )
+    except IntegrityError:
+        # A racing first boot won the unique index: its row stands,
+        # this one's work is done.
         return
-    await model.record_audit("mint", row)
+    try:
+        await sync_probe_manifest(app)
+        await app.state.secrets.write(ref, PROBE_SECRET_B64)
+        await model.record_audit("mint", row)
+    except Exception:  # noqa: BLE001 - named below, non-fatal
+        # A seed whose row cannot be declared, valued, or audited
+        # rolls back whole — a live daemon-wide row with no value
+        # behind its ref would answer every swap fail-closed — and
+        # the daemon stays up without the probe row (the mint
+        # route's own posture).
+        await model.delete_placeholder(row["id"])
+        with contextlib.suppress(Exception):
+            await sync_probe_manifest(app)
+        LOG.exception("probe placeholder seed failed; rolled back")
 
 
 async def sync_probe_manifest(app) -> None:

@@ -99,34 +99,31 @@ def row_entry(row: dict, covers: bool) -> PlaceholderEntry:
     )
 
 
-def build_master(owner) -> Master:
+def build_master(owner, trust_bundle: str) -> Master:
     """The embedded master: no listener of its own — one mode spec
     per armed workspace joins ``options.mode`` at arm time.
 
     The addon registers before the default addons (registration
     order is hook dispatch order — the spike's round one), and the
     confdir points into the daemon state so mitmproxy never touches
-    ``~/.mitmproxy``.
-
-    Upstream verification trusts the probe service's CA beside the
-    system store (#424): the daemon's own emulated service serves a
-    leaf that CA signed, and mitmproxy verifies upstream TLS by
-    default — the added trust covers exactly the certificates the
-    daemon itself mints.
+    ``~/.mitmproxy``. Upstream verification loads *trust_bundle*
+    (the probe service's CA appended to the platform roots, #424):
+    the option replaces mitmproxy's default lookup with exactly the
+    named file, so the bundle carries both — the daemon's own
+    service and every real public-CA service verify alike. The
+    caller owns the file's mint (the service's serialized path).
     """
     confdir = owner.confdir()
     confdir.mkdir(parents=True, exist_ok=True)
-    authority = probe.service_material(owner.app.state.settings)
     master = Master(options.Options(mode=[], confdir=str(confdir)))
     master.addons.add(InterceptorAddon(owner), LogBridge(), *default_addons())
     # lazy: the splice tier must relay before any upstream dial;
     # keep_host_header: the Host the swap pinned is the Host the
-    # origin sees — mitmproxy's own rewrite stays off. The trust
-    # file widens upstream verification to the probe CA alone.
+    # origin sees — mitmproxy's own rewrite stays off.
     master.options.update(
         connection_strategy="lazy",
         keep_host_header=True,
-        ssl_verify_upstream_trusted_ca=str(authority.chain_file),
+        ssl_verify_upstream_trusted_ca=trust_bundle,
     )
     return master
 
@@ -346,6 +343,11 @@ class Interceptor:
     async def ensure_master(self) -> None:
         """Start the embedded master once, lazily.
 
+        The trust bundle is minted through the probe service's
+        serialized path before the master builds (#424 review):
+        the file is written once under the service's lock, never
+        raced by a concurrent first attach.
+
         ``Master.run`` sets two process-wide loop attributes from
         here until shutdown: an eager task factory and mitmproxy's
         own exception handler for otherwise-unhandled loop errors
@@ -356,7 +358,16 @@ class Interceptor:
         lives for the daemon's lifetime, never per workspace."""
         if self._master is not None:
             return
-        self._master = self._master_factory(self)
+        service = self.app.state.probe
+        if service is not None:
+            bundle = await service.upstream_trust_bundle()
+        else:
+            # A stripped-down host with no probe service still
+            # verifies upstreams against the same bundle shape.
+            bundle = await asyncio.to_thread(
+                probe.upstream_bundle, self.app.state.settings
+            )
+        self._master = self._master_factory(self, bundle)
         self._task = asyncio.create_task(self._master.run())
 
     async def apply_modes(self) -> None:

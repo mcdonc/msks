@@ -3,7 +3,7 @@
 The full operator verification against a real msksd process and a
 real workspace VM: read the probe placeholder the daemon seeded at
 first-time startup, then invoke curl from inside the guest against
-``https://probe.msks/`` with the sentinel as the raw Basic blob —
+``https://secretprobe.msks/`` with the sentinel as the raw Basic blob —
 and assert the service answers ``ok``. The answer can only exist
 if every link worked: the resolver's local answer, the redirect,
 the splice and leaf mint, the sentinel→secret swap of the blob,
@@ -121,7 +121,7 @@ async def test_probe_e2e_curl_from_the_workspace() -> None:
         assert probe.status_code == 200, probe.text
         recipe = probe.json()
         assert recipe["host"] == PROBE_HOST
-        assert recipe["secret"] == "bXNrczoxMjM0NQ=="
+        assert recipe["secret"] == "bXNrczptc2tz"
         sentinel = recipe["sentinel"]
 
         # The name resolves to the tap address the resolver serves

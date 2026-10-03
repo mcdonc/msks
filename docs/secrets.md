@@ -161,8 +161,8 @@ where the per-VM forward gates do not apply.
 
 A fresh daemon seeds one placeholder itself at first-time
 startup: the daemon-wide row named **`probe`**, allowlisting
-`probe.msks`, carrying the fixed credential blob
-`bXNrczoxMjM0NQ==` as its secret. It exists so an operator can
+`secretprobe.msks`, carrying the fixed credential blob
+`bXNrczptc2tz` as its secret. It exists so an operator can
 verify interception from inside a workspace with zero minting
 (the [probe endpoint](networking.md#the-probe-endpoint-424)); its
 sentinel never needs to be treated as a secret, because the

@@ -3518,7 +3518,7 @@ async def test_first_startup_seeds_the_probe_placeholder(client) -> None:
     assert len(rows) == 1
     row = rows[0]
     assert row["workspaces"] == []
-    assert row["dests"] == ["probe.msks"]
+    assert row["dests"] == ["secretprobe.msks"]
     root = app.state.settings.secret_store.root
     from msks.spec.probe import PROBE_SECRET_B64
 
@@ -3530,7 +3530,7 @@ async def test_first_startup_seeds_the_probe_placeholder(client) -> None:
     probe = await http.get("/api/v1/probe", headers=auth())
     assert probe.status_code == 200
     body = probe.json()
-    assert body["host"] == "probe.msks"
+    assert body["host"] == "secretprobe.msks"
     assert body["port"] == 443
     assert body["username"] == "msks"
     assert body["secret"] == PROBE_SECRET_B64
@@ -3617,3 +3617,28 @@ async def test_the_probe_route_404s_once_the_row_is_revoked(
     gone = await http.get("/api/v1/probe", headers=auth())
     assert gone.status_code == 404
     assert "seeded at daemon startup" in gone.json()["detail"]
+
+
+async def test_a_seed_race_lost_on_the_unique_index_stands_down(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Two first boots racing the empty-table check (#424 review):
+    the loser's insert hits the unique index and treats the
+    winner's row as the answer — no rollback, no fatal startup."""
+    from sqlalchemy.exc import IntegrityError
+
+    async def racing_insert(*args, **kwargs):
+        raise IntegrityError("stmt", {}, Exception("unique"))
+
+    settings = Settings(
+        vmm=VmmSettings(state_dir=tmp_path / "vms"),
+        net=NetSettings(enabled=False),
+        server=ServerSettings(db_path=tmp_path / "api.db"),
+        secret_store=SecretStoreSettings(root=tmp_path / "store"),
+    )
+    app = build_app(settings)
+    app.state.microvm = StubMicrovm()
+    api = build_api(app)
+    monkeypatch.setattr(app.state.model, "create_placeholder", racing_insert)
+    async with api.router.lifespan_context(api):
+        assert await app.state.model.list_placeholders() == []

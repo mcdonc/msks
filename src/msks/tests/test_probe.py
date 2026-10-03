@@ -21,6 +21,7 @@ from msks.interceptor.probe import (
     build_probe_app,
     parse_basic_auth,
     service_material,
+    upstream_bundle,
 )
 from msks.llm import TapListener
 from msks.settings import Settings, VmmSettings
@@ -40,7 +41,7 @@ VALID = {"authorization": basic(PROBE_USERNAME, PROBE_PASSWORD)}
 def client() -> httpx.AsyncClient:
     return httpx.AsyncClient(
         transport=httpx.ASGITransport(app=build_probe_app()),
-        base_url="http://probe.msks",
+        base_url="http://secretprobe.msks",
     )
 
 
@@ -63,7 +64,7 @@ async def test_wrong_answers_are_the_challenge(
     assert wrong_password.status_code == 401
     assert wrong_password.headers["WWW-Authenticate"] == 'Basic realm="msks"'
     wrong_user = await client.get(
-        "/", headers={"authorization": basic("other", "12345")}
+        "/", headers={"authorization": basic("other", PROBE_PASSWORD)}
     )
     assert wrong_user.status_code == 401
     missing = await client.get("/")
@@ -90,8 +91,11 @@ async def test_malformed_credentials_answer_401_never_500(
 
 
 def test_parse_basic_auth_shapes() -> None:
-    assert parse_basic_auth("basic bXNrczoxMjM0NQ==") == ("msks", "12345")
-    assert parse_basic_auth("BASIC bXNrczoxMjM0NQ==") == ("msks", "12345")
+    assert parse_basic_auth("basic bXNrczptc2tz") == ("msks", PROBE_PASSWORD)
+    assert parse_basic_auth("BASIC bXNrczptc2tz") == (
+        "msks",
+        PROBE_PASSWORD,
+    )
     # The first colon bounds the username; a password may hold more.
     assert parse_basic_auth(basic("u", "a:b")) == ("u", "a:b")
     assert parse_basic_auth("") is None
@@ -104,7 +108,7 @@ def test_the_minted_secret_is_the_credential_blob() -> None:
     """The swap contract (#424): the placeholder's minted secret is
     the base64 of the whole credential, so the byte-level rewrite of
     the raw Basic blob lands as a well-formed header."""
-    assert PROBE_SECRET_B64 == "bXNrczoxMjM0NQ=="
+    assert PROBE_SECRET_B64 == "bXNrczptc2tz"
     decoded = base64.b64decode(PROBE_SECRET_B64).decode()
     assert decoded == f"{PROBE_USERNAME}:{PROBE_PASSWORD}"
 
@@ -124,7 +128,7 @@ def test_service_material_mints_once_and_reuses(tmp_path: Path) -> None:
     leaf = tmp_path / "state" / "probe" / "service.crt"
     assert leaf.is_file()
     cert = x509.load_pem_x509_certificate(leaf.read_bytes())
-    assert "probe.msks" in cert.subject.rfc4514_string()
+    assert "secretprobe.msks" in cert.subject.rfc4514_string()
 
 
 def test_a_stale_leaf_remints(tmp_path: Path, monkeypatch) -> None:
@@ -212,6 +216,45 @@ async def test_concurrent_material_calls_mint_once(
     assert len(calls) == 1
 
 
+async def test_concurrent_bundle_calls_mint_once(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The trust bundle races the same way the material does (#424
+    review): the second caller waits on the lock and reads the
+    first's bundle — one file, one writer."""
+    import threading
+
+    app = build_app(probe_settings(tmp_path))
+    server = app.state.probe
+    entered = threading.Event()
+    release = threading.Event()
+    calls: list = []
+
+    def held_bundle(settings):
+        calls.append(1)
+        entered.set()
+        release.wait(5)
+        return upstream_bundle(settings)
+
+    monkeypatch.setattr(probe_mod, "upstream_bundle", held_bundle)
+
+    async def held_call():
+        await asyncio.to_thread(entered.wait, 5)
+        second = asyncio.create_task(server.upstream_trust_bundle())
+        await asyncio.sleep(0)
+        release.set()
+        return await second
+
+    first, second = await asyncio.gather(
+        server.upstream_trust_bundle(), held_call()
+    )
+    assert first == second
+    assert len(calls) == 1
+    # The memoized fast path: a third caller reads, never mints.
+    assert await server.upstream_trust_bundle() == first
+    assert len(calls) == 1
+
+
 async def test_listener_serves_real_https_and_stops(tmp_path: Path) -> None:
     """The service speaks TLS from its own CA: a client that trusts
     that CA completes, and the fixed credential answers ok over it."""
@@ -271,4 +314,4 @@ def test_stop_mapping_leaves_a_replaced_listener(tmp_path: Path) -> None:
 
 
 def test_the_module_states_its_constants() -> None:
-    assert probe_mod.PROBE_HOST == "probe.msks"
+    assert probe_mod.PROBE_HOST == "secretprobe.msks"

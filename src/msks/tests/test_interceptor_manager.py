@@ -101,7 +101,7 @@ class FakeSecrets:
 
 
 def fake_master_factory(cls=FakeMaster):
-    def factory(owner):
+    def factory(owner, trust_bundle):
         return cls(owner)
 
     return factory
@@ -416,19 +416,34 @@ async def test_swap_and_sighting_events_reach_the_hub(app) -> None:
 
 async def test_build_master_orders_the_addon_first(tmp_path) -> None:
     """The real master: the interceptor addon registers before the
-    defaults, no listener ships, and the daemon state owns the
-    confdir."""
+    defaults, no listener ships, the daemon state owns the confdir,
+    and upstream verification loads the trust bundle (#424)."""
+    from pathlib import Path
+
+    import certifi
+
     app = build_app(
         Settings(
             vmm=VmmSettings(state_dir=tmp_path),
             server=ServerSettings(db_path=tmp_path / "msks.db"),
         )
     )
-    master = manager_mod.build_master(app.state.interceptor)
+    bundle = await app.state.probe.upstream_trust_bundle()
+    master = manager_mod.build_master(app.state.interceptor, bundle)
     names = [type(a).__name__ for a in master.addons.chain]
     assert names.index("InterceptorAddon") < names.index("TlsConfig")
     assert master.options.mode == []
     assert str(tmp_path / "interceptor") in master.options.confdir
+    assert master.options.ssl_verify_upstream_trusted_ca == bundle
+    # The bundle REPLACES mitmproxy's default lookup, so it carries
+    # the platform roots it replaced plus the probe CA — an option
+    # holding the probe CA alone would break every real service.
+    body = Path(bundle).read_bytes()
+    platform = Path(certifi.where()).read_bytes()
+    assert body.startswith(
+        (tmp_path / "probe" / "interceptor-ca.crt").read_bytes()
+    )
+    assert body.endswith(platform)
     assert master.options.connection_strategy == "lazy"
     assert master.options.keep_host_header is True
 
@@ -499,3 +514,25 @@ async def test_log_dead_master_names_the_error(caplog) -> None:
     with caplog.at_level("ERROR", logger="msks.interceptor.manager"):
         manager_mod.log_dead_master(task)
     assert "mitmproxy died" in caplog.text
+
+
+async def test_arming_without_a_probe_service_builds_the_bundle(
+    app,
+) -> None:
+    """A stripped-down host with no probe service still arms, with
+    the upstream trust bundle built through the module path (#424):
+    the master's verification never depends on the service object."""
+    from pathlib import Path
+
+    seen: dict = {}
+
+    def factory(owner, trust_bundle):
+        seen["bundle"] = trust_bundle
+        return FakeMaster(owner)
+
+    app.state.interceptor._master_factory = factory
+    app.state.probe = None
+    await mint_placeholder(app)
+    await app.state.interceptor.refresh("ws-a")
+    assert Path(seen["bundle"]).is_file()
+    assert seen["bundle"].endswith("upstream-bundle.pem")

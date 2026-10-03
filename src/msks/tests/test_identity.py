@@ -157,10 +157,22 @@ def sandboxed(script: str, sandbox) -> str:
         .replace("/etc/passwd", f"{sandbox}/passwd")
         .replace("/etc/msks", f"{sandbox}/msks")
         .replace("/etc/skel", f"{sandbox}/skel")
+        .replace("/etc/ssl/certs", f"{sandbox}/ssl-certs")
+        .replace("/etc/profile.d", f"{sandbox}/profile.d")
+        .replace("/etc/profile.local", f"{sandbox}/profile.local")
+        .replace(
+            "/usr/local/share/ca-certificates",
+            f"{sandbox}/usr-local-ca",
+        )
     )
 
 
-def run_seed(sandbox, guest_passwd_line: str, useradd_fails: bool = False):
+def run_seed(
+    sandbox,
+    guest_passwd_line: str,
+    useradd_fails: bool = False,
+    ca_pem: str | None = None,
+):
     """Execute the sandboxed seed under stubbed guest tools.
 
     ``getent`` answers the passwd line the scenario wants, and
@@ -204,6 +216,9 @@ def run_seed(sandbox, guest_passwd_line: str, useradd_fails: bool = False):
         "for arg; do case $arg in -*) ;; *) dir=$arg ;; esac; done\n"
         'exec mkdir -p "$dir"\n'
     )
+    stubs.joinpath("update-ca-certificates").write_text(
+        f'#!/bin/sh\necho "update-ca-certificates $*" >> "{log}"\nexit 0\n'
+    )
     for stub in stubs.iterdir():
         stub.chmod(0o755)
     env = {
@@ -213,7 +228,9 @@ def run_seed(sandbox, guest_passwd_line: str, useradd_fails: bool = False):
         [
             "sh",
             "-c",
-            sandboxed(seed_script(PUBLIC, "ws-id", "alice"), sandbox),
+            sandboxed(
+                seed_script(PUBLIC, "ws-id", "alice", ca_pem=ca_pem), sandbox
+            ),
         ],
         env=env,
         capture_output=True,
@@ -224,6 +241,7 @@ def run_seed(sandbox, guest_passwd_line: str, useradd_fails: bool = False):
 
 def prepare_sandbox(tmp_path):
     """The sandbox tree the rewritten paths land in."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
     for member in ("root", "msks", "skel"):
         (tmp_path / member).mkdir()
     (tmp_path / "skel" / ".profile").write_text("# skel\n")
@@ -591,28 +609,104 @@ CA_PEM = "-----BEGIN CERTIFICATE-----\nZmFrZQ==\n-----END CERTIFICATE-----\n"
 
 
 def test_seed_script_installs_the_interceptor_ca() -> None:
-    """With a CA present the script plants it in the guest's local
-    trust store and links it in (#424): the guest validates every
-    leaf its own interception path serves — the probe endpoint
-    included — from first boot."""
+    """With a CA present the script stages it, names it beside the
+    system roots for the export-honoring clients, hooks NixOS's
+    profile.local, and links Debian's system trust store (#424)."""
     script = seed_script(PUBLIC, "ws-id", ca_pem=CA_PEM)
     assert f"ca_cert='{CA_PEM}'" in script
-    assert (
-        "printf '%s\\n' \"$ca_cert\" "
-        "> /usr/local/share/ca-certificates/msks-interceptor.crt" in script
-    )
+    assert "> /etc/msks/interceptor-ca.crt" in script
+    assert "cat /etc/ssl/certs/ca-bundle.crt" in script
+    assert "/etc/msks/ca-bundle.crt" in script
+    assert "export SSL_CERT_FILE=/etc/msks/ca-bundle.crt" in script
+    assert "export NODE_EXTRA_CA_CERTS=/etc/msks/interceptor-ca.crt" in script
+    assert "/etc/profile.local" in script
     assert "update-ca-certificates" in script
 
 
 def test_the_ca_block_tolerates_a_guest_without_the_tool() -> None:
     """A guest with no update-ca-certificates (NixOS manages its
-    trust store) keeps booting: the CA file is staged and the miss
-    lands on stderr (#424)."""
+    trust store) keeps booting: the CA is staged, the exports are
+    written, and the miss lands on stderr (#424)."""
     script = seed_script(
         None, "ws-id", llm_token="t", llm_port=1, ca_pem=CA_PEM
     )
     assert "command -v update-ca-certificates" in script
-    assert "staged but not linked" in script
+    assert "staged and exported" in script
+
+
+def test_the_ca_block_executes_on_a_nixos_shaped_sandbox(
+    tmp_path,
+) -> None:
+    """The NixOS guest's shape (#424): no /usr/local tree, no
+    update-ca-certificates, a store bundle at /etc/ssl/certs — the
+    seed still exits clean, stages the certificate, builds the
+    export bundle beside the system roots, and hooks
+    /etc/profile.local (which is what makes the exports — and the
+    LLM block's — load in a NixOS login shell)."""
+    sandbox = prepare_sandbox(tmp_path / "nx")
+    ssl = sandbox / "ssl-certs"
+    ssl.mkdir()
+    (ssl / "ca-bundle.crt").write_text("SYSTEM-ROOTS\n")
+    stubs = sandbox / "bin"
+    stubs.mkdir(exist_ok=True)
+    log = sandbox / "stub.log"
+    (sandbox / "passwd").write_text(
+        "root:x:0:0:root:/root:/bin/sh\n"
+        "msks:x:1000:1000:msks:/home/msks:/bin/bash\n"
+        "alice:x:1001:1001::/home/alice:/bin/bash\n"
+    )
+    for name, body in (
+        ("useradd", f'echo "useradd $*" >> "{log}"\nexit 0\n'),
+        ("usermod", f'echo "usermod $*" >> "{log}"\nexit 0\n'),
+        ("id", f'echo "id $*" >> "{log}"\necho ""\nexit 0\n'),
+        ("chown", f'echo "chown $*" >> "{log}"\n'),
+        (
+            "install",
+            f'echo "install $*" >> "{log}"\n'
+            "for arg; do case $arg in -*) ;; *) dir=$arg ;; esac; done\n"
+            'exec mkdir -p "$dir"\n',
+        ),
+    ):
+        stubs.joinpath(name).write_text("#!/bin/sh\n" + body)
+        stubs.joinpath(name).chmod(0o755)
+    script = sandboxed(
+        seed_script(PUBLIC, "ws-id", "alice", ca_pem=CA_PEM), sandbox
+    )
+    done = subprocess.run(
+        ["sh", "-c", script],
+        env={"PATH": f"{stubs}:{os.environ['PATH']}"},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert done.returncode == 0, done.stderr
+    staged = sandbox / "msks" / "interceptor-ca.crt"
+    assert staged.read_text().strip() == CA_PEM.strip()
+    # The export bundle: the system roots first, the workspace's
+    # CA appended behind them (printf adds the PEM its newline).
+    bundle = (sandbox / "msks" / "ca-bundle.crt").read_text()
+    assert bundle.startswith("SYSTEM-ROOTS\n")
+    assert "ZmFrZQ==" in bundle
+    exports = sandbox / "profile.d" / "msks-ca.sh"
+    assert "SSL_CERT_FILE" in exports.read_text()
+    assert "profile.d/*.sh" in (sandbox / "profile.local").read_text()
+    # No update-ca-certificates on this guest: the Debian-shaped
+    # staging happened but nothing linked it — the note says so.
+    assert (sandbox / "usr-local-ca" / "msks-interceptor.crt").exists()
+    assert "links no system trust store" in done.stderr
+
+
+def test_the_ca_block_executes_the_debian_link(tmp_path) -> None:
+    """The Debian guest's shape (#424): update-ca-certificates
+    present — the seed stages, exports, and links the system
+    trust store."""
+    sandbox = prepare_sandbox(tmp_path / "deb")
+    done = run_seed(sandbox, "", ca_pem=CA_PEM)
+    assert done.returncode == 0, done.stderr
+    stub_log = (sandbox / "stub.log").read_text()
+    assert "update-ca-certificates" in stub_log
+    staged = sandbox / "usr-local-ca" / "msks-interceptor.crt"
+    assert staged.read_text().strip() == CA_PEM.strip()
 
 
 def test_compose_user_data_carries_the_ca() -> None:

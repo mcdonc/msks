@@ -234,16 +234,16 @@ header without reconnecting.
 ## The probe endpoint (#424)
 
 The daemon serves one deliberately ordinary HTTPS service every
-workspace can reach: **`https://probe.msks/`** — an emulated
+workspace can reach: **`https://secretprobe.msks/`** — an emulated
 external endpoint protected by HTTP basic auth, username `msks`,
-password `12345`. It exists so an operator can verify from inside
+password `msks`. It exists so an operator can verify from inside
 a workspace that **secret interception works end to end**: the
 `ok` page it answers with can only exist when the whole chain —
 redirect, TLS splice, leaf mint, sentinel→secret swap — ran.
 
 The daemon seeds the machinery itself at first-time startup (the
 daemon-wide placeholder named `probe`, whose secret is the base64
-of the whole credential `bXNrczoxMjM0NQ==`), and the guest's own
+of the whole credential `bXNrczptc2tz`), and the guest's own
 interception CA is installed at first boot, so nothing is left to
 do by hand. The verification:
 
@@ -252,7 +252,7 @@ do by hand. The verification:
 curl -s -H "Authorization: Bearer $TOKEN" https://msksd/api/v1/probe
 
 # inside the workspace: the sentinel rides as the raw Basic blob
-curl -H "Authorization: Basic <sentinel>" https://probe.msks/
+curl -H "Authorization: Basic <sentinel>" https://secretprobe.msks/
 ok
 ```
 
@@ -275,6 +275,20 @@ the endpoint gates nothing beyond its own `ok` page, which is
 also why the seeded row's sentinel is served back over the
 token-gated API (`GET /api/v1/probe`): a token holder already
 owns the daemon.
+
+Two reachability notes. The probe answers only while the
+workspace is **armed** — a workspace scoped against daemon-wide
+placeholders (no covering row of its own) never arms, so its
+direct dial to `secretprobe.msks:443` finds nothing admitted and
+times out; that posture is the documented way to opt a workspace
+out of interception entirely. And the guest's trust in its own
+interception CA is installed at first boot: Debian guests link it
+into the system trust store, while NixOS guests (whose store
+bundle is immutable and whose `/etc/profile` reads no
+`profile.d`) get the certificate staged under `/etc/msks` with
+`SSL_CERT_FILE` and `NODE_EXTRA_CA_CERTS` exported through its
+`/etc/profile.local` hook — which also brings the LLM proxy's
+environment alive there.
 
 ## What runs where
 

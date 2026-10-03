@@ -285,21 +285,55 @@ def keyless_seed_script(
 
 
 def ca_seed_block(ca_pem: str) -> str:
-    """The #424/#200 block: the workspace's interceptor CA as a
-    guest-trusted certificate. The PEM lands in Debian's local
-    trust store and ``update-ca-certificates`` links it in; a
-    guest without that tool (NixOS manages /etc/ssl declaratively)
-    says so on stderr and keeps booting — the CA file itself still
-    sits where an operator or a provisioning step can wire it."""
+    """The #424/#200 block: the workspace's interceptor CA, staged
+    and named so every client family trusts it.
+
+    Both distros get the staged certificate (/etc/msks) and the
+    export bundle beside the system roots (``SSL_CERT_FILE``
+    replaces the default lookup, so it carries both; node adds the
+    root itself through ``NODE_EXTRA_CA_CERTS``). Debian-family
+    guests additionally link the CA into the system trust store
+    with ``update-ca-certificates`` — every client, login shell or
+    not. NixOS's store bundle is immutable and its ``/etc/profile``
+    reads no ``profile.d``: the same exports ride its sanctioned
+    ``/etc/profile.local`` hook (whose one rule also brings the
+    LLM block's exports alive there). Every step is best-effort —
+    a guest with no writable target keeps booting and says so on
+    stderr."""
     return (
         f"ca_cert='{ca_pem}'\n"
-        "printf '%s\\n' \"$ca_cert\" "
-        "> /usr/local/share/ca-certificates/msks-interceptor.crt\n"
-        "if command -v update-ca-certificates >/dev/null 2>&1; then\n"
+        "install -d -m 0755 -o root -g root /etc/msks\n"
+        "printf '%s\\n' \"$ca_cert\" > /etc/msks/interceptor-ca.crt\n"
+        "if [ -r /etc/ssl/certs/ca-bundle.crt ]; then\n"
+        "  cat /etc/ssl/certs/ca-bundle.crt \\\n"
+        "      /etc/msks/interceptor-ca.crt > /etc/msks/ca-bundle.crt\n"
+        "else\n"
+        "  cp /etc/msks/interceptor-ca.crt /etc/msks/ca-bundle.crt\n"
+        "fi\n"
+        "install -d -m 0755 /etc/profile.d\n"
+        "cat > /etc/profile.d/msks-ca.sh <<'MSEOF'\n"
+        "# msks (#424): name this workspace's interception CA beside\n"
+        "# the system roots. SSL_CERT_FILE for the OpenSSL and Go\n"
+        "# clients; NODE_EXTRA_CA_CERTS for node (which adds the\n"
+        "# root on top of its own bundled roots).\n"
+        "export SSL_CERT_FILE=/etc/msks/ca-bundle.crt\n"
+        "export NODE_EXTRA_CA_CERTS=/etc/msks/interceptor-ca.crt\n"
+        "MSEOF\n"
+        "if [ ! -e /etc/profile.local ] || \\\n"
+        "   ! grep -q 'for i in /etc/profile.d' /etc/profile.local\n"
+        "then\n"
+        '  echo \'for i in /etc/profile.d/*.sh; do [ -r "$i" ] \\\n'
+        '    && . "$i"; done\' >> /etc/profile.local\n'
+        "fi\n"
+        "if install -d -m 0755 /usr/local/share/ca-certificates \\\n"
+        "   2>/dev/null && printf '%s\\n' \"$ca_cert\" > \\\n"
+        "      /usr/local/share/ca-certificates/msks-interceptor.crt \\\n"
+        "   && command -v update-ca-certificates >/dev/null 2>&1\n"
+        "then\n"
         "  update-ca-certificates >/dev/null\n"
         "else\n"
-        "  echo 'msks: no update-ca-certificates; the interceptor CA "
-        "is staged but not linked' >&2\n"
+        "  echo 'msks: the interceptor CA is staged and exported;' \\\n"
+        "    'this guest links no system trust store' >&2\n"
         "fi\n"
     )
 

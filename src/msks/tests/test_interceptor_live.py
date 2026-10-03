@@ -397,13 +397,19 @@ async def test_the_live_probe_chain(tmp_path, monkeypatch) -> None:
     await interceptor.refresh("ws-live")
     master = interceptor._master
     assert master is not None
-    # build_master trusts the probe CA beside the system store (#424)
-    # — the upstream dial to the service verifies against it.
+    # build_master's default trust (#424): the bundle carries the
+    # probe CA appended to the platform roots — the option REPLACES
+    # the default lookup, so the file must hold both. The upstream
+    # dial to the service verifies against it below.
     trust = master.options.ssl_verify_upstream_trusted_ca
-    assert trust is not None and trust.endswith(
-        f"probe{Path('/')}{ca.CA_CERT_FILE}"
+    assert trust is not None and trust.endswith("upstream-bundle.pem")
+    body = Path(trust).read_bytes()
+    assert body.startswith(
+        (tmp_path / "probe" / "interceptor-ca.crt").read_bytes()
     )
-    assert Path(trust).is_file()
+    assert len(body) > len(
+        (tmp_path / "probe" / "interceptor-ca.crt").read_bytes()
+    )
 
     ws_ca = str(tmp_path / "vms" / "ws-live" / ca.CA_CERT_FILE)
     auth = {"Authorization": f"Basic {row['sentinel']}"}

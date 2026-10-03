@@ -6,6 +6,10 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
   "alembic>=1.14",
+  # The platform CA bundle (#424): the interceptor's upstream
+  # verification loads a bundle file when the option is set, so
+  # the probe CA rides appended to certifi's platform roots.
+  "certifi>=2024.10",
   "cryptography>=44",
   "fastapi>=0.115",
   "httpx>=0.28",

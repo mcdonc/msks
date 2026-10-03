@@ -197,16 +197,16 @@ def test_a_answer_for_answers_one_a_record() -> None:
     """The local-answer builder (#424): one A record for the
     question, readable by the codec's own parser (the round trip
     the forwarder's local answer rides)."""
-    wire = dnsmsg.a_answer_for(query("probe.msks"), "10.0.0.1")
+    wire = dnsmsg.a_answer_for(query("secretprobe.msks"), "10.0.0.1")
     records = dnsmsg.parse_a_records(wire)
     assert [ip for ip, _ttl in records] == ["10.0.0.1"]
-    question = dnsmsg.parse_query(query("probe.msks"))
+    question = dnsmsg.parse_query(query("secretprobe.msks"))
     assert question is not None
     answered = dnsmsg.parse_query(wire)
     assert answered is not None
     assert (answered.id, answered.name, answered.qtype) == (
         question.id,
-        "probe.msks",
+        "secretprobe.msks",
         dnsmsg.TYPE_A,
     )
 
