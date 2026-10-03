@@ -116,7 +116,10 @@ MODULE = "msks.client.term_popup"
 #: history reaches. The option must sit on the server before the
 #: session exists (a pane adopts its history limit only at
 #: creation), which is why the launch line starts the server and
-#: sets its options ahead of ``new-session``.
+#: sets its options ahead of ``new-session``. The cost is memory
+#: that grows with use, not with the setting: tmux allocates a
+#: history line only when output scrolls one off the screen, so
+#: the depth is the ceiling, not the starting footprint.
 HISTORY_LINES = 10000
 
 ROLES = ("launch", "pane", "watch", "decide")
