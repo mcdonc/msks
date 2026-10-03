@@ -177,7 +177,10 @@ endpoint's recipe — and revoke it like any other placeholder when
 you do not want it. The seed runs exactly when the placeholder
 table is empty: a daemon that already holds rows seeds nothing,
 and a revoked probe row stays gone while the operator's rows hold
-the table. The seed's mint rides the audit trail like any other.
+the table (it returns on the next startup that finds the table
+empty — values are daemon-minted, so a row minted by hand cannot
+carry the probe's fixed credential). The seed's mint rides the
+audit trail like any other.
 
 ## The mint flow
 

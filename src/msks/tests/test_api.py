@@ -3499,8 +3499,7 @@ async def test_first_startup_seeds_the_probe_placeholder(client) -> None:
     root = app.state.settings.secret_store.root
     from msks.spec.probe import PROBE_SECRET_B64
 
-    stored = root / "msks" / "default" / "MSKSDAEMON_PROBE"
-    assert stored.read_text() == PROBE_SECRET_B64
+    assert await app.state.secrets.read("MSKSDAEMON_PROBE") == PROBE_SECRET_B64
     assert "MSKSDAEMON_PROBE" in (root / "secretspec.toml").read_text()
     # The read-back surface: the sentinel and the recipe, gated the
     # same as every secret route.
@@ -3593,7 +3592,7 @@ async def test_the_probe_route_404s_once_the_row_is_revoked(
     ).status_code == 200
     gone = await http.get("/api/v1/probe", headers=auth())
     assert gone.status_code == 404
-    assert "seeded at daemon startup" in gone.json()["detail"]
+    assert "the placeholder table is empty" in gone.json()["detail"]
 
 
 async def test_a_seed_race_lost_on_the_unique_index_stands_down(

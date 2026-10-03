@@ -668,7 +668,7 @@ async def test_the_panel_copies_value_and_sentinel_over_osc52(
         await pilot.press("c")
         assert copied == [value]
         assert "copied the value" in panel_text(app)
-        await pilot.press("s")
+        await pilot.click("#do-copy-sentinel")  # the button leg
         assert copied == [value, sentinel]
         assert "copied the sentinel" in panel_text(app)
         assert "OSC 52" in panel_text(app)

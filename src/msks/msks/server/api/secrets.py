@@ -406,16 +406,19 @@ def router(app, hub) -> APIRouter:
         so serving it over the authenticated API costs nothing a
         token holder does not already hold (the llm-token route's
         rationale). A revoked or re-scoped row answers 404 with the
-        re-mint recipe in the detail.
+        reason in the detail: values are daemon-minted (#423), so a
+        row minted by hand cannot carry the probe's fixed
+        credential — the seed is the only mint that can.
         """
         row = await app.state.model.placeholder_for([], PROBE_NAME)
         if row is None:
             raise HTTPException(
                 status_code=404,
                 detail=(
-                    "the probe placeholder is absent; it is seeded at "
-                    "daemon startup, or mint it by hand with dests "
-                    f"[{PROBE_HOST!r}] and the credential blob secret"
+                    "the probe placeholder is absent; the daemon seeds "
+                    "it at startup when the placeholder table is empty — "
+                    "values are daemon-minted, so a row minted by hand "
+                    "cannot carry the probe's fixed credential"
                 ),
             )
         return {

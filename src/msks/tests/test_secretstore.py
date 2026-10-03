@@ -24,6 +24,7 @@ from msks.secretstore import (
     SecretStore,
     SecretStoreError,
     backend_ref,
+    convertbits,
     encode_bech32,
     ensure_age_identity,
     mint_age_identity,
@@ -146,6 +147,15 @@ def test_provider_uri_is_the_agefile(tmp_path) -> None:
         f"?identity={explicit}"
     )
     assert explicit.exists()
+
+
+def test_convertbits_regroups_with_and_without_tail_pad() -> None:
+    """8-bit bytes into 5-bit words: a length divisible by 5 bits'
+    word size carries no pad word (5 bytes = exactly 8 words), a
+    longer one pads the tail (32 bytes = 51 words + the pad)."""
+    assert convertbits(b"12345", 8, 5) == convertbits(b"12345", 8, 5)
+    assert len(convertbits(b"12345", 8, 5)) == 8
+    assert len(convertbits(bytes(32), 8, 5)) == 52
 
 
 def test_minted_identity_matches_the_age_tooling(tmp_path) -> None:
