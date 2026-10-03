@@ -17,7 +17,6 @@ from ...model.secrets import SECRET_COVERAGES, coverage_label
 from ...secretstore import (
     SecretStoreError,
     backend_ref,
-    new_secret_value,
     new_sentinel,
     valid_name,
 )
@@ -52,10 +51,8 @@ async def seed_probe_placeholder(app) -> None:
     (an operator's mints, or a migrated state) keeps them
     untouched. A store that cannot serve rolls the row back and
     the daemon stays up without it (loud, non-fatal — the
-    bootstrap default image's posture: fixing the store and
-    restarting with an empty table is the recovery, because a
-    row minted by hand cannot carry the probe's fixed credential
-    (#423 — values are daemon-minted)).
+    bootstrap default image's posture: the operator can mint the
+    row by hand with the fixed credential as the value).
 
     Runs before any workspace can be attached, so no arming step
     belongs here: the placeholder-driven arm happens at each
@@ -116,9 +113,9 @@ def placeholder_view(row: dict, sentinel: bool = True) -> dict:
     """The API-facing view of a placeholder row (#198).
 
     The sentinel appears only when *sentinel* is set — mint's 201
-    carries it exactly once; every later view omits it. The minted
-    value rides that one reply too (#423): the route injects it
-    beside the sentinel, and no later view carries it either.
+    carries it exactly once; every later view omits it. The value
+    appears in no view at all (#423): the operator supplied it at
+    mint and it is never echoed.
     ``workspaces`` is the row's coverage (#339): ``[]`` is the
     daemon-wide row.
     """
@@ -233,6 +230,8 @@ def router(app, hub) -> APIRouter:
                     "without a leading digit"
                 ),
             )
+        if not body.value.strip():
+            raise HTTPException(status_code=422, detail="the value is empty")
         dests = validated_dests(body.dests)
         # Coverage resolution (#339): the two spellings cannot mix;
         # neither given mints the daemon-wide row (the default), a
@@ -288,7 +287,6 @@ def router(app, hub) -> APIRouter:
             else None
         )
         sentinel = new_sentinel(daemon_wide=not coverage)
-        value = new_secret_value()
         async with app.state.store_lock:
             # Row before value, all under the store lock: an
             # uncertified byte can never land behind a ref a winning
@@ -316,7 +314,7 @@ def router(app, hub) -> APIRouter:
             # valueless live row behind — both roll back here too.
             try:
                 await sync_store_manifest()
-                await app.state.secrets.write(ref, value)
+                await app.state.secrets.write(ref, body.value)
             except (SecretStoreError, OSError) as exc:
                 # Roll the row back: a placeholder whose value never
                 # landed would swap empty on the wire.
@@ -384,15 +382,12 @@ def router(app, hub) -> APIRouter:
                 "ts": time.time(),
             },
         )
-        # The value and the sentinel appear in exactly one
-        # response: this one (#423). The operator pastes the value
-        # into the external service; workspaces keep receiving
-        # only the sentinel.
-        view = placeholder_view(row)
-        view["value"] = value
+        # The sentinel appears in exactly one response: this one.
+        # The value is the operator's own and rides no response at
+        # all (#423): it was supplied at mint and never echoed.
         return Response(
             status_code=201,
-            content=json.dumps(view),
+            content=json.dumps(placeholder_view(row)),
             media_type="application/json",
         )
 
@@ -413,19 +408,18 @@ def router(app, hub) -> APIRouter:
         so serving it over the authenticated API costs nothing a
         token holder does not already hold (the llm-token route's
         rationale). A revoked or re-scoped row answers 404 with the
-        reason in the detail: values are daemon-minted (#423), so a
-        row minted by hand cannot carry the probe's fixed
-        credential — the seed is the only mint that can.
+        re-mint recipe in the detail: the credential is the fixed
+        blob the endpoint itself serves.
         """
         row = await app.state.model.placeholder_for([], PROBE_NAME)
         if row is None:
             raise HTTPException(
                 status_code=404,
                 detail=(
-                    "the probe placeholder is absent; the daemon seeds "
-                    "it at startup when the placeholder table is empty — "
-                    "values are daemon-minted, so a row minted by hand "
-                    "cannot carry the probe's fixed credential"
+                    "the probe placeholder is absent; it is seeded at "
+                    "daemon startup, or mint it by hand with dests "
+                    f"[{PROBE_HOST!r}] and the value {PROBE_SECRET_B64} "
+                    "(the fixed probe credential)"
                 ),
             )
         return {

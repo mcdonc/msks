@@ -2398,12 +2398,15 @@ def mint_body(**overrides) -> dict:
         "workspace_id": "ws-sec",
         "name": "github_api",
         "dests": ["api.github.com"],
+        "value": "ghp-real-token",
     }
     body.update(overrides)
     return body
 
 
-async def test_mint_stores_and_answers_the_value_once(client) -> None:
+async def test_mint_stores_the_value_and_answers_the_sentinel_once(
+    client,
+) -> None:
     http, app, _stub = client
     await seed_workspace(app)
     response = await http.post(
@@ -2412,13 +2415,13 @@ async def test_mint_stores_and_answers_the_value_once(client) -> None:
     assert response.status_code == 201
     row = response.json()
     assert row["sentinel"].startswith("mskssec1_")
-    assert row["value"].startswith("msksval1_")
-    assert "secret" not in row
+    assert "value" not in row
     assert row["dests"] == ["api.github.com"]
-    # The minted value landed in the store, under the derived ref.
+    # The operator's value landed in the store, under the derived
+    # ref — stored verbatim, never echoed.
     assert (
         await app.state.secrets.read("MSKSWS_WS_SEC_GITHUB_API")
-        == row["value"]
+        == "ghp-real-token"
     )
     assert (
         "MSKSWS_WS_SEC_GITHUB_API"
@@ -2426,14 +2429,23 @@ async def test_mint_stores_and_answers_the_value_once(client) -> None:
             app.state.settings.secret_store.root / "secretspec.toml"
         ).read_text()
     )
-    # Mint is the only view that ever carries the sentinel or the
-    # value.
+    # Mint is the only view that ever carries the sentinel.
     listing = await http.get("/api/v1/secrets", headers=auth())
     assert "sentinel" not in listing.json()[0]
     assert "value" not in listing.json()[0]
     audit = await http.get("/api/v1/secrets/audit", headers=auth())
     assert audit.json()[0]["kind"] == "mint"
     assert "value" not in audit.json()[0]
+
+
+async def test_mint_refuses_a_whitespace_value(client) -> None:
+    http, app, _stub = client
+    await seed_workspace(app)
+    response = await http.post(
+        "/api/v1/secrets", json=mint_body(value="  \n"), headers=auth()
+    )
+    assert response.status_code == 422
+    assert "value is empty" in response.json()["detail"]
 
 
 async def test_mint_validates_name_dests_and_workspace(client) -> None:
@@ -2540,8 +2552,8 @@ async def test_a_stale_client_sending_a_secret_is_refused_by_name(
     client,
 ) -> None:
     """A pre-#423 CLI still sending ``secret`` gets a 422 naming
-    the field — not a silent mint whose one-time value that client
-    never prints."""
+    the field — the body's misspelling is refused, not silently
+    half-stored."""
     http, app, _stub = client
     await seed_workspace(app)
     stale = await http.post(
@@ -2660,9 +2672,9 @@ async def test_revoke_unknown_placeholder_is_a_404(client) -> None:
 async def test_mint_survives_the_insert_race(client, monkeypatch) -> None:
     """Two same-label mints racing past both pre-checks: the
     loser's row insert answers 409 on the unique index, and the
-    winner's certified row owns the store entry — the daemon
-    minted it, so the loser never had bytes to plant (#423); the
-    stored value is the winner's reply."""
+    winner's certified value owns the store entry (the winner
+    re-writes after its insert, so a last-write by the loser
+    cannot stand)."""
     http, app, _stub = client
     await seed_workspace(app)
     first = await http.post(
@@ -2681,16 +2693,18 @@ async def test_mint_survives_the_insert_race(client, monkeypatch) -> None:
 
     monkeypatch.setattr(app.state.model, "placeholder_for", blind)
     monkeypatch.setattr(app.state.model, "placeholder_by_ref", blind_by_ref)
+    # The loser carries DIFFERENT bytes: nothing it sends may ever
+    # reach the store behind the winner's certified row.
     raced = await http.post(
         "/api/v1/secrets",
-        json=mint_body(),
+        json=mint_body(value="LOSER-UNCERTIFIED"),
         headers=auth(),
     )
     assert raced.status_code == 409
     assert "collision" in raced.json()["detail"]
     assert (
         await app.state.secrets.read("MSKSWS_WS_SEC_GITHUB_API")
-        == first.json()["value"]
+        == "ghp-real-token"
     )
     listing = await http.get("/api/v1/secrets", headers=auth())
     assert len(operator_rows(listing.json())) == 1
@@ -2730,8 +2744,7 @@ async def test_mint_answers_409_on_a_ref_collision(client) -> None:
     # The winner's value and the manifest are intact.
     root = app.state.settings.secret_store.root
     assert (
-        await app.state.secrets.read("MSKSWS_WS_SEC_FOO")
-        == first.json()["value"]
+        await app.state.secrets.read("MSKSWS_WS_SEC_FOO") == "ghp-real-token"
     )
     manifest = (root / "secretspec.toml").read_text()
     assert manifest.count("MSKSWS_WS_SEC_FOO") == 1
@@ -2879,6 +2892,7 @@ async def test_daemon_wide_mint_covers_every_workspace(client) -> None:
         json={
             "name": "github_api",
             "dests": ["api.github.com"],
+            "value": "ghp-shared",
         },
         headers=auth(),
     )
@@ -2886,9 +2900,9 @@ async def test_daemon_wide_mint_covers_every_workspace(client) -> None:
     row = response.json()
     assert row["workspaces"] == []
     assert row["sentinel"].startswith("mskssec2_")
-    assert row["value"].startswith("msksval1_")
+    assert "value" not in row
     assert (
-        await app.state.secrets.read("MSKSDAEMON_GITHUB_API") == row["value"]
+        await app.state.secrets.read("MSKSDAEMON_GITHUB_API") == "ghp-shared"
     )
     # The audit row records the daemon-wide coverage.
     audit = await http.get("/api/v1/secrets/audit", headers=auth())
@@ -2908,6 +2922,7 @@ async def test_daemon_wide_mint_covers_every_workspace(client) -> None:
         json={
             "name": "github_api",
             "dests": ["api.github.com"],
+            "value": "ghp-shared",
         },
         headers=auth(),
     )
@@ -2927,6 +2942,7 @@ async def test_multi_workspace_mint_is_one_row(client) -> None:
             "workspaces": ["ws-b", "ws-a", "ws-a"],
             "name": "pair_api",
             "dests": ["api.example.com"],
+            "value": "pair-token",
         },
         headers=auth(),
     )
@@ -2936,7 +2952,7 @@ async def test_multi_workspace_mint_is_one_row(client) -> None:
     assert row["sentinel"].startswith("mskssec1_")
     assert (
         await app.state.secrets.read("MSKSWS_WS_A_WS_B_PAIR_API")
-        == row["value"]
+        == "pair-token"
     )
     # The legacy single-workspace spelling still mints, and the
     # two spellings cannot mix.
@@ -2962,6 +2978,7 @@ async def test_multi_workspace_mint_is_one_row(client) -> None:
             "workspaces": [],
             "name": "empty",
             "dests": ["api.example.com"],
+            "value": "s",
         },
         headers=auth(),
     )
@@ -2972,6 +2989,7 @@ async def test_multi_workspace_mint_is_one_row(client) -> None:
             "workspaces": ["nope"],
             "name": "ghost",
             "dests": ["api.example.com"],
+            "value": "s",
         },
         headers=auth(),
     )
@@ -3111,6 +3129,7 @@ async def test_daemon_wide_mint_arms_every_attached_workspace(client) -> None:
             json={
                 "name": "wide",
                 "dests": ["api.github.com"],
+                "value": "s",
             },
             headers=auth(),
         )
@@ -3166,6 +3185,7 @@ async def test_a_partial_daemon_wide_arm_disarms_on_rollback(client) -> None:
             json={
                 "name": "wide",
                 "dests": ["api.github.com"],
+                "value": "s",
             },
             headers=auth(),
         )
@@ -3683,7 +3703,7 @@ async def test_the_probe_route_404s_once_the_row_is_revoked(
     ).status_code == 200
     gone = await http.get("/api/v1/probe", headers=auth())
     assert gone.status_code == 404
-    assert "the placeholder table is empty" in gone.json()["detail"]
+    assert "mint it by hand" in gone.json()["detail"]
 
 
 async def test_a_seed_race_lost_on_the_unique_index_stands_down(

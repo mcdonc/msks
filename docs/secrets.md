@@ -4,10 +4,11 @@ A workspace never holds a real secret. It holds a **placeholder** —
 a sentinel token the operator mints once and pastes into the
 workspace — and the daemon swaps the sentinel for the real secret
 on the wire, in flight, only toward the destinations the mint
-named. The real secret is minted by the daemon itself (#423): it
-lives in msksd's **secret store** — one age-encrypted agefile —
-and in the daemon's memory, and it reaches the operator exactly
-once, in the mint reply, to be pasted into the external service.
+named. The real secret is the operator's own value, supplied at
+mint (a file or stdin on the CLI, a masked field on the TUI
+form); it lives in msksd's **secret store** — one age-encrypted
+agefile — and in the daemon's memory, and it is never echoed
+back: the mint reply carries the sentinel alone.
 
 A mint covers **workspaces** (#339). With no target it is the
 **daemon-wide placeholder**: one row, one sentinel, valid on
@@ -177,31 +178,32 @@ endpoint's recipe — and revoke it like any other placeholder when
 you do not want it. The seed runs exactly when the placeholder
 table is empty: a daemon that already holds rows seeds nothing,
 and a revoked probe row stays gone while the operator's rows hold
-the table (it returns on the next startup that finds the table
-empty — values are daemon-minted, so a row minted by hand cannot
-carry the probe's fixed credential). The seed's mint rides the
-audit trail like any other.
+the table — or mint it back by hand: `msks secret mint --name
+probe --dest secretprobe.msks --secret-file -` with the fixed
+credential blob `bXNrczptc2tz` (the value the probe endpoint
+itself serves). The seed's mint rides the audit trail like any
+other.
 
 ## The mint flow
 
 ```console
-$ msks secret mint --name github_api --dest api.github.com
+$ op read 'op://Vault/github/credential' \
+    | msks secret mint --name github_api \
+        --dest api.github.com --secret-file -
 minted */github_api for api.github.com
-value (shown once): msksval1_9Jm3...kQ
 sentinel (shown once): mskssec2_9Jm3...kQ
 ```
 
-- The mint **generates the value** (#423): the daemon creates a
-  strong random value (the platform CSPRNG — `msksval1_` plus 32
-  URL-safe bytes), stores it in the agefile, and answers with it
-  exactly once, beside the sentinel. Paste the value into the
-  external service then; every later view omits it, and a lost
-  value is re-minted, not recalled. The operator never supplies
-  a value, and the client — on another machine — receives the
-  one-time reply over the existing token-authenticated TLS API;
-  the agefile and the age identity stay on the daemon's host, and
-  the exposure point is the client's terminal, the same exposure
-  the sentinel has always had.
+- The value is the operator's own secret: a file's contents, or
+  stdin for `--secret-file -` (the example pipes it from a
+  password manager, so it never touches disk). It is
+  whitespace-stripped at both ends, never accepted as a
+  command-line argument (argv lands in process lists and shell
+  history), stored verbatim in the agefile, and never echoed —
+  the mint reply carries the sentinel alone. The client and the
+  daemon may sit on different machines: the value rides the
+  token-authenticated TLS API, and the agefile and the age
+  identity stay on the daemon's host.
 - The mint above carries no workspace target: it is the
   **daemon-wide** mint — one row, one `mskssec2_` sentinel, valid
   on every workspace's tap toward the minted destinations. A
@@ -225,24 +227,25 @@ sentinel (shown once): mskssec2_9Jm3...kQ
   placeholder lives until revoked. `msks secret renew` extends a
   lifetime in place — the sentinel never changes and nothing is
   re-delivered.
-- The value and the sentinel are printed once, at mint. Every
-  later view (list, audit, logs) omits them; a lost value or
-  sentinel is re-minted, not recalled.
+- The sentinel is printed once, at mint. Every later view (list,
+  audit, logs) omits it; a lost sentinel is re-minted, not
+  recalled.
 
 The `msks tui` secrets page mints too (#393): `c` opens the form
 — name, repeatable destinations, coverage (the daemon-wide row,
 or a multi-select of the workspaces the tree's own list offers),
-and the lifetime (`unbounded` by default, an hour to thirty days
-beside it). There is no value field — the daemon mints the value
-(#423). The submit checks the store (`msks secret check`'s
-endpoint) before it mints, and a refusal — a store that cannot
-answer writes, a name collision on the chosen coverage set —
-names itself on the form with the fields kept for a retry. A
-successful mint answers with the one-time panel: the value, the
-sentinel, its reach decoded from its prefix, OSC 52 clipboard
-copies for each (over ssh included, where the terminal honors
-it), and the rule that the display ends with the panel — a lost
-value or sentinel is re-minted, never recalled. Closing the panel
+the lifetime (`unbounded` by default, an hour to thirty days
+beside it), and the value: a masked field the operator types or
+pastes into — no file path to name, the form takes the secret's
+bytes directly. The submit checks the store (`msks secret
+check`'s endpoint) before it mints, and a refusal — a store that
+cannot answer writes, a name collision on the chosen coverage
+set, a blank value — names itself on the form with the fields
+kept for a retry. A successful mint answers with the sentinel's
+one-time panel: the sentinel, its reach decoded from its prefix,
+an OSC 52 clipboard copy (over ssh included, where the terminal
+honors it), and the rule that the display ends with the panel —
+a lost sentinel is re-minted, never recalled. Closing the panel
 clears its text.
 
 `msks secret revoke --name github_api` retires the daemon-wide row
@@ -269,10 +272,11 @@ setting back to `all` arms it with any live daemon-wide row.
 The store is [SecretSpec](https://secretspec.dev) driven through its
 CLI (`secretspec`, named by `secret_store_cli`): one
 age-encrypted **agefile** — `<store root>/secrets.age`, default
-`<state_dir>/secrets/secrets.age` — holding every value msks
-itself minted. Values exist in plaintext only in the daemon's
-memory, the one-time mint reply, and the `secretspec` child's
-pipe; at rest they are ciphertext.
+`<state_dir>/secrets/secrets.age` — holding every value the
+operator supplied at mint. Values exist in plaintext only in the
+client's memory, the token-authenticated request, the daemon's
+memory, and the `secretspec` child's pipe; at rest they are
+ciphertext.
 
 The age identity is the daemon's own (#423): minted the first
 time a store operation needs it — a plaintext age-keygen X25519
@@ -314,7 +318,7 @@ secret_store_age_identity: ""
 
 ## At-rest encryption
 
-The agefile is the store: every value msks mints lands in it
+The agefile is the store: every minted value lands in it
 encrypted, and no configuration choice changes that posture — the
 `age` provider is the one store. The ssh identities, the
 database, and the token hashes keep their own house postures; the
@@ -337,5 +341,6 @@ re-evaluates the covered workspaces' redirects in the same pass —
 the last placeholder's retirement stands the interception down,
 and one revoke or expiry retires the whole row everywhere at
 once. The secret value and the sentinel appear nowhere in the
-audit or the events: the value answers its single mint-time
-reply alone, and the sentinel is never shown past its own.
+audit or the events: the value rides its mint request alone and
+is never echoed, and the sentinel is never shown past its single
+mint-time print.

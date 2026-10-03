@@ -170,9 +170,6 @@ class MsksTuiApp(App):
                       border: round $primary; padding: 1 2; }
     #panel-note { color: $text-muted; margin-bottom: 1;
                   text-wrap: nowrap; text-overflow: ellipsis; }
-    #panel-value-label { color: $text-muted; }
-    #panel-value { text-style: bold; text-wrap: nowrap;
-                   text-overflow: ellipsis; }
     #panel-label { color: $text-muted; }
     #panel-sentinel { text-style: bold; text-wrap: nowrap;
                       text-overflow: ellipsis; margin-bottom: 1; }

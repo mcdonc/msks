@@ -28,7 +28,6 @@ from msks.secretstore import (
     encode_bech32,
     ensure_age_identity,
     mint_age_identity,
-    new_secret_value,
     new_sentinel,
     provider_uri,
     render_manifest,
@@ -84,17 +83,6 @@ def test_new_sentinel_shape() -> None:
     daemon = new_sentinel(daemon_wide=True)
     assert daemon.startswith("mskssec2_")
     assert len(daemon) == len("mskssec2_") + 43
-
-
-def test_new_secret_value_shape() -> None:
-    """The minted value (#423) is the sentinel's own shape — a
-    versioned prefix plus 43 URL-safe bytes — so a value found in
-    a log or a paste names its origin from the string alone, and
-    each mint draws fresh bytes."""
-    value = new_secret_value()
-    assert value.startswith("msksval1_")
-    assert len(value) == len("msksval1_") + 43
-    assert new_secret_value() != value
 
 
 def test_backend_ref_sanitizes() -> None:

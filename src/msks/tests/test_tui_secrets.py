@@ -518,20 +518,25 @@ def panel_text(app) -> str:
         return ""
 
 
-def fill_mint(screen, *, name: str = "github_api") -> None:
-    """Fill the form's plain fields with a body that mints."""
+def fill_mint(
+    screen, *, name: str = "github_api", value: str = "hunter2"
+) -> None:
+    """Fill the form's plain fields with a body that mints — the
+    masked value field included."""
     screen.query_one("#field-name", Input).value = name
     screen.query_one("#field-dests", Input).value = "api.github.com,.gh"
+    screen.query_one("#field-value", Input).value = value
 
 
-async def test_the_form_mints_a_daemon_wide_row_and_the_one_times_show_once(
+async def test_the_form_mints_a_daemon_wide_row_and_the_sentinel_shows_once(
     tmp_path,
 ) -> None:
-    """The create action's whole path (#393, #423): the store check
+    """The create action's whole path (#393): the store check
     rides ahead of the mint, the daemon-wide body carries neither
-    a coverage list, a ttl, nor a value (the daemon mints it),
-    the value and the sentinel land once each on the panel, and
-    closing it clears the text and lands the row on the page."""
+    a coverage list nor a ttl but does carry the operator's value,
+    the sentinel lands once on the panel (the value never echoes),
+    and closing it clears the text and lands the row on the
+    page."""
     data = FakeData([])
     app, _follow = make_app(data)
     async with app.run_test() as pilot:
@@ -548,21 +553,18 @@ async def test_the_form_mints_a_daemon_wide_row_and_the_one_times_show_once(
         assert body["dests"] == ["api.github.com", ".gh"]
         assert "workspaces" not in body  # the daemon-wide default
         assert "ttl_s" not in body  # unbounded, the daemon's default
-        assert "secret" not in body  # the daemon mints the value (#423)
-        # The value and the sentinel show exactly once each, with
-        # the reach decoded.
+        assert body["value"] == "hunter2"
+        # The sentinel shows exactly once, with its reach decoded;
+        # the operator's value appears nowhere on the panel.
         sentinel = "mskssec2_" + "s" * 43
-        value = "msksval1_" + "s" * 43
         await wait_for(lambda: sentinel in panel_text(app))
         assert panel_text(app).count(sentinel) == 1
-        assert panel_text(app).count(value) == 1
+        assert "hunter2" not in panel_text(app)
         assert "every accepting workspace" in panel_text(app)
         sentinel_line = app.screen.query_one("#panel-sentinel", Static)
-        value_line = app.screen.query_one("#panel-value", Static)
         await pilot.press("q")
         await wait_for(lambda: on_secrets(app))
         assert str(sentinel_line.content) == ""  # closed: text cleared
-        assert str(value_line.content) == ""
         await wait_for(lambda: secrets_children(app) == 1)
         assert "minted */github_api" in secrets_status(app)
 
@@ -642,12 +644,11 @@ async def test_a_refused_store_check_names_itself_and_the_mint_never_runs(
         assert data.secret_calls == []
 
 
-async def test_the_panel_copies_value_and_sentinel_over_osc52(
+async def test_the_panel_copies_the_sentinel_over_osc52(
     tmp_path, monkeypatch
 ) -> None:
-    """`c` on the panel hands the value and `s` the sentinel to
-    the OSC 52 copy (#393, #423), each naming its copy on the
-    note."""
+    """`c` on the panel hands the sentinel to the OSC 52 copy
+    (#393) and names the copy on the note."""
     data = FakeData([])
     copied: list[str] = []
 
@@ -664,13 +665,9 @@ async def test_the_panel_copies_value_and_sentinel_over_osc52(
         form.submit()
         await wait_for(lambda: on_panel(app))
         sentinel = "mskssec2_" + "s" * 43
-        value = "msksval1_" + "s" * 43
         await pilot.press("c")
-        assert copied == [value]
-        assert "copied the value" in panel_text(app)
-        await pilot.click("#do-copy-sentinel")  # the button leg
-        assert copied == [value, sentinel]
-        assert "copied the sentinel" in panel_text(app)
+        assert copied == [sentinel]
+        assert "copied to the clipboard" in panel_text(app)
         assert "OSC 52" in panel_text(app)
         # A copy with no driver to write through names that.
         monkeypatch.setattr(secrets_mod, "osc52_copy", lambda app, text: False)
@@ -714,6 +711,10 @@ async def test_local_refusals_keep_the_body_home(tmp_path) -> None:
         await wait_for(lambda: "at least one workspace" in mint_note(app))
         form.query_one("#field-coverage", Select).value = "daemon-wide"
         await pilot.pause()
+        # No value.
+        form.query_one("#field-value", Input).value = ""
+        form.submit()
+        await wait_for(lambda: "a value is required" in mint_note(app))
         assert data.calls == []
         assert data.secret_calls == []
         # Escape cancels: no exchange either.
@@ -794,6 +795,8 @@ async def test_the_arrows_walk_the_form_and_leave_the_picker_at_its_edges(
         await pilot.press("down")  # the second option — the bottom edge
         await pilot.press("down")  # hands the walk on
         assert form.focused is form.query_one("#field-ttl", Select)
+        await pilot.press("down")  # the masked value field closes the walk
+        assert form.focused is form.query_one("#field-value", Input)
 
 
 # -- the audit view -------------------------------------------------------
@@ -1373,7 +1376,8 @@ async def test_the_form_cancels_without_an_exchange(tmp_path) -> None:
 
 async def test_the_panel_closes_on_its_button(tmp_path) -> None:
     """The Close button clears the panel's text and returns the
-    page (#393); the panel's Copy value button copies first."""
+    page (#393); the mint's Copy button copies the sentinel
+    first."""
     data = FakeData([])
     app, _follow = make_app(data)
     async with app.run_test() as pilot:
@@ -1384,9 +1388,8 @@ async def test_the_panel_closes_on_its_button(tmp_path) -> None:
         await wait_for(lambda: on_panel(app))
         panel = app.screen
         sentinel_line = panel.query_one("#panel-sentinel", Static)
-        await pilot.press("enter")  # the focused Copy value button
-        assert "copied the value" in panel_text(app)
-        await pilot.press("tab")
+        await pilot.press("enter")  # the focused Copy button
+        assert "copied to the clipboard" in panel_text(app)
         await pilot.press("tab")
         await panel.query_one("#panel-rule", Static).remove()
         # The Close button closes over a line already gone — a
