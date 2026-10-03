@@ -24,6 +24,7 @@
   config,
   lib,
   pkgs,
+  imageBuild ? false,
   ...
 }:
 
@@ -48,6 +49,14 @@ let
   # The model-discovery extension (#266, #268): the shared source
   # file the tmpfiles rules below plant inside the guest.
   piExtension = ./guest-pi-extension.ts;
+
+  # The workspace's interception CA (#427): the identity seed
+  # stages it at /etc/msks at first boot, and the rebuild-time
+  # evaluation inside the guest reads it (below). One probe of
+  # the path, shared by every consumer, so no evaluation can see
+  # the file appear mid-eval twice over.
+  interceptorCA = /etc/msks/interceptor-ca.crt;
+  hasInterceptorCA = builtins.pathExists interceptorCA;
 in
 {
   nixpkgs.hostPlatform = "x86_64-linux";
@@ -295,6 +304,84 @@ in
     };
   };
 
+  # The workspace's interception CA folded into the system trust
+  # store (#427). The identity seed (#424/#200) stages the
+  # per-workspace certificate under /etc/msks at first boot, and
+  # this module — re-evaluated inside the guest by the fold unit
+  # below, after cloud-init has staged the file — reads it into
+  # security.pki, so the system bundle the rebuild builds carries
+  # the CA: every client trusts the interception leaves, not only
+  # the ones that honor the seed's environment exports. The
+  # pathExists guard keeps a boot ahead of the seed (and the
+  # image build itself, on its host) evaluating the shipped
+  # configuration exactly; the assertion below refuses an image
+  # build on a host that carries the file, where evaluation would
+  # otherwise bake a foreign CA into every guest. The path is the
+  # guest's own reserved namespace — the seed's files under
+  # /etc/msks are the only writers.
+  security.pki.certificates = lib.optionals hasInterceptorCA [
+    (builtins.readFile interceptorCA)
+  ];
+
+  # Node stays env-driven after the fold too: it ignores the
+  # system trust store and adds roots through this variable
+  # (#424), so the rebuilt system sets it declaratively — the
+  # same value the seed's profile.d export carried, present for
+  # every session shape once the fold has run.
+  environment.sessionVariables = lib.optionalAttrs hasInterceptorCA {
+    NODE_EXTRA_CA_CERTS = "/etc/msks/interceptor-ca.crt";
+  };
+
+  # The fold trigger (#427): one background rebuild per fresh
+  # certificate. A oneshot after cloud-final (the stage that runs
+  # the identity seed), gated by a marker holding the folded
+  # certificate's hash — the same certificate no-ops on later
+  # boots, a factory reset's re-mint rebuilds exactly once (the
+  # reset drops the marker with the overlay). The rebuild never
+  # blocks the workspace: the seed's staged exports already cover
+  # the env-honoring clients from the first seconds, this unit
+  # completes trust for the rest minutes later, and it runs at
+  # low weight so a first boot's interactive work keeps the CPU.
+  # The unit is conditioned on the staged certificate, so a
+  # guest whose seed carried no CA block never starts it.
+  systemd.services.msks-interceptor-ca = {
+    description = "msks: fold the workspace's interceptor CA into the system trust bundle (#427)";
+    documentation = [ "https://github.com/mcdonc/msks" ];
+    after = [ "cloud-final.service" ];
+    wantedBy = [ "multi-user.target" ];
+    path = [
+      pkgs.nixos-rebuild
+      pkgs.nix
+      pkgs.systemd
+      pkgs.coreutils
+    ];
+    unitConfig = {
+      ConditionPathExists = "/etc/msks/interceptor-ca.crt";
+    };
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      Nice = 19;
+      CPUWeight = 20;
+      IOSchedulingClass = "idle";
+    };
+    # The marker writes only after a successful switch: a failed
+    # rebuild leaves no marker and the next boot retries the fold
+    # (the failure stays visible on the unit until then).
+    script = ''
+      set -eu
+      cert=/etc/msks/interceptor-ca.crt
+      marker=/var/lib/msks/interceptor-ca.folded
+      sum=$(sha256sum "$cert" | cut -d' ' -f1)
+      if [ -r "$marker" ] && [ "$(cat "$marker")" = "$sum" ]; then
+        exit 0
+      fi
+      install -d -m 0755 /var/lib/msks
+      nixos-rebuild switch
+      printf '%s\n' "$sum" > "$marker"
+    '';
+  };
+
   # The serial console is the guest's debug channel: autologin
   # root on ttyS0 (the vsock console is the supported interactive
   # path), the same parity the Debian image ships. NixOS's getty
@@ -433,6 +520,14 @@ in
   # workspace rebuild's), not boot a workspace whose pi refuses
   # to start.
   assertions = [
+    {
+      assertion = !imageBuild || !hasInterceptorCA;
+      message =
+        ""
+        + "this image build host carries /etc/msks/interceptor-ca.crt — "
+        + "the evaluation would fold that certificate into every "
+        + "guest's trust store; build the image from a host without it";
+    }
     {
       assertion = lib.versionAtLeast pkgs.nodejs_22.version "22.19.0";
       message = "pi's engines floor (22.19.0) exceeds nixpkgs nodejs_22 (${pkgs.nodejs_22.version}) — the nixpkgs pin regressed";

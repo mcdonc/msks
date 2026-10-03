@@ -296,8 +296,11 @@ def ca_seed_block(ca_pem: str) -> str:
     bundle — whichever name the distro ships (``ca-bundle.crt``
     NixOS-style, ``ca-certificates.crt`` Debian-style) — with the
     CA appended, and it exports only when that bundle was built; a
-    CA-only bundle would break TLS to every real service. Node adds
-    the root itself through ``NODE_EXTRA_CA_CERTS``. NixOS's
+    CA-only bundle would break TLS to every real service. Git's
+    own ``GIT_SSL_CAINFO`` names the same bundle (it replaces
+    git's default CA file, so it must carry the platform roots
+    too), and node adds the root itself through
+    ``NODE_EXTRA_CA_CERTS``. NixOS's
     ``/etc/profile`` reads no ``profile.d``: the same exports ride
     its sanctioned ``/etc/profile.local`` hook (whose one rule also
     brings the LLM block's exports alive there). Every step is
@@ -333,13 +336,15 @@ def ca_seed_block(ca_pem: str) -> str:
         "install -d -m 0755 /etc/profile.d\n"
         "cat > /etc/profile.d/msks-ca.sh <<'MSEOF'\n"
         "# msks (#424): name this workspace's interception CA beside\n"
-        "# the system roots. SSL_CERT_FILE (only when the bundle was\n"
-        "# built — it REPLACES the default lookup, so it must carry\n"
-        "# the platform roots too) for the OpenSSL and Go clients;\n"
+        "# the system roots. SSL_CERT_FILE and GIT_SSL_CAINFO (only\n"
+        "# when the bundle was built — they REPLACE the default\n"
+        "# lookup, so they must carry the platform roots too) for\n"
+        "# the OpenSSL and Go clients and for git's own CA file;\n"
         "# NODE_EXTRA_CA_CERTS for node, which adds the root on top\n"
         "# of its own bundled roots.\n"
         "if [ -r /etc/msks/ca-bundle.crt ]; then\n"
         "  export SSL_CERT_FILE=/etc/msks/ca-bundle.crt\n"
+        "  export GIT_SSL_CAINFO=/etc/msks/ca-bundle.crt\n"
         "fi\n"
         "if [ -r /etc/msks/interceptor-ca.crt ]; then\n"
         "  export NODE_EXTRA_CA_CERTS=/etc/msks/interceptor-ca.crt\n"

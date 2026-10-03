@@ -463,13 +463,68 @@ def test_the_nixos_image_is_rebuild_ready() -> None:
         "/nixos/default.nix" in build
     )
     # One source of truth: the image build evaluates the same file
-    # the guest rebuild imports.
-    assert "configuration = ./guest-nixos-configuration.nix;" in build
+    # the guest rebuild imports (eval-config directly — the
+    # nixos/default.nix wrapper would nest a list configuration
+    # one level deep), with the image-build marker beside it.
+    assert "eval-config.nix" in build
+    assert "./guest-nixos-configuration.nix" in build
     # The vsock port guard (#274 review): the extraction duplicated
     # vsockShellPort across two files — the build asserts the
     # module's service unit carries the same port the manifest
     # advertises, so a drift fails the build.
     assert "msks-console-helper $vsockShellPort" in build
+
+
+def test_the_nixos_image_folds_the_interceptor_ca() -> None:
+    """The #427 fold: the guest module reads the seed-staged
+    workspace CA into the system trust bundle at rebuild time, a
+    background oneshot runs that rebuild once per fresh
+    certificate, and the image build refuses a host whose own
+    /etc/msks would leak into every guest. The Debian image stays
+    untouched by all of it — its update-ca-certificates link
+    completes trust at first boot already (#424)."""
+    configuration = (
+        REPO_ROOT / "nix" / "guest-nixos-configuration.nix"
+    ).read_text()
+    build = (REPO_ROOT / "nix" / "guest-nixos.nix").read_text()
+    debian = (REPO_ROOT / "nix" / "guest-debian.nix").read_text()
+    # The declarative fold: evaluation inside the guest — after
+    # the seed staged the file — reads it into security.pki, so
+    # the system bundle the rebuild builds carries the CA for
+    # every client. The pathExists guard keeps a boot ahead of the
+    # seed (and the image build, on a clean host) evaluating the
+    # shipped configuration exactly.
+    assert "security.pki.certificates" in configuration
+    assert "hasInterceptorCA" in configuration
+    assert "builtins.readFile interceptorCA" in configuration
+    # node ignores the system trust store; its extra-root
+    # variable rides the session environment once the fold ran.
+    assert "NODE_EXTRA_CA_CERTS" in configuration
+    # The trigger: a oneshot ordered after cloud-final (the stage
+    # that runs the identity seed), conditioned on the staged
+    # certificate, running at a weight that keeps a first boot's
+    # interactive work responsive. The marker holds the folded
+    # certificate's hash and writes only after a successful
+    # switch — a failed rebuild retries on the next boot, the
+    # same certificate no-ops, and a factory reset's re-mint
+    # rebuilds exactly once (the reset drops the marker with the
+    # overlay).
+    assert "msks-interceptor-ca" in configuration
+    assert '"cloud-final.service"' in configuration
+    assert "nixos-rebuild switch" in configuration
+    assert "interceptor-ca.folded" in configuration
+    assert "Nice = 19" in configuration
+    assert (
+        'ConditionPathExists = "/etc/msks/interceptor-ca.crt"' in configuration
+    )
+    # The build-host guard: the image build marks its own
+    # evaluation, and the module's assertion refuses one whose
+    # evaluation would fold a host-carried certificate into every
+    # guest's trust store.
+    assert "_module.args.imageBuild = true" in build
+    assert "!imageBuild || !hasInterceptorCA" in configuration
+    # The Debian image has no fold unit.
+    assert "msks-interceptor-ca" not in debian
 
 
 def test_the_extension_bounds_its_single_fetch() -> None:
