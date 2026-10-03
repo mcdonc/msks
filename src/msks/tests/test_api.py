@@ -77,6 +77,12 @@ class StubMicrovm:
         self.calls.append(("reset", workspace_id))
 
 
+def operator_rows(rows: list[dict]) -> list[dict]:
+    """The listing minus the seeded probe placeholder (#424): the
+    operator's own rows, for exact-shape assertions."""
+    return [row for row in rows if row["name"] != "probe"]
+
+
 @pytest.fixture
 async def client(tmp_path: Path):
     settings = Settings(
@@ -2510,7 +2516,7 @@ async def test_revoke_cleans_row_store_and_manifest(client) -> None:
     assert revoked.status_code == 200
     assert revoked.json()["store_cleaned"] is True
     listing = await http.get("/api/v1/secrets", headers=auth())
-    assert listing.json() == []
+    assert operator_rows(listing.json()) == []
     root = app.state.settings.secret_store.root
     manifest = (root / "secretspec.toml").read_text()
     assert "MSKSWS_WS_SEC_GITHUB_API" not in manifest
@@ -2519,7 +2525,9 @@ async def test_revoke_cleans_row_store_and_manifest(client) -> None:
     ).exists()
     audit = await http.get("/api/v1/secrets/audit", headers=auth())
     kinds = [event["kind"] for event in audit.json()]
-    assert kinds == ["revoke", "mint"]
+    # The seeded probe row's startup mint rides the trail (#424).
+    assert kinds[:2] == ["revoke", "mint"]
+    assert kinds[2:] == ["mint"]
 
 
 async def test_revoke_survives_a_failing_store_cleanup(client) -> None:
@@ -2535,7 +2543,7 @@ async def test_revoke_survives_a_failing_store_cleanup(client) -> None:
     assert revoked.status_code == 200
     assert revoked.json()["store_cleaned"] is False
     listing = await http.get("/api/v1/secrets", headers=auth())
-    assert listing.json() == []
+    assert operator_rows(listing.json()) == []
 
 
 async def test_store_check_endpoint(client) -> None:
@@ -2607,7 +2615,7 @@ async def test_mint_survives_the_insert_race(client, monkeypatch) -> None:
         == "ghp-real-token"
     )
     listing = await http.get("/api/v1/secrets", headers=auth())
-    assert len(listing.json()) == 1
+    assert len(operator_rows(listing.json())) == 1
 
 
 async def test_mint_dedupes_repeated_dests(client) -> None:
@@ -3106,7 +3114,7 @@ async def test_a_partial_daemon_wide_arm_disarms_on_rollback(client) -> None:
     # over the same targets — ws-sec's disarm included.
     assert refreshes == ["ws-sec", "ws-other", "ws-sec", "ws-other"]
     listing = await http.get("/api/v1/secrets", headers=auth())
-    assert listing.json() == []
+    assert operator_rows(listing.json()) == []
 
 
 async def test_mint_and_revoke_events_carry_the_placeholder_identity(
@@ -3136,7 +3144,7 @@ async def test_mint_and_revoke_events_carry_the_placeholder_identity(
     # replay alike (#305): the same fact lands once on the events
     # screen however it arrives.
     audit = await app.state.model.list_audit()
-    assert [row["id"] for row in audit] == [
+    assert [row["id"] for row in audit][:2] == [
         revoke["audit_id"],
         mint["audit_id"],
     ]
@@ -3195,10 +3203,12 @@ async def test_a_mint_that_cannot_arm_rolls_back_whole(client) -> None:
     assert response.status_code == 503
     assert "could not arm" in response.json()["detail"]
     listing = await http.get("/api/v1/secrets", headers=auth())
-    assert listing.json() == []
-    # A rolled-back mint never existed: no audit row, no event.
+    assert operator_rows(listing.json()) == []
+    # A rolled-back mint never existed: no audit row, no event of
+    # its own (the seeded probe row's startup mint is the trail's
+    # whole content, #424).
     audit = await http.get("/api/v1/secrets/audit", headers=auth())
-    assert audit.json() == []
+    assert operator_rows(audit.json()) == []
     events = []
     while not queue.empty():
         events.append(json.loads(await queue.get()))
@@ -3253,7 +3263,7 @@ async def test_revoke_survives_a_failing_refresh(client) -> None:
         app.state.interceptor = real
     assert revoked.status_code == 200
     listing = await http.get("/api/v1/secrets", headers=auth())
-    assert listing.json() == []
+    assert operator_rows(listing.json()) == []
 
 
 async def test_a_renew_that_cannot_arm_restores_the_deadline(client) -> None:
@@ -3493,3 +3503,117 @@ async def test_lifespan_migrates_legacy_backend_refs(tmp_path: Path) -> None:
     manifest = (store_root / "secretspec.toml").read_text()
     assert "MSKSWS_WS_A_GITHUB_API" in manifest
     assert "MSKS_" not in manifest
+
+
+# --- the seeded probe placeholder (#424) -------------------------------------
+
+
+async def test_first_startup_seeds_the_probe_placeholder(client) -> None:
+    """A fresh daemon ships the daemon-wide probe row (#424): the
+    store holds the fixed credential blob and the manifest declares
+    its ref, so the probe works with zero operator minting."""
+    http, app, _stub = client
+    listing = await http.get("/api/v1/secrets", headers=auth())
+    rows = [row for row in listing.json() if row["name"] == "probe"]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["workspaces"] == []
+    assert row["dests"] == ["probe.msks"]
+    root = app.state.settings.secret_store.root
+    from msks.spec.probe import PROBE_SECRET_B64
+
+    stored = root / "msks" / "default" / "MSKSDAEMON_PROBE"
+    assert stored.read_text() == PROBE_SECRET_B64
+    assert "MSKSDAEMON_PROBE" in (root / "secretspec.toml").read_text()
+    # The read-back surface: the sentinel and the recipe, gated the
+    # same as every secret route.
+    probe = await http.get("/api/v1/probe", headers=auth())
+    assert probe.status_code == 200
+    body = probe.json()
+    assert body["host"] == "probe.msks"
+    assert body["port"] == 443
+    assert body["username"] == "msks"
+    assert body["secret"] == PROBE_SECRET_B64
+    assert body["placeholder_id"] == row["id"]
+    assert body["sentinel"].startswith("mskssec2_")
+    assert (await http.get("/api/v1/probe")).status_code == 401
+
+
+async def test_the_seed_leaves_an_occupied_table_alone(
+    tmp_path: Path,
+) -> None:
+    """First-time means empty: a daemon that already holds rows —
+    an operator's mints, or a seeded prior boot — seeds nothing
+    new, and a revoked probe row stays gone while the operator's
+    rows hold the table."""
+    settings = Settings(
+        vmm=VmmSettings(state_dir=tmp_path / "vms"),
+        net=NetSettings(enabled=False),
+        server=ServerSettings(db_path=tmp_path / "api.db"),
+        secret_store=SecretStoreSettings(root=tmp_path / "store"),
+    )
+    app = build_app(settings)
+    app.state.microvm = StubMicrovm()
+    api = build_api(app)
+    async with api.router.lifespan_context(api):
+        await app.state.model.create_placeholder(
+            ["ws-sec"],
+            "github_api",
+            "mskssec1_x",
+            ["api.github.com"],
+            "MSKSWS_WS_SEC_GITHUB_API",
+            None,
+        )
+        for row in await app.state.model.list_placeholders():
+            if row["name"] == "probe":
+                await app.state.model.delete_placeholder(row["id"])
+    async with api.router.lifespan_context(api):
+        names = [
+            row["name"] for row in await app.state.model.list_placeholders()
+        ]
+        assert names == ["github_api"]
+
+
+async def test_a_store_that_cannot_serve_skips_the_seed(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    """A failing store write rolls the row back and the daemon
+    stays up without the probe row (loud, non-fatal)."""
+    from msks.secretstore import SecretStoreError
+
+    async def broken_write(ref, value):
+        raise SecretStoreError("write", "store unavailable")
+
+    settings = Settings(
+        vmm=VmmSettings(state_dir=tmp_path / "vms"),
+        net=NetSettings(enabled=False),
+        server=ServerSettings(db_path=tmp_path / "api.db"),
+        secret_store=SecretStoreSettings(root=tmp_path / "store"),
+    )
+    app = build_app(settings)
+    app.state.microvm = StubMicrovm()
+    api = build_api(app)
+    monkeypatch.setattr(app.state.secrets, "write", broken_write)
+    import logging
+
+    with caplog.at_level(logging.ERROR):
+        async with api.router.lifespan_context(api):
+            assert await app.state.model.list_placeholders() == []
+    assert "probe placeholder seed failed" in caplog.text
+
+
+async def test_the_probe_route_404s_once_the_row_is_revoked(
+    client,
+) -> None:
+    http, _app, _stub = client
+    row = next(
+        row
+        for row in (await http.get("/api/v1/secrets", headers=auth())).json()
+        if row["name"] == "probe"
+    )
+    assert (
+        await http.delete(f"/api/v1/secrets/{row['id']}", headers=auth())
+    ).status_code == 200
+    gone = await http.get("/api/v1/probe", headers=auth())
+    assert gone.status_code == 404
+    assert "seeded at daemon startup" in gone.json()["detail"]

@@ -582,3 +582,47 @@ def test_compose_with_only_a_token_builds_a_seed() -> None:
     # Neither a key nor a token: the operator's payload verbatim (the
     # #41 contract).
     assert compose_user_data(None, None, "ws-id") is None
+
+
+# --- the interceptor CA block (#424, #200's create-time half) ----------------
+
+
+CA_PEM = "-----BEGIN CERTIFICATE-----\nZmFrZQ==\n-----END CERTIFICATE-----\n"
+
+
+def test_seed_script_installs_the_interceptor_ca() -> None:
+    """With a CA present the script plants it in the guest's local
+    trust store and links it in (#424): the guest validates every
+    leaf its own interception path serves — the probe endpoint
+    included — from first boot."""
+    script = seed_script(PUBLIC, "ws-id", ca_pem=CA_PEM)
+    assert f"ca_cert='{CA_PEM}'" in script
+    assert (
+        "printf '%s\\n' \"$ca_cert\" "
+        "> /usr/local/share/ca-certificates/msks-interceptor.crt" in script
+    )
+    assert "update-ca-certificates" in script
+
+
+def test_the_ca_block_tolerates_a_guest_without_the_tool() -> None:
+    """A guest with no update-ca-certificates (NixOS manages its
+    trust store) keeps booting: the CA file is staged and the miss
+    lands on stderr (#424)."""
+    script = seed_script(
+        None, "ws-id", llm_token="t", llm_port=1, ca_pem=CA_PEM
+    )
+    assert "command -v update-ca-certificates" in script
+    assert "staged but not linked" in script
+
+
+def test_compose_user_data_carries_the_ca() -> None:
+    """The composed document includes the CA wherever a seed script
+    exists — with a key, and keyless with a token alone."""
+    with_key = compose_user_data(None, PUBLIC, "ws-id", ca_pem=CA_PEM)
+    assert "ca_cert=" in with_key
+    keyless = compose_user_data(
+        None, None, "ws-id", llm_token="t", ca_pem=CA_PEM
+    )
+    assert "ca_cert=" in keyless
+    # Without key, token, or CA the operator payload travels alone.
+    assert compose_user_data("payload", None, "ws-id") == "payload"

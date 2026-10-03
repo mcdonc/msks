@@ -338,3 +338,89 @@ async def test_the_live_interceptor(tmp_path, monkeypatch) -> None:
     await interceptor.stop()
     for origin in origins.values():
         origin.close()
+
+
+@pytest.mark.timeout(180)
+async def test_the_live_probe_chain(tmp_path, monkeypatch) -> None:
+    """The #424 probe, end to end through the real machinery: the
+    guest's HTTPS request toward probe.msms — redirected, spliced,
+    leaf-minted, its raw Basic sentinel blob swapped for the minted
+    credential, the upstream dial verified against the probe CA —
+    answers ``ok`` from the real probe service; a bogus blob answers
+    401 with the challenge."""
+    from msks.interceptor.probe import PROBE_PORT
+    from msks.llm import TapListener
+    from msks.spec.probe import PROBE_HOST, PROBE_SECRET_B64
+
+    app = build_app(
+        Settings(
+            vmm=VmmSettings(state_dir=tmp_path),
+            net=NetSettings(interceptor_port=0),
+            server=ServerSettings(db_path=tmp_path / "msks.db"),
+        )
+    )
+    # The armed listener's port, picked free like the origins'.
+    port = free_port()
+    app.state.settings.net.interceptor_port = port
+    app.state.model.migrate()
+    app.state.net = FakeNet()
+    app.state.secrets = FakeSecrets()
+    interceptor = Interceptor(app)
+    app.state.interceptor = interceptor
+
+    def fake_original_addr(sock) -> tuple[str, int]:
+        return TAP_IP, probe_port_holder["port"]
+
+    import mitmproxy.platform
+
+    monkeypatch.setattr(
+        mitmproxy.platform, "original_addr", fake_original_addr
+    )
+
+    # The probe service's listener on the tap address: the daemon
+    # side the interceptor's upstream dial lands on (production
+    # binds 443; the test's dial names this port).
+    probe_port_holder: dict = {}
+    service = app.state.probe
+    certfile, keyfile = await service.material()
+    listener = TapListener(
+        service.probe_app,
+        tap_ip=TAP_IP,
+        port=0,
+        ssl_certfile=certfile,
+        ssl_keyfile=keyfile,
+    )
+    await service.start_listener("ws-live", listener)
+    probe_port_holder["port"] = listener._sock.getsockname()[1]
+
+    row = await seed(app, "probe", [PROBE_HOST], PROBE_SECRET_B64)
+    await interceptor.refresh("ws-live")
+    master = interceptor._master
+    assert master is not None
+    # build_master trusts the probe CA beside the system store (#424)
+    # — the upstream dial to the service verifies against it.
+    trust = master.options.ssl_verify_upstream_trusted_ca
+    assert trust is not None and trust.endswith(
+        f"probe{Path('/')}{ca.CA_CERT_FILE}"
+    )
+    assert Path(trust).is_file()
+
+    ws_ca = str(tmp_path / "vms" / "ws-live" / ca.CA_CERT_FILE)
+    auth = {"Authorization": f"Basic {row['sentinel']}"}
+
+    try:
+        status, body = await asyncio.to_thread(
+            https_get, port, PROBE_HOST, "/", auth, ws_ca
+        )
+        assert status == 200
+        assert body == "ok"
+        wrong = {"Authorization": f"Basic {row['sentinel']}XX"}
+        status, body = await asyncio.to_thread(
+            https_get, port, PROBE_HOST, "/", wrong, ws_ca
+        )
+        assert status == 401
+        assert body == "invalid credentials"
+        assert PROBE_PORT == 443
+    finally:
+        await interceptor.stop()
+        await service.stop_listener("ws-live")

@@ -148,6 +148,7 @@ def seed_script(
     login_user: str | None = None,
     llm_token: str | None = None,
     llm_port: int = 0,
+    ca_pem: str | None = None,
 ) -> str:
     """The seeding payload's script half: authorized_keys for root
     and the msks workspace user (#63) plus the console helper's
@@ -196,13 +197,17 @@ def seed_script(
     into ~/.pi/agent/extensions/ with the rest of the skeleton.
     The seed carries only the per-workspace facts the image
     cannot know — the token, the port, the gateway.
+
+    The workspace's interceptor CA rides the same channel (#424,
+    the create-time half of #200): every guest trusts the CA its
+    own interception path serves, so HTTPS toward allowlisted
+    destinations — and the probe service — validates with zero
+    manual steps. The PEM's charset (base64, dashes, newlines)
+    carries no quote or metacharacter, so the single-quoted
+    assignment is safe.
     """
     if public_key is None:
-        return (
-            "#!/bin/sh\n"
-            "# msks (#259): the workspace's LLM proxy credential.\n"
-            "set -eu\n" + llm_seed_block(llm_token, llm_port)
-        )
+        return keyless_seed_script(llm_token, llm_port, ca_pem)
     script = (
         "#!/bin/sh\n"
         "# msks (#111, #123): the workspace identity — authorized_keys\n"
@@ -258,7 +263,45 @@ def seed_script(
     )
     if llm_token is not None:
         script += llm_seed_block(llm_token, llm_port)
+    if ca_pem is not None:
+        script += ca_seed_block(ca_pem)
     return script
+
+
+def keyless_seed_script(
+    llm_token: str | None, llm_port: int, ca_pem: str | None
+) -> str:
+    """The identity-less seed: the LLM credential block alone (a
+    pre-#111 row whose seed is healing), plus the interceptor CA
+    block when one rides (#424)."""
+    script = (
+        "#!/bin/sh\n"
+        "# msks (#259): the workspace's LLM proxy credential.\n"
+        "set -eu\n" + llm_seed_block(llm_token, llm_port)
+    )
+    if ca_pem is not None:
+        script += ca_seed_block(ca_pem)
+    return script
+
+
+def ca_seed_block(ca_pem: str) -> str:
+    """The #424/#200 block: the workspace's interceptor CA as a
+    guest-trusted certificate. The PEM lands in Debian's local
+    trust store and ``update-ca-certificates`` links it in; a
+    guest without that tool (NixOS manages /etc/ssl declaratively)
+    says so on stderr and keeps booting — the CA file itself still
+    sits where an operator or a provisioning step can wire it."""
+    return (
+        f"ca_cert='{ca_pem}'\n"
+        "printf '%s\\n' \"$ca_cert\" "
+        "> /usr/local/share/ca-certificates/msks-interceptor.crt\n"
+        "if command -v update-ca-certificates >/dev/null 2>&1; then\n"
+        "  update-ca-certificates >/dev/null\n"
+        "else\n"
+        "  echo 'msks: no update-ca-certificates; the interceptor CA "
+        "is staged but not linked' >&2\n"
+        "fi\n"
+    )
 
 
 def llm_seed_block(token: str, port: int) -> str:
@@ -405,6 +448,7 @@ def compose_user_data(
     login_user: str | None = None,
     llm_token: str | None = None,
     llm_port: int = 0,
+    ca_pem: str | None = None,
 ) -> str:
     """The seed's user-data document: what cidata actually carries.
 
@@ -416,10 +460,15 @@ def compose_user_data(
     from its first line — the two forms the #41 contract documents
     are a ``#!`` script and a ``#cloud-config`` document.
     """
-    if public_key is None and llm_token is None:
+    if public_key is None and llm_token is None and ca_pem is None:
         return operator_payload
     script = seed_script(
-        public_key, workspace_id, login_user, llm_token, llm_port
+        public_key,
+        workspace_id,
+        login_user,
+        llm_token,
+        llm_port,
+        ca_pem,
     )
     if operator_payload is None:
         return script

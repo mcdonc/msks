@@ -626,10 +626,20 @@ class TapListener:
     and signal handlers stay the process's own — an embedded
     server has no business owning SIGTERM."""
 
-    def __init__(self, app, *, tap_ip: str, port: int) -> None:
+    def __init__(
+        self,
+        app,
+        *,
+        tap_ip: str,
+        port: int,
+        ssl_certfile: str | None = None,
+        ssl_keyfile: str | None = None,
+    ) -> None:
         self._app = app
         self.tap_ip = tap_ip
         self.port = port
+        self._ssl_certfile = ssl_certfile
+        self._ssl_keyfile = ssl_keyfile
         self._server: Any = None
         self._task: asyncio.Task | None = None
         self._sock: socket.socket | None = None
@@ -658,6 +668,10 @@ class TapListener:
             log_level="warning",
             access_log=False,
             lifespan="off",
+            # TLS material when the listener serves HTTPS (the probe
+            # service, #424); None serves plain HTTP (the LLM proxy).
+            ssl_certfile=self._ssl_certfile,
+            ssl_keyfile=self._ssl_keyfile,
             # A bound on the graceful shutdown: an in-flight proxied
             # request gets this long to finish after the stop ask —
             # explicit because uvicorn's default (no bound) is

@@ -33,7 +33,7 @@ from mitmproxy.master import Master
 
 from ..spec.failures import MicrovmError
 from ..spec.time import deadline_passed
-from . import ca
+from . import ca, probe
 from .engine import InterceptorAddon, LogBridge, host_matches
 
 logger = logging.getLogger(__name__)
@@ -107,15 +107,27 @@ def build_master(owner) -> Master:
     order is hook dispatch order — the spike's round one), and the
     confdir points into the daemon state so mitmproxy never touches
     ``~/.mitmproxy``.
+
+    Upstream verification trusts the probe service's CA beside the
+    system store (#424): the daemon's own emulated service serves a
+    leaf that CA signed, and mitmproxy verifies upstream TLS by
+    default — the added trust covers exactly the certificates the
+    daemon itself mints.
     """
     confdir = owner.confdir()
     confdir.mkdir(parents=True, exist_ok=True)
+    authority = probe.service_material(owner.app.state.settings)
     master = Master(options.Options(mode=[], confdir=str(confdir)))
     master.addons.add(InterceptorAddon(owner), LogBridge(), *default_addons())
     # lazy: the splice tier must relay before any upstream dial;
     # keep_host_header: the Host the swap pinned is the Host the
-    # origin sees — mitmproxy's own rewrite stays off.
-    master.options.update(connection_strategy="lazy", keep_host_header=True)
+    # origin sees — mitmproxy's own rewrite stays off. The trust
+    # file widens upstream verification to the probe CA alone.
+    master.options.update(
+        connection_strategy="lazy",
+        keep_host_header=True,
+        ssl_verify_upstream_trusted_ca=str(authority.chain_file),
+    )
     return master
 
 

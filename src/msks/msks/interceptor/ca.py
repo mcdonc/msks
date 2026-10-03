@@ -149,12 +149,18 @@ def load_or_mint(vm_dir: Path, workspace_id: str) -> WorkspaceCA:
 
 
 def mint_leaf(
-    ca: WorkspaceCA, sni: str, altnames: tuple[str, ...] | None = None
+    ca: WorkspaceCA,
+    sni: str,
+    altnames: tuple[str, ...] | None = None,
+    days: int = LEAF_DAYS,
 ) -> tuple[ed25519.Ed25519PrivateKey, x509.Certificate]:
     """One connection's leaf, signed by the workspace CA and carrying
     the SNI as both subject and SAN (RFC 2818: the SAN is the
     identity a client checks). *altnames* widens the SAN set — the
-    live test's origins serve several names from one leaf."""
+    live test's origins serve several names from one leaf.
+    *days* widens the validity window — the probe service's leaf
+    (#424) outlives its connections the way a real service's
+    certificate does."""
     names = altnames or (sni,)
     key = ed25519.Ed25519PrivateKey.generate()
     now = now_utc()
@@ -167,7 +173,7 @@ def mint_leaf(
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - timedelta(seconds=LEAF_BACKDATE_S))
-        .not_valid_after(now + timedelta(days=LEAF_DAYS))
+        .not_valid_after(now + timedelta(days=days))
         .add_extension(
             x509.SubjectAlternativeName(
                 [x509.DNSName(name) for name in names]

@@ -11,6 +11,7 @@ from .consent.coordinator import ConsentEngine
 from .consent.deciders import DeciderRegistry
 from .events import EventHub
 from .interceptor import Interceptor
+from .interceptor.probe import ProbeService
 from .llm import LlmProxy
 from .microvm import Microvm
 from .model import Model
@@ -38,6 +39,9 @@ class AppState:
         # The workspace LLM proxy (#259): the router plus the shared
         # proxy app the per-tap listeners serve.
         self.llm: LlmProxy | None = None
+        # The probe service (#424): the emulated external HTTPS
+        # endpoint each per-tap listener serves.
+        self.probe: ProbeService | None = None
 
 
 class App:
@@ -54,6 +58,7 @@ class App:
         self.state.secrets = SecretStore(self)
         self.state.interceptor = Interceptor(self)
         self.state.llm = LlmProxy(self)
+        self.state.probe = ProbeService(self)
 
 
 def build_app(settings: Settings | None = None) -> App:

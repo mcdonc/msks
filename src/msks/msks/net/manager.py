@@ -203,6 +203,7 @@ class NetManager:
         dialer=None,
         consumer_factory=FlowConsumer,
         llm_factory=None,
+        probe_factory=None,
     ) -> None:
         self.app = app
         self._dhcp_factory = dhcp_factory
@@ -211,6 +212,9 @@ class NetManager:
         # The per-tap LLM listener seam (#259): the default asks the
         # llm subsystem; the tests inject one that records the ask.
         self._llm_factory = llm_factory
+        # The per-tap probe listener seam (#424), same shape: the
+        # default asks the probe service.
+        self._probe_factory = probe_factory
         # The guest-dial seam for the forward websocket (#109): the
         # default dials real TCP; the tests inject one that answers
         # from a listener they control (fake_ch has no NIC).
@@ -338,6 +342,13 @@ class NetManager:
         if self.app.state.llm is not None:
             await self.app.state.llm.stop_listener(workspace_id)
 
+    async def stop_probe(self, workspace_id: str) -> None:
+        """Stop the workspace's probe listener when one serves
+        (#424): unconditional and idempotent, the same contract
+        stop_llm carries."""
+        if self.app.state.probe is not None:
+            await self.app.state.probe.stop_listener(workspace_id)
+
     async def detach(self, workspace_id: str) -> None:
         """Tear one workspace's egress down (idempotent).
 
@@ -360,6 +371,8 @@ class NetManager:
                 # whose serve task already died badly must not abort the
                 # table and tap cleanup below it.
                 await self.stop_llm(workspace_id)
+            with contextlib.suppress(Exception):
+                await self.stop_probe(workspace_id)
             if attachment is None:
                 return
             await self.app.state.consent.on_workspace_stop(workspace_id)
@@ -1047,6 +1060,7 @@ class NetManager:
             asyncio.create_task(forwarder.serve()),
         ]
         await self.start_llm(services, attachment)
+        await self.start_probe(attachment)
 
     async def start_llm(
         self, services: NetServices, attachment: NetAttachment
@@ -1081,6 +1095,39 @@ class NetManager:
                 flush=True,
             )
 
+    async def start_probe(self, attachment: NetAttachment) -> None:
+        """Bind this tap's probe listener (#424) — the same
+        best-effort posture the LLM listener carries (#259): a
+        refused bind (another daemon on the port, an address the
+        host cannot bind) logs loudly and the boot proceeds,
+        leaving that workspace without the probe endpoint until
+        its next start. The port is 443 on the tap's own address:
+        the nft redirect preserves the guest's destination port,
+        and the interceptor's upstream dial lands here."""
+        probe = self.app.state.probe
+        if probe is None:
+            return
+        factory = self._probe_factory or self.default_probe
+        try:
+            listener = await factory(attachment)
+            if listener is None:
+                return
+            await probe.start_listener(attachment.workspace_id, listener)
+        except Exception as exc:
+            print(
+                f"msksd: probe endpoint for {attachment.workspace_id} "
+                f"did not start ({exc}); the workspace boots "
+                "without it",
+                flush=True,
+            )
+
+    async def default_probe(self, attachment):
+        """The real listener path: the service's TLS material, then
+        its listener for this tap (the seam's tests replace this
+        whole half)."""
+        certfile, keyfile = await self.app.state.probe.material()
+        return self.app.state.probe.listener_for(attachment, certfile, keyfile)
+
     def dns_upstream(self) -> tuple[str, int]:
         """Where the forwarder relays: the setting, else resolv.conf."""
         settings = self.app.state.settings.net
@@ -1102,6 +1149,8 @@ class NetManager:
         """Roll back a half-built attachment (best effort)."""
         with contextlib.suppress(Exception):
             await self.stop_llm(workspace_id)
+        with contextlib.suppress(Exception):
+            await self.stop_probe(workspace_id)
         services = self._services.pop(workspace_id, None)
         if services is not None:
             await stop_services(services)
@@ -1116,8 +1165,9 @@ async def stop_services(services: NetServices) -> None:
 
     The consumer unbinds first (fail-closed), then the cancelled
     tasks are gathered so their cleanup (including pending reader
-    removal) lands before the caller moves on. The LLM listener is
-    not here: detach's own stop_llm owns it, before this runs.
+    removal) lands before the caller moves on. The LLM and probe
+    listeners are not here: detach's own stop paths own them,
+    before this runs.
     """
     services.stop_consumer()
     for task in services.tasks:

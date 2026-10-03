@@ -24,6 +24,9 @@ RR_FIXED = struct.Struct(">HHIH")
 # The rdlength an IPv4 A record carries.
 A_RDATA_LEN = 4
 
+# The record type an A answer carries.
+TYPE_A = 1
+
 # A name decoder bound: compression-pointer chains are capped so a
 # hostile answer cannot loop the decoder through crafted pointers.
 MAX_NAME_JUMPS = 16
@@ -259,7 +262,7 @@ def a_record(
 ) -> tuple[str, int] | None:
     """The (ip, ttl) an A record carries at ``rdata_at``, or None
     for any other record type."""
-    if rtype != 1 or rdlength != A_RDATA_LEN:
+    if rtype != TYPE_A or rdlength != A_RDATA_LEN:
         return None
     raw = wire[rdata_at : rdata_at + A_RDATA_LEN]
     return (".".join(str(b) for b in raw), ttl)
@@ -288,6 +291,37 @@ def nxdomain_for(query: bytes) -> bytes:
         0,
     )
     return header + question.wire[HEADER_LEN:]
+
+
+def a_answer_for(query: bytes, ip: str, ttl: int = 60) -> bytes:
+    """A one-record A answer for *query*'s single question (#424).
+
+    The local-answer builder the probe name serves through: copies
+    the question verbatim, answers it with one A record whose owner
+    name is a compression pointer to the question, and keeps the
+    QR/RD/RA header shape an upstream resolver answers with. A
+    malformed query (no decodable question) gets the NXDOMAIN
+    shape — the same fail-closed fallback ``nxdomain_for`` makes.
+    """
+    question = parse_query(query)
+    if question is None:
+        return nxdomain_for(query)
+    header = struct.pack(
+        "!HHHHHH",
+        question.id,
+        0x8180,  # QR + RD + RA
+        1,  # qdcount: the copied question
+        1,  # ancount: the one A record
+        0,
+        0,
+    )
+    rdata = bytes(int(part) for part in ip.split("."))
+    rr = (
+        b"\xc0\x0c"  # owner name: pointer to the question's name
+        + RR_FIXED.pack(TYPE_A, 1, ttl, len(rdata))
+        + rdata
+    )
+    return header + question.wire[HEADER_LEN:] + rr
 
 
 def rewrite_id(answer: bytes, ident: int) -> bytes:

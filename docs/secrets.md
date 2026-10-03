@@ -157,6 +157,26 @@ tap 80/443 flow, including one workspace dialing another's
 address, and the interceptor dials the destination from the host,
 where the per-VM forward gates do not apply.
 
+## The seeded probe placeholder (#424)
+
+A fresh daemon seeds one placeholder itself at first-time
+startup: the daemon-wide row named **`probe`**, allowlisting
+`probe.msks`, carrying the fixed credential blob
+`bXNrczoxMjM0NQ==` as its secret. It exists so an operator can
+verify interception from inside a workspace with zero minting
+(the [probe endpoint](networking.md#the-probe-endpoint-424)); its
+sentinel never needs to be treated as a secret, because the
+credential it swaps to is public and gates nothing beyond the
+probe's own `ok` page.
+
+Read the seeded sentinel back over the token-gated API —
+`GET /api/v1/probe` answers the row id, the sentinel, and the
+endpoint's recipe — and revoke it like any other placeholder when
+you do not want it. The seed runs exactly when the placeholder
+table is empty: a daemon that already holds rows seeds nothing,
+and a revoked probe row stays gone while the operator's rows hold
+the table. The seed's mint rides the audit trail like any other.
+
 ## The mint flow
 
 ```console
