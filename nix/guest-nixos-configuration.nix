@@ -57,6 +57,27 @@ let
   # the file appear mid-eval twice over.
   interceptorCA = /etc/msks/interceptor-ca.crt;
   hasInterceptorCA = builtins.pathExists interceptorCA;
+
+  # The nix search path both surfaces ride (#274, #433): nix.conf
+  # (nix.settings.nix-path — the lookup a stripped-env invocation
+  # falls back to; nixos-rebuild spawns its nix calls with no
+  # session NIX_PATH) and the login shells' NIX_PATH (nix.nixPath
+  # — the channel module's stock three plus rebuild-ng's own
+  # entrypoint). A LIST, never a colon-joined string: nix.conf
+  # separates search-path entries on whitespace, so a
+  # colon-joined string ships as ONE dead entry and
+  # `<nixos-config>` stops resolving for exactly the env-less
+  # callers that need it — the #427 fold unit was the first
+  # canary. nixos-system is rebuild-ng's preferred entrypoint,
+  # pointed at the baked channel's own eval-config wrapper so
+  # `nix-build <nixos-system> -A config.system.build.toplevel`
+  # evaluates the shipped configuration.
+  nixSearchPath = [
+    "nixpkgs=/nix/var/nix/profiles/per-user/root/channels/nixos"
+    "nixos-config=/etc/nixos/configuration.nix"
+    "nixos-system=/nix/var/nix/profiles/per-user/root/channels/nixos/nixos"
+    "/nix/var/nix/profiles/per-user/root/channels"
+  ];
 in
 {
   nixpkgs.hostPlatform = "x86_64-linux";
@@ -82,21 +103,12 @@ in
   nix.enable = true;
   documentation.enable = false;
 
-  # The search path nixos-rebuild rides (#274): the tool spawns
-  # its nix calls with a stripped environment, so the session
-  # NIX_PATH never reaches them — nix.conf is the lookup every
-  # invocation falls back to. The stock entries (nixpkgs, the
-  # configuration, the channels profile) match the channel
-  # module's session defaults; nixos-system is rebuild-ng's
-  # preferred entrypoint, pointed at the baked channel's own
-  # eval-config wrapper so `nix-build <nixos-system> -A
-  # config.system.build.toplevel` evaluates the shipped
-  # configuration.
-  nix.settings.nix-path =
-    "nixpkgs=/nix/var/nix/profiles/per-user/root/channels/nixos"
-    + ":nixos-config=/etc/nixos/configuration.nix"
-    + ":nixos-system=/nix/var/nix/profiles/per-user/root/channels/nixos/nixos"
-    + ":/nix/var/nix/profiles/per-user/root/channels";
+  # The search-path halves (#274, #433): nix.conf for the
+  # stripped-env callers (the rebuild tools), the session
+  # NIX_PATH for every login shell — one list, both surfaces, so
+  # an interactive `<nixpkgs>` and a unit's resolve identically.
+  nix.settings.nix-path = nixSearchPath;
+  nix.nixPath = nixSearchPath;
 
   system.stateVersion = lib.versions.majorMinor lib.version;
 

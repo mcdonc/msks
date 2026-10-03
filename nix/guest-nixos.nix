@@ -83,7 +83,13 @@ let
   # image itself evaluated. The module, its package files, and the
   # console helper's sources ship beside it in the rootfs tree
   # below — a workspace rebuild evaluates exactly what the image
-  # build did.
+  # build did. The _module.args line (#433): the module declares
+  # the imageBuild marker (the flag its CA assertion switches on)
+  # as a module argument, and the rebuild-side evaluation supplies
+  # it here — false, the runtime answer. Without it, the module
+  # system resolves the unprovided argument through _module.args,
+  # finds nothing, and the rebuild dies at `attribute 'imageBuild'
+  # missing` — the #427 fold unit on main shipped exactly that.
   configurationEntry = pkgs.writeText "configuration.nix" ''
     # The msks workspace's system configuration, as shipped by the
     # image build (#274). This file imports the same module the
@@ -91,6 +97,7 @@ let
     # and run `sudo nixos-rebuild switch` to activate them.
     { ... }:
     {
+      _module.args.imageBuild = false;
       imports = [ ./nix/guest-nixos-configuration.nix ];
     }
   '';
@@ -330,6 +337,15 @@ let
           "$toplevel"/etc/nix/nix.conf
         grep -q 'nixos-config=/etc/nixos/configuration.nix' \
           "$toplevel"/etc/nix/nix.conf
+        # The nix-path entries must be LIST-rendered — one per
+        # whitespace token (#433): nix.conf splits search-path
+        # entries on whitespace, and a colon-joined string would
+        # ship as one dead entry — `<nixos-config>` then resolves
+        # nowhere for stripped-env callers, and the first
+        # nixos-rebuild inside a unit (the #427 fold) dies. No
+        # entry carries a colon, so one on the nix-path line is
+        # the string form come back.
+        ! grep '^nix-path = .*:' "$toplevel"/etc/nix/nix.conf
         db_rows=$(sqlite3 "$root"/nix/var/nix/db/db.sqlite \
           'select count(*) from ValidPaths')
         shipped=$(wc -l < "$closureInfo"/store-paths)
@@ -343,6 +359,12 @@ let
         test "$(readlink "$root"/root/.nix-defexpr/channels)" \
           = /nix/var/nix/profiles/per-user/root/channels
         grep -q 'guest-nixos-configuration.nix' "$root"/etc/nixos/configuration.nix
+        # The entry supplies the module's imageBuild marker (#433):
+        # the runtime answer is false, and the module system needs
+        # it explicitly — an unprovided argument errors even with a
+        # head default.
+        grep -q '_module.args.imageBuild = false' \
+          "$root"/etc/nixos/configuration.nix
         test -f "$root"/etc/nixos/nix/guest-nixos-configuration.nix
         test -f "$root"/etc/nixos/nix/console-helper-pkg.nix
         test -f "$root"/etc/nixos/nix/agent-toolchain.nix
@@ -350,6 +372,22 @@ let
         test -f "$root"/etc/nixos/nix/pi-shrinkwrap-patch.py
         test -f "$root"/etc/nixos/nix/pi-shrinkwrap-integrity.json
         test -f "$root"/etc/nixos/src/console-helper/Cargo.toml
+        # The shipped chain must evaluate as a guest rebuild
+        # evaluates it (#433): the nixos-system entrypoint with
+        # nixos-config pointed at the tree's copy — the lookup pair
+        # nix.conf ships. A shipped configuration a rebuild cannot
+        # evaluate (a missing module argument, a broken import)
+        # fails the image build here, not the #427 fold unit on a
+        # workspace's first boot. outPath forces the whole system
+        # — assertions included — without writing anything to the
+        # store; the scratch state dir keeps nix-instantiate's own
+        # bookkeeping off the sandbox's read-only /nix/var.
+        NIX_STATE_DIR="$PWD"/nix-eval-state nix-instantiate --eval-only \
+          -I nixos-system="$channelSources"/nixos/nixos \
+          -I nixos-config="$root"/etc/nixos/configuration.nix \
+          '<nixos-system>' \
+          -A config.system.build.toplevel.outPath \
+          > /dev/null
         # The claude ELF's linkage (#268 review): the loader-patched
         # binary must resolve everything inside the closure — its
         # interpreter, every NEEDED soname, and every version symbol
