@@ -2,6 +2,7 @@
 
 import base64
 import os
+import shutil
 import subprocess
 
 import pytest
@@ -669,12 +670,31 @@ def test_the_ca_block_executes_on_a_nixos_shaped_sandbox(
     ):
         stubs.joinpath(name).write_text("#!/bin/sh\n" + body)
         stubs.joinpath(name).chmod(0o755)
+    # The guest's whole PATH, rebuilt: only the stubs and the few
+    # real tools the seed uses — no host binary can leak in (a CI
+    # runner's own update-ca-certificates would otherwise run
+    # against the runner's /etc, not the sandbox).
+    tools = sandbox / "tools"
+    tools.mkdir()
+    for name in (
+        "sh",
+        "cut",
+        "grep",
+        "cp",
+        "cat",
+        "mkdir",
+        "touch",
+        "chmod",
+    ):
+        found = shutil.which(name)
+        assert found, f"the seed's toolset needs {name}"
+        (tools / name).symlink_to(found)
     script = sandboxed(
         seed_script(PUBLIC, "ws-id", "alice", ca_pem=CA_PEM), sandbox
     )
     done = subprocess.run(
         ["sh", "-c", script],
-        env={"PATH": f"{stubs}:{os.environ['PATH']}"},
+        env={"PATH": f"{stubs}:{tools}"},
         capture_output=True,
         text=True,
         timeout=30,
