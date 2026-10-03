@@ -231,6 +231,67 @@ workspace. The daemon logs each switch and broadcasts a
 refreshed `egress.rules` frame, so an attached TUI repaints its
 header without reconnecting.
 
+## The probe endpoint (#424)
+
+The daemon serves one deliberately ordinary HTTPS service every
+workspace can reach: **`https://secretprobe.msks/`** — an emulated
+external endpoint protected by HTTP basic auth, username `msks`,
+password `msks`. It exists so an operator can verify from inside
+a workspace that **secret interception works end to end**: the
+`ok` page it answers with can only exist when the whole chain —
+redirect, TLS splice, leaf mint, sentinel→secret swap — ran.
+
+The daemon seeds the machinery itself at first-time startup (the
+daemon-wide placeholder named `probe`, whose secret is the base64
+of the whole credential `bXNrczptc2tz`), and the guest's own
+interception CA is installed at first boot, so nothing is left to
+do by hand. The verification:
+
+```bash
+# on the host: read the seeded sentinel (token-gated API)
+curl -s -H "Authorization: Bearer $TOKEN" https://msksd/api/v1/probe
+
+# inside the workspace: the sentinel rides as the raw Basic blob
+curl -H "Authorization: Basic <sentinel>" https://secretprobe.msks/
+ok
+```
+
+A request that reaches the service has already passed the nft
+redirect (guest TCP 80/443 to the per-tap interceptor listener),
+the splice tier (the SNI matched an allowlisted entry), and the
+per-workspace CA's leaf mint; the swap then rewrote the raw blob
+into a well-formed credential, the interceptor's upstream dial
+landed on the service's own listener (port 443 on the tap
+address, verified against the service CA the daemon mints), and
+the service validated the fixed pair. A broken link answers
+distinctly: an TLS failure names the splice or the CA, a `401`
+names the swap (or a wrong credential), a timeout names the
+redirect.
+
+The endpoint performs no other action: it reads no workspace
+state, accepts no commands, and returns no other data. The
+credentials are a fixed probe value shared by every deployment —
+the endpoint gates nothing beyond its own `ok` page, which is
+also why the seeded row's sentinel is served back over the
+token-gated API (`GET /api/v1/probe`): a token holder already
+owns the daemon.
+
+Two reachability notes. The probe answers only while the
+workspace is **armed** — a workspace scoped against daemon-wide
+placeholders (no covering row of its own) never arms, so its
+direct dial to `secretprobe.msks:443` finds nothing admitted and
+times out; that posture is the documented way to opt a workspace
+out of interception entirely. And the guest's trust in its own
+interception CA is installed at first boot on both images:
+Debian guests link it into the system trust store, and both
+guests export `SSL_CERT_FILE` (a bundle built from the platform's
+own roots with the CA appended — the variable replaces the
+default lookup, so it must carry both) and `NODE_EXTRA_CA_CERTS`
+for node-based clients. NixOS's `/etc/profile` reads no
+`profile.d`, so its sanctioned `/etc/profile.local` hook sources
+the same exports — which also brings the LLM proxy's environment
+alive there.
+
 ## What runs where
 
 **On the host:** the tap, its address, the per-VM
@@ -240,7 +301,7 @@ dedicated service user holding exactly two ambient capabilities:
 `CAP_NET_ADMIN` (taps and their addresses, the nftables tables,
 and — because ambient capabilities survive `exec` — the workspace
 VMM opening its tap) and `CAP_NET_BIND_SERVICE` (the DHCP and DNS
-listeners, UDP 67 and 53). Nothing in the daemon's process tree
+listeners, UDP 67 and 53, and the probe service's TCP 443). Nothing in the daemon's process tree
 runs as uid 0; `/dev/kvm` reaches the VMM through the `kvm` group.
 The host's firewall is never touched; containment stays inside the
 host by design.

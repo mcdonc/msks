@@ -108,6 +108,10 @@ def build_api(app) -> FastAPI:
                     moved,
                 )
             bootstrap_default_image(app)
+            # The probe placeholder (#424): seeded before any
+            # workspace can attach, so every boot arms the probe's
+            # interception path with zero operator minting.
+            await secrets.seed_probe_placeholder(app)
             await app.state.net.start()
             await app.state.consent.start()
             watcher = asyncio.create_task(watch_loop(app, hub))

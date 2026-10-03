@@ -1688,3 +1688,24 @@ async def test_console_user_refusal_expires_at_the_deadline(
         await server.wait_closed()
         stub_vm.kill()
         await stub_vm.wait()
+
+
+def test_prepare_mints_the_interceptor_ca_into_the_seed(
+    env, tmp_path: Path
+) -> None:
+    """Create mints the workspace's interceptor CA and the seed
+    carries its certificate (#424, #200's create-time half): the
+    guest trusts its own interception path from first boot."""
+    from msks.interceptor import ca as ica
+    from msks.spec.vm import VmSpec
+
+    app, state_dir, _ch = env
+    driver = app.state.microvm.local
+    vm_spec = VmSpec(workspace_id=WID, kernel=Path("/k"), rootfs=Path("/r"))
+    pem = driver.interceptor_ca_pem(vm_spec)
+    assert pem.startswith("-----BEGIN CERTIFICATE-----")
+    ca_path = state_dir / "vms" / WID / ica.CA_CERT_FILE
+    assert ca_path.is_file()
+    assert pem == ca_path.read_text()
+    # Idempotent: the second read is the same certificate.
+    assert driver.interceptor_ca_pem(vm_spec) == pem

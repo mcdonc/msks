@@ -113,7 +113,9 @@ def sweep_tmp_siblings(target: Path) -> None:
             debris.unlink(missing_ok=True)
 
 
-async def ensure_artifacts(spec: VmSpec, settings, llm_port: int = 0) -> None:
+async def ensure_artifacts(
+    spec: VmSpec, settings, llm_port: int = 0, ca_pem: str | None = None
+) -> None:
     """Create the workspace's overlay and home volume when absent.
 
     Each artifact is installed atomically (private scratch file, one
@@ -134,7 +136,7 @@ async def ensure_artifacts(spec: VmSpec, settings, llm_port: int = 0) -> None:
         if not overlay.is_file():
             await create_overlay(spec, settings, overlay)
             installed.append(overlay)
-        await ensure_seed(spec, settings, installed, llm_port)
+        await ensure_seed(spec, settings, installed, llm_port, ca_pem)
     except BaseException:
         for artifact in installed:
             artifact.unlink(missing_ok=True)
@@ -142,7 +144,11 @@ async def ensure_artifacts(spec: VmSpec, settings, llm_port: int = 0) -> None:
 
 
 async def ensure_seed(
-    spec: VmSpec, settings, installed: list[Path], llm_port: int = 0
+    spec: VmSpec,
+    settings,
+    installed: list[Path],
+    llm_port: int = 0,
+    ca_pem: str | None = None,
 ) -> None:
     """Build the #41 seed when the workspace carries a payload — its
     own or the minted identity's (#111) — and the file is absent; a
@@ -161,7 +167,7 @@ async def ensure_seed(
     seed = seed_path(settings.state_dir, spec.workspace_id)
     if seed.is_file():
         return
-    await create_seed(spec, settings, llm_port)
+    await create_seed(spec, settings, llm_port, ca_pem)
     installed.append(seed)
 
 
@@ -261,7 +267,9 @@ def seed_metadata(workspace_id: str, name: str | None) -> str:
     return f"instance-id: {workspace_id}\nlocal-hostname: {hostname}\n"
 
 
-async def create_seed(spec: VmSpec, settings, llm_port: int = 0) -> None:
+async def create_seed(
+    spec: VmSpec, settings, llm_port: int = 0, ca_pem: str | None = None
+) -> None:
     """Build and install the workspace's #41 seed disk.
 
     mkisofs packs the staged ``user-data``/``meta-data`` into a
@@ -293,6 +301,7 @@ async def create_seed(spec: VmSpec, settings, llm_port: int = 0) -> None:
                 spec.login_user,
                 spec.llm_token,
                 llm_port,
+                ca_pem,
             ),
             encoding="utf-8",
         )

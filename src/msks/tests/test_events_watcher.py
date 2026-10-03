@@ -501,9 +501,16 @@ async def test_sweep_retires_expired_and_keeps_live_rows(tmp_path) -> None:
         swept = await sweep_expired_placeholders(app, hub)
         assert swept == 1
         rows = await app.state.model.list_placeholders()
-        assert {row["name"] for row in rows} == {"live", "forever"}
+        # The seeded probe placeholder rides along (#424): a fresh
+        # daemon's first startup minted it beside the test's rows.
+        assert {row["name"] for row in rows} == {
+            "live",
+            "forever",
+            "probe",
+        }
         audit = await app.state.model.list_audit()
-        assert [event["kind"] for event in audit] == ["expiry"]
+        # The seeded probe row's startup mint rides the trail (#424).
+        assert [event["kind"] for event in audit] == ["expiry", "mint"]
         assert audit[0]["name"] == "expired"
         assert audit[0]["dests"] == ["api.example.com"]
         manifest = (tmp_path / "store" / "secretspec.toml").read_text()
@@ -538,7 +545,8 @@ async def test_sweep_survives_a_failing_store_delete(tmp_path) -> None:
         app.state.settings.secret_store.cli = "/nonexistent/secretspec"
         swept = await sweep_expired_placeholders(app, api.state.hub)
         assert swept == 1
-        assert await app.state.model.list_placeholders() == []
+        remaining = await app.state.model.list_placeholders()
+        assert [row["name"] for row in remaining] == ["probe"]
         audit = await app.state.model.list_audit()
         assert audit[0]["kind"] == "expiry"
 
@@ -594,8 +602,20 @@ async def test_list_workspace_audit_scopes_orders_and_bounds(
         await model.record_audit("revoke", row_a)
         await model.record_audit("expiry", row_a)
         scoped = await model.list_workspace_audit("ws-a")
-        assert [row["kind"] for row in scoped] == ["mint", "revoke", "expiry"]
-        assert all(row["workspaces"] == ["ws-a"] for row in scoped)
+        # The seeded probe row is daemon-wide, so its startup mint
+        # rides the workspace's trail too (#424).
+        assert [row["kind"] for row in scoped] == [
+            "mint",
+            "mint",
+            "revoke",
+            "expiry",
+        ]
+        assert [row["workspaces"] for row in scoped] == [
+            [],
+            ["ws-a"],
+            ["ws-a"],
+            ["ws-a"],
+        ]
         newest = await model.list_workspace_audit("ws-a", limit=2)
         assert [row["kind"] for row in newest] == ["revoke", "expiry"]
 
@@ -619,12 +639,13 @@ async def test_sweep_caps_retirements_per_pass(tmp_path, monkeypatch) -> None:
         await seed_placeholder(app, "ws-b", "two", past)
         first = await sweep_expired_placeholders(app, api.state.hub)
         assert first == 1
-        assert len(await app.state.model.list_placeholders()) == 1
+        assert len(await app.state.model.list_placeholders()) == 2
         second = await sweep_expired_placeholders(app, api.state.hub)
         assert second == 1
-        assert await app.state.model.list_placeholders() == []
+        remaining = await app.state.model.list_placeholders()
+        assert [row["name"] for row in remaining] == ["probe"]
         kinds = [event["kind"] for event in await app.state.model.list_audit()]
-        assert kinds == ["expiry", "expiry"]
+        assert kinds == ["expiry", "expiry", "mint"]
 
 
 async def test_sweep_stands_down_through_live_attachments(

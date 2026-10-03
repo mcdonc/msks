@@ -33,6 +33,7 @@ on:
       - src/msks/tests/test_smoke/__init__.py
       - src/msks/tests/test_smoke/*.py
       - src/msks/tests/test_smoke/core/**
+      - src/msks/tests/test_smoke/egress/test_probe_e2e.py
   pull_request:
     paths:
       - .github/workflows/smoke-nixos.yml
@@ -65,7 +66,9 @@ concurrency:
 jobs:
   smoke-nixos:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # 25 held the core lane alone; the probe e2e boots a daemon
+    # and a guest beside it.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v5
 
@@ -118,6 +121,36 @@ jobs:
               echo 'the NixOS boots skipped — assets or /dev/kvm regressed'
               exit 1
             }
+
+      # The probe e2e against the NixOS image (#424): the same
+      # root+egress shape the Debian egress lane runs, against the
+      # NixOS guest — the daemon boots that image unchanged, the
+      # seed's CA staging rides the NixOS paths (the staged bundle
+      # and the profile.local exports), and curl (an image package
+      # here) verifies against the seed's bundle.
+      - name: Probe e2e (root)
+        run: |
+          set -o pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq nftables
+          G=.devenv/state/guest-nixos
+          manifest="$G/guest-manifest.json"
+          cmdline=$(
+            python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['cmdline'])" \
+              "$manifest"
+          )
+          IMG="$PWD/$G"
+          devenv --quiet -O dotenv.enable:bool false shell -- bash -c "
+          sudo -n env TEST_EGRESS=1 TMPDIR=/tmp \
+            GUEST_DIR='$IMG' \
+            TEST_VMLINUX='$IMG/vmlinux' \
+            TEST_INITRD='$IMG/initrd' \
+            TEST_ROOTFS='$IMG/rootfs.ext4' \
+            TEST_CMDLINE='$cmdline' \
+            PATH=\"\$PATH\" HOME=/root \
+            python -m pytest src/msks/tests/test_smoke/egress/test_probe_e2e.py \
+            -v -rs -p no:cacheprovider --no-cov 2>&1 | tee /tmp/smoke-nixos-e2e.log
+          "
+          ! grep -q 'test_probe_e2e.*SKIPPED' /tmp/smoke-nixos-e2e.log
 
       - name: Collect smoke state on failure
         if: failure() || cancelled()

@@ -14,6 +14,9 @@
   # Runtime dependencies, mirroring [project.dependencies]:
   fastapi,
   httpx,
+  # The platform CA bundle (#424): the interceptor's upstream
+  # verification loads the probe CA appended to certifi's roots.
+  certifi,
   pydantic,
   pyyaml,
   sqlalchemy,
@@ -83,6 +86,7 @@ buildPythonPackage {
   dependencies = [
     fastapi
     httpx
+    certifi
     pydantic
     pyyaml
     sqlalchemy

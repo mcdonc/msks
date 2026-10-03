@@ -668,3 +668,39 @@ def test_posture_sets_name_the_sets_each_mode_carries() -> None:
         "allows_port",
     )
     assert posture_sets(EgressPolicy("w", "interactive", ())) == CONSENT_SETS
+
+
+def test_the_tap_admits_no_direct_443_and_the_redirect_owns_it() -> None:
+    from msks.spec.egress import EgressPolicy
+
+    """The probe service's containment, pinned (#424 review): the
+    input chain admits no tcp/443 from the tap in any posture — a
+    guest cannot dial the service directly, armed or not — and the
+    armed prerouting redirect claims every guest TCP 80/443 flow,
+    which is the only path to the service."""
+    for policy in (
+        EgressPolicy("ws-x", "allow", ()),
+        EgressPolicy("ws-x", "static", ()),
+        EgressPolicy("ws-x", "interactive", ()),
+    ):
+        ruleset = nft.vm_ruleset(
+            "ws-x",
+            "msks-tap",
+            "172.31.0.1",
+            "172.31.0.2",
+            "eth0",
+            policy=policy,
+        )
+        assert "dport 443 accept" not in ruleset
+    armed = nft.vm_ruleset(
+        "ws-x",
+        "msks-tap",
+        "172.31.0.1",
+        "172.31.0.2",
+        "eth0",
+        policy=EgressPolicy("ws-x", "allow", ()),
+        interceptor_port=8643,
+    )
+    assert "tcp dport { 80, 443 } redirect to :8643" in armed
+    # The armed input widen names the interceptor's port alone.
+    assert "tcp dport 8643 accept" in armed

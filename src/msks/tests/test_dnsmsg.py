@@ -191,3 +191,27 @@ def test_multi_question_queries_are_refused() -> None:
     q2 = query("evil.example")
     packed = q1[:6] + b"\x00\x02" + q1[12:] + q2[12:]
     assert dnsmsg.parse_query(packed) is None
+
+
+def test_a_answer_for_answers_one_a_record() -> None:
+    """The local-answer builder (#424): one A record for the
+    question, readable by the codec's own parser (the round trip
+    the forwarder's local answer rides)."""
+    wire = dnsmsg.a_answer_for(query("secretprobe.msks"), "10.0.0.1")
+    records = dnsmsg.parse_a_records(wire)
+    assert [ip for ip, _ttl in records] == ["10.0.0.1"]
+    question = dnsmsg.parse_query(query("secretprobe.msks"))
+    assert question is not None
+    answered = dnsmsg.parse_query(wire)
+    assert answered is not None
+    assert (answered.id, answered.name, answered.qtype) == (
+        question.id,
+        "secretprobe.msks",
+        dnsmsg.TYPE_A,
+    )
+
+
+def test_a_answer_for_a_malformed_query_takes_the_nxdomain_shape() -> None:
+    wire = dnsmsg.a_answer_for(b"\x00" * 8, "10.0.0.1")
+    assert dnsmsg.parse_a_records(wire) == []
+    assert wire[:2] + wire[2:4]  # a bare header reply, not a raise

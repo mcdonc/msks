@@ -20,6 +20,13 @@ from ...secretstore import (
     new_sentinel,
     valid_name,
 )
+from ...spec.probe import (
+    PROBE_HOST,
+    PROBE_NAME,
+    PROBE_PORT,
+    PROBE_SECRET_B64,
+    PROBE_USERNAME,
+)
 from .deps import require_token
 from .rows import workspace_or_404
 from .schemas import (
@@ -30,6 +37,66 @@ from .schemas import (
 )
 
 LOG = logging.getLogger(__name__)
+
+
+async def seed_probe_placeholder(app) -> None:
+    """Seed the probe placeholder at first-time startup (#424).
+
+    The daemon-wide row named ``probe``: allowlisting the probe
+    host, carrying the fixed credential blob as its secret, so the
+    probe works with zero operator minting — the sentinel is read
+    back over the authenticated API (``GET /api/v1/probe``).
+    Seeded exactly when the placeholder table is empty — a fresh
+    daemon's first startup; a daemon that already holds rows
+    (an operator's mints, or a migrated state) keeps them
+    untouched. A store that cannot serve rolls the row back and
+    the daemon stays up without it (loud, non-fatal — the
+    bootstrap default image's posture: the operator can mint by
+    hand).
+
+    Runs before any workspace can be attached, so no arming step
+    belongs here: the placeholder-driven arm happens at each
+    attach as always.
+    """
+    model = app.state.model
+    if app.state.secrets.settings.root is None:
+        # A store with no root (a directly-constructed Settings in
+        # tests) has no manifest to declare the ref and no provider
+        # to hold the value — nothing to seed into.
+        return
+    if await model.list_placeholders():
+        return
+    sentinel = new_sentinel(daemon_wide=True)
+    ref = backend_ref([], PROBE_NAME)
+    try:
+        row = await model.create_placeholder(
+            [], PROBE_NAME, sentinel, [PROBE_HOST], ref, None
+        )
+    except IntegrityError:
+        # A racing first boot won the unique index: its row stands,
+        # this one's work is done.
+        return
+    try:
+        await sync_probe_manifest(app)
+        await app.state.secrets.write(ref, PROBE_SECRET_B64)
+        await model.record_audit("mint", row)
+    except Exception:  # noqa: BLE001 - named below, non-fatal
+        # A seed whose row cannot be declared, valued, or audited
+        # rolls back whole — a live daemon-wide row with no value
+        # behind its ref would answer every swap fail-closed — and
+        # the daemon stays up without the probe row (the mint
+        # route's own posture).
+        await model.delete_placeholder(row["id"])
+        with contextlib.suppress(Exception):
+            await sync_probe_manifest(app)
+        LOG.exception("probe placeholder seed failed; rolled back")
+
+
+async def sync_probe_manifest(app) -> None:
+    """Re-render the store manifest off the live rows (off the
+    event loop — it is file IO, the mint route's own shape)."""
+    refs = await app.state.model.placeholder_refs()
+    await asyncio.to_thread(app.state.secrets.sync_manifest, refs)
 
 
 def prior_deadline(row: dict) -> datetime | None:
@@ -320,6 +387,37 @@ def router(app, hub) -> APIRouter:
             placeholder_view(row, sentinel=False)
             for row in await app.state.model.list_placeholders()
         ]
+
+    @api.get("/api/v1/probe", dependencies=[Depends(require_token)])
+    async def probe_endpoint() -> dict:
+        """The seeded probe placeholder's sentinel and recipe (#424),
+        token-gated.
+
+        The credential this placeholder swaps to is a fixed public
+        probe value — the sentinel gates nothing an attacker wants —
+        so serving it over the authenticated API costs nothing a
+        token holder does not already hold (the llm-token route's
+        rationale). A revoked or re-scoped row answers 404 with the
+        re-mint recipe in the detail.
+        """
+        row = await app.state.model.placeholder_for([], PROBE_NAME)
+        if row is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "the probe placeholder is absent; it is seeded at "
+                    "daemon startup, or mint it by hand with dests "
+                    f"[{PROBE_HOST!r}] and the credential blob secret"
+                ),
+            )
+        return {
+            "placeholder_id": row["id"],
+            "sentinel": row["sentinel"],
+            "host": PROBE_HOST,
+            "port": PROBE_PORT,
+            "username": PROBE_USERNAME,
+            "secret": PROBE_SECRET_B64,
+        }
 
     @api.post("/api/v1/secrets/check", dependencies=[Depends(require_token)])
     async def check_secret_store() -> dict:

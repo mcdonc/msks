@@ -25,6 +25,7 @@ import signal
 import socket
 from pathlib import Path
 
+from ..interceptor import ca
 from ..persist import (
     ensure_artifacts,
     home_volume_path,
@@ -428,7 +429,25 @@ class LocalCloudHypervisor(MicrovmDriver):
                     f"already exists: {artifact}; "
                     "remove it (or restore the workspace row) first"
                 )
-        await ensure_artifacts(spec, vmm, self._settings().llm.port)
+        await ensure_artifacts(
+            spec, vmm, self._settings().llm.port, self.interceptor_ca_pem(spec)
+        )
+
+    def interceptor_ca_pem(self, spec: VmSpec) -> str:
+        """The workspace's interceptor CA certificate, minted on
+        first need (#424, the create-time half of #200).
+
+        ``prepare`` lands here at create, so the seed disk carries
+        the CA and the guest trusts its own interception path from
+        first boot; ``_boot``'s artifact heal re-reads the same CA
+        (``load_or_mint`` is idempotent, and the interceptor's arm
+        path loads what this minted). The mint is one Ed25519
+        keypair — milliseconds, once per workspace.
+        """
+        authority = ca.load_or_mint(
+            self._dir(spec.workspace_id), spec.workspace_id
+        )
+        return ca.cert_pem(authority.cert).decode()
 
     async def launch(self, spec: VmSpec) -> None:
         async with self._guard(spec.workspace_id):
@@ -494,7 +513,9 @@ class LocalCloudHypervisor(MicrovmDriver):
         # Boots heal their artifacts (#14): a workspace row whose
         # overlay or volume is missing (a crash mid-create, or a row
         # that predates #14) gets them back before the VM starts.
-        await ensure_artifacts(spec, vmm, self._settings().llm.port)
+        await ensure_artifacts(
+            spec, vmm, self._settings().llm.port, self.interceptor_ca_pem(spec)
+        )
         socket_path = vm_dir / "api.sock"
         serial_log = vm_dir / "serial.log"
         proc = await self._spawn(

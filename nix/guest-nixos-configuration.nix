@@ -393,6 +393,12 @@ in
     # (nixpkgs' fd ships the `fd` name pi accepts).
     pkgs.fd
     pkgs.ripgrep
+    # curl (#424): the workspace's ordinary HTTPS client — the
+    # probe e2e drives it against the daemon's own endpoint, and a
+    # workspace without it reaches for the same download-on-first-
+    # use path fd and rg stay off. The platform's own packaging,
+    # like every tool on this profile.
+    pkgs.curl
   ];
 
   # The model-discovery extension (#266, #268): planted the

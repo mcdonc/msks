@@ -148,6 +148,7 @@ def seed_script(
     login_user: str | None = None,
     llm_token: str | None = None,
     llm_port: int = 0,
+    ca_pem: str | None = None,
 ) -> str:
     """The seeding payload's script half: authorized_keys for root
     and the msks workspace user (#63) plus the console helper's
@@ -196,13 +197,17 @@ def seed_script(
     into ~/.pi/agent/extensions/ with the rest of the skeleton.
     The seed carries only the per-workspace facts the image
     cannot know — the token, the port, the gateway.
+
+    The workspace's interceptor CA rides the same channel (#424,
+    the create-time half of #200): every guest trusts the CA its
+    own interception path serves, so HTTPS toward allowlisted
+    destinations — and the probe service — validates with zero
+    manual steps. The PEM's charset (base64, dashes, newlines)
+    carries no quote or metacharacter, so the single-quoted
+    assignment is safe.
     """
     if public_key is None:
-        return (
-            "#!/bin/sh\n"
-            "# msks (#259): the workspace's LLM proxy credential.\n"
-            "set -eu\n" + llm_seed_block(llm_token, llm_port)
-        )
+        return keyless_seed_script(llm_token, llm_port, ca_pem)
     script = (
         "#!/bin/sh\n"
         "# msks (#111, #123): the workspace identity — authorized_keys\n"
@@ -258,7 +263,100 @@ def seed_script(
     )
     if llm_token is not None:
         script += llm_seed_block(llm_token, llm_port)
+    if ca_pem is not None:
+        script += ca_seed_block(ca_pem)
     return script
+
+
+def keyless_seed_script(
+    llm_token: str | None, llm_port: int, ca_pem: str | None
+) -> str:
+    """The identity-less seed: the LLM credential block when a
+    token rides (a pre-#111 row whose seed is healing — a tokenless
+    spec names no proxy to configure), plus the interceptor CA
+    block when one rides (#424)."""
+    script = "#!/bin/sh\n# msks (#424): the workspace's seed.\nset -eu\n"
+    if llm_token is not None:
+        script += llm_seed_block(llm_token, llm_port)
+    if ca_pem is not None:
+        script += ca_seed_block(ca_pem)
+    return script
+
+
+def ca_seed_block(ca_pem: str) -> str:
+    """The #424/#200 block: the workspace's interceptor CA, staged
+    and named so every client family trusts it.
+
+    Every guest stages the certificate under /etc/msks and links it
+    into the system trust store when the distro's linker exists
+    (Debian's ``update-ca-certificates`` — every client, login
+    shell or not). The exports name the CA beside the **platform
+    roots**: ``SSL_CERT_FILE`` replaces the OpenSSL/Go default
+    lookup, so it points at a bundle built from the platform's own
+    bundle — whichever name the distro ships (``ca-bundle.crt``
+    NixOS-style, ``ca-certificates.crt`` Debian-style) — with the
+    CA appended, and it exports only when that bundle was built; a
+    CA-only bundle would break TLS to every real service. Node adds
+    the root itself through ``NODE_EXTRA_CA_CERTS``. NixOS's
+    ``/etc/profile`` reads no ``profile.d``: the same exports ride
+    its sanctioned ``/etc/profile.local`` hook (whose one rule also
+    brings the LLM block's exports alive there). Every step is
+    best-effort — a guest with no writable target keeps booting and
+    says so on stderr."""
+    return (
+        f"ca_cert='{ca_pem}'\n"
+        "install -d -m 0755 -o root -g root /etc/msks\n"
+        "printf '%s\\n' \"$ca_cert\" > /etc/msks/interceptor-ca.crt\n"
+        # The system-trust link, when the distro has a linker:
+        # checked FIRST so a NixOS guest stages nothing under
+        # /usr/local that nothing there consumes.
+        "if command -v update-ca-certificates >/dev/null 2>&1 \\\n"
+        "   && install -d -m 0755 /usr/local/share/ca-certificates \\\n"
+        "   && printf '%s\\n' \"$ca_cert\" > \\\n"
+        "      /usr/local/share/ca-certificates/msks-interceptor.crt\n"
+        "then\n"
+        "  update-ca-certificates >/dev/null\n"
+        "fi\n"
+        # The export bundle: the platform roots under whichever name
+        # the distro ships them, with the CA appended — never the
+        # CA alone (SSL_CERT_FILE replaces the default lookup).
+        "ca_base=''\n"
+        "for bundle in /etc/ssl/certs/ca-bundle.crt \\\n"
+        "             /etc/ssl/certs/ca-certificates.crt\n"
+        "do\n"
+        '  [ -r "$bundle" ] && ca_base=$bundle && break\n'
+        "done\n"
+        'if [ -n "$ca_base" ]; then\n'
+        '  cat "$ca_base" /etc/msks/interceptor-ca.crt \\\n'
+        "      > /etc/msks/ca-bundle.crt 2>/dev/null || true\n"
+        "fi\n"
+        "install -d -m 0755 /etc/profile.d\n"
+        "cat > /etc/profile.d/msks-ca.sh <<'MSEOF'\n"
+        "# msks (#424): name this workspace's interception CA beside\n"
+        "# the system roots. SSL_CERT_FILE (only when the bundle was\n"
+        "# built — it REPLACES the default lookup, so it must carry\n"
+        "# the platform roots too) for the OpenSSL and Go clients;\n"
+        "# NODE_EXTRA_CA_CERTS for node, which adds the root on top\n"
+        "# of its own bundled roots.\n"
+        "if [ -r /etc/msks/ca-bundle.crt ]; then\n"
+        "  export SSL_CERT_FILE=/etc/msks/ca-bundle.crt\n"
+        "fi\n"
+        "if [ -r /etc/msks/interceptor-ca.crt ]; then\n"
+        "  export NODE_EXTRA_CA_CERTS=/etc/msks/interceptor-ca.crt\n"
+        "fi\n"
+        "MSEOF\n"
+        # NixOS's hook: /etc/profile.local. Idempotent by marker.
+        "if [ ! -e /etc/profile.local ] || \\\n"
+        "   ! grep -q 'for i in /etc/profile.d' /etc/profile.local\n"
+        "then\n"
+        '  echo \'for i in /etc/profile.d/*.sh; do [ -r "$i" ] \\\n'
+        '    && . "$i"; done\' >> /etc/profile.local\n'
+        "fi\n"
+        "if ! command -v update-ca-certificates >/dev/null 2>&1; then\n"
+        "  echo 'msks: the interceptor CA is staged and exported;' \\\n"
+        "    'this guest links no system trust store' >&2\n"
+        "fi\n"
+    )
 
 
 def llm_seed_block(token: str, port: int) -> str:
@@ -277,6 +375,10 @@ def llm_seed_block(token: str, port: int) -> str:
     return (
         f"llm_token='{token}'\n"
         "install -d -m 0755 -o root -g root /etc/msks\n"
+        # The block owns its profile.d target: the NixOS base ships
+        # no /etc/profile.d, and the heredoc below aborts a set -eu
+        # seed against a missing directory.
+        "install -d -m 0755 /etc/profile.d\n"
         "printf '%s\\n' \"$llm_token\" > /etc/msks/llm.token\n"
         "chmod 0644 /etc/msks/llm.token\n"
         "cat > /etc/profile.d/msks-llm.sh <<'MSEOF'\n"
@@ -405,6 +507,7 @@ def compose_user_data(
     login_user: str | None = None,
     llm_token: str | None = None,
     llm_port: int = 0,
+    ca_pem: str | None = None,
 ) -> str:
     """The seed's user-data document: what cidata actually carries.
 
@@ -416,10 +519,15 @@ def compose_user_data(
     from its first line — the two forms the #41 contract documents
     are a ``#!`` script and a ``#cloud-config`` document.
     """
-    if public_key is None and llm_token is None:
+    if public_key is None and llm_token is None and ca_pem is None:
         return operator_payload
     script = seed_script(
-        public_key, workspace_id, login_user, llm_token, llm_port
+        public_key,
+        workspace_id,
+        login_user,
+        llm_token,
+        llm_port,
+        ca_pem,
     )
     if operator_payload is None:
         return script

@@ -2,6 +2,7 @@
 
 import asyncio
 import socket
+import struct
 from pathlib import Path
 
 import pytest
@@ -283,3 +284,55 @@ async def test_relay_drops_a_failed_reply_send() -> None:
         forwarder.stop()
         client.close()
         upstream.close()
+
+
+# --- the probe name's local answer (#424) -----------------------------------
+
+
+def probe_query(qtype: int = 1) -> bytes:
+    """A query datagram for the well-known probe host."""
+    qname = (
+        b"".join(
+            bytes([len(label)]) + label.encode()
+            for label in dns.PROBE_HOST.split(".")
+        )
+        + b"\x00"
+    )
+    header = struct.pack("!HHHHHH", 0x0100, 0x0100, 1, 0, 0, 0)
+    return header + qname + struct.pack("!HH", qtype, 1)
+
+
+async def test_probe_host_answers_locally_with_the_tap_address(
+    pair,
+) -> None:
+    """The A query for the probe host never reaches the upstream:
+    the forwarder answers with its own bind address (#424) — the
+    address whose 443 the redirect owns."""
+    from msks.net import dnsmsg
+
+    forwarder, client, upstream = pair
+
+    async def nothing_may_arrive_upstream() -> None:
+        loop = asyncio.get_running_loop()
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(loop.sock_recvfrom(upstream, 4096), 0.3)
+
+    guard = asyncio.create_task(nothing_may_arrive_upstream())
+    await asyncio.to_thread(
+        client.sendto, probe_query(), forwarder._sock.getsockname()
+    )
+    data, _server = await asyncio.to_thread(client.recvfrom, 4096)
+    await guard
+    assert [ip for ip, _ttl in dnsmsg.parse_a_records(data)] == ["127.0.0.1"]
+
+
+async def test_probe_host_answers_nxdomain_for_non_a(pair) -> None:
+    """AAAA for the probe host answers NXDOMAIN, so a dual-stack
+    client falls back to A (#424)."""
+    forwarder, client, _upstream = pair
+    await asyncio.to_thread(
+        client.sendto, probe_query(qtype=28), forwarder._sock.getsockname()
+    )
+    data, _server = await asyncio.to_thread(client.recvfrom, 4096)
+    # RCODE 3 in the flags word.
+    assert int.from_bytes(data[2:4], "big") & 0x0F == 3

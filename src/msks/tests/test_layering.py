@@ -105,9 +105,15 @@ ALLOWED_EDGES = {
     # verdict policy over the model, vocabulary from spec
     ("consent", "model"),
     ("consent", "spec"),
-    # interceptor: vocabulary from spec (#407 pruned the driver edge)
+    # interceptor: vocabulary from spec (#407 pruned the driver
+    # edge); the probe service reuses the proxy's per-tap listener
+    # wrapper and the resolver answers the probe name (#424)
+    ("interceptor", "llm"),
     ("interceptor", "spec"),
-    # the local driver: vocabulary and storage read directly (#407)
+    # the local driver: vocabulary and storage read directly
+    # (#407); it mints the workspace's interceptor CA at create so
+    # the seed disk carries it (#424/#200)
+    ("microvm", "interceptor"),
     ("microvm", "persist"),
     ("microvm", "spec"),
     # the ORM's vocabulary

@@ -45,6 +45,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..spec.egress import MODE_ALLOW, MODE_STATIC, ports_for
+from ..spec.probe import PROBE_HOST
 from . import dnsmsg
 from .loopio import recvfrom, sendto
 
@@ -398,10 +399,35 @@ class DnsForwarder:
     async def _relay(
         self, sock: socket.socket, query: bytes, client: tuple[str, int]
     ) -> None:
+        if self.answer_probe_host(sock, query, client):
+            return
         if self._gate is None:
             await self.relay_verbatim(sock, query, client)
             return
         await self.relay_gated(sock, query, client)
+
+    def answer_probe_host(
+        self, sock: socket.socket, query: bytes, client: tuple[str, int]
+    ) -> bool:
+        """Answer the well-known probe name locally (#424): the A
+        query resolves to this forwarder's own tap address — the
+        guest's route to the daemon-side service — and every other
+        type answers NXDOMAIN so a dual-stack client falls back to
+        A. The local answer stands ahead of the gate in every
+        consent mode: the probe is the daemon's own service, and
+        its reachability is exactly what an operator verifies.
+        Whether the request PASSES is interception's question, not
+        the resolver's. Any other name returns False and takes the
+        relay path unchanged.
+        """
+        parsed = dnsmsg.parse_query(query)
+        if parsed is None or parsed.name != PROBE_HOST:
+            return False
+        if parsed.qtype == dnsmsg.TYPE_A:
+            sendto(sock, dnsmsg.a_answer_for(query, self._bind[0]), client)
+        else:
+            sendto(sock, dnsmsg.nxdomain_for(query), client)
+        return True
 
     async def relay_verbatim(
         self, sock: socket.socket, query: bytes, client: tuple[str, int]

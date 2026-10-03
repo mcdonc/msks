@@ -81,7 +81,8 @@ conformance = 5
 [snapshot.app]
 consent = 4
 events = 2
-interceptor = 2
+# interceptor: the composer seam + the probe service (#424)
+interceptor = 4
 llm = 2
 microvm = 2
 model = 2
@@ -114,9 +115,17 @@ spec = 15
 spec = 3
 
 [snapshot.interceptor]
-spec = 4
+# llm: the probe service reuses the per-tap listener wrapper
+# (#424); spec grew by one for the probe name's vocabulary
+llm = 2
+# spec grew: the probe service reads its whole vocabulary from the
+# leaf (#424)
+spec = 9
 
 [snapshot.microvm]
+# interceptor: the local driver mints the workspace CA at create
+# so the seed carries it (#424/#200)
+interceptor = 2
 persist = 7
 spec = 14
 
@@ -124,7 +133,8 @@ spec = 14
 spec = 16
 
 [snapshot.net]
-spec = 23
+# spec grew by one import: the resolver answers the probe name (#424)
+spec = 25
 
 [snapshot.persist]
 identity = 2
@@ -145,7 +155,9 @@ model = 7
 persist = 12
 secretstore = 5
 settings = 2
-spec = 22
+# spec grew by one statement: the secret routes seed and serve the
+# probe placeholder (#424)
+spec = 28
 storage = 13
 
 [snapshot.settings]

@@ -21,6 +21,10 @@ from msks.settings import (
 )
 from netstubs import NFT_FAIL_AT, NFT_STDERR, log_lines, stub_ip, stub_nft
 
+#: The real default probe path, saved before this module's autouse
+#: fixture seams it out (#424): the wiring test restores it.
+REAL_DEFAULT_PROBE = NetManager.default_probe
+
 
 class FakeService:
     """The DHCP/DNS service surface: start/stop/serve, recorded."""
@@ -108,6 +112,20 @@ async def net_app(tmp_path: Path, monkeypatch):
 async def ready(app) -> NetManager:
     await app.state.net.start()
     return app.state.net
+
+
+@pytest.fixture(autouse=True)
+def inert_default_probe(monkeypatch):
+    """Keep the default probe listener out of this module's boots
+    (#424): the stub tools create no taps, so the real bind path
+    would only mint TLS material and fail to bind. The seamed tests
+    below cover the wiring; the service itself has its own suite.
+    """
+
+    async def none_listener(self, attachment):
+        return None
+
+    monkeypatch.setattr(NetManager, "default_probe", none_listener)
 
 
 async def test_start_disabled_leaves_everything_off(tmp_path: Path) -> None:
@@ -1793,3 +1811,126 @@ async def test_apply_interception_takes_the_workspace_guard(
     await manager.apply_interception("ws-i", None)
     await switch_task
     assert order == ["switch", "swap"]
+
+
+# --- the per-tap probe listener (#424) ---------------------------------------
+
+
+class RecordingProbe:
+    """The probe seam's listener: records its lifecycle."""
+
+    def __init__(self, tap_ip: str) -> None:
+        self.tap_ip = tap_ip
+        self.started = 0
+        self.stopped = 0
+
+    async def start(self) -> None:
+        self.started += 1
+
+    async def stop(self) -> None:
+        self.stopped += 1
+
+
+async def test_attach_starts_the_probe_listener_and_detach_stops_it(
+    net_app, monkeypatch
+) -> None:
+    """The probe service's per-tap listener rides the same
+    lifecycle the LLM listener does (#424): bound at attach,
+    stopped at detach, registry kept honest."""
+    app, _ip, _nft = net_app
+    listeners: dict = {}
+
+    async def factory(attachment):
+        listener = RecordingProbe(attachment.tap_ip)
+        listeners[attachment.workspace_id] = listener
+        return listener
+
+    monkeypatch.setattr(
+        manager_mod, "verify_forwarding", lambda path=None: None
+    )
+    manager = NetManager(
+        app,
+        dhcp_factory=FakeService,
+        dns_factory=FakeService,
+        probe_factory=factory,
+    )
+    app.state.net = manager
+    await manager.start()
+    await manager.attach("ws-a", want=True)
+    assert listeners["ws-a"].started == 1
+    assert app.state.probe._listeners == {"ws-a": listeners["ws-a"]}
+    await manager.detach("ws-a")
+    assert listeners["ws-a"].stopped == 1
+    assert app.state.probe._listeners == {}
+
+
+async def test_a_refused_probe_bind_leaves_the_boot_alive(
+    net_app, monkeypatch, capsys
+) -> None:
+    """The probe is an auxiliary surface like the proxy (#424): a
+    bind that fails logs loudly and the workspace still boots."""
+
+    async def factory(attachment):
+        raise OSError("address in use")
+
+    app, _ip, _nft = net_app
+    monkeypatch.setattr(
+        manager_mod, "verify_forwarding", lambda path=None: None
+    )
+    manager = NetManager(
+        app,
+        dhcp_factory=FakeService,
+        dns_factory=FakeService,
+        probe_factory=factory,
+    )
+    app.state.net = manager
+    await manager.start()
+    attachment = await manager.attach("ws-a", want=True)
+    assert attachment is not None
+    assert "probe endpoint" in capsys.readouterr().out
+    assert app.state.probe._listeners == {}
+    await manager.detach("ws-a")
+
+
+async def test_attach_works_without_a_probe_subsystem(net_app) -> None:
+    """A stripped-down host with no probe service attaches and
+    detaches untouched (#424)."""
+    app, _ip, _nft = net_app
+    app.state.probe = None
+    await ready(app)
+    attachment = await app.state.net.attach("ws-a", want=True)
+    assert attachment is not None
+    await app.state.net.detach("ws-a")
+
+
+async def test_the_default_probe_path_wires_the_service_material(
+    net_app, monkeypatch
+) -> None:
+    """The unseamed path: the service's shared TLS material feeds
+    listener_for, and the listener lands in the service's registry
+    (#424)."""
+    app, _ip, _nft = net_app
+    calls: dict = {}
+
+    class FakeProbeService:
+        async def material(self):
+            calls["material"] = True
+            return "cert.pem", "key.pem"
+
+        def listener_for(self, attachment, certfile, keyfile):
+            calls["listener_for"] = (attachment.tap_ip, certfile, keyfile)
+            return RecordingProbe(attachment.tap_ip)
+
+    real_probe = app.state.probe
+    app.state.probe = FakeProbeService()
+    manager = NetManager(
+        app, dhcp_factory=FakeService, dns_factory=FakeService
+    )
+    monkeypatch.setattr(NetManager, "default_probe", REAL_DEFAULT_PROBE)
+    listener = await manager.default_probe(
+        type("A", (), {"tap_ip": "10.9.9.9", "workspace_id": "ws-x"})()
+    )
+    assert listener is not None
+    assert calls["material"] is True
+    assert calls["listener_for"] == ("10.9.9.9", "cert.pem", "key.pem")
+    app.state.probe = real_probe
