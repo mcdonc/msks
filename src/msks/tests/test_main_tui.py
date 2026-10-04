@@ -9,6 +9,7 @@ tests.
 
 import asyncio
 import json
+import os
 import stat
 import sys
 import time
@@ -651,6 +652,43 @@ async def test_ctrl_c_quits_over_the_consent_overlay(monkeypatch) -> None:
         await pilot.press("ctrl+c")
         await pilot.pause()
         assert app.return_code == 0
+
+
+# -- Ctrl+Shift+C: the terminal's own gesture (#437) -----------------------
+
+
+def test_the_tui_leaves_the_kitty_keyboard_protocol_off(monkeypatch) -> None:
+    """(#437) The tree asks the terminal for no kitty keyboard
+    protocol: textual's default would deliver every key to the
+    app and take the terminal's own Ctrl+Shift+C copy away. The
+    package init sets the flag before textual reads it, and an
+    operator's explicit choice stays authoritative."""
+    import importlib
+
+    import msks.client.tui as tui_pkg
+
+    assert os.environ.get("TEXTUAL_DISABLE_KITTY_KEY") == "1"
+    monkeypatch.setenv("TEXTUAL_DISABLE_KITTY_KEY", "0")
+    importlib.reload(tui_pkg)
+    assert os.environ["TEXTUAL_DISABLE_KITTY_KEY"] == "0"
+
+
+async def test_ctrl_shift_c_reaches_no_binding_and_the_tree_keeps_running(
+    monkeypatch,
+) -> None:
+    """(#437) The tree handles no Ctrl+Shift+C itself: no binding
+    answers the key — the terminal's own shortcut owns the gesture
+    — and the tree keeps running when one arrives anyway (a
+    terminal that speaks the kitty protocol against the flag
+    delivers the key separately)."""
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: "alpha" in row_text(app, 0))
+        assert "ctrl+shift+c" not in app.screen.active_bindings
+        await pilot.press("ctrl+shift+c")
+        await pilot.pause()
+        assert app.return_code is None
 
 
 async def test_the_create_form_posts_and_the_list_refreshes() -> None:

@@ -195,7 +195,14 @@ class MsksTuiApp(App):
         # binding and ahead of its stock ctrl+c nag (a notification
         # saying to press q), so the terminal reflex lands — the
         # app exits exactly as the tree's q does, and the follow-up
-        # loop reads the operator's quit.
+        # loop reads the operator's quit. (#437) Ctrl+Shift+C owns
+        # no binding here: the gesture stays the terminal's own
+        # copy shortcut, and the tree starts with the kitty
+        # keyboard protocol off (the package's __init__) so a
+        # terminal that binds the combo handles it itself. A
+        # terminal that passes the byte through sends Ctrl+C's own
+        # byte for both gestures, and the quit above answers it —
+        # the two keys cannot be told apart on that encoding.
         Binding("ctrl+c", "quit", "Quit", priority=True),
     ]
 

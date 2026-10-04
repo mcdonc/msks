@@ -358,7 +358,7 @@ carrying the daemon's refusal verbatim beside the name the form
 submitted, waiting for dismissal — Enter, Escape, `q`, or the
 Close button — so the detail stays on screen while the operator
 reads it; closing it returns to the list, and a create that
-lands keeps today's flash note. `s` opens the
+lands keeps today's flash note. `e` opens the
 **secrets** page (#431). Each row's status
 column carries the state's color (#348): a running workspace in
 the theme's success color, a stopped one in muted text, and any
@@ -553,7 +553,13 @@ at the workspaces list, Escape is the tree itself quitting).
 Ctrl+C exits the client from any screen — the tree, a page, a
 form field, or a panel stacked over them — the same clean exit
 `q` takes at the workspaces list, and it takes priority over the
-form field's copy shortcut while a form field holds the focus. The TUI speaks the same REST
+form field's copy shortcut while a form field holds the focus.
+Ctrl+Shift+C belongs to the terminal (#437): the TUI starts with
+the kitty keyboard protocol off, so a terminal that binds the
+combo to its own copy handles the gesture and the TUI never
+sees the key. A terminal that passes the key through sends the
+same byte as Ctrl+C, and the exit above answers it — the two
+gestures cannot be told apart on that encoding. The TUI speaks the same REST
 surface the `msksc` commands speak (`MSKSC_URL`, `MSKSC_TOKEN`,
 `MSKSC_CAFILE`) and reads no daemon state directly.
 
