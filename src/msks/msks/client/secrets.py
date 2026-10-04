@@ -164,7 +164,7 @@ def cmd_secret_mint(
         f"minted {coverage_label(row['workspaces'])}/{name} "
         f"for {', '.join(row['dests'])}"
     )
-    print(f"sentinel (shown once): {row['sentinel']}")
+    print(f"sentinel: {row['sentinel']}")
     return 0
 
 

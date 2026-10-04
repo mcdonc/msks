@@ -1,7 +1,8 @@
 """The tree's secrets page (#390, #393): every placeholder row the
 daemon holds with revoke and renew on the focused row, the
 daemon-wide audit stream one key away, the mint form, and the
-mint's one-time panel — extracted from the app shell so
+sentinel panel the mint's reply and Enter on a row both open
+(#440) — extracted from the app shell so
 :mod:`msks.client.tui.main_app` composes them.
 
 Spatial navigation: arrows walk the rows, ``k``/``w`` pick the
@@ -36,6 +37,7 @@ from textual.widgets.selection_list import Selection
 from .consent_ui import (
     ConfirmScreen,
     DurationScreen,
+    FailurePanel,
     FlashLine,
     OneFlight,
     PickerScreen,
@@ -217,6 +219,15 @@ SCOPED_SENTINEL = "mskssec1_"
 #: workspace's tap swaps it.
 WIDE_SENTINEL = "mskssec2_"
 
+#: The mint form's standing note (#393): its title line, back
+#: on the form once a flight ends without a reply — the failure
+#: panel owns the refusal (#426), and the note names nothing in
+#: the air.
+MINT_NOTE = (
+    "mint a placeholder — the sentinel shows on the panel;"
+    " Enter on a row reopens it"
+)
+
 #: The mint name's pattern (#393): the client's own copy of
 #: the store's identifier rule — letters, numbers, and underscores,
 #: no leading digit.
@@ -287,7 +298,7 @@ def osc52_copy(app, text: str) -> bool:
 def minted_note(row: dict) -> str:
     """The mint's outcome line (#393): the row's label in the
     page's own vocabulary — the sentinel itself stays on the
-    one-time panel above the page."""
+    panel above the page."""
     return f"minted {escape(coverage_text(row))}/{escape(row['name'])}"
 
 
@@ -296,11 +307,11 @@ class SecretsScreen(Screen):
     holds — coverage, name, destinations, a live TTL countdown,
     the created date — with revoke and renew on the focused row,
     the audit stream one key away, and the mint form on `c` (#393
-    — its one-time sentinel panel replaces
+    — its sentinel panel replaces
     the form). The coverage flip stays on the workspace page (a
-    picker beside the egress-mode row); Enter on a row owns
-    nothing yet — the placeholder-to-workspace links land with the
-    cross-references (#394).
+    picker beside the egress-mode row); Enter or a click on a row
+    shows its sentinel on the panel (#440) — the placeholder-to-
+    workspace links land with the cross-references (#394).
     """
 
     BINDINGS = [
@@ -424,9 +435,7 @@ class SecretsScreen(Screen):
             columns.display = bool(self.rows)
             empty = self.query_one("#secret-empty", Static)
             empty.display = not self.rows
-            empty.update(
-                "No placeholders — c mints one; the sentinel shows once."
-            )
+            empty.update("No placeholders — c mints one.")
         except NoMatches:
             pass
 
@@ -526,9 +535,24 @@ class SecretsScreen(Screen):
         return picked
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        """Enter on a row decides nothing yet: the
-        placeholder-to-workspace navigation lands with the
-        cross-references (#394)."""
+        """Enter (or a click) on a row (#440): fetch the row's
+        sentinel and show it on the panel — the sentinel reads
+        back on demand, not only at mint. The placeholder-to-
+        workspace navigation lands with the cross-references
+        (#394)."""
+        secret_id = getattr(event.item, "secret_id", None)
+        row = next((r for r in self.rows if r["id"] == secret_id), None)
+        if row is None:
+            return  # a rebuild's swap window: the row is already gone
+        self.run_worker(self.show_sentinel(row), exclusive=True)
+
+    async def show_sentinel(self, row: dict) -> None:
+        """Fetch the row with its sentinel (#440) and open the
+        panel over it; a refusal names itself on the page's
+        status line."""
+        fresh = await self.guarded("sentinel", self.app.data.secret(row["id"]))
+        if fresh is not None:
+            self.app.push_screen(SentinelPanel(fresh))
 
     def action_audit(self) -> None:
         """Push the daemon-wide audit view (#390)."""
@@ -553,7 +577,7 @@ class SecretsScreen(Screen):
     async def minted(self, row: dict | None) -> None:
         """The mint form's callback (#393): a mint that lands
         dismisses with its reply — the page refreshes so the row
-        stands on the list, and the sentinel's one-time panel
+        stands on the list, and the sentinel panel
         replaces the form; a cancel decides nothing."""
         if row is None:
             return
@@ -898,8 +922,8 @@ class MintScreen(FormWalk, ModalScreen[dict | None]):
     (``msks secret check``'s endpoint), then mints; a refusal
     anywhere names itself on the note and the fields stay for a
     retry. A mint that lands dismisses with its reply — the row
-    carrying the sentinel exactly once — and the page replaces
-    the form with the one-time panel; the dismiss clears the
+    carrying the sentinel — and the page replaces
+    the form with the sentinel panel; the dismiss clears the
     value field, so the typed secret leaves the widget tree with
     the form (the panel's own closing rule)."""
 
@@ -914,7 +938,7 @@ class MintScreen(FormWalk, ModalScreen[dict | None]):
     ]
 
     #: Whether the mint's exchange is in the air (#393): the
-    #: sentinel rides exactly one reply, so the flight owns the
+    #: reply carries the sentinel, so the flight owns the
     #: form until it lands — a second submit or a cancel in the
     #: air would drop the reply on a mint the daemon already took
     #: (and the retry would find the name taken).
@@ -922,10 +946,7 @@ class MintScreen(FormWalk, ModalScreen[dict | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="form"):
-            yield Static(
-                "mint a placeholder — the sentinel shows once",
-                id="form-note",
-            )
+            yield Static(MINT_NOTE, id="form-note")
             with Horizontal(classes="form-row"):
                 yield Static("name", classes="form-label")
                 yield Input(
@@ -1145,24 +1166,34 @@ class MintScreen(FormWalk, ModalScreen[dict | None]):
 
     async def mint_flight(self, body: dict) -> None:
         """The exchange proper: the store check names a broken
-        store before a doomed mint runs; a refused mint names
-        itself on the note with the fields kept for a retry; a
-        mint that lands dismisses with its reply (#393 — the
-        sentinel rides the reply exactly once; the value rides no
-        reply at all)."""
+        store before a doomed mint runs; a refusal lands on the
+        failure panel (#426) — the daemon's detail at reading
+        width, dismissed by hand — with the fields kept for a
+        retry; a mint that lands dismisses with its reply (#393 —
+        the sentinel rides the reply; the value
+        rides no reply at all)."""
         self.note("checking the secret store…")
         try:
             await self.app.data.secret_check()
         except (Exception, SystemExit) as exc:
-            self.note(f"secret store check failed: {flash_safe(str(exc))}")
+            self.refused("secret store check", None, exc)
             return
         self.note("minting…")
         try:
             row = await self.app.data.mint_secret(body)
         except (Exception, SystemExit) as exc:
-            self.note(f"mint failed: {flash_safe(str(exc))}")
+            self.refused("mint", body["name"], exc)
             return
         self.dismiss_with(row)
+
+    def refused(self, verb: str, identity: str | None, exc) -> None:
+        """A refused exchange (#426): the failure panel opens over
+        the form carrying the daemon's detail, and the note
+        returns to its standing text — the flight is down, and
+        the fields stay filled for a retry once the panel
+        closes."""
+        self.note(MINT_NOTE)
+        self.app.push_screen(FailurePanel(verb, identity, str(exc)))
 
     def dismiss_with(self, row: dict | None) -> None:
         """Dismiss and hand the reply to the callback (async — the
@@ -1178,20 +1209,42 @@ class MintScreen(FormWalk, ModalScreen[dict | None]):
         self._task = asyncio.create_task(self.submitted(row))
 
 
+def masked_sentinel(sentinel: str) -> str:
+    """The sentinel's masked display: the prefix stays — it
+    names the reach, holds no bearer power — and the body renders
+    one bullet per character, so the panel opens without putting
+    the token on screen."""
+    if not sentinel:
+        return ""
+    if sentinel.startswith(SCOPED_SENTINEL):
+        prefix = SCOPED_SENTINEL
+    elif sentinel.startswith(WIDE_SENTINEL):
+        prefix = WIDE_SENTINEL
+    else:
+        return "\u2022" * len(sentinel)
+    return prefix + "\u2022" * (len(sentinel) - len(prefix))
+
+
 class SentinelPanel(ModalScreen):
-    """The sentinel's one-time panel (#393): the mint's reply
-    replaces the form with the sentinel, its reach decoded from
-    the prefix, and the closing rule — the display ends with the
-    panel, and a lost sentinel is re-minted, never recalled (the
-    value is the operator's own and rides no reply — #423).
-    `c` (or the Copy button) writes the sentinel to the terminal's
-    clipboard over OSC 52 — the copy path a terminal that honors
-    the sequence answers, over ssh included; a terminal that
-    does not honors nothing and the sentinel stays on the panel
-    until it closes. Closing clears the panel's text: the
-    sentinel leaves no trace in the widget tree behind it."""
+    """The sentinel's panel (#393, #440): the mint's reply opens
+    it, and Enter (or a click) on a listing row opens it again
+    over the on-demand fetch (#440) — the daemon serves the row's
+    sentinel to a token holder whenever asked, so the panel opens
+    on demand, not only at mint (the value is the operator's own
+    and rides no reply — #423).
+    The sentinel opens masked — its prefix names the reach, the
+    body renders as bullets — and the Show action (`s`) reveals
+    and hides it again: the panel stands where a shoulder could
+    read it. `c` (or the Copy button) writes the sentinel to the
+    terminal's clipboard over OSC 52 — the copy path a terminal
+    that honors the sequence answers, over ssh included; the copy
+    needs no reveal, and a terminal that honors nothing leaves
+    the sentinel on the panel until it closes. Closing clears the
+    panel's text: the sentinel leaves no trace in the widget tree
+    behind it."""
 
     BINDINGS = [
+        Binding("s", "show", "Show"),
         Binding("c", "copy", "Copy"),
         Binding("q", "close", "Close"),
         Binding("escape", "close", "Close", show=False),
@@ -1200,43 +1253,64 @@ class SentinelPanel(ModalScreen):
     def __init__(self, row: dict) -> None:
         super().__init__()
         self.row = row
+        self.revealed = False
 
     def compose(self) -> ComposeResult:
         with Vertical(id="sentinel-panel"):
             yield Static(
-                f"minted {escape(coverage_text(self.row))}/"
+                f"{escape(coverage_text(self.row))}/"
                 f"{escape(self.row['name'])}",
                 id="panel-note",
             )
-            yield Static("sentinel (shown once):", id="panel-label")
-            yield Static(self.row.get("sentinel") or "", id="panel-sentinel")
+            yield Static("sentinel:", id="panel-label")
+            yield Static(
+                masked_sentinel(self.row.get("sentinel") or ""),
+                id="panel-sentinel",
+            )
             yield Static(
                 f"reach: {sentinel_reach(self.row)}", id="panel-reach"
             )
             yield Static(
-                "a lost sentinel is re-minted, never recalled — "
-                "this display ends with the panel",
+                "s reveals the sentinel — this display ends with the panel",
                 id="panel-rule",
             )
             with Horizontal(id="panel-buttons"):
                 yield Button(
-                    "Copy", id="do-copy", variant="primary", compact=True
+                    "Show", id="do-show", variant="primary", compact=True
                 )
+                yield Button("Copy", id="do-copy", compact=True)
                 yield Button("Close", id="do-close", compact=True)
         yield Footer()
 
     def on_mount(self) -> None:
-        self.query_one("#do-copy", Button).focus()
+        self.query_one("#do-show", Button).focus()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "do-copy":
+        if event.button.id == "do-show":
+            self.action_show()
+        elif event.button.id == "do-copy":
             self.action_copy()
         else:
             self.action_close()
 
+    def action_show(self) -> None:
+        """Reveal or hide the sentinel: the panel swaps the masked
+        body for the real one (and back), so the token reaches
+        the screen only while the operator asked for it."""
+        self.revealed = not self.revealed
+        self.query_one("#panel-sentinel", Static).update(
+            self.row.get("sentinel") or ""
+            if self.revealed
+            else masked_sentinel(self.row.get("sentinel") or "")
+        )
+        self.query_one("#do-show", Button).label = (
+            "Hide" if self.revealed else "Show"
+        )
+
     def action_copy(self) -> None:
         """The OSC 52 copy (#393): the sequence rides the driver
-        beside the frame; the note names what happened."""
+        beside the frame — masked or revealed, the real sentinel
+        is what lands — and the note names what happened."""
         copied = osc52_copy(self.app, self.row.get("sentinel") or "")
         self.query_one("#panel-note", Static).update(
             "copied to the clipboard — where the terminal honors OSC 52"

@@ -16,13 +16,17 @@ from msks.client.tui import rows as rows_mod
 from msks.client.tui import secrets as secrets_mod
 from msks.client.tui.link import AuditLink
 from msks.client.tui.secrets import (
+    MINT_NOTE,
+    SCOPED_SENTINEL,
     SECRET_TTLS,
+    WIDE_SENTINEL,
     MintScreen,
     SecretAuditScreen,
     SecretsScreen,
     SentinelPanel,
     WorkspacePicker,
     coverage_text,
+    masked_sentinel,
     osc52_copy,
     osc52_sequence,
     secret_row_cells,
@@ -32,8 +36,16 @@ from msks.client.tui.secrets import (
     ttl_text,
 )
 from test_consent_overlay import FakeFactory, FakeWS, press_until, wait_for
-from test_main_tui import FakeData, list_children, make_app, row
-from textual.widgets import Input, Select, Static
+from test_main_tui import (
+    FakeData,
+    failure_detail,
+    failure_title,
+    list_children,
+    make_app,
+    on_failure,
+    row,
+)
+from textual.widgets import Button, Input, Select, Static
 
 
 def secret_row(
@@ -95,8 +107,7 @@ def on_audit(app) -> bool:
 
 
 async def open_secrets(pilot, app) -> SecretsScreen:
-    """Press `e` on the workspaces list (#431, #437: the mnemonic
-    swap)."""
+    """Press `e` on the workspaces list (#431)."""
     await press_until(pilot, "e", lambda: on_secrets(app))
     return app.screen
 
@@ -203,8 +214,8 @@ async def pick_option(pilot, app, downs: int) -> None:
 
 
 async def test_e_opens_the_page_and_back() -> None:
-    """`e` on the workspaces list opens the secrets page (#431,
-    #437: the mnemonic swap), Escape returns to the list."""
+    """`e` on the workspaces list opens the secrets page (#431),
+    Escape returns to the list."""
     data = FakeData([row(), row(id="ws-b", name="beta")])
     data.secret_rows = [secret_row()]
     app, _follow = make_app(data)
@@ -415,19 +426,91 @@ async def test_keys_without_a_focused_row_flash() -> None:
         assert data.secret_calls == []
 
 
-async def test_enter_on_a_row_decides_nothing() -> None:
-    """Enter owns nothing yet — the placeholder-to-workspace links
-    land with the cross-references (#394)."""
+async def test_enter_on_a_row_shows_the_sentinel_panel() -> None:
+    """Enter on the focused row (#440): the page fetches the row's
+    sentinel and opens the panel over it masked — the prefix and
+    the reach visible, the body bullets until revealed — and
+    closing it clears the text and lands the focus back on the
+    same row (moved off the top first, so a reset to the top
+    would answer a different id)."""
+    data = FakeData([])
+    data.secret_rows = [secret_row(), secret_row(id=2, name="beta")]
+    app, _follow = make_app(data)
+    async with app.run_test() as pilot:
+        await open_secrets(pilot, app)
+        await wait_for(lambda: secrets_children(app) == 2)
+        await pilot.press("down")  # the highlight sits on row 2
+        await pilot.press("enter")
+        await wait_for(lambda: on_panel(app))
+        assert data.secret_calls == [("show", 2)]
+        text = panel_text(app)
+        assert "mskssec2_" + "t" * 43 not in text  # masked on open
+        assert "mskssec2_" + "\u2022" * 43 in text
+        assert "every accepting workspace" in text
+        assert "shown once" not in text
+        await pilot.press("s")  # the reveal
+        await pilot.pause()
+        assert "mskssec2_" + "t" * 43 in panel_text(app)
+        sentinel_line = app.screen.query_one("#panel-sentinel", Static)
+        await pilot.press("escape")
+        await wait_for(lambda: on_secrets(app))
+        assert str(sentinel_line.content) == ""  # closed: text cleared
+        await pilot.press("enter")  # focus returned to the same row
+        await wait_for(lambda: on_panel(app))
+        assert data.secret_calls == [("show", 2), ("show", 2)]
+        await pilot.press("q")
+        await wait_for(lambda: on_secrets(app))
+
+
+async def test_a_click_on_a_row_shows_its_sentinel() -> None:
+    """A mouse click on a row opens the same panel (#440) — the
+    clicked row's, scoped prefix and reach named from the string,
+    the body masked until the Show button reveals it."""
+    data = FakeData([])
+    data.secret_rows = [secret_row(id=3, workspaces=["ws-a"], name="scoped")]
+    app, _follow = make_app(data)
+    async with app.run_test() as pilot:
+        await open_secrets(pilot, app)
+        await wait_for(lambda: secrets_children(app) == 1)
+        await pilot.click("#secret-rows ListItem")
+        await wait_for(lambda: on_panel(app))
+        assert data.secret_calls == [("show", 3)]
+        text = panel_text(app)
+        assert "mskssec1_" + "t" * 43 not in text
+        assert "the chosen workspaces: ws-a" in text
+        await pilot.click("#do-show")
+        await wait_for(lambda: "mskssec1_" + "t" * 43 in panel_text(app))
+
+
+async def test_a_failed_sentinel_fetch_flashes_and_stays() -> None:
+    """A refused fetch names itself on the page's status line and
+    the page stands — no panel over a refusal."""
+    data = FakeData([])
+    data.secret_rows = [secret_row()]
+    data.fail.add("show-secret")
+    app, _follow = make_app(data)
+    async with app.run_test() as pilot:
+        await open_secrets(pilot, app)
+        await wait_for(lambda: secrets_children(app) == 1)
+        await pilot.press("enter")
+        await wait_for(lambda: "sentinel failed" in secrets_status(app))
+        assert on_secrets(app)
+
+
+async def test_a_selection_without_its_row_fetches_nothing() -> None:
+    """A Selected event whose row is already gone — a rebuild's
+    swap window — fetches nothing; the page stands (#440)."""
     data = FakeData([])
     data.secret_rows = [secret_row()]
     app, _follow = make_app(data)
     async with app.run_test() as pilot:
         await open_secrets(pilot, app)
         await wait_for(lambda: secrets_children(app) == 1)
-        await pilot.press("enter")
+        event = SimpleNamespace(item=SimpleNamespace(secret_id=404))
+        app.screen.on_list_view_selected(event)
         await pilot.pause()
-        assert on_secrets(app)
         assert data.secret_calls == []
+        assert on_secrets(app)
 
 
 # -- the mint form (#393) --------------------------------------------------
@@ -457,7 +540,7 @@ def mint_note(app) -> str:
 
 def panel_text(app) -> str:
     """Every line the panel paints, joined — the surface the
-    one-time display owns."""
+    panel owns."""
     try:
         return "\n".join(
             str(widget.content)
@@ -478,14 +561,15 @@ def fill_mint(
     screen.query_one("#field-value", Input).value = value
 
 
-async def test_the_form_mints_a_daemon_wide_row_and_the_sentinel_shows_once(
+async def test_the_form_mints_and_the_panel_masks_until_revealed(
     tmp_path,
 ) -> None:
     """The create action's whole path (#393): the store check
     rides ahead of the mint, the daemon-wide body carries neither
     a coverage list nor a ttl but does carry the operator's value,
-    the sentinel lands once on the panel (the value never echoes),
-    and closing it clears the text and lands the row on the
+    the panel opens with the sentinel masked (the reach decoded
+    from the prefix), the reveal shows it and the hide masks it
+    again, and closing clears the text and lands the row on the
     page."""
     data = FakeData([])
     app, _follow = make_app(data)
@@ -505,13 +589,25 @@ async def test_the_form_mints_a_daemon_wide_row_and_the_sentinel_shows_once(
         assert "workspaces" not in body  # the daemon-wide default
         assert "ttl_s" not in body  # unbounded, the daemon's default
         assert body["value"] == "hunter2"
-        # The sentinel shows exactly once, with its reach decoded;
-        # the operator's value appears nowhere on the panel.
+        # The panel opens masked — the prefix and the reach stand,
+        # the body is bullets — and the operator's value appears
+        # nowhere on the panel.
         sentinel = "mskssec2_" + "s" * 43
-        await wait_for(lambda: sentinel in panel_text(app))
-        assert panel_text(app).count(sentinel) == 1
+        masked = "mskssec2_" + "\u2022" * 43
+        await wait_for(lambda: masked in panel_text(app))
+        assert sentinel not in panel_text(app)
         assert "hunter2" not in panel_text(app)
         assert "every accepting workspace" in panel_text(app)
+        # The reveal — the focused Show button — and the hide.
+        await pilot.press("enter")
+        await wait_for(lambda: sentinel in panel_text(app))
+        assert panel_text(app).count(sentinel) == 1
+        await pilot.press("s")  # the hide
+        await wait_for(lambda: sentinel not in panel_text(app))
+        assert masked in panel_text(app)
+        await pilot.press("s")  # revealed again for the close
+        await pilot.pause()
+        assert sentinel in panel_text(app)
         sentinel_line = app.screen.query_one("#panel-sentinel", Static)
         await pilot.press("q")
         await wait_for(lambda: on_secrets(app))
@@ -556,17 +652,20 @@ async def test_a_scoped_mint_picks_workspaces_from_the_tree(tmp_path) -> None:
         body = data.secret_calls[0][1]
         assert body["workspaces"] == ["ws-a", "ws-b"]
         assert body["ttl_s"] == 604800
+        assert ("mskssec1_" + "s" * 43) not in panel_text(app)  # masked
+        await pilot.press("s")  # the reveal
         text = panel_text(app)
         assert ("mskssec1_" + "s" * 43) in text
         assert "the chosen workspaces: ws-a,ws-b" in text
 
 
-async def test_a_failed_mint_keeps_the_form_and_names_the_cause(
+async def test_a_failed_mint_opens_the_panel_and_keeps_the_fields(
     tmp_path,
 ) -> None:
-    """A refused mint names itself on the note with the fields
-    kept for a retry (#393); the retry lands once the daemon
-    takes the body."""
+    """A refused mint opens the failure panel over the form
+    (#426): the daemon's detail verbatim beside the name the form
+    submitted, and closing it returns to the form with the fields
+    kept for a retry."""
     data = FakeData([])
     data.fail.add("mint")
     app, _follow = make_app(data)
@@ -575,21 +674,54 @@ async def test_a_failed_mint_keeps_the_form_and_names_the_cause(
         form = await open_mint(pilot, app)
         fill_mint(form)
         form.submit()
-        await wait_for(lambda: "mint failed" in mint_note(app))
-        assert "placeholder named github_api" in mint_note(app)
-        assert on_mint(app)  # the form stands
+        await wait_for(lambda: on_failure(app))
+        assert "mint failed" in failure_title(app)
+        assert "github_api" in failure_title(app)
+        assert "placeholder named github_api" in failure_detail(app)
+        await pilot.press("q")
+        await wait_for(lambda: on_mint(app))
         assert form.query_one("#field-name", Input).value == "github_api"
+        assert mint_note(app) == MINT_NOTE  # nothing in the air
         data.fail.clear()
         form.submit()  # the fields kept: the retry mints as-is
         await wait_for(lambda: on_panel(app))
         assert len(data.secret_calls) == 2
 
 
-async def test_a_refused_store_check_names_itself_and_the_mint_never_runs(
+async def test_the_failure_panel_holds_until_closed(tmp_path) -> None:
+    """The failure panel has no timeout and owns the keys while it
+    stands (#426): the page's own actions behind it answer
+    nothing, and only the closing keys dismiss it."""
+    data = FakeData([row()])
+    data.secret_rows = [secret_row()]
+    data.fail.add("mint")
+    app, _follow = make_app(data)
+    async with app.run_test() as pilot:
+        await open_secrets(pilot, app)
+        form = await open_mint(pilot, app)
+        fill_mint(form)
+        form.submit()
+        await wait_for(lambda: on_failure(app))
+        panel = app.screen
+        # The Close button holds the focus — Enter reaches it —
+        # and arrows find no other control to walk into.
+        assert app.focused is panel.query_one("#do-close", Button)
+        exchanges = len(data.secret_calls)
+        await pilot.press("x", "r", "down", "up")
+        await pilot.pause()
+        assert on_failure(app)  # still standing
+        assert data.secret_calls[exchanges:] == []  # no new exchange
+        await pilot.press("escape")
+        await wait_for(lambda: on_mint(app))
+
+
+async def test_a_refused_store_check_opens_the_panel_and_no_mint_runs(
     tmp_path,
 ) -> None:
-    """The store pre-flight (#393): a store that cannot answer
-    writes names itself on the form, and no mint leaves."""
+    """The store pre-flight (#393, #426): a store that cannot
+    answer opens the failure panel — its refusal names no one
+    body, so the title carries the verb alone — and no mint
+    leaves."""
     data = FakeData([])
     data.fail.add("secret-check")
     app, _follow = make_app(data)
@@ -598,8 +730,11 @@ async def test_a_refused_store_check_names_itself_and_the_mint_never_runs(
         form = await open_mint(pilot, app)
         fill_mint(form)
         form.submit()
-        await wait_for(lambda: "secret store check failed" in mint_note(app))
-        assert on_mint(app)
+        await wait_for(lambda: on_failure(app))
+        assert failure_title(app) == "secret store check failed"
+        assert "daemon away" in failure_detail(app)
+        await pilot.press("enter")  # the focused Close button
+        await wait_for(lambda: on_mint(app))
         assert data.secret_calls == []
 
 
@@ -607,7 +742,8 @@ async def test_the_panel_copies_the_sentinel_over_osc52(
     tmp_path, monkeypatch
 ) -> None:
     """`c` on the panel hands the sentinel to the OSC 52 copy
-    (#393) and names the copy on the note."""
+    (#393) and names the copy on the note — the real string is
+    what lands, with the display still masked."""
     data = FakeData([])
     copied: list[str] = []
 
@@ -624,10 +760,11 @@ async def test_the_panel_copies_the_sentinel_over_osc52(
         form.submit()
         await wait_for(lambda: on_panel(app))
         sentinel = "mskssec2_" + "s" * 43
-        await pilot.press("c")
+        await pilot.press("c")  # masked on screen, real in the copy
         assert copied == [sentinel]
         assert "copied to the clipboard" in panel_text(app)
         assert "OSC 52" in panel_text(app)
+        assert sentinel not in panel_text(app)  # the copy reveals nothing
         # A copy with no driver to write through names that.
         monkeypatch.setattr(secrets_mod, "osc52_copy", lambda app, text: False)
         await pilot.press("c")
@@ -1230,6 +1367,18 @@ def test_osc52_copy_writes_through_the_driver() -> None:
     assert len(written) == 1
 
 
+def test_masked_sentinel_keeps_the_prefix_and_masks_the_body() -> None:
+    """The masked display: a known prefix stays — it names the
+    reach — and the body renders one bullet per character; a
+    sentinel matching no prefix masks whole."""
+    scoped = SCOPED_SENTINEL + "abc"
+    wide = WIDE_SENTINEL + "abcdef"
+    assert masked_sentinel(scoped) == SCOPED_SENTINEL + "\u2022" * 3
+    assert masked_sentinel(wide) == WIDE_SENTINEL + "\u2022" * 6
+    assert masked_sentinel("junk") == "\u2022" * 4
+    assert masked_sentinel("") == ""
+
+
 async def test_a_junk_dest_carrying_markup_refuses_without_crashing(
     tmp_path,
 ) -> None:
@@ -1342,8 +1491,8 @@ async def test_the_form_cancels_without_an_exchange(tmp_path) -> None:
 
 async def test_the_panel_closes_on_its_button(tmp_path) -> None:
     """The Close button clears the panel's text and returns the
-    page (#393); the mint's Copy button copies the sentinel
-    first."""
+    page (#393); the Show button reveals the sentinel first, and
+    the Copy button copies it from either state."""
     data = FakeData([])
     app, _follow = make_app(data)
     async with app.run_test() as pilot:
@@ -1354,9 +1503,12 @@ async def test_the_panel_closes_on_its_button(tmp_path) -> None:
         await wait_for(lambda: on_panel(app))
         panel = app.screen
         sentinel_line = panel.query_one("#panel-sentinel", Static)
-        await pilot.press("enter")  # the focused Copy button
+        await pilot.press("enter")  # the focused Show button
+        assert ("mskssec2_" + "s" * 43) in panel_text(app)
+        panel.query_one("#do-copy", Button).focus()
+        await pilot.press("enter")  # the Copy button
         assert "copied to the clipboard" in panel_text(app)
-        await pilot.press("tab")
+        panel.query_one("#do-close", Button).focus()
         await panel.query_one("#panel-rule", Static).remove()
         # The Close button closes over a line already gone — a
         # teardown race, read as noise — and still clears the rest.

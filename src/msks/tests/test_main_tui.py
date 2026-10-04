@@ -29,7 +29,11 @@ from msks.client.tui import main_screen as main_screen_mod
 from msks.client.tui import rows as rows_mod
 from msks.client.tui import workspace as page_mod
 from msks.client.tui.consent import ConsentController
-from msks.client.tui.consent_ui import FlashLine
+from msks.client.tui.consent_ui import (
+    FailurePanel,
+    FlashLine,
+    panel_safe,
+)
 from msks.client.tui.follow import FLOW_SHELL, TuiFollow, run_follow_up
 from msks.client.tui.forms import (
     EDIT_FREE_STATUSES,
@@ -61,7 +65,7 @@ from test_consent_tui import (
     rules_frame as shared_rules_frame,
 )
 from textual.color import Color
-from textual.content import Span
+from textual.content import Content, Span
 from textual.css.query import NoMatches
 from textual.widgets import Button, Input, OptionList, Select, Static
 
@@ -250,6 +254,20 @@ class FakeData:
             raise RuntimeError(self.refusal)
         return [dict(r) for r in self.secret_rows]
 
+    async def secret(self, placeholder_id: int) -> dict:
+        """The row's on-demand sentinel fetch (#440) — recorded;
+        the reply carries the row the listing serves plus its
+        sentinel (the daemon's per-row GET), never a value."""
+        self.secret_calls.append(("show", placeholder_id))
+        if "show-secret" in self.fail:
+            raise RuntimeError(self.refusal)
+        fresh = next(r for r in self.secret_rows if r["id"] == placeholder_id)
+        reply = dict(fresh)
+        reply["sentinel"] = (
+            "mskssec2_" if not fresh["workspaces"] else "mskssec1_"
+        ) + "t" * 43
+        return reply
+
     async def revoke_secret(self, placeholder_id: int) -> dict:
         """The secrets page's revoke (#390) — recorded; the row
         leaves with the listing."""
@@ -292,7 +310,7 @@ class FakeData:
     async def mint_secret(self, body: dict) -> dict:
         """The mint form's mint (#393) — recorded with its raw
         body (the value rides the record the way the wire does);
-        the reply carries the sentinel exactly once and never the
+        the reply carries the row with its sentinel, never the
         value, and the row lands on the page's listing without
         it."""
         self.secret_calls.append(("mint", dict(body)))
@@ -384,6 +402,28 @@ def action_text(app, index: int) -> str:
 
 def status_text(app) -> str:
     return str(app.query_one("#status", Static).content)
+
+
+def on_failure(app) -> bool:
+    """Whether the failure panel stands on top (#426)."""
+    return isinstance(app.screen, FailurePanel)
+
+
+def failure_title(app) -> str:
+    """The failure panel's title line; empty while it mounts."""
+    try:
+        return str(app.screen.query_one("#failure-title", Static).content)
+    except Exception:
+        return ""
+
+
+def failure_detail(app) -> str:
+    """The failure panel's body — the daemon's refusal; empty
+    while it mounts."""
+    try:
+        return str(app.screen.query_one("#failure-detail", Static).content)
+    except Exception:
+        return ""
 
 
 def row_text(app, index: int) -> str:
@@ -883,9 +923,14 @@ async def test_a_defaults_refusal_keeps_the_form_standing() -> None:
         assert screen.query_one("#field-home_mib", Input).placeholder == "MiB"
 
 
-async def test_a_create_failure_flashes_the_daemons_line() -> None:
+async def test_a_create_failure_opens_the_panel_and_waits() -> None:
+    """A refused create lands on the failure panel (#426): the
+    daemon's detail verbatim beside the name the form submitted,
+    the panel holding the screen until the operator closes it —
+    the flash path no longer carries create failures."""
     data = FakeData([])
     data.fail.add("create")
+    data.refusal = "msks: 409: a workspace named brand-new exists"
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await pilot.press("c")
@@ -893,8 +938,20 @@ async def test_a_create_failure_flashes_the_daemons_line() -> None:
         screen = app.screen
         screen.query_one("#field-name", Input).value = "brand-new"
         screen.submit()
-        await wait_for(lambda: "create failed" in status_text(app))
+        await wait_for(lambda: on_failure(app))
+        assert "create failed" in failure_title(app)
+        assert "brand-new" in failure_title(app)
+        assert "409" in failure_detail(app)
+        # The panel owns the refusal; the status line carries no
+        # create flash, and the keys behind it answer nothing.
+        assert "create failed" not in status_text(app)
+        exchanges = len(data.calls)
+        await pilot.press("e", "x", "down")
         await pilot.pause()
+        assert on_failure(app)
+        assert data.calls[exchanges:] == []
+        await pilot.press("escape")
+        await wait_for(lambda: on_main(app))
 
 
 # -- the workspace page ---------------------------------------------------
@@ -1889,7 +1946,22 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
                     "dests": ["api.github.com"],
                     "created_at": "2030-01-02T03:04:05",
                     "expires_at": None,
-                    "sentinel": "mskssec1_shown_once",
+                    "sentinel": "mskssec1_row",
+                },
+            )
+        if request.method == "GET" and request.url.path == (
+            "/api/v1/secrets/7"
+        ):
+            return httpx.Response(
+                200,
+                json={
+                    "id": 7,
+                    "workspaces": [],
+                    "name": "github_api",
+                    "dests": ["api.github.com"],
+                    "created_at": "2030-01-02T03:04:05",
+                    "expires_at": None,
+                    "sentinel": "mskssec2_row",
                 },
             )
         if request.method == "DELETE" and request.url.path == (
@@ -2044,9 +2116,15 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
     assert ("DELETE", "/api/v1/secrets/7") in seen
     assert ("POST", "/api/v1/secrets/7/renew") in seen
     assert ("GET", "/api/v1/secrets/audit") in seen
+    # The on-demand row fetch (#440): the per-row GET the page's
+    # Enter-on-a-row panel makes — the reply carrying the row's
+    # sentinel where the listing omits it.
+    shown = await data.secret(7)
+    assert shown["sentinel"] == "mskssec2_row"
+    assert ("GET", "/api/v1/secrets/7") in seen
     # The mint seams (#393): the store pre-flight and the mint
     # itself — the same exchanges the secret subcommands make,
-    # the reply carrying the value and the sentinel exactly once.
+    # the reply carrying the row and its sentinel, never the value.
     assert await data.secret_check() == {"provider": "files", "ok": True}
     row = await data.mint_secret(
         {
@@ -2056,7 +2134,7 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
             "value": "hunter2",
         }
     )
-    assert row["sentinel"] == "mskssec1_shown_once"
+    assert row["sentinel"] == "mskssec1_row"
     assert "value" not in row  # the operator's value never echoes
     assert minted == [
         {
@@ -3415,12 +3493,14 @@ async def test_the_tree_flashes_a_seeded_refusal(monkeypatch) -> None:
         await pilot.pause()
 
 
-async def test_a_markup_refusal_never_crashes_the_screen(
+async def test_a_markup_refusal_renders_literally_on_the_panel(
     monkeypatch,
 ) -> None:
-    """The daemon echoes operator-typed text back in its refusals —
-    a stray rich markup bracket in one must flash literally, not crash
-    the tree."""
+    """The daemon echoes operator-typed text back in its refusals
+    — a stray rich markup bracket in one must render literally on
+    the failure panel, not crash the tree. The title's identity is
+    the same threat: a name carrying a truncated closing tag
+    renders literally too."""
     scripted_link(monkeypatch, [])
     data = FakeData([])
     data.fail.add("create")
@@ -3430,13 +3510,25 @@ async def test_a_markup_refusal_never_crashes_the_screen(
         await pilot.press("c")
         await wait_for(lambda: type(app.screen).__name__ == "CreateScreen")
         screen = app.screen
-        screen.query_one("#field-name", Input).value = "brand-new"
+        screen.query_one("#field-name", Input).value = "ws[/x"
         screen.submit()
-        await wait_for(lambda: "create failed" in status_text(app))
-        # Rendered literally (rich's escape form in the raw content,
-        # the brackets on screen) — no MarkupError, no dead tree.
-        assert "no such image: debian-12" in status_text(app)
+        await wait_for(lambda: on_failure(app))
+        # Rendered literally (rich's escape form in the raw
+        # content, the brackets on screen) — no MarkupError, no
+        # dead tree.
+        assert "no such image: debian-12" in failure_detail(app)
+        await pilot.pause()  # lay the title out before reading it
+        title = app.screen.query_one("#failure-title", Static)
+        line = "".join(seg.text for seg in title.render_line(0))
+        assert "create failed: ws[/x" in line
         await pilot.pause()
+    # The panel's body keeps a refusal's own line breaks (a panel
+    # wraps them); the one-row status line collapses them.
+    assert "\n" in panel_safe("one\ntwo[/x")
+    assert "\n" not in main_app.flash_safe("one\ntwo[/x")
+    # The panel's escape renders a truncated tag literally — the
+    # parse keeps the brackets, with no stray backslash.
+    assert Content.from_markup(panel_safe("ws[/x")).plain == "ws[/x"
 
 
 async def test_the_form_sets_the_login_user(monkeypatch) -> None:

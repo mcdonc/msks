@@ -19,6 +19,7 @@ from textual.widgets import Footer, ListItem, ListView, Static
 
 from .consent_ui import (
     ConfirmScreen,
+    FailurePanel,
     flash_safe,
     focus_attr,
     focused_attr,
@@ -69,9 +70,9 @@ class MainScreen(Screen):
         Binding("enter", "open", "Open", show=False),
         Binding("c", "create", "New"),
         Binding("s", "start", "Start"),
-        Binding("e", "secrets", "Secrets"),
         Binding("x", "stop", "Stop"),
         Binding("D", "remove", "Remove"),
+        Binding("e", "secrets", "Secrets"),
         Binding("r", "refresh", "Refresh"),
         Binding("q", "quit", "Quit"),
         Binding("escape", "quit", show=False),
@@ -212,6 +213,7 @@ class MainScreen(Screen):
         self.app.push_screen(SecretsScreen())
 
     def action_start(self) -> None:
+        """`s`: start the focused workspace."""
         self.run_worker(self.start_focused, exclusive=True)
 
     def action_stop(self) -> None:
@@ -273,13 +275,18 @@ class MainScreen(Screen):
 
     async def created(self, body: dict | None) -> None:
         """The create form's callback: a body creates, a cancel
-        (None) decides nothing."""
+        (None) decides nothing. A refused create lands on the
+        failure panel (#426) — a detail worth acting on outlives
+        a five-second flash — and dismissing it returns here, to
+        the list."""
         if body is None:
             return
-        result = await guarded_flash(
-            self.app, "create", self.app.data.create(body)
-        )
-        if result is None:
+        try:
+            result = await self.app.data.create(body)
+        except (Exception, SystemExit) as exc:
+            self.app.push_screen(
+                FailurePanel("create", body.get("name"), str(exc))
+            )
             return
         row, path = result
         self.app.flash(created_note(row, path))

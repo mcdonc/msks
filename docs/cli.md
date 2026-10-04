@@ -351,8 +351,14 @@ workspace tree (`msks tui` names the same command, and `msks tui
 my-workspace` opens that workspace's page directly). The tree is
 rooted at the **workspaces list**: every workspace one row, with
 creating, starting, stopping, and removing on its keys (`c` new,
-`s` start, `x` stop, `D` remove — asked and confirmed — `r`
-refresh, and Enter opens the workspace's page). `e` opens the
+`s` start, `x` stop, `D` remove — asked and confirmed — `e`
+secrets, `r` refresh, and Enter opens the workspace's page). A refused create
+opens the failure panel (#426): a centered panel over the list
+carrying the daemon's refusal verbatim beside the name the form
+submitted, waiting for dismissal — Enter, Escape, `q`, or the
+Close button — so the detail stays on screen while the operator
+reads it; closing it returns to the list, and a create that
+lands keeps today's flash note. `e` opens the
 **secrets** page (#431). Each row's status
 column carries the state's color (#348): a running workspace in
 the theme's success color, a stopped one in muted text, and any
@@ -405,19 +411,29 @@ one field), coverage — the daemon-wide row, or a multi-select
 fed by the tree's own workspace list — the lifetime (`unbounded`
 by default, an hour to thirty days beside it), and the value: a
 masked field the operator types or pastes into — the form takes
-the secret's bytes directly. The submit checks the secret store first (`msks secret
-check`'s endpoint), then mints; a refusal names itself on the
-form's note line and the fields stay filled for a retry. A mint
+the secret's bytes directly. The submit checks the secret store
+first (`msks secret
+check`'s endpoint), then mints; a refused mint opens the failure
+panel (#426) over the form — the daemon's refusal verbatim beside
+the name the form submitted — and a refused store check opens it
+with the daemon's refusal alone; either way it closes by hand
+(Enter, Escape, `q`, or the Close button), and the fields
+stay filled for a retry once it closes. A mint
 that lands replaces the form
-with the sentinel's one-time panel: the sentinel itself, its
-reach decoded from its
-prefix (`mskssec1_` scoped to the chosen
-workspaces, `mskssec2_` every accepting workspace), a `c` copy
+with the sentinel's panel: the sentinel opens masked — its
+prefix names the reach (`mskssec1_` scoped to the chosen
+workspaces, `mskssec2_` every accepting workspace), the body
+renders as bullets — with an `s` Show action that reveals and
+hides it again, and a `c` copy
 action that writes the sentinel to the terminal's clipboard over
 OSC 52 — the copy path a terminal that honors the sequence
-answers, over ssh included — and the closing
-rule: the display ends with the panel, and a lost sentinel is
-re-minted, never recalled. Closing the panel clears its text, and the minted row
+answers, over ssh included, with no reveal needed — and the closing
+rule: the display ends with the panel. Enter (or a click) on a
+listing row opens the panel again (#440): the page fetches the
+row's sentinel from the daemon and shows it with the same show
+and copy actions — the sentinel reads back on demand, at mint
+and after.
+Closing the panel clears its text, and the minted row
 stands on the page's list. The placeholder-to-workspace
 navigation lands with the cross-references (#394).
 
@@ -1201,9 +1217,11 @@ domain (`.github.com`). `--workspace` takes one ref or a comma
 list and repeats; omitted, the mint covers every workspace on the
 daemon — one row, one `mskssec2_` sentinel — while a scoped mint
 prints a `mskssec1_` sentinel, so the string alone names its
-reach. The mint prints the sentinel exactly once —
-every later view omits it, so a lost sentinel is re-minted, not
-recalled. `revoke` and `renew` take the same targeting the mint
+reach. The mint prints the sentinel;
+the listing and the audit omit it (`secret ls` never shows one),
+and the daemon serves a row's sentinel back on demand over the
+token-authenticated API — the `msks tui` row panel (#440) is
+that surface. `revoke` and `renew` take the same targeting the mint
 took; `revoke` takes effect on the next request and retires the
 whole row everywhere at once, and `renew`
 extends a `--ttl` lifetime in place with the sentinel unchanged.
