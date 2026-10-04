@@ -315,7 +315,15 @@ down scrolls back toward the live output, and reaching the bottom
 — or pressing `q` — returns to the plain shell. The keyboard path
 covers the same history: `Ctrl-b [` (or `Ctrl-b PageUp`) opens
 tmux's copy mode, where the arrow keys and PageUp/PageDown move
-through it. These settings ride the window's own tmux server (the
+through it. `Shift-PageUp` and `Shift-PageDown` page through it
+too, one page per press, entering copy mode on the way up and
+returning to the shell at the bottom (#444); a terminal that
+keeps the shifted pair for its own view (its scrollback has
+nothing to show on this pane) still has the wheel — Konsole can
+hand the pair to the pane with a keytab rule scoped to the
+alternate screen, sending `\E[5;2~` and `\E[6;2~`. The bare
+PageUp/PageDown reach the shell untouched. These settings ride
+the window's own tmux server (the
 launch's dedicated socket); an operator's own running tmux server
 keeps its own settings. With tmux's mouse mode on, a plain drag
 selects text in tmux's buffer, and holding Shift while dragging

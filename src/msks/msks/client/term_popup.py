@@ -122,6 +122,24 @@ MODULE = "msks.client.term_popup"
 #: the depth is the ceiling, not the starting footprint.
 HISTORY_LINES = 10000
 
+#: The popup's page-scroll bindings (#444), the keyboard twin of
+#: the wheel path above: tmux's own documented pair — ``copy-mode
+#: -eu`` enters copy mode paged up one page and arms the same
+#: exit-at-bottom rule the wheel rides, ``-ed`` pages down and
+#: leaves copy mode at the bottom — so both paths scroll one
+#: history with one exit. The shifted page keys are the pair
+#: terminals reserve for their own scrollback, and this session's
+#: alternate screen leaves that scrollback empty: a terminal that
+#: passes the shifted keys through (their well-known sequences —
+#: Konsole's keytab can send them with an ``AppScreen``-scoped
+#: rule) pages the history with them, while one that keeps the
+#: keys for its own view still has the wheel. The bare page keys
+#: carry no binding here, so they reach the shell untouched.
+PAGE_SCROLL_COMMANDS = (
+    ("S-PgUp", "copy-mode -eu"),
+    ("S-PgDn", "copy-mode -ed"),
+)
+
 ROLES = ("launch", "pane", "watch", "decide")
 
 
@@ -548,9 +566,12 @@ def session_argv(
     before the session exists, because a pane adopts its history
     limit only at creation: mouse mode turns the wheel into
     scrolling, and the raised history line count is how far back
-    it reaches. The options land on this launch's own server (the
-    dedicated socket carries them), so the operator's own tmux
-    server, when one runs, keeps its own settings."""
+    it reaches. The page-scroll bindings (#444) land with them:
+    the shifted page keys page that same history through tmux's
+    copy mode, the keyboard twin of the wheel. Everything lands
+    on this launch's own server (the dedicated socket carries
+    it), so the operator's own tmux server, when one runs, keeps
+    its own settings."""
     pane = [
         sys.executable,
         "-m",
@@ -562,7 +583,7 @@ def session_argv(
         "--",
         *child,
     ]
-    return [
+    argv = [
         "tmux",
         "-L",
         socket_name(workspace_id),
@@ -577,6 +598,10 @@ def session_argv(
         "-g",
         "history-limit",
         str(HISTORY_LINES),
+    ]
+    for key, command in PAGE_SCROLL_COMMANDS:
+        argv += [";", "bind-key", "-n", key, command]
+    argv += [
         ";",
         "new-session",
         "-s",
@@ -587,6 +612,7 @@ def session_argv(
         "destroy-unattached",
         "on",
     ]
+    return argv
 
 
 def decide_command(row: dict, workspace_id: str) -> str:

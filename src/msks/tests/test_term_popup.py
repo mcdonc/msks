@@ -8,12 +8,17 @@ retirement, never opening a window.
 """
 
 import asyncio
+import fcntl
 import io
 import os
 import pty
 import shlex
+import shutil
+import struct
 import subprocess
+import termios
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -86,6 +91,19 @@ def test_session_argv_names_the_socket_the_pane_and_the_workspace() -> None:
         "-g",
         "history-limit",
         str(tp.HISTORY_LINES),
+        # The page-scroll bindings (#444) ride the same server:
+        # the shifted page keys page the same history the wheel
+        # scrolls, tmux's own documented copy-mode pair.
+        ";",
+        "bind-key",
+        "-n",
+        "S-PgUp",
+        "copy-mode -eu",
+        ";",
+        "bind-key",
+        "-n",
+        "S-PgDn",
+        "copy-mode -ed",
         ";",
         "new-session",
         "-s",
@@ -110,6 +128,113 @@ def test_session_argv_without_a_workspace_ships_no_watcher() -> None:
     joined = argv[argv.index("new-session") + 3]
     assert " pane -s shell -- top" in joined
     assert " -w " not in joined
+
+
+def test_page_keys_scroll_the_session_history() -> None:
+    """The #444 boundary against a real tmux server: an attached
+    client's tty takes the well-known shifted page sequences and
+    the shipped bindings page the pane's history — up into copy
+    mode, back down out of it — while the bare page key passes
+    through to the pane's application. The session runs detached
+    on its own socket and the client rides a local pty, so no
+    window opens anywhere."""
+    if shutil.which("tmux") is None:  # pragma: no cover — the
+        pytest.skip("tmux is not on PATH")  # devenv suite ships one
+    socket = f"msks-test-{os.getpid()}"
+    session = "scrolltest"
+    # The shipped server half, ahead of new-session: exactly the
+    # options and bindings the launcher lays on its own server
+    # (the slice already ends with the chain's separator).
+    half = tp.session_argv(["true"], session=session, workspace_id=None)
+    half = half[: half.index("new-session")]
+
+    def run(*words: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["tmux", "-L", socket, *words],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+
+    subprocess.run(
+        [
+            "tmux",
+            "-L",
+            socket,
+            *half[3:],
+            "new-session",
+            "-d",
+            "-s",
+            session,
+            "-x",
+            "80",
+            "-y",
+            "10",
+            "sh -c 'seq 1 50; exec cat'",
+        ],
+        timeout=10,
+        check=True,
+        capture_output=True,
+    )
+    master, slave = pty.openpty()
+    fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 10, 80, 0, 0))
+    client = subprocess.Popen(
+        ["tmux", "-L", socket, "attach", "-t", session],
+        stdin=slave,
+        stdout=slave,
+        stderr=slave,
+        start_new_session=True,
+        env={**os.environ, "TERM": "xterm"},
+    )
+    os.close(slave)
+
+    def pane_flag(flag: str) -> str:
+        proc = run("display", "-p", "-t", session, f"#{{{flag}}}")
+        return proc.stdout.strip()
+
+    def eventually(flag: str, want: str, deadline: float = 5.0) -> None:
+        end = time.monotonic() + deadline
+        while time.monotonic() < end:
+            if pane_flag(flag) == want:
+                return
+            time.sleep(0.1)
+        raise AssertionError(
+            f"#{flag} stayed {pane_flag(flag)!r}, wanted {want!r}"
+        )
+
+    def eventually_at_least(
+        flag: str, want: int, deadline: float = 5.0
+    ) -> None:
+        end = time.monotonic() + deadline
+        while time.monotonic() < end:
+            value = pane_flag(flag)
+            if value.isdigit() and int(value) >= want:
+                return
+            time.sleep(0.1)
+        raise AssertionError(
+            f"#{flag} stayed {value!r}, wanted at least {want}"
+        )
+
+    try:
+        # 50 lines printed on a 10-row window: the ones that left
+        # the viewport are the history the page keys walk (the
+        # count carries the pane's own startup lines, so the wait
+        # asks for a depth of pages, not an exact figure).
+        eventually_at_least("history_size", 30)
+        os.write(master, b"\x1b[5;2~")  # S-PgUp pages into copy mode
+        eventually("pane_in_mode", "1")
+        os.write(master, b"\x1b[6;2~")  # S-PgDn pages back down; the
+        os.write(master, b"\x1b[6;2~")  # bottom exits copy mode
+        eventually("pane_in_mode", "0")
+        os.write(master, b"\x1b[5~")  # the bare page key reaches the
+        time.sleep(0.5)  # pane's cat, not a binding: no copy mode
+        assert pane_flag("pane_in_mode") == "0"
+    finally:
+        client.terminate()
+        client.wait(timeout=10)
+        os.close(master)
+        run("kill-server")
 
 
 def test_take_option_stops_at_the_separator() -> None:
