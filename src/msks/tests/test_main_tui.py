@@ -253,6 +253,20 @@ class FakeData:
             raise RuntimeError(self.refusal)
         return [dict(r) for r in self.secret_rows]
 
+    async def secret(self, placeholder_id: int) -> dict:
+        """The row's on-demand sentinel fetch (#440) — recorded;
+        the reply carries the row the listing serves plus its
+        sentinel (the daemon's per-row GET), never a value."""
+        self.secret_calls.append(("show", placeholder_id))
+        if "show-secret" in self.fail:
+            raise RuntimeError(self.refusal)
+        fresh = next(r for r in self.secret_rows if r["id"] == placeholder_id)
+        reply = dict(fresh)
+        reply["sentinel"] = (
+            "mskssec2_" if not fresh["workspaces"] else "mskssec1_"
+        ) + "t" * 43
+        return reply
+
     async def revoke_secret(self, placeholder_id: int) -> dict:
         """The secrets page's revoke (#390) — recorded; the row
         leaves with the listing."""
@@ -295,7 +309,7 @@ class FakeData:
     async def mint_secret(self, body: dict) -> dict:
         """The mint form's mint (#393) — recorded with its raw
         body (the value rides the record the way the wire does);
-        the reply carries the sentinel exactly once and never the
+        the reply carries the row with its sentinel, never the
         value, and the row lands on the page's listing without
         it."""
         self.secret_calls.append(("mint", dict(body)))
@@ -546,7 +560,7 @@ async def test_start_stop_and_remove_from_the_list(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await wait_for(lambda: list_children(app) == 1)
-        await press_until(pilot, "e", lambda: data.calls == [("start", WS)])
+        await press_until(pilot, "s", lambda: data.calls == [("start", WS)])
         await wait_for(lambda: "alpha running" in status_text(app))
         await press_until(pilot, "x", lambda: ("stop", WS) in data.calls)
         await wait_for(lambda: "alpha stopped" in status_text(app))
@@ -576,7 +590,7 @@ async def test_keys_without_a_focused_row_flash() -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await wait_for(lambda: list_children(app) == 0)
-        await pilot.press("e")
+        await pilot.press("s")
         await wait_for(lambda: "no workspace focused" in status_text(app))
         await pilot.press("D")
         await pilot.pause()
@@ -1894,7 +1908,22 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
                     "dests": ["api.github.com"],
                     "created_at": "2030-01-02T03:04:05",
                     "expires_at": None,
-                    "sentinel": "mskssec1_shown_once",
+                    "sentinel": "mskssec1_row",
+                },
+            )
+        if request.method == "GET" and request.url.path == (
+            "/api/v1/secrets/7"
+        ):
+            return httpx.Response(
+                200,
+                json={
+                    "id": 7,
+                    "workspaces": [],
+                    "name": "github_api",
+                    "dests": ["api.github.com"],
+                    "created_at": "2030-01-02T03:04:05",
+                    "expires_at": None,
+                    "sentinel": "mskssec2_row",
                 },
             )
         if request.method == "DELETE" and request.url.path == (
@@ -2049,9 +2078,15 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
     assert ("DELETE", "/api/v1/secrets/7") in seen
     assert ("POST", "/api/v1/secrets/7/renew") in seen
     assert ("GET", "/api/v1/secrets/audit") in seen
+    # The on-demand row fetch (#440): the per-row GET the page's
+    # Enter-on-a-row panel makes — the reply carrying the row's
+    # sentinel where the listing omits it.
+    shown = await data.secret(7)
+    assert shown["sentinel"] == "mskssec2_row"
+    assert ("GET", "/api/v1/secrets/7") in seen
     # The mint seams (#393): the store pre-flight and the mint
     # itself — the same exchanges the secret subcommands make,
-    # the reply carrying the value and the sentinel exactly once.
+    # the reply carrying the row and its sentinel, never the value.
     assert await data.secret_check() == {"provider": "files", "ok": True}
     row = await data.mint_secret(
         {
@@ -2061,7 +2096,7 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
             "value": "hunter2",
         }
     )
-    assert row["sentinel"] == "mskssec1_shown_once"
+    assert row["sentinel"] == "mskssec1_row"
     assert "value" not in row  # the operator's value never echoes
     assert minted == [
         {
@@ -2482,7 +2517,7 @@ async def test_the_status_column_carries_its_states_color(
         await wait_for(lambda: list_children(app) == 3)
         rows = app.query_one("#rows")
         # The listing's rows are the workspaces alone (#431: the
-        # branch row is gone; `s` opens the secrets page).
+        # branch row is gone; `e` opens the secrets page).
         workspace_rows = [
             child
             for child in rows.children
@@ -3036,7 +3071,7 @@ async def test_a_start_failure_and_a_remove_failure_flash(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await wait_for(lambda: "alpha" in row_text(app, 0))
-        await press_until(pilot, "e", lambda: ("start", WS) in data.calls)
+        await press_until(pilot, "s", lambda: ("start", WS) in data.calls)
         await wait_for(lambda: "start failed" in status_text(app))
         await press_until(
             pilot, "D", lambda: type(app.screen).__name__ == "ConfirmScreen"

@@ -4,8 +4,9 @@ Real secrets live in one age-encrypted **agefile** under the
 store root. The operator supplies each value at mint (a file or
 stdin on the CLI, a masked field on the TUI form); the daemon
 strips it at both ends, stores it through SecretSpec's ``age``
-provider, and never echoes it back — the mint reply carries the
-sentinel alone. Values ride the token-authenticated TLS API from
+provider, and never echoes it back — the mint reply and the
+on-demand row fetch (#440) carry the sentinel, not the value.
+Values ride the token-authenticated TLS API from
 the client machine to the daemon's, and the agefile and the age
 identity stay on the daemon's host; workspaces keep receiving
 only the sentinel.

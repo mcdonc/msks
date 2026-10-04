@@ -196,6 +196,20 @@ class TuiData:
             ssl_ctx=shared_ssl(),
         )
 
+    async def secret(self, placeholder_id: int) -> dict:
+        """GET one placeholder row with its sentinel (#440) — the
+        page's Enter-on-a-row fetch, the same exchange
+        ``GET /api/v1/secrets/<id>`` serves: the listing omits
+        sentinels, this reply carries the row's."""
+        return await api_call(
+            "GET",
+            env_url(),
+            env_token(),
+            f"/api/v1/secrets/{placeholder_id}",
+            transport=self.transport,
+            ssl_ctx=shared_ssl(),
+        )
+
     async def revoke_secret(self, placeholder_id: int) -> dict:
         """DELETE one placeholder row (#390) — the secrets page's
         revoke, the same exchange ``msks secret revoke`` makes: the
@@ -241,7 +255,7 @@ class TuiData:
     async def mint_secret(self, body: dict) -> dict:
         """POST one placeholder mint (#393) — the secrets page's
         form, the same exchange ``msks secret mint`` makes: the
-        reply carries the sentinel exactly once."""
+        reply carries the row with its sentinel."""
         return await api_call(
             "POST",
             env_url(),

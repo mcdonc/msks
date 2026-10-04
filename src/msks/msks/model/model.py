@@ -770,10 +770,10 @@ def workspace_fields(
 def placeholder_dict(row: Placeholder) -> dict:
     """The API-facing dict for a placeholder row.
 
-    The sentinel is included — mint's response prints it once — but
-    list views built from these dicts drop it ("never shown again").
-    ``workspaces`` is the coverage set (#339): ``[]`` is the
-    daemon-wide row.
+    The sentinel is included — mint's response and the on-demand
+    row fetch (#440) print it — but list views built from these
+    dicts drop it. ``workspaces`` is the coverage set (#339):
+    ``[]`` is the daemon-wide row.
     """
     return {
         "id": row.id,

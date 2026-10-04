@@ -113,9 +113,9 @@ def placeholder_view(row: dict, sentinel: bool = True) -> dict:
     """The API-facing view of a placeholder row (#198).
 
     The sentinel appears only when *sentinel* is set — mint's 201
-    carries it exactly once; every later view omits it. The value
-    appears in no view at all (#423): the operator supplied it at
-    mint and it is never echoed.
+    and the on-demand row fetch (#440) carry it; every listing
+    view omits it. The value appears in no view at all (#423):
+    the operator supplied it at mint and it is never echoed.
     ``workspaces`` is the row's coverage (#339): ``[]`` is the
     daemon-wide row.
     """
@@ -331,8 +331,8 @@ def router(app, hub) -> APIRouter:
                 with contextlib.suppress(SecretStoreError, OSError):
                     await sync_store_manifest()
                 raise HTTPException(status_code=503, detail=str(exc)) from None
-        # The sentinel appears in exactly one response: this one.
-        # Arming is placeholder-driven (#199): a scoped mint against
+        # The sentinel rides this reply and the on-demand row fetch
+        # (#440). Arming is placeholder-driven (#199): a scoped mint against
         # a running workspace redirects its web egress from here;
         # a daemon-wide mint redirects every attached workspace's
         # (#339). A mint that cannot arm stands or falls whole — a
@@ -391,9 +391,10 @@ def router(app, hub) -> APIRouter:
                 "ts": time.time(),
             },
         )
-        # The sentinel appears in exactly one response: this one.
-        # The value is the operator's own and rides no response at
-        # all (#423): it was supplied at mint and never echoed.
+        # The sentinel rides this reply and the on-demand row fetch
+        # (#440); the value is the operator's own and rides no
+        # response at all (#423): it was supplied at mint and never
+        # echoed.
         return Response(
             status_code=201,
             content=json.dumps(placeholder_view(row)),
@@ -542,6 +543,29 @@ def router(app, hub) -> APIRouter:
     @api.get("/api/v1/secrets/audit", dependencies=[Depends(require_token)])
     async def list_secret_audit() -> list[dict]:
         return await app.state.model.list_audit()
+
+    @api.get(
+        "/api/v1/secrets/{placeholder_id}",
+        dependencies=[Depends(require_token)],
+    )
+    async def get_secret(placeholder_id: int) -> dict:
+        """One placeholder row with its sentinel (#440),
+        token-gated — the fetch the TUI's Enter-on-a-row panel
+        makes. The listing omits sentinels; this reply carries
+        the row's, the same posture the probe endpoint serves
+        under (#424): a token holder already holds the daemon's
+        operator surface, so reading a sentinel back costs
+        nothing the holder does not already hold. The value
+        stays absent from every view (#423).
+
+        Registered below the audit route on purpose: FastAPI
+        matches in registration order, and a parameterized GET
+        above it would shadow the literal ``/audit`` path with a
+        422."""
+        row = await app.state.model.get_placeholder(placeholder_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="no such placeholder")
+        return placeholder_view(row)
 
     @api.put(
         "/api/v1/workspaces/{workspace_id}/secret-coverage",
