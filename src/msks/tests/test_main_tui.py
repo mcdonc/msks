@@ -617,7 +617,7 @@ async def test_ctrl_c_names_the_quit_key_instead_of_exiting(
         await pilot.press("ctrl+c")
         await pilot.pause()
         assert app.return_code is None
-        assert notes and "quit" in notes[0]
+        assert notes and "quit the app" in notes[0]
 
 
 async def test_ctrl_c_keeps_the_form_fields_copy_shortcut(
@@ -625,13 +625,9 @@ async def test_ctrl_c_keeps_the_form_fields_copy_shortcut(
 ) -> None:
     # (#442) Over a form field the focused Input keeps Ctrl+C as
     # its own copy shortcut — the key reaches no quit path, and
-    # the client keeps running.
-    notes: list[str] = []
-    monkeypatch.setattr(
-        main_app.MsksTuiApp,
-        "notify",
-        lambda self, message, **kw: notes.append(message),
-    )
+    # the copy itself runs (pinned on the Input's own action).
+    copies: list[object] = []
+    monkeypatch.setattr(Input, "action_copy", lambda self: copies.append(self))
     data = FakeData([])
     app, _ = make_app(data)
     async with app.run_test() as pilot:
@@ -641,8 +637,33 @@ async def test_ctrl_c_keeps_the_form_fields_copy_shortcut(
         assert app.focused is not None
         await pilot.press("ctrl+c")
         await pilot.pause()
+        assert len(copies) == 1
         assert app.return_code is None
+
+
+async def test_ctrl_c_over_a_stacked_panel_stays_silent(
+    monkeypatch,
+) -> None:
+    # (#442) The stock Textual modal behavior, pinned as the
+    # deliberate ask: over a stacked panel the modal chain cuts
+    # the App's ctrl+c binding, so the key copies nothing, shows
+    # nothing, and exits nothing. The consent overlay over an
+    # open page is that panel.
+    notes: list[str] = []
+    monkeypatch.setattr(
+        main_app.MsksTuiApp,
+        "notify",
+        lambda self, message, **kw: notes.append(message),
+    )
+    scripted_link(monkeypatch, [rules_frame(), request_frame("r9")])
+    app, _ = make_app(FakeData([row()]))
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: on_overlay(app))
+        await pilot.press("ctrl+c")
+        await pilot.pause()
         assert notes == []
+        assert app.return_code is None
 
 
 async def test_ctrl_q_quits_the_tree(monkeypatch) -> None:

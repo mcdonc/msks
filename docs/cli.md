@@ -555,13 +555,18 @@ page, a form field, or a panel stacked over them — the same
 clean exit `q` takes at the workspaces list, and it takes
 priority over the form field's shortcuts while a form field
 holds the focus. A bare Ctrl+C keeps the client running (#442):
-a form field holds it as the field's own copy shortcut, and
-every other screen answers it with a notification naming the
-quit key. Ctrl+Shift+C belongs to the terminal (#437): the TUI
+a form field holds it as the field's own copy shortcut, and the
+tree's own screens answer it with a notification naming the
+quit key. A stacked panel — a form, a confirmation, a picker,
+the consent overlay, the sentinel panel — leaves the key
+silent: nothing exits, nothing copies, nothing shows, the
+stock Textual modal behavior. Ctrl+Shift+C belongs to the
+terminal (#437): the TUI
 starts with the kitty keyboard protocol off, so a terminal that
 binds the combo to its own copy handles the gesture and the TUI
 never sees the key. A terminal that passes the key through sends
-the same byte as Ctrl+C, and the notification answers it — no
+the same byte as Ctrl+C, and the tree's own screens answer it
+with the notification — no
 path of the gesture exits the client. The TUI speaks the same REST
 surface the `msksc` commands speak (`MSKSC_URL`, `MSKSC_TOKEN`,
 `MSKSC_CAFILE`) and reads no daemon state directly.

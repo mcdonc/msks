@@ -190,13 +190,16 @@ class MsksTuiApp(App):
     # (#442) The exit keys are Textual's own, carried with no
     # override here: ctrl+q quits from every screen (a priority
     # binding on the App), and a bare ctrl+c names the quit key
-    # in a notification — on a form field the Input keeps ctrl+c
-    # as the field's own copy shortcut. The tree's q and Escape
-    # exits stand as they were. (#437) Ctrl+Shift+C stays the
-    # terminal's own gesture: the kitty keyboard protocol is off
-    # (the package's __init__), and a terminal that passes the
-    # key through sends Ctrl+C's byte — the notification answers
-    # it, so no path of the gesture exits the client.
+    # in a notification on the tree's own screens — a form field
+    # keeps ctrl+c as the field's own copy shortcut, and a
+    # stacked panel leaves the key silent (the modal chain cuts
+    # the App's binding; the stock Textual behavior). The tree's
+    # q and Escape exits stand as they were. (#437) Ctrl+Shift+C
+    # stays the terminal's own gesture: the kitty keyboard
+    # protocol is off (the package's __init__), and a terminal
+    # that passes the key through sends Ctrl+C's byte — the
+    # notification answers it on the tree's own screens, so no
+    # path of the gesture exits the client.
 
     def get_default_screen(self) -> Screen:
         """The tree's root: the workspaces list."""
