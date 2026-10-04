@@ -1908,7 +1908,22 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
                     "dests": ["api.github.com"],
                     "created_at": "2030-01-02T03:04:05",
                     "expires_at": None,
-                    "sentinel": "mskssec1_shown_once",
+                    "sentinel": "mskssec1_row",
+                },
+            )
+        if request.method == "GET" and request.url.path == (
+            "/api/v1/secrets/7"
+        ):
+            return httpx.Response(
+                200,
+                json={
+                    "id": 7,
+                    "workspaces": [],
+                    "name": "github_api",
+                    "dests": ["api.github.com"],
+                    "created_at": "2030-01-02T03:04:05",
+                    "expires_at": None,
+                    "sentinel": "mskssec2_row",
                 },
             )
         if request.method == "DELETE" and request.url.path == (
@@ -2063,6 +2078,12 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
     assert ("DELETE", "/api/v1/secrets/7") in seen
     assert ("POST", "/api/v1/secrets/7/renew") in seen
     assert ("GET", "/api/v1/secrets/audit") in seen
+    # The on-demand row fetch (#440): the per-row GET the page's
+    # Enter-on-a-row panel makes — the reply carrying the row's
+    # sentinel where the listing omits it.
+    shown = await data.secret(7)
+    assert shown["sentinel"] == "mskssec2_row"
+    assert ("GET", "/api/v1/secrets/7") in seen
     # The mint seams (#393): the store pre-flight and the mint
     # itself — the same exchanges the secret subcommands make,
     # the reply carrying the value and the sentinel exactly once.
@@ -2075,7 +2096,7 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
             "value": "hunter2",
         }
     )
-    assert row["sentinel"] == "mskssec1_shown_once"
+    assert row["sentinel"] == "mskssec1_row"
     assert "value" not in row  # the operator's value never echoes
     assert minted == [
         {

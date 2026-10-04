@@ -484,6 +484,22 @@ async def test_a_failed_sentinel_fetch_flashes_and_stays() -> None:
         assert on_secrets(app)
 
 
+async def test_a_selection_without_its_row_fetches_nothing() -> None:
+    """A Selected event whose row is already gone — a rebuild's
+    swap window — fetches nothing; the page stands (#440)."""
+    data = FakeData([])
+    data.secret_rows = [secret_row()]
+    app, _follow = make_app(data)
+    async with app.run_test() as pilot:
+        await open_secrets(pilot, app)
+        await wait_for(lambda: secrets_children(app) == 1)
+        event = SimpleNamespace(item=SimpleNamespace(secret_id=404))
+        app.screen.on_list_view_selected(event)
+        await pilot.pause()
+        assert data.secret_calls == []
+        assert on_secrets(app)
+
+
 # -- the mint form (#393) --------------------------------------------------
 
 
