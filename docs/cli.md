@@ -352,7 +352,13 @@ my-workspace` opens that workspace's page directly). The tree is
 rooted at the **workspaces list**: every workspace one row, with
 creating, starting, stopping, and removing on its keys (`c` new,
 `e` start, `x` stop, `D` remove — asked and confirmed — `r`
-refresh, and Enter opens the workspace's page). `s` opens the
+refresh, and Enter opens the workspace's page). A refused create
+opens the failure panel (#426): a centered panel over the list
+carrying the daemon's refusal verbatim beside the name the form
+submitted, waiting for dismissal — Enter, Escape, `q`, or the
+Close button — so the detail stays on screen while the operator
+reads it; closing it returns to the list, and a create that
+lands keeps today's flash note. `s` opens the
 **secrets** page (#431). Each row's status
 column carries the state's color (#348): a running workspace in
 the theme's success color, a stopped one in muted text, and any
@@ -405,9 +411,14 @@ one field), coverage — the daemon-wide row, or a multi-select
 fed by the tree's own workspace list — the lifetime (`unbounded`
 by default, an hour to thirty days beside it), and the value: a
 masked field the operator types or pastes into — the form takes
-the secret's bytes directly. The submit checks the secret store first (`msks secret
-check`'s endpoint), then mints; a refusal names itself on the
-form's note line and the fields stay filled for a retry. A mint
+the secret's bytes directly. The submit checks the secret store
+first (`msks secret
+check`'s endpoint), then mints; a refused mint opens the failure
+panel (#426) over the form — the daemon's refusal verbatim beside
+the name the form submitted — and a refused store check opens it
+with the daemon's refusal alone; either way it closes by hand
+(Enter, Escape, `q`, or the Close button), and the fields
+stay filled for a retry once it closes. A mint
 that lands replaces the form
 with the sentinel's one-time panel: the sentinel itself, its
 reach decoded from its

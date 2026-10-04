@@ -16,7 +16,8 @@ duration, and the generic one the audit view's filters take), the
 rules screen (in-effect verdicts, revoke), and the audit row
 rendering — plus the connection seams the page's
 :class:`~msks.client.tui.link.DeciderLink` dials through
-(``default_ws_factory``, the one shared TLS context). The protocol
+(``default_ws_factory``, the one shared TLS context) and the
+failure panel a refused create or mint opens (#426). The protocol
 logic lives in :mod:`msks.client.tui.consent`; this module is the
 view.
 
@@ -37,11 +38,18 @@ import websockets
 from rich.markup import escape
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.content import Content
 from textual.css.query import NoMatches
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Footer, ListItem, ListView, OptionList, Static
+from textual.widgets import (
+    Button,
+    Footer,
+    ListItem,
+    ListView,
+    OptionList,
+    Static,
+)
 
 from ..egress import events_url
 from ..env import env_token, env_url, ssl_context
@@ -455,6 +463,17 @@ def flash_safe(text: str) -> str:
     return re.sub(r"(?<!\\)\[/", r"\\\[/", escape(flat))
 
 
+def panel_safe(text: str) -> str:
+    """Escape free text for a panel's body, verbatim on screen:
+    the truncated-tag second pass emits Textual's own single
+    backslash, so a refusal echoing a bracket renders it with no
+    stray backslash beside it — where the status line's own pass
+    doubles it (a one-row surface whose wart predates the panel).
+    The line breaks stay: a panel wraps its lines, so a refusal's
+    own breaks ride through instead of collapsing to spaces."""
+    return re.sub(r"(?<!\\)\[/", r"\\[/", escape(text))
+
+
 def effective_allows(rules: EgressRules | None) -> bool:
     """Whether anything effectively allows egress under the
     snapshot (#280): a non-empty allowlist or an in-effect allowed
@@ -583,6 +602,62 @@ class ConfirmScreen(ModalScreen[bool]):
         """Dismiss and hand the answer to the callback."""
         self.dismiss()
         self._pick_task = asyncio.create_task(self.answered(answer))
+
+
+class FailurePanel(ModalScreen):
+    """A failed create or mint (#426): the daemon's refusal in a
+    panel that waits for dismissal — Enter, Escape, ``q``, or the
+    Close button — where a flash would drop the detail after
+    five seconds and a form note would squeeze it into one line.
+    The title names the verb and the identity the form submitted;
+    the body carries the daemon's detail verbatim, wrapping at
+    the panel's edge."""
+
+    BINDINGS = [
+        Binding("enter", "close", "Close", show=False),
+        Binding("q", "close", "Close"),
+        Binding("escape", "close", "Close", show=False),
+    ]
+
+    def __init__(self, verb: str, identity: str | None, detail: str) -> None:
+        super().__init__()
+        self.verb = verb
+        self.identity = identity
+        self.detail = detail
+
+    def heading(self) -> str:
+        """The panel's title line: the verb that failed and the
+        identity the form submitted (a store check names no
+        identity — its refusal belongs to no one body), escaped
+        for the markup parse the way the body is — a name
+        carrying a truncated closing tag renders literally, not
+        crashes the panel. A method, not an attribute — a
+        Screen's own ``title`` starts as None and would shadow
+        one."""
+        if self.identity is None:
+            return f"{self.verb} failed"
+        return f"{self.verb} failed: {panel_safe(self.identity)}"
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="failure-panel"):
+            yield Static(self.heading(), id="failure-title")
+            yield Static(panel_safe(self.detail), id="failure-detail")
+            with Horizontal(id="failure-buttons"):
+                yield Button(
+                    "Close", id="do-close", variant="primary", compact=True
+                )
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.query_one("#do-close", Button).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.action_close()
+
+    def action_close(self) -> None:
+        """Dismiss — the panel has no timeout; it leaves when the
+        operator closes it."""
+        self.dismiss()
 
 
 class DurationScreen(PickerScreen):
