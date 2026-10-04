@@ -351,8 +351,8 @@ workspace tree (`msks tui` names the same command, and `msks tui
 my-workspace` opens that workspace's page directly). The tree is
 rooted at the **workspaces list**: every workspace one row, with
 creating, starting, stopping, and removing on its keys (`c` new,
-`e` start, `x` stop, `D` remove — asked and confirmed — `r`
-refresh, and Enter opens the workspace's page). A refused create
+`s` start, `x` stop, `D` remove — asked and confirmed — `e`
+secrets, `r` refresh, and Enter opens the workspace's page). A refused create
 opens the failure panel (#426): a centered panel over the list
 carrying the daemon's refusal verbatim beside the name the form
 submitted, waiting for dismissal — Enter, Escape, `q`, or the
@@ -382,7 +382,7 @@ created date reads on the workspace page's header.
 
 A placeholder row is a daemon-wide object (its coverage set
 crosses workspaces, and the daemon-wide row belongs to none of
-them), so the secrets page lives at the tree's level: `s` on the
+them), so the secrets page lives at the tree's level: `e` on the
 workspaces list opens it.
 
 The **secrets page** lists every placeholder row the daemon
@@ -420,17 +420,19 @@ with the daemon's refusal alone; either way it closes by hand
 (Enter, Escape, `q`, or the Close button), and the fields
 stay filled for a retry once it closes. A mint
 that lands replaces the form
-with the sentinel's panel: the sentinel itself, its
-reach decoded from its
-prefix (`mskssec1_` scoped to the chosen
-workspaces, `mskssec2_` every accepting workspace), a `c` copy
+with the sentinel's panel: the sentinel opens masked — its
+prefix names the reach (`mskssec1_` scoped to the chosen
+workspaces, `mskssec2_` every accepting workspace), the body
+renders as bullets — with an `s` Show action that reveals and
+hides it again, and a `c` copy
 action that writes the sentinel to the terminal's clipboard over
 OSC 52 — the copy path a terminal that honors the sequence
-answers, over ssh included — and the closing
+answers, over ssh included, with no reveal needed — and the closing
 rule: the display ends with the panel. Enter (or a click) on a
 listing row opens the panel again (#440): the page fetches the
-row's sentinel from the daemon and shows it with the same copy
-action — the sentinel reads back on demand, at mint and after.
+row's sentinel from the daemon and shows it with the same show
+and copy actions — the sentinel reads back on demand, at mint
+and after.
 Closing the panel clears its text, and the minted row
 stands on the page's list. The placeholder-to-workspace
 navigation lands with the cross-references (#394).

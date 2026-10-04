@@ -247,9 +247,11 @@ check`'s endpoint) before it mints, and a refusal — a store that
 cannot answer writes, a name collision on the chosen coverage
 set, a blank value — names itself on the form with the fields
 kept for a retry. A successful mint answers with the sentinel's
-panel: the sentinel, its reach decoded from its prefix,
-an OSC 52 clipboard copy (over ssh included, where the terminal
-honors it), and the rule that the display ends with the panel.
+panel: the sentinel opens masked — its prefix names the reach,
+the body renders as bullets — with a Show action that reveals
+and hides it again, an OSC 52 clipboard copy (over ssh included,
+where the terminal honors it — the copy needs no reveal), and
+the rule that the display ends with the panel.
 Enter (or a click) on a listing row opens the same panel again
 (#440): the page fetches the row's sentinel from the daemon and
 shows it, so the sentinel reads back on demand — the panel is
