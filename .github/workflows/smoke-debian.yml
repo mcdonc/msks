@@ -119,7 +119,7 @@ jobs:
           TEST_CONSOLE_TIMEOUT_S: "120"
           TEST_SHUTDOWN_TIMEOUT_S: "180"
         run: |
-          set -o pipefail
+          set -eo pipefail
           devenv --quiet -O dotenv.enable:bool false shell -- \
             python -m pytest src/msks/tests/test_smoke/core \
             -v -rs -p no:cacheprovider --no-cov 2>&1 \

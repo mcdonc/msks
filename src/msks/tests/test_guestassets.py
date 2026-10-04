@@ -468,6 +468,29 @@ def test_the_nixos_image_is_rebuild_ready() -> None:
     # one level deep), with the image-build marker beside it.
     assert "eval-config.nix" in build
     assert "./guest-nixos-configuration.nix" in build
+    # The search path ships as a LIST (#433): nix.conf separates
+    # search-path entries on whitespace, so a colon-joined string
+    # renders as one dead entry and `<nixos-config>` resolves
+    # nowhere for the stripped-env callers — the #427 fold unit
+    # shipped exactly that. One list feeds both surfaces (nix.conf
+    # and every login shell's NIX_PATH), and the build refuses a
+    # colon on the nix-path line outright.
+    assert "nixSearchPath = [" in configuration
+    assert "nix.settings.nix-path = nixSearchPath;" in configuration
+    assert "nix.nixPath = nixSearchPath;" in configuration
+    assert "! grep '^nix-path = .*:'" in build
+    # The entry supplies the module's imageBuild marker (#433): an
+    # unprovided module argument errors at rebuild time even with
+    # a head default, so the shipped configuration.nix carries the
+    # runtime answer — false — itself.
+    assert "_module.args.imageBuild = false;" in build
+    # The build evaluates the shipped /etc/nixos exactly as a
+    # guest rebuild does — the nixos-system entrypoint with
+    # nixos-config pointed at the tree's copy — so a shipped
+    # configuration a rebuild cannot evaluate fails the image
+    # build, not the fold unit on a workspace's first boot.
+    assert "nix-instantiate --eval-only" in build
+    assert "-A config.system.build.toplevel.outPath" in build
     # The vsock port guard (#274 review): the extraction duplicated
     # vsockShellPort across two files — the build asserts the
     # module's service unit carries the same port the manifest

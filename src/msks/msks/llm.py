@@ -665,7 +665,18 @@ class TapListener:
             self._app,
             host=self.tap_ip,
             port=self.port,
-            log_level="warning",
+            # No log_level and no log_config: uvicorn's loggers are
+            # process-global by name, and a Config's load() applies
+            # its own level to the shared "uvicorn.error" logger —
+            # an embedded "warning" would then silence the outer
+            # server's INFO records for the rest of the process
+            # life (its "Application shutdown complete." among
+            # them: the shutdown itself runs, its proof vanishes).
+            # The embedded server stays quiet by shape — lifespan
+            # off, access log off, sockets handed in — so it has
+            # nothing to configure globally.
+            log_config=None,
+            log_level=None,
             access_log=False,
             lifespan="off",
             # TLS material when the listener serves HTTPS (the probe
@@ -680,7 +691,20 @@ class TapListener:
             timeout_graceful_shutdown=5,
         )
         server = uvicorn.Server(config)
-        server.install_signal_handlers = lambda: None
+        # An embedded server has no business owning the process's
+        # signals — and in this uvicorn line, serve() arms them
+        # unconditionally: capture_signals installs (and on exit
+        # restores) process-wide SIGTERM/SIGINT handlers, swapping
+        # whatever the outer server armed. A tap listener stopping
+        # mid-teardown then leaves a dead server's handler in the
+        # slot: a later SIGTERM sets a stopped server's flag while
+        # the live one never learns, and the daemon dies by the
+        # signal with no graceful shutdown — the shape the daemon
+        # e2e started failing with once the probe listener (#424)
+        # put a second embedded server on a tap. Neutralized
+        # per-instance; the process's signals stay the outer
+        # server's own.
+        server.capture_signals = contextlib.nullcontext
         self._server = server
         self._task = asyncio.create_task(server.serve(sockets=[self._sock]))
 
