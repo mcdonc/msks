@@ -15,11 +15,11 @@ already lives: in ``terminal_open_cmd``'s own prefix.
 Four roles share this module, spelled as the first argument:
 
 ``launch``
-    The console entry the operator's prefix runs. Names the
-    window per ``MSKSC_TERMINAL_TITLE`` when the setting is in
-    place (#445), validates tmux, names a fresh session after the
-    workspace on a dedicated socket (a server of its own, so the
-    pane inherits this process's environment — an operator's
+    The console entry the operator's prefix runs. Validates tmux,
+    names the window per ``MSKSC_TERMINAL_TITLE`` when the setting
+    is in place (#445), names a fresh session after the workspace
+    on a dedicated socket (a server of its own, so the pane
+    inherits this process's environment — an operator's
     already-running tmux server would otherwise substitute its
     own — and the session stays out of their window list), and
     becomes the attached tmux client (``tmux -L <socket>
@@ -186,19 +186,20 @@ def split_role(args: list[str]) -> tuple[str, list[str]]:
 
 def run_launch(argv: list[str]) -> int:
     """The launcher (#379): a missing tmux names itself and stops
-    before a window could open half-way; otherwise name the window
-    for the operator when ``MSKSC_TERMINAL_TITLE`` configured a
-    title (#445), then become the tmux client attached to a fresh
-    session (one that ends with this window) whose pane runs this
-    module's pane role with the appended command. The terminal
-    window itself is whatever the operator's prefix opened — this
-    process already runs inside it."""
+    before a window could open half-way — its title included; a
+    configured title (``MSKSC_TERMINAL_TITLE``) names the window
+    only once tmux is there to fill it (#445). Then become the
+    tmux client attached to a fresh session (one that ends with
+    this window) whose pane runs this module's pane role with the
+    appended command. The terminal window itself is whatever the
+    operator's prefix opened — this process already runs inside
+    it."""
     workspace_id = workspace_from_argv(argv)
+    if shutil.which("tmux") is None:
+        raise SystemExit("msks-term-popup: tmux is not on PATH")
     title = configured_title(workspace_id)
     if title is not None:
         set_window_title(title)
-    if shutil.which("tmux") is None:
-        raise SystemExit("msks-term-popup: tmux is not on PATH")
     os.execvp(
         "tmux",
         session_argv(argv, session_name(workspace_id), workspace_id),
@@ -574,9 +575,9 @@ def span(on: bool, code: str, text: str) -> str:
 def configured_title(workspace_id: str | None) -> str | None:
     """The window title the operator configured (#445):
     ``MSKSC_TERMINAL_TITLE``'s template with ``{workspace}``
-    resolved to the session's name — the workspace, or ``shell``
-    for a child naming none. None (the setting unset, or blank)
-    leaves the terminal emulator's own title in place."""
+    resolved to the session's name — the workspace's id, or
+    ``shell`` for a child naming none. None (the setting unset, or
+    blank) leaves the terminal emulator's own title in place."""
     template = os.environ.get(TITLE_ENV_VAR, "")
     if not template.strip():
         return None
@@ -586,14 +587,17 @@ def configured_title(workspace_id: str | None) -> str | None:
 def set_window_title(title: str) -> None:
     """Name the terminal window this launcher runs in (#445): one
     OSC 0 sequence, the title-setting escape every terminal that
-    runs a command honors. Written before the tmux client takes
+    runs a command honors. Control characters drop out of the
+    title first — a BEL would end the OSC early and an ESC would
+    start a live sequence. Written before the tmux client takes
     the screen — the launch's own server pins ``set-titles`` off
     (:func:`session_argv`), so the title stays for the window's
     lifetime — and a stdout that is not a terminal (a piped
     hand-run) stays clean."""
     if not sys.stdout.isatty():
         return
-    sys.stdout.write(f"\x1b]0;{title}\x07")
+    clean = "".join(c for c in title if c >= " " and c != "\x7f")
+    sys.stdout.write(f"\x1b]0;{clean}\x07")
     sys.stdout.flush()
 
 

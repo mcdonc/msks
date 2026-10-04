@@ -318,6 +318,21 @@ def test_run_launch_names_a_missing_tmux(
         tp.run_launch(list(SSH_CHILD))
 
 
+def test_a_missing_tmux_leaves_the_window_title_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The refusal path stops before the window could open
+    # half-way — its title included: a configured template never
+    # reaches a window tmux is not there to fill.
+    monkeypatch.setattr(tp.shutil, "which", lambda tool: None)
+    monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "msks — {workspace}")
+    out = Tty()
+    monkeypatch.setattr(tp.sys, "stdout", out)
+    with pytest.raises(SystemExit, match="tmux is not on PATH"):
+        tp.run_launch(list(SSH_CHILD))
+    assert out.getvalue() == ""
+
+
 def test_run_launch_execs_the_tmux_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -400,6 +415,18 @@ def test_set_window_title_leaves_a_pipe_clean(
     monkeypatch.setattr(tp.sys, "stdout", out)
     tp.set_window_title("msks — ws")
     assert out.getvalue() == ""
+
+
+def test_set_window_title_drops_control_characters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A BEL in the title would end the OSC early and an ESC would
+    # start a live sequence — the title carries neither through;
+    # the printable characters around them stay.
+    out = Tty()
+    monkeypatch.setattr(tp.sys, "stdout", out)
+    tp.set_window_title("a\x07b\x1b[2mc\nd\x7f")
+    assert out.getvalue() == "\x1b]0;ab[2mcd\x07"
 
 
 def test_the_launch_line_meets_the_pane_role(

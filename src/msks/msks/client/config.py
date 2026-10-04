@@ -91,9 +91,10 @@ CONFIG_FILENAME = "msks.yaml"
 #: ``identity_file`` names the operator's own private key file
 #: (#336) and is global-only (no per-alias form): an identity
 #: belongs to the operator, not to a daemon connection.
-#: ``terminal_title`` names the consent window's title (#445) and
-#: is global-only the same way: the window belongs to the
-#: operator's desktop, not to a daemon connection.
+#: ``terminal_title`` names the window title msks-term-popup
+#: writes to the terminal it runs in (#445) and is global-only
+#: the same way: the window belongs to the operator's desktop,
+#: not to a daemon connection.
 GLOBAL_ENV_VARS: dict[str, str] = {
     "url": "MSKSC_URL",
     "token_file": "MSKSC_TOKEN",
@@ -114,10 +115,10 @@ DAEMON_ENTRY_KEYS = ("url", "token_file", "cafile", "expected_image")
 #: of the file value, overriding it for one shell.
 TERMINAL_ENV_VAR = "MSKSC_TERMINAL_OPEN_CMD"
 
-#: The consent window's title template (#445): the variable the
-#: launcher reads once it runs inside the window the prefix
-#: opened — the file's value reaches it through :func:`apply`'s
-#: materialization, the way every file-derived setting rides.
+#: The window-title template (#445): the variable the launcher
+#: reads once it runs inside the window the prefix opened — the
+#: file's value reaches it through :func:`apply`'s materialization,
+#: the way every file-derived setting rides.
 TITLE_ENV_VAR = "MSKSC_TERMINAL_TITLE"
 
 #: The remembered-passthrough setting's variable (#385): the string
@@ -310,12 +311,12 @@ def valid_top_level_keys() -> list[str]:
 def scalar_value(key: str, value: object, path: str) -> str | None:
     """One scalar global key's value: a string, or the unset form.
 
-    Every scalar key here names a URL, a path, or a reference —
-    YAML's native numbers and booleans have no meaning for any of
-    them, so a bare one is a typo held up at load instead of
-    stringifying into a URL like ``8660``. Null and the empty
-    string are the unset form (an explicit empty beats a silent
-    default: neither overrides anything).
+    Every scalar key here names a URL, a path, a reference, or a
+    window-title template — YAML's native numbers and booleans
+    have no meaning for any of them, so a bare one is a typo held
+    up at load instead of stringifying into a URL like ``8660``.
+    Null and the empty string are the unset form (an explicit empty
+    beats a silent default: neither overrides anything).
     """
     if value is None or value == "":
         return None
@@ -903,7 +904,7 @@ def render_template() -> str:
 # terminal_title: msks — {workspace} # the window title msks-term-popup
 #                                # writes to the terminal it runs in
 #                                # (#445); {workspace} resolves to the
-#                                # workspace's name; unset leaves the
+#                                # workspace's id; unset leaves the
 #                                # terminal emulator's own title
 # ssh_options:                  # ssh options remembered for every ssh
 #                                # session msks runs — msks ssh, the
