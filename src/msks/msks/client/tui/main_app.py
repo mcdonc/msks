@@ -192,8 +192,9 @@ class MsksTuiApp(App):
     # binding on the App), and a bare ctrl+c names the quit key
     # in a notification on the tree's own screens — a form field
     # keeps ctrl+c as the field's own copy shortcut, and a
-    # stacked panel leaves the key silent (the modal chain cuts
-    # the App's binding; the stock Textual behavior). The tree's
+    # stacked panel away from its fields leaves the key silent
+    # (the modal chain cuts the App's binding; the stock Textual
+    # behavior). The tree's
     # q and Escape exits stand as they were. (#437) Ctrl+Shift+C
     # stays the terminal's own gesture: the kitty keyboard
     # protocol is off (the package's __init__), and a terminal
