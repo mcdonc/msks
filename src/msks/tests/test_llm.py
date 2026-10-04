@@ -566,6 +566,34 @@ async def test_tap_listener_serves_real_http_and_stops() -> None:
     assert listener._task is None
 
 
+async def test_tap_listener_leaves_process_logging_and_signals_alone() -> None:
+    """The embedded server configures nothing global (#433 fix).
+
+    uvicorn's Config applies its log level to the shared
+    "uvicorn.error" logger at load time, and its serve() wraps
+    itself in process-wide signal capture — an embedded "warning"
+    silenced the outer server's INFO records for the rest of the
+    process life (its "Application shutdown complete." proof among
+    them; the shutdown itself ran), and the capture swapping
+    handlers on a listener's stop left the outer server's arm
+    disarmed. The listener's config carries no level and no config,
+    and its serve captures no signals.
+    """
+    import contextlib
+
+    proxy = proxy_under_test({}, llm_settings(()))
+    listener = TapListener(proxy.proxy_app, tap_ip="127.0.0.1", port=0)
+    await proxy.start_listener("ws1", listener)
+    try:
+        config = listener._server.config
+        assert config.log_level is None
+        assert config.log_config is None
+        assert listener._server.capture_signals is contextlib.nullcontext
+        assert not hasattr(listener._server, "install_signal_handlers")
+    finally:
+        await proxy.stop_listener("ws1")
+
+
 async def test_listener_bind_failure_unregisters_the_mapping() -> None:
     proxy = proxy_under_test({"ws1": {"id": "ws1", "llm_token": TOKEN}})
     squatter = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

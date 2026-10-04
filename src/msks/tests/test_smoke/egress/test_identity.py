@@ -727,9 +727,11 @@ async def test_local_client_minted_identity() -> None:
                 raise AssertionError("the test API server never started (30s)")
             await asyncio.sleep(0.05)
 
-        # The client mint is the create default (#121): the POST
-        # carries the public half only, and the private half lands
-        # mode 0600 under the client data root after the create.
+        # The client mint is explicit (#336 made the operator's
+        # own key the bare-create default, so #121's mint is
+        # opted into): the POST carries the public half only, and
+        # the private half lands mode 0600 under the client data
+        # root after the create.
         created = await cli(
             "create",
             wid,
@@ -742,6 +744,8 @@ async def test_local_client_minted_identity() -> None:
             "--egress",
             "--user",
             "alice",
+            "--key-type",
+            "ed25519",
         )
         assert created.returncode == 0, created.stderr
         # The client mint lands under the minted id (#246).
@@ -1060,7 +1064,7 @@ async def test_local_operator_pubkey() -> None:
         refused = await cli("key", wid, "--private")
         assert refused.returncode != 0
         assert "holds no private half" in refused.stderr
-        assert "supplied from a key you already own" in refused.stderr
+        assert "it is the operator's own key" in refused.stderr
 
         started = await cli("start", wid)
         assert started.returncode == 0, started.stderr

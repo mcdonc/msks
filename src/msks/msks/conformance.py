@@ -88,6 +88,15 @@ FORWARDING = Path("/proc/sys/net/ipv4/ip_forward")
 #: text would match the echo and pass without the command's output.
 PROBE_TIMEOUT_S = 30.0
 RETRY_SLEEP_S = 2.0
+#: The probe's own #75 retries: a console that accepts the
+#: connection and echoes while the shell behind it never reaches
+#: its first prompt wedges exactly one session, and a wedged
+#: session answers nothing for the whole budget — the address
+#: probe of the egress pass met one on every run (the guest held
+#: its DHCP address; the single session never delivered it). The
+#: same fresh-session loop await_console retries with, at probe
+#: granularity.
+PROBE_ATTEMPTS = 3
 
 
 @dataclass(frozen=True)
@@ -159,24 +168,31 @@ async def probe(
     marker: str,
     user: str | None,
 ) -> None:
-    """One shell command over the vsock console, marker round-trip.
-
-    A fresh session per call: a console that accepts the connection
-    and echoes while the shell behind it stalls (the slow-boot
-    shape the smoke harness documents) is retried by the caller's
-    loop, never trusted on its echo alone. The per-round-trip
-    budget is read off the module at call time so a test (or an
-    embedder) can tighten it.
+    """One shell command over the vsock console, marker round-trip
+    — retried on a fresh session while the shell behind the pty
+    stalls (#75: the line discipline echoes while the shell never
+    reaches its first prompt, and a wedged session answers nothing
+    for its whole budget). The per-round-trip budget is read off
+    the module at call time so a test (or an embedder) can tighten
+    it.
     """
-    reader, writer = await microvm.console(workspace_id, user=user)
-    try:
-        writer.write(command.encode() + b"\n")
-        await writer.drain()
-        await read_until(reader, marker.encode(), PROBE_TIMEOUT_S)
-    finally:
-        writer.close()
-        with contextlib.suppress(Exception):
-            await writer.wait_closed()
+    last: BaseException = TimeoutError("no attempt was made")
+    for _ in range(PROBE_ATTEMPTS):
+        try:
+            reader, writer = await microvm.console(workspace_id, user=user)
+            try:
+                writer.write(command.encode() + b"\n")
+                await writer.drain()
+                await read_until(reader, marker.encode(), PROBE_TIMEOUT_S)
+                return
+            finally:
+                writer.close()
+                with contextlib.suppress(Exception):
+                    await writer.wait_closed()
+        except (OSError, TimeoutError) as exc:
+            last = exc
+            await asyncio.sleep(RETRY_SLEEP_S)
+    raise last
 
 
 async def await_console(
