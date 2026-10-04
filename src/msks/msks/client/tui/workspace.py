@@ -501,11 +501,6 @@ class WorkspaceScreen(Screen):
         self.flash_line.set(message)
         self.paint_consent()
 
-    def copy_text(self) -> str | None:
-        """(#437) Ctrl+Shift+C's payload: the page's own workspace
-        label — the everyday reference an operator pastes."""
-        return workspace_label(self.row)
-
     async def guarded_page_flash(self, label: str, work):
         """Await one page action, flashing the failure on the
         page's consent line — the app-level guard paints the

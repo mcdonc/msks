@@ -538,20 +538,12 @@ Ctrl+C exits the client from any screen — the tree, a page, a
 form field, or a panel stacked over them — the same clean exit
 `q` takes at the workspaces list, and it takes priority over the
 form field's copy shortcut while a form field holds the focus.
-Ctrl+Shift+C copies to the clipboard from any screen (#437): the
-focused workspace's name on the workspaces list and the workspace
-page, the focused placeholder's name on the secrets page and its
-audit view, the focused field's selection on the create, edit, and
-mint forms, and the sentinel itself on the mint's one-time panel —
-each copy rides the same OSC 52 path the panel's `c` copy takes.
-The screen's status line names what landed when it holds one
-(the list and the pages); a screen without its own line answers
-with a toast. A screen with nothing to copy says that and keeps
-running. A terminal that keeps the legacy input encoding sends
-Ctrl+C's byte for both gestures, so the reflex reads as Ctrl+C
-there and quits — a terminal that speaks a disambiguating
-protocol (the kitty keyboard protocol among them) delivers the
-key separately, and the copy lands there. The TUI speaks the same REST
+Ctrl+Shift+C belongs to the terminal (#437): the TUI starts with
+the kitty keyboard protocol off, so a terminal that binds the
+combo to its own copy handles the gesture and the TUI never
+sees the key. A terminal that passes the key through sends the
+same byte as Ctrl+C, and the exit above answers it — the two
+gestures cannot be told apart on that encoding. The TUI speaks the same REST
 surface the `msksc` commands speak (`MSKSC_URL`, `MSKSC_TOKEN`,
 `MSKSC_CAFILE`) and reads no daemon state directly.
 

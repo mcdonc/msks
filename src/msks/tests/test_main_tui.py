@@ -9,6 +9,7 @@ tests.
 
 import asyncio
 import json
+import os
 import stat
 import sys
 import time
@@ -613,136 +614,40 @@ async def test_ctrl_c_quits_over_the_consent_overlay(monkeypatch) -> None:
         assert app.return_code == 0
 
 
-# -- Ctrl+Shift+C: the copy reflex (#437) ----------------------------------
+# -- Ctrl+Shift+C: the terminal's own gesture (#437) -----------------------
 
 
-async def test_ctrl_shift_c_copies_the_focused_workspace_label(
+def test_the_tui_leaves_the_kitty_keyboard_protocol_off(monkeypatch) -> None:
+    """(#437) The tree asks the terminal for no kitty keyboard
+    protocol: textual's default would deliver every key to the
+    app and take the terminal's own Ctrl+Shift+C copy away. The
+    package init sets the flag before textual reads it, and an
+    operator's explicit choice stays authoritative."""
+    import importlib
+
+    import msks.client.tui as tui_pkg
+
+    assert os.environ.get("TEXTUAL_DISABLE_KITTY_KEY") == "1"
+    monkeypatch.setenv("TEXTUAL_DISABLE_KITTY_KEY", "0")
+    importlib.reload(tui_pkg)
+    assert os.environ["TEXTUAL_DISABLE_KITTY_KEY"] == "0"
+
+
+async def test_ctrl_shift_c_reaches_no_binding_and_the_tree_keeps_running(
     monkeypatch,
 ) -> None:
-    """(#437) Ctrl+Shift+C — the terminal-wide copy reflex — hands
-    the focused row's label to the OSC 52 copy and the tree keeps
-    running; the list's status line names the copy. The two keys
-    read apart only where the terminal disambiguates them (the
-    kitty keyboard protocol among them), so the binding answers
-    the disambiguated key — on a terminal that keeps the legacy
-    encoding the byte arrives as Ctrl+C and quits (#388)."""
-    copied: list[str] = []
-
-    def record_copy(app, text) -> bool:
-        copied.append(text)
-        return True
-
-    monkeypatch.setattr(main_app, "osc52_copy", record_copy)
+    """(#437) The tree handles no Ctrl+Shift+C itself: no binding
+    answers the key — the terminal's own shortcut owns the gesture
+    — and the tree keeps running when one arrives anyway (a
+    terminal that speaks the kitty protocol against the flag
+    delivers the key separately)."""
     data = FakeData([row()])
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await wait_for(lambda: "alpha" in row_text(app, 0))
-        assert "ctrl+shift+c" in app.screen.active_bindings
-        await press_until(pilot, "ctrl+shift+c", lambda: copied == ["alpha"])
-        await wait_for(lambda: "copied to the clipboard" in status_text(app))
-        assert "OSC 52" in status_text(app)
-        assert app.return_code is None
-
-
-async def test_ctrl_shift_c_with_nothing_to_copy_flashes() -> None:
-    """(#437) A screen with nothing to copy answers the reflex
-    with a flash and stays running."""
-    data = FakeData([])
-    app, _ = make_app(data)
-    async with app.run_test() as pilot:
-        await wait_for(lambda: list_children(app) == 0)
-        await press_until(
-            pilot,
-            "ctrl+shift+c",
-            lambda: "nothing to copy" in status_text(app),
-        )
-        assert app.return_code is None
-
-
-async def test_ctrl_shift_c_names_a_copy_that_did_not_land(
-    monkeypatch,
-) -> None:
-    """(#437) A copy with no driver to write through names that on
-    the status line — the sentinel panel's own rule, carried to
-    the reflex."""
-    monkeypatch.setattr(main_app, "osc52_copy", lambda app, text: False)
-    data = FakeData([row()])
-    app, _ = make_app(data)
-    async with app.run_test() as pilot:
-        await wait_for(lambda: "alpha" in row_text(app, 0))
-        await press_until(
-            pilot,
-            "ctrl+shift+c",
-            lambda: "the copy did not land" in status_text(app),
-        )
-        assert "no terminal to write through" in status_text(app)
-
-
-async def test_ctrl_shift_c_copies_the_page_workspace_label(
-    monkeypatch,
-) -> None:
-    """(#437) On the workspace page the reflex copies the page's
-    own workspace label, and the page's consent line names the
-    copy (the pushed page hides the app's status line, #343)."""
-    copied: list[str] = []
-
-    def record_copy(app, text) -> bool:
-        copied.append(text)
-        return True
-
-    monkeypatch.setattr(main_app, "osc52_copy", record_copy)
-    scripted_link(monkeypatch, [])
-    data = FakeData([row()])
-    app, _ = make_app(data)
-    async with app.run_test() as pilot:
-        await open_page(pilot, app)
-        await press_until(pilot, "ctrl+shift+c", lambda: copied == ["alpha"])
-        await wait_for(lambda: "copied to the clipboard" in consent_text(app))
-        assert app.return_code is None
-
-
-async def test_ctrl_shift_c_on_a_modal_form_copies_the_fields_selection(
-    monkeypatch,
-) -> None:
-    """(#437) A modal screen cuts the app's binding out of the
-    dispatch chain, so the reflex rides the key handler there:
-    the focused field's selection rides the OSC 52 copy, the form
-    — a screen with no flash line of its own — names the outcome
-    with a toast, and an empty selection says that instead. The
-    tree keeps running either way."""
-    copied: list[str] = []
-    toasts: list[str] = []
-
-    def record_copy(app, text) -> bool:
-        copied.append(text)
-        return True
-
-    monkeypatch.setattr(main_app, "osc52_copy", record_copy)
-    monkeypatch.setattr(
-        main_app.MsksTuiApp,
-        "notify",
-        lambda self, message, **kw: toasts.append(message),
-    )
-    data = FakeData([])
-    app, _ = make_app(data)
-    async with app.run_test() as pilot:
-        await wait_for(lambda: list_children(app) == 0)
-        await pilot.press("c")
-        await wait_for(lambda: type(app.screen).__name__ == "CreateScreen")
-        field = app.screen.query_one("#field-name", Input)
-        field.value = "gamma"
-        field.select_all()
+        assert "ctrl+shift+c" not in app.screen.active_bindings
+        await pilot.press("ctrl+shift+c")
         await pilot.pause()
-        await press_until(pilot, "ctrl+shift+c", lambda: copied == ["gamma"])
-        assert toasts == [
-            "copied to the clipboard — where the terminal honors OSC 52"
-        ]
-        assert app.return_code is None
-        field.value = ""  # an empty selection: nothing to copy
-        await press_until(
-            pilot, "ctrl+shift+c", lambda: toasts[-1:] == ["nothing to copy"]
-        )
-        assert copied == ["gamma"]
         assert app.return_code is None
 
 

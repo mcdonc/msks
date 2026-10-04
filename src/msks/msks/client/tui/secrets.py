@@ -458,13 +458,6 @@ class SecretsScreen(Screen):
             return None
         return next((row for row in self.rows if row["id"] == secret_id), None)
 
-    def copy_text(self) -> str | None:
-        """(#437) Ctrl+Shift+C's payload: the focused
-        placeholder's name — the sentinel itself rides only the
-        one-time panel's own copy key, never a reflex."""
-        row = self.focused_row()
-        return row.get("name") if row is not None else None
-
     def action_revoke(self) -> None:
         """Ask first (#390: a revoke retires the row everywhere at
         once), then delete through the data seam."""
@@ -786,23 +779,6 @@ class SecretAuditScreen(Screen):
             self.query_one("#audit-status", Static).update(line)
         except NoMatches:
             pass
-
-    def copy_text(self) -> str | None:
-        """(#437) Ctrl+Shift+C's payload: the focused event row's
-        placeholder name — the audit vocabulary the secrets page
-        copies, None when no row holds the focus."""
-        seq = focused_event_id(self.rows_widget())
-        if seq is None:
-            return None
-        event = next(
-            (
-                event
-                for event in self.link_or_stub().controller.events
-                if event.seq == seq
-            ),
-            None,
-        )
-        return event.name if event is not None else None
 
     # -- the filters -------------------------------------------------------
 
@@ -1213,14 +1189,10 @@ class SentinelPanel(ModalScreen):
     the sequence answers, over ssh included; a terminal that
     does not honors nothing and the sentinel stays on the panel
     until it closes. Closing clears the panel's text: the
-    sentinel leaves no trace in the widget tree behind it.
-    Ctrl+Shift+C rides the same copy (#437) — the terminal-wide
-    reflex takes the panel's own path, so the note names the
-    outcome where the operator reads it."""
+    sentinel leaves no trace in the widget tree behind it."""
 
     BINDINGS = [
         Binding("c", "copy", "Copy"),
-        Binding("ctrl+shift+c", "copy", show=False),
         Binding("q", "close", "Close"),
         Binding("escape", "close", "Close", show=False),
     ]

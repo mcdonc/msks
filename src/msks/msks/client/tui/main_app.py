@@ -39,7 +39,6 @@ from .consent_ui import FlashLine, flash_safe, shared_ssl
 from .data import TuiData
 from .follow import TuiFollow, run_follow_up
 from .main_screen import MainScreen
-from .secrets import osc52_copy
 from .workspace import WorkspaceScreen
 
 
@@ -186,25 +185,15 @@ class MsksTuiApp(App):
         # binding and ahead of its stock ctrl+c nag (a notification
         # saying to press q), so the terminal reflex lands — the
         # app exits exactly as the tree's q does, and the follow-up
-        # loop reads the operator's quit.
+        # loop reads the operator's quit. (#437) Ctrl+Shift+C owns
+        # no binding here: the gesture stays the terminal's own
+        # copy shortcut, and the tree starts with the kitty
+        # keyboard protocol off (the package's __init__) so a
+        # terminal that binds the combo handles it itself. A
+        # terminal that passes the byte through sends Ctrl+C's own
+        # byte for both gestures, and the quit above answers it —
+        # the two keys cannot be told apart on that encoding.
         Binding("ctrl+c", "quit", "Quit", priority=True),
-        # (#437) Ctrl+Shift+C — the terminal-wide copy reflex —
-        # copies from every screen: the screen names its own copy
-        # text, a form hands the focused field's selection to the
-        # same OSC 52 path the sentinel panel's copy rides, and a
-        # screen with nothing to copy says so and keeps running.
-        # The binding answers the non-modal screens (and draws
-        # the footer hint); a modal screen cuts the app's
-        # bindings out of the dispatch chain, so the
-        # ``key_ctrl_shift_c`` handler below carries the gesture
-        # there — and the sentinel panel's own binding still wins
-        # on the panel, its note line naming the outcome. A
-        # terminal that keeps the legacy input encoding sends
-        # Ctrl+C's byte for both gestures, and Ctrl+C still quits
-        # there (#388) — the two keys read apart, and the copy
-        # lands, where the terminal disambiguates them (the kitty
-        # keyboard protocol among them).
-        Binding("ctrl+shift+c", "copy", "Copy"),
     ]
 
     def get_default_screen(self) -> Screen:
@@ -251,44 +240,6 @@ class MsksTuiApp(App):
         """Give the status lines to a message for FLASH_TTL
         seconds."""
         self.flash_line.set(message)
-
-    def copy_payload(self) -> str | None:
-        """(#437) The reflex's payload: the active screen's own
-        copy text when it names one, else the focused field's
-        selection (a form's Input or TextArea), None when neither
-        holds text."""
-        take = getattr(self.screen, "copy_text", None)
-        if take is not None:
-            return take()
-        return getattr(self.focused, "selected_text", "") or None
-
-    def action_copy(self) -> None:
-        """(#437) Ctrl+Shift+C: the copy reflex, answered per
-        screen — the payload over OSC 52, and a screen with
-        nothing to copy says so and the tree keeps running. The
-        outcome rides the screen's own line when it holds one
-        (the list, the workspace and secrets pages), a toast
-        otherwise (a modal form and the audit and rules views
-        paint no status line of the app's)."""
-        text = self.copy_payload()
-        if text and osc52_copy(self, text):
-            tell = "copied to the clipboard — where the terminal honors OSC 52"
-        elif text:
-            tell = "the copy did not land — no terminal to write through"
-        else:
-            tell = "nothing to copy"
-        flash = getattr(self.screen, "flash", None)
-        if flash is not None:
-            flash(tell)
-        else:
-            self.notify(tell)
-
-    async def key_ctrl_shift_c(self) -> None:
-        """(#437) The binding's fallback on a modal screen: the
-        modal dispatch chain cuts the app's bindings out, so the
-        unhandled key reaches this handler instead — the same
-        copy the binding runs."""
-        self.action_copy()
 
     def quit_after(self, kind: str, workspace_id: str) -> None:
         """Record one full-terminal flow and exit the tree; the
