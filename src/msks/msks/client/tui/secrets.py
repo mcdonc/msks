@@ -36,6 +36,7 @@ from textual.widgets.selection_list import Selection
 from .consent_ui import (
     ConfirmScreen,
     DurationScreen,
+    FailurePanel,
     FlashLine,
     OneFlight,
     PickerScreen,
@@ -216,6 +217,12 @@ SCOPED_SENTINEL = "mskssec1_"
 #: The daemon-wide sentinel's prefix (#393): every accepting
 #: workspace's tap swaps it.
 WIDE_SENTINEL = "mskssec2_"
+
+#: The mint form's standing note (#393): its title line, back
+#: on the form once a flight ends without a reply — the failure
+#: panel owns the refusal (#426), and the note names nothing in
+#: the air.
+MINT_NOTE = "mint a placeholder — the sentinel shows once"
 
 #: The mint name's pattern (#393): the client's own copy of
 #: the store's identifier rule — letters, numbers, and underscores,
@@ -922,10 +929,7 @@ class MintScreen(FormWalk, ModalScreen[dict | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="form"):
-            yield Static(
-                "mint a placeholder — the sentinel shows once",
-                id="form-note",
-            )
+            yield Static(MINT_NOTE, id="form-note")
             with Horizontal(classes="form-row"):
                 yield Static("name", classes="form-label")
                 yield Input(
@@ -1145,24 +1149,34 @@ class MintScreen(FormWalk, ModalScreen[dict | None]):
 
     async def mint_flight(self, body: dict) -> None:
         """The exchange proper: the store check names a broken
-        store before a doomed mint runs; a refused mint names
-        itself on the note with the fields kept for a retry; a
-        mint that lands dismisses with its reply (#393 — the
-        sentinel rides the reply exactly once; the value rides no
-        reply at all)."""
+        store before a doomed mint runs; a refusal lands on the
+        failure panel (#426) — the daemon's detail at reading
+        width, dismissed by hand — with the fields kept for a
+        retry; a mint that lands dismisses with its reply (#393 —
+        the sentinel rides the reply exactly once; the value
+        rides no reply at all)."""
         self.note("checking the secret store…")
         try:
             await self.app.data.secret_check()
         except (Exception, SystemExit) as exc:
-            self.note(f"secret store check failed: {flash_safe(str(exc))}")
+            self.refused("secret store check", None, exc)
             return
         self.note("minting…")
         try:
             row = await self.app.data.mint_secret(body)
         except (Exception, SystemExit) as exc:
-            self.note(f"mint failed: {flash_safe(str(exc))}")
+            self.refused("mint", body["name"], exc)
             return
         self.dismiss_with(row)
+
+    def refused(self, verb: str, identity: str | None, exc) -> None:
+        """A refused exchange (#426): the failure panel opens over
+        the form carrying the daemon's detail, and the note
+        returns to its standing text — the flight is down, and
+        the fields stay filled for a retry once the panel
+        closes."""
+        self.note(MINT_NOTE)
+        self.app.push_screen(FailurePanel(verb, identity, str(exc)))
 
     def dismiss_with(self, row: dict | None) -> None:
         """Dismiss and hand the reply to the callback (async — the

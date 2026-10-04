@@ -16,6 +16,7 @@ from msks.client.tui import rows as rows_mod
 from msks.client.tui import secrets as secrets_mod
 from msks.client.tui.link import AuditLink
 from msks.client.tui.secrets import (
+    MINT_NOTE,
     SECRET_TTLS,
     MintScreen,
     SecretAuditScreen,
@@ -32,8 +33,16 @@ from msks.client.tui.secrets import (
     ttl_text,
 )
 from test_consent_overlay import FakeFactory, FakeWS, press_until, wait_for
-from test_main_tui import FakeData, list_children, make_app, row
-from textual.widgets import Input, Select, Static
+from test_main_tui import (
+    FakeData,
+    failure_detail,
+    failure_title,
+    list_children,
+    make_app,
+    on_failure,
+    row,
+)
+from textual.widgets import Button, Input, Select, Static
 
 
 def secret_row(
@@ -560,12 +569,13 @@ async def test_a_scoped_mint_picks_workspaces_from_the_tree(tmp_path) -> None:
         assert "the chosen workspaces: ws-a,ws-b" in text
 
 
-async def test_a_failed_mint_keeps_the_form_and_names_the_cause(
+async def test_a_failed_mint_opens_the_panel_and_keeps_the_fields(
     tmp_path,
 ) -> None:
-    """A refused mint names itself on the note with the fields
-    kept for a retry (#393); the retry lands once the daemon
-    takes the body."""
+    """A refused mint opens the failure panel over the form
+    (#426): the daemon's detail verbatim beside the name the form
+    submitted, and closing it returns to the form with the fields
+    kept for a retry."""
     data = FakeData([])
     data.fail.add("mint")
     app, _follow = make_app(data)
@@ -574,21 +584,54 @@ async def test_a_failed_mint_keeps_the_form_and_names_the_cause(
         form = await open_mint(pilot, app)
         fill_mint(form)
         form.submit()
-        await wait_for(lambda: "mint failed" in mint_note(app))
-        assert "placeholder named github_api" in mint_note(app)
-        assert on_mint(app)  # the form stands
+        await wait_for(lambda: on_failure(app))
+        assert "mint failed" in failure_title(app)
+        assert "github_api" in failure_title(app)
+        assert "placeholder named github_api" in failure_detail(app)
+        await pilot.press("q")
+        await wait_for(lambda: on_mint(app))
         assert form.query_one("#field-name", Input).value == "github_api"
+        assert mint_note(app) == MINT_NOTE  # nothing in the air
         data.fail.clear()
         form.submit()  # the fields kept: the retry mints as-is
         await wait_for(lambda: on_panel(app))
         assert len(data.secret_calls) == 2
 
 
-async def test_a_refused_store_check_names_itself_and_the_mint_never_runs(
+async def test_the_failure_panel_holds_until_closed(tmp_path) -> None:
+    """The failure panel has no timeout and owns the keys while it
+    stands (#426): the page's own actions behind it answer
+    nothing, and only the closing keys dismiss it."""
+    data = FakeData([row()])
+    data.secret_rows = [secret_row()]
+    data.fail.add("mint")
+    app, _follow = make_app(data)
+    async with app.run_test() as pilot:
+        await open_secrets(pilot, app)
+        form = await open_mint(pilot, app)
+        fill_mint(form)
+        form.submit()
+        await wait_for(lambda: on_failure(app))
+        panel = app.screen
+        # The Close button holds the focus — Enter reaches it —
+        # and arrows find no other control to walk into.
+        assert app.focused is panel.query_one("#do-close", Button)
+        exchanges = len(data.secret_calls)
+        await pilot.press("x", "r", "down", "up")
+        await pilot.pause()
+        assert on_failure(app)  # still standing
+        assert data.secret_calls[exchanges:] == []  # no new exchange
+        await pilot.press("escape")
+        await wait_for(lambda: on_mint(app))
+
+
+async def test_a_refused_store_check_opens_the_panel_and_no_mint_runs(
     tmp_path,
 ) -> None:
-    """The store pre-flight (#393): a store that cannot answer
-    writes names itself on the form, and no mint leaves."""
+    """The store pre-flight (#393, #426): a store that cannot
+    answer opens the failure panel — its refusal names no one
+    body, so the title carries the verb alone — and no mint
+    leaves."""
     data = FakeData([])
     data.fail.add("secret-check")
     app, _follow = make_app(data)
@@ -597,8 +640,11 @@ async def test_a_refused_store_check_names_itself_and_the_mint_never_runs(
         form = await open_mint(pilot, app)
         fill_mint(form)
         form.submit()
-        await wait_for(lambda: "secret store check failed" in mint_note(app))
-        assert on_mint(app)
+        await wait_for(lambda: on_failure(app))
+        assert failure_title(app) == "secret store check failed"
+        assert "daemon away" in failure_detail(app)
+        await pilot.press("enter")  # the focused Close button
+        await wait_for(lambda: on_mint(app))
         assert data.secret_calls == []
 
 

@@ -28,7 +28,7 @@ from msks.client.tui import main_screen as main_screen_mod
 from msks.client.tui import rows as rows_mod
 from msks.client.tui import workspace as page_mod
 from msks.client.tui.consent import ConsentController
-from msks.client.tui.consent_ui import FlashLine
+from msks.client.tui.consent_ui import FailurePanel, FlashLine
 from msks.client.tui.follow import FLOW_SHELL, TuiFollow, run_follow_up
 from msks.client.tui.forms import (
     EDIT_FREE_STATUSES,
@@ -383,6 +383,28 @@ def action_text(app, index: int) -> str:
 
 def status_text(app) -> str:
     return str(app.query_one("#status", Static).content)
+
+
+def on_failure(app) -> bool:
+    """Whether the failure panel stands on top (#426)."""
+    return isinstance(app.screen, FailurePanel)
+
+
+def failure_title(app) -> str:
+    """The failure panel's title line; empty while it mounts."""
+    try:
+        return str(app.screen.query_one("#failure-title", Static).content)
+    except Exception:
+        return ""
+
+
+def failure_detail(app) -> str:
+    """The failure panel's body — the daemon's refusal; empty
+    while it mounts."""
+    try:
+        return str(app.screen.query_one("#failure-detail", Static).content)
+    except Exception:
+        return ""
 
 
 def row_text(app, index: int) -> str:
@@ -845,9 +867,14 @@ async def test_a_defaults_refusal_keeps_the_form_standing() -> None:
         assert screen.query_one("#field-home_mib", Input).placeholder == "MiB"
 
 
-async def test_a_create_failure_flashes_the_daemons_line() -> None:
+async def test_a_create_failure_opens_the_panel_and_waits() -> None:
+    """A refused create lands on the failure panel (#426): the
+    daemon's detail verbatim beside the name the form submitted,
+    the panel holding the screen until the operator closes it —
+    the flash path no longer carries create failures."""
     data = FakeData([])
     data.fail.add("create")
+    data.refusal = "msks: 409: a workspace named brand-new exists"
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await pilot.press("c")
@@ -855,8 +882,21 @@ async def test_a_create_failure_flashes_the_daemons_line() -> None:
         screen = app.screen
         screen.query_one("#field-name", Input).value = "brand-new"
         screen.submit()
-        await wait_for(lambda: "create failed" in status_text(app))
+        await wait_for(lambda: on_failure(app))
+        assert "create failed" in failure_title(app)
+        assert "brand-new" in failure_title(app)
+        assert "409" in failure_detail(app)
+        # The panel owns the refusal; the status line carries no
+        # create flash, and the keys behind it answer nothing.
+        assert "create failed" not in status_text(app)
+        exchanges = len(data.calls)
+        await pilot.press("e", "x", "down")
         await pilot.pause()
+        assert on_failure(app)
+        assert data.calls[exchanges:] == []
+        await pilot.press("escape")
+        await wait_for(lambda: on_main(app))
+        assert list_children(app) == 0  # no refresh: nothing landed
 
 
 # -- the workspace page ---------------------------------------------------
@@ -3377,12 +3417,12 @@ async def test_the_tree_flashes_a_seeded_refusal(monkeypatch) -> None:
         await pilot.pause()
 
 
-async def test_a_markup_refusal_never_crashes_the_screen(
+async def test_a_markup_refusal_renders_literally_on_the_panel(
     monkeypatch,
 ) -> None:
-    """The daemon echoes operator-typed text back in its refusals —
-    a stray rich markup bracket in one must flash literally, not crash
-    the tree."""
+    """The daemon echoes operator-typed text back in its refusals
+    — a stray rich markup bracket in one must render literally on
+    the failure panel, not crash the tree."""
     scripted_link(monkeypatch, [])
     data = FakeData([])
     data.fail.add("create")
@@ -3394,10 +3434,11 @@ async def test_a_markup_refusal_never_crashes_the_screen(
         screen = app.screen
         screen.query_one("#field-name", Input).value = "brand-new"
         screen.submit()
-        await wait_for(lambda: "create failed" in status_text(app))
-        # Rendered literally (rich's escape form in the raw content,
-        # the brackets on screen) — no MarkupError, no dead tree.
-        assert "no such image: debian-12" in status_text(app)
+        await wait_for(lambda: on_failure(app))
+        # Rendered literally (rich's escape form in the raw
+        # content, the brackets on screen) — no MarkupError, no
+        # dead tree.
+        assert "no such image: debian-12" in failure_detail(app)
         await pilot.pause()
 
 

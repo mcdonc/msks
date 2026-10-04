@@ -176,6 +176,16 @@ class MsksTuiApp(App):
     #panel-buttons { height: auto; align-horizontal: center;
                      margin-top: 1; }
     #panel-buttons Button { margin: 0 2; }
+    FailurePanel { align: center middle; }
+    #failure-panel { width: 64; height: auto; max-height: 100%;
+                     background: $panel; border: round $primary;
+                     padding: 1 2; }
+    #failure-title { color: $warning; margin-bottom: 1;
+                     text-wrap: wrap; }
+    #failure-detail { margin-bottom: 1; text-wrap: wrap; }
+    #failure-buttons { height: auto; align-horizontal: center;
+                       margin-top: 1; }
+    #failure-buttons Button { margin: 0 2; }
     """
 
     BINDINGS = [
