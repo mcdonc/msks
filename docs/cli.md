@@ -351,8 +351,8 @@ workspace tree (`msks tui` names the same command, and `msks tui
 my-workspace` opens that workspace's page directly). The tree is
 rooted at the **workspaces list**: every workspace one row, with
 creating, starting, stopping, and removing on its keys (`c` new,
-`e` start, `x` stop, `D` remove — asked and confirmed — `r`
-refresh, and Enter opens the workspace's page). `s` opens the
+`s` start, `x` stop, `D` remove — asked and confirmed — `r`
+refresh, and Enter opens the workspace's page). `e` opens the
 **secrets** page (#431). Each row's status
 column carries the state's color (#348): a running workspace in
 the theme's success color, a stopped one in muted text, and any
@@ -376,7 +376,7 @@ created date reads on the workspace page's header.
 
 A placeholder row is a daemon-wide object (its coverage set
 crosses workspaces, and the daemon-wide row belongs to none of
-them), so the secrets page lives at the tree's level: `s` on the
+them), so the secrets page lives at the tree's level: `e` on the
 workspaces list opens it.
 
 The **secrets page** lists every placeholder row the daemon
@@ -537,7 +537,17 @@ at the workspaces list, Escape is the tree itself quitting).
 Ctrl+C exits the client from any screen — the tree, a page, a
 form field, or a panel stacked over them — the same clean exit
 `q` takes at the workspaces list, and it takes priority over the
-form field's copy shortcut while a form field holds the focus. The TUI speaks the same REST
+form field's copy shortcut while a form field holds the focus.
+Ctrl+Shift+C copies to the clipboard from any screen (#437): the
+focused workspace's name on the workspaces list and the workspace
+page, the focused placeholder's name on the secrets page, and the
+sentinel itself on the mint's one-time panel — each copy rides
+the same OSC 52 path the panel's `c` copy takes, and the screen's
+status line names what landed. A terminal that keeps the legacy
+input encoding sends Ctrl+C's byte for both gestures, so the
+reflex reads as Ctrl+C there and quits — the copy lands on a
+terminal that disambiguates the two keys (the kitty keyboard
+protocol among them). The TUI speaks the same REST
 surface the `msksc` commands speak (`MSKSC_URL`, `MSKSC_TOKEN`,
 `MSKSC_CAFILE`) and reads no daemon state directly.
 

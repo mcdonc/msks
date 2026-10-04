@@ -458,6 +458,13 @@ class SecretsScreen(Screen):
             return None
         return next((row for row in self.rows if row["id"] == secret_id), None)
 
+    def copy_text(self) -> str | None:
+        """(#437) Ctrl+Shift+C's payload: the focused
+        placeholder's name — the sentinel itself rides only the
+        one-time panel's own copy key, never a reflex."""
+        row = self.focused_row()
+        return row.get("name") if row is not None else None
+
     def action_revoke(self) -> None:
         """Ask first (#390: a revoke retires the row everywhere at
         once), then delete through the data seam."""
@@ -1189,10 +1196,14 @@ class SentinelPanel(ModalScreen):
     the sequence answers, over ssh included; a terminal that
     does not honors nothing and the sentinel stays on the panel
     until it closes. Closing clears the panel's text: the
-    sentinel leaves no trace in the widget tree behind it."""
+    sentinel leaves no trace in the widget tree behind it.
+    Ctrl+Shift+C rides the same copy (#437) — the terminal-wide
+    reflex takes the panel's own path, so the note names the
+    outcome where the operator reads it."""
 
     BINDINGS = [
         Binding("c", "copy", "Copy"),
+        Binding("ctrl+shift+c", "copy", show=False),
         Binding("q", "close", "Close"),
         Binding("escape", "close", "Close", show=False),
     ]

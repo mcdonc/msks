@@ -39,6 +39,7 @@ from .consent_ui import FlashLine, flash_safe, shared_ssl
 from .data import TuiData
 from .follow import TuiFollow, run_follow_up
 from .main_screen import MainScreen
+from .secrets import osc52_copy
 from .workspace import WorkspaceScreen
 
 
@@ -187,6 +188,20 @@ class MsksTuiApp(App):
         # app exits exactly as the tree's q does, and the follow-up
         # loop reads the operator's quit.
         Binding("ctrl+c", "quit", "Quit", priority=True),
+        # (#437) Ctrl+Shift+C — the terminal-wide copy reflex —
+        # copies from every screen: the screen names its own copy
+        # text and the app writes it over OSC 52, and a screen
+        # with nothing to copy flashes that and keeps running.
+        # The binding rides the app without priority, so a screen
+        # that owns the key keeps it (the sentinel panel routes
+        # the gesture through its own copy, its note line naming
+        # the outcome). A terminal that keeps the legacy input
+        # encoding sends Ctrl+C's byte for both gestures, and
+        # Ctrl+C still quits there (#388) — the two keys read
+        # apart, and the copy lands, where the terminal
+        # disambiguates them (the kitty keyboard protocol among
+        # them).
+        Binding("ctrl+shift+c", "copy", "Copy"),
     ]
 
     def get_default_screen(self) -> Screen:
@@ -233,6 +248,25 @@ class MsksTuiApp(App):
         """Give the status lines to a message for FLASH_TTL
         seconds."""
         self.flash_line.set(message)
+
+    def action_copy(self) -> None:
+        """(#437) Ctrl+Shift+C: the copy reflex, answered per
+        screen — the active screen's copy text over OSC 52, and a
+        screen with nothing to copy flashes that and the tree
+        keeps running. The flash rides the screen's own line when
+        it holds one (the workspace and secrets pages), the app's
+        status line otherwise."""
+        screen = self.screen
+        take = getattr(screen, "copy_text", None)
+        text = take() if take is not None else None
+        flash = getattr(screen, "flash", self.flash)
+        if not text:
+            flash("nothing to copy")
+            return
+        if osc52_copy(self, text):
+            flash("copied to the clipboard — where the terminal honors OSC 52")
+        else:
+            flash("the copy did not land — no terminal to write through")
 
     def quit_after(self, kind: str, workspace_id: str) -> None:
         """Record one full-terminal flow and exit the tree; the

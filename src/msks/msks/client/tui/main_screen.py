@@ -1,7 +1,7 @@
 """The tree's root screen (#309): the workspaces listing —
 extracted from the app shell so :mod:`msks.client.tui.main_app`
 composes it. Create, start, stop, and remove happen here; Enter
-opens the focused workspace's page, and ``s`` opens the secrets
+opens the focused workspace's page, and ``e`` opens the secrets
 page (#431).
 
 Spatial navigation: arrows walk the rows in reading order, the
@@ -63,13 +63,13 @@ async def guarded_flash(app, label: str, work):
 class MainScreen(Screen):
     """The tree's root (#309): every workspace one row; create,
     start, stop, and remove happen here; Enter opens the
-    workspace's page, ``s`` the secrets page (#431)."""
+    workspace's page, ``e`` the secrets page (#431)."""
 
     BINDINGS = [
         Binding("enter", "open", "Open", show=False),
         Binding("c", "create", "New"),
-        Binding("s", "secrets", "Secrets"),
-        Binding("e", "start", "Start"),
+        Binding("s", "start", "Start"),
+        Binding("e", "secrets", "Secrets"),
         Binding("x", "stop", "Stop"),
         Binding("D", "remove", "Remove"),
         Binding("r", "refresh", "Refresh"),
@@ -207,8 +207,15 @@ class MainScreen(Screen):
     def action_refresh(self) -> None:
         self.refresh_rows()
 
+    def copy_text(self) -> str | None:
+        """(#437) Ctrl+Shift+C's payload: the focused workspace's
+        label — the everyday reference an operator pastes, None
+        when no row holds the focus."""
+        row = self.focused_row()
+        return workspace_label(row) if row is not None else None
+
     def action_secrets(self) -> None:
-        """`s`: the secrets page (#431)."""
+        """`e`: the secrets page (#431)."""
         self.app.push_screen(SecretsScreen())
 
     def action_start(self) -> None:

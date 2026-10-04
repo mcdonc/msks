@@ -12,6 +12,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
+from msks.client.tui import main_app as main_app_mod
 from msks.client.tui import rows as rows_mod
 from msks.client.tui import secrets as secrets_mod
 from msks.client.tui.link import AuditLink
@@ -95,8 +96,9 @@ def on_audit(app) -> bool:
 
 
 async def open_secrets(pilot, app) -> SecretsScreen:
-    """Press `s` on the workspaces list (#431)."""
-    await press_until(pilot, "s", lambda: on_secrets(app))
+    """Press `e` on the workspaces list (#431, #437: the mnemonic
+    swap)."""
+    await press_until(pilot, "e", lambda: on_secrets(app))
     return app.screen
 
 
@@ -201,9 +203,9 @@ async def pick_option(pilot, app, downs: int) -> None:
 # -- the main screen's path to the page -----------------------------------
 
 
-async def test_s_opens_the_page_and_back() -> None:
-    """`s` on the workspaces list opens the secrets page (#431),
-    Escape returns to the list."""
+async def test_e_opens_the_page_and_back() -> None:
+    """`e` on the workspaces list opens the secrets page (#431,
+    #437: the mnemonic swap), Escape returns to the list."""
     data = FakeData([row(), row(id="ws-b", name="beta")])
     data.secret_rows = [secret_row()]
     app, _follow = make_app(data)
@@ -215,6 +217,35 @@ async def test_s_opens_the_page_and_back() -> None:
         assert page is app.screen
         await pilot.press("escape")
         await wait_for(lambda: not on_secrets(app))
+
+
+async def test_ctrl_shift_c_copies_the_focused_placeholder_name(
+    monkeypatch,
+) -> None:
+    """(#437) Ctrl+Shift+C on the page copies the focused
+    placeholder's name — the sentinel itself rides only the
+    one-time panel's own copy key — and the page's status line
+    names the copy."""
+    copied: list[str] = []
+
+    def record_copy(app, text) -> bool:
+        copied.append(text)
+        return True
+
+    monkeypatch.setattr(main_app_mod, "osc52_copy", record_copy)
+    data = FakeData([row()])
+    data.secret_rows = [secret_row(name="github_api")]
+    app, _follow = make_app(data)
+    async with app.run_test() as pilot:
+        await open_secrets(pilot, app)
+        await wait_for(lambda: secrets_children(app) == 1)
+        await press_until(
+            pilot, "ctrl+shift+c", lambda: copied == ["github_api"]
+        )
+        await wait_for(
+            lambda: "copied to the clipboard" in secrets_status(app)
+        )
+        assert "nothing to copy" not in secrets_status(app)
 
 
 # -- the page -------------------------------------------------------------
@@ -632,6 +663,14 @@ async def test_the_panel_copies_the_sentinel_over_osc52(
         await pilot.press("c")
         assert "the copy did not land" in panel_text(app)
         assert "no terminal to write through" in panel_text(app)
+        # Ctrl+Shift+C rides the same copy (#437): the terminal's
+        # copy reflex takes the panel's own path, so the note
+        # names the outcome here too.
+        monkeypatch.setattr(secrets_mod, "osc52_copy", record_copy)
+        copied.clear()
+        await pilot.press("ctrl+shift+c")
+        assert copied == [sentinel]
+        assert "copied to the clipboard" in panel_text(app)
 
 
 async def test_local_refusals_keep_the_body_home(tmp_path) -> None:

@@ -520,7 +520,7 @@ async def test_start_stop_and_remove_from_the_list(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await wait_for(lambda: list_children(app) == 1)
-        await press_until(pilot, "e", lambda: data.calls == [("start", WS)])
+        await press_until(pilot, "s", lambda: data.calls == [("start", WS)])
         await wait_for(lambda: "alpha running" in status_text(app))
         await press_until(pilot, "x", lambda: ("stop", WS) in data.calls)
         await wait_for(lambda: "alpha stopped" in status_text(app))
@@ -550,7 +550,7 @@ async def test_keys_without_a_focused_row_flash() -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await wait_for(lambda: list_children(app) == 0)
-        await pilot.press("e")
+        await pilot.press("s")
         await wait_for(lambda: "no workspace focused" in status_text(app))
         await pilot.press("D")
         await pilot.pause()
@@ -611,6 +611,93 @@ async def test_ctrl_c_quits_over_the_consent_overlay(monkeypatch) -> None:
         await pilot.press("ctrl+c")
         await pilot.pause()
         assert app.return_code == 0
+
+
+# -- Ctrl+Shift+C: the copy reflex (#437) ----------------------------------
+
+
+async def test_ctrl_shift_c_copies_the_focused_workspace_label(
+    monkeypatch,
+) -> None:
+    """(#437) Ctrl+Shift+C — the terminal-wide copy reflex — hands
+    the focused row's label to the OSC 52 copy and the tree keeps
+    running; the list's status line names the copy. The two keys
+    read apart only where the terminal disambiguates them (the
+    kitty keyboard protocol among them), so the binding answers
+    the disambiguated key — on a terminal that keeps the legacy
+    encoding the byte arrives as Ctrl+C and quits (#388)."""
+    copied: list[str] = []
+
+    def record_copy(app, text) -> bool:
+        copied.append(text)
+        return True
+
+    monkeypatch.setattr(main_app, "osc52_copy", record_copy)
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: "alpha" in row_text(app, 0))
+        assert "ctrl+shift+c" in app.screen.active_bindings
+        await press_until(pilot, "ctrl+shift+c", lambda: copied == ["alpha"])
+        await wait_for(lambda: "copied to the clipboard" in status_text(app))
+        assert "OSC 52" in status_text(app)
+        assert app.return_code is None
+
+
+async def test_ctrl_shift_c_with_nothing_to_copy_flashes() -> None:
+    """(#437) A screen with nothing to copy answers the reflex
+    with a flash and stays running."""
+    data = FakeData([])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: list_children(app) == 0)
+        await press_until(
+            pilot,
+            "ctrl+shift+c",
+            lambda: "nothing to copy" in status_text(app),
+        )
+        assert app.return_code is None
+
+
+async def test_ctrl_shift_c_names_a_copy_that_did_not_land(
+    monkeypatch,
+) -> None:
+    """(#437) A copy with no driver to write through names that on
+    the status line — the sentinel panel's own rule, carried to
+    the reflex."""
+    monkeypatch.setattr(main_app, "osc52_copy", lambda app, text: False)
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: "alpha" in row_text(app, 0))
+        await press_until(
+            pilot,
+            "ctrl+shift+c",
+            lambda: "the copy did not land" in status_text(app),
+        )
+        assert "no terminal to write through" in status_text(app)
+
+
+async def test_ctrl_shift_c_copies_the_page_workspace_label(
+    monkeypatch,
+) -> None:
+    """(#437) On the workspace page the reflex copies the page's
+    own workspace label, and the page's consent line names the
+    copy (the pushed page hides the app's status line, #343)."""
+    copied: list[str] = []
+
+    def record_copy(app, text) -> bool:
+        copied.append(text)
+        return True
+
+    monkeypatch.setattr(main_app, "osc52_copy", record_copy)
+    scripted_link(monkeypatch, [])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await press_until(pilot, "ctrl+shift+c", lambda: copied == ["alpha"])
+        await wait_for(lambda: "copied to the clipboard" in consent_text(app))
 
 
 async def test_the_create_form_posts_and_the_list_refreshes() -> None:
@@ -2439,7 +2526,7 @@ async def test_the_status_column_carries_its_states_color(
         await wait_for(lambda: list_children(app) == 3)
         rows = app.query_one("#rows")
         # The listing's rows are the workspaces alone (#431: the
-        # branch row is gone; `s` opens the secrets page).
+        # branch row is gone; `e` opens the secrets page).
         workspace_rows = [
             child
             for child in rows.children
@@ -2993,7 +3080,7 @@ async def test_a_start_failure_and_a_remove_failure_flash(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await wait_for(lambda: "alpha" in row_text(app, 0))
-        await press_until(pilot, "e", lambda: ("start", WS) in data.calls)
+        await press_until(pilot, "s", lambda: ("start", WS) in data.calls)
         await wait_for(lambda: "start failed" in status_text(app))
         await press_until(
             pilot, "D", lambda: type(app.screen).__name__ == "ConfirmScreen"
