@@ -233,8 +233,8 @@ sentinel: mskssec2_9Jm3...kQ
   daemon serves the row's sentinel back on demand over the
   token-authenticated API — the `msks tui` secrets page's
   Enter-on-a-row panel (#440) — so a sentinel that scrolled
-  away reads back from the daemon; only the operator's value
-  never echoes twice.
+  away reads back from the daemon; the operator's value alone
+  is never echoed back.
 
 The `msks tui` secrets page mints too (#393): `c` opens the form
 — name, repeatable destinations, coverage (the daemon-wide row,

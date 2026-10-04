@@ -255,7 +255,7 @@ class TuiData:
     async def mint_secret(self, body: dict) -> dict:
         """POST one placeholder mint (#393) — the secrets page's
         form, the same exchange ``msks secret mint`` makes: the
-        reply carries the sentinel exactly once."""
+        reply carries the row with its sentinel."""
         return await api_call(
             "POST",
             env_url(),

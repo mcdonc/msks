@@ -224,7 +224,8 @@ WIDE_SENTINEL = "mskssec2_"
 #: panel owns the refusal (#426), and the note names nothing in
 #: the air.
 MINT_NOTE = (
-    "mint a placeholder — its sentinel shows on the panel and on the row"
+    "mint a placeholder — the sentinel shows on the panel;"
+    " Enter on a row reopens it"
 )
 
 #: The mint name's pattern (#393): the client's own copy of
@@ -1246,7 +1247,7 @@ class SentinelPanel(ModalScreen):
                 f"reach: {sentinel_reach(self.row)}", id="panel-reach"
             )
             yield Static(
-                "Enter on a row shows the sentinel again — "
+                "Enter on a row shows the sentinel — "
                 "this display ends with the panel",
                 id="panel-rule",
             )

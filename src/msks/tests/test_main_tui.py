@@ -309,7 +309,7 @@ class FakeData:
     async def mint_secret(self, body: dict) -> dict:
         """The mint form's mint (#393) — recorded with its raw
         body (the value rides the record the way the wire does);
-        the reply carries the sentinel exactly once and never the
+        the reply carries the row with its sentinel, never the
         value, and the row lands on the page's listing without
         it."""
         self.secret_calls.append(("mint", dict(body)))
@@ -2086,7 +2086,7 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
     assert ("GET", "/api/v1/secrets/7") in seen
     # The mint seams (#393): the store pre-flight and the mint
     # itself — the same exchanges the secret subcommands make,
-    # the reply carrying the value and the sentinel exactly once.
+    # the reply carrying the row and its sentinel, never the value.
     assert await data.secret_check() == {"provider": "files", "ok": True}
     row = await data.mint_secret(
         {

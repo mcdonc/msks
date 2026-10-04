@@ -427,16 +427,18 @@ async def test_enter_on_a_row_shows_the_sentinel_panel() -> None:
     """Enter on the focused row (#440): the page fetches the row's
     sentinel and opens the panel over it — the sentinel with its
     reach, no shown-once wording — and closing it clears the text
-    and lands the focus back on the same row."""
+    and lands the focus back on the same row (moved off the top
+    first, so a reset to the top would answer a different id)."""
     data = FakeData([])
     data.secret_rows = [secret_row(), secret_row(id=2, name="beta")]
     app, _follow = make_app(data)
     async with app.run_test() as pilot:
         await open_secrets(pilot, app)
         await wait_for(lambda: secrets_children(app) == 2)
+        await pilot.press("down")  # the highlight sits on row 2
         await pilot.press("enter")
         await wait_for(lambda: on_panel(app))
-        assert data.secret_calls == [("show", 1)]
+        assert data.secret_calls == [("show", 2)]
         text = panel_text(app)
         assert "mskssec2_" + "t" * 43 in text
         assert "every accepting workspace" in text
@@ -447,7 +449,7 @@ async def test_enter_on_a_row_shows_the_sentinel_panel() -> None:
         assert str(sentinel_line.content) == ""  # closed: text cleared
         await pilot.press("enter")  # focus returned to the same row
         await wait_for(lambda: on_panel(app))
-        assert data.secret_calls == [("show", 1), ("show", 1)]
+        assert data.secret_calls == [("show", 2), ("show", 2)]
         await pilot.press("q")
         await wait_for(lambda: on_secrets(app))
 
@@ -527,7 +529,7 @@ def mint_note(app) -> str:
 
 def panel_text(app) -> str:
     """Every line the panel paints, joined — the surface the
-    one-time display owns."""
+    panel owns."""
     try:
         return "\n".join(
             str(widget.content)
@@ -575,7 +577,7 @@ async def test_the_form_mints_a_daemon_wide_row_and_the_sentinel_shows_once(
         assert "workspaces" not in body  # the daemon-wide default
         assert "ttl_s" not in body  # unbounded, the daemon's default
         assert body["value"] == "hunter2"
-        # The sentinel shows exactly once, with its reach decoded;
+        # The sentinel shows, with its reach decoded;
         # the operator's value appears nowhere on the panel.
         sentinel = "mskssec2_" + "s" * 43
         await wait_for(lambda: sentinel in panel_text(app))

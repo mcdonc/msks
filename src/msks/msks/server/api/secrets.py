@@ -556,7 +556,12 @@ def router(app, hub) -> APIRouter:
         under (#424): a token holder already holds the daemon's
         operator surface, so reading a sentinel back costs
         nothing the holder does not already hold. The value
-        stays absent from every view (#423)."""
+        stays absent from every view (#423).
+
+        Registered below the audit route on purpose: FastAPI
+        matches in registration order, and a parameterized GET
+        above it would shadow the literal ``/audit`` path with a
+        422."""
         row = await app.state.model.get_placeholder(placeholder_id)
         if row is None:
             raise HTTPException(status_code=404, detail="no such placeholder")

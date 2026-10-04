@@ -2444,8 +2444,9 @@ async def test_the_row_fetch_serves_the_sentinel_on_demand(
     """GET one placeholder row (#440): the reply carries the row's
     sentinel — the same string the mint answered — while the
     listing keeps omitting sentinels, the audit route still
-    answers beside the parameterized one, and an unknown id
-    answers 404. The value appears in no view at all (#423)."""
+    answers beside the parameterized one (and its rows stay
+    sentinel-free), and an unknown id answers 404. The value
+    appears in no view at all (#423)."""
     http, app, _stub = client
     await seed_workspace(app)
     minted = await http.post(
@@ -2462,6 +2463,9 @@ async def test_the_row_fetch_serves_the_sentinel_on_demand(
     assert "value" not in fetched.json()
     listing = await http.get("/api/v1/secrets", headers=auth())
     assert "sentinel" not in listing.json()[0]
+    audit = await http.get("/api/v1/secrets/audit", headers=auth())
+    assert audit.status_code == 200
+    assert "sentinel" not in audit.json()[0]
     missing = await http.get("/api/v1/secrets/9999", headers=auth())
     assert missing.status_code == 404
 
