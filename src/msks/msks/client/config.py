@@ -91,6 +91,9 @@ CONFIG_FILENAME = "msks.yaml"
 #: ``identity_file`` names the operator's own private key file
 #: (#336) and is global-only (no per-alias form): an identity
 #: belongs to the operator, not to a daemon connection.
+#: ``terminal_title`` names the consent window's title (#445) and
+#: is global-only the same way: the window belongs to the
+#: operator's desktop, not to a daemon connection.
 GLOBAL_ENV_VARS: dict[str, str] = {
     "url": "MSKSC_URL",
     "token_file": "MSKSC_TOKEN",
@@ -99,6 +102,7 @@ GLOBAL_ENV_VARS: dict[str, str] = {
     "cache_dir": "MSKSC_CACHE_DIR",
     "data_dir": "MSKSC_DATA_DIR",
     "identity_file": "MSKSC_IDENTITY_FILE",
+    "terminal_title": "MSKSC_TERMINAL_TITLE",
 }
 
 #: The keys one ``daemons:`` entry may carry. ``url`` is the one
@@ -109,6 +113,12 @@ DAEMON_ENTRY_KEYS = ("url", "token_file", "cafile", "expected_image")
 #: The terminal-launch setting's variable (#314): the string form
 #: of the file value, overriding it for one shell.
 TERMINAL_ENV_VAR = "MSKSC_TERMINAL_OPEN_CMD"
+
+#: The consent window's title template (#445): the variable the
+#: launcher reads once it runs inside the window the prefix
+#: opened — the file's value reaches it through :func:`apply`'s
+#: materialization, the way every file-derived setting rides.
+TITLE_ENV_VAR = "MSKSC_TERMINAL_TITLE"
 
 #: The remembered-passthrough setting's variable (#385): the string
 #: form of the file value (shell-split), overriding it for one
@@ -709,6 +719,7 @@ class ClientConfig:
     cache_dir: str | None
     data_dir: str | None
     identity_file: str | None
+    terminal_title: str | None
     terminal_open_cmd: list[str]
     ssh_options: list[str]
     daemon: str | None
@@ -738,6 +749,7 @@ def resolve(
     cache = resolved_global("cache_dir", doc, layer)
     data = resolved_global("data_dir", doc, layer)
     identity = resolved_global("identity_file", doc, layer)
+    title = resolved_global("terminal_title", doc, layer)
     return ClientConfig(
         url=url,
         token=token,
@@ -746,6 +758,7 @@ def resolve(
         cache_dir=cache,
         data_dir=data,
         identity_file=identity,
+        terminal_title=title,
         terminal_open_cmd=terminal_command(doc),
         ssh_options=resolved_ssh_options(doc, layer),
         daemon=selection.alias,
@@ -887,6 +900,11 @@ def render_template() -> str:
 #                                # a list form carries its words as
 #                                # written; unset -> xterm -e, the
 #                                # terminal most Linuxes carry
+# terminal_title: msks — {workspace} # the window title msks-term-popup
+#                                # writes to the terminal it runs in
+#                                # (#445); {workspace} resolves to the
+#                                # workspace's name; unset leaves the
+#                                # terminal emulator's own title
 # ssh_options:                  # ssh options remembered for every ssh
 #                                # session msks runs — msks ssh, the
 #                                # new-terminal shell, msks rsync's

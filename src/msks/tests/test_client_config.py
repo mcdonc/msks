@@ -25,6 +25,7 @@ CLIENT_VARS = (
     "MSKSC_DATA_DIR",
     "MSKSC_IDENTITY_FILE",
     "MSKSC_TERMINAL_OPEN_CMD",
+    "MSKSC_TERMINAL_TITLE",
     "MSKSC_SSH_OPTIONS",
 )
 
@@ -142,7 +143,7 @@ def test_empty_and_null_forms_are_unset(tmp_path: Path) -> None:
     path = write_config(
         tmp_path,
         'url:\ncafile: ""\nexpected_image: none-set\n'
-        "terminal_open_cmd: ''\n",
+        "terminal_open_cmd: ''\nterminal_title: ''\n",
     )
     assert config.load_config(path) == {"expected_image": "none-set"}
     # The bare null form takes the same unset path.
@@ -645,6 +646,67 @@ def test_terminal_command_prefers_the_variable(tmp_path, monkeypatch) -> None:
     with pytest.raises(ValueError, match="MSKSC_TERMINAL_OPEN_CMD"):
         monkeypatch.setenv("MSKSC_TERMINAL_OPEN_CMD", 'wezterm "')
         config.resolve(None, path)
+
+
+# --- terminal_title ---
+
+
+def test_terminal_title_prefers_the_variable(tmp_path, monkeypatch) -> None:
+    """The consent window's title template (#445) resolves the way
+    every global key does: the variable over the file, the file
+    over none — and only the file's winner is materialized, so the
+    launcher the TUI spawns reads it from the environment either
+    way."""
+    clean_env(monkeypatch)
+    path = write_config(tmp_path, 'terminal_title: "msks — {workspace}"\n')
+    conf = config.resolve(None, path)
+    assert conf.terminal_title == "msks — {workspace}"
+    assert conf.env_layer["MSKSC_TERMINAL_TITLE"] == "msks — {workspace}"
+    monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "env title")
+    conf = config.resolve(None, path)
+    assert conf.terminal_title == "env title"
+    assert "MSKSC_TERMINAL_TITLE" not in conf.env_layer
+
+
+def test_no_terminal_title_answers_none(tmp_path, monkeypatch) -> None:
+    clean_env(monkeypatch)
+    conf = config.resolve(None, write_config(tmp_path, "url: https://x\n"))
+    assert conf.terminal_title is None
+    assert "MSKSC_TERMINAL_TITLE" not in conf.env_layer
+
+
+def test_terminal_title_takes_only_strings(tmp_path: Path) -> None:
+    path = write_config(tmp_path, "terminal_title: 3\n")
+    with pytest.raises(ValueError, match="'terminal_title' must be a string"):
+        config.load_config(path)
+
+
+def test_terminal_title_is_global_only(tmp_path, monkeypatch) -> None:
+    """The window belongs to the operator's desktop, not to a
+    daemon connection: a per-alias terminal_title is refused, the
+    identity_file rule (#336)."""
+    clean_env(monkeypatch)
+    alias = write_config(
+        tmp_path,
+        "daemons:\n"
+        "  lab:\n"
+        "    url: https://lab:8660\n"
+        "    terminal_title: lab window\n",
+    )
+    with pytest.raises(ValueError, match="unknown key 'terminal_title'"):
+        config.resolve(None, alias)
+
+
+def test_apply_materializes_the_file_derived_title(
+    tmp_path, monkeypatch
+) -> None:
+    """The launcher runs as a grandchild of the TUI; the file's
+    winner reaches it the substrate every other file value rides
+    — the environment."""
+    clean_env(monkeypatch)
+    path = write_config(tmp_path, 'terminal_title: "msks — {workspace}"\n')
+    config.apply(config.resolve(None, path))
+    assert os.environ["MSKSC_TERMINAL_TITLE"] == "msks — {workspace}"
 
 
 # --- ssh_options ---

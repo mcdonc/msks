@@ -80,6 +80,9 @@ def test_session_argv_names_the_socket_the_pane_and_the_workspace() -> None:
         # server ahead of the session: a pane adopts its history
         # limit only at creation, and mouse mode read live still
         # wants to be on the server the session is born from.
+        # set-titles pins off for the configured window title
+        # (#445): the fresh server reads the operator's tmux.conf,
+        # and its set-titles on would take the title over.
         "start-server",
         ";",
         "set-option",
@@ -111,6 +114,11 @@ def test_session_argv_names_the_socket_the_pane_and_the_workspace() -> None:
         "S-PgDn",
         "if -F '#{pane_in_mode}' 'send-keys -X page-down'"
         " 'copy-mode -e; send-keys -X page-down'",
+        ";",
+        "set-option",
+        "-g",
+        "set-titles",
+        "off",
         ";",
         "new-session",
         "-s",
@@ -329,6 +337,69 @@ def test_run_launch_execs_the_tmux_client(
     # session name is the word after new-session itself.
     assert argv[2].startswith("msks-a1b2c3d4e5-")
     assert argv[i + 2] == "a1b2c3d4e5"
+
+
+# --- the configured window title (#445) -----------------------------------
+
+
+class Tty(io.StringIO):
+    """A stdout the title writer accepts — a pipe answers
+    isatty() False and stays clean."""
+
+    def isatty(self) -> bool:
+        return True
+
+
+def test_configured_title_resolves_the_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "msks — {workspace}")
+    assert tp.configured_title("a1b2c3d4e5") == "msks — a1b2c3d4e5"
+    # A child naming no workspace takes the session's shell name.
+    assert tp.configured_title(None) == "msks — shell"
+    monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "msks shell")
+    assert tp.configured_title("a1b2c3d4e5") == "msks shell"
+    # Unset and blank are the unset form: the emulator's own
+    # title stays.
+    monkeypatch.delenv("MSKSC_TERMINAL_TITLE")
+    assert tp.configured_title("a1b2c3d4e5") is None
+    monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "  ")
+    assert tp.configured_title("a1b2c3d4e5") is None
+
+
+def test_run_launch_titles_the_window_before_the_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(tp.shutil, "which", lambda tool: "/bin/" + tool)
+    monkeypatch.setattr(tp.os, "execvp", lambda binname, argv: None)
+    monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "msks — {workspace}")
+    out = Tty()
+    monkeypatch.setattr(tp.sys, "stdout", out)
+    assert tp.run_launch(list(SSH_CHILD)) == 0
+    assert out.getvalue() == "\x1b]0;msks — a1b2c3d4e5\x07"
+
+
+def test_run_launch_without_a_title_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(tp.shutil, "which", lambda tool: "/bin/" + tool)
+    monkeypatch.setattr(tp.os, "execvp", lambda binname, argv: None)
+    monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "")
+    out = Tty()
+    monkeypatch.setattr(tp.sys, "stdout", out)
+    assert tp.run_launch(list(SSH_CHILD)) == 0
+    assert out.getvalue() == ""
+
+
+def test_set_window_title_leaves_a_pipe_clean(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A piped hand-run has no window title to set, so the escape
+    # never lands in the stream.
+    out = io.StringIO()
+    monkeypatch.setattr(tp.sys, "stdout", out)
+    tp.set_window_title("msks — ws")
+    assert out.getvalue() == ""
 
 
 def test_the_launch_line_meets_the_pane_role(
