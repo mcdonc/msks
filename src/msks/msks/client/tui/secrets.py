@@ -787,6 +787,23 @@ class SecretAuditScreen(Screen):
         except NoMatches:
             pass
 
+    def copy_text(self) -> str | None:
+        """(#437) Ctrl+Shift+C's payload: the focused event row's
+        placeholder name — the audit vocabulary the secrets page
+        copies, None when no row holds the focus."""
+        seq = focused_event_id(self.rows_widget())
+        if seq is None:
+            return None
+        event = next(
+            (
+                event
+                for event in self.link_or_stub().controller.events
+                if event.seq == seq
+            ),
+            None,
+        )
+        return event.name if event is not None else None
+
     # -- the filters -------------------------------------------------------
 
     def action_kind(self) -> None:

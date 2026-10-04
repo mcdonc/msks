@@ -190,17 +190,20 @@ class MsksTuiApp(App):
         Binding("ctrl+c", "quit", "Quit", priority=True),
         # (#437) Ctrl+Shift+C — the terminal-wide copy reflex —
         # copies from every screen: the screen names its own copy
-        # text and the app writes it over OSC 52, and a screen
-        # with nothing to copy flashes that and keeps running.
-        # The binding rides the app without priority, so a screen
-        # that owns the key keeps it (the sentinel panel routes
-        # the gesture through its own copy, its note line naming
-        # the outcome). A terminal that keeps the legacy input
-        # encoding sends Ctrl+C's byte for both gestures, and
-        # Ctrl+C still quits there (#388) — the two keys read
-        # apart, and the copy lands, where the terminal
-        # disambiguates them (the kitty keyboard protocol among
-        # them).
+        # text, a form hands the focused field's selection to the
+        # same OSC 52 path the sentinel panel's copy rides, and a
+        # screen with nothing to copy says so and keeps running.
+        # The binding answers the non-modal screens (and draws
+        # the footer hint); a modal screen cuts the app's
+        # bindings out of the dispatch chain, so the
+        # ``key_ctrl_shift_c`` handler below carries the gesture
+        # there — and the sentinel panel's own binding still wins
+        # on the panel, its note line naming the outcome. A
+        # terminal that keeps the legacy input encoding sends
+        # Ctrl+C's byte for both gestures, and Ctrl+C still quits
+        # there (#388) — the two keys read apart, and the copy
+        # lands, where the terminal disambiguates them (the kitty
+        # keyboard protocol among them).
         Binding("ctrl+shift+c", "copy", "Copy"),
     ]
 
@@ -249,24 +252,43 @@ class MsksTuiApp(App):
         seconds."""
         self.flash_line.set(message)
 
+    def copy_payload(self) -> str | None:
+        """(#437) The reflex's payload: the active screen's own
+        copy text when it names one, else the focused field's
+        selection (a form's Input or TextArea), None when neither
+        holds text."""
+        take = getattr(self.screen, "copy_text", None)
+        if take is not None:
+            return take()
+        return getattr(self.focused, "selected_text", "") or None
+
     def action_copy(self) -> None:
         """(#437) Ctrl+Shift+C: the copy reflex, answered per
-        screen — the active screen's copy text over OSC 52, and a
-        screen with nothing to copy flashes that and the tree
-        keeps running. The flash rides the screen's own line when
-        it holds one (the workspace and secrets pages), the app's
-        status line otherwise."""
-        screen = self.screen
-        take = getattr(screen, "copy_text", None)
-        text = take() if take is not None else None
-        flash = getattr(screen, "flash", self.flash)
-        if not text:
-            flash("nothing to copy")
-            return
-        if osc52_copy(self, text):
-            flash("copied to the clipboard — where the terminal honors OSC 52")
+        screen — the payload over OSC 52, and a screen with
+        nothing to copy says so and the tree keeps running. The
+        outcome rides the screen's own line when it holds one
+        (the list, the workspace and secrets pages), a toast
+        otherwise (a modal form and the audit and rules views
+        paint no status line of the app's)."""
+        text = self.copy_payload()
+        if text and osc52_copy(self, text):
+            tell = "copied to the clipboard — where the terminal honors OSC 52"
+        elif text:
+            tell = "the copy did not land — no terminal to write through"
         else:
-            flash("the copy did not land — no terminal to write through")
+            tell = "nothing to copy"
+        flash = getattr(self.screen, "flash", None)
+        if flash is not None:
+            flash(tell)
+        else:
+            self.notify(tell)
+
+    async def key_ctrl_shift_c(self) -> None:
+        """(#437) The binding's fallback on a modal screen: the
+        modal dispatch chain cuts the app's bindings out, so the
+        unhandled key reaches this handler instead — the same
+        copy the binding runs."""
+        self.action_copy()
 
     def quit_after(self, kind: str, workspace_id: str) -> None:
         """Record one full-terminal flow and exit the tree; the

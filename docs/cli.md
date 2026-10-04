@@ -540,14 +540,18 @@ form field, or a panel stacked over them — the same clean exit
 form field's copy shortcut while a form field holds the focus.
 Ctrl+Shift+C copies to the clipboard from any screen (#437): the
 focused workspace's name on the workspaces list and the workspace
-page, the focused placeholder's name on the secrets page, and the
-sentinel itself on the mint's one-time panel — each copy rides
-the same OSC 52 path the panel's `c` copy takes, and the screen's
-status line names what landed. A terminal that keeps the legacy
-input encoding sends Ctrl+C's byte for both gestures, so the
-reflex reads as Ctrl+C there and quits — the copy lands on a
-terminal that disambiguates the two keys (the kitty keyboard
-protocol among them). The TUI speaks the same REST
+page, the focused placeholder's name on the secrets page and its
+audit view, the focused field's selection on the create, edit, and
+mint forms, and the sentinel itself on the mint's one-time panel —
+each copy rides the same OSC 52 path the panel's `c` copy takes.
+The screen's status line names what landed when it holds one
+(the list and the pages); a screen without its own line answers
+with a toast. A screen with nothing to copy says that and keeps
+running. A terminal that keeps the legacy input encoding sends
+Ctrl+C's byte for both gestures, so the reflex reads as Ctrl+C
+there and quits — a terminal that speaks a disambiguating
+protocol (the kitty keyboard protocol among them) delivers the
+key separately, and the copy lands there. The TUI speaks the same REST
 surface the `msksc` commands speak (`MSKSC_URL`, `MSKSC_TOKEN`,
 `MSKSC_CAFILE`) and reads no daemon state directly.
 

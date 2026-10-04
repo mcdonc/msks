@@ -246,6 +246,7 @@ async def test_ctrl_shift_c_copies_the_focused_placeholder_name(
             lambda: "copied to the clipboard" in secrets_status(app)
         )
         assert "nothing to copy" not in secrets_status(app)
+        assert app.return_code is None
 
 
 # -- the page -------------------------------------------------------------
@@ -860,6 +861,88 @@ async def test_the_audit_view_replays_and_streams() -> None:
         assert factory.made[0].sent == []
         await pilot.press("r")
         await wait_for(lambda: not on_audit(app))
+
+
+async def test_ctrl_shift_c_copies_the_focused_audit_row_name(
+    monkeypatch,
+) -> None:
+    """(#437) The reflex reaches the audit view: the focused
+    event row's placeholder name rides the OSC 52 copy, and the
+    view — a screen with no flash line of its own — names the
+    outcome with a toast."""
+    copied: list[str] = []
+    toasts: list[str] = []
+
+    def record_copy(app, text) -> bool:
+        copied.append(text)
+        return True
+
+    monkeypatch.setattr(main_app_mod, "osc52_copy", record_copy)
+    monkeypatch.setattr(
+        main_app_mod.MsksTuiApp,
+        "notify",
+        lambda self, message, **kw: toasts.append(message),
+    )
+    data = FakeData([])
+    data.audit_rows = [audit_row(1, "mint")]
+    factory = FakeFactory([FakeWS([])])
+
+    def link_factory() -> AuditLink:
+        return AuditLink(
+            ws_factory=factory, reconnect_delays=(0.01, 0.01, 0.01)
+        )
+
+    app, _follow = make_app(data)
+    async with app.run_test() as pilot:
+        await open_audit(pilot, app, link_factory)
+
+        def highlighted():
+            """The rows list's highlighted row, or None while the
+            compose or a swap window holds it."""
+            try:
+                return app.screen.query_one("#audit-rows").highlighted_child
+            except Exception:
+                return None
+
+        await wait_for(lambda: highlighted() is not None)
+        await press_until(
+            pilot, "ctrl+shift+c", lambda: copied == ["github_api"]
+        )
+        assert toasts == [
+            "copied to the clipboard — where the terminal honors OSC 52"
+        ]
+        assert app.return_code is None
+
+
+async def test_ctrl_shift_c_on_an_empty_audit_view_says_so(
+    monkeypatch,
+) -> None:
+    """(#437) The reflex on an audit view holding no rows: nothing
+    holds the focus, the view says nothing to copy, and it keeps
+    running."""
+    toasts: list[str] = []
+    monkeypatch.setattr(main_app_mod, "osc52_copy", lambda app, text: True)
+    monkeypatch.setattr(
+        main_app_mod.MsksTuiApp,
+        "notify",
+        lambda self, message, **kw: toasts.append(message),
+    )
+    data = FakeData([])
+    factory = FakeFactory([FakeWS([])])
+
+    def link_factory() -> AuditLink:
+        return AuditLink(
+            ws_factory=factory, reconnect_delays=(0.01, 0.01, 0.01)
+        )
+
+    app, _follow = make_app(data)
+    async with app.run_test() as pilot:
+        await open_audit(pilot, app, link_factory)
+        await wait_for(lambda: audit_children(app) == 0)
+        await press_until(
+            pilot, "ctrl+shift+c", lambda: toasts[-1:] == ["nothing to copy"]
+        )
+        assert app.return_code is None
 
 
 async def test_the_audit_seed_dedups_against_the_live_tail() -> None:

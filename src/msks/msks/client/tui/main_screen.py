@@ -214,6 +214,12 @@ class MainScreen(Screen):
         row = self.focused_row()
         return workspace_label(row) if row is not None else None
 
+    def flash(self, message: str) -> None:
+        """(#437) The copy reflex's flash: this screen owns the
+        app's status line (sync_status paints the app's flash
+        line), so its outcome rides that line."""
+        self.app.flash(message)
+
     def action_secrets(self) -> None:
         """`e`: the secrets page (#431)."""
         self.app.push_screen(SecretsScreen())

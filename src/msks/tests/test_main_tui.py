@@ -698,6 +698,52 @@ async def test_ctrl_shift_c_copies_the_page_workspace_label(
         await open_page(pilot, app)
         await press_until(pilot, "ctrl+shift+c", lambda: copied == ["alpha"])
         await wait_for(lambda: "copied to the clipboard" in consent_text(app))
+        assert app.return_code is None
+
+
+async def test_ctrl_shift_c_on_a_modal_form_copies_the_fields_selection(
+    monkeypatch,
+) -> None:
+    """(#437) A modal screen cuts the app's binding out of the
+    dispatch chain, so the reflex rides the key handler there:
+    the focused field's selection rides the OSC 52 copy, the form
+    — a screen with no flash line of its own — names the outcome
+    with a toast, and an empty selection says that instead. The
+    tree keeps running either way."""
+    copied: list[str] = []
+    toasts: list[str] = []
+
+    def record_copy(app, text) -> bool:
+        copied.append(text)
+        return True
+
+    monkeypatch.setattr(main_app, "osc52_copy", record_copy)
+    monkeypatch.setattr(
+        main_app.MsksTuiApp,
+        "notify",
+        lambda self, message, **kw: toasts.append(message),
+    )
+    data = FakeData([])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: list_children(app) == 0)
+        await pilot.press("c")
+        await wait_for(lambda: type(app.screen).__name__ == "CreateScreen")
+        field = app.screen.query_one("#field-name", Input)
+        field.value = "gamma"
+        field.select_all()
+        await pilot.pause()
+        await press_until(pilot, "ctrl+shift+c", lambda: copied == ["gamma"])
+        assert toasts == [
+            "copied to the clipboard — where the terminal honors OSC 52"
+        ]
+        assert app.return_code is None
+        field.value = ""  # an empty selection: nothing to copy
+        await press_until(
+            pilot, "ctrl+shift+c", lambda: toasts[-1:] == ["nothing to copy"]
+        )
+        assert copied == ["gamma"]
+        assert app.return_code is None
 
 
 async def test_the_create_form_posts_and_the_list_refreshes() -> None:
