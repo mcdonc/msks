@@ -464,11 +464,14 @@ def flash_safe(text: str) -> str:
 
 
 def panel_safe(text: str) -> str:
-    """Escape free text for a panel's body — ``flash_safe``'s own
-    rule over the line breaks it keeps: a panel wraps its lines,
-    so a refusal's own breaks ride through instead of collapsing
-    to spaces."""
-    return re.sub(r"(?<!\\)\[/", r"\\\[/", escape(text))
+    """Escape free text for a panel's body, verbatim on screen:
+    the truncated-tag second pass emits Textual's own single
+    backslash, so a refusal echoing a bracket renders it with no
+    stray backslash beside it — where the status line's own pass
+    doubles it (a one-row surface whose wart predates the panel).
+    The line breaks stay: a panel wraps its lines, so a refusal's
+    own breaks ride through instead of collapsing to spaces."""
+    return re.sub(r"(?<!\\)\[/", r"\\[/", escape(text))
 
 
 def effective_allows(rules: EgressRules | None) -> bool:
@@ -625,12 +628,15 @@ class FailurePanel(ModalScreen):
     def heading(self) -> str:
         """The panel's title line: the verb that failed and the
         identity the form submitted (a store check names no
-        identity — its refusal belongs to no one body). A method,
-        not an attribute — a Screen's own ``title`` starts as
-        None and would shadow one."""
+        identity — its refusal belongs to no one body), escaped
+        for the markup parse the way the body is — a name
+        carrying a truncated closing tag renders literally, not
+        crashes the panel. A method, not an attribute — a
+        Screen's own ``title`` starts as None and would shadow
+        one."""
         if self.identity is None:
             return f"{self.verb} failed"
-        return f"{self.verb} failed: {escape(self.identity)}"
+        return f"{self.verb} failed: {panel_safe(self.identity)}"
 
     def compose(self) -> ComposeResult:
         with Vertical(id="failure-panel"):

@@ -413,10 +413,11 @@ by default, an hour to thirty days beside it), and the value: a
 masked field the operator types or pastes into — the form takes
 the secret's bytes directly. The submit checks the secret store
 first (`msks secret
-check`'s endpoint), then mints; a refused store check or mint
-opens the failure panel (#426) over the form — the daemon's
-refusal verbatim beside the name the form submitted, closed by
-hand (Enter, Escape, `q`, or the Close button) — and the fields
+check`'s endpoint), then mints; a refused mint opens the failure
+panel (#426) over the form — the daemon's refusal verbatim beside
+the name the form submitted — and a refused store check opens it
+with the daemon's refusal alone; either way it closes by hand
+(Enter, Escape, `q`, or the Close button), and the fields
 stay filled for a retry once it closes. A mint
 that lands replaces the form
 with the sentinel's one-time panel: the sentinel itself, its
