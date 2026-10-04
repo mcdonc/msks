@@ -52,6 +52,12 @@ def preseeded_migrations(tmp_path_factory):
         if db_path.exists():
             real_migrate(self)
             return
+        # The real migrate's first act is tighten_db_mode's
+        # parent-dir mkdir — smoke harnesses build their app in a
+        # state dir nothing else made yet, so the copy path owes
+        # the same guarantee (#433 review: without it every
+        # fresh-dir smoke failed at copyfile).
+        db_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(template, db_path)
         tighten_db_mode(db_path)
 
