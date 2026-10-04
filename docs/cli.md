@@ -550,16 +550,23 @@ Every screen walks with the arrow keys alone: lists move with
 up/down, the create form's fields move with up/down between them,
 and Escape leaves the screen it is on (`q` backs out of a page;
 at the workspaces list, Escape is the tree itself quitting).
-Ctrl+C exits the client from any screen — the tree, a page, a
-form field, or a panel stacked over them — the same clean exit
-`q` takes at the workspaces list, and it takes priority over the
-form field's copy shortcut while a form field holds the focus.
-Ctrl+Shift+C belongs to the terminal (#437): the TUI starts with
-the kitty keyboard protocol off, so a terminal that binds the
-combo to its own copy handles the gesture and the TUI never
-sees the key. A terminal that passes the key through sends the
-same byte as Ctrl+C, and the exit above answers it — the two
-gestures cannot be told apart on that encoding. The TUI speaks the same REST
+Ctrl+Q exits the client from any screen (#442) — the tree, a
+page, a form field, or a panel stacked over them — the same
+clean exit `q` takes at the workspaces list, and it takes
+priority over the form field's shortcuts while a form field
+holds the focus. A bare Ctrl+C keeps the client running (#442):
+a form field holds it as the field's own copy shortcut, and
+the tree's own screens answer it with a notification naming the
+quit key. A stacked panel away from its fields — a
+confirmation, a picker, the consent overlay, the sentinel
+panel — leaves the key silent: nothing exits, nothing copies,
+nothing shows, the stock Textual modal behavior. Ctrl+Shift+C
+belongs to the terminal (#437): the TUI starts with the kitty
+keyboard protocol off, so a terminal that binds the combo to
+its own copy handles the gesture and the TUI never sees the
+key. A terminal that passes the key through sends the same byte
+as Ctrl+C, and the tree's own screens answer it with the
+notification — no path of the gesture exits the client. The TUI speaks the same REST
 surface the `msksc` commands speak (`MSKSC_URL`, `MSKSC_TOKEN`,
 `MSKSC_CAFILE`) and reads no daemon state directly.
 

@@ -598,35 +598,36 @@ async def test_keys_without_a_focused_row_flash() -> None:
         assert "remove" not in [call[0] for call in data.calls]
 
 
-async def test_ctrl_c_quits_the_tree(monkeypatch) -> None:
-    # (#388) Ctrl+C exits the client from the tree's root, the
-    # same clean exit q takes. The binding stays live on every
-    # screen — the footer draws its key hint from the same map.
+async def test_ctrl_c_names_the_quit_key_instead_of_exiting(
+    monkeypatch,
+) -> None:
+    # (#442) A bare Ctrl+C keeps the client running: Textual's own
+    # binding answers it with a notification naming the quit key,
+    # and the tree adds no binding of its own over it.
+    notes: list[str] = []
+    monkeypatch.setattr(
+        main_app.MsksTuiApp,
+        "notify",
+        lambda self, message, **kw: notes.append(message),
+    )
     scripted_link(monkeypatch, [])
     app, _ = make_app(FakeData([row()]))
     async with app.run_test() as pilot:
         await wait_for(lambda: list_children(app) == 1)
-        assert "ctrl+c" in app.screen.active_bindings
         await pilot.press("ctrl+c")
         await pilot.pause()
-        assert app.return_code == 0
+        assert app.return_code is None
+        assert notes and "quit the app" in notes[0]
 
 
-async def test_ctrl_c_quits_from_a_workspace_page(monkeypatch) -> None:
-    scripted_link(monkeypatch, [])
-    app, _ = make_app(FakeData([row()]))
-    async with app.run_test() as pilot:
-        await wait_for(lambda: "alpha" in row_text(app, 0))
-        await open_page(pilot, app)
-        await pilot.press("ctrl+c")
-        await pilot.pause()
-        assert app.return_code == 0
-
-
-async def test_ctrl_c_quits_over_a_form_input() -> None:
-    # The priority binding takes Ctrl+C ahead of the create form's
-    # focused Input — which binds the key to copy — so the reflex
-    # exits instead of copying an empty selection.
+async def test_ctrl_c_keeps_the_form_fields_copy_shortcut(
+    monkeypatch,
+) -> None:
+    # (#442) Over a form field the focused Input keeps Ctrl+C as
+    # its own copy shortcut — the key reaches no quit path, and
+    # the copy itself runs (pinned on the Input's own action).
+    copies: list[object] = []
+    monkeypatch.setattr(Input, "action_copy", lambda self: copies.append(self))
     data = FakeData([])
     app, _ = make_app(data)
     async with app.run_test() as pilot:
@@ -636,20 +637,84 @@ async def test_ctrl_c_quits_over_a_form_input() -> None:
         assert app.focused is not None
         await pilot.press("ctrl+c")
         await pilot.pause()
-        assert app.return_code == 0
+        assert len(copies) == 1
+        assert app.return_code is None
 
 
-async def test_ctrl_c_quits_over_the_consent_overlay(monkeypatch) -> None:
-    # The docs promise the exit over a stacked panel; the consent
-    # overlay over an open page is that panel. A hold arrives, the
-    # overlay opens by itself, and Ctrl+C still takes the whole
-    # client down.
+async def test_ctrl_c_over_a_stacked_panel_stays_silent(
+    monkeypatch,
+) -> None:
+    # (#442) The stock Textual modal behavior, pinned as the
+    # deliberate ask: over a stacked panel the modal chain cuts
+    # the App's ctrl+c binding, so the key copies nothing, shows
+    # nothing, and exits nothing. The consent overlay over an
+    # open page is that panel.
+    notes: list[str] = []
+    monkeypatch.setattr(
+        main_app.MsksTuiApp,
+        "notify",
+        lambda self, message, **kw: notes.append(message),
+    )
     scripted_link(monkeypatch, [rules_frame(), request_frame("r9")])
     app, _ = make_app(FakeData([row()]))
     async with app.run_test() as pilot:
         await open_page(pilot, app)
         await wait_for(lambda: on_overlay(app))
         await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert notes == []
+        assert app.return_code is None
+
+
+async def test_ctrl_q_quits_the_tree(monkeypatch) -> None:
+    # (#442) Textual's own priority binding carries the exit from
+    # every screen, the same clean exit q takes at the list.
+    scripted_link(monkeypatch, [])
+    app, _ = make_app(FakeData([row()]))
+    async with app.run_test() as pilot:
+        await wait_for(lambda: list_children(app) == 1)
+        await pilot.press("ctrl+q")
+        await pilot.pause()
+        assert app.return_code == 0
+
+
+async def test_ctrl_q_quits_from_a_workspace_page(monkeypatch) -> None:
+    scripted_link(monkeypatch, [])
+    app, _ = make_app(FakeData([row()]))
+    async with app.run_test() as pilot:
+        await wait_for(lambda: "alpha" in row_text(app, 0))
+        await open_page(pilot, app)
+        await pilot.press("ctrl+q")
+        await pilot.pause()
+        assert app.return_code == 0
+
+
+async def test_ctrl_q_quits_over_a_form_input() -> None:
+    # The exit stands over the create form's focused Input too —
+    # Textual's binding is priority, so the field never sees it.
+    data = FakeData([])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: list_children(app) == 0)
+        await pilot.press("c")
+        await wait_for(lambda: type(app.screen).__name__ == "CreateScreen")
+        assert app.focused is not None
+        await pilot.press("ctrl+q")
+        await pilot.pause()
+        assert app.return_code == 0
+
+
+async def test_ctrl_q_quits_over_the_consent_overlay(monkeypatch) -> None:
+    # The exit stands over a stacked panel; the consent overlay
+    # over an open page is that panel. A hold arrives, the overlay
+    # opens by itself, and Ctrl+Q still takes the whole client
+    # down.
+    scripted_link(monkeypatch, [rules_frame(), request_frame("r9")])
+    app, _ = make_app(FakeData([row()]))
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: on_overlay(app))
+        await pilot.press("ctrl+q")
         await pilot.pause()
         assert app.return_code == 0
 

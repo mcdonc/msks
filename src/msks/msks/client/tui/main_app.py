@@ -30,7 +30,6 @@ import asyncio
 import sys
 
 from textual.app import App
-from textual.binding import Binding
 from textual.screen import Screen
 
 from ..config import DEFAULT_TERMINAL_CMD, ClientConfig
@@ -188,23 +187,20 @@ class MsksTuiApp(App):
     #failure-buttons Button { margin: 0 2; }
     """
 
-    BINDINGS = [
-        # (#388) Ctrl+C exits from every screen: the tree, a
-        # workspace page, a form, and any modal over them. The
-        # priority carries the key ahead of Textual's Input copy
-        # binding and ahead of its stock ctrl+c nag (a notification
-        # saying to press q), so the terminal reflex lands — the
-        # app exits exactly as the tree's q does, and the follow-up
-        # loop reads the operator's quit. (#437) Ctrl+Shift+C owns
-        # no binding here: the gesture stays the terminal's own
-        # copy shortcut, and the tree starts with the kitty
-        # keyboard protocol off (the package's __init__) so a
-        # terminal that binds the combo handles it itself. A
-        # terminal that passes the byte through sends Ctrl+C's own
-        # byte for both gestures, and the quit above answers it —
-        # the two keys cannot be told apart on that encoding.
-        Binding("ctrl+c", "quit", "Quit", priority=True),
-    ]
+    # (#442) The exit keys are Textual's own, carried with no
+    # override here: ctrl+q quits from every screen (a priority
+    # binding on the App), and a bare ctrl+c names the quit key
+    # in a notification on the tree's own screens — a form field
+    # keeps ctrl+c as the field's own copy shortcut, and a
+    # stacked panel away from its fields leaves the key silent
+    # (the modal chain cuts the App's binding; the stock Textual
+    # behavior). The tree's
+    # q and Escape exits stand as they were. (#437) Ctrl+Shift+C
+    # stays the terminal's own gesture: the kitty keyboard
+    # protocol is off (the package's __init__), and a terminal
+    # that passes the key through sends Ctrl+C's byte — the
+    # notification answers it on the tree's own screens, so no
+    # path of the gesture exits the client.
 
     def get_default_screen(self) -> Screen:
         """The tree's root: the workspaces list."""
