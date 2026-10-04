@@ -2438,6 +2438,34 @@ async def test_mint_stores_the_value_and_answers_the_sentinel_once(
     assert "value" not in audit.json()[0]
 
 
+async def test_the_row_fetch_serves_the_sentinel_on_demand(
+    client,
+) -> None:
+    """GET one placeholder row (#440): the reply carries the row's
+    sentinel — the same string the mint answered — while the
+    listing keeps omitting sentinels, the audit route still
+    answers beside the parameterized one, and an unknown id
+    answers 404. The value appears in no view at all (#423)."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    minted = await http.post(
+        "/api/v1/secrets", json=mint_body(), headers=auth()
+    )
+    assert minted.status_code == 201
+    sentinel = minted.json()["sentinel"]
+    fetched = await http.get(
+        f"/api/v1/secrets/{minted.json()['id']}", headers=auth()
+    )
+    assert fetched.status_code == 200
+    assert fetched.json()["sentinel"] == sentinel
+    assert fetched.json()["name"] == "github_api"
+    assert "value" not in fetched.json()
+    listing = await http.get("/api/v1/secrets", headers=auth())
+    assert "sentinel" not in listing.json()[0]
+    missing = await http.get("/api/v1/secrets/9999", headers=auth())
+    assert missing.status_code == 404
+
+
 async def test_mint_refuses_a_whitespace_value(client) -> None:
     http, app, _stub = client
     await seed_workspace(app)
@@ -2715,6 +2743,7 @@ async def test_secret_routes_require_a_token(client) -> None:
     assert (
         await http.post("/api/v1/secrets", json=mint_body())
     ).status_code == 401
+    assert (await http.get("/api/v1/secrets/1")).status_code == 401
 
 
 async def test_revoke_unknown_placeholder_is_a_404(client) -> None:

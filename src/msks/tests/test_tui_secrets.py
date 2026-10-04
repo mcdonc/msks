@@ -423,19 +423,65 @@ async def test_keys_without_a_focused_row_flash() -> None:
         assert data.secret_calls == []
 
 
-async def test_enter_on_a_row_decides_nothing() -> None:
-    """Enter owns nothing yet — the placeholder-to-workspace links
-    land with the cross-references (#394)."""
+async def test_enter_on_a_row_shows_the_sentinel_panel() -> None:
+    """Enter on the focused row (#440): the page fetches the row's
+    sentinel and opens the panel over it — the sentinel with its
+    reach, no shown-once wording — and closing it clears the text
+    and lands the focus back on the same row."""
+    data = FakeData([])
+    data.secret_rows = [secret_row(), secret_row(id=2, name="beta")]
+    app, _follow = make_app(data)
+    async with app.run_test() as pilot:
+        await open_secrets(pilot, app)
+        await wait_for(lambda: secrets_children(app) == 2)
+        await pilot.press("enter")
+        await wait_for(lambda: on_panel(app))
+        assert data.secret_calls == [("show", 1)]
+        text = panel_text(app)
+        assert "mskssec2_" + "t" * 43 in text
+        assert "every accepting workspace" in text
+        assert "shown once" not in text
+        sentinel_line = app.screen.query_one("#panel-sentinel", Static)
+        await pilot.press("escape")
+        await wait_for(lambda: on_secrets(app))
+        assert str(sentinel_line.content) == ""  # closed: text cleared
+        await pilot.press("enter")  # focus returned to the same row
+        await wait_for(lambda: on_panel(app))
+        assert data.secret_calls == [("show", 1), ("show", 1)]
+        await pilot.press("q")
+        await wait_for(lambda: on_secrets(app))
+
+
+async def test_a_click_on_a_row_shows_its_sentinel() -> None:
+    """A mouse click on a row opens the same panel (#440) — the
+    clicked row's, scoped prefix and reach named from the string."""
+    data = FakeData([])
+    data.secret_rows = [secret_row(id=3, workspaces=["ws-a"], name="scoped")]
+    app, _follow = make_app(data)
+    async with app.run_test() as pilot:
+        await open_secrets(pilot, app)
+        await wait_for(lambda: secrets_children(app) == 1)
+        await pilot.click("#secret-rows ListItem")
+        await wait_for(lambda: on_panel(app))
+        assert data.secret_calls == [("show", 3)]
+        text = panel_text(app)
+        assert "mskssec1_" + "t" * 43 in text
+        assert "the chosen workspaces: ws-a" in text
+
+
+async def test_a_failed_sentinel_fetch_flashes_and_stays() -> None:
+    """A refused fetch names itself on the page's status line and
+    the page stands — no panel over a refusal."""
     data = FakeData([])
     data.secret_rows = [secret_row()]
+    data.fail.add("show-secret")
     app, _follow = make_app(data)
     async with app.run_test() as pilot:
         await open_secrets(pilot, app)
         await wait_for(lambda: secrets_children(app) == 1)
         await pilot.press("enter")
-        await pilot.pause()
+        await wait_for(lambda: "sentinel failed" in secrets_status(app))
         assert on_secrets(app)
-        assert data.secret_calls == []
 
 
 # -- the mint form (#393) --------------------------------------------------

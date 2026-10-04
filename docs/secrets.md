@@ -191,7 +191,7 @@ $ op read 'op://Vault/github/credential' \
     | msks secret mint --name github_api \
         --dest api.github.com --secret-file -
 minted */github_api for api.github.com
-sentinel (shown once): mskssec2_9Jm3...kQ
+sentinel: mskssec2_9Jm3...kQ
 ```
 
 - The value is the operator's own secret: a file's contents, or
@@ -201,7 +201,7 @@ sentinel (shown once): mskssec2_9Jm3...kQ
   command-line argument (argv lands in process lists and shell
   history), stripped at both ends (a UTF-8 BOM drops too) and
   stored in the agefile, and never echoed —
-  the mint reply carries the sentinel alone. The client and the
+  the mint reply carries the sentinel, not the value. The client and the
   daemon may sit on different machines: the value rides the
   token-authenticated TLS API, and the agefile and the age
   identity stay on the daemon's host.
@@ -228,9 +228,13 @@ sentinel (shown once): mskssec2_9Jm3...kQ
   placeholder lives until revoked. `msks secret renew` extends a
   lifetime in place — the sentinel never changes and nothing is
   re-delivered.
-- The sentinel is printed once, at mint. Every later view (list,
-  audit, logs) omits it; a lost sentinel is re-minted, not
-  recalled.
+- The CLI prints the sentinel at mint. The listing and the
+  audit omit it (`msks secret ls` never shows one), and the
+  daemon serves the row's sentinel back on demand over the
+  token-authenticated API — the `msks tui` secrets page's
+  Enter-on-a-row panel (#440) — so a sentinel that scrolled
+  away reads back from the daemon; only the operator's value
+  never echoes twice.
 
 The `msks tui` secrets page mints too (#393): `c` opens the form
 — name, repeatable destinations, coverage (the daemon-wide row,
@@ -243,11 +247,14 @@ check`'s endpoint) before it mints, and a refusal — a store that
 cannot answer writes, a name collision on the chosen coverage
 set, a blank value — names itself on the form with the fields
 kept for a retry. A successful mint answers with the sentinel's
-one-time panel: the sentinel, its reach decoded from its prefix,
+panel: the sentinel, its reach decoded from its prefix,
 an OSC 52 clipboard copy (over ssh included, where the terminal
-honors it), and the rule that the display ends with the panel —
-a lost sentinel is re-minted, never recalled. Closing the panel
-clears its text.
+honors it), and the rule that the display ends with the panel.
+Enter (or a click) on a listing row opens the same panel again
+(#440): the page fetches the row's sentinel from the daemon and
+shows it, so the sentinel reads back on demand — the panel is
+one surface for the row, opened at mint and after. Closing the
+panel clears its text.
 
 `msks secret revoke --name github_api` retires the daemon-wide row
 of that label everywhere at once; `msks secret revoke
@@ -343,5 +350,6 @@ the last placeholder's retirement stands the interception down,
 and one revoke or expiry retires the whole row everywhere at
 once. The secret value and the sentinel appear nowhere in the
 audit or the events: the value rides its mint request alone and
-is never echoed, and the sentinel is never shown past its single
-mint-time print.
+is never echoed, and the sentinel appears only in the mint reply
+and the on-demand row fetch — never in the audit or the event
+stream.

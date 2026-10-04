@@ -253,6 +253,20 @@ class FakeData:
             raise RuntimeError(self.refusal)
         return [dict(r) for r in self.secret_rows]
 
+    async def secret(self, placeholder_id: int) -> dict:
+        """The row's on-demand sentinel fetch (#440) — recorded;
+        the reply carries the row the listing serves plus its
+        sentinel (the daemon's per-row GET), never a value."""
+        self.secret_calls.append(("show", placeholder_id))
+        if "show-secret" in self.fail:
+            raise RuntimeError(self.refusal)
+        fresh = next(r for r in self.secret_rows if r["id"] == placeholder_id)
+        reply = dict(fresh)
+        reply["sentinel"] = (
+            "mskssec2_" if not fresh["workspaces"] else "mskssec1_"
+        ) + "t" * 43
+        return reply
+
     async def revoke_secret(self, placeholder_id: int) -> dict:
         """The secrets page's revoke (#390) — recorded; the row
         leaves with the listing."""
