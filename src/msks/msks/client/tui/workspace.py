@@ -58,16 +58,12 @@ from .rows import header_meta, header_name, muted_style, workspace_label
 #: terminal.
 ACTION_SHELL_WINDOW = "shell-window"
 
-#: The workspace page's egress-mode action (#344): the shared mode
-#: picker over the page — the posture switches without leaving the
-#: workspace.
-ACTION_EGRESS_MODE = "egress-mode"
-
 #: The workspace page's consent action (#358, #454): the egress
 #: consent page — the holds queue and the in-effect verdicts on
 #: one full-screen visit, opened by hand; holds surface passively
 #: while it is closed (the header's count, the consent line's
-#: flash).
+#: flash). The page also owns the egress-mode switch (#344): its
+#: ``m`` opens the picker over whatever surface hosts the link.
 ACTION_CONSENT = "egress-consent"
 
 
@@ -238,7 +234,6 @@ PAGE_ACTIONS = (
         "decide holds and review rules",
         True,
     ),
-    PageAction(ACTION_EGRESS_MODE, "Switch the egress mode", "", False),
     PageAction("edit", "Edit settings", "sizes and topology", False),
     PageAction("start", "Start", "", True),
     PageAction("stop", "Stop", "", False),
@@ -251,8 +246,9 @@ class WorkspaceScreen(Screen):
     and created date muted on the second, the pending-egress
     count beside the status while holds wait, #354), the consent
     status line, and the page's actions — a shell in a new window
-    (#341), the egress consent page (#454), the egress-mode
-    switch (#344), start, and stop. The page is the workspace's
+    (#341), the egress consent page (#454), the edit dialog, and
+    start and stop; the egress-mode switch (#344) lives on the
+    consent page, its ``m``. The page is the workspace's
     decider while it is open: holds land on its link, the header
     counts them, and the consent line flashes each first-seen
     hold's destination — the page pushes nothing on a hold's
@@ -412,22 +408,21 @@ class WorkspaceScreen(Screen):
 
     def drain_sightings(self) -> None:
         """Flash the off-allowlist sightings the frames landed since
-        the last drain, each on the surface that owns the
-        terminal."""
+        the last drain, each on the surface that owns the terminal
+        (#358 carries #201's rule — the exfil signal interrupts
+        wherever the operator is)."""
         for event in self.link.take_sightings():
-            self.flash_sighting(sighting_flash(event))
+            self.flash_visible(sighting_flash(event))
 
-    def flash_sighting(self, line: str) -> None:
-        """One drained sighting on the surface that owns the
-        terminal: the consent page's status line while it is up,
-        this page's consent line when it is not (#358 carries
-        #201's rule — the exfil signal interrupts wherever the
-        operator is)."""
+    def flash_visible(self, message: str) -> None:
+        """Give one message to the surface that owns the terminal: the
+        consent page's status line while it is up, this page's
+        consent line when it is not."""
         page = self.consent_page()
         if page is not None:
-            page.flash(line)
+            page.flash(message)
         else:
-            self.flash(line)
+            self.flash(message)
 
     def consent_page(self) -> ConsentPage | None:
         """The open consent page wherever it sits in the stack (a
@@ -666,7 +661,6 @@ class WorkspaceScreen(Screen):
     async def run_page_action(self, kind: str) -> None:
         handler = {
             ACTION_SHELL_WINDOW: self.open_shell_window,
-            ACTION_EGRESS_MODE: self.pick_egress_mode,
             "edit": self.edit_workspace,
             "start": self.start_workspace,
             "stop": self.stop_workspace,
@@ -808,12 +802,12 @@ class WorkspaceScreen(Screen):
         return self.link.controller.rules
 
     def open_mode_picker(self) -> None:
-        """Push the mode picker (#344, #454) over whatever surface
-        the page hosts — the page's own action row and the consent
-        page's ``m`` both take this one path: the current mode
-        starts highlighted (the snapshot's mode; the row's until
-        the first rules frame lands), and the pick goes to the
-        switch path, which owns the empty-static confirmation."""
+        """Push the mode picker (#344) over whatever surface the
+        page hosts — the consent page's ``m`` is its one path
+        (#454): the current mode starts highlighted (the snapshot's
+        mode; the row's until the first rules frame lands), and the
+        pick goes to the switch path, which owns the empty-static
+        confirmation."""
         rules = self.page_rules()
         current = (
             rules.mode
@@ -821,10 +815,6 @@ class WorkspaceScreen(Screen):
             else (self.row.get("egress_mode") or "")
         )
         self.app.push_screen(ModeScreen(current, self.switch_mode))
-
-    async def pick_egress_mode(self) -> None:
-        """Open the mode picker over the page (#344)."""
-        self.open_mode_picker()
 
     async def switch_mode(self, mode: str | None) -> None:
         """One picked mode (#344): the pick goes to the shared
@@ -848,15 +838,17 @@ class WorkspaceScreen(Screen):
         mode the moment the switch lands, a dropped link included
         (the daemon pushes the same frame on the events socket,
         and it re-lands the same data idempotently). A refusal
-        names itself on the page's consent line: the app-level
-        flash paints the list's status line, which the pushed page
-        hides (#343)."""
+        names itself on the surface that owns the terminal — the
+        consent page's status line while it stands (the switch's
+        one path, its ``m``), the page's consent line otherwise:
+        the app-level flash paints the list's status line, which
+        a pushed page hides (#343)."""
         try:
             reply = await self.app.data.set_egress_mode(
                 self.row["id"], mode, confirm_empty=confirm_empty
             )
         except (Exception, SystemExit) as exc:
-            self.flash(f"mode switch failed: {flash_safe(str(exc))}")
+            self.flash_visible(f"mode switch failed: {flash_safe(str(exc))}")
             return
         self.row["egress_mode"] = reply.get("mode") or mode
         self.land_rules_reply(reply)

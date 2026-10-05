@@ -66,6 +66,7 @@ from .consent import (
     SecretEvent,
     fmt_duration,
 )
+from .rows import header_meta, header_name
 
 #: Reconnect backoff (seconds), capped; a repeatedly-dropping daemon
 #: must not spin the client.
@@ -760,14 +761,18 @@ class ConsentPage(Screen):
 
     Two zones in reading order: the held requests (rows with
     countdowns, the queue the overlay owned) above the in-effect
-    verdicts (the rules rows), the mode line and static allowlist
-    at the top, a status line naming the workspace, the mode, the
-    link's state, and the held count. The arrows walk a zone's
-    rows and cross between the zones at their edges (an
-    :class:`EdgeListView` a side) — no focus trap anywhere, and a
-    list swap leaves the zones' focus where it stood (the empty
-    queue's first hold excepted: that arrival takes the focus
-    once, the moment the page's purpose materializes).
+    verdicts (the rules rows), under the workspace page's own
+    two-line header (#460 — the name with its status and the
+    pending-egress count, the id, image, host, and created date
+    muted beneath, so the identity stays visible while verdicts
+    are made), the mode line and static allowlist, and a status
+    line naming the mode, the link's state, and the held count.
+    The arrows walk a zone's rows and cross between the zones at
+    their edges (an :class:`EdgeListView` a side) — no focus trap
+    anywhere, and a list swap leaves the zones' focus where it
+    stood (the empty queue's first hold excepted: that arrival
+    takes the focus once, the moment the page's purpose
+    materializes).
 
     The verdict keys act on the holds zone alone: ``a``/``d``
     decide the focused hold for the default duration, ``A``/``D``
@@ -834,6 +839,16 @@ class ConsentPage(Screen):
         return self.link.controller
 
     def compose(self) -> ComposeResult:
+        yield Static(
+            header_name(
+                self.host.row, theme_variables=self.app.theme_variables
+            ),
+            id="header",
+        )
+        yield Static(
+            header_meta(self.host.row, self.app.theme_variables),
+            id="header-meta",
+        )
         with Vertical(id="consent-page"):
             yield Static(id="allowlist")
             yield Static(id="consent-status")
@@ -858,14 +873,15 @@ class ConsentPage(Screen):
 
     def started(self) -> None:
         """The compose has settled: build both zones, paint the
-        status line, and focus the holds when a hold waits (the
-        urgent zone), the verdicts otherwise — the verdicts too
-        when the holds list sits in a rebuild's swap window (a
-        stalled loop can run the tick's first rebuild before this
-        lands; a page with nowhere focused would take keys as
-        inert until Tab)."""
+        header and the status line, and focus the holds when a hold
+        waits (the urgent zone), the verdicts otherwise — the
+        verdicts too when the holds list sits in a rebuild's swap
+        window (a stalled loop can run the tick's first rebuild
+        before this lands; a page with nowhere focused would take
+        keys as inert until Tab)."""
         self.hold_rebuilds.request()
         self.rule_rebuilds.request()
+        self.paint_header()
         self.update_status()
         self.holds_known = bool(self.controller.ordered())
         if self.holds_known and self.hold_rows() is not None:
@@ -880,13 +896,14 @@ class ConsentPage(Screen):
     # -- the per-second repaint ------------------------------------------
 
     def tick(self) -> None:
-        """The per-second repaint: both zones' countdowns and the
-        status line. A teardown race leaves the queries empty —
-        noise, not a crash."""
+        """The per-second repaint: the header, both zones'
+        countdowns, and the status line. A teardown race leaves the
+        queries empty — noise, not a crash."""
         try:
             self.sync_holds()
             self.update_status()
             self.sync_rules()
+            self.paint_header()
         except NoMatches:
             pass
 
@@ -1136,6 +1153,28 @@ class ConsentPage(Screen):
 
     # -- the status line ---------------------------------------------------
 
+    def paint_header(self) -> None:
+        """The page's header — the workspace page's own two lines
+        (#460): the name with its status and the pending-egress
+        count, the id, image, host, and created date muted beneath.
+        The row is the host's (its per-second read keeps both
+        pages' headers following a workspace another surface may
+        have moved), and the count rides the host's link — the
+        same queue the workspace page beneath counts."""
+        try:
+            self.query_one("#header", Static).update(
+                header_name(
+                    self.host.row,
+                    self.host.pending_count(),
+                    self.app.theme_variables,
+                )
+            )
+            self.query_one("#header-meta", Static).update(
+                header_meta(self.host.row, self.app.theme_variables)
+            )
+        except NoMatches:
+            pass  # teardown unmounted a header line under the worker
+
     def flash(self, message: str) -> None:
         """Give the status line to a message for FLASH_TTL seconds —
         a verdict's failure, a sighting's alarm (#201): the
@@ -1144,15 +1183,16 @@ class ConsentPage(Screen):
         self.update_status()
 
     def update_status(self) -> None:
-        """The status line: workspace, current mode, the link's
-        state, held count; a flash owns it until its TTL lapses. A
-        rejected registration names its reason — the daemon refused
-        this page as the decider, and the line says why (escaped
-        the way the flashes are: a truncated closing tag in the
-        reason would raise in the parse, #318's rule). The held
-        count drops to zero off a live link for the header's own
-        reason: a dead socket's snapshot may carry holds the
-        server already resolved."""
+        """The status line: the current mode, the link's state, the
+        held count (the header above carries the workspace's
+        identity); a flash owns it until its TTL lapses. A rejected
+        registration names its reason — the daemon refused this
+        page as the decider, and the line says why (escaped the way
+        the flashes are: a truncated closing tag in the reason
+        would raise in the parse, #318's rule). The held count
+        drops to zero off a live link for the header's own reason:
+        a dead socket's snapshot may carry holds the server
+        already resolved."""
         if self.link.state in (REJECTED, UNUSABLE_TOKEN):
             state = flash_safe(self.link.reject_reason or "rejected")
         else:
@@ -1161,8 +1201,7 @@ class ConsentPage(Screen):
             len(self.controller.pending) if self.link.state == CONNECTED else 0
         )
         default = (
-            f" {escape(self.workspace_id)}  ·  mode "
-            f"{mode_label(self.controller.rules)}"
+            f"mode {mode_label(self.controller.rules)}"
             f"  ·  {state}  ·  {held} held"
         )
         self.query_one("#consent-status", Static).update(

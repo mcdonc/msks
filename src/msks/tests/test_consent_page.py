@@ -360,6 +360,15 @@ def status_line(app) -> str:
     return str(consent_in(app).query_one("#consent-status").content)
 
 
+def header_line(app) -> str:
+    """The consent page's header name line; empty while the page
+    still mounts."""
+    try:
+        return str(consent_in(app).query_one("#header").content)
+    except Exception:
+        return ""
+
+
 def page_consent(app, page) -> str:
     """The workspace page's consent line; empty while the page still
     mounts."""
@@ -467,6 +476,35 @@ async def decide_the(controller, rid: str, decision: str = "allowed") -> None:
 
 
 # -- the page's shape (#454) ------------------------------------------------
+
+
+async def test_the_page_carries_the_workspace_header() -> None:
+    """#460: the consent page opens under the workspace page's own
+    two-line header — the name with its status (and the
+    pending-egress count while holds wait), the id, image, host,
+    and created date muted beneath — so the identity stays visible
+    while verdicts are made, and the count rides the header as
+    holds land and resolve."""
+    factory = FakeFactory(
+        [FakeWS([request_frame("r1"), rules_frame()]), FakeWS([])]
+    )
+    app, page, _data = make_page(factory)
+    async with app.run_test() as pilot:
+        cp = await open_consent(pilot, app, page)
+        await wait_for(lambda: hold_children(app) == 1)
+        header = header_line(app)
+        assert "dev" in header
+        assert "running" in header
+        # The count lands with the page's first repaint (the same
+        # per-second tick the workspace page's header rides).
+        await wait_for(lambda: "egress to decide: 1" in header_line(app))
+        meta = str(cp.query_one("#header-meta").content)
+        assert WS in meta
+        assert "host-1" in meta
+        assert "created 2026-01-02" in meta
+        await decide_the(page.link.controller, "r1")
+        cp.tick()
+        await wait_for(lambda: "egress to decide" not in header_line(app))
 
 
 async def test_the_page_shows_both_zones() -> None:
@@ -690,7 +728,7 @@ async def test_the_queue_lifecycle() -> None:
         await pilot.pause()
         assert "api.example:443" in held_row(app, 0)
         assert "raw.example (all ports)" in held_row(app, 1)
-        assert WS in status_line(app)
+        assert "dev" in str(cp.query_one("#header").content)
         assert "connected" in status_line(app)
         # a allows the focused (first) hold with the default duration.
         await pilot.press("a")
@@ -1237,7 +1275,9 @@ async def test_a_foreign_sighting_never_flashes() -> None:
 async def test_the_mode_picker_opens_from_the_consent_page() -> None:
     """`m` on the consent page opens the workspace page's picker
     directly (#301 over #454): the operator watching holds
-    escalates or relaxes the posture without leaving the page; the
+    escalates or relaxes the posture without leaving the page —
+    the switch's one path since the workspace page's own mode
+    action left (#460) — the current mode starts highlighted, the
     pick goes through the data seam, and `m` again under the open
     picker stacks nothing."""
     factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
@@ -1246,6 +1286,8 @@ async def test_the_mode_picker_opens_from_the_consent_page() -> None:
         await open_consent(pilot, app, page)
         await wait_for(lambda: "mode interactive" in status_line(app))
         await open_screen(pilot, app, "m", "ModeScreen")
+        options = app.screen.query_one("#pick-options")
+        assert options.highlighted == 2  # interactive, the snapshot's
         await pilot.press("m")  # under the picker: inert
         await pilot.pause()
         assert (
@@ -1425,8 +1467,9 @@ async def test_mode_picker_escape_cancels() -> None:
 
 async def test_mode_switch_failure_flashes() -> None:
     """A failed switch (the daemon's named refusal among them)
-    flashes on the workspace page's consent line, never crashes
-    the tree."""
+    flashes on the consent page's own status line — the surface
+    that owns the terminal while the switch stands (#460) — and
+    never crashes the tree."""
     factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
     app, page, data = make_page(factory)
     data.fail.add("mode")
@@ -1436,7 +1479,8 @@ async def test_mode_switch_failure_flashes() -> None:
         await pilot.press("up")  # interactive -> static
         await pilot.press("enter")
         await wait_for(lambda: len(data.modes) == 1)
-        await wait_for(lambda: "mode switch failed" in page_consent(app, page))
+        await wait_for(lambda: "mode switch failed" in status_line(app))
+        assert on_consent(app)  # the page kept the terminal
 
 
 async def test_modal_keys_do_not_reach_the_hidden_page() -> None:
@@ -1512,6 +1556,20 @@ async def test_a_tick_survives_widgets_that_left_under_it() -> None:
         await cp.query_one("#holds-empty").remove()
         cp.tick()  # the empty line's query raises inside: swallowed
         await wait_for(lambda: cp.hold_rows() is not None)
+
+
+async def test_a_header_line_that_left_under_the_paint() -> None:
+    """A header line removed under the paint (a teardown race)
+    is noise, not a crash: the paint swallows the missing query
+    and paints whichever lines stand."""
+    factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
+    app, page, _data = make_page(factory)
+    async with app.run_test() as pilot:
+        cp = await open_consent(pilot, app, page)
+        await wait_for(lambda: "dev" in header_line(app))
+        await cp.query_one("#header").remove()
+        cp.paint_header()  # swallowed: the name line is gone
+        await pilot.pause()
 
 
 async def test_hold_rows_returns_none_in_a_swap_window() -> None:
