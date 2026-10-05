@@ -1725,12 +1725,17 @@ mod session {
     }
 
     #[test]
-    fn write_all_failure_on_closed_fd() {
+    fn write_all_failure_on_unwritable_fd() {
+        // A dangling fd number is not deterministically unwritable:
+        // the harness runs the tests on threads, and any concurrent
+        // open in the process can recycle the dropped number, making
+        // the write succeed — a load-bound flake on busy runners
+        // (#476). Keeping the fd owned makes the write fail on its
+        // own merits instead: with the peer closed, write(2)
+        // answers EPIPE.
         let (client, server) = socketpair();
         drop(client);
-        let fd = server.as_raw_fd();
-        drop(server);
-        assert!(!write_all(fd, b"x"));
+        assert!(!write_all(server.as_raw_fd(), b"x"));
     }
 
     // --- run_shell_child, against a scriptable ChildSys ---

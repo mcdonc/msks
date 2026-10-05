@@ -123,7 +123,11 @@ def consent_line(link, row: dict) -> str:
     silence is data (the controller keeps its last snapshot through
     the backoff ladder, so the line says so beside it)."""
     if link.state in (REJECTED, UNUSABLE_TOKEN):
-        return f"egress consent: {escape(link.reject_reason)}"
+        # The daemon's refusal text is free text on a markup-
+        # parsing Static: it rides flash_safe, so a truncated
+        # closing tag in the reason parses clean at update time
+        # (#318's rule) — the timer's repaint included.
+        return f"egress consent: {flash_safe(link.reject_reason)}"
     rules = link.controller.rules
     if rules is None:
         mode = row.get("egress_mode") or "-"
@@ -687,7 +691,7 @@ class WorkspaceScreen(Screen):
             # tree's first flash: this tree exits on the spot, and
             # its own status line dies with it.
             self.app.follow.seed = (
-                f"shell window failed: {escape(str(exc))}"
+                f"shell window failed: {flash_safe(str(exc))}"
                 " — opening in this terminal"
             )
             self.app.quit_after(FLOW_SHELL, self.row["id"])

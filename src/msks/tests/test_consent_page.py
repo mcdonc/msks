@@ -831,6 +831,48 @@ async def test_verdict_keys_without_a_focused_row() -> None:
         assert data.decided == []
 
 
+async def test_a_swap_reclaims_focus_from_its_dying_holds_list() -> None:
+    """The holds swap carries the verdicts zone's reclaim: a focus
+    grab landing inside its remove window (started() processing
+    mid-swap on a starved loop) would leave the letters dying on
+    the removed list's closed pump — 'a' never took effect under
+    the parallel suite (#468). The swap's tail gives the fresh
+    list the focus its removal orphaned."""
+    factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
+    app, page, data = make_page(factory)
+    async with app.run_test() as pilot:
+        cp = await open_consent(pilot, app, page)
+        await wait_for(lambda: hold_children(app) == 1)
+        await wait_for(lambda: focused_zone(app) == "holds")
+        await pilot.pause()  # started() lands; it must not mask the race
+        old = cp.query_one("#hold-rows")
+        real_remove = old.remove
+
+        async def remove_under_a_grab():
+            removal = real_remove()  # the prune repairs synchronously here
+            cp.set_focus(old)  # the grab: started() landing inside the window
+            return await removal
+
+        old.remove = remove_under_a_grab
+        cp.set_focus(None)  # the swap's head reads held_focus False
+        await decide_the(page.link.controller, "r1")
+        cp.tick()
+        # The verdicts zone's rule: wait for the end state itself
+        # — the fresh list owns the id, and the focus the grab left
+        # on the corpse has been reclaimed onto it.
+        await wait_for(
+            lambda: (
+                cp.hold_rows() is not old
+                and cp.focused is not old
+                and cp.focused is cp.hold_rows()
+            )
+        )
+        await press_until(
+            pilot, "a", lambda: "no hold focused" in status_line(app)
+        )
+        assert data.decided == []
+
+
 async def test_enter_decides_nothing() -> None:
     """Enter carries no verdict (#358): both zones are ListViews,
     and Enter fires their selection — a stray Enter aimed at the
@@ -1206,6 +1248,48 @@ async def test_the_verdicts_refresh_on_frames() -> None:
         await open_screen(pilot, app, "escape", "ConsentPage")
 
 
+async def test_a_swap_reclaims_focus_from_its_dying_rules_list() -> None:
+    """A focus grab landing inside a swap's remove window leaves
+    the screen focused on the removed list — the page's own
+    ``started`` can process there on a starved loop (its zone
+    query still finds the dying list), and keys then die on the
+    removed widget's closed pump for good: 'm' never took effect
+    under the parallel suite (#468, #476). The swap's tail
+    reclaims the focus its removal orphaned, and the page's keys
+    live again."""
+    factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
+    app, page, _data = make_page(factory)
+    async with app.run_test() as pilot:
+        cp = await open_consent(pilot, app, page)
+        await wait_for(lambda: rules_children(app) == 2)
+        await pilot.pause()  # started() lands; it must not mask the race
+        old = cp.query_one("#rule-rows")
+        real_remove = old.remove
+
+        async def remove_under_a_grab():
+            removal = real_remove()  # the prune repairs synchronously here
+            cp.set_focus(old)  # the grab: started() landing inside the window
+            return await removal
+
+        old.remove = remove_under_a_grab
+        cp.set_focus(None)  # the swap's head reads held_focus False
+        page.link.controller.apply_frame(empty_rules_frame("allow"))
+        cp.tick()
+        # The children count crosses zero while the dying list's
+        # rows prune, and the page's own once-a-second tick can
+        # land its own swap beside this one — wait for the end
+        # state itself: the fresh list owns the id, and the focus
+        # the grab left on the corpse has been reclaimed onto it.
+        await wait_for(
+            lambda: (
+                cp.rule_rows() is not old
+                and cp.focused is not old
+                and cp.focused is cp.rule_rows()
+            )
+        )
+        await open_screen(pilot, app, "m", "ModeScreen")
+
+
 async def test_a_zone_swap_keeps_the_other_zones_focus() -> None:
     """A holds-list rebuild (a new hold arriving beside a standing
     one) moves no focus into the holds zone while the operator
@@ -1349,6 +1433,15 @@ async def test_the_status_line_names_the_link_state() -> None:
         page.link.reject_reason = "unknown workspace [/dev"
         cp.update_status()
         assert "unknown workspace" in status_line(app)  # parses, renders
+        # The workspace page beneath ticks on its own timer and
+        # repaints its #consent line with the same reason — the
+        # load-bound crash sat here (#476): drive the repaint by
+        # hand so the poisoned reason meets the markup parser on
+        # every run, not only when the timer lands in the window.
+        page.paint_consent()
+        assert "unknown workspace" in str(
+            page.query_one("#consent", Static).content
+        )
         await pilot.pause()
 
 
