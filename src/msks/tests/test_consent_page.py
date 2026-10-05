@@ -1450,8 +1450,10 @@ async def test_mode_picker_without_a_snapshot_confirms_static() -> None:
 
 async def test_the_picker_with_an_unknown_current() -> None:
     """A current mode the picker does not know (a row without a
-    recorded mode and no snapshot yet) leaves the default
-    highlight alone."""
+    recorded mode and no snapshot yet) leaves nothing highlighted
+    — the widget's constructor pre-highlights the first row, and a
+    bare Enter must not take a posture the page has not seen
+    (#465 review)."""
     factory = FakeFactory([FakeWS([]), FakeWS([])])
     app, page, _data = make_page(factory)
     async with app.run_test() as pilot:
@@ -1465,8 +1467,14 @@ async def test_the_picker_with_an_unknown_current() -> None:
             except Exception:
                 return "pending"  # the compose stream settles async
 
-        await wait_for(lambda: highlight() != "pending")
-        assert highlight() == 0
+        # The constructor's own highlight (row 0) is transient: the
+        # mount settles on nothing highlighted.
+        await wait_for(lambda: highlight() is None)
+        await pilot.press("enter")
+        await asyncio.sleep(0.1)
+        # Enter decided nothing: the picker still stands, nothing
+        # was picked.
+        assert type(app.screen).__name__ == "ModeScreen"
 
 
 async def test_mode_picker_escape_cancels() -> None:

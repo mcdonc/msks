@@ -563,7 +563,9 @@ async def test_the_picker_opens_before_any_rules_frame() -> None:
         await pilot.press("m")
         assert isinstance(pilot.app.screen, ModeScreen)
         options = pilot.app.screen.query_one(OptionList)
-        assert options.highlighted is None
+        # The constructor's own highlight (row 0) is transient: the
+        # mount settles on nothing highlighted.
+        await until(lambda: options.highlighted is None)
         await pilot.press("enter")
         await asyncio.sleep(0.1)
         assert sent == []
