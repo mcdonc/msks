@@ -105,7 +105,6 @@ def test_install_hint_table_and_managers() -> None:
     assert install_hint("mkisofs", "brew") == "brew install cdrtools"
     assert install_hint("rsync", "zypper") == "sudo zypper install rsync"
     assert install_hint("curl", "apk") == "sudo apk add curl"
-    assert install_hint("curl", "apk") == "sudo apk add curl"
 
 
 def test_install_hint_fallbacks() -> None:

@@ -140,7 +140,7 @@ UPSTREAM_HINTS = {
 # qemu-utils/qemu-img is Debian's name for the conversion tool,
 # and conntrack comes from conntrack-tools everywhere except apt.
 # cloud-hypervisor and ch-remote carry no rows: Debian's archive
-# has neither, so their hint is the upstream release (PINNED_HINTS).
+# has neither, so their hint is the upstream release (UPSTREAM_HINTS).
 PACKAGE_HINTS: dict[str, dict[str, str]] = {
     "curl": {
         "dnf": "curl",
@@ -415,7 +415,7 @@ def check_ssh(manager: str | None) -> CheckResult:
     rc, out, err = run(["ssh", "-V"])
     if ssh_banner_ok(rc, err):
         return CheckResult(name="ssh", ok=True, message=f"ssh ok ({path})")
-    detail = (err or out or f"exit {rc}").strip()[:200]
+    detail = (err.strip() or out.strip() or f"exit {rc}")[:200]
     return ssh_result(
         manager, f"ssh found at {path} but probe failed: {detail}"
     )

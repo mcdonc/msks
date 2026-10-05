@@ -46,7 +46,8 @@ links against, and the host tmux at the 3.2 floor the consent
 terminal documents (#379). Each result prints with a ✓ (present
 and functional), ⚠ (a development-time or client-side tool the
 daemon itself runs without: a debugging aid, a diagnostic, the
-clone scanner, a hand-side VMM poking tool, or a tool behind
+clone scanner, a tool for poking the VMM's API socket by hand,
+or a tool behind
 `msks forward`), or ✗ (a core-path dependency) marker, and each
 miss carries an install hint matched to the detected package
 manager. The run ends with a
