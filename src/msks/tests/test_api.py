@@ -3817,3 +3817,42 @@ async def test_a_seed_race_lost_on_the_unique_index_stands_down(
     monkeypatch.setattr(app.state.model, "create_placeholder", racing_insert)
     async with api.router.lifespan_context(api):
         assert await app.state.model.list_placeholders() == []
+
+
+async def test_the_listing_names_each_images_catalog_reference(client) -> None:
+    """#470 L3: the workspace listing joins the image catalog —
+    every row carries the human reference (name:version) its
+    digest resolves to beside the digest itself, and a row whose
+    image the catalog no longer resolves keeps ``None`` for the
+    reference (the client falls back to the digest)."""
+    from test_imagestore import build_containerdisk
+
+    http, app, _stub = client
+    state_dir = app.state.settings.vmm.state_dir
+    state_dir.mkdir(parents=True, exist_ok=True)
+    archive = state_dir / "ref-image.tar"
+    build_containerdisk(archive, name="debian-13", version="2026.09")
+    imported = await http.post(
+        "/api/v1/images", json={"source": str(archive)}, headers=auth()
+    )
+    assert imported.status_code == 201, imported.text
+    digest = imported.json()["hash"]
+    created = await http.post(
+        "/api/v1/workspaces", json={"id": "ws-ref"}, headers=auth()
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["image_hash"] == digest
+    listed = await http.get("/api/v1/workspaces", headers=auth())
+    (row,) = listed.json()
+    assert row["image_ref"] == "debian-13:2026.09"
+    assert row["image_hash"] == digest
+    # A row with no image keeps None for the reference — the
+    # client falls back to the digest it carries — and a digest
+    # the catalog cannot resolve keeps None too (a pruned
+    # image).
+    from msks.imagestore import list_images
+    from msks.server.api.workspaces import image_ref
+
+    catalog = list_images(state_dir)
+    assert image_ref(catalog, None) is None
+    assert image_ref(catalog, "0" * 64) is None

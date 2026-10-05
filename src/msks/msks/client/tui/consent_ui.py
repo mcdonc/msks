@@ -41,7 +41,7 @@ from rich.markup import escape
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.content import Content
+from textual.content import Content, Span
 from textual.css.query import NoMatches
 from textual.screen import ModalScreen, Screen
 from textual.widgets import (
@@ -66,7 +66,7 @@ from .consent import (
     SecretEvent,
     fmt_duration,
 )
-from .rows import header_meta, header_name
+from .rows import clip, header_meta, header_name
 
 #: Reconnect backoff (seconds), capped; a repeatedly-dropping daemon
 #: must not spin the client.
@@ -102,14 +102,33 @@ def registration_frame(workspace_id: str) -> str:
     return json.dumps({"type": "egress.decider", "workspace": workspace_id})
 
 
-def dest_line(request: ConsentRequest, remaining: float) -> str:
-    """One held request's row text: destination, port (or all
-    ports), and the hold's countdown."""
+#: A held request's countdown turns urgent below this many
+#: seconds (#470 C7): a hold that lapses fails closed, so the
+#: deadline reads in the warning color while it is still a
+#: decision away.
+HOLD_WARNING_S = 10.0
+
+
+def dest_line(
+    request: ConsentRequest, remaining: float, focused: bool = False
+) -> Content:
+    """One held request's row (#454, #470 C7/S3): destination,
+    port (or all ports), and the hold's countdown — the countdown
+    in the warning color under :data:`HOLD_WARNING_S` (the hold
+    that lapses fails closed), the destination bold on the row
+    the keys act on, the focus cue a weak theme's highlight bar
+    cannot carry."""
     host = escape(request.dest_host)
     port = (
         " (all ports)" if request.dest_port == 0 else (f":{request.dest_port}")
     )
-    return f"{host}{port}  ({int(remaining)}s)"
+    text = f"{host}{port}  ({int(remaining)}s)"
+    spans = []
+    if focused:
+        spans.append(Span(0, len(host) + len(port), "$text bold"))
+    if remaining < HOLD_WARNING_S:
+        spans.append(Span(text.rindex("("), len(text), "$warning"))
+    return Content(text, spans)
 
 
 def duration_label(rule, remaining: float | None) -> str:
@@ -124,18 +143,46 @@ def duration_label(rule, remaining: float | None) -> str:
     return f"{fmt_duration(remaining)} left"
 
 
-def rule_line(rule, remaining: float | None) -> str:
-    """One in-effect verdict's row text with its duration label."""
-    host = escape(rule.dest_host)
+#: The verdict word's colors (#470 C5): the decision earns its
+#: leading cell — allowed in the success color, denied in the
+#: error color.
+VERDICT_COLORS = {"allowed": "$success", "denied": "$error"}
+
+#: A verdict row's host budget (#470 C5): a long FQDN clips at
+#: its middle — the row keeps one line and the duration stays
+#: readable at the terminal's edge.
+RULE_HOST_W = 40
+
+
+def rule_line(rule, remaining: float | None, focused: bool = False) -> Content:
+    """One in-effect verdict's row (#470 C5/S3): the decision word
+    in its verdict color, the host clipped to its budget (a long
+    FQDN keeps the row to one line), the duration label behind
+    it, and the host bold on the row ``x`` acts on."""
+    host = clip(escape(rule.dest_host), RULE_HOST_W)
     port = " (all ports)" if rule.dest_port == 0 else f":{rule.dest_port}"
-    return (
-        f"{rule.decision:7s} {host}{port}  {duration_label(rule, remaining)}"
-    )
+    label = duration_label(rule, remaining)
+    text = f"{rule.decision:<7s} {host}{port}  {label}"
+    spans = [
+        Span(0, len(rule.decision), VERDICT_COLORS.get(rule.decision, "$text"))
+    ]
+    if focused:
+        # The host sits past the decision's padded column — a
+        # decision word the daemon grows past seven cells pushes
+        # it right, so the span reads the offset it finds, not a
+        # constant.
+        host_at = max(len(rule.decision), 7) + 1
+        spans.append(
+            Span(host_at, host_at + len(host) + len(port), "$text bold")
+        )
+    return Content(text, spans)
 
 
 def allowlist_text(rules: EgressRules | None) -> str:
-    """The rules screen's header: mode + static allowlist (entries
-    escaped — operator-supplied strings render literally)."""
+    """The consent page's allowlist line (#470 C1): the static
+    allowlist alone — the status line beneath names the mode, so
+    the word appears once (entries escaped — operator-supplied
+    strings render literally)."""
     if rules is None:
         return "no rules snapshot yet"
     entries = (
@@ -143,7 +190,7 @@ def allowlist_text(rules: EgressRules | None) -> str:
         if rules.allow_list
         else "(empty)"
     )
-    return f"mode {rules.mode}   allowlist: {entries}"
+    return f"allowlist: {entries}"
 
 
 def mode_label(rules: EgressRules | None) -> str:
@@ -760,6 +807,12 @@ class EdgeListView(ListView):
             self.action_cursor_down()
 
 
+#: The verdict keys' standing hint (#470 C2): the letters the
+#: queue answers, named beside the queue itself — the footer's
+#: ellipsis variant cannot teach its own meaning.
+HOLDS_HINT = "a allow · d deny · shift or enter picks a duration · x revoke"
+
+
 class ConsentPage(Screen):
     """The egress consent page (#454): the held-request queue and
     the in-effect verdicts on one full-screen page — the consent
@@ -785,13 +838,14 @@ class ConsentPage(Screen):
     The verdict keys act on the holds zone alone: ``a``/``d``
     decide the focused hold for the default duration, ``A``/``D``
     pick a duration first, and on a verdict row they decide
-    nothing. ``x`` revokes the focused verdict and acts on
+    nothing — a mis-zoned press names itself on the status line
+    (#470 C2). ``x`` revokes the focused verdict and acts on
     nothing in the holds zone; ``m`` opens the host's mode
     picker; ``q`` or Escape returns to the workspace page — holds
     keep waiting, the header's count keeps naming them. Enter
-    carries no verdict: the zones are ListViews, and a stray
-    Enter aimed at the page beneath must not decide anything;
-    only an explicit letter decides.
+    opens the duration picker on a focused hold (#470 C4) — the
+    key answers, the pick decides; only an explicit letter or a
+    picked duration ever decides.
 
     The page owns its per-second repaint: an unchanged row set
     repaints its countdowns in place; only a membership change
@@ -808,6 +862,7 @@ class ConsentPage(Screen):
     AUTO_FOCUS = ""
 
     BINDINGS = [
+        Binding("enter", "enter_pick", "Allow for…", priority=True),
         Binding("a", "allow", "Allow"),
         Binding("A", "allow_duration", "Allow…"),
         Binding("d", "deny", "Deny"),
@@ -817,6 +872,20 @@ class ConsentPage(Screen):
         Binding("q", "back", "Back"),
         Binding("escape", "back", "Back", show=False),
     ]
+
+    def check_action(self, action: str, parameters) -> bool | None:
+        """The verdict keys ride the queue's life (#470 C3): while
+        no hold waits, ``a``/``d``/``A``/``D`` leave the footer and
+        go inert — a dead control hides rather than flash — and
+        they return the moment a hold lands."""
+        if action in {
+            "allow",
+            "deny",
+            "allow_duration",
+            "deny_duration",
+        }:
+            return bool(self.controller.ordered())
+        return True
 
     def __init__(self, host) -> None:
         super().__init__()
@@ -862,6 +931,7 @@ class ConsentPage(Screen):
             yield Static(id="consent-status")
             with Vertical(id="holds-zone"):
                 yield Static("held requests", id="holds-label")
+                yield Static(HOLDS_HINT, id="holds-hint")
                 # The empty line sits above the list so the list can
                 # mount at its zone's end — an anchored mount would
                 # wedge the zone the moment its anchor left.
@@ -997,13 +1067,18 @@ class ConsentPage(Screen):
         return f"No held requests — {self.link.state}."
 
     def repaint_countdowns(self, rows: ListView, ordered: list) -> None:
-        """Repaint each survivor's countdown in place."""
+        """Repaint each survivor's countdown in place (#470 S3):
+        the bold cue follows the focused row."""
         existing = row_map(rows)
         for request in ordered:
             item = existing.get(request.id)
             if item is not None:
                 item.query_one(Static).update(
-                    dest_line(request, self.controller.remaining(request))
+                    dest_line(
+                        request,
+                        self.controller.remaining(request),
+                        focused=item is rows.highlighted_child,
+                    )
                 )
 
     async def rebuild_holds(self, ordered: list) -> None:
@@ -1034,6 +1109,14 @@ class ConsentPage(Screen):
         self.land_hold_focus(fresh, focused, held_focus, ordered)
         self.reclaim_hold_focus(fresh, old, focused)
         self.sync_empty(ordered)
+        self.repaint_countdowns(fresh, ordered)  # the bold cue lands
+        # The footer follows the queue's membership (#470 C3, the
+        # review round): the verdict keys live in
+        # ``check_action`` — driven by the queue — and the footer
+        # only re-renders its bindings on focus moves, so the
+        # rebuild (a hold arriving or resolving) hands it the
+        # gate's fresh answer itself.
+        self.refresh_bindings()
 
     def fresh_hold_list(self, ordered: list) -> EdgeListView:
         """The holds zone's next list: the rows for ``ordered``, the
@@ -1146,6 +1229,7 @@ class ConsentPage(Screen):
             await old.remove()  # frees the id before the fresh list mounts
         await body.mount(fresh)
         self.land_rule_focus(fresh, old, focused, held_focus)
+        self.repaint_rule_rows(fresh, ordered)  # the bold cue lands
 
     def land_rule_focus(
         self, fresh: ListView, old: ListView | None, focused, held_focus: bool
@@ -1177,15 +1261,20 @@ class ConsentPage(Screen):
         return items
 
     def repaint_rule_rows(self, rows: ListView, ordered: list) -> None:
-        """Repaint each surviving rule row's text in place: the
-        caller's order-equal membership match proves the children
-        and ``ordered`` line up positionally, so the pass walks the
-        two side by side (never id-keyed — a malformed frame with
-        duplicate ids would repaint one row twice and leave its
-        twin stale), moves no index, and takes no focus."""
+        """Repaint each surviving rule row's text in place (#470
+        S3): the caller's order-equal membership match proves the
+        children and ``ordered`` line up positionally, so the pass
+        walks the two side by side (never id-keyed — a malformed
+        frame with duplicate ids would repaint one row twice and
+        leave its twin stale), moves no index, and takes no
+        focus — the bold cue follows the focused row."""
         for child, rule in zip(rows.children, ordered):
             child.query_one(Static).update(
-                rule_line(rule, self.controller.rule_remaining(rule))
+                rule_line(
+                    rule,
+                    self.controller.rule_remaining(rule),
+                    focused=child is rows.highlighted_child,
+                )
             )
 
     # -- the status line ---------------------------------------------------
@@ -1241,9 +1330,24 @@ class ConsentPage(Screen):
             f"mode {mode_label(self.controller.rules)}"
             f"  ·  {state}  ·  {held} held"
         )
-        self.query_one("#consent-status", Static).update(
-            self.flash_line.text(default)
-        )
+        # The zones' labels carry their counts (#470 C6): the
+        # reader knows a section is complete without hunting a
+        # scrollbar. A flash routed here while the compose still
+        # settles (a sighting drained from the workspace page
+        # beneath) finds the lines absent — the tick's own guard,
+        # carried in, noise not a crash.
+        try:
+            self.query_one("#holds-label", Static).update(
+                f"held requests ({held})"
+            )
+            self.query_one("#rules-label", Static).update(
+                f"in effect ({len(rule_rows(self.controller.rules))})"
+            )
+            self.query_one("#consent-status", Static).update(
+                self.flash_line.text(default)
+            )
+        except NoMatches:
+            pass
 
     # -- verdicts ------------------------------------------------------------
 
@@ -1263,18 +1367,34 @@ class ConsentPage(Screen):
     async def action_allow(self) -> None:
         if self.holds_zone_focused():
             await self.decide_focused("allow", DURATION_DEFAULT)
+        else:
+            self.flash("a decides a held request")
 
     async def action_deny(self) -> None:
         if self.holds_zone_focused():
             await self.decide_focused("deny", DURATION_DEFAULT)
+        else:
+            self.flash("d decides a held request")
 
     async def action_allow_duration(self) -> None:
         if self.holds_zone_focused():
             await self.pick_duration("allow")
+        else:
+            self.flash("A picks a duration on a held request")
 
     async def action_deny_duration(self) -> None:
         if self.holds_zone_focused():
             await self.pick_duration("deny")
+        else:
+            self.flash("D picks a duration on a held request")
+
+    async def action_enter_pick(self) -> None:
+        """Enter on a focused hold opens the duration picker (#470
+        C4) — the key answers, the pick decides; Enter alone never
+        decides. A focus on the verdicts answers nothing: a
+        verdict row carries nothing to pick."""
+        if self.holds_zone_focused():
+            await self.pick_duration("allow")
 
     async def decide_focused(self, decision: str, duration: str) -> None:
         """Send the verdict for the focused hold through the data
@@ -1336,6 +1456,7 @@ class ConsentPage(Screen):
         focused, and a press in the holds zone decides nothing —
         a hold carries nothing to revoke."""
         if not self.rules_zone_focused():
+            self.flash("x revokes a verdict row")
             return
         rule_id = focused_rule_or_none(self)
         if rule_id is not None:
@@ -1351,11 +1472,34 @@ class ConsentPage(Screen):
             self.flash(f"revoke failed: {flash_safe(str(exc))}")
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        """Enter on a row decides nothing: both zones are
-        ListViews, and Enter fires their selection — a stray Enter
-        (the operator aimed at the workspace page's action list
-        when the hold's flash landed) must never become a verdict.
-        Only an explicit letter decides."""
+        """Enter on a row decides nothing by selection: both zones
+        are ListViews and the priority binding owns the key
+        (#470 C4) — this handler stands for a future widget that
+        selects without the binding, and only an explicit letter
+        or a picked duration decides."""
+
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        """The focused row moved: repaint the standing rows so the
+        bold cue follows it (#470 S3) — in place, identity and
+        focus stay put. Teardown prunes a zone's Static under the
+        repaint — the walk stops, noise, not a crash."""
+        try:
+            rows = self.hold_rows()
+            if rows is not None:
+                self.repaint_countdowns(rows, self.controller.ordered())
+            self.paint_rules_in_place()
+        except NoMatches:
+            pass
+
+    def paint_rules_in_place(self) -> None:
+        """Repaint the verdict rows when their membership stands
+        (#470 S3): a swap window takes the tick's rebuild instead
+        — this pass never builds."""
+        rows = self.rule_rows()
+        ordered = rule_rows(self.controller.rules)
+        if rows is None or row_rule_ids(rows) != [rule.id for rule in ordered]:
+            return
+        self.repaint_rule_rows(rows, ordered)
 
     # -- the mode picker and back -------------------------------------------
 

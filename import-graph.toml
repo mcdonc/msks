@@ -157,8 +157,11 @@ events = 4
 identity = 8
 # #448: the lifespan runs the catalog's startup sweep itself (the
 # seed bootstrap imports beside the default's, and debris from
-# either must clear whichever setting pointed at it).
-imagestore = 25
+# either must clear whichever setting pointed at it). #470: the
+# workspace listing joins the catalog — each row's image
+# reference resolves through the imagestore (resolve_hash beside
+# the listing's aliased list_images).
+imagestore = 29
 llm = 2
 microvm = 10
 model = 7

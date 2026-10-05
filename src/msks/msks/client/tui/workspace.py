@@ -111,6 +111,10 @@ def granted_line(controller) -> str:
     expiry = next_expiry(controller, rules)
     if expiry is not None:
         summary += f" · next expires {fmt_duration(expiry)}"
+    # The count names its own affordance (#470 W3): the summary is
+    # the line an operator reads as inert data, so it carries the
+    # key the hold flashes already name.
+    summary += " · e to review"
     return summary
 
 
@@ -140,15 +144,22 @@ def consent_line(link, row: dict) -> str:
     return line
 
 
-#: The power verbs' dimming rule (#367): the status that makes
-#: each verb pointless — the row dims with its reason while the
-#: workspace sits in it, and Enter names the reason instead of
-#: calling the daemon. Every other status leaves both rows live:
-#: the daemon owns the vocabulary (a workspace may read paused,
-#: starting, created, or a watcher word), and a verb it would
-#: still take stays offered — a refusal names itself on the
-#: page's consent line.
-DIMMED_WHEN = {"start": "running", "stop": "stopped"}
+#: The power verbs' dimming rule (#367, #470 W1): the status
+#: that makes each verb pointless — the row dims with its reason
+#: while the workspace sits in it, and Enter names the reason
+#: instead of calling the daemon. Every other status leaves both
+#: rows live: the daemon owns the vocabulary (a workspace may
+#: read paused, starting, created, or a watcher word), and a verb
+#: it would still take stays offered — a refusal names itself on
+#: the page's consent line. The shell action joins the rule at
+#: ``stopped`` (#470 W1): a workspace that sits powered off takes
+#: no shell, and the emphasis moves to the verb the status
+#: permits.
+DIMMED_WHEN = {
+    "start": "running",
+    "stop": "stopped",
+    ACTION_SHELL_WINDOW: "stopped",
+}
 
 
 class PageAction(NamedTuple):
@@ -172,6 +183,14 @@ def action_note(kind: str, status: str) -> str | None:
     return None
 
 
+def action_label(kind: str) -> str:
+    """The row's painted name for its kind — the subject a skip
+    flash names (#470 L5): the same words both screens read."""
+    return next(
+        (spec.name for spec in PAGE_ACTIONS if spec.kind == kind), kind
+    )
+
+
 def dimmed_action_content(
     name: str, note: str, marker: str, muted: str
 ) -> Content:
@@ -186,39 +205,51 @@ def dimmed_action_content(
 
 
 def live_action_content(
-    kind: str, name: str, desc: str, marker: str, muted: str
+    name: str, desc: str, marker: str, muted: str, primary: bool
 ) -> Content:
-    """A live action row's paint (#367): the name in the default
-    foreground — bold on the shell row, the page's most-used
-    action — the description muted behind an em dash."""
-    text = f"{marker} {name}"
-    spans = []
+    """A live action row's paint (#367, #470 W1/S3): the name
+    bold on the page's primary row — the action the current
+    status permits, and the row Enter acts on — the description
+    muted behind an em dash (every live row carries one, #470
+    W2)."""
+    text = f"{marker} {name} — {desc}"
     offset = 2 + len(name)
-    if kind == ACTION_SHELL_WINDOW:
+    spans = []
+    if primary:
         spans.append(Span(2, offset, "$text bold"))
-    if desc:
-        text += f" — {desc}"
-        spans.append(Span(offset + 3, len(text), muted))
+    spans.append(Span(offset + 3, len(text), muted))
     return Content(text, spans)
+
+
+def primary_action(kind: str, status: str) -> bool:
+    """Whether the row is the page's primary (#470 W1): the shell
+    while the workspace takes one, the start verb while it sits
+    stopped — the emphasis follows the state the row permits."""
+    if kind == ACTION_SHELL_WINDOW:
+        return True
+    return kind == "start" and status == "stopped"
 
 
 def action_content(
     spec: PageAction, status: str, theme_variables: dict | None, focused: bool
 ) -> Content:
-    """One action row's paint (#367): a marker cell on the row
-    Enter acts on — the highlighted row (the highlight bar stays
-    the list's own cue; the marker keeps the row legible where a
-    theme's bar reads weakly) — beside the row's tone-painted
-    content. A power row the status dims (#:data:`DIMMED_WHEN`)
-    mutes the whole row behind its reason; every other row rides
-    :func:`live_action_content`. The cells ride a Content's plain
+    """One action row's paint (#367, #470 W1/S3): a marker cell on
+    the row Enter acts on — the highlighted row (the highlight
+    bar stays the list's own cue; the marker keeps the row
+    legible where a theme's bar reads weakly) — beside the row's
+    tone-painted content. A power row the status dims
+    (:data:`DIMMED_WHEN`) mutes the whole row behind its reason;
+    every other row rides :func:`live_action_content`, its bold
+    on the row the status permits (:func:`primary_action`) and
+    on the focused row itself. The cells ride a Content's plain
     text, so a markup-carrying name cannot shift the spans."""
     marker = "▸" if focused else " "
     muted = muted_style(theme_variables or {})
     note = action_note(spec.kind, status)
     if note is not None:
         return dimmed_action_content(spec.name, note, marker, muted)
-    return live_action_content(spec.kind, spec.name, spec.desc, marker, muted)
+    primary = primary_action(spec.kind, status) or focused
+    return live_action_content(spec.name, spec.desc, marker, muted, primary)
 
 
 #: The workspace page's fixed actions (#309), top to bottom in
@@ -239,8 +270,8 @@ PAGE_ACTIONS = (
         True,
     ),
     PageAction("edit", "Edit settings", "sizes and topology", False),
-    PageAction("start", "Start", "", True),
-    PageAction("stop", "Stop", "", False),
+    PageAction("start", "Start", "boot the workspace", True),
+    PageAction("stop", "Stop", "power it off", False),
 )
 
 
@@ -261,8 +292,10 @@ class WorkspaceScreen(Screen):
     docstring owns that page's shape)."""
 
     BINDINGS = [
-        Binding("enter", "run", "Run"),
+        Binding("enter", "run", "Run", priority=True),
         Binding("e", "consent", "Egress consent"),
+        Binding("s", "quick_start", "Start"),
+        Binding("x", "quick_stop", "Stop"),
         Binding("q", "back", "Back"),
         Binding("escape", "back", "Back", show=False),
     ]
@@ -641,7 +674,7 @@ class WorkspaceScreen(Screen):
             return
         note = action_note(kind, self.row.get("status") or "")
         if note is not None:
-            self.flash(f"{kind} skipped: {note}")
+            self.flash(f"{action_label(kind)} skipped: {note}")
             return
         if kind == ACTION_CONSENT:
             self.open_consent_page()
@@ -708,6 +741,27 @@ class WorkspaceScreen(Screen):
 
     async def stop_workspace(self) -> None:
         await self.power_workspace("stop")
+
+    async def action_quick_start(self) -> None:
+        """``s``: the list's start letter, carried onto the page
+        (#470 W5) — the same muscle memory both screens answer."""
+        await self.power_key("start")
+
+    async def action_quick_stop(self) -> None:
+        """``x``: the list's stop letter, carried onto the page
+        (#470 W5)."""
+        await self.power_key("stop")
+
+    async def power_key(self, verb: str) -> None:
+        """One quick power key (#470 W5): the row's status
+        pre-flights the verb — the dimmed row's note names the
+        skip — and a live verb runs the page's own power
+        exchange."""
+        note = action_note(verb, self.row.get("status") or "")
+        if note is not None:
+            self.flash(f"{action_label(verb)} skipped: {note}")
+            return
+        await self.power_workspace(verb)
 
     async def power_workspace(self, verb: str) -> None:
         """Boot or power off this workspace; the header and the

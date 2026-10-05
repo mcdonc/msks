@@ -124,6 +124,8 @@ class MsksTuiApp(App):
     #actions ListItem Static { text-wrap: nowrap;
                               text-overflow: ellipsis; }
     WorkspaceForm { align: center middle; }
+    SearchScreen { align: center middle; }
+    #search-input { width: 48; border: round $primary; }
     #form { width: 64; height: auto; background: $panel;
             border: round $primary; padding: 1 2; }
     #form-note { color: $text-muted; margin-bottom: 1;
@@ -141,6 +143,7 @@ class MsksTuiApp(App):
     #consent-page { padding: 0 1; }
     #allowlist { height: 1; color: $text-muted;
                  text-wrap: nowrap; text-overflow: ellipsis; }
+    #holds-hint { height: 1; padding: 0 1; color: $text-muted; }
     #consent-status { height: 1; color: $text-muted;
                       text-wrap: nowrap;
                       text-overflow: ellipsis; }
