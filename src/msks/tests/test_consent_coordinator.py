@@ -121,7 +121,7 @@ async def test_interactive_without_decider_denies_fast(engine_app) -> None:
     future = await app.state.consent.hold("ws-interactive", "x.example", 443)
     verdict = await verdict_of(future)
     assert verdict["decision"] == "deny"
-    assert verdict["reason"] == "static"  # no human, no hold
+    assert verdict["reason"] == "no_decider"  # no human, no hold
     rows = await app.state.model.egress_consent.list_requests("ws-interactive")
     assert [r["decision"] for r in rows] == ["denied"]
     assert rows[0]["decided_by"] is None

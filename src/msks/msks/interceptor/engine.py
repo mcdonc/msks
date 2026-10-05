@@ -39,10 +39,12 @@ gate (:mod:`msks.interceptor.egress`) before anything else moves:
   handshake instead; fail-closed either way.
 - ``request`` gates plain HTTP (no ClientHello ever gated it) on
   the Host header, and answers denied requests — including the
-  marked TLS ones — with a local 403. TLS connections skip the
-  re-gate: the hello already gated the connection, and a ``once``
-  verdict must not re-prompt per request on a kept-alive
-  connection.
+  marked TLS ones — with a local 403 whose body names what happened
+  (#472): a verdict refused the destination, its decision is still
+  pending (the duplicate rule refused this newcomer's re-ask), or no
+  decider answered in time. TLS connections skip the re-gate: the
+  hello already gated the connection, and a ``once`` verdict must
+  not re-prompt per request on a kept-alive connection.
 """
 
 import logging
@@ -172,14 +174,48 @@ def original_destination(client) -> tuple[str, int]:
     return sock[0], sock[1]
 
 
-def refuse(flow: http.HTTPFlow) -> None:
+# The refusal bodies, by the verdict's reason (#472): the guest
+# reads one line in its shell, and the line must say what happened
+# — a flow the duplicate rule refused is not a verdict on its
+# destination, and a prompt nobody answered refused no destination
+# either.
+BODY_DENIED = (
+    "msks: egress consent denied this destination; "
+    "the request was not forwarded."
+)
+BODY_PENDING = (
+    "msks: egress consent for this destination is already pending; "
+    "answer the consent prompt; "
+    "the request was not forwarded."
+)
+BODY_UNANSWERED = (
+    "msks: no decider answered the egress consent request in time; "
+    "the request was not forwarded."
+)
+
+
+def refusal_body(reason: str) -> str:
+    """The 403 body one denial reason answers with: a destination
+    an actual verdict or the static posture refused, a destination
+    whose decision is still pending (the duplicate rule refused
+    this newcomer while the first hold waits), or a prompt no
+    decider answered in time (none registered, or the hold
+    expired undecided)."""
+    if reason == "duplicate":
+        return BODY_PENDING
+    if reason in ("no_decider", "timeout"):
+        return BODY_UNANSWERED
+    return BODY_DENIED
+
+
+def refuse(flow: http.HTTPFlow, reason: str) -> None:
     """Answer a consent-denied request locally: nothing forwards,
     and the sentinel a denied request may carry never rides the
-    wire (the swap path's fail-closed rule)."""
+    wire (the swap path's fail-closed rule). The body names what
+    happened, per ``reason``."""
     flow.response = http.Response.make(
         403,
-        "msks: egress consent denied this destination; "
-        "the request was not forwarded.",
+        refusal_body(reason),
         {"content-type": "text/plain"},
     )
 
@@ -238,14 +274,17 @@ class InterceptorAddon:
         # The interceptor manager: dispatch, entries, CAs, events.
         self.owner = owner
         # Connections the hello-time gate denied, by identity: the
-        # request hook answers them locally. Weak, so a closed
-        # connection's marker dies with the connection object.
-        self._denied: weakref.WeakSet = weakref.WeakSet()
+        # request hook answers them locally with the denial's
+        # reason — the 403 body names what happened (#472). Weak,
+        # so a closed connection's marker dies with the connection
+        # object.
+        self._denied: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
         # One connection's own gate answers, per destination —
         # plain HTTP gates per request, and a ``once`` verdict must
         # not re-prompt for the next request on the same kept-alive
-        # connection. Weak, so a closed connection's answers die
-        # with it.
+        # connection. The cached value is the verdict itself, so
+        # the refusal keeps its reason. Weak, so a closed
+        # connection's answers die with it.
         self._per_connection: weakref.WeakKeyDictionary = (
             weakref.WeakKeyDictionary()
         )
@@ -258,9 +297,10 @@ class InterceptorAddon:
             client.proxy_mode.custom_listen_host
         )
 
-    def denied(self, client) -> bool:
-        """Whether the hello-time gate denied this connection."""
-        return client in self._denied
+    def denial(self, client) -> str | None:
+        """The reason the hello-time gate denied this connection,
+        None when it allowed the connection."""
+        return self._denied.get(client)
 
     async def gate(self, workspace: str, host: str, port: int, address: str):
         """The egress gate for one web destination (#452), keyed by
@@ -301,7 +341,7 @@ class InterceptorAddon:
         verdict = await self.gate(workspace, sni or address, port, address)
         if verdict.allowed:
             return False
-        self._denied.add(client)
+        self._denied[client] = verdict.reason
         return True
 
     def tls_start_client(self, data: tls.TlsData) -> None:
@@ -347,40 +387,44 @@ class InterceptorAddon:
         workspace = self.workspace(flow.client_conn)
         if workspace is None:
             return
-        if await self.refused(flow, workspace):
-            refuse(flow)
+        reason = await self.refused(flow, workspace)
+        if reason is not None:
+            refuse(flow, reason)
             return
         await swap_or_announce(self.owner, workspace, flow)
 
-    async def refused(self, flow: http.HTTPFlow, workspace: str) -> bool:
-        """Whether this request is consent-denied: a connection the
-        hello gate marked, or a plain-HTTP request the gate denies
-        now."""
-        if self.denied(flow.client_conn):
-            return True
-        return await self.plain_denied(flow, workspace)
+    async def refused(self, flow: http.HTTPFlow, workspace: str) -> str | None:
+        """The denial reason when this request is consent-denied
+        (None when it passes): a connection the hello gate marked,
+        or a plain-HTTP request the gate denies now."""
+        marked = self.denial(flow.client_conn)
+        if marked is not None:
+            return marked
+        return await self.plain_denial(flow, workspace)
 
-    async def plain_denied(self, flow: http.HTTPFlow, workspace: str) -> bool:
-        """Whether the egress gate denies this plain-HTTP request
-        (True), or the connection is TLS and gated already (False
-        — the caller treats that as not-denied-here). One
-        connection's answer per destination caches: a ``once``
-        verdict covers the connection's own kept-alive requests,
-        and a different Host gates fresh (a different key — the
-        cache keys lowercased, matching the gate's own keying)."""
+    async def plain_denial(
+        self, flow: http.HTTPFlow, workspace: str
+    ) -> str | None:
+        """The egress gate's denial reason for this plain-HTTP
+        request (None when the gate allows, or the connection is
+        TLS and gated already — the caller treats both as
+        not-denied-here). One connection's verdict per destination
+        caches: a ``once`` verdict covers the connection's own
+        kept-alive requests, and a different Host gates fresh (a
+        different key — the cache keys lowercased, matching the
+        gate's own keying)."""
         if flow.client_conn.tls:
-            return False
+            return None
         client = flow.client_conn
         address, port = original_destination(client)
         host = destination_name(flow)
         key = (host.lower(), port)
         cached = self._per_connection.get(client, {}).get(key)
         if cached is not None:
-            return cached
+            return None if cached.allowed else cached.reason
         verdict = await self.gate(workspace, host, port, address)
-        denied_answer = not verdict.allowed
-        self._per_connection.setdefault(client, {})[key] = denied_answer
-        return denied_answer
+        self._per_connection.setdefault(client, {})[key] = verdict
+        return None if verdict.allowed else verdict.reason
 
 
 class LogBridge:

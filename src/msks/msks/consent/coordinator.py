@@ -369,8 +369,9 @@ class ConsentEngine:
           normally never queues in static mode; this is the
           defense-in-depth answer if one arrives anyway).
         - ``interactive`` without a live decider: record a denial
-          and deny at once — fail fast, no prompt, no hang (the
-          kernel's own SYN retransmit timeout is the alternative).
+          and deny at once (reason ``no_decider``) — fail fast, no
+          prompt, no hang (the kernel's own SYN retransmit timeout
+          is the alternative).
         - the pending cap reached: deny at once (the prompt-spam
           bound; the hold is refused, not held).
         - a pending hold already exists for this destination: deny
@@ -441,10 +442,10 @@ class ConsentEngine:
     async def interactive_hold(
         self, workspace_id: str, host: str, port: int
     ) -> asyncio.Future:
-        """The interactive path: no decider means a fast static
-        denial (no hold, no prompt, no hang — the kernel's SYN
-        retransmit timer is the alternative), then the cap, the
-        dedup, the hold."""
+        """The interactive path: no decider means an immediate
+        ``no_decider`` denial (no hold, no prompt, no hang — the
+        kernel's SYN retransmit timer is the alternative), then
+        the cap, the dedup, the hold."""
         if not self.app.state.deciders.has_decider(workspace_id):
             await self.model.record_policy(
                 DECISION_DENIED, workspace_id, host, port
@@ -452,7 +453,7 @@ class ConsentEngine:
             return completed_verdict(
                 {
                     "decision": VERDICT_DENY,
-                    "reason": "static",
+                    "reason": "no_decider",
                     "pin_ttl_s": ONCE_REJECT_S,
                 }
             )
