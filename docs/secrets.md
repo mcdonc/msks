@@ -93,8 +93,9 @@ origin's real certificate fails its handshake instead; refused
 closed either way). See
 [networking](networking.md#egress-consent-69) for the gate's
 precedence and its per-connection boundaries. The consent modes
-keep gating every other port at the kernel queue as before, and the verdict pins and
-resolver-learned allows they hold in the kernel carry across the
+keep gating every other port at the kernel queue as before, and
+the verdict pins and resolver-learned allows they hold in the
+kernel carry across the
 interceptor's arm/disarm table swaps — re-pinned with their
 remaining lifetimes in the same transaction that swaps the table.
 

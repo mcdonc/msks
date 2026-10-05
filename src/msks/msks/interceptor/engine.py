@@ -366,13 +366,14 @@ class InterceptorAddon:
         — the caller treats that as not-denied-here). One
         connection's answer per destination caches: a ``once``
         verdict covers the connection's own kept-alive requests,
-        and a different Host gates fresh (a different key)."""
+        and a different Host gates fresh (a different key — the
+        cache keys lowercased, matching the gate's own keying)."""
         if flow.client_conn.tls:
             return False
         client = flow.client_conn
         address, port = original_destination(client)
         host = destination_name(flow)
-        key = (host, port)
+        key = (host.lower(), port)
         cached = self._per_connection.get(client, {}).get(key)
         if cached is not None:
             return cached
