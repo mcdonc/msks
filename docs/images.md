@@ -600,6 +600,11 @@ curl -X DELETE .../api/v1/images/default \
 - `MSKSD_DEFAULT_IMAGE` (set by the dev daemon from its state dir's
   image) imports and designates at first boot; on later boots the
   daemon only re-checks the hash, not a full re-import.
+- `MSKSD_SEED_IMAGES` (the dev daemon sets it to the NixOS guest's
+  archive whenever `msks-build-guest nixos` has built one) imports
+  at every start — warm when the archive is unchanged, never
+  designated — so a rebuilt guest is what a bare-name create boots
+  without a manual re-import.
 - Listing shows every registered image with its hash, name,
   version, kernel facts, which one is default, and when each
   entered the catalog (the `imported` field, ISO 8601 UTC); a
@@ -630,7 +635,10 @@ Workspace create selects an image by reference:
 # name:version — exact
 curl -X POST .../api/v1/workspaces -d '{"id": "ws1", "image": "debian:13.6"}'
 
-# bare name — resolves to the newest registered version
+# bare name — resolves to the newest registered version; the
+# most recently imported row wins when two builds share one
+# numeric version (their versions differ only in non-numeric
+# suffixes, e.g. a NixOS build's trailing store hash)
 {"id": "ws1", "image": "debian"}
 
 # name@hash — pins identity AND content

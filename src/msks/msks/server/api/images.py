@@ -85,6 +85,33 @@ def bootstrap_default_image(app) -> None:
     print(f"msksd: default image {record.ref} ({record.hash[:12]}) imported")
 
 
+def bootstrap_seed_images(app) -> None:
+    """Import every MSKSD_SEED_IMAGES archive, warm when unchanged.
+
+    Seeded rows never touch the default designation (#448): the
+    setting converges a catalog onto archives an environment keeps
+    rebuilding (the dev daemon points it at the NixOS guest
+    msks-build-guest leaves behind), so a rebuilt guest is what a
+    bare-name create boots — the default-image pointer carries the
+    same convergence for the image a bare create falls back to.
+    Failure per archive is loud but non-fatal: one bad pointer
+    neither takes the daemon down nor blocks the seeds behind it.
+    """
+    sources = app.state.settings.vmm.seed_images
+    if not sources:
+        return
+    state_dir = app.state.settings.vmm.state_dir
+    for source in sources:
+        try:
+            if warm_import(Path(source), state_dir) is not None:
+                continue
+            record = import_archive(Path(source), state_dir)
+        except (ImageError, OSError) as exc:
+            print(f"msksd: seed image import failed: {source}: {exc}")
+            continue
+        print(f"msksd: seed image {record.ref} ({record.hash[:12]}) imported")
+
+
 def router(app, catalog_lock) -> APIRouter:
     """The catalog routes; imports and renames serialize on the
     daemon-wide catalog lock (#258, #340)."""

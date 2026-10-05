@@ -78,6 +78,7 @@ SETTING_ENV_VARS: tuple[str, ...] = (
     "MSKSD_CONSOLE_STALL_TIMEOUT_S",
     "MSKSD_MOVE_WAIT_TIMEOUT_S",
     "MSKSD_DEFAULT_IMAGE",
+    "MSKSD_SEED_IMAGES",
     "MSKSD_QEMU_IMG",
     "MSKSD_MKFS_EXT4",
     "MSKSD_RESIZE2FS",
@@ -165,10 +166,10 @@ def scalar_to_str(key: str, value: object) -> str:
 
     Native YAML scalars keep their meaning: a bare int/float arrives
     as its digits, a bare bool as ``true``/``false``, a quoted string
-    as itself. Anything else (a list or mapping — the one list-valued
-    key is ``llm_models``, handled before this rule) is rejected so
-    a misplaced block fails at startup instead of stringifying into
-    garbage.
+    as itself. Anything else (a list or mapping — the list-valued
+    keys are ``llm_models`` and ``seed_images``, handled before
+    this rule) is rejected so a misplaced block fails at startup
+    instead of stringifying into garbage.
     """
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -180,10 +181,14 @@ def scalar_to_str(key: str, value: object) -> str:
     )
 
 
-#: The file's one list-valued key (#259): ``llm_models`` entries may
-#: be colon-delimited strings or LiteLLM-native dicts, matching
-#: klangk's YAML shape — env vars stay strings (comma-separated).
-LIST_KEYS = {"llm_models": "MSKSD_LLM_MODELS"}
+#: The file's list-valued keys (#259, #448): ``llm_models``
+#: entries may be colon-delimited strings or LiteLLM-native dicts,
+#: matching klangk's YAML shape; ``seed_images`` entries are
+#: archive path strings. Env vars stay strings (comma-separated).
+LIST_KEYS = {
+    "llm_models": "MSKSD_LLM_MODELS",
+    "seed_images": "MSKSD_SEED_IMAGES",
+}
 
 
 def list_value(key: str, value: list) -> list:
@@ -499,6 +504,9 @@ def render_template() -> str:
 # shutdown_timeout_s: 20.0  # seconds a stop waits for guest poweroff
 # default_image: ""         # a container-image tar imported and
 #                           # designated default on first boot
+# seed_images: ""           # container-image tars imported into
+#                           # the catalog at every start (list or
+#                           # comma-separated), never designated
 # qemu_img: qemu-img        # builds the root overlay
 # mkfs_ext4: mkfs.ext4      # builds the /home volume
 # resize2fs: resize2fs      # moves a /home volume's size (#184)

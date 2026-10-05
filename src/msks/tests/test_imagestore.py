@@ -713,6 +713,122 @@ async def test_default_image_bootstrap(tmp_path, capsys) -> None:
         assert "default image import failed" in capsys.readouterr().out
 
 
+async def test_seed_images_bootstrap(tmp_path, capsys) -> None:
+    """MSKSD_SEED_IMAGES imports at every start, never designated
+    (#448): a rebuilt guest converges into the catalog while the
+    default designation stays the default image's own."""
+
+    seeded = tmp_path / "nixos.tar"
+    build_containerdisk(seeded, name="nixos", version="26.05pre-git-a")
+    designated = tmp_path / "boot.tar"
+    build_containerdisk(designated, name="boot", version="1")
+
+    def make_state(seed: str) -> Settings:
+        return Settings(
+            vmm=VmmSettings(
+                state_dir=tmp_path / "vms",
+                default_image=str(designated),
+                seed_images=(seed,),
+            ),
+            net=NetSettings(enabled=False),
+            server=ServerSettings(
+                db_path=tmp_path / "ws.db",
+                bootstrap_token="t",
+                event_poll_s=10.0,
+            ),
+        )
+
+    # First start: both the default and the seed land; only the
+    # default image owns the designation.
+    with TestClient(build_api(build_app(make_state(str(seeded))))):
+        refs = {row.ref for row in list_images(tmp_path / "vms")}
+        assert "nixos:26.05pre-git-a" in refs
+        assert default_image(tmp_path / "vms").ref == "boot:1"
+        assert "seed image nixos:26.05pre-git-a" in capsys.readouterr().out
+
+    # Second start, archive unchanged: the warm path imports
+    # nothing and prints nothing.
+    with TestClient(build_api(build_app(make_state(str(seeded))))):
+        assert capsys.readouterr().out == ""
+
+    # A rebuilt archive is a fresh row, and a bare name resolves it
+    # (the numeric tie breaks on import recency) while the default
+    # designation stays untouched.
+    rebuilt = tmp_path / "nixos-rebuilt.tar"
+    build_containerdisk(
+        rebuilt,
+        name="nixos",
+        version="26.05pre-git-b",
+        members={
+            "boot/vmlinuz": b"kernel-bytes-v2",
+            "boot/initrd.img": b"initrd-bytes",
+            "disk/rootfs.ext4": b"rootfs-bytes",
+        },
+    )
+    with TestClient(build_api(build_app(make_state(str(rebuilt))))):
+        assert resolve("nixos", tmp_path / "vms").version == "26.05pre-git-b"
+        assert default_image(tmp_path / "vms").ref == "boot:1"
+        assert "seed image nixos:26.05pre-git-b" in capsys.readouterr().out
+
+    # A broken seed is loud but non-fatal, and blocks nothing: the
+    # API still serves with the failure named.
+    with TestClient(
+        build_api(build_app(make_state(str(tmp_path / "absent.tar"))))
+    ) as client:
+        assert client.get("/api/v1/health").status_code == 200
+        assert "seed image import failed" in capsys.readouterr().out
+
+
+def test_resolve_newest_breaks_numeric_ties_by_import_recency(
+    tmp_path: Path,
+) -> None:
+    """Two builds of one numeric version (#448) — the NixOS
+    version's trailing store hash is the live case — resolve by
+    import recency, never by the hash's lexical accident."""
+    early = tmp_path / "early.tar"
+    late = tmp_path / "late.tar"
+    # The stale row carries the lexically larger version: the old
+    # full-string ordering would keep booting it forever.
+    build_containerdisk(early, version="26.05pre-git-zzzzzzzz")
+    build_containerdisk(late, version="26.05pre-git-aaaaaaaa")
+    hashes = [
+        import_archive(archive, tmp_path).hash for archive in (early, late)
+    ]
+    base = datetime(2026, 9, 1, tzinfo=UTC)
+    for i, digest in enumerate(hashes):
+        when = base + timedelta(days=i)
+        (tmp_path / "images" / digest / IMPORTED_STAMP).write_text(
+            when.isoformat() + "\n"
+        )
+    newest = resolve("debian", tmp_path)
+    assert newest is not None
+    assert newest.version == "26.05pre-git-aaaaaaaa"
+
+
+def test_resolve_newest_prefers_the_recent_rebuild_under_one_reference(
+    tmp_path: Path,
+) -> None:
+    """Two rows under one name:version (the rebuilt-archive shape,
+    #186): the later import is what a bare name boots — the old
+    ordering kept the oldest row."""
+    hashes = []
+    for i in range(2):
+        archive = tmp_path / f"i{i}.tar"
+        build_containerdisk(archive, members=rebuilt_members(i))
+        hashes.append(import_archive(archive, tmp_path).hash)
+    # Stamp the second import a day older than the first: recency,
+    # not import-call order or directory listing, decides.
+    base = datetime(2026, 9, 1, tzinfo=UTC)
+    for i, digest in enumerate(hashes):
+        when = base + timedelta(days=1 - i)
+        (tmp_path / "images" / digest / IMPORTED_STAMP).write_text(
+            when.isoformat() + "\n"
+        )
+    newest = resolve("debian", tmp_path)
+    assert newest is not None
+    assert newest.hash == hashes[0]
+
+
 def test_import_layer_entry_is_directory(tmp_path: Path) -> None:
     archive = tmp_path / "ld.tar"
     with tarfile.open(archive, "w") as outer:
@@ -1099,8 +1215,12 @@ def test_corrupt_cache_manifest_degrades(tmp_path: Path) -> None:
     assert list_images(tmp_path)[0].ref == "cc:1"
 
 
-def test_version_key_never_compares_int_to_str(tmp_path: Path) -> None:
-    """Round-2 finding 3: 1.0 vs 1.rc must order, not TypeError."""
+def test_tagged_versions_order_without_type_errors(tmp_path: Path) -> None:
+    """Round-2 finding 3's rule under #448's ranking: mixed
+    numeric/tagged versions order, never TypeError. The pieces are
+    all ints by construction, and a numbered segment outranks its
+    absence — 1.0 sorts above 1.rc, so a prerelease tag never
+    decides bare-name resolution."""
     first = tmp_path / "v1.tar"
     second = tmp_path / "v2.tar"
     build_containerdisk(first, name="vv", version="1.0")
@@ -1109,8 +1229,8 @@ def test_version_key_never_compares_int_to_str(tmp_path: Path) -> None:
     import_archive(second, tmp_path)
     newest = resolve("vv", tmp_path)
     assert newest is not None
-    # "rc" outranks "0" lexically: (1,"rc") > (0,0).
-    assert newest.version == "1.rc"
+    # (1, 0) outranks (1,): the numeric pieces decide, no tags.
+    assert newest.version == "1.0"
 
 
 def test_sweep_crash_leftovers(tmp_path: Path) -> None:

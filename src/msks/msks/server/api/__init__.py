@@ -36,7 +36,7 @@ from . import (
     volumes,
     workspaces,
 )
-from .images import bootstrap_default_image
+from .images import bootstrap_default_image, bootstrap_seed_images
 
 LOG = logging.getLogger(__name__)
 
@@ -128,6 +128,7 @@ def build_api(app) -> FastAPI:
                     moved,
                 )
             bootstrap_default_image(app)
+            bootstrap_seed_images(app)
             # The probe placeholder (#424): seeded before any
             # workspace can attach, so every boot arms the probe's
             # interception path with zero operator minting.
