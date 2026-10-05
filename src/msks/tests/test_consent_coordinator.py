@@ -194,6 +194,21 @@ async def test_rate_limit_and_duplicate_deny(engine_app) -> None:
     assert not holds[0].done() and not third.done()
 
 
+async def test_a_duplicate_answers_before_the_cap(engine_app) -> None:
+    """A duplicate holds nothing new, so a full prompt cap never
+    refuses it as rate_limited (#472 review): the operator reads
+    the pending decision, not a refusal that never happened."""
+    app, _frames, _queue = engine_app
+    app.state.settings.net.consent_timeout_s = 30.0
+    app.state.settings.net.consent_rate_limit = 1
+    app.state.deciders.register(1, "ws-interactive")
+    await app.state.consent.hold("ws-interactive", "held.example", 443)
+    dup = await app.state.consent.hold("ws-interactive", "held.example", 443)
+    assert (await verdict_of(dup))["reason"] == "duplicate"
+    fresh = await app.state.consent.hold("ws-interactive", "new.example", 443)
+    assert (await verdict_of(fresh))["reason"] == "rate_limited"
+
+
 async def test_timeout_expires_the_hold(engine_app) -> None:
     app, frames, _queue = engine_app
     app.state.deciders.register(1, "ws-interactive")

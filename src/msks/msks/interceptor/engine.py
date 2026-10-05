@@ -41,10 +41,12 @@ gate (:mod:`msks.interceptor.egress`) before anything else moves:
   the Host header, and answers denied requests — including the
   marked TLS ones — with a local 403 whose body names what happened
   (#472): a verdict refused the destination, its decision is still
-  pending (the duplicate rule refused this newcomer's re-ask), or no
-  decider answered in time. TLS connections skip the re-gate: the
-  hello already gated the connection, and a ``once`` verdict must
-  not re-prompt per request on a kept-alive connection.
+  pending (the duplicate rule refused this newcomer's re-ask), no
+  decider answered in time, or the request ended without a decision.
+  TLS connections skip the re-gate: the hello already gated the
+  connection, and a ``once`` verdict must not re-prompt per request
+  on a kept-alive connection — except a duplicate-race denial, which
+  is not final and re-gates until the destination's decision lands.
 """
 
 import logging
@@ -189,7 +191,12 @@ BODY_PENDING = (
     "the request was not forwarded."
 )
 BODY_UNANSWERED = (
-    "msks: no decider answered the egress consent request in time; "
+    "msks: no decider answered the egress consent request "
+    "(no decider was connected, or the request expired undecided); "
+    "the request was not forwarded."
+)
+BODY_UNDECIDED = (
+    "msks: the egress consent request ended without a decision; "
     "the request was not forwarded."
 )
 
@@ -198,13 +205,17 @@ def refusal_body(reason: str) -> str:
     """The 403 body one denial reason answers with: a destination
     an actual verdict or the static posture refused, a destination
     whose decision is still pending (the duplicate rule refused
-    this newcomer while the first hold waits), or a prompt no
-    decider answered in time (none registered, or the hold
-    expired undecided)."""
+    this newcomer while the first hold waits), a prompt no decider
+    answered (none registered, or the hold expired undecided), or
+    a request that ended without a decision (the gate raised, the
+    workspace vanished or stopped, the mode switched mid-hold) —
+    never a verdict on the destination."""
     if reason == "duplicate":
         return BODY_PENDING
     if reason in ("no_decider", "timeout"):
         return BODY_UNANSWERED
+    if reason in ("error", "gone", "stopped", "shutdown", "mode switch"):
+        return BODY_UNDECIDED
     return BODY_DENIED
 
 
@@ -299,8 +310,13 @@ class InterceptorAddon:
 
     def denial(self, client) -> str | None:
         """The reason the hello-time gate denied this connection,
-        None when it allowed the connection."""
-        return self._denied.get(client)
+        None when it allowed the connection. A stored reason that
+        reads falsy answers ``error`` — a denial must never vanish
+        from the marker (the request hook treats None as
+        allowed)."""
+        if client not in self._denied:
+            return None
+        return self._denied[client] or "error"
 
     async def gate(self, workspace: str, host: str, port: int, address: str):
         """The egress gate for one web destination (#452), keyed by
@@ -378,12 +394,13 @@ class InterceptorAddon:
 
     async def request(self, flow: http.HTTPFlow) -> None:
         """The consent tier, then the swap. A connection the hello
-        gate denied answers locally (no swap machinery runs — a
-        sentinel on a denied request never rides the wire). Plain
-        HTTP gated here on its Host header — no ClientHello gated
-        the connection. TLS connections skip the re-gate: the hello
-        gated the connection, and per-request re-gating would
-        re-prompt a ``once`` verdict on every kept-alive request."""
+        gate denied with a final reason answers locally (no swap
+        machinery runs — a sentinel on a denied request never rides
+        the wire). Plain HTTP gated here on its Host header — no
+        ClientHello gated the connection. TLS connections skip the
+        re-gate: the hello gated the connection, and per-request
+        re-gating would re-prompt a ``once`` verdict on every
+        kept-alive request."""
         workspace = self.workspace(flow.client_conn)
         if workspace is None:
             return
@@ -395,26 +412,32 @@ class InterceptorAddon:
 
     async def refused(self, flow: http.HTTPFlow, workspace: str) -> str | None:
         """The denial reason when this request is consent-denied
-        (None when it passes): a connection the hello gate marked,
-        or a plain-HTTP request the gate denies now."""
+        (None when it passes): a connection the hello gate denied
+        with a final reason, or a fresh gate whose verdict denies
+        now. A duplicate-race denial is not final — the
+        destination's pending decision may land at any time — so
+        that one re-gates per request until a final answer covers
+        the destination (#472)."""
         marked = self.denial(flow.client_conn)
-        if marked is not None:
+        if marked is not None and marked != "duplicate":
             return marked
-        return await self.plain_denial(flow, workspace)
-
-    async def plain_denial(
-        self, flow: http.HTTPFlow, workspace: str
-    ) -> str | None:
-        """The egress gate's denial reason for this plain-HTTP
-        request (None when the gate allows, or the connection is
-        TLS and gated already — the caller treats both as
-        not-denied-here). One connection's verdict per destination
-        caches: a ``once`` verdict covers the connection's own
-        kept-alive requests, and a different Host gates fresh (a
-        different key — the cache keys lowercased, matching the
-        gate's own keying)."""
-        if flow.client_conn.tls:
+        if flow.client_conn.tls and marked is None:
+            # Allowed at the hello: the connection's own verdict
+            # stands (re-gating would re-prompt a ``once`` verdict
+            # per kept-alive request).
             return None
+        return await self.gated(flow, workspace)
+
+    async def gated(self, flow: http.HTTPFlow, workspace: str) -> str | None:
+        """The egress gate's denial reason for one request (None
+        when it allows), cached per connection once the answer is
+        final: a ``once`` verdict covers the connection's own
+        kept-alive requests, and a different Host gates fresh (a
+        different key, lowercased). A duplicate answer caches
+        nothing — it is the pending decision's placeholder, so the
+        next request re-gates: while the decision waits, the
+        engine's dedup answers fast; once it lands, session or
+        standing coverage answers for real."""
         client = flow.client_conn
         address, port = original_destination(client)
         host = destination_name(flow)
@@ -423,7 +446,8 @@ class InterceptorAddon:
         if cached is not None:
             return None if cached.allowed else cached.reason
         verdict = await self.gate(workspace, host, port, address)
-        self._per_connection.setdefault(client, {})[key] = verdict
+        if verdict.reason != "duplicate":
+            self._per_connection.setdefault(client, {})[key] = verdict
         return None if verdict.allowed else verdict.reason
 
 

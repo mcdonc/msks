@@ -283,6 +283,18 @@ class EgressConsentModel:
             )
             return int(count or 0)
 
+    async def has_pending(
+        self, workspace_id: str, dest_host: str, dest_port: int
+    ) -> bool:
+        """Whether a pending hold already exists for one
+        destination — the read-only dedup check the engine answers
+        duplicates with before consulting the prompt cap."""
+        async with self.maker()() as session:
+            return (
+                await pending_row(session, workspace_id, dest_host, dest_port)
+                is not None
+            )
+
     async def active_verdict_for(
         self,
         workspace_id: str,
