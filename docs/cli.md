@@ -505,8 +505,9 @@ screen), and the page's actions centered in the space the header
 lines and the footer leave — the block capped at 64 columns — in
 three groups: a shell in a new terminal
 window, then egress consent and an edit dialog for the sizes and
-topology (#331), then start and stop. Each action paints its name with its description — when
-it carries one — muted behind it, and the row Enter acts on carries a marker beside the
+topology (#331), then start and stop. Each action paints its
+name with its description — when it carries one — muted behind
+it, and the row Enter acts on carries a marker beside the
 list's own highlight. The start and stop rows dim behind their
 reason while the workspace's status makes the verb pointless —
 stop on a stopped workspace, start on a running one — and Enter
@@ -540,8 +541,9 @@ date muted — so the workspace's identity stays visible while
 verdicts are made. A hold's arrival pushes nothing: the
 header's `egress to decide: N` counts what waits on both pages'
 headers (a hold waits
-about two minutes before it times out denied), and the consent
-line flashes the held destination with the key in — a burst of
+about two minutes before it times out denied), and the
+workspace page's consent line beneath flashes the held
+destination with the key in — a burst of
 first-seen holds names its count instead, and a hold that lands
 while another screen owns the terminal flashes on the first tick
 after that screen leaves. Keys on the

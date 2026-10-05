@@ -62,8 +62,8 @@ ACTION_SHELL_WINDOW = "shell-window"
 #: consent page — the holds queue and the in-effect verdicts on
 #: one full-screen visit, opened by hand; holds surface passively
 #: while it is closed (the header's count, the consent line's
-#: flash). The page also owns the egress-mode switch (#344): its
-#: ``m`` opens the picker over whatever surface hosts the link.
+#: flash). The consent page's ``m`` owns the egress-mode switch
+#: (#344) — the picker's one path.
 ACTION_CONSENT = "egress-consent"
 
 
@@ -802,12 +802,11 @@ class WorkspaceScreen(Screen):
         return self.link.controller.rules
 
     def open_mode_picker(self) -> None:
-        """Push the mode picker (#344) over whatever surface the
-        page hosts — the consent page's ``m`` is its one path
-        (#454): the current mode starts highlighted (the snapshot's
-        mode; the row's until the first rules frame lands), and the
-        pick goes to the switch path, which owns the empty-static
-        confirmation."""
+        """Push the mode picker (#344) over the consent page — its
+        ``m`` is the picker's one path (#454, #460): the current
+        mode starts highlighted (the snapshot's mode; the row's
+        until the first rules frame lands), and the pick goes to
+        the switch path, which owns the empty-static confirmation."""
         rules = self.page_rules()
         current = (
             rules.mode

@@ -1561,7 +1561,8 @@ async def test_a_tick_survives_widgets_that_left_under_it() -> None:
 async def test_a_header_line_that_left_under_the_paint() -> None:
     """A header line removed under the paint (a teardown race)
     is noise, not a crash: the paint swallows the missing query
-    and paints whichever lines stand."""
+    (one try wraps both lines, so the meta line's repaint skips
+    with the missing name line)."""
     factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
     app, page, _data = make_page(factory)
     async with app.run_test() as pilot:

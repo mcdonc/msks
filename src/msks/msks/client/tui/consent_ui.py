@@ -1323,8 +1323,8 @@ class ConsentPage(Screen):
     # -- the mode picker and back -------------------------------------------
 
     def action_mode(self) -> None:
-        """Open the host's mode picker — the same path the
-        workspace page's action row takes (#344)."""
+        """Open the host's mode picker — the switch's one path
+        (#344, #460)."""
         self.host.open_mode_picker()
 
     def action_back(self) -> None:
