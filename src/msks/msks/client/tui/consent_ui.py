@@ -567,8 +567,16 @@ class PickerScreen(ModalScreen[str | None]):
     def on_mount(self) -> None:
         options = self.query_one("#pick-options", OptionList)
         options.focus()
-        if self.current in self.options:
-            options.highlighted = list(self.options).index(self.current)
+        # A current that names no option leaves nothing highlighted:
+        # the widget pre-highlights its first row at construction,
+        # and a bare Enter must not take a pre-selected choice the
+        # operator never made — the mode picker's no-rules window
+        # would otherwise pre-select ``allow`` (#465 review).
+        options.highlighted = (
+            list(self.options).index(self.current)
+            if self.current in self.options
+            else None
+        )
 
     def on_option_list_option_selected(
         self, event: OptionList.OptionSelected

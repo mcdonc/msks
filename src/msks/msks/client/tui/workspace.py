@@ -805,8 +805,10 @@ class WorkspaceScreen(Screen):
         """Push the mode picker (#344) over the consent page — its
         ``m`` is the picker's one path (#454, #460): the current
         mode starts highlighted (the snapshot's mode; the row's
-        until the first rules frame lands), and the pick goes to
-        the switch path, which owns the empty-static confirmation."""
+        until the first rules frame lands), a current the picker
+        does not know highlights nothing — a bare Enter decides
+        nothing (#465 review) — and the pick goes to the switch
+        path, which owns the empty-static confirmation."""
         rules = self.page_rules()
         current = (
             rules.mode

@@ -312,15 +312,26 @@ workspace carries — destination and time remaining per row —
 with the arrow keys moving the selection: `a` allows until
 restart and `d` denies the selected hold, while the uppercase
 twins `A` and `D` pick a duration for their verdict (Enter picks,
-Escape cancels). A hold leaves the list the moment the daemon
-resolves it — a verdict from another decider window or the
-hold's own timeout — and the popup viewer hides itself when the
-list empties.
+Escape cancels). `m` switches the workspace's egress mode
+(#465): the picker offers `allow`, `static`, and `interactive`
+with the current mode highlighted (Enter picks, Escape or `q`
+cancels), and picking `static` while nothing is effectively
+allowed asks the empty-static question first — the same
+confirmation the consent page asks. The switch goes through the
+same endpoint `msks egress mode` speaks; the status line names
+the current mode beside the connection state, a landed switch
+flashes its effect there (`in effect now`, or `takes effect at
+next start` for a stopped workspace), and a switch the daemon
+refuses names its reason on the same line. A hold leaves the
+list the moment the daemon resolves it — a verdict from another
+decider window or the hold's own timeout — and the popup viewer
+hides itself when the list empties.
 
 A hold arriving with the popup closed raises a popup viewer
 over the shell that attaches to the hidden session, and the
-bindings map rides the popup's bottom edge: the verdict keys
-beside the hide/show entry. `q`, `Esc`, or `C-b` hide the viewer
+bindings map rides the popup's bottom edge: the verdict keys,
+the mode switch, and the hide/show entry. `q`, `Esc`, or `C-b`
+hide the viewer
 — the decider keeps running, its queue keeps living, and `C-b p`
 brings the popup back; a popup the app raised returns the same
 way on the next hold. The session ends with its window, and the
