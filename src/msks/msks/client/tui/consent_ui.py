@@ -568,8 +568,8 @@ class PickerScreen(ModalScreen[str | None]):
         options = self.query_one("#pick-options", OptionList)
         options.focus()
         # A current that names no option leaves nothing highlighted:
-        # the widget's focus pre-highlights the first row, and a
-        # bare Enter must not take a pre-selected choice the
+        # the widget pre-highlights its first row at construction,
+        # and a bare Enter must not take a pre-selected choice the
         # operator never made — the mode picker's no-rules window
         # would otherwise pre-select ``allow`` (#465 review).
         options.highlighted = (
