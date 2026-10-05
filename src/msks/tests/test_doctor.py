@@ -116,7 +116,8 @@ def test_install_hint_fallbacks() -> None:
 
 def test_install_hint_pinned_binaries() -> None:
     assert "secretspec/releases" in install_hint("secretspec", "apt")
-    assert "devenv" in install_hint("jscpd", "dnf")
+    hint = install_hint("jscpd", "dnf")
+    assert "npm install -g jscpd" in hint
     hint = install_hint("cloud-hypervisor", "apt")
     assert "cloud-hypervisor/releases" in hint
     assert install_hint("ch-remote", None) == install_hint(

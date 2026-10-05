@@ -15,8 +15,8 @@ Design (ported from klangkd doctor, klangk #1612): capabilities
 first, never platform predictions. Every check runs on every host;
 only the package-hint table varies by detected manager. Checks are
 graded — an error keeps the daemon from its core paths, a warning
-names a degraded path (a diagnostic aid, a client-side workflow, a
-dev-shell tool). Exit code is 0 when every check passes or only
+names a development-time or client-side tool the daemon itself
+runs without). Exit code is 0 when every check passes or only
 warns, 1 when any check errors.
 
 Tool names come from the daemon's own settings wherever a setting
@@ -107,12 +107,12 @@ def detect_package_manager() -> str | None:
 # ---------------------------------------------------------------------------
 
 # Checks whose fix is not a distro package, so every manager
-# gets the same hint: the pinned or upstream binary itself.
-# cloud-hypervisor and ch-remote ship together in the upstream
-# static release tarball (Debian's archive carries neither); the
-# secretspec CLI is a pinned release binary; jscpd arrives with
-# the devenv shell.
-PINNED_HINTS = {
+# gets the same hint: the upstream source itself. Doctor runs on
+# deployment hosts (Debian and the like) where the repo's own dev
+# tooling is absent, so the hints stay host-usable: the upstream
+# release URL or the package manager that actually serves the
+# binary.
+UPSTREAM_HINTS = {
     "cloud-hypervisor": (
         "upstream static release (ships cloud-hypervisor and "
         "ch-remote) — install from "
@@ -124,11 +124,11 @@ PINNED_HINTS = {
         "https://github.com/cloud-hypervisor/cloud-hypervisor/releases"
     ),
     "secretspec": (
-        "pinned release binary — install from "
+        "release binary — install from "
         "https://github.com/cachix/secretspec/releases"
     ),
     "jscpd": (
-        "pinned rust binary, provided by the devenv shell (see devenv.nix)"
+        "npm install -g jscpd (a development tool; the daemon runs without it)"
     ),
 }
 
@@ -280,8 +280,8 @@ PACKAGE_HINTS: dict[str, dict[str, str]] = {
 
 def install_hint(name: str, manager: str | None) -> str:
     """Return an install hint string for a missing check *name*."""
-    if name in PINNED_HINTS:
-        return PINNED_HINTS[name]
+    if name in UPSTREAM_HINTS:
+        return UPSTREAM_HINTS[name]
     if manager is None:
         return f"install {name}"
     pkg = PACKAGE_HINTS.get(name, {}).get(manager, name)
@@ -657,9 +657,9 @@ def run_doctor(settings: Settings) -> DoctorReport:
     report.add(check_library("libnfnetlink", manager))
     report.add(check_tmux(manager))
 
-    # Warning grade: these name degraded or adjacent paths — a
-    # debugging aid, a diagnostic for foreign firewall policy, the
-    # dev-shell clone scanner, and the two client-side tools the
+    # Warning grade: these name development-time or client-side
+    # paths — a debugging aid, a diagnostic for foreign firewall
+    # policy, the clone scanner, and the two client-side tools the
     # documented workflows run over `msks forward`. The daemon
     # itself runs without them.
     report.add(

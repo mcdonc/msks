@@ -44,11 +44,12 @@ the iproute2/nftables/conntrack trio behind each workspace's tap,
 secret store, the two libraries the interceptor's NFQUEUE path
 links against, and the host tmux at the 3.2 floor the consent
 terminal documents (#379). Each result prints with a ✓ (present
-and functional), ⚠ (a degraded path: a debugging aid, a
-diagnostic, the dev-shell clone scanner, a hand-side VMM poking
-tool, or a client-side tool behind `msks forward`), or ✗ (a
-core-path dependency) marker, and each miss carries an install
-hint matched to the detected package manager. The run ends with a
+and functional), ⚠ (a development-time or client-side tool the
+daemon itself runs without: a debugging aid, a diagnostic, the
+clone scanner, a hand-side VMM poking tool, or a tool behind
+`msks forward`), or ✗ (a core-path dependency) marker, and each
+miss carries an install hint matched to the detected package
+manager. The run ends with a
 summary that repeats every miss with its fix; the exit code is 0
 when every check passes or only warns, 1 when any check errors.
 
@@ -72,8 +73,8 @@ packages carrying only the pkg-config files doctor falls back
 past). Where a fix is not a distro package, the hint names the
 real source: cloud-hypervisor and `ch-remote` install from the
 upstream static release (Debian's archive carries neither), the
-secretspec CLI from its pinned release, and jscpd arrives with
-the devenv shell.
+secretspec CLI from its release binaries, and jscpd through npm
+(a development tool — the daemon runs without it).
 
 The dev daemon runs bare: `scripts/dev-daemon.sh` sets
 `MSKSD_CONFIG_DIR` to the devenv root (and the devenv shell presets
