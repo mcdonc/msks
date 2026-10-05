@@ -17,6 +17,7 @@ import shutil
 import struct
 import subprocess
 import termios
+import threading
 import time
 
 import pytest
@@ -136,9 +137,9 @@ def test_session_argv_names_the_socket_the_pane_and_the_workspace() -> None:
         "-s",
         tp.CONSENT_SESSION,
         "-x",
-        str(tp.POPUP_COLS),
+        str(tp.POPUP_COLS - 2),
         "-y",
-        str(tp.POPUP_ROWS),
+        str(tp.POPUP_ROWS - 2),
         consent_command,
         ";",
         "set-option",
@@ -426,17 +427,6 @@ def test_the_status_bar_carries_the_workspace_name() -> None:
             check=False,
             capture_output=True,
         )
-
-
-def test_take_option_stops_at_the_separator() -> None:
-    assert tp.take_option("-s", ["a", "-s", "b", "c"]) == ("b", ["a", "c"])
-    assert tp.take_option("-s", ["a"]) == (None, ["a"])
-    # The child's own -w belongs to the child, whatever follows --.
-    argv = ["-s", "sess", "--", "python", "-m", "foo", "-w", "other"]
-    assert tp.take_option("-w", argv) == (None, argv)
-    assert tp.take_option("-s", argv) == ("sess", argv[2:])
-    with pytest.raises(SystemExit, match="needs a value"):
-        tp.take_option("-w", ["-s", "sess", "-w"])
 
 
 def test_child_argv() -> None:
@@ -802,3 +792,196 @@ def test_run_pane_drops_the_marker_and_execs(
     assert tp.run_pane(["--", *SSH_CHILD]) == 0
     assert seen["argv"] == SSH_CHILD
     assert tp.TITLE_MARKER not in os.environ
+
+
+# --- the consent chain against a real server (#467) --------------------------
+
+
+def consent_server(socket: str) -> None:
+    """The hidden half of the shipped chain on a real server: the
+    consent session, born detached at the viewer's inner size
+    with its own lease — a dummy command stands in for the app."""
+    subprocess.run(
+        [
+            "tmux",
+            "-L",
+            socket,
+            "start-server",
+            ";",
+            "new-session",
+            "-d",
+            "-s",
+            tp.CONSENT_SESSION,
+            "-x",
+            str(tp.POPUP_COLS - 2),
+            "-y",
+            str(tp.POPUP_ROWS - 2),
+            "sh -c 'sleep 60'",
+            ";",
+            "set-option",
+            "-t",
+            tp.CONSENT_SESSION,
+            "destroy-unattached",
+            "off",
+        ],
+        timeout=10,
+        check=True,
+        capture_output=True,
+    )
+
+
+def lease_shell_session(socket: str, master, slave) -> subprocess.Popen:
+    """The shell half, as the launch creates it: the client's own
+    new-session (attached, never detached), then the trailing
+    option that ties the session to its window."""
+    client = subprocess.Popen(
+        [
+            "tmux",
+            "-L",
+            socket,
+            "new-session",
+            "-s",
+            "shell",
+            "sh -c 'sleep 60'",
+        ],
+        stdin=slave,
+        stdout=slave,
+        stderr=slave,
+        start_new_session=True,
+        env={**os.environ, "TERM": "xterm"},
+    )
+    os.close(slave)
+    subprocess.run(
+        [
+            "tmux",
+            "-L",
+            socket,
+            "set-option",
+            "-t",
+            "shell",
+            "destroy-unattached",
+            "on",
+        ],
+        timeout=5,
+        check=True,
+        capture_output=True,
+    )
+    return client
+
+
+def pty_pair():
+    """A pty the size of a small window, master and slave."""
+    master, slave = pty.openpty()
+    fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+    return master, slave
+
+
+def eventually(check, deadline: float = 5.0) -> None:
+    """Await a server-side condition, polling the real server."""
+    end = time.monotonic() + deadline
+    while time.monotonic() < end:
+        if check():
+            return
+        time.sleep(0.1)
+    raise AssertionError("server condition did not arrive")
+
+
+def session_up(socket: str, session: str) -> bool:
+    proc = subprocess.run(
+        ["tmux", "-L", socket, "has-session", "-t", session],
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+    return proc.returncode == 0
+
+
+def test_the_sessions_carry_opposite_leases() -> None:
+    """#467 against a real server: the shell session dies with its
+    client (``destroy-unattached on``) while the consent session
+    stands — its app carries the window-gone retirement, so a
+    closed window leaves the session for the clock, not forever —
+    and the server dies when the last session ends."""
+    if shutil.which("tmux") is None:  # pragma: no cover
+        pytest.skip("tmux is not on PATH")
+    socket = f"msks-lease-{os.getpid()}"
+    consent_server(socket)
+    master, slave = pty_pair()
+    client = lease_shell_session(socket, master, slave)
+    try:
+        eventually(lambda: session_up(socket, "shell"))
+        eventually(lambda: session_up(socket, tp.CONSENT_SESSION))
+        # The window closes: its client dies, and the shell
+        # session follows it.
+        client.kill()
+        client.wait(timeout=10)
+        eventually(lambda: not session_up(socket, "shell"))
+        assert session_up(socket, tp.CONSENT_SESSION)
+    finally:
+        subprocess.run(
+            ["tmux", "-L", socket, "kill-server"],
+            timeout=10,
+            check=False,
+            capture_output=True,
+        )
+        client.wait(timeout=10)
+        os.close(master)
+
+
+def test_the_viewer_show_and_hide_cycle() -> None:
+    """#467 against a real server: the show path's display-popup
+    puts a viewer on the shell's client (the blocking call
+    outlives the test's wait — the popup stands), and the detach
+    hides it while the consent session stands."""
+    if shutil.which("tmux") is None:  # pragma: no cover
+        pytest.skip("tmux is not on PATH")
+    socket = f"msks-view-{os.getpid()}"
+    consent_server(socket)
+    master, slave = pty_pair()
+    client = lease_shell_session(socket, master, slave)
+    shown: list = []
+    try:
+        eventually(lambda: session_up(socket, "shell"))
+
+        def find_client() -> str | None:
+            clients = tp.shell_clients(socket, tp.CONSENT_SESSION)
+            return clients[0] if clients else None
+
+        eventually(lambda: find_client() is not None)
+        target = find_client()
+        assert target is not None
+        # display-popup blocks while the popup stands: it runs on a
+        # thread, and the viewer it parks is the thing asserted.
+        shower = threading.Thread(
+            target=lambda: shown.append(
+                subprocess.run(
+                    tp.show_popup_argv(socket, target),
+                    capture_output=True,
+                    timeout=tp.TMUX_TIMEOUT_S,
+                    check=False,
+                ).returncode
+                == 0
+            ),
+            daemon=True,
+        )
+        shower.start()
+        eventually(lambda: tp.hidden_has_viewer(socket, tp.CONSENT_SESSION))
+        subprocess.run(
+            tp.detach_argv(socket), timeout=5, check=True, capture_output=True
+        )
+        eventually(
+            lambda: not tp.hidden_has_viewer(socket, tp.CONSENT_SESSION)
+        )
+        shower.join(timeout=10)
+        assert shown == [True]
+        assert session_up(socket, tp.CONSENT_SESSION)
+    finally:
+        subprocess.run(
+            ["tmux", "-L", socket, "kill-server"],
+            timeout=10,
+            check=False,
+            capture_output=True,
+        )
+        client.kill()
+        client.wait(timeout=10)
+        os.close(master)

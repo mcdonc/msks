@@ -616,3 +616,178 @@ async def test_a_show_that_targets_nothing_retries(
         assert pilot.app.is_running
     assert ran == []
     assert posted == []
+
+
+async def test_the_picker_decides_the_hold_it_was_keyed_on() -> None:
+    """The picker captures its hold at open (#467 review): a row
+    arriving while it stands must not move the verdict, and the
+    queue's swap must not move the quick keys' target either."""
+    posted, seam = verdict_seam()
+    frames = [
+        rules_frame(),
+        request_frame("r1"),
+        request_frame("r2", host="cdn.example"),
+    ]
+    async with build(frames, seam).run_test() as pilot:
+        await until(lambda: len(row_texts(pilot.app)) == 2)
+        await pilot.press("down")
+        queue = pilot.app.query_one("#requests")
+        assert queue.index == 1
+        # A third hold lands while the picker stands.
+        await pilot.press("D")
+        assert isinstance(pilot.app.screen, DurationScreen)
+        frames.append(request_frame("r3", host="late.example"))
+        await until(lambda: len(row_texts(pilot.app)) == 3)
+        await pilot.press("enter")
+        await until(lambda: len(posted) == 1)
+        assert posted == [("ws1", "r2", "deny", "tilrestart")]
+
+
+async def test_the_selection_rides_its_hold_across_swaps() -> None:
+    """A membership change keeps the highlighted hold where it
+    stood (#467 review): an arrival or another row's resolution
+    must not snap the selection to the top."""
+    posted, seam = verdict_seam()
+    frames = [
+        rules_frame(),
+        request_frame("r1"),
+        request_frame("r2", host="cdn.example"),
+    ]
+    async with build(frames, seam).run_test() as pilot:
+        await until(lambda: len(row_texts(pilot.app)) == 2)
+        queue = pilot.app.query_one("#requests")
+        await pilot.press("down")
+        assert queue.index == 1
+        # An arrival: the selection stays on its hold.
+        frames.append(request_frame("r3", host="late.example"))
+        await until(lambda: len(row_texts(pilot.app)) == 3)
+        assert queue.index == 1
+        await pilot.press("d")
+        await until(lambda: posted == [("ws1", "r2", "deny", "once")])
+        # Another row's resolution: the selection still stands.
+        frames.append(resolved_frame("r1"))
+        await until(lambda: len(row_texts(pilot.app)) == 2)
+        # r2 — the selection's hold — not whatever moved up.
+        await until(lambda: queue.index == 0 and len(queue.children) == 2)
+
+
+async def test_the_decider_retires_with_its_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The window-gone clock (#467 review): a client seen once and
+    then gone past the empty window retires the app; a client
+    standing keeps it; a window that never attached retires past
+    the launch grace."""
+    posted, seam = verdict_seam()
+    now = {"t": 1000.0}
+    clients = {"list": [VIEWER]}
+    monkeypatch.setattr(
+        tp, "shell_clients", lambda socket, session=None: clients["list"]
+    )
+    frames = [rules_frame()]
+    async with build(
+        frames,
+        seam,
+        popup_socket=SOCKET,
+        popup_session=tp.CONSENT_SESSION,
+        clock=lambda: now["t"],
+    ).run_test() as pilot:
+        app = pilot.app
+        now["t"] = 2000.0
+        app.retire_when_gone()  # a client stands: no retirement
+        assert app.is_running
+        clients["list"] = []
+        now["t"] = 2008.0
+        app.retire_when_gone()  # inside the empty window
+        assert app.is_running
+        now["t"] = 2020.0
+        app.retire_when_gone()  # past it: the decider steps aside
+        await until(lambda: not app.is_running)
+    assert posted == []
+
+
+async def test_a_window_that_never_attached_retires(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    posted, seam = verdict_seam()
+    now = {"t": 1000.0}
+    monkeypatch.setattr(tp, "shell_clients", lambda socket, session=None: [])
+    frames = [rules_frame()]
+    async with build(
+        frames,
+        seam,
+        popup_socket=SOCKET,
+        popup_session=tp.CONSENT_SESSION,
+        clock=lambda: now["t"],
+    ).run_test() as pilot:
+        app = pilot.app
+        now["t"] = 1020.0
+        app.retire_when_gone()  # inside the launch grace
+        assert app.is_running
+        now["t"] = 1031.0
+        app.retire_when_gone()  # no window ever came
+        await until(lambda: not app.is_running)
+    assert posted == []
+
+
+async def test_daemon_text_cannot_crash_the_status_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refusal or failure string with markup in it arrives
+    escaped (#318's rule): the status line parses markup, and the
+    hidden decider must survive hostile text."""
+
+    async def refuse(ws, rid, decision, duration):
+        raise SystemExit("msks: 409: gone [/dev/x]")
+
+    frames = [rules_frame(), request_frame("r1")]
+    async with build(frames, refuse).run_test() as pilot:
+        await until(lambda: len(row_texts(pilot.app)) == 1)
+        await pilot.press("a")
+        await until(lambda: "409" in status_text(pilot.app))
+        assert pilot.app.is_running
+
+
+async def test_a_verdict_in_flight_through_the_exit() -> None:
+    """A post that outlives the app: the flash records, the
+    repaint stands down (#467 review)."""
+    posted, seam = verdict_seam()
+    landed = []
+
+    async def slow(ws, rid, decision, duration):
+        await asyncio.sleep(0.3)
+        posted.append((rid, decision, duration))
+        landed.append(True)
+
+    frames = [rules_frame(), request_frame("r1")]
+    async with build(frames, slow).run_test() as pilot:
+        await until(lambda: len(row_texts(pilot.app)) == 1)
+        await pilot.press("a")
+        await pilot.press("q")  # the app quits under the post
+        await until(lambda: not pilot.app.is_running)
+        pilot.app.repaint()  # the teardown guard: no crash
+        await until(lambda: landed == [True])
+    assert posted == [("r1", "allow", "tilrestart")]
+
+
+async def test_the_show_covers_every_shell_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two windows on the launch's socket: the show reaches each
+    client's popup."""
+    posted, seam = verdict_seam()
+    ran = record_tmux(monkeypatch)
+    monkeypatch.setattr(
+        tp,
+        "shell_clients",
+        lambda socket, session=None: ["/dev/pts/3", "/dev/pts/9"],
+    )
+    frames = [rules_frame(), request_frame("r1")]
+    async with build(
+        frames, seam, popup_socket=SOCKET, popup_session=tp.CONSENT_SESSION
+    ).run_test():
+        await until(lambda: len(ran) == 2)
+    assert ran == [
+        tp.show_popup_argv(SOCKET, "/dev/pts/3"),
+        tp.show_popup_argv(SOCKET, "/dev/pts/9"),
+    ]

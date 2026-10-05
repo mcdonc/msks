@@ -48,6 +48,7 @@ from .consent_ui import (
     DurationScreen,
     FlashLine,
     dest_line,
+    flash_safe,
     shared_ssl,
 )
 from .link import DeciderLink
@@ -61,6 +62,16 @@ TICK_S = 1.0
 #: never left unpopup'd.
 POPUP_SHOW_ATTEMPTS = 3
 POPUP_SHOW_RETRY_DELAY = 0.5
+
+#: The window-gone retirement's clock (#467 review): the launch's
+#: client is the window; gone past the empty window with one seen
+#: before, or never attached past the grace, the decider retires
+#: (the hidden session ends with the app, the server with the
+#: session) — a closed window leaves no decider holding the
+#: workspace's egress to its timeouts.
+LIVENESS_TICK_S = 5.0
+LIVENESS_EMPTY_S = 10.0
+LIVENESS_GRACE_S = 30.0
 
 
 async def rest_decide(
@@ -137,6 +148,9 @@ class ConsentDeciderApp(App[None]):
         self.show_task: asyncio.Task | None = None
         self.hide_task: asyncio.Task | None = None
         self.verdicts: set[asyncio.Task] = set()
+        self.started = clock()
+        self.client_seen = False
+        self.empty_since: float | None = None
         self.bind_leave_keys()
 
     @property
@@ -176,6 +190,8 @@ class ConsentDeciderApp(App[None]):
             self.link_worker, exclusive=True, group="ws", exit_on_error=False
         )
         self.set_interval(TICK_S, self.repaint)
+        if self.persistent:
+            self.set_interval(LIVENESS_TICK_S, self.retire_when_gone)
         self.query_one("#requests", ListView).focus()
 
     # --- the connection -----------------------------------------------------
@@ -208,24 +224,54 @@ class ConsentDeciderApp(App[None]):
         """The per-second pass: the queue's rows (a membership
         change swaps the list, a same-set tick repaints the
         countdowns in place), the status line, and the popup's
-        empty-queue retirement."""
-        rows = self.link.controller.ordered()
+        empty-queue retirement. A repaint during teardown finds
+        the screen half-dismantled and stands down instead."""
+        if not self.is_running:
+            return
+        self.repaint_queue(self.link.controller.ordered())
+
+    def repaint_queue(self, rows: list) -> None:
+        """The queue's pass: the rows, the status line, and the
+        popup's empty-queue retirement."""
         queue = self.query_one("#requests", ListView)
         if self.queue_stale(queue, rows):
+            held = self.selected_id(queue)
             queue.clear()
             for row in rows:
                 item = ListItem(Static(self.row_text(row)))
                 item.hold_id = row.id  # type: ignore[attr-defined]
                 queue.append(item)
             if rows:
-                queue.index = 0  # the queue's first hold takes the
-                # selection — the one focus edge the page owns
+                # The selection rides its hold across the swap (a
+                # resolved hold falls to the top) — a membership
+                # change must never move the target of a
+                # destructive key (#467 review).
+                queue.index = self.row_position(held, rows)
         else:
             for item, row in zip(queue.children, rows):
                 item.query_one(Static).update(self.row_text(row))
         self.query_one("#empty", Static).display = not rows
         self.query_one("#status", Static).update(self.status_text())
         self.retire_popup(rows)
+
+    def selected_id(self, queue: ListView) -> str | None:
+        """The highlighted row's hold, read from the list as it
+        stands — the visual rows, not the controller's fresh
+        order: a row above the selection may already have
+        resolved, and the fresh order would hand back the hold one
+        row down."""
+        index = queue.index
+        if index is None or not 0 <= index < len(queue.children):
+            return None
+        return getattr(queue.children[index], "hold_id", None)
+
+    def row_position(self, held: str | None, rows: list) -> int:
+        """Where the selection lands after a swap: on its hold
+        when it survived, else the top."""
+        for position, row in enumerate(rows):
+            if row.id == held:
+                return position
+        return 0
 
     def queue_stale(self, queue: ListView, rows: list) -> bool:
         """Whether the queue's list needs a rebuild: a membership
@@ -255,7 +301,9 @@ class ConsentDeciderApp(App[None]):
         link's state beside the queue's count."""
         state = self.link.reject_reason or self.link.state
         counted = f"{len(self.link.controller.pending)} held"
-        return self.flash_line.text(f"{state} · {counted}")
+        # The daemon's refusal text is its own string; the status
+        # line parses markup, so it arrives escaped (#318's rule).
+        return self.flash_line.text(flash_safe(f"{state} · {counted}"))
 
     def retire_popup(self, rows: list[ConsentRequest]) -> None:
         """The queue emptying hides a popup the show path raised:
@@ -332,12 +380,47 @@ class ConsentDeciderApp(App[None]):
                 self.workspace_id, request_id, decision, duration
             )
         except SystemExit as exc:
-            self.flash_line.set(str(exc))
+            self.flash_line.set(flash_safe(str(exc)))
         except Exception as exc:  # noqa: BLE001 - the status line
-            self.flash_line.set(f"verdict post failed: {exc}")
+            self.flash_line.set(flash_safe(f"verdict post failed: {exc}"))
         else:
             self.flash_line.set(f"{decision} ({duration})")
-        self.repaint()
+        if self.is_running:
+            self.repaint()
+
+    # --- the window's life ---------------------------------------------------
+
+    def retire_when_gone(self) -> None:
+        """The liveness tick: a window gone past its grace retires
+        the decider — the hidden session ends with the app, and
+        the launch's server with the session."""
+        if self.window_gone():
+            self.exit()
+
+    def window_gone(self) -> bool:
+        """Whether the launch's window has left for good: a client
+        attached once and none stands past the empty window, or no
+        client ever attached past the launch grace."""
+        if self.clients_live():
+            self.client_seen = True
+            return False
+        if not self.client_seen:
+            return self.clock() - self.started >= LIVENESS_GRACE_S
+        return (
+            self.empty_since is not None
+            and self.clock() - self.empty_since >= LIVENESS_EMPTY_S
+        )
+
+    def clients_live(self) -> bool:
+        """Whether the launch's window still carries its client —
+        the empty moment starts the empty window's clock."""
+        socket = self.popup_socket or ""
+        if term_popup.shell_clients(socket, self.popup_session or ""):
+            self.empty_since = None
+            return True
+        if self.empty_since is None:
+            self.empty_since = self.clock()
+        return False
 
     # --- the viewer ---------------------------------------------------------
 
@@ -410,14 +493,14 @@ class ConsentDeciderApp(App[None]):
         ran — the blocking call outliving its timeout means the
         popup opened and stayed."""
         try:
-            subprocess.run(
+            proc = subprocess.run(
                 term_popup.show_popup_argv(socket, client, session),
                 capture_output=True,
                 timeout=term_popup.TMUX_TIMEOUT_S,
             )
         except subprocess.SubprocessError:
             return False
-        return True
+        return proc.returncode == 0
 
     def schedule_hide(self) -> None:
         """Hide the viewer, once at a time — the detach is the

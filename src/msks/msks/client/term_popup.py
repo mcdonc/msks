@@ -239,7 +239,10 @@ def viewer_command(socket: str, session: str = CONSENT_SESSION) -> str:
     the hidden session. ``env -u TMUX`` unsets TMUX so the nested
     attach is permitted — the popup itself runs inside a pane of
     the same server, where TMUX is set."""
-    return f"env -u TMUX tmux -L {socket} attach -t {session}"
+    return (
+        f"env -u TMUX tmux -L {shlex.quote(socket)}"
+        f" attach -t {shlex.quote(session)}"
+    )
 
 
 def popup_command(socket: str, session: str = CONSENT_SESSION) -> str:
@@ -338,7 +341,9 @@ def session_argv(
     attached to a fresh session whose pane runs this module's pane
     role with the appended command, and — when the command names a
     workspace — the hidden consent session beside it (see
-    :func:`consent_chain`). The pane command is shell-joined as tmux
+    :func:`consent_chain`), whose app retires when this window
+    has been gone past its grace. The pane command is
+    shell-joined as tmux
     takes its command, so a child path with spaces survives the
     join; the client owns the terminal window the operator's
     prefix already opened, and ``destroy-unattached`` tears the
@@ -463,9 +468,11 @@ def consent_chain(workspace_id: str | None, socket: str) -> list[str]:
     app alone), the prefix pins off (every key reaches the app,
     and ``C-b`` closes the viewer from inside it), and
     ``destroy-unattached`` pins off: the popup closing leaves the
-    decider standing while the server's global default — set
-    after both sessions exist — tears the shell session down with
-    its window."""
+    decider standing while the shell session's own ``on`` — set
+    once both sessions exist, so it never touches this one —
+    tears the shell session down with its window. The app itself
+    carries the window-gone retirement (see
+    :mod:`msks.client.tui.decide_app`)."""
     if workspace_id is None:
         return []
     return [
@@ -474,10 +481,13 @@ def consent_chain(workspace_id: str | None, socket: str) -> list[str]:
         "-d",
         "-s",
         CONSENT_SESSION,
+        # Born at the viewer's inner size — ``display-popup``'s
+        # -w/-h carry its border — so a viewer's attach resizes
+        # nothing (#467 review).
         "-x",
-        str(POPUP_COLS),
+        str(POPUP_COLS - 2),
         "-y",
-        str(POPUP_ROWS),
+        str(POPUP_ROWS - 2),
         shlex.join(decide_app_command(workspace_id, socket)),
         ";",
         "set-option",
@@ -557,21 +567,6 @@ def socket_name(workspace_id: str | None, token: int | None = None) -> str:
     per window is the accepted cost."""
     suffix = os.getpid() if token is None else token
     return f"msks-{workspace_id or 'shell'}-{suffix}"
-
-
-def take_option(flag: str, argv: list[str]) -> tuple[str | None, list[str]]:
-    """Pull ``flag VALUE`` out of argv wherever it sits before the
-    ``--`` separator — the appended command's own ``-s``/``-w``
-    words belong to it, and parsing past the separator would hand
-    the role the wrong session or workspace. A trailing flag with
-    no value refuses with a usage line."""
-    head = argv[: argv.index("--")] if "--" in argv else argv
-    if flag in head:
-        i = head.index(flag)
-        if i + 1 >= len(head):
-            raise SystemExit(f"msks-term-popup: {flag} needs a value")
-        return head[i + 1], argv[:i] + argv[i + 2 :]
-    return None, argv
 
 
 def child_argv(argv: list[str]) -> list[str]:

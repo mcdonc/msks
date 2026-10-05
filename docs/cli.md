@@ -358,7 +358,9 @@ for a plain shell; the window list after the label stays empty
 fills with the pane's title, the clock, and the date — the
 label is the whole bar.
 The hidden consent session runs on the launch's own socket — one
-small server per window — and dies with it; the window's own
+small server per window — and the app retires when the window
+has been gone for a stretch, taking the session and the server
+with it; the window's own
 hold flags (`konsole --hold`, xterm's
 `-hold`) keep the window open after the session ends as they do
 for a plain shell window.
