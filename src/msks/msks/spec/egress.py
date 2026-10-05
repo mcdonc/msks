@@ -293,6 +293,14 @@ def ports_for(qname: str, specs: tuple[HostSpec, ...]) -> set[int] | None:
     return ports
 
 
+def covers(ports: set[int] | None) -> bool:
+    """Whether a ports answer is a match: None is an all-ports
+    match, a non-empty set matches those ports, and an empty set
+    matches nothing (the fail-closed distinction klangk pinned —
+    inverting it is the classic gate bug)."""
+    return ports is None or bool(ports)
+
+
 def allow_all_cidrs(specs: tuple[IpSpec, ...]) -> tuple[str, ...]:
     """The ``/0`` specs in an address-spec list (for the loud log)."""
     return tuple(

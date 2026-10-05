@@ -119,8 +119,9 @@ spec = 3
 # (#424); spec grew by one for the probe name's vocabulary
 llm = 2
 # spec grew: the probe service reads its whole vocabulary from the
-# leaf (#424)
-spec = 9
+# leaf (#424); five more names for the web-egress consent gate's
+# posture and coverage vocabulary (#452)
+spec = 15
 
 [snapshot.microvm]
 # interceptor: the local driver mints the workspace CA at create
@@ -133,8 +134,10 @@ spec = 14
 spec = 16
 
 [snapshot.net]
-# spec grew by one import: the resolver answers the probe name (#424)
-spec = 25
+# spec grew by one import: the resolver answers the probe name (#424);
+# one more name — covers moved home to the ports vocabulary beside
+# ports_for (#452), so the interceptor's web gate reads it from the leaf
+spec = 26
 
 [snapshot.persist]
 identity = 2

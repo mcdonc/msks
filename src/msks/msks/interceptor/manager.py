@@ -33,7 +33,7 @@ from mitmproxy.master import Master
 
 from ..spec.failures import MicrovmError
 from ..spec.time import deadline_passed
-from . import ca, probe
+from . import ca, egress, probe
 from .engine import InterceptorAddon, LogBridge, host_matches
 
 logger = logging.getLogger(__name__)
@@ -153,6 +153,15 @@ class Interceptor:
         self._cas: dict[str, ca.WorkspaceCA] = {}
 
     # --- the addon's surface (sync: the hot path never awaits) ------
+
+    async def web_verdict(
+        self, workspace_id: str, host: str, port: int, address: str
+    ) -> egress.WebVerdict:
+        """The egress-consent gate for one redirected web flow
+        (#452): the addon's hot path reaches the workspace's
+        posture, the consent session memory, the durable verdict
+        rows, and the consent engine through this seam."""
+        return await egress.decide(self.app, workspace_id, host, port, address)
 
     def workspace_for_tap(self, tap_ip: str | None) -> str | None:
         """The workspace whose tap address this is, None when the

@@ -125,6 +125,27 @@ each new outbound connection is decided:
   Postgres host) prompts with the address itself and keys its
   verdict on the address.
 
+  **Web flows while the interceptor is armed (#452).** A covered
+  workspace's TCP flows toward ports 80 and 443 redirect into the
+  [interceptor](secrets.md#the-interceptor-the-swap-on-the-wire)
+  before the kernel chain, so those flows gate at the interceptor
+  itself — on the name the wire carries, which is the one thing the
+  network layer cannot read: the SNI of the TLS handshake on
+  HTTPS, the Host header on plain HTTP (the original destination
+  address answers for a flow that carries neither). The decision
+  table matches the resolver gate's precedence — a standing deny
+  verdict first, then the static allowlist (name specs against the
+  wire's name, address specs against the original destination),
+  then a standing allow, then the mode: `static` records the denial
+  and answers a local HTTP 403; `interactive` holds through the
+  consent engine, so the same decider endpoints answer the same
+  rows the kernel queue writes, and an allow completes the
+  handshake while a deny answers the 403 locally (nothing
+  forwards). Verdicts and durations are shared: one allow covers
+  the destination's web flows and its other ports alike, and the
+  session memory that skips re-prompting is one table for both
+  gates.
+
 **Verdicts and durations.** `msks egress decide` records
 `allow`/`deny` with a duration — `once` (this connection only; a
 reconnect re-prompts), `5m`, `15m`, `tilrestart` (until the VM

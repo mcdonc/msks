@@ -5,7 +5,9 @@ working reference is the #194 spike
 (``docs/spikes/194-egress-interceptor.md``).
 """
 
+from . import egress
 from .ca import WorkspaceCA, load_or_mint, mint_ca, mint_leaf
+from .egress import WebVerdict
 from .engine import InterceptorAddon, LogBridge, host_matches
 from .manager import Armed, Interceptor, PlaceholderEntry
 
@@ -15,7 +17,9 @@ __all__ = [
     "InterceptorAddon",
     "LogBridge",
     "PlaceholderEntry",
+    "WebVerdict",
     "WorkspaceCA",
+    "egress",
     "host_matches",
     "load_or_mint",
     "mint_ca",

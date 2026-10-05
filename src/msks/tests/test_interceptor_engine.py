@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 from msks.interceptor import PlaceholderEntry, ca, engine, host_matches
+from msks.interceptor.egress import WebVerdict
 
 TAP = "172.31.0.2"
 OTHER_TAP = "172.31.0.6"
@@ -58,10 +59,13 @@ class FakeRequest:
 
 
 class FakeClient:
-    def __init__(self, tap=TAP, sni=SNI, tls=True) -> None:
+    def __init__(
+        self, tap=TAP, sni=SNI, tls=True, dest=("198.51.100.7", 443)
+    ) -> None:
         self.proxy_mode = SimpleNamespace(custom_listen_host=tap)
         self.sni = sni if tls else None
         self.tls = tls
+        self.sockname = dest
 
 
 class FakeFlow:
@@ -74,17 +78,30 @@ class FakeFlow:
 class FakeOwner:
     """The manager surface the addon reads."""
 
-    def __init__(self, entries, authority, live=True, secret="real-one"):
+    def __init__(
+        self,
+        entries,
+        authority,
+        live=True,
+        secret="real-one",
+        verdict=None,
+    ):
         self.entries = entries
         self.authority = authority
         self.live = live
         self.secret = secret
+        self.verdict = verdict or WebVerdict(True, "ungated")
         self.swaps: list[tuple] = []
         self.sightings: list[tuple] = []
         self.leaf_snis: list[str] = []
+        self.gated: list[tuple] = []
 
     def workspace_for_tap(self, tap_ip):
         return "ws-a" if tap_ip == TAP else None
+
+    async def web_verdict(self, workspace_id, host, port, address):
+        self.gated.append((workspace_id, host, port, address))
+        return self.verdict
 
     def entries_for(self, workspace_id):
         return self.entries
@@ -173,37 +190,131 @@ def test_host_matches_exact_and_label_anchored_suffix() -> None:
 # --- the splice tier ---------------------------------------------------------
 
 
-def test_hello_splices_when_no_entry_covers_the_sni(authority) -> None:
+async def test_hello_splices_when_no_entry_covers_the_sni(authority) -> None:
     addon = engine.InterceptorAddon(FakeOwner({}, authority))
     data = hello_data(FakeClient(), "unknown.example.com")
-    addon.tls_clienthello(data)
+    await addon.tls_clienthello(data)
     assert data.ignore_connection is True
 
 
-def test_hello_intercepts_when_an_entry_covers_the_sni(authority) -> None:
+async def test_hello_intercepts_when_an_entry_covers_the_sni(
+    authority,
+) -> None:
     addon = engine.InterceptorAddon(
         FakeOwner({entry().sentinel: entry()}, authority)
     )
     data = hello_data(FakeClient(), SNI)
-    addon.tls_clienthello(data)
+    await addon.tls_clienthello(data)
     assert data.ignore_connection is False
 
 
-def test_hello_ignores_connections_from_foreign_listeners(authority) -> None:
+async def test_hello_ignores_connections_from_foreign_listeners(
+    authority,
+) -> None:
     addon = engine.InterceptorAddon(FakeOwner({}, authority))
     data = hello_data(FakeClient(tap=OTHER_TAP), SNI)
-    addon.tls_clienthello(data)
+    await addon.tls_clienthello(data)
     assert data.ignore_connection is False
+    assert addon.owner.gated == []
 
 
-def test_hello_splices_a_sentinelless_sni(authority) -> None:
+async def test_hello_splices_a_sentinelless_sni(authority) -> None:
     """No SNI carries no name to match: the flow relays undecrypted."""
     addon = engine.InterceptorAddon(
         FakeOwner({entry().sentinel: entry()}, authority)
     )
     data = hello_data(FakeClient(), None)
-    addon.tls_clienthello(data)
+    await addon.tls_clienthello(data)
     assert data.ignore_connection is True
+    # The address the redirect preserved named the flow instead.
+    assert addon.owner.gated == [("ws-a", "198.51.100.7", 443, "198.51.100.7")]
+
+
+# --- the consent tier (#452) -------------------------------------------------
+
+
+async def test_hello_gates_the_sni_before_the_splice(authority) -> None:
+    """The gate runs before the splice decision and keys on the
+    SNI with the original destination beside it."""
+    owner = FakeOwner({entry().sentinel: entry()}, authority)
+    data = hello_data(FakeClient(), SNI)
+    await engine.InterceptorAddon(owner).tls_clienthello(data)
+    assert owner.gated == [("ws-a", SNI, 443, "198.51.100.7")]
+
+
+async def test_hello_marks_a_denied_connection(authority) -> None:
+    """A denied SNI stays on the decrypt path (never relayed) and
+    the connection carries the deny marker the request hook
+    answers."""
+    owner = FakeOwner({}, authority, verdict=WebVerdict(False, "static"))
+    addon = engine.InterceptorAddon(owner)
+    client = FakeClient()
+    data = hello_data(client, "denied.example.com")
+    await addon.tls_clienthello(data)
+    assert data.ignore_connection is False
+    assert addon.denied(client)
+    # A covered SNI would have decrypted anyway; the marker, not
+    # the coverage, owns the refusal.
+    assert owner.leaf_snis == []
+
+
+async def test_a_marked_connection_refuses_locally(authority) -> None:
+    addon = engine.InterceptorAddon(
+        FakeOwner({}, authority, verdict=WebVerdict(False, "verdict"))
+    )
+    client = FakeClient(sni="denied.example.com")
+    data = hello_data(client, "denied.example.com")
+    await addon.tls_clienthello(data)
+    flow = swap_flow(entry().sentinel, sni="denied.example.com")
+    flow.client_conn = client
+    await addon.request(flow)
+    assert flow.response is not None
+    assert flow.response.status_code == 403
+    assert addon.denied(client)
+
+
+async def test_request_gates_plain_http(authority) -> None:
+    """Plain HTTP never had a ClientHello: the request hook gates
+    it on the Host header and the original destination."""
+    owner = FakeOwner(
+        {entry().sentinel: entry()},
+        authority,
+        verdict=WebVerdict(False, "static"),
+    )
+    flow = swap_flow(entry().sentinel, tls=False, pretty="plain.example.net")
+    flow.client_conn.sockname = ("198.51.100.9", 80)
+    await engine.InterceptorAddon(owner).request(flow)
+    assert flow.response is not None
+    assert flow.response.status_code == 403
+    assert owner.gated == [("ws-a", "plain.example.net", 80, "198.51.100.9")]
+    assert owner.swaps == []
+
+
+async def test_request_skips_the_gate_for_allowed_tls(authority) -> None:
+    """TLS connections gated at their hello: the request hook runs
+    the swap without re-gating (a once verdict must not
+    re-prompt per kept-alive request)."""
+    sentinel = entry().sentinel
+    owner = FakeOwner({sentinel: entry()}, authority)
+    flow = swap_flow(sentinel)
+    await engine.InterceptorAddon(owner).request(flow)
+    assert owner.gated == []
+    assert owner.swaps == [("ws-a", "api", SNI)]
+
+
+async def test_a_denied_plain_request_never_swaps(authority) -> None:
+    """The refusal precedes the swap machinery: a sentinel on a
+    denied request never rides the wire."""
+    sentinel = entry().sentinel
+    owner = FakeOwner(
+        {sentinel: entry()}, authority, verdict=WebVerdict(False, "verdict")
+    )
+    flow = swap_flow(sentinel, tls=False, pretty="plain.example.net")
+    await engine.InterceptorAddon(owner).request(flow)
+    assert flow.response is not None
+    assert flow.response.status_code == 403
+    assert owner.swaps == []
+    assert owner.sightings == []
 
 
 # --- the leaf ----------------------------------------------------------------
