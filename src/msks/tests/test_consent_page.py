@@ -867,8 +867,9 @@ async def test_a_hold_arriving_pushes_nothing() -> None:
 
 async def test_a_new_hold_under_the_open_page_adds_its_row_silently() -> None:
     """A hold arriving while the consent page stands is its row on
-    the holds zone — the workspace page's flash stays quiet (the
-    row itself is the signal there)."""
+    the holds zone; the ids stay unseen and the first tick after
+    the return names what arrived — the flash waits for a line
+    the operator can see."""
     factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
     app, page, _data = make_page(factory)
     async with app.run_test() as pilot:
@@ -880,6 +881,46 @@ async def test_a_new_hold_under_the_open_page_adds_its_row_silently() -> None:
         page.tick()
         await pilot.pause()
         assert "press e" not in page_consent(app, page)
+        await leave_page(pilot, app)
+        page.tick()
+        assert "press e" in page_consent(app, page)
+        assert "r2" in page.seen_hold_ids  # named on the return's tick
+
+
+async def test_a_hold_under_a_modal_waits_for_it_to_leave() -> None:
+    """A hold landing while a picker owns the terminal waits: the
+    ids stay unseen (a flash on the hidden consent line would be
+    consumed unseen — the overlay-era burst guard's rule), and the
+    first tick after the picker leaves names the destination."""
+    factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
+    app, page, _data = make_page(factory)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app, page)
+        page.open_mode_picker()
+        await wait_for(lambda: type(app.screen).__name__ == "ModeScreen")
+        factory.made[0].push(request_frame("r1"))
+        await wait_for(lambda: len(page.link.controller.pending) == 1)
+        page.tick()
+        await pilot.pause()
+        assert "press e" not in page_consent(app, page)  # unseen, not spent
+        await open_screen(pilot, app, "escape", "WorkspaceScreen")
+        page.tick()
+        assert "press e" in page_consent(app, page)
+
+
+async def test_a_burst_flashes_its_count() -> None:
+    """Two first-seen holds in one tick take one flash naming the
+    count — a FlashLine owns the line for its TTL, and one
+    destination a tick would overwrite the other."""
+    factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
+    app, page, _data = make_page(factory)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app, page)
+        factory.made[0].push(request_frame("r1"))
+        factory.made[0].push(request_frame("r2"))
+        await wait_for(lambda: len(page.link.controller.pending) == 2)
+        page.tick()
+        assert "2 egress holds to decide" in page_consent(app, page)
 
 
 async def test_the_replayed_hold_never_reflashes() -> None:

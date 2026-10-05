@@ -377,21 +377,29 @@ class WorkspaceScreen(Screen):
     def flash_new_holds(self) -> None:
         """Flash each hold the queue has not named yet (#454): the
         page pushes nothing on a hold's arrival, so the consent
-        line names the destination and the key in. A hold arriving
-        under the open consent page stays silent — its row on that
-        page is the signal."""
-        fresh = self.take_unseen_holds()
-        if self.consent_page() is not None:
+        line names the destination and the key in. The flash waits
+        while another screen owns the terminal (the consent page,
+        the edit form, a picker): the ids stay unseen and the
+        first tick after the stack unwinds names what arrived —
+        the overlay-era burst guard's rule, carried to the flash
+        (a flash painted on a hidden line is consumed unseen).
+        A burst takes one flash naming its count (a FlashLine
+        owns the line for its TTL — one destination a tick would
+        overwrite the rest)."""
+        if self.app.screen is not self:
             return
-        for request in fresh:
-            self.flash(hold_flash(request))
+        fresh = self.take_unseen_holds()
+        if len(fresh) == 1:
+            self.flash(hold_flash(fresh[0]))
+        elif fresh:
+            self.flash(f"{len(fresh)} egress holds to decide — press e")
 
     def take_unseen_holds(self) -> list:
         """The queue's holds the consent line has not named yet,
         taken: their ids join the seen set here and never leave it
         — a reconnect's replay re-lands the same holds without
-        re-flashing them, and the holds that arrived while the link
-        was down name themselves once, on the tick after the
+        re-flashing them, and the holds that arrived while the
+        link was down name themselves once, on the tick after the
         replay lands them."""
         pending = self.link.controller.ordered()
         fresh = [

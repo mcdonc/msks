@@ -859,12 +859,16 @@ class ConsentPage(Screen):
     def started(self) -> None:
         """The compose has settled: build both zones, paint the
         status line, and focus the holds when a hold waits (the
-        urgent zone), the verdicts otherwise."""
+        urgent zone), the verdicts otherwise — the verdicts too
+        when the holds list sits in a rebuild's swap window (a
+        stalled loop can run the tick's first rebuild before this
+        lands; a page with nowhere focused would take keys as
+        inert until Tab)."""
         self.hold_rebuilds.request()
         self.rule_rebuilds.request()
         self.update_status()
         self.holds_known = bool(self.controller.ordered())
-        if self.holds_known:
+        if self.holds_known and self.hold_rows() is not None:
             self.focus_holds()
         else:
             self.focus_rules()
@@ -1118,12 +1122,19 @@ class ConsentPage(Screen):
         """The status line: workspace, current mode, the link's
         state, held count; a flash owns it until its TTL lapses. A
         rejected registration names its reason — the daemon refused
-        this page as the decider, and the line says why."""
+        this page as the decider, and the line says why (escaped
+        the way the flashes are: a truncated closing tag in the
+        reason would raise in the parse, #318's rule). The held
+        count drops to zero off a live link for the header's own
+        reason: a dead socket's snapshot may carry holds the
+        server already resolved."""
         if self.link.state in (REJECTED, UNUSABLE_TOKEN):
-            state = escape(self.link.reject_reason or "rejected")
+            state = flash_safe(self.link.reject_reason or "rejected")
         else:
             state = self.link.state
-        held = len(self.controller.pending)
+        held = (
+            len(self.controller.pending) if self.link.state == CONNECTED else 0
+        )
         default = (
             f" {escape(self.workspace_id)}  ·  mode "
             f"{mode_label(self.controller.rules)}"

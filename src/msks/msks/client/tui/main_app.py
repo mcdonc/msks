@@ -2,8 +2,9 @@
 and the chained-flow runner — the full-screen tree rooted at the
 workspaces list, launched by ``msks tui``. The screens live in
 sibling modules (the listing here in
-:mod:`msks.client.tui.main_screen`, the workspace page and its
-consent overlay in :mod:`msks.client.tui.workspace`, the secrets
+:mod:`msks.client.tui.main_screen`, the workspace page in
+:mod:`msks.client.tui.workspace`, the egress consent page in
+:mod:`msks.client.tui.consent_ui`, the secrets
 page in :mod:`msks.client.tui.secrets`, the forms in
 :mod:`msks.client.tui.forms`) and this module composes them.
 
