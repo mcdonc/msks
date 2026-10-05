@@ -16,7 +16,7 @@ import subprocess
 import sys
 from datetime import datetime
 
-from ..spec.images import is_hash_shape, version_key
+from ..spec.images import is_hash_shape, newest_rank
 from .context import env_token, env_url
 from .rest import api_call, api_client, request
 from .tabular import listing_text
@@ -300,10 +300,19 @@ def bare_ref_matches(ref: str, rows: list[dict]) -> list[dict]:
 
 def top_version_rows(candidates: list[dict]) -> list[dict]:
     """The candidates sitting at the newest version — the daemon's
-    ordering (``imagestore.version_key``), so client and daemon
-    agree on what "newest" means."""
-    top = max(version_key(row["version"]) for row in candidates)
-    return [row for row in candidates if version_key(row["version"]) == top]
+    ordering (``spec.images.newest_rank`` over the row's import
+    stamp), so client and daemon agree on what "newest" means.
+    Rows sharing the winning version string return together: two
+    imports under one reference (a rebuilt archive) surface as the
+    ambiguity they are, never a silent arbitrary pick."""
+    best = max(candidates, key=row_rank)
+    return [row for row in candidates if row["version"] == best["version"]]
+
+
+def row_rank(row: dict) -> tuple:
+    """A listing row's bare-name ordering (#448): the shared newest
+    rank over the row's imported stamp."""
+    return newest_rank(row["version"], row.get("imported"), row["hash"])
 
 
 def pin_matches(ref: str, rows: list[dict]) -> list[dict]:

@@ -119,6 +119,12 @@ class VmmSettings:
     # and designated default (the dev daemon points this at its state
     # image's store path through its cmdline bridge).
     default_image: str = ""
+    # Container-image tars imported into the catalog at every start,
+    # warm when unchanged (#448): the dev daemon points this at the
+    # archives its opt-in guest builds leave behind, so a rebuilt
+    # guest is what a bare-name create boots. Seeded rows never
+    # touch the default designation.
+    seed_images: tuple[str, ...] = ()
     # Per-workspace persistent artifacts (#14): the tools that make
     # them, the host that owns them, and their default sizes.
     qemu_img: str = "qemu-img"
@@ -419,6 +425,7 @@ def vmm_settings_from_env(
         console_stall_timeout_s=stall_timeout_s,
         move_wait_timeout_s=move_wait_seconds(env),
         default_image=_env(env, "MSKSD_DEFAULT_IMAGE", cls.default_image),
+        seed_images=seed_images_from(env),
         qemu_img=_env(env, "MSKSD_QEMU_IMG", cls.qemu_img),
         mkfs_ext4=_env(env, "MSKSD_MKFS_EXT4", cls.mkfs_ext4),
         resize2fs=_env(env, "MSKSD_RESIZE2FS", cls.resize2fs),
@@ -444,6 +451,25 @@ def vmm_settings_from_env(
 def image_import_max_mib(env: Mapping[str, str]) -> int:
     """The URL-import ceiling (#258): a positive MiB count."""
     return _parse_positive_int(env, "MSKSD_IMAGE_IMPORT_MAX_MIB", 8192)
+
+
+def seed_images_from(env) -> tuple[str, ...]:
+    """The seed list (#448): the env's comma-separated archive
+    paths, or the config file's list (the form a path containing
+    a comma needs). Blank entries drop; a non-string entry is a
+    named error, the same walk both sources take."""
+    raw = env.get("MSKSD_SEED_IMAGES", "")
+    entries = raw if isinstance(raw, list) else raw.split(",")
+    paths = []
+    for entry in entries:
+        if not isinstance(entry, str):
+            raise ValueError(
+                "MSKSD_SEED_IMAGES entries must be strings, got "
+                f"{type(entry).__name__}"
+            )
+        if entry.strip():
+            paths.append(entry.strip())
+    return tuple(paths)
 
 
 def image_import_timeout_s(env: Mapping[str, str]) -> float:

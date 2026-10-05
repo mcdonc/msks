@@ -376,6 +376,25 @@ def test_llm_models_accepts_the_file_list_form(
         Settings.from_env({"MSKSD_LLM_MODELS": [17]})
 
 
+def test_seed_images_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The #448 seed list: comma-separated archive paths, blanks
+    dropped, whitespace stripped."""
+    monkeypatch.setenv("MSKSD_SEED_IMAGES", " /a.tar ,, /b.tar ")
+    assert Settings.from_env().vmm.seed_images == ("/a.tar", "/b.tar")
+    monkeypatch.delenv("MSKSD_SEED_IMAGES")
+    assert Settings.from_env().vmm.seed_images == ()
+
+
+def test_seed_images_accepts_the_file_list_form() -> None:
+    """The config layer's list of path strings reaches the tuple;
+    a non-string entry is a named error wherever it came from."""
+    settings = Settings.from_env({"MSKSD_SEED_IMAGES": ["/a.tar", "/b.tar"]})
+    assert settings.vmm.seed_images == ("/a.tar", "/b.tar")
+    for bad in ([17], [{"path": "/a.tar"}]):
+        with pytest.raises(ValueError, match="MSKSD_SEED_IMAGES"):
+            Settings.from_env({"MSKSD_SEED_IMAGES": bad})
+
+
 def test_dict_entry_shapes_fail_named_at_load() -> None:
     """The fail-at-load rule reaches inside dict entries (#259
     review): non-string keys, a null or scalar params block, and a

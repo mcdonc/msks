@@ -22,6 +22,7 @@ from fastapi import __version__ as fastapi_version
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from ...imagestore import sweep_crash_leftovers
 from ...microvm.errors import MicrovmError
 from ...spec.version import __version__
 from ..watcher import watch_loop
@@ -36,7 +37,7 @@ from . import (
     volumes,
     workspaces,
 )
-from .images import bootstrap_default_image
+from .images import bootstrap_default_image, bootstrap_seed_images
 
 LOG = logging.getLogger(__name__)
 
@@ -127,7 +128,14 @@ def build_api(app) -> FastAPI:
                     "MSKSWS_ backend refs",
                     moved,
                 )
+            # The catalog's startup sweep runs before either image
+            # bootstrap: an interrupted import (a seed or default
+            # that hit a full disk mid-unpack) leaves dot-prefixed
+            # staging debris the next start must clear, whichever
+            # setting pointed at it (#448 review).
+            sweep_crash_leftovers(app.state.settings.vmm.state_dir)
             bootstrap_default_image(app)
+            bootstrap_seed_images(app)
             # The probe placeholder (#424): seeded before any
             # workspace can attach, so every boot arms the probe's
             # interception path with zero operator minting.

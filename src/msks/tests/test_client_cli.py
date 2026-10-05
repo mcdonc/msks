@@ -1836,6 +1836,39 @@ def listing_transport(handler=None) -> httpx.MockTransport:
     return mock(default)
 
 
+def test_bare_ref_picks_the_recent_import_at_a_numeric_tie() -> None:
+    """#448: two rows whose versions differ only in non-numeric
+    suffixes (a NixOS build's trailing store hash) resolve to the
+    later import — the picker agrees with the daemon's bare-name
+    ordering."""
+    stale = {
+        **image_row("nixos", "26.05pre-git-zzz", "d" * 64),
+        "imported": "2026-09-22T10:00:00",
+    }
+    fresh = {
+        **image_row("nixos", "26.05pre-git-aaa", "e" * 64),
+        "imported": "2026-09-23T10:00:00",
+    }
+    matches = images.image_ref_matches("nixos", [stale, fresh])
+    assert [row["hash"] for row in matches] == ["e" * 64]
+
+
+def test_bare_ref_keeps_same_reference_rows_ambiguous() -> None:
+    """A rebuilt archive under one name:version stays an ambiguity
+    the operator resolves (both rows return), never a silent
+    pick between them."""
+    first = {
+        **image_row("boot", "1", "d" * 64),
+        "imported": "2026-09-22T10:00:00",
+    }
+    second = {
+        **image_row("boot", "1", "e" * 64),
+        "imported": "2026-09-23T10:00:00",
+    }
+    matches = images.image_ref_matches("boot", [first, second])
+    assert {row["hash"] for row in matches} == {"d" * 64, "e" * 64}
+
+
 def test_image_ls_formats_rows(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

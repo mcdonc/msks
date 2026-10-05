@@ -36,7 +36,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from .spec.images import is_hash_shape, version_key
+from .spec.images import is_hash_shape, newest_rank
 
 #: The cache file that carries an entry's import time (#186): one
 #: ISO-8601 line, rewritten by every import (a re-import refreshes
@@ -803,15 +803,25 @@ def resolve_name_version(ref: str, images: list) -> ImageRecord | None:
 
 def resolve_newest(name: str, images: list) -> ImageRecord | None:
     candidates = [image for image in images if image.name == name]
-    return max(candidates, key=lambda i: version_key(i.version), default=None)
+    return max(candidates, key=record_rank, default=None)
+
+
+def record_rank(image: ImageRecord) -> tuple:
+    """A catalog row's bare-name ordering (#448): the shared newest
+    rank over the row's import stamp, so recency decides between
+    two builds of one numeric version."""
+    stamp = image.imported.isoformat() if image.imported is not None else ""
+    return newest_rank(image.version, stamp, image.hash)
 
 
 def resolve(ref: str, state_dir: Path) -> ImageRecord | None:
     """A catalog reference: hash, name:version, name, or name@hash.
 
-    A bare name resolves to its newest version (numeric ordering);
-    name@hash pins both identity and content. A malformed hash in an
-    @-reference is a named error, not a silent miss.
+    A bare name resolves to its newest version — numeric ordering,
+    with the most recently imported row winning every tie between
+    builds whose versions carry the same leading numbers (#448);
+    name@hash pins both identity and content. A malformed hash in
+    an @-reference is a named error, not a silent miss.
     """
     images = list_images(state_dir)
     if is_hash_shape(ref):

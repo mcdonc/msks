@@ -456,6 +456,12 @@ KEY_CASES = [
     ("console_stall_timeout_s", 31.0, "vmm.console_stall_timeout_s", 31.0),
     ("move_wait_timeout_s", 7.5, "vmm.move_wait_timeout_s", 7.5),
     ("default_image", "/img.tar", "vmm.default_image", "/img.tar"),
+    (
+        "seed_images",
+        ["/a.tar", "/b.tar"],
+        "vmm.seed_images",
+        ("/a.tar", "/b.tar"),
+    ),
     ("qemu_img", "/qi", "vmm.qemu_img", "/qi"),
     ("mkfs_ext4", "/mkfs", "vmm.mkfs_ext4", "/mkfs"),
     ("mkisofs", "/mkisofs", "vmm.mkisofs", "/mkisofs"),
@@ -847,10 +853,10 @@ def test_reload_latches_the_secret_store_location(tmp_path) -> None:
     assert app.state.secrets._cache == {}  # the swap emptied the cache
 
 
-def test_llm_models_is_the_one_list_valued_key(tmp_path: Path) -> None:
+def test_llm_models_is_a_list_valued_key(tmp_path: Path) -> None:
     """The file's list form (#259, klangk's shape): entries are
     strings or LiteLLM-native dicts, and the settings carry them
-    through; every other key keeps the scalar-only rule."""
+    through; every non-list-valued key keeps the scalar-only rule."""
     config = tmp_path / "msksd.yaml"
     config.write_text(
         "llm_models:\n"
@@ -864,6 +870,29 @@ def test_llm_models_is_the_one_list_valued_key(tmp_path: Path) -> None:
     string, entry = settings.llm.models
     assert string == "openai/gpt-4o::sk-1"
     assert entry["litellm_params"]["api_key"] == "sk-2"
+
+
+def test_seed_images_is_a_list_valued_key(tmp_path: Path) -> None:
+    """The #448 seed list in the file's shape: path strings carry
+    through; a non-string entry is a named error at load, and the
+    environment's comma-separated form overrides the file."""
+    config = tmp_path / "msksd.yaml"
+    config.write_text("seed_images:\n  - /a.tar\n  - /b.tar\n")
+    settings = load_settings(str(config))
+    assert settings.vmm.seed_images == ("/a.tar", "/b.tar")
+
+    config.write_text("seed_images:\n  - path: /a.tar\n")
+    with pytest.raises(ValueError, match="MSKSD_SEED_IMAGES"):
+        load_settings(str(config))
+
+    config.write_text("seed_images:\n  - /kept.tar\n")
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setenv("MSKSD_SEED_IMAGES", "/env.tar")
+    try:
+        settings = load_settings(str(config))
+        assert settings.vmm.seed_images == ("/env.tar",)
+    finally:
+        monkeypatch.undo()
 
 
 def test_a_list_for_any_other_key_is_a_named_error(tmp_path: Path) -> None:

@@ -146,6 +146,26 @@ if [ -e "$state/default-image" ]; then
   export MSKSD_DEFAULT_IMAGE="$state/default-image"
 fi
 
+# The opt-in NixOS guest's archive (#448): when msks-build-guest
+# nixos has left one, the daemon imports it at every start (warm
+# when unchanged, never designated) — the same convergence the
+# default-image pointer carries. A rebuilt guest therefore becomes
+# what `msks create --image nixos` boots: a bare name resolves the
+# most recently imported row.
+nixos_dir="${GUEST_NIXOS_DIR:-$root/.devenv/state/guest-nixos}"
+case "$nixos_dir" in
+/*) ;;
+*) nixos_dir="$root/$nixos_dir" ;;
+esac
+seeds=""
+for archive in "$nixos_dir"/workspace-*.tar; do
+  [ -e "$archive" ] || continue
+  seeds="${seeds:+$seeds,}$archive"
+done
+if [ -n "$seeds" ]; then
+  export MSKSD_SEED_IMAGES="$seeds"
+fi
+
 echo "msks-dev: serving https://127.0.0.1:$p (state $state; config ${MSKSD_CONFIG_DIR}/msksd.yaml; Ctrl-C stops)"
 # Foreground exec: the wrapper raises the two caps ambient (both
 # flags required — ambient needs the caps inheritable first), and
