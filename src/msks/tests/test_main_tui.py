@@ -541,9 +541,12 @@ async def test_the_list_rows_open_pages_and_return(monkeypatch) -> None:
 
 
 async def test_a_refresh_keeps_the_focused_workspace_row() -> None:
-    """A refresh rebuilds the listing with the focused row kept
-    by its key — the consent queue's rebuild rule, carried to the
-    listing."""
+    """A refresh keeps the focused row by its key — the consent
+    queue's rebuild rule, carried to the listing — and an
+    unchanged listing keeps its own list (#470 L2): the standing
+    interval refresh repaints nothing while the daemon serves the
+    same rows, so focus never blips; a changed listing swaps in a
+    fresh list with the focused row restored."""
     data = FakeData([row(), row(id="ws-b", name="beta")])
     app, _ = make_app(data)
     async with app.run_test() as pilot:
@@ -560,6 +563,16 @@ async def test_a_refresh_keeps_the_focused_workspace_row() -> None:
         await press_until(
             pilot, "down", lambda: focused_key() == ("workspace", "ws-b")
         )
+        # An unchanged listing keeps its list: the refresh takes
+        # no swap, and the focus stands where it was.
+        await pilot.press("r")
+        await pilot.pause()
+        assert app.query_one("#rows") is before
+        assert focused_key() == ("workspace", "ws-b")
+
+        # A changed listing swaps in a fresh list, the focused row
+        # kept by its key.
+        data.rows.append(row(id="ws-c", name="gamma"))
         await pilot.press("r")
 
         def fresh():
@@ -571,6 +584,7 @@ async def test_a_refresh_keeps_the_focused_workspace_row() -> None:
         await wait_for(
             lambda: fresh().highlighted_child.row_key == ("workspace", "ws-b")
         )
+        await wait_for(lambda: list_children(app) == 3)
 
 
 async def test_start_stop_and_remove_from_the_list(monkeypatch) -> None:
@@ -1080,8 +1094,8 @@ async def test_the_header_splits_the_name_from_the_metadata(
         assert "2026-01-02" in meta_text(app)
         header = app.screen.query_one("#header", Static)
         (span,) = header.content.spans
-        assert header.content.plain[span.start : span.end] == "stopped"
-        assert span.style == rows_mod.muted_style(app.theme_variables)
+        assert header.content.plain[span.start : span.end] == "● stopped"
+        assert span.style == "$warning"
         # The meta line renders dimmer than the name line's default
         # foreground — muted beside prominent, both on the panel —
         # with its `·` separators carrying the muted span treatment
@@ -1099,10 +1113,12 @@ async def test_the_header_splits_the_name_from_the_metadata(
 async def test_the_header_truncates_gracefully_at_eighty_columns(
     monkeypatch,
 ) -> None:
-    """#351: at 80 columns — a full id, a 12-character image hash,
-    a full host name — the muted meta line truncates at the
-    terminal's edge (an ellipsis marks the cut) and never wraps,
-    and the name still reads in full on its own line."""
+    """#351, #470 S2: at 80 columns — a full id, a 12-character
+    image hash, a full host name — the meta line clips each field
+    to its own budget: the whole line fits the terminal with the
+    created date whole, the host clips at its middle (an ellipsis
+    keeps both its ends), and it never wraps. The name still
+    reads in full on its own line."""
     scripted_link(monkeypatch, [])
     data = FakeData(
         [
@@ -1120,18 +1136,20 @@ async def test_the_header_truncates_gracefully_at_eighty_columns(
         header = app.screen.query_one("#header", Static)
         meta = app.screen.query_one("#header-meta", Static)
         assert header.region.height == 1
-        assert meta.region.height == 1  # crops at the edge, never wraps
+        assert meta.region.height == 1  # fits the width, never wraps
         name_line = "".join(s.text for s in header.render_line(0))
         assert "a-very-long-workspace-name" in name_line  # reads in full
         meta_line = "".join(s.text for s in meta.render_line(0))
-        assert meta_line.rstrip().endswith("…")  # the cut, marked
-        # The host reads up to the edge and cuts mid-word; the
-        # created date leaves with it.
-        assert "workstation-3.lab.example.inte" in meta_line
+        # Every field fits its budget: the date lands whole, the
+        # host clips at its middle — its head and tail both read —
+        # and nothing runs to the terminal's edge.
+        assert "created 2026-01-02" in meta_line
+        assert "…" in meta_line
+        assert "work…" in meta_line and "y.net" in meta_line
         assert (
             "workstation-3.lab.example.internal.company.net" not in meta_line
         )
-        assert "created" not in meta_line
+        assert cell_len(meta_line.rstrip()) < 80
 
 
 async def test_the_page_centers_its_action_block(monkeypatch) -> None:
@@ -1656,7 +1674,7 @@ async def test_the_new_terminal_action_spawns_an_ssh_child(
         return SimpleNamespace(wait=closed)
 
     monkeypatch.setattr(follow_mod, "spawn_window", record)
-    data = FakeData([row()])
+    data = FakeData([row(status="running")])
     conf = SimpleNamespace(terminal_open_cmd=["kitty", "-e"])
     app = MsksTuiApp(TuiFollow(), data=data, conf=conf)
     async with app.run_test() as pilot:
@@ -1699,7 +1717,7 @@ async def test_a_dead_launcher_falls_back_to_this_terminal(
         raise FileNotFoundError("xterm")
 
     monkeypatch.setattr(follow_mod, "spawn_window", refused)
-    data = FakeData([row()])
+    data = FakeData([row(status="running")])
     follow = TuiFollow()
     app = MsksTuiApp(follow, data=data)
     async with app.run_test() as pilot:
@@ -2172,31 +2190,74 @@ def test_the_line_helpers() -> None:
     assert rows_mod.workspace_label(row(name=None)) == WS
     listing = rows_mod.row_content(row())
     assert "alpha" in listing.plain
-    assert "stopped" in listing.plain
+    assert "● stopped" in listing.plain
     assert "interactive" in listing.plain
-    # The header's name line (#351): the name in the default
-    # foreground, the status beside it carrying the status color.
+    # The IMAGE cell prefers the catalog reference and keeps the
+    # digest as its fallback (#470 L3).
+    with_ref = rows_mod.row_content({**row(), "image_ref": "deb13:1"})
+    assert "deb13:1" in with_ref.plain
+    assert "a" * 6 not in with_ref.plain  # the digest stands down
+    # The header's name line (#351, #470 S1): the name in the
+    # default foreground, the status behind its cue dot beside it
+    # carrying the status color.
     name = rows_mod.header_name(row())
     assert "alpha" in name.plain
     (span,) = name.spans
-    assert name.plain[span.start : span.end] == "stopped"
-    assert span.style == rows_mod.muted_style({})
+    assert name.plain[span.start : span.end] == "● stopped"
+    assert span.style == "$warning"
     assert "egress to decide" not in name.plain
     assert "egress to decide: 2" in rows_mod.header_name(row(), 2).plain
     # A wide-character name keeps the span on the status: the
     # offsets are codepoints, like the listing's span.
     wide = rows_mod.header_name(row(name="北" * 16))
     (wide_span,) = wide.spans
-    assert wide.plain[wide_span.start : wide_span.end] == "stopped"
-    # The meta line: the id, the image hash, the host, the date,
-    # with its separators carrying the muted span treatment
-    # (#366) — the same ride the name line gives the status.
+    assert wide.plain[wide_span.start : wide_span.end] == "● stopped"
+    # The meta line: the id, the image hash, the host, the date —
+    # each clipped to its own budget (#470 S2) — with its
+    # separators carrying the muted span treatment (#366) — the
+    # same ride the name line gives the status.
     meta = rows_mod.header_meta(row())
     plain = meta.plain
     assert WS in plain and "host-1" in plain and "2026-01-02" in plain
-    assert f"image {'a' * 12}" in plain
+    assert f"image {rows_mod.clip('a' * 64, 12)}" in plain
     assert [plain[s.start : s.end] for s in meta.spans] == ["·", "·", "·"]
     assert all(span.style == rows_mod.muted_style({}) for span in meta.spans)
+    long_meta = rows_mod.header_meta(
+        row(id="a1b2c3d4e5", host="workstation-3.lab.example.internal")
+    ).plain
+    assert "a1b…" in long_meta and "d4e5" in long_meta  # the id clips
+    assert "work…" in long_meta and "ernal" in long_meta  # the host clips
+    # The whole line fits an 80-column terminal's padding with
+    # the date whole (#470 S2).
+    assert cell_len(long_meta.rstrip()) <= 78
+
+    # The listing's display order (#470 L1): newest creation
+    # first, a stamp that does not parse sinks to the end in the
+    # daemon's own order.
+    def stamped(id_: str, when: str) -> dict:
+        return {**row(id=id_), "created_at": when}
+
+    assert [
+        r["id"]
+        for r in rows_mod.newest_first(
+            [
+                stamped("old", "2026-01-01T00:00:00"),
+                stamped("new", "2026-01-03T00:00:00"),
+                stamped("mid", "2026-01-02T00:00:00"),
+            ]
+        )
+    ] == ["new", "mid", "old"]
+    broken = {**row(id="broken"), "created_at": "not a stamp"}
+    assert [
+        r["id"]
+        for r in rows_mod.newest_first(
+            [
+                stamped("old", "2026-01-01T00:00:00"),
+                broken,
+                stamped("mid", "2026-01-02T00:00:00"),
+            ]
+        )
+    ] == ["mid", "old", "broken"]
     assert (
         main_screen_mod.created_note(row(id="x"), None)
         == "created alpha (id x)"
@@ -2222,7 +2283,7 @@ def test_the_listing_columns_line_up(monkeypatch) -> None:
     ).plain
     header = rows_mod.list_header()
     for label, cell in (
-        ("STATUS", "stopped"),
+        ("STATUS", "● stopped"),
         ("EGRESS", "interactive"),
         ("IMAGE", "aaaaa…aaaaaa"),
         ("CREATED", "2d ago"),
@@ -2235,8 +2296,8 @@ def test_the_listing_columns_line_up(monkeypatch) -> None:
     # A clipped name keeps the columns; a wide name pads to the
     # same display width (32 cells of CJK land at 22 by clipping).
     assert "…" in long_name
-    assert cell_len(wide[: wide.index("stopped")]) == cell_len(
-        short[: short.index("stopped")]
+    assert cell_len(wide[: wide.index("● stopped")]) == cell_len(
+        short[: short.index("● stopped")]
     )
     # An over-wide status clips inside its column, not past it:
     # the egress column still starts where the short row's does.
@@ -2544,12 +2605,13 @@ async def test_a_scrolling_list_keeps_the_created_label(
 async def test_the_status_column_carries_its_states_color(
     monkeypatch,
 ) -> None:
-    """#348: the status cell alone carries a color — running in
-    the theme's success color, stopped in muted text, any other
-    state in the warning color — while the name, egress, image,
-    and date keep the default foreground. The colors are theme
-    variables the render resolves against the active theme, and
-    each row carries its status as a class."""
+    """#348, #470 S1: the status cell alone carries a color — the
+    cue dot rides with the word — running in the theme's success
+    color, every other state in the warning color — while the
+    name, egress, image, and date keep the default foreground.
+    The colors are theme variables the render resolves against
+    the active theme, and each row carries its status as a
+    class."""
     pinned_clock(monkeypatch)  # the created cell reads "2d ago"
     data = FakeData(
         [
@@ -2600,29 +2662,31 @@ async def test_the_status_column_carries_its_states_color(
                 and "-highlight" not in workspace_rows[0].classes
             )
         )
-        muted = rows_mod.muted_style(app.theme_variables)
         for item, name, style, status in zip(
             workspace_rows,
             ("alpha", "gamma", "beta"),
-            (muted, "$warning", "$success"),
+            ("$warning", "$warning", "$success"),
             ("stopped", "created", "running"),
             strict=True,
         ):
             static = row_static(item)
             content = static.content
-            (span,) = content.spans
-            # The span covers the status cell alone, and the row's
-            # class is the status itself.
-            assert content.plain[span.start : span.end] == status
-            assert span.style == style
+            # The status span covers the cue cell (dot and word),
+            # the row's class is the status itself — and a
+            # focused row adds the bold name cue beside it (#470
+            # S3).
+            (status_span,) = [
+                span
+                for span in content.spans
+                if content.plain[span.start : span.end] == f"● {status}"
+            ]
+            assert status_span.style == style
             assert status in item.classes
             # The rendered segments carry the acceptance colors:
             # the status takes its state's theme color while the
             # name and the date share the row's default
             # foreground — the same color both plain columns
-            # share, whatever the highlight does to the row. The
-            # muted entry rides the theme's own ratio (see its
-            # branch below for how the rendered color is pinned).
+            # share, whatever the highlight does to the row.
             segs = row_segments(item)
 
             def segment(text):
@@ -2634,37 +2698,37 @@ async def test_the_status_column_carries_its_states_color(
             if status == "running":
                 # The focused row composes the highlight over the
                 # span, so its status stands out from its own
-                # name without matching the raw theme color.
+                # name without matching the raw theme color — and
+                # its name carries the bold cue (#470 S3) while
+                # the date keeps the row's plain foreground.
                 assert rendered != name_color
-            elif status == "created":
+                assert segment(name).style.bold
+            else:
                 assert (
                     rendered == Color.parse(app.theme_variables["warning"]).rgb
                 )
-            else:
-                # Muted text: dimmer than the row's own default
-                # foreground (the muted color rides the theme's
-                # ratio through the span style above — the auto
-                # base of "$text-muted" composes a few values
-                # differently in a span than in widget css, so the
-                # rendered muted color is pinned by luminance,
-                # not by equality with the header's color).
-                assert sum(rendered) < sum(name_color)
-                assert rendered != name_color
-            assert date_color == name_color
+                assert date_color == name_color
+
+        # The focused row's name carries the bold cue (#470 S3):
+        # a span a weak theme's bar cannot lose.
+        focused = rows.highlighted_child
+        focused_content = focused.query_one(Static).content
+        assert any(
+            span.style == "$text bold" for span in focused_content.spans
+        )
 
 
 def test_a_status_outside_the_map_still_names_itself() -> None:
-    """#348: a state the map does not know takes the warning
-    color, and a status that does not read as one ASCII CSS word
-    names the row ``other`` (Textual's class names are ASCII — a
-    wider word would raise, so the guard hands it the bucket
-    class instead)."""
+    """#348, #470 S1: running takes the success color and every
+    other state — stopped among them — the warning color, and a
+    status that does not read as one ASCII CSS word names the row
+    ``other`` (Textual's class names are ASCII — a wider word
+    would raise, so the guard hands it the bucket class
+    instead)."""
     assert rows_mod.status_color("paused") == "$warning"
     assert rows_mod.status_color("running") == "$success"
-    assert (
-        rows_mod.status_color("stopped", {"text-muted": "auto 40%"})
-        == "$text 40%"
-    )
+    assert rows_mod.status_color("stopped") == "$warning"
+    assert rows_mod.status_text("paused") == "● paused"
     assert rows_mod.status_class("paused") == "paused"
     assert rows_mod.status_class("not running") == "other"
     assert rows_mod.status_class("") == "other"
@@ -2849,7 +2913,9 @@ def test_the_consent_line_counts_a_stack_of_grants() -> None:
             )
         ]
     )
-    assert granted_line(controller) == "3 grants · next expires 3m"
+    assert (
+        granted_line(controller) == "3 grants · next expires 3m · e to review"
+    )
     controller = pinned_controller(
         [
             grant_stack(
@@ -2860,7 +2926,7 @@ def test_the_consent_line_counts_a_stack_of_grants() -> None:
             )
         ]
     )
-    assert granted_line(controller) == "2 grants"
+    assert granted_line(controller) == "2 grants · e to review"
 
 
 def test_the_default_flow_runners(monkeypatch) -> None:
@@ -3209,7 +3275,7 @@ async def test_the_page_follows_a_status_moved_elsewhere(
         # page's per-second read can learn it.
         data.rows[0] = {**data.rows[0], "status": "running"}
         await wait_for(lambda: "workspace is running" in action_text(app, 3))
-        assert action_text(app, 4).strip() == "Stop"
+        assert action_text(app, 4).strip() == "Stop — power it off"
         assert "running" in header_text(app)
 
 
@@ -3228,7 +3294,7 @@ async def test_enter_on_a_dimmed_row_flashes_and_runs_nothing(
         await pilot.press("down", "down", "down", "down")
         await pilot.press("enter")
         await wait_for(
-            lambda: "stop skipped: workspace is stopped" in consent_text(app)
+            lambda: "Stop skipped: workspace is stopped" in consent_text(app)
         )
         await pilot.pause()
         assert ("stop", WS) not in data.calls
@@ -3273,17 +3339,30 @@ def test_the_groups_lead_rows_carry_the_class() -> None:
 
 
 def test_action_rows_paint_two_tones() -> None:
-    """#367: the name stands in the default foreground (bold on
-    the shell row), the description rides muted, and a dimmed
-    power row mutes the whole row behind its reason."""
+    """#367, #470 W1/W2/S3: the name stands in the default
+    foreground — bold on the row the status permits (the shell
+    while it runs, the start verb while it sits stopped) and on
+    the focused row — the description rides muted, and a power
+    row the status dims mutes the whole row behind its reason."""
     muted = rows_mod.muted_style({})
-    shell = action_content(PAGE_ACTIONS[0], "stopped", {}, focused=True)
+    shell = action_content(PAGE_ACTIONS[0], "running", {}, focused=True)
     assert str(shell).startswith("▸ Open a shell — in a new terminal")
     assert Span(2, 14, "$text bold") in shell.spans
     assert Span(17, 34, muted) in shell.spans
+    # Stopped, the shell dims behind its reason and the start
+    # verb takes the bold (#470 W1); both power rows carry their
+    # descriptions (#470 W2).
+    shell_off = action_content(PAGE_ACTIONS[0], "stopped", {}, False)
+    assert str(shell_off).startswith("  Open a shell — workspace is stopped")
     start = action_content(PAGE_ACTIONS[3], "stopped", {}, focused=False)
-    assert str(start).startswith("  Start")
-    assert start.spans == []
+    assert str(start).startswith("  Start — boot the workspace")
+    assert Span(2, 7, "$text bold") in start.spans
+    assert Span(10, 28, muted) in start.spans
+    # A focused live row carries the bold cue beside the marker
+    # (#470 S3) wherever the status's emphasis sits.
+    edit = action_content(PAGE_ACTIONS[2], "stopped", {}, focused=True)
+    assert str(edit).startswith("▸ Edit settings — sizes and topology")
+    assert Span(2, 15, "$text bold") in edit.spans
     stop = action_content(PAGE_ACTIONS[4], "stopped", {}, False)
     assert str(stop).startswith("  Stop — workspace is stopped")
     assert Span(2, 6, muted) in stop.spans
@@ -3609,3 +3688,205 @@ async def test_a_reopen_never_stacks_a_second_page(monkeypatch) -> None:
             if isinstance(screen, WorkspaceScreen)
         ]
         assert len(pages) == 1
+
+
+# -- the design pass (#470): the list -----------------------------------
+
+
+def stamp(row_dict: dict, when: str) -> dict:
+    """One listing row restamped — distinct creation dates for the
+    sort's sake."""
+    return {**row_dict, "created_at": when}
+
+
+async def test_the_listing_sorts_newest_first(monkeypatch) -> None:
+    """#470 L1: the listing renders newest-first whatever order the
+    daemon serves, and the CREATED column's header carries the
+    sort's arrow beside its label."""
+    scripted_link(monkeypatch, [])
+    data = FakeData(
+        [
+            stamp(row(id="old", name="old"), "2026-01-01T00:00:00"),
+            stamp(row(id="new", name="new"), "2026-01-03T00:00:00"),
+            stamp(row(id="mid", name="mid"), "2026-01-02T00:00:00"),
+        ]
+    )
+    app, _ = make_app(data)
+    async with app.run_test():
+        await wait_for(lambda: "new" in row_text(app, 0))
+        assert "mid" in row_text(app, 1)
+        assert "old" in row_text(app, 2)
+        assert "CREATED ↓" in str(app.query_one("#columns", Static).content)
+
+
+async def test_the_listing_refreshes_while_it_stands(monkeypatch) -> None:
+    """#470 L2: the list reloads on its standing interval — a
+    workspace another surface created appears without a keypress,
+    newest-first on top."""
+    scripted_link(monkeypatch, [])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test():
+        await wait_for(lambda: list_children(app) == 1)
+        data.rows.append(
+            stamp(row(id="ws-b", name="beta"), "2026-02-01T00:00:00")
+        )
+        await wait_for(lambda: list_children(app) == 2, timeout=30.0)
+        assert "beta" in row_text(app, 0)  # newer than the fixture
+
+
+async def test_the_typeahead_jumps_the_focus(monkeypatch) -> None:
+    """#470 L4: ``/`` opens the typeahead — typing moves the list's
+    focus to the first row whose name starts with the term, a term
+    nothing starts with names itself on the status line, and Enter
+    closes the modal with the match standing."""
+    scripted_link(monkeypatch, [])
+    data = FakeData(
+        [
+            row(),
+            row(id="ws-b", name="beta"),
+            row(id="ws-c", name="nix"),
+        ]
+    )
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: "3 workspaces" in status_text(app))
+        rows = app.query_one("#rows")
+        await pilot.press("/")
+        await wait_for(
+            lambda: isinstance(app.screen, main_screen_mod.SearchScreen)
+        )
+        for key in "ni":
+            await pilot.press(key)
+        await wait_for(lambda: rows.highlighted_child.workspace_id == "ws-c")
+        # A term nothing starts with ("niz") names itself; the
+        # focus keeps its place. Escape closes the modal through
+        # its own binding; a reopened search takes an emptied term
+        # (backspace) and Enter closes it with the match standing.
+        await pilot.press("z")
+        await wait_for(lambda: "no workspace starts with" in status_text(app))
+        await pilot.press("escape")
+        await wait_for(
+            lambda: not isinstance(app.screen, main_screen_mod.SearchScreen)
+        )
+        assert rows.highlighted_child.workspace_id == "ws-c"
+        await pilot.press("/")
+        await wait_for(
+            lambda: isinstance(app.screen, main_screen_mod.SearchScreen)
+        )
+        await pilot.press("n", "backspace")
+        await pilot.press("enter")
+        await wait_for(
+            lambda: not isinstance(app.screen, main_screen_mod.SearchScreen)
+        )
+        assert rows.highlighted_child.workspace_id == "ws-c"
+
+
+async def test_a_mismatched_power_key_skips_client_side(monkeypatch) -> None:
+    """#470 L5: a power verb the focused row's own status makes
+    pointless names the page's skip note client-side — the same
+    words both screens read — and the daemon takes no call."""
+    scripted_link(monkeypatch, [])
+    data = FakeData([row(status="running")])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: "1 workspace" in status_text(app))
+        await pilot.press("s")
+        await wait_for(
+            lambda: "Start skipped: workspace is running" in status_text(app)
+        )
+        await pilot.pause()
+        assert ("start", WS) not in data.calls
+
+
+async def test_a_row_selection_opens_the_page(monkeypatch) -> None:
+    """#470: a row's selection — the message a mouse click fires —
+    opens its workspace's page, the ListView's own path beside
+    the Enter binding."""
+    scripted_link(monkeypatch, [])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test():
+        await wait_for(lambda: "1 workspace" in status_text(app))
+        app.screen.on_list_view_selected(None)  # the click's message
+        await wait_for(lambda: on_page(app))
+
+
+async def test_a_stale_child_skips_in_the_repaint(monkeypatch) -> None:
+    """#470 S3: the repaint walk skips a child whose row left the
+    data under it before the rebuild lands — the walk stops
+    quiet."""
+    scripted_link(monkeypatch, [])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test():
+        await wait_for(lambda: "1 workspace" in status_text(app))
+        screen = app.screen
+        standing = screen.rows
+        screen.rows = []  # the row leaves before the rebuild lands
+        screen.paint_rows()  # the stale child skips alone, no raise
+        screen.rows = standing
+        await app.query_one("#rows").children[0].query_one(Static).remove()
+        screen.paint_rows()  # the pruned Static skips alone, no raise
+
+
+async def test_every_footer_names_its_enter_binding(monkeypatch) -> None:
+    """#470 S4: the list, the workspace page, and the consent page
+    all name Enter in their footers — the one key every screen
+    answers, shown where the focused list would otherwise swallow
+    it."""
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+
+    def enter_shown() -> bool:
+        binding = app.screen.active_bindings.get("enter")
+        return binding is not None and binding.binding.show
+
+    async with app.run_test() as pilot:
+        await wait_for(enter_shown)  # the list: open
+        await open_page(pilot, app)
+        await wait_for(enter_shown)  # the page: run
+        await pilot.press("e")
+        await wait_for(lambda: on_consent(app))
+        await wait_for(enter_shown)  # the consent page: allow for…
+
+
+# -- the design pass (#470): the workspace page --------------------------
+
+
+async def test_the_page_answers_the_lists_power_letters(monkeypatch) -> None:
+    """#470 W5: ``s``/``x`` on the workspace page run the page's
+    own power exchange — the letters the list binds — and the
+    status pre-flight names the skip the dimmed row carries."""
+    scripted_link(monkeypatch, [])
+    data = FakeData([row(status="stopped")])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 5)
+        await pilot.press("x")
+        await wait_for(
+            lambda: "Stop skipped: workspace is stopped" in consent_text(app)
+        )
+        await pilot.pause()
+        assert ("stop", WS) not in data.calls
+        await pilot.press("s")
+        await wait_for(lambda: ("start", WS) in data.calls)
+        await wait_for(lambda: "running" in header_text(app))
+        # A stopped workspace's shell row names its skip on the
+        # ListView's own selection path too — a mouse click beside
+        # the Enter binding (#470 W1).
+        await pilot.press("x")  # stop again — the quick letter
+        await wait_for(lambda: ("stop", WS) in data.calls)
+        await wait_for(lambda: "stopped" in header_text(app))
+        # The shell row's selection — the message a mouse click
+        # fires — names its skip on the stopped workspace (#470
+        # W1), the ListView's own path beside the Enter binding.
+        app.screen.on_list_view_selected(None)
+        await wait_for(
+            lambda: (
+                "Open a shell skipped: workspace is stopped"
+                in consent_text(app)
+            )
+        )

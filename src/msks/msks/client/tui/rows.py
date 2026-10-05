@@ -29,7 +29,7 @@ LIST_COLUMNS = (
     ("STATUS", 10),
     ("EGRESS", 12),
     ("IMAGE", 12),
-    ("CREATED", 10),
+    ("CREATED ↓", 10),
 )
 
 #: The space between two listing columns.
@@ -104,8 +104,9 @@ def padded_cells(cells: tuple[str, ...], columns=LIST_COLUMNS) -> str:
 #: grows still stands out.
 RUNNING_COLOR = "$success"
 
-#: The color every status outside the map's two entries renders
-#: in.
+#: The color every status besides running renders in (#470 S1):
+#: stopped carried the muted text color until the cue-dot pass;
+#: every non-running state now stands in the warning color.
 OTHER_STATUS_COLOR = "$warning"
 
 #: The muted ratio a theme spells some other way than Textual's
@@ -114,14 +115,16 @@ DEFAULT_MUTED_RATIO = "60%"
 
 
 def muted_style(theme_variables: dict) -> str:
-    """The stopped status's color (#348): the theme's text
-    variable at the theme's own muted ratio — "$text-muted"
-    itself is a widget-css color ("auto 60%"), and a content
-    span parses its style as a rich style, where the auto half
-    does not resolve; riding ``$text`` at the same ratio renders
-    near the same muted text, within a few color values (the
-    auto base composes slightly differently in a span than in
-    widget css). A theme that spells its muted color without a
+    """The muted accent both header lines share (#366, #470 S1):
+    the theme's text variable at the theme's own muted ratio —
+    "$text-muted" itself is a widget-css color ("auto 60%"), and
+    a content span parses its style as a rich style, where the
+    auto half does not resolve; riding ``$text`` at the same
+    ratio renders near the same muted text, within a few color
+    values (the auto base composes slightly differently in a
+    span than in widget css). The stopped status rode this color
+    until #470's cue-dot pass; the meta line and its separators
+    still do. A theme that spells its muted color without a
     ratio rides the 60% Textual's own themes use."""
     parts = theme_variables.get("text-muted", "").split()
     ratio = (
@@ -133,15 +136,27 @@ def muted_style(theme_variables: dict) -> str:
 
 
 def status_color(status: str, theme_variables: dict | None = None) -> str:
-    """The status column's color (#348): a theme variable the
+    """The status cue's color (#348, #470 S1): a theme variable the
     render resolves against the active theme — running in the
-    success color, stopped in muted text at the theme's own
-    ratio, any other state in the warning color."""
+    success color, every other state in the warning color. The
+    stopped state rode muted text until #470's pass; the cue dot
+    carries the state now, so the word keeps a color the eye
+    separates from the muted metadata around it."""
     if status == "running":
         return RUNNING_COLOR
-    if status == "stopped":
-        return muted_style(theme_variables or {})
     return OTHER_STATUS_COLOR
+
+
+#: The status cue's dot (#470 S1): a filled circle before the
+#: status word — the colored cell the eye finds in a column of
+#: one state, where the muted word read as plain text.
+STATUS_DOT = "●"
+
+
+def status_text(status: str) -> str:
+    """The status word behind its cue dot (#470 S1) — the dot and
+    the word ride the status color together."""
+    return f"{STATUS_DOT} {status}"
 
 
 def status_class(status: str) -> str:
@@ -216,45 +231,73 @@ def row_cells(row: dict) -> tuple[str, ...]:
     created cell reads as a relative label (#350)."""
     return (
         clip(workspace_label(row), NAME_W),
-        clip(row["status"], STATUS_W),
+        clip(status_text(row["status"]), STATUS_W),
         clip(row.get("egress_mode") or "-", EGRESS_W),
-        clip(row.get("image_hash") or "-", IMAGE_W),
+        clip(row.get("image_ref") or row.get("image_hash") or "-", IMAGE_W),
         clip(created_label(row.get("created_at")), CREATED_W),
     )
 
 
-def row_content(row: dict, theme_variables: dict | None = None) -> Content:
-    """One listing row (#348): the padded cells with the status
-    cell alone carrying its state's color. The span's style is a
-    theme variable the render resolves against the active theme
-    (the muted ratio reads the theme's own); the cells ride a
-    Content's plain text — never parsed as markup — so a
-    markup-carrying name cannot shift the columns (the name
-    cell's own length fixes the span's offset: a wide-character
-    name pads with fewer characters than its display width)."""
+def row_content(
+    row: dict, theme_variables: dict | None = None, focused: bool = False
+) -> Content:
+    """One listing row (#348, #470 S1/S3): the padded cells with
+    the status cell alone carrying its state's color (dot and
+    word), and the focused row's name bold — the focus cue that
+    survives a theme whose highlight bar reads weakly. The span's
+    style is a theme variable the render resolves against the
+    active theme; the cells ride a Content's plain text — never
+    parsed as markup — so a markup-carrying name cannot shift the
+    columns (the name cell's own length fixes the span's offset:
+    a wide-character name pads with fewer characters than its
+    display width)."""
     cells = row_cells(row)
     name, status, *_ = cells
     line = padded_cells(cells).rstrip()
     offset = len(cell_pad(name, NAME_W)) + len(COLUMN_GAP)
-    span = Span(
-        offset,
-        offset + len(status),
-        status_color(row["status"], theme_variables),
-    )
-    return Content(line, [span])
+    spans = [
+        Span(
+            offset,
+            offset + len(status),
+            status_color(row["status"], theme_variables),
+        )
+    ]
+    if focused:
+        spans.append(Span(0, len(name), "$text bold"))
+    return Content(line, spans)
+
+
+def newest_first(rows: list[dict]) -> list[dict]:
+    """The listing's display order (#470 L1): newest creation
+    first — the daemon serves oldest-first, so the row an operator
+    just made would land at the bottom, and the CREATED column's
+    arrow names the sort the labels sit in. A stamp that does not
+    parse sinks to the end in the daemon's own order."""
+
+    def keyed(indexed):
+        index, item = indexed
+        stamp = parse_stamp(item.get("created_at") or "")
+        return (
+            stamp is None,
+            -(stamp.timestamp() if stamp is not None else 0.0),
+            index,
+        )
+
+    return [item for _index, item in sorted(enumerate(rows), key=keyed)]
 
 
 def header_name(
     row: dict, pending: int = 0, theme_variables: dict | None = None
 ) -> Content:
-    """The header's first line (#351): the workspace's name in
-    the default foreground, its status beside it in the status
-    color (the list's status coloring), and — while holds wait on
-    the page's queue — the pending-egress count (#354): the
-    segment leaves with the last hold. The name rides a Content's
-    plain text, so a markup-carrying name cannot shift the span."""
+    """The header's first line (#351, #470 S1): the workspace's
+    name in the default foreground, its status behind the cue dot
+    beside it in the status color (the list's status coloring),
+    and — while holds wait on the page's queue — the pending-egress
+    count (#354): the segment leaves with the last hold. The name
+    rides a Content's plain text, so a markup-carrying name
+    cannot shift the span."""
     name = workspace_label(row)
-    status = row["status"]
+    status = status_text(row["status"])
     text = f" {name}  ·  {status}"
     if pending:
         text += f"  ·  egress to decide: {pending}"
@@ -267,29 +310,41 @@ def header_name(
     return Content(text, [span])
 
 
+#: Each meta field's cell budget (#470 S2): the line clips every
+#: field to its own width instead of running past the terminal's
+#: edge — at an 80-column terminal the whole line (its padding
+#: and separators included) fits with the created date whole
+#: ("id" stays on the CLI; eight cells identify a row as well as
+#: ten).
+META_ID_W = 8
+META_IMAGE_W = 12
+META_HOST_W = 10
+
+
 def meta_fields(row: dict) -> tuple[str, str, str, str]:
-    """The meta line's fields: the immutable id, the image
-    hash's head, the host, and the created date — each with its
-    honest fallback for a row that predates it."""
+    """The meta line's fields, each clipped to its budget (#470
+    S2): the immutable id, the image hash, the host, and the
+    created date — each with its honest fallback for a row that
+    predates it."""
     created = (row.get("created_at") or "")[:10]
     return (
-        row["id"],
-        (row.get("image_hash") or "-")[:12],
-        row.get("host") or "-",
+        clip(row["id"], META_ID_W),
+        clip(row.get("image_hash") or "-", META_IMAGE_W),
+        clip(row.get("host") or "-", META_HOST_W),
         created or "-",
     )
 
 
 def header_meta(row: dict, theme_variables: dict | None = None) -> Content:
-    """The header's second line (#351): the immutable id, the
-    image hash, the host, and the created date — the page paints
-    the line muted, and its ``·`` separators carry the same muted
-    span style the name line gives the status (#366): a theme
-    variable the render resolves, the one expression both header
-    lines' muted accents share. The fields ride a Content's plain
-    text (the name line's rule — no escaping), and the line
-    truncates at the terminal's edge (an ellipsis marks the cut)
-    beside the name's own line."""
+    """The header's second line (#351, #470 S2): the immutable id,
+    the image hash, the host, and the created date — every field
+    clipped to its own budget so the line fits an 80-column
+    terminal with the date whole. The page paints the line muted,
+    and its ``·`` separators carry the same muted span style the
+    name line gives the status (#366): a theme variable the
+    render resolves, the one expression both header lines' muted
+    accents share. The fields ride a Content's plain text (the
+    name line's rule — no escaping)."""
     wid, image, host, created = meta_fields(row)
     text = f" id {wid}  ·  image {image}  ·  host {host}  ·  created {created}"
     style = muted_style(theme_variables or {})

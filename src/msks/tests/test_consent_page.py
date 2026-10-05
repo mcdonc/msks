@@ -16,6 +16,7 @@ import websockets
 from msks.client.tui import consent_ui
 from msks.client.tui.consent_ui import (
     ConsentPage,
+    DurationScreen,
     OneFlight,
     hold_flash,
 )
@@ -539,10 +540,24 @@ async def test_the_page_shows_both_zones() -> None:
         await wait_for(lambda: hold_children(app) == 1)
         await wait_for(lambda: rules_children(app) == 2)
         header = str(cp.query_one("#allowlist").content)
-        assert "mode interactive" in header
+        assert header.startswith("allowlist:")
         assert ".debian.org" in header
-        assert "held requests" in str(cp.query_one("#holds-label").content)
-        assert "in effect" in str(cp.query_one("#rules-label").content)
+        # The zone labels carry their counts (#470 C6) and the
+        # verdict keys' hint stands under the queue's label
+        # (#470 C2) — the counts follow within a tick of the
+        # frames that land them.
+        await wait_for(
+            lambda: (
+                "held requests (1)"
+                in str(cp.query_one("#holds-label").content)
+            )
+        )
+        await wait_for(
+            lambda: (
+                "in effect (2)" in str(cp.query_one("#rules-label").content)
+            )
+        )
+        assert "a allow" in str(cp.query_one("#holds-hint").content)
         assert "api.example:443" in held_row(app, 0)
         assert "allowed" in rule_row_text(app, 0)
 
@@ -649,18 +664,20 @@ async def test_the_arrows_cross_between_the_zones() -> None:
 
 async def test_up_from_empty_verdicts_enters_the_empty_holds() -> None:
     """Up off an empty verdicts list hands the walk to the holds
-    zone even with nothing to highlight — the empty list keeps the
-    focus, and the verdict keys flash their no-hold-focused note
-    there (the honest nothing)."""
+    zone even with nothing to highlight — the empty list keeps
+    the focus, and the verdict keys stand inert there while no
+    hold waits (#470 C3): the press decides nothing and flashes
+    nothing."""
     factory = FakeFactory([FakeWS([empty_rules_frame()]), FakeWS([])])
     app, page, data = make_page(factory)
     async with app.run_test() as pilot:
         await open_consent(pilot, app, page)
         await wait_for(lambda: focused_zone(app) == "rules")
         await press_until(pilot, "up", lambda: focused_zone(app) == "holds")
-        await press_until(
-            pilot, "a", lambda: "no hold focused" in status_line(app)
-        )
+        standing = status_line(app)
+        await pilot.press("a")
+        await pilot.pause()
+        assert status_line(app) == standing  # inert: no flash
         assert data.decided == []
 
 
@@ -812,7 +829,8 @@ async def test_the_picker_decides_the_hold_it_opened_on() -> None:
 
 async def test_verdict_keys_without_a_focused_row() -> None:
     """The last hold resolving under the holds zone's focus leaves
-    an empty focused list: the letters flash, they decide
+    an empty focused list: the verdict keys stand inert while no
+    hold waits (#470 C3) — they decide nothing and flash
     nothing."""
     factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
     app, page, data = make_page(factory)
@@ -823,11 +841,11 @@ async def test_verdict_keys_without_a_focused_row() -> None:
         await decide_the(page.link.controller, "r1")
         cp.tick()
         await wait_for(lambda: hold_children(app) == 0)
-        # Retried: the press can land between the swap and its
-        # focus restore, where the keys read as inert by design.
-        await press_until(
-            pilot, "a", lambda: "no hold focused" in status_line(app)
-        )
+        standing = status_line(app)
+        await pilot.press("a")
+        await pilot.press("A")
+        await pilot.pause()
+        assert status_line(app) == standing  # inert: no flash
         assert data.decided == []
 
 
@@ -837,7 +855,10 @@ async def test_a_swap_reclaims_focus_from_its_dying_holds_list() -> None:
     mid-swap on a starved loop) would leave the letters dying on
     the removed list's closed pump — 'a' never took effect under
     the parallel suite (#468). The swap's tail gives the fresh
-    list the focus its removal orphaned."""
+    list the focus its removal orphaned. The letters take the
+    fresh list's word once a hold stands on it again (#470 C3:
+    with the queue empty they stand inert, so the proof waits for
+    a fresh hold to decide)."""
     factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
     app, page, data = make_page(factory)
     async with app.run_test() as pilot:
@@ -867,27 +888,46 @@ async def test_a_swap_reclaims_focus_from_its_dying_holds_list() -> None:
                 and cp.focused is cp.hold_rows()
             )
         )
+        # The letters answer on the fresh list: a new hold lands
+        # on it (#470 C3 keeps them inert while the queue stands
+        # empty) and 'a' decides it through the reclaimed focus.
+        factory.made[0].push(request_frame("r2"))
+        await wait_for(lambda: hold_children(app) == 1)
         await press_until(
-            pilot, "a", lambda: "no hold focused" in status_line(app)
+            pilot,
+            "a",
+            lambda: (WS, "r2", "allow", "tilrestart") in data.decided,
         )
-        assert data.decided == []
 
 
-async def test_enter_decides_nothing() -> None:
-    """Enter carries no verdict (#358): both zones are ListViews,
-    and Enter fires their selection — a stray Enter aimed at the
-    page beneath must not decide anything. Only an explicit letter
-    decides."""
+async def test_enter_opens_the_picker_and_decides_nothing_alone() -> None:
+    """#470 C4: Enter on a focused hold opens the duration picker
+    — the key answers, the pick decides. Escape closes the picker
+    with nothing decided, and a stray Enter aimed at the page
+    beneath decides nothing on its own."""
     factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
     app, page, data = make_page(factory)
     async with app.run_test() as pilot:
         await open_consent(pilot, app, page)
         await wait_for(lambda: hold_children(app) == 1)
-        await pilot.press("enter")
-        await pilot.press("enter")
+        await wait_for(lambda: focused_zone(app) == "holds")
+        # Retried: a press that falls in a rebuild's swap window
+        # reads as nothing focused — the loop presses again until
+        # the picker stands.
+        await press_until(
+            pilot, "enter", lambda: isinstance(app.screen, DurationScreen)
+        )
+        await pilot.press("escape")
+        await wait_for(lambda: on_consent(app))
         await pilot.pause()
         assert data.decided == []
-        assert on_consent(app)  # the tree never left the page
+        # Enter on the verdicts answers nothing (#470 C4): the
+        # picker belongs to a focused hold.
+        await press_until(pilot, "down", lambda: focused_zone(app) == "rules")
+        await pilot.press("enter")
+        await pilot.pause()
+        assert on_consent(app)
+        assert data.decided == []
 
 
 async def test_a_resolved_hold_above_focus_never_retargets() -> None:
@@ -1136,7 +1176,7 @@ async def test_the_verdicts_zone_revokes() -> None:
         cp = await open_consent(pilot, app, page)
         await wait_for(lambda: rules_children(app) == 2)
         header = str(cp.query_one("#allowlist").content)
-        assert "mode interactive" in header
+        assert header.startswith("allowlist:")
         assert ".debian.org" in header
         await wait_for(lambda: "allowed" in rule_row_text(app, 0))
         assert "forever" in rule_row_text(app, 1)
@@ -1198,12 +1238,10 @@ async def test_the_verdicts_repaint_in_place() -> None:
         await wait_for(lambda: "2m left" in rule_row_text(app, 0))  # 500-360
         await wait_for(lambda: cp.query_one("#rule-rows") is rows)
         # A same-membership frame (a mode switch lands in it): the
-        # header follows the mode, the rows never swap.
+        # status line follows the mode, the rows never swap.
         page.link.controller.apply_frame(same_rows_frame("allow"))
         cp.tick()
-        await wait_for(
-            lambda: "mode allow" in str(cp.query_one("#allowlist").content)
-        )
+        await wait_for(lambda: "mode allow" in status_line(app))
         await wait_for(lambda: cp.query_one("#rule-rows") is rows)
         assert rules_focus(app) == "d1"
         # A membership change (a1 revoked): the fresh-list swap.
@@ -2068,3 +2106,110 @@ def test_ws_connect_kwargs_and_shared_ssl(monkeypatch) -> None:
     assert "token" not in kwargs["uri"]
     assert kwargs["additional_headers"] == [("Authorization", "Bearer t")]
     assert consent_ui.shared_ssl() is ctx
+
+
+# -- the design pass (#470): the verdict keys' affordances ---------------
+
+
+async def test_mis_zoned_verdict_keys_name_their_zone() -> None:
+    """#470 C2: a verdict key pressed outside its zone names the
+    zone it acts on — the letters with a hold waiting but the
+    verdicts focused, x with the holds focused. The presses decide
+    and revoke nothing."""
+    factory = FakeFactory(
+        [FakeWS([request_frame("r1"), rules_frame()]), FakeWS([])]
+    )
+    app, page, data = make_page(factory)
+    async with app.run_test() as pilot:
+        await open_consent(pilot, app, page)
+        await wait_for(lambda: hold_children(app) == 1)
+        await wait_for(lambda: rules_children(app) == 2)
+        await press_until(pilot, "down", lambda: focused_zone(app) == "rules")
+        await press_until(
+            pilot, "a", lambda: "a decides a held request" in status_line(app)
+        )
+        await press_until(
+            pilot,
+            "A",
+            lambda: "A picks a duration on a held request" in status_line(app),
+        )
+        await press_until(
+            pilot, "d", lambda: "d decides a held request" in status_line(app)
+        )
+        await press_until(
+            pilot,
+            "D",
+            lambda: "D picks a duration on a held request" in status_line(app),
+        )
+        assert data.decided == []
+        await press_until(pilot, "up", lambda: focused_zone(app) == "holds")
+        await press_until(
+            pilot, "x", lambda: "x revokes a verdict row" in status_line(app)
+        )
+        assert data.revoked == []
+
+
+async def test_a_teardown_prune_under_the_highlight_repaint_stops_quiet() -> (
+    None
+):
+    """#470 S3: the highlight repaint walks the rows that stand —
+    a row whose Static teardown pruned mid-walk skips alone, the
+    walk stops quiet."""
+    factory = FakeFactory(
+        [FakeWS([request_frame("r1"), rules_frame()]), FakeWS([])]
+    )
+    app, page, _data = make_page(factory)
+    async with app.run_test() as pilot:
+        cp = await open_consent(pilot, app, page)
+        await wait_for(lambda: hold_children(app) == 1)
+        await wait_for(lambda: rules_children(app) == 2)
+        await cp.query_one("#rule-rows").children[0].query_one(Static).remove()
+        cp.on_list_view_highlighted(None)  # the pruned row skips, no raise
+
+
+async def test_the_focused_rows_carry_the_bold_cue() -> None:
+    """#470 S3: the focused hold's destination and the focused
+    verdict's host render bold — the focus cue that survives a
+    theme whose highlight bar reads weakly."""
+    factory = FakeFactory(
+        [FakeWS([request_frame("r1"), rules_frame()]), FakeWS([])]
+    )
+    app, page, _data = make_page(factory)
+    async with app.run_test() as pilot:
+        cp = await open_consent(pilot, app, page)
+        await wait_for(lambda: hold_children(app) == 1)
+        await wait_for(lambda: focused_zone(app) == "holds")
+        await wait_for(
+            lambda: any(
+                span.style == "$text bold"
+                for span in cp.query_one("#hold-rows")
+                .highlighted_child.query_one(Static)
+                .content.spans
+            )
+        )
+        await press_until(pilot, "down", lambda: focused_zone(app) == "rules")
+        await wait_for(
+            lambda: any(
+                span.style == "$text bold"
+                for span in cp.query_one("#rule-rows")
+                .highlighted_child.query_one(Static)
+                .content.spans
+            )
+        )
+
+
+async def test_a_decide_key_inside_a_swap_window_flashes() -> None:
+    """The decide path's honest nothing (#454, #470 C2): a verdict
+    key whose hold list stands in a rebuild's swap window reads
+    as nothing focused and names it — the guard the zone gates
+    stand in front of."""
+    factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
+    app, page, data = make_page(factory)
+    async with app.run_test() as pilot:
+        cp = await open_consent(pilot, app, page)
+        await wait_for(lambda: hold_children(app) == 1)
+        await wait_for(lambda: focused_zone(app) == "holds")
+        await cp.query_one("#hold-rows").remove()
+        await cp.decide_focused("allow", "15m")  # the swap window
+        await wait_for(lambda: "no hold focused" in status_line(app))
+        assert data.decided == []

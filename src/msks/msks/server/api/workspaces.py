@@ -10,6 +10,8 @@ from fastapi.responses import Response
 from sqlalchemy.exc import IntegrityError
 
 from ...identity import LEGACY_LOGIN_USER, mint, normalize_public_key
+from ...imagestore import list_images as list_catalog_images
+from ...imagestore import resolve_hash
 from ...llm import mint_token
 from ...microvm.errors import MicrovmError
 from ...model.secrets import SECRET_COVERAGES
@@ -27,6 +29,22 @@ from .rows import (
 )
 from .schemas import WorkspaceCreate
 from .volumes import move_lock
+
+
+def image_ref(app, image_hash: str | None) -> str | None:
+    """The catalog reference for a workspace's image hash (#470
+    L3) — ``name:version``, the words a listing's IMAGE column
+    reads — or None when the catalog cannot resolve the digest (a
+    pruned image, a row older than the hash). The digest stays in
+    the row's own field; this is the human-facing alias."""
+    if not image_hash:
+        return None
+    record = resolve_hash(
+        image_hash, list_catalog_images(app.state.settings.vmm.state_dir)
+    )
+    if record is None:
+        return None
+    return f"{record.name}:{record.version}"
 
 
 def router(app) -> APIRouter:
@@ -193,7 +211,13 @@ def router(app) -> APIRouter:
 
     @api.get("/api/v1/workspaces", dependencies=[Depends(require_token)])
     async def list_workspaces() -> list[dict]:
-        return await app.state.model.list_workspaces()
+        """The workspace rows with each image's catalog reference
+        (#470 L3) — the listing's client prefers the reference and
+        keeps the digest as its own fallback."""
+        rows = await app.state.model.list_workspaces()
+        for row in rows:
+            row["image_ref"] = image_ref(app, row.get("image_hash"))
+        return rows
 
     @api.get(
         "/api/v1/workspaces/{workspace_id}",

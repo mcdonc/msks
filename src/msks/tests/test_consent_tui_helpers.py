@@ -330,3 +330,78 @@ def test_audit_stamp_epoch_reads_naive_utc_and_offsets() -> None:
     assert offset == datetime(2030, 1, 1, 1, 4, 5, tzinfo=UTC).timestamp()
     assert consent_mod.audit_stamp_epoch(None) == 0.0
     assert consent_mod.audit_stamp_epoch("junk") == 0.0
+
+
+def test_hold_row_paints_urgency_and_focus() -> None:
+    """#470 C7/S3: a held request's row keeps its countdown in the
+    default foreground above the warning bound and turns it to the
+    warning color under it — the hold that lapses fails closed —
+    and the destination renders bold on the focused row."""
+
+    from msks.client.tui.consent_ui import HOLD_WARNING_S, dest_line
+
+    request = consent_mod.ConsentRequest(
+        id="r1",
+        workspace_id="ws",
+        dest_host="api.example",
+        dest_port=443,
+        requested_at=0.0,
+    )
+    calm = dest_line(request, HOLD_WARNING_S + 5.0)
+    assert str(calm) == "api.example:443  (15s)"
+    assert calm.spans == []  # plain while the deadline is a decision away
+    urgent = dest_line(request, 9.0)
+    (span,) = urgent.spans
+    assert urgent.plain[span.start : span.end] == "(9s)"
+    assert span.style == "$warning"
+    focused = dest_line(request, 15.0, focused=True)
+    (bold,) = focused.spans
+    assert focused.plain[bold.start : bold.end] == "api.example:443"
+    assert bold.style == "$text bold"
+
+
+def test_verdict_row_paints_its_decision_and_clips_its_host() -> None:
+    """#470 C5/S3: a verdict row colors its decision word — allowed
+    in the success color, denied in the error color — clips a long
+    host at its middle so the row keeps one line, and renders the
+    host bold on the focused row ``x`` acts on."""
+
+    from msks.client.tui.consent_ui import (
+        RULE_HOST_W,
+        VERDICT_COLORS,
+        rule_line,
+    )
+
+    def rule(host: str, decision: str = "allowed") -> consent_mod.ConsentRule:
+        return consent_mod.ConsentRule(
+            id="a1",
+            dest_host=host,
+            dest_port=443,
+            decision=decision,
+            duration="forever",
+            decided_at=None,
+            decided_by="token",
+        )
+
+    allowed = rule_line(rule("api.example"), None)
+    assert str(allowed) == "allowed api.example:443  forever"
+    (span,) = allowed.spans
+    assert allowed.plain[span.start : span.end] == "allowed"
+    assert span.style == VERDICT_COLORS["allowed"] == "$success"
+    denied = rule_line(rule("api.example", "denied"), None)
+    (denied_span,) = denied.spans
+    assert denied.plain[denied_span.start : denied_span.end] == "denied"
+    assert denied_span.style == "$error"
+    # A long FQDN clips at its middle: both ends read, the row
+    # keeps one line whatever the catalog grows.
+    long_host = "bare-domain.us-east-2.swim.install.determinate.systems"
+    clipped = rule_line(rule(long_host), None)
+    text = str(clipped)
+    assert "…" in text
+    assert "bare-domain" in text and "systems" in text
+    assert "us-east-2.swim.install.determinate" not in text
+    # The focused row's host renders bold.
+    focused = rule_line(rule("api.example"), None, focused=True)
+    bold = next(s for s in focused.spans if s.style == "$text bold")
+    assert focused.plain[bold.start : bold.end] == "api.example:443"
+    assert len(long_host) > RULE_HOST_W  # the budget the clip serves
