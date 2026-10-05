@@ -527,7 +527,10 @@ the only place verdicts are made. A hold's arrival pushes
 nothing: the
 header's `egress to decide: N` counts what waits (a hold waits
 about two minutes before it times out denied), and the consent
-line flashes the held destination with the key in. Keys on the
+line flashes the held destination with the key in — a burst of
+first-seen holds names its count instead, and a hold that lands
+while another screen owns the terminal flashes on the first tick
+after that screen leaves. Keys on the
 page: the arrows walk the held requests and cross into the
 verdict rows beneath (and back), `a`/`d` allow or deny the
 focused hold for the default duration (`tilrestart`), `A`/`D`

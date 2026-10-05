@@ -1266,7 +1266,10 @@ async def test_the_mode_picker_opens_from_the_consent_page() -> None:
 async def test_the_status_line_names_the_link_state() -> None:
     """The empty line and the status line stay honest about the
     link: a drop names itself, a rejected registration names its
-    reason — silence is never data."""
+    reason — silence is never data — and the held count drops to
+    zero off a live link for the header's own reason (a dead
+    socket's snapshot may carry holds the server already
+    resolved), a truncated closing tag in the reason included."""
     factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
     app, page, _data = make_page(factory)
     async with app.run_test() as pilot:
@@ -1275,10 +1278,15 @@ async def test_the_status_line_names_the_link_state() -> None:
         page.link.state = "reconnecting"
         cp.sync_empty([])
         assert "reconnecting" in str(cp.query_one("#holds-empty").content)
-        page.link.state = "rejected"
-        page.link.reject_reason = "unknown workspace"
+        factory.made[0].push(request_frame("r1"))
+        await wait_for(lambda: len(page.link.controller.pending) == 1)
         cp.update_status()
-        assert "unknown workspace" in status_line(app)
+        assert "0 held" in status_line(app)  # the drop folds the count
+        page.link.state = "rejected"
+        page.link.reject_reason = "unknown workspace [/dev"
+        cp.update_status()
+        assert "unknown workspace" in status_line(app)  # parses, renders
+        await pilot.pause()
 
 
 async def test_the_status_line_shows_the_mode() -> None:
