@@ -13,6 +13,7 @@ import json
 import socket
 import ssl
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,12 @@ class FakeNet:
 
     def __init__(self) -> None:
         self.interceptions: list[tuple[str, int | None]] = []
+        # The naming memory's stand-in: address -> the name the
+        # daemon's resolver last learned for it.
+        self.names: dict[str, str] = {}
+
+    def host_for(self, workspace_id: str, address: str) -> str | None:
+        return self.names.get(address)
 
     def attachment_for(self, workspace_id: str):
         return type("Attachment", (), {"tap_ip": TAP_IP})()
@@ -76,7 +83,10 @@ def key_pem(key) -> bytes:
 class Origin:
     """A loopback TLS origin echoing what it received."""
 
-    def __init__(self, tmp: Path, name: str, hosts: list[str]) -> None:
+    def __init__(
+        self, tmp: Path, name: str, hosts: list[str], addr: str = "127.0.0.1"
+    ) -> None:
+        self.addr = addr
         self.dir = tmp / f"origin-{name}"
         self.dir.mkdir()
         self.authority = ca.load_or_mint(self.dir, name)
@@ -95,7 +105,7 @@ class Origin:
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(chain, leaf_key)
         self.server = await asyncio.start_server(
-            self.serve, "127.0.0.1", 0, ssl=context
+            self.serve, self.addr, 0, ssl=context
         )
 
     @property
@@ -142,7 +152,7 @@ class PlainOrigin(Origin):
     """The plain-HTTP stand-in: the same echo, no TLS."""
 
     async def start(self) -> None:
-        self.server = await asyncio.start_server(self.serve, "127.0.0.1", 0)
+        self.server = await asyncio.start_server(self.serve, self.addr, 0)
 
 
 def read_response(sock: socket.socket) -> tuple[int, str]:
@@ -430,3 +440,136 @@ async def test_the_live_probe_chain(tmp_path, monkeypatch) -> None:
     finally:
         await interceptor.stop()
         await service.stop_listener("ws-live")
+
+
+async def pending_request(app) -> dict:
+    """The workspace's first pending consent row, polled until it
+    appears (the gate creates it when the ClientHello holds)."""
+    deadline = time.monotonic() + 30.0
+    while time.monotonic() < deadline:
+        rows = await app.state.model.egress_consent.list_requests(
+            "ws-live", decision="pending"
+        )
+        if rows:
+            return rows[0]
+        await asyncio.sleep(0.05)
+    raise AssertionError("no pending consent request appeared")
+
+
+@pytest.mark.timeout(180)
+async def test_the_live_consent_gate(tmp_path, monkeypatch) -> None:
+    """#452, live: an armed interceptor on an interactive workspace
+    holds the guest's web flows for a decider verdict — the gate
+    the prerouting redirect made the kernel queue unable to serve.
+    An allowed destination completes its handshake and swaps; a
+    denied one answers the local refusal without forwarding."""
+    scratch = Path(tempfile.mkdtemp(prefix="msks-live-"))
+    origins = {
+        # One loopback address per origin, so the naming memory's
+        # address→name binding stands in cleanly (production's
+        # destinations hold distinct addresses; the swap test's
+        # shared 127.0.0.1 would map one name for both).
+        "a": Origin(scratch, "a", [API], addr="127.0.0.11"),
+        "b": Origin(scratch, "b", [OTHER], addr="127.0.0.12"),
+    }
+    for origin in origins.values():
+        await origin.start()
+
+    port = free_port()
+    app = build_app(
+        Settings(
+            vmm=VmmSettings(state_dir=tmp_path),
+            net=NetSettings(interceptor_port=port),
+            server=ServerSettings(db_path=tmp_path / "msks.db"),
+        )
+    )
+    app.state.model.migrate()
+    app.state.net = FakeNet()
+    app.state.net.names = {"127.0.0.11": API, "127.0.0.12": OTHER}
+    app.state.secrets = FakeSecrets()
+    interceptor = Interceptor(app)
+    app.state.interceptor = interceptor
+
+    holder: dict = {}
+
+    def fake_original_addr(sock) -> tuple[str, int]:
+        return holder["dst"]
+
+    import mitmproxy.platform
+
+    monkeypatch.setattr(
+        mitmproxy.platform, "original_addr", fake_original_addr
+    )
+
+    first = await seed(app, "api", [API], "real-secret-one")
+    await app.state.model.set_egress_policy("ws-live", "interactive", None)
+    app.state.deciders.register(1, "ws-live")
+
+    await interceptor.refresh("ws-live")
+    master = interceptor._master
+    assert master is not None
+    bundle = scratch / "upstream-bundle.pem"
+    bundle.write_bytes(origins["a"].ca_pem + origins["b"].ca_pem)
+    master.options.update(ssl_verify_upstream_trusted_ca=str(bundle))
+
+    ws_ca = str(tmp_path / "vms" / "ws-live" / ca.CA_CERT_FILE)
+    auth = {"Authorization": f"Bearer {first['sentinel']}"}
+
+    try:
+        # 1. The hold: the ClientHello waits for a verdict, keyed
+        # by the SNI the naming memory binds to the connection's
+        # address (the origin's ephemeral port here stands in for
+        # the 443 production's redirect preserves).
+        holder["dst"] = ("127.0.0.11", origins["a"].port)
+        task = asyncio.create_task(
+            asyncio.to_thread(https_get, port, API, "/echo", auth, ws_ca)
+        )
+        request = await pending_request(app)
+        assert request["dest_host"] == API
+        # The port the redirect stand-in preserved: the origin's
+        # ephemeral port here (production's redirect hands 443).
+        assert request["dest_port"] == origins["a"].port
+
+        # 2. The allow: the handshake completes and the swap runs.
+        await app.state.consent.resolve(
+            request["id"], "allowed", "tester", "5m"
+        )
+        status, body = await task
+        assert status == 200
+        assert "real-secret-one" in body
+        assert first["sentinel"] not in body
+
+        # 3. The session allow covers the next connection: no new
+        # hold, same swap.
+        holder["dst"] = ("127.0.0.11", origins["a"].port)
+        status, body = await asyncio.to_thread(
+            https_get, port, API, "/echo", auth, ws_ca
+        )
+        assert status == 200
+        assert "real-secret-one" in body
+        await asyncio.sleep(0.3)
+        rows = await app.state.model.egress_consent.list_requests(
+            "ws-live", decision="pending"
+        )
+        assert rows == []
+
+        # 4. The deny: a second destination holds; the verdict
+        # answers locally — the handshake completes against the
+        # workspace CA, the request refuses, nothing forwards.
+        holder["dst"] = ("127.0.0.12", origins["b"].port)
+        task = asyncio.create_task(
+            asyncio.to_thread(https_get, port, OTHER, "/echo", auth, ws_ca)
+        )
+        request = await pending_request(app)
+        assert request["dest_host"] == OTHER
+        await app.state.consent.resolve(
+            request["id"], "denied", "tester", "5m"
+        )
+        status, body = await task
+        assert status == 403
+        assert "not forwarded" in body
+        assert first["sentinel"] not in body
+    finally:
+        await interceptor.stop()
+        for origin in origins.values():
+            origin.close()

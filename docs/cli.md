@@ -1393,7 +1393,10 @@ events appear on the daemon's events channel for every session.
 Egress consent (#69, #195): decide, watch, and inspect a workspace's
 outbound-destination verdicts. A workspace in `interactive` mode
 holds each new outbound connection's first packet until a decider
-allows or denies it; `static` workspaces allow only their
+allows or denies it — for web flows (TCP 80/443) of an armed
+interceptor workspace, the hold lands at the connection's TLS
+handshake or its first HTTP request and shares the same rows and
+durations; `static` workspaces allow only their
 create-time allowlist; `allow` workspaces (the create default)
 record off-list destinations and pass them.
 

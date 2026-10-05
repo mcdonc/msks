@@ -536,3 +536,17 @@ async def test_arming_without_a_probe_service_builds_the_bundle(
     await app.state.interceptor.refresh("ws-a")
     assert Path(seen["bundle"]).is_file()
     assert seen["bundle"].endswith("upstream-bundle.pem")
+
+
+async def test_host_for_without_a_net_seam_answers_none(app) -> None:
+    """A net layer without the naming seam (a stripped-down host)
+    answers None — the web gate keys by the address; with the seam
+    it answers the naming memory's name (#452)."""
+    app.state.net = SimpleNamespace()
+    assert app.state.interceptor.host_for("ws", "198.51.100.7") is None
+    app.state.net = SimpleNamespace(
+        host_for=lambda workspace_id, address: "api.example.com"
+    )
+    assert app.state.interceptor.host_for("ws", "198.51.100.7") == (
+        "api.example.com"
+    )

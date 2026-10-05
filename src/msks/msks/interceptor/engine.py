@@ -22,9 +22,31 @@ Fail-closed on the swap path: a secret the store cannot serve (or a
 sentinel whose row cannot be read) answers the guest with a local
 502 rather than forwarding a request that still carries the
 sentinel.
+
+The consent tier (#452): while the interceptor is armed, the nft
+prerouting redirect owns the guest's TCP flows to ports 80/443 —
+they become host input to this listener and never reach the
+forward chain's NFQUEUE gate. The hooks below run the web-egress
+gate (:mod:`msks.interceptor.egress`) before anything else moves:
+
+- ``tls_clienthello`` gates every TLS connection on its SNI (the
+  cryptographic destination name). An allowed connection takes
+  today's path (decrypt when a placeholder covers the SNI, relay
+  undecrypted otherwise). A denied connection takes the decrypt
+  path with a deny marker — the guest's client completes its
+  handshake against the workspace CA and the request hook answers
+  locally, so no byte forwards. A pinned client fails the
+  handshake instead; fail-closed either way.
+- ``request`` gates plain HTTP (no ClientHello ever gated it) on
+  the Host header, and answers denied requests — including the
+  marked TLS ones — with a local 403. TLS connections skip the
+  re-gate: the hello already gated the connection, and a ``once``
+  verdict must not re-prompt per request on a kept-alive
+  connection.
 """
 
 import logging
+import weakref
 
 from mitmproxy import http, tls
 from mitmproxy.addons.tlsconfig import _default_ciphers
@@ -141,6 +163,27 @@ async def fetch_secret(owner, entry) -> str | None:
     return await owner.secret_for(entry)
 
 
+def original_destination(client) -> tuple[str, int]:
+    """``(address, port)`` the guest aimed at — transparent mode
+    rewrites ``sockname`` to the nft redirect's original
+    destination, which is what the egress gate keys its address
+    half on."""
+    sock = getattr(client, "sockname", None) or ("", 0)
+    return sock[0], sock[1]
+
+
+def refuse(flow: http.HTTPFlow) -> None:
+    """Answer a consent-denied request locally: nothing forwards,
+    and the sentinel a denied request may carry never rides the
+    wire (the swap path's fail-closed rule)."""
+    flow.response = http.Response.make(
+        403,
+        "msks: egress consent denied this destination; "
+        "the request was not forwarded.",
+        {"content-type": "text/plain"},
+    )
+
+
 def fail_closed(flow: http.HTTPFlow) -> None:
     """Answer locally instead of forwarding: a swap-path failure must
     not leak the request the sentinel still rides."""
@@ -150,6 +193,21 @@ def fail_closed(flow: http.HTTPFlow) -> None:
         "the request was not forwarded.",
         {"content-type": "text/plain"},
     )
+
+
+async def swap_or_announce(owner, workspace: str, flow) -> None:
+    """The swap tail: a carried sentinel whose own allowlist covers
+    the destination swaps; one whose allowlist misses it is the
+    off-allowlist sighting — decrypted, unrewritten, announced;
+    a sentinelless request passes."""
+    entry = carried_entry(owner.entries_for(workspace), flow)
+    if entry is None:
+        return
+    host = destination_name(flow)
+    if not host_matches(host, entry.dests):
+        await owner.publish_sighting(workspace, entry, host)
+        return
+    await swap_on_flow(owner, workspace, entry, host, flow)
 
 
 async def swap_on_flow(owner, workspace, entry, host, flow) -> None:
@@ -174,11 +232,23 @@ async def swap_on_flow(owner, workspace, entry, host, flow) -> None:
 
 
 class InterceptorAddon:
-    """The three hooks: splice, leaf, rewrite."""
+    """The hooks: consent, splice, leaf, rewrite."""
 
     def __init__(self, owner) -> None:
         # The interceptor manager: dispatch, entries, CAs, events.
         self.owner = owner
+        # Connections the hello-time gate denied, by identity: the
+        # request hook answers them locally. Weak, so a closed
+        # connection's marker dies with the connection object.
+        self._denied: weakref.WeakSet = weakref.WeakSet()
+        # One connection's own gate answers, per destination —
+        # plain HTTP gates per request, and a ``once`` verdict must
+        # not re-prompt for the next request on the same kept-alive
+        # connection. Weak, so a closed connection's answers die
+        # with it.
+        self._per_connection: weakref.WeakKeyDictionary = (
+            weakref.WeakKeyDictionary()
+        )
 
     def workspace(self, client) -> str | None:
         """The workspace whose tap accepted this connection — the
@@ -188,19 +258,51 @@ class InterceptorAddon:
             client.proxy_mode.custom_listen_host
         )
 
-    def tls_clienthello(self, data: tls.ClientHelloData) -> None:
-        """The splice tier: a ClientHello whose SNI no active
-        placeholder of this workspace covers is relayed undecrypted
-        (``ignore_connection``), end-to-end TLS preserved — pinned
-        clients keep working, and detection of off-allowlist
-        sightings stays limited to decrypted flows, exactly as #194
-        recorded."""
+    def denied(self, client) -> bool:
+        """Whether the hello-time gate denied this connection."""
+        return client in self._denied
+
+    async def gate(self, workspace: str, host: str, port: int, address: str):
+        """The egress gate for one web destination (#452), keyed by
+        the name the daemon's naming memory binds to the address
+        (the gate falls back to the address when nothing binds)."""
+        named = self.owner.host_for(workspace, address)
+        return await self.owner.web_verdict(
+            workspace, host, port, address, named
+        )
+
+    async def tls_clienthello(self, data: tls.ClientHelloData) -> None:
+        """The consent tier, then the splice tier. The gate first:
+        a gated workspace's TLS connections hold here until a
+        verdict — the Layer-7 answer to the SYN hold the redirect
+        made impossible. Allowed connections splice as before (a
+        ClientHello whose SNI no active placeholder of this
+        workspace covers is relayed undecrypted,
+        ``ignore_connection``; a covered one decrypts for the
+        swap). A denied connection is marked and left on the
+        decrypt path: the handshake answers from the workspace CA
+        and the request hook refuses locally."""
         workspace = self.workspace(data.context.client)
         if workspace is None:
             return
+        client = data.context.client
         sni = data.client_hello.sni or ""
+        if await self.refuse_client(client, workspace, sni):
+            return
         if self.owner.matching_entry(workspace, sni) is None:
             data.ignore_connection = True
+
+    async def refuse_client(self, client, workspace: str, sni: str) -> bool:
+        """Gate one connection at its hello: True when the gate
+        denied it — the connection takes the decrypt path with a
+        deny marker, never a relay; False when allowed (the splice
+        tier then decides decrypt or relay)."""
+        address, port = original_destination(client)
+        verdict = await self.gate(workspace, sni or address, port, address)
+        if verdict.allowed:
+            return False
+        self._denied.add(client)
+        return True
 
     def tls_start_client(self, data: tls.TlsData) -> None:
         """Serve the client-facing TLS from this workspace's CA: a
@@ -235,23 +337,50 @@ class InterceptorAddon:
         data.ssl_conn.set_accept_state()
 
     async def request(self, flow: http.HTTPFlow) -> None:
-        """The swap: a carried sentinel whose own allowlist covers
-        the destination is exchanged for the secret; a carried
-        sentinel whose allowlist misses it is the off-allowlist
-        sighting — decrypted, unrewritten, announced. A sentinel
-        whose row is gone (revoked, expired) passes through
-        decrypted and unrewritten."""
+        """The consent tier, then the swap. A connection the hello
+        gate denied answers locally (no swap machinery runs — a
+        sentinel on a denied request never rides the wire). Plain
+        HTTP gated here on its Host header — no ClientHello gated
+        the connection. TLS connections skip the re-gate: the hello
+        gated the connection, and per-request re-gating would
+        re-prompt a ``once`` verdict on every kept-alive request."""
         workspace = self.workspace(flow.client_conn)
         if workspace is None:
             return
-        entry = carried_entry(self.owner.entries_for(workspace), flow)
-        if entry is None:
+        if await self.refused(flow, workspace):
+            refuse(flow)
             return
+        await swap_or_announce(self.owner, workspace, flow)
+
+    async def refused(self, flow: http.HTTPFlow, workspace: str) -> bool:
+        """Whether this request is consent-denied: a connection the
+        hello gate marked, or a plain-HTTP request the gate denies
+        now."""
+        if self.denied(flow.client_conn):
+            return True
+        return await self.plain_denied(flow, workspace)
+
+    async def plain_denied(self, flow: http.HTTPFlow, workspace: str) -> bool:
+        """Whether the egress gate denies this plain-HTTP request
+        (True), or the connection is TLS and gated already (False
+        — the caller treats that as not-denied-here). One
+        connection's answer per destination caches: a ``once``
+        verdict covers the connection's own kept-alive requests,
+        and a different Host gates fresh (a different key — the
+        cache keys lowercased, matching the gate's own keying)."""
+        if flow.client_conn.tls:
+            return False
+        client = flow.client_conn
+        address, port = original_destination(client)
         host = destination_name(flow)
-        if not host_matches(host, entry.dests):
-            await self.owner.publish_sighting(workspace, entry, host)
-            return
-        await swap_on_flow(self.owner, workspace, entry, host, flow)
+        key = (host.lower(), port)
+        cached = self._per_connection.get(client, {}).get(key)
+        if cached is not None:
+            return cached
+        verdict = await self.gate(workspace, host, port, address)
+        denied_answer = not verdict.allowed
+        self._per_connection.setdefault(client, {})[key] = denied_answer
+        return denied_answer
 
 
 class LogBridge:

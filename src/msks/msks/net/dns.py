@@ -44,7 +44,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..spec.egress import MODE_ALLOW, MODE_STATIC, ports_for
+from ..spec.egress import MODE_ALLOW, MODE_STATIC, covers, ports_for
 from ..spec.probe import PROBE_HOST
 from . import dnsmsg
 from .loopio import recvfrom, sendto
@@ -109,14 +109,6 @@ class QueryDecision:
 LEARN = "learn"
 RECORD = "record"
 NXDOMAIN = "nxdomain"
-
-
-def covers(ports: set[int] | None) -> bool:
-    """Whether a ports answer is a match: None is an all-ports
-    match, a non-empty set matches those ports, and an empty set
-    matches nothing (the fail-closed distinction klangk pinned —
-    inverting it is the classic gate bug)."""
-    return ports is None or bool(ports)
 
 
 class ResolverGate:

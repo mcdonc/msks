@@ -74,15 +74,30 @@ What each request gets:
   redirect owns — nothing routes around the interceptor.
 
 While a workspace is armed, the redirect takes its web egress
-(TCP 80 and 443) **before** the egress-consent gates see it: the
-interceptor's own allowlist is what gates web traffic during that
-time, and a static or interactive workspace with a live
-placeholder reaches any web destination through the splice tier.
-The consent modes keep gating every other port, and the verdict
-pins and resolver-learned allows they hold in the kernel carry
-across the interceptor's arm/disarm table swaps — re-pinned with
-their remaining lifetimes in the same transaction that swaps the
-table.
+(TCP 80 and 443) **before** the kernel's consent queue, so the
+interceptor runs the consent gate for exactly those flows (#452):
+every web connection is decided on the name the wire carries — the
+TLS handshake's SNI on HTTPS, the Host header on plain HTTP —
+bound to the address the naming memory holds for the connection
+(a name claiming an address it never resolved to keys by the
+address, so it borrows nothing). A `static` workspace's
+allowlist gates its web traffic by that name; an `interactive`
+workspace's web connections hold through the same decider
+endpoints, rows, durations, and session memory every other port
+uses — `msks egress watch` and the TUI answer them like any other
+hold. An allowed web connection takes the splice or swap path
+above; a denied one is answered locally with an HTTP 403 naming
+consent — the handshake completes against the workspace's CA, the
+request refuses, and nothing forwards (a client that pins the
+origin's real certificate fails its handshake instead; refused
+closed either way). See
+[networking](networking.md#egress-consent-69) for the gate's
+precedence and its per-connection boundaries. The consent modes
+keep gating every other port at the kernel queue as before, and
+the verdict pins and resolver-learned allows they hold in the
+kernel carry across the
+interceptor's arm/disarm table swaps — re-pinned with their
+remaining lifetimes in the same transaction that swaps the table.
 
 Each swap publishes a `secret.swap` event; mint, revoke, and expiry
 publish their own (`secret.mint`, `secret.revoke`, `secret.expiry`).
