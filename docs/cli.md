@@ -30,16 +30,16 @@ The list-valued settings (`MSKSC_TERMINAL_OPEN_CMD`,
 `MSKSC_SSH_OPTIONS`) carry their string form and are documented with
 their file keys below.
 
-| Variable               | Meaning                                                                                                                            | Default                          |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
-| `MSKSC_URL`            | The daemon's base URL                                                                                                              | `https://127.0.0.1:8660`         |
-| `MSKSC_TOKEN`          | A daemon bearer token (see tokens below)                                                                                           | — (required)                     |
-| `MSKSC_CAFILE`         | A PEM file to verify the daemon's TLS certificate                                                                                  | unverified with warning          |
-| `MSKSC_EXPECTED_IMAGE` | An image reference the operator sets; `msks ls` compares it with the image the daemon reports in `/health` and names drift (#160)  | unset (no check)                 |
-| `MSKSC_CACHE_DIR`      | The directory per-workspace host-key caches live under (#251); the per-workspace directories are created below it                  | `~/.cache/msks`                  |
-| `MSKSC_DATA_DIR`       | The directory client-minted workspace identities live under (#251); same naming rule                                               | `~/.local/share/msks`            |
-| `MSKSC_IDENTITY_FILE`  | Your own private key file — the ssh identity a bare `msks create` plants into every workspace (#336); a leading `~` expands        | unset (msks mints one)           |
-| `MSKSC_TERMINAL_TITLE` | The window-title template `msks-term-popup` writes to the terminal it runs in (#445); `{workspace}` resolves to the workspace's id | unset (the terminal's own title) |
+| Variable               | Meaning                                                                                                                           | Default                          |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| `MSKSC_URL`            | The daemon's base URL                                                                                                             | `https://127.0.0.1:8660`         |
+| `MSKSC_TOKEN`          | A daemon bearer token (see tokens below)                                                                                          | — (required)                     |
+| `MSKSC_CAFILE`         | A PEM file to verify the daemon's TLS certificate                                                                                 | unverified with warning          |
+| `MSKSC_EXPECTED_IMAGE` | An image reference the operator sets; `msks ls` compares it with the image the daemon reports in `/health` and names drift (#160) | unset (no check)                 |
+| `MSKSC_CACHE_DIR`      | The directory per-workspace host-key caches live under (#251); the per-workspace directories are created below it                 | `~/.cache/msks`                  |
+| `MSKSC_DATA_DIR`       | The directory client-minted workspace identities live under (#251); same naming rule                                              | `~/.local/share/msks`            |
+| `MSKSC_IDENTITY_FILE`  | Your own private key file — the ssh identity a bare `msks create` plants into every workspace (#336); a leading `~` expands       | unset (msks mints one)           |
+| `MSKSC_TERMINAL_TITLE` | The title template for the workspace-shell windows the workspace page opens (#445); `{workspace}` resolves to the workspace's id  | unset (the terminal's own title) |
 
 The two directory variables are separate because their contents
 differ in durability: the host-key cache is disposable (a swept
@@ -222,24 +222,35 @@ closes itself when the session disconnects.
 
 ### `terminal_title`
 
-`terminal_title` names the title of the terminal window the
-workspace page's new-terminal shell action opens, for launchers
-that run `msks-term-popup` (#445): the launcher writes the title
-to the window before it attaches tmux, with `{workspace}`
-resolved to the workspace's id — the token `msks ssh` addresses,
-because that is what the TUI appends to the launcher — or `shell`,
-when the appended command names no workspace:
+`terminal_title` names the title of every terminal window the
+workspace page's new-terminal shell action opens (#445), with
+`{workspace}` resolved to the workspace's id — the token
+`msks ssh` addresses, because that is what the TUI appends to
+the launcher — or `shell`, when the appended command names no
+workspace:
 
 ```yaml
 terminal_title: msks — {workspace}
 ```
 
+Two paths write it. A launcher that runs `msks-term-popup`
+writes the title before it attaches tmux, and the launch's own
+tmux server pins `set-titles` off, so the title stays for the
+window's lifetime — a workspace shell inside the window cannot
+rewrite it. Every other launcher gets the title from the
+appended `msks ssh` itself: the window msks opens is marked at
+spawn, and the command names it before the session starts. A
+workspace that sets its own title from inside the session (a
+`PROMPT_COMMAND` with a title escape, the way stock ssh sessions
+can) rewrites it there — tmux shields the popup path, and nothing
+shields the plain path.
+
 `MSKSC_TERMINAL_TITLE` overrides the file value. The default is
 unset: the terminal emulator's own title — the command it runs,
-or whatever its `-T` / `--title` flag names — stays in place. The
-launch's own tmux server pins `set-titles` off, so the title you
-set stays for the window's lifetime; a workspace shell inside the
-window cannot rewrite it.
+or whatever its `-T` / `--title` flag names — stays in place.
+A `msks ssh` you type yourself keeps your terminal's title: the
+setting applies to the windows msks opens, and a same-terminal
+shell (the dead-launcher fallback) changes nothing.
 
 ### `ssh_options`
 

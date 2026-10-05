@@ -75,6 +75,7 @@ from .rest import (
     ensure_running,
     fetch_ssh_key,
 )
+from .wintitle import title_spawned_window
 
 #: The remembered-passthrough setting's variable (#385): the
 #: config file's ``ssh_options`` value, shell-joined by the config
@@ -1315,7 +1316,12 @@ def exec_child(argv: list[str], missing_line: str) -> int:
 def run_workspace_ssh(
     workspace_id: str, passthrough: list[str], transport=None
 ) -> int:
-    """One ssh session, from boot pre-flight to ssh's own exit code."""
+    """One ssh session, from boot pre-flight to ssh's own exit
+    code. The window the TUI opened for this session (the spawn's
+    marker names it) takes its title from ``MSKSC_TERMINAL_TITLE``
+    before the session starts (#445); a typed invocation carries
+    no marker and keeps its terminal's title."""
+    title_spawned_window(workspace_id)
     passthrough = passthrough_args(passthrough)
     with staged_session(workspace_id, transport) as (
         booted,

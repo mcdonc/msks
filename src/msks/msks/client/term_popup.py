@@ -56,10 +56,10 @@ import tty
 import websockets
 
 from . import wsauth
-from .config import TITLE_ENV_VAR
 from .egress import DURATIONS, connect_args, dest_label, refused
 from .env import env_token, env_url
 from .rest import api_client, request
+from .wintitle import configured_title, set_window_title
 
 #: The popup geometry: fixed cells, sized for the 80-column window
 #: the consent screens already target; tmux clips it to a smaller
@@ -570,35 +570,6 @@ def span(on: bool, code: str, text: str) -> str:
     if not on:
         return text
     return f"\x1b[{code}m{text}\x1b[0m"
-
-
-def configured_title(workspace_id: str | None) -> str | None:
-    """The window title the operator configured (#445):
-    ``MSKSC_TERMINAL_TITLE``'s template with ``{workspace}``
-    resolved to the session's name — the workspace's id, or
-    ``shell`` for a child naming none. None (the setting unset, or
-    blank) leaves the terminal emulator's own title in place."""
-    template = os.environ.get(TITLE_ENV_VAR, "")
-    if not template.strip():
-        return None
-    return template.replace("{workspace}", session_name(workspace_id))
-
-
-def set_window_title(title: str) -> None:
-    """Name the terminal window this launcher runs in (#445): one
-    OSC 0 sequence, the title-setting escape every terminal that
-    runs a command honors. Control characters drop out of the
-    title first — a BEL would end the OSC early and an ESC would
-    start a live sequence. Written before the tmux client takes
-    the screen — the launch's own server pins ``set-titles`` off
-    (:func:`session_argv`), so the title stays for the window's
-    lifetime — and a stdout that is not a terminal (a piped
-    hand-run) stays clean."""
-    if not sys.stdout.isatty():
-        return
-    clean = "".join(c for c in title if c >= " " and c != "\x7f")
-    sys.stdout.write(f"\x1b]0;{clean}\x07")
-    sys.stdout.flush()
 
 
 def session_argv(

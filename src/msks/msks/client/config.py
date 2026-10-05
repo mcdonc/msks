@@ -901,8 +901,8 @@ def render_template() -> str:
 #                                # a list form carries its words as
 #                                # written; unset -> xterm -e, the
 #                                # terminal most Linuxes carry
-# terminal_title: msks — {workspace} # the window title msks-term-popup
-#                                # writes to the terminal it runs in
+# terminal_title: msks — {workspace} # the title of the workspace-shell
+#                                # windows the workspace page opens
 #                                # (#445); {workspace} resolves to the
 #                                # workspace's id; unset leaves the
 #                                # terminal emulator's own title

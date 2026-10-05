@@ -359,27 +359,11 @@ def test_run_launch_execs_the_tmux_client(
 
 class Tty(io.StringIO):
     """A stdout the title writer accepts — a pipe answers
-    isatty() False and stays clean."""
+    isatty() False and stays clean. The emission itself lives in
+    :mod:`msks.client.wintitle` and is tested there."""
 
     def isatty(self) -> bool:
         return True
-
-
-def test_configured_title_resolves_the_workspace(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "msks — {workspace}")
-    assert tp.configured_title("a1b2c3d4e5") == "msks — a1b2c3d4e5"
-    # A child naming no workspace takes the session's shell name.
-    assert tp.configured_title(None) == "msks — shell"
-    monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "msks shell")
-    assert tp.configured_title("a1b2c3d4e5") == "msks shell"
-    # Unset and blank are the unset form: the emulator's own
-    # title stays.
-    monkeypatch.delenv("MSKSC_TERMINAL_TITLE")
-    assert tp.configured_title("a1b2c3d4e5") is None
-    monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "  ")
-    assert tp.configured_title("a1b2c3d4e5") is None
 
 
 def test_run_launch_titles_the_window_before_the_client(
@@ -404,29 +388,6 @@ def test_run_launch_without_a_title_writes_nothing(
     monkeypatch.setattr(tp.sys, "stdout", out)
     assert tp.run_launch(list(SSH_CHILD)) == 0
     assert out.getvalue() == ""
-
-
-def test_set_window_title_leaves_a_pipe_clean(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # A piped hand-run has no window title to set, so the escape
-    # never lands in the stream.
-    out = io.StringIO()
-    monkeypatch.setattr(tp.sys, "stdout", out)
-    tp.set_window_title("msks — ws")
-    assert out.getvalue() == ""
-
-
-def test_set_window_title_drops_control_characters(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # A BEL in the title would end the OSC early and an ESC would
-    # start a live sequence — the title carries neither through;
-    # the printable characters around them stay.
-    out = Tty()
-    monkeypatch.setattr(tp.sys, "stdout", out)
-    tp.set_window_title("a\x07b\x1b[2mc\nd\x7f")
-    assert out.getvalue() == "\x1b]0;ab[2mcd\x07"
 
 
 def test_the_launch_line_meets_the_pane_role(

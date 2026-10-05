@@ -7,9 +7,11 @@ of their own.
 """
 
 import asyncio
+import os
 import sys
 
 from ..console import run_workspace_shell
+from ..wintitle import TITLE_MARKER
 
 #: The full-terminal flows a page can record (#309): the console
 #: shell as the new-terminal action's dead-launcher fallback. The
@@ -67,7 +69,11 @@ async def spawn_window(argv: list[str]):
     stdio on devnull — the window borrows no terminal the tree
     holds, and the tree's later exit never takes it down. The
     asyncio child watcher reaps the launcher when it closes, so
-    the tree holds no waitable handle and leaves no zombie.
+    the tree holds no waitable handle and leaves no zombie. The
+    child's environment carries the new-window marker (#445): the
+    window msks opened may take its title from
+    ``MSKSC_TERMINAL_TITLE`` — the launcher names it when it runs
+    one, and the appended ``msks ssh`` names it when none does.
     """
     return await asyncio.create_subprocess_exec(
         *argv,
@@ -75,6 +81,7 @@ async def spawn_window(argv: list[str]):
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
         start_new_session=True,
+        env={**os.environ, TITLE_MARKER: "1"},
     )
 
 
