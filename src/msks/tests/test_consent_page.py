@@ -813,6 +813,7 @@ async def test_a_resolved_hold_above_focus_never_retargets() -> None:
         await wait_for(
             lambda: (
                 hold_children(app) == 2
+                and focused_zone(app) == "holds"
                 and focused_request_id_or_none(app) == "r2"
             )
         )
@@ -835,6 +836,7 @@ async def test_the_focused_hold_leaving_falls_to_a_live_target() -> None:
         await wait_for(
             lambda: (
                 hold_children(app) == 1
+                and focused_zone(app) == "holds"
                 and focused_request_id_or_none(app) == "r2"
             )
         )
@@ -1602,6 +1604,10 @@ async def test_a_dying_rebuild_logs_and_re_arms() -> None:
     async with app.run_test() as pilot:
         cp = await open_consent(pilot, app, page)
         await wait_for(lambda: hold_children(app) == 1)
+        # The open-time flight settles first: the mid-flight request
+        # below must arm against a dying flight, not race whatever
+        # the page's own startup still holds in the air (#322).
+        await wait_for(lambda: not cp.hold_rebuilds.scheduled)
         armed_while_dying = {"late": False}
 
         async def dying() -> None:
@@ -1617,6 +1623,10 @@ async def test_a_dying_rebuild_logs_and_re_arms() -> None:
             original_request()
 
         cp.hold_rebuilds.request = spying_request  # type: ignore[method-assign]
+        cp.hold_rebuilds.request()  # arms the dying flight
+        # The mid-flight request, explicit: the arming call set
+        # ``scheduled`` synchronously, so this one observably arms
+        # while the flight is dying — no startup race to win.
         cp.hold_rebuilds.request()
         await wait_for(lambda: not cp.hold_rebuilds.scheduled)
         assert armed_while_dying["late"]

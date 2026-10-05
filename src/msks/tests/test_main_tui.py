@@ -189,6 +189,13 @@ class FakeData:
             ("cpus", "cpus set to {value}"),
             ("mem_mib", "mem set to {value} MiB"),
         ):
+            if field in self.resize_omit:
+                # A daemon that predates the field cannot move it:
+                # the stored row keeps its own value too, not only
+                # the reply — otherwise the page's per-second
+                # refresh lands the moved value mid-edit and the
+                # defensive merge reads it as the row's own fact.
+                continue
             if body.get(field) is not None and body[field] != fresh[field]:
                 fresh[field] = body[field]
                 changes.append(moved.format(value=body[field]))
@@ -1512,11 +1519,16 @@ async def test_an_older_daemons_resize_reply_keeps_the_rows_facts(
         screen.query_one("#field-cpus", Input).value = "4"
         screen.query_one("#field-root_mib", Input).value = "20480"
         screen.submit()
-        await wait_for(lambda: "resized alpha" in consent_text(app))
-        assert page.row["root_mib"] == 20480  # the reply's fact
+        # The row's fact first (durable), then the outcome line's
+        # content from the flash's own message: the line shows it
+        # for FLASH_TTL seconds, and a multi-second stall under the
+        # parallel suite can eat that window before a poll sees it
+        # (#322's class — the message is what the line carries).
+        await wait_for(lambda: page.row["root_mib"] == 20480)
         assert page.row["cpus"] == 2  # the row's own, kept
         assert page.row["mem_mib"] == 8192
-        assert "cpus 2" in consent_text(app)  # the row's fact, printed
+        assert "resized alpha" in page.flash_line.msg
+        assert "cpus 2" in page.flash_line.msg  # the row's fact, printed
 
 
 async def test_an_edit_refusal_flashes_on_the_page(monkeypatch) -> None:

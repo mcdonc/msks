@@ -894,10 +894,14 @@ class ConsentPage(Screen):
 
     def focus_holds(self) -> None:
         """Focus the holds zone from above (the page's own start):
-        a highlighted row when the list carries one."""
+        a highlighted row when the list carries one. The focus move
+        is the screen's synchronous ``set_focus`` — ``focus()``
+        lands through ``call_later``, and a list swap between the
+        call and the landing leaves the screen focused on a removed
+        list (keys then die on a dead widget, #322's class)."""
         rows = self.hold_rows()
         if rows is not None:
-            rows.focus()
+            self.set_focus(rows)
             ensure_focus(rows)
 
     def focus_rules(self) -> None:
@@ -905,7 +909,7 @@ class ConsentPage(Screen):
         the list carries one."""
         rows = self.rule_rows()
         if rows is not None:
-            rows.focus()
+            self.set_focus(rows)
             ensure_focus(rows)
 
     def enter_rules(self) -> None:
@@ -918,7 +922,7 @@ class ConsentPage(Screen):
         at their last row — the row nearest the boundary crossed."""
         rows = self.hold_rows()
         if rows is not None:
-            rows.focus()
+            self.set_focus(rows)
             if rows.children:
                 rows.index = len(rows.children) - 1
             else:
@@ -987,12 +991,19 @@ class ConsentPage(Screen):
         body = self.query_one("#holds-zone", Vertical)
         old = self.hold_rows()
         focused = focused_request_id(old)
-        # Read before the remove: a removed list no longer reports
-        # the focus it carried (the awaits shift it to the next
-        # focusable — the verdicts — before the fresh list mounts).
-        held_focus = old is not None and old.has_focus
+        # Read before the remove, from the screen's synchronous
+        # focused widget — the reactive ``has_focus`` lags a focus
+        # move by a message round-trip, and a swap reading the lag
+        # would skip the restore while the move's callback still
+        # targets this list. The focus is also CLEARED before the
+        # remove: a focused widget's removal triggers Textual's
+        # internal focus repair, which grabs the next focusable (the
+        # verdicts zone) behind the swap's back.
+        held_focus = old is not None and self.focused is old
         fresh = self.fresh_hold_list(ordered)
         if old is not None:
+            if held_focus:
+                self.set_focus(None)
             await old.remove()  # frees the id before the fresh list mounts
         await body.mount(fresh)
         self.land_hold_focus(fresh, focused, held_focus, ordered)
@@ -1018,7 +1029,7 @@ class ConsentPage(Screen):
         open). Every other swap keeps the zones' focus where it
         stood."""
         if held_focus or (not self.holds_known and ordered):
-            fresh.focus()
+            self.set_focus(fresh)
             focus_by_id(fresh, focused)  # after mount: index sticks
         if ordered:
             self.holds_known = True
@@ -1081,7 +1092,27 @@ class ConsentPage(Screen):
         awaited), preserving the focused rule by id (the top when
         it left) — and the holds zone's focus when it held it."""
         focused = focused_rule_id(old)
-        held_focus = old is not None and old.has_focus
+        held_focus = old is not None and self.focused is old
+        fresh = EdgeListView(
+            *self.render_rule_items(ordered),
+            leave_up=self.enter_holds,
+            id="rule-rows",
+        )
+        if old is not None:
+            # Cleared first for the same reason the holds swap clears:
+            # the removal's internal focus repair would grab the
+            # holds zone without a set_focus the fresh list can win.
+            if held_focus:
+                self.set_focus(None)
+            await old.remove()  # frees the id before the fresh list mounts
+        await body.mount(fresh)
+        if held_focus:
+            self.set_focus(fresh)
+            focus_rule_by_id(fresh, focused)  # after mount: index sticks
+
+    def render_rule_items(self, ordered: list) -> list:
+        """The verdicts zone's next rows, each tagged with its rule
+        id — ``x``'s target through the swap-safe read."""
         items = []
         for rule in ordered:
             item = ListItem(
@@ -1089,13 +1120,7 @@ class ConsentPage(Screen):
             )
             item.rule_id = rule.id
             items.append(item)
-        fresh = EdgeListView(*items, leave_up=self.enter_holds, id="rule-rows")
-        if old is not None:
-            await old.remove()  # frees the id before the fresh list mounts
-        await body.mount(fresh)
-        if held_focus:
-            fresh.focus()
-            focus_rule_by_id(fresh, focused)  # after mount: index sticks
+        return items
 
     def repaint_rule_rows(self, rows: ListView, ordered: list) -> None:
         """Repaint each surviving rule row's text in place: the
