@@ -2232,3 +2232,30 @@ async def test_a_decide_key_inside_a_swap_window_flashes() -> None:
         await cp.decide_focused("allow", "15m")  # the swap window
         await wait_for(lambda: "no hold focused" in status_line(app))
         assert data.decided == []
+
+
+async def test_the_verdict_keys_leave_when_the_queue_empties() -> None:
+    """#470 C3 (the review round's insurance): the verdict keys'
+    gate follows the queue's membership wherever the focus stands
+    — the last hold resolving under the rules zone's focus takes
+    the keys out of the page's active bindings, and the holds
+    rebuild hands the footer the fresh answer."""
+    factory = FakeFactory(
+        [FakeWS([request_frame("r1"), rules_frame()]), FakeWS([])]
+    )
+    app, page, data = make_page(factory)
+    async with app.run_test() as pilot:
+        cp = await open_consent(pilot, app, page)
+        await wait_for(lambda: hold_children(app) == 1)
+        await wait_for(lambda: rules_children(app) == 2)
+        await press_until(pilot, "down", lambda: focused_zone(app) == "rules")
+
+        def verdict_keys() -> list[str]:
+            bindings = cp.active_bindings
+            return sorted(k for k in ("a", "A", "d", "D") if k in bindings)
+
+        await wait_for(lambda: verdict_keys() == ["A", "D", "a", "d"])
+        await decide_the(page.link.controller, "r1")
+        cp.tick()  # the rebuild lands the gate's fresh answer
+        await wait_for(lambda: verdict_keys() == [])
+        assert data.decided == []
