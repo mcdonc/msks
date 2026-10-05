@@ -1,7 +1,7 @@
 """The workspace page's decider connection (#309).
 
 While the workspace screen is open, the page registers as the
-workspace's decider — the same registration the consent overlay's
+workspace's decider — the same registration the consent page's
 host makes — so interactive holds land on the page (#69: holds exist
 only while a decider watches) and the rules frames keep the
 consent status line honest. The frame parsing is

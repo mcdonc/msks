@@ -158,8 +158,8 @@ class TuiData:
         decision: str,
         duration: str,
     ) -> dict:
-        """POST one verdict on a held request — the consent
-        overlay's decide, the same exchange ``msks egress decide``
+        """POST one verdict on a held request — the egress consent
+        page's decide, the same exchange ``msks egress decide``
         makes."""
         return await api_call(
             "POST",
@@ -172,8 +172,9 @@ class TuiData:
         )
 
     async def revoke(self, workspace_id: str, request_id: str) -> dict:
-        """DELETE one in-effect verdict — the rules screen's
-        revoke, the same exchange ``msks egress revoke`` makes."""
+        """DELETE one in-effect verdict — the egress consent
+        page's revoke, the same exchange ``msks egress revoke``
+        makes."""
         return await api_call(
             "DELETE",
             env_url(),

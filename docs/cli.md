@@ -500,7 +500,7 @@ style the header's status takes — a status line for egress
 consent (the mode, then one granted scope named with its expiry;
 two or more grants read as a count with the nearest expiry — `5
 grants · next expires 4h` — so the line stays readable at 80
-columns, every grant listed on the consent overlay's rules
+columns, every grant listed on the workspace's egress consent
 screen), and the page's actions centered in the space the header
 lines and the footer leave — the block capped at 64 columns — in
 three groups: a shell in a new terminal
@@ -529,36 +529,38 @@ as the workspace's decider, so holds land on it. Reminting the
 LLM token is a CLI operation — `msks llm-token --remint` prints
 the fresh token, the part the page cannot usefully show.
 
-The page's **Egress consent** action (#358) opens the consent
-overlay: a centered panel over the page holding the held-request
-queue with countdowns and the verdict keys — the consent decider
-as a pane inside the tree, not a screen the tree hands the
-terminal to. The page also opens it by itself: the first hold of
-a burst pushes the panel the moment it lands (a hold waits about
-two minutes before it times out denied, so surfacing it loudly is
-the point), while a picker or confirmation already stacked over
-the page holds the open until it leaves. `q` or Escape parks the
-panel — holds keep waiting, and the header's `egress to decide:
-N` keeps counting them — and a panel the page opened closes
-itself when its queue empties; one the operator opened by hand
-stays until the operator closes it, an empty queue included,
-because reviewing rules, revoking, and switching the mode all
-start there. Keys: `a`/`d` allow or deny the focused hold for
-the default duration (`tilrestart`), `A`/`D` pick a duration
-first (`once / 5m / 15m / tilrestart / forever`), `r` pushes the
-rules screen over the panel (the in-effect verdicts with
-countdowns, `x` to revoke the focused rule — the row leaves on
-the daemon's refreshed frame, never optimistically), and `m`
-opens the mode picker. Enter carries no verdict — only an
-explicit letter decides — and the panel's keys live on the panel
-itself, so they cannot collide with the page's. The
-placeholder-token audit moved to the secrets page (#390): the
-overlay keeps the holds, the rules, and the mode. See `msks
-egress` below for what verdicts and rules cover.
+The page's **Egress consent** action and its `e` key
+(#358, #454) open the egress consent page: a full-screen visit
+holding the held-request queue and the in-effect verdicts
+together — the consent decider as a page inside the tree, and
+the only place verdicts are made. A hold's arrival pushes
+nothing: the
+header's `egress to decide: N` counts what waits (a hold waits
+about two minutes before it times out denied), and the consent
+line flashes the held destination with the key in — a burst of
+first-seen holds names its count instead, and a hold that lands
+while another screen owns the terminal flashes on the first tick
+after that screen leaves. Keys on the
+page: the arrows walk the held requests and cross into the
+verdict rows beneath (and back), `a`/`d` allow or deny the
+focused hold for the default duration (`tilrestart`), `A`/`D`
+pick a duration first (`once / 5m / 15m / tilrestart /
+forever`) — the letters act on the holds alone and decide
+nothing on a verdict row — `x` revokes the focused verdict (the
+row leaves on the daemon's refreshed frame, never
+optimistically), and `m` opens the mode picker. Enter carries
+no verdict — only an explicit letter decides — and the page's
+keys live on the page itself, so they cannot collide with the
+workspace page's. `q` or Escape returns to the workspace page
+(holds keep waiting, the header's count keeps counting, `e`
+reopens). The placeholder-token audit lives on the secrets page
+(#390): the consent page keeps the holds, the verdicts, and the
+mode. See `msks egress` below for what verdicts and rules
+cover.
 
 The page's **Switch the egress mode** action (#344) opens the
 mode picker (`allow` / `static` / `interactive`, the current
-mode highlighted) over the page — the same picker the overlay's
+mode highlighted) over the page — the same picker the consent
 `m` opens: picking a mode switches the posture through the same
 endpoint `msks egress mode` speaks, without leaving the
 workspace. The consent line names the new mode as the switch
@@ -612,7 +614,7 @@ holds the focus. A bare Ctrl+C keeps the client running (#442):
 a form field holds it as the field's own copy shortcut, and
 the tree's own screens answer it with a notification naming the
 quit key. A stacked panel away from its fields — a
-confirmation, a picker, the consent overlay, the sentinel
+confirmation, a picker, the sentinel
 panel — leaves the key silent: nothing exits, nothing copies,
 nothing shows, the stock Textual modal behavior. Ctrl+Shift+C
 belongs to the terminal (#437): the TUI starts with the kitty
@@ -1412,7 +1414,7 @@ record off-list destinations and pass them.
 
 ```text
 msks tui                          # THE decider: the workspace page's
-                                  # consent overlay (see `msks` above)
+                                  # egress consent page (see `msks` above)
 msks egress rules ws-dev          # the mode, allowlist, and in-effect verdicts
 msks egress requests ws-dev       # the consent rows (audit trail), newest first
 msks egress requests ws-dev --decision pending

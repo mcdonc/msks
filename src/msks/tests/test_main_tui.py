@@ -56,7 +56,7 @@ from msks.client.tui.workspace import (
 )
 from msks.server.api.rows import HOME_FREE_STATUSES
 from rich.cells import cell_len
-from test_consent_overlay import FakeFactory, FakeWS, press_until, wait_for
+from test_consent_page import FakeFactory, FakeWS, press_until, wait_for
 from test_consent_tui import frame
 from test_consent_tui import (
     request_frame as shared_request_frame,
@@ -189,6 +189,13 @@ class FakeData:
             ("cpus", "cpus set to {value}"),
             ("mem_mib", "mem set to {value} MiB"),
         ):
+            if field in self.resize_omit:
+                # A daemon that predates the field cannot move it:
+                # the stored row keeps its own value too, not only
+                # the reply — otherwise the page's per-second
+                # refresh lands the moved value mid-edit and the
+                # defensive merge reads it as the row's own fact.
+                continue
             if body.get(field) is not None and body[field] != fresh[field]:
                 fresh[field] = body[field]
                 changes.append(moved.format(value=body[field]))
@@ -236,14 +243,14 @@ class FakeData:
     async def decide(
         self, workspace_id: str, request_id: str, decision: str, duration: str
     ) -> dict:
-        """The consent overlay's decide — recorded, the named
+        """The egress consent page's decide — recorded, the named
         refusal when it fails."""
         self.calls.append(("decide", workspace_id, request_id, decision))
         return self.reply("decide", {"request_id": request_id})
 
     async def revoke(self, workspace_id: str, request_id: str) -> dict:
-        """The rules screen's revoke — recorded, the named refusal
-        when it fails."""
+        """The egress consent page's revoke — recorded, the named
+        refusal when it fails."""
         self.calls.append(("revoke", workspace_id, request_id))
         return self.reply("revoke", {"request_id": request_id})
 
@@ -481,10 +488,10 @@ def on_page(app) -> bool:
     return isinstance(app.screen, WorkspaceScreen)
 
 
-def on_overlay(app) -> bool:
-    from msks.client.tui.workspace import ConsentOverlay
+def on_consent(app) -> bool:
+    from msks.client.tui.consent_ui import ConsentPage
 
-    return isinstance(app.screen, ConsentOverlay)
+    return isinstance(app.screen, ConsentPage)
 
 
 async def open_page(pilot, app) -> WorkspaceScreen:
@@ -652,28 +659,28 @@ async def test_ctrl_c_keeps_the_form_fields_copy_shortcut(
         assert app.return_code is None
 
 
-async def test_ctrl_c_over_a_stacked_panel_stays_silent(
+async def test_ctrl_c_over_the_consent_page_names_the_quit_key(
     monkeypatch,
 ) -> None:
-    # (#442) The stock Textual modal behavior, pinned as the
-    # deliberate ask: over a stacked panel the modal chain cuts
-    # the App's ctrl+c binding, so the key copies nothing, shows
-    # nothing, and exits nothing. The consent overlay over an
-    # open page is that panel.
+    # (#442 over #454) The consent page is one of the tree's own
+    # screens (the modal panel it replaced cut the App's ctrl+c
+    # binding; a full-screen page does not): the key answers with
+    # the notification naming the quit key, copies nothing, and
+    # exits nothing.
     notes: list[str] = []
     monkeypatch.setattr(
         main_app.MsksTuiApp,
         "notify",
         lambda self, message, **kw: notes.append(message),
     )
-    scripted_link(monkeypatch, [rules_frame(), request_frame("r9")])
+    scripted_link(monkeypatch, [rules_frame()])
     app, _ = make_app(FakeData([row()]))
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: on_overlay(app))
+        await press_until(pilot, "e", lambda: on_consent(app))
         await pilot.press("ctrl+c")
         await pilot.pause()
-        assert notes == []
+        assert notes and "quit the app" in notes[0]
         assert app.return_code is None
 
 
@@ -715,16 +722,15 @@ async def test_ctrl_q_quits_over_a_form_input() -> None:
         assert app.return_code == 0
 
 
-async def test_ctrl_q_quits_over_the_consent_overlay(monkeypatch) -> None:
-    # The exit stands over a stacked panel; the consent overlay
-    # over an open page is that panel. A hold arrives, the overlay
-    # opens by itself, and Ctrl+Q still takes the whole client
-    # down.
-    scripted_link(monkeypatch, [rules_frame(), request_frame("r9")])
+async def test_ctrl_q_quits_over_the_consent_page(monkeypatch) -> None:
+    # The exit stands over a stacked page; the egress consent
+    # page over an open workspace page is that page. Open it with
+    # e, and Ctrl+Q still takes the whole client down.
+    scripted_link(monkeypatch, [rules_frame()])
     app, _ = make_app(FakeData([row()]))
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: on_overlay(app))
+        await press_until(pilot, "e", lambda: on_consent(app))
         await pilot.press("ctrl+q")
         await pilot.pause()
         assert app.return_code == 0
@@ -1155,32 +1161,31 @@ async def test_the_page_centers_its_action_block(monkeypatch) -> None:
         assert actions.region.bottom <= page.region.bottom
 
 
-async def test_a_hold_arriving_opens_the_overlay_by_itself(
-    monkeypatch,
-) -> None:
-    """#358: the page's list carries only the fixed actions; a
-    waiting hold counts itself in the header's indicator, and the
-    burst's first hold opens the consent overlay by itself — the
-    auto-opened panel."""
+async def test_a_hold_arriving_pushes_nothing(monkeypatch) -> None:
+    """#454: the page's list carries only the fixed actions; a
+    waiting hold counts itself in the header's indicator and
+    flashes its destination on the consent line — nothing is
+    pushed over the page."""
     scripted_link(monkeypatch, [rules_frame(), request_frame("r9")])
     data = FakeData([row()])
     app, follow = make_app(data)
     async with app.run_test() as pilot:
-        await open_page(pilot, app)
+        page = await open_page(pilot, app)
         await wait_for(lambda: action_children(app) == 6)
         await wait_for(lambda: "egress to decide: 1" in header_text(app))
         rows = app.screen.query_one("#actions")
         assert "pending" not in rows.children[0].classes
-        await wait_for(lambda: on_overlay(app))
-        assert app.screen.auto is True  # type: ignore[attr-defined]
+        await asyncio.sleep(1.2)  # a tick (or two) lands with the hold
+        assert on_page(app)  # the hold pushed nothing
+        assert "press e" in consent_text(app)
+        assert page.pending_count() == 1
 
 
-async def test_the_consent_action_opens_the_panel_by_hand(
+async def test_the_consent_action_opens_the_page_by_hand(
     monkeypatch,
 ) -> None:
-    """#358: the page's consent action row pushes the overlay by
-    hand — with nothing pending it is the consent panel, and it
-    stays open until the operator closes it."""
+    """#454: the page's consent action row and its ``e`` key both
+    push the egress consent page; ``q`` returns to the page."""
     scripted_link(monkeypatch, [rules_frame()])
     data = FakeData([row()])
     app, _ = make_app(data)
@@ -1188,9 +1193,10 @@ async def test_the_consent_action_opens_the_panel_by_hand(
         await open_page(pilot, app)
         await wait_for(lambda: action_children(app) == 6)
         await pilot.press("down")  # the consent action
-        await press_until(pilot, "enter", lambda: on_overlay(app))
-        assert app.screen.auto is False  # type: ignore[attr-defined]
-        await press_until(pilot, "q", lambda: on_page(app))  # the close
+        await press_until(pilot, "enter", lambda: on_consent(app))
+        await press_until(pilot, "q", lambda: on_page(app))  # the return
+        await press_until(pilot, "e", lambda: on_consent(app))  # the key
+        await press_until(pilot, "escape", lambda: on_page(app))
 
 
 async def test_the_page_runs_start_and_stop(monkeypatch) -> None:
@@ -1513,11 +1519,16 @@ async def test_an_older_daemons_resize_reply_keeps_the_rows_facts(
         screen.query_one("#field-cpus", Input).value = "4"
         screen.query_one("#field-root_mib", Input).value = "20480"
         screen.submit()
-        await wait_for(lambda: "resized alpha" in consent_text(app))
-        assert page.row["root_mib"] == 20480  # the reply's fact
+        # The row's fact first (durable), then the outcome line's
+        # content from the flash's own message: the line shows it
+        # for FLASH_TTL seconds, and a multi-second stall under the
+        # parallel suite can eat that window before a poll sees it
+        # (#322's class — the message is what the line carries).
+        await wait_for(lambda: page.row["root_mib"] == 20480)
         assert page.row["cpus"] == 2  # the row's own, kept
         assert page.row["mem_mib"] == 8192
-        assert "cpus 2" in consent_text(app)  # the row's fact, printed
+        assert "resized alpha" in page.flash_line.msg
+        assert "cpus 2" in page.flash_line.msg  # the row's fact, printed
 
 
 async def test_an_edit_refusal_flashes_on_the_page(monkeypatch) -> None:
@@ -2185,8 +2196,8 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
         "PUT",
         "/api/v1/workspaces/ws1/egress/policy",
     ) in seen
-    # The verdict seams (#358): the overlay's decide POST and the
-    # rules screen's revoke DELETE — the same exchanges the egress
+    # The verdict seams (#358, #454): the consent page's decide
+    # POST and its revoke DELETE — the same exchanges the egress
     # subcommands make.
     assert await data.decide("ws1", "r9", "allow", "5m")
     assert await data.revoke("ws1", "r9")
@@ -2911,7 +2922,7 @@ def test_the_consent_line_counts_a_stack_of_grants() -> None:
     more collapse to the count with the nearest expiry (the
     open-ended verdicts out of the countdown), so a stack of
     grants keeps the line readable at 80 columns — every grant
-    stays spelled out on the consent overlay's rules screen. A
+    stays spelled out on the egress consent page. A
     stack with no countdown at all carries the count alone, and
     nothing in effect stays the honest absence."""
     controller = pinned_controller([])
@@ -3059,12 +3070,10 @@ async def test_the_headers_count_follows_the_queue(monkeypatch) -> None:
         await wait_for(lambda: action_children(app) == 6)
         assert "egress to decide" not in header_text(app)
         ws.push(request_frame("late1"))
-        # The burst's first hold opens the consent overlay by itself
-        # (#358); the header the count rides on sits behind it, so
-        # the test parks the panel — the burst stays surfaced by the
-        # header alone, exactly the state the count is about.
-        await wait_for(lambda: on_overlay(app))
-        await press_until(pilot, "q", lambda: on_page(app))
+        # Nothing is pushed (#454): the hold counts on the header
+        # and flashes on the consent line, and the page keeps the
+        # terminal — exactly the state the count is about.
+        await wait_for(lambda: on_page(app))
         await wait_for(lambda: "egress to decide: 1" in header_text(app))
         ws.push(request_frame("late2"))
         await wait_for(lambda: "egress to decide: 2" in header_text(app))
@@ -3074,11 +3083,6 @@ async def test_the_headers_count_follows_the_queue(monkeypatch) -> None:
                 {"request_id": "late1", "decision": "allowed"},
             )
         )
-        # late2 joined while the park covered late1: once late1 (the
-        # parked id) resolves, late2 stands unparked and the panel
-        # opens for it — park it and read the count again.
-        await wait_for(lambda: on_overlay(app))
-        await press_until(pilot, "q", lambda: on_page(app))
         await wait_for(lambda: "egress to decide: 1" in header_text(app))
         assert action_children(app) == 6
         ws.push(
@@ -3093,9 +3097,6 @@ async def test_the_headers_count_follows_the_queue(monkeypatch) -> None:
         # re-registration clears it anyway. A live link counts
         # again the moment it stands.
         ws.push(request_frame("late3"))
-        # The next burst opens the panel again; park it once more.
-        await wait_for(lambda: on_overlay(app))
-        await press_until(pilot, "q", lambda: on_page(app))
         await wait_for(lambda: "egress to decide: 1" in header_text(app))
         assert page.link is not None
         page.link.state = link_mod.RECONNECTING
@@ -3406,13 +3407,14 @@ async def test_a_row_that_leaves_the_listing_closes_the_page(
         assert app.follow.reopen is None  # no ghost page on restart
 
 
-async def test_a_removal_under_an_open_overlay_waits_for_it(
+async def test_a_removal_under_an_open_consent_page_waits_for_it(
     monkeypatch,
 ) -> None:
-    """The overlay holds the close: a removal that lands while the
-    consent panel is up keeps the page (and the panel) standing
-    until the operator parks the panel — the next per-second read
-    then closes the page behind the same notice."""
+    """The consent page holds the close: a removal that lands while
+    the egress consent page is up keeps the workspace page (and
+    the consent page) standing until the operator returns — the
+    next per-second read then closes the page behind the same
+    notice."""
     ws = FakeWS([rules_frame()])
     factory = FakeFactory([ws, FakeWS([])])
     monkeypatch.setattr(
@@ -3427,23 +3429,23 @@ async def test_a_removal_under_an_open_overlay_waits_for_it(
     async with app.run_test() as pilot:
         await open_quietly(pilot, app)
         await wait_for(lambda: action_children(app) == 6)
-        ws.push(request_frame("late1"))  # the burst opens the panel
-        await wait_for(lambda: on_overlay(app))
-        data.rows.clear()  # removed while the panel is up
-        await asyncio.sleep(1.2)  # a read (or two) lands under the panel
-        assert on_overlay(app)  # the close waits
-        # Park the panel: one q at a time, each press given its own
-        # window — a tight press_until loop can outrun the park and
-        # feed the page's own back binding a queued q, while a
-        # press inside the queue's swap window no-ops and wants a
-        # retry.
+        await press_until(pilot, "e", lambda: on_consent(app))
+        data.rows.clear()  # removed while the consent page is up
+        await asyncio.sleep(1.2)  # a read (or two) lands under it
+        assert on_consent(app)  # the close waits
+        # Return: one q at a time, each press given its own window
+        # — the pop chain runs on (the page closes behind the same
+        # notice the moment it surfaces), so the wait watches for
+        # the consent page leaving, not for any one screen beneath
+        # it: the intermediate workspace page may stand for less
+        # than a poll cycle before its own close lands.
         deadline = time.monotonic() + 10.0
-        while not on_page(app):
+        while on_consent(app):
             if time.monotonic() > deadline:
-                raise AssertionError("the panel never parked")
+                raise AssertionError("the consent page never left")
             await pilot.press("q")
             try:
-                await wait_for(lambda: on_page(app), timeout=2.0)
+                await wait_for(lambda: not on_consent(app), timeout=2.0)
             except AssertionError:
                 continue  # the press fell in a swap window
         await wait_for(lambda: "removed" in status_text(app), timeout=15.0)

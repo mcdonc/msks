@@ -15,16 +15,16 @@ from ..wintitle import TITLE_MARKER
 
 #: The full-terminal flows a page can record (#309): the console
 #: shell as the new-terminal action's dead-launcher fallback. The
-#: consent decider stopped chaining when it moved into the page's
-#: overlay (#358).
+#: consent decider stopped chaining when it moved into the tree
+#: (#358).
 FLOW_SHELL = "shell"
 
 
 class TuiFollow:
     """What happens after the TUI exits (#309): one full-terminal
     flow — a console shell, the dead-launcher fallback — or nothing
-    (the operator quit; the consent decider stopped chaining when it
-    moved into the page's overlay, #358). Also carries the workspace
+    (the operator quit; the consent decider stopped chaining when
+    it moved into the tree, #358). Also carries the workspace
     page the tree reopens when a flow hands the terminal back."""
 
     def __init__(self) -> None:
