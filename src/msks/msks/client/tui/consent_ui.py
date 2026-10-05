@@ -1229,6 +1229,7 @@ class ConsentPage(Screen):
             await old.remove()  # frees the id before the fresh list mounts
         await body.mount(fresh)
         self.land_rule_focus(fresh, old, focused, held_focus)
+        self.repaint_rule_rows(fresh, ordered)  # the bold cue lands
 
     def land_rule_focus(
         self, fresh: ListView, old: ListView | None, focused, held_focus: bool
@@ -1246,7 +1247,6 @@ class ConsentPage(Screen):
         if held_focus or (old is not None and self.focused is old):
             self.set_focus(fresh)
             focus_rule_by_id(fresh, focused)  # after mount: index sticks
-        self.repaint_rule_rows(fresh, ordered)  # the bold cue lands
 
     def render_rule_items(self, ordered: list) -> list:
         """The verdicts zone's next rows, each tagged with its rule
