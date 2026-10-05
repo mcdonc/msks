@@ -342,9 +342,10 @@ workspace too (#455): the launch resolves the workspace's name
 and pins it to the status bar's left side — `[project-x]` — with
 the id standing in whenever the lookup cannot land (the daemon
 down, the workspace gone, the wait run out) and `shell`
-for a plain shell; the window list after the label stays empty —
-one window names itself enough (#458) — and the bar's right side
-keeps tmux's own pane title, clock, and date.
+for a plain shell; the window list after the label stays empty
+(#458), and so does the bar's right side, which tmux's default
+fills with the pane's title, the clock, and the date — the
+label is the whole bar.
 The watcher keeps its diagnostics in a
 `msks-consent-*` log
 under the tmp dir (a registration the daemon refuses — a

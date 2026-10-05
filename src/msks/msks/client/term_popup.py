@@ -630,7 +630,10 @@ def session_argv(
     empty (#458): tmux's default bar follows the left side with
     the window list — an index, the pane command's name, a
     current-window flag — and a single-window session names
-    itself enough with the label. Everything
+    itself enough with the label. The right side pins to empty
+    with them: tmux's default paints the pane's title, the clock,
+    and the date there, and the label is the whole bar.
+    Everything
     lands on this launch's own server (the dedicated socket
     carries it), so the operator's own tmux server, when one
     runs, keeps its own settings."""
@@ -682,7 +685,9 @@ def session_argv(
         # The window-list formats pin to empty (#458): tmux's
         # default bar follows the left side with the window list,
         # and a single-window session names itself enough with
-        # the label.
+        # the label. The right side pins to empty with them —
+        # tmux's default paints the pane title, the clock, and
+        # the date there — so the label is the whole bar.
         ";",
         "set-option",
         "-g",
@@ -692,6 +697,11 @@ def session_argv(
         "set-option",
         "-g",
         "window-status-current-format",
+        "",
+        ";",
+        "set-option",
+        "-g",
+        "status-right",
         "",
         ";",
         "new-session",

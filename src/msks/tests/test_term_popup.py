@@ -135,8 +135,9 @@ def test_session_argv_names_the_socket_the_pane_and_the_workspace() -> None:
         # (#455) — a label apart from the id, so the pin proves
         # the label lands, and the length budget keeps tmux's
         # ten-cell default from clipping it. The window-list
-        # formats pin to empty (#458): the default list would
-        # follow the label, and one window names itself enough.
+        # formats and the right side pin to empty (#458): the
+        # default list would follow the label, the default right
+        # side would trail it, and the label is the whole bar.
         ";",
         "set-option",
         "-g",
@@ -156,6 +157,11 @@ def test_session_argv_names_the_socket_the_pane_and_the_workspace() -> None:
         "set-option",
         "-g",
         "window-status-current-format",
+        "",
+        ";",
+        "set-option",
+        "-g",
+        "status-right",
         "",
         ";",
         "new-session",
@@ -321,13 +327,12 @@ def test_the_status_bar_carries_the_workspace_name() -> None:
     shipped option chain writes the resolved name onto the bar —
     read back through the session it names, expanded the way the
     bar itself renders it — with the length budget raised past
-    tmux's ten-cell default, and both window-list formats read
-    back empty, so the bar carries the label and tmux's own right
-    side with no window list between them. The session runs
-    detached on its own socket with a pane that stays alive (a
-    pane that exits takes the last session — and its server —
-    with it), so no window opens anywhere and the read-back never
-    races the session's death."""
+    tmux's ten-cell default, and the window-list formats and the
+    right side read back empty, so the label is the whole bar.
+    The session runs detached on its own socket with a pane that
+    stays alive (a pane that exits takes the last session — and
+    its server — with it), so no window opens anywhere and the
+    read-back never races the session's death."""
     if shutil.which("tmux") is None:  # pragma: no cover
         pytest.skip("tmux is not on PATH")
     socket = f"msks-test-{os.getpid()}"
@@ -367,14 +372,17 @@ def test_the_status_bar_carries_the_workspace_name() -> None:
                 "-t",
                 session,
                 "#{E:status-left}|#{status-left-length}"
-                "|#{window-status-format}|#{window-status-current-format}",
+                "|#{window-status-format}|#{window-status-current-format}"
+                "|#{status-right}",
             ],
             capture_output=True,
             text=True,
             timeout=10,
             check=True,
         )
-        assert proc.stdout.strip() == f"[project-x] |{tp.STATUS_LEFT_LENGTH}||"
+        assert proc.stdout.strip() == (
+            f"[project-x] |{tp.STATUS_LEFT_LENGTH}|||"
+        )
     finally:
         subprocess.run(
             ["tmux", "-L", socket, "kill-server"],
