@@ -805,6 +805,51 @@ def test_resolve_newest_breaks_numeric_ties_by_import_recency(
     assert newest.version == "26.05pre-git-aaaaaaaa"
 
 
+def test_resolve_newest_keeps_numeric_order_across_prerelease_minors(
+    tmp_path: Path,
+) -> None:
+    """The numeric walk reads a fused prerelease tag's numbers
+    (``05pre`` → ``5``) and stops at the first alpha-only segment:
+    a newer minor outranks an older one however their store hashes
+    spell, and recency never overrides the numbers (#448 review —
+    the dropped-digit form tied 26.05pre with 26.11pre)."""
+    early_minor = tmp_path / "old.tar"
+    late_minor = tmp_path / "new.tar"
+    build_containerdisk(early_minor, version="26.11pre-git-aaaaaaaa")
+    build_containerdisk(late_minor, version="26.05pre-git-zzzzzzzz")
+    hashes = [
+        import_archive(archive, tmp_path).hash
+        for archive in (early_minor, late_minor)
+    ]
+    base = datetime(2026, 9, 1, tzinfo=UTC)
+    for i, digest in enumerate(hashes):
+        when = base + timedelta(days=i)
+        (tmp_path / "images" / digest / IMPORTED_STAMP).write_text(
+            when.isoformat() + "\n"
+        )
+    # 26.11 wins although 26.05 imported later: (26, 11) > (26, 5).
+    newest = resolve("debian", tmp_path)
+    assert newest is not None
+    assert newest.version == "26.11pre-git-aaaaaaaa"
+
+
+def test_resolve_newest_keeps_a_newer_minor_prerelease_above_the_older_release(
+    tmp_path: Path,
+) -> None:
+    """A prerelease of a newer minor outranks the older release
+    (``6rc1``'s leading digits count): the dropped-digit form sank
+    13.6rc1 below 13.5 forever."""
+    release = tmp_path / "release.tar"
+    prerelease = tmp_path / "prerelease.tar"
+    build_containerdisk(release, version="13.5")
+    build_containerdisk(prerelease, version="13.6rc1")
+    import_archive(release, tmp_path)
+    import_archive(prerelease, tmp_path)
+    newest = resolve("debian", tmp_path)
+    assert newest is not None
+    assert newest.version == "13.6rc1"
+
+
 def test_resolve_newest_prefers_the_recent_rebuild_under_one_reference(
     tmp_path: Path,
 ) -> None:
@@ -1223,13 +1268,18 @@ def test_tagged_versions_order_without_type_errors(tmp_path: Path) -> None:
     decides bare-name resolution."""
     first = tmp_path / "v1.tar"
     second = tmp_path / "v2.tar"
+    third = tmp_path / "v3.tar"
     build_containerdisk(first, name="vv", version="1.0")
     build_containerdisk(second, name="vv", version="1.rc")
+    build_containerdisk(third, name="vv", version="1.pre1")
     import_archive(first, tmp_path)
     import_archive(second, tmp_path)
+    import_archive(third, tmp_path)
     newest = resolve("vv", tmp_path)
     assert newest is not None
-    # (1, 0) outranks (1,): the numeric pieces decide, no tags.
+    # (1, 0) outranks (1,) — the numeric pieces decide, no tags;
+    # "rc" stops the walk, "pre1"'s empty digit run contributes
+    # nothing without stopping it.
     assert newest.version == "1.0"
 
 

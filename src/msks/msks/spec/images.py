@@ -6,18 +6,34 @@ the daemon's catalog resolves it.
 
 
 def version_numbers(version: str) -> tuple[int, ...]:
-    """The version's numeric pieces: ``13.6-beta`` → ``(13, 6)``.
+    """The version's leading numbers: ``13.6-beta`` → ``(13, 6)``,
+    ``26.05pre-git-54w4wrbv`` → ``(26, 5)``.
 
-    The non-numeric segments a build stamps beside the numbers — a
-    NixOS version's trailing store hash, a prerelease tag — carry
-    no ordering, so they drop here: two builds of one numeric
-    version tie until import recency speaks (#448).
+    Each segment contributes its leading digit run (``05pre`` →
+    ``5``, so a fused prerelease tag keeps its minor), and the
+    first purely-alpha segment ends the walk (``git`` above): the
+    trailing segments a build stamps beside the numbers — a NixOS
+    version's store hash, a Debian build's tag — carry no
+    ordering, so they drop here. Two builds of one numeric version
+    tie until import recency speaks (#448).
     """
-    return tuple(
-        int(piece)
-        for piece in version.replace("-", ".").split(".")
-        if piece.isdigit()
-    )
+    numbers = []
+    for piece in version.replace("-", ".").split("."):
+        if piece.isalpha():
+            break
+        digits = leading_digits(piece)
+        if digits:
+            numbers.append(int(digits))
+    return tuple(numbers)
+
+
+def leading_digits(piece: str) -> str:
+    """A segment's leading digit run: ``6rc1`` → ``6``, ``pre`` →
+    empty."""
+    end = 0
+    while end < len(piece) and piece[end].isdigit():
+        end += 1
+    return piece[:end]
 
 
 def newest_rank(version: str, imported: str | None, digest: str) -> tuple:

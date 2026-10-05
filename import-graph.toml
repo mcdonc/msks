@@ -148,7 +148,10 @@ app = 2
 config = 2
 events = 4
 identity = 8
-imagestore = 24
+# #448: the lifespan runs the catalog's startup sweep itself (the
+# seed bootstrap imports beside the default's, and debris from
+# either must clear whichever setting pointed at it).
+imagestore = 25
 llm = 2
 microvm = 10
 model = 7

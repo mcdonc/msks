@@ -20,7 +20,6 @@ from ...imagestore import (
     remove,
     resolve,
     set_default,
-    sweep_crash_leftovers,
     unset_default,
     warm_import,
 )
@@ -60,7 +59,6 @@ def bootstrap_default_image(app) -> None:
     if not source:
         return
     state_dir = app.state.settings.vmm.state_dir
-    sweep_crash_leftovers(state_dir)
     try:
         warm = warm_import(Path(source), state_dir)
         if warm is not None:

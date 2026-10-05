@@ -455,9 +455,9 @@ def image_import_max_mib(env: Mapping[str, str]) -> int:
 
 def seed_images_from(env) -> tuple[str, ...]:
     """The seed list (#448): the env's comma-separated archive
-    paths, or the config file's list. Blank entries drop; a
-    non-string entry is a named error, the same walk both
-    sources take."""
+    paths, or the config file's list (the form a path containing
+    a comma needs). Blank entries drop; a non-string entry is a
+    named error, the same walk both sources take."""
     raw = env.get("MSKSD_SEED_IMAGES", "")
     entries = raw if isinstance(raw, list) else raw.split(",")
     paths = []

@@ -636,9 +636,9 @@ Workspace create selects an image by reference:
 curl -X POST .../api/v1/workspaces -d '{"id": "ws1", "image": "debian:13.6"}'
 
 # bare name — resolves to the newest registered version; the
-# most recently imported row wins when two builds share one
-# numeric version (their versions differ only in non-numeric
-# suffixes, e.g. a NixOS build's trailing store hash)
+# most recently imported row wins when two builds carry the same
+# leading numbers (e.g. a NixOS version's trailing store hash
+# differs between builds)
 {"id": "ws1", "image": "debian"}
 
 # name@hash — pins identity AND content

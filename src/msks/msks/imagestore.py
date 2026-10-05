@@ -818,11 +818,10 @@ def resolve(ref: str, state_dir: Path) -> ImageRecord | None:
     """A catalog reference: hash, name:version, name, or name@hash.
 
     A bare name resolves to its newest version — numeric ordering,
-    with the most recently imported row winning every numeric tie
-    (two builds of one numeric version differ only in non-numeric
-    suffixes, #448); name@hash pins both identity and content. A
-    malformed hash in an @-reference is a named error, not a
-    silent miss.
+    with the most recently imported row winning every tie between
+    builds whose versions carry the same leading numbers (#448);
+    name@hash pins both identity and content. A malformed hash in
+    an @-reference is a named error, not a silent miss.
     """
     images = list_images(state_dir)
     if is_hash_shape(ref):
