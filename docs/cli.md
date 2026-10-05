@@ -340,7 +340,8 @@ line. The window the prefix opens takes its title from
 id into it, #445). The session's own status bar names the
 workspace too (#455): the launch resolves the workspace's name
 and pins it to the status bar's left side — `[project-x]` — with
-the id standing in when the daemon cannot be reached and `shell`
+the id standing in whenever the lookup cannot land (the daemon
+down, the workspace gone, the wait run out) and `shell`
 for a plain shell; the bar's other side keeps tmux's own layout.
 The watcher keeps its diagnostics in a
 `msks-consent-*` log

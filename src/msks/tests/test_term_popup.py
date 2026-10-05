@@ -41,6 +41,15 @@ def client_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MSKSC_TOKEN", "tok")
 
 
+def no_daemon_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Drop the daemon presets an ambient shell may carry: the
+    launch role now resolves the status label over REST, and a
+    preset pointing at a live (or wedged) dev daemon would have
+    every launch test dial it — the token's absence stops the
+    lookup before a dial, the same fallback the window ships."""
+    monkeypatch.delenv("MSKSC_TOKEN", raising=False)
+
+
 # --- the launch argv contracts ---------------------------------------------
 
 
@@ -297,11 +306,13 @@ def test_page_keys_scroll_the_session_history() -> None:
 
 def test_the_status_bar_carries_the_workspace_name() -> None:
     """The #455 boundary against a real tmux server: the shipped
-    option chain writes the resolved name onto the bar — the
-    option's own words, read back through the session it names —
-    with the length budget raised past tmux's ten-cell default.
-    The session runs detached on its own socket, so no window
-    opens anywhere."""
+    option chain writes the resolved name onto the bar — read
+    back through the session it names, expanded the way the bar
+    itself renders it — with the length budget raised past tmux's
+    ten-cell default. The session runs detached on its own socket
+    with a pane that stays alive (a pane that exits takes the
+    last session — and its server — with it), so no window opens
+    anywhere and the read-back never races the session's death."""
     if shutil.which("tmux") is None:  # pragma: no cover
         pytest.skip("tmux is not on PATH")
     socket = f"msks-test-{os.getpid()}"
@@ -325,7 +336,7 @@ def test_the_status_bar_carries_the_workspace_name() -> None:
                 "80",
                 "-y",
                 "10",
-                "true",
+                "sh -c 'exec cat'",
             ],
             timeout=10,
             check=True,
@@ -340,7 +351,7 @@ def test_the_status_bar_carries_the_workspace_name() -> None:
                 "-p",
                 "-t",
                 session,
-                "#{status-left}|#{status-left-length}",
+                "#{E:status-left}|#{status-left-length}",
             ],
             capture_output=True,
             text=True,
@@ -380,6 +391,7 @@ def test_main_defaults_to_launch_for_the_appended_child(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(tp.shutil, "which", lambda tool: "/bin/" + tool)
+    no_daemon_env(monkeypatch)
     seen = {}
     monkeypatch.setattr(
         tp.os, "execvp", lambda binname, argv: seen.update(argv=argv)
@@ -431,6 +443,7 @@ def test_run_launch_execs_the_tmux_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(tp.shutil, "which", lambda tool: "/bin/" + tool)
+    no_daemon_env(monkeypatch)
     seen = {}
     monkeypatch.setattr(
         tp.os,
@@ -544,6 +557,7 @@ def test_run_launch_titles_the_window_before_the_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(tp.shutil, "which", lambda tool: "/bin/" + tool)
+    no_daemon_env(monkeypatch)
     monkeypatch.setattr(tp.os, "execvp", lambda binname, argv: None)
     monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "msks — {workspace}")
     out = Tty()
@@ -556,6 +570,7 @@ def test_run_launch_without_a_title_writes_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(tp.shutil, "which", lambda tool: "/bin/" + tool)
+    no_daemon_env(monkeypatch)
     monkeypatch.setattr(tp.os, "execvp", lambda binname, argv: None)
     monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "")
     out = Tty()
