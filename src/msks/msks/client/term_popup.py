@@ -1,18 +1,24 @@
-"""The tmux consent-terminal launcher (#379).
+"""The tmux consent-terminal launcher (#379, #467).
 
 ``terminal_open_cmd`` names a command prefix and the TUI appends
-the ``msks ssh`` invocation after it (#341). This module ships the
-suffix half: ``msks-term-popup`` runs inside whatever terminal
+the ``msks ssh`` invocation after it (#341). This module ships
+the suffix half: ``msks-term-popup`` runs inside whatever terminal
 window the prefix opens — ``konsole -e msks-term-popup``, ``xterm
 -e msks-term-popup``, any terminal that runs a command — and runs
-the appended command as a local tmux session. While the session
-lives, a background watcher speaks the events websocket as a
-consent decider for the workspace; an egress request needing a
-verdict raises a tmux popup over the shell, one keypress decides
-it, and the popup closes. The terminal choice stays where it
-already lives: in ``terminal_open_cmd``'s own prefix.
+the appended command as a local tmux session. When the appended
+command names a workspace, the launch also starts the standalone
+consent-decider app (#467) in a hidden session on the same
+socket: the app holds the workspace's decider registration for
+the window's whole life, and a hold arriving with the popup
+closed raises a ``display-popup`` viewer over the shell that
+attaches to it. The viewer hides (``q``/``Esc``/``C-b``) without
+stopping the app — the queue lives on, holds leave it as the
+daemon resolves them, and ``C-b p`` (the launch's binding) or the
+next hold brings the popup back. The bindings map rides the
+app's footer at the popup's bottom. The terminal choice stays
+where it already lives: in ``terminal_open_cmd``'s own prefix.
 
-Four roles share this module, spelled as the first argument:
+Two roles share this module, spelled as the first argument:
 
 ``launch``
     The console entry the operator's prefix runs. Validates tmux,
@@ -22,95 +28,60 @@ Four roles share this module, spelled as the first argument:
     workspace on a dedicated socket (a server of its own, so the
     pane inherits this process's environment — an operator's
     already-running tmux server would otherwise substitute its
-    own — and the session stays out of their window list), and
-    becomes the attached tmux client (``tmux -L <socket>
-    new-session ... pane ...``).
+    own — and the session stays out of their window list), starts
+    the hidden consent session beside it, and becomes the attached
+tmux client (``tmux -L <socket> new-session ... pane ...``).
 ``pane``
-    The tmux session's first process. Starts the watcher beside the
-    shell (its own process group membership takes it down with the
-    window), then becomes the appended command.
-``watch``
-    The consent watcher: connect as decider, raise the popup for
-    each pending request, and exit once the session is gone.
-``decide``
-    The popup's command: show the held request, take one keypress,
-    and post the verdict.
+    The tmux session's first process: drop the new-window marker
+    (#445) and become the appended command.
 
 The launcher runs detached with stdio on devnull (#341's spawn
-contract), so every role keeps its own diagnostics to a log file
-under the tmp dir; the popup itself owns the only interactive
-surface.
+contract), so it keeps its own diagnostics to a log file under
+the tmp dir; the consent app owns the only interactive surface.
 """
 
 import asyncio
-import json
 import os
 import shlex
 import shutil
 import subprocess
 import sys
-import tempfile
-import termios
-import time
-import tty
 
-import websockets
-
-from . import wsauth
-from .egress import DURATIONS, connect_args, dest_label, refused
 from .env import env_token, env_url
-from .rest import api_client, request, workspace_row
+from .rest import workspace_row
 from .wintitle import TITLE_MARKER, configured_title, set_window_title
 
 #: The popup geometry: fixed cells, sized for the 80-column window
 #: the consent screens already target; tmux clips it to a smaller
-#: client window.
+#: client window. The hidden session is born at this size too, so
+#: the app never reflows when a viewer attaches.
 POPUP_COLS = 76
-POPUP_ROWS = 12
+POPUP_ROWS = 16
 
-#: How long the outcome line stays up before ``-E`` closes the
-#: popup — an instant close would eat the verdict's confirmation.
-OUTCOME_LINGER_S = 1.2
+#: The hidden session's name (#467): one launch owns one socket,
+#: so a fixed name is unique on it — the shell session carries the
+#: workspace id beside it.
+CONSENT_SESSION = "consent"
 
-#: The recv idle window the watcher sits in when no frames flow:
-#: each wake re-checks that its tmux session still exists, so a
-#: closed window retires the watcher within one tick.
-LIVENESS_TICK_S = 5.0
+#: The standalone consent app's module (#467) — the hidden
+#: session's command runs it with the interpreter already running
+#: this launcher.
+DECIDE_MODULE = "msks.client.tui.decide_app"
 
-#: The popup's quick verdicts: ``a`` allows until restart (the
-#: common case), ``d`` denies now — and so does every other key,
-#: the fail-fast default a popup left alone must take (the
-#: ``--decide`` prompt's rule). The uppercase twins (``A``, ``D``)
-#: open the duration chooser for the same verdict.
-CHOICES = {
-    "a": ("allow", "tilrestart"),
-    "d": ("deny", "once"),
-}
+#: The reopen key (#467): ``C-b p`` on the launch's own server
+#: (the shell session's prefix is the default, and no inner tmux
+#: competes for it) shows the popup viewer again.
+REOPEN_KEY = "p"
 
-#: The duration chooser's keys, in :data:`egress.DURATIONS` order.
-DURATION_KEYS = {str(i): duration for i, duration in enumerate(DURATIONS, 1)}
+#: How long a tmux query may take before the caller stops waiting
+#: on it: the app's show blocks while the popup stands (the kill
+#: ends the wait, not the popup), and the launch never waits at
+#: all — it only builds argv.
+TMUX_TIMEOUT_S = 3.0
 
-#: The popup's ANSI paint codes: bold labels, a bold-cyan
-#: destination, a faint request id, green allow bindings, red deny
-#: bindings. :func:`span` applies a code only while :func:`ansi`
-#: says stdout takes paint (a terminal that did not opt out with
-#: NO_COLOR).
-PAINT_LABEL = "1"
-PAINT_FACT = "1;36"
-PAINT_ID = "2"
-PAINT_KEY = "32"
-PAINT_DKEY = "31"
-PAINT_ALLOW = "1;32"
-PAINT_DENY = "1;31"
-
-#: The popup key map's quick-form column width: the widest cell
-#: ("[a] until restart") plus a one-space gutter, so the duration
-#: chooser column lines up under itself row over row.
-KEY_COLUMN = 20
-
-#: The modules this package reaches itself through: the pane, the
-#: watcher, and the popup's command all re-invoke this module by
-#: name with the interpreter that is already running it.
+#: The modules this package reaches itself through: the pane
+#: re-invokes this module by name with the interpreter that is
+#: already running it.
 MODULE = "msks.client.term_popup"
 
 #: The pane's scrollback depth (#434): the session runs in tmux's
@@ -176,7 +147,7 @@ PAGE_SCROLL_COMMANDS = (
     ),
 )
 
-ROLES = ("launch", "pane", "watch", "decide")
+ROLES = ("launch", "pane")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -225,373 +196,139 @@ def run_launch(argv: list[str]) -> int:
 
 
 def run_pane(argv: list[str]) -> int:
-    """The tmux pane's first process (#379): start the consent
-    watcher beside the shell, then become the appended command. The
-    watcher stays in this pane's process group, so the window's
-    teardown SIGHUP retires it with the shell; its own liveness
-    check is the backstop. No workspace in the child (or no tmux
-    environment — a hand-run pane) runs the command alone. The
-    new-window marker (#445) is dropped before anything runs: the
-    window is already titled — :func:`run_launch` wrote it before
-    attaching tmux — and tmux owns the pane's escapes, so the
-    session has no title of its own to write."""
+    """The tmux pane's first process: drop the new-window marker
+    (#445) — the window is already titled, :func:`run_launch` wrote
+    it before attaching tmux, and tmux owns the pane's escapes —
+    and become the appended command."""
     os.environ.pop(TITLE_MARKER, None)
-    session, rest = take_option("-s", argv)
-    workspace_id, rest = take_option("-w", rest)
-    child = child_argv(rest)
-    if workspace_id is not None and os.environ.get("TMUX"):
-        start_watcher(session or session_name(workspace_id), workspace_id)
+    child = child_argv(argv)
     os.execvp(child[0], child)
     return 0  # pragma: no cover — execvp replaces the process
 
 
-def run_watch(argv: list[str]) -> int:
-    """The consent watcher role: one loop over the events websocket
-    until its tmux session is gone. Never returns early on a closed
-    connection — the reconnect ladder keeps the decider registered
-    through a daemon restart; the liveness check is the only exit."""
-    session, rest = take_option("-s", argv)
-    workspace_id, rest = take_option("-w", rest)
-    if session is None or workspace_id is None or rest:
-        raise SystemExit(
-            "usage: msks.client.term_popup watch -s SESSION -w WORKSPACE"
-        )
-    return asyncio.run(watch_loop(workspace_id, session))
+# --- the consent popup's tmux edges (#467) -----------------------------------
 
 
-def run_decide(argv: list[str]) -> int:
-    """The popup's command (#379): show the held request, take one
-    keypress, post the verdict. A post that cannot land (the
-    request resolved in another window, the daemon unreachable)
-    names its reason from :func:`request`'s one-line contract; the
-    outcome lingers so ``-E``'s instant close cannot eat it."""
-    workspace_id, rest = take_option("-w", argv)
-    request_id, rest = take_option("-r", rest)
-    dest, rest = take_option("-d", rest)
-    if None in (workspace_id, request_id, dest) or rest:
-        raise SystemExit(
-            "usage: msks.client.term_popup decide "
-            "-w WORKSPACE -r REQUEST -d DESTINATION"
-        )
-    on = ansi()
-    print(
-        f"  {span(on, PAINT_LABEL, 'destination:')}"
-        f" {span(on, PAINT_FACT, dest)}"
+def tmux_argv(socket: str, *args: str) -> list[str]:
+    """One tmux command on the launch's own server."""
+    return ["tmux", "-L", socket, *args]
+
+
+def decide_app_command(
+    workspace_id: str, socket: str, session: str = CONSENT_SESSION
+) -> list[str]:
+    """The hidden session's command: this interpreter running the
+    standalone consent app for the workspace, pointed back at the
+    launch's socket and its own session so it can raise and hide
+    its popup viewer."""
+    return [
+        sys.executable,
+        "-m",
+        DECIDE_MODULE,
+        "-w",
+        workspace_id,
+        "--socket",
+        socket,
+        "--session",
+        session,
+    ]
+
+
+def viewer_command(socket: str, session: str = CONSENT_SESSION) -> str:
+    """The shell command a popup viewer runs: a client attaching to
+    the hidden session. ``env -u TMUX`` unsets TMUX so the nested
+    attach is permitted — the popup itself runs inside a pane of
+    the same server, where TMUX is set."""
+    return f"env -u TMUX tmux -L {socket} attach -t {session}"
+
+
+def popup_command(socket: str, session: str = CONSENT_SESSION) -> str:
+    """The ``display-popup`` command string the reopen binding
+    carries: centered, the popup geometry, closing when its viewer
+    exits (``-E``). The command must sit as one quoted word —
+    ``display-popup`` treats its trailing command as absorbing
+    every token after it."""
+    return (
+        f"display-popup -E -w {POPUP_COLS} -h {POPUP_ROWS}"
+        f" {shlex.quote(viewer_command(socket, session))}"
     )
-    print(
-        f"  {span(on, PAINT_LABEL, 'request:')}"
-        f"     {span(on, PAINT_ID, request_id)}"
+
+
+def show_popup_argv(
+    socket: str, client: str, session: str = CONSENT_SESSION
+) -> list[str]:
+    """The argv that shows the popup viewer on one shell client —
+    the app's own show path, run server-side so it names the
+    target client with ``-c``. Blocks while the popup stands."""
+    return tmux_argv(
+        socket,
+        "display-popup",
+        "-c",
+        client,
+        "-E",
+        "-w",
+        str(POPUP_COLS),
+        "-h",
+        str(POPUP_ROWS),
+        viewer_command(socket, session),
     )
-    decision, duration = read_verdict(on)
-    try:
-        asyncio.run(post_verdict(workspace_id, request_id, decision, duration))
-    except SystemExit as exc:
-        print(f"  {span(on, PAINT_DENY, str(exc))}")
-        linger()
-        return 1
-    paint = PAINT_ALLOW if decision == "allow" else PAINT_DENY
-    print(f"  {span(on, paint, f'{decision} ({duration})')}")
-    linger()
-    return 0
 
 
-async def watch_loop(workspace_id: str, session: str) -> int:
-    """The watcher's event loop (#379): register as decider on
-    every connection until its tmux session is gone. Never returns
-    early on a closed connection — the reconnect ladder keeps the
-    decider registered through a daemon restart; the liveness
-    check is the only exit."""
-    resolved: set[str] = set()
-    try:
-        url, token = env_url(), env_token()
-        async for sock in websockets.connect(**connect_args(url, token)):
-            if not await watch_connection(
-                sock, workspace_id, session, resolved
-            ):
-                return 0
-    except wsauth.UnusableToken as exc:
-        # One line without the token in it — the websocket library's
-        # own refusal embeds the credential whole (#116 review).
-        raise SystemExit(f"msks: {exc}") from None
-    return 0
+def detach_argv(socket: str, session: str = CONSENT_SESSION) -> list[str]:
+    """The argv that detaches the hidden session's viewer: the
+    popup hides while the app inside the session keeps running."""
+    return tmux_argv(socket, "detach-client", "-s", session)
 
 
-async def watch_connection(
-    sock, workspace_id: str, session: str, resolved: set[str]
-) -> bool:
-    """One connection's lifetime: announce as decider, then idle
-    no longer than one liveness tick so a closed window retires
-    the watcher even with no traffic flowing. False means retired;
-    True means the server closed the connection — at the announce
-    or mid-stream — and the loop reconnects."""
-    try:
-        await sock.send(
-            json.dumps({"type": "egress.decider", "workspace": workspace_id})
-        )
-        while True:
-            try:
-                raw = await asyncio.wait_for(
-                    sock.recv(), timeout=LIVENESS_TICK_S
-                )
-            except TimeoutError:
-                if not await asyncio.to_thread(session_alive, session):
-                    return False
-                continue
-            await watch_frame(json.loads(raw), workspace_id, session, resolved)
-    except websockets.ConnectionClosed as closed:
-        return closed_connection(closed)
-
-
-def closed_connection(closed: websockets.ConnectionClosed) -> bool:
-    """A closed connection's verdict: the auth refusal exits the
-    process (a token the daemon does not hold cannot become valid
-    by reconnecting — one line, no spin); any other close tells
-    the loop to reconnect — the server re-sends the snapshot."""
-    if refused(closed):
-        raise SystemExit(f"msks: {wsauth.AUTH_FAILED_MESSAGE}") from None
-    return True
-
-
-async def watch_frame(
-    frame: dict, workspace_id: str, session: str, resolved: set[str]
-) -> None:
-    """One events frame (#379): a fresh request raises the decider
-    popup over the shell — the blocking popup queues a second
-    request behind the first — and every resolution records its id,
-    so a reconnect's re-sent snapshot does not re-raise a request
-    this window already decided. A request resolved while its
-    popup is up answers at the POST with the daemon's one-line
-    reason; a request resolved between its frame and its popup
-    still pops (the resolution frame sits unread behind it). A
-    refused decider registration — the workspace id names nothing —
-    stops the watcher with the log's one line naming the id and the
-    daemon's reason."""
-    event = frame.get("event")
-    data = frame.get("data", {})
-    if event == "egress.request":
-        row = data["request"]
-        if row["id"] not in resolved:
-            await asyncio.to_thread(raise_popup, row, workspace_id, session)
-    elif event == "egress.resolved":
-        resolved.add(data["request_id"])
-    elif event == "egress.decider_rejected":
-        print(
-            f"decider registration refused: {workspace_id}"
-            f" ({data.get('reason', 'no reason given')}); stopping",
-            flush=True,
-        )
-        raise SystemExit(1)
-
-
-def raise_popup(row: dict, workspace_id: str, session: str) -> int:
-    """Open the decider overlay over the session's window: one
-    tmux client (the terminal window's own client) gets the popup,
-    and it closes itself when the decide role exits (``-E``). No
-    attached client — the window closed between the frame and here
-    — returns 1; the caller moves on."""
-    client = popup_client(session)
-    if client is None:
-        return 1
-    proc = subprocess.run(
-        [
-            "tmux",
-            "display-popup",
-            "-t",
-            client,
-            "-E",
-            "-w",
-            str(POPUP_COLS),
-            "-h",
-            str(POPUP_ROWS),
-            decide_command(row, workspace_id),
-        ],
-        check=False,
-    )
-    return proc.returncode
-
-
-def popup_client(session: str) -> str | None:
-    """The session's attached client tty — the window the popup
-    overlays. tmux addresses popup targets by client, and a session
-    names its clients, so this resolves the one window the prefix
-    opened even though the watcher itself is no client."""
+def shell_clients(socket: str, session: str = CONSENT_SESSION) -> list[str]:
+    """The clients to show a popup on: every client of this server
+    attached outside the hidden session — the shell window's own
+    client, never the viewer a popup already carries."""
     try:
         proc = subprocess.run(
-            ["tmux", "list-clients", "-t", session, "-F", "#{client_tty}"],
+            tmux_argv(
+                socket,
+                "list-clients",
+                "-F",
+                "#{client_name}\t#{client_session}",
+            ),
             capture_output=True,
             text=True,
+            timeout=TMUX_TIMEOUT_S,
             check=False,
         )
-    except OSError:
-        return None
-    if proc.returncode != 0:
-        return None
-    for line in proc.stdout.splitlines():
-        if line.strip():
-            return line.strip()
-    return None
+    except OSError, subprocess.SubprocessError:
+        return []
+    if proc.returncode != 0 or proc.stdout is None:
+        return []
+    return outside_clients(proc.stdout, session)
 
 
-def session_alive(session: str) -> bool:
-    """Whether the tmux session still exists — False for a dead
-    session and for a dead server alike (``has-session`` fails
-    either way), which is the watcher's retirement condition."""
+def outside_clients(out: str, session: str) -> list[str]:
+    """The parsed client names attached outside the hidden
+    session — the shell window's own client, never a viewer."""
+    names = []
+    for line in out.splitlines():
+        name, _, attached = line.partition("\t")
+        if name and attached != session:
+            names.append(name)
+    return names
+
+
+def hidden_has_viewer(socket: str, session: str = CONSENT_SESSION) -> bool:
+    """Whether the hidden session has a viewer client attached —
+    the popup standing open."""
     try:
         proc = subprocess.run(
-            ["tmux", "has-session", "-t", session],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            tmux_argv(socket, "list-clients", "-t", session),
+            capture_output=True,
+            text=True,
+            timeout=TMUX_TIMEOUT_S,
             check=False,
         )
-    except OSError:
+    except OSError, subprocess.SubprocessError:
         return False
-    return proc.returncode == 0
-
-
-def start_watcher(session: str, workspace_id: str) -> None:
-    """Spawn the watcher beside the pane's command, its output to
-    a log file under the tmp dir (the pane's own stdio belongs to
-    the shell; the file is the watcher's one diagnostic surface —
-    the refused-registration line, the auth refusal — and tmp
-    reapers collect it). The child inherits the open file
-    descriptor, and the same process group and $TMUX environment
-    the pane holds are what the watcher rides to its grave and to
-    the server socket."""
-    log = tempfile.NamedTemporaryFile(
-        prefix=f"msks-consent-{workspace_id}-", suffix=".log", delete=False
-    )
-    try:
-        subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                MODULE,
-                "watch",
-                "-s",
-                session,
-                "-w",
-                workspace_id,
-            ],
-            stdin=subprocess.DEVNULL,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-        )
-    finally:
-        log.close()
-
-
-async def post_verdict(
-    workspace_id: str, request_id: str, decision: str, duration: str
-) -> None:
-    """Post one verdict through the shared REST contract: failures
-    raise SystemExit with the readable line the popup prints."""
-    async with api_client(env_url(), env_token()) as client:
-        await request(
-            client,
-            "POST",
-            f"/api/v1/workspaces/{workspace_id}/egress/requests/{request_id}",
-            {"decision": decision, "duration": duration},
-        )
-
-
-def read_verdict(on: bool) -> tuple[str, str]:
-    """The popup's keypress exchange: one key takes its quick
-    verdict; an uppercase twin reads a second key and takes that
-    duration for the same verdict."""
-    key = read_key(prompt_text(on))
-    verdict = verdict_for(key)
-    if verdict is None:
-        choice = read_key(duration_text(on))
-        return ("allow" if key == "A" else "deny", duration_for(choice))
-    return verdict
-
-
-def read_key(prompt: str) -> str:
-    """Read one keypress without waiting for Enter — the popup's
-    single-key contract. A stdin that is not a terminal (a test, a
-    piped run) falls back to a whole line; EOF reads empty."""
-    sys.stdout.write(prompt)
-    sys.stdout.flush()
-    if not sys.stdin.isatty():
-        return sys.stdin.readline().strip()
-    fd = sys.stdin.fileno()
-    saved = termios.tcgetattr(fd)
-    try:
-        tty.setcbreak(fd)
-        return sys.stdin.read(1)
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
-
-
-def prompt_text(on: bool = True) -> str:
-    """The popup's key map, one verdict per row: the quick form and
-    the duration chooser each sit in their own column. A key
-    outside the map still denies now — :func:`verdict_for`'s
-    fail-fast rule — but the map no longer says so."""
-    return (
-        f"  {span(on, PAINT_LABEL, 'allow:')}  "
-        f"{key_cell(on, PAINT_KEY, '[a]', 'until restart')}"
-        f"{span(on, PAINT_KEY, '[A]')} choose duration\n"
-        f"  {span(on, PAINT_LABEL, 'deny:')}   "
-        f"{key_cell(on, PAINT_DKEY, '[d]', 'now')}"
-        f"{span(on, PAINT_DKEY, '[D]')} choose duration\n"
-        f"  {span(on, PAINT_LABEL, '> ')}"
-    )
-
-
-def key_cell(on: bool, code: str, key: str, label: str) -> str:
-    """One key-map cell: the painted key, its label, and the pad to
-    :data:`KEY_COLUMN` — computed on the plain width, so paint
-    never shifts the columns."""
-    cell = f"{span(on, code, key)} {label}"
-    pad = KEY_COLUMN - len(key) - 1 - len(label)
-    return f"{cell}{' ' * max(pad, 1)}"
-
-
-def duration_text(on: bool = True) -> str:
-    """The duration chooser's key map, in :data:`egress.DURATIONS`
-    order."""
-    keys = "  ".join(
-        f"{span(on, PAINT_KEY, f'[{i}]')} {duration}"
-        for i, duration in enumerate(DURATIONS, 1)
-    )
-    return (
-        f"  {span(on, PAINT_LABEL, 'duration:')} {keys}\n"
-        f"  {span(on, PAINT_LABEL, '> ')}"
-    )
-
-
-def verdict_for(key: str) -> tuple[str, str] | None:
-    """One pressed key's ``(decision, duration)``: the lowercase
-    quick forms, or None for the uppercase forms (their verdict's
-    duration comes from the chooser). Every key outside the map
-    denies now — the fail-fast default a popup left alone must
-    take."""
-    if key in CHOICES:
-        return CHOICES[key]
-    if key in ("A", "D"):
-        return None
-    return ("deny", "once")
-
-
-def duration_for(key: str) -> str:
-    """One duration-chooser keypress; a stray key keeps until
-    restart, the chooser's common case."""
-    return DURATION_KEYS.get(key, "tilrestart")
-
-
-def ansi() -> bool:
-    """Whether the popup's stdout takes paint: a terminal that did
-    not opt out with NO_COLOR."""
-    return sys.stdout.isatty() and "NO_COLOR" not in os.environ
-
-
-def span(on: bool, code: str, text: str) -> str:
-    """One painted span — code, text, reset — or the bare text when
-    paint is off."""
-    if not on:
-        return text
-    return f"\x1b[{code}m{text}\x1b[0m"
+    return bool(proc.stdout and proc.stdout.strip())
 
 
 def session_argv(
@@ -599,9 +336,9 @@ def session_argv(
 ) -> list[str]:
     """The tmux argv: one client on this launch's dedicated socket,
     attached to a fresh session whose pane runs this module's pane
-    role with the workspace id and the appended command — the
-    watcher the pane starts is the feature, so the id rides the
-    pane argv explicitly. The pane command is shell-joined as tmux
+    role with the appended command, and — when the command names a
+    workspace — the hidden consent session beside it (see
+    :func:`consent_chain`). The pane command is shell-joined as tmux
     takes its command, so a child path with spaces survives the
     join; the client owns the terminal window the operator's
     prefix already opened, and ``destroy-unattached`` tears the
@@ -637,21 +374,19 @@ def session_argv(
     lands on this launch's own server (the dedicated socket
     carries it), so the operator's own tmux server, when one
     runs, keeps its own settings."""
+    socket = socket_name(workspace_id)
     pane = [
         sys.executable,
         "-m",
         MODULE,
         "pane",
-        "-s",
-        session,
-        *(["-w", workspace_id] if workspace_id else []),
         "--",
         *child,
     ]
     argv = [
         "tmux",
         "-L",
-        socket_name(workspace_id),
+        socket,
         "start-server",
         ";",
         "set-option",
@@ -666,6 +401,7 @@ def session_argv(
     ]
     for key, command in PAGE_SCROLL_COMMANDS:
         argv += [";", "bind-key", "-n", key, command]
+    argv += consent_chain(workspace_id, socket)
     argv += [
         ";",
         "set-option",
@@ -716,24 +452,56 @@ def session_argv(
     return argv
 
 
-def decide_command(row: dict, workspace_id: str) -> str:
-    """The one-line command the popup runs: this module's decide
-    role with the request's id and destination — everything the
-    prompt shows, so the popup needs no websocket of its own."""
-    return shlex.join(
-        [
-            sys.executable,
-            "-m",
-            MODULE,
-            "decide",
-            "-w",
-            workspace_id,
-            "-r",
-            row["id"],
-            "-d",
-            dest_label(row),
-        ]
-    )
+def consent_chain(workspace_id: str | None, socket: str) -> list[str]:
+    """The hidden consent session's slice of the launch chain
+    (#467), empty for a child naming no workspace: the session
+    itself — born detached at the popup's geometry, so the app
+    never reflows when a viewer attaches — its three options, and
+    the reopen binding, all ahead of the shell's own
+    ``new-session`` so the decider stands before the window the
+    operator reads. The status bar pins off (the popup shows the
+    app alone), the prefix pins off (every key reaches the app,
+    and ``C-b`` closes the viewer from inside it), and
+    ``destroy-unattached`` pins off: the popup closing leaves the
+    decider standing while the server's global default — set
+    after both sessions exist — tears the shell session down with
+    its window."""
+    if workspace_id is None:
+        return []
+    return [
+        ";",
+        "new-session",
+        "-d",
+        "-s",
+        CONSENT_SESSION,
+        "-x",
+        str(POPUP_COLS),
+        "-y",
+        str(POPUP_ROWS),
+        shlex.join(decide_app_command(workspace_id, socket)),
+        ";",
+        "set-option",
+        "-t",
+        CONSENT_SESSION,
+        "status",
+        "off",
+        ";",
+        "set-option",
+        "-t",
+        CONSENT_SESSION,
+        "prefix",
+        "None",
+        ";",
+        "set-option",
+        "-t",
+        CONSENT_SESSION,
+        "destroy-unattached",
+        "off",
+        ";",
+        "bind-key",
+        REOPEN_KEY,
+        popup_command(socket),
+    ]
 
 
 def workspace_from_argv(argv: list[str]) -> str | None:
@@ -814,17 +582,9 @@ def child_argv(argv: list[str]) -> list[str]:
     return argv
 
 
-def linger() -> None:
-    """Hold the outcome line up for the read it needs before the
-    popup closes."""
-    time.sleep(OUTCOME_LINGER_S)
-
-
 RUNNERS = {
     "launch": run_launch,
     "pane": run_pane,
-    "watch": run_watch,
-    "decide": run_decide,
 }
 
 
