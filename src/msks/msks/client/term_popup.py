@@ -123,21 +123,40 @@ MODULE = "msks.client.term_popup"
 HISTORY_LINES = 10000
 
 #: The popup's page-scroll bindings (#444), the keyboard twin of
-#: the wheel path above: tmux's own documented pair — ``copy-mode
-#: -eu`` enters copy mode paged up one page and arms the same
-#: exit-at-bottom rule the wheel rides, ``-ed`` pages down and
-#: leaves copy mode at the bottom — so both paths scroll one
-#: history with one exit. The shifted page keys are the pair
-#: terminals reserve for their own scrollback, and this session's
-#: alternate screen leaves that scrollback empty: a terminal that
-#: passes the shifted keys through (their well-known sequences —
-#: Konsole's keytab can send them with an ``AppScreen``-scoped
-#: rule) pages the history with them, while one that keeps the
-#: keys for its own view still has the wheel. The bare page keys
-#: carry no binding here, so they reach the shell untouched.
+#: the wheel path above: each command pages one page — up on the
+#: shifted page-up key, down on its twin — through the same
+#: history the wheel scrolls, entering copy mode armed with the
+#: wheel's exit-at-bottom rule (``-e``). The vehicle is the stock
+#: wheel binding's own: an ``if -F`` whose quoted branches ride
+#: the mode check — already in copy mode, the plain page command;
+#: not yet, the compound that enters and pages. Two properties of
+#: that shape are load-bearing: tmux parses the chain's argv with
+#: quotes and separators, so the embedded ``;`` must sit inside
+#: the quoted branch or it would split the launch chain itself;
+#: and ``bind-key`` validates its command at bind time, so the
+#: man page's newer ``copy-mode -u``/``-d`` pair — ``-d`` arrived
+#: in tmux 3.5 — would abort the whole launch (no window at all)
+#: on the 3.2–3.4 tmux a stock distribution ships; every piece
+#: here runs on the documented 3.2 floor. The shifted page keys
+#: are the pair terminals reserve for their own scrollback, and
+#: this session's alternate screen leaves that scrollback empty:
+#: a terminal that passes the shifted keys through (their
+#: well-known sequences — Konsole's keytab can send them with an
+#: ``AppScreen``-scoped rule) pages the history with them, while
+#: one that keeps the keys for its own view still has the wheel.
+#: The bare page keys carry no binding here, so they reach the
+#: shell untouched.
 PAGE_SCROLL_COMMANDS = (
-    ("S-PgUp", "copy-mode -eu"),
-    ("S-PgDn", "copy-mode -ed"),
+    (
+        "S-PgUp",
+        "if -F '#{pane_in_mode}' 'send-keys -X page-up'"
+        " 'copy-mode -e; send-keys -X page-up'",
+    ),
+    (
+        "S-PgDn",
+        "if -F '#{pane_in_mode}' 'send-keys -X page-down'"
+        " 'copy-mode -e; send-keys -X page-down'",
+    ),
 )
 
 ROLES = ("launch", "pane", "watch", "decide")

@@ -93,17 +93,24 @@ def test_session_argv_names_the_socket_the_pane_and_the_workspace() -> None:
         str(tp.HISTORY_LINES),
         # The page-scroll bindings (#444) ride the same server:
         # the shifted page keys page the same history the wheel
-        # scrolls, tmux's own documented copy-mode pair.
+        # scrolls, in the stock wheel binding's own vehicle — an
+        # if -F whose quoted branches keep the embedded separator
+        # from splitting the launch chain — with commands every
+        # documented-supported tmux accepts at bind time (the man
+        # page's -d is 3.5-only, and bind-time validation would
+        # abort the whole launch on a 3.2–3.4 tmux).
         ";",
         "bind-key",
         "-n",
         "S-PgUp",
-        "copy-mode -eu",
+        "if -F '#{pane_in_mode}' 'send-keys -X page-up'"
+        " 'copy-mode -e; send-keys -X page-up'",
         ";",
         "bind-key",
         "-n",
         "S-PgDn",
-        "copy-mode -ed",
+        "if -F '#{pane_in_mode}' 'send-keys -X page-down'"
+        " 'copy-mode -e; send-keys -X page-down'",
         ";",
         "new-session",
         "-s",
@@ -138,8 +145,9 @@ def test_page_keys_scroll_the_session_history() -> None:
     through to the pane's application. The session runs detached
     on its own socket and the client rides a local pty, so no
     window opens anywhere."""
-    if shutil.which("tmux") is None:  # pragma: no cover — the
-        pytest.skip("tmux is not on PATH")  # devenv suite ships one
+    # The suite's devenv ships tmux; the guard covers foreign hosts.
+    if shutil.which("tmux") is None:  # pragma: no cover
+        pytest.skip("tmux is not on PATH")
     socket = f"msks-test-{os.getpid()}"
     session = "scrolltest"
     # The shipped server half, ahead of new-session: exactly the
@@ -157,41 +165,16 @@ def test_page_keys_scroll_the_session_history() -> None:
             check=False,
         )
 
-    subprocess.run(
-        [
-            "tmux",
-            "-L",
-            socket,
-            *half[3:],
-            "new-session",
-            "-d",
-            "-s",
-            session,
-            "-x",
-            "80",
-            "-y",
-            "10",
-            "sh -c 'seq 1 50; exec cat'",
-        ],
-        timeout=10,
-        check=True,
-        capture_output=True,
-    )
-    master, slave = pty.openpty()
-    fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 10, 80, 0, 0))
-    client = subprocess.Popen(
-        ["tmux", "-L", socket, "attach", "-t", session],
-        stdin=slave,
-        stdout=slave,
-        stderr=slave,
-        start_new_session=True,
-        env={**os.environ, "TERM": "xterm"},
-    )
-    os.close(slave)
-
     def pane_flag(flag: str) -> str:
         proc = run("display", "-p", "-t", session, f"#{{{flag}}}")
+        if proc.returncode != 0:
+            raise AssertionError(
+                f"tmux display -p #{{{flag}}} failed: {proc.stderr.strip()}"
+            )
         return proc.stdout.strip()
+
+    master, slave = pty.openpty()
+    fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 10, 80, 0, 0))
 
     def eventually(flag: str, want: str, deadline: float = 5.0) -> None:
         end = time.monotonic() + deadline
@@ -216,7 +199,37 @@ def test_page_keys_scroll_the_session_history() -> None:
             f"#{flag} stayed {value!r}, wanted at least {want}"
         )
 
+    client = None
     try:
+        subprocess.run(
+            [
+                "tmux",
+                "-L",
+                socket,
+                *half[3:],
+                "new-session",
+                "-d",
+                "-s",
+                session,
+                "-x",
+                "80",
+                "-y",
+                "10",
+                "sh -c 'seq 1 50; exec cat'",
+            ],
+            timeout=10,
+            check=True,
+            capture_output=True,
+        )
+        client = subprocess.Popen(
+            ["tmux", "-L", socket, "attach", "-t", session],
+            stdin=slave,
+            stdout=slave,
+            stderr=slave,
+            start_new_session=True,
+            env={**os.environ, "TERM": "xterm"},
+        )
+        os.close(slave)
         # 50 lines printed on a 10-row window: the ones that left
         # the viewport are the history the page keys walk (the
         # count carries the pane's own startup lines, so the wait
@@ -227,14 +240,19 @@ def test_page_keys_scroll_the_session_history() -> None:
         os.write(master, b"\x1b[6;2~")  # S-PgDn pages back down; the
         os.write(master, b"\x1b[6;2~")  # bottom exits copy mode
         eventually("pane_in_mode", "0")
-        os.write(master, b"\x1b[5~")  # the bare page key reaches the
-        time.sleep(0.5)  # pane's cat, not a binding: no copy mode
-        assert pane_flag("pane_in_mode") == "0"
+        os.write(master, b"\x1b[5~")  # the bare page key reaches
+        # the pane's cat, not a binding: copy mode stays closed
+        # across a window of checks, not one sampling of it.
+        end = time.monotonic() + 1.0
+        while time.monotonic() < end:
+            assert pane_flag("pane_in_mode") == "0"
+            time.sleep(0.1)
     finally:
-        client.terminate()
-        client.wait(timeout=10)
+        run("kill-server")  # the server's death takes the session
+        if client is not None:
+            client.kill()
+            client.wait(timeout=10)
         os.close(master)
-        run("kill-server")
 
 
 def test_take_option_stops_at_the_separator() -> None:
