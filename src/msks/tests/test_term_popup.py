@@ -851,7 +851,15 @@ def lease_shell_session(socket: str, master, slave) -> subprocess.Popen:
         env={**os.environ, "TERM": "xterm"},
     )
     os.close(slave)
-    subprocess.run(
+    eventually(lambda: lease_taken(socket))
+    return client
+
+
+def lease_taken(socket: str) -> bool:
+    """The trailing option, polled: the client's own new-session
+    races the session's existence on a loaded host, and the
+    option lands the moment the session does."""
+    proc = subprocess.run(
         [
             "tmux",
             "-L",
@@ -863,10 +871,10 @@ def lease_shell_session(socket: str, master, slave) -> subprocess.Popen:
             "on",
         ],
         timeout=5,
-        check=True,
+        check=False,
         capture_output=True,
     )
-    return client
+    return proc.returncode == 0
 
 
 def pty_pair():
