@@ -14,17 +14,20 @@ from msks.server.doctor import (
     check_binary,
     check_library,
     check_ssh,
+    check_tmux,
     detect_package_manager,
     doctor_main,
     format_report,
     install_hint,
     library_probe_result,
+    parse_tmux_version,
     result_marker,
     run,
     run_doctor,
     settings_for_doctor,
 )
 from msks.settings import Settings, VmmSettings
+from msks.spec.version import __version__
 
 # ---------------------------------------------------------------------------
 # Report types
@@ -101,6 +104,8 @@ def test_install_hint_table_and_managers() -> None:
     assert install_hint("mkisofs", "pacman") == "sudo pacman -S cdrtools"
     assert install_hint("mkisofs", "brew") == "brew install cdrtools"
     assert install_hint("rsync", "zypper") == "sudo zypper install rsync"
+    assert install_hint("curl", "apk") == "sudo apk add curl"
+    assert install_hint("curl", "apk") == "sudo apk add curl"
 
 
 def test_install_hint_fallbacks() -> None:
@@ -112,6 +117,11 @@ def test_install_hint_fallbacks() -> None:
 def test_install_hint_pinned_binaries() -> None:
     assert "secretspec/releases" in install_hint("secretspec", "apt")
     assert "devenv" in install_hint("jscpd", "dnf")
+    hint = install_hint("cloud-hypervisor", "apt")
+    assert "cloud-hypervisor/releases" in hint
+    assert install_hint("ch-remote", None) == install_hint(
+        "cloud-hypervisor", None
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +136,7 @@ def test_run_reports_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(doctor_mod.subprocess, "run", raise_missing)
     rc, out, err = run(["ghost", "--version"])
     assert (rc, out) == (-1, "")
-    assert "not found" in err
+    assert err == "ghost: nope"  # the binary and the OS error both land
 
 
 def test_run_reports_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -137,6 +147,16 @@ def test_run_reports_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     rc, _out, err = run(["slow", "--version"])
     assert rc == -1
     assert "timed out" in err
+
+
+def test_run_reports_oserror(monkeypatch: pytest.MonkeyPatch) -> None:
+    def raise_exec_format(*a, **kw):
+        raise OSError("Exec format error")
+
+    monkeypatch.setattr(doctor_mod.subprocess, "run", raise_exec_format)
+    rc, _out, err = run(["/opt/broken/tool", "--version"])
+    assert rc == -1
+    assert "Exec format error" in err
 
 
 def test_run_captures_output(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -252,6 +272,24 @@ def test_check_ssh_rejects_other_banner(
     assert result.ok is False
 
 
+def test_check_ssh_stdout_banner_names_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A wrapper printing its banner to stdout with rc 0: the miss
+    # names what the probe actually printed, not a bare "exit 0".
+    monkeypatch.setattr(
+        doctor_mod.shutil, "which", lambda name: "/usr/bin/ssh"
+    )
+    monkeypatch.setattr(
+        doctor_mod,
+        "run",
+        lambda cmd, timeout=10.0: (0, "OpenSSH_9.6 (wrapper)", ""),
+    )
+    result = check_ssh(None)
+    assert result.ok is False
+    assert "OpenSSH_9.6 (wrapper)" in result.message
+
+
 def test_check_ssh_rejects_rc2(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         doctor_mod.shutil, "which", lambda name: "/usr/bin/ssh"
@@ -261,6 +299,70 @@ def test_check_ssh_rejects_rc2(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     result = check_ssh(None)
     assert result.ok is False
+
+
+# ---------------------------------------------------------------------------
+# The tmux floor
+# ---------------------------------------------------------------------------
+
+
+def test_parse_tmux_version() -> None:
+    assert parse_tmux_version("tmux 3.6a") == (3, 6)
+    assert parse_tmux_version("tmux 3.2") == (3, 2)
+    assert parse_tmux_version("weird output") is None
+
+
+def tmux_on_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        doctor_mod.shutil, "which", lambda name: "/usr/bin/tmux"
+    )
+
+
+def test_check_tmux_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(doctor_mod.shutil, "which", lambda name: None)
+    result = check_tmux("apt")
+    assert result.ok is False and result.is_warning is False
+    assert result.hint == "sudo apt install tmux"
+
+
+def test_check_tmux_ok_at_floor(monkeypatch: pytest.MonkeyPatch) -> None:
+    tmux_on_path(monkeypatch)
+    monkeypatch.setattr(
+        doctor_mod, "run", lambda cmd, timeout=10.0: (0, "tmux 3.2", "")
+    )
+    result = check_tmux(None)
+    assert result.ok is True
+    assert "3.2" in result.message
+
+
+def test_check_tmux_old_is_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    tmux_on_path(monkeypatch)
+    monkeypatch.setattr(
+        doctor_mod, "run", lambda cmd, timeout=10.0: (0, "tmux 3.1b", "")
+    )
+    result = check_tmux(None)
+    assert result.ok is False and result.is_warning is False
+    assert "display-popup" in result.message
+
+
+def test_check_tmux_unparseable(monkeypatch: pytest.MonkeyPatch) -> None:
+    tmux_on_path(monkeypatch)
+    monkeypatch.setattr(
+        doctor_mod, "run", lambda cmd, timeout=10.0: (0, "mystery", "")
+    )
+    result = check_tmux(None)
+    assert result.ok is False
+    assert "unparseable (mystery)" in result.message
+
+
+def test_check_tmux_probe_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    tmux_on_path(monkeypatch)
+    monkeypatch.setattr(
+        doctor_mod, "run", lambda cmd, timeout=10.0: (1, "", "denied")
+    )
+    result = check_tmux(None)
+    assert result.ok is False
+    assert "tmux -V failed" in result.message
 
 
 # ---------------------------------------------------------------------------
@@ -342,6 +444,13 @@ def test_library_missing_everywhere(monkeypatch: pytest.MonkeyPatch) -> None:
 # ---------------------------------------------------------------------------
 
 
+def probes_ok(cmd: list[str], timeout: float = 10.0) -> tuple[int, str, str]:
+    """A green probe answer: every binary answers, tmux reports 3.4."""
+    if cmd[0].endswith("tmux"):
+        return (0, "tmux 3.4", "")
+    return (0, "lib x", "OpenSSH_x")
+
+
 def all_found(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every binary on PATH, every probe green, libraries present."""
     monkeypatch.setattr(
@@ -349,9 +458,7 @@ def all_found(monkeypatch: pytest.MonkeyPatch) -> None:
         "which",
         lambda name: f"/usr/bin/{name}" if name else None,
     )
-    monkeypatch.setattr(
-        doctor_mod, "run", lambda cmd, timeout=10.0: (0, "lib x", "OpenSSH_x")
-    )
+    monkeypatch.setattr(doctor_mod, "run", probes_ok)
 
 
 def test_run_doctor_grades_and_settings_names(
@@ -363,10 +470,10 @@ def test_run_doctor_grades_and_settings_names(
     names = {r.name for r in report.results}
     assert "xmkisofs" in names  # the settings name, not the default
     assert report.passed is True
-    # The error-grade rows: daemon core paths, both libraries included.
+    # The error-grade rows: daemon core paths, both libraries and
+    # the tmux floor included.
     assert {
         "cloud-hypervisor",
-        "ch-remote",
         "mkfs.ext4",
         "nft",
         "conntrack",
@@ -374,6 +481,7 @@ def test_run_doctor_grades_and_settings_names(
         "secretspec",
         "libnetfilter_queue",
         "libnfnetlink",
+        "tmux",
     } <= names
 
 
@@ -381,14 +489,16 @@ def test_run_doctor_warning_rows(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         doctor_mod.shutil,
         "which",
-        lambda name: None if name in {"curl", "ssh"} else f"/usr/bin/{name}",
+        lambda name: (
+            None
+            if name in {"curl", "ssh", "ch-remote"}
+            else f"/usr/bin/{name}"
+        ),
     )
-    monkeypatch.setattr(
-        doctor_mod, "run", lambda cmd, timeout=10.0: (0, "lib x", "")
-    )
+    monkeypatch.setattr(doctor_mod, "run", probes_ok)
     report = run_doctor(Settings())
     warn_names = {r.name for r in report.warnings}
-    assert warn_names == {"curl", "ssh"}
+    assert warn_names == {"curl", "ssh", "ch-remote"}
     assert report.passed is True  # warnings do not fail the run
 
 
@@ -398,9 +508,7 @@ def test_run_doctor_error_fails(monkeypatch: pytest.MonkeyPatch) -> None:
         "which",
         lambda name: None if name == "nft" else f"/usr/bin/{name}",
     )
-    monkeypatch.setattr(
-        doctor_mod, "run", lambda cmd, timeout=10.0: (0, "lib x", "")
-    )
+    monkeypatch.setattr(doctor_mod, "run", probes_ok)
     report = run_doctor(Settings())
     assert report.passed is False
     assert [r.name for r in report.errors] == ["nft"]
@@ -423,12 +531,28 @@ def test_settings_for_doctor_default_path_miss_is_silent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def refuse(config, generate):
-        raise ValueError("config file not found")
+        raise ValueError(
+            "config file not found: /home/u/.config/msksd/msksd.yaml"
+        )
 
     monkeypatch.setattr(doctor_mod, "load_settings", refuse)
     settings, notice = settings_for_doctor(None)
     assert notice is None
     assert settings == Settings.from_env()
+
+
+def test_settings_for_doctor_broken_default_warns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A default config that exists but will not load is a finding:
+    # doctor would otherwise go green over names the daemon refuses.
+    def refuse(config, generate):
+        raise ValueError("bad yaml at line 3")
+
+    monkeypatch.setattr(doctor_mod, "load_settings", refuse)
+    settings, notice = settings_for_doctor(None)
+    assert notice is not None and notice.is_warning
+    assert "bad yaml" in notice.message
 
 
 def test_settings_for_doctor_explicit_failure_warns(
@@ -453,7 +577,7 @@ def test_doctor_main_exit_codes_and_output(
     assert doctor_main(None) == 0
     out = capsys.readouterr().out
     assert "msksd doctor" in out
-    assert "All 18 checks passed." in out
+    assert "All 19 checks passed." in out
 
 
 def test_doctor_main_appends_config_notice(
@@ -525,7 +649,7 @@ def test_format_report_counts_and_blocks(
         ]
     )
     text = format_report(report)
-    assert "1 passed, 2 errors, 1 warnings" in text
+    assert "1 passed, 2 errors, 1 warning" in text
     assert "(none detected)" in text
     assert "Errors (the daemon needs these):" in text
     assert "Warnings (degraded paths, not core):" in text
@@ -540,7 +664,7 @@ def test_format_report_errors_only(
     monkeypatch.setattr(doctor_mod, "detect_package_manager", lambda: "apt")
     report = DoctorReport([ok("a"), err("c")])
     text = format_report(report)
-    assert "1 passed, 1 errors" in text
+    assert "1 passed, 1 error" in text
     assert "Warnings" not in text
 
 
@@ -565,6 +689,28 @@ def test_parser_accepts_flags_before_and_after_subcommand() -> None:
     args = parser.parse_args([])
     assert args.command is None
     assert not hasattr(args, "config")
+
+
+def test_version_on_every_parser(
+    capsys: pytest.CaptureFixture,
+) -> None:
+    parser = main_mod.build_parser()
+    for argv in (
+        ["--version"],
+        ["serve", "--version"],
+        ["doctor", "--version"],
+    ):
+        with pytest.raises(SystemExit) as excinfo:
+            parser.parse_args(argv)
+        assert excinfo.value.code == 0
+        assert __version__ in capsys.readouterr().out
+
+
+def test_doctor_rejects_serve_flags() -> None:
+    parser = main_mod.build_parser()
+    with pytest.raises(SystemExit) as excinfo:
+        parser.parse_args(["doctor", "--no-tls"])
+    assert excinfo.value.code == 2
 
 
 def test_main_dispatches_doctor(monkeypatch: pytest.MonkeyPatch) -> None:

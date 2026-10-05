@@ -150,8 +150,8 @@ def install_sighup_reload(app, config: str | None) -> None:
 # SUPPRESS plus set_defaults below because a subparser applies its
 # own defaults over values the main parser already parsed
 # (bpo-9351) — SUPPRESS leaves the main parser's value in place.
-SHARED_FLAGS = argparse.ArgumentParser(add_help=False)
-SHARED_FLAGS.add_argument(
+CONFIG_FLAGS = argparse.ArgumentParser(add_help=False)
+CONFIG_FLAGS.add_argument(
     "--config",
     metavar="PATH",
     default=argparse.SUPPRESS,
@@ -161,6 +161,7 @@ SHARED_FLAGS.add_argument(
         "$MSKSD_CONFIG_DIR/msksd.yaml, generated on first run"
     ),
 )
+SHARED_FLAGS = argparse.ArgumentParser(add_help=False, parents=[CONFIG_FLAGS])
 SHARED_FLAGS.add_argument(
     "--no-tls",
     action="store_true",
@@ -177,22 +178,29 @@ SHARED_FLAGS.add_argument(
         "dev-tree flow, #144)"
     ),
 )
+# --version on every parser: a subcommand position must not turn
+# it into an unrecognized argument.
+VERSION_FLAGS = argparse.ArgumentParser(add_help=False)
+VERSION_FLAGS.add_argument("--version", action="version", version=__version__)
 
 
 def build_parser() -> argparse.ArgumentParser:
     """The msksd argument parser: subcommands plus the bare serve."""
-    parser = argparse.ArgumentParser(prog="msksd", parents=[SHARED_FLAGS])
-    parser.add_argument("--version", action="version", version=__version__)
+    parser = argparse.ArgumentParser(
+        prog="msksd", parents=[SHARED_FLAGS, VERSION_FLAGS]
+    )
     parser.set_defaults(command=None)
     sub = parser.add_subparsers(dest="command")
     sub.add_parser(
         "serve",
-        parents=[SHARED_FLAGS],
+        parents=[SHARED_FLAGS, VERSION_FLAGS],
         help="run the API server (the default when no subcommand is given)",
     )
+    # Doctor reads a config but takes no serve flags: giving it the
+    # serve-only ones would parse them into silence.
     sub.add_parser(
         "doctor",
-        parents=[SHARED_FLAGS],
+        parents=[CONFIG_FLAGS, VERSION_FLAGS],
         help="check the host for the daemon's external tools (#464)",
     )
     return parser

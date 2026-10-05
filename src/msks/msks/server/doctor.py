@@ -1,8 +1,8 @@
 """``msksd doctor`` — pre-flight host dependency checker (#464).
 
 The daemon drives tools outside its Python environment: the
-cloud-hypervisor VMM and its ``ch-remote`` API client (#1), the
-e2fsprogs pair that grows and checks workspace volumes (#184), the
+cloud-hypervisor VMM (#1), the e2fsprogs pair that grows and
+checks workspace volumes (#184), the
 ``mkisofs`` that packs the #41 cidata seed disks, the iproute2 /
 nftables / conntrack trio that wires and polices each workspace's
 tap (#52), ``qemu-img`` for the root overlay, and the secretspec
@@ -28,6 +28,7 @@ the error.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import sys
@@ -105,12 +106,25 @@ def detect_package_manager() -> str | None:
 # Package hints and install hints
 # ---------------------------------------------------------------------------
 
-# The libraries the netfilterqueue extension links against
-# (net/nfq.py's interceptor path): the runtime soname packages, not
-# the -dev ones that carry the pkg-config files.
+# Checks whose fix is not a distro package, so every manager
+# gets the same hint: the pinned or upstream binary itself.
+# cloud-hypervisor and ch-remote ship together in the upstream
+# static release tarball (Debian's archive carries neither); the
+# secretspec CLI is a pinned release binary; jscpd arrives with
+# the devenv shell.
 PINNED_HINTS = {
+    "cloud-hypervisor": (
+        "upstream static release (ships cloud-hypervisor and "
+        "ch-remote) — install from "
+        "https://github.com/cloud-hypervisor/cloud-hypervisor/releases"
+    ),
+    "ch-remote": (
+        "upstream static release (ships cloud-hypervisor and "
+        "ch-remote) — install from "
+        "https://github.com/cloud-hypervisor/cloud-hypervisor/releases"
+    ),
     "secretspec": (
-        "pinned release binary (see devenv.nix): "
+        "pinned release binary — install from "
         "https://github.com/cachix/secretspec/releases"
     ),
     "jscpd": (
@@ -125,26 +139,9 @@ PINNED_HINTS = {
 # (Debian family) and cdrtools (pacman, brew) both serve mkisofs,
 # qemu-utils/qemu-img is Debian's name for the conversion tool,
 # and conntrack comes from conntrack-tools everywhere except apt.
+# cloud-hypervisor and ch-remote carry no rows: Debian's archive
+# has neither, so their hint is the upstream release (PINNED_HINTS).
 PACKAGE_HINTS: dict[str, dict[str, str]] = {
-    "cloud-hypervisor": {
-        "dnf": "cloud-hypervisor",
-        "yum": "cloud-hypervisor",
-        "apt": "cloud-hypervisor",
-        "pacman": "cloud-hypervisor",
-        "zypper": "cloud-hypervisor",
-        "apk": "cloud-hypervisor",
-        "brew": "cloud-hypervisor",
-    },
-    "ch-remote": {
-        # Same package as the VMM: it ships both binaries.
-        "dnf": "cloud-hypervisor",
-        "yum": "cloud-hypervisor",
-        "apt": "cloud-hypervisor",
-        "pacman": "cloud-hypervisor",
-        "zypper": "cloud-hypervisor",
-        "apk": "cloud-hypervisor",
-        "brew": "cloud-hypervisor",
-    },
     "curl": {
         "dnf": "curl",
         "yum": "curl",
@@ -253,6 +250,15 @@ PACKAGE_HINTS: dict[str, dict[str, str]] = {
         "apk": "rsync",
         "brew": "rsync",
     },
+    "tmux": {
+        "dnf": "tmux",
+        "yum": "tmux",
+        "apt": "tmux",
+        "pacman": "tmux",
+        "zypper": "tmux",
+        "apk": "tmux",
+        "brew": "tmux",
+    },
     "libnetfilter_queue": {
         "dnf": "libnetfilter_queue",
         "yum": "libnetfilter_queue",
@@ -291,6 +297,9 @@ def manager_install(manager: str, pkg: str) -> str:
     if manager == "pacman":
         # pacman has no "install" subcommand — the package action is -S.
         return f"sudo pacman -S {pkg}"
+    if manager == "apk":
+        # apk's install verb is "add".
+        return f"sudo apk add {pkg}"
     return f"sudo {manager} install {pkg}"
 
 
@@ -313,10 +322,12 @@ def run(cmd: list[str], timeout: float = 10.0) -> tuple[int, str, str]:
             timeout=timeout,
         )
         return proc.returncode, proc.stdout, proc.stderr
-    except FileNotFoundError:
-        return -1, "", f"{cmd[0]}: not found"
     except subprocess.TimeoutExpired:
         return -1, "", f"{cmd[0]}: timed out"
+    except OSError as exc:
+        # Covers a missing binary and an unexecutable one (ENOEXEC
+        # on a corrupt settings-named path) with the same shape.
+        return -1, "", f"{cmd[0]}: {exc}"
 
 
 def binary_missing(
@@ -371,36 +382,119 @@ def check_binary(
     return CheckResult(name=name, ok=True, message=f"{name} ok ({path})")
 
 
-def check_ssh(manager: str | None) -> CheckResult:
-    """Check the host ssh client (#110's forward smoke, #112's workflow).
-
-    ``ssh -V`` writes its version to stderr and exits 1 on every
-    OpenSSH release — the probe's contract, not a failure, so the
-    rc check steps aside for the "OpenSSH" banner in stderr.
-    """
-    path = shutil.which("ssh")
-    if not path:
-        return CheckResult(
-            name="ssh",
-            ok=False,
-            is_warning=True,
-            message=(
-                "ssh not found on PATH (the documented ssh workflow "
-                "and the forward-path smoke run over `msks forward`)"
-            ),
-            hint=install_hint("ssh", manager),
-        )
-    rc, _out, err = run(["ssh", "-V"])
-    if rc in (0, 1) and "OpenSSH" in err:
-        return CheckResult(name="ssh", ok=True, message=f"ssh ok ({path})")
-    detail = err.strip()[:200] or f"exit {rc}"
+def ssh_result(manager: str | None, message: str) -> CheckResult:
+    """A warning-grade ssh miss carrying the install hint."""
     return CheckResult(
         name="ssh",
         ok=False,
         is_warning=True,
-        message=f"ssh found at {path} but probe failed: {detail}",
+        message=message,
         hint=install_hint("ssh", manager),
     )
+
+
+def ssh_banner_ok(rc: int, err: str) -> bool:
+    """True when the probe answered with OpenSSH's version banner."""
+    return rc in (0, 1) and "OpenSSH" in err
+
+
+def check_ssh(manager: str | None) -> CheckResult:
+    """Check the host ssh client (#110's forward smoke, #112's workflow).
+
+    ``ssh -V`` writes its version to stderr; the exit code varies
+    by release (0 or 1), so the rc check steps aside for the
+    "OpenSSH" banner in the probe's output instead.
+    """
+    path = shutil.which("ssh")
+    if not path:
+        return ssh_result(
+            manager,
+            "ssh not found on PATH (the documented ssh workflow "
+            "and the forward-path smoke run over `msks forward`)",
+        )
+    rc, out, err = run(["ssh", "-V"])
+    if ssh_banner_ok(rc, err):
+        return CheckResult(name="ssh", ok=True, message=f"ssh ok ({path})")
+    detail = (err or out or f"exit {rc}").strip()[:200]
+    return ssh_result(
+        manager, f"ssh found at {path} but probe failed: {detail}"
+    )
+
+
+# The consent terminal's documented floor (#379): display-popup
+# and the launch chain's bind-time-validated commands both need
+# tmux 3.2.
+TMUX_MIN_VERSION = (3, 2)
+
+
+def parse_tmux_version(out: str) -> tuple[int, int] | None:
+    """Parse ``tmux -V`` output (``"tmux 3.6a"``) → ``(3, 6)``.
+
+    None when no MAJOR.MINOR pair is present, so the caller
+    reports an unparseable version instead of guessing.
+    """
+    m = re.search(r"(\d+)\.(\d+)", out)
+    if not m:
+        return None
+    return (int(m.group(1)), int(m.group(2)))
+
+
+def tmux_unparseable(out: str, manager: str | None) -> CheckResult:
+    """The miss for a ``tmux -V`` answer with no version in it."""
+    probe = out.strip()[:40] or "tmux -V failed"
+    return CheckResult(
+        name="tmux",
+        ok=False,
+        message=(
+            f"tmux version unparseable ({probe}); "
+            "the consent terminal needs >= 3.2"
+        ),
+        hint=install_hint("tmux", manager),
+    )
+
+
+def tmux_version_result(
+    version: tuple[int, int], path: str, manager: str | None
+) -> CheckResult:
+    """The result for one parsed tmux version, against the floor."""
+    label = ".".join(map(str, version))
+    if version < TMUX_MIN_VERSION:
+        return CheckResult(
+            name="tmux",
+            ok=False,
+            message=(
+                f"tmux {label} < 3.2 — the consent terminal needs "
+                "display-popup"
+            ),
+            hint=install_hint("tmux", manager),
+        )
+    return CheckResult(
+        name="tmux", ok=True, message=f"tmux {label} ok ({path})"
+    )
+
+
+def check_tmux(manager: str | None) -> CheckResult:
+    """Check the host tmux meets the 3.2 floor the consent
+    terminal documents (#379).
+
+    ``display-popup`` landed in 3.2 and the launch chain's
+    bind-time-validated commands stay inside the 3.2 grammar, so
+    an older or unparseable tmux is an error — the consent flow
+    cannot launch its terminal on it.
+    """
+    path = shutil.which("tmux")
+    if not path:
+        return CheckResult(
+            name="tmux",
+            ok=False,
+            message="tmux not found on PATH",
+            hint=install_hint("tmux", manager),
+        )
+    rc, out, _err = run(["tmux", "-V"])
+    version = parse_tmux_version(out) if rc == 0 else None
+    if version is None:
+        return tmux_unparseable(out, manager)
+    return tmux_version_result(version, path, manager)
 
 
 # The definitive capability test for the two libraries: the
@@ -492,14 +586,6 @@ def run_doctor(settings: Settings) -> DoctorReport:
     )
     report.add(
         check_binary(
-            "ch-remote",
-            ["ch-remote", "--version"],
-            manager,
-            use="drives the VMM over its API socket (#1)",
-        )
-    )
-    report.add(
-        check_binary(
             vmm.mkfs_ext4,
             [vmm.mkfs_ext4, "-V"],
             manager,
@@ -569,6 +655,7 @@ def run_doctor(settings: Settings) -> DoctorReport:
     )
     report.add(check_library("libnetfilter_queue", manager))
     report.add(check_library("libnfnetlink", manager))
+    report.add(check_tmux(manager))
 
     # Warning grade: these name degraded or adjacent paths — a
     # debugging aid, a diagnostic for foreign firewall policy, the
@@ -582,6 +669,18 @@ def run_doctor(settings: Settings) -> DoctorReport:
             manager,
             is_warning=True,
             use="unix-socket REST poking during VMM debugging",
+        )
+    )
+    report.add(
+        check_binary(
+            "ch-remote",
+            ["ch-remote", "--version"],
+            manager,
+            is_warning=True,
+            use=(
+                "pokes the VMM's API socket by hand (dev and demo "
+                "flows; the daemon speaks the socket itself)"
+            ),
         )
     )
     report.add(
@@ -623,6 +722,17 @@ def run_doctor(settings: Settings) -> DoctorReport:
 # ---------------------------------------------------------------------------
 
 
+def default_path_absent(exc: Exception) -> bool:
+    """True when the load failure is the missing default-path file.
+
+    The not-found raise is config.py's stable in-tree contract
+    (``"config file not found: <path>"``); every other failure —
+    unreadable file, invalid YAML, a bad value — names a config
+    that exists and is broken, which doctor must surface.
+    """
+    return str(exc).startswith("config file not found")
+
+
 def settings_for_doctor(
     config: str | None,
 ) -> tuple[Settings, CheckResult | None]:
@@ -630,17 +740,17 @@ def settings_for_doctor(
 
     ``load_settings`` reads the same sources the daemon will (env
     over file over defaults) without ever generating the first-run
-    template — doctor takes no side effects. A default-path miss on
-    a fresh host is the normal pre-first-run state and stays silent;
-    an explicit ``--config`` that fails to load produces a warning
-    result naming the error, and the checks fall back to
+    template — doctor takes no side effects. A default-path miss
+    on a fresh host is the normal pre-first-run state and stays
+    silent; any config that exists but fails to load produces a
+    warning result naming the error, and the checks fall back to
     env-plus-defaults so the run still reports the host's tools.
     """
     try:
         return load_settings(config, generate=False), None
     except Exception as exc:  # any operator config mistake, foreseen or not
         fallback = Settings.from_env()
-        if config is None:
+        if config is None and default_path_absent(exc):
             return fallback, None
         notice = CheckResult(
             name="config",
@@ -704,9 +814,9 @@ def summary_line(ok_count: int, errors: int, warnings: int) -> str:
     """The closing tally, naming only the nonzero grades."""
     parts = [f"{ok_count} passed"]
     if errors:
-        parts.append(f"{errors} errors")
+        parts.append(f"{errors} error{'s' if errors != 1 else ''}")
     if warnings:
-        parts.append(f"{warnings} warnings")
+        parts.append(f"{warnings} warning{'s' if warnings != 1 else ''}")
     return ", ".join(parts)
 
 

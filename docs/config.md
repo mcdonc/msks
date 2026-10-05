@@ -37,29 +37,43 @@ the file is located.
 
 `msksd doctor` checks the host for the external tools and libraries
 the daemon drives outside its Python environment (#464) — the
-cloud-hypervisor VMM and its `ch-remote` API client, the e2fsprogs
-pair that grows and checks workspace volumes, the `mkisofs` that
-packs the cidata seed disks, the iproute2/nftables/conntrack trio
-behind each workspace's tap, `qemu-img` for the root overlay, the
-secretspec CLI behind the secret store, and the two libraries the
-interceptor's NFQUEUE path links against. Each result prints with
-a ✓ (present and functional), ⚠ (a degraded path: a debugging aid,
-a diagnostic, the dev-shell clone scanner, or a client-side tool
-behind `msks forward`), or ✗ (a core-path dependency) marker, and
-each miss carries an install hint matched to the detected package
-manager. The run ends with a summary that repeats every miss with
-its fix; the exit code is 0 when every check passes or only warns,
-1 when any check errors.
+cloud-hypervisor VMM, the e2fsprogs pair that grows and checks
+workspace volumes, the `mkisofs` that packs the cidata seed disks,
+the iproute2/nftables/conntrack trio behind each workspace's tap,
+`qemu-img` for the root overlay, the secretspec CLI behind the
+secret store, the two libraries the interceptor's NFQUEUE path
+links against, and the host tmux at the 3.2 floor the consent
+terminal documents (#379). Each result prints with a ✓ (present
+and functional), ⚠ (a degraded path: a debugging aid, a
+diagnostic, the dev-shell clone scanner, a hand-side VMM poking
+tool, or a client-side tool behind `msks forward`), or ✗ (a
+core-path dependency) marker, and each miss carries an install
+hint matched to the detected package manager. The run ends with a
+summary that repeats every miss with its fix; the exit code is 0
+when every check passes or only warns, 1 when any check errors.
 
 Tool names come from the same settings the daemon will use (the
 `--config` flag and `MSKSD_*` variables apply), so doctor checks
 what this host's daemon will actually exec. Doctor takes no side
 effects: it reads a config when one resolves and never generates
-the first-run template, and a config that fails to load falls back
-to environment variables and defaults with a warning naming the
-error. The two libraries are verified through `pkg-config`, the
-linker cache (`ldconfig -p`), or the `netfilterqueue` import
-itself — whichever answers first.
+the first-run template; a config that exists but fails to load
+falls back to environment variables and defaults with a warning
+naming the error, and a fresh host with no default config yet
+falls back silently. The two libraries are verified through
+`pkg-config`, the linker cache (`ldconfig -p`), or the
+`netfilterqueue` import itself — whichever answers first.
+
+The install hints match each manager's real package names
+(verified against a Debian trixie container: `genisoimage` serves
+`mkisofs`, `qemu-utils` ships `qemu-img`, `conntrack` is apt's
+name, and the library rows name the runtime soname packages —
+`libnetfilter-queue1` and `libnfnetlink0` — with the `-dev`
+packages carrying only the pkg-config files doctor falls back
+past). Where a fix is not a distro package, the hint names the
+real source: cloud-hypervisor and `ch-remote` install from the
+upstream static release (Debian's archive carries neither), the
+secretspec CLI from its pinned release, and jscpd arrives with
+the devenv shell.
 
 The dev daemon runs bare: `scripts/dev-daemon.sh` sets
 `MSKSD_CONFIG_DIR` to the devenv root (and the devenv shell presets
