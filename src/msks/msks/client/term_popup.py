@@ -59,7 +59,7 @@ from . import wsauth
 from .egress import DURATIONS, connect_args, dest_label, refused
 from .env import env_token, env_url
 from .rest import api_client, request
-from .wintitle import configured_title, set_window_title
+from .wintitle import TITLE_MARKER, configured_title, set_window_title
 
 #: The popup geometry: fixed cells, sized for the 80-column window
 #: the consent screens already target; tmux clips it to a smaller
@@ -213,7 +213,12 @@ def run_pane(argv: list[str]) -> int:
     watcher stays in this pane's process group, so the window's
     teardown SIGHUP retires it with the shell; its own liveness
     check is the backstop. No workspace in the child (or no tmux
-    environment — a hand-run pane) runs the command alone."""
+    environment — a hand-run pane) runs the command alone. The
+    new-window marker (#445) is dropped before anything runs: the
+    window is already titled — :func:`run_launch` wrote it before
+    attaching tmux — and tmux owns the pane's escapes, so the
+    session has no title of its own to write."""
+    os.environ.pop(TITLE_MARKER, None)
     session, rest = take_option("-s", argv)
     workspace_id, rest = take_option("-w", rest)
     child = child_argv(rest)

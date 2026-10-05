@@ -64,9 +64,13 @@ def test_set_window_title_drops_control_characters(monkeypatch) -> None:
 
 def test_a_marked_window_takes_the_title(monkeypatch) -> None:
     # The TUI's spawn marker is the handoff: the ssh session it
-    # spawned names the window before the session starts.
+    # spawned names the window before the session starts. A stale
+    # $TMUX (the operator runs the TUI inside tmux) decides
+    # nothing — the marker is the one live signal.
+    monkeypatch.delenv("TMUX", raising=False)
     monkeypatch.setenv(wt.TITLE_MARKER, "1")
     monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "msks — {workspace}")
+    monkeypatch.setenv("TMUX", "/tmp/tmux-0/default,1,sess")
     out = Tty()
     monkeypatch.setattr(wt.sys, "stdout", out)
     wt.title_spawned_window("a1b2c3d4e5")
@@ -79,19 +83,7 @@ def test_a_typed_invocation_keeps_its_terminal_title(
     # No marker — the operator typed the command in their own
     # terminal, and OSC cannot read a title back to restore it.
     monkeypatch.delenv(wt.TITLE_MARKER, raising=False)
-    monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "msks — {workspace}")
-    out = Tty()
-    monkeypatch.setattr(wt.sys, "stdout", out)
-    wt.title_spawned_window("a1b2c3d4e5")
-    assert out.getvalue() == ""
-
-
-def test_a_tmux_pane_leaves_the_window_title_alone(monkeypatch) -> None:
-    # Inside the consent launcher's pane the window is already
-    # titled (the launcher wrote it before attaching tmux), and
-    # tmux owns the pane's escapes — the session adds nothing.
-    monkeypatch.setenv(wt.TITLE_MARKER, "1")
-    monkeypatch.setenv("TMUX", "/tmp/tmux-0/default,1,sess")
+    monkeypatch.delenv("TMUX", raising=False)
     monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "msks — {workspace}")
     out = Tty()
     monkeypatch.setattr(wt.sys, "stdout", out)
@@ -102,9 +94,24 @@ def test_a_tmux_pane_leaves_the_window_title_alone(monkeypatch) -> None:
 def test_a_marked_window_without_a_template_writes_nothing(
     monkeypatch,
 ) -> None:
+    monkeypatch.delenv("TMUX", raising=False)
     monkeypatch.setenv(wt.TITLE_MARKER, "1")
     monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "")
     out = Tty()
+    monkeypatch.setattr(wt.sys, "stdout", out)
+    wt.title_spawned_window("a1b2c3d4e5")
+    assert out.getvalue() == ""
+
+
+def test_a_marked_window_on_a_pipe_writes_nothing(monkeypatch) -> None:
+    # The spawn's stdio is the window's tty in the real path; a
+    # captured stdout (a piped hand-run with the marker set by
+    # hand) stays clean through the whole gate, not just the
+    # writer.
+    monkeypatch.delenv("TMUX", raising=False)
+    monkeypatch.setenv(wt.TITLE_MARKER, "1")
+    monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "msks — {workspace}")
+    out = io.StringIO()
     monkeypatch.setattr(wt.sys, "stdout", out)
     wt.title_spawned_window("a1b2c3d4e5")
     assert out.getvalue() == ""

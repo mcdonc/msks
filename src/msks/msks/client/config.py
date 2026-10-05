@@ -91,10 +91,10 @@ CONFIG_FILENAME = "msks.yaml"
 #: ``identity_file`` names the operator's own private key file
 #: (#336) and is global-only (no per-alias form): an identity
 #: belongs to the operator, not to a daemon connection.
-#: ``terminal_title`` names the window title msks-term-popup
-#: writes to the terminal it runs in (#445) and is global-only
-#: the same way: the window belongs to the operator's desktop,
-#: not to a daemon connection.
+#: ``terminal_title`` names the title of the workspace-shell
+#: windows the workspace page opens (#445) and is global-only:
+#: the windows belong to the operator's desktop, not to a daemon
+#: connection.
 GLOBAL_ENV_VARS: dict[str, str] = {
     "url": "MSKSC_URL",
     "token_file": "MSKSC_TOKEN",
@@ -115,10 +115,12 @@ DAEMON_ENTRY_KEYS = ("url", "token_file", "cafile", "expected_image")
 #: of the file value, overriding it for one shell.
 TERMINAL_ENV_VAR = "MSKSC_TERMINAL_OPEN_CMD"
 
-#: The window-title template (#445): the variable the launcher
-#: reads once it runs inside the window the prefix opened — the
-#: file's value reaches it through :func:`apply`'s materialization,
-#: the way every file-derived setting rides.
+#: The workspace-shell window's title template (#445): the
+#: variable the title writers read — the consent launcher inside
+#: the window the prefix opened, and the appended ``msks ssh`` in
+#: a window the TUI marked at spawn. A file's value reaches them
+#: through :func:`apply`'s materialization, the way every
+#: file-derived setting rides.
 TITLE_ENV_VAR = "MSKSC_TERMINAL_TITLE"
 
 #: The remembered-passthrough setting's variable (#385): the string

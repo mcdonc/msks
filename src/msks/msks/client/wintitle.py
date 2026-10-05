@@ -55,15 +55,17 @@ def set_window_title(title: str) -> None:
 
 def title_spawned_window(workspace_ref: str) -> None:
     """Name the window the TUI opened for this ssh session (#445):
-    the spawn's marker, no tmux pane, a configured template, and a
-    terminal stdout together write the title before the session
-    starts. A typed invocation carries no marker and keeps its
-    terminal's title; inside the consent launcher's pane the
-    window is already titled and tmux owns the pane's escapes, so
-    the session adds nothing."""
+    the spawn's marker, a configured template, and a terminal
+    stdout together write the title before the session starts. A
+    typed invocation carries no marker and keeps its terminal's
+    title. Inside the consent launcher's pane the marker is gone
+    — :func:`msks.client.term_popup.run_pane` removes it before
+    the session runs (the launcher already titled the window, and
+    tmux owns the pane's escapes) — and a stale ``$TMUX`` from the
+    operator's own environment decides nothing: the marker is
+    the one live handoff, not the variable tmux happened to leave
+    in it."""
     if os.environ.get(TITLE_MARKER, "") == "":
-        return
-    if os.environ.get("TMUX"):
         return
     title = configured_title(workspace_ref)
     if title is not None:

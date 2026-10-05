@@ -450,6 +450,12 @@ def test_run_pane_starts_the_watcher_then_execs_the_child(
     assert rc == 0
     assert started == {"session": "sess", "ws": "ws1"}
     assert seen["argv"] == SSH_CHILD
+    # The new-window marker (#445) is gone before the child runs:
+    # the window is already titled (the launch role wrote it) and
+    # tmux owns the pane's escapes.
+    monkeypatch.setenv(tp.TITLE_MARKER, "1")
+    tp.run_pane(["-s", "sess", "-w", "ws1", "--", *SSH_CHILD])
+    assert tp.TITLE_MARKER not in os.environ
     # No workspace in the child: the pane runs the command alone.
     # Without -s the session name derives from the workspace; with
     # no tmux environment (a hand-run pane) it runs alone too.

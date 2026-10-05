@@ -1719,6 +1719,7 @@ async def test_spawn_window_marks_the_opened_window(monkeypatch) -> None:
     env = seen["kwargs"]["env"]
     assert env[follow_mod.TITLE_MARKER] == "1"
     assert "PATH" in env  # a copy of the environment, marker added
+    assert follow_mod.TITLE_MARKER not in os.environ  # tree unmarked
 
 
 async def test_the_new_terminal_action_spawns_an_ssh_child(
