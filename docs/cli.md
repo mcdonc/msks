@@ -306,17 +306,23 @@ surfaces above and leaves them untouched.
 appended shell inside a local tmux session and answers the
 workspace's egress consent prompts right there: while the session
 lives, it registers as a decider for the workspace, and a held
-egress request raises a popup over the shell: `a` allows until
-restart and `d` denies — any other key denies — while the
-uppercase twins `A` and `D` pick a duration for their verdict
-(`1` once, `2` 5m, `3` 15m, `4` until restart, `5` forever). The
-popup paints its rows — a bold destination, green allow bindings,
-red deny — and `NO_COLOR` leaves it plain. The session ends with
-its window, and the decider registration ends
-with the session. It works with any terminal that runs a command:
-name your terminal and its command flag in `terminal_open_cmd`,
-and `msks-term-popup` right after it (tmux 3.2 or newer must be on
-PATH):
+egress request raises a popup over the shell listing every hold
+the workspace currently carries — destination and time remaining
+per row (#461). `↑` and `↓` move the selection, `a` allows until
+restart and `d` denies the selected hold, and the uppercase twins
+`A` and `D` pick a duration for their verdict (`1` once, `2` 5m,
+`3` 15m, `4` until restart, `5` forever). A hold leaves the list
+the moment the daemon resolves it — a verdict from another
+decider window or the hold's own timeout — and the popup closes
+itself when the list empties; `Esc` closes it any time, and the
+holds it leaves behind stay held, to their timeout or a verdict
+from the consent TUI. The popup paints its rows — a bold
+destination, green allow bindings, red deny — and `NO_COLOR`
+leaves it plain. The session ends with its window, and the
+decider registration ends with the session. It works with any
+terminal that runs a command: name your terminal and its command
+flag in `terminal_open_cmd`, and `msks-term-popup` right after it
+(tmux 3.2 or newer must be on PATH):
 
 ```yaml
 terminal_open_cmd: konsole -e msks-term-popup
@@ -329,13 +335,14 @@ terminal_open_cmd:                     # list form (no shell quoting)
   - msks-term-popup
 ```
 
-Each popup answers one request at a time — a second request
-waits for the popup ahead of it. A request that another decider
-window (the consent TUI, another popup) answers while its popup
-is open fails at the post and the popup names the reason — the
-request is already resolved; a request decided before this window
-raises its popup still pops, and answering it reports the same
-line. The window the prefix opens takes its title from
+The popup keeps its own events connection, so a request that
+arrives while it stands joins the list on its own, and a verdict
+posted from it lands through the same REST contract as the
+consent TUI. A post that cannot land — the request resolved in
+another decider window while the verdict was in flight — names
+its reason on the popup's status line. A popup raised for a hold
+another window decided in between opens on the current list and
+closes once that list is empty. The window the prefix opens takes its title from
 `terminal_title` (`msks — {workspace}` resolves the workspace's
 id into it, #445). The session's own status bar names the
 workspace too (#455): the launch resolves the workspace's name

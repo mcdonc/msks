@@ -10,6 +10,7 @@ retirement, never opening a window.
 import asyncio
 import fcntl
 import io
+import json
 import os
 import pty
 import shlex
@@ -19,6 +20,7 @@ import subprocess
 import termios
 import threading
 import time
+import tty
 from types import SimpleNamespace
 
 import pytest
@@ -726,38 +728,160 @@ def test_start_watcher_popens_this_module(
 # --- the watcher's frame handling ------------------------------------------
 
 
-async def test_watch_frame_raises_popups_and_records_resolutions(
+async def until(predicate, timeout: float = 2.0) -> None:
+    """Await a condition the loop's own scheduling settles — a
+    task's start, a thread's record — or name the wait's failure."""
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if predicate():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("condition did not arrive")
+
+
+def rules_frame() -> str:
+    """The registration's first frame: the rules view that adopts
+    the server's canonical workspace id (#297)."""
+    return json.dumps(
+        {
+            "event": "egress.rules",
+            "data": {
+                "workspace_id": "ws1",
+                "mode": "interactive",
+                "allow_list": [],
+                "allowed": [],
+                "denied": [],
+            },
+        }
+    )
+
+
+def request_frame(
+    rid: str,
+    host: str = "api.example",
+    port: int = 443,
+    requested_at: float = 10.0,
+    expires_at: float | None = None,
+) -> str:
+    """One held request's frame, the daemon's snapshot shape."""
+    row: dict = {
+        "id": rid,
+        "workspace_id": "ws1",
+        "dest_host": host,
+        "dest_port": port,
+        "requested_at": requested_at,
+    }
+    if expires_at is not None:
+        row["expires_at"] = expires_at
+    return json.dumps(
+        {
+            "event": "egress.request",
+            "data": {"workspace_id": "ws1", "request": row},
+        }
+    )
+
+
+def resolved_frame(rid: str, decision: str = "allowed") -> str:
+    """One resolution's frame."""
+    return json.dumps(
+        {
+            "event": "egress.resolved",
+            "data": {
+                "workspace_id": "ws1",
+                "request_id": rid,
+                "decision": decision,
+            },
+        }
+    )
+
+
+async def test_watch_frame_raises_one_popup_and_latches_the_rest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gate = threading.Event()
+    popped = []
+
+    def slow_popup(workspace_id: str, session: str) -> int:
+        popped.append((workspace_id, session))
+        assert gate.wait(5)
+        return 0
+
+    monkeypatch.setattr(tp, "raise_popup", slow_popup)
+    state = tp.WatchState()
+    await tp.watch_frame(json.loads(request_frame("r1")), "ws1", "sess", state)
+    await until(lambda: len(popped) == 1)
+    # The popup stands: a second request joins its list, and its
+    # frame raises nothing of its own.
+    await tp.watch_frame(json.loads(request_frame("r2")), "ws1", "sess", state)
+    assert state.popup_up is True
+    gate.set()
+    await until(lambda: not state.popup_up)
+    assert popped == [("ws1", "sess")]
+    # The latch open again: the next request raises.
+    await tp.watch_frame(json.loads(request_frame("r2")), "ws1", "sess", state)
+    await until(lambda: len(popped) == 2)
+    gate.set()
+    await until(lambda: not state.popup_up)
+
+
+async def test_watch_frame_skips_the_decided_and_the_shapeless(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     popped = []
-    monkeypatch.setattr(
-        tp, "raise_popup", lambda row, ws, session: popped.append(row["id"])
+    monkeypatch.setattr(tp, "raise_popup", lambda *a: popped.append(a))
+    state = tp.WatchState()
+    state.resolved = {"r1"}
+    await tp.watch_frame(json.loads(request_frame("r1")), "ws1", "sess", state)
+    await tp.watch_frame(
+        {"event": "egress.request", "data": {}}, "ws1", "sess", state
     )
-    request = {
-        "event": "egress.request",
-        "data": {
-            "request": {
-                "id": "r1",
-                "workspace_id": "ws1",
-                "dest_host": "api.example",
-                "dest_port": 443,
-            }
-        },
-    }
-    resolved = {"event": "egress.resolved", "data": {"request_id": "r1"}}
-    await tp.watch_frame(request, "ws1", "sess", set())
-    assert popped == ["r1"]
-    seen: set[str] = set()
-    await tp.watch_frame(resolved, "ws1", "sess", seen)
-    await tp.watch_frame(request, "ws1", "sess", seen)
-    assert seen == {"r1"}
-    assert popped == ["r1"]  # decided elsewhere: no second popup
-    other = {"event": "egress.rules", "data": {}}
-    await tp.watch_frame(other, "ws1", "sess", seen)
+    await tp.watch_frame(
+        {"event": "egress.request", "data": {"request": "junk"}},
+        "ws1",
+        "sess",
+        state,
+    )
+    await asyncio.sleep(0.05)
+    assert popped == []
+    # A resolution's id records whatever raised it; a frame that
+    # names none, and a frame the watcher does not know, both
+    # pass it by.
+    await tp.watch_frame(
+        json.loads(resolved_frame("r2")), "ws1", "sess", state
+    )
+    assert state.resolved == {"r1", "r2"}
+    await tp.watch_frame(
+        {"event": "egress.resolved", "data": {"request_id": None}},
+        "ws1",
+        "sess",
+        state,
+    )
+    await tp.watch_frame(
+        {"event": "egress.rules", "data": {}}, "ws1", "sess", state
+    )
+    assert state.resolved == {"r1", "r2"}
+
+
+async def test_watch_frame_gives_up_when_tmux_is_gone(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    def boom(workspace_id: str, session: str) -> int:
+        raise OSError("no tmux")
+
+    monkeypatch.setattr(tp, "raise_popup", boom)
+    state = tp.WatchState()
+    await tp.watch_frame(json.loads(request_frame("r1")), "ws1", "sess", state)
+    await until(lambda: state.gave_up)
+    await until(lambda: not state.popup_up)
+    assert "popup unavailable: no tmux" in capsys.readouterr().out
+    # The watcher stays registered: a later request raises nothing
+    # and breaks nothing.
+    await tp.watch_frame(json.loads(request_frame("r2")), "ws1", "sess", state)
+    await asyncio.sleep(0.05)
+    assert state.popup_up is False
 
 
 async def test_watch_frame_stops_on_a_refused_registration(
-    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture,
 ) -> None:
     # A workspace id that names nothing: the server refuses the
@@ -769,9 +893,8 @@ async def test_watch_frame_stops_on_a_refused_registration(
         "event": "egress.decider_rejected",
         "data": {"reason": "unknown workspace"},
     }
-    monkeypatch.setattr(tp, "raise_popup", lambda *a: None)
     with pytest.raises(SystemExit):
-        await tp.watch_frame(rejected, "nope", "sess", set())
+        await tp.watch_frame(rejected, "nope", "sess", tp.WatchState())
     out = capsys.readouterr().out
     assert "decider registration refused: nope" in out
     assert "unknown workspace" in out
@@ -824,7 +947,7 @@ async def test_watch_loop_registers_decides_and_retires(
     monkeypatch.setattr(
         tp,
         "raise_popup",
-        lambda row, ws, session: popped.append((row["id"], ws, session)),
+        lambda ws, session: popped.append((ws, session)),
     )
     sock = FakeWS(
         [
@@ -838,7 +961,7 @@ async def test_watch_loop_registers_decides_and_retires(
     assert await tp.watch_loop("ws1", "sess") == 0
     announce = '{"type": "egress.decider", "workspace": "ws1"}'
     assert sock.sent == [announce]
-    assert popped == [("r1", "ws1", "sess")]
+    await until(lambda: popped == [("ws1", "sess")])
     assert connect.kwargs["uri"].endswith("/api/v1/events")
 
 
@@ -918,16 +1041,15 @@ def test_raise_popup_targets_the_sessions_client(
         return subprocess.CompletedProcess(argv, 0)
 
     monkeypatch.setattr(tp.subprocess, "run", fake_run)
-    row = {"id": "r1", "dest_host": "api.example", "dest_port": 443}
-    assert tp.raise_popup(row, "ws1", "sess") == 0
+    assert tp.raise_popup("ws1", "sess") == 0
     argv = ran["argv"]
     assert argv[:4] == ["tmux", "display-popup", "-t", "/dev/pts/3"]
     assert argv[4] == "-E"
-    assert argv[5:9] == ["-w", "76", "-h", "12"]
-    assert "decide -w ws1 -r r1 -d api.example:443" in argv[9]
+    assert argv[5:9] == ["-w", "76", "-h", "16"]
+    assert "decide -w ws1" in argv[9]
     # No attached client — the window is gone — reports nonzero.
     monkeypatch.setattr(tp, "popup_client", lambda session: None)
-    assert tp.raise_popup(row, "ws1", "sess") == 1
+    assert tp.raise_popup("ws1", "sess") == 1
 
 
 def test_popup_client_resolves_the_attached_tty(
@@ -983,17 +1105,35 @@ def test_session_alive_reads_has_session(
 # --- the decide role --------------------------------------------------------
 
 
-def test_verdict_for_maps_the_keys() -> None:
-    # The quick forms: a allows until restart, d denies now.
-    assert tp.verdict_for("a") == ("allow", "tilrestart")
-    assert tp.verdict_for("d") == ("deny", "once")
-    # The uppercase twins hand their duration to the chooser.
-    assert tp.verdict_for("A") is None
-    assert tp.verdict_for("D") is None
-    # Any other key — Enter, EOF, a stray letter — denies now.
-    assert tp.verdict_for("") == ("deny", "once")
-    assert tp.verdict_for("x") == ("deny", "once")
-    assert tp.verdict_for("1") == ("deny", "once")
+def test_chooser_line_lists_the_durations() -> None:
+    plain = tp.chooser_line(on=False)
+    assert "[1] once" in plain
+    assert "[5] forever" in plain
+    assert "\x1b" not in plain
+
+
+def test_clip_cuts_long_labels() -> None:
+    assert tp.clip("abc", 5) == "abc"
+    assert tp.clip("abcdef", 5) == "abcd…"
+    assert tp.clip("x", 0) == ""
+
+
+def test_popup_size_reads_the_pty_and_falls_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    master, slave = pty.openpty()
+    out = os.fdopen(slave, "w")
+    monkeypatch.setattr(tp.sys, "stdout", out)
+    fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 100, 0, 0))
+    assert tp.popup_size() == (100, 24)
+    # A pty that answers nothing keeps the shipped geometry.
+    fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 0, 0, 0, 0))
+    assert tp.popup_size() == (tp.POPUP_COLS, tp.POPUP_ROWS)
+    os.close(master)
+    out.close()
+    # So does a stdout with no fd at all (a pipe, a test).
+    monkeypatch.setattr(tp.sys, "stdout", io.StringIO())
+    assert tp.popup_size() == (tp.POPUP_COLS, tp.POPUP_ROWS)
 
 
 def test_duration_for_maps_the_chooser_keys() -> None:
@@ -1027,166 +1167,603 @@ def test_ansi_follows_the_tty_and_no_color(
     assert tp.ansi() is False
 
 
-def test_prompt_text_plains_and_paints() -> None:
-    plain = tp.prompt_text(on=False)
-    lines = plain.splitlines()
-    assert "[a] until restart" in lines[0]
-    assert "[d] now" in lines[1]
-    # The chooser column lines up under itself, row over row.
-    assert lines[0].index("[A]") == lines[1].index("[D]")
-    # The fail-fast default stays a behavior, not a line.
-    assert "any other key" not in plain
-    assert "\x1b" not in plain
-    painted = tp.prompt_text(on=True)
-    assert painted != plain
-    assert "\x1b[32m[a]" in painted
-    assert "\x1b[31m[d]" in painted
+# --- the popup's key surface ------------------------------------------------
 
 
-def test_duration_text_lists_the_durations() -> None:
-    plain = tp.duration_text(on=False)
-    assert "[1] once" in plain
-    assert "[5] forever" in plain
-    assert "\x1b" not in plain
+def test_key_decoder_maps_sequences_and_singles() -> None:
+    decoder = tp.KeyDecoder()
+    assert decoder.feed(b"\x1b[Ba") == ["down", "a"]
+    assert decoder.feed(b"\x1bOA") == ["up"]
+    assert decoder.feed(b"\r") == ["enter"]
+    assert decoder.feed(b"\x04") == ["esc"]
+    # Control bytes drop; left and right count for nothing.
+    assert decoder.feed(b"\x00\x7f") == []
+    assert decoder.feed(b"\x1b[D") == []
+    # An unknown CSI body drops its leader and keeps scanning.
+    assert decoder.feed(b"\x1b[Zx") == ["x"]
+    # A parameterized sequence drops whole, parameters and all.
+    assert decoder.feed(b"\x1b[1;5Aa") == ["a"]
+    # A control byte inside a body ends it: the tail survives.
+    assert decoder.feed(b"\x1b[\x08x") == ["x"]
+    # An unknown SS3 pair drops whole; a partial one parks.
+    assert decoder.feed(b"\x1bOPa") == ["a"]
+    parked = tp.KeyDecoder()
+    assert parked.feed(b"\x1bO") == []
+    assert parked.parked is True
+    # An Esc pair (Alt+key) degrades to the key it carried.
+    assert decoder.feed(b"\x1bx") == ["x"]
 
 
-def test_read_key_falls_back_to_a_line_when_not_a_tty(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(tp.sys, "stdin", io.StringIO("4\n"))
-    monkeypatch.setattr(tp.sys, "stdout", io.StringIO())
-    assert tp.read_key("choose: ") == "4"
+def test_key_decoder_lone_esc_counts_after_the_wait() -> None:
+    decoder = tp.KeyDecoder()
+    assert decoder.feed(b"\x1b") == []
+    assert decoder.parked is True
+    assert decoder.lapse() == ["esc"]
+    # A partial sequence had its tail lost: it drops silently.
+    partial = tp.KeyDecoder()
+    assert partial.feed(b"\x1b[") == []
+    assert partial.lapse() == []
+    # A tail that arrives in time still completes the sequence.
+    split = tp.KeyDecoder()
+    assert split.feed(b"\x1b") == []
+    assert split.feed(b"[B") == ["down"]
 
 
-def test_read_key_reads_one_key_from_a_tty(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # A real pty pair: cbreak reads the one key without Enter, and
-    # the terminal's saved modes come back. The key is written
-    # mid-read (a timer thread) — a byte sitting in the pty's
-    # queue before the cbreak switch is dropped by the termios
-    # change, while the popup's own keys always arrive after it.
+async def test_key_source_pumps_a_pty() -> None:
     master, slave = pty.openpty()
-    reader = os.fdopen(slave, "r")
-    monkeypatch.setattr(tp.sys, "stdin", reader)
-    monkeypatch.setattr(tp.sys, "stdout", io.StringIO())
-    timer = threading.Timer(0.1, os.write, args=(master, b"4"))
-    timer.start()
-    assert tp.read_key("choose: ") == "4"
-    timer.join()
-    timer = threading.Timer(0.1, os.write, args=(master, b"n"))
-    timer.start()
-    assert tp.read_key("again: ") == "n"
-    timer.join()
+    saved = termios.tcgetattr(slave)
+    tty.setcbreak(slave)  # the popup runs the pty in cbreak; a
+    # canonical line buffer would sit on the keys until Enter.
+    source = tp.KeySource(slave)
+    try:
+        os.write(master, b"\x1b[Ba")
+        assert await asyncio.wait_for(source.keys.get(), 2) == "down"
+        assert await asyncio.wait_for(source.keys.get(), 2) == "a"
+        # A lone Esc waits out its tail-window before it counts.
+        os.write(master, b"\x1b")
+        assert await asyncio.wait_for(source.keys.get(), 2) == "esc"
+    finally:
+        source.close()
+        termios.tcsetattr(slave, termios.TCSADRAIN, saved)
+        os.close(master)
+        os.close(slave)
+
+
+async def test_key_source_settles_and_closes_its_timer() -> None:
+    master, slave = pty.openpty()
+    source = tp.KeySource(slave)
+    source.decoder.buf += b"\x1b"
+    source.settle()
+    source.settle()  # a second park re-arms the wait
+    assert source.timer is not None
+    source.lapse()
+    assert source.timer is None
+    assert source.keys.get_nowait() == "esc"
+    source.decoder.buf += b"\x1b"
+    source.settle()
+    source.close()  # an armed timer dies with the source
+    assert source.timer is None
     os.close(master)
-    reader.close()
+    os.close(slave)
 
 
-def test_linger_holds_the_outcome_line(
+async def test_key_source_survives_a_dead_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(tp, "OUTCOME_LINGER_S", 0)
-    tp.linger()
+    master, slave = pty.openpty()
+    saved = termios.tcgetattr(slave)
+    tty.setcbreak(slave)
+    source = tp.KeySource(slave)
+
+    def gone(fd: int, count: int) -> bytes:
+        raise OSError("fd closed")
+
+    monkeypatch.setattr(tp.os, "read", gone)
+    os.write(master, b"a")  # the readable edge meets the dead read
+    await asyncio.sleep(0.05)
+    monkeypatch.undo()
+    source.close()
+    termios.tcsetattr(slave, termios.TCSADRAIN, saved)
+    os.close(master)
+    os.close(slave)
 
 
-def test_run_decide_posts_the_verdict(
+# --- the popup UI -----------------------------------------------------------
+
+
+def ui(now: dict | None = None) -> tp.PopupUI:
+    """A plain-paint UI on a movable clock — render() touches no
+    terminal, so the assertions read the frames as text."""
+    clock = (lambda: now["t"]) if now is not None else (lambda: 1000.0)
+    return tp.PopupUI("ws1", clock=clock, on=False)
+
+
+def test_the_list_renders_rows_and_countdowns() -> None:
+    view = ui()
+    assert view.frame(rules_frame()) is False
+    view.frame(request_frame("r1", expires_at=1045.0))
+    view.frame(
+        request_frame(
+            "r2", host="cdn.example", requested_at=11.0, expires_at=1041.0
+        )
+    )
+    lines = view.render(76, 16).split("\n")
+    assert lines[0].strip() == "pending egress requests: 2"
+    assert "> api.example:443" in lines[2]
+    assert lines[2].endswith("45s")
+    assert "  cdn.example:443" in lines[3]
+    assert lines[3].endswith("41s")
+    # The key map's three rows and the status row follow the list.
+    assert "[a] until restart" in lines[5]
+    assert "[d] now" in lines[6]
+    assert "[↑]/[↓] move" in lines[7]
+    assert lines[8] == ""
+    assert "\x1b" not in "\n".join(lines)
+
+
+def test_the_list_clips_long_rows_and_deep_lists() -> None:
+    view = ui()
+    view.frame(rules_frame())
+    view.frame(
+        request_frame("r1", host="a-very-long-hostname.example.internal")
+    )
+    narrow = view.render(40, 16).splitlines()
+    assert "…" in narrow[2]
+    assert len(narrow[2]) <= 40
+    # More holds than the window: the header counts the hidden.
+    deep = ui()
+    deep.frame(rules_frame())
+    for i in range(7):
+        deep.frame(request_frame(f"r{i}", host=f"h{i}.example"))
+    short = deep.render(76, 12).splitlines()
+    assert short[0].strip().startswith("pending egress requests: 7")
+    assert "(+2 more)" in short[0]
+
+
+async def test_keys_navigate_and_decide(
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture,
 ) -> None:
-    client_env(monkeypatch)
-    monkeypatch.setattr(tp, "linger", lambda: None)
-    posted = {}
+    posted = []
 
-    class FakeClient:
-        async def __aenter__(self):
-            return self
+    async def fake_post(ws, rid, decision, duration):
+        posted.append((ws, rid, decision, duration))
 
-        async def __aexit__(self, *exc):
-            return None
+    monkeypatch.setattr(tp, "post_verdict", fake_post)
+    view = ui()
+    view.frame(rules_frame())
+    view.frame(request_frame("r1"))
+    view.frame(request_frame("r2", host="cdn.example"))
+    assert view.key("down") is False
+    assert view.index == 1
+    view.key("up")
+    view.key("up")  # clamps at the top
+    assert view.index == 0
+    view.key("x")  # outside the map: nothing changes
+    assert not view.posts
+    view.key("a")
+    await asyncio.gather(*view.posts)
+    assert posted == [("ws1", "r1", "allow", "tilrestart")]
+    assert view.status == (
+        "allow api.example:443 (tilrestart)",
+        tp.PAINT_ALLOW,
+    )
+    assert view.exited is False
 
-    monkeypatch.setattr(tp, "api_client", lambda *_a, **_k: FakeClient())
 
-    async def fake_request(client, method, path, json_body=None):
-        posted.update(method=method, path=path, body=json_body)
-
-    monkeypatch.setattr(tp, "request", fake_request)
-    monkeypatch.setattr(tp, "read_key", lambda prompt: "a")
-    rc = tp.run_decide(["-w", "ws1", "-r", "r1", "-d", "api.example:443"])
-    assert rc == 0
-    assert posted["method"] == "POST"
-    assert posted["path"] == "/api/v1/workspaces/ws1/egress/requests/r1"
-    assert posted["body"] == {"decision": "allow", "duration": "tilrestart"}
-    out = capsys.readouterr().out
-    assert "destination: api.example:443" in out
-    assert "allow (tilrestart)" in out
-
-
-def test_run_decide_uppercase_opens_the_duration_chooser(
+async def test_the_chooser_takes_a_duration_and_esc_backs_out(
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture,
 ) -> None:
-    client_env(monkeypatch)
-    monkeypatch.setattr(tp, "linger", lambda: None)
-    posted = {}
+    posted = []
 
-    class FakeClient:
-        async def __aenter__(self):
-            return self
+    async def fake_post(ws, rid, decision, duration):
+        posted.append((ws, rid, decision, duration))
 
-        async def __aexit__(self, *exc):
-            return None
-
-    monkeypatch.setattr(tp, "api_client", lambda *_a, **_k: FakeClient())
-
-    async def fake_request(client, method, path, json_body=None):
-        posted.update(method=method, path=path, body=json_body)
-
-    monkeypatch.setattr(tp, "request", fake_request)
-    keys = iter(["A", "2"])
-    monkeypatch.setattr(tp, "read_key", lambda prompt: next(keys))
-    rc = tp.run_decide(["-w", "ws1", "-r", "r1", "-d", "api.example:443"])
-    assert rc == 0
-    assert posted["body"] == {"decision": "allow", "duration": "5m"}
-    out = capsys.readouterr().out
-    assert "allow (5m)" in out
+    monkeypatch.setattr(tp, "post_verdict", fake_post)
+    view = ui()
+    view.frame(rules_frame())
+    view.frame(request_frame("r1"))
+    view.key("D")
+    assert "duration:" in view.render(76, 16)
+    view.key("esc")  # the chooser backs out, nothing posts
+    assert view.chooser is None
+    view.key("D")
+    view.key("up")  # arrows hold the chooser open
+    assert view.chooser == "deny"
+    view.key("3")
+    await asyncio.gather(*view.posts)
+    assert posted == [("ws1", "r1", "deny", "15m")]
+    assert view.status == ("deny api.example:443 (15m)", tp.PAINT_DENY)
 
 
-def test_run_decide_names_a_post_that_cannot_land(
+async def test_a_post_that_cannot_land_names_its_reason(
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture,
 ) -> None:
-    client_env(monkeypatch)
-    monkeypatch.setattr(tp, "linger", lambda: None)
-
-    class FakeClient:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *exc):
-            return None
-
-    monkeypatch.setattr(tp, "api_client", lambda *_a, **_k: FakeClient())
-
-    async def refuse(client, method, path, json_body=None):
+    async def refuse(ws, rid, decision, duration):
         raise SystemExit("msks: 409: resolved elsewhere")
 
-    monkeypatch.setattr(tp, "request", refuse)
-    monkeypatch.setattr(tp, "read_key", lambda prompt: "y")
-    rc = tp.run_decide(["-w", "ws1", "-r", "r1", "-d", "d:443"])
-    assert rc == 1
-    assert "resolved elsewhere" in capsys.readouterr().out
+    monkeypatch.setattr(tp, "post_verdict", refuse)
+    view = ui()
+    view.frame(rules_frame())
+    view.frame(request_frame("r1"))
+    view.key("a")
+    await asyncio.gather(*view.posts)
+    assert view.status == (
+        "msks: 409: resolved elsewhere",
+        tp.PAINT_DENY,
+    )
+    # The hold stays for its own exit: the popup does not.
+    assert view.exited is False
+
+
+def test_frames_drop_resolved_holds_and_clamp_the_selection() -> None:
+    view = ui()
+    view.frame(rules_frame())
+    for rid in ("r1", "r2", "r3"):
+        view.frame(request_frame(rid))
+    view.move(1)
+    view.move(1)
+    assert view.index == 2
+    view.frame(resolved_frame("r3"))
+    assert view.index == 1
+    view.frame(resolved_frame("r1"))
+    assert view.index == 0
+    assert [hold.id for hold in view.rows()] == ["r2"]
+
+
+def test_the_empty_list_closes_after_the_grace() -> None:
+    now = {"t": 1000.0}
+    view = ui(now)
+    view.frame(rules_frame())
+    view.frame(request_frame("r1"))
+    view.frame(resolved_frame("r1"))
+    now["t"] = 1000.4
+    assert view.tick() is False  # inside the grace window
+    now["t"] = 1000.6
+    assert view.tick() is True  # past it, and the list is empty
+    assert view.exit_code == 0
+    # The frames never landed: no close, whatever the clock says.
+    assert ui(now).tick() is False
+
+
+def test_a_refused_registration_exits_with_the_reason() -> None:
+    view = ui()
+    rejected = json.dumps(
+        {
+            "event": "egress.decider_rejected",
+            "data": {"reason": "unknown workspace"},
+        }
+    )
+    assert view.frame(rejected) is True
+    assert view.exit_code == 1
+    assert view.status == (
+        "decider registration refused: unknown workspace",
+        tp.PAINT_DENY,
+    )
+
+
+async def test_session_result_reraises_the_unexpected() -> None:
+    async def bug() -> None:
+        raise ValueError("bug")
+
+    broken = asyncio.create_task(bug())
+    await asyncio.sleep(0)
+    with pytest.raises(ValueError, match="bug"):
+        tp.session_result([broken])
+    # A cancelled task carries no verdict of its own.
+    stopped = asyncio.create_task(asyncio.sleep(30))
+    stopped.cancel()
+    await asyncio.gather(stopped, return_exceptions=True)
+    assert tp.session_result([stopped]) is None
+
+
+def test_paint_marks_the_exit_when_the_pty_dies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Dead(io.StringIO):
+        def write(self, text):
+            raise OSError("gone")
+
+        def flush(self) -> None:
+            return None
+
+    monkeypatch.setattr(tp.sys, "stdout", Dead())
+    view = ui()
+    view.frame(rules_frame())
+    view.frame(request_frame("r1"))
+    assert view.exited is True
+
+
+def test_cursor_writes_only_to_a_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out = Tty()
+    monkeypatch.setattr(tp.sys, "stdout", out)
+    tp.cursor(tp.HIDE_CURSOR)
+    tp.cursor(tp.SHOW_CURSOR)
+    assert out.getvalue() == "\x1b[?25l\x1b[?25h"
+    plain = io.StringIO()
+    monkeypatch.setattr(tp.sys, "stdout", plain)
+    tp.cursor(tp.HIDE_CURSOR)
+    assert plain.getvalue() == ""
+
+
+async def test_the_edges_of_an_empty_popup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    view = ui()
+    view.move(1)  # nothing to move
+    view.decide("allow", "once")  # nothing to decide
+    assert view.posts == set()
+    assert view.frame(rules_frame()) is False
+    junk = json.dumps({"event": "junk", "data": {}})
+    assert view.frame(junk) is False  # an unhandled frame changes nothing
+    monkeypatch.setattr(tp, "OUTCOME_LINGER_S", 5)
+    # A close without a line to read skips the beat entirely.
+    await asyncio.wait_for(view.close_out(), 0.1)
+
+
+def test_a_resync_clears_stale_rows() -> None:
+    view = ui()
+    view.frame(rules_frame())
+    view.frame(request_frame("r1"))
+    view.resync = True  # a reconnect's registration
+    view.frame(rules_frame())  # its snapshot lands nothing
+    assert view.rows() == []
+    view.frame(request_frame("r2"))
+    assert [hold.id for hold in view.rows()] == ["r2"]
+    # A mid-connection rules refresh clears nothing.
+    view.frame(rules_frame())
+    assert [hold.id for hold in view.rows()] == ["r2"]
+
+
+# --- the decide loop --------------------------------------------------------
+
+
+class ClosingWS(FakeWS):
+    """A scripted websocket that closes once its frames run out —
+    the reconnect path's connection."""
+
+    async def recv(self) -> str:
+        if self.frames:
+            return self.frames.pop(0)
+        raise websockets.ConnectionClosed(None, Close(1000, "bye"))
+
+
+async def scripted(
+    monkeypatch: pytest.MonkeyPatch, connections: list
+) -> FakeConnect:
+    """Wire the decide loop to scripted connections on a fast
+    clock, with stdin a non-terminal (the keys arrive by queue
+    or not at all)."""
+    client_env(monkeypatch)
+    monkeypatch.setattr(tp.sys, "stdin", io.StringIO())
+    monkeypatch.setattr(tp, "SNAPSHOT_GRACE_S", 0.05)
+    monkeypatch.setattr(tp, "TICK_S", 0.02)
+    monkeypatch.setattr(tp, "OUTCOME_LINGER_S", 0)
+    connect = FakeConnect(connections)
+    monkeypatch.setattr(tp.websockets, "connect", connect)
+    return connect
+
+
+async def fake_posts(monkeypatch: pytest.MonkeyPatch) -> list:
+    """Record the verdict posts in place of the REST contract."""
+    posted = []
+
+    async def fake_post(ws, rid, decision, duration):
+        posted.append((rid, decision, duration))
+
+    monkeypatch.setattr(tp, "post_verdict", fake_post)
+    return posted
+
+
+async def test_decide_loop_lists_decides_and_leaves(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    posted = await fake_posts(monkeypatch)
+    sock = FakeWS(
+        [
+            rules_frame(),
+            request_frame("r1"),
+            request_frame("r2", host="cdn.example"),
+        ]
+    )
+    await scripted(monkeypatch, [sock])
+    keys: asyncio.Queue[str] = asyncio.Queue()
+    task = asyncio.create_task(tp.decide_loop("ws1", keys))
+    await asyncio.sleep(0.1)  # the frames land before the keys
+    keys.put_nowait("down")
+    await asyncio.sleep(0.05)
+    keys.put_nowait("a")
+    await until(lambda: len(posted) == 1)
+    keys.put_nowait("esc")
+    assert await task == 0
+    assert posted == [("r2", "allow", "tilrestart")]
+    assert sock.sent == ['{"type": "egress.decider", "workspace": "ws1"}']
+    out = capsys.readouterr().out
+    assert "pending egress requests: 2" in out
+    assert "api.example:443" in out
+    assert "cdn.example:443" in out
+
+
+async def test_decide_loop_closes_on_an_empty_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await scripted(monkeypatch, [FakeWS([rules_frame()])])
+    assert await tp.decide_loop("ws1") == 0
+
+
+async def test_decide_loop_drops_a_hold_that_expires(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    posted = await fake_posts(monkeypatch)
+    await scripted(
+        monkeypatch,
+        [FakeWS([rules_frame(), request_frame("r1"), resolved_frame("r1")])],
+    )
+    assert await tp.decide_loop("ws1") == 0
+    assert posted == []
+    out = capsys.readouterr().out
+    assert "api.example:443" in out
+    assert "pending egress requests: 0" in out
+
+
+async def test_decide_loop_resyncs_after_a_reconnect(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    # The first connection delivers a hold and drops; the hold
+    # resolves during the outage, and the second connection's
+    # snapshot lands nothing — the resync clears the stale row
+    # instead of pinning it to the list forever.
+    first = ClosingWS([rules_frame(), request_frame("r1")])
+    second = FakeWS([rules_frame()])
+    await scripted(monkeypatch, [first, second])
+    assert await tp.decide_loop("ws1") == 0
+    assert "pending egress requests: 0" in capsys.readouterr().out
+
+
+async def test_decide_loop_exits_on_a_refused_registration(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    await scripted(
+        monkeypatch,
+        [
+            FakeWS(
+                [
+                    json.dumps(
+                        {
+                            "event": "egress.decider_rejected",
+                            "data": {"reason": "unknown workspace"},
+                        }
+                    )
+                ]
+            )
+        ],
+    )
+    assert await tp.decide_loop("ws1") == 1
+    out = capsys.readouterr().out
+    assert "decider registration refused: unknown workspace" in out
+
+
+async def test_decide_loop_exits_on_a_token_the_handshake_cannot_carry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client_env(monkeypatch)
+    monkeypatch.setenv("MSKSC_TOKEN", "a b")
+    monkeypatch.setattr(tp.websockets, "connect", FakeConnect([]))
+    with pytest.raises(SystemExit) as caught:
+        await tp.decide_loop("ws1")
+    assert "cannot ride" in str(caught.value)
+    assert "a b" not in str(caught.value)
+
+
+async def test_decide_loop_exits_on_an_auth_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client_env(monkeypatch)
+
+    def refused_recv() -> str:
+        raise websockets.ConnectionClosed(
+            Close(wsauth.CLOSE_AUTH_FAILED, "no"), None
+        )
+
+    sock = FakeWS([])
+    sock.recv = refused_recv  # type: ignore[method-assign]
+    monkeypatch.setattr(tp.websockets, "connect", FakeConnect([sock]))
+    with pytest.raises(SystemExit, match="authentication failed"):
+        await tp.decide_loop("ws1")
+
+
+async def test_decide_loop_returns_when_the_connections_run_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The connect ladder done — the daemon gone for good — is a
+    # clean exit, not a spin.
+    await scripted(monkeypatch, [ClosingWS([])])
+    assert await tp.decide_loop("ws1") == 0
+
+
+async def test_post_verdict_posts_the_rest_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client_env(monkeypatch)
+    posted = {}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+    monkeypatch.setattr(tp, "api_client", lambda *_a, **_k: FakeClient())
+
+    async def fake_request(client, method, path, json_body=None):
+        posted.update(method=method, path=path, body=json_body)
+
+    monkeypatch.setattr(tp, "request", fake_request)
+    await tp.post_verdict("ws1", "r1", "allow", "5m")
+    assert posted["method"] == "POST"
+    assert posted["path"] == "/api/v1/workspaces/ws1/egress/requests/r1"
+    assert posted["body"] == {"decision": "allow", "duration": "5m"}
 
 
 def test_run_decide_validates_its_arguments() -> None:
+    with pytest.raises(SystemExit, match="needs a value"):
+        tp.run_decide(["-w"])
     with pytest.raises(SystemExit, match="usage"):
-        tp.run_decide(["-w", "ws1"])
+        tp.run_decide(["-w", "ws1", "extra"])
+
+
+def test_run_decide_runs_the_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tp.sys, "stdin", io.StringIO())
+    calls = []
+
+    async def fake_loop(workspace_id, keys=None):
+        calls.append((workspace_id, keys))
+        return 7
+
+    monkeypatch.setattr(tp, "decide_loop", fake_loop)
+    assert tp.run_decide(["-w", "ws1"]) == 7
+    assert calls == [("ws1", None)]
+
+
+def test_run_decide_takes_keys_from_a_tty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The full key path against a real pty pair: cbreak holds for
+    # the session, the readable edge decodes the keys, and the
+    # terminal's saved modes come back. The frames arrive over a
+    # scripted websocket; the keys arrive from the pty's master.
+    posted = []
+
+    async def fake_post(ws, rid, decision, duration):
+        posted.append((rid, decision, duration))
+
+    monkeypatch.setattr(tp, "post_verdict", fake_post)
+    client_env(monkeypatch)
+    monkeypatch.setattr(tp, "SNAPSHOT_GRACE_S", 5.0)
+    monkeypatch.setattr(tp, "TICK_S", 0.1)
+    monkeypatch.setattr(
+        tp.websockets,
+        "connect",
+        FakeConnect([FakeWS([rules_frame(), request_frame("r1")])]),
+    )
+    master, slave = pty.openpty()
+    before = termios.tcgetattr(slave)
+    monkeypatch.setattr(tp.sys, "stdin", os.fdopen(slave, "r"))
+    allow = threading.Timer(0.2, os.write, args=(master, b"a"))
+    leave = threading.Timer(0.6, os.write, args=(master, b"\x1b"))
+    allow.start()
+    leave.start()
+    assert tp.run_decide(["-w", "ws1"]) == 0
+    allow.join()
+    leave.join()
+    assert posted == [("r1", "allow", "tilrestart")]
+    assert list(termios.tcgetattr(slave)) == list(before)
+    os.close(master)
 
 
 def test_decide_command_spells_the_popup_role() -> None:
-    row = {"id": "r1", "dest_host": "api.example", "dest_port": 0}
-    line = tp.decide_command(row, "ws1")
+    line = tp.decide_command("ws1")
     assert line.startswith(tp.sys.executable)
-    assert line.endswith(
-        "-m msks.client.term_popup decide -w ws1 -r r1"
-        " -d 'api.example (all ports)'"
-    )
+    assert line.endswith("-m msks.client.term_popup decide -w ws1")

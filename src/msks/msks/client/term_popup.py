@@ -8,9 +8,16 @@ window the prefix opens — ``konsole -e msks-term-popup``, ``xterm
 the appended command as a local tmux session. While the session
 lives, a background watcher speaks the events websocket as a
 consent decider for the workspace; an egress request needing a
-verdict raises a tmux popup over the shell, one keypress decides
-it, and the popup closes. The terminal choice stays where it
-already lives: in ``terminal_open_cmd``'s own prefix.
+verdict raises a tmux popup over the shell, and the popup lists
+every current hold for the workspace (#461): the operator moves
+between the holds with the arrow keys, allows or denies each one,
+and a hold leaves the list the moment the daemon resolves it — a
+verdict from another decider window, or the hold's own timeout.
+The popup closes itself when the list empties; Esc closes it any
+time, and the holds a closed popup leaves behind stay held, to
+their timeout or a verdict from the consent TUI. The terminal
+choice stays where it already lives: in ``terminal_open_cmd``'s
+own prefix.
 
 Four roles share this module, spelled as the first argument:
 
@@ -30,11 +37,13 @@ Four roles share this module, spelled as the first argument:
     shell (its own process group membership takes it down with the
     window), then becomes the appended command.
 ``watch``
-    The consent watcher: connect as decider, raise the popup for
-    each pending request, and exit once the session is gone.
+    The consent watcher: connect as decider, raise the popup when
+    a request arrives and none stands, and exit once the session
+    is gone.
 ``decide``
-    The popup's command: show the held request, take one keypress,
-    and post the verdict.
+    The popup's command: speak the events websocket itself, show
+    the live list of the workspace's holds, and post the verdicts
+    the operator keys in.
 
 The launcher runs detached with stdio on devnull (#341's spawn
 contract), so every role keeps its own diagnostics to a log file
@@ -43,10 +52,12 @@ surface.
 """
 
 import asyncio
+import fcntl
 import json
 import os
 import shlex
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -60,17 +71,55 @@ from . import wsauth
 from .egress import DURATIONS, connect_args, dest_label, refused
 from .env import env_token, env_url
 from .rest import api_client, request, workspace_row
+from .tui.consent import (
+    ADDED,
+    REJECTED,
+    RESOLVED,
+    RULES,
+    ConsentController,
+    ConsentRequest,
+    fmt_duration,
+)
 from .wintitle import TITLE_MARKER, configured_title, set_window_title
 
 #: The popup geometry: fixed cells, sized for the 80-column window
 #: the consent screens already target; tmux clips it to a smaller
-#: client window.
+#: client window. The rows cover the daemon's pending cap (the
+#: default rate limit holds eight) beside the chrome — header,
+#: key map, status — so the common case lists every hold at once;
+#: more holds than fit scroll a window around the selection.
 POPUP_COLS = 76
-POPUP_ROWS = 12
+POPUP_ROWS = 16
 
-#: How long the outcome line stays up before ``-E`` closes the
-#: popup — an instant close would eat the verdict's confirmation.
+#: The popup's fixed chrome: the header row, the blank under it,
+#: the blank over the key map, the key map's three rows, and the
+#: status line — the list's rows are everything between.
+CHROME_ROWS = 7
+
+#: How long the outcome line stays up before the popup closes —
+#: an instant close would eat the verdict's confirmation.
 OUTCOME_LINGER_S = 1.2
+
+#: The popup's repaint beat: the countdowns move once a second,
+#: and an empty list past its grace closes on a tick.
+TICK_S = 1.0
+
+#: How long the popup waits after its registration's rules frame
+#: before an empty list counts as final: the pending rows land
+#: right behind that frame, and a blank beat between the two is a
+#: slow link, not a workspace with nothing held.
+SNAPSHOT_GRACE_S = 0.5
+
+#: How long a lone Esc byte waits for a sequence tail before it
+#: counts as the Esc key itself — an arrow's three bytes arrive
+#: together, and only a bare Esc sits alone.
+ESC_WAIT_S = 0.05
+
+#: The cursor escapes the popup writes on its own tty: the cursor
+#: hides while the list stands (the selection marker points) and
+#: comes back on every exit path.
+HIDE_CURSOR = "\x1b[?25l"
+SHOW_CURSOR = "\x1b[?25h"
 
 #: The recv idle window the watcher sits in when no frames flow:
 #: each wake re-checks that its tmux session still exists, so a
@@ -78,10 +127,10 @@ OUTCOME_LINGER_S = 1.2
 LIVENESS_TICK_S = 5.0
 
 #: The popup's quick verdicts: ``a`` allows until restart (the
-#: common case), ``d`` denies now — and so does every other key,
-#: the fail-fast default a popup left alone must take (the
-#: ``--decide`` prompt's rule). The uppercase twins (``A``, ``D``)
-#: open the duration chooser for the same verdict.
+#: common case), ``d`` denies now. The uppercase twins (``A``,
+#: ``D``) open the duration chooser for the same verdict. A key
+#: outside the map changes nothing — the hold stays held, for its
+#: timeout or a later verdict, and the map names every action.
 CHOICES = {
     "a": ("allow", "tilrestart"),
     "d": ("deny", "once"),
@@ -89,6 +138,10 @@ CHOICES = {
 
 #: The duration chooser's keys, in :data:`egress.DURATIONS` order.
 DURATION_KEYS = {str(i): duration for i, duration in enumerate(DURATIONS, 1)}
+
+#: The keys that open the duration chooser, and the verdict each
+#: parks until its duration key lands.
+CHOOSER_KEYS = {"A": "allow", "D": "deny"}
 
 #: The popup's ANSI paint codes: bold labels, a bold-cyan
 #: destination, a faint request id, green allow bindings, red deny
@@ -176,6 +229,21 @@ PAGE_SCROLL_COMMANDS = (
     ),
 )
 
+#: The escape sequences the popup's keys ride in: the arrows in
+#: both spellings a terminal sends (CSI and SS3), mapped to the
+#: names the popup speaks. Left and right arrive and count for
+#: nothing — the list has one column.
+KEY_SEQUENCES = (
+    (b"\x1b[A", "up"),
+    (b"\x1b[B", "down"),
+    (b"\x1bOA", "up"),
+    (b"\x1bOB", "down"),
+    (b"\x1b[C", ""),
+    (b"\x1b[D", ""),
+    (b"\x1bOC", ""),
+    (b"\x1bOD", ""),
+)
+
 ROLES = ("launch", "pane", "watch", "decide")
 
 
@@ -260,39 +328,45 @@ def run_watch(argv: list[str]) -> int:
 
 
 def run_decide(argv: list[str]) -> int:
-    """The popup's command (#379): show the held request, take one
-    keypress, post the verdict. A post that cannot land (the
-    request resolved in another window, the daemon unreachable)
-    names its reason from :func:`request`'s one-line contract; the
-    outcome lingers so ``-E``'s instant close cannot eat it."""
+    """The popup's command (#461): speak the events websocket as a
+    decider of its own, show the live list of the workspace's
+    holds, and post the verdicts the operator keys in. The tty
+    stays in cbreak for the whole session — one keypress is one
+    key — and the terminal's saved modes come back on every exit
+    path. A stdin that is not a terminal (a test, a piped run)
+    skips the key surface: the list still lives, and the popup
+    still closes itself when it empties."""
     workspace_id, rest = take_option("-w", argv)
-    request_id, rest = take_option("-r", rest)
-    dest, rest = take_option("-d", rest)
-    if None in (workspace_id, request_id, dest) or rest:
-        raise SystemExit(
-            "usage: msks.client.term_popup decide "
-            "-w WORKSPACE -r REQUEST -d DESTINATION"
-        )
-    on = ansi()
-    print(
-        f"  {span(on, PAINT_LABEL, 'destination:')}"
-        f" {span(on, PAINT_FACT, dest)}"
-    )
-    print(
-        f"  {span(on, PAINT_LABEL, 'request:')}"
-        f"     {span(on, PAINT_ID, request_id)}"
-    )
-    decision, duration = read_verdict(on)
+    if workspace_id is None or rest:
+        raise SystemExit("usage: msks.client.term_popup decide -w WORKSPACE")
+    saved = None
+    if sys.stdin.isatty():
+        saved = termios.tcgetattr(sys.stdin.fileno())
+        tty.setcbreak(sys.stdin.fileno())
     try:
-        asyncio.run(post_verdict(workspace_id, request_id, decision, duration))
-    except SystemExit as exc:
-        print(f"  {span(on, PAINT_DENY, str(exc))}")
-        linger()
-        return 1
-    paint = PAINT_ALLOW if decision == "allow" else PAINT_DENY
-    print(f"  {span(on, paint, f'{decision} ({duration})')}")
-    linger()
-    return 0
+        return asyncio.run(decide_loop(workspace_id))
+    finally:
+        if saved is not None:
+            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, saved)
+
+
+# --- the watcher's frame handling ------------------------------------------
+
+
+class WatchState:
+    """The watcher's cross-frame state (#461): the ids this window
+    already saw resolved, and the latch that keeps one popup up at
+    a time — a request that lands while the popup stands shows in
+    the popup's own list, so its frame needs no raise of its own.
+    A popup the watcher cannot raise (tmux gone) sets the give-up
+    flag: the watcher stays registered as the workspace's decider,
+    and the diagnostics carry the one line naming the failure."""
+
+    def __init__(self) -> None:
+        self.resolved: set[str] = set()
+        self.popup_up = False
+        self.gave_up = False
+        self.tasks: set[asyncio.Task] = set()
 
 
 async def watch_loop(workspace_id: str, session: str) -> int:
@@ -301,13 +375,11 @@ async def watch_loop(workspace_id: str, session: str) -> int:
     early on a closed connection — the reconnect ladder keeps the
     decider registered through a daemon restart; the liveness
     check is the only exit."""
-    resolved: set[str] = set()
+    state = WatchState()
     try:
         url, token = env_url(), env_token()
         async for sock in websockets.connect(**connect_args(url, token)):
-            if not await watch_connection(
-                sock, workspace_id, session, resolved
-            ):
+            if not await watch_connection(sock, workspace_id, session, state):
                 return 0
     except wsauth.UnusableToken as exc:
         # One line without the token in it — the websocket library's
@@ -317,7 +389,7 @@ async def watch_loop(workspace_id: str, session: str) -> int:
 
 
 async def watch_connection(
-    sock, workspace_id: str, session: str, resolved: set[str]
+    sock, workspace_id: str, session: str, state: WatchState
 ) -> bool:
     """One connection's lifetime: announce as decider, then idle
     no longer than one liveness tick so a closed window retires
@@ -337,7 +409,7 @@ async def watch_connection(
                 if not await asyncio.to_thread(session_alive, session):
                     return False
                 continue
-            await watch_frame(json.loads(raw), workspace_id, session, resolved)
+            await watch_frame(json.loads(raw), workspace_id, session, state)
     except websockets.ConnectionClosed as closed:
         return closed_connection(closed)
 
@@ -353,37 +425,81 @@ def closed_connection(closed: websockets.ConnectionClosed) -> bool:
 
 
 async def watch_frame(
-    frame: dict, workspace_id: str, session: str, resolved: set[str]
+    frame: dict, workspace_id: str, session: str, state: WatchState
 ) -> None:
-    """One events frame (#379): a fresh request raises the decider
-    popup over the shell — the blocking popup queues a second
-    request behind the first — and every resolution records its id,
-    so a reconnect's re-sent snapshot does not re-raise a request
-    this window already decided. A request resolved while its
-    popup is up answers at the POST with the daemon's one-line
-    reason; a request resolved between its frame and its popup
-    still pops (the resolution frame sits unread behind it). A
-    refused decider registration — the workspace id names nothing —
-    stops the watcher with the log's one line naming the id and the
+    """One events frame (#461): a fresh request raises the list
+    popup while none stands — and every resolution records its id,
+    so neither a reconnect's re-sent snapshot nor a queued frame
+    re-raises what this window already saw decided. A refused
+    decider registration — the workspace id names nothing — stops
+    the watcher with the log's one line naming the id and the
     daemon's reason."""
     event = frame.get("event")
     data = frame.get("data", {})
     if event == "egress.request":
-        row = data["request"]
-        if row["id"] not in resolved:
-            await asyncio.to_thread(raise_popup, row, workspace_id, session)
+        watch_request(data, workspace_id, session, state)
     elif event == "egress.resolved":
-        resolved.add(data["request_id"])
+        watch_resolution(data, state)
     elif event == "egress.decider_rejected":
-        print(
-            f"decider registration refused: {workspace_id}"
-            f" ({data.get('reason', 'no reason given')}); stopping",
-            flush=True,
-        )
-        raise SystemExit(1)
+        stop_refused(workspace_id, data)
 
 
-def raise_popup(row: dict, workspace_id: str, session: str) -> int:
+def watch_request(
+    data: dict, workspace_id: str, session: str, state: WatchState
+) -> None:
+    """A request frame's raise: the ids this window saw decided
+    and the popup latch both stand in front of it."""
+    row = data.get("request")
+    rid = row.get("id") if isinstance(row, dict) else None
+    if rid and rid not in state.resolved and not state.popup_up:
+        raise_later(workspace_id, session, state)
+
+
+def watch_resolution(data: dict, state: WatchState) -> None:
+    """A resolution frame's record: the id never raises again."""
+    rid = data.get("request_id")
+    if isinstance(rid, str):
+        state.resolved.add(rid)
+
+
+def stop_refused(workspace_id: str, data: dict) -> None:
+    """The daemon's refusal of this watcher's registration: one
+    line in the log, and the watcher stops."""
+    print(
+        f"decider registration refused: {workspace_id}"
+        f" ({data.get('reason', 'no reason given')}); stopping",
+        flush=True,
+    )
+    raise SystemExit(1)
+
+
+def raise_later(workspace_id: str, session: str, state: WatchState) -> None:
+    """Latch the popup up and raise it off the frame path: the
+    recv loop keeps flowing while the popup stands (a resolution
+    that lands mid-popup records before a queued request frame
+    could re-raise it), and the latch opens when the popup's
+    process ends. A raise that cannot run — tmux gone — gives up
+    on popups with one line in the watcher's log and leaves the
+    registration standing."""
+    if state.gave_up:
+        return
+    state.popup_up = True
+
+    async def cycle() -> None:
+        try:
+            await asyncio.to_thread(raise_popup, workspace_id, session)
+        except OSError as exc:
+            state.gave_up = True
+            print(f"popup unavailable: {exc}; giving up on popups", flush=True)
+        finally:
+            state.popup_up = False
+
+    task = asyncio.create_task(cycle())
+    state.tasks.add(task)
+    task.add_done_callback(state.tasks.discard)
+
+
+def raise_popup(workspace_id: str, session: str) -> int:
     """Open the decider overlay over the session's window: one
     tmux client (the terminal window's own client) gets the popup,
     and it closes itself when the decide role exits (``-E``). No
@@ -403,7 +519,7 @@ def raise_popup(row: dict, workspace_id: str, session: str) -> int:
             str(POPUP_COLS),
             "-h",
             str(POPUP_ROWS),
-            decide_command(row, workspace_id),
+            decide_command(workspace_id),
         ],
         check=False,
     )
@@ -494,49 +610,621 @@ async def post_verdict(
         )
 
 
-def read_verdict(on: bool) -> tuple[str, str]:
-    """The popup's keypress exchange: one key takes its quick
-    verdict; an uppercase twin reads a second key and takes that
-    duration for the same verdict."""
-    key = read_key(prompt_text(on))
-    verdict = verdict_for(key)
-    if verdict is None:
-        choice = read_key(duration_text(on))
-        return ("allow" if key == "A" else "deny", duration_for(choice))
-    return verdict
+# --- the decide role: the live list ----------------------------------------
 
 
-def read_key(prompt: str) -> str:
-    """Read one keypress without waiting for Enter — the popup's
-    single-key contract. A stdin that is not a terminal (a test, a
-    piped run) falls back to a whole line; EOF reads empty."""
-    sys.stdout.write(prompt)
-    sys.stdout.flush()
-    if not sys.stdin.isatty():
-        return sys.stdin.readline().strip()
-    fd = sys.stdin.fileno()
-    saved = termios.tcgetattr(fd)
+class SessionDone(Exception):
+    """The popup's own exit, out of a session task: carries the
+    process exit code and, for the exits that name their reason
+    (the auth refusal), the one line to print — a SystemExit
+    raised inside a task escapes the loop's own machinery, so the
+    task hands the reason over and the main coroutine raises it."""
+
+    def __init__(self, code: int, message: str | None = None) -> None:
+        super().__init__(code)
+        self.code = code
+        self.message = message
+
+
+async def decide_loop(
+    workspace_id: str, keys: asyncio.Queue[str] | None = None
+) -> int:
+    """The popup's event loop (#461): register as a decider of its
+    own on every connection, run the list until it empties or the
+    operator leaves, and reconnect through a daemon restart — the
+    registration re-sends the snapshot, and the resync clears what
+    resolved while the connection was down."""
+    keys, source = open_keys(keys)
+    ui = PopupUI(workspace_id)
+    cursor(HIDE_CURSOR)
     try:
-        tty.setcbreak(fd)
-        return sys.stdin.read(1)
+        url, token = env_url(), env_token()
+        async for sock in websockets.connect(**connect_args(url, token)):
+            code = await popup_connection(sock, ui, keys, workspace_id)
+            if code is not None:
+                return code
+    except wsauth.UnusableToken as exc:
+        # One line without the token in it — the websocket library's
+        # own refusal embeds the credential whole (#116 review).
+        raise SystemExit(f"msks: {exc}") from None
     finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+        if source is not None:
+            source.close()
+        cursor(SHOW_CURSOR)
+    return 0
 
 
-def prompt_text(on: bool = True) -> str:
-    """The popup's key map, one verdict per row: the quick form and
-    the duration chooser each sit in their own column. A key
-    outside the map still denies now — :func:`verdict_for`'s
-    fail-fast rule — but the map no longer says so."""
-    return (
-        f"  {span(on, PAINT_LABEL, 'allow:')}  "
-        f"{key_cell(on, PAINT_KEY, '[a]', 'until restart')}"
-        f"{span(on, PAINT_KEY, '[A]')} choose duration\n"
-        f"  {span(on, PAINT_LABEL, 'deny:')}   "
-        f"{key_cell(on, PAINT_DKEY, '[d]', 'now')}"
-        f"{span(on, PAINT_DKEY, '[D]')} choose duration\n"
-        f"  {span(on, PAINT_LABEL, '> ')}"
+def open_keys(
+    keys: asyncio.Queue[str] | None,
+) -> tuple[asyncio.Queue[str] | None, KeySource | None]:
+    """The popup's key surface: the pty's readable edge when stdin
+    is a terminal, the caller's own queue when it hands one (the
+    tests), and none at all on a piped stdin — the list still
+    lives, and the popup still closes itself when it empties."""
+    if keys is not None or not sys.stdin.isatty():
+        return keys, None
+    source = KeySource(sys.stdin.fileno())
+    return source.keys, source
+
+
+def cursor(code: str) -> None:
+    """Hide or show the terminal's cursor: the selection marker
+    points, so the cursor itself stays out of the list's face —
+    and a stdout that is not a terminal (a pipe, a test) takes no
+    escape at all."""
+    if sys.stdout.isatty():
+        sys.stdout.write(code)
+        sys.stdout.flush()
+
+
+async def popup_connection(
+    sock, ui: PopupUI, keys: asyncio.Queue[str] | None, workspace_id: str
+) -> int | None:
+    """One connection from the popup's side: announce as a
+    decider, mark the list for the resync, and run the session."""
+    ui.resync = True
+    await sock.send(
+        json.dumps({"type": "egress.decider", "workspace": workspace_id})
     )
+    done = await popup_session(sock, ui, keys)
+    if done is None:
+        return None
+    if done.message:
+        raise SystemExit(done.message)
+    return done.code
+
+
+async def popup_session(
+    sock, ui: PopupUI, keys: asyncio.Queue[str] | None
+) -> SessionDone | None:
+    """One connection's session: the frames, the keys, and the
+    repaint tick run side by side; the first to finish ends it. A
+    SessionDone is the popup's own exit; None means the connection
+    closed and the caller reconnects."""
+    tasks = [asyncio.create_task(popup_reader(sock, ui))]
+    if keys is not None:
+        tasks.append(asyncio.create_task(popup_keyer(keys, ui)))
+    tasks.append(asyncio.create_task(popup_ticker(ui)))
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        await retire(tasks)
+    return session_result(tasks)
+
+
+async def retire(tasks: list[asyncio.Task]) -> None:
+    """Cancel and reap the session's tasks: the first finisher
+    ended the session, the rest stop where they stand."""
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def session_result(tasks: list[asyncio.Task]) -> SessionDone | None:
+    """The session's verdict: the popup's own exit when a task
+    carries one, None when the connection closed — and any other
+    exception re-raises into the caller."""
+    for task in tasks:
+        if task.cancelled():
+            continue
+        exc = task.exception()
+        if isinstance(exc, SessionDone):
+            return exc
+        if exc is not None:
+            raise exc
+    return None
+
+
+async def popup_reader(sock, ui: PopupUI) -> None:
+    """The frames task: every inbound frame lands on the UI; a
+    closed connection returns (the caller reconnects), the auth
+    refusal exits with its one line, and the UI's own exits — the
+    emptied list, the refused registration — linger their last
+    frame for the read it needs."""
+    while True:
+        try:
+            raw = await sock.recv()
+        except websockets.ConnectionClosed as closed:
+            if refused(closed):
+                raise SessionDone(
+                    1, f"msks: {wsauth.AUTH_FAILED_MESSAGE}"
+                ) from None
+            return
+        if ui.frame(raw):
+            await ui.close_out()
+            raise SessionDone(ui.exit_code)
+
+
+async def popup_keyer(keys: asyncio.Queue[str], ui: PopupUI) -> None:
+    """The keys task: every decoded key lands on the UI; the UI's
+    own exits (Esc, the emptied list) leave without the linger —
+    the operator's key already said goodbye."""
+    while True:
+        if ui.key(await keys.get()):
+            raise SessionDone(ui.exit_code)
+
+
+async def popup_ticker(ui: PopupUI) -> None:
+    """The tick task: the per-second repaint that moves the
+    countdowns and closes an emptied list past its grace."""
+    while True:
+        await asyncio.sleep(TICK_S)
+        if ui.tick():
+            raise SessionDone(ui.exit_code)
+
+
+class KeyDecoder:
+    """The pty's bytes into key names (#461): the arrows in both
+    spellings a terminal sends, a lone Esc that waits briefly for
+    a tail before it counts, and single printable keys. Anything
+    else — a control byte, an unknown sequence, an Esc pair
+    (Alt+key) — drops or degrades to the key it carried, so a
+    terminal's odd emission never closes the popup by accident."""
+
+    def __init__(self) -> None:
+        self.buf = bytearray()
+
+    @property
+    def parked(self) -> bool:
+        """Whether the buffer head waits on more bytes — an escape
+        sequence mid-arrival."""
+        return bool(self.buf)
+
+    def feed(self, data: bytes) -> list[str]:
+        """Drain arrived bytes into keys; a parked prefix stays for
+        its tail or :meth:`lapse`."""
+        self.buf += data
+        keys = []
+        while self.buf:
+            key = self.take()
+            if key is None:
+                break
+            if key:
+                keys.append(key)
+        return keys
+
+    def take(self) -> str | None:
+        """One key off the buffer head: a name, ``""`` for bytes
+        consumed silently, or None while a prefix parks."""
+        first = self.buf[0]
+        if first == 0x1B:
+            return self.take_escape()
+        del self.buf[0]
+        if first in (0x0A, 0x0D):
+            return "enter"
+        if first == 0x04:  # Ctrl-D leaves the way Esc does
+            return "esc"
+        if 0x20 <= first < 0x7F:
+            return chr(first)
+        return ""
+
+    def take_escape(self) -> str | None:
+        """The buffer's escape head: a known sequence's name, or
+        whatever the unknown-escape rules make of it."""
+        data = bytes(self.buf)
+        for seq, key in KEY_SEQUENCES:
+            if data.startswith(seq):
+                del self.buf[: len(seq)]
+                return key
+        return self.take_unknown_escape(data)
+
+    def take_unknown_escape(self, data: bytes) -> str | None:
+        """The escape head no known sequence claims: a CSI or SS3
+        body parks until its final byte and drops whole when it
+        lands, a lone Esc parks for the lapse, and an Esc pair
+        (Alt+key) sheds its modifier."""
+        if data.startswith(b"\x1b["):
+            return self.drop_csi(data)
+        if data.startswith(b"\x1bO"):
+            if len(data) < 3:
+                return None
+            del self.buf[:3]  # an unknown SS3 pair drops whole
+            return ""
+        if data == b"\x1b":
+            return None  # a lone Esc: the lapse decides
+        del self.buf[:1]
+        return ""
+
+    def drop_csi(self, data: bytes) -> str | None:
+        """A CSI body: parked until its final byte arrives, then
+        dropped whole."""
+        span = csi_span(data)
+        if span is None:
+            return None
+        del self.buf[:span]  # an unknown CSI: drop it whole
+        return ""
+
+    def lapse(self) -> list[str]:
+        """The parked prefix after the wait: a lone Esc counts at
+        last; a partial sequence had its tail lost, and drops."""
+        lone = self.buf == b"\x1b"
+        self.buf.clear()
+        return ["esc"] if lone else []
+
+
+def csi_span(data: bytes) -> int | None:
+    """The length of one CSI sequence: the escape, the bracket,
+    the parameter and intermediate bytes, and the final byte that
+    closes it; None while that final byte has yet to arrive. A
+    control byte inside the body ends the span early — the tail
+    belongs to whatever comes next."""
+    for i in range(2, len(data)):
+        if data[i] < 0x20:
+            return i
+        if 0x40 <= data[i] <= 0x7E:
+            return i + 1
+    return None
+
+
+class KeySource:
+    """stdin's bytes onto the loop's key queue (#461): each
+    readable edge feeds :class:`KeyDecoder`, and a parked escape
+    prefix settles on a short timer — a lone Esc counts only once
+    its tail fails to arrive. The queue is the same one a caller
+    may hand :func:`decide_loop`, so the tests drive the key path
+    with the pump switched off."""
+
+    def __init__(self, fd: int) -> None:
+        self.fd = fd
+        self.decoder = KeyDecoder()
+        self.timer = None
+        self.keys: asyncio.Queue[str] = asyncio.Queue()
+        asyncio.get_running_loop().add_reader(fd, self.readable)
+
+    def readable(self) -> None:
+        """One readable edge: drain what arrived and re-settle."""
+        try:
+            data = os.read(self.fd, 64)
+        except OSError:
+            return
+        for name in self.decoder.feed(data):
+            self.keys.put_nowait(name)
+        self.settle()
+
+    def settle(self) -> None:
+        """(Re)arm the lapse timer while a prefix parks."""
+        if self.timer is not None:
+            self.timer.cancel()
+            self.timer = None
+        if self.decoder.parked:
+            self.timer = asyncio.get_running_loop().call_later(
+                ESC_WAIT_S, self.lapse
+            )
+
+    def lapse(self) -> None:
+        """The timer's edge: settle the parked prefix."""
+        self.timer = None
+        for name in self.decoder.lapse():
+            self.keys.put_nowait(name)
+        self.settle()
+
+    def close(self) -> None:
+        """Take the reader and any armed timer off the loop."""
+        if self.timer is not None:
+            self.timer.cancel()
+            self.timer = None
+        asyncio.get_running_loop().remove_reader(self.fd)
+
+
+class PopupUI:
+    """The popup's screen state (#461): the pending list off the
+    shared consent controller, the selection, the duration
+    chooser, and the status line. :meth:`paint` is the only
+    output edge; everything else is pure enough to drive straight
+    from tests."""
+
+    def __init__(
+        self,
+        workspace_id: str,
+        *,
+        clock=time.time,
+        on: bool | None = None,
+    ) -> None:
+        self.workspace_id = workspace_id
+        self.controller = ConsentController(
+            clock=clock, workspace_id=workspace_id
+        )
+        self.clock = clock
+        self.on = ansi() if on is None else on
+        self.index = 0
+        self.chooser: str | None = None
+        self.status = ("connecting", "")
+        self.posts: set[asyncio.Task] = set()
+        self.exited = False
+        self.exit_code = 0
+        self.resync = True
+        self.rules_at: float | None = None
+        self.close_after: float | None = None
+
+    def frame(self, raw: str) -> bool:
+        """One events frame: apply it, repaint, and report the
+        popup's exit."""
+        outcome, payload = self.controller.apply_frame(raw)
+        self.apply_outcome(outcome, payload)
+        self.paint()
+        return self.exited or self.closing()
+
+    def apply_outcome(self, outcome: str, payload: object) -> None:
+        """One frame's state change — the refused registration is
+        the only frame that exits on its own."""
+        if outcome == RULES:
+            self.land_rules()
+        elif outcome == ADDED:
+            self.land_request()
+        elif outcome == RESOLVED:
+            self.index = min(
+                self.index, max(len(self.controller.pending) - 1, 0)
+            )
+        elif outcome == REJECTED:
+            self.land_refusal(payload)
+
+    def land_request(self) -> None:
+        """The list's first hold takes the selection."""
+        if len(self.controller.pending) == 1:
+            self.index = 0
+
+    def land_refusal(self, payload: object) -> None:
+        """The daemon's refusal of the popup's registration: the
+        reason lands on the status line, and the exit code names
+        the stop."""
+        self.status = (
+            f"decider registration refused: {payload or 'no reason given'}",
+            PAINT_DENY,
+        )
+        self.exited = True
+        self.exit_code = 1
+
+    def key(self, name: str) -> bool:
+        """One decoded key: the map owns every action, and a key
+        outside it changes nothing — the hold stays held, for its
+        timeout or a later verdict. Esc is the one way out ahead of
+        the list emptying."""
+        if name == "esc":
+            return self.escape()
+        self.act(name)
+        self.paint()
+        return self.exited
+
+    def escape(self) -> bool:
+        """The Esc key: out of the chooser when one stands, out of
+        the popup otherwise."""
+        if self.chooser:
+            self.chooser = None
+            return False
+        self.exited = True
+        self.exit_code = 0
+        return True
+
+    def act(self, name: str) -> None:
+        """Every non-Esc key: the arrows move the selection, and
+        the verdict keys act on it — the chooser takes the next
+        key as its duration."""
+        if name in ("up", "down"):
+            self.step(name)
+        elif self.chooser:
+            self.choose(name)
+        elif name in CHOICES:
+            self.decide(*CHOICES[name])
+        elif name in CHOOSER_KEYS:
+            self.chooser = CHOOSER_KEYS[name]
+
+    def step(self, name: str) -> None:
+        """One arrow: the selection moves unless a chooser waits
+        on the next key."""
+        if not self.chooser:
+            self.move(-1 if name == "up" else 1)
+
+    def tick(self) -> bool:
+        """The per-second beat: the countdowns move, and an empty
+        list past its grace closes the popup."""
+        self.paint()
+        return self.closing()
+
+    def closing(self) -> bool:
+        """The emptied list's exit: only after the registration's
+        frames had their grace — the pending rows land right behind
+        the rules frame, and the blank beat between the two is a
+        slow link, not a workspace with nothing held."""
+        if self.rules_at is None or self.controller.pending:
+            return False
+        if self.close_after is not None and self.clock() < self.close_after:
+            return False
+        self.exited = True
+        self.exit_code = 0
+        return True
+
+    async def close_out(self) -> None:
+        """Hold the last frame up for the read it needs before the
+        popup closes — a close without a line to read (a raise for
+        a hold another window already decided) skips the beat."""
+        if self.status[0]:
+            await asyncio.sleep(OUTCOME_LINGER_S)
+
+    def land_rules(self) -> None:
+        """One rules frame: each connection's first precedes that
+        connection's pending snapshot, so the grace window re-arms
+        and a resync's stale rows clear — a hold that resolved
+        while the connection was down never comes back, and the
+        snapshot's rows re-land right behind the frame. The first
+        one also drops the connecting line."""
+        if self.resync:
+            self.controller.pending.clear()
+            self.index = 0
+            self.resync = False
+        self.close_after = self.clock() + SNAPSHOT_GRACE_S
+        if self.rules_at is None:
+            self.rules_at = self.clock()
+            self.status = ("", "")
+
+    def move(self, delta: int) -> None:
+        """Move the selection, clamped to the list."""
+        count = len(self.controller.pending)
+        if count:
+            self.index = min(max(self.index + delta, 0), count - 1)
+
+    def choose(self, name: str) -> None:
+        """The chooser's key: a duration for the parked verdict."""
+        decision = self.chooser or "deny"
+        self.chooser = None
+        self.decide(decision, duration_for(name))
+
+    def decide(self, decision: str, duration: str) -> None:
+        """Post one verdict for the selected hold, off the key
+        path: the row leaves when its resolution frame lands, not
+        when the post returns."""
+        rows = self.rows()
+        if rows:
+            task = asyncio.create_task(
+                self.post(decision, duration, rows[self.index])
+            )
+            self.posts.add(task)
+            task.add_done_callback(self.posts.discard)
+
+    async def post(
+        self, decision: str, duration: str, request: ConsentRequest
+    ) -> None:
+        """One verdict through the shared REST contract: failures
+        name their reason on the status line (the request resolved
+        in another window, the daemon unreachable) and the hold
+        stays for its own exit."""
+        label = dest_label(
+            {
+                "dest_host": request.dest_host,
+                "dest_port": request.dest_port,
+            }
+        )
+        try:
+            await post_verdict(
+                self.workspace_id, request.id, decision, duration
+            )
+        except SystemExit as exc:
+            self.status = (str(exc), PAINT_DENY)
+        else:
+            paint = PAINT_ALLOW if decision == "allow" else PAINT_DENY
+            self.status = (f"{decision} {label} ({duration})", paint)
+        self.paint()
+
+    def rows(self) -> list[ConsentRequest]:
+        """The pending holds, oldest first — the stable order the
+        selection rides."""
+        return self.controller.ordered()
+
+    def paint(self) -> None:
+        """Repaint the popup: home, clear below, draw. A dead pty
+        (the window closed under the popup) marks the exit instead
+        of raising through the loop."""
+        cols, height = popup_size()
+        try:
+            sys.stdout.write(f"\x1b[H\x1b[J{self.render(cols, height)}\n")
+            sys.stdout.flush()
+        except OSError:
+            self.exited = True
+
+    def render(self, width: int, height: int) -> str:
+        """The popup's frame as text: the header, the list's window
+        around the selection, the key map, and the status line."""
+        rows = self.rows()
+        fit = max(height - CHROME_ROWS, 1)
+        start = 0
+        if len(rows) > fit:
+            start = min(max(self.index - fit // 2, 0), len(rows) - fit)
+        window = rows[start : start + fit]
+        lines = [self.header_line(len(rows), len(rows) - len(window)), ""]
+        for offset, hold in enumerate(window):
+            lines.append(
+                self.hold_line(hold, start + offset == self.index, width)
+            )
+        lines.append("")
+        lines.extend(self.keymap_lines())
+        lines.append(self.status_line())
+        return "\n".join(lines)
+
+    def header_line(self, count: int, hidden: int) -> str:
+        """The list's header: how many holds pend, and how many
+        more sit past the window."""
+        text = f"pending egress requests: {count}"
+        if hidden:
+            text += f" (+{hidden} more)"
+        return f"  {span(self.on, PAINT_LABEL, text)}"
+
+    def hold_line(
+        self, request: ConsentRequest, selected: bool, width: int
+    ) -> str:
+        """One hold's row: the destination left, the remaining time
+        right, the selection's marker pointing at the row the
+        verdict keys act on."""
+        label = dest_label(
+            {
+                "dest_host": request.dest_host,
+                "dest_port": request.dest_port,
+            }
+        )
+        remain = self.remaining(request)
+        budget = max(width - 6, 12)
+        if len(label) + len(remain) + 1 > budget:
+            label = clip(label, budget - len(remain) - 1)
+        pad = budget - len(label) - len(remain)
+        left = f"{'> ' if selected else '  '}{label}"
+        if selected:
+            left = span(self.on, PAINT_FACT, left)
+            remain = span(self.on, PAINT_LABEL, remain)
+        else:
+            remain = span(self.on, PAINT_ID, remain)
+        return f"  {left}{' ' * pad} {remain}"
+
+    def remaining(self, request: ConsentRequest) -> str:
+        """The hold's time left, from the frame's honest deadline;
+        a frame without one (an older daemon) shows none."""
+        if request.expires_at is None:
+            return ""
+        return fmt_duration(max(0.0, request.expires_at - self.clock()))
+
+    def keymap_lines(self) -> list[str]:
+        """The key map's rows: the verdict keys, their duration
+        choosers, and the list's own keys."""
+        on = self.on
+        return [
+            f"  {span(on, PAINT_LABEL, 'allow:')}  "
+            f"{key_cell(on, PAINT_KEY, '[a]', 'until restart')}"
+            f"{span(on, PAINT_KEY, '[A]')} choose duration",
+            f"  {span(on, PAINT_LABEL, 'deny:')}   "
+            f"{key_cell(on, PAINT_DKEY, '[d]', 'now')}"
+            f"{span(on, PAINT_DKEY, '[D]')} choose duration",
+            f"  {span(on, PAINT_LABEL, 'select:')}"
+            f" {span(on, PAINT_KEY, '[↑]/[↓]')} move"
+            f"    {span(on, PAINT_KEY, '[Esc]')} close",
+        ]
+
+    def status_line(self) -> str:
+        """The status row: the chooser's key map while a verdict
+        parks, the last outcome line otherwise."""
+        if self.chooser:
+            return chooser_line(self.on)
+        text, paint = self.status
+        if not text:
+            return ""
+        marked = span(self.on, paint, text) if paint else text
+        return f"  {marked}"
 
 
 def key_cell(on: bool, code: str, key: str, label: str) -> str:
@@ -548,30 +1236,36 @@ def key_cell(on: bool, code: str, key: str, label: str) -> str:
     return f"{cell}{' ' * max(pad, 1)}"
 
 
-def duration_text(on: bool = True) -> str:
+def chooser_line(on: bool) -> str:
     """The duration chooser's key map, in :data:`egress.DURATIONS`
     order."""
     keys = "  ".join(
         f"{span(on, PAINT_KEY, f'[{i}]')} {duration}"
         for i, duration in enumerate(DURATIONS, 1)
     )
-    return (
-        f"  {span(on, PAINT_LABEL, 'duration:')} {keys}\n"
-        f"  {span(on, PAINT_LABEL, '> ')}"
-    )
+    return f"  {span(on, PAINT_LABEL, 'duration:')} {keys}"
 
 
-def verdict_for(key: str) -> tuple[str, str] | None:
-    """One pressed key's ``(decision, duration)``: the lowercase
-    quick forms, or None for the uppercase forms (their verdict's
-    duration comes from the chooser). Every key outside the map
-    denies now — the fail-fast default a popup left alone must
-    take."""
-    if key in CHOICES:
-        return CHOICES[key]
-    if key in ("A", "D"):
-        return None
-    return ("deny", "once")
+def clip(text: str, width: int) -> str:
+    """Text cut to width cells, an ellipsis marking the cut."""
+    if width <= 0:
+        return ""
+    return text if len(text) <= width else text[: width - 1] + "…"
+
+
+def popup_size() -> tuple[int, int]:
+    """The popup pty's columns and rows — tmux sizes it to the
+    popup geometry, clipped to the window — with the shipped
+    geometry standing in when the query cannot run (a pipe, a
+    test) or answers nothing."""
+    try:
+        packed = fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, b" " * 8)
+        rows, cols = struct.unpack("HHHH", packed)[:2]
+    except OSError, ValueError:
+        return POPUP_COLS, POPUP_ROWS
+    if cols <= 0 or rows <= 0:
+        return POPUP_COLS, POPUP_ROWS
+    return cols, rows
 
 
 def duration_for(key: str) -> str:
@@ -716,23 +1410,12 @@ def session_argv(
     return argv
 
 
-def decide_command(row: dict, workspace_id: str) -> str:
+def decide_command(workspace_id: str) -> str:
     """The one-line command the popup runs: this module's decide
-    role with the request's id and destination — everything the
-    prompt shows, so the popup needs no websocket of its own."""
+    role with the workspace — the holds arrive on the popup's own
+    events connection, so the raise carries nothing else."""
     return shlex.join(
-        [
-            sys.executable,
-            "-m",
-            MODULE,
-            "decide",
-            "-w",
-            workspace_id,
-            "-r",
-            row["id"],
-            "-d",
-            dest_label(row),
-        ]
+        [sys.executable, "-m", MODULE, "decide", "-w", workspace_id]
     )
 
 
@@ -812,12 +1495,6 @@ def child_argv(argv: list[str]) -> list[str]:
     if "--" in argv:
         argv = argv[argv.index("--") + 1 :]
     return argv
-
-
-def linger() -> None:
-    """Hold the outcome line up for the read it needs before the
-    popup closes."""
-    time.sleep(OUTCOME_LINGER_S)
 
 
 RUNNERS = {
