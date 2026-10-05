@@ -85,12 +85,14 @@ class FakeOwner:
         live=True,
         secret="real-one",
         verdict=None,
+        names=None,
     ):
         self.entries = entries
         self.authority = authority
         self.live = live
         self.secret = secret
         self.verdict = verdict or WebVerdict(True, "ungated")
+        self.names = names or {}
         self.swaps: list[tuple] = []
         self.sightings: list[tuple] = []
         self.leaf_snis: list[str] = []
@@ -99,8 +101,11 @@ class FakeOwner:
     def workspace_for_tap(self, tap_ip):
         return "ws-a" if tap_ip == TAP else None
 
-    async def web_verdict(self, workspace_id, host, port, address):
-        self.gated.append((workspace_id, host, port, address))
+    def host_for(self, workspace_id, address):
+        return self.names.get(address)
+
+    async def web_verdict(self, workspace_id, host, port, address, named):
+        self.gated.append((workspace_id, host, port, address, named))
         return self.verdict
 
     def entries_for(self, workspace_id):
@@ -226,8 +231,11 @@ async def test_hello_splices_a_sentinelless_sni(authority) -> None:
     data = hello_data(FakeClient(), None)
     await addon.tls_clienthello(data)
     assert data.ignore_connection is True
-    # The address the redirect preserved named the flow instead.
-    assert addon.owner.gated == [("ws-a", "198.51.100.7", 443, "198.51.100.7")]
+    # No name rode, and the naming memory holds none for the
+    # address: the address itself keyed the gate.
+    assert addon.owner.gated == [
+        ("ws-a", "198.51.100.7", 443, "198.51.100.7", None)
+    ]
 
 
 # --- the consent tier (#452) -------------------------------------------------
@@ -235,11 +243,26 @@ async def test_hello_splices_a_sentinelless_sni(authority) -> None:
 
 async def test_hello_gates_the_sni_before_the_splice(authority) -> None:
     """The gate runs before the splice decision and keys on the
-    SNI with the original destination beside it."""
+    SNI when the naming memory binds the connection's address to
+    it."""
+    owner = FakeOwner(
+        {entry().sentinel: entry()},
+        authority,
+        names={"198.51.100.7": SNI},
+    )
+    data = hello_data(FakeClient(), SNI)
+    await engine.InterceptorAddon(owner).tls_clienthello(data)
+    assert owner.gated == [("ws-a", SNI, 443, "198.51.100.7", SNI)]
+
+
+async def test_hello_keys_by_address_without_a_binding(authority) -> None:
+    """A name the naming memory never bound to the address keys
+    the gate by the address: a hosts-file or fronted dial cannot
+    borrow a name's verdict."""
     owner = FakeOwner({entry().sentinel: entry()}, authority)
     data = hello_data(FakeClient(), SNI)
     await engine.InterceptorAddon(owner).tls_clienthello(data)
-    assert owner.gated == [("ws-a", SNI, 443, "198.51.100.7")]
+    assert owner.gated == [("ws-a", SNI, 443, "198.51.100.7", None)]
 
 
 async def test_hello_marks_a_denied_connection(authority) -> None:
@@ -286,8 +309,29 @@ async def test_request_gates_plain_http(authority) -> None:
     await engine.InterceptorAddon(owner).request(flow)
     assert flow.response is not None
     assert flow.response.status_code == 403
-    assert owner.gated == [("ws-a", "plain.example.net", 80, "198.51.100.9")]
+    assert owner.gated == [
+        ("ws-a", "plain.example.net", 80, "198.51.100.9", None)
+    ]
     assert owner.swaps == []
+
+
+async def test_plain_http_answers_once_per_destination(authority) -> None:
+    """A ``once`` verdict covers the connection's own kept-alive
+    requests: the second request on the same connection gates no
+    further (a different Host would — a different key)."""
+    owner = FakeOwner({entry().sentinel: entry()}, authority)
+    flow = swap_flow(entry().sentinel, tls=False, pretty="plain.example.net")
+    flow.client_conn.sockname = ("198.51.100.9", 80)
+    addon = engine.InterceptorAddon(owner)
+    await addon.request(flow)
+    flow.response = None
+    await addon.request(flow)
+    assert flow.response is None  # allowed, forwarded both times
+    assert len(owner.gated) == 1
+    other = swap_flow(entry().sentinel, tls=False, pretty="other.example.net")
+    other.client_conn = flow.client_conn
+    await addon.request(other)
+    assert len(owner.gated) == 2
 
 
 async def test_request_skips_the_gate_for_allowed_tls(authority) -> None:

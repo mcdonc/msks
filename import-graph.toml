@@ -119,9 +119,9 @@ spec = 3
 # (#424); spec grew by one for the probe name's vocabulary
 llm = 2
 # spec grew: the probe service reads its whole vocabulary from the
-# leaf (#424); five more names for the web-egress consent gate's
-# posture and coverage vocabulary (#452)
-spec = 15
+# leaf (#424); seven more names for the web-egress consent gate's
+# posture, coverage, and address grammar (#452)
+spec = 16
 
 [snapshot.microvm]
 # interceptor: the local driver mints the workspace CA at create

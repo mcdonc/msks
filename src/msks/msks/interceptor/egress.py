@@ -9,7 +9,11 @@ keyed by the name the wire carries (SNI for TLS, the Host header
 for plain HTTP) instead of the address a SYN names.
 
 The decision table mirrors the resolver gate's precedence, with
-deny winning over allow (the safe direction):
+deny winning over allow (the safe direction), and every check
+keys on the destination :func:`gate_key` derives — the wire's
+name only when the naming memory binds it to the connection's
+address, else the address itself (a fronted or hosts-file dial
+cannot borrow a name's allowlist entry or verdict):
 
 - a name-keyed verdict already covers the destination — a session
   deny, or a durable ``forever`` deny row — deny;
@@ -41,6 +45,7 @@ from ..spec.egress import (
     MODE_STATIC,
     EgressPolicy,
     covers,
+    is_ipv4,
     ports_for,
 )
 
@@ -70,17 +75,23 @@ def deny(reason: str) -> WebVerdict:
 
 
 async def decide(
-    app, workspace_id: str, host: str, port: int, address: str
+    app,
+    workspace_id: str,
+    host: str,
+    port: int,
+    address: str,
+    named: str | None,
 ) -> WebVerdict:
     """The gate for one redirected web flow — never raises.
 
     ``host`` is the name the wire carried (SNI or Host header,
     falling back to the address when neither rode); ``address``
     and ``port`` are the original destination the redirect
-    preserved.
+    preserved; ``named`` is the name the daemon's naming memory
+    holds for that address (None when it never resolved).
     """
     try:
-        return await gate(app, workspace_id, host, port, address)
+        return await gate(app, workspace_id, host, port, address, named)
     except Exception:  # noqa: BLE001 - named below, fail-closed
         logger.exception(
             "interceptor: the egress gate failed for %s; answering deny",
@@ -89,11 +100,36 @@ async def decide(
         return deny("error")
 
 
+def gate_key(host: str, address: str, named: str | None) -> str:
+    """The destination a web flow gates on, lowercased (DNS
+    semantics — the wire's case must not fork the verdict rows).
+
+    The wire's name counts only when the naming memory binds it
+    to the connection's address — the guest resolved it through
+    the daemon's resolver. A name the memory holds for the
+    address under a different spelling keys by the memory's name
+    (a fronted claim); an address the memory never learned keys
+    by the address itself — the kernel path's keying, so a
+    hosts-file or raw-IP dial cannot borrow an allowlist entry
+    or a verdict granted to a name.
+    """
+    host = host.lower()
+    if named is not None:
+        return host if named == host else named
+    return address or host
+
+
 async def gate(
-    app, workspace_id: str, host: str, port: int, address: str
+    app,
+    workspace_id: str,
+    host: str,
+    port: int,
+    address: str,
+    named: str | None,
 ) -> WebVerdict:
     """The decision body ``decide`` guards: the posture split,
-    then coverage and the mode tail."""
+    then coverage and the mode tail — all keyed by
+    :func:`gate_key`."""
     policy = await posture(app, workspace_id)
     if policy is None:
         # A workspace that vanished mid-request: a missing row
@@ -101,9 +137,10 @@ async def gate(
         return deny("gone")
     if not policy.gated:
         return allow("ungated")
-    if not host and not address:
+    key = gate_key(host, address, named)
+    if not key:
         return deny("unnamed")
-    return await covered_or_mode(app, policy, host, port, address)
+    return await covered_or_mode(app, policy, key, port, address)
 
 
 async def posture(app, workspace_id: str) -> EgressPolicy | None:
@@ -114,79 +151,76 @@ async def posture(app, workspace_id: str) -> EgressPolicy | None:
 
 
 async def covered_or_mode(
-    app, policy: EgressPolicy, host: str, port: int, address: str
+    app, policy: EgressPolicy, key: str, port: int, address: str
 ) -> WebVerdict:
     """Past the posture split: durable and session coverage first
     (deny wins), then the static allowlist, then the mode tail."""
     engine = app.state.consent
     workspace_id = policy.workspace_id
-    if await denied_verdict(app, engine, workspace_id, host, port):
+    deny_covered, allow_covered = await standing(
+        app, engine, workspace_id, key, port
+    )
+    if deny_covered:
         return deny("verdict")
-    if allowlisted(policy, host, port, address):
+    if allowlisted(policy, key, port, address):
         return allow("allowlist")
-    if await allowed_verdict(app, engine, workspace_id, host, port):
+    if (
+        allow_covered
+        or engine.session.allow_ttl(workspace_id, key, port) is not None
+    ):
         return allow("verdict")
-    return await mode_tail(app, policy, host, port)
+    return await mode_tail(app, policy, key, port)
 
 
-async def denied_verdict(
-    app, engine, workspace_id: str, host: str, port: int
-) -> bool:
-    """Whether a standing deny covers the destination: the session
-    table first, then the durable ``forever`` row."""
-    if engine.session.deny_ttl(workspace_id, host, port) is not None:
-        return True
+async def standing(
+    app, engine, workspace_id: str, key: str, port: int
+) -> tuple[bool, bool]:
+    """``(deny_covered, allow_covered)`` from one durable read:
+    the session table first, then the ``forever`` row — one read
+    decides both halves, so a verdict landing between two looks
+    cannot be missed."""
+    if engine.session.deny_ttl(workspace_id, key, port) is not None:
+        return True, False
     row = await app.state.model.egress_consent.forever_verdict_for(
-        workspace_id, host
+        workspace_id, key
     )
-    return row is not None and row["decision"] == DECISION_DENIED
-
-
-async def allowed_verdict(
-    app, engine, workspace_id: str, host: str, port: int
-) -> bool:
-    """Whether a standing allow covers the destination: the session
-    table first, then the durable row — the only decision left at
-    this point is an allow (the deny half answered before it)."""
-    if engine.session.allow_ttl(workspace_id, host, port) is not None:
-        return True
-    return (
-        await app.state.model.egress_consent.forever_verdict_for(
-            workspace_id, host
-        )
-        is not None
-    )
+    denied = row is not None and row["decision"] == DECISION_DENIED
+    return denied, row is not None and not denied
 
 
 def allowlisted(
-    policy: EgressPolicy, host: str, port: int, address: str
+    policy: EgressPolicy, key: str, port: int, address: str
 ) -> bool:
-    """The static half: name specs match the name the wire carried
-    on this port; address specs (CIDRs and literals) match the
-    original destination the redirect preserved."""
-    return name_allowed(policy.host_specs, host, port) or address_allowed(
+    """The static half: name specs match the gated name on this
+    port; address specs (CIDRs and literals) match the original
+    destination the redirect preserved."""
+    return name_allowed(policy.host_specs, key, port) or address_allowed(
         policy.ip_specs, address, port
     )
 
 
-def name_allowed(specs, host: str, port: int) -> bool:
-    """Whether a name spec covers ``host`` on ``port``: a
+def name_allowed(specs, key: str, port: int) -> bool:
+    """Whether a name spec covers the gated name on ``port``: a
     port-less spec covers every port; a port-scoped one covers
     its own."""
-    ports = ports_for(host.lower(), specs)
+    ports = ports_for(key, specs)
     return covers(ports) and (ports is None or port in ports)
 
 
 def address_allowed(specs, address: str, port: int) -> bool:
     """Whether an address spec (CIDR or literal) covers the
-    original destination on ``port``."""
+    original destination on ``port``. An address that is not an
+    IPv4 literal (empty, or a form the redirect did not preserve)
+    matches nothing."""
+    if not is_ipv4(address):
+        return False
     return any(
         spec.port in (None, port) and spec.matches(address) for spec in specs
     )
 
 
 async def mode_tail(
-    app, policy: EgressPolicy, host: str, port: int
+    app, policy: EgressPolicy, key: str, port: int
 ) -> WebVerdict:
     """The mode tail: ``static`` records the denial and denies
     (the resolver's audit shape, port-keyed here — the wire named
@@ -197,10 +231,10 @@ async def mode_tail(
     if policy.mode == MODE_STATIC:
         with contextlib.suppress(Exception):
             await app.state.model.egress_consent.record_policy(
-                DECISION_DENIED, workspace_id, host, port
+                DECISION_DENIED, workspace_id, key, port
             )
         return deny("static")
-    future = await app.state.consent.hold(workspace_id, host, port)
+    future = await app.state.consent.hold(workspace_id, key, port)
     decided = await future
     return WebVerdict(
         decided.get("decision") == VERDICT_ALLOW,

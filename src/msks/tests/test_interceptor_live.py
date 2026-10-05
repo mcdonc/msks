@@ -36,6 +36,12 @@ class FakeNet:
 
     def __init__(self) -> None:
         self.interceptions: list[tuple[str, int | None]] = []
+        # The naming memory's stand-in: address -> the name the
+        # daemon's resolver last learned for it.
+        self.names: dict[str, str] = {}
+
+    def host_for(self, workspace_id: str, address: str) -> str | None:
+        return self.names.get(address)
 
     def attachment_for(self, workspace_id: str):
         return type("Attachment", (), {"tap_ip": TAP_IP})()
@@ -77,7 +83,10 @@ def key_pem(key) -> bytes:
 class Origin:
     """A loopback TLS origin echoing what it received."""
 
-    def __init__(self, tmp: Path, name: str, hosts: list[str]) -> None:
+    def __init__(
+        self, tmp: Path, name: str, hosts: list[str], addr: str = "127.0.0.1"
+    ) -> None:
+        self.addr = addr
         self.dir = tmp / f"origin-{name}"
         self.dir.mkdir()
         self.authority = ca.load_or_mint(self.dir, name)
@@ -96,7 +105,7 @@ class Origin:
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(chain, leaf_key)
         self.server = await asyncio.start_server(
-            self.serve, "127.0.0.1", 0, ssl=context
+            self.serve, self.addr, 0, ssl=context
         )
 
     @property
@@ -143,7 +152,7 @@ class PlainOrigin(Origin):
     """The plain-HTTP stand-in: the same echo, no TLS."""
 
     async def start(self) -> None:
-        self.server = await asyncio.start_server(self.serve, "127.0.0.1", 0)
+        self.server = await asyncio.start_server(self.serve, self.addr, 0)
 
 
 def read_response(sock: socket.socket) -> tuple[int, str]:
@@ -456,8 +465,12 @@ async def test_the_live_consent_gate(tmp_path, monkeypatch) -> None:
     denied one answers the local refusal without forwarding."""
     scratch = Path(tempfile.mkdtemp(prefix="msks-live-"))
     origins = {
-        "a": Origin(scratch, "a", [API]),
-        "b": Origin(scratch, "b", [OTHER]),
+        # One loopback address per origin, so the naming memory's
+        # address→name binding stands in cleanly (production's
+        # destinations hold distinct addresses; the swap test's
+        # shared 127.0.0.1 would map one name for both).
+        "a": Origin(scratch, "a", [API], addr="127.0.0.11"),
+        "b": Origin(scratch, "b", [OTHER], addr="127.0.0.12"),
     }
     for origin in origins.values():
         await origin.start()
@@ -472,6 +485,7 @@ async def test_the_live_consent_gate(tmp_path, monkeypatch) -> None:
     )
     app.state.model.migrate()
     app.state.net = FakeNet()
+    app.state.net.names = {"127.0.0.11": API, "127.0.0.12": OTHER}
     app.state.secrets = FakeSecrets()
     interceptor = Interceptor(app)
     app.state.interceptor = interceptor
@@ -503,8 +517,10 @@ async def test_the_live_consent_gate(tmp_path, monkeypatch) -> None:
 
     try:
         # 1. The hold: the ClientHello waits for a verdict, keyed
-        # by the SNI and the original port the redirect preserved.
-        holder["dst"] = ("127.0.0.1", origins["a"].port)
+        # by the SNI the naming memory binds to the connection's
+        # address (the origin's ephemeral port here stands in for
+        # the 443 production's redirect preserves).
+        holder["dst"] = ("127.0.0.11", origins["a"].port)
         task = asyncio.create_task(
             asyncio.to_thread(https_get, port, API, "/echo", auth, ws_ca)
         )
@@ -525,17 +541,22 @@ async def test_the_live_consent_gate(tmp_path, monkeypatch) -> None:
 
         # 3. The session allow covers the next connection: no new
         # hold, same swap.
-        holder["dst"] = ("127.0.0.1", origins["a"].port)
+        holder["dst"] = ("127.0.0.11", origins["a"].port)
         status, body = await asyncio.to_thread(
             https_get, port, API, "/echo", auth, ws_ca
         )
         assert status == 200
         assert "real-secret-one" in body
+        await asyncio.sleep(0.3)
+        rows = await app.state.model.egress_consent.list_requests(
+            "ws-live", decision="pending"
+        )
+        assert rows == []
 
         # 4. The deny: a second destination holds; the verdict
         # answers locally — the handshake completes against the
         # workspace CA, the request refuses, nothing forwards.
-        holder["dst"] = ("127.0.0.1", origins["b"].port)
+        holder["dst"] = ("127.0.0.12", origins["b"].port)
         task = asyncio.create_task(
             asyncio.to_thread(https_get, port, OTHER, "/echo", auth, ws_ca)
         )

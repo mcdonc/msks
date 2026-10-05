@@ -241,6 +241,14 @@ class InterceptorAddon:
         # request hook answers them locally. Weak, so a closed
         # connection's marker dies with the connection object.
         self._denied: weakref.WeakSet = weakref.WeakSet()
+        # One connection's own gate answers, per destination —
+        # plain HTTP gates per request, and a ``once`` verdict must
+        # not re-prompt for the next request on the same kept-alive
+        # connection. Weak, so a closed connection's answers die
+        # with it.
+        self._per_connection: weakref.WeakKeyDictionary = (
+            weakref.WeakKeyDictionary()
+        )
 
     def workspace(self, client) -> str | None:
         """The workspace whose tap accepted this connection — the
@@ -255,8 +263,13 @@ class InterceptorAddon:
         return client in self._denied
 
     async def gate(self, workspace: str, host: str, port: int, address: str):
-        """The egress gate for one web destination (#452)."""
-        return await self.owner.web_verdict(workspace, host, port, address)
+        """The egress gate for one web destination (#452), keyed by
+        the name the daemon's naming memory binds to the address
+        (the gate falls back to the address when nothing binds)."""
+        named = self.owner.host_for(workspace, address)
+        return await self.owner.web_verdict(
+            workspace, host, port, address, named
+        )
 
     async def tls_clienthello(self, data: tls.ClientHelloData) -> None:
         """The consent tier, then the splice tier. The gate first:
@@ -350,14 +363,23 @@ class InterceptorAddon:
     async def plain_denied(self, flow: http.HTTPFlow, workspace: str) -> bool:
         """Whether the egress gate denies this plain-HTTP request
         (True), or the connection is TLS and gated already (False
-        — the caller treats that as not-denied-here)."""
+        — the caller treats that as not-denied-here). One
+        connection's answer per destination caches: a ``once``
+        verdict covers the connection's own kept-alive requests,
+        and a different Host gates fresh (a different key)."""
         if flow.client_conn.tls:
             return False
-        address, port = original_destination(flow.client_conn)
-        verdict = await self.gate(
-            workspace, destination_name(flow), port, address
-        )
-        return not verdict.allowed
+        client = flow.client_conn
+        address, port = original_destination(client)
+        host = destination_name(flow)
+        key = (host, port)
+        cached = self._per_connection.get(client, {}).get(key)
+        if cached is not None:
+            return cached
+        verdict = await self.gate(workspace, host, port, address)
+        denied_answer = not verdict.allowed
+        self._per_connection.setdefault(client, {})[key] = denied_answer
+        return denied_answer
 
 
 class LogBridge:

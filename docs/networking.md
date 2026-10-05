@@ -131,20 +131,35 @@ each new outbound connection is decided:
   before the kernel chain, so those flows gate at the interceptor
   itself — on the name the wire carries, which is the one thing the
   network layer cannot read: the SNI of the TLS handshake on
-  HTTPS, the Host header on plain HTTP (the original destination
-  address answers for a flow that carries neither). The decision
-  table matches the resolver gate's precedence — a standing deny
-  verdict first, then the static allowlist (name specs against the
-  wire's name, address specs against the original destination),
-  then a standing allow, then the mode: `static` records the denial
-  and answers a local HTTP 403; `interactive` holds through the
-  consent engine, so the same decider endpoints answer the same
-  rows the kernel queue writes, and an allow completes the
-  handshake while a deny answers the 403 locally (nothing
-  forwards). Verdicts and durations are shared: one allow covers
-  the destination's web flows and its other ports alike, and the
-  session memory that skips re-prompting is one table for both
-  gates.
+  HTTPS, the Host header on plain HTTP. The name counts only when
+  the daemon's naming memory binds it to the connection's address
+  (the guest resolved it through the daemon's resolver): an
+  address the memory never learned — a hosts-file entry, a
+  fronted claim — keys the gate by the address itself, exactly as
+  the kernel queue keys a raw-IP connect, so a name's allowlist
+  entry or verdict covers no address it never resolved to. The
+  decision table matches the resolver gate's precedence — a
+  standing deny verdict first, then the static allowlist (name
+  specs against the gated name, address specs against the original
+  destination), then a standing allow, then the mode: `static`
+  records the denial and answers a local HTTP 403; `interactive`
+  holds through the consent engine, so the same decider endpoints
+  answer the same rows the kernel queue writes, and an allow
+  completes the handshake while a deny answers the 403 locally
+  (nothing forwards). Verdicts and durations are shared: one allow
+  covers the destination's web flows and its other ports alike,
+  and the session memory that skips re-prompting is one table for
+  both gates. The gating boundary is the connection on TLS — the
+  handshake gates once, and kept-alive requests (several Hosts
+  included) ride the connection's own verdict until it closes;
+  `msks egress revoke` stops a destination's next connection and
+  plain-HTTP request, while an established TLS connection keeps
+  its consent until it closes (the kernel path additionally kills
+  established flows with their conntrack entries; the
+  interceptor's connections have no conntrack entry to kill).
+  Plain HTTP gates each request on its Host — a different Host
+  gates fresh, and one connection's repeated requests to the same
+  destination share that connection's own answer.
 
 **Verdicts and durations.** `msks egress decide` records
 `allow`/`deny` with a duration — `once` (this connection only; a

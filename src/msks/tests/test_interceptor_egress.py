@@ -60,8 +60,10 @@ def app(model, engine):
     return SimpleNamespace(state=SimpleNamespace(model=model, consent=engine))
 
 
-async def decide(model, engine, host=HOST, port=443, address=ADDR):
-    return await egress.decide(app(model, engine), WS, host, port, address)
+async def decide(model, engine, host=HOST, port=443, address=ADDR, named=HOST):
+    return await egress.decide(
+        app(model, engine), WS, host, port, address, named
+    )
 
 
 # --- the posture split -------------------------------------------------------
@@ -81,7 +83,9 @@ async def test_a_missing_workspace_denies() -> None:
 
 async def test_an_unnamed_flow_denies() -> None:
     model = FakeModel({WS: row()})
-    verdict = await egress.decide(app(model, FakeEngine()), WS, "", 443, "")
+    verdict = await egress.decide(
+        app(model, FakeEngine()), WS, "", 443, "", None
+    )
     assert verdict == egress.WebVerdict(False, "unnamed")
 
 
@@ -98,6 +102,7 @@ async def test_any_failure_answers_deny() -> None:
         HOST,
         443,
         ADDR,
+        None,
     )
     assert verdict == egress.WebVerdict(False, "error")
 
@@ -172,13 +177,13 @@ async def test_an_inclusive_suffix_spec_allows_subdomains() -> None:
 
 async def test_an_address_spec_allows_the_original_destination() -> None:
     model = FakeModel({WS: row(allowlist=(f"{ADDR}/32:443",))})
-    verdict = await decide(model, FakeEngine(), host="")
+    verdict = await decide(model, FakeEngine(), host="", named=None)
     assert verdict == egress.WebVerdict(True, "allowlist")
 
 
 async def test_an_address_spec_port_scopes() -> None:
     model = FakeModel({WS: row(mode="static", allowlist=(f"{ADDR}/32:443",))})
-    verdict = await decide(model, FakeEngine(), host="", port=80)
+    verdict = await decide(model, FakeEngine(), host="", port=80, named=None)
     assert verdict == egress.WebVerdict(False, "static")
 
 
@@ -221,6 +226,81 @@ async def test_the_gate_passes_the_address_as_the_name_when_nameless() -> None:
     original destination address — the kernel path's raw-IP shape."""
     model = FakeModel({WS: row()})
     engine = FakeEngine()
-    verdict = await egress.decide(app(model, engine), WS, ADDR, 443, ADDR)
+    verdict = await egress.decide(
+        app(model, engine), WS, ADDR, 443, ADDR, None
+    )
     assert verdict == egress.WebVerdict(True, "decided")
     assert engine.holds == [(WS, ADDR, 443)]
+
+
+# --- the gate key (#452 review: binding and case) ----------------------------
+
+
+def test_gate_key_lowercases_the_wire_name() -> None:
+    """DNS names compare case-insensitively: the wire's case must
+    not fork the verdict rows (a mixed-case SNI cannot slip a
+    standing deny)."""
+    assert egress.gate_key("API.Example.COM", ADDR, None) == ADDR
+    assert (
+        egress.gate_key("API.Example.COM", ADDR, "api.example.com")
+        == "api.example.com"
+    )
+
+
+async def test_a_mixed_case_sni_hits_the_standing_deny() -> None:
+    """The deny-beats-allowlist precedence survives the wire's
+    case: the key lowercases before every lookup."""
+    model = FakeModel(
+        {WS: row(allowlist=(HOST,))},
+        forever={"decision": "denied"},
+    )
+    verdict = await decide(model, FakeEngine(), host=HOST.upper())
+    assert verdict == egress.WebVerdict(False, "verdict")
+
+
+async def test_a_mixed_case_name_matches_the_allowlist() -> None:
+    model = FakeModel({WS: row(mode="static", allowlist=(HOST,))})
+    verdict = await decide(model, FakeEngine(), host=HOST.upper())
+    assert verdict == egress.WebVerdict(True, "allowlist")
+
+
+async def test_an_unbound_name_keys_by_the_address() -> None:
+    """A name the naming memory never bound to the connection's
+    address keys the gate by the address: the allowlist's name
+    specs cannot cover it (the address specs still can), and an
+    interactive hold prompts with the address."""
+    model = FakeModel({WS: row(mode="static", allowlist=(HOST,))})
+    verdict = await decide(model, FakeEngine(), named=None)
+    assert verdict == egress.WebVerdict(False, "static")
+
+
+async def test_a_fronted_name_keys_by_the_memorys_name() -> None:
+    """A name claiming an address the memory holds under another
+    name keys by the memory's name, not the claim."""
+    model = FakeModel({WS: row(mode="static", allowlist=(HOST,))})
+    verdict = await decide(
+        model,
+        FakeEngine(),
+        host="claimed.example.net",
+        named="evil.example.net",
+    )
+    assert verdict == egress.WebVerdict(False, "static")
+
+
+async def test_a_bound_name_borrows_its_verdicts() -> None:
+    """The binding made the kernel path's promise true here too:
+    a name-keyed verdict covers the connection once the memory
+    binds the address."""
+    model = FakeModel({WS: row()})
+    engine = FakeEngine()
+    engine.session.allow(WS, HOST, 443, 300.0)
+    verdict = await decide(model, engine, named=HOST)
+    assert verdict == egress.WebVerdict(True, "verdict")
+    assert engine.holds == []
+
+
+def test_a_non_address_original_destination_matches_no_address_spec() -> None:
+    """An address spec answers nothing when the redirect's
+    preserved destination is not an IPv4 literal."""
+    policy = egress.EgressPolicy(WS, "static", ("203.0.113.0/24",))
+    assert egress.address_allowed(policy.ip_specs, "", 443) is False

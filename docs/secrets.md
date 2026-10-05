@@ -78,9 +78,10 @@ While a workspace is armed, the redirect takes its web egress
 interceptor runs the consent gate for exactly those flows (#452):
 every web connection is decided on the name the wire carries — the
 TLS handshake's SNI on HTTPS, the Host header on plain HTTP —
-before the splice or swap tier runs. A `static` workspace's
-allowlist gates its web traffic by that name (and by the original
-destination address for address-form specs); an `interactive`
+bound to the address the naming memory holds for the connection
+(a name claiming an address it never resolved to keys by the
+address, so it borrows nothing). A `static` workspace's
+allowlist gates its web traffic by that name; an `interactive`
 workspace's web connections hold through the same decider
 endpoints, rows, durations, and session memory every other port
 uses — `msks egress watch` and the TUI answer them like any other
@@ -89,8 +90,10 @@ above; a denied one is answered locally with an HTTP 403 naming
 consent — the handshake completes against the workspace's CA, the
 request refuses, and nothing forwards (a client that pins the
 origin's real certificate fails its handshake instead; refused
-closed either way). The consent modes keep gating every other
-port at the kernel queue as before, and the verdict pins and
+closed either way). See
+[networking](networking.md#egress-consent-69) for the gate's
+precedence and its per-connection boundaries. The consent modes
+keep gating every other port at the kernel queue as before, and the verdict pins and
 resolver-learned allows they hold in the kernel carry across the
 interceptor's arm/disarm table swaps — re-pinned with their
 remaining lifetimes in the same transaction that swaps the table.
