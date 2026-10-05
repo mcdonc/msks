@@ -79,6 +79,12 @@ class DeciderLink:
         self.reconnect_delays = reconnect_delays
         self._ws_factory = ws_factory or default_ws_factory
         self._task: asyncio.Task | None = None
+        #: The per-frame hook (#467): a callable the standalone
+        #: decider app sets to learn each frame's outcome the
+        #: moment it lands — its popup shows on arrival, not on
+        #: the next tick. None for the page hosts, whose tick
+        #: reads the controller directly.
+        self.on_frame = None
 
     def take_sightings(self) -> list[SecretEvent]:
         """The sightings that landed since the last drain, taken:
@@ -172,6 +178,7 @@ class DeciderLink:
         its controller state: the flash belongs to whichever surface
         owns the terminal, and the link's host decides that."""
         outcome, payload = self.controller.apply_frame(raw)
+        self.notify_frame(outcome, payload)
         if outcome == SECRET_EVENT and payload.kind == "sighting":
             self.sightings.append(payload)
         if outcome != FRAME_REJECTED:
@@ -179,6 +186,12 @@ class DeciderLink:
         self.state = REJECTED
         self.reject_reason = payload or "registration rejected"
         return True
+
+    def notify_frame(self, outcome: str, payload: object) -> None:
+        """Hand one frame's outcome to the hook, when one is set —
+        the standalone decider app's popup path (#467)."""
+        if self.on_frame is not None:
+            self.on_frame(outcome, payload)
 
     def closed(
         self, exc: websockets.ConnectionClosed

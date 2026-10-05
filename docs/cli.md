@@ -300,23 +300,34 @@ when a remembered option breaks the seam.
 websocket sessions, not ssh — `ssh_options` applies to the ssh
 surfaces above and leaves them untouched.
 
-### `msks-term-popup`: the consent-decider terminal (#379)
+### `msks-term-popup`: the consent-decider terminal (#379, #467)
 
 `msks-term-popup` is a shipped client command that runs the
 appended shell inside a local tmux session and answers the
-workspace's egress consent prompts right there: while the session
-lives, it registers as a decider for the workspace, and a held
-egress request raises a popup over the shell: `a` allows until
-restart and `d` denies — any other key denies — while the
-uppercase twins `A` and `D` pick a duration for their verdict
-(`1` once, `2` 5m, `3` 15m, `4` until restart, `5` forever). The
-popup paints its rows — a bold destination, green allow bindings,
-red deny — and `NO_COLOR` leaves it plain. The session ends with
-its window, and the decider registration ends
-with the session. It works with any terminal that runs a command:
-name your terminal and its command flag in `terminal_open_cmd`,
-and `msks-term-popup` right after it (tmux 3.2 or newer must be on
-PATH):
+workspace's egress consent prompts right there: the launch also
+starts the consent-decider app in a hidden tmux session on the
+same socket, where it holds the workspace's decider registration
+for the window's whole life. The app lists every hold the
+workspace carries — destination and time remaining per row —
+with the arrow keys moving the selection: `a` allows until
+restart and `d` denies the selected hold, while the uppercase
+twins `A` and `D` pick a duration for their verdict (Enter picks,
+Escape cancels). A hold leaves the list the moment the daemon
+resolves it — a verdict from another decider window or the
+hold's own timeout — and the popup viewer hides itself when the
+list empties.
+
+A hold arriving with the popup closed raises a popup viewer
+over the shell that attaches to the hidden session, and the
+bindings map rides the popup's bottom edge: the verdict keys
+beside the hide/show entry. `q`, `Esc`, or `C-b` hide the viewer
+— the decider keeps running, its queue keeps living, and `C-b p`
+brings the popup back; a popup the app raised returns the same
+way on the next hold. The session ends with its window, and the
+decider registration ends with the server. It works with any
+terminal that runs a command: name your terminal and its command
+flag in `terminal_open_cmd`, and `msks-term-popup` right after it
+(tmux 3.2 or newer must be on PATH):
 
 ```yaml
 terminal_open_cmd: konsole -e msks-term-popup
@@ -329,13 +340,13 @@ terminal_open_cmd:                     # list form (no shell quoting)
   - msks-term-popup
 ```
 
-Each popup answers one request at a time — a second request
-waits for the popup ahead of it. A request that another decider
-window (the consent TUI, another popup) answers while its popup
-is open fails at the post and the popup names the reason — the
-request is already resolved; a request decided before this window
-raises its popup still pops, and answering it reports the same
-line. The window the prefix opens takes its title from
+The popup viewer keeps its own attach to the hidden session, so
+a hold that arrives while it stands is already in the list, and
+verdicts posted from it land through the same REST contract as
+the consent page — a post that cannot land (the request resolved
+in another decider window while the verdict was in flight) names
+its reason on the popup's status line. The window the prefix
+opens takes its title from
 `terminal_title` (`msks — {workspace}` resolves the workspace's
 id into it, #445). The session's own status bar names the
 workspace too (#455): the launch resolves the workspace's name
@@ -346,11 +357,11 @@ for a plain shell; the window list after the label stays empty
 (#458), and so does the bar's right side, which tmux's default
 fills with the pane's title, the clock, and the date — the
 label is the whole bar.
-The watcher keeps its diagnostics in a
-`msks-consent-*` log
-under the tmp dir (a registration the daemon refuses — a
-workspace id that names nothing — stops the watcher with one line
-there); the window's own hold flags (`konsole --hold`, xterm's
+The hidden consent session runs on the launch's own socket — one
+small server per window — and the app retires when the window
+has been gone for a stretch, taking the session and the server
+with it; the window's own
+hold flags (`konsole --hold`, xterm's
 `-hold`) keep the window open after the session ends as they do
 for a plain shell window.
 

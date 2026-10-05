@@ -19,6 +19,7 @@ entry_points = [
   "msks.server.main",
   "msks.client.cli",
   "msks.client.term_popup",
+  "msks.client.tui.decide_app",
   "msks.conformance",
 ]
 
