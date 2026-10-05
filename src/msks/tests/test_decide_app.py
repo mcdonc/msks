@@ -21,7 +21,7 @@ from msks.client.tui.consent_ui import (
     DurationScreen,
     ModeScreen,
 )
-from textual.widgets import Static
+from textual.widgets import OptionList, Static
 
 SOCKET = "msks-ws1-7"
 VIEWER = "/dev/pts/3"
@@ -551,8 +551,10 @@ async def test_a_refused_mode_switch_names_its_reason() -> None:
 
 async def test_the_picker_opens_before_any_rules_frame() -> None:
     """No rules frame yet: the picker opens with nothing
-    highlighted and the status line names no mode; a cancel
-    sends nothing."""
+    highlighted — the widget's own focus would otherwise
+    pre-highlight ``allow``, and a bare Enter must not take a
+    posture the app has not seen — and the status line names no
+    mode."""
     posted, seam = verdict_seam()
     sent, mode = mode_seam()
     frames = [request_frame("r1")]  # no rules frame
@@ -560,7 +562,11 @@ async def test_the_picker_opens_before_any_rules_frame() -> None:
         await until(lambda: len(row_texts(pilot.app)) == 1)
         await pilot.press("m")
         assert isinstance(pilot.app.screen, ModeScreen)
-        assert pilot.app.screen.current == ""
+        options = pilot.app.screen.query_one(OptionList)
+        assert options.highlighted is None
+        await pilot.press("enter")
+        await asyncio.sleep(0.1)
+        assert sent == []
         await pilot.press("escape")
         await asyncio.sleep(0.1)
         assert sent == []

@@ -447,9 +447,10 @@ class ConsentDeciderApp(App[None]):
 
     def action_mode(self) -> None:
         """``m``: the mode picker (#465) — the consent page's own
-        screen, with the snapshot's mode highlighted (the
-        controller's once a rules frame has landed; the picker's
-        own fallback until then)."""
+        screen, with the current mode highlighted once a rules
+        frame has landed. Before one lands nothing is highlighted
+        and a bare Enter decides nothing — the picker never
+        pre-selects a posture the app has not seen."""
         rules = self.link.controller.rules
         current = rules.mode if rules is not None else ""
         self.push_screen(ModeScreen(current, self.switch_mode))
@@ -507,7 +508,9 @@ class ConsentDeciderApp(App[None]):
             if reply.get("applied")
             else "takes effect at next start"
         )
-        self.flash_line.set(f"mode {reply.get('mode') or mode} ({effect})")
+        self.flash_line.set(
+            flash_safe(f"mode {reply.get('mode') or mode} ({effect})")
+        )
 
     # --- the window's life ---------------------------------------------------
 
