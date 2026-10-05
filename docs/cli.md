@@ -504,10 +504,10 @@ columns, every grant listed on the workspace's egress consent
 screen), and the page's actions centered in the space the header
 lines and the footer leave — the block capped at 64 columns — in
 three groups: a shell in a new terminal
-window, then egress consent, a live egress-mode switch, and an
-edit dialog for the sizes and topology (#331), then start and
-stop. Each action paints its name with its description — when
-it carries one — muted behind it, and the row Enter acts on carries a marker beside the
+window, then egress consent and an edit dialog for the sizes and
+topology (#331), then start and stop. Each action paints its
+name with its description — when it carries one — muted behind
+it, and the row Enter acts on carries a marker beside the
 list's own highlight. The start and stop rows dim behind their
 reason while the workspace's status makes the verb pointless —
 stop on a stopped workspace, start on a running one — and Enter
@@ -533,11 +533,17 @@ The page's **Egress consent** action and its `e` key
 (#358, #454) open the egress consent page: a full-screen visit
 holding the held-request queue and the in-effect verdicts
 together — the consent decider as a page inside the tree, and
-the only place verdicts are made. A hold's arrival pushes
-nothing: the
-header's `egress to decide: N` counts what waits (a hold waits
-about two minutes before it times out denied), and the consent
-line flashes the held destination with the key in — a burst of
+the only place verdicts are made. The page carries the same
+two-line header as the workspace page beneath it (#460) — the
+workspace's name with its status (and the pending-hold count
+while any hold waits), then the id, image hash, host, and created
+date muted — so the workspace's identity stays visible while
+verdicts are made. A hold's arrival pushes nothing: the
+header's `egress to decide: N` counts what waits on both pages'
+headers (a hold waits
+about two minutes before it times out denied), and the
+workspace page's consent line beneath flashes the held
+destination with the key in — a burst of
 first-seen holds names its count instead, and a hold that lands
 while another screen owns the terminal flashes on the first tick
 after that screen leaves. Keys on the
@@ -548,7 +554,16 @@ pick a duration first (`once / 5m / 15m / tilrestart /
 forever`) — the letters act on the holds alone and decide
 nothing on a verdict row — `x` revokes the focused verdict (the
 row leaves on the daemon's refreshed frame, never
-optimistically), and `m` opens the mode picker. Enter carries
+optimistically), and `m` opens the mode picker (`allow` /
+`static` / `interactive`, the current mode highlighted) — the
+switch's one path since the workspace page's own mode action
+left (#460): picking a mode switches the posture through the same
+endpoint `msks egress mode` speaks, without leaving the page.
+The status line names the new mode as the switch lands; a pick
+of `static` with nothing effectively allowed asks the same
+offline-workspace confirmation the CLI asks (confirm to switch,
+decline to decide nothing), and a refused switch names its reason
+on the status line, where the operator reads it. Enter carries
 no verdict — only an explicit letter decides — and the page's
 keys live on the page itself, so they cannot collide with the
 workspace page's. `q` or Escape returns to the workspace page
@@ -557,17 +572,6 @@ reopens). The placeholder-token audit lives on the secrets page
 (#390): the consent page keeps the holds, the verdicts, and the
 mode. See `msks egress` below for what verdicts and rules
 cover.
-
-The page's **Switch the egress mode** action (#344) opens the
-mode picker (`allow` / `static` / `interactive`, the current
-mode highlighted) over the page — the same picker the consent
-`m` opens: picking a mode switches the posture through the same
-endpoint `msks egress mode` speaks, without leaving the
-workspace. The consent line names the new mode as the switch
-lands; a pick of `static` with nothing effectively allowed asks
-the same offline-workspace confirmation the CLI asks (confirm
-to switch, decline to decide nothing); a refused switch names
-its reason on the consent line, where the page reads it.
 
 The page's **Edit settings** action (#331) opens the edit
 dialog: the create form's own layout, seeded with the

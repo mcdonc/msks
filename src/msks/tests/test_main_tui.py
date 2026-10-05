@@ -1146,7 +1146,7 @@ async def test_the_page_centers_its_action_block(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test(size=(80, 40)) as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         await pilot.pause()  # lay the centered block out
         page = app.screen.query_one("#page")
         actions = app.screen.query_one("#actions")
@@ -1171,7 +1171,7 @@ async def test_a_hold_arriving_pushes_nothing(monkeypatch) -> None:
     app, follow = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         await wait_for(lambda: "egress to decide: 1" in header_text(app))
         rows = app.screen.query_one("#actions")
         assert "pending" not in rows.children[0].classes
@@ -1191,7 +1191,7 @@ async def test_the_consent_action_opens_the_page_by_hand(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         await pilot.press("down")  # the consent action
         await press_until(pilot, "enter", lambda: on_consent(app))
         await press_until(pilot, "q", lambda: on_page(app))  # the return
@@ -1201,17 +1201,18 @@ async def test_the_consent_action_opens_the_page_by_hand(
 
 async def test_the_page_runs_start_and_stop(monkeypatch) -> None:
     """The fixed actions in walk order (#309, re-pinned #343,
-    #331): a shell (a new terminal), consent, the egress-mode
-    switch, the edit dialog, start, stop — the LLM token's remint
-    stays on the CLI."""
+    #331): a shell (a new terminal), consent, the edit dialog,
+    start, stop — the LLM token's remint stays on the CLI, and
+    the egress-mode switch lives on the consent page's ``m``
+    (#460)."""
     scripted_link(monkeypatch, [rules_frame()])
     data = FakeData([row()])
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
-        # Down four times lands on start.
-        await pilot.press("down", "down", "down", "down")
+        await wait_for(lambda: action_children(app) == 5)
+        # Down three times lands on start.
+        await pilot.press("down", "down", "down")
         await pilot.press("enter")
         await wait_for(lambda: ("start", WS) in data.calls)
         await wait_for(lambda: "running" in header_text(app))
@@ -1220,121 +1221,13 @@ async def test_the_page_runs_start_and_stop(monkeypatch) -> None:
         await wait_for(lambda: "stopped" in header_text(app))
 
 
-# -- the egress-mode switch (#344) -----------------------------------------
-
-
-async def test_the_page_switches_the_egress_mode(monkeypatch) -> None:
-    """Enter on the mode action opens the decider's picker over
-    the page, the current mode highlighted; a picked mode goes
-    through the policy endpoint, and the consent line names the
-    new mode — the reply carries the fresh rules frame, so the
-    line flips as the switch lands, pushed frame or not."""
-    scripted_link(monkeypatch, [rules_frame()])
-    data = FakeData([row()])
-    app, _ = make_app(data)
-    async with app.run_test() as pilot:
-        await open_page(pilot, app)
-        await wait_for(lambda: "mode interactive" in consent_text(app))
-        assert "Switch the egress mode" in action_text(app, 2)
-        await pilot.press("down", "down", "enter")
-        await wait_for(lambda: type(app.screen).__name__ == "ModeScreen")
-        options = app.screen.query_one("#pick-options", OptionList)
-        assert options.highlighted == 2  # interactive, the snapshot's
-        await pilot.press("up", "up")  # allow
-        await pilot.press("enter")
-        await wait_for(lambda: ("mode", WS, "allow", False) in data.calls)
-        await wait_for(lambda: "mode allow" in consent_text(app))
-        assert on_page(app)  # the whole switch stayed on the page
-
-
-async def test_a_static_pick_with_nothing_allowed_confirms_first(
-    monkeypatch,
-) -> None:
-    """A pick of static with nothing effectively allowed — no
-    allowlist, no in-effect allowed verdict — asks the same
-    offline-workspace question the decider and the CLI ask: a no
-    decides nothing, a yes sends the confirmed switch."""
-    scripted_link(monkeypatch, [rules_frame(mode="allow")])
-    data = FakeData([row()])
-    app, _ = make_app(data)
-    async with app.run_test() as pilot:
-        await open_page(pilot, app)
-        await wait_for(lambda: "mode allow" in consent_text(app))
-        await pilot.press("down", "down", "enter")
-        await wait_for(lambda: type(app.screen).__name__ == "ModeScreen")
-        options = app.screen.query_one("#pick-options", OptionList)
-        assert options.highlighted == 0  # allow, the snapshot's mode
-        await pilot.press("down")  # static
-        await pilot.press("enter")
-        await wait_for(lambda: type(app.screen).__name__ == "ConfirmScreen")
-        question = str(app.screen.query_one("#question", Static).content)
-        assert "NXDOMAIN" in question
-        await pilot.press("n")  # decline: nothing sent
-        await wait_for(lambda: on_page(app))
-        await pilot.pause()
-        assert data.calls == []
-        # The same pick, answered yes: the confirmed switch goes
-        # out, and the page names the new posture.
-        await pilot.press("enter")  # the mode row keeps focus
-        await wait_for(lambda: type(app.screen).__name__ == "ModeScreen")
-        await pilot.press("down", "enter")
-        await wait_for(lambda: type(app.screen).__name__ == "ConfirmScreen")
-        await pilot.press("y")
-        await wait_for(lambda: ("mode", WS, "static", True) in data.calls)
-        await wait_for(lambda: "mode static" in consent_text(app))
-
-
-async def test_a_refused_switch_names_itself_on_the_page(
-    monkeypatch,
-) -> None:
-    """A refused switch surfaces its reason on the page itself
-    (#343): the app-level flash paints the list's status line,
-    which the pushed page hides — the refusal owns the page's
-    consent line instead."""
-    scripted_link(monkeypatch, [rules_frame()])
-    data = FakeData([row()])
-    data.fail.add("mode")
-    data.refusal = "static needs allow_list entries"
-    app, _ = make_app(data)
-    async with app.run_test() as pilot:
-        await open_page(pilot, app)
-        await wait_for(lambda: "mode interactive" in consent_text(app))
-        await pilot.press("down", "down", "enter")
-        await wait_for(lambda: type(app.screen).__name__ == "ModeScreen")
-        await pilot.press("up", "up")  # allow
-        await pilot.press("enter")
-        await wait_for(lambda: "mode switch failed" in consent_text(app))
-        assert "static needs allow_list entries" in consent_text(app)
-        assert on_page(app)
-
-
-async def test_escape_on_the_picker_decides_nothing(monkeypatch) -> None:
-    """Escape closes the picker and decides nothing — the page's
-    rows keep focus; with no rules frame landed, the row's
-    recorded mode starts highlighted."""
-    scripted_link(monkeypatch, [])
-    data = FakeData([row(mode="static")])
-    app, _ = make_app(data)
-    async with app.run_test() as pilot:
-        await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
-        await pilot.press("down", "down", "enter")
-        await wait_for(lambda: type(app.screen).__name__ == "ModeScreen")
-        options = app.screen.query_one("#pick-options", OptionList)
-        assert options.highlighted == 1  # static, the row's mode
-        await pilot.press("escape")
-        await wait_for(lambda: on_page(app))
-        await pilot.pause()
-        assert data.calls == []
-
-
 # -- the edit dialog (#331) ---------------------------------------------
 
 
 async def open_edit(pilot, app) -> EditScreen:
-    """Down three times lands on the edit action; Enter opens the
+    """Down two times lands on the edit action; Enter opens the
     prefilled dialog over the page."""
-    await pilot.press("down", "down", "down")
+    await pilot.press("down", "down")
     await pilot.press("enter")
     await wait_for(lambda: type(app.screen).__name__ == "EditScreen")
     return app.screen
@@ -1382,8 +1275,8 @@ async def test_the_page_opens_the_prefilled_edit_dialog(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
-        assert "Edit settings" in action_text(app, 3)
+        await wait_for(lambda: action_children(app) == 5)
+        assert "Edit settings" in action_text(app, 2)
         screen = await open_edit(pilot, app)
         assert isinstance(screen, WorkspaceForm)
         assert isinstance(screen, EditScreen)
@@ -1439,7 +1332,7 @@ async def test_the_edit_dialog_resizes_the_changed_sizes(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         screen = await open_edit(pilot, app)
         screen.query_one("#field-cpus", Input).value = "4"
         screen.query_one("#field-root_mib", Input).value = "20480"
@@ -1471,7 +1364,7 @@ async def test_the_edit_dialog_refuses_create_time_and_empty(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         screen = await open_edit(pilot, app)
         # A programmatic move on a read-only field: the submit
         # refuses it by name.
@@ -1514,7 +1407,7 @@ async def test_an_older_daemons_resize_reply_keeps_the_rows_facts(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         screen = await open_edit(pilot, app)
         screen.query_one("#field-cpus", Input).value = "4"
         screen.query_one("#field-root_mib", Input).value = "20480"
@@ -1543,7 +1436,7 @@ async def test_an_edit_refusal_flashes_on_the_page(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         screen = await open_edit(pilot, app)
         screen.query_one("#field-cpus", Input).value = "4"
         screen.submit()
@@ -1564,7 +1457,7 @@ async def test_an_edit_on_a_running_workspace_asks_and_stops_first(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         screen = await open_edit(pilot, app)
         screen.query_one("#field-home_mib", Input).value = "40960"
         screen.submit()
@@ -1601,7 +1494,7 @@ async def test_a_failed_stop_names_itself_and_skips_the_resize(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         screen = await open_edit(pilot, app)
         screen.query_one("#field-cpus", Input).value = "4"
         screen.submit()
@@ -1627,7 +1520,7 @@ async def test_a_refused_resize_after_the_stop_names_itself(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         screen = await open_edit(pilot, app)
         screen.query_one("#field-cpus", Input).value = "4"
         screen.submit()
@@ -1652,7 +1545,7 @@ async def test_a_declined_stop_keeps_the_workspace_running(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         screen = await open_edit(pilot, app)
         screen.query_one("#field-cpus", Input).value = "4"
         screen.submit()
@@ -1677,7 +1570,7 @@ async def test_the_edit_dialog_fits_the_small_terminal(
     app, _ = make_app(data)
     async with app.run_test(size=(80, 24)) as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         screen = await open_edit(pilot, app)
         form = screen.query_one("#form")
         assert form.outer_size.height <= 23  # the footer keeps its row
@@ -1768,7 +1661,7 @@ async def test_the_new_terminal_action_spawns_an_ssh_child(
     app = MsksTuiApp(TuiFollow(), data=data, conf=conf)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         assert "new terminal" in action_text(app, 0)
         await press_until(pilot, "enter", lambda: len(spawned) == 1)
         assert spawned[0] == [
@@ -1811,7 +1704,7 @@ async def test_a_dead_launcher_falls_back_to_this_terminal(
     app = MsksTuiApp(follow, data=data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         await pilot.press("enter")
         await pilot.pause()
     assert follow.take() == (FLOW_SHELL, WS)
@@ -3067,7 +2960,7 @@ async def test_the_headers_count_follows_the_queue(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         assert "egress to decide" not in header_text(app)
         ws.push(request_frame("late1"))
         # Nothing is pushed (#454): the hold counts on the header
@@ -3084,7 +2977,7 @@ async def test_the_headers_count_follows_the_queue(monkeypatch) -> None:
             )
         )
         await wait_for(lambda: "egress to decide: 1" in header_text(app))
-        assert action_children(app) == 6
+        assert action_children(app) == 5
         ws.push(
             frame(
                 "egress.resolved",
@@ -3114,7 +3007,7 @@ async def test_the_swap_windows_self_heal(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         # Tear the action list away: the next sync rebuilds it, and
         # the paint paths swallow the missing widgets.
         actions = page.query_one("#actions")
@@ -3128,7 +3021,7 @@ async def test_the_swap_windows_self_heal(monkeypatch) -> None:
         page.paint_consent()
         page.paint_actions()
         page.sync_actions()
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
 
 
 async def test_a_rebuild_over_a_standing_list_keeps_focus(
@@ -3142,8 +3035,8 @@ async def test_a_rebuild_over_a_standing_list_keeps_focus(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
-        await pilot.press("down", "down")  # the egress-mode row
+        await wait_for(lambda: action_children(app) == 5)
+        await pilot.press("down", "down")  # the edit row
         before = page.actions_widget()
         page.rebuilds.request()
         await wait_for(
@@ -3153,7 +3046,7 @@ async def test_a_rebuild_over_a_standing_list_keeps_focus(
         rows = page.actions_widget()
         assert rows is not None and rows is not before  # a fresh list
         assert rows.index == 2  # the focused row kept by its key
-        assert "Switch the egress mode" in action_text(app, 2)
+        assert "Edit settings" in action_text(app, 2)
 
 
 async def test_a_bare_listing_read_in_a_swap_window(monkeypatch) -> None:
@@ -3243,8 +3136,8 @@ async def test_page_action_failures_flash(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
-        await pilot.press("down", "down", "down", "down")
+        await wait_for(lambda: action_children(app) == 5)
+        await pilot.press("down", "down", "down")
         await press_until(pilot, "enter", lambda: ("start", WS) in data.calls)
         await wait_for(lambda: "start failed" in consent_text(app))
         # A start that lands (the daemon's own answer) flips the
@@ -3256,7 +3149,7 @@ async def test_page_action_failures_flash(monkeypatch) -> None:
             "enter",
             lambda: data.calls.count(("start", WS)) == 2,
         )
-        await wait_for(lambda: "workspace is running" in action_text(app, 4))
+        await wait_for(lambda: "workspace is running" in action_text(app, 3))
         await pilot.press("down")
         await press_until(pilot, "enter", lambda: ("stop", WS) in data.calls)
         await wait_for(lambda: "stop failed" in consent_text(app))
@@ -3273,13 +3166,13 @@ async def test_power_rows_dim_with_the_status(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
-        await wait_for(lambda: "workspace is stopped" in action_text(app, 5))
-        assert "workspace is stopped" not in action_text(app, 4)
-        await pilot.press("down", "down", "down", "down")
+        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: "workspace is stopped" in action_text(app, 4))
+        assert "workspace is stopped" not in action_text(app, 3)
+        await pilot.press("down", "down", "down")
         await press_until(pilot, "enter", lambda: ("start", WS) in data.calls)
-        await wait_for(lambda: "workspace is running" in action_text(app, 4))
-        assert "workspace is running" not in action_text(app, 5)
+        await wait_for(lambda: "workspace is running" in action_text(app, 3))
+        assert "workspace is running" not in action_text(app, 4)
         assert page.row["status"] == "running"
 
 
@@ -3294,13 +3187,13 @@ async def test_the_page_follows_a_status_moved_elsewhere(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
-        await wait_for(lambda: "workspace is stopped" in action_text(app, 5))
+        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: "workspace is stopped" in action_text(app, 4))
         # Another surface boots it: a fresh row object, so only the
         # page's per-second read can learn it.
         data.rows[0] = {**data.rows[0], "status": "running"}
-        await wait_for(lambda: "workspace is running" in action_text(app, 4))
-        assert action_text(app, 5).strip() == "Stop"
+        await wait_for(lambda: "workspace is running" in action_text(app, 3))
+        assert action_text(app, 4).strip() == "Stop"
         assert "running" in header_text(app)
 
 
@@ -3314,9 +3207,9 @@ async def test_enter_on_a_dimmed_row_flashes_and_runs_nothing(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
-        await wait_for(lambda: "workspace is stopped" in action_text(app, 5))
-        await pilot.press("down", "down", "down", "down", "down")
+        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: "workspace is stopped" in action_text(app, 4))
+        await pilot.press("down", "down", "down", "down")
         await pilot.press("enter")
         await wait_for(
             lambda: "stop skipped: workspace is stopped" in consent_text(app)
@@ -3334,7 +3227,7 @@ async def test_the_focused_row_carries_the_marker(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         await wait_for(lambda: action_text(app, 0).startswith("▸"))
         before = page_actions(app)
         await pilot.press("down")
@@ -3351,7 +3244,6 @@ def test_the_groups_lead_rows_carry_the_class() -> None:
     assert [i.page_action for i in items] == [
         "shell-window",
         "egress-consent",
-        "egress-mode",
         "edit",
         "start",
         "stop",
@@ -3361,7 +3253,7 @@ def test_the_groups_lead_rows_carry_the_class() -> None:
         for index, item in enumerate(items)
         if "group-lead" in item.classes
     ]
-    assert leads == [0, 1, 4]
+    assert leads == [0, 1, 3]
 
 
 def test_action_rows_paint_two_tones() -> None:
@@ -3373,10 +3265,10 @@ def test_action_rows_paint_two_tones() -> None:
     assert str(shell).startswith("▸ Open a shell — in a new terminal")
     assert Span(2, 14, "$text bold") in shell.spans
     assert Span(17, 34, muted) in shell.spans
-    mode = action_content(PAGE_ACTIONS[2], "running", {}, focused=False)
-    assert str(mode).startswith("  Switch the egress mode")
-    assert mode.spans == []
-    stop = action_content(PAGE_ACTIONS[5], "stopped", {}, False)
+    start = action_content(PAGE_ACTIONS[3], "stopped", {}, focused=False)
+    assert str(start).startswith("  Start")
+    assert start.spans == []
+    stop = action_content(PAGE_ACTIONS[4], "stopped", {}, False)
     assert str(stop).startswith("  Stop — workspace is stopped")
     assert Span(2, 6, muted) in stop.spans
     assert Span(9, 29, muted) in stop.spans
@@ -3400,7 +3292,7 @@ async def test_a_row_that_leaves_the_listing_closes_the_page(
         # over the removal's) and not one bare press (a press in
         # the list's swap window no-ops).
         await open_quietly(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         data.rows.clear()  # removed from another terminal
         await wait_for(lambda: "removed" in status_text(app), timeout=15.0)
         assert on_main(app)
@@ -3428,7 +3320,7 @@ async def test_a_removal_under_an_open_consent_page_waits_for_it(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_quietly(pilot, app)
-        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: action_children(app) == 5)
         await press_until(pilot, "e", lambda: on_consent(app))
         data.rows.clear()  # removed while the consent page is up
         await asyncio.sleep(1.2)  # a read (or two) lands under it
