@@ -1032,6 +1032,7 @@ class ConsentPage(Screen):
             await old.remove()  # frees the id before the fresh list mounts
         await body.mount(fresh)
         self.land_hold_focus(fresh, focused, held_focus, ordered)
+        self.reclaim_hold_focus(fresh, old, focused)
         self.sync_empty(ordered)
 
     def fresh_hold_list(self, ordered: list) -> EdgeListView:
@@ -1058,6 +1059,19 @@ class ConsentPage(Screen):
             focus_by_id(fresh, focused)  # after mount: index sticks
         if ordered:
             self.holds_known = True
+
+    def reclaim_hold_focus(
+        self, fresh: ListView, old: ListView | None, focused
+    ) -> None:
+        """The verdicts zone's reclaim, carried to the holds: a
+        focus grab landing inside the remove/mount window
+        (``started`` processing mid-swap on a starved loop) must not
+        outlive the list it grabbed — the letters would die on the
+        removed widget's closed pump ('a' never took effect,
+        #468). A swap never leaves focus on the list it removed."""
+        if old is not None and self.focused is old:
+            self.set_focus(fresh)
+            focus_by_id(fresh, focused)
 
     def render_hold(self, request) -> ListItem:
         """One holds-zone row."""
@@ -1131,7 +1145,22 @@ class ConsentPage(Screen):
                 self.set_focus(None)
             await old.remove()  # frees the id before the fresh list mounts
         await body.mount(fresh)
-        if held_focus:
+        self.land_rule_focus(fresh, old, focused, held_focus)
+
+    def land_rule_focus(
+        self, fresh: ListView, old: ListView | None, focused, held_focus: bool
+    ) -> None:
+        """Give the fresh verdicts list the focus the swap owes it:
+        the zone held it — or a focus grab landed on the dying list
+        inside the remove/mount window, which the swap never leaves
+        behind. The page's own ``started`` runs as a pump message,
+        and on a starved loop it can process while the flight parks
+        in ``old.remove()``, where the zone query still finds the
+        dying list and focuses it; the list then unmounts with the
+        focus on it and no repair ever comes — keys die on the
+        removed widget's closed pump for good ('m' never took
+        effect, #468's class, #476)."""
+        if held_focus or (old is not None and self.focused is old):
             self.set_focus(fresh)
             focus_rule_by_id(fresh, focused)  # after mount: index sticks
 
