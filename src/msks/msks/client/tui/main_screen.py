@@ -178,13 +178,17 @@ class MainScreen(Screen):
         rows newest-first (#470 L1), preserving the focused row by
         key (the top when it left) — the consent queue's rebuild
         rule, carried to the listing. An unchanged listing keeps
-        its list (#470 L2): the standing refresh repaints nothing
-        while the daemon serves the same rows, so focus and
+        its list (#470 L2): the comparison reads in the display
+        order (the daemon serves oldest-first — plain equality
+        with the daemon's list would differ by order alone and
+        never skip), so the standing refresh repaints nothing
+        while the daemon serves the same rows, and focus and
         scroll never blip on the interval."""
-        if rows == self.rows and self.rows_widget() is not None:
+        ordered = newest_first(rows)
+        if ordered == self.rows and self.rows_widget() is not None:
             self.sync_status()
             return
-        self.rows = newest_first(rows)
+        self.rows = ordered
         listing = self.query_one("#listing", Vertical)
         old = self.rows_widget()
         focused = focused_attr(old, "row_key")

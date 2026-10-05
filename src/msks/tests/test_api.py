@@ -3850,7 +3850,9 @@ async def test_the_listing_names_each_images_catalog_reference(client) -> None:
     # client falls back to the digest it carries — and a digest
     # the catalog cannot resolve keeps None too (a pruned
     # image).
+    from msks.imagestore import list_images
     from msks.server.api.workspaces import image_ref
 
-    assert image_ref(app, None) is None
-    assert image_ref(app, "0" * 64) is None
+    catalog = list_images(state_dir)
+    assert image_ref(catalog, None) is None
+    assert image_ref(catalog, "0" * 64) is None

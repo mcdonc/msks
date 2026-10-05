@@ -167,7 +167,14 @@ def rule_line(rule, remaining: float | None, focused: bool = False) -> Content:
         Span(0, len(rule.decision), VERDICT_COLORS.get(rule.decision, "$text"))
     ]
     if focused:
-        spans.append(Span(8, 8 + len(host) + len(port), "$text bold"))
+        # The host sits past the decision's padded column — a
+        # decision word the daemon grows past seven cells pushes
+        # it right, so the span reads the offset it finds, not a
+        # constant.
+        host_at = max(len(rule.decision), 7) + 1
+        spans.append(
+            Span(host_at, host_at + len(host) + len(port), "$text bold")
+        )
     return Content(text, spans)
 
 
@@ -1103,6 +1110,13 @@ class ConsentPage(Screen):
         self.reclaim_hold_focus(fresh, old, focused)
         self.sync_empty(ordered)
         self.repaint_countdowns(fresh, ordered)  # the bold cue lands
+        # The footer follows the queue's membership (#470 C3, the
+        # review round): the verdict keys live in
+        # ``check_action`` — driven by the queue — and the footer
+        # only re-renders its bindings on focus moves, so the
+        # rebuild (a hold arriving or resolving) hands it the
+        # gate's fresh answer itself.
+        self.refresh_bindings()
 
     def fresh_hold_list(self, ordered: list) -> EdgeListView:
         """The holds zone's next list: the rows for ``ordered``, the
@@ -1318,16 +1332,22 @@ class ConsentPage(Screen):
         )
         # The zones' labels carry their counts (#470 C6): the
         # reader knows a section is complete without hunting a
-        # scrollbar.
-        self.query_one("#holds-label", Static).update(
-            f"held requests ({held})"
-        )
-        self.query_one("#rules-label", Static).update(
-            f"in effect ({len(rule_rows(self.controller.rules))})"
-        )
-        self.query_one("#consent-status", Static).update(
-            self.flash_line.text(default)
-        )
+        # scrollbar. A flash routed here while the compose still
+        # settles (a sighting drained from the workspace page
+        # beneath) finds the lines absent — the tick's own guard,
+        # carried in, noise not a crash.
+        try:
+            self.query_one("#holds-label", Static).update(
+                f"held requests ({held})"
+            )
+            self.query_one("#rules-label", Static).update(
+                f"in effect ({len(rule_rows(self.controller.rules))})"
+            )
+            self.query_one("#consent-status", Static).update(
+                self.flash_line.text(default)
+            )
+        except NoMatches:
+            pass
 
     # -- verdicts ------------------------------------------------------------
 

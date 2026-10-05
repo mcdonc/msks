@@ -425,10 +425,17 @@ reference no other workspace shares.
 A bare `msks` — no arguments at all — launches the full-screen
 workspace tree (`msks tui` names the same command, and `msks tui
 my-workspace` opens that workspace's page directly). The tree is
-rooted at the **workspaces list**: every workspace one row, with
-creating, starting, stopping, and removing on its keys (`c` new,
-`s` start, `x` stop, `D` remove — asked and confirmed — `e`
-secrets, `r` refresh, and Enter opens the workspace's page). A refused create
+rooted at the **workspaces list**: every workspace one row —
+newest first, the CREATED column's arrow naming the sort (#470)
+— with creating, starting, stopping, and removing on its keys
+(`c` new, `s` start, `x` stop, `D` remove — asked and confirmed —
+`e` secrets, `r` refresh, `/` a typeahead that jumps the focus
+to the first row whose name starts with what you type, and
+Enter opens the workspace's page). The list re-reads the daemon
+every five seconds, so a workspace another surface moved — the
+CLI, another operator — appears without a keypress, and a power
+verb the focused row's own status makes pointless names its
+skip client-side without a round-trip. A refused create
 opens the failure panel (#426): a centered panel over the list
 carrying the daemon's refusal verbatim beside the name the form
 submitted, waiting for dismissal — Enter, Escape, `q`, or the
@@ -436,10 +443,12 @@ Close button — so the detail stays on screen while the operator
 reads it; closing it returns to the list, and a create that
 lands keeps today's flash note. `e` opens the
 **secrets** page (#431). Each row's status
-column carries the state's color (#348): a running workspace in
-the theme's success color, a stopped one in muted text, and any
-other state in the warning color — the rest of the row keeps the
-default foreground, and the colors follow the active theme.
+column carries the state's color behind a filled cue dot (#348
+and #470): a running workspace in the theme's success color,
+every other state — stopped among them — in the warning color —
+the rest of the row keeps the default foreground, the focused
+row's name takes a bold cue, and the colors follow the active
+theme.
 
 The listing renders inside a rounded frame — the same framing
 the create form carries (#349) — so the rows read as one table
@@ -528,21 +537,26 @@ lines and the footer leave — the block capped at 64 columns — in
 three groups: a shell in a new terminal
 window, then egress consent and an edit dialog for the sizes and
 topology (#331), then start and stop. Each action paints its
-name with its description — when it carries one — muted behind
-it, and the row Enter acts on carries a marker beside the
-list's own highlight. The start and stop rows dim behind their
-reason while the workspace's status makes the verb pointless —
-stop on a stopped workspace, start on a running one — and Enter
-on a dimmed row names that reason on the consent line; the page
+name with its description muted behind it, and the row Enter
+acts on carries a marker beside the list's own highlight and the
+name in bold. The shell, start, and stop rows dim behind their
+reason while the workspace's status makes the action pointless —
+a shell or a stop on a stopped workspace, a start on a running
+one — and Enter on a dimmed row names that reason on the consent
+line; the bold sits on the action the state permits (the shell
+while the workspace takes one, Start while it sits stopped),
+and `s`/`x` run start and stop from wherever the focus stands —
+the letters the list binds. The page
 re-reads the workspace each second, so the dimming follows a
 start or stop made anywhere, not only on the page. A workspace
 the listing no longer sees — removed from another surface —
 closes its page and names the removal on the list's status
 line. The
 header's first line also counts pending holds (`egress to
-decide: N` while any hold waits, refreshed each second), and on
-a narrow terminal each header line truncates at the edge with an
-ellipsis — the metadata owns its own line, so a name truncates
+decide: N` while any hold waits, refreshed each second). The
+header's meta line clips each field to its own budget — the id,
+the image hash, the host — so the created date stays whole at 80
+columns and the metadata owns its own line: a name truncates
 only when it alone no longer fits the line — and a flashed
 refusal on the consent line truncates at the edge the same way,
 so the page's layout holds steady. A workspace in `interactive`
@@ -573,8 +587,9 @@ page: the arrows walk the held requests and cross into the
 verdict rows beneath (and back), `a`/`d` allow or deny the
 focused hold for the default duration (`tilrestart`), `A`/`D`
 pick a duration first (`once / 5m / 15m / tilrestart /
-forever`) — the letters act on the holds alone and decide
-nothing on a verdict row — `x` revokes the focused verdict (the
+forever`) — the letters act on the holds alone, and a
+mis-zoned press names the zone it acts on instead of deciding
+silently — `x` revokes the focused verdict (the
 row leaves on the daemon's refreshed frame, never
 optimistically), and `m` opens the mode picker (`allow` /
 `static` / `interactive`, the current mode highlighted) — the
@@ -585,8 +600,11 @@ The status line names the new mode as the switch lands; a pick
 of `static` with nothing effectively allowed asks the same
 offline-workspace confirmation the CLI asks (confirm to switch,
 decline to decide nothing), and a refused switch names its reason
-on the status line, where the operator reads it. Enter carries
-no verdict — only an explicit letter decides — and the page's
+on the status line, where the operator reads it. Enter on a
+focused hold opens the duration picker — the key answers, the
+pick decides; only an explicit letter or a picked duration ever
+decides — and while no hold waits the verdict keys stand inert
+and leave the footer until one lands. The page's
 keys live on the page itself, so they cannot collide with the
 workspace page's. `q` or Escape returns to the workspace page
 (holds keep waiting, the header's count keeps counting, `e`
@@ -678,8 +696,8 @@ paths instead of a catalog image.
 
 `--json` replaces the table with one JSON document — the API's
 workspace rows verbatim (id, name, kernel, initrd, rootfs, cmdline,
-cpus, mem_mib, image_hash, host, root_mib, home_mib, status,
-created_at):
+cpus, mem_mib, image_hash, image_ref, host, root_mib, home_mib,
+status, created_at):
 
 ```bash
 msks ls --json | jq -r '.[] | select(.status == "running") | .name'

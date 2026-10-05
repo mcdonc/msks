@@ -2167,6 +2167,23 @@ async def test_a_teardown_prune_under_the_highlight_repaint_stops_quiet() -> (
         cp.on_list_view_highlighted(None)  # the pruned row skips, no raise
 
 
+async def test_a_flash_before_the_labels_land_names_nothing() -> None:
+    """The status-line update's own guard (#470 C6, the review
+    round): a flash routed to the page while its compose still
+    settles — a sighting drained from the workspace page beneath
+    — finds the labels absent and stops quiet, noise not a
+    crash."""
+    factory = FakeFactory(
+        [FakeWS([request_frame("r1"), rules_frame()]), FakeWS([])]
+    )
+    app, page, _data = make_page(factory)
+    async with app.run_test() as pilot:
+        cp = await open_consent(pilot, app, page)
+        await wait_for(lambda: hold_children(app) == 1)
+        await cp.query_one("#holds-label").remove()
+        cp.update_status()  # the label gone: the update stops quiet
+
+
 async def test_the_focused_rows_carry_the_bold_cue() -> None:
     """#470 S3: the focused hold's destination and the focused
     verdict's host render bold — the focus cue that survives a
@@ -2175,27 +2192,29 @@ async def test_the_focused_rows_carry_the_bold_cue() -> None:
         [FakeWS([request_frame("r1"), rules_frame()]), FakeWS([])]
     )
     app, page, _data = make_page(factory)
+
+    def bold_cue(list_id: str) -> bool:
+        """Whether the focused row of the named zone carries the
+        bold span — False while its Static still mounts (the
+        compose stream lags the highlight)."""
+        try:
+            item = cp.query_one(list_id).highlighted_child
+            if item is None:
+                return False
+            return any(
+                span.style == "$text bold"
+                for span in item.query_one(Static).content.spans
+            )
+        except Exception:
+            return False
+
     async with app.run_test() as pilot:
         cp = await open_consent(pilot, app, page)
         await wait_for(lambda: hold_children(app) == 1)
         await wait_for(lambda: focused_zone(app) == "holds")
-        await wait_for(
-            lambda: any(
-                span.style == "$text bold"
-                for span in cp.query_one("#hold-rows")
-                .highlighted_child.query_one(Static)
-                .content.spans
-            )
-        )
+        await wait_for(lambda: bold_cue("#hold-rows"))
         await press_until(pilot, "down", lambda: focused_zone(app) == "rules")
-        await wait_for(
-            lambda: any(
-                span.style == "$text bold"
-                for span in cp.query_one("#rule-rows")
-                .highlighted_child.query_one(Static)
-                .content.spans
-            )
-        )
+        await wait_for(lambda: bold_cue("#rule-rows"))
 
 
 async def test_a_decide_key_inside_a_swap_window_flashes() -> None:

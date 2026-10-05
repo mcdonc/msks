@@ -31,17 +31,20 @@ from .schemas import WorkspaceCreate
 from .volumes import move_lock
 
 
-def image_ref(app, image_hash: str | None) -> str | None:
+def image_ref(images, image_hash: str | None) -> str | None:
     """The catalog reference for a workspace's image hash (#470
     L3) — ``name:version``, the words a listing's IMAGE column
-    reads — or None when the catalog cannot resolve the digest (a
-    pruned image, a row older than the hash). The digest stays in
-    the row's own field; this is the human-facing alias."""
+    reads — resolved against ONE catalog listing the caller
+    holds (the listing endpoint is polled every second by an open
+    page and every five by the standing list refresh, so a
+    per-row catalog walk would rescan the directory N times a
+    request). None when the catalog cannot resolve the digest (a
+    pruned image, a row older than the hash, no image at all).
+    The digest stays in the row's own field; this is the
+    human-facing alias."""
     if not image_hash:
         return None
-    record = resolve_hash(
-        image_hash, list_catalog_images(app.state.settings.vmm.state_dir)
-    )
+    record = resolve_hash(image_hash, images)
     if record is None:
         return None
     return f"{record.name}:{record.version}"
@@ -213,10 +216,12 @@ def router(app) -> APIRouter:
     async def list_workspaces() -> list[dict]:
         """The workspace rows with each image's catalog reference
         (#470 L3) — the listing's client prefers the reference and
-        keeps the digest as its own fallback."""
+        keeps the digest as its own fallback. One catalog walk
+        serves every row."""
         rows = await app.state.model.list_workspaces()
+        images = list_catalog_images(app.state.settings.vmm.state_dir)
         for row in rows:
-            row["image_ref"] = image_ref(app, row.get("image_hash"))
+            row["image_ref"] = image_ref(images, row.get("image_hash"))
         return rows
 
     @api.get(

@@ -545,9 +545,18 @@ async def test_a_refresh_keeps_the_focused_workspace_row() -> None:
     queue's rebuild rule, carried to the listing — and an
     unchanged listing keeps its own list (#470 L2): the standing
     interval refresh repaints nothing while the daemon serves the
-    same rows, so focus never blips; a changed listing swaps in a
-    fresh list with the focused row restored."""
-    data = FakeData([row(), row(id="ws-b", name="beta")])
+    same rows, whatever order it serves them in, so focus never
+    blips; a changed listing swaps in a fresh list with the
+    focused row restored."""
+    data = FakeData(
+        [
+            {**row(), "created_at": "2026-01-01T00:00:00"},
+            {
+                **row(id="ws-b", name="beta"),
+                "created_at": "2026-01-03T00:00:00",
+            },
+        ]
+    )
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await wait_for(lambda: list_children(app) == 2)
@@ -563,16 +572,25 @@ async def test_a_refresh_keeps_the_focused_workspace_row() -> None:
         await press_until(
             pilot, "down", lambda: focused_key() == ("workspace", "ws-b")
         )
-        # An unchanged listing keeps its list: the refresh takes
-        # no swap, and the focus stands where it was.
+        # An unchanged listing keeps its list — the daemon serves
+        # oldest-first and the display is newest-first, so the
+        # skip reads in the display order or never fires: the
+        # refresh takes no swap, and the focus stands where it
+        # was.
         await pilot.press("r")
+        await wait_for(lambda: data.fetches >= 2)  # the refresh ran
         await pilot.pause()
         assert app.query_one("#rows") is before
         assert focused_key() == ("workspace", "ws-b")
 
         # A changed listing swaps in a fresh list, the focused row
         # kept by its key.
-        data.rows.append(row(id="ws-c", name="gamma"))
+        data.rows.append(
+            {
+                **row(id="ws-c", name="gamma"),
+                "created_at": "2026-02-01T00:00:00",
+            }
+        )
         await pilot.press("r")
 
         def fresh():
@@ -2205,6 +2223,14 @@ def test_the_line_helpers() -> None:
     (span,) = name.spans
     assert name.plain[span.start : span.end] == "● stopped"
     assert span.style == "$warning"
+    # The running state keeps the success color behind its dot —
+    # the dotted word and the raw word answer the same map
+    # (the review round on #470: the dotted text fed to the map
+    # painted running in the warning color).
+    running = rows_mod.header_name(row(status="running"))
+    (running_span,) = running.spans
+    assert running.plain[running_span.start : running_span.end] == "● running"
+    assert running_span.style == "$success"
     assert "egress to decide" not in name.plain
     assert "egress to decide: 2" in rows_mod.header_name(row(), 2).plain
     # A wide-character name keeps the span on the status: the
@@ -3732,7 +3758,9 @@ async def test_the_listing_refreshes_while_it_stands(monkeypatch) -> None:
             stamp(row(id="ws-b", name="beta"), "2026-02-01T00:00:00")
         )
         await wait_for(lambda: list_children(app) == 2, timeout=30.0)
-        assert "beta" in row_text(app, 0)  # newer than the fixture
+        # The fresh row lands on top once its paint lands (the
+        # compose stream lags the row count under load).
+        await wait_for(lambda: "beta" in row_text(app, 0))
 
 
 async def test_the_typeahead_jumps_the_focus(monkeypatch) -> None:
@@ -3758,7 +3786,12 @@ async def test_the_typeahead_jumps_the_focus(monkeypatch) -> None:
         )
         for key in "ni":
             await pilot.press(key)
-        await wait_for(lambda: rows.highlighted_child.workspace_id == "ws-c")
+
+        def highlighted_is(ws_id: str) -> bool:
+            child = rows.highlighted_child
+            return child is not None and child.workspace_id == ws_id
+
+        await wait_for(lambda: highlighted_is("ws-c"))
         # A term nothing starts with ("niz") names itself; the
         # focus keeps its place. Escape closes the modal through
         # its own binding; a reopened search takes an emptied term
@@ -3769,6 +3802,7 @@ async def test_the_typeahead_jumps_the_focus(monkeypatch) -> None:
         await wait_for(
             lambda: not isinstance(app.screen, main_screen_mod.SearchScreen)
         )
+        assert rows.highlighted_child is not None
         assert rows.highlighted_child.workspace_id == "ws-c"
         await pilot.press("/")
         await wait_for(
@@ -3779,6 +3813,7 @@ async def test_the_typeahead_jumps_the_focus(monkeypatch) -> None:
         await wait_for(
             lambda: not isinstance(app.screen, main_screen_mod.SearchScreen)
         )
+        assert rows.highlighted_child is not None
         assert rows.highlighted_child.workspace_id == "ws-c"
 
 
@@ -3828,6 +3863,10 @@ async def test_a_stale_child_skips_in_the_repaint(monkeypatch) -> None:
         screen.rows = standing
         await app.query_one("#rows").children[0].query_one(Static).remove()
         screen.paint_rows()  # the pruned Static skips alone, no raise
+        # A swap window (the list gone, the fresh one not yet
+        # mounted) takes the same quiet exit.
+        await app.query_one("#rows").remove()
+        screen.paint_rows()
 
 
 async def test_every_footer_names_its_enter_binding(monkeypatch) -> None:

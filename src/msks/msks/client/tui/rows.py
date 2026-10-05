@@ -305,7 +305,7 @@ def header_name(
     span = Span(
         offset,
         offset + len(status),
-        status_color(status, theme_variables),
+        status_color(row["status"], theme_variables),
     )
     return Content(text, [span])
 
