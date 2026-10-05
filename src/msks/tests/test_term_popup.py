@@ -876,8 +876,10 @@ def pty_pair():
     return master, slave
 
 
-def eventually(check, deadline: float = 5.0) -> None:
-    """Await a server-side condition, polling the real server."""
+def eventually(check, deadline: float = 15.0) -> None:
+    """Await a server-side condition, polling the real server.
+    The deadline breathes for a loaded parallel suite — a probe
+    passes in well under a second on an idle host."""
     end = time.monotonic() + deadline
     while time.monotonic() < end:
         if check():
@@ -917,6 +919,14 @@ def test_the_sessions_carry_opposite_leases() -> None:
         client.wait(timeout=10)
         eventually(lambda: not session_up(socket, "shell"))
         assert session_up(socket, tp.CONSENT_SESSION)
+        # The last session's end takes the server with it.
+        subprocess.run(
+            ["tmux", "-L", socket, "kill-session", "-t", tp.CONSENT_SESSION],
+            timeout=5,
+            check=True,
+            capture_output=True,
+        )
+        eventually(lambda: not session_up(socket, tp.CONSENT_SESSION))
     finally:
         subprocess.run(
             ["tmux", "-L", socket, "kill-server"],

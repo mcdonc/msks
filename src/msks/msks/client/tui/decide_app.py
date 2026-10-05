@@ -319,13 +319,15 @@ class ConsentDeciderApp(App[None]):
     # --- the verdicts -------------------------------------------------------
 
     def focused_hold(self) -> ConsentRequest | None:
-        """The hold the verdict keys act on: the queue's
-        highlighted row, when one stands under it."""
-        rows = self.link.controller.ordered()
-        index = self.query_one("#requests", ListView).index
-        if index is None or not 0 <= index < len(rows):
-            return None
-        return rows[index]
+        """The hold the verdict keys act on: the highlighted
+        row's hold, read from the list as it stands — a frame may
+        already have reshaped the controller's order while the
+        list still shows the rows the operator sees."""
+        held = self.selected_id(self.query_one("#requests", ListView))
+        for row in self.link.controller.ordered():
+            if row.id == held:
+                return row
+        return None
 
     def action_allow(self) -> None:
         """``a``: allow the focused hold until restart — the
@@ -345,27 +347,40 @@ class ConsentDeciderApp(App[None]):
         self.pick_duration("deny")
 
     def pick_duration(self, decision: str) -> None:
-        """Open the shared duration picker for the focused hold."""
-        if self.focused_hold() is not None:
+        """Open the shared duration picker for the focused hold.
+        The request id is captured here, not re-read at pick
+        time: the focused row can change — or resolve — while the
+        picker stands, and the verdict must land on the hold the
+        operator keyed it for (the page's own rule; a resolved
+        hold answers at the post with the daemon's reason)."""
+        hold = self.focused_hold()
+        if hold is not None:
             self.push_screen(
-                DurationScreen(picked=lambda pick: self.picked(decision, pick))
+                DurationScreen(
+                    picked=lambda pick: self.picked(hold.id, decision, pick)
+                )
             )
 
-    async def picked(self, decision: str, pick: str | None) -> None:
-        """The picker's answer: a duration decides, a cancel
-        changes nothing."""
+    async def picked(
+        self, request_id: str, decision: str, pick: str | None
+    ) -> None:
+        """The picker's answer: a duration decides the hold the
+        picker was keyed on, a cancel changes nothing."""
         if pick is not None:
-            self.decide(decision, pick)
+            self.decide_id(request_id, decision, pick)
 
     def decide(self, decision: str, duration: str) -> None:
         """Post one verdict for the focused hold, off the key
         path: the row leaves when its resolution frame lands, not
         when the post returns."""
         hold = self.focused_hold()
-        if hold is None:
-            return
+        if hold is not None:
+            self.decide_id(hold.id, decision, duration)
+
+    def decide_id(self, request_id: str, decision: str, duration: str) -> None:
+        """Post one verdict for a named hold, off the key path."""
         task = asyncio.create_task(
-            self.post_verdict(hold.id, decision, duration)
+            self.post_verdict(request_id, decision, duration)
         )
         self.verdicts.add(task)
         task.add_done_callback(self.verdicts.discard)
@@ -390,37 +405,38 @@ class ConsentDeciderApp(App[None]):
 
     # --- the window's life ---------------------------------------------------
 
-    def retire_when_gone(self) -> None:
+    async def retire_when_gone(self) -> None:
         """The liveness tick: a window gone past its grace retires
         the decider — the hidden session ends with the app, and
-        the launch's server with the session."""
-        if self.window_gone():
+        the launch's server with the session. The probe runs off
+        the loop (it is the same blocking tmux work the show and
+        hide paths thread); the clock is this app's own tick, so
+        a wedged loop leaves the session standing until the
+        operator's next launch — every probe it makes is bounded
+        at three seconds."""
+        live = await asyncio.to_thread(self.clients_present)
+        if self.window_gone(live):
             self.exit()
 
-    def window_gone(self) -> bool:
-        """Whether the launch's window has left for good: a client
-        attached once and none stands past the empty window, or no
-        client ever attached past the launch grace."""
-        if self.clients_live():
-            self.client_seen = True
-            return False
-        if not self.client_seen:
-            return self.clock() - self.started >= LIVENESS_GRACE_S
-        return (
-            self.empty_since is not None
-            and self.clock() - self.empty_since >= LIVENESS_EMPTY_S
-        )
-
-    def clients_live(self) -> bool:
-        """Whether the launch's window still carries its client —
-        the empty moment starts the empty window's clock."""
+    def clients_present(self) -> bool:
+        """The probe, thread-side: whether the launch's window
+        still carries its client."""
         socket = self.popup_socket or ""
-        if term_popup.shell_clients(socket, self.popup_session or ""):
+        return bool(term_popup.shell_clients(socket, self.popup_session or ""))
+
+    def window_gone(self, live: bool) -> bool:
+        """The clock, loop-side: a client attached once and none
+        stands past the empty window, or no client ever attached
+        past the launch grace."""
+        if live:
+            self.client_seen = True
             self.empty_since = None
-            return True
+            return False
         if self.empty_since is None:
             self.empty_since = self.clock()
-        return False
+        if not self.client_seen:
+            return self.clock() - self.started >= LIVENESS_GRACE_S
+        return self.clock() - self.empty_since >= LIVENESS_EMPTY_S
 
     # --- the viewer ---------------------------------------------------------
 

@@ -694,14 +694,14 @@ async def test_the_decider_retires_with_its_window(
     ).run_test() as pilot:
         app = pilot.app
         now["t"] = 2000.0
-        app.retire_when_gone()  # a client stands: no retirement
+        await app.retire_when_gone()  # a client stands: no retirement
         assert app.is_running
         clients["list"] = []
         now["t"] = 2008.0
-        app.retire_when_gone()  # inside the empty window
+        await app.retire_when_gone()  # inside the empty window
         assert app.is_running
         now["t"] = 2020.0
-        app.retire_when_gone()  # past it: the decider steps aside
+        await app.retire_when_gone()  # past it: the decider steps aside
         await until(lambda: not app.is_running)
     assert posted == []
 
@@ -722,10 +722,10 @@ async def test_a_window_that_never_attached_retires(
     ).run_test() as pilot:
         app = pilot.app
         now["t"] = 1020.0
-        app.retire_when_gone()  # inside the launch grace
+        await app.retire_when_gone()  # inside the launch grace
         assert app.is_running
         now["t"] = 1031.0
-        app.retire_when_gone()  # no window ever came
+        await app.retire_when_gone()  # no window ever came
         await until(lambda: not app.is_running)
     assert posted == []
 
@@ -791,3 +791,48 @@ async def test_the_show_covers_every_shell_client(
         tp.show_popup_argv(SOCKET, "/dev/pts/3"),
         tp.show_popup_argv(SOCKET, "/dev/pts/9"),
     ]
+
+
+async def test_the_picker_decides_the_hold_even_if_it_resolved() -> None:
+    """The keyed hold resolving mid-picker does not redirect the
+    verdict (#467 review): the captured id posts — a resolved
+    hold answers at the post, not by silently deciding another."""
+    posted, seam = verdict_seam()
+    frames = [
+        rules_frame(),
+        request_frame("r1"),
+        request_frame("r2", host="cdn.example"),
+    ]
+    async with build(frames, seam).run_test() as pilot:
+        await until(lambda: len(row_texts(pilot.app)) == 2)
+        queue = pilot.app.query_one("#requests")
+        await pilot.press("down")
+        assert queue.index == 1
+        await pilot.press("D")
+        assert isinstance(pilot.app.screen, DurationScreen)
+        # The keyed hold itself resolves while the picker stands.
+        frames.append(resolved_frame("r2"))
+        await until(lambda: len(row_texts(pilot.app)) == 1)
+        await pilot.press("enter")
+        await until(lambda: len(posted) == 1)
+        assert posted == [("ws1", "r2", "deny", "tilrestart")]
+
+
+async def test_the_quick_keys_read_the_rows_the_operator_sees() -> None:
+    """A frame that reshaped the controller between repaints
+    cannot move a quick key's target: the hold comes from the
+    list's own row, not the fresh order mapped onto a stale
+    index."""
+    posted, seam = verdict_seam()
+    frames = [rules_frame(), request_frame("r1"), request_frame("r2")]
+    async with build(frames, seam).run_test() as pilot:
+        await until(lambda: len(row_texts(pilot.app)) == 2)
+        queue = pilot.app.query_one("#requests")
+        await pilot.press("down")
+        assert queue.index == 1
+        # The controller drops r1 before the list swaps: the
+        # highlighted row still says r2.
+        del pilot.app.link.controller.pending["r1"]
+        await pilot.press("d")
+        await until(lambda: len(posted) == 1)
+        assert posted == [("ws1", "r2", "deny", "once")]
