@@ -1694,6 +1694,34 @@ async def test_spawn_window_detaches_quietly() -> None:
     assert await asyncio.wait_for(proc.wait(), 10) == 0
 
 
+async def test_spawn_window_marks_the_opened_window(monkeypatch) -> None:
+    """The child's environment carries the new-window marker
+    (#445): the window msks opened may take its title from
+    ``MSKSC_TERMINAL_TITLE`` — the appended ``msks ssh`` reads the
+    marker to tell a spawned window from the operator's own
+    terminal. A copy of the environment, so the marker never
+    leaks into the tree's own process."""
+    seen = {}
+
+    async def fake_exec(*argv, **kwargs):
+        seen.update(argv=argv, kwargs=kwargs)
+        return SimpleNamespace(pid=1)
+
+    monkeypatch.setattr(
+        follow_mod,
+        "asyncio",
+        SimpleNamespace(
+            create_subprocess_exec=fake_exec,
+            subprocess=asyncio.subprocess,
+        ),
+    )
+    await follow_mod.spawn_window(["xterm", "-e"])
+    env = seen["kwargs"]["env"]
+    assert env[follow_mod.TITLE_MARKER] == "1"
+    assert "PATH" in env  # a copy of the environment, marker added
+    assert follow_mod.TITLE_MARKER not in os.environ  # tree unmarked
+
+
 async def test_the_new_terminal_action_spawns_an_ssh_child(
     monkeypatch,
 ) -> None:

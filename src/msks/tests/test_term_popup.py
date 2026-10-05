@@ -80,6 +80,9 @@ def test_session_argv_names_the_socket_the_pane_and_the_workspace() -> None:
         # server ahead of the session: a pane adopts its history
         # limit only at creation, and mouse mode read live still
         # wants to be on the server the session is born from.
+        # set-titles pins off for the configured window title
+        # (#445): the fresh server reads the operator's tmux.conf,
+        # and its set-titles on would take the title over.
         "start-server",
         ";",
         "set-option",
@@ -111,6 +114,11 @@ def test_session_argv_names_the_socket_the_pane_and_the_workspace() -> None:
         "S-PgDn",
         "if -F '#{pane_in_mode}' 'send-keys -X page-down'"
         " 'copy-mode -e; send-keys -X page-down'",
+        ";",
+        "set-option",
+        "-g",
+        "set-titles",
+        "off",
         ";",
         "new-session",
         "-s",
@@ -310,6 +318,21 @@ def test_run_launch_names_a_missing_tmux(
         tp.run_launch(list(SSH_CHILD))
 
 
+def test_a_missing_tmux_leaves_the_window_title_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The refusal path stops before the window could open
+    # half-way — its title included: a configured template never
+    # reaches a window tmux is not there to fill.
+    monkeypatch.setattr(tp.shutil, "which", lambda tool: None)
+    monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "msks — {workspace}")
+    out = Tty()
+    monkeypatch.setattr(tp.sys, "stdout", out)
+    with pytest.raises(SystemExit, match="tmux is not on PATH"):
+        tp.run_launch(list(SSH_CHILD))
+    assert out.getvalue() == ""
+
+
 def test_run_launch_execs_the_tmux_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -329,6 +352,42 @@ def test_run_launch_execs_the_tmux_client(
     # session name is the word after new-session itself.
     assert argv[2].startswith("msks-a1b2c3d4e5-")
     assert argv[i + 2] == "a1b2c3d4e5"
+
+
+# --- the configured window title (#445) -----------------------------------
+
+
+class Tty(io.StringIO):
+    """A stdout the title writer accepts — a pipe answers
+    isatty() False and stays clean. The emission itself lives in
+    :mod:`msks.client.wintitle` and is tested there."""
+
+    def isatty(self) -> bool:
+        return True
+
+
+def test_run_launch_titles_the_window_before_the_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(tp.shutil, "which", lambda tool: "/bin/" + tool)
+    monkeypatch.setattr(tp.os, "execvp", lambda binname, argv: None)
+    monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "msks — {workspace}")
+    out = Tty()
+    monkeypatch.setattr(tp.sys, "stdout", out)
+    assert tp.run_launch(list(SSH_CHILD)) == 0
+    assert out.getvalue() == "\x1b]0;msks — a1b2c3d4e5\x07"
+
+
+def test_run_launch_without_a_title_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(tp.shutil, "which", lambda tool: "/bin/" + tool)
+    monkeypatch.setattr(tp.os, "execvp", lambda binname, argv: None)
+    monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "")
+    out = Tty()
+    monkeypatch.setattr(tp.sys, "stdout", out)
+    assert tp.run_launch(list(SSH_CHILD)) == 0
+    assert out.getvalue() == ""
 
 
 def test_the_launch_line_meets_the_pane_role(
@@ -391,6 +450,12 @@ def test_run_pane_starts_the_watcher_then_execs_the_child(
     assert rc == 0
     assert started == {"session": "sess", "ws": "ws1"}
     assert seen["argv"] == SSH_CHILD
+    # The new-window marker (#445) is gone before the child runs:
+    # the window is already titled (the launch role wrote it) and
+    # tmux owns the pane's escapes.
+    monkeypatch.setenv(tp.TITLE_MARKER, "1")
+    tp.run_pane(["-s", "sess", "-w", "ws1", "--", *SSH_CHILD])
+    assert tp.TITLE_MARKER not in os.environ
     # No workspace in the child: the pane runs the command alone.
     # Without -s the session name derives from the workspace; with
     # no tmux environment (a hand-run pane) it runs alone too.

@@ -16,12 +16,14 @@ Four roles share this module, spelled as the first argument:
 
 ``launch``
     The console entry the operator's prefix runs. Validates tmux,
-    names a fresh session after the workspace on a dedicated
-    socket (a server of its own, so the pane inherits this
-    process's environment — an operator's already-running tmux
-    server would otherwise substitute its own — and the session
-    stays out of their window list), and becomes the attached
-    tmux client (``tmux -L <socket> new-session ... pane ...``).
+    names the window per ``MSKSC_TERMINAL_TITLE`` when the setting
+    is in place (#445), names a fresh session after the workspace
+    on a dedicated socket (a server of its own, so the pane
+    inherits this process's environment — an operator's
+    already-running tmux server would otherwise substitute its
+    own — and the session stays out of their window list), and
+    becomes the attached tmux client (``tmux -L <socket>
+    new-session ... pane ...``).
 ``pane``
     The tmux session's first process. Starts the watcher beside the
     shell (its own process group membership takes it down with the
@@ -57,6 +59,7 @@ from . import wsauth
 from .egress import DURATIONS, connect_args, dest_label, refused
 from .env import env_token, env_url
 from .rest import api_client, request
+from .wintitle import TITLE_MARKER, configured_title, set_window_title
 
 #: The popup geometry: fixed cells, sized for the 80-column window
 #: the consent screens already target; tmux clips it to a smaller
@@ -183,15 +186,20 @@ def split_role(args: list[str]) -> tuple[str, list[str]]:
 
 def run_launch(argv: list[str]) -> int:
     """The launcher (#379): a missing tmux names itself and stops
-    before a window could open half-way; otherwise become the tmux
-    client attached to a fresh session (one that ends with this
-    window) whose pane runs this module's pane role with the
+    before a window could open half-way — its title included; a
+    configured title (``MSKSC_TERMINAL_TITLE``) names the window
+    only once tmux is there to fill it (#445). Then become the
+    tmux client attached to a fresh session (one that ends with
+    this window) whose pane runs this module's pane role with the
     appended command. The terminal window itself is whatever the
     operator's prefix opened — this process already runs inside
     it."""
+    workspace_id = workspace_from_argv(argv)
     if shutil.which("tmux") is None:
         raise SystemExit("msks-term-popup: tmux is not on PATH")
-    workspace_id = workspace_from_argv(argv)
+    title = configured_title(workspace_id)
+    if title is not None:
+        set_window_title(title)
     os.execvp(
         "tmux",
         session_argv(argv, session_name(workspace_id), workspace_id),
@@ -205,7 +213,12 @@ def run_pane(argv: list[str]) -> int:
     watcher stays in this pane's process group, so the window's
     teardown SIGHUP retires it with the shell; its own liveness
     check is the backstop. No workspace in the child (or no tmux
-    environment — a hand-run pane) runs the command alone."""
+    environment — a hand-run pane) runs the command alone. The
+    new-window marker (#445) is dropped before anything runs: the
+    window is already titled — :func:`run_launch` wrote it before
+    attaching tmux — and tmux owns the pane's escapes, so the
+    session has no title of its own to write."""
+    os.environ.pop(TITLE_MARKER, None)
     session, rest = take_option("-s", argv)
     workspace_id, rest = take_option("-w", rest)
     child = child_argv(rest)
@@ -587,10 +600,14 @@ def session_argv(
     scrolling, and the raised history line count is how far back
     it reaches. The page-scroll bindings (#444) land with them:
     the shifted page keys page that same history through tmux's
-    copy mode, the keyboard twin of the wheel. Everything lands
-    on this launch's own server (the dedicated socket carries
-    it), so the operator's own tmux server, when one runs, keeps
-    its own settings."""
+    copy mode, the keyboard twin of the wheel. ``set-titles``
+    pins off for the configured window title (#445): a fresh
+    server still reads the operator's own tmux.conf, whose
+    ``set-titles on`` would otherwise hand the outer window's
+    title to tmux the moment the client attaches. Everything
+    lands on this launch's own server (the dedicated socket
+    carries it), so the operator's own tmux server, when one
+    runs, keeps its own settings."""
     pane = [
         sys.executable,
         "-m",
@@ -621,6 +638,11 @@ def session_argv(
     for key, command in PAGE_SCROLL_COMMANDS:
         argv += [";", "bind-key", "-n", key, command]
     argv += [
+        ";",
+        "set-option",
+        "-g",
+        "set-titles",
+        "off",
         ";",
         "new-session",
         "-s",
