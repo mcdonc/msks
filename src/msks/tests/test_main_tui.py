@@ -426,6 +426,17 @@ def failure_detail(app) -> str:
         return ""
 
 
+def close_focused(app) -> bool:
+    """Whether the failure panel's Close button holds the focus
+    (#449): false while the pushed panel is still composing
+    (NoMatches on the query) and until its on_mount focus move
+    lands on the pump."""
+    try:
+        return app.focused is app.screen.query_one("#do-close", Button)
+    except Exception:
+        return False
+
+
 def row_text(app, index: int) -> str:
     """One listing row's text; empty while its inner widget is
     still mounting (the compose stream lags the row count)."""
