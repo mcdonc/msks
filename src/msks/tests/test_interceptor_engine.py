@@ -398,7 +398,7 @@ async def test_a_plain_refusal_names_what_happened(authority) -> None:
         ("timeout", engine.BODY_UNANSWERED),
         ("verdict", engine.BODY_DENIED),
         ("static", engine.BODY_DENIED),
-        ("rate_limited", engine.BODY_DENIED),
+        ("rate_limited", engine.BODY_UNDECIDED),
     ):
         owner = FakeOwner({}, authority, verdict=WebVerdict(False, reason))
         flow = swap_flow(entry().sentinel, tls=False, pretty="plain.example")
@@ -416,11 +416,34 @@ def test_refusal_body_falls_back_to_the_verdict_wording() -> None:
 
 
 def test_a_request_that_ended_without_a_decision_says_so() -> None:
-    """Fail-close reasons (a raised gate, a vanished workspace, a
-    hold torn down by stop or mode switch) assert no verdict —
-    their body says the request ended undecided (#472 review)."""
-    for reason in ("error", "gone", "stopped", "shutdown", "mode switch"):
+    """Fail-close and cap reasons (a raised gate, a vanished
+    workspace, a hold torn down by stop or mode switch, the
+    prompt cap's outright refusal) assert no verdict — their body
+    says the request ended undecided (#472 review)."""
+    for reason in (
+        "error",
+        "gone",
+        "stopped",
+        "shutdown",
+        "mode switch",
+        "rate_limited",
+    ):
         assert engine.refusal_body(reason) == engine.BODY_UNDECIDED
+
+
+async def test_a_falsy_marker_reason_reads_as_error(authority) -> None:
+    """A denial must never vanish from the marker: a falsy stored
+    reason answers error (#472 review) instead of un-marking the
+    connection and forwarding its request."""
+    owner = FakeOwner({}, authority, verdict=WebVerdict(False, ""))
+    addon = engine.InterceptorAddon(owner)
+    client = FakeClient(sni="weird.example.com")
+    await addon.tls_clienthello(hello_data(client, "weird.example.com"))
+    flow = swap_flow(entry().sentinel, sni="weird.example.com")
+    flow.client_conn = client
+    await addon.request(flow)
+    assert flow.response.status_code == 403
+    assert flow.response.text == engine.BODY_UNDECIDED
 
 
 async def test_a_duplicate_answer_does_not_stick(authority) -> None:

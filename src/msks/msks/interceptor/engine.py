@@ -207,14 +207,22 @@ def refusal_body(reason: str) -> str:
     whose decision is still pending (the duplicate rule refused
     this newcomer while the first hold waits), a prompt no decider
     answered (none registered, or the hold expired undecided), or
-    a request that ended without a decision (the gate raised, the
-    workspace vanished or stopped, the mode switched mid-hold) —
-    never a verdict on the destination."""
+    a request that ended without a decision — the gate raised, the
+    workspace vanished or stopped, the mode switched mid-hold, or
+    the prompt cap refused the hold outright. The last class
+    never asserts a verdict on the destination."""
     if reason == "duplicate":
         return BODY_PENDING
     if reason in ("no_decider", "timeout"):
         return BODY_UNANSWERED
-    if reason in ("error", "gone", "stopped", "shutdown", "mode switch"):
+    if reason in (
+        "error",
+        "gone",
+        "stopped",
+        "shutdown",
+        "mode switch",
+        "rate_limited",
+    ):
         return BODY_UNDECIDED
     return BODY_DENIED
 
@@ -436,8 +444,10 @@ class InterceptorAddon:
         different key, lowercased). A duplicate answer caches
         nothing — it is the pending decision's placeholder, so the
         next request re-gates: while the decision waits, the
-        engine's dedup answers fast; once it lands, session or
-        standing coverage answers for real."""
+        engine's dedup answers fast; once it lands, its coverage
+        answers (a ``once`` verdict covers nothing — the raced
+        connection's next request asks fresh, then caches its own
+        answer)."""
         client = flow.client_conn
         address, port = original_destination(client)
         host = destination_name(flow)

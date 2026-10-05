@@ -154,9 +154,9 @@ each new outbound connection is decided:
   destination is already pending and points the operator at the
   consent prompt, a prompt no decider answered (none registered,
   or the request expired undecided) says so, and a request that
-  ended without a decision (the gate failed, or the workspace
-  vanished, stopped, or switched mode mid-hold) says that
-  instead. Verdicts and durations are shared: one allow
+  ended without a decision (the gate failed, the prompt cap
+  refused the hold, or the workspace vanished, stopped, or
+  switched mode mid-hold) says that instead. Verdicts and durations are shared: one allow
   covers the destination's web flows and its other ports alike,
   and the session memory that skips re-prompting is one table for
   both gates. The gating boundary is the connection, both
