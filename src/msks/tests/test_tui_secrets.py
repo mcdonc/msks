@@ -38,6 +38,7 @@ from msks.client.tui.secrets import (
 from test_consent_overlay import FakeFactory, FakeWS, press_until, wait_for
 from test_main_tui import (
     FakeData,
+    close_focused,
     failure_detail,
     failure_title,
     list_children,
@@ -675,6 +676,10 @@ async def test_a_failed_mint_opens_the_panel_and_keeps_the_fields(
         fill_mint(form)
         form.submit()
         await wait_for(lambda: on_failure(app))
+        # The title and body land with the panel's compose, a hop
+        # after the screen swap — the wait spans it under xdist
+        # load (#449).
+        await wait_for(lambda: failure_title(app))
         assert "mint failed" in failure_title(app)
         assert "github_api" in failure_title(app)
         assert "placeholder named github_api" in failure_detail(app)
@@ -702,10 +707,14 @@ async def test_the_failure_panel_holds_until_closed(tmp_path) -> None:
         fill_mint(form)
         form.submit()
         await wait_for(lambda: on_failure(app))
-        panel = app.screen
         # The Close button holds the focus — Enter reaches it —
-        # and arrows find no other control to walk into.
-        assert app.focused is panel.query_one("#do-close", Button)
+        # and arrows find no other control to walk into.  The
+        # screen swap, the compose, and the panel's on_mount
+        # focus move each land on the pump after the push, so
+        # the wait spans the whole chain under xdist load (#449)
+        # — the predicate reads as false through the hops it has
+        # not reached yet.
+        await wait_for(lambda: close_focused(app))
         exchanges = len(data.secret_calls)
         await pilot.press("x", "r", "down", "up")
         await pilot.pause()
@@ -731,6 +740,7 @@ async def test_a_refused_store_check_opens_the_panel_and_no_mint_runs(
         fill_mint(form)
         form.submit()
         await wait_for(lambda: on_failure(app))
+        await wait_for(lambda: failure_title(app))
         assert failure_title(app) == "secret store check failed"
         assert "daemon away" in failure_detail(app)
         await pilot.press("enter")  # the focused Close button
