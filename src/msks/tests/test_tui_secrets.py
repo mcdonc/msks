@@ -704,8 +704,13 @@ async def test_the_failure_panel_holds_until_closed(tmp_path) -> None:
         await wait_for(lambda: on_failure(app))
         panel = app.screen
         # The Close button holds the focus — Enter reaches it —
-        # and arrows find no other control to walk into.
-        assert app.focused is panel.query_one("#do-close", Button)
+        # and arrows find no other control to walk into.  The
+        # screen swap lands on the pump before the panel's own
+        # on_mount focus move does, so the wait spans both under
+        # xdist load (#449).
+        close = panel.query_one("#do-close", Button)
+        await wait_for(lambda: app.focused is close)
+        assert app.focused is close
         exchanges = len(data.secret_calls)
         await pilot.press("x", "r", "down", "up")
         await pilot.pause()
