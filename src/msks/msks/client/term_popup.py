@@ -626,7 +626,14 @@ def session_argv(
     default shows the session name — the workspace id — and the
     label is the name an operator reads; a ``#`` in it doubles
     for the format tmux leaves literal, so a name cannot write
-    format escapes into the bar. Everything
+    format escapes into the bar. The window-list formats pin to
+    empty (#458): tmux's default bar follows the left side with
+    the window list — an index, the pane command's name, a
+    current-window flag — and a single-window session names
+    itself enough with the label. The right side pins to empty
+    with them: tmux's default paints the pane's title, the clock,
+    and the date there, and the label is the whole bar.
+    Everything
     lands on this launch's own server (the dedicated socket
     carries it), so the operator's own tmux server, when one
     runs, keeps its own settings."""
@@ -675,6 +682,27 @@ def session_argv(
         "-g",
         "status-left-length",
         str(STATUS_LEFT_LENGTH),
+        # The window-list formats pin to empty (#458): tmux's
+        # default bar follows the left side with the window list,
+        # and a single-window session names itself enough with
+        # the label. The right side pins to empty with them —
+        # tmux's default paints the pane title, the clock, and
+        # the date there — so the label is the whole bar.
+        ";",
+        "set-option",
+        "-g",
+        "window-status-format",
+        "",
+        ";",
+        "set-option",
+        "-g",
+        "window-status-current-format",
+        "",
+        ";",
+        "set-option",
+        "-g",
+        "status-right",
+        "",
         ";",
         "new-session",
         "-s",

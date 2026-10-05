@@ -134,7 +134,10 @@ def test_session_argv_names_the_socket_the_pane_and_the_workspace() -> None:
         # The status bar's left side takes the resolved name
         # (#455) — a label apart from the id, so the pin proves
         # the label lands, and the length budget keeps tmux's
-        # ten-cell default from clipping it.
+        # ten-cell default from clipping it. The window-list
+        # formats and the right side pin to empty (#458): the
+        # default list would follow the label, the default right
+        # side would trail it, and the label is the whole bar.
         ";",
         "set-option",
         "-g",
@@ -145,6 +148,21 @@ def test_session_argv_names_the_socket_the_pane_and_the_workspace() -> None:
         "-g",
         "status-left-length",
         str(tp.STATUS_LEFT_LENGTH),
+        ";",
+        "set-option",
+        "-g",
+        "window-status-format",
+        "",
+        ";",
+        "set-option",
+        "-g",
+        "window-status-current-format",
+        "",
+        ";",
+        "set-option",
+        "-g",
+        "status-right",
+        "",
         ";",
         "new-session",
         "-s",
@@ -305,14 +323,16 @@ def test_page_keys_scroll_the_session_history() -> None:
 
 
 def test_the_status_bar_carries_the_workspace_name() -> None:
-    """The #455 boundary against a real tmux server: the shipped
-    option chain writes the resolved name onto the bar — read
-    back through the session it names, expanded the way the bar
-    itself renders it — with the length budget raised past tmux's
-    ten-cell default. The session runs detached on its own socket
-    with a pane that stays alive (a pane that exits takes the
-    last session — and its server — with it), so no window opens
-    anywhere and the read-back never races the session's death."""
+    """The #455/#458 boundary against a real tmux server: the
+    shipped option chain writes the resolved name onto the bar —
+    read back through the session it names, expanded the way the
+    bar itself renders it — with the length budget raised past
+    tmux's ten-cell default, and the window-list formats and the
+    right side read back empty, so the label is the whole bar.
+    The session runs detached on its own socket with a pane that
+    stays alive (a pane that exits takes the last session — and
+    its server — with it), so no window opens anywhere and the
+    read-back never races the session's death."""
     if shutil.which("tmux") is None:  # pragma: no cover
         pytest.skip("tmux is not on PATH")
     socket = f"msks-test-{os.getpid()}"
@@ -351,14 +371,18 @@ def test_the_status_bar_carries_the_workspace_name() -> None:
                 "-p",
                 "-t",
                 session,
-                "#{E:status-left}|#{status-left-length}",
+                "#{E:status-left}|#{status-left-length}"
+                "|#{window-status-format}|#{window-status-current-format}"
+                "|#{status-right}",
             ],
             capture_output=True,
             text=True,
             timeout=10,
             check=True,
         )
-        assert proc.stdout.strip() == f"[project-x] |{tp.STATUS_LEFT_LENGTH}"
+        assert proc.stdout.strip() == (
+            f"[project-x] |{tp.STATUS_LEFT_LENGTH}|||"
+        )
     finally:
         subprocess.run(
             ["tmux", "-L", socket, "kill-server"],
