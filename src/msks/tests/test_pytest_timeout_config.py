@@ -14,8 +14,12 @@ import pytest
 SMOKE_CONFTEST = Path(__file__).parent / "test_smoke" / "conftest.py"
 
 
-def test_ceiling_is_30s_in_addopts(pytestconfig) -> None:
-    assert "--timeout=30" in pytestconfig.getini("addopts")
+def test_ceiling_is_60s_in_addopts(pytestconfig) -> None:
+    """60s, not the old 30s (#468): the TUI harness polls credit
+    OS-descheduled spans back to their deadlines, so a healthy
+    test under parallel-suite load can legitimately run past 30s
+    of wall clock."""
+    assert "--timeout=60" in pytestconfig.getini("addopts")
 
 
 def test_addopts_report_durations(pytestconfig) -> None:
@@ -67,7 +71,7 @@ def test_smoke_conftest_lifts_the_ceiling() -> None:
         [smoke_item, unit_item, lookalike, budgeted]
     )
     assert smoke_item.marks, "smoke items must get the override"
-    assert not unit_item.marks, "unit items must keep the 30s ceiling"
+    assert not unit_item.marks, "unit items must keep the 60s ceiling"
     assert not lookalike.marks, "a test_smoke_* FILE is not the dir"
     assert not budgeted.marks, (
         "an item carrying its own timeout budget keeps it — the "

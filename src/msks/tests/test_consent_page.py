@@ -416,34 +416,46 @@ def focused_zone(app) -> str | None:
 async def wait_for(
     condition, timeout: float = 10.0, delay: float = 0.02
 ) -> None:
-    """Poll a render condition until a wall-clock deadline (UI
-    updates land on the message pump, not synchronously with the
-    worker's frames). The budget is monotonic wall-clock time, not
-    a try count: under full-suite load a multi-second event-loop
-    stall stretches every iteration, and a fixed try count then
-    gives up on a condition that lands moments later (#322)."""
+    """Poll a render condition until a deadline (UI updates land
+    on the message pump, not synchronously with the worker's
+    frames). The budget is monotonic time, not a try count (#322),
+    and not raw wall clock (#468): the parallel suite can
+    deschedule this worker for whole seconds at a stretch, and a
+    parked poll would count that span as budget spent. Each
+    parked cycle credits its overshoot back to the deadline, so
+    the condition keeps its full window of pump progress however
+    starved the runner is."""
     deadline = time.monotonic() + timeout
     while True:
         if condition():
             return
+        parked = time.monotonic()
+        await asyncio.sleep(delay)
+        # The park ran past its requested span: the runner was
+        # descheduled, or the pump worked the queue — span the
+        # budget never had. Credit it back (#468).
+        ran = time.monotonic() - parked
+        if ran > delay:
+            deadline += ran - delay
         if time.monotonic() >= deadline:
-            # A loop parked past the deadline gets one pump cycle to
-            # land the condition before the poll gives up: the frames
-            # that arrived during the park are queued, not processed.
-            await asyncio.sleep(delay)
+            # The cycle's pump work gets one read before the poll
+            # gives up: the frames that landed during the park are
+            # read here, not before it.
             if condition():
                 return
             raise AssertionError("condition never landed")
-        await asyncio.sleep(delay)
 
 
 async def press_until(pilot, key: str, landed, timeout: float = 10.0) -> None:
     """Press a key until its effect lands — an action pressed inside
     a rebuild's swap window no-ops (by design), so the tests retry.
-    The budget is a wall-clock deadline for the same stall reason
-    as wait_for (#322)."""
+    The budget is time the app actually ran, for the same starved-
+    runner reason as wait_for (#322, #468): a press cycle that ran
+    past its requested sleep credits the overshoot back to the
+    deadline, so a descheduled worker cannot spend the budget."""
     deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+    while True:
+        started = time.monotonic()
         await pilot.press(key)
         try:
             if landed():
@@ -451,7 +463,11 @@ async def press_until(pilot, key: str, landed, timeout: float = 10.0) -> None:
         except Exception:
             pass
         await asyncio.sleep(0.05)
-    raise AssertionError(f"{key!r} never took effect")
+        ran = time.monotonic() - started
+        if ran > 0.05:
+            deadline += ran - 0.05
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"{key!r} never took effect")
 
 
 async def open_screen(pilot, app, key: str, name: str) -> None:
@@ -664,7 +680,10 @@ async def test_focused_rule_or_none_in_a_swap_window() -> None:
         await cp.query_one("#hold-rows").remove()
         cp.focus_holds()  # the holds mid-swap
         cp.enter_holds()  # the up-edge handoff onto a missing list
-        await pilot.pause()
+        # No pause before the read: the page's once-a-second tick
+        # timer can fire across any await, and its self-heal would
+        # remount the list this assert means to find missing
+        # (#468).
         assert cp.hold_rows() is None
         cp.tick()  # both zones self-heal
         await wait_for(lambda: rules_children(app) == 2)
@@ -1760,6 +1779,68 @@ async def test_a_flight_dying_at_teardown_stays_quiet(
     await wait_for(lambda: not flight.scheduled)
     assert not logged  # the dead owner logs nothing
     assert runs == [1]  # no re-arm carried the death forward
+
+
+# -- the harness's budgets (#468) -----------------------------------------
+
+
+async def test_wait_for_credits_a_descheduled_park(monkeypatch) -> None:
+    """A park that runs past its requested span (the runner was
+    descheduled under the parallel suite) is not budget spent: the
+    deadline extends by the overshoot, so a condition that lands
+    after the wall-clock window still lands (#468). The budget
+    here is 0.3s while every park runs 0.15s over — without the
+    credit the poll gives up before the 0.8s condition."""
+    real_sleep = asyncio.sleep
+
+    def starved_sleep(delay: float):
+        return real_sleep(delay + 0.15)
+
+    lands_at = time.monotonic() + 0.8
+    monkeypatch.setattr(asyncio, "sleep", starved_sleep)
+    await wait_for(lambda: time.monotonic() >= lands_at, timeout=0.3)
+
+
+async def test_wait_for_still_gives_up_without_a_landing(monkeypatch) -> None:
+    """The credit buys back starved time, not a second chance: a
+    condition that never lands still fails inside its (credited)
+    budget — the credit must not make a genuine regression hang."""
+    real_sleep = asyncio.sleep
+
+    def starved_sleep(delay: float):
+        return real_sleep(delay + 0.15)
+
+    monkeypatch.setattr(asyncio, "sleep", starved_sleep)
+    try:
+        await wait_for(lambda: False, timeout=0.3)
+    except AssertionError as exc:
+        assert "never landed" in str(exc)
+    else:
+        raise AssertionError("the poll should have given up")
+
+
+async def test_press_until_credits_a_descheduled_cycle(monkeypatch) -> None:
+    """A press cycle that runs past its requested sleep is not
+    budget spent either (#468): the presses keep coming until the
+    key lands, however long the OS starved the worker in between."""
+    real_sleep = asyncio.sleep
+
+    def starved_sleep(delay: float):
+        return real_sleep(delay + 0.15)
+
+    class CountingPilot:
+        presses = 0
+
+        async def press(self, key: str) -> None:
+            CountingPilot.presses += 1
+
+    lands_at = time.monotonic() + 0.8
+    monkeypatch.setattr(asyncio, "sleep", starved_sleep)
+    pilot = CountingPilot()
+    await press_until(
+        pilot, "m", lambda: time.monotonic() >= lands_at, timeout=0.3
+    )
+    assert pilot.presses >= 2  # the budget bought more than one cycle
 
 
 # -- the hold flash's shape (#454) -----------------------------------------

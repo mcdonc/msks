@@ -3330,8 +3330,11 @@ async def test_a_removal_under_an_open_consent_page_waits_for_it(
         # notice the moment it surfaces), so the wait watches for
         # the consent page leaving, not for any one screen beneath
         # it: the intermediate workspace page may stand for less
-        # than a poll cycle before its own close lands.
-        deadline = time.monotonic() + 10.0
+        # than a poll cycle before its own close lands. The outer
+        # guard is wall clock with room to spare: each inner wait
+        # already budgets pump progress, not wall clock (#468), so
+        # a starved runner stretches this deadline, not the test.
+        deadline = time.monotonic() + 30.0
         while on_consent(app):
             if time.monotonic() > deadline:
                 raise AssertionError("the consent page never left")
