@@ -148,7 +148,10 @@ model = 2
 
 [snapshot.server]
 app = 2
-config = 2
+# #464: msksd doctor reads the daemon's own tool-name settings
+# (load_settings) beside serve's — the checks name what the
+# daemon will actually exec.
+config = 4
 events = 4
 identity = 8
 # #448: the lifespan runs the catalog's startup sweep itself (the
@@ -163,7 +166,9 @@ persist = 12
 # the route dropped its new_secret_value import (the minter
 # itself is gone with it).
 secretstore = 5
-settings = 2
+# #464: doctor's Settings import (env-plus-defaults fallback when
+# a config will not load).
+settings = 4
 # spec grew by one statement: the secret routes seed and serve the
 # probe placeholder (#424)
 spec = 28

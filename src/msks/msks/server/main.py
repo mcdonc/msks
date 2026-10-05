@@ -12,6 +12,7 @@ from ..app import build_app
 from ..config import load_settings
 from ..settings import Settings
 from ..spec.version import __version__
+from . import doctor
 from .api import build_api
 from .reload import arm_reload_watcher
 from .tls import load_or_generate
@@ -143,38 +144,74 @@ def install_sighup_reload(app, config: str | None) -> None:
     )
 
 
+# Flags both the bare invocation and every subcommand accept. They
+# live on one parent so `msksd --no-tls` (no subcommand) and
+# `msksd serve --no-tls` parse the same way; the defaults are
+# SUPPRESS plus set_defaults below because a subparser applies its
+# own defaults over values the main parser already parsed
+# (bpo-9351) — SUPPRESS leaves the main parser's value in place.
+SHARED_FLAGS = argparse.ArgumentParser(add_help=False)
+SHARED_FLAGS.add_argument(
+    "--config",
+    metavar="PATH",
+    default=argparse.SUPPRESS,
+    help=(
+        "YAML config file to read (env vars still override it); "
+        "'none' reads env vars and defaults only; default: "
+        "$MSKSD_CONFIG_DIR/msksd.yaml, generated on first run"
+    ),
+)
+SHARED_FLAGS.add_argument(
+    "--no-tls",
+    action="store_true",
+    default=argparse.SUPPRESS,
+    help="serve plain HTTP (development only)",
+)
+SHARED_FLAGS.add_argument(
+    "--reload",
+    action="store_true",
+    default=argparse.SUPPRESS,
+    help=(
+        "development: watch the msks package source tree and "
+        "restart the process when it changes (used by the "
+        "dev-tree flow, #144)"
+    ),
+)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """The msksd argument parser: subcommands plus the bare serve."""
+    parser = argparse.ArgumentParser(prog="msksd", parents=[SHARED_FLAGS])
+    parser.add_argument("--version", action="version", version=__version__)
+    parser.set_defaults(command=None)
+    sub = parser.add_subparsers(dest="command")
+    sub.add_parser(
+        "serve",
+        parents=[SHARED_FLAGS],
+        help="run the API server (the default when no subcommand is given)",
+    )
+    sub.add_parser(
+        "doctor",
+        parents=[SHARED_FLAGS],
+        help="check the host for the daemon's external tools (#464)",
+    )
+    return parser
+
+
 def main(argv: list[str] | None = None) -> int:
-    """Console-script entry: parse args, run the server."""
+    """Console-script entry: parse args, run the server or doctor."""
     logging.basicConfig(
         format="%(levelname)s %(name)s: %(message)s",
     )
     logging.getLogger("msks").setLevel(logging.INFO)
-    parser = argparse.ArgumentParser(prog="msksd")
-    parser.add_argument("--version", action="version", version=__version__)
-    parser.add_argument(
-        "--no-tls",
-        action="store_true",
-        help="serve plain HTTP (development only)",
-    )
-    parser.add_argument(
-        "--reload",
-        action="store_true",
-        help=(
-            "development: watch the msks package source tree and "
-            "restart the process when it changes (used by the "
-            "dev-tree flow, #144)"
-        ),
-    )
-    parser.add_argument(
-        "--config",
-        metavar="PATH",
-        help=(
-            "YAML config file to read (env vars still override it); "
-            "'none' reads env vars and defaults only; default: "
-            "$MSKSD_CONFIG_DIR/msksd.yaml, generated on first run"
-        ),
-    )
-    args = parser.parse_args(argv)
+    args = build_parser().parse_args(argv)
+    # Subparser defaults are SUPPRESS (bpo-9351, above); fill the
+    # gaps so every path below reads plain attribute values.
+    args.__dict__.setdefault("config", None)
+    args.__dict__.setdefault("no_tls", False)
+    args.__dict__.setdefault("reload", False)
+    if args.command == "doctor":
+        return doctor.doctor_main(args.config)
     try:
         settings = load_settings(args.config)
         app = build_app(settings)

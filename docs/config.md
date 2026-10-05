@@ -33,6 +33,34 @@ an environment variable: the config file cannot relocate the
 directory it lives in, so the tree root must be resolvable before
 the file is located.
 
+## `msksd doctor`
+
+`msksd doctor` checks the host for the external tools and libraries
+the daemon drives outside its Python environment (#464) — the
+cloud-hypervisor VMM and its `ch-remote` API client, the e2fsprogs
+pair that grows and checks workspace volumes, the `mkisofs` that
+packs the cidata seed disks, the iproute2/nftables/conntrack trio
+behind each workspace's tap, `qemu-img` for the root overlay, the
+secretspec CLI behind the secret store, and the two libraries the
+interceptor's NFQUEUE path links against. Each result prints with
+a ✓ (present and functional), ⚠ (a degraded path: a debugging aid,
+a diagnostic, the dev-shell clone scanner, or a client-side tool
+behind `msks forward`), or ✗ (a core-path dependency) marker, and
+each miss carries an install hint matched to the detected package
+manager. The run ends with a summary that repeats every miss with
+its fix; the exit code is 0 when every check passes or only warns,
+1 when any check errors.
+
+Tool names come from the same settings the daemon will use (the
+`--config` flag and `MSKSD_*` variables apply), so doctor checks
+what this host's daemon will actually exec. Doctor takes no side
+effects: it reads a config when one resolves and never generates
+the first-run template, and a config that fails to load falls back
+to environment variables and defaults with a warning naming the
+error. The two libraries are verified through `pkg-config`, the
+linker cache (`ldconfig -p`), or the `netfilterqueue` import
+itself — whichever answers first.
+
 The dev daemon runs bare: `scripts/dev-daemon.sh` sets
 `MSKSD_CONFIG_DIR` to the devenv root (and the devenv shell presets
 the same value, so a hand-run `msksd` resolves the same file), so
