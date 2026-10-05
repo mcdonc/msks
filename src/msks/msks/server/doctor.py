@@ -1,23 +1,26 @@
 """``msksd doctor`` — pre-flight host dependency checker (#464).
 
-The daemon drives tools outside its Python environment: the
-cloud-hypervisor VMM (#1), the e2fsprogs pair that grows and
-checks workspace volumes (#184), the
-``mkisofs`` that packs the #41 cidata seed disks, the iproute2 /
-nftables / conntrack trio that wires and polices each workspace's
-tap (#52), ``qemu-img`` for the root overlay, and the secretspec
-CLI behind the #198 secret store. A missing tool surfaces today as
-a late runtime failure with an opaque error; doctor names each one
-before that, with an install hint matched to the detected package
-manager.
+The daemon and the msks client drive tools outside their Python
+environment: the cloud-hypervisor VMM (#1), the e2fsprogs pair
+that grows and checks workspace volumes (#184), the ``mkisofs``
+that packs the #41 cidata seed disks, the iproute2 / nftables /
+conntrack trio that wires and polices each workspace's tap (#52),
+``qemu-img`` for the root overlay, the secretspec CLI behind the
+#198 secret store, the two libraries the interceptor's NFQUEUE
+path links against, and the client-side ssh/rsync pair and tmux
+the documented workflows run on. A missing tool surfaces today as
+a late runtime failure with an opaque error; doctor names each
+one before that, with an install hint matched to the detected
+package manager. The check set covers what msksd and the client
+exec at runtime — debugging and development tools stay out of it.
 
 Design (ported from klangkd doctor, klangk #1612): capabilities
 first, never platform predictions. Every check runs on every host;
 only the package-hint table varies by detected manager. Checks are
 graded — an error keeps the daemon from its core paths, a warning
-names a development-time or client-side tool the daemon itself
-runs without). Exit code is 0 when every check passes or only
-warns, 1 when any check errors.
+names a client-side tool the daemon itself runs without. Exit
+code is 0 when every check passes or only warns, 1 when any check
+errors.
 
 Tool names come from the daemon's own settings wherever a setting
 exists (``load_settings``, env vars included), so doctor checks
@@ -109,26 +112,15 @@ def detect_package_manager() -> str | None:
 # Checks whose fix is not a distro package, so every manager
 # gets the same hint: the upstream source itself. Doctor runs on
 # deployment hosts (Debian and the like) where the repo's own dev
-# tooling is absent, so the hints stay host-usable: the upstream
-# release URL or the package manager that actually serves the
-# binary.
+# tooling is absent, so the hints stay host-usable.
 UPSTREAM_HINTS = {
     "cloud-hypervisor": (
-        "upstream static release (ships cloud-hypervisor and "
-        "ch-remote) — install from "
-        "https://github.com/cloud-hypervisor/cloud-hypervisor/releases"
-    ),
-    "ch-remote": (
-        "upstream static release (ships cloud-hypervisor and "
-        "ch-remote) — install from "
+        "upstream static release — install from "
         "https://github.com/cloud-hypervisor/cloud-hypervisor/releases"
     ),
     "secretspec": (
         "release binary — install from "
         "https://github.com/cachix/secretspec/releases"
-    ),
-    "jscpd": (
-        "npm install -g jscpd (a development tool; the daemon runs without it)"
     ),
 }
 
@@ -142,15 +134,6 @@ UPSTREAM_HINTS = {
 # cloud-hypervisor and ch-remote carry no rows: Debian's archive
 # has neither, so their hint is the upstream release (UPSTREAM_HINTS).
 PACKAGE_HINTS: dict[str, dict[str, str]] = {
-    "curl": {
-        "dnf": "curl",
-        "yum": "curl",
-        "apt": "curl",
-        "pacman": "curl",
-        "zypper": "curl",
-        "apk": "curl",
-        "brew": "curl",
-    },
     "mkfs.ext4": {
         "dnf": "e2fsprogs",
         "yum": "e2fsprogs",
@@ -196,15 +179,6 @@ PACKAGE_HINTS: dict[str, dict[str, str]] = {
         "apk": "iproute2",
         "pacman": "iproute2",
         "brew": "iproute2",
-    },
-    "iptables": {
-        "dnf": "iptables",
-        "yum": "iptables",
-        "apt": "iptables",
-        "pacman": "iptables",
-        "zypper": "iptables",
-        "apk": "iptables",
-        "brew": "iptables",
     },
     "nft": {
         "dnf": "nftables",
@@ -657,53 +631,10 @@ def run_doctor(settings: Settings) -> DoctorReport:
     report.add(check_library("libnfnetlink", manager))
     report.add(check_tmux(manager))
 
-    # Warning grade: these name development-time or client-side
-    # paths — a debugging aid, a diagnostic for foreign firewall
-    # policy, the clone scanner, and the two client-side tools the
-    # documented workflows run over `msks forward`. The daemon
-    # itself runs without them.
-    report.add(
-        check_binary(
-            "curl",
-            ["curl", "--version"],
-            manager,
-            is_warning=True,
-            use="unix-socket REST poking during VMM debugging",
-        )
-    )
-    report.add(
-        check_binary(
-            "ch-remote",
-            ["ch-remote", "--version"],
-            manager,
-            is_warning=True,
-            use=(
-                "pokes the VMM's API socket by hand (dev and demo "
-                "flows; the daemon speaks the socket itself)"
-            ),
-        )
-    )
-    report.add(
-        check_binary(
-            "iptables",
-            ["iptables", "--version"],
-            manager,
-            is_warning=True,
-            use=(
-                "diagnoses foreign FORWARD drops that block the "
-                "egress forward path (#75/#52)"
-            ),
-        )
-    )
-    report.add(
-        check_binary(
-            "jscpd",
-            ["jscpd", "--version"],
-            manager,
-            is_warning=True,
-            use="the token-clone scanner (#71)",
-        )
-    )
+    # Warning grade: the client-side tools the documented
+    # workflows run over `msks forward` — the ssh client and the
+    # host rsync it drives. The daemon itself runs without them,
+    # so a miss warns instead of failing the run.
     report.add(check_ssh(manager))
     report.add(
         check_binary(

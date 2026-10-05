@@ -104,24 +104,19 @@ def test_install_hint_table_and_managers() -> None:
     assert install_hint("mkisofs", "pacman") == "sudo pacman -S cdrtools"
     assert install_hint("mkisofs", "brew") == "brew install cdrtools"
     assert install_hint("rsync", "zypper") == "sudo zypper install rsync"
-    assert install_hint("curl", "apk") == "sudo apk add curl"
+    assert install_hint("nft", "apk") == "sudo apk add nftables"
 
 
 def test_install_hint_fallbacks() -> None:
-    assert install_hint("curl", None) == "install curl"
+    assert install_hint("mkisofs", None) == "install mkisofs"
     hint = install_hint("never-packaged", "dnf")
     assert hint == "sudo dnf install never-packaged"
 
 
 def test_install_hint_pinned_binaries() -> None:
     assert "secretspec/releases" in install_hint("secretspec", "apt")
-    hint = install_hint("jscpd", "dnf")
-    assert "npm install -g jscpd" in hint
     hint = install_hint("cloud-hypervisor", "apt")
     assert "cloud-hypervisor/releases" in hint
-    assert install_hint("ch-remote", None) == install_hint(
-        "cloud-hypervisor", None
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +189,7 @@ def test_check_binary_missing_warns_when_graded(
 ) -> None:
     monkeypatch.setattr(doctor_mod.shutil, "which", lambda name: None)
     result = check_binary(
-        "curl", ["curl", "--version"], "apt", is_warning=True, use="debug"
+        "ssh", ["ssh", "-V"], "apt", is_warning=True, use="debug"
     )
     assert result.is_warning is True
 
@@ -489,16 +484,12 @@ def test_run_doctor_warning_rows(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         doctor_mod.shutil,
         "which",
-        lambda name: (
-            None
-            if name in {"curl", "ssh", "ch-remote"}
-            else f"/usr/bin/{name}"
-        ),
+        lambda name: None if name in {"ssh", "rsync"} else f"/usr/bin/{name}",
     )
     monkeypatch.setattr(doctor_mod, "run", probes_ok)
     report = run_doctor(Settings())
     warn_names = {r.name for r in report.warnings}
-    assert warn_names == {"curl", "ssh", "ch-remote"}
+    assert warn_names == {"ssh", "rsync"}
     assert report.passed is True  # warnings do not fail the run
 
 
@@ -577,7 +568,7 @@ def test_doctor_main_exit_codes_and_output(
     assert doctor_main(None) == 0
     out = capsys.readouterr().out
     assert "msksd doctor" in out
-    assert "All 19 checks passed." in out
+    assert "All 15 checks passed." in out
 
 
 def test_doctor_main_appends_config_notice(

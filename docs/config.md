@@ -35,24 +35,24 @@ the file is located.
 
 ## `msksd doctor`
 
-`msksd doctor` checks the host for the external tools and libraries
-the daemon drives outside its Python environment (#464) — the
+`msksd doctor` checks the host for the external tools and
+libraries msksd and the msks client exec at runtime (#464) — the
 cloud-hypervisor VMM, the e2fsprogs pair that grows and checks
 workspace volumes, the `mkisofs` that packs the cidata seed disks,
 the iproute2/nftables/conntrack trio behind each workspace's tap,
 `qemu-img` for the root overlay, the secretspec CLI behind the
 secret store, the two libraries the interceptor's NFQUEUE path
-links against, and the host tmux at the 3.2 floor the consent
-terminal documents (#379). Each result prints with a ✓ (present
-and functional), ⚠ (a development-time or client-side tool the
-daemon itself runs without: a debugging aid, a diagnostic, the
-clone scanner, a tool for poking the VMM's API socket by hand,
-or a tool behind
-`msks forward`), or ✗ (a core-path dependency) marker, and each
-miss carries an install hint matched to the detected package
-manager. The run ends with a
-summary that repeats every miss with its fix; the exit code is 0
-when every check passes or only warns, 1 when any check errors.
+links against, the host tmux at the 3.2 floor the consent
+terminal documents (#379), and the ssh/rsync pair the documented
+workflows run over `msks forward` (#110/#112). Each result prints
+with a ✓ (present and functional), ⚠ (a client-side tool the
+daemon itself runs without), or ✗ (a core-path dependency)
+marker, and each miss carries an install hint matched to the
+detected package manager. The run ends with a summary that
+repeats every miss with its fix; the exit code is 0 when every
+check passes or only warns, 1 when any check errors. The check
+set covers runtime requirements only — debugging and development
+tools stay out of it.
 
 Tool names come from the same settings the daemon will use (the
 `--config` flag and `MSKSD_*` variables apply), so doctor checks
@@ -72,10 +72,9 @@ name, and the library rows name the runtime soname packages —
 `libnetfilter-queue1` and `libnfnetlink0` — with the `-dev`
 packages carrying only the pkg-config files doctor falls back
 past). Where a fix is not a distro package, the hint names the
-real source: cloud-hypervisor and `ch-remote` install from the
-upstream static release (Debian's archive carries neither), the
-secretspec CLI from its release binaries, and jscpd through npm
-(a development tool — the daemon runs without it).
+real source: cloud-hypervisor installs from the upstream static
+release (Debian's archive carries it in none of its suites) and
+the secretspec CLI from its release binaries.
 
 The dev daemon runs bare: `scripts/dev-daemon.sh` sets
 `MSKSD_CONFIG_DIR` to the devenv root (and the devenv shell presets
