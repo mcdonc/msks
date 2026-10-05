@@ -275,7 +275,7 @@ async def test_hello_marks_a_denied_connection(authority) -> None:
     data = hello_data(client, "denied.example.com")
     await addon.tls_clienthello(data)
     assert data.ignore_connection is False
-    assert addon.denied(client)
+    assert addon.denial(client) == "static"
     # A covered SNI would have decrypted anyway; the marker, not
     # the coverage, owns the refusal.
     assert owner.leaf_snis == []
@@ -293,7 +293,8 @@ async def test_a_marked_connection_refuses_locally(authority) -> None:
     await addon.request(flow)
     assert flow.response is not None
     assert flow.response.status_code == 403
-    assert addon.denied(client)
+    assert flow.response.text == engine.BODY_DENIED
+    assert addon.denial(client) == "verdict"
 
 
 async def test_request_gates_plain_http(authority) -> None:
@@ -359,6 +360,145 @@ async def test_a_denied_plain_request_never_swaps(authority) -> None:
     assert flow.response.status_code == 403
     assert owner.swaps == []
     assert owner.sightings == []
+
+
+# --- the refusal body (#472) -------------------------------------------------
+
+
+async def test_a_marked_connection_names_what_happened(
+    authority,
+) -> None:
+    """The hello-time marker carries the verdict's reason through
+    to the request hook's 403: a duplicate-race newcomer reads as
+    a still-pending decision, an unanswered prompt as one."""
+    for reason, body in (
+        ("duplicate", engine.BODY_PENDING),
+        ("no_decider", engine.BODY_UNANSWERED),
+        ("timeout", engine.BODY_UNANSWERED),
+    ):
+        addon = engine.InterceptorAddon(
+            FakeOwner({}, authority, verdict=WebVerdict(False, reason))
+        )
+        client = FakeClient(sni="dup.example.com")
+        await addon.tls_clienthello(hello_data(client, "dup.example.com"))
+        flow = swap_flow(entry().sentinel, sni="dup.example.com")
+        flow.client_conn = client
+        await addon.request(flow)
+        assert flow.response.status_code == 403
+        assert flow.response.text == body
+
+
+async def test_a_plain_refusal_names_what_happened(authority) -> None:
+    """The same distinction on the plain-HTTP path, whose verdict
+    the request hook takes fresh (no hello ever gated the
+    connection)."""
+    for reason, body in (
+        ("duplicate", engine.BODY_PENDING),
+        ("no_decider", engine.BODY_UNANSWERED),
+        ("timeout", engine.BODY_UNANSWERED),
+        ("verdict", engine.BODY_DENIED),
+        ("static", engine.BODY_DENIED),
+        ("rate_limited", engine.BODY_UNDECIDED),
+    ):
+        owner = FakeOwner({}, authority, verdict=WebVerdict(False, reason))
+        flow = swap_flow(entry().sentinel, tls=False, pretty="plain.example")
+        flow.client_conn.sockname = ("198.51.100.9", 80)
+        await engine.InterceptorAddon(owner).request(flow)
+        assert flow.response.status_code == 403
+        assert flow.response.text == body
+
+
+def test_refusal_body_falls_back_to_the_verdict_wording() -> None:
+    """Denial reasons the map does not name read as a verdict's
+    refusal — the body never guesses."""
+    assert engine.refusal_body("unnamed") == engine.BODY_DENIED
+    assert engine.refusal_body("mystery") == engine.BODY_DENIED
+
+
+def test_a_request_that_ended_without_a_decision_says_so() -> None:
+    """Fail-close and cap reasons (a raised gate, a vanished
+    workspace, a hold torn down by stop or mode switch, the
+    prompt cap's outright refusal) assert no verdict — their body
+    says the request ended undecided (#472 review)."""
+    for reason in (
+        "error",
+        "gone",
+        "stopped",
+        "shutdown",
+        "mode switch",
+        "rate_limited",
+    ):
+        assert engine.refusal_body(reason) == engine.BODY_UNDECIDED
+
+
+async def test_a_falsy_marker_reason_reads_as_error(authority) -> None:
+    """A denial must never vanish from the marker: a falsy stored
+    reason answers error (#472 review) instead of un-marking the
+    connection and forwarding its request."""
+    owner = FakeOwner({}, authority, verdict=WebVerdict(False, ""))
+    addon = engine.InterceptorAddon(owner)
+    client = FakeClient(sni="weird.example.com")
+    await addon.tls_clienthello(hello_data(client, "weird.example.com"))
+    flow = swap_flow(entry().sentinel, sni="weird.example.com")
+    flow.client_conn = client
+    await addon.request(flow)
+    assert flow.response.status_code == 403
+    assert flow.response.text == engine.BODY_UNDECIDED
+
+
+async def test_a_duplicate_answer_does_not_stick(authority) -> None:
+    """A duplicate-race denial is not a verdict on the
+    destination, so it never caches: while the decision waits,
+    every request re-gates (the dedup answers fast, no new prompt),
+    and once the decision lands the next request reads it (#472
+    review — the cached body claimed a pending prompt forever)."""
+    owner = FakeOwner({}, authority, verdict=WebVerdict(False, "duplicate"))
+    flow = swap_flow(entry().sentinel, tls=False, pretty="plain.example")
+    flow.client_conn.sockname = ("198.51.100.9", 80)
+    addon = engine.InterceptorAddon(owner)
+    await addon.request(flow)
+    assert flow.response.text == engine.BODY_PENDING
+    # The decision lands as an allow: the next request on the same
+    # connection passes instead of claiming the prompt still waits.
+    owner.verdict = WebVerdict(True, "verdict")
+    flow.response = None
+    await addon.request(flow)
+    assert flow.response is None
+    assert len(owner.gated) == 2
+    # A final verdict caches per connection: a fresh connection
+    # to the same destination gates once and keeps its answer.
+    owner.verdict = WebVerdict(False, "verdict")
+    second = swap_flow(entry().sentinel, tls=False, pretty="plain.example")
+    second.client_conn.sockname = ("198.51.100.9", 80)
+    await addon.request(second)
+    assert second.response.text == engine.BODY_DENIED
+    second.response = None
+    await addon.request(second)
+    assert len(owner.gated) == 3  # the fresh connection's one gate
+    assert second.response.text == engine.BODY_DENIED
+
+
+async def test_a_duplicate_marked_tls_connection_re_gates(authority) -> None:
+    """The hello-time marker answers final denials for the
+    connection's life; a duplicate marker re-gates per request, so
+    a decision that lands after the hello reaches the next request
+    (#472 review)."""
+    owner = FakeOwner({}, authority, verdict=WebVerdict(False, "duplicate"))
+    addon = engine.InterceptorAddon(owner)
+    client = FakeClient(sni="dup.example.com")
+    await addon.tls_clienthello(hello_data(client, "dup.example.com"))
+    flow = swap_flow(entry().sentinel, sni="dup.example.com")
+    flow.client_conn = client
+    await addon.request(flow)
+    assert flow.response.text == engine.BODY_PENDING
+    owner.verdict = WebVerdict(False, "verdict")
+    flow.response = None
+    await addon.request(flow)
+    assert flow.response.text == engine.BODY_DENIED
+    flow.response = None
+    await addon.request(flow)  # final now: the answer caches
+    assert flow.response.text == engine.BODY_DENIED
+    assert len(owner.gated) == 3
 
 
 # --- the leaf ----------------------------------------------------------------

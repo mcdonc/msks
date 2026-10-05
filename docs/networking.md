@@ -148,7 +148,15 @@ each new outbound connection is decided:
   holds through the consent engine, so the same decider endpoints
   answer the same rows the kernel queue writes, and an allow
   completes the handshake while a deny answers the 403 locally
-  (nothing forwards). Verdicts and durations are shared: one allow
+  (nothing forwards). The 403's body names what happened: a
+  verdict's refusal says consent denied the destination, a flow
+  that lost the duplicate race says a decision for the
+  destination is already pending and points the operator at the
+  consent prompt, a prompt no decider answered (none registered,
+  or the request expired undecided) says so, and a request that
+  ended without a decision (the gate failed, the prompt cap
+  refused the hold, or the workspace vanished, stopped, or
+  switched mode mid-hold) says that instead. Verdicts and durations are shared: one allow
   covers the destination's web flows and its other ports alike,
   and the session memory that skips re-prompting is one table for
   both gates. The gating boundary is the connection, both

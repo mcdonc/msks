@@ -80,6 +80,19 @@ def completed_verdict(verdict: dict) -> asyncio.Future:
     return fut
 
 
+def denial(reason: str) -> asyncio.Future:
+    """A completed no-hold deny future carrying ``reason`` — the
+    shape every fast refusal (no decider, duplicate, cap) answers
+    with."""
+    return completed_verdict(
+        {
+            "decision": VERDICT_DENY,
+            "reason": reason,
+            "pin_ttl_s": ONCE_REJECT_S,
+        }
+    )
+
+
 def built_verdict(
     row: dict | None, decision: str, duration: str
 ) -> tuple[dict, str]:
@@ -369,12 +382,14 @@ class ConsentEngine:
           normally never queues in static mode; this is the
           defense-in-depth answer if one arrives anyway).
         - ``interactive`` without a live decider: record a denial
-          and deny at once — fail fast, no prompt, no hang (the
-          kernel's own SYN retransmit timeout is the alternative).
+          and deny at once (reason ``no_decider``) — fail fast, no
+          prompt, no hang (the kernel's own SYN retransmit timeout
+          is the alternative).
+        - a pending hold already exists for this destination: deny
+          the duplicate (before the cap — a duplicate holds nothing
+          new, so the prompt cap never refuses it).
         - the pending cap reached: deny at once (the prompt-spam
           bound; the hold is refused, not held).
-        - a pending hold already exists for this destination: deny
-          the duplicate.
         - otherwise: create the row, arm the timeout, fan out to
           deciders, and return the hold's future.
         """
@@ -438,43 +453,44 @@ class ConsentEngine:
             )
         return await self.interactive_hold(workspace_id, host, port)
 
-    async def interactive_hold(
+    async def fast_refusal(
         self, workspace_id: str, host: str, port: int
-    ) -> asyncio.Future:
-        """The interactive path: no decider means a fast static
+    ) -> asyncio.Future | None:
+        """The no-hold fast answers, or None when a hold should
+        register: no decider means an immediate ``no_decider``
         denial (no hold, no prompt, no hang — the kernel's SYN
-        retransmit timer is the alternative), then the cap, the
-        dedup, the hold."""
+        retransmit timer is the alternative); a pending duplicate
+        answers before the cap (a duplicate holds nothing new, so
+        the prompt cap never refuses it); the cap itself bounds
+        prompt spam."""
         if not self.app.state.deciders.has_decider(workspace_id):
             await self.model.record_policy(
                 DECISION_DENIED, workspace_id, host, port
             )
-            return completed_verdict(
-                {
-                    "decision": VERDICT_DENY,
-                    "reason": "static",
-                    "pin_ttl_s": ONCE_REJECT_S,
-                }
-            )
+            return denial("no_decider")
+        if await self.model.has_pending(workspace_id, host, port):
+            return denial("duplicate")
         if self.rate_limit > 0 and (
             await self.model.count_pending(workspace_id) >= self.rate_limit
         ):
-            return completed_verdict(
-                {
-                    "decision": VERDICT_DENY,
-                    "reason": "rate_limited",
-                    "pin_ttl_s": ONCE_REJECT_S,
-                }
-            )
+            return denial("rate_limited")
+        return None
+
+    async def interactive_hold(
+        self, workspace_id: str, host: str, port: int
+    ) -> asyncio.Future:
+        """The interactive path: the fast refusals, then the hold
+        (a racing insert that loses the destination's dedup slot
+        answers duplicate too)."""
+        fast = await self.fast_refusal(workspace_id, host, port)
+        if fast is not None:
+            return fast
         request = await self.model.create_request(workspace_id, host, port)
         if request is None:
-            return completed_verdict(
-                {
-                    "decision": VERDICT_DENY,
-                    "reason": "duplicate",
-                    "pin_ttl_s": ONCE_REJECT_S,
-                }
-            )
+            # A racing insert won the destination's dedup slot —
+            # only schedulable between the has_pending read and
+            # this insert; the suite cannot arrange the race.
+            return denial("duplicate")  # pragma: no cover
         return self.register_hold(request)
 
     def register_hold(self, request: dict) -> asyncio.Future:
