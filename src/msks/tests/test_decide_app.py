@@ -16,7 +16,11 @@ import time
 import pytest
 from msks.client import term_popup as tp
 from msks.client.tui import decide_app as da
-from msks.client.tui.consent_ui import DurationScreen
+from msks.client.tui.consent_ui import (
+    ConfirmScreen,
+    DurationScreen,
+    ModeScreen,
+)
 from textual.widgets import Static
 
 SOCKET = "msks-ws1-7"
@@ -26,7 +30,9 @@ VIEWER = "/dev/pts/3"
 COUNTDOWN = re.compile(r"\(\d+s\)")
 
 
-def rules_frame() -> str:
+def rules_frame(
+    mode: str = "interactive", allow_list: list[str] | None = None
+) -> str:
     """The registration's first frame: the rules view that adopts
     the server's canonical workspace id (#297)."""
     return json.dumps(
@@ -34,8 +40,8 @@ def rules_frame() -> str:
             "event": "egress.rules",
             "data": {
                 "workspace_id": "ws1",
-                "mode": "interactive",
-                "allow_list": [],
+                "mode": mode,
+                "allow_list": allow_list or [],
                 "allowed": [],
                 "denied": [],
             },
@@ -161,6 +167,28 @@ def verdict_seam() -> tuple[list, object]:
         posted.append((ws, rid, decision, duration))
 
     return posted, seam
+
+
+def mode_seam(reply: dict | None = None) -> tuple[list, object]:
+    """A recording stand-in for the REST mode contract; the reply
+    is the fresh rules frame the daemon returns, ``applied`` True
+    unless the canned reply says otherwise."""
+    sent = []
+
+    async def seam(ws, mode, *, confirm_empty=False):
+        sent.append((ws, mode, confirm_empty))
+        if reply is None:
+            return {
+                "workspace_id": ws,
+                "mode": mode,
+                "allow_list": [],
+                "allowed": [],
+                "denied": [],
+                "applied": True,
+            }
+        return dict(reply)
+
+    return sent, seam
 
 
 def build(frames: list[str], seam, **kwargs) -> da.ConsentDeciderApp:
@@ -366,6 +394,25 @@ async def test_rest_decide_posts_the_verdict(
     assert posted["body"] == {"decision": "allow", "duration": "5m"}
 
 
+async def test_rest_mode_puts_the_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MSKSC_URL", "https://daemon")
+    monkeypatch.setenv("MSKSC_TOKEN", "tok")
+    posted = {}
+
+    async def fake_call(method, path, *, json_body=None, **kwargs):
+        posted.update(method=method, path=path, body=json_body)
+
+    monkeypatch.setattr(da.context, "call", fake_call)
+    await da.rest_mode("ws1", "static", confirm_empty=True)
+    assert posted["method"] == "PUT"
+    assert posted["path"] == "/api/v1/workspaces/ws1/egress/policy"
+    assert posted["body"] == {"mode": "static", "confirm_empty": True}
+    await da.rest_mode("ws1", "allow")
+    assert posted["body"] == {"mode": "allow"}
+
+
 def test_the_footer_names_the_popup_bindings() -> None:
     # The persistent map carries the toggle the footer shows —
     # the verdict keys beside the reopen spelling, with the
@@ -380,6 +427,159 @@ def test_the_footer_names_the_popup_bindings() -> None:
     standalone = da.ConsentDeciderApp("ws1")
     alone = {binding.key for _key, binding in standalone._bindings}
     assert "q" in alone and "ctrl+b" not in alone
+
+
+async def test_the_mode_picker_switches_the_mode() -> None:
+    """``m`` opens the shared picker (#465): the current mode
+    starts highlighted, the pick goes straight through the REST
+    seam when the gate holds nothing to ask, and the reply's
+    rules frame lands — the status line names the new mode."""
+    posted, seam = verdict_seam()
+    sent, mode = mode_seam()
+    frames = [rules_frame()]  # interactive, nothing allowed
+    async with build(frames, seam, mode=mode).run_test() as pilot:
+        await until(lambda: "mode interactive" in status_text(pilot.app))
+        await pilot.press("m")
+        assert isinstance(pilot.app.screen, ModeScreen)
+        await pilot.press("up")  # static — the gate asks below
+        await pilot.press("up")  # allow — straight through
+        await pilot.press("enter")
+        await until(lambda: sent == [("ws1", "allow", False)])
+        assert not isinstance(pilot.app.screen, ConfirmScreen)
+        await until(
+            lambda: "mode allow (in effect now)" in status_text(pilot.app)
+        )
+    assert posted == []
+
+
+async def test_the_mode_picker_cancels() -> None:
+    posted, seam = verdict_seam()
+    sent, mode = mode_seam()
+    frames = [rules_frame()]
+    async with build(frames, seam, mode=mode).run_test() as pilot:
+        await until(lambda: "mode interactive" in status_text(pilot.app))
+        await pilot.press("m")
+        await pilot.press("escape")
+        await asyncio.sleep(0.1)
+        assert sent == []
+
+
+async def test_static_with_nothing_allowed_asks_first() -> None:
+    """The empty-static gate (#465): picking ``static`` while
+    nothing is effectively allowed pushes the shared question —
+    a no decides nothing, a yes sends the confirmed switch."""
+    posted, seam = verdict_seam()
+    sent, mode = mode_seam()
+    frames = [rules_frame()]  # nothing allowed
+    async with build(frames, seam, mode=mode).run_test() as pilot:
+        await until(lambda: "mode interactive" in status_text(pilot.app))
+        await pilot.press("m")
+        await pilot.press("up")  # static, nothing allowed: ask
+        await pilot.press("enter")
+        assert isinstance(pilot.app.screen, ConfirmScreen)
+        await pilot.press("n")
+        await asyncio.sleep(0.1)
+        assert sent == []
+        await pilot.press("m")
+        await pilot.press("up")
+        await pilot.press("enter")
+        await pilot.press("y")
+        await until(lambda: sent == [("ws1", "static", True)])
+    assert posted == []
+
+
+async def test_static_with_something_allowed_skips_the_question() -> None:
+    """An allowlist entry satisfies the gate: the static pick goes
+    straight through, confirmation never asked."""
+    posted, seam = verdict_seam()
+    sent, mode = mode_seam()
+    frames = [rules_frame(allow_list=["10.0.0.0/8"])]
+    async with build(frames, seam, mode=mode).run_test() as pilot:
+        await until(lambda: "mode interactive" in status_text(pilot.app))
+        await pilot.press("m")
+        await pilot.press("up")  # static — the allowlist carries it
+        await pilot.press("enter")
+        await until(lambda: sent == [("ws1", "static", False)])
+        assert not isinstance(pilot.app.screen, ConfirmScreen)
+    assert posted == []
+
+
+async def test_a_switch_on_a_stopped_workspace_names_its_effect() -> None:
+    """A reply without ``applied`` names the next-start effect —
+    the CLI's own line."""
+    posted, seam = verdict_seam()
+    sent, mode = mode_seam(
+        {
+            "workspace_id": "ws1",
+            "mode": "static",
+            "allow_list": ["10.0.0.0/8"],
+            "allowed": [],
+            "denied": [],
+            "applied": False,
+        }
+    )
+    frames = [rules_frame(allow_list=["10.0.0.0/8"])]
+    async with build(frames, seam, mode=mode).run_test() as pilot:
+        await until(lambda: "mode interactive" in status_text(pilot.app))
+        await pilot.press("m")
+        await pilot.press("up")
+        await pilot.press("enter")
+        await until(
+            lambda: "takes effect at next start" in status_text(pilot.app)
+        )
+    assert sent == [("ws1", "static", False)]
+
+
+async def test_a_refused_mode_switch_names_its_reason() -> None:
+    """A switch the daemon refuses owns the status line with its
+    one-line reason — the verdict posts' shape."""
+    posted, seam = verdict_seam()
+
+    async def refuse(ws, mode_, *, confirm_empty=False):
+        raise SystemExit("msks: 409: static needs confirmation")
+
+    frames = [rules_frame(allow_list=["10.0.0.0/8"])]
+    async with build(frames, seam, mode=refuse).run_test() as pilot:
+        await until(lambda: "mode interactive" in status_text(pilot.app))
+        await pilot.press("m")
+        await pilot.press("up")
+        await pilot.press("enter")
+        await until(lambda: "mode switch failed" in status_text(pilot.app))
+        assert "409" in status_text(pilot.app)
+        assert pilot.app.is_running
+
+
+async def test_the_picker_opens_before_any_rules_frame() -> None:
+    """No rules frame yet: the picker opens with nothing
+    highlighted and the status line names no mode; a cancel
+    sends nothing."""
+    posted, seam = verdict_seam()
+    sent, mode = mode_seam()
+    frames = [request_frame("r1")]  # no rules frame
+    async with build(frames, seam, mode=mode).run_test() as pilot:
+        await until(lambda: len(row_texts(pilot.app)) == 1)
+        await pilot.press("m")
+        assert isinstance(pilot.app.screen, ModeScreen)
+        assert pilot.app.screen.current == ""
+        await pilot.press("escape")
+        await asyncio.sleep(0.1)
+        assert sent == []
+        assert "mode" not in status_text(pilot.app)
+
+
+async def test_a_mode_switch_lands_after_the_exit() -> None:
+    """A mode PUT that outlives the app (#465): the reply lands
+    through the controller, the flash records, and the repaint's
+    guard stands down — the verdict posts' own rule, driven
+    without the race (an app that never ran)."""
+    posted, seam = verdict_seam()
+    sent, mode = mode_seam()
+    app = build([rules_frame()], seam, mode=mode)
+    assert not app.is_running
+    await app.send_mode("allow")
+    assert sent == [("ws1", "allow", False)]
+    assert app.link.controller.rules is not None
+    assert app.link.controller.rules.mode == "allow"
 
 
 async def test_the_verdict_edges() -> None:

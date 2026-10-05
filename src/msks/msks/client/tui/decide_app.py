@@ -17,7 +17,12 @@ The footer carries the bindings map at the popup's bottom
 (#467): the verdict keys beside the hide/show entry, whose
 ``ctrl+b`` half closes the viewer from inside it — the popup
 captures input while it stands, so the launch's ``C-b p`` cannot
-fire there, and the prefix key alone answers instead.
+fire there, and the prefix key alone answers instead. ``m``
+switches the workspace's egress mode from the popup (#465): the
+picker, the gate, and the empty-static confirmation are the
+consent page's own shapes, the switch rides the same endpoint
+``msks egress mode`` speaks, and the landed switch or the
+daemon's refusal names itself on the status line.
 
 Standalone — ``python -m msks.client.tui.decide_app -w WORKSPACE``
 — the same app runs outside a shell window; it quits on ``q``
@@ -27,6 +32,7 @@ and the connection ladder.
 """
 
 import asyncio
+import json
 import subprocess
 import sys
 import time
@@ -44,12 +50,16 @@ from .consent import (
     ConsentRequest,
 )
 from .consent_ui import (
+    EMPTY_STATIC_QUESTION,
     FLASH_TTL,
+    ConfirmScreen,
     DurationScreen,
     FlashLine,
+    ModeScreen,
     dest_line,
     flash_safe,
     shared_ssl,
+    switch_mode_path,
 )
 from .link import DeciderLink
 
@@ -89,6 +99,25 @@ async def rest_decide(
     )
 
 
+async def rest_mode(
+    workspace_id: str, mode: str, *, confirm_empty: bool = False
+) -> dict:
+    """PUT one mode switch through the shared REST contract
+    (#465) — the consent page's switch and ``msks egress mode``'s
+    exchange; ``confirm_empty`` rides only when set, and the
+    daemon's refusal names it. Returns the reply: the fresh rules
+    frame with ``applied`` beside it."""
+    body: dict = {"mode": mode}
+    if confirm_empty:
+        body["confirm_empty"] = True
+    return await context.call(
+        "PUT",
+        f"/api/v1/workspaces/{workspace_id}/egress/policy",
+        json_body=body,
+        ssl_ctx=shared_ssl(),
+    )
+
+
 class FrameLanded(Message):
     """One events frame's arrival, from the link's worker to the
     UI's queue: ``holds_added`` says whether it added a hold — the
@@ -101,8 +130,9 @@ class FrameLanded(Message):
 
 class ConsentDeciderApp(App[None]):
     """The decider's screen: the held-request queue, the verdict
-    keys, and the popup viewer's controls — a thin view over the
-    shared controller, the same shapes the consent page renders."""
+    keys, the mode switch, and the popup viewer's controls — a
+    thin view over the shared controller, the same shapes the
+    consent page renders."""
 
     #: The command palette's footer entry is noise in a popup.
     ENABLE_COMMAND_PALETTE = False
@@ -113,6 +143,9 @@ class ConsentDeciderApp(App[None]):
     #queue { height: 1fr; }
     #requests { height: 1fr; }
     #empty { padding: 1 2; color: $text-muted; }
+    ConfirmScreen { align: center middle; }
+    #question { padding: 1 2; background: $panel;
+                border: round $primary; }
     """
 
     BINDINGS = [
@@ -120,6 +153,7 @@ class ConsentDeciderApp(App[None]):
         Binding("A", "allow_duration", "Allow…"),
         Binding("d", "deny", "Deny"),
         Binding("D", "deny_duration", "Deny…"),
+        Binding("m", "mode", "Mode"),
     ]
 
     def __init__(
@@ -128,6 +162,7 @@ class ConsentDeciderApp(App[None]):
         *,
         ws_factory=None,
         decide=rest_decide,
+        mode=rest_mode,
         clock=time.time,
         popup_socket: str | None = None,
         popup_session: str | None = None,
@@ -137,6 +172,7 @@ class ConsentDeciderApp(App[None]):
         self.link = DeciderLink(workspace_id, ws_factory=ws_factory)
         self.link.on_frame = self.frame_arrived
         self.decide_call = decide
+        self.mode_call = mode
         self.clock = clock
         self.popup_socket = popup_socket
         self.popup_session = popup_session
@@ -298,8 +334,12 @@ class ConsentDeciderApp(App[None]):
 
     def status_text(self) -> str:
         """The status line: the flash while it lives, else the
-        link's state beside the queue's count."""
+        link's state beside the mode (once a rules frame named
+        it) and the queue's count."""
         state = self.link.reject_reason or self.link.state
+        rules = self.link.controller.rules
+        if rules is not None:
+            state = f"{state} · mode {rules.mode}"
         counted = f"{len(self.link.controller.pending)} held"
         # The daemon's refusal text is its own string; the status
         # line parses markup, so it arrives escaped (#318's rule).
@@ -402,6 +442,72 @@ class ConsentDeciderApp(App[None]):
             self.flash_line.set(f"{decision} ({duration})")
         if self.is_running:
             self.repaint()
+
+    # --- the mode switch (#465) ---------------------------------------------
+
+    def action_mode(self) -> None:
+        """``m``: the mode picker (#465) — the consent page's own
+        screen, with the snapshot's mode highlighted (the
+        controller's once a rules frame has landed; the picker's
+        own fallback until then)."""
+        rules = self.link.controller.rules
+        current = rules.mode if rules is not None else ""
+        self.push_screen(ModeScreen(current, self.switch_mode))
+
+    async def switch_mode(self, mode: str | None) -> None:
+        """One picked mode (#465): the pick goes to the shared
+        switch path — the same gate and confirmation the consent
+        page's ``m`` takes."""
+        await switch_mode_path(
+            mode,
+            self.link.controller.rules,
+            self.ask_empty_static,
+            self.send_mode,
+        )
+
+    def ask_empty_static(self, answered) -> None:
+        """Push the empty-static confirmation over the queue —
+        this app's screen stack is the host the shared path
+        needs."""
+        self.push_screen(ConfirmScreen(EMPTY_STATIC_QUESTION, answered))
+
+    async def send_mode(
+        self, mode: str, *, confirm_empty: bool = False
+    ) -> None:
+        """One mode switch through the REST contract (#465): a
+        switch the daemon refuses names its reason on the status
+        line; a landed one takes its success beat through
+        :meth:`mode_landed`. Either way the repaint follows only
+        while the app runs — a reply that outlives the exit still
+        records."""
+        try:
+            reply = await self.mode_call(
+                self.workspace_id, mode, confirm_empty=confirm_empty
+            )
+        except (Exception, SystemExit) as exc:
+            self.flash_line.set(flash_safe(f"mode switch failed: {exc}"))
+        else:
+            self.mode_landed(reply, mode)
+        if self.is_running:
+            self.repaint()
+
+    def mode_landed(self, reply: dict, mode: str) -> None:
+        """The switch's success beat (#465): the reply's fresh
+        rules frame lands through the controller — the same path
+        the events socket's frames take, the page's own rule, so
+        the mode's name lands without waiting for the pushed frame
+        (the daemon pushes the same frame on the events socket,
+        and it re-lands the same data idempotently) — and the
+        flash confirms the switch with its effect."""
+        self.link.controller.apply_frame(
+            json.dumps({"event": "egress.rules", "data": reply})
+        )
+        effect = (
+            "in effect now"
+            if reply.get("applied")
+            else "takes effect at next start"
+        )
+        self.flash_line.set(f"mode {reply.get('mode') or mode} ({effect})")
 
     # --- the window's life ---------------------------------------------------
 
