@@ -2762,6 +2762,22 @@ def test_the_consent_line_names_a_rejection() -> None:
     assert "unknown workspace" in consent_line(link, row())
 
 
+def test_the_consent_line_parses_a_truncated_tag_in_the_reason() -> None:
+    """A rejection reason carrying a truncated closing tag parses
+    clean where the line lands — the workspace page's #consent
+    Static parses markup at update time, and the timer's repaint
+    feeds it the raw reason; a bare [/ would raise there and kill
+    the app mid-tick (#476, #318's rule)."""
+    from textual.content import Content
+
+    link = DeciderLink(WS)
+    link.state = link_mod.REJECTED
+    link.reject_reason = "unknown workspace [/dev"
+    line = consent_line(link, row())
+    Content.from_markup(line)  # parses, no MarkupError
+    assert "unknown workspace" in line
+
+
 def test_the_consent_line_names_an_unusable_token() -> None:
     # The unusable-token state carries its reason to the screen
     # (#116 review): the operator sees where to look, not just a

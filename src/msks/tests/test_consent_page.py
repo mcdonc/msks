@@ -1349,6 +1349,15 @@ async def test_the_status_line_names_the_link_state() -> None:
         page.link.reject_reason = "unknown workspace [/dev"
         cp.update_status()
         assert "unknown workspace" in status_line(app)  # parses, renders
+        # The workspace page beneath ticks on its own timer and
+        # repaints its #consent line with the same reason — the
+        # load-bound crash sat here (#476): drive the repaint by
+        # hand so the poisoned reason meets the markup parser on
+        # every run, not only when the timer lands in the window.
+        page.paint_consent()
+        assert "unknown workspace" in str(
+            page.query_one("#consent", Static).content
+        )
         await pilot.pause()
 
 
