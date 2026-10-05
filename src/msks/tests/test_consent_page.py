@@ -1,11 +1,11 @@
-"""The consent overlay (#358): Pilot-driven, fake seams.
+"""The egress consent page (#454): Pilot-driven, fake seams.
 
-The overlay rides a workspace page inside the tree app: the data
+The page rides a workspace page inside the tree app: the data
 seam (decide, revoke, the mode switch) is scripted and recorded,
-the page's decider link rides the FakeWS/FakeFactory connections,
-and the page's own harness lives in test_main_tui.py. The pure
-helpers (rows, focus, labels) get direct unit tests in
-test_consent_tui_helpers.py.
+the workspace page's decider link rides the FakeWS/FakeFactory
+connections, and the page's own harness lives in
+test_main_tui.py. The pure helpers (rows, focus, labels) get
+direct unit tests in test_consent_tui_helpers.py.
 """
 
 import asyncio
@@ -13,13 +13,16 @@ import json
 import time
 
 import websockets
-from msks.client.tui import consent as consent_mod
 from msks.client.tui import consent_ui
-from msks.client.tui.consent_ui import OneFlight, RulesScreen
+from msks.client.tui.consent_ui import (
+    ConsentPage,
+    OneFlight,
+    hold_flash,
+)
 from msks.client.tui.follow import TuiFollow
 from msks.client.tui.link import DeciderLink
 from msks.client.tui.main_app import MsksTuiApp
-from msks.client.tui.workspace import ConsentOverlay, WorkspaceScreen
+from msks.client.tui.workspace import WorkspaceScreen
 from test_consent_tui import (
     request_frame as shared_request_frame,
 )
@@ -205,7 +208,7 @@ class Entering:
         return None
 
 
-class OverlayData:
+class PageData:
     """The page's daemon calls, scripted and recorded: the verdicts,
     the revokes, and the mode switches."""
 
@@ -253,10 +256,10 @@ class OverlayData:
         return {"request_id": request_id}
 
 
-def make_page(factory: FakeFactory, *, data: OverlayData | None = None):
+def make_page(factory: FakeFactory, *, data: PageData | None = None):
     """The tree app with one workspace page whose decider link rides
     the scripted connections."""
-    data = data or OverlayData()
+    data = data or PageData()
 
     def link_factory() -> DeciderLink:
         return DeciderLink(
@@ -272,27 +275,39 @@ def on_page(app) -> bool:
     return isinstance(app.screen, WorkspaceScreen)
 
 
-def on_overlay(app) -> bool:
-    return isinstance(app.screen, ConsentOverlay)
+def on_consent(app) -> bool:
+    return isinstance(app.screen, ConsentPage)
 
 
-def overlay_in(app) -> ConsentOverlay | None:
-    """The page's overlay wherever it sits in the stack (a pushed
-    rules or events screen stands above it)."""
+def consent_in(app) -> ConsentPage | None:
+    """The open consent page wherever it sits in the stack (a pushed
+    picker stands above it)."""
     for screen in app.screen_stack:
-        if isinstance(screen, ConsentOverlay):
+        if isinstance(screen, ConsentPage):
             return screen
     return None
 
 
-def queue_children(app) -> int:
-    """The queue's row count; -1 with no overlay (or inside a
+def hold_children(app) -> int:
+    """The holds zone's row count; -1 with no page open (or inside a
     rebuild's swap window)."""
-    overlay = overlay_in(app)
-    if overlay is None:
+    page = consent_in(app)
+    if page is None:
         return -1
     try:
-        return len(overlay.query_one("#consent-rows").children)
+        return len(page.query_one("#hold-rows").children)
+    except Exception:
+        return -1
+
+
+def rules_children(app) -> int:
+    """The verdicts zone's row count; -1 inside a rebuild's swap
+    window (or when the page is not open)."""
+    page = consent_in(app)
+    if page is None:
+        return -1
+    try:
+        return len(page.query_one("#rule-rows").children)
     except Exception:
         return -1
 
@@ -305,50 +320,49 @@ async def open_page(pilot, app, page) -> WorkspaceScreen:
     return page
 
 
-async def open_overlay(pilot, app, page, *, auto: bool = False):
-    """Push the page, then the consent overlay over it by hand. A
-    hold that already auto-opened one is reused — the panel is the
-    panel, whichever path opened it. The panel's widgets settle
-    before the caller reads them (compose streams asynchronously)."""
+async def open_consent(pilot, app, page) -> ConsentPage:
+    """Push the page, then the egress consent page over it by hand.
+    The page's widgets settle before the caller reads them (compose
+    streams asynchronously)."""
     await open_page(pilot, app, page)
-    if page.overlay is None:
-        page.push_overlay(auto=auto)
-    await wait_for(
-        lambda: page.overlay is not None and panel_settled(page.overlay)
-    )
-    return page.overlay
+    page.open_consent_page()
+    await wait_for(lambda: page_settled(consent_in(app)))
+    return consent_in(app)
 
 
-def panel_settled(overlay) -> bool:
-    """Whether the panel's own widgets have mounted."""
+def page_settled(page) -> bool:
+    """Whether the page's own widgets have mounted."""
+    if page is None:
+        return False
     try:
-        overlay.query_one("#consent-status")
-        overlay.query_one("#consent-rows")
+        page.query_one("#consent-status")
+        page.query_one("#hold-rows")
+        page.query_one("#rule-rows")
         return True
     except Exception:
         return False
 
 
 def held_row(app, index: int) -> str:
-    rows = overlay_in(app).query_one("#consent-rows")
+    page = consent_in(app)
+    rows = page.query_one("#hold-rows")
     return str(rows.children[index].query_one(Static).content)
 
 
-def rules_children(app) -> int:
-    """The rules screen's row count; -1 inside a rebuild's swap
-    window (or when the rules screen is not on top)."""
-    try:
-        return len(app.screen.query_one("#rule-rows").children)
-    except Exception:
-        return -1
+def rule_row_text(app, index: int) -> str:
+    page = consent_in(app)
+    return str(
+        page.query_one("#rule-rows").children[index].query_one(Static).content
+    )
 
 
 def status_line(app) -> str:
-    return str(overlay_in(app).query_one("#consent-status").content)
+    return str(consent_in(app).query_one("#consent-status").content)
 
 
 def page_consent(app, page) -> str:
-    """The page's consent line; empty while the page still mounts."""
+    """The workspace page's consent line; empty while the page still
+    mounts."""
     try:
         return str(page.query_one("#consent", Static).content)
     except Exception:
@@ -356,25 +370,16 @@ def page_consent(app, page) -> str:
 
 
 def focused_request_id_or_none(app) -> str | None:
-    """The queue's focused id, or None in a swap window."""
+    """The holds zone's focused id, or None in a swap window."""
     from msks.client.tui.consent_ui import focused_request_id
 
-    overlay = overlay_in(app)
-    if overlay is None:
+    page = consent_in(app)
+    if page is None:
         return None
     try:
-        return focused_request_id(overlay.query_one("#consent-rows"))
+        return focused_request_id(page.query_one("#hold-rows"))
     except Exception:
         return None
-
-
-def rule_rows_is(app, rows) -> bool:
-    """Whether the rules list on top is still the very widget (a
-    swap window reads as no list at all)."""
-    try:
-        return app.screen.query_one("#rule-rows") is rows
-    except Exception:
-        return False
 
 
 def rules_focus(app) -> str | None:
@@ -382,9 +387,21 @@ def rules_focus(app) -> str | None:
     try:
         from msks.client.tui.consent_ui import focused_rule_id
 
-        return focused_rule_id(app.screen.query_one("#rule-rows"))
+        return focused_rule_id(consent_in(app).query_one("#rule-rows"))
     except Exception:
         return None
+
+
+def focused_zone(app) -> str | None:
+    """Which zone owns the focus: "holds", "rules", or None."""
+    page = consent_in(app)
+    if page is None:
+        return None
+    if page.hold_rows() is not None and page.hold_rows().has_focus:
+        return "holds"
+    if page.rule_rows() is not None and page.rule_rows().has_focus:
+        return "rules"
+    return None
 
 
 async def wait_for(
@@ -435,10 +452,11 @@ async def open_screen(pilot, app, key: str, name: str) -> None:
     await press_until(pilot, key, lambda: type(app.screen).__name__ == name)
 
 
-async def close_panel(pilot, app, timeout: float = 30.0) -> None:
-    """Press the close key until the page stands again — under a
-    loaded runner a key press can be dropped or land unprocessed,
-    and the tests retry as the operator would (#322)."""
+async def leave_page(pilot, app, timeout: float = 30.0) -> None:
+    """Press the back key until the workspace page stands again —
+    under a loaded runner a key press can be dropped or land
+    unprocessed, and the tests retry as the operator would
+    (#322)."""
     await press_until(pilot, "q", lambda: on_page(app), timeout=timeout)
 
 
@@ -446,6 +464,208 @@ async def decide_the(controller, rid: str, decision: str = "allowed") -> None:
     """Land one hold's resolution in the controller (the daemon's
     frame the verdict or the timeout produces)."""
     controller.apply_frame(resolved_frame(rid, decision))
+
+
+# -- the page's shape (#454) ------------------------------------------------
+
+
+async def test_the_page_shows_both_zones() -> None:
+    """The consent page holds both lists: the held requests with
+    countdowns above the in-effect verdicts, the mode line and
+    static allowlist at the top."""
+    factory = FakeFactory(
+        [
+            FakeWS([request_frame("r1"), rules_frame()]),
+            FakeWS([]),
+        ]
+    )
+    app, page, _data = make_page(factory)
+    async with app.run_test() as pilot:
+        cp = await open_consent(pilot, app, page)
+        await wait_for(lambda: hold_children(app) == 1)
+        await wait_for(lambda: rules_children(app) == 2)
+        header = str(cp.query_one("#allowlist").content)
+        assert "mode interactive" in header
+        assert ".debian.org" in header
+        assert "held requests" in str(cp.query_one("#holds-label").content)
+        assert "in effect" in str(cp.query_one("#rules-label").content)
+        assert "api.example:443" in held_row(app, 0)
+        assert "allowed" in rule_row_text(app, 0)
+
+
+async def test_the_page_opens_with_the_holds_zone_focused() -> None:
+    """A hold waiting when the page opens puts the focus where the
+    decision is; an empty queue starts in the verdicts."""
+    factory = FakeFactory(
+        [FakeWS([request_frame("r1"), rules_frame()]), FakeWS([])]
+    )
+    app, page, _data = make_page(factory)
+    async with app.run_test() as pilot:
+        await open_consent(pilot, app, page)
+        await wait_for(lambda: hold_children(app) == 1)
+        await wait_for(lambda: focused_zone(app) == "holds")
+    factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
+    app, page, _data = make_page(factory)
+    async with app.run_test() as pilot:
+        await open_consent(pilot, app, page)
+        await wait_for(lambda: rules_children(app) == 2)
+        await wait_for(lambda: focused_zone(app) == "rules")
+
+
+async def test_the_arrows_cross_between_the_zones() -> None:
+    """The arrows alone reach both zones in reading order (#454):
+    down off the holds list's bottom enters the verdicts at their
+    first row; up off the verdicts' top returns to the holds at
+    the row nearest the boundary crossed."""
+    factory = FakeFactory(
+        [
+            FakeWS(
+                [
+                    request_frame("r1"),
+                    request_frame("r2"),
+                    rules_frame(),
+                ]
+            ),
+            FakeWS([]),
+        ]
+    )
+    app, page, _data = make_page(factory)
+    async with app.run_test() as pilot:
+        await open_consent(pilot, app, page)
+        await wait_for(lambda: hold_children(app) == 2)
+        await wait_for(lambda: rules_children(app) == 2)
+        await wait_for(lambda: focused_zone(app) == "holds")
+        await press_until(
+            pilot, "down", lambda: focused_request_id_or_none(app) == "r2"
+        )
+        # The interior walk: up from r2 returns to r1 without
+        # leaving the zone (the edge is the bottom alone).
+        await press_until(
+            pilot, "up", lambda: focused_request_id_or_none(app) == "r1"
+        )
+        await press_until(
+            pilot, "down", lambda: focused_request_id_or_none(app) == "r2"
+        )
+        await press_until(pilot, "down", lambda: focused_zone(app) == "rules")
+        assert rules_focus(app) == "a1"
+        # Down through the verdicts' interior and off their bottom:
+        # nothing stands below the page's last zone — the walk
+        # stays on the last row.
+        await press_until(pilot, "down", lambda: rules_focus(app) == "d1")
+        # The no-handoff edges, driven directly (a keypress proving
+        # a no-op cannot wait on a state that never changes, and a
+        # press can land inert inside a rebuild's swap window):
+        # down off the verdicts' bottom stays on the last row —
+        # nothing stands below the page's last zone.
+        cp = consent_in(app)
+        cp.rule_rows().action_edge_next()
+        await pilot.pause()
+        assert rules_focus(app) == "d1"
+        assert focused_zone(app) == "rules"
+        # Up off the verdicts' top returns to the holds at their
+        # last row — the wait takes the zone AND the row (a stale
+        # highlight on the unfocused zone's list would satisfy a
+        # row-only wait without the walk crossing at all).
+        await press_until(
+            pilot,
+            "up",
+            lambda: (
+                focused_zone(app) == "holds"
+                and focused_request_id_or_none(app) == "r2"
+            ),
+        )
+        assert focused_zone(app) == "holds"
+        # Up off the holds zone's top stays put: nothing stands
+        # above it (the mode line and status line take no focus) —
+        # the direct call, for the same swap-window reason.
+        cp.hold_rows().action_edge_previous()  # r2 -> r1 (interior)
+        await pilot.pause()
+        assert focused_request_id_or_none(app) == "r1"
+        cp.hold_rows().action_edge_previous()  # at the top: no handoff
+        await pilot.pause()
+        assert focused_request_id_or_none(app) == "r1"
+        assert focused_zone(app) == "holds"
+        # The direct entry lands on the last row as well (the
+        # keypress crossing above already walked it).
+        cp.enter_holds()
+        await pilot.pause()
+        assert focused_request_id_or_none(app) == "r2"
+        assert focused_zone(app) == "holds"
+
+
+async def test_up_from_empty_verdicts_enters_the_empty_holds() -> None:
+    """Up off an empty verdicts list hands the walk to the holds
+    zone even with nothing to highlight — the empty list keeps the
+    focus, and the verdict keys flash their no-hold-focused note
+    there (the honest nothing)."""
+    factory = FakeFactory([FakeWS([empty_rules_frame()]), FakeWS([])])
+    app, page, data = make_page(factory)
+    async with app.run_test() as pilot:
+        await open_consent(pilot, app, page)
+        await wait_for(lambda: focused_zone(app) == "rules")
+        await press_until(pilot, "up", lambda: focused_zone(app) == "holds")
+        await press_until(
+            pilot, "a", lambda: "no hold focused" in status_line(app)
+        )
+        assert data.decided == []
+
+
+async def test_focused_rule_or_none_in_a_swap_window() -> None:
+    """The swap-window reads inside the page: the revoke target
+    with no list at all reads as nothing focused, and the zone
+    focus helpers and the up-edge handoff no-op on a zone whose
+    list is mid-swap — the walk waits for the heal."""
+    factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
+    app, page, _data = make_page(factory)
+    async with app.run_test() as pilot:
+        cp = await open_consent(pilot, app, page)
+        await wait_for(lambda: rules_children(app) == 2)
+        await cp.query_one("#rule-rows").remove()
+        assert consent_ui.focused_rule_or_none(cp) is None
+        cp.focus_rules()  # the verdicts mid-swap: the walk no-ops
+        await cp.query_one("#hold-rows").remove()
+        cp.focus_holds()  # the holds mid-swap
+        cp.enter_holds()  # the up-edge handoff onto a missing list
+        await pilot.pause()
+        assert cp.hold_rows() is None
+        cp.tick()  # both zones self-heal
+        await wait_for(lambda: rules_children(app) == 2)
+        await wait_for(lambda: hold_children(app) == 0)
+
+
+async def test_verdict_keys_are_inert_on_a_verdict_row() -> None:
+    """``a``/``d``/``A``/``D`` act on the holds zone alone: a
+    verdict row is state, not a question, and the letters decide
+    nothing there — while ``x`` revokes the focused verdict."""
+    factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
+    app, page, data = make_page(factory)
+    async with app.run_test() as pilot:
+        await open_consent(pilot, app, page)
+        await wait_for(lambda: rules_children(app) == 2)
+        await wait_for(lambda: focused_zone(app) == "rules")
+        await pilot.press("a")
+        await pilot.press("d")
+        await pilot.press("A")
+        await pilot.press("D")
+        await pilot.pause()
+        assert data.decided == []
+        await pilot.press("x")
+        await wait_for(lambda: len(data.revoked) == 1)
+        assert data.revoked == [(WS, "a1")]
+
+
+async def test_x_is_inert_in_the_holds_zone() -> None:
+    """``x`` acts on the verdicts alone: a hold carries nothing to
+    revoke."""
+    factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
+    app, page, data = make_page(factory)
+    async with app.run_test() as pilot:
+        await open_consent(pilot, app, page)
+        await wait_for(lambda: hold_children(app) == 1)
+        await wait_for(lambda: focused_zone(app) == "holds")
+        await pilot.press("x")
+        await pilot.pause()
+        assert data.revoked == []
 
 
 # -- the queue ------------------------------------------------------------
@@ -465,8 +685,8 @@ async def test_the_queue_lifecycle() -> None:
     )
     app, page, data = make_page(factory)
     async with app.run_test() as pilot:
-        overlay = await open_overlay(pilot, app, page)
-        await wait_for(lambda: queue_children(app) == 2)
+        cp = await open_consent(pilot, app, page)
+        await wait_for(lambda: hold_children(app) == 2)
         await pilot.pause()
         assert "api.example:443" in held_row(app, 0)
         assert "raw.example (all ports)" in held_row(app, 1)
@@ -478,22 +698,26 @@ async def test_the_queue_lifecycle() -> None:
         assert data.decided == [(WS, "r1", "allow", "tilrestart")]
         # A resolved frame drops its row.
         await decide_the(page.link.controller, "r1")
-        overlay.tick()
-        await wait_for(lambda: queue_children(app) == 1)
+        cp.tick()
+        await wait_for(lambda: hold_children(app) == 1)
         # d denies the survivor (retried: the press can land in the
         # rebuild's swap window right after the resolve).
         await press_until(pilot, "d", lambda: len(data.decided) == 2)
         assert data.decided[-1] == (WS, "r2", "deny", "tilrestart")
-        # q parks the overlay; the page keeps running beneath it.
-        await close_panel(pilot, app)
-        assert page.overlay is None
+        # q returns to the workspace page; the page keeps running
+        # beneath, and e reopens with the holds still waiting.
+        await leave_page(pilot, app)
+        assert consent_in(app) is None
+        assert len(page.link.controller.pending) == 1
+        await open_screen(pilot, app, "e", "ConsentPage")
+        await wait_for(lambda: hold_children(app) == 1)
 
 
 async def test_the_duration_picker() -> None:
     factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
     app, page, data = make_page(factory)
     async with app.run_test() as pilot:
-        await open_overlay(pilot, app, page)
+        await open_consent(pilot, app, page)
         await pilot.pause()
         await open_screen(pilot, app, "A", "DurationScreen")
         # Default highlight is tilrestart; two ups land on 5m.
@@ -502,7 +726,7 @@ async def test_the_duration_picker() -> None:
         assert data.decided == [(WS, "r1", "allow", "5m")]
         # D + Escape cancels: nothing more decided.
         factory.made[0].push(request_frame("r3"))
-        await wait_for(lambda: queue_children(app) == 2)
+        await wait_for(lambda: hold_children(app) == 2)
         await press_until(
             pilot, "D", lambda: type(app.screen).__name__ == "DurationScreen"
         )
@@ -518,8 +742,8 @@ async def test_the_picker_decides_the_hold_it_opened_on() -> None:
     factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
     app, page, data = make_page(factory)
     async with app.run_test() as pilot:
-        await open_overlay(pilot, app, page)
-        await wait_for(lambda: queue_children(app) == 1)
+        await open_consent(pilot, app, page)
+        await wait_for(lambda: hold_children(app) == 1)
         await open_screen(pilot, app, "A", "DurationScreen")
         # The hold resolves while the picker is open (the timeout
         # won the race); the picked duration still names r1.
@@ -530,33 +754,41 @@ async def test_the_picker_decides_the_hold_it_opened_on() -> None:
 
 
 async def test_verdict_keys_without_a_focused_row() -> None:
-    factory = FakeFactory([FakeWS([]), FakeWS([])])
-    app, page, data = make_page(factory)
-    async with app.run_test() as pilot:
-        await open_overlay(pilot, app, page)
-        await pilot.pause()
-        await pilot.press("a")
-        await pilot.press("d")
-        await pilot.pause()
-        assert data.decided == []  # nothing focused: no verdict
-        assert "no hold focused" in status_line(app)
-
-
-async def test_enter_decides_nothing() -> None:
-    """Enter carries no verdict (#358): the queue is a ListView, and
-    Enter fires its selection — a stray Enter aimed at the page's
-    action list when the hold arrived must not decide anything.
-    Only an explicit letter decides."""
+    """The last hold resolving under the holds zone's focus leaves
+    an empty focused list: the letters flash, they decide
+    nothing."""
     factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
     app, page, data = make_page(factory)
     async with app.run_test() as pilot:
-        await open_overlay(pilot, app, page)
-        await wait_for(lambda: queue_children(app) == 1)
+        cp = await open_consent(pilot, app, page)
+        await wait_for(lambda: hold_children(app) == 1)
+        await wait_for(lambda: focused_zone(app) == "holds")
+        await decide_the(page.link.controller, "r1")
+        cp.tick()
+        await wait_for(lambda: hold_children(app) == 0)
+        # Retried: the press can land between the swap and its
+        # focus restore, where the keys read as inert by design.
+        await press_until(
+            pilot, "a", lambda: "no hold focused" in status_line(app)
+        )
+        assert data.decided == []
+
+
+async def test_enter_decides_nothing() -> None:
+    """Enter carries no verdict (#358): both zones are ListViews,
+    and Enter fires their selection — a stray Enter aimed at the
+    page beneath must not decide anything. Only an explicit letter
+    decides."""
+    factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
+    app, page, data = make_page(factory)
+    async with app.run_test() as pilot:
+        await open_consent(pilot, app, page)
+        await wait_for(lambda: hold_children(app) == 1)
         await pilot.press("enter")
         await pilot.press("enter")
         await pilot.pause()
         assert data.decided == []
-        assert on_overlay(app)  # the tree never left the overlay
+        assert on_consent(app)  # the tree never left the page
 
 
 async def test_a_resolved_hold_above_focus_never_retargets() -> None:
@@ -567,20 +799,20 @@ async def test_a_resolved_hold_above_focus_never_retargets() -> None:
     factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
     app, page, data = make_page(factory)
     async with app.run_test() as pilot:
-        overlay = await open_overlay(pilot, app, page)
-        await wait_for(lambda: queue_children(app) == 1)
+        cp = await open_consent(pilot, app, page)
+        await wait_for(lambda: hold_children(app) == 1)
         factory.made[0].push(request_frame("r2"))
         factory.made[0].push(request_frame("r3"))
-        await wait_for(lambda: queue_children(app) == 3)
+        await wait_for(lambda: hold_children(app) == 3)
         await press_until(
             pilot, "down", lambda: focused_request_id_or_none(app) == "r2"
         )
         # r1 (above) resolves: the rebuild must keep r2 focused.
         await decide_the(page.link.controller, "r1")
-        overlay.tick()
+        cp.tick()
         await wait_for(
             lambda: (
-                queue_children(app) == 2
+                hold_children(app) == 2
                 and focused_request_id_or_none(app) == "r2"
             )
         )
@@ -594,15 +826,15 @@ async def test_the_focused_hold_leaving_falls_to_a_live_target() -> None:
     factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
     app, page, data = make_page(factory)
     async with app.run_test() as pilot:
-        overlay = await open_overlay(pilot, app, page)
-        await wait_for(lambda: queue_children(app) == 1)
+        cp = await open_consent(pilot, app, page)
+        await wait_for(lambda: hold_children(app) == 1)
         factory.made[0].push(request_frame("r2"))
         await wait_for(lambda: len(page.link.controller.pending) == 2)
         await decide_the(page.link.controller, "r1")
-        overlay.tick()
+        cp.tick()
         await wait_for(
             lambda: (
-                queue_children(app) == 1
+                hold_children(app) == 1
                 and focused_request_id_or_none(app) == "r2"
             )
         )
@@ -610,78 +842,14 @@ async def test_the_focused_hold_leaving_falls_to_a_live_target() -> None:
         assert data.decided[0][1] == "r2"
 
 
-# -- the overlay's lifecycle (#358) ---------------------------------------
+# -- holds surface passively (#454) ----------------------------------------
 
 
-async def test_an_auto_opened_overlay_closes_when_the_queue_empties() -> None:
-    factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
-    app, page, _data = make_page(factory)
-    async with app.run_test() as pilot:
-        await open_page(pilot, app, page)
-        # The burst's first hold opens the overlay by itself.
-        await wait_for(lambda: queue_children(app) == 1)
-        page.tick()
-        await wait_for(lambda: on_overlay(app))
-        assert page.overlay.auto is True
-        # The hold resolves: the overlay closes itself.
-        await decide_the(page.link.controller, "r1")
-        page.overlay.tick()
-        await wait_for(lambda: on_page(app))
-        assert page.overlay is None
-
-
-async def test_the_close_waits_while_rules_sits_above() -> None:
-    """The auto-close holds off while the rules screen is stacked
-    over the overlay: back returns to the overlay first, and the
-    next tick takes the panel down."""
-    factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
-    app, page, _data = make_page(factory)
-    async with app.run_test() as pilot:
-        overlay = await open_overlay(pilot, app, page, auto=True)
-        await wait_for(lambda: queue_children(app) == 1)
-        await press_until(
-            pilot, "r", lambda: type(app.screen).__name__ == "RulesScreen"
-        )
-        await decide_the(page.link.controller, "r1")
-        overlay.tick()
-        await pilot.pause()
-        assert type(app.screen).__name__ == "RulesScreen"  # held off
-        # Back returns to the overlay — or the panel's own timer
-        # tick may already have taken it down once it surfaced
-        # (both orders are the pinned behavior: the close waits for
-        # the rules screen to leave, then lands). The budgets ride
-        # high: under a full parallel suite a worker's event loop
-        # stalls past the default window (#322).
-        await press_until(
-            pilot, "r", lambda: on_overlay(app) or on_page(app), timeout=30
-        )
-        overlay.tick()
-        await wait_for(lambda: on_page(app), timeout=30)  # closes
-
-
-async def test_a_manual_open_stays_until_closed() -> None:
-    """Opened by hand the overlay is the consent panel: an empty
-    queue keeps it standing (rules, events, and the mode switch all
-    start here), and only the operator's key closes it."""
-    factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
-    app, page, _data = make_page(factory)
-    async with app.run_test() as pilot:
-        overlay = await open_overlay(pilot, app, page)
-        await pilot.pause()
-        assert "No held requests" in str(
-            overlay.query_one("#consent-empty").content
-        )
-        overlay.tick()
-        overlay.tick()
-        await pilot.pause()
-        assert on_overlay(app)  # no self-close on a manual open
-        await close_panel(pilot, app)
-
-
-async def test_a_parked_burst_never_re_pops_until_it_empties() -> None:
-    """Closing the overlay on holds is the operator saying "not
-    now" for the burst: later holds in the same burst add header
-    counts, not panels — the next burst opens one again."""
+async def test_a_hold_arriving_pushes_nothing() -> None:
+    """The page pushes nothing on a hold's arrival (#454): the
+    header's count names what waits, the consent line flashes the
+    destination with the key in, and the workspace page keeps the
+    terminal."""
     factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
     app, page, _data = make_page(factory)
     async with app.run_test() as pilot:
@@ -689,83 +857,36 @@ async def test_a_parked_burst_never_re_pops_until_it_empties() -> None:
         factory.made[0].push(request_frame("r1"))
         await wait_for(lambda: len(page.link.controller.pending) == 1)
         page.tick()
-        await wait_for(lambda: on_overlay(app))
-        await close_panel(pilot, app)  # park on a non-empty queue
+        await pilot.pause()
+        assert on_page(app)  # nothing was pushed
+        assert consent_in(app) is None
+        assert "egress to decide: api.example:443" in page_consent(app, page)
+        assert "press e" in page_consent(app, page)
+        assert page.pending_count() == 1
+
+
+async def test_a_new_hold_under_the_open_page_adds_its_row_silently() -> None:
+    """A hold arriving while the consent page stands is its row on
+    the holds zone — the workspace page's flash stays quiet (the
+    row itself is the signal there)."""
+    factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
+    app, page, _data = make_page(factory)
+    async with app.run_test() as pilot:
+        await open_consent(pilot, app, page)
+        await wait_for(lambda: hold_children(app) == 1)
+        page.flash_line.until = 0.0  # any earlier flash has lapsed
         factory.made[0].push(request_frame("r2"))
-        await wait_for(lambda: len(page.link.controller.pending) == 2)
+        await wait_for(lambda: hold_children(app) == 2)
         page.tick()
         await pilot.pause()
-        assert on_page(app)  # parked: no re-pop
-        # The burst empties; the next burst opens again.
-        await decide_the(page.link.controller, "r1")
-        await decide_the(page.link.controller, "r2")
-        page.tick()
-        await pilot.pause()
-        assert page.parked_ids is None
-        factory.made[0].push(request_frame("r3"))
-        await wait_for(lambda: len(page.link.controller.pending) == 1)
-        page.tick()
-        await wait_for(lambda: on_overlay(app))
+        assert "press e" not in page_consent(app, page)
 
 
-async def test_a_delayed_manual_push_never_stacks_a_second_panel() -> None:
-    """One panel stands at a time: the Enter that opens the consent
-    action runs as a worker, and a page tick can auto-open the
-    panel between the keypress and the worker body — the delayed
-    push no-ops instead of stacking a second overlay."""
-    factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
-    app, page, _data = make_page(factory)
-    async with app.run_test() as pilot:
-        await open_page(pilot, app, page)
-        await wait_for(lambda: len(page.link.controller.pending) == 1)
-        page.tick()  # the auto-open wins the race
-        await wait_for(lambda: on_overlay(app))
-        page.push_overlay(auto=False)  # the delayed worker's push
-        await pilot.pause()
-        stacked = [
-            s for s in app.screen_stack if isinstance(s, ConsentOverlay)
-        ]
-        assert len(stacked) == 1
-        assert page.overlay is stacked[0]
-        await close_panel(pilot, app)  # one q reaches the page
-
-
-async def test_a_park_survives_a_link_drop() -> None:
-    """Parking during a drop holds: the count folds the connection
-    state (0 while disconnected), but the park reads the
-    controller's queue — the replay re-lands the same holds after
-    the reconnection, and the panel the operator closed stays
-    closed."""
-    factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
-    app, page, _data = make_page(factory)
-    async with app.run_test() as pilot:
-        await open_page(pilot, app, page)
-        await wait_for(lambda: len(page.link.controller.pending) == 1)
-        page.tick()
-        await wait_for(lambda: on_overlay(app))
-        page.link.state = "reconnecting"  # the drop: holds stand
-        await press_until(
-            pilot, "q", lambda: page.parked_ids is not None
-        )  # recorded against the queue
-        page.tick()
-        # the drop's folded count clears nothing: the park reads ids
-        page.link.state = "connected"  # the replay re-lands them
-        page.link.replay_pending = True  # mid-window, truth in flight
-        page.tick()
-        assert page.parked_ids is not None
-        page.link.replay_pending = False
-        page.tick()
-        await pilot.pause()
-        assert on_page(app)  # no re-open for a parked burst
-
-
-async def test_a_park_survives_the_reconnects_reset_window() -> None:
-    """The registration's reset wipes the controller's snapshot
-    before the replay re-lands it: a tick inside that window reads
-    an empty queue, and the park must hold anyway — the replay
-    re-lands the same holds, and the panel the operator closed
-    stays closed. The park ends when none of its ids stand in a
-    settled queue; a new burst then opens a panel again."""
+async def test_the_replayed_hold_never_reflashes() -> None:
+    """A reconnect's replay re-lands the same holds without
+    re-flashing them: the seen set keeps ids, and the holds that
+    arrived while the link was down flash once, on the tick after
+    the replay lands them."""
     ws1 = FakeWS([request_frame("r1")])
     ws2 = FakeWS([])  # the replay arrives after the registration
     factory = FakeFactory([ws1, ws2])
@@ -774,51 +895,20 @@ async def test_a_park_survives_the_reconnects_reset_window() -> None:
         await open_page(pilot, app, page)
         await wait_for(lambda: len(page.link.controller.pending) == 1)
         page.tick()
-        await wait_for(lambda: on_overlay(app))
-        await close_panel(pilot, app)  # park on the burst
+        assert "press e" in page_consent(app, page)
+        page.flash_line.until = 0.0  # the flash has lapsed
         # The link drops and reconnects: the registration resets the
         # controller, and the replay has not landed yet.
         await ws1.close()
         await wait_for(lambda: len(factory.made) == 2)
         await wait_for(lambda: page.link.replay_pending)
-        page.tick()  # a tick inside the window: empty queue
-        assert page.parked_ids is not None  # the park held
-        # The replay re-lands the same hold: still parked.
+        page.tick()  # a tick inside the window: nothing to name
         ws2.push(rules_frame())
         ws2.push(request_frame("r1"))
         await wait_for(lambda: not page.link.replay_pending)
         page.tick()
         await pilot.pause()
-        assert on_page(app)  # no re-pop for the replayed hold
-        assert page.parked_ids is not None
-        # The hold resolves: the park ends, a new burst may open.
-        await decide_the(page.link.controller, "r1")
-        page.tick()
-        await pilot.pause()
-        assert page.parked_ids is None
-        ws2.push(request_frame("r2"))
-        await wait_for(lambda: len(page.link.controller.pending) == 1)
-        page.tick()
-        await wait_for(lambda: on_overlay(app))  # the new burst opens
-
-
-async def test_the_auto_open_waits_for_a_stacked_modal() -> None:
-    """A hold arriving while the mode picker is open stacks nothing
-    under it: the open waits for the modal to leave, then lands."""
-    factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
-    app, page, _data = make_page(factory)
-    async with app.run_test() as pilot:
-        await open_page(pilot, app, page)
-        page.open_mode_picker()
-        await wait_for(lambda: type(app.screen).__name__ == "ModeScreen")
-        factory.made[0].push(request_frame("r1"))
-        await wait_for(lambda: len(page.link.controller.pending) == 1)
-        page.tick()
-        await pilot.pause()
-        assert type(app.screen).__name__ == "ModeScreen"  # nothing stacked
-        await close_panel(pilot, app)  # the picker leaves
-        page.tick()
-        await wait_for(lambda: on_overlay(app))  # now it opens
+        assert "press e" not in page_consent(app, page)  # seen already
 
 
 # -- verdict failures ------------------------------------------------------
@@ -829,14 +919,14 @@ async def test_decide_and_revoke_failures_flash() -> None:
     app, page, data = make_page(factory)
     data.fail.add("decide")
     async with app.run_test() as pilot:
-        overlay = await open_overlay(pilot, app, page)
+        cp = await open_consent(pilot, app, page)
         await pilot.pause()
         await pilot.press("a")
         await wait_for(lambda: "decide failed" in status_line(app))
         # A failing revoke flashes the same way.
         data.fail.discard("decide")
         data.fail.add("revoke")
-        await overlay.revoke_rule("r1")
+        await cp.revoke_rule("r1")
         await wait_for(lambda: "revoke failed" in status_line(app))
 
 
@@ -850,14 +940,14 @@ async def test_a_truncated_closing_tag_failure_flashes_literally() -> None:
     data.fail.add("decide")
     data.refusal = "unknown workspace [/dev"
     async with app.run_test() as pilot:
-        overlay = await open_overlay(pilot, app, page)
+        cp = await open_consent(pilot, app, page)
         await pilot.pause()
         await pilot.press("a")
         await wait_for(
             lambda: "decide failed: unknown workspace" in status_line(app)
         )
         assert "\\[/dev" in status_line(app)
-        overlay.update_status()  # renders, no MarkupError
+        cp.update_status()  # renders, no MarkupError
         await pilot.pause()
 
 
@@ -872,7 +962,7 @@ async def test_a_bracketed_failure_message_flashes_literally() -> None:
     data.fail.add("decide")
     data.refusal = "[SSL: CERTIFICATE_VERIFY_FAILED] nope[/]"
     async with app.run_test() as pilot:
-        overlay = await open_overlay(pilot, app, page)
+        cp = await open_consent(pilot, app, page)
         await pilot.pause()
         await pilot.press("a")
         await wait_for(
@@ -882,71 +972,62 @@ async def test_a_bracketed_failure_message_flashes_literally() -> None:
             )
         )
         assert "nope\\[/]" in status_line(app)
-        overlay.update_status()
+        cp.update_status()
         await pilot.pause()
         # A failing revoke with bracketed text flashes the same way.
         data.fail.discard("decide")
         data.fail.add("revoke")
-        await overlay.revoke_rule("r1")
+        await cp.revoke_rule("r1")
         await wait_for(lambda: "revoke failed: [SSL" in status_line(app))
         assert "nope\\[/]" in status_line(app)
-        overlay.update_status()
+        cp.update_status()
         await pilot.pause()
 
 
-# -- the rules screen ------------------------------------------------------
+# -- the verdicts zone ------------------------------------------------------
 
 
-async def test_the_rules_screen_revokes() -> None:
+async def test_the_verdicts_zone_revokes() -> None:
     factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
     app, page, data = make_page(factory)
     async with app.run_test() as pilot:
-        overlay = await open_overlay(pilot, app, page)
-        await open_screen(pilot, app, "r", "RulesScreen")
+        cp = await open_consent(pilot, app, page)
         await wait_for(lambda: rules_children(app) == 2)
-        header = str(app.screen.query_one("#allowlist").content)
+        header = str(cp.query_one("#allowlist").content)
         assert "mode interactive" in header
         assert ".debian.org" in header
-
-        def rule_text(i: int) -> str:
-            return str(
-                app.screen.query_one("#rule-rows")
-                .children[i]
-                .query_one(Static)
-                .content
-            )
-
-        await wait_for(lambda: "allowed" in rule_text(0))
-        assert "forever" in rule_text(1)
+        await wait_for(lambda: "allowed" in rule_row_text(app, 0))
+        assert "forever" in rule_row_text(app, 1)
         # x revokes the focused rule (allowed, first).
         await pilot.press("x")
         await wait_for(lambda: len(data.revoked) == 1)
         assert data.revoked == [(WS, "a1")]
-        # r (or escape) returns to the overlay, hold still focused.
-        await pilot.press("r")
-        await wait_for(lambda: on_overlay(app))
-        assert overlay.queue_rows() is not None
+        # The awaited action completes on its own too (the row
+        # stands until the daemon's refreshed frame — the fake
+        # seam sends none — so the focused rule is still a1).
+        await cp.action_revoke()
+        assert data.revoked == [(WS, "a1"), (WS, "a1")]
+        # q (or escape) returns to the workspace page.
+        await leave_page(pilot, app)
 
 
-async def test_a_rules_screen_with_nothing_focused_revokes_nothing() -> None:
-    """A rules screen with no rows (nothing to focus) revokes
-    nothing on `x`; the screen also constructs host-free — the mode
-    switch is a callback, not an app method."""
-    empty = consent_mod.ConsentController()
-    screen = RulesScreen(empty, lambda rid: None, lambda: None)
-    assert screen is not None
+async def test_the_verdicts_with_nothing_focused_revoke_nothing() -> None:
+    """A verdicts zone with no rows (nothing to focus) revokes
+    nothing on `x` — the awaited action with a focused-but-empty
+    zone reads as nothing focused, the same as the key press."""
     factory = FakeFactory([FakeWS([empty_rules_frame()]), FakeWS([])])
     app, page, data = make_page(factory)
     async with app.run_test() as pilot:
-        await open_overlay(pilot, app, page)
-        await open_screen(pilot, app, "r", "RulesScreen")
+        cp = await open_consent(pilot, app, page)
         await wait_for(lambda: rules_children(app) == 0)
+        await wait_for(lambda: focused_zone(app) == "rules")
         await pilot.press("x")
+        await cp.action_revoke()  # focused zone, nothing highlighted
         await pilot.pause()
         assert data.revoked == []
 
 
-async def test_the_rules_screen_repaints_in_place() -> None:
+async def test_the_verdicts_repaint_in_place() -> None:
     """An unchanged row set takes an in-place countdown repaint, not
     the remove-and-mount swap — the once-a-second flash #301
     reports. The list keeps its identity (and with it the focus and
@@ -955,55 +1036,43 @@ async def test_the_rules_screen_repaints_in_place() -> None:
     factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
     app, page, _data = make_page(factory)
     async with app.run_test() as pilot:
-        overlay = await open_overlay(pilot, app, page)
-        await pilot.press("r")
+        cp = await open_consent(pilot, app, page)
         await wait_for(lambda: rules_children(app) == 2)
-        rows = app.screen.query_one("#rule-rows")
+        rows = cp.query_one("#rule-rows")
         await press_until(pilot, "down", lambda: rules_focus(app) == "d1")
         # A tick on the same snapshot: in place, identity kept.
-        overlay.tick()
-        await wait_for(lambda: rule_rows_is(app, rows))
+        cp.tick()
+        await wait_for(lambda: cp.query_one("#rule-rows") is rows)
         assert rules_focus(app) == "d1"
         # The survivors' countdown text follows the clock: a1's 5m
         # verdict, decided_at 200, reads off the controller clock
         # the test now owns.
         clock = {"now": 300.0}
         page.link.controller._clock = lambda: clock["now"]
-
-        def row_text(i: int) -> str:
-            return str(
-                app.screen.query_one("#rule-rows")
-                .children[i]
-                .query_one(Static)
-                .content
-            )
-
-        overlay.tick()
-        await wait_for(lambda: "3m left" in row_text(0))  # 500-300
+        cp.tick()
+        await wait_for(lambda: "3m left" in rule_row_text(app, 0))  # 500-300
         clock["now"] = 360.0
-        overlay.tick()
-        await wait_for(lambda: "2m left" in row_text(0))  # 500-360
-        await wait_for(lambda: rule_rows_is(app, rows))  # still in place
+        cp.tick()
+        await wait_for(lambda: "2m left" in rule_row_text(app, 0))  # 500-360
+        await wait_for(lambda: cp.query_one("#rule-rows") is rows)
         # A same-membership frame (a mode switch lands in it): the
         # header follows the mode, the rows never swap.
         page.link.controller.apply_frame(same_rows_frame("allow"))
-        overlay.tick()
+        cp.tick()
         await wait_for(
-            lambda: (
-                "mode allow" in str(app.screen.query_one("#allowlist").content)
-            )
+            lambda: "mode allow" in str(cp.query_one("#allowlist").content)
         )
-        await wait_for(lambda: rule_rows_is(app, rows))
+        await wait_for(lambda: cp.query_one("#rule-rows") is rows)
         assert rules_focus(app) == "d1"
         # A membership change (a1 revoked): the fresh-list swap.
         page.link.controller.apply_frame(empty_rules_frame("allow"))
-        overlay.tick()
+        cp.tick()
         # Pin the swap itself, not a row count: a count of 0 also
         # reads on the old list mid-swap under load (#322).
         await wait_for(
             lambda: (
                 rules_children(app) == 0
-                and app.screen.query_one("#rule-rows") is not rows
+                and cp.query_one("#rule-rows") is not rows
             )
         )
 
@@ -1014,47 +1083,54 @@ async def test_rules_rebuild_self_heals_without_an_old_list() -> None:
     factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
     app, page, _data = make_page(factory)
     async with app.run_test() as pilot:
-        await open_overlay(pilot, app, page)
-        await pilot.press("r")
+        cp = await open_consent(pilot, app, page)
         await wait_for(lambda: rules_children(app) == 2)
-        await app.screen.query_one("#rule-rows").remove()
-        app.screen.schedule_refresh()
+        await cp.query_one("#rule-rows").remove()
+        cp.rule_rebuilds.request()
         await wait_for(lambda: rules_children(app) == 2)
 
 
-async def test_the_rules_screen_refreshes_on_frames() -> None:
-    """The rules screen refreshes while it is on top of the
-    overlay: a frame landing repaints the rows without a visit,
-    and `m` reaches the host's picker from there."""
+async def test_the_verdicts_refresh_on_frames() -> None:
+    """The verdicts repaint while a picker sits above the page: a
+    frame landing repaints the rows without a visit, and `m`
+    reaches the host's picker from the page."""
     factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
     app, page, _data = make_page(factory)
     async with app.run_test() as pilot:
-        overlay = await open_overlay(pilot, app, page)
-        await press_until(
-            pilot, "r", lambda: type(app.screen).__name__ == "RulesScreen"
-        )
+        cp = await open_consent(pilot, app, page)
         await wait_for(lambda: rules_children(app) == 2)
         page.link.controller.apply_frame(empty_rules_frame("allow"))
-        overlay.tick()
+        cp.tick()
         await wait_for(lambda: rules_children(app) == 0)
         await open_screen(pilot, app, "m", "ModeScreen")
-        await open_screen(pilot, app, "escape", "RulesScreen")
+        await open_screen(pilot, app, "escape", "ConsentPage")
 
 
-# -- the events screen's retirement (#390) -------------------------------
-
-
-async def test_the_overlay_carries_no_events_key() -> None:
-    """The placeholder audit moved to the tree's secrets page
-    (#390): the overlay's keymap covers the holds, the rules, and
-    the mode — `e` decides nothing and stacks nothing."""
-    factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
+async def test_a_zone_swap_keeps_the_other_zones_focus() -> None:
+    """A holds-list rebuild (a new hold arriving beside a standing
+    one) moves no focus into the holds zone while the operator
+    reads the verdicts — the growth edge is the empty queue alone."""
+    factory = FakeFactory(
+        [
+            FakeWS([request_frame("r1"), rules_frame()]),
+            FakeWS([]),
+        ]
+    )
     app, page, _data = make_page(factory)
     async with app.run_test() as pilot:
-        await open_overlay(pilot, app, page)
-        await pilot.press("e")
-        await asyncio.sleep(0.05)
-        assert on_overlay(app)  # the key closed nothing, stacked nothing
+        await open_consent(pilot, app, page)
+        await wait_for(lambda: hold_children(app) == 1)
+        await wait_for(lambda: rules_children(app) == 2)
+        # Walk into the verdicts once both zones stand and the holds
+        # zone holds the focus (the growth swap has landed).
+        await wait_for(lambda: focused_zone(app) == "holds")
+        await press_until(pilot, "down", lambda: focused_zone(app) == "rules")
+        assert focused_zone(app) == "rules"
+        factory.made[0].push(request_frame("r2"))
+        await wait_for(lambda: hold_children(app) == 2)
+        await pilot.pause()
+        assert focused_zone(app) == "rules"  # no steal into the holds
+        assert rules_focus(app) is not None  # a row keeps its highlight
 
 
 # -- the sightings' flash (#201 over #358) ---------------------------------
@@ -1062,8 +1138,8 @@ async def test_the_overlay_carries_no_events_key() -> None:
 
 async def test_a_sighting_flashes_the_page_line() -> None:
     """An off-allowlist sighting interrupts wherever the operator
-    is: with no overlay up, the page's consent line carries the
-    alarm for its TTL."""
+    is: with the consent page closed, the workspace page's consent
+    line carries the alarm for its TTL."""
     factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
     app, page, _data = make_page(factory)
     async with app.run_test() as pilot:
@@ -1075,11 +1151,11 @@ async def test_a_sighting_flashes_the_page_line() -> None:
         assert "evil.example" in page_consent(app, page)
 
 
-async def test_a_sighting_flashes_the_overlay_while_it_is_up() -> None:
+async def test_a_sighting_flashes_the_consent_page_while_it_is_up() -> None:
     factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
     app, page, _data = make_page(factory)
     async with app.run_test() as pilot:
-        await open_overlay(pilot, app, page)
+        await open_consent(pilot, app, page)
         factory.made[0].push(secret_frame("sighting", host="evil.example"))
         await wait_for(lambda: page.link.sightings)
         page.tick()
@@ -1112,19 +1188,19 @@ async def test_a_foreign_sighting_never_flashes() -> None:
         assert "! sighting" not in page_consent(app, page)
 
 
-# -- the mode picker over the overlay --------------------------------------
+# -- the mode picker over the page -----------------------------------------
 
 
-async def test_the_mode_picker_opens_from_the_overlay() -> None:
-    """`m` on the overlay opens the page's picker directly (#301
-    over #358): the operator watching holds escalates or relaxes
-    the posture without detouring through the rules screen; the
+async def test_the_mode_picker_opens_from_the_consent_page() -> None:
+    """`m` on the consent page opens the workspace page's picker
+    directly (#301 over #454): the operator watching holds
+    escalates or relaxes the posture without leaving the page; the
     pick goes through the data seam, and `m` again under the open
     picker stacks nothing."""
     factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
     app, page, data = make_page(factory)
     async with app.run_test() as pilot:
-        await open_overlay(pilot, app, page)
+        await open_consent(pilot, app, page)
         await wait_for(lambda: "mode interactive" in status_line(app))
         await open_screen(pilot, app, "m", "ModeScreen")
         await pilot.press("m")  # under the picker: inert
@@ -1143,7 +1219,7 @@ async def test_the_mode_picker_opens_from_the_overlay() -> None:
         await pilot.press("enter")
         await wait_for(lambda: len(data.modes) == 1)
         assert data.modes == [(WS, "static", False)]
-        await wait_for(lambda: on_overlay(app))
+        await wait_for(lambda: on_consent(app))
 
 
 async def test_the_status_line_names_the_link_state() -> None:
@@ -1153,35 +1229,33 @@ async def test_the_status_line_names_the_link_state() -> None:
     factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
     app, page, _data = make_page(factory)
     async with app.run_test() as pilot:
-        overlay = await open_overlay(pilot, app, page)
+        cp = await open_consent(pilot, app, page)
         await wait_for(lambda: "mode interactive" in status_line(app))
         page.link.state = "reconnecting"
-        overlay.sync_empty([])
-        assert "reconnecting" in str(
-            overlay.query_one("#consent-empty").content
-        )
+        cp.sync_empty([])
+        assert "reconnecting" in str(cp.query_one("#holds-empty").content)
         page.link.state = "rejected"
         page.link.reject_reason = "unknown workspace"
-        overlay.update_status()
+        cp.update_status()
         assert "unknown workspace" in status_line(app)
 
 
 async def test_the_status_line_shows_the_mode() -> None:
-    """The overlay's status line names the current mode at all
-    times (#301): `—` until the first rules frame lands, the
-    snapshot's mode after, and a mode switch's reply repaints it."""
+    """The page's status line names the current mode at all times
+    (#301): `—` until the first rules frame lands, the snapshot's
+    mode after, and a mode switch's reply repaints it."""
     factory = FakeFactory([FakeWS([]), FakeWS([])])
     app, page, _data = make_page(factory)
     async with app.run_test() as pilot:
-        overlay = await open_overlay(pilot, app, page)
+        cp = await open_consent(pilot, app, page)
         await pilot.pause()
-        overlay.update_status()
+        cp.update_status()
         assert "mode —" in status_line(app)
         page.link.controller.apply_frame(rules_frame())
-        overlay.tick()
+        cp.tick()
         await wait_for(lambda: "mode interactive" in status_line(app))
         page.link.controller.apply_frame(mode_frame("allow"))
-        overlay.tick()
+        cp.tick()
         await wait_for(lambda: "mode allow" in status_line(app))
 
 
@@ -1194,8 +1268,8 @@ async def test_m_stays_inert_under_a_modal() -> None:
     )
     app, page, _data = make_page(factory)
     async with app.run_test() as pilot:
-        await open_overlay(pilot, app, page)
-        await wait_for(lambda: queue_children(app) == 1)
+        await open_consent(pilot, app, page)
+        await wait_for(lambda: hold_children(app) == 1)
         await open_screen(pilot, app, "A", "DurationScreen")
         await pilot.press("m")
         await pilot.pause()
@@ -1228,7 +1302,7 @@ async def test_mode_picker_confirms_an_empty_static_switch() -> None:
     factory = FakeFactory([FakeWS([empty_rules_frame()]), FakeWS([])])
     app, page, data = make_page(factory)
     async with app.run_test() as pilot:
-        await open_overlay(pilot, app, page)
+        await open_consent(pilot, app, page)
         await open_screen(pilot, app, "m", "ModeScreen")
         await pilot.press("down")  # allow -> static
         await pilot.press("enter")
@@ -1253,7 +1327,7 @@ async def test_mode_picker_without_a_snapshot_confirms_static() -> None:
     factory = FakeFactory([FakeWS([]), FakeWS([])])
     app, page, data = make_page(factory)
     async with app.run_test() as pilot:
-        await open_overlay(pilot, app, page)
+        await open_consent(pilot, app, page)
         await open_screen(pilot, app, "m", "ModeScreen")
         await pilot.press("up")  # the row's interactive -> static
         await pilot.press("enter")
@@ -1288,7 +1362,7 @@ async def test_mode_picker_escape_cancels() -> None:
     factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
     app, page, data = make_page(factory)
     async with app.run_test() as pilot:
-        await open_overlay(pilot, app, page)
+        await open_consent(pilot, app, page)
         await open_screen(pilot, app, "m", "ModeScreen")
         await press_until(
             pilot,
@@ -1300,12 +1374,13 @@ async def test_mode_picker_escape_cancels() -> None:
 
 async def test_mode_switch_failure_flashes() -> None:
     """A failed switch (the daemon's named refusal among them)
-    flashes on the page's consent line, never crashes the tree."""
+    flashes on the workspace page's consent line, never crashes
+    the tree."""
     factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
     app, page, data = make_page(factory)
     data.fail.add("mode")
     async with app.run_test() as pilot:
-        await open_overlay(pilot, app, page)
+        await open_consent(pilot, app, page)
         await open_screen(pilot, app, "m", "ModeScreen")
         await pilot.press("up")  # interactive -> static
         await pilot.press("enter")
@@ -1313,24 +1388,23 @@ async def test_mode_switch_failure_flashes() -> None:
         await wait_for(lambda: "mode switch failed" in page_consent(app, page))
 
 
-async def test_modal_keys_do_not_reach_the_hidden_queue() -> None:
+async def test_modal_keys_do_not_reach_the_hidden_page() -> None:
     """The verdict keys stay inert under a pushed screen (the
     screen-separation rule #358): `a` decides nothing while the
-    picker is open over the rules screen over the overlay, and `q`
-    closes the modal instead of the panel."""
+    picker is open over the consent page, and `q` closes the modal
+    instead of the page."""
     factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
     app, page, data = make_page(factory)
     async with app.run_test() as pilot:
-        await open_overlay(pilot, app, page)
-        await wait_for(lambda: queue_children(app) == 1)
-        await open_screen(pilot, app, "r", "RulesScreen")
+        await open_consent(pilot, app, page)
+        await wait_for(lambda: hold_children(app) == 1)
         await open_screen(pilot, app, "m", "ModeScreen")
         await pilot.press("a")
         await pilot.press("d")
         await asyncio.sleep(0.05)
         assert data.decided == []  # the hidden hold stays undecided
         await open_screen(
-            pilot, app, "q", "RulesScreen"
+            pilot, app, "q", "ConsentPage"
         )  # the modal's own binding
         assert app.is_running  # q closed the modal, not the tree
 
@@ -1347,9 +1421,9 @@ async def test_the_countdown_repaint_skips_a_row_that_left() -> None:
     )
     app, page, _data = make_page(factory)
     async with app.run_test() as pilot:
-        overlay = await open_overlay(pilot, app, page)
-        await wait_for(lambda: queue_children(app) == 2)
-        rows = overlay.query_one("#consent-rows")
+        cp = await open_consent(pilot, app, page)
+        await wait_for(lambda: hold_children(app) == 2)
+        rows = cp.query_one("#hold-rows")
         ordered = page.link.controller.ordered()
 
         def row_text(index: int) -> str:
@@ -1369,10 +1443,10 @@ async def test_the_countdown_repaint_skips_a_row_that_left() -> None:
 
             id = "gone"
 
-        overlay.repaint_countdowns(rows, ordered)  # both survivors
-        overlay.repaint_countdowns(rows, [*ordered, Gone()])
+        cp.repaint_countdowns(rows, ordered)  # both survivors
+        cp.repaint_countdowns(rows, [*ordered, Gone()])
         await pilot.pause()
-        assert queue_children(app) == 2
+        assert hold_children(app) == 2
 
 
 async def test_a_tick_survives_widgets_that_left_under_it() -> None:
@@ -1382,24 +1456,24 @@ async def test_a_tick_survives_widgets_that_left_under_it() -> None:
     factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
     app, page, _data = make_page(factory)
     async with app.run_test() as pilot:
-        overlay = await open_overlay(pilot, app, page)
-        await wait_for(lambda: overlay.queue_rows() is not None)
-        await overlay.query_one("#consent-empty").remove()
-        overlay.tick()  # the empty line's query raises inside: swallowed
-        await wait_for(lambda: overlay.queue_rows() is not None)
+        cp = await open_consent(pilot, app, page)
+        await wait_for(lambda: cp.hold_rows() is not None)
+        await cp.query_one("#holds-empty").remove()
+        cp.tick()  # the empty line's query raises inside: swallowed
+        await wait_for(lambda: cp.hold_rows() is not None)
 
 
-async def test_queue_rows_returns_none_in_a_swap_window() -> None:
+async def test_hold_rows_returns_none_in_a_swap_window() -> None:
     factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
     app, page, _data = make_page(factory)
     async with app.run_test() as pilot:
-        overlay = await open_overlay(pilot, app, page)
-        await wait_for(lambda: overlay.queue_rows() is not None)
-        rows = overlay.queue_rows()
+        cp = await open_consent(pilot, app, page)
+        await wait_for(lambda: cp.hold_rows() is not None)
+        rows = cp.hold_rows()
         await rows.remove()
-        assert overlay.queue_rows() is None
-        overlay.tick()  # the missing list self-heals
-        await wait_for(lambda: overlay.queue_rows() is not None)
+        assert cp.hold_rows() is None
+        cp.tick()  # the missing list self-heals
+        await wait_for(lambda: cp.hold_rows() is not None)
 
 
 async def test_action_revoke_in_a_swap_window() -> None:
@@ -1408,12 +1482,11 @@ async def test_action_revoke_in_a_swap_window() -> None:
     factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
     app, page, data = make_page(factory)
     async with app.run_test() as pilot:
-        await open_overlay(pilot, app, page)
-        await open_screen(pilot, app, "r", "RulesScreen")
+        cp = await open_consent(pilot, app, page)
         await wait_for(lambda: rules_children(app) == 2)
-        rows = app.screen.query_one("#rule-rows")
+        rows = cp.query_one("#rule-rows")
         await rows.remove()
-        await app.screen.action_revoke()
+        await cp.action_revoke()
         assert data.revoked == []
 
 
@@ -1423,31 +1496,31 @@ async def test_pick_duration_and_decide_in_a_swap_window() -> None:
     factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
     app, page, _data = make_page(factory)
     async with app.run_test() as pilot:
-        overlay = await open_overlay(pilot, app, page)
-        await wait_for(lambda: queue_children(app) == 1)
-        rows = overlay.queue_rows()
+        cp = await open_consent(pilot, app, page)
+        await wait_for(lambda: hold_children(app) == 1)
+        rows = cp.hold_rows()
         await rows.remove()
-        await overlay.pick_duration("allow")
+        await cp.pick_duration("allow")
         await pilot.pause()
-        assert type(app.screen).__name__ == "ConsentOverlay"
+        assert type(app.screen).__name__ == "ConsentPage"
         assert "no hold focused" in status_line(app)
 
 
 async def test_a_mid_swap_death_self_heals_on_the_next_tick() -> None:
     """A rebuild that died mid-swap leaves no list; the tick sees
-    the membership differ from nothing and rebuilds — the queue
+    the membership differ from nothing and rebuilds — the zone
     self-heals instead of wedging blank."""
     factory = FakeFactory(
         [FakeWS([request_frame("r1"), request_frame("r2")]), FakeWS([])]
     )
     app, page, _data = make_page(factory)
     async with app.run_test() as pilot:
-        overlay = await open_overlay(pilot, app, page)
-        await wait_for(lambda: queue_children(app) == 2)
-        rows = overlay.queue_rows()
+        cp = await open_consent(pilot, app, page)
+        await wait_for(lambda: hold_children(app) == 2)
+        rows = cp.hold_rows()
         await rows.remove()
-        overlay.tick()
-        await wait_for(lambda: queue_children(app) == 2)
+        cp.tick()
+        await wait_for(lambda: hold_children(app) == 2)
 
 
 async def test_rebuild_re_arms_when_frames_land_mid_flight() -> None:
@@ -1456,19 +1529,19 @@ async def test_rebuild_re_arms_when_frames_land_mid_flight() -> None:
     factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
     app, page, _data = make_page(factory)
     async with app.run_test() as pilot:
-        overlay = await open_overlay(pilot, app, page)
-        await wait_for(lambda: queue_children(app) == 1)
+        cp = await open_consent(pilot, app, page)
+        await wait_for(lambda: hold_children(app) == 1)
         landing = asyncio.Event()
 
-        real_rebuild = overlay.rebuilds._rebuild  # zero-arg: reads at call
+        real_rebuild = cp.hold_rebuilds._rebuild  # zero-arg: reads at call
 
         async def gated_rebuild() -> None:
             await real_rebuild()
             landing.set()
 
-        overlay.rebuilds._rebuild = gated_rebuild
+        cp.hold_rebuilds._rebuild = gated_rebuild
         factory.made[0].push(request_frame("r2"))
-        await wait_for(lambda: queue_children(app) == 2)
+        await wait_for(lambda: hold_children(app) == 2)
         await wait_for(landing.is_set)
 
 
@@ -1478,25 +1551,25 @@ async def test_a_dying_rebuild_logs_and_re_arms() -> None:
     factory = FakeFactory([FakeWS([request_frame("r1")]), FakeWS([])])
     app, page, _data = make_page(factory)
     async with app.run_test() as pilot:
-        overlay = await open_overlay(pilot, app, page)
-        await wait_for(lambda: queue_children(app) == 1)
+        cp = await open_consent(pilot, app, page)
+        await wait_for(lambda: hold_children(app) == 1)
         armed_while_dying = {"late": False}
 
         async def dying() -> None:
             raise RuntimeError("boom")
 
-        overlay.rebuilds._rebuild = dying
+        cp.hold_rebuilds._rebuild = dying
 
-        original_request = overlay.rebuilds.request
+        original_request = cp.hold_rebuilds.request
 
         def spying_request() -> None:
-            if overlay.rebuilds.scheduled:
+            if cp.hold_rebuilds.scheduled:
                 armed_while_dying["late"] = True
             original_request()
 
-        overlay.rebuilds.request = spying_request  # type: ignore[method-assign]
-        overlay.rebuilds.request()
-        await wait_for(lambda: not overlay.rebuilds.scheduled)
+        cp.hold_rebuilds.request = spying_request  # type: ignore[method-assign]
+        cp.hold_rebuilds.request()
+        await wait_for(lambda: not cp.hold_rebuilds.scheduled)
         assert armed_while_dying["late"]
 
 
@@ -1569,6 +1642,46 @@ async def test_a_flight_dying_at_teardown_stays_quiet(
     await wait_for(lambda: not flight.scheduled)
     assert not logged  # the dead owner logs nothing
     assert runs == [1]  # no re-arm carried the death forward
+
+
+# -- the hold flash's shape (#454) -----------------------------------------
+
+
+def test_hold_flash_names_the_destination_and_the_key() -> None:
+    """The flash carries the destination with its port (all ports
+    for a portless flow) and the key in — the attention a hold
+    gets while the consent page is closed."""
+
+    class Req:
+        dest_host = "api.example"
+        dest_port = 443
+
+    assert hold_flash(Req()) == ("egress to decide: api.example:443 — press e")
+
+    class Portless:
+        dest_host = "raw.example"
+        dest_port = 0
+
+    assert "raw.example (all ports)" in hold_flash(Portless())
+
+
+def test_hold_flash_escapes_markup() -> None:
+    """A destination carrying rich markup renders literally — the
+    consent line parses markup at update time, and a truncated
+    closing tag in a destination would raise there (#318): the
+    flash's text parses clean, bracket and all."""
+    from rich.text import Text
+
+    class Hostile:
+        dest_host = "[bold]x[/"
+        dest_port = 443
+
+    flashed = hold_flash(Hostile())
+    Text.from_markup(flashed)  # parses, no MarkupError
+    assert "x" in flashed
+
+
+# -- the link (unchanged, beside the page) ----------------------------------
 
 
 def test_backoff_and_refused_close() -> None:

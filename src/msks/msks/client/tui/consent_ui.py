@@ -2,19 +2,21 @@
 :class:`ConsentController` that every consent surface in the tree
 renders from.
 
-The workspace page's consent overlay (the modal over the page,
-``main_app.ConsentOverlay`) owns the held-request queue and the
-verdict keys; the rules screen — below in this module — pushes
-above the overlay as a full-screen visit. The placeholder audit
-moved to the tree's secrets page (#390): its daemon-wide view lives
-in ``main_app`` beside the page that opens it, rendering through
-this module's row helpers.
+The workspace page holds the decider link and its controller; the
+egress consent page — below in this module, pushed over the
+workspace page — is the tree's only deciding surface: the
+held-request queue and the in-effect verdicts on one full-screen
+visit (#454), merged from the consent overlay and its rules
+screen. The placeholder audit lives in the tree's secrets page
+(#390): its daemon-wide view sits in ``main_app`` beside the page
+that opens it, rendering through this module's row helpers.
 
 This module keeps everything those surfaces share — the row and
 focus helpers, the reconnect ladder's constants, the pickers (mode,
 duration, and the generic one the audit view's filters take), the
-rules screen (in-effect verdicts, revoke), and the audit row
-rendering — plus the connection seams the page's
+edge-walking list the consent page's two zones cross between, the
+consent page itself (holds, verdicts, revoke, mode), and the audit
+row rendering — plus the connection seams the page's
 :class:`~msks.client.tui.link.DeciderLink` dials through
 (``default_ws_factory``, the one shared TLS context) and the
 failure panel a refused create or mint opens (#426). The protocol
@@ -83,6 +85,13 @@ AUTH_CLOSE_CODE = 4401
 CONNECTED = "connected"
 RECONNECTING = "reconnecting"
 REFUSED = "refused — bad token?"
+
+#: The registration-refusal and unusable-token states' labels — the
+#: same strings :mod:`msks.client.tui.link` names its states by (the
+#: link owns the connection; the surfaces render the labels, and an
+#: import between the two modules would cycle).
+REJECTED = "rejected"
+UNUSABLE_TOKEN = "unusable token"
 
 logger = logging.getLogger(__name__)
 
@@ -439,6 +448,21 @@ def events_note() -> str:
     )
 
 
+def hold_flash(request) -> str:
+    """The consent-line flash a first-seen hold takes (#454): the
+    destination with the key in — the page pushes nothing on a
+    hold's arrival, so this line is the attention the hold gets
+    (the header's count beside it), the sighting flash's shape.
+    The host rides through ``flash_safe``: the consent line parses
+    markup at update time, and a truncated closing tag in a
+    destination would raise there (#318's rule).
+    """
+    port = (
+        " (all ports)" if request.dest_port == 0 else f":{request.dest_port}"
+    )
+    return f"egress to decide: {flash_safe(request.dest_host)}{port} — press e"
+
+
 def sighting_flash(event: SecretEvent) -> str:
     """The status line an off-allowlist sighting takes while the
     queue (or picker) is on top: the exfil signal surfaces on every
@@ -677,74 +701,368 @@ class DurationScreen(PickerScreen):
         super().__init__(choices, default, picked)
 
 
-class RulesScreen(Screen):
-    """The in-effect verdicts: allow/deny rows with durations and
-    countdowns, the static allowlist, and revoke on the focused row.
-
-    Arrows move the rule list; ``x`` revokes the focused rule, ``r``
-    or Escape returns to the surface below — no focus trap anywhere.
-    The per-tick countdown refresh repaints an unchanged row set in
-    place; only a membership change swaps the list (the swap was
-    the once-a-second flash #301 reports)."""
+class EdgeListView(ListView):
+    """A :class:`~textual.widgets.ListView` whose arrow keys leave
+    the list at its edges (#454): the consent page stacks two
+    lists, and the arrows alone must walk both in reading order —
+    the spatial-navigation rule, the mint form's picker-edge
+    pattern carried to the page's lists. The interior rows take
+    the stock cursor walk; an edge hands the walk to the callback
+    given at construction (nothing happens at an edge with no
+    handoff — the walk just stops, as it does at the page's own
+    top and bottom)."""
 
     BINDINGS = [
-        Binding("x", "revoke", "Revoke"),
-        Binding("m", "mode", "Mode"),
-        Binding("r", "back", "Back"),
-        Binding("escape", "back", "Back", show=False),
-        Binding("q", "back", "Back", show=False),
+        Binding("up", "edge_previous", show=False),
+        Binding("down", "edge_next", show=False),
     ]
 
-    def __init__(self, controller: ConsentController, revoke, mode) -> None:
+    def __init__(self, *children, leave_up=None, leave_down=None, **kwargs):
+        super().__init__(*children, **kwargs)
+        self.leave_up = leave_up
+        self.leave_down = leave_down
+
+    def at_top(self) -> bool:
+        """Whether the walk leaves upward from here: no rows,
+        nothing highlighted, or the first row highlighted."""
+        return not self.children or self.index in (None, 0)
+
+    def at_bottom(self) -> bool:
+        """Whether the walk leaves downward from here: no rows,
+        nothing highlighted, or the last row highlighted."""
+        return not self.children or self.index == len(self.children) - 1
+
+    def action_edge_previous(self) -> None:
+        """Up: the interior walks the rows, the top edge hands the
+        walk to the surface above."""
+        if self.at_top():
+            if self.leave_up is not None:
+                self.leave_up()
+        else:
+            self.action_cursor_up()
+
+    def action_edge_next(self) -> None:
+        """Down: the interior walks the rows, the bottom edge
+        hands the walk to the surface below."""
+        if self.at_bottom():
+            if self.leave_down is not None:
+                self.leave_down()
+        else:
+            self.action_cursor_down()
+
+
+class ConsentPage(Screen):
+    """The egress consent page (#454): the held-request queue and
+    the in-effect verdicts on one full-screen page — the consent
+    overlay (#358) and its rules screen merged, the tree's only
+    deciding surface. The workspace page beneath keeps the link
+    running; this page reads its controller.
+
+    Two zones in reading order: the held requests (rows with
+    countdowns, the queue the overlay owned) above the in-effect
+    verdicts (the rules rows), the mode line and static allowlist
+    at the top, a status line naming the workspace, the mode, the
+    link's state, and the held count. The arrows walk a zone's
+    rows and cross between the zones at their edges (an
+    :class:`EdgeListView` a side) — no focus trap anywhere, and a
+    list swap leaves the zones' focus where it stood (the empty
+    queue's first hold excepted: that arrival takes the focus
+    once, the moment the page's purpose materializes).
+
+    The verdict keys act on the holds zone alone: ``a``/``d``
+    decide the focused hold for the default duration, ``A``/``D``
+    pick a duration first, and on a verdict row they decide
+    nothing. ``x`` revokes the focused verdict and acts on
+    nothing in the holds zone; ``m`` opens the host's mode
+    picker; ``q`` or Escape returns to the workspace page — holds
+    keep waiting, the header's count keeps naming them. Enter
+    carries no verdict: the zones are ListViews, and a stray
+    Enter aimed at the page beneath must not decide anything;
+    only an explicit letter decides.
+
+    The page owns its per-second repaint: an unchanged row set
+    repaints its countdowns in place; only a membership change
+    swaps a list (the swap was the once-a-second flash #301
+    reports)."""
+
+    #: The page sets its own initial focus (``started``: the holds
+    #: zone when a hold waits, the verdicts otherwise) once the
+    #: compose has settled — Textual's auto-focus would grab the
+    #: first focusable (always the holds list) before that decision
+    #: runs, and the holds zone's first swap would then faithfully
+    #: restore the wrong zone. The empty string (not None — None
+    #: inherits the app's setting) matches no widget (#454).
+    AUTO_FOCUS = ""
+
+    BINDINGS = [
+        Binding("a", "allow", "Allow"),
+        Binding("A", "allow_duration", "Allow…"),
+        Binding("d", "deny", "Deny"),
+        Binding("D", "deny_duration", "Deny…"),
+        Binding("x", "revoke", "Revoke"),
+        Binding("m", "mode", "Mode"),
+        Binding("q", "back", "Back"),
+        Binding("escape", "back", "Back", show=False),
+    ]
+
+    def __init__(self, host) -> None:
         super().__init__()
-        self.controller = controller
-        self.revoke = revoke
-        self.mode = mode
-        self.rebuilds = OneFlight(
-            lambda: self.rebuild_rows(),
+        self.host = host
+        self.workspace_id = host.row["id"]
+        self.link = host.link_or_stub()
+        self.flash_line = FlashLine()
+        #: Whether the queue has ever held a hold while this page
+        #: stood (#454): ``started`` seeds it from the frames that
+        #: landed before the page opened, and the first later
+        #: arrival flips it — the one focus edge the page owns.
+        self.holds_known = False
+        self.hold_rebuilds = OneFlight(
+            lambda: self.rebuild_holds(self.controller.ordered()),
             lambda: self.app.is_running,
-            "rules",
+            "consent-holds",
+        )
+        self.rule_rebuilds = OneFlight(
+            lambda: self.rebuild_rules(),
+            lambda: self.app.is_running,
+            "consent-rules",
         )
 
+    @property
+    def controller(self) -> ConsentController:
+        """The host link's controller — the queue's state, shared
+        with the workspace page's own lines."""
+        return self.link.controller
+
     def compose(self) -> ComposeResult:
-        with Vertical(id="rules-body"):
+        with Vertical(id="consent-page"):
             yield Static(id="allowlist")
-            yield ListView(id="rule-rows")
+            yield Static(id="consent-status")
+            with Vertical(id="holds-zone"):
+                yield Static("held requests", id="holds-label")
+                # The empty line sits above the list so the list can
+                # mount at its zone's end — an anchored mount would
+                # wedge the zone the moment its anchor left.
+                yield Static(id="holds-empty")
+                yield EdgeListView(leave_down=self.enter_rules, id="hold-rows")
+            with Vertical(id="rules-zone"):
+                yield Static("in effect", id="rules-label")
+                yield EdgeListView(leave_up=self.enter_holds, id="rule-rows")
         yield Footer()
 
     def on_mount(self) -> None:
-        self.query_one("#rule-rows", ListView).focus()
+        self.set_interval(1.0, self.tick)
+        # call_after_refresh: the first rebuild waits for the compose
+        # stream to settle — a timer or worker racing it queries
+        # widgets that are not mounted yet (the page's own rule).
+        self.call_after_refresh(self.started)
+
+    def started(self) -> None:
+        """The compose has settled: build both zones, paint the
+        status line, and focus the holds when a hold waits (the
+        urgent zone), the verdicts otherwise."""
+        self.hold_rebuilds.request()
+        self.rule_rebuilds.request()
+        self.update_status()
+        self.holds_known = bool(self.controller.ordered())
+        if self.holds_known:
+            self.focus_holds()
+        else:
+            self.focus_rules()
 
     def on_show(self) -> None:
-        self.schedule_refresh()
+        self.hold_rebuilds.request()
+        self.rule_rebuilds.request()
 
-    def schedule_refresh(self) -> None:
-        """Arm one rows rebuild; single flight, with a re-arm when a
-        frame lands mid-flight (the in-progress rebuild already
-        captured the old snapshot — the re-arm applies the new one
-        the moment it lands)."""
-        self.rebuilds.request()
+    # -- the per-second repaint ------------------------------------------
 
-    async def rebuild_rows(self) -> None:
-        """Repaint from the controller's rules snapshot. An
-        unchanged row set (same ids, same order) repaints the
-        survivors' countdowns in place — the per-tick refresh must
-        not swap the whole list, the once-a-second flash #301
-        reports. A membership change builds a fresh list,
-        preserving the focused rule by id (the top when it left): a
-        mutating ListView carries asynchronously-pruned stale
-        children that shift indexes, so positions must come from
-        children that are all real — `x` must never retarget
-        through a shifted index."""
+    def tick(self) -> None:
+        """The per-second repaint: both zones' countdowns and the
+        status line. A teardown race leaves the queries empty —
+        noise, not a crash."""
+        try:
+            self.sync_holds()
+            self.update_status()
+            self.sync_rules()
+        except NoMatches:
+            pass
+
+    # -- the zones' focus handoffs ---------------------------------------
+
+    def focus_holds(self) -> None:
+        """Focus the holds zone from above (the page's own start):
+        a highlighted row when the list carries one."""
+        rows = self.hold_rows()
+        if rows is not None:
+            rows.focus()
+            ensure_focus(rows)
+
+    def focus_rules(self) -> None:
+        """Focus the verdicts zone from above: the first row when
+        the list carries one."""
+        rows = self.rule_rows()
+        if rows is not None:
+            rows.focus()
+            ensure_focus(rows)
+
+    def enter_rules(self) -> None:
+        """The holds list's bottom edge hands the walk down: focus
+        the verdicts at their first row."""
+        self.focus_rules()
+
+    def enter_holds(self) -> None:
+        """The verdicts' top edge hands the walk up: focus the holds
+        at their last row — the row nearest the boundary crossed."""
+        rows = self.hold_rows()
+        if rows is not None:
+            rows.focus()
+            if rows.children:
+                rows.index = len(rows.children) - 1
+            else:
+                ensure_focus(rows)
+
+    # -- the holds zone ---------------------------------------------------
+
+    def hold_rows(self) -> ListView | None:
+        """The holds list, or None during a rebuild's swap window."""
+        try:
+            return self.query_one("#hold-rows", ListView)
+        except NoMatches:
+            return None
+
+    def sync_holds(self) -> None:
+        """Sync the holds zone to state. A membership change (a hold
+        resolved, a new one arrived) rebuilds the list fresh —
+        Textual prunes removed children asynchronously, so mutating
+        a live ListView leaves stale copies that shift every index
+        under the highlight; a fresh list keeps the destructive
+        keys' target derivable from children that are all real.
+        Same-set ticks repaint survivors' countdowns in place. A
+        missing list (a rebuild died mid-swap) schedules a rebuild —
+        the zone self-heals instead of wedging blank."""
+        rows = self.hold_rows()
+        if rows is None:
+            self.hold_rebuilds.request()
+            return
+        ordered = self.controller.ordered()
+        if row_ids(rows) != {request.id for request in ordered}:
+            self.hold_rebuilds.request()
+            return
+        self.repaint_countdowns(rows, ordered)
+        self.sync_empty(ordered)
+
+    def sync_empty(self, ordered: list) -> None:
+        """The empty state rides beside the holds list, honest
+        about the connection state."""
+        empty = self.query_one("#holds-empty", Static)
+        empty.display = not ordered
+        empty.update(self.empty_line())
+
+    def empty_line(self) -> str:
+        """The empty-holds line, honest about the link's state."""
+        if self.link.state == CONNECTED:
+            return "No held requests — connected, waiting."
+        return f"No held requests — {self.link.state}."
+
+    def repaint_countdowns(self, rows: ListView, ordered: list) -> None:
+        """Repaint each survivor's countdown in place."""
+        existing = row_map(rows)
+        for request in ordered:
+            item = existing.get(request.id)
+            if item is not None:
+                item.query_one(Static).update(
+                    dest_line(request, self.controller.remaining(request))
+                )
+
+    async def rebuild_holds(self, ordered: list) -> None:
+        """Swap in a freshly-built holds list (its mount awaited),
+        restoring focus by id (the top when the focused hold left)
+        so ``a``/``d`` never retarget through a shifted index.
+        Focus is read from the live list here, at rebuild time —
+        never captured at arm time. A missing old list (a rebuild
+        died mid-swap) is fine: the fresh list mounts anew."""
+        body = self.query_one("#holds-zone", Vertical)
+        old = self.hold_rows()
+        focused = focused_request_id(old)
+        # Read before the remove: a removed list no longer reports
+        # the focus it carried (the awaits shift it to the next
+        # focusable — the verdicts — before the fresh list mounts).
+        held_focus = old is not None and old.has_focus
+        fresh = self.fresh_hold_list(ordered)
+        if old is not None:
+            await old.remove()  # frees the id before the fresh list mounts
+        await body.mount(fresh)
+        self.land_hold_focus(fresh, focused, held_focus, ordered)
+        self.sync_empty(ordered)
+
+    def fresh_hold_list(self, ordered: list) -> EdgeListView:
+        """The holds zone's next list: the rows for ``ordered``, the
+        down-edge handoff wired."""
+        items = [self.render_hold(request) for request in ordered]
+        return EdgeListView(
+            *items, leave_down=self.enter_rules, id="hold-rows"
+        )
+
+    def land_hold_focus(
+        self, fresh: ListView, focused, held_focus: bool, ordered: list
+    ) -> None:
+        """Give the fresh holds list the focus the swap owes it:
+        the zone held it, or the queue's first hold landed on a page
+        that opened empty — the moment the page's purpose
+        materializes (#454; the overlay's unconditional
+        fresh-focus, narrowed to the arrival; ``holds_known`` is
+        ``started``'s record of the holds that already waited at
+        open). Every other swap keeps the zones' focus where it
+        stood."""
+        if held_focus or (not self.holds_known and ordered):
+            fresh.focus()
+            focus_by_id(fresh, focused)  # after mount: index sticks
+        if ordered:
+            self.holds_known = True
+
+    def render_hold(self, request) -> ListItem:
+        """One holds-zone row."""
+        item = ListItem(
+            Static(dest_line(request, self.controller.remaining(request)))
+        )
+        item.request_id = request.id
+        return item
+
+    # -- the verdicts zone --------------------------------------------------
+
+    def rule_rows(self) -> ListView | None:
+        """The verdicts list, or None during a rebuild's swap
+        window."""
+        try:
+            return self.query_one("#rule-rows", ListView)
+        except NoMatches:
+            return None
+
+    def sync_rules(self) -> None:
+        """Arm one verdicts rebuild each tick: the flight itself
+        takes the cheap in-place countdown path when the row set
+        is unchanged (the old rules screen's per-tick refresh, the
+        decider app's repaint rule — one owner), and a membership
+        change builds the fresh list."""
+        self.rule_rebuilds.request()
+
+    async def rebuild_rules(self) -> None:
+        """Repaint the verdicts zone from the controller's rules
+        snapshot. An unchanged row set (same ids, same order)
+        repaints the survivors' countdowns in place — the per-tick
+        refresh must not swap the whole list, the once-a-second
+        flash #301 reports. A membership change builds a fresh
+        list, preserving the focused rule by id (the top when it
+        left): a mutating ListView carries asynchronously-pruned
+        stale children that shift indexes, so positions must come
+        from children that are all real — `x` must never retarget
+        through a shifted index. A swap never moves focus between
+        zones: the fresh list keeps the verdicts zone only when
+        the old one held it."""
         rules = self.controller.rules
         ordered = rule_rows(rules)
         self.query_one("#allowlist", Static).update(allowlist_text(rules))
-        body = self.query_one("#rules-body", Vertical)
-        old = None
-        try:
-            old = self.query_one("#rule-rows", ListView)
-        except NoMatches:
-            pass  # a died-mid-swap rebuild: mount the fresh list anew
+        body = self.query_one("#rules-zone", Vertical)
+        old = self.rule_rows()
         if old is not None and row_rule_ids(old) == [
             rule.id for rule in ordered
         ]:
@@ -755,13 +1073,11 @@ class RulesScreen(Screen):
     async def swap_rule_rows(
         self, body: Vertical, old: ListView | None, ordered: list
     ) -> None:
-        """Swap in a freshly-built list (its mount awaited),
-        preserving the focused rule by id (the top when it left): a
-        mutating ListView carries asynchronously-pruned stale
-        children that shift indexes, so positions must come from
-        children that are all real — `x` must never retarget
-        through a shifted index."""
+        """Swap in a freshly-built verdicts list (its mount
+        awaited), preserving the focused rule by id (the top when
+        it left) — and the holds zone's focus when it held it."""
         focused = focused_rule_id(old)
+        held_focus = old is not None and old.has_focus
         items = []
         for rule in ordered:
             item = ListItem(
@@ -769,44 +1085,177 @@ class RulesScreen(Screen):
             )
             item.rule_id = rule.id
             items.append(item)
-        fresh = ListView(*items, id="rule-rows")
+        fresh = EdgeListView(*items, leave_up=self.enter_holds, id="rule-rows")
         if old is not None:
             await old.remove()  # frees the id before the fresh list mounts
         await body.mount(fresh)
-        fresh.focus()
-        focus_rule_by_id(fresh, focused)  # after mount: index sticks
+        if held_focus:
+            fresh.focus()
+            focus_rule_by_id(fresh, focused)  # after mount: index sticks
 
     def repaint_rule_rows(self, rows: ListView, ordered: list) -> None:
-        """Repaint each surviving rule row's text in place (the
-        queue's per-tick countdown repaint, carried to the rules
-        rows): the caller's order-equal membership match proves the
-        children and ``ordered`` line up positionally, so the pass
-        walks the two side by side (never id-keyed — a malformed
-        frame with duplicate ids would repaint one row twice and
-        leave its twin stale), moves no index, and takes no
-        focus."""
+        """Repaint each surviving rule row's text in place: the
+        caller's order-equal membership match proves the children
+        and ``ordered`` line up positionally, so the pass walks the
+        two side by side (never id-keyed — a malformed frame with
+        duplicate ids would repaint one row twice and leave its
+        twin stale), moves no index, and takes no focus."""
         for child, rule in zip(rows.children, ordered):
             child.query_one(Static).update(
                 rule_line(rule, self.controller.rule_remaining(rule))
             )
 
+    # -- the status line ---------------------------------------------------
+
+    def flash(self, message: str) -> None:
+        """Give the status line to a message for FLASH_TTL seconds —
+        a verdict's failure, a sighting's alarm (#201): the
+        surfaces this page owns."""
+        self.flash_line.set(message)
+        self.update_status()
+
+    def update_status(self) -> None:
+        """The status line: workspace, current mode, the link's
+        state, held count; a flash owns it until its TTL lapses. A
+        rejected registration names its reason — the daemon refused
+        this page as the decider, and the line says why."""
+        if self.link.state in (REJECTED, UNUSABLE_TOKEN):
+            state = escape(self.link.reject_reason or "rejected")
+        else:
+            state = self.link.state
+        held = len(self.controller.pending)
+        default = (
+            f" {escape(self.workspace_id)}  ·  mode "
+            f"{mode_label(self.controller.rules)}"
+            f"  ·  {state}  ·  {held} held"
+        )
+        self.query_one("#consent-status", Static).update(
+            self.flash_line.text(default)
+        )
+
+    # -- verdicts ------------------------------------------------------------
+
+    def holds_zone_focused(self) -> bool:
+        """Whether the holds list owns the focus — the verdict keys
+        act on it alone (#454): a hold is a question, a verdict row
+        is state, and the letters never act on state."""
+        rows = self.hold_rows()
+        return rows is not None and rows.has_focus
+
+    def rules_zone_focused(self) -> bool:
+        """Whether the verdicts list owns the focus — ``x`` acts on
+        it alone: a hold carries nothing to revoke."""
+        rows = self.rule_rows()
+        return rows is not None and rows.has_focus
+
+    async def action_allow(self) -> None:
+        if self.holds_zone_focused():
+            await self.decide_focused("allow", DURATION_DEFAULT)
+
+    async def action_deny(self) -> None:
+        if self.holds_zone_focused():
+            await self.decide_focused("deny", DURATION_DEFAULT)
+
+    async def action_allow_duration(self) -> None:
+        if self.holds_zone_focused():
+            await self.pick_duration("allow")
+
+    async def action_deny_duration(self) -> None:
+        if self.holds_zone_focused():
+            await self.pick_duration("deny")
+
+    async def decide_focused(self, decision: str, duration: str) -> None:
+        """Send the verdict for the focused hold through the data
+        seam; a failure flashes, never crashes the tree (SystemExit
+        included — the REST seam's error surface). A key pressed
+        inside a rebuild's swap window reads as nothing focused."""
+        request_id = focused_request_id(self.hold_rows())
+        if request_id is None:
+            self.flash("no hold focused")
+            return
+        await self.send_verdict(request_id, decision, duration)
+
+    async def pick_duration(self, decision: str) -> None:
+        """Open the duration picker for the FOCUSED hold; a picked
+        duration decides that hold, a cancel decides nothing. The
+        request id is captured here: the focused row can change (or
+        resolve) while the picker is open, and Enter must not land
+        the verdict on whatever holds focus when the pick arrives."""
+        request_id = focused_request_id(self.hold_rows())
+        if request_id is None:
+            self.flash("no hold focused")
+            return
+        await self.app.push_screen(
+            DurationScreen(self.finish_pick(decision, request_id))
+        )
+
+    def finish_pick(self, decision: str, request_id: str | None):
+        """The callback the picker calls with the picked duration
+        (or None on cancel)."""
+
+        async def picked(duration: str | None) -> None:
+            if duration is None:
+                return
+            # Sent unconditionally: after a reconnect the local
+            # pending set is fresh (empty) while the hold may still
+            # be live server-side — the server is the source of
+            # truth and 404s ids that truly resolved.
+            await self.send_verdict(request_id, decision, duration)
+
+        return picked
+
+    async def send_verdict(
+        self, request_id: str, decision: str, duration: str
+    ) -> None:
+        """One decide through the data seam — the same exchange
+        ``msks egress decide`` makes."""
+        try:
+            await self.host.app.data.decide(
+                self.workspace_id, request_id, decision, duration
+            )
+        except (Exception, SystemExit) as exc:
+            self.flash(f"decide failed: {flash_safe(str(exc))}")
+
     async def action_revoke(self) -> None:
-        """Revoke the focused rule through the injected seam; the row
+        """Revoke the focused verdict through the data seam; the row
         leaves on the refreshed ``egress.rules`` frame, never
         optimistically (a still-enforced rule must not hide). A key
         pressed inside a rebuild's swap window reads as nothing
-        focused."""
+        focused, and a press in the holds zone decides nothing —
+        a hold carries nothing to revoke."""
+        if not self.rules_zone_focused():
+            return
         rule_id = focused_rule_or_none(self)
         if rule_id is not None:
-            await self.revoke(rule_id)
+            await self.revoke_rule(rule_id)
+
+    async def revoke_rule(self, request_id: str) -> None:
+        """One revoke through the data seam — the same exchange
+        ``msks egress revoke`` makes; the row leaves on the
+        refreshed ``egress.rules`` frame, never optimistically."""
+        try:
+            await self.host.app.data.revoke(self.workspace_id, request_id)
+        except (Exception, SystemExit) as exc:
+            self.flash(f"revoke failed: {flash_safe(str(exc))}")
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        """Enter on a row decides nothing: both zones are
+        ListViews, and Enter fires their selection — a stray Enter
+        (the operator aimed at the workspace page's action list
+        when the hold's flash landed) must never become a verdict.
+        Only an explicit letter decides."""
+
+    # -- the mode picker and back -------------------------------------------
 
     def action_mode(self) -> None:
-        """Open the mode picker through the host's callback (#301
-        kept the key beside the rules rows); the host owns which
-        picker path runs."""
-        self.mode()
+        """Open the host's mode picker — the same path the
+        workspace page's action row takes (#344)."""
+        self.host.open_mode_picker()
 
     def action_back(self) -> None:
+        """``q``/Escape: return to the workspace page — holds keep
+        waiting, the header's count keeps naming them, and ``e``
+        reopens this page."""
         self.app.pop_screen()
 
 

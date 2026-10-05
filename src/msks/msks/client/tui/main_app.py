@@ -13,13 +13,13 @@ as a chained app: the page action records itself on the
 :class:`TuiFollow` queue and exits the tree, :func:`run_main_tui`
 runs the flow, and the tree restarts where it left off (the
 workspace page reopens). The consent decider lives inside the
-tree instead (#358): the workspace page pushes a
-:class:`ConsentOverlay` — a modal panel over the page holding the
-held-request queue — by hand from its action list, and by itself
-when a hold arrives. The screens talk to the daemon through
+tree instead (#358, #454): the workspace page holds a
+:class:`DeciderLink` so pending holds land on it, and the egress
+consent page it opens — a full-screen visit holding both the
+held-request queue and the in-effect verdicts — is the tree's
+only deciding surface. The screens talk to the daemon through
 :class:`TuiData` — the same REST surface the ``msksc`` commands
-use — and the page holds a :class:`DeciderLink` so pending holds
-land on it.
+use.
 
 Spatial navigation: every screen is a list the arrows walk, the
 create form's arrows move between its fields, and Escape always
@@ -137,15 +137,22 @@ class MsksTuiApp(App):
     ConfirmScreen { align: center middle; }
     #question { padding: 1 2; background: $panel;
                 border: round $primary; }
-    ConsentOverlay { align: center middle; }
-    #consent-panel { width: 64; height: auto; background: $panel;
-                     border: round $primary; padding: 1 2; }
-    #consent-status { height: 1; padding: 0 1; margin-bottom: 1;
-                      color: $text-muted; text-wrap: nowrap;
+    #consent-page { padding: 0 1; }
+    #allowlist { height: 1; color: $text-muted;
+                 text-wrap: nowrap; text-overflow: ellipsis; }
+    #consent-status { height: 1; color: $text-muted;
+                      text-wrap: nowrap;
                       text-overflow: ellipsis; }
-    #consent-rows { height: auto; max-height: 12; }
-    #consent-rows ListItem { height: 1; }
-    #consent-empty { height: 1; padding: 0 1; color: $text-muted; }
+    #holds-zone, #rules-zone { height: auto; }
+    #holds-label, #rules-label { height: 1; margin-top: 1;
+                                 color: $text-muted;
+                                 text-style: bold; }
+    #hold-rows { height: auto; max-height: 12; margin: 0 1; }
+    #hold-rows ListItem { height: 1; }
+    #holds-empty { height: 1; padding: 0 1; color: $text-muted; }
+    #rules-zone { height: 1fr; min-height: 3; }
+    #rule-rows { margin: 0 1; }
+    #rule-rows ListItem { height: 1; }
     #secrets-listing { border: round $primary; background: $panel; }
     #secret-columns { padding: 0 1; color: $text-muted; }
     #secret-rows ListItem { height: 1; padding: 0 1; }

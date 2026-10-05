@@ -1,14 +1,16 @@
-"""The workspace page (#309) and its consent overlay (#358) —
-extracted from the app shell so :mod:`msks.client.tui.main_app`
-composes them.
+"""The workspace page (#309) and the egress consent page it
+opens (#454) — extracted from the app shell so
+:mod:`msks.client.tui.main_app` composes them.
 
 The page is the workspace's decider while it is open: holds land
-on its link, the header counts them, and the first hold of a
-burst opens the overlay by itself. Spatial navigation: arrows
-walk the page's action rows, Enter runs the focused one, ``q`` or
-Escape returns to the list, and the overlay's verdict keys never
-leak into the page beneath (Textual routes keys to the active
-screen alone).
+on its link, the header counts them, and the consent line flashes
+each first-seen hold's destination — the page pushes nothing on a
+hold's arrival; the operator decides on the consent page, opened
+with ``e`` or the action row, and the holds keep waiting beneath.
+Spatial navigation: arrows walk the page's action rows, Enter runs
+the focused one, ``q`` or Escape returns to the list, and the
+consent page's verdict keys live on that page alone (Textual
+routes keys to the active screen alone).
 """
 
 import json
@@ -20,7 +22,7 @@ from textual.binding import Binding
 from textual.containers import Vertical
 from textual.content import Content, Span
 from textual.css.query import NoMatches
-from textual.screen import ModalScreen, Screen
+from textual.screen import Screen
 from textual.widgets import Footer, ListItem, ListView, Static
 
 from ..resize import resize_message
@@ -31,25 +33,18 @@ from ..resize import resize_message
 # the page's calls.
 from . import follow
 from .consent_ui import (
-    DURATION_DEFAULT,
     EMPTY_STATIC_QUESTION,
     ConfirmScreen,
-    DurationScreen,
+    ConsentPage,
     FlashLine,
     ModeScreen,
     OneFlight,
-    RulesScreen,
-    dest_line,
     duration_label,
     flash_safe,
     fmt_duration,
     focus_attr,
-    focus_by_id,
     focused_attr,
-    focused_request_id,
-    mode_label,
-    row_ids,
-    row_map,
+    hold_flash,
     sighting_flash,
     switch_mode_path,
 )
@@ -68,9 +63,11 @@ ACTION_SHELL_WINDOW = "shell-window"
 #: workspace.
 ACTION_EGRESS_MODE = "egress-mode"
 
-#: The workspace page's consent action (#358): the consent overlay
-#: — the held-request queue as a panel over the page, opened by
-#: hand; the page also opens it by itself when a hold arrives.
+#: The workspace page's consent action (#358, #454): the egress
+#: consent page — the holds queue and the in-effect verdicts on
+#: one full-screen visit, opened by hand; holds surface passively
+#: while it is closed (the header's count, the consent line's
+#: flash).
 ACTION_CONSENT = "egress-consent"
 
 
@@ -101,8 +98,8 @@ def granted_line(controller) -> str:
     to the count with the nearest expiry (``3 grants · next
     expires 4h``), so a workspace with several grants keeps the
     line readable at 80 columns instead of running it to the
-    terminal's edge — every grant stays spelled out on the
-    consent overlay's rules screen (``r`` from the overlay). A
+    terminal's edge — every grant stays spelled out on the egress
+    consent page (``e`` from the workspace page). A
     stack with no
     countdown among its grants (open-ended verdicts alone)
     carries the count alone. The honest absence when nothing is
@@ -254,15 +251,18 @@ class WorkspaceScreen(Screen):
     and created date muted on the second, the pending-egress
     count beside the status while holds wait, #354), the consent
     status line, and the page's actions — a shell in a new window
-    (#341), the consent overlay (#358), the egress-mode switch
-    (#344), start, and stop. The page is the workspace's decider
-    while it is open: holds land on its link, the header counts
-    them, and the first hold of a burst opens the consent overlay
-    by itself — the overlay's own docstring owns the panel's
-    lifecycle."""
+    (#341), the egress consent page (#454), the egress-mode
+    switch (#344), start, and stop. The page is the workspace's
+    decider while it is open: holds land on its link, the header
+    counts them, and the consent line flashes each first-seen
+    hold's destination — the page pushes nothing on a hold's
+    arrival; the operator opens the consent page with ``e`` or
+    the action row and decides there (the consent page's own
+    docstring owns that page's shape)."""
 
     BINDINGS = [
         Binding("enter", "run", "Run"),
+        Binding("e", "consent", "Egress consent"),
         Binding("q", "back", "Back"),
         Binding("escape", "back", "Back", show=False),
     ]
@@ -272,19 +272,12 @@ class WorkspaceScreen(Screen):
         self.row = row
         self.link_factory = link_factory or self.make_link
         self.link: DeciderLink | None = None
-        # The consent overlay over this page (#358): None while the
-        # page owns the terminal alone. The page pushes it by hand
-        # (the action row) and by itself (the first hold of a
-        # burst); the overlay pops itself closed.
-        self.overlay: ConsentOverlay | None = None
-        # The parked burst for the overlay's auto-open (#358): the
-        # ids of the holds the operator closed the overlay on (the
-        # burst keeps its rows without re-popping). It ends when
-        # none of its ids stand in a settled queue — the replay
-        # re-landing them keeps it, a live queue resolving them ends
-        # it, and the registration's reset window (the queue's truth
-        # in flight) touches it not at all.
-        self.parked_ids: frozenset[str] | None = None
+        # The holds the consent line has named (#454): ids only
+        # join, never leave — a reconnect's replay re-lands the
+        # same holds without re-flashing them, and the holds that
+        # arrived while the link was down flash once, on the tick
+        # after the replay lands them.
+        self.seen_hold_ids: set[str] = set()
         # The page's own flash (#344): a message that owns the
         # consent line for FLASH_TTL seconds. The app-level flash
         # paints the list's status line, which the pushed page
@@ -354,11 +347,11 @@ class WorkspaceScreen(Screen):
     def tick(self) -> None:
         """The per-second repaint: the consent line's countdowns,
         the header's pending-egress count, the sighting drain, the
-        overlay's auto-open watch, and a fresh row (the page's
-        dimming and header follow a workspace another surface —
-        the CLI, another operator — may have moved while the page
-        stood). A screen going away under the timer leaves the
-        queries empty — teardown noise, not a crash."""
+        hold flash, and a fresh row (the page's dimming and header
+        follow a workspace another surface — the CLI, another
+        operator — may have moved while the page stood). A screen
+        going away under the timer leaves the queries empty —
+        teardown noise, not a crash."""
         try:
             self.watch_holds()
             if self.is_mounted:
@@ -369,20 +362,45 @@ class WorkspaceScreen(Screen):
         except NoMatches:
             pass
 
-    # -- the consent overlay (#358) ----------------------------------
+    # -- the holds watch (#454) ----------------------------------------
 
     def watch_holds(self) -> None:
         """The per-tick watch over the link: drain the sighting
-        buffer (#201 over #358), then the burst bookkeeping that
-        owns the overlay's auto-open."""
+        buffer (#201 over #358), then name each first-seen hold on
+        the consent line (#454) — the passive attention a hold
+        gets, the header's count beside it."""
         if self.link is None:
             return
         self.drain_sightings()
-        self.settle_park()
-        if self.link.replay_pending:
-            return  # the replay is in flight: the queue's truth waits
-        if self.pending_count() and self.burst_surfaces():
-            self.push_overlay(auto=True)
+        self.flash_new_holds()
+
+    def flash_new_holds(self) -> None:
+        """Flash each hold the queue has not named yet (#454): the
+        page pushes nothing on a hold's arrival, so the consent
+        line names the destination and the key in. A hold arriving
+        under the open consent page stays silent — its row on that
+        page is the signal."""
+        fresh = self.take_unseen_holds()
+        if self.consent_page() is not None:
+            return
+        for request in fresh:
+            self.flash(hold_flash(request))
+
+    def take_unseen_holds(self) -> list:
+        """The queue's holds the consent line has not named yet,
+        taken: their ids join the seen set here and never leave it
+        — a reconnect's replay re-lands the same holds without
+        re-flashing them, and the holds that arrived while the link
+        was down name themselves once, on the tick after the
+        replay lands them."""
+        pending = self.link.controller.ordered()
+        fresh = [
+            request
+            for request in pending
+            if request.id not in self.seen_hold_ids
+        ]
+        self.seen_hold_ids.update(request.id for request in pending)
+        return fresh
 
     def drain_sightings(self) -> None:
         """Flash the off-allowlist sightings the frames landed since
@@ -391,69 +409,38 @@ class WorkspaceScreen(Screen):
         for event in self.link.take_sightings():
             self.flash_sighting(sighting_flash(event))
 
-    def settle_park(self) -> None:
-        """End the parked burst when none of its holds stand in a
-        settled queue. The registration's reset window (between the
-        controller's reset and the replay's first frame) never ends
-        one: the holds the operator parked are in flight, and the
-        replay re-lands the survivors of them."""
-        if self.parked_ids is None or self.link.replay_pending:
-            return
-        standing = set(self.link.controller.pending)
-        if self.parked_ids & standing:
-            return
-        self.parked_ids = None
-
-    def burst_surfaces(self) -> bool:
-        """Whether the burst may surface an overlay now: the overlay
-        already stands, the burst is parked, or a modal owns the
-        terminal's top (the mode picker, a confirmation) — each
-        says the burst needs no new panel this tick."""
-        if self.overlay is not None or self.parked_ids is not None:
-            return False
-        return self.app.screen is self
-
     def flash_sighting(self, line: str) -> None:
         """One drained sighting on the surface that owns the
-        terminal: the overlay's status line while it is up, this
-        page's consent line when it is not (#358 carries #201's
-        rule — the exfil signal interrupts wherever the operator
-        is)."""
-        if self.overlay is not None:
-            self.overlay.flash(line)
+        terminal: the consent page's status line while it is up,
+        this page's consent line when it is not (#358 carries
+        #201's rule — the exfil signal interrupts wherever the
+        operator is)."""
+        page = self.consent_page()
+        if page is not None:
+            page.flash(line)
         else:
             self.flash(line)
 
-    def push_overlay(self, *, auto: bool) -> None:
-        """Push the consent overlay over this page — by hand from
-        the action row (``auto`` False: it stays until the operator
-        closes it) or by the hold watch (``auto`` True: it closes
-        itself when the queue empties). One panel stands at a time:
-        a delayed Enter worker landing after the tick auto-opened
-        one no-ops here (the panel the operator asked for is up)."""
-        if self.overlay is not None:
-            return
-        self.overlay = ConsentOverlay(self, auto=auto)
-        self.app.push_screen(self.overlay)
+    def consent_page(self) -> ConsentPage | None:
+        """The open consent page wherever it sits in the stack (a
+        picker may stand above it)."""
+        for screen in self.app.screen_stack:
+            if isinstance(screen, ConsentPage):
+                return screen
+        return None
 
-    def overlay_parked(self) -> None:
-        """The overlay closed on the operator's key: the burst stays
-        surfaced by the header's count alone. The park records the
-        queue's ids — the truth about what waits — because the count
-        folds the connection state (0 on a dropped link whose
-        snapshot still carries holds) and a park recorded there
-        would be forgotten; the drop's reconnection replays the same
-        holds, and the panel the operator closed stays closed."""
-        self.overlay = None
-        if self.link is not None and self.link.controller.ordered():
-            self.parked_ids = frozenset(
-                request.id for request in self.link.controller.ordered()
-            )
+    def open_consent_page(self) -> None:
+        """Push the egress consent page over this page (#454): the
+        holds queue and the in-effect verdicts on one screen, the
+        tree's only deciding surface. This page keeps the link
+        running beneath it — the consent page reads the same
+        controller, and holds keep landing while it stands."""
+        self.app.push_screen(ConsentPage(self))
 
-    def overlay_auto_closed(self) -> None:
-        """The overlay's queue emptied and it closed itself — no
-        park to remember (nothing waits)."""
-        self.overlay = None
+    def action_consent(self) -> None:
+        """``e``: the consent page one key away (#454) — a hold's
+        flash names the key, and the hold's clock is running."""
+        self.open_consent_page()
 
     # -- the header and the consent line -------------------------------------
 
@@ -538,8 +525,8 @@ class WorkspaceScreen(Screen):
         """A listing that cannot see the workspace names its removal
         — another surface deleted it — and the page closes behind
         a notice on the list's status line: a page for a workspace
-        that no longer exists offers only refusals. A modal above
-        the page (the consent overlay, the edit form) holds the
+        that no longer exists offers only refusals. A screen above
+        the page (the consent page, the edit form) holds the
         close until it goes; the per-second read tries again."""
         if self.app.screen is not self:
             return
@@ -650,7 +637,7 @@ class WorkspaceScreen(Screen):
             self.flash(f"{kind} skipped: {note}")
             return
         if kind == ACTION_CONSENT:
-            self.push_overlay(auto=False)
+            self.open_consent_page()
             return
         await self.run_page_action(kind)
 
@@ -813,13 +800,12 @@ class WorkspaceScreen(Screen):
         return self.link.controller.rules
 
     def open_mode_picker(self) -> None:
-        """Push the mode picker (#344, #358) over whatever surface
-        the page hosts — the page's own action row, the consent
-        overlay's ``m``, and the rules screen's ``m`` all take this
-        one path: the current mode starts highlighted (the
-        snapshot's mode; the row's until the first rules frame
-        lands), and the pick goes to the switch path, which owns the
-        empty-static confirmation."""
+        """Push the mode picker (#344, #454) over whatever surface
+        the page hosts — the page's own action row and the consent
+        page's ``m`` both take this one path: the current mode
+        starts highlighted (the snapshot's mode; the row's until
+        the first rules frame lands), and the pick goes to the
+        switch path, which owns the empty-static confirmation."""
         rules = self.page_rules()
         current = (
             rules.mode
@@ -885,342 +871,4 @@ class WorkspaceScreen(Screen):
         """Return to the workspaces list; the page stops deciding
         for the workspace as it goes (unmount closes the link)."""
         self.app.follow.reopen = None
-        self.overlay = None
-        self.app.pop_screen()
-
-
-class ConsentOverlay(ModalScreen):
-    """The consent panel over the workspace page (#358): the
-    held-request queue with the verdict keys, one centered panel in
-    the create form's shape — the surface the standalone decider
-    app (#195) was, folded into the tree.
-
-    Lifecycle: the page pushes it by hand (the action row — it
-    stays open until the operator closes it, an empty queue
-    included: reviewing rules, revoking, and switching the mode all
-    start here) or by itself (the first hold of a burst). ``q`` or
-    Escape parks it — holds keep waiting, the header's count keeps
-    naming them — and an overlay the page opened closes itself
-    when its queue empties, whichever way the last hold resolved;
-    the close waits while the rules screen sits stacked above, so
-    back returns here first. The placeholder audit moved to the
-    tree's secrets page (#390); the overlay keeps the holds, the
-    rules, and the mode.
-
-    Keys: ``a``/``d`` decide the focused hold for the default
-    duration, ``A``/``D`` pick a duration first, ``m`` opens the
-    page's mode picker, ``r`` pushes the rules screen, ``q``/
-    Escape close. Enter carries no verdict — the queue is a
-    ListView, and a stray Enter aimed at the page when the hold
-    arrived must not decide anything; only an explicit letter
-    decides. The bindings live on this screen, so the page's
-    keymap and the overlay's cannot collide (Textual routes keys to
-    the active screen alone), and pickers pushed above work without
-    shadow bindings.
-    """
-
-    BINDINGS = [
-        Binding("a", "allow", "Allow"),
-        Binding("A", "allow_duration", "Allow…"),
-        Binding("d", "deny", "Deny"),
-        Binding("D", "deny_duration", "Deny…"),
-        Binding("m", "mode", "Mode"),
-        Binding("r", "rules", "Rules"),
-        Binding("q", "park", "Close"),
-        Binding("escape", "park", "Close", show=False),
-    ]
-
-    def __init__(self, host: WorkspaceScreen, *, auto: bool) -> None:
-        super().__init__()
-        self.host = host
-        self.auto = auto
-        self.workspace_id = host.row["id"]
-        self.link = host.link_or_stub()
-        self.flash_line = FlashLine()
-        self.rebuilds = OneFlight(
-            lambda: self.rebuild_queue(self.controller.ordered()),
-            lambda: self.app.is_running,
-            "consent-overlay",
-        )
-
-    @property
-    def controller(self):
-        """The page link's controller — the queue's state, shared
-        with the page's own lines."""
-        return self.link.controller
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="consent-panel"):
-            yield Static(id="consent-status")
-            yield ListView(id="consent-rows")
-            yield Static(id="consent-empty")
-        yield Footer()
-
-    def on_mount(self) -> None:
-        self.set_interval(1.0, self.tick)
-        # call_after_refresh: the first rebuild waits for the compose
-        # stream to settle — a timer or worker racing it queries
-        # widgets that are not mounted yet (the page's own rule).
-        self.call_after_refresh(self.started)
-
-    def started(self) -> None:
-        """The compose has settled: focus the rows, build them, and
-        paint the status line."""
-        self.query_one("#consent-rows", ListView).focus()
-        self.rebuilds.request()
-        self.update_status()
-
-    # -- the per-second repaint ------------------------------------------
-
-    def tick(self) -> None:
-        """The per-second repaint: the countdowns, the status line,
-        the rules screen while it is on top (its rows tick and a
-        fresh frame shows up — the decider app's repaint rule, one
-        owner), and the self-close check. A teardown race leaves
-        the queries empty — noise, not a crash."""
-        try:
-            self.sync_rows()
-            self.update_status()
-            self.refresh_screens()
-            self.maybe_autoclose()
-        except NoMatches:
-            pass
-
-    def refresh_screens(self) -> None:
-        """Repaint the rules screen while it is on top of this
-        overlay (its rebuild awaits widget mounts, so it runs as a
-        task, one flight at a time). The placeholder audit moved to
-        the tree's secrets page (#390): the overlay no longer
-        hosts an events screen beside it."""
-        screen = self.app.screen
-        if isinstance(screen, RulesScreen):
-            screen.schedule_refresh()
-
-    def maybe_autoclose(self) -> None:
-        """The self-close: an auto-opened overlay whose queue
-        emptied pops itself — its purpose is gone, and nothing is
-        left to yank out from under the operator. A screen stacked
-        above (rules, events, a picker) holds the close: back
-        returns here first, and the next tick after it settles takes
-        the panel down. An overlay the operator opened by hand stays
-        until the operator closes it."""
-        if not self.auto or self.controller.ordered():
-            return
-        if self.app.screen is not self:
-            return
-        self.host.overlay_auto_closed()
-        self.app.pop_screen()
-
-    # -- the queue rows ---------------------------------------------------
-
-    def queue_rows(self) -> ListView | None:
-        """The queue list, or None during a rebuild's swap window."""
-        try:
-            return self.query_one("#consent-rows", ListView)
-        except NoMatches:
-            return None
-
-    def sync_rows(self) -> None:
-        """Sync the queue to state. A membership change (a hold
-        resolved, a new one arrived) rebuilds the list fresh —
-        Textual prunes removed children asynchronously, so mutating
-        a live ListView leaves stale copies that shift every index
-        under the highlight; a fresh list keeps the destructive
-        keys' target derivable from children that are all real.
-        Same-set ticks repaint survivors' countdowns in place. A
-        missing list (a rebuild died mid-swap) schedules a rebuild —
-        the queue self-heals instead of wedging blank."""
-        rows = self.queue_rows()
-        if rows is None:
-            self.rebuilds.request()
-            return
-        ordered = self.controller.ordered()
-        if row_ids(rows) != {request.id for request in ordered}:
-            self.rebuilds.request()
-            return
-        self.repaint_countdowns(rows, ordered)
-        self.sync_empty(ordered)
-
-    def sync_empty(self, ordered: list) -> None:
-        """The empty state rides beside the list, honest about the
-        connection state."""
-        empty = self.query_one("#consent-empty", Static)
-        empty.display = not ordered
-        empty.update(self.empty_line())
-
-    def empty_line(self) -> str:
-        """The empty-queue line, honest about the link's state."""
-        if self.link.state == CONNECTED:
-            return "No held requests — connected, waiting."
-        return f"No held requests — {self.link.state}."
-
-    def repaint_countdowns(self, rows: ListView, ordered: list) -> None:
-        """Repaint each survivor's countdown in place."""
-        existing = row_map(rows)
-        for request in ordered:
-            item = existing.get(request.id)
-            if item is not None:
-                item.query_one(Static).update(
-                    dest_line(request, self.controller.remaining(request))
-                )
-
-    async def rebuild_queue(self, ordered: list) -> None:
-        """Swap in a freshly-built queue list (its mount awaited),
-        restoring focus by id (the top when the focused hold left)
-        so ``a``/``d`` never retarget through a shifted index. Focus
-        is read from the live list here, at rebuild time — never
-        captured at arm time. A missing old list (a rebuild died
-        mid-swap) is fine: the fresh list mounts anew."""
-        body = self.query_one("#consent-panel", Vertical)
-        old = self.queue_rows()
-        focused = focused_request_id(old)
-        items = [self.render_item(request) for request in ordered]
-        fresh = ListView(*items, id="consent-rows")
-        if old is not None:
-            await old.remove()  # frees the id before the fresh list mounts
-        await body.mount(fresh)
-        fresh.focus()
-        focus_by_id(fresh, focused)  # after mount: index sticks
-        self.sync_empty(ordered)
-
-    def render_item(self, request) -> ListItem:
-        """One queue row."""
-        item = ListItem(
-            Static(dest_line(request, self.controller.remaining(request)))
-        )
-        item.request_id = request.id
-        return item
-
-    # -- the status line ---------------------------------------------------
-
-    def flash(self, message: str) -> None:
-        """Give the status line to a message for FLASH_TTL seconds —
-        a verdict's failure, a sighting's alarm (#201): the surfaces
-        this overlay owns."""
-        self.flash_line.set(message)
-        self.update_status()
-
-    def update_status(self) -> None:
-        """The status line: workspace, current mode, the link's
-        state, held count; a flash owns it until its TTL lapses. A
-        rejected registration names its reason — the daemon refused
-        this page as the decider, and the line says why."""
-        if self.link.state in (REJECTED, UNUSABLE_TOKEN):
-            state = escape(self.link.reject_reason or "rejected")
-        else:
-            state = self.link.state
-        held = len(self.controller.pending)
-        default = (
-            f" {escape(self.workspace_id)}  ·  mode "
-            f"{mode_label(self.controller.rules)}"
-            f"  ·  {state}  ·  {held} held"
-        )
-        self.query_one("#consent-status", Static).update(
-            self.flash_line.text(default)
-        )
-
-    # -- verdicts ------------------------------------------------------------
-
-    async def action_allow(self) -> None:
-        await self.decide_focused("allow", DURATION_DEFAULT)
-
-    async def action_deny(self) -> None:
-        await self.decide_focused("deny", DURATION_DEFAULT)
-
-    async def action_allow_duration(self) -> None:
-        await self.pick_duration("allow")
-
-    async def action_deny_duration(self) -> None:
-        await self.pick_duration("deny")
-
-    async def decide_focused(self, decision: str, duration: str) -> None:
-        """Send the verdict for the focused hold through the data
-        seam; a failure flashes, never crashes the tree (SystemExit
-        included — the REST seam's error surface). A key pressed
-        inside a rebuild's swap window reads as nothing focused."""
-        request_id = focused_request_id(self.queue_rows())
-        if request_id is None:
-            self.flash("no hold focused")
-            return
-        await self.send_verdict(request_id, decision, duration)
-
-    async def pick_duration(self, decision: str) -> None:
-        """Open the duration picker for the FOCUSED hold; a picked
-        duration decides that hold, a cancel decides nothing. The
-        request id is captured here: the focused row can change (or
-        resolve) while the picker is open, and Enter must not land
-        the verdict on whatever holds focus when the pick arrives."""
-        request_id = focused_request_id(self.queue_rows())
-        if request_id is None:
-            self.flash("no hold focused")
-            return
-        await self.app.push_screen(
-            DurationScreen(self.finish_pick(decision, request_id))
-        )
-
-    def finish_pick(self, decision: str, request_id: str | None):
-        """The callback the picker calls with the picked duration
-        (or None on cancel)."""
-
-        async def picked(duration: str | None) -> None:
-            if duration is None:
-                return
-            # Sent unconditionally: after a reconnect the local
-            # pending set is fresh (empty) while the hold may still
-            # be live server-side — the server is the source of
-            # truth and 404s ids that truly resolved.
-            await self.send_verdict(request_id, decision, duration)
-
-        return picked
-
-    async def send_verdict(
-        self, request_id: str, decision: str, duration: str
-    ) -> None:
-        """One decide through the data seam — the same exchange
-        ``msks egress decide`` makes."""
-        try:
-            await self.host.app.data.decide(
-                self.workspace_id, request_id, decision, duration
-            )
-        except (Exception, SystemExit) as exc:
-            self.flash(f"decide failed: {flash_safe(str(exc))}")
-
-    async def revoke_rule(self, request_id: str) -> None:
-        """One revoke through the data seam — the same exchange
-        ``msks egress revoke`` makes; the row leaves on the
-        refreshed ``egress.rules`` frame, never optimistically."""
-        try:
-            await self.host.app.data.revoke(self.workspace_id, request_id)
-        except (Exception, SystemExit) as exc:
-            self.flash(f"revoke failed: {flash_safe(str(exc))}")
-
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
-        """Enter on a row decides nothing: the queue is a ListView,
-        and Enter fires its selection — a stray Enter (the operator
-        aimed at the page's action list when the hold arrived and
-        the overlay opened under the keypress) must never become a
-        verdict. Only an explicit letter decides."""
-
-    # -- the pushed screens ---------------------------------------------
-
-    def action_rules(self) -> None:
-        """Push the rules screen over the overlay — the deliberation
-        flow keeps the in-effect verdicts one key away; back returns
-        to the held hold still focused."""
-        self.app.push_screen(
-            RulesScreen(
-                self.controller, self.revoke_rule, self.host.open_mode_picker
-            )
-        )
-
-    def action_mode(self) -> None:
-        """Open the page's mode picker — the same path the page's
-        action row takes (#344)."""
-        self.host.open_mode_picker()
-
-    def action_park(self) -> None:
-        """``q``/Escape: close without deciding — holds keep
-        waiting, the header's count names them, and the action row
-        reopens this panel."""
-        self.host.overlay_parked()
         self.app.pop_screen()

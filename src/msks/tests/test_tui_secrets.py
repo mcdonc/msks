@@ -35,7 +35,7 @@ from msks.client.tui.secrets import (
     ttl_default,
     ttl_text,
 )
-from test_consent_overlay import FakeFactory, FakeWS, press_until, wait_for
+from test_consent_page import FakeFactory, FakeWS, press_until, wait_for
 from test_main_tui import (
     FakeData,
     close_focused,
