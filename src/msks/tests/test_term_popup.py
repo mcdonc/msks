@@ -41,6 +41,15 @@ def client_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MSKSC_TOKEN", "tok")
 
 
+def no_daemon_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Drop the daemon presets an ambient shell may carry: the
+    launch role now resolves the status label over REST, and a
+    preset pointing at a live (or wedged) dev daemon would have
+    every launch test dial it — the token's absence stops the
+    lookup before a dial, the same fallback the window ships."""
+    monkeypatch.delenv("MSKSC_TOKEN", raising=False)
+
+
 # --- the launch argv contracts ---------------------------------------------
 
 
@@ -66,7 +75,10 @@ def test_session_and_socket_names_carry_the_workspace() -> None:
 
 def test_session_argv_names_the_socket_the_pane_and_the_workspace() -> None:
     argv = tp.session_argv(
-        SSH_CHILD, session="a1b2c3d4e5", workspace_id="a1b2c3d4e5"
+        SSH_CHILD,
+        session="a1b2c3d4e5",
+        workspace_id="a1b2c3d4e5",
+        label="project-x",
     )
     assert argv[0:2] == ["tmux", "-L"]
     assert argv[2].startswith("msks-a1b2c3d4e5-")
@@ -119,6 +131,20 @@ def test_session_argv_names_the_socket_the_pane_and_the_workspace() -> None:
         "-g",
         "set-titles",
         "off",
+        # The status bar's left side takes the resolved name
+        # (#455) — a label apart from the id, so the pin proves
+        # the label lands, and the length budget keeps tmux's
+        # ten-cell default from clipping it.
+        ";",
+        "set-option",
+        "-g",
+        "status-left",
+        "[project-x] ",
+        ";",
+        "set-option",
+        "-g",
+        "status-left-length",
+        str(tp.STATUS_LEFT_LENGTH),
         ";",
         "new-session",
         "-s",
@@ -138,11 +164,24 @@ def test_session_argv_names_the_socket_the_pane_and_the_workspace() -> None:
     )
 
 
+def test_session_argv_escapes_a_hash_in_the_label() -> None:
+    # A workspace name can carry the character tmux's formats
+    # read — a `#[` pair would repaint the bar — so it doubles
+    # into the literal form tmux's own escape is.
+    argv = tp.session_argv(
+        ["top"], session="s", workspace_id=None, label="a#b"
+    )
+    assert argv[argv.index("status-left") + 1] == "[a##b] "
+
+
 def test_session_argv_without_a_workspace_ships_no_watcher() -> None:
-    argv = tp.session_argv(["top"], session="shell", workspace_id=None)
+    argv = tp.session_argv(
+        ["top"], session="shell", workspace_id=None, label="shell"
+    )
     joined = argv[argv.index("new-session") + 3]
     assert " pane -s shell -- top" in joined
     assert " -w " not in joined
+    assert argv[argv.index("status-left") + 1] == "[shell] "
 
 
 def test_page_keys_scroll_the_session_history() -> None:
@@ -161,7 +200,9 @@ def test_page_keys_scroll_the_session_history() -> None:
     # The shipped server half, ahead of new-session: exactly the
     # options and bindings the launcher lays on its own server
     # (the slice already ends with the chain's separator).
-    half = tp.session_argv(["true"], session=session, workspace_id=None)
+    half = tp.session_argv(
+        ["true"], session=session, workspace_id=None, label="shell"
+    )
     half = half[: half.index("new-session")]
 
     def run(*words: str) -> subprocess.CompletedProcess:
@@ -263,6 +304,70 @@ def test_page_keys_scroll_the_session_history() -> None:
         os.close(master)
 
 
+def test_the_status_bar_carries_the_workspace_name() -> None:
+    """The #455 boundary against a real tmux server: the shipped
+    option chain writes the resolved name onto the bar — read
+    back through the session it names, expanded the way the bar
+    itself renders it — with the length budget raised past tmux's
+    ten-cell default. The session runs detached on its own socket
+    with a pane that stays alive (a pane that exits takes the
+    last session — and its server — with it), so no window opens
+    anywhere and the read-back never races the session's death."""
+    if shutil.which("tmux") is None:  # pragma: no cover
+        pytest.skip("tmux is not on PATH")
+    socket = f"msks-test-{os.getpid()}"
+    session = "barname"
+    half = tp.session_argv(
+        ["true"], session=session, workspace_id=None, label="project-x"
+    )
+    half = half[: half.index("new-session")]
+    try:
+        subprocess.run(
+            [
+                "tmux",
+                "-L",
+                socket,
+                *half[3:],
+                "new-session",
+                "-d",
+                "-s",
+                session,
+                "-x",
+                "80",
+                "-y",
+                "10",
+                "sh -c 'exec cat'",
+            ],
+            timeout=10,
+            check=True,
+            capture_output=True,
+        )
+        proc = subprocess.run(
+            [
+                "tmux",
+                "-L",
+                socket,
+                "display",
+                "-p",
+                "-t",
+                session,
+                "#{E:status-left}|#{status-left-length}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+        assert proc.stdout.strip() == f"[project-x] |{tp.STATUS_LEFT_LENGTH}"
+    finally:
+        subprocess.run(
+            ["tmux", "-L", socket, "kill-server"],
+            timeout=10,
+            check=False,
+            capture_output=True,
+        )
+
+
 def test_take_option_stops_at_the_separator() -> None:
     assert tp.take_option("-s", ["a", "-s", "b", "c"]) == ("b", ["a", "c"])
     assert tp.take_option("-s", ["a"]) == (None, ["a"])
@@ -286,6 +391,7 @@ def test_main_defaults_to_launch_for_the_appended_child(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(tp.shutil, "which", lambda tool: "/bin/" + tool)
+    no_daemon_env(monkeypatch)
     seen = {}
     monkeypatch.setattr(
         tp.os, "execvp", lambda binname, argv: seen.update(argv=argv)
@@ -337,6 +443,7 @@ def test_run_launch_execs_the_tmux_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(tp.shutil, "which", lambda tool: "/bin/" + tool)
+    no_daemon_env(monkeypatch)
     seen = {}
     monkeypatch.setattr(
         tp.os,
@@ -352,6 +459,86 @@ def test_run_launch_execs_the_tmux_client(
     # session name is the word after new-session itself.
     assert argv[2].startswith("msks-a1b2c3d4e5-")
     assert argv[i + 2] == "a1b2c3d4e5"
+
+
+def test_run_launch_puts_the_resolved_name_on_the_status_bar(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The launcher resolves the label and hands it to the argv
+    # builder — the seam the unit tests below fill, joined here
+    # to the chain the client execs.
+    monkeypatch.setattr(tp.shutil, "which", lambda tool: "/bin/" + tool)
+    monkeypatch.setattr(tp, "status_label", lambda ws: "project-x")
+    seen = {}
+    monkeypatch.setattr(
+        tp.os, "execvp", lambda binname, argv: seen.update(argv=argv)
+    )
+    assert tp.run_launch(list(SSH_CHILD)) == 0
+    assert seen["argv"][seen["argv"].index("status-left") + 1] == (
+        "[project-x] "
+    )
+
+
+# --- the status bar's workspace label (#455) --------------------------------
+
+
+def test_status_label_uses_the_daemons_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client_env(monkeypatch)
+    seen = {}
+
+    async def row(workspace_id: str, url: str, token: str) -> dict:
+        seen.update(workspace_id=workspace_id, url=url, token=token)
+        return {"name": "project-x"}
+
+    monkeypatch.setattr(tp, "workspace_row", row)
+    assert tp.status_label("a1b2c3d4e5") == "project-x"
+    assert seen == {
+        "workspace_id": "a1b2c3d4e5",
+        "url": "https://daemon",
+        "token": "tok",
+    }
+    # A child naming no workspace is a plain shell, its label its
+    # session's own name.
+    assert tp.status_label(None) == "shell"
+
+
+def test_status_label_falls_back_to_the_id_when_the_lookup_cannot_land(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client_env(monkeypatch)
+
+    async def refused(workspace_id: str, url: str, token: str) -> dict:
+        raise SystemExit("msks: 404: no such workspace")
+
+    monkeypatch.setattr(tp, "workspace_row", refused)
+    assert tp.status_label("a1b2c3d4e5") == "a1b2c3d4e5"
+
+    async def unnamed(workspace_id: str, url: str, token: str) -> dict:
+        return {"name": ""}
+
+    monkeypatch.setattr(tp, "workspace_row", unnamed)
+    assert tp.status_label("a1b2c3d4e5") == "a1b2c3d4e5"
+
+    # A token the environment never carried stops the lookup
+    # before a dial: the id stands in, no window waits on it.
+    monkeypatch.delenv("MSKSC_TOKEN", raising=False)
+    assert tp.status_label("a1b2c3d4e5") == "a1b2c3d4e5"
+
+
+def test_status_label_times_out_to_the_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client_env(monkeypatch)
+    monkeypatch.setattr(tp, "LABEL_WAIT_S", 0.05)
+
+    async def hang(workspace_id: str, url: str, token: str) -> dict:
+        await asyncio.sleep(30)
+        return {"name": "late"}
+
+    monkeypatch.setattr(tp, "workspace_row", hang)
+    assert tp.status_label("a1b2c3d4e5") == "a1b2c3d4e5"
 
 
 # --- the configured window title (#445) -----------------------------------
@@ -370,6 +557,7 @@ def test_run_launch_titles_the_window_before_the_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(tp.shutil, "which", lambda tool: "/bin/" + tool)
+    no_daemon_env(monkeypatch)
     monkeypatch.setattr(tp.os, "execvp", lambda binname, argv: None)
     monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "msks — {workspace}")
     out = Tty()
@@ -382,6 +570,7 @@ def test_run_launch_without_a_title_writes_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(tp.shutil, "which", lambda tool: "/bin/" + tool)
+    no_daemon_env(monkeypatch)
     monkeypatch.setattr(tp.os, "execvp", lambda binname, argv: None)
     monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "")
     out = Tty()
@@ -407,7 +596,10 @@ def test_the_launch_line_meets_the_pane_role(
     )
     monkeypatch.setattr(tp.os, "execvp", lambda binname, argv: None)
     argv = tp.session_argv(
-        SSH_CHILD, session="a1b2c3d4e5", workspace_id="a1b2c3d4e5"
+        SSH_CHILD,
+        session="a1b2c3d4e5",
+        workspace_id="a1b2c3d4e5",
+        label="a1b2c3d4e5",
     )
     joined = argv[argv.index("new-session") + 3]
     words = shlex.split(joined)[3:]  # past python -m msks.client.term_popup

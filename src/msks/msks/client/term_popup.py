@@ -17,9 +17,10 @@ Four roles share this module, spelled as the first argument:
 ``launch``
     The console entry the operator's prefix runs. Validates tmux,
     names the window per ``MSKSC_TERMINAL_TITLE`` when the setting
-    is in place (#445), names a fresh session after the workspace
-    on a dedicated socket (a server of its own, so the pane
-    inherits this process's environment — an operator's
+    is in place (#445), resolves the workspace's name for the
+    session's status bar (#455), names a fresh session after the
+    workspace on a dedicated socket (a server of its own, so the
+    pane inherits this process's environment — an operator's
     already-running tmux server would otherwise substitute its
     own — and the session stays out of their window list), and
     becomes the attached tmux client (``tmux -L <socket>
@@ -58,7 +59,7 @@ import websockets
 from . import wsauth
 from .egress import DURATIONS, connect_args, dest_label, refused
 from .env import env_token, env_url
-from .rest import api_client, request
+from .rest import api_client, request, workspace_row
 from .wintitle import TITLE_MARKER, configured_title, set_window_title
 
 #: The popup geometry: fixed cells, sized for the 80-column window
@@ -125,6 +126,19 @@ MODULE = "msks.client.term_popup"
 #: the depth is the ceiling, not the starting footprint.
 HISTORY_LINES = 10000
 
+#: The status bar's left-side width (#455): tmux clips the left
+#: side at ten cells by default, too short for a workspace name,
+#: so the launch raises the budget the label needs rather than
+#: clip the name it just resolved.
+STATUS_LEFT_LENGTH = 64
+
+#: How long the launch waits on the workspace-name lookup for the
+#: status bar (#455): the REST read budget is sized for boots, and
+#: this wait sits between the operator and their window — a
+#: daemon that hangs delays the window by these seconds, then the
+#: id stands in.
+LABEL_WAIT_S = 5.0
+
 #: The popup's page-scroll bindings (#444), the keyboard twin of
 #: the wheel path above: each command pages one page — up on the
 #: shifted page-up key, down on its twin — through the same
@@ -188,21 +202,24 @@ def run_launch(argv: list[str]) -> int:
     """The launcher (#379): a missing tmux names itself and stops
     before a window could open half-way — its title included; a
     configured title (``MSKSC_TERMINAL_TITLE``) names the window
-    only once tmux is there to fill it (#445). Then become the
-    tmux client attached to a fresh session (one that ends with
-    this window) whose pane runs this module's pane role with the
-    appended command. The terminal window itself is whatever the
-    operator's prefix opened — this process already runs inside
-    it."""
+    only once tmux is there to fill it (#445). Then resolve the
+    workspace's name for the status bar (#455) — last of the
+    pre-exec steps, so a slow lookup delays only the client — and
+    become the tmux client attached to a fresh session (one that
+    ends with this window) whose pane runs this module's pane role
+    with the appended command. The terminal window itself is
+    whatever the operator's prefix opened — this process already
+    runs inside it."""
     workspace_id = workspace_from_argv(argv)
     if shutil.which("tmux") is None:
         raise SystemExit("msks-term-popup: tmux is not on PATH")
     title = configured_title(workspace_id)
     if title is not None:
         set_window_title(title)
+    label = status_label(workspace_id)
     os.execvp(
         "tmux",
-        session_argv(argv, session_name(workspace_id), workspace_id),
+        session_argv(argv, session_name(workspace_id), workspace_id, label),
     )
     return 0  # pragma: no cover — execvp replaces the process
 
@@ -578,7 +595,7 @@ def span(on: bool, code: str, text: str) -> str:
 
 
 def session_argv(
-    child: list[str], session: str, workspace_id: str | None
+    child: list[str], session: str, workspace_id: str | None, label: str
 ) -> list[str]:
     """The tmux argv: one client on this launch's dedicated socket,
     attached to a fresh session whose pane runs this module's pane
@@ -604,7 +621,12 @@ def session_argv(
     pins off for the configured window title (#445): a fresh
     server still reads the operator's own tmux.conf, whose
     ``set-titles on`` would otherwise hand the outer window's
-    title to tmux the moment the client attaches. Everything
+    title to tmux the moment the client attaches. The status
+    bar's left side takes the workspace label (#455): tmux's
+    default shows the session name — the workspace id — and the
+    label is the name an operator reads; a ``#`` in it doubles
+    for the format tmux leaves literal, so a name cannot write
+    format escapes into the bar. Everything
     lands on this launch's own server (the dedicated socket
     carries it), so the operator's own tmux server, when one
     runs, keeps its own settings."""
@@ -643,6 +665,16 @@ def session_argv(
         "-g",
         "set-titles",
         "off",
+        ";",
+        "set-option",
+        "-g",
+        "status-left",
+        f"[{label.replace('#', '##')}] ",
+        ";",
+        "set-option",
+        "-g",
+        "status-left-length",
+        str(STATUS_LEFT_LENGTH),
         ";",
         "new-session",
         "-s",
@@ -685,6 +717,30 @@ def workspace_from_argv(argv: list[str]) -> str | None:
         if argv[i - 1] == "ssh":
             return argv[i]
     return None
+
+
+def status_label(workspace_id: str | None) -> str:
+    """The status bar's workspace label (#455): the daemon's name
+    for the workspace — the session name tmux would otherwise
+    show is the id, an opaque token to read. The window opens
+    whatever the daemon answers: a lookup that cannot land (no
+    token, a daemon down, a workspace gone) falls back to the id,
+    a row naming nothing keeps the id too, and a child naming no
+    workspace carries ``shell`` like its session. The wait stays
+    short so a daemon that hangs delays the window by seconds,
+    not by the REST read budget."""
+    if workspace_id is None:
+        return session_name(workspace_id)
+    try:
+        row = asyncio.run(
+            asyncio.wait_for(
+                workspace_row(workspace_id, env_url(), env_token()),
+                LABEL_WAIT_S,
+            )
+        )
+    except Exception, SystemExit:
+        return workspace_id
+    return row.get("name") or workspace_id
 
 
 def session_name(workspace_id: str | None) -> str:

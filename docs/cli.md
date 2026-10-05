@@ -337,7 +337,13 @@ request is already resolved; a request decided before this window
 raises its popup still pops, and answering it reports the same
 line. The window the prefix opens takes its title from
 `terminal_title` (`msks — {workspace}` resolves the workspace's
-id into it, #445). The watcher keeps its diagnostics in a
+id into it, #445). The session's own status bar names the
+workspace too (#455): the launch resolves the workspace's name
+and pins it to the status bar's left side — `[project-x]` — with
+the id standing in whenever the lookup cannot land (the daemon
+down, the workspace gone, the wait run out) and `shell`
+for a plain shell; the bar's other side keeps tmux's own layout.
+The watcher keeps its diagnostics in a
 `msks-consent-*` log
 under the tmp dir (a registration the daemon refuses — a
 workspace id that names nothing — stops the watcher with one line
@@ -358,7 +364,8 @@ keeps the shifted pair for its own view (its scrollback has
 nothing to show on this pane) still has the wheel — Konsole can
 hand the pair to the pane with a keytab rule scoped to the
 alternate screen, sending `\E[5;2~` and `\E[6;2~`. The bare
-PageUp/PageDown reach the shell untouched. These settings ride
+PageUp/PageDown reach the shell untouched. These settings — the
+status bar's name among them — ride
 the window's own tmux server (the
 launch's dedicated socket); an operator's own running tmux server
 keeps its own settings. With tmux's mouse mode on, a plain drag
