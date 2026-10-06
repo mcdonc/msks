@@ -539,16 +539,17 @@ window, then egress consent and an edit dialog for the sizes and
 topology (#331), then start and stop. Each action paints its
 name with its description muted behind it, and the row Enter
 acts on carries a marker beside the list's own highlight and the
-name in bold. The shell, start, and stop rows dim behind their
-reason while the workspace's status makes the action pointless —
-a shell or a stop on a stopped workspace, a start on a running
-one — and Enter on a dimmed row names that reason on the consent
-line; the bold sits on the action the state permits (the shell
-while the workspace takes one, Start while it sits stopped),
-and `s`/`x` run start and stop from wherever the focus stands —
-the letters the list binds. The page
-re-reads the workspace each second, so the dimming follows a
-start or stop made anywhere, not only on the page. A workspace
+name in bold. The start and stop rows dim behind their reason
+while the workspace's status makes the verb pointless — a stop
+on a stopped workspace, a start on a running one — and Enter on
+a dimmed row names that reason on the consent line; the bold
+sits on the rows the state invites (the shell in every state —
+its window's `msks ssh` child boots a stopped workspace itself,
+so the action never dims — and Start while the workspace sits
+stopped), and `s`/`x` run start and stop from wherever the
+focus stands — the letters the list binds. The page re-reads
+the workspace each second, so the dimming follows a start or
+stop made anywhere, not only on the page. A workspace
 the listing no longer sees — removed from another surface —
 closes its page and names the removal on the list's status
 line. The
@@ -640,8 +641,12 @@ running beside the window — the spawned shell inherits the tree's
 resolved connection, so it reaches the same daemon, and it rides
 ssh rather than the console because a fresh window gets resized:
 the console sizes its guest pty once, at connect, while ssh
-carries every resize to the guest. A launcher that cannot
-start — a missing binary, one without the execute bit — names its
+carries every resize to the guest. The action runs on a stopped
+workspace too: the spawned `msks ssh` boots the workspace itself
+(`msks: <name> is stopped; starting it`) and the window carries
+the boot notice, and the same-terminal fallback below boots the
+same way. A launcher that cannot start — a missing binary, one
+without the execute bit — names its
 reason on the tree's first flash after the shell hands the
 terminal back, and the shell runs in this terminal instead: a
 chained `msks console` session.

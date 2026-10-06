@@ -1722,6 +1722,36 @@ async def test_the_new_terminal_action_spawns_an_ssh_child(
         await wait_for(lambda: not app.reapers)  # dropped at close
 
 
+async def test_the_shell_opens_a_stopped_workspace(monkeypatch) -> None:
+    """#479: Enter on the shell row while the workspace sits
+    stopped opens the window — the ssh child boots the workspace
+    itself, so the row stays live in every state and no skip
+    flash names a dimmed reason."""
+    scripted_link(monkeypatch, [])
+    spawned: list[list[str]] = []
+
+    async def record(argv):
+        spawned.append(argv)
+
+        async def closed():
+            return 0
+
+        return SimpleNamespace(wait=closed)
+
+    monkeypatch.setattr(follow_mod, "spawn_window", record)
+    data = FakeData([row(status="stopped")])
+    conf = SimpleNamespace(terminal_open_cmd=["kitty", "-e"])
+    app = MsksTuiApp(TuiFollow(), data=data, conf=conf)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 5)
+        await press_until(pilot, "enter", lambda: len(spawned) == 1)
+        assert spawned[0][-2:] == ["ssh", WS]
+        await wait_for(lambda: "opened a shell window" in consent_text(app))
+        assert "skipped" not in consent_text(app)
+        assert on_page(app)  # the tree kept running beside the window
+
+
 async def test_a_dead_launcher_falls_back_to_this_terminal(
     monkeypatch,
 ) -> None:
@@ -3366,20 +3396,23 @@ def test_the_groups_lead_rows_carry_the_class() -> None:
 
 def test_action_rows_paint_two_tones() -> None:
     """#367, #470 W1/W2/S3: the name stands in the default
-    foreground — bold on the row the status permits (the shell
-    while it runs, the start verb while it sits stopped) and on
-    the focused row — the description rides muted, and a power
-    row the status dims mutes the whole row behind its reason."""
+    foreground — bold on the row the status permits (the shell in
+    every state, #479 — its child boots a stopped workspace —
+    Start beside one that sits stopped) and on the focused row —
+    the description rides muted, and a power row the status dims
+    mutes the whole row behind its reason."""
     muted = rows_mod.muted_style({})
     shell = action_content(PAGE_ACTIONS[0], "running", {}, focused=True)
     assert str(shell).startswith("▸ Open a shell — in a new terminal")
     assert Span(2, 14, "$text bold") in shell.spans
     assert Span(17, 34, muted) in shell.spans
-    # Stopped, the shell dims behind its reason and the start
-    # verb takes the bold (#470 W1); both power rows carry their
-    # descriptions (#470 W2).
+    # Stopped, the shell stays live (#479 — the child boots the
+    # workspace itself) and both power rows carry their
+    # descriptions (#470 W2); Start keeps its bold beside it.
     shell_off = action_content(PAGE_ACTIONS[0], "stopped", {}, False)
-    assert str(shell_off).startswith("  Open a shell — workspace is stopped")
+    assert str(shell_off).startswith("  Open a shell — in a new terminal")
+    assert Span(2, 14, "$text bold") in shell_off.spans
+    assert Span(17, 34, muted) in shell_off.spans
     start = action_content(PAGE_ACTIONS[3], "stopped", {}, focused=False)
     assert str(start).startswith("  Start — boot the workspace")
     assert Span(2, 7, "$text bold") in start.spans
@@ -3913,19 +3946,21 @@ async def test_the_page_answers_the_lists_power_letters(monkeypatch) -> None:
         await pilot.press("s")
         await wait_for(lambda: ("start", WS) in data.calls)
         await wait_for(lambda: "running" in header_text(app))
-        # A stopped workspace's shell row names its skip on the
-        # ListView's own selection path too — a mouse click beside
-        # the Enter binding (#470 W1).
         await pilot.press("x")  # stop again — the quick letter
         await wait_for(lambda: ("stop", WS) in data.calls)
         await wait_for(lambda: "stopped" in header_text(app))
+
         # The shell row's selection — the message a mouse click
-        # fires — names its skip on the stopped workspace (#470
-        # W1), the ListView's own path beside the Enter binding.
+        # fires — opens the window on the stopped workspace too
+        # (#479): the ssh child boots it, so the row spawns
+        # instead of naming a skip.
+        async def record(argv):
+            async def closed():
+                return 0
+
+            return SimpleNamespace(wait=closed)
+
+        monkeypatch.setattr(follow_mod, "spawn_window", record)
         app.screen.on_list_view_selected(None)
-        await wait_for(
-            lambda: (
-                "Open a shell skipped: workspace is stopped"
-                in consent_text(app)
-            )
-        )
+        await wait_for(lambda: "opened a shell window" in consent_text(app))
+        assert "Open a shell skipped" not in consent_text(app)
