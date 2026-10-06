@@ -1270,6 +1270,26 @@ async def test_rules_rebuild_self_heals_without_an_old_list() -> None:
         await wait_for(lambda: rules_children(app) == 2)
 
 
+async def test_a_swap_without_an_old_list_mounts_the_fresh_one() -> None:
+    """The swap's no-old-list arc, driven directly: the self-heal
+    test above reaches it through the rebuild loop, whose lookup
+    can still find a dying list on a starved loop and repaint in
+    place instead (#468's race) — under CI load that left the arc
+    uncovered and the coverage gate red. The direct call pins the
+    swap's own contract: no old list mounts the fresh one."""
+    factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
+    app, page, _data = make_page(factory)
+    async with app.run_test() as pilot:
+        cp = await open_consent(pilot, app, page)
+        await wait_for(lambda: rules_children(app) == 2)
+        old = cp.query_one("#rule-rows")
+        await old.remove()
+        ordered = consent_ui.rule_rows(cp.controller.rules)
+        await cp.swap_rule_rows(cp.query_one("#rules-zone"), None, ordered)
+        assert cp.query_one("#rule-rows") is not old
+        await wait_for(lambda: rules_children(app) == 2)
+
+
 async def test_the_verdicts_refresh_on_frames() -> None:
     """The verdicts repaint while a picker sits above the page: a
     frame landing repaints the rows without a visit, and `m`
