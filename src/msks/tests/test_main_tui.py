@@ -1746,7 +1746,15 @@ async def test_the_shell_opens_a_stopped_workspace(monkeypatch) -> None:
         await open_page(pilot, app)
         await wait_for(lambda: action_children(app) == 5)
         await press_until(pilot, "enter", lambda: len(spawned) == 1)
-        assert spawned[0][-2:] == ["ssh", WS]
+        assert spawned[0] == [
+            "kitty",
+            "-e",
+            sys.executable,
+            "-m",
+            "msks.client.cli",
+            "ssh",
+            WS,
+        ]
         await wait_for(lambda: "opened a shell window" in consent_text(app))
         assert "skipped" not in consent_text(app)
         assert on_page(app)  # the tree kept running beside the window
@@ -3932,6 +3940,18 @@ async def test_the_page_answers_the_lists_power_letters(monkeypatch) -> None:
     own power exchange — the letters the list binds — and the
     status pre-flight names the skip the dimmed row carries."""
     scripted_link(monkeypatch, [])
+
+    # Patched before the page opens: open_page's tight enter
+    # retry can queue a second enter that lands on the live
+    # shell row (#368's hazard), and the row now spawns — a real
+    # launcher would open a real terminal.
+    async def record(argv):
+        async def closed():
+            return 0
+
+        return SimpleNamespace(wait=closed)
+
+    monkeypatch.setattr(follow_mod, "spawn_window", record)
     data = FakeData([row(status="stopped")])
     app, _ = make_app(data)
     async with app.run_test() as pilot:
@@ -3949,18 +3969,10 @@ async def test_the_page_answers_the_lists_power_letters(monkeypatch) -> None:
         await pilot.press("x")  # stop again — the quick letter
         await wait_for(lambda: ("stop", WS) in data.calls)
         await wait_for(lambda: "stopped" in header_text(app))
-
         # The shell row's selection — the message a mouse click
         # fires — opens the window on the stopped workspace too
         # (#479): the ssh child boots it, so the row spawns
         # instead of naming a skip.
-        async def record(argv):
-            async def closed():
-                return 0
-
-            return SimpleNamespace(wait=closed)
-
-        monkeypatch.setattr(follow_mod, "spawn_window", record)
         app.screen.on_list_view_selected(None)
         await wait_for(lambda: "opened a shell window" in consent_text(app))
         assert "Open a shell skipped" not in consent_text(app)

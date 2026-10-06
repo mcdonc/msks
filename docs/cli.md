@@ -643,10 +643,10 @@ ssh rather than the console because a fresh window gets resized:
 the console sizes its guest pty once, at connect, while ssh
 carries every resize to the guest. The action runs on a stopped
 workspace too: the spawned `msks ssh` boots the workspace itself
-(`msks: <name> is stopped; starting it`) and the window carries
-the boot notice, and the same-terminal fallback below boots the
-same way. A launcher that cannot start — a missing binary, one
-without the execute bit — names its
+(it carries the workspace's id, and the window reads the pre-flight's
+`msks: <id> is stopped; starting it`) and the same-terminal fallback
+below boots the same way. A launcher that cannot start — a missing
+binary, one without the execute bit — names its
 reason on the tree's first flash after the shell hands the
 terminal back, and the shell runs in this terminal instead: a
 chained `msks console` session.
