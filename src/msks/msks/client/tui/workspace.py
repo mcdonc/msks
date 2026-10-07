@@ -144,21 +144,20 @@ def consent_line(link, row: dict) -> str:
     return line
 
 
-#: The power verbs' dimming rule (#367, #470 W1): the status
-#: that makes each verb pointless — the row dims with its reason
+#: The power verbs' dimming rule (#367): the status that
+#: makes each verb pointless — the row dims with its reason
 #: while the workspace sits in it, and Enter names the reason
 #: instead of calling the daemon. Every other status leaves both
 #: rows live: the daemon owns the vocabulary (a workspace may
 #: read paused, starting, created, or a watcher word), and a verb
 #: it would still take stays offered — a refusal names itself on
-#: the page's consent line. The shell action joins the rule at
-#: ``stopped`` (#470 W1): a workspace that sits powered off takes
-#: no shell, and the emphasis moves to the verb the status
-#: permits.
+#: the page's consent line. The shell action runs in every state
+#: (#479): the ssh child it opens boots a stopped workspace
+#: itself, so the row never dims — the power pair alone carries
+#: the rule.
 DIMMED_WHEN = {
     "start": "running",
     "stop": "stopped",
-    ACTION_SHELL_WINDOW: "stopped",
 }
 
 
@@ -222,9 +221,10 @@ def live_action_content(
 
 
 def primary_action(kind: str, status: str) -> bool:
-    """Whether the row is the page's primary (#470 W1): the shell
-    while the workspace takes one, the start verb while it sits
-    stopped — the emphasis follows the state the row permits."""
+    """Whether the row is the page's primary (#470 W1): the
+    shell in every state (its child boots a stopped workspace
+    itself, #479), the start verb while the workspace sits
+    stopped — the emphasis follows the rows the state invites."""
     if kind == ACTION_SHELL_WINDOW:
         return True
     return kind == "start" and status == "stopped"
@@ -715,7 +715,10 @@ class WorkspaceScreen(Screen):
         the execute bit, a word the exec itself refuses — seeds the
         restart's flash with its reason and takes the
         same-terminal shell flow instead (the setting's documented
-        fallback)."""
+        fallback). The action runs on a stopped workspace too
+        (#479): the ssh child boots the workspace itself, and the
+        window carries the boot notice; the same-terminal fallback
+        boots the same way."""
         child = follow.ssh_child_argv(self.row["id"])
         try:
             proc = await follow.spawn_window([*self.app.terminal_cmd, *child])
