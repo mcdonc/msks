@@ -25,7 +25,7 @@ class VmSpec:
     workspace_id: str
     kernel: Path
     rootfs: Path
-    cmdline: str = "console=hvc0 root=/dev/vda rw"
+    cmdline: str = "console=ttyS0 root=/dev/vda rw"
     cpus: int = 2
     mem_mib: int = 8192
     initrd: Path | None = None

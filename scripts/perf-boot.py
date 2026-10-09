@@ -39,7 +39,7 @@ import uuid
 from pathlib import Path
 
 from msks.app import build_app
-from msks.microvm import VmSpec
+from msks.microvm import VmSpec, close_console_stream
 from msks.settings import Settings, VmmSettings
 
 # The guest-asset loader lives in the test tree (#403); a dev script
@@ -167,6 +167,10 @@ async def measure_boot(microvm, spec, result: dict) -> tuple:
     result["t_vmm"] = time.perf_counter() - t0
     reader, writer = await microvm.console(spec.workspace_id)
     result["t_console"] = time.perf_counter() - t0
+    # The kernel console streams unbidden; an early boot may be
+    # past that, so nudge once for the first byte.
+    writer.write(b"\n")
+    await writer.drain()
     first = await asyncio.wait_for(reader.read(4096), 30.0)
     result["t_kernel"] = time.perf_counter() - t0
     buf = first
@@ -179,9 +183,7 @@ async def measure_boot(microvm, spec, result: dict) -> tuple:
             pass
     result["t_prompt"] = time.perf_counter() - t0
     await collect_guest_memory(reader, writer, result)
-    writer.close()
-    with contextlib.suppress(Exception):
-        await writer.wait_closed()
+    await close_console_stream(reader, writer)
     return t0, result
 
 
@@ -208,7 +210,7 @@ async def collect_blame(microvm, wid: str) -> list[str]:
     blame = await run_shell_command(
         reader, writer, "systemd-analyze blame | head -12"
     )
-    writer.close()
+    await close_console_stream(reader, writer)
     # Keep timing lines only; the first line is the echoed command
     # prompt, not blame output.
     return [

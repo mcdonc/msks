@@ -412,8 +412,8 @@ def test_import_of_the_real_built_nixos_image(tmp_path: Path) -> None:
     """The `msks-build-guest nixos` containerDisk (#250), when
     present, imports through the same schema — and the capabilities
     carry the whole NixOS-vs-Debian difference the daemon acts on:
-    the same declared cloud-init provisioner, the same prelude-v1
-    console. The ceiling lifts for the same reason as the Debian
+    the same declared cloud-init provisioner, the same serial
+    console getty. The ceiling lifts for the same reason as the Debian
     twin's: the toolchain bake (#268) grew the archive past the
     suite's 30 s copy budget on CI runners' disks."""
 
@@ -535,7 +535,7 @@ async def test_create_explicit_artifacts_without_catalog(tmp_path) -> None:
         assert made.status_code == 201, made.text
         row = made.json()
         assert row["initrd"] is None
-        assert row["cmdline"] == "console=hvc0 root=/dev/vda rw"
+        assert row["cmdline"] == "console=ttyS0 root=/dev/vda rw"
         explicit = client.post(
             "/api/v1/workspaces",
             json={

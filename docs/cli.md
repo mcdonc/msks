@@ -1154,9 +1154,9 @@ nothing else from msks (no daemon, no state):
 
 ```text
 $ msks image check workspace-mine-1.0.tar
-PASS archive        imported mine:1.0 (1d6a5e782fc0), prelude-v1 handshake as 'root'
+PASS archive        imported mine:1.0 (1d6a5e782fc0), root autologin getty on the console port
 PASS boot           guest answered the console in 3.4s (kernel 6.12.107+deb13-amd64)
-PASS console        prelude-v1 handshake as 'root'
+PASS console        root autologin getty on the console port
 PASS user-data      seed payload ran on first boot
 PASS acpi-shutdown  clean shutdown within 120s
 PASS root-rw        root is writable and the write survived a stop/start (overlay)
@@ -1195,9 +1195,8 @@ only the hash forms still identify one of them.)
 ### `msks image info`
 
 Prints one image's full record — reference, the archive's own
-pair (the origin, #340), hash, kernel facts, cmdline, the
-console's vsock port, and the default designation — from the same
-listing data:
+pair (the origin, #340), hash, kernel facts, cmdline, and the
+default designation — from the same listing data:
 
 ```text
 $ msks image info debian:13
@@ -1205,8 +1204,7 @@ ref      mine:1.4
 origin   debian:13
 hash     9f2c41ab77de0000000000000000000000000000000000000000000000000000
 kernel   6.12.107+deb13 (raw)
-cmdline  console=hvc0 root=/dev/vda rw
-console  vsock port 1073741826
+cmdline  console=ttyS0 root=/dev/vda rw
 seed     provisioner - (none declared)
 default  yes
 ```

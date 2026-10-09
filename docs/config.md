@@ -104,7 +104,7 @@ port: 8660
 ```
 
 sets the same settings `MSKSD_HOST`, `MSKSD_PORT`, and
-`MSKSD_VSOCK_SHELL_PORT` would. Either spelling is recoverable from
+`MSKSD_CONSOLE_WAIT_TIMEOUT_S` would. Either spelling is recoverable from
 the other by the rule, and the daemon enforces it in code: the
 key↔variable table is derived mechanically, so the two forms cannot
 drift apart.

@@ -18,7 +18,12 @@ from pathlib import Path
 import pytest
 from fake_ch import FakeCH
 from msks.app import build_app
-from msks.microvm import MicrovmError, MicrovmTimeoutError, VmSpec
+from msks.microvm import (
+    MicrovmError,
+    MicrovmTimeoutError,
+    VmSpec,
+    close_console_stream,
+)
 from msks.microvm import local as local_mod
 from msks.microvm.driver import MicrovmDriver
 from msks.microvm.local import disk_entries, map_ch_state, vm_config
@@ -156,7 +161,7 @@ def test_vm_config_matches_v52_schema(tmp_path: Path) -> None:
     assert config["cpus"] == {"boot_vcpus": 4, "max_vcpus": 4}
     assert config["memory"] == {"size": 2048 * 1024 * 1024}
     assert config["payload"]["kernel"] == str(tmp_path / "k")
-    assert config["payload"]["cmdline"] == "console=hvc0 root=/dev/vda rw"
+    assert config["payload"]["cmdline"] == "console=ttyS0 root=/dev/vda rw"
     assert config["disks"] == disk_entries(tmp_path, WID)
     assert config["serial"] == {"mode": "Off"}
     assert config["console"] == {"mode": "Off"}
@@ -840,6 +845,69 @@ async def test_console_connects_and_streams(env, tmp_path: Path) -> None:
         await stub_vm.wait()
         server.close()
         await server.wait_closed()
+
+
+async def test_close_console_stream_half_closes_and_drains(
+    env, tmp_path: Path
+) -> None:
+    """The teardown's contract (#481): the peer sees a clean EOF
+    (SHUT_WR, not an abortive close with unread bytes), the tail
+    still in flight is drained, and the stream ends closed."""
+    app, state_dir, _ = env
+    sock = state_dir / "vms" / WID / "console.sock"
+    sock.parent.mkdir(parents=True, exist_ok=True)
+    stub_vm = await spawn_stub_vmm(app)
+    sock.parent.joinpath("ch.pid").write_text(str(stub_vm.pid))
+    seen_eof = asyncio.Event()
+
+    async def handle(reader, writer):
+        # The tail in flight at detach time: bytes the client has
+        # not read when it starts closing.
+        writer.write(b"tail-bytes\n")
+        await writer.drain()
+        await reader.read()  # returns b"" once the client half-closes
+        seen_eof.set()
+        writer.close()
+
+    server = await asyncio.start_unix_server(handle, str(sock))
+    try:
+        reader, writer = await app.state.microvm.console(WID)
+        await close_console_stream(reader, writer)
+        assert seen_eof.is_set(), "the peer never saw the half-close EOF"
+        assert writer.is_closing()
+    finally:
+        stub_vm.kill()
+        await stub_vm.wait()
+        server.close()
+        await server.wait_closed()
+
+
+async def test_close_console_stream_tolerates_socketless_writers() -> None:
+    """A writer that models no real socket (fakes, stub drivers)
+    skips the half-close, idles out the drain, and still closes
+    the stream — the teardown never raises.
+    """
+
+    class SocketlessWriter:
+        def get_extra_info(self, name):
+            return None
+
+        def close(self) -> None:
+            self.closed = True
+
+        async def wait_closed(self) -> None:
+            return None
+
+    class ChattyReader:
+        """A stream that always has one more byte: the drain loop
+        runs to its deadline cap instead of an EOF."""
+
+        async def read(self, n):
+            return b"x"
+
+    writer = SocketlessWriter()
+    await asyncio.wait_for(close_console_stream(ChattyReader(), writer), 5)
+    assert writer.closed
 
 
 async def test_console_without_vm_fails_fast(env, monkeypatch) -> None:

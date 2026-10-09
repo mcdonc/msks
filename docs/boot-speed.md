@@ -98,13 +98,13 @@ console port's module load included — silently fails.
 
 ### A console that starts before the boot finishes
 
-`msks-console.service` sets `DefaultDependencies=no` and orders
-only after the module load, so it listens as soon as the console
-device exists instead of waiting for the full target chain. A start
-that lands too early self-heals (`Restart=always`, short
-`RestartSec`) — with `StartLimitIntervalSec=0`, because a fast-fail
-loop would otherwise exhaust systemd's default burst limit and end
-the retries permanently.
+The console is the root autologin getty on the serial port
+(`serial-getty@ttyS0.service` with an autologin drop-in, #481):
+the stock template carries `Restart=always` and short
+`RestartSec`, so a start that lands before the shell's dependencies
+are ready respawns a fresh getty on its own. The drop-in pins
+`TERM=xterm` so the shell's line discipline matches what the
+client terminal sends.
 
 The same principle applies to anything a workspace image wants on
 the critical path: order it after exactly what it needs, not after

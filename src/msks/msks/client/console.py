@@ -218,7 +218,6 @@ async def run_shell(
 
 
 CLOSE_CODE_REASONS = {
-    4400: "console refused (unknown user or bad request)",
     4401: wsauth.AUTH_FAILED_MESSAGE,
     4404: "no such workspace",
     # The daemon's own message names the real cause (a refused

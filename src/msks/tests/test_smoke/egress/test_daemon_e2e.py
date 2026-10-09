@@ -142,6 +142,10 @@ async def console_exec(
                 max_size=2**22,
             ) as ws:
                 buf = b""
+                # The idle shell renders its prompt on a newline
+                # (#481: a serial prompt prints only to a
+                # connected client).
+                await ws.send(b"\n")
                 prompt_deadline = (
                     asyncio.get_running_loop().time() + CONSOLE_TIMEOUT_S
                 )

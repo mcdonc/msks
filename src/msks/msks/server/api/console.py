@@ -7,6 +7,7 @@ import contextlib
 from fastapi import APIRouter, WebSocket
 
 from ...microvm.errors import MicrovmError
+from ...microvm.local import close_console_stream
 from .deps import authed_accept
 from .streams import close_reason, pump_streams
 
@@ -58,10 +59,10 @@ async def bridge_console(
     for task in done:
         with contextlib.suppress(Exception):
             task.result()
-    await close_console_session(socket, ended)
+    await close_websocket(socket, ended)
 
 
-async def close_console_session(socket, ended: str | None) -> None:
+async def close_websocket(socket, ended: str | None) -> None:
     """The bridge's protocol-clean ending (#217): a guest stream
     that ended (the getty closes, the shell logs out) closes with
     1000. A client disconnect (``ended == "socket"``) and a
@@ -190,8 +191,10 @@ def router(app) -> APIRouter:
                 app.state.settings.vmm.console_stall_timeout_s,
             )
         finally:
-            writer.close()
-            with contextlib.suppress(Exception):
-                await writer.wait_closed()
+            # The half-close-and-drain teardown keeps the VMM's
+            # serial-manager thread alive across client detaches
+            # (close_console_stream's docstring names the upstream
+            # defect this avoids).
+            await close_console_stream(reader, writer)
 
     return api

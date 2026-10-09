@@ -101,7 +101,7 @@ async def console_attempt(socket_path: Path):
     """One connect against the console device's unix socket.
 
     cloud-hypervisor listens on the path; the guest's autologin
-    getty on hvc0 (#481) speaks through it. Raises _ConsoleRetry
+    getty on ttyS0 (#481) speaks through it. Raises _ConsoleRetry
     for every state a still-booting guest can present (missing
     socket, refused connect, hostile path).
     """
@@ -112,6 +112,42 @@ async def console_attempt(socket_path: Path):
         # brings the device up, PermissionError on a hostile path,
         # and friends: all retryable-shaped, all carrying their errno.
         raise _ConsoleRetry(f"console socket unreachable: {exc}") from exc
+
+
+async def close_console_stream(reader, writer) -> None:
+    """Tear down a console socket session so the VMM survives it.
+
+    A plain close() on an AF_UNIX socket that still has unread
+    bytes queued to this side aborts the connection: the VMM's
+    serial-manager read() gets ECONNRESET, and v52's epoll loop
+    returns the error out of the thread closure — whose wrapper
+    only reports panics — so the thread dies silently, the console
+    listener stops serving forever, and the guest's serial output
+    path can wedge its tty transmitter (upstream #8998, fixed on
+    cloud-hypervisor main by #8687, unreleased at v52). Half-closing
+    first (SHUT_WR) hands the VMM a clean EOF — the path its
+    graceful-disconnect branch takes — and draining afterwards
+    empties this side's receive queue so the final close carries
+    no unread data.
+    """
+    with contextlib.suppress(OSError, AttributeError):
+        raw = writer.get_extra_info("socket")
+        if raw is not None:
+            raw.shutdown(socket.SHUT_WR)
+    # Read the tail in flight (prompt redraws, escape sequences)
+    # until the stream reaches EOF; each slice is capped so a
+    # chatty guest cannot hold the detach hostage.
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 1.0
+    while loop.time() < deadline:
+        try:
+            if not await asyncio.wait_for(reader.read(4096), 0.25):
+                break
+        except TimeoutError, OSError:
+            break
+    writer.close()
+    with contextlib.suppress(Exception):
+        await writer.wait_closed()
 
 
 CH_STATE_TO_STATUS = {
@@ -514,7 +550,7 @@ class LocalCloudHypervisor(MicrovmDriver):
         console device — seconds after vm.boot reported success —
         so the connect is retried under one deadline; a dead VMM
         fails fast instead of waiting it out. The stream is raw
-        bytes: the guest side is an autologin root getty on hvc0
+        bytes: the guest side is an autologin root getty on ttyS0
         (#481), and whatever it prints is the session's first
         output.
         """

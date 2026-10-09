@@ -1363,7 +1363,6 @@ async def test_create_accepts_both_payload_forms(client) -> None:
         "name": "img-cloud",
         "version": "1.0",
         "cmdline": "console=ttyS0 root=/dev/vda ro",
-        "vsock_shell_port": 1023,
         "capabilities": {"provisioner": "cloud-init"},
     }
     archive = state_dir / "img-cloud.tar"

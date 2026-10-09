@@ -572,13 +572,13 @@ def test_compose_with_only_a_token_builds_a_seed() -> None:
     """No key, no payload, a token: the seed is the token's script
     alone (the seed's presence condition includes the token)."""
     script = compose_user_data(
-        None, None, "ws-id", llm_token="msksllm1_z", llm_port=8770
+        None, None, llm_token="msksllm1_z", llm_port=8770
     )
     assert "llm_token='msksllm1_z'" in script
     assert script.startswith("#!/bin/sh\n")
     # Neither a key nor a token: the operator's payload verbatim (the
     # #41 contract).
-    assert compose_user_data(None, None, "ws-id") is None
+    assert compose_user_data(None, None) is None
 
 
 # --- the interceptor CA block (#424, #200's create-time half) ----------------
@@ -610,9 +610,7 @@ def test_the_ca_block_tolerates_a_guest_without_the_tool() -> None:
     """A guest with no update-ca-certificates (NixOS manages its
     trust store) keeps booting: the CA is staged, the exports are
     written, and the miss lands on stderr (#424)."""
-    script = seed_script(
-        None, "ws-id", llm_token="t", llm_port=1, ca_pem=CA_PEM
-    )
+    script = seed_script(None, llm_token="t", llm_port=1, ca_pem=CA_PEM)
     assert "command -v update-ca-certificates" in script
     assert "staged and exported" in script
 
@@ -671,9 +669,7 @@ def test_the_ca_block_executes_on_a_nixos_shaped_sandbox(
         found = shutil.which(name)
         assert found, f"the seed's toolset needs {name}"
         (tools / name).symlink_to(found)
-    script = sandboxed(
-        seed_script(PUBLIC, "ws-id", "alice", ca_pem=CA_PEM), sandbox
-    )
+    script = sandboxed(seed_script(PUBLIC, "alice", ca_pem=CA_PEM), sandbox)
     done = subprocess.run(
         ["sh", "-c", script],
         env={"PATH": f"{stubs}:{tools}"},
@@ -729,11 +725,9 @@ def test_the_ca_block_executes_the_debian_link(tmp_path) -> None:
 def test_compose_user_data_carries_the_ca() -> None:
     """The composed document includes the CA wherever a seed script
     exists — with a key, and keyless with a token alone."""
-    with_key = compose_user_data(None, PUBLIC, "ws-id", ca_pem=CA_PEM)
+    with_key = compose_user_data(None, PUBLIC, ca_pem=CA_PEM)
     assert "ca_cert=" in with_key
-    keyless = compose_user_data(
-        None, None, "ws-id", llm_token="t", ca_pem=CA_PEM
-    )
+    keyless = compose_user_data(None, None, llm_token="t", ca_pem=CA_PEM)
     assert "ca_cert=" in keyless
     # Without key, token, or CA the operator payload travels alone.
-    assert compose_user_data("payload", None, "ws-id") == "payload"
+    assert compose_user_data("payload", None) == "payload"

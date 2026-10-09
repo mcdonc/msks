@@ -169,4 +169,4 @@ def default_cmdline(body: WorkspaceCreate, record) -> str:
         return body.cmdline
     if record is not None:
         return record.cmdline
-    return "console=hvc0 root=/dev/vda rw"
+    return "console=ttyS0 root=/dev/vda rw"

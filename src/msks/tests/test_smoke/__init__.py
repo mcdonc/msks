@@ -37,6 +37,7 @@ from pathlib import Path
 
 import pytest
 from httpx import AsyncClient
+from msks.microvm import close_console_stream
 
 VMLINUX = os.environ.get("TEST_VMLINUX")
 INITRD = os.environ.get("TEST_INITRD")
@@ -326,15 +327,19 @@ async def run_in_console(
         try:
             reader, writer = await microvm.console(workspace_id)
             try:
+                # A serial shell's prompt prints to whoever is
+                # connected; ours arrives after the last detach, so
+                # it never reached us. One newline makes the idle
+                # shell render a fresh prompt (#481).
+                writer.write(b"\n")
+                await writer.drain()
                 await read_until(reader, root_prompt_needle(hostname))
                 writer.write(command.encode() + b"\n")
                 await writer.drain()
                 await read_until(reader, marker.encode())
                 return
             finally:
-                writer.close()
-                with contextlib.suppress(Exception):
-                    await writer.wait_closed()
+                await close_console_stream(reader, writer)
         # TimeoutError is an OSError subclass, so the stalled-session
         # paths (read_until's AssertionError, a dead stream's OSError)
         # all land here as retryable.
@@ -446,9 +451,7 @@ async def await_dev_state(
                     reader, b"E-42", timeout_s=CONSOLE_TIMEOUT_S
                 )
             finally:
-                writer.close()
-                with contextlib.suppress(Exception):
-                    await writer.wait_closed()
+                await close_console_stream(reader, writer)
         except (AssertionError, OSError) as exc:
             last = f"<console probe failed: {exc}>".encode()
         else:
@@ -553,9 +556,7 @@ async def await_guest_trail(
                     reader, b"E-42", timeout_s=CONSOLE_TIMEOUT_S
                 )
             finally:
-                writer.close()
-                with contextlib.suppress(Exception):
-                    await writer.wait_closed()
+                await close_console_stream(reader, writer)
         except (AssertionError, OSError) as exc:
             last = f"<console probe failed: {exc}>".encode()
         else:

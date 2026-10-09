@@ -614,12 +614,13 @@ def _closed(code: int, reason: str = ""):
     return console.websockets.ConnectionClosed(close, None)
 
 
-def test_report_close_4400() -> None:
+def test_report_close_unmapped_code_is_a_clean_end() -> None:
+    """Only the mapped refusals fail the client (#481 dropped
+    the 4400 user gate; a code outside the map ends the session
+    cleanly, exit 0, like a normal detach)."""
     closed = _closed(4400, "console user 'x' is not served")
-    with pytest.raises(SystemExit) as caught:
-        console._report_close(closed)
-    assert "console refused" in str(caught.value)
-    assert "'x'" in str(caught.value)
+    # Raises nothing: the function returns on an unmapped code.
+    console._report_close(closed)
 
 
 def test_report_close_4401() -> None:

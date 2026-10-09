@@ -41,7 +41,7 @@ from pathlib import Path
 from .app import App, build_app
 from .conformance_args import CheckOptions, check_arguments
 from .imagestore import ImageError, ImageRecord, import_archive
-from .microvm import VmSpec
+from .microvm import VmSpec, close_console_stream
 from .settings import (
     NetSettings,
     ServerSettings,
@@ -185,9 +185,11 @@ async def probe(
                 await read_until(reader, marker.encode(), PROBE_TIMEOUT_S)
                 return
             finally:
-                writer.close()
-                with contextlib.suppress(Exception):
-                    await writer.wait_closed()
+                # The half-close teardown keeps the VMM's serial
+                # manager alive across this checker's own session
+                # churn (close_console_stream names the upstream
+                # defect a plain close triggers).
+                await close_console_stream(reader, writer)
         except (OSError, TimeoutError) as exc:
             last = exc
             await asyncio.sleep(RETRY_SLEEP_S)

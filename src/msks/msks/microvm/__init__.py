@@ -9,7 +9,7 @@ workspaces changes no code above this seam.
 from ..spec.vm import VmInfo, VmSpec
 from .driver import MicrovmDriver
 from .errors import MicrovmError, MicrovmTimeoutError
-from .local import LocalCloudHypervisor
+from .local import LocalCloudHypervisor, close_console_stream
 
 __all__ = [
     "LocalCloudHypervisor",
@@ -18,6 +18,7 @@ __all__ = [
     "MicrovmTimeoutError",
     "VmInfo",
     "VmSpec",
+    "close_console_stream",
     "Microvm",
 ]
 

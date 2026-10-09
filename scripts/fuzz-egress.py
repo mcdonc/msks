@@ -1603,9 +1603,10 @@ class Console:
             return None
 
     async def authed_lead(self, ws) -> bytes:
-        """The first bytes the console getty leaves on the wire
-        (#481): no challenge exchange — the session opens with the
-        getty's own output."""
+        """The first bytes the console shell leaves on the wire
+        (#481): no challenge exchange — a newline makes the idle
+        shell render its prompt, and those bytes open the session."""
+        await ws.send(b"\n")
         return await self.next_chunk(ws)
 
     async def wait_prompt(self, ws, buf: bytes) -> bytes:

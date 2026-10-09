@@ -86,7 +86,7 @@ async def test_wedged_session_gets_a_fresh_one(monkeypatch, capsys) -> None:
     microvm = FakeMicrovm([wedged_session(), live])
     await test_smoke.run_in_console(microvm, "wid", "echo hi", "hi")
     assert microvm.opened == 2
-    assert live[1].written == b"echo hi\n"
+    assert live[1].written == b"\necho hi\n"
     # The abandoned session leaves its story in the log.
     assert "1/3" in capsys.readouterr().out
 
@@ -103,8 +103,8 @@ async def test_marker_stall_also_gets_a_fresh_session(monkeypatch) -> None:
     assert microvm.opened == 2
     # The command really ran twice: once into the stalled shell,
     # once into the fresh one.
-    assert stalled[1].written == b"echo hi\n"
-    assert live[1].written == b"echo hi\n"
+    assert stalled[1].written == b"\necho hi\n"
+    assert live[1].written == b"\necho hi\n"
 
 
 async def test_all_sessions_wedged_names_the_count(monkeypatch) -> None:

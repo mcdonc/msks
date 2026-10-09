@@ -106,8 +106,10 @@ settings = 2
 [snapshot.conformance]
 app = 3
 conformance_args = 3
+# #481: the checker's console probe tears its sessions down
+# through the VMM-safe half-close helper (upstream CH #8998).
 imagestore = 4
-microvm = 2
+microvm = 3
 settings = 5
 
 [snapshot.consent]
@@ -169,7 +171,10 @@ identity = 6
 # markers no longer cross this edge.
 imagestore = 26
 llm = 2
-microvm = 10
+# #481: the console endpoint's teardown uses the VMM-safe
+# half-close helper (upstream CH #8998), on the seam's module
+# beside its existing errors import.
+microvm = 12
 model = 7
 persist = 12
 # #423 follow-up: the mint takes the operator's value again, so

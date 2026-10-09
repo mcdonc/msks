@@ -424,8 +424,9 @@ async def test_bridge_zero_stall_timeout_disables_the_watchdog() -> None:
     )
 
 
-def _make_prelude_image(tmp_path, hash_name: str = "a" * 64) -> str:
-    """A catalog image with console markers; returns its hash."""
+def _make_console_image(tmp_path, hash_name: str = "a" * 64) -> str:
+    """A catalog image with console-capable facts; returns its
+    hash."""
     from msks import imagestore
 
     cache = imagestore.images_dir(tmp_path) / hash_name
@@ -439,19 +440,16 @@ def _make_prelude_image(tmp_path, hash_name: str = "a" * 64) -> str:
                 "name": "debian",
                 "version": "13.6",
                 "cmdline": "console=ttyS0",
-                "vsock_shell_port": 1023,
-                "console_protocol": "prelude-v1",
-                "console_users": ["root", "msks"],
             }
         )
     )
     return hash_name
 
 
-def _make_prelude_workspace(
+def _make_console_workspace(
     client, tmp_path, workspace_id: str = "ws-p"
 ) -> str:
-    digest = _make_prelude_image(tmp_path)
+    digest = _make_console_image(tmp_path)
     response = client.post(
         "/api/v1/workspaces",
         json={"id": workspace_id, "image": "debian:13.6"},

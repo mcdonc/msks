@@ -383,7 +383,8 @@ def create(
         help="the workspace's login user (#248): seeded into the guest "
         "at first boot (the account, its home, authorized_keys, and "
         "the workspace-user sudo grant) and used as the default login "
-        "for msks ssh, rsync, and console (default: your username)",
+        "for msks ssh and rsync — the console session itself is the "
+        "guest's root autologin getty (#481) (default: your username)",
     ),
     daemon_mint: bool = typer.Option(
         False,

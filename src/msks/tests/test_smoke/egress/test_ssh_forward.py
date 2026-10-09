@@ -54,8 +54,8 @@ async def test_local_sshd_and_rsync() -> None:
     login still matches after a stop/start cycle (the key lives on
     the persistent root overlay, so the reconnect must not see a
     changed key), and ``rsync -e ssh`` lands a directory in the
-    guest. A workspace without egress keeps its vsock console
-    untouched by all of this — the no-NIC smokes above run that
+    guest. A workspace without egress keeps its console untouched
+    by all of this — the no-NIC smokes above run that
     posture on the same image.
     """
     nft_tool = os.environ.get("TEST_NFT") or shutil.which("nft") or "nft"
@@ -87,7 +87,7 @@ async def test_local_sshd_and_rsync() -> None:
         kernel=Path(VMLINUX),
         rootfs=Path(ROOTFS),
         initrd=Path(INITRD) if INITRD else None,
-        cmdline=CMDLINE or "console=hvc0 root=/dev/vda rw",
+        cmdline=CMDLINE or "console=ttyS0 root=/dev/vda rw",
         egress=True,
     )
     workdir = state_dir / "ssh-work"
