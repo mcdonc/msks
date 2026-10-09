@@ -587,8 +587,16 @@ let
         # and an autologin root getty — the daemon bridges the
         # serial device's socket to the client. TERM is pinned
         # because a bare drop-in inherits none; readline turns off
-        # without it (#61).
+        # without it (#61). The After= mirrors the NixOS image's
+        # console drop-in: the prompt is the readiness signal, so
+        # it waits for cloud-init's init stage (the seed's
+        # hostname — an interactive bash freezes $HOSTNAME at
+        # startup) and for home.mount to settle (a write before
+        # the volume mounts lands on the overlay and disappears
+        # behind the mount).
         printf '%s\n' \
+          '[Unit]' \
+          'After=cloud-init.service home.mount' \
           '[Service]' \
           'Environment=TERM=xterm' \
           'ExecStart=' \

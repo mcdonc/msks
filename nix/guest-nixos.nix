@@ -273,9 +273,13 @@ let
         # contract names are wanted at boot — the console service,
         # cloud-init, sshd. A config that silently dropped one (the
         # enable flipped off, the wantedBy lost) fails the build
-        # here, not a workspace's first boot.
+        # here, not a workspace's first boot. The console getty is
+        # instantiated by getty-generator at runtime (no wants
+        # symlink to assert); the build pins its drop-in (#481) and
+        # the hostname unit that orders ahead of it.
         test -x "$toplevel"/init
-        test -e "$toplevel"/etc/systemd/system/multi-user.target.wants/serial-getty@ttyS0.service
+        test -e "$toplevel"/etc/systemd/system/serial-getty@ttyS0.service.d/10-msks-console.conf
+        test -e "$toplevel"/etc/systemd/system/multi-user.target.wants/msks-seed-hostname.service
         test -e "$toplevel"/etc/systemd/system/multi-user.target.wants/cloud-init.service
         test -e "$toplevel"/etc/systemd/system/multi-user.target.wants/sshd.service
         # Sanity: the baked agent toolchain (#266, #268) — an

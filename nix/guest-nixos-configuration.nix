@@ -71,6 +71,24 @@ let
     "nixos-system=/nix/var/nix/profiles/per-user/root/channels/nixos/nixos"
     "/nix/var/nix/profiles/per-user/root/channels"
   ];
+  # The console getty's per-instance drop-in (#481), shipped as a
+  # systemd.packages entry: package drop-in dirs are lndir-merged
+  # into the unit collection by nixpkgs' assembly — the one route
+  # to an instance drop-in that stays inside the closure (a full
+  # systemd.services unit named for the instance shadows the
+  # template; asDropin leaves a broken wants symlink; the /etc
+  # unit dir itself is a store symlink no bake may mkdir into).
+  consoleGettyDropin = pkgs.runCommand "msks-console-getty-dropin" { } ''
+    mkdir -p $out/lib/systemd/system/serial-getty@ttyS0.service.d
+    printf '%s\n' \
+      '[Unit]' \
+      'After=msks-seed-hostname.service home.mount' \
+      'X-RestartIfChanged=false' \
+      '[Service]' \
+      'Environment=TERM=xterm' \
+      > $out/lib/systemd/system/serial-getty@ttyS0.service.d/10-msks-console.conf
+  '';
+
 in
 {
   nixpkgs.hostPlatform = "x86_64-linux";
@@ -208,11 +226,63 @@ in
 
   # The console (#481): ttyS0 carries both the kernel console
   # (console=ttyS0 above) and an autologin root getty — the daemon
-  # bridges the serial device's socket to the client. TERM rides
-  # agetty's own argument (#61).
-  systemd.services."serial-getty@ttyS0" = {
+  # bridges the serial device's socket to the client. The instance
+  # is the nixpkgs TEMPLATE instantiated by getty-generator, with
+  # services.getty.autologinUser baking --autologin root and the
+  # shadow --login-program (NixOS ships no /bin/login) — it keeps
+  # the template's Restart=always and PAMName=login. The
+  # per-instance changes ride the drop-in above (consoleGettyDropin):
+  # TERM for readline (#61); After= the seed's hostname unit and
+  # home.mount — the console prompt is the readiness signal the
+  # smoke harness (and an operator) keys on, so it waits for the
+  # hostname (an interactive bash freezes $HOSTNAME at startup, and
+  # NixOS's cloud-init runs at multi-user time, too late to rely
+  # on) and for the home volume (a write that lands before the
+  # mount goes to the overlay and the later mount hides it;
+  # a volume-less nofail boot still reaches the prompt after the
+  # 30s device timeout); X-RestartIfChanged so the #427 fold's
+  # nixos-rebuild switch never restarts — and so kills — the live
+  # console (a getty change takes effect on the next boot).
+  systemd.packages = [ consoleGettyDropin ];
+
+  # The seed's hostname, applied before any getty renders a
+  # prompt (#481). cloud-init would set it (#370) — but NixOS runs
+  # cloud-init.service at multi-user time, racing the getty's
+  # interactive shell — and ordering the getty behind cloud-init
+  # delays the console by everything cloud-init waits for.
+  # Instead the seed's NoCloud meta-data is read directly, once,
+  # before getty.target: the name lands in milliseconds, and
+  # cloud-init's set-hostname later agrees with it. Idempotent by
+  # content: a later boot reads the same seed, and a seed-less
+  # workspace exits clean.
+  systemd.services.msks-seed-hostname = {
+    description = "msks: the seed's workspace hostname, before any getty (#481)";
+    documentation = [ "https://github.com/mcdonc/msks" ];
     wantedBy = [ "multi-user.target" ];
-    serviceConfig.ExecStart = "-${pkgs.util-linux}/sbin/agetty --autologin root --noclear ttyS0 xterm";
+    before = [ "getty.target" ];
+    after = [ "dev-disk\x2dby\x2dlabel\x2dcidata.device" ];
+    path = [
+      pkgs.util-linux
+      pkgs.coreutils
+      pkgs.gnused
+      pkgs.nettools
+    ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = ''
+      set -eu
+      seed=/dev/disk/by-label/cidata
+      [ -e "$seed" ] || exit 0
+      mkdir -p /run/msks-seed
+      mount -o ro "$seed" /run/msks-seed
+      trap 'umount /run/msks-seed' EXIT
+      name=$(sed -n 's/^local-hostname: //p' /run/msks-seed/meta-data | head -1)
+      [ -n "$name" ] || exit 0
+      printf '%s\n' "$name" > /etc/hostname
+      hostname "$name"
+    '';
   };
 
   # Nested KVM (#82): the flavor depends on the host CPU; a
@@ -362,11 +432,10 @@ in
   };
 
   # The serial console is the guest's debug channel: autologin
-  # root on ttyS0 — the same getty the console unit above pins;
-  # NixOS's getty module bakes --autologin into the template. NixOS's getty
-  # module bakes --autologin into the getty/serial-getty/console-
-  # getty templates; systemd's getty-generator instantiates
-  # serial-getty@ttyS0 from console=ttyS0.
+  # root on ttyS0, pinned by the console drop-in above; NixOS's
+  # getty module bakes --autologin into the getty/serial-getty/
+  # console-getty templates, and systemd's getty-generator
+  # instantiates serial-getty@ttyS0 from console=ttyS0.
   services.getty.autologinUser = "root";
 
   # One console look across images: the Debian guest's plain
