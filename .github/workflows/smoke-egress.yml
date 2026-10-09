@@ -55,7 +55,11 @@ concurrency:
 jobs:
   smoke-egress:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The suite's own budgets (per-test 30m ceiling, the git-out
+    # leg's 900s) need more than 20m of runner time once early
+    # tests take their share; a tighter ceiling kills the run
+    # mid-test with no failure evidence (#481 CI).
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v5
 
