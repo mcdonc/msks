@@ -383,7 +383,8 @@ def create(
         help="the workspace's login user (#248): seeded into the guest "
         "at first boot (the account, its home, authorized_keys, and "
         "the workspace-user sudo grant) and used as the default login "
-        "for msks ssh, rsync, and console (default: your username)",
+        "for msks ssh and rsync — the console session itself is the "
+        "guest's root autologin getty (#481) (default: your username)",
     ),
     daemon_mint: bool = typer.Option(
         False,
@@ -517,15 +518,9 @@ def console(
     workspace_id: str = typer.Argument(
         ..., help="the workspace to attach to (name or id)"
     ),
-    user: str | None = typer.Option(
-        None,
-        "--user",
-        help="shell user (default: the workspace's login user, #248; "
-        "--user root is the recovery shell)",
-    ),
 ) -> int:
-    """Interactive shell in a workspace."""
-    return run_workspace_shell(workspace_id, user)
+    """Interactive root shell in a workspace."""
+    return run_workspace_shell(workspace_id)
 
 
 @app.command("forward")

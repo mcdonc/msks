@@ -31,7 +31,6 @@ on:
       - nix/pi-shrinkwrap-patch.py
       - nix/pi-shrinkwrap-integrity.json
       - nix/guest-debian.nix
-      - nix/console-helper-pkg.nix
       - nix/image-archive.nix
       - nix/guest-pi-extension.ts
       - scripts/build-guest.sh
@@ -51,7 +50,6 @@ on:
       - nix/pi-shrinkwrap-patch.py
       - nix/pi-shrinkwrap-integrity.json
       - nix/guest-debian.nix
-      - nix/console-helper-pkg.nix
       - nix/image-archive.nix
       - nix/guest-pi-extension.ts
       - scripts/build-guest.sh

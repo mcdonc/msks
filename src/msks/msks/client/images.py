@@ -235,7 +235,6 @@ def info_pairs(row: dict) -> list[list[str]]:
         ("hash", row["hash"]),
         ("kernel", kernel),
         ("cmdline", row["cmdline"]),
-        ("console", f"vsock port {row['vsock_shell_port']}"),
         ("seed", f"provisioner {provisioner}"),
         ("default", default),
     ]

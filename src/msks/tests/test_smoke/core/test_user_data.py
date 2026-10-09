@@ -52,7 +52,7 @@ async def test_local_user_data_provisioning() -> None:
         kernel=Path(VMLINUX),
         rootfs=Path(ROOTFS),
         initrd=Path(INITRD) if INITRD else None,
-        cmdline=CMDLINE or "console=hvc0 root=/dev/vda rw",
+        cmdline=CMDLINE or "console=ttyS0 root=/dev/vda rw",
         root_mib=2048,
         home_mib=256,
         egress=False,
@@ -61,7 +61,7 @@ async def test_local_user_data_provisioning() -> None:
 
     async def boot_and_probe(expected_count: int, app=None) -> None:
         await microvm.launch(spec)
-        await await_guest_up(serial_log, hostname=wid)
+        await await_guest_up(microvm, wid, hostname=wid)
         # Payloads run in cloud-final, which can lag the login getty;
         # wait for cloud-init to be done before asserting on files it
         # was supposed to write.
@@ -70,7 +70,6 @@ async def test_local_user_data_provisioning() -> None:
             wid,
             "cloud-init status --wait",
             "done",
-            app=app,
             hostname=wid,
         )
         await run_in_console(
@@ -78,7 +77,6 @@ async def test_local_user_data_provisioning() -> None:
             wid,
             "cat /root/firstboot-count",
             str(expected_count),
-            app=app,
             hostname=wid,
         )
         # The guest resolves its own hostname (#376): both images'
@@ -95,7 +93,6 @@ async def test_local_user_data_provisioning() -> None:
             wid,
             "getent hosts $(hostname) >/dev/null && echo R-$((6*7))",
             "R-42",
-            app=app,
             hostname=wid,
         )
         await run_in_console(
@@ -105,7 +102,6 @@ async def test_local_user_data_provisioning() -> None:
             ' grep -q "^127.0.1.1.*$(hostname)" /etc/hosts;'
             "fi && echo H-$((6*7))",
             "H-42",
-            app=app,
             hostname=wid,
         )
         # The seed reaches the guest as a labeled, read-only disk.
@@ -114,7 +110,6 @@ async def test_local_user_data_provisioning() -> None:
             wid,
             "blkid -o value -s LABEL /dev/vdc",
             "cidata",
-            app=app,
             hostname=wid,
         )
         await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
@@ -169,7 +164,7 @@ async def test_local_user_data_cloud_config() -> None:
         kernel=Path(VMLINUX),
         rootfs=Path(ROOTFS),
         initrd=Path(INITRD) if INITRD else None,
-        cmdline=CMDLINE or "console=hvc0 root=/dev/vda rw",
+        cmdline=CMDLINE or "console=ttyS0 root=/dev/vda rw",
         root_mib=2048,
         home_mib=256,
         egress=False,
@@ -177,13 +172,12 @@ async def test_local_user_data_cloud_config() -> None:
     )
     try:
         await microvm.launch(spec)
-        await await_guest_up(serial_log, hostname=wid)
+        await await_guest_up(microvm, wid, hostname=wid)
         await run_in_console(
             microvm,
             wid,
             "cloud-init status --wait",
             "done",
-            app=app,
             hostname=wid,
         )
         await run_in_console(
@@ -191,7 +185,6 @@ async def test_local_user_data_cloud_config() -> None:
             wid,
             "cat /root/provisioned.txt",
             marker,
-            app=app,
             hostname=wid,
         )
         await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)

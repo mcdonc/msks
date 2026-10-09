@@ -18,7 +18,12 @@ from pathlib import Path
 import pytest
 from fake_ch import FakeCH
 from msks.app import build_app
-from msks.microvm import MicrovmError, MicrovmTimeoutError, VmSpec
+from msks.microvm import (
+    MicrovmError,
+    MicrovmTimeoutError,
+    VmSpec,
+    close_console_stream,
+)
 from msks.microvm import local as local_mod
 from msks.microvm.driver import MicrovmDriver
 from msks.microvm.local import disk_entries, map_ch_state, vm_config
@@ -152,17 +157,13 @@ def test_vm_config_matches_v52_schema(tmp_path: Path) -> None:
             mem_mib=2048,
         ),
         disk_entries(tmp_path, WID),
-        tmp_path / "serial.log",
     )
     assert config["cpus"] == {"boot_vcpus": 4, "max_vcpus": 4}
     assert config["memory"] == {"size": 2048 * 1024 * 1024}
     assert config["payload"]["kernel"] == str(tmp_path / "k")
-    assert config["payload"]["cmdline"] == "console=hvc0 root=/dev/vda rw"
+    assert config["payload"]["cmdline"] == "console=ttyS0 root=/dev/vda rw"
     assert config["disks"] == disk_entries(tmp_path, WID)
-    assert config["serial"] == {
-        "mode": "File",
-        "file": str(tmp_path / "serial.log"),
-    }
+    assert config["serial"] == {"mode": "Off"}
     assert config["console"] == {"mode": "Off"}
     assert "initramfs" not in config["payload"]
 
@@ -193,7 +194,6 @@ def test_vm_config_with_initrd(tmp_path: Path) -> None:
             initrd=tmp_path / "i",
         ),
         disk_entries(tmp_path, WID),
-        tmp_path / "serial.log",
     )
     assert config["payload"]["initramfs"] == str(tmp_path / "i")
 
@@ -796,27 +796,23 @@ async def test_shutdown_escalates_when_api_dies_midcall(
         os.kill(sleeper.pid, 0)
 
 
-def test_vm_config_with_vsock(tmp_path: Path) -> None:
+def test_vm_config_with_console_socket(tmp_path: Path) -> None:
     config = vm_config(
         VmSpec(workspace_id=WID, kernel=tmp_path / "k", rootfs=tmp_path / "r"),
         disk_entries(tmp_path, WID),
-        tmp_path / "serial.log",
-        vsock_socket=tmp_path / "vms" / WID / "vsock.sock",
+        console_socket=tmp_path / "vms" / WID / "console.sock",
     )
-    assert config["vsock"] == {
-        "cid": 3,
-        "socket": str(tmp_path / "vms" / WID / "vsock.sock"),
+    assert config["serial"] == {
+        "mode": "Socket",
+        "socket": str(tmp_path / "vms" / WID / "console.sock"),
     }
+    assert config["console"] == {"mode": "Off"}
 
 
-async def _fake_vsock_server(path: Path, reply: bytes):
-    """A unix server speaking the CONNECT handshake, echoing bytes."""
+async def _fake_console_server(path: Path):
+    """A unix server echoing bytes, as the getty's pty would."""
 
     async def handle(reader, writer):
-        line = await reader.readline()
-        assert line.startswith(b"CONNECT ")
-        writer.write(reply)
-        await writer.drain()
         while True:
             data = await reader.read(4096)
             if not data:
@@ -828,15 +824,15 @@ async def _fake_vsock_server(path: Path, reply: bytes):
     return await asyncio.start_unix_server(handle, str(path))
 
 
-async def test_console_handshake_and_stream(env, tmp_path: Path) -> None:
+async def test_console_connects_and_streams(env, tmp_path: Path) -> None:
     app, state_dir, _ = env
-    sock = state_dir / "vms" / WID / "vsock.sock"
+    sock = state_dir / "vms" / WID / "console.sock"
     sock.parent.mkdir(parents=True, exist_ok=True)
     # A live-seeming VMM: a stub whose cmdline passes the identity
     # check (#151).
     stub_vm = await spawn_stub_vmm(app)
     sock.parent.joinpath("ch.pid").write_text(str(stub_vm.pid))
-    server = await _fake_vsock_server(sock, b"OK 1073741824\n")
+    server = await _fake_console_server(sock)
     try:
         reader, writer = await app.state.microvm.console(WID)
         writer.write(b"ping\n")
@@ -851,31 +847,123 @@ async def test_console_handshake_and_stream(env, tmp_path: Path) -> None:
         await server.wait_closed()
 
 
-async def test_console_without_vm_fails_fast(env, monkeypatch) -> None:
-    app, _, _ = env
-    app.state.settings.vmm.vsock_wait_timeout_s = 0.1
-    with pytest.raises(MicrovmError, match="no live VMM"):
-        await app.state.microvm.console(WID)
-
-
-async def test_console_refused_handshake(env, tmp_path, monkeypatch) -> None:
+async def test_close_console_stream_half_closes_and_drains(
+    env, tmp_path: Path
+) -> None:
+    """The teardown's contract (#481): the peer sees a clean EOF
+    (SHUT_WR, not an abortive close with unread bytes), the tail
+    still in flight is drained, and the stream ends closed."""
     app, state_dir, _ = env
-    app.state.settings.vmm.vsock_wait_timeout_s = 0.1
-    # A live-seeming VM: the pid check must not fail the retry early.
-    (state_dir / "vms" / WID).mkdir(parents=True, exist_ok=True)
+    sock = state_dir / "vms" / WID / "console.sock"
+    sock.parent.mkdir(parents=True, exist_ok=True)
     stub_vm = await spawn_stub_vmm(app)
-    (state_dir / "vms" / WID / "ch.pid").write_text(str(stub_vm.pid))
-    sock = state_dir / "vms" / WID / "vsock.sock"
-    server = await _fake_vsock_server(sock, b"NOK bad-port\n")
+    sock.parent.joinpath("ch.pid").write_text(str(stub_vm.pid))
+    seen_eof = asyncio.Event()
+
+    async def handle(reader, writer):
+        # The tail in flight at detach time: bytes the client has
+        # not read when it starts closing.
+        writer.write(b"tail-bytes\n")
+        await writer.drain()
+        await reader.read()  # returns b"" once the client half-closes
+        seen_eof.set()
+        writer.close()
+
+    server = await asyncio.start_unix_server(handle, str(sock))
     try:
-        with pytest.raises(MicrovmError, match="handshake refused"):
-            await app.state.microvm.console(WID)
-        assert stub_vm.returncode is None, "stub died mid-test"
+        reader, writer = await app.state.microvm.console(WID)
+        await close_console_stream(reader, writer)
+        assert seen_eof.is_set(), "the peer never saw the half-close EOF"
+        assert writer.is_closing()
     finally:
         stub_vm.kill()
         await stub_vm.wait()
         server.close()
         await server.wait_closed()
+
+
+async def test_close_console_stream_tolerates_socketless_writers() -> None:
+    """A writer that models no real socket (fakes, stub drivers)
+    skips the half-close, idles out the drain, and still closes
+    the stream — the teardown never raises.
+    """
+
+    class SocketlessWriter:
+        def get_extra_info(self, name):
+            return None
+
+        def close(self) -> None:
+            self.closed = True
+
+        async def wait_closed(self) -> None:
+            return None
+
+    class ChattyReader:
+        """A stream that always has one more byte: the drain loop
+        runs to its deadline cap instead of an EOF."""
+
+        async def read(self, n):
+            return b"x"
+
+    writer = SocketlessWriter()
+    await asyncio.wait_for(close_console_stream(ChattyReader(), writer), 5)
+    assert writer.closed
+
+
+async def test_close_console_stream_half_closes_through_pseudo_sockets(
+    env, tmp_path: Path
+) -> None:
+    """uvloop's get_extra_info("socket") is a PseudoSocket that
+    answers shutdown with TypeError but carries the fd (#481 CI:
+    the daemon's teardown crashed on it). The half-close goes
+    through the fd, and the peer still sees a clean EOF.
+    """
+    app, state_dir, _ = env
+    sock = state_dir / "vms" / WID / "console.sock"
+    sock.parent.mkdir(parents=True, exist_ok=True)
+    stub_vm = await spawn_stub_vmm(app)
+    sock.parent.joinpath("ch.pid").write_text(str(stub_vm.pid))
+    seen_eof = asyncio.Event()
+
+    async def handle(reader, writer):
+        await reader.read()  # b"" once the client half-closes
+        seen_eof.set()
+        writer.close()
+
+    server = await asyncio.start_unix_server(handle, str(sock))
+    try:
+        reader, writer = await app.state.microvm.console(WID)
+
+        class PseudoSocket:
+            """The uvloop shape: fileno yes, shutdown no."""
+
+            def __init__(self, fd):
+                self.fd = fd
+
+            def fileno(self):
+                return self.fd
+
+            def shutdown(self, how):
+                raise TypeError("transport sockets do not support shutdown()")
+
+        real_fd = writer.get_extra_info("socket").fileno()
+        writer.get_extra_info = lambda name: (
+            PseudoSocket(real_fd) if name == "socket" else None
+        )
+        await close_console_stream(reader, writer)
+        assert seen_eof.is_set(), "the fd-wrapped half-close never landed"
+    finally:
+        stub_vm.kill()
+        await stub_vm.wait()
+        server.close()
+        await server.wait_closed()
+
+
+async def test_console_without_vm_fails_fast(env, monkeypatch) -> None:
+    app, _, _ = env
+    app.state.settings.vmm.console_wait_timeout_s = 0.1
+    with pytest.raises(MicrovmError, match="no live VMM"):
+        await app.state.microvm.console(WID)
 
 
 async def test_default_console_unsupported() -> None:
@@ -905,97 +993,225 @@ async def test_default_console_unsupported() -> None:
         await Minimal().console(WID)
 
 
-async def test_console_silent_server_times_out(env, monkeypatch) -> None:
-    """A wedged CH that never answers the handshake fails with the
-    named cause instead of hanging."""
-    app, state_dir, _ = env
-    # The deadline bounds one silent 0.3s reply window (patched
-    # below): the retry-until-deadline loop shape is exercised by
-    # the never-appears test; this one pins the named cause.
-    app.state.settings.vmm.vsock_wait_timeout_s = 0.2
-    vm_dir = state_dir / "vms" / WID
-    vm_dir.mkdir(parents=True, exist_ok=True)
-    stub_vm = await spawn_stub_vmm(app)
-    vm_dir.joinpath("ch.pid").write_text(str(stub_vm.pid))
-
-    handlers: list[asyncio.Task] = []
-
-    async def silent(reader, writer):
-        try:
-            await reader.readline()
-            await asyncio.sleep(60)
-        finally:
-            # Cancelled at teardown below: the writer closes then,
-            # not at loop teardown — wait_closed() returns at once.
-            writer.close()
-            await writer.wait_closed()
-
-    def accept(reader, writer):
-        handlers.append(asyncio.create_task(silent(reader, writer)))
-
-    monkeypatch.setattr(local_mod, "VSOCK_REPLY_S", 0.3)
-    server = await asyncio.start_unix_server(
-        accept, str(vm_dir / "vsock.sock")
-    )
-    try:
-        with pytest.raises(
-            MicrovmError, match="handshake reply never arrived"
-        ):
-            await app.state.microvm.console(WID)
-        assert stub_vm.returncode is None, "stub died mid-test"
-    finally:
-        stub_vm.kill()
-        await stub_vm.wait()
-        for task in handlers:
-            task.cancel()
-        await asyncio.gather(*handlers, return_exceptions=True)
-        server.close()
-        await server.wait_closed()
-
-
 async def test_console_socket_never_appears(env, monkeypatch) -> None:
-    """A live VMM whose vsock socket never appears fails at the
+    """A live VMM whose console socket never appears fails at the
     deadline with the named cause."""
     app, state_dir, _ = env
-    app.state.settings.vmm.vsock_wait_timeout_s = 0.1
+    app.state.settings.vmm.console_wait_timeout_s = 0.1
     vm_dir = state_dir / "vms" / WID
     vm_dir.mkdir(parents=True, exist_ok=True)
     stub_vm = await spawn_stub_vmm(app)
     vm_dir.joinpath("ch.pid").write_text(str(stub_vm.pid))
     try:
-        with pytest.raises(MicrovmError, match="vsock socket unreachable"):
+        with pytest.raises(MicrovmError, match="console socket unreachable"):
             await app.state.microvm.console(WID)
     finally:
         stub_vm.kill()
         await stub_vm.wait()
 
 
-async def test_console_stream_dies_mid_handshake(env, monkeypatch) -> None:
-    """A VMM that resets the stream mid-handshake is retried, then
-    fails with the named cause (not a raw OSError)."""
-    app, state_dir, _ = env
-    app.state.settings.vmm.vsock_wait_timeout_s = 0.1
-    vm_dir = state_dir / "vms" / WID
+async def spawn_stub_vmm(
+    app, workspace_id: str = WID
+) -> asyncio.subprocess.Process:
+    """A process that #151's identity check accepts as OUR VMM.
+
+    The liveness checks read /proc/<pid>/cmdline and require the
+    configured VMM binary and this workspace's --api-socket
+    argument there; spawning the fixture stub itself with the same
+    argv the driver uses gives a killable process whose identity
+    matches exactly. Bare `sleep` reads as a foreign process and
+    takes the dead-VMM path (which never signals it).
+
+    The stub announces userland via STUB_READY, and only that
+    announcement releases this helper: a `#!/usr/bin/env python3`
+    shebang runs an exec CHAIN whose env phase carries the same
+    stub and --api-socket fields (identity confirms mid-chain), and
+    the next exec transition briefly reads an EMPTY cmdline --
+    sampled in that window, liveness read as "no live VMM" and
+    flaked the console tests under load (#154 r2).
+    """
+    binary = app.state.settings.vmm.cloud_hypervisor
+    vm_dir = app.state.microvm.local._dir(workspace_id)
     vm_dir.mkdir(parents=True, exist_ok=True)
-    stub_vm = await spawn_stub_vmm(app)
-    vm_dir.joinpath("ch.pid").write_text(str(stub_vm.pid))
-
-    async def resetter(reader, writer):
-        # Accept, then kill the stream before any reply.
-        writer.close()
-
-    server = await asyncio.start_unix_server(
-        resetter, str(vm_dir / "vsock.sock")
+    ready = vm_dir / f"stub-ready-{os.getpid()}-{next(_stub_seq)}"
+    proc = await asyncio.create_subprocess_exec(
+        str(binary),
+        "--api-socket",
+        str(vm_dir / "api.sock"),
+        env={**os.environ, "STUB_READY": str(ready)},
     )
+    for _ in range(200):
+        if ready.exists():
+            return proc
+        assert proc.returncode is None, "stub exited before ready"
+        await asyncio.sleep(0.05)
+    proc.kill()
+    await proc.wait()
+    pytest.fail("stub VMM never became ready")
+
+
+_stub_seq = itertools.count()
+
+
+async def test_kill_never_signals_a_foreign_pid(env, tmp_path: Path) -> None:
+    """The identity check's security property, pinned (#154 r2): a
+    recycled pidfile pid owned by some innocent process is never
+    signaled -- kill() reports success and leaves it alive."""
+    app, state_dir, _ = env
+    vm_dir = state_dir / "vms" / WID
+    vm_dir.mkdir(parents=True)
+    foreign = await asyncio.create_subprocess_exec("sleep", "600")
+    (vm_dir / "ch.pid").write_text(str(foreign.pid))
     try:
-        with pytest.raises(MicrovmError, match="handshake"):
-            await app.state.microvm.console(WID)
-        assert stub_vm.returncode is None, "stub died mid-test"
+        await app.state.microvm.kill(WID)  # must NOT touch it
+        assert foreign.returncode is None
+        os.kill(foreign.pid, 0)  # alive and well
     finally:
+        foreign.kill()
+        await foreign.wait()
+
+
+async def test_pid_alive_names_a_foreign_owner(env, monkeypatch) -> None:
+    """kill(0) EPERM on a FOREIGN pid reads as dead -- mixed-uid
+    hosts recycle pids too; silence, not an error (#154 r2)."""
+    app, _, _ = env
+    driver = app.state.microvm.local
+    foreign = await asyncio.create_subprocess_exec("sleep", "600")
+
+    def eperm(pid: int, sig: int) -> None:
+        raise PermissionError(1, "not yours")
+
+    monkeypatch.setattr(local_mod.os, "kill", eperm)
+    try:
+        assert not driver._pid_alive(foreign.pid, WID)
+    finally:
+        monkeypatch.undo()  # before proc cleanup: it signals too
+        foreign.kill()
+        await foreign.wait()
+
+
+async def test_pid_alive_names_our_eperm_vmm(env, monkeypatch) -> None:
+    """kill(0) EPERM on OUR VMM is named, not silent: the operator
+    learns the pid is owned by another user (#154 r2)."""
+    app, _, _ = env
+    driver = app.state.microvm.local
+    stub_vm = await spawn_stub_vmm(app)
+
+    def eperm(pid: int, sig: int) -> None:
+        raise PermissionError(1, "not yours")
+
+    monkeypatch.setattr(local_mod.os, "kill", eperm)
+    try:
+        with pytest.raises(MicrovmError, match="owned by another user"):
+            driver._pid_alive(stub_vm.pid, WID)
+    finally:
+        monkeypatch.undo()
         stub_vm.kill()
         await stub_vm.wait()
-        server.close()
-        await server.wait_closed()
+
+
+def bind_then_abandon(path: Path) -> None:
+    """A genuine stale socket: bound, then closed with the file left.
+
+    The exact residue a hard-killed VMM leaves — a socket file at
+    the name with nothing listening (#151).
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    srv.bind(str(path))
+    srv.close()  # the file stays; no listener does
+
+
+async def test_launch_sweeps_stale_sockets(env, fake, tmp_path: Path) -> None:
+    """Socket residue from a hard kill must not doom the next start (#151).
+
+    A VMM killed without cleanup leaves api.sock and console.sock
+    behind; the next spawn died binding them (AddrInUse) and the
+    operator saw a misleading unreachable-API 503. The stale console
+    residue here is the incident's exact shape (bound, abandoned);
+    the fake's LIVE api.sock pre-bound beside it proves the sweep
+    takes only what nothing listens on — its removal is asserted
+    because nothing (the fake does not emulate the console device)
+    re-creates it.
+    """
+    app, _, _ = env
+    vm_dir = app.state.microvm.local._dir(WID)
+    assert (vm_dir / "api.sock").exists()  # the fake's live listener
+    stale = vm_dir / "console.sock"
+    bind_then_abandon(stale)
+    inode_before = (vm_dir / "api.sock").stat().st_ino
+    await app.state.microvm.launch(spec(tmp_path))
+    assert not stale.exists()  # swept; nothing recreated it
+    # The pidfile is rewritten by the live launch; the fake's live
+    # socket keeps its very inode -- the sweep never touched it.
+    assert (vm_dir / "ch.pid").read_text().strip().isdigit()
+    assert (vm_dir / "api.sock").stat().st_ino == inode_before
+    info = await app.state.microvm.info(WID)
+    assert info.status is VmStatus.RUNNING
+
+
+async def test_launch_names_a_sweep_obstacle_it_cannot_remove(
+    env, tmp_path: Path
+) -> None:
+    """A directory squatting on the socket name is refused (stale)
+    but cannot be unlinked; the operator error says so, pointing at
+    the exact path (#154 review)."""
+    app, state_dir, _ = env
+    vm_dir = state_dir / "vms" / WID
+    vm_dir.mkdir(parents=True, exist_ok=True)
+    (vm_dir / "api.sock").mkdir()
+    (vm_dir / "ch.pid").mkdir()
+    with pytest.raises(
+        MicrovmError, match="cannot remove stale socket.*remove it by hand"
+    ):
+        await app.state.microvm.launch(spec(tmp_path))
+    # The pidfile obstacle names itself the same way.
+    (vm_dir / "api.sock").rmdir()
+    with pytest.raises(MicrovmError, match="cannot remove stale pidfile"):
+        await app.state.microvm.launch(spec(tmp_path))
+
+
+def test_cmdline_is_vmm_matrix(tmp_path: Path) -> None:
+    """The identity check's adversarial matrix (#154 r2/r3): exact-
+    field binary match plus this workspace's --api-socket pair."""
+    from msks.microvm.local import cmdline_is_vmm
+
+    sock = tmp_path / "vms" / "ws" / "api.sock"
+    ours = b"cloud-hypervisor\0--api-socket\0" + os.fsencode(str(sock)) + b"\0"
+    assert cmdline_is_vmm(ours, "cloud-hypervisor", sock)
+    # Shebang chain: interpreter argv[0], binary rides as argv[1].
+    chain = (
+        b"/usr/bin/env\0cloud-hypervisor\0--api-socket\0"
+        + os.fsencode(str(sock))
+        + b"\0"
+    )
+    assert cmdline_is_vmm(chain, "cloud-hypervisor", sock)
+    # The F-a lookalikes: substring and bare-name-without-socket.
+    assert not cmdline_is_vmm(
+        b"grep\0cloud-hypervisor\0/var/log/syslog\0",
+        "cloud-hypervisor",
+        sock,
+    )
+    assert not cmdline_is_vmm(
+        b"cloud-hypervisor-v2\0--api-socket\0"
+        + os.fsencode(str(sock))
+        + b"\0",
+        "cloud-hypervisor",
+        sock,
+    )
+    # Another workspace's socket is not ours.
+    other = tmp_path / "vms" / "other" / "api.sock"
+    assert not cmdline_is_vmm(
+        b"cloud-hypervisor\0--api-socket\0" + os.fsencode(str(other)) + b"\0",
+        "cloud-hypervisor",
+        sock,
+    )
+    # Empty cmdline (an exec window) proves nothing.
+    assert not cmdline_is_vmm(b"", "cloud-hypervisor", sock)
+    # A --api-socket flag at argv end with no value cannot pair.
+    assert not cmdline_is_vmm(
+        b"cloud-hypervisor\0--api-socket", "cloud-hypervisor", sock
+    )
 
 
 # --- egress networking (#52) ----------------------------------------------
@@ -1005,7 +1221,6 @@ def test_vm_config_carries_the_net_device(tmp_path: Path) -> None:
     config = vm_config(
         VmSpec(workspace_id=WID, kernel=tmp_path / "k", rootfs=tmp_path / "r"),
         disk_entries(tmp_path, WID),
-        tmp_path / "serial.log",
         net={"tap": "msks-abc123", "mac": "02:11:22:33:44:55"},
     )
     assert config["net"] == [
@@ -1015,7 +1230,6 @@ def test_vm_config_carries_the_net_device(tmp_path: Path) -> None:
     plain = vm_config(
         VmSpec(workspace_id=WID, kernel=tmp_path / "k", rootfs=tmp_path / "r"),
         disk_entries(tmp_path, WID),
-        tmp_path / "serial.log",
     )
     assert "net" not in plain
 
@@ -1156,376 +1370,17 @@ async def test_launch_attaches_the_user_data_seed(
     await app.state.microvm.kill(WID)
 
 
-# --- console identity prelude (#63) -----------------------------------
+def test_log_tail_shapes() -> None:
+    from msks.microvm.local import LocalCloudHypervisor
 
-
-@pytest.mark.asyncio
-async def test_handshake_sends_prelude(tmp_path: Path) -> None:
-    path = tmp_path / "guest.sock"
-    seen = {}
-
-    async def session(reader, writer):
-        seen["connect"] = await reader.readline()
-        writer.write(b"OK 5\n")
-        await writer.drain()
-        seen["prelude"] = await reader.readuntil(b"GO\n")
-        writer.write(b"MSKS OK msks\n")
-        await writer.drain()
-        writer.close()
-
-    server = await asyncio.start_unix_server(session, str(path))
-    try:
-        reader, writer = await local_mod._vsock_handshake(
-            path, 1023, user="msks", rows=34, cols=120
-        )
-    finally:
-        server.close()
-        await server.wait_closed()
-    assert seen["connect"] == b"CONNECT 1023\n"
-    assert seen["prelude"] == (
-        b"HELLO 1\nUSER msks\nTERM xterm\nWINSZ 34 120\nGO\n"
-    )
-    writer.close()
-
-
-@pytest.mark.asyncio
-async def test_prelude_carries_term(tmp_path: Path) -> None:
-    path = tmp_path / "guest.sock"
-    seen = {}
-
-    async def session(reader, writer):
-        await reader.readline()
-        writer.write(b"OK 5\n")
-        await writer.drain()
-        seen["prelude"] = await reader.readuntil(b"GO\n")
-        writer.write(b"MSKS OK msks\n")
-        await writer.drain()
-        writer.close()
-
-    server = await asyncio.start_unix_server(session, str(path))
-    try:
-        reader, writer = await local_mod._vsock_handshake(
-            path, 1023, user="msks", term="tmux-256color"
-        )
-    finally:
-        server.close()
-        await server.wait_closed()
-    assert b"TERM tmux-256color\n" in seen["prelude"]
-    writer.close()
-
-
-@pytest.mark.asyncio
-async def test_prelude_refusal_raises(tmp_path: Path) -> None:
-    path = tmp_path / "guest.sock"
-
-    async def session(reader, writer):
-        await reader.readline()
-        writer.write(b"OK 5\n")
-        await writer.drain()
-        assert await reader.readuntil(b"GO\n")
-        writer.write(b"MSKS ERR auth\n")
-        await writer.drain()
-        writer.close()
-
-    server = await asyncio.start_unix_server(session, str(path))
-    try:
-        with pytest.raises(MicrovmError) as caught:
-            await local_mod._vsock_handshake(path, 1023, user="msks")
-    finally:
-        server.close()
-        await server.wait_closed()
-    assert "refused user 'msks': auth" in str(caught.value)
-
-
-@pytest.mark.asyncio
-async def test_prelude_user_refusal_is_retryable(tmp_path: Path) -> None:
-    """The helper's absent-account refusal (#248) reads as a
-    boot-state, not a verdict: the handshake raises the retryable
-    marker the console loop waits out, because the daemon's own
-    gate already admitted the name and the first-boot seed that
-    creates the account lands with the same boot."""
-    path = tmp_path / "guest.sock"
-
-    async def session(reader, writer):
-        await reader.readline()
-        writer.write(b"OK 5\n")
-        await writer.drain()
-        assert await reader.readuntil(b"GO\n")
-        writer.write(b"MSKS ERR user\n")
-        await writer.drain()
-        writer.close()
-
-    server = await asyncio.start_unix_server(session, str(path))
-    try:
-        with pytest.raises(local_mod._UserRetry) as caught:
-            await local_mod._vsock_handshake(
-                path, 1023, user="a" * 32
-            )  # the charset's longest name
-    finally:
-        server.close()
-        await server.wait_closed()
-    assert "serves no such account" in str(caught.value)
-    # The message rides a websocket close reason (a 123-byte wire
-    # budget; the daemon truncates at 120) — at the longest name
-    # it must still fit whole, or the refusal names nothing.
-    assert len(str(caught.value).encode()) <= 120
-
-
-@pytest.mark.asyncio
-async def test_prelude_garbage_fails_closed(tmp_path: Path) -> None:
-    path = tmp_path / "guest.sock"
-
-    async def session(reader, writer):
-        await reader.readline()
-        writer.write(b"OK 5\n")
-        await writer.drain()
-        assert await reader.readuntil(b"GO\n")
-        writer.write(b"welcome to debian\n")
-        await writer.drain()
-        writer.close()
-
-    server = await asyncio.start_unix_server(session, str(path))
-    try:
-        with pytest.raises(MicrovmError, match="unrecognized"):
-            await local_mod._vsock_handshake(path, 1023, user="root")
-    finally:
-        server.close()
-        await server.wait_closed()
-
-
-@pytest.mark.asyncio
-async def test_prelude_silence_fails_closed(tmp_path: Path) -> None:
-    path = tmp_path / "guest.sock"
-
-    async def session(reader, writer):
-        await reader.readline()
-        writer.write(b"OK 5\n")
-        await writer.drain()
-        assert await reader.readuntil(b"GO\n")
-        # No reply at all: the guest went away mid-negotiation.
-        writer.close()
-
-    server = await asyncio.start_unix_server(session, str(path))
-    try:
-        with pytest.raises(MicrovmError, match="prelude"):
-            await local_mod._vsock_handshake(path, 1023, user="root")
-    finally:
-        server.close()
-        await server.wait_closed()
-
-
-@pytest.mark.asyncio
-async def test_prelude_timeout_fails_closed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "guest.sock"
-
-    async def session(reader, writer):
-        await reader.readline()
-        writer.write(b"OK 5\n")
-        await writer.drain()
-        assert await reader.readuntil(b"GO\n")
-        # Reads the prelude, then stays silent past the reply
-        # deadline (0.2s patched below) — the connection stays open,
-        # so the handshake's failure is the timeout, not a close.
-        await asyncio.sleep(0.5)
-
-    monkeypatch.setattr(local_mod, "PRELUDE_REPLY_S", 0.2)
-    server = await asyncio.start_unix_server(session, str(path))
-    try:
-        with pytest.raises(MicrovmError, match="prelude"):
-            await local_mod._vsock_handshake(path, 1023, user="root")
-    finally:
-        server.close()
-        await server.wait_closed()
-
-
-@pytest.mark.asyncio
-async def test_handshake_without_user_sends_no_prelude(tmp_path: Path) -> None:
-    path = tmp_path / "guest.sock"
-    seen = {}
-
-    async def session(reader, writer):
-        seen["connect"] = await reader.readline()
-        writer.write(b"OK 5\n")
-        await writer.drain()
-        # A bounded peek: the legacy path sends no prelude, so nothing
-        # arrives before the client hangs up.
-        try:
-            data = await asyncio.wait_for(reader.read(64), 0.3)
-        except TimeoutError:
-            data = b"<timeout>"
-        seen["rest"] = data
-        writer.close()
-
-    server = await asyncio.start_unix_server(session, str(path))
-    try:
-        reader, writer = await local_mod._vsock_handshake(path, 1023)
-    finally:
-        server.close()
-        await server.wait_closed()
-    assert seen["rest"] in (b"", None) or not seen["rest"].startswith(b"HELLO")
-    writer.close()
-
-
-async def spawn_stub_vmm(
-    app, workspace_id: str = WID
-) -> asyncio.subprocess.Process:
-    """A process that #151's identity check accepts as OUR VMM.
-
-    The liveness checks read /proc/<pid>/cmdline and require the
-    configured VMM binary and this workspace's --api-socket
-    argument there; spawning the fixture stub itself with the same
-    argv the driver uses gives a killable process whose identity
-    matches exactly. Bare `sleep` reads as a foreign process and
-    takes the dead-VMM path (which never signals it).
-
-    The stub announces userland via STUB_READY, and only that
-    announcement releases this helper: a `#!/usr/bin/env python3`
-    shebang runs an exec CHAIN whose env phase carries the same
-    stub and --api-socket fields (identity confirms mid-chain), and
-    the next exec transition briefly reads an EMPTY cmdline --
-    sampled in that window, liveness read as "no live VMM" and
-    flaked the console tests under load (#154 r2).
-    """
-    binary = app.state.settings.vmm.cloud_hypervisor
-    vm_dir = app.state.microvm.local._dir(workspace_id)
-    vm_dir.mkdir(parents=True, exist_ok=True)
-    ready = vm_dir / f"stub-ready-{os.getpid()}-{next(_stub_seq)}"
-    proc = await asyncio.create_subprocess_exec(
-        str(binary),
-        "--api-socket",
-        str(vm_dir / "api.sock"),
-        env={**os.environ, "STUB_READY": str(ready)},
-    )
-    for _ in range(200):
-        if ready.exists():
-            return proc
-        assert proc.returncode is None, "stub exited before ready"
-        await asyncio.sleep(0.05)
-    proc.kill()
-    await proc.wait()
-    pytest.fail("stub VMM never became ready")
-
-
-_stub_seq = itertools.count()
-
-
-async def test_kill_never_signals_a_foreign_pid(env, tmp_path: Path) -> None:
-    """The identity check's security property, pinned (#154 r2): a
-    recycled pidfile pid owned by some innocent process is never
-    signaled -- kill() reports success and leaves it alive."""
-    app, state_dir, _ = env
-    vm_dir = state_dir / "vms" / WID
-    vm_dir.mkdir(parents=True)
-    foreign = await asyncio.create_subprocess_exec("sleep", "600")
-    (vm_dir / "ch.pid").write_text(str(foreign.pid))
-    try:
-        await app.state.microvm.kill(WID)  # must NOT touch it
-        assert foreign.returncode is None
-        os.kill(foreign.pid, 0)  # alive and well
-    finally:
-        foreign.kill()
-        await foreign.wait()
-
-
-async def test_pid_alive_names_a_foreign_owner(env, monkeypatch) -> None:
-    """kill(0) EPERM on a FOREIGN pid reads as dead -- mixed-uid
-    hosts recycle pids too; silence, not an error (#154 r2)."""
-    app, _, _ = env
-    driver = app.state.microvm.local
-    foreign = await asyncio.create_subprocess_exec("sleep", "600")
-
-    def eperm(pid: int, sig: int) -> None:
-        raise PermissionError(1, "not yours")
-
-    monkeypatch.setattr(local_mod.os, "kill", eperm)
-    try:
-        assert not driver._pid_alive(foreign.pid, WID)
-    finally:
-        monkeypatch.undo()  # before proc cleanup: it signals too
-        foreign.kill()
-        await foreign.wait()
-
-
-async def test_pid_alive_names_our_eperm_vmm(env, monkeypatch) -> None:
-    """kill(0) EPERM on OUR VMM is named, not silent: the operator
-    learns the pid is owned by another user (#154 r2)."""
-    app, _, _ = env
-    driver = app.state.microvm.local
-    stub_vm = await spawn_stub_vmm(app)
-
-    def eperm(pid: int, sig: int) -> None:
-        raise PermissionError(1, "not yours")
-
-    monkeypatch.setattr(local_mod.os, "kill", eperm)
-    try:
-        with pytest.raises(MicrovmError, match="owned by another user"):
-            driver._pid_alive(stub_vm.pid, WID)
-    finally:
-        monkeypatch.undo()
-        stub_vm.kill()
-        await stub_vm.wait()
-
-
-def bind_then_abandon(path: Path) -> None:
-    """A genuine stale socket: bound, then closed with the file left.
-
-    The exact residue a hard-killed VMM leaves — a socket file at
-    the name with nothing listening (#151).
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    srv.bind(str(path))
-    srv.close()  # the file stays; no listener does
-
-
-async def test_launch_sweeps_stale_sockets(env, fake, tmp_path: Path) -> None:
-    """Socket residue from a hard kill must not doom the next start (#151).
-
-    A VMM killed without cleanup leaves api.sock and vsock.sock
-    behind; the next spawn died binding them (AddrInUse) and the
-    operator saw a misleading unreachable-API 503. The stale vsock
-    residue here is the incident's exact shape (bound, abandoned);
-    the fake's LIVE api.sock pre-bound beside it proves the sweep
-    takes only what nothing listens on — its removal is asserted
-    because nothing (the fake does not emulate vsock) re-creates it.
-    """
-    app, _, _ = env
-    vm_dir = app.state.microvm.local._dir(WID)
-    assert (vm_dir / "api.sock").exists()  # the fake's live listener
-    stale = vm_dir / "vsock.sock"
-    bind_then_abandon(stale)
-    inode_before = (vm_dir / "api.sock").stat().st_ino
-    await app.state.microvm.launch(spec(tmp_path))
-    assert not stale.exists()  # swept; nothing recreated it
-    # The pidfile is rewritten by the live launch; the fake's live
-    # socket keeps its very inode -- the sweep never touched it.
-    assert (vm_dir / "ch.pid").read_text().strip().isdigit()
-    assert (vm_dir / "api.sock").stat().st_ino == inode_before
-    info = await app.state.microvm.info(WID)
-    assert info.status is VmStatus.RUNNING
-
-
-async def test_launch_names_a_sweep_obstacle_it_cannot_remove(
-    env, tmp_path: Path
-) -> None:
-    """A directory squatting on the socket name is refused (stale)
-    but cannot be unlinked; the operator error says so, pointing at
-    the exact path (#154 review)."""
-    app, state_dir, _ = env
-    vm_dir = state_dir / "vms" / WID
-    vm_dir.mkdir(parents=True, exist_ok=True)
-    (vm_dir / "api.sock").mkdir()
-    (vm_dir / "ch.pid").mkdir()
-    with pytest.raises(
-        MicrovmError, match="cannot remove stale socket.*remove it by hand"
-    ):
-        await app.state.microvm.launch(spec(tmp_path))
-    # The pidfile obstacle names itself the same way.
-    (vm_dir / "api.sock").rmdir()
-    with pytest.raises(MicrovmError, match="cannot remove stale pidfile"):
-        await app.state.microvm.launch(spec(tmp_path))
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "ch.log"
+        p.write_text("one line\n")
+        assert LocalCloudHypervisor._log_tail(p) == "; last log line: one line"
+        p.write_text("")
+        assert LocalCloudHypervisor._log_tail(p) == " (log empty)"
+        p.unlink()
+        assert LocalCloudHypervisor._log_tail(p) == " (log unreadable)"
 
 
 def test_socket_stale_sweeps_a_dangling_symlink(tmp_path: Path) -> None:
@@ -1538,49 +1393,6 @@ def test_socket_stale_sweeps_a_dangling_symlink(tmp_path: Path) -> None:
     link = tmp_path / "api.sock"
     link.symlink_to(target)  # target never exists: the link dangles
     assert socket_stale(link)
-
-
-def test_cmdline_is_vmm_matrix(tmp_path: Path) -> None:
-    """The identity check's adversarial matrix (#154 r2/r3): exact-
-    field binary match plus this workspace's --api-socket pair."""
-    from msks.microvm.local import cmdline_is_vmm
-
-    sock = tmp_path / "vms" / "ws" / "api.sock"
-    ours = b"cloud-hypervisor\0--api-socket\0" + os.fsencode(str(sock)) + b"\0"
-    assert cmdline_is_vmm(ours, "cloud-hypervisor", sock)
-    # Shebang chain: interpreter argv[0], binary rides as argv[1].
-    chain = (
-        b"/usr/bin/env\0cloud-hypervisor\0--api-socket\0"
-        + os.fsencode(str(sock))
-        + b"\0"
-    )
-    assert cmdline_is_vmm(chain, "cloud-hypervisor", sock)
-    # The F-a lookalikes: substring and bare-name-without-socket.
-    assert not cmdline_is_vmm(
-        b"grep\0cloud-hypervisor\0/var/log/syslog\0",
-        "cloud-hypervisor",
-        sock,
-    )
-    assert not cmdline_is_vmm(
-        b"cloud-hypervisor-v2\0--api-socket\0"
-        + os.fsencode(str(sock))
-        + b"\0",
-        "cloud-hypervisor",
-        sock,
-    )
-    # Another workspace's socket is not ours.
-    other = tmp_path / "vms" / "other" / "api.sock"
-    assert not cmdline_is_vmm(
-        b"cloud-hypervisor\0--api-socket\0" + os.fsencode(str(other)) + b"\0",
-        "cloud-hypervisor",
-        sock,
-    )
-    # Empty cmdline (an exec window) proves nothing.
-    assert not cmdline_is_vmm(b"", "cloud-hypervisor", sock)
-    # A --api-socket flag at argv end with no value cannot pair.
-    assert not cmdline_is_vmm(
-        b"cloud-hypervisor\0--api-socket", "cloud-hypervisor", sock
-    )
 
 
 def test_socket_stale_contract(tmp_path: Path) -> None:
@@ -1617,95 +1429,3 @@ def test_socket_stale_contract(tmp_path: Path) -> None:
         for filler in fillers:
             filler.close()
         srv.close()
-
-
-async def test_launch_reports_the_vmm_log_tail_on_early_exit(
-    env, tmp_path: Path
-) -> None:
-    """A dying VMM names its own cause in the error (#151).
-
-    The stub binary replays the real fatal line from the incident
-    (CreateApiServerSocket AddrInUse) into ch.log and exits: the
-    operator error must carry it, not a bare exit code.
-    """
-    app, _, _ = env
-    stub = tmp_path / "vmm-stub"
-    stub.write_text(
-        "#!/bin/sh\n"
-        'echo "cloud-hypervisor: Fatal error: '
-        'CreateApiServerSocket(Os { code: 98, AddrInUse })" >&2\n'
-        "exit 1\n"
-    )
-    stub.chmod(0o755)
-    app.state.settings.vmm.cloud_hypervisor = str(stub)
-    with pytest.raises(MicrovmError, match="AddrInUse"):
-        await app.state.microvm.launch(spec(tmp_path))
-
-
-def test_log_tail_shapes() -> None:
-    from msks.microvm.local import LocalCloudHypervisor
-
-    with tempfile.TemporaryDirectory() as d:
-        p = Path(d) / "ch.log"
-        p.write_text("one line\n")
-        assert LocalCloudHypervisor._log_tail(p) == "; last log line: one line"
-        p.write_text("")
-        assert LocalCloudHypervisor._log_tail(p) == " (log empty)"
-        p.unlink()
-        assert LocalCloudHypervisor._log_tail(p) == " (log unreadable)"
-
-
-@pytest.mark.asyncio
-async def test_console_user_refusal_expires_at_the_deadline(
-    env, monkeypatch
-) -> None:
-    """A guest that keeps refusing the login user past the vsock
-    deadline fails with the seed named (#248) — not the generic
-    is-the-VM-running line a bring-up failure carries."""
-    app, state_dir, _ = env
-    app.state.settings.vmm.vsock_wait_timeout_s = 0.1
-    vm_dir = state_dir / "vms" / WID
-    vm_dir.mkdir(parents=True, exist_ok=True)
-    stub_vm = await spawn_stub_vmm(app)
-    vm_dir.joinpath("ch.pid").write_text(str(stub_vm.pid))
-    path = vm_dir / "vsock.sock"
-
-    async def session(reader, writer):
-        await reader.readline()
-        writer.write(b"OK 5\n")
-        await writer.drain()
-        assert await reader.readuntil(b"GO\n")
-        writer.write(b"MSKS ERR user\n")
-        await writer.drain()
-        writer.close()
-
-    server = await asyncio.start_unix_server(session, str(path))
-    try:
-        with pytest.raises(MicrovmError, match="serves no such account"):
-            await app.state.microvm.console(WID, user="alice")
-    finally:
-        server.close()
-        await server.wait_closed()
-        stub_vm.kill()
-        await stub_vm.wait()
-
-
-def test_prepare_mints_the_interceptor_ca_into_the_seed(
-    env, tmp_path: Path
-) -> None:
-    """Create mints the workspace's interceptor CA and the seed
-    carries its certificate (#424, #200's create-time half): the
-    guest trusts its own interception path from first boot."""
-    from msks.interceptor import ca as ica
-    from msks.spec.vm import VmSpec
-
-    app, state_dir, _ch = env
-    driver = app.state.microvm.local
-    vm_spec = VmSpec(workspace_id=WID, kernel=Path("/k"), rootfs=Path("/r"))
-    pem = driver.interceptor_ca_pem(vm_spec)
-    assert pem.startswith("-----BEGIN CERTIFICATE-----")
-    ca_path = state_dir / "vms" / WID / ica.CA_CERT_FILE
-    assert ca_path.is_file()
-    assert pem == ca_path.read_text()
-    # Idempotent: the second read is the same certificate.
-    assert driver.interceptor_ca_pem(vm_spec) == pem

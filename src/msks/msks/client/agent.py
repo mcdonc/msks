@@ -51,7 +51,7 @@ MAX_MESSAGE = 1 << 16
 #: three NIST curves OpenSSH clients offer (P-256/384/521; the
 #: mint only ever produces P-256, but an operator's own key may
 #: carry the wider curves — the guest's sshd stays the authority,
-#: so the agent follows sshsig's existing set).
+#: so the agent follows OpenSSH's existing set).
 CURVE_NAMES = {
     ec.SECP256R1: "ecdsa-sha2-nistp256",
     ec.SECP384R1: "ecdsa-sha2-nistp384",
@@ -327,10 +327,8 @@ def environment_agent() -> str | None:
     """The agent socket the operator's environment names, when it
     names one and it exists.
 
-    The one resolver for the operator's agent: the console's
-    challenge signer (:mod:`msks.client.consoleauth`), ssh-session
-    agent forwarding (:mod:`msks.client.ssh`), and the agent-held
-    key authentication #123 will add all consult it.
+    The one resolver for the operator's agent: ssh-session
+    agent forwarding (:mod:`msks.client.ssh`) consults it.
     """
     path = os.environ.get("SSH_AUTH_SOCK", "")
     if path and os.path.exists(path):

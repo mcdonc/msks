@@ -5,7 +5,8 @@ workspace's state; the public half reaches the guest through the
 #41 user_data channel — the cidata seed — so a fresh workspace
 accepts ssh with no manual key steps anywhere. The private half is
 served over the authenticated API to whoever holds a token (a token
-holder already owns the root console, so this grants nothing new).
+holder already owns the root console, so this grants nothing new —
+the console is a root autologin now, #481).
 
 The key type is a setting (#115): the default is Ed25519 (#138 —
 FIPS 186-5 approves EdDSA), with ECDSA P-256 and RSA as choices,
@@ -48,10 +49,10 @@ RSA_BITS = 3072
 #: the string and run as shell code in the guest's first boot.
 LABEL_PATTERN = re.compile(r"[a-z0-9@.\-]+")
 
-#: The workspace's login-user charset (#248): the same wire shape
-#: the console's user line accepts (the guest helper's own check,
-#: mirrored by the daemon's console validation) and the create
-#: body's `user` field enforces. It is also what keeps the
+#: The workspace's login-user charset (#248): the wire shape the
+#: create body's `user` field enforces (ssh names the account in
+#: its config alias; the console is a root failsafe, #481). It is
+#: also what keeps the
 #: interpolated login name inside `seed_script`'s quoted
 #: assignments, the same job LABEL_PATTERN does for algorithms.
 LOGIN_NAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
@@ -144,23 +145,21 @@ def mint(key_type: str) -> tuple[str, str]:
 
 def seed_script(
     public_key: str | None,
-    workspace_id: str,
     login_user: str | None = None,
     llm_token: str | None = None,
     llm_port: int = 0,
     ca_pem: str | None = None,
 ) -> str:
     """The seeding payload's script half: authorized_keys for root
-    and the msks workspace user (#63) plus the console helper's
-    allowed_signers (#123), written idempotently — and the
-    workspace's login user (#248) provisioned the same way when it
-    names an account the image does not ship.
+    and the msks workspace user (#63), written idempotently — and
+    the workspace's login user (#248) provisioned the same way when
+    it names an account the image does not ship.
 
     The same mkdir/chmod/append shape #110's smoke planted by hand,
     now the daemon's own first-boot step. The msks user's home rides
     the persistent /home volume (#14): the seed makes it — owned by
-    the user, populated from /etc/skel — before the console helper
-    ever connects (#171; a bare ``install -d`` of the .ssh path
+    the user, populated from /etc/skel — before any login needs it
+    (#171; a bare ``install -d`` of the .ssh path
     would leave the home itself root-owned, because install -d
     applies -o/-g to the final component only). A home that already
     carries dotfiles keeps them (a factory reset preserves the
@@ -172,17 +171,7 @@ def seed_script(
     account and its home, the key lands in its authorized_keys, and
     a sudoers entry carries the same passwordless-root grant the
     msks user holds (#169) — the operator's own account gets the
-    workspace-user posture, not a second-class one. The console
-    helper needs no provisioning of its own: it serves every
-    regular account passwd names, and the daemon's console gate
-    admits the row's recorded user.
-
-    The allowed_signers file is the console challenge's trust store
-    (#123): the guest helper's ``ssh-keygen -Y verify`` checks the
-    client's signature against it, principal-bound to this
-    workspace's id. The daemon relays the challenge and the
-    signature; it can answer for neither. ssh and console share the
-    key: what authorized_keys accepts, allowed_signers accepts.
+    workspace-user posture, not a second-class one.
 
     A workspace's LLM proxy credential rides the same script
     (#259): the token file under /etc/msks and the profile.d
@@ -210,12 +199,10 @@ def seed_script(
         return keyless_seed_script(llm_token, llm_port, ca_pem)
     script = (
         "#!/bin/sh\n"
-        "# msks (#111, #123): the workspace identity — authorized_keys\n"
-        "# for root and the msks user, and the console helper's\n"
-        "# allowed_signers, planted first boot.\n"
+        "# msks (#111): the workspace identity — authorized_keys\n"
+        "# for root and the msks user, planted first boot.\n"
         "set -eu\n"
         f"key='{public_key}'\n"
-        f"wsid='{workspace_id}'\n"
         "install -d -m 0700 -o root -g root /root/.ssh\n"
         "touch /root/.ssh/authorized_keys\n"
         'grep -qxF "$key" /root/.ssh/authorized_keys '
@@ -246,21 +233,6 @@ def seed_script(
     )
     if login_user not in (None, "root", "msks"):
         script += named_user_block(login_user)
-    script += (
-        # The signers line: the workspace id principal, then the
-        # key's own two fields (an authorized_keys comment is not
-        # signers syntax). Splitting with globbing off — the key's
-        # charset carries no glob characters.
-        "set -f\n"
-        "set -- $key\n"
-        "install -d -m 0700 -o root -g root /etc/msks\n"
-        "signers=/etc/msks/console.allowed_signers\n"
-        'touch "$signers"\n'
-        'grep -qxF "$wsid $1 $2" "$signers" '
-        '|| printf \'%s %s %s\\n\' "$wsid" "$1" "$2" >> "$signers"\n'
-        'chown root:root "$signers"\n'
-        'chmod 0600 "$signers"\n'
-    )
     if llm_token is not None:
         script += llm_seed_block(llm_token, llm_port)
     if ca_pem is not None:
@@ -422,19 +394,17 @@ def named_user_block(login_user: str) -> str:
 
     A name that lands on an account the image already ships with a
     system uid (1-999: Debian's base-passwd carries charset-valid
-    names like ``sync`` and ``man``) seeds nothing: the console
-    helper refuses those accounts by its own rule, and adding one
+    names like ``sync`` and ``man``) seeds nothing: a system
+    account is not a login, and adding one
     to the workspace group would be a privilege write with no
     login behind it. The block says so on stderr (cloud-init's
-    output log, the serial console) and the rest of the script —
-    the signers store included — still runs.
+    output log, the serial console) and the rest of the script
+    still runs.
 
     A ``useradd`` that fails gets the same tolerance, for the same
-    reason the skeleton copy does: the block sits before the
-    signers store under ``set -eu``, so an abort here would plant
-    the keys but never the console challenge's trust store — and a
-    guest whose helper reads a missing store serves no challenge
-    at all (#123's opt-in shape). The failure (useradd's own
+    reason the skeleton copy does: an abort here would plant
+    the keys and never the account — and the console
+    gate would refuse the name forever after. The failure (useradd's own
     stderr and the line above) lands in the cloud-init log, and
     the seeding stands down.
     """
@@ -508,7 +478,6 @@ MIME_BOUNDARY = "============msks-identity=="
 def compose_user_data(
     operator_payload: str | None,
     public_key: str | None,
-    workspace_id: str = "",
     login_user: str | None = None,
     llm_token: str | None = None,
     llm_port: int = 0,
@@ -528,7 +497,6 @@ def compose_user_data(
         return operator_payload
     script = seed_script(
         public_key,
-        workspace_id,
         login_user,
         llm_token,
         llm_port,

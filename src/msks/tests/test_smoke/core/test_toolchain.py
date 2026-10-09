@@ -51,7 +51,7 @@ async def test_local_agent_toolchain() -> None:
         kernel=Path(VMLINUX),
         rootfs=Path(ROOTFS),
         initrd=Path(INITRD) if INITRD else None,
-        cmdline=CMDLINE or "console=hvc0 root=/dev/vda rw",
+        cmdline=CMDLINE or "console=ttyS0 root=/dev/vda rw",
         root_mib=2048,
         home_mib=256,
         egress=False,
@@ -60,7 +60,7 @@ async def test_local_agent_toolchain() -> None:
         await microvm.launch(spec)
         info = await microvm.info(wid)
         assert info.status.value == "running"
-        await await_guest_up(serial_log)
+        await await_guest_up(microvm, wid)
         # The whole toolchain answers, as root. The version checks
         # pin the shared pins (pi, herdr, claude carry the same
         # versions in both images) and Node's major (the Debian
@@ -140,7 +140,6 @@ async def test_local_agent_toolchain() -> None:
             "command -v node pi herdr claude >/dev/null "
             "&& echo UPATH-$((6*7))",
             "UPATH-42",
-            user="msks",
         )
         await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
         final = await microvm.info(wid)

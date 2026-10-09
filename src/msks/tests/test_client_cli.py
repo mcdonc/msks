@@ -1807,8 +1807,7 @@ def image_row(
         "hash": digest,
         "name": name,
         "version": version,
-        "cmdline": "console=hvc0 root=/dev/vda rw",
-        "vsock_shell_port": 1073741826,
+        "cmdline": "console=ttyS0 root=/dev/vda rw",
         "kernel_version": "6.12.107+deb13",
         "kernel_format": "raw",
         "default": default,
@@ -2141,8 +2140,7 @@ def test_image_info_prints_the_record(
     assert "ref      alpine:3.20" in out
     assert "hash     " + "c" * 64 in out
     assert "kernel   6.12.107+deb13 (raw)" in out
-    assert "cmdline  console=hvc0 root=/dev/vda rw" in out
-    assert "console  vsock port 1073741826" in out
+    assert "cmdline  console=ttyS0 root=/dev/vda rw" in out
     assert "seed     provisioner - (none declared)" in out
     assert "default  no" in out
 

@@ -95,10 +95,10 @@ class VmmSettings:
     socket_wait_timeout_s: float = 10.0
     request_timeout_s: float = 5.0
     shutdown_timeout_s: float = 20.0
-    vsock_shell_port: int = 1023
-    # Console bring-up wait: generous by default — nested-virt guests
-    # can take longer than bare metal to arm the vsock device.
-    vsock_wait_timeout_s: float = 15.0
+    # Console bring-up wait (#481): the dial retries against the
+    # virtio-console socket until this deadline — nested-virt
+    # guests can take longer than bare metal to arm the device.
+    console_wait_timeout_s: float = 15.0
     # Forward bring-up wait (#109): a freshly booted guest races
     # DHCP against its services, so a refused dial during this window
     # retries; past the deadline the refusal names the cause.
@@ -415,11 +415,8 @@ def vmm_settings_from_env(
         ),
         request_timeout_s=_env_float(env, "MSKSD_REQUEST_TIMEOUT_S", 5.0),
         shutdown_timeout_s=_env_float(env, "MSKSD_SHUTDOWN_TIMEOUT_S", 20.0),
-        vsock_shell_port=_parse_int(
-            env, "MSKSD_VSOCK_SHELL_PORT", cls.vsock_shell_port
-        ),
-        vsock_wait_timeout_s=_env_float(
-            env, "MSKSD_VSOCK_WAIT_TIMEOUT_S", cls.vsock_wait_timeout_s
+        console_wait_timeout_s=_env_float(
+            env, "MSKSD_CONSOLE_WAIT_TIMEOUT_S", cls.console_wait_timeout_s
         ),
         forward_wait_timeout_s=forward_wait_s,
         console_stall_timeout_s=stall_timeout_s,

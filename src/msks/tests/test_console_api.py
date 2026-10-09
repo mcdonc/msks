@@ -9,11 +9,9 @@ from fastapi.testclient import TestClient
 from msks.app import build_app
 from msks.microvm import MicrovmError
 from msks.server.api import build_api
-from msks.server.api.console import RefusalScan, bridge_console
+from msks.server.api.console import bridge_console
 from msks.settings import NetSettings, ServerSettings, Settings
 from test_api import TOKEN, StubMicrovm, auth
-
-from msks import imagestore
 
 
 class ConsoleStub(StubMicrovm):
@@ -23,19 +21,12 @@ class ConsoleStub(StubMicrovm):
         super().__init__()
         self._tmp_path = tmp_path
         self.refusals: set[str] = set()
-        self.console_calls: list[tuple[str, str | None, int, int]] = []
+        self.console_calls: list[str] = []
 
-    async def console(
-        self,
-        workspace_id: str,
-        user: str | None = None,
-        rows: int = 0,
-        cols: int = 0,
-        term: str = "xterm",
-    ):
-        self.console_calls.append((workspace_id, user, rows, cols, term))
+    async def console(self, workspace_id: str):
+        self.console_calls.append(workspace_id)
         if workspace_id in self.refusals:
-            raise MicrovmError("no live vsock socket")
+            raise MicrovmError("no live console socket")
         # The socket name shortens the workspace id: the daemon-minted
         # ids (#246) are 10 hex chars, and a deep xdist tmp dir plus
         # that name can push the AF_UNIX path past its 108-byte limit.
@@ -250,99 +241,6 @@ async def test_bridge_closes_cleanly_on_guest_eof() -> None:
     assert "console closed" in reason
 
 
-class _RefusalSocket:
-    """A websocket fake that never disconnects: the refusal close
-    must come from the scan, not a side effect of the client going."""
-
-    def __init__(self) -> None:
-        self.closed: tuple[int, str] | None = None
-
-    async def receive(self):
-        await asyncio.sleep(3600)
-
-    async def send_bytes(self, data: bytes) -> None:
-        return
-
-    async def close(self, code: int = 1000, reason: str = "") -> None:
-        self.closed = (code, reason)
-
-
-async def test_bridge_closes_with_named_code_on_auth_refusal() -> None:
-    """#217: the #123 refusal line closes the websocket with 4403
-    and the guest's text as the reason — even when the stream stays
-    open (the scan wakes the bridge on its own)."""
-    socket = _RefusalSocket()
-    reader = asyncio.StreamReader()
-    reader.feed_data(b"banner\r\nMSKS ERR auth\r\n")
-    # Deliberately NO feed_eof: the close must not wait on the
-    # guest's exit.
-    await asyncio.wait_for(bridge_console(socket, reader, _SilentWriter()), 5)
-    assert socket.closed is not None
-    code, reason = socket.closed
-    assert code == 4403, reason
-    assert "MSKS ERR auth" in reason
-
-
-async def test_refusal_scan_distrusts_buffer_start_after_slide() -> None:
-    """Once the bounded tail slides, the buffer's first byte is a
-    mid-stream position: a refusal line arriving WITHOUT a leading
-    newline (cut exactly at a chunk boundary) does not read as a
-    line start."""
-    scan = RefusalScan()
-    scan.feed(b"x" * 300)  # the tail slid; the stream start is gone
-    assert scan._at_start is False
-    scan.feed(b"MSKS ERR auth\r\n")
-    assert scan.text is None
-    assert not scan.matched.is_set()
-
-
-async def test_refusal_scan_stands_down_after_auth_ok() -> None:
-    """The gate: once the helper says AUTH OK, later `MSKS ERR` text
-    in shell output (a log catted, journalctl) is not a refusal."""
-    scan = RefusalScan()
-    scan.feed(b"AUTH OK\r\n")
-    scan.feed(b"$ cat helper.log\r\nMSKS ERR auth\r\n")
-    assert scan.text is None
-    assert not scan.matched.is_set()
-
-
-async def test_bridge_stays_open_after_auth_ok_despite_err_text() -> None:
-    """The same gate end-to-end: a logged refusal line AFTER auth is
-    shell output; the session keeps its stream (EOF ends it, with
-    the normal 1000 — not the 4403 refusal)."""
-    socket = _RefusalSocket()
-    reader = asyncio.StreamReader()
-    reader.feed_data(b"AUTH OK\r\nMSKS ERR auth\r\n")
-    reader.feed_eof()
-    await asyncio.wait_for(bridge_console(socket, reader, _SilentWriter()), 5)
-    assert socket.closed is not None
-    assert socket.closed[0] == 1000, socket.closed
-
-
-async def test_refusal_scan_ignores_bytes_after_the_match() -> None:
-    """Post-match chunks are dropped: the scan records the refusal
-    once and never re-arms (the bridge closes on the first one)."""
-    scan = RefusalScan()
-    scan.feed(b"MSKS ERR auth\r\n")
-    assert scan.text == "MSKS ERR auth"
-    scan.feed(b"more bytes\r\n")
-    assert scan.text == "MSKS ERR auth"
-
-
-async def test_bridge_refusal_scan_spans_chunk_splits() -> None:
-    """The refusal line can arrive split across relayed reads; the
-    scan's tail buffer must reassemble it."""
-    socket = _RefusalSocket()
-    reader = asyncio.StreamReader()
-    reader.feed_data(b"junk\r\nMSKS E")
-    reader.feed_data(b"RR auth\r\n")
-    await asyncio.wait_for(bridge_console(socket, reader, _SilentWriter()), 5)
-    assert socket.closed is not None
-    code, reason = socket.closed
-    assert code == 4403, reason
-    assert "MSKS ERR auth" in reason
-
-
 class _StallSocket:
     """A websocket fake: one input message, then silence forever."""
 
@@ -526,8 +424,9 @@ async def test_bridge_zero_stall_timeout_disables_the_watchdog() -> None:
     )
 
 
-def _make_prelude_image(tmp_path, hash_name: str = "a" * 64) -> str:
-    """A catalog image with console markers; returns its hash."""
+def _make_console_image(tmp_path, hash_name: str = "a" * 64) -> str:
+    """A catalog image with console-capable facts; returns its
+    hash."""
     from msks import imagestore
 
     cache = imagestore.images_dir(tmp_path) / hash_name
@@ -541,19 +440,16 @@ def _make_prelude_image(tmp_path, hash_name: str = "a" * 64) -> str:
                 "name": "debian",
                 "version": "13.6",
                 "cmdline": "console=ttyS0",
-                "vsock_shell_port": 1023,
-                "console_protocol": "prelude-v1",
-                "console_users": ["root", "msks"],
             }
         )
     )
     return hash_name
 
 
-def _make_prelude_workspace(
+def _make_console_workspace(
     client, tmp_path, workspace_id: str = "ws-p"
 ) -> str:
-    digest = _make_prelude_image(tmp_path)
+    digest = _make_console_image(tmp_path)
     response = client.post(
         "/api/v1/workspaces",
         json={"id": workspace_id, "image": "debian:13.6"},
@@ -562,204 +458,3 @@ def _make_prelude_workspace(
     assert response.status_code == 201, response.text
     _ = digest
     return response.json()["id"]  # the minted id (#246)
-
-
-def test_console_default_user_root_legacy(console_api, tmp_path) -> None:
-    api, app, stub = console_api
-    with TestClient(api) as client:
-        wid = _make_workspace(client)
-        with client.websocket_connect(
-            "/api/v1/workspaces/ws-c/console",
-            headers=auth(),
-        ) as socket:
-            socket.send_bytes(b"hello")
-            got = b""
-            while b"HELLO" not in got:
-                got += socket.receive_bytes()
-    assert stub.console_calls == [(wid, None, 0, 0, "xterm")]
-
-
-def test_console_unknown_user_closes_4400(console_api) -> None:
-    api, app, stub = console_api
-    with TestClient(api) as client:
-        _make_workspace(client)
-        with client.websocket_connect(
-            "/api/v1/workspaces/ws-c/console?user=nobody",
-            headers=auth(),
-        ) as s:
-            with pytest.raises(WebSocketDisconnect) as caught:
-                s.receive_text()
-        assert caught.value.code == 4400
-        assert "not served" in (caught.value.reason or "")
-
-
-def test_console_bad_rows_closes_4400(console_api) -> None:
-    api, app, stub = console_api
-    with TestClient(api) as client:
-        _make_workspace(client)
-        for query in ("rows=abc", "rows=0", "cols=99999", "user=Bad.Name"):
-            with client.websocket_connect(
-                f"/api/v1/workspaces/ws-c/console?{query}",
-                headers=auth(),
-            ) as s:
-                with pytest.raises(WebSocketDisconnect) as caught:
-                    s.receive_text()
-                assert caught.value.code == 4400, query
-    assert stub.console_calls == []
-
-
-def test_console_prelude_image_passes_user_and_size(
-    console_api, tmp_path
-) -> None:
-    api, app, stub = console_api
-    app.state.settings.vmm.state_dir = tmp_path
-    with TestClient(api) as client:
-        wid = _make_prelude_workspace(client, tmp_path)
-        with client.websocket_connect(
-            "/api/v1/workspaces/ws-p/console?user=msks&rows=34&cols=120",
-            headers=auth(),
-        ) as socket:
-            socket.send_bytes(b"hello")
-            got = b""
-            while b"HELLO" not in got:
-                got += socket.receive_bytes()
-    assert stub.console_calls == [(wid, "msks", 34, 120, "xterm")]
-
-
-def test_console_admits_the_workspaces_login_user(
-    console_api, tmp_path
-) -> None:
-    """The row's recorded login user (#248) is served beside the
-    image's own console users: the seed provisions the account, so
-    a name the manifest does not list still opens the console —
-    and a name neither the manifest nor the row serves still
-    closes 4400."""
-    api, app, stub = console_api
-    app.state.settings.vmm.state_dir = tmp_path
-    _make_prelude_image(tmp_path)
-    with TestClient(api) as client:
-        response = client.post(
-            "/api/v1/workspaces",
-            json={"id": "ws-lu", "image": "debian:13.6", "user": "alice"},
-            headers=auth(),
-        )
-        assert response.status_code == 201, response.text
-        wid = response.json()["id"]
-        with client.websocket_connect(
-            "/api/v1/workspaces/ws-lu/console?user=alice",
-            headers=auth(),
-        ) as socket:
-            socket.send_bytes(b"hello")
-            got = b""
-            while b"HELLO" not in got:
-                got += socket.receive_bytes()
-        assert stub.console_calls == [(wid, "alice", 24, 80, "xterm")]
-        stub.console_calls.clear()
-        with client.websocket_connect(
-            "/api/v1/workspaces/ws-lu/console?user=nobody",
-            headers=auth(),
-        ) as s:
-            with pytest.raises(WebSocketDisconnect) as caught:
-                s.receive_text()
-        assert caught.value.code == 4400
-        assert "not served" in (caught.value.reason or "")
-    assert stub.console_calls == []
-
-
-def test_console_bad_term_closes_4400(console_api) -> None:
-    api, app, stub = console_api
-    with TestClient(api) as client:
-        _make_workspace(client)
-        for query in ("term=bad%20term", "term=" + "x" * 33):
-            with client.websocket_connect(
-                f"/api/v1/workspaces/ws-c/console?{query}",
-                headers=auth(),
-            ) as s:
-                with pytest.raises(WebSocketDisconnect) as caught:
-                    s.receive_text()
-                assert caught.value.code == 4400, query
-    assert stub.console_calls == []
-
-
-def test_console_prelude_image_carries_term(console_api, tmp_path) -> None:
-    api, app, stub = console_api
-    app.state.settings.vmm.state_dir = tmp_path
-    with TestClient(api) as client:
-        wid = _make_prelude_workspace(client, tmp_path)
-        with client.websocket_connect(
-            "/api/v1/workspaces/ws-p/console?user=msks&term=tmux-256color",
-            headers=auth(),
-        ) as socket:
-            socket.send_bytes(b"hello")
-            got = b""
-            while b"HELLO" not in got:
-                got += socket.receive_bytes()
-    assert stub.console_calls == [(wid, "msks", 24, 80, "tmux-256color")]
-
-
-def test_console_unreadable_image_record_closes_4501(
-    console_api, tmp_path
-) -> None:
-    api, app, stub = console_api
-    app.state.settings.vmm.state_dir = tmp_path
-    with TestClient(api) as client:
-        _make_prelude_workspace(client, tmp_path)
-    # Corrupt the bound image's record out-of-band: the console must
-    # refuse loudly, not silently downgrade to a legacy raw stream.
-    digest = next(
-        p.name for p in imagestore.images_dir(tmp_path).iterdir() if p.is_dir()
-    )
-    (imagestore.images_dir(tmp_path) / digest / "image.json").write_text(
-        "{corrupt"
-    )
-    with TestClient(api) as client:
-        with client.websocket_connect(
-            "/api/v1/workspaces/ws-p/console",
-            headers=auth(),
-        ) as s:
-            with pytest.raises(WebSocketDisconnect) as caught:
-                s.receive_text()
-        assert caught.value.code == 4501
-        assert "unreadable" in (caught.value.reason or "")
-    assert stub.console_calls == []
-
-
-def test_console_missing_image_record_closes_4501(
-    console_api, tmp_path
-) -> None:
-    api, app, stub = console_api
-    app.state.settings.vmm.state_dir = tmp_path
-    with TestClient(api) as client:
-        _make_prelude_workspace(client, tmp_path)
-    # The bound image's record vanished (out-of-band deletion): the
-    # console refuses loudly instead of silently downgrading.
-    digest = next(
-        p.name for p in imagestore.images_dir(tmp_path).iterdir() if p.is_dir()
-    )
-    (imagestore.images_dir(tmp_path) / digest / "image.json").unlink()
-    with TestClient(api) as client:
-        with client.websocket_connect(
-            "/api/v1/workspaces/ws-p/console",
-            headers=auth(),
-        ) as s:
-            with pytest.raises(WebSocketDisconnect) as caught:
-                s.receive_text()
-        assert caught.value.code == 4501
-        assert "unreadable" in (caught.value.reason or "")
-    assert stub.console_calls == []
-
-
-def test_console_prelude_image_default_size(console_api, tmp_path) -> None:
-    api, app, stub = console_api
-    app.state.settings.vmm.state_dir = tmp_path
-    with TestClient(api) as client:
-        wid = _make_prelude_workspace(client, tmp_path)
-        with client.websocket_connect(
-            "/api/v1/workspaces/ws-p/console?user=root",
-            headers=auth(),
-        ) as socket:
-            socket.send_bytes(b"x")
-            got = b""
-            while b"X" not in got:
-                got += socket.receive_bytes()
-    assert stub.console_calls == [(wid, "root", 24, 80, "xterm")]

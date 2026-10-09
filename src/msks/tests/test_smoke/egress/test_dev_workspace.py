@@ -65,7 +65,7 @@ async def test_local_dev_workspace_bootstrap() -> None:
         kernel=Path(VMLINUX),
         rootfs=Path(ROOTFS),
         initrd=Path(INITRD) if INITRD else None,
-        cmdline=CMDLINE or "console=hvc0 root=/dev/vda rw",
+        cmdline=CMDLINE or "console=ttyS0 root=/dev/vda rw",
         # 8 GiB covers the in-guest suite (pytest -n auto across the
         # guest's cores); the bootstrap itself is downloads, not
         # builds. The overlay holds the venv and uv's Python.
@@ -89,7 +89,6 @@ async def test_local_dev_workspace_bootstrap() -> None:
             wid,
             f"{probe_cmd} && echo {marker_prefix}-$((6*7))",
             f"{marker_prefix}-42",
-            app=app,
             hostname=wid,
         )
 
@@ -97,7 +96,7 @@ async def test_local_dev_workspace_bootstrap() -> None:
         await app.state.net.start()
         await app.state.model.create_workspace(spec)
         await microvm.launch(spec)
-        await await_guest_up(serial_log, hostname=wid)
+        await await_guest_up(microvm, wid, hostname=wid)
         # First boot: the seed runs in cloud-final; poll its state
         # trail to "done" (each tool's marker gated on its presence).
         await await_dev_state(microvm, app, wid, b"done", hostname=wid)
@@ -113,7 +112,7 @@ async def test_local_dev_workspace_bootstrap() -> None:
         await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
         serial_log.unlink(missing_ok=True)
         await microvm.launch(spec)
-        await await_guest_up(serial_log, hostname=wid)
+        await await_guest_up(microvm, wid, hostname=wid)
         await await_dev_state(microvm, app, wid, b"done", hostname=wid)
         # Console-readiness after the reboot plus the persistence
         # proof: the venv survives, and the rerun log does not exist
@@ -134,7 +133,6 @@ async def test_local_dev_workspace_bootstrap() -> None:
             "sh /mnt/cidata/user-data >/root/.msks-bootstrap/rerun.log 2>&1; "
             "echo R-$?",
             "R-0",
-            app=app,
             hostname=wid,
         )
         await await_dev_state(microvm, app, wid, b"done", hostname=wid)
@@ -163,7 +161,6 @@ async def test_local_dev_workspace_bootstrap() -> None:
             "echo done-$? >/root/.msks-bootstrap/unit-tests.rc' "
             ">/dev/null 2>&1 & echo BG-$((6*7)); fi",
             "BG-42",
-            app=app,
             hostname=wid,
         )
         await await_dev_state(microvm, app, wid, b"done-0", hostname=wid)

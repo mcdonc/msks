@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
-"""Measure workspace boot: start -> interactive vsock shell.
+"""Measure workspace boot: start -> interactive console shell.
 
 The clock starts immediately before ``microvm.launch`` (the local
-backend's equivalent of ``POST .../start``) and stops when the vsock
+backend's equivalent of ``POST .../start``) and stops when the
 console answers with a shell prompt — the same readiness definition
 as #37. Per-run breakdown:
 
 - t_vmm          launch() returned (CH spawn + create + boot accepted)
-- t_kernel       first serial byte (kernel decompressed and printing)
-- t_login        serial shows the login getty (last userspace unit)
-- t_console      vsock handshake completed (console service listening)
+- t_kernel       first console byte (kernel decompressed and printing)
+- t_console      console socket connected (device up)
 - t_prompt       the shell rendered its first prompt (interactive)
 
-Guest-internal systemd timings are collected through the vsock shell
+Guest-internal systemd timings are collected through the console
 (``systemd-analyze``) and printed once per run.
 
 Usage (from the repo root, inside the devenv shell):
@@ -40,7 +39,7 @@ import uuid
 from pathlib import Path
 
 from msks.app import build_app
-from msks.microvm import VmSpec
+from msks.microvm import VmSpec, close_console_stream
 from msks.settings import Settings, VmmSettings
 
 # The guest-asset loader lives in the test tree (#403); a dev script
@@ -51,34 +50,7 @@ sys.path.insert(
 )
 from guestassets import load_guest_assets  # noqa: E402
 
-LOGIN_MARKER = "msks-guest login:"
 PROMPT_MARKER = b"root@msks-guest"
-
-
-async def first_serial_byte(
-    serial_log: Path, timeout_s: float = 30.0
-) -> float:
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout_s
-    while loop.time() < deadline:
-        if serial_log.exists() and serial_log.stat().st_size > 0:
-            return loop.time()
-        await asyncio.sleep(0.005)
-    raise TimeoutError(f"no serial output within {timeout_s}s")
-
-
-async def wait_marker(
-    path: Path, marker: str, timeout_s: float = 60.0
-) -> float:
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout_s
-    while loop.time() < deadline:
-        if path.exists() and marker in path.read_text(
-            encoding="utf-8", errors="replace"
-        ):
-            return loop.time()
-        await asyncio.sleep(0.01)
-    raise TimeoutError(f"{marker!r} never appeared within {timeout_s}s")
 
 
 async def read_until_prompt(reader, timeout_s: float = 30.0) -> float:
@@ -120,18 +92,6 @@ async def run_shell_command(
         ):
             return out.decode("utf-8", "replace")
     return out.decode("utf-8", "replace") + "\n(timeout)"
-
-
-def kernel_start_gap(serial_log: Path) -> str | None:
-    """The kernel timestamp on the last printk: initrd cost, roughly."""
-    try:
-        text = serial_log.read_text(encoding="utf-8", errors="replace")
-    except FileNotFoundError:
-        return None
-    stamps = [
-        ln[1 : ln.index("]")] for ln in text.splitlines() if is_stamp(ln)
-    ]
-    return stamps[-1].strip() if stamps else None
 
 
 def is_stamp(line: str) -> bool:
@@ -193,40 +153,47 @@ async def collect_guest_memory(reader, writer, result: dict) -> None:
     record_guest_memory(result, parse_meminfo(out))
 
 
-async def measure_boot(microvm, spec, serial_log, result: dict) -> tuple:
-    """Fill the timing dict; return it with the launch timestamp."""
+async def measure_boot(microvm, spec, result: dict) -> tuple:
+    """Fill the timing dict; return it with the launch timestamp.
+
+    The console is the serial device (#481): after launch, one
+    connect carries the whole readiness story — the socket accepts
+    (t_console), the first byte arrives (t_kernel, the decompressed
+    kernel printing), and the getty's prompt renders (t_prompt,
+    interactive).
+    """
     t0 = time.perf_counter()
     await microvm.launch(spec)
     result["t_vmm"] = time.perf_counter() - t0
-    result["t_kernel"] = (await first_serial_byte(serial_log)) - t0
-    # The console is the readiness path (#37 definition) — measured
-    # CONCURRENTLY with the serial getty: the vsock console answers
-    # long before the login prompt renders.
-    login_task = asyncio.create_task(wait_marker(serial_log, LOGIN_MARKER))
-    reader, writer = await microvm.console(spec.workspace_id, user="root")
+    reader, writer = await microvm.console(spec.workspace_id)
     result["t_console"] = time.perf_counter() - t0
-    result["t_prompt"] = (await read_until_prompt(reader)) - t0
+    # The kernel console streams unbidden; an early boot may be
+    # past that, so nudge once for the first byte.
+    writer.write(b"\n")
+    await writer.drain()
+    first = await asyncio.wait_for(reader.read(4096), 30.0)
+    result["t_kernel"] = time.perf_counter() - t0
+    buf = first
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 30.0
+    while PROMPT_MARKER not in buf and loop.time() < deadline:
+        try:
+            buf += await asyncio.wait_for(reader.read(4096), timeout=1.0)
+        except TimeoutError:
+            pass
+    result["t_prompt"] = time.perf_counter() - t0
     await collect_guest_memory(reader, writer, result)
-    writer.close()
-    with contextlib.suppress(Exception):
-        await writer.wait_closed()
-    try:
-        result["t_login"] = (
-            await asyncio.wait_for(asyncio.shield(login_task), timeout=30.0)
-        ) - t0
-    except TimeoutError:
-        result["t_login"] = None
-    login_task.cancel()
-    return result, t0
+    await close_console_stream(reader, writer)
+    return t0, result
 
 
 def setup_run(assets) -> tuple:
-    """A fresh state dir, driver, spec, and serial-log path per run."""
+    """A fresh state dir, driver, and spec per run."""
     state_dir = Path(f"/tmp/msks-perf-{uuid.uuid4().hex[:8]}")
     settings = Settings(vmm=VmmSettings(state_dir=state_dir))
     app = build_app(settings)
     wid = f"perf-{uuid.uuid4().hex[:8]}"
-    serial_log = state_dir / "vms" / wid / "serial.log"
+
     spec = VmSpec(
         workspace_id=wid,
         kernel=assets.vmlinux,
@@ -235,15 +202,15 @@ def setup_run(assets) -> tuple:
         cmdline=assets.cmdline,
         egress=False,
     )
-    return app.state.microvm, spec, serial_log, state_dir
+    return app.state.microvm, spec, state_dir
 
 
 async def collect_blame(microvm, wid: str) -> list[str]:
-    reader, writer = await microvm.console(wid, user="root")
+    reader, writer = await microvm.console(wid)
     blame = await run_shell_command(
         reader, writer, "systemd-analyze blame | head -12"
     )
-    writer.close()
+    await close_console_stream(reader, writer)
     # Keep timing lines only; the first line is the echoed command
     # prompt, not blame output.
     return [
@@ -265,7 +232,7 @@ async def teardown(microvm, wid: str, state_dir: Path, keep: bool) -> None:
     try:
         await microvm.kill(wid)
     finally:
-        # cleanup() deletes the vm dir (serial log included); keep
+        # cleanup() deletes the vm dir; keep
         # means the logs are wanted for diagnosis.
         if not keep:
             with contextlib.suppress(Exception):
@@ -274,12 +241,11 @@ async def teardown(microvm, wid: str, state_dir: Path, keep: bool) -> None:
 
 
 async def one_run(assets, keep: bool = False) -> dict:
-    microvm, spec, serial_log, state_dir = setup_run(assets)
+    microvm, spec, state_dir = setup_run(assets)
     wid = spec.workspace_id
     result: dict = {"workspace": wid}
     try:
-        result, _t0 = await measure_boot(microvm, spec, serial_log, result)
-        result["kernel_last_stamp"] = kernel_start_gap(serial_log)
+        result, _t0 = await measure_boot(microvm, spec, result)
         record_memory(result, microvm, wid, spec)
         if not keep:
             result["blame"] = await collect_blame(microvm, wid)
@@ -293,7 +259,6 @@ RUN_KEYS = (
     "t_kernel",
     "t_console",
     "t_prompt",
-    "t_login",
     "vmm_rss_mib",
     "guest_mem_mib",
 )

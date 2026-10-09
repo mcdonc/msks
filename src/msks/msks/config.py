@@ -72,8 +72,7 @@ SETTING_ENV_VARS: tuple[str, ...] = (
     "MSKSD_SOCKET_WAIT_TIMEOUT_S",
     "MSKSD_REQUEST_TIMEOUT_S",
     "MSKSD_SHUTDOWN_TIMEOUT_S",
-    "MSKSD_VSOCK_SHELL_PORT",
-    "MSKSD_VSOCK_WAIT_TIMEOUT_S",
+    "MSKSD_CONSOLE_WAIT_TIMEOUT_S",
     "MSKSD_FORWARD_WAIT_TIMEOUT_S",
     "MSKSD_CONSOLE_STALL_TIMEOUT_S",
     "MSKSD_MOVE_WAIT_TIMEOUT_S",
@@ -491,10 +490,8 @@ def render_template() -> str:
 #                           # per-workspace artifacts
 # cloud_hypervisor: cloud-hypervisor  # the VMM binary the local
 #                           # driver execs
-# vsock_shell_port: 1023    # the vsock port the guest console
-#                           # listens on
-# vsock_wait_timeout_s: 15.0    # seconds to wait for the console at
-#                           # boot
+# console_wait_timeout_s: 15.0  # seconds to wait for the console
+#                           # device at boot
 # console_stall_timeout_s: 60.0  # seconds of input-unanswered
 #                           # silence before a console session is
 #                           # closed as stalled (4502); 0 disables

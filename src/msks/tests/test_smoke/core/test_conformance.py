@@ -37,7 +37,7 @@ def guest_archive() -> Path:
 @needs_local
 async def test_conformance_passes_on_the_built_guest() -> None:
     """The checker's own medicine: every contract point the shipped
-    image claims, it passes — boot, prelude console, overlay, home
+    image claims, it passes — boot, console getty, overlay, home
     volume, seed, ACPI shutdown."""
     rows = await check_image(
         guest_archive(),

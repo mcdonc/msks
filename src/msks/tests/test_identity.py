@@ -58,11 +58,10 @@ def test_seed_script_plants_both_users_and_the_trust_store() -> None:
     """The script targets root and the msks user with the
     mkdir/chmod/append shape, and a key already present is not
     duplicated."""
-    script = seed_script(PUBLIC, "ws-id")
+    script = seed_script(PUBLIC)
     assert script.startswith("#!/bin/sh\n")
     assert f"key='{PUBLIC}'" in script
-    assert "wsid='ws-id'" in script
-    assert script.count("grep -qxF") == 3
+    assert script.count("grep -qxF") == 2
     assert "/root/.ssh/authorized_keys" in script
     assert "/home/msks/.ssh/authorized_keys" in script
     assert "chown msks:msks" in script
@@ -73,15 +72,12 @@ def test_seed_script_plants_both_users_and_the_trust_store() -> None:
     assert "chown -R msks:msks /home/msks" in script
     assert "install -d -m 0700 -o msks -g msks /home/msks/.ssh" in script
     # Idempotent shape: the append only runs when grep misses.
-    assert script.count("|| printf") == 3
+    assert script.count("|| printf") == 2
     assert script.count(">> /root/.ssh/authorized_keys") == 1
     assert script.count(">> /home/msks/.ssh/authorized_keys") == 1
     # The console challenge's trust store (#123): the workspace id
     # principal, the key's own two fields (the authorized_keys
     # comment is not signers syntax), root-owned and private.
-    assert "/etc/msks/console.allowed_signers" in script
-    assert '"$wsid" "$1" "$2" >> "$signers"' in script
-    assert 'chmod 0600 "$signers"' in script
     # No login user named: the shipped accounts are the whole
     # provisioning, and no useradd runs (#248).
     assert "useradd" not in script
@@ -92,7 +88,7 @@ def test_seed_script_provisions_a_named_login_user() -> None:
     first boot: the account (only when missing), the #171 home
     shape, its authorized_keys, and the #169 passwordless-sudo
     grant — the same posture the msks account carries."""
-    script = seed_script(PUBLIC, "ws-id", "alice")
+    script = seed_script(PUBLIC, "alice")
     assert "luser='alice'" in script
     # The account is made only when passwd names it — a
     # re-provision or an operator-premade account keeps its uid.
@@ -121,32 +117,30 @@ def test_seed_script_provisions_a_named_login_user() -> None:
     assert script.count('>> "/home/$luser/.ssh/authorized_keys"') == 1
     assert 'chown -R "$luser:" "/home/$luser"' in script
     assert 'chmod 0600 "/home/$luser/.ssh/authorized_keys"' in script
-    # The root, msks, and signers lines ride along unchanged.
-    assert script.count("grep -qxF") == 4
-    assert 'chmod 0600 "$signers"' in script
+    # The root and msks lines ride along unchanged.
+    assert script.count("grep -qxF") == 3
 
 
 def test_seed_script_skips_a_system_account_name() -> None:
     """A name that lands on a system account the image ships
     (Debian's base-passwd carries charset-valid names like
-    ``sync``) seeds nothing: the console helper refuses those
-    accounts on its own rule, and adding one to the workspace
-    group would be a privilege write with no login behind it — the
-    block says so on stderr, the provisioning sits behind a guard,
-    and the rest of the script (the signers store included) still
-    runs."""
-    script = seed_script(PUBLIC, "ws-id", "sync")
+    ``sync``) seeds nothing: a system account is not a login, and
+    adding one to the workspace group would be a privilege write
+    with no login behind it — the block says so on stderr, the
+    provisioning sits behind a guard, and the rest of the script
+    still runs."""
+    script = seed_script(PUBLIC, "sync")
     assert 'elif [ "$luid" -lt 1000 ] && [ "$luid" -ne 0 ]; then' in script
     assert "names a system account" in script
     assert "seed_user=no" in script
     assert 'if [ "$seed_user" = yes ]; then' in script
     guarded = script.split('if [ "$seed_user" = yes ]; then')[1]
     assert "usermod -aG wheel" in guarded
-    # The signers block stays outside the guard — a skipped login
-    # user never costs the console challenge its trust store.
-    assert script.index('chmod 0600 "$signers"') > script.index(
-        'if [ "$seed_user" = yes ]; then'
-    )
+    # The root keys stay outside the guard — a skipped login user
+    # never costs the workspace its identity.
+    assert script.index(
+        "chmod 0600 /root/.ssh/authorized_keys"
+    ) < script.index('if [ "$seed_user" = yes ]; then')
 
 
 def sandboxed(script: str, sandbox) -> str:
@@ -229,9 +223,7 @@ def run_seed(
         [
             "sh",
             "-c",
-            sandboxed(
-                seed_script(PUBLIC, "ws-id", "alice", ca_pem=ca_pem), sandbox
-            ),
+            sandboxed(seed_script(PUBLIC, "alice", ca_pem=ca_pem), sandbox),
         ],
         env=env,
         capture_output=True,
@@ -277,7 +269,7 @@ def test_seed_script_executes_the_skip_for_a_system_uid(tmp_path) -> None:
     entry under uid 1000 seeds nothing for the name the script
     targets (no home, no group join — the paths the seeded
     shape WOULD touch) while the rest of the script — root's keys,
-    the msks home, the signers store — still lands."""
+    the msks home — still lands."""
     sandbox = prepare_sandbox(tmp_path)
     done = run_seed(
         sandbox,
@@ -295,24 +287,18 @@ def test_seed_script_executes_the_skip_for_a_system_uid(tmp_path) -> None:
     # The rest of the seed still ran.
     assert (sandbox / "root" / ".ssh" / "authorized_keys").read_text()
     assert (sandbox / "home" / "msks" / ".ssh" / "authorized_keys").exists()
-    assert (sandbox / "msks" / "console.allowed_signers").exists()
 
 
 def test_seed_script_tolerates_a_failed_useradd(tmp_path) -> None:
     """A useradd that fails stands the seeding down without
-    aborting the script: the block sits before the signers store
-    under ``set -eu``, and an abort would plant the keys but never
-    the console challenge's trust store — a guest whose helper
-    reads a missing store serves no challenge at all (#123's
-    opt-in shape)."""
+    aborting the script: an abort under ``set -eu`` would plant the
+    keys but never finish the seeded accounts' provisioning."""
     sandbox = prepare_sandbox(tmp_path)
     done = run_seed(sandbox, guest_passwd_line="", useradd_fails=True)
     assert done.returncode == 0, done.stderr
     assert "could not be created" in done.stderr
     assert not (sandbox / "home" / "alice").exists()
     assert "usermod" not in sandbox.joinpath("stub.log").read_text()
-    # The trust store still landed.
-    assert (sandbox / "msks" / "console.allowed_signers").exists()
 
 
 def test_seed_script_executes_the_keep_for_a_regular_uid(tmp_path) -> None:
@@ -340,10 +326,10 @@ def test_seed_script_skips_provisioning_for_shipped_users() -> None:
     either as the login user records it on the row and seeds
     nothing new — no useradd, no group join."""
     for shipped in ("root", "msks"):
-        script = seed_script(PUBLIC, "ws-id", shipped)
+        script = seed_script(PUBLIC, shipped)
         assert "useradd" not in script
         assert "usermod" not in script
-        assert script == seed_script(PUBLIC, "ws-id")
+        assert script == seed_script(PUBLIC)
 
 
 def test_compose_without_key_is_verbatim() -> None:
@@ -356,17 +342,15 @@ def test_compose_without_key_is_verbatim() -> None:
 def test_compose_without_payload_is_the_script() -> None:
     """A minted key and no operator payload: the seed is the script
     alone, one plain document."""
-    assert compose_user_data(None, PUBLIC, "ws-id") == seed_script(
-        PUBLIC, "ws-id"
-    )
+    assert compose_user_data(None, PUBLIC) == seed_script(PUBLIC)
 
 
 def test_compose_carries_the_login_user_into_the_script() -> None:
     """The login user rides the composed document the same way it
     rides the bare script (#248): the seed the guest runs is the
     one for THIS workspace's user."""
-    assert compose_user_data(None, PUBLIC, "ws-id", "alice") == seed_script(
-        PUBLIC, "ws-id", "alice"
+    assert compose_user_data(None, PUBLIC, "alice") == seed_script(
+        PUBLIC, "alice"
     )
 
 
@@ -374,13 +358,13 @@ def test_compose_merges_script_and_script_payload() -> None:
     """Both halves present: MIME multipart, script first, the
     operator's shell payload second with its sniffed type."""
     payload = "#!/bin/sh\necho operator\n"
-    composed = compose_user_data(payload, PUBLIC, "ws-id")
+    composed = compose_user_data(payload, PUBLIC)
     assert composed.startswith(
         f'Content-Type: multipart/mixed; boundary="{MIME_BOUNDARY}"'
     )
     assert 'Content-Type: text/x-shellscript; charset="utf-8"' in composed
     assert 'Content-Type: text/cloud-config; charset="utf-8"' not in composed
-    assert seed_script(PUBLIC, "ws-id") in composed
+    assert seed_script(PUBLIC) in composed
     assert payload in composed
     assert composed.endswith(f"--{MIME_BOUNDARY}--\n")
 
@@ -388,7 +372,7 @@ def test_compose_merges_script_and_script_payload() -> None:
 def test_compose_merges_cloud_config_payload() -> None:
     """A #cloud-config operator payload rides as text/cloud-config."""
     payload = "#cloud-config\npackages: []\n"
-    composed = compose_user_data(payload, PUBLIC, "ws-id")
+    composed = compose_user_data(payload, PUBLIC)
     assert 'Content-Type: text/cloud-config; charset="utf-8"' in composed
 
 
@@ -396,7 +380,7 @@ def test_compose_appends_missing_trailing_newline() -> None:
     """A payload without a final newline gets one: the closing
     boundary must start on its own line."""
     payload = "#!/bin/sh\necho operator"
-    composed = compose_user_data(payload, PUBLIC, "ws-id")
+    composed = compose_user_data(payload, PUBLIC)
     assert f"\n--{MIME_BOUNDARY}--" in composed
 
 
@@ -404,12 +388,8 @@ def test_unique_boundary_falls_back_when_embedded() -> None:
     """A payload embedding the boundary string forces a random one;
     ordinary payloads keep the documented boundary."""
     hostile = f"echo {MIME_BOUNDARY}\n"
-    assert MIME_BOUNDARY not in unique_boundary(
-        hostile, seed_script(PUBLIC, "ws-id")
-    )
-    assert MIME_BOUNDARY in unique_boundary(
-        "echo hi\n", seed_script(PUBLIC, "ws-id")
-    )
+    assert MIME_BOUNDARY not in unique_boundary(hostile, seed_script(PUBLIC))
+    assert MIME_BOUNDARY in unique_boundary("echo hi\n", seed_script(PUBLIC))
 
 
 def test_operator_content_type_by_first_line() -> None:
@@ -560,9 +540,7 @@ def test_seed_script_appends_the_llm_block() -> None:
     carry the msks-prefixed pair (#266): the proxy is this
     daemon's own service, so the names say so, and no vendor-shaped
     variable leaves the seed."""
-    script = seed_script(
-        PUBLIC, "ws-id", None, llm_token="msksllm1_x", llm_port=8770
-    )
+    script = seed_script(PUBLIC, llm_token="msksllm1_x", llm_port=8770)
     assert "llm_token='msksllm1_x'" in script
     assert "/etc/msks/llm.token" in script
     assert "/etc/profile.d/msks-llm.sh" in script
@@ -583,7 +561,7 @@ def test_seed_script_appends_the_llm_block() -> None:
 def test_seed_script_carries_a_token_without_an_identity() -> None:
     """A pre-#111 row healing its seed with a token plants the token
     block alone — under a shebang, so cloud-init runs it."""
-    script = seed_script(None, "ws-id", llm_token="msksllm1_y", llm_port=99)
+    script = seed_script(None, llm_token="msksllm1_y", llm_port=99)
     assert script.startswith("#!/bin/sh\n")
     assert "llm_token='msksllm1_y'" in script
     assert "authorized_keys" not in script
@@ -594,13 +572,13 @@ def test_compose_with_only_a_token_builds_a_seed() -> None:
     """No key, no payload, a token: the seed is the token's script
     alone (the seed's presence condition includes the token)."""
     script = compose_user_data(
-        None, None, "ws-id", llm_token="msksllm1_z", llm_port=8770
+        None, None, llm_token="msksllm1_z", llm_port=8770
     )
     assert "llm_token='msksllm1_z'" in script
     assert script.startswith("#!/bin/sh\n")
     # Neither a key nor a token: the operator's payload verbatim (the
     # #41 contract).
-    assert compose_user_data(None, None, "ws-id") is None
+    assert compose_user_data(None, None) is None
 
 
 # --- the interceptor CA block (#424, #200's create-time half) ----------------
@@ -613,7 +591,7 @@ def test_seed_script_installs_the_interceptor_ca() -> None:
     """With a CA present the script stages it, names it beside the
     system roots for the export-honoring clients, hooks NixOS's
     profile.local, and links Debian's system trust store (#424)."""
-    script = seed_script(PUBLIC, "ws-id", ca_pem=CA_PEM)
+    script = seed_script(PUBLIC, ca_pem=CA_PEM)
     assert f"ca_cert='{CA_PEM}'" in script
     assert "> /etc/msks/interceptor-ca.crt" in script
     # The export bundle builds from whichever platform bundle name
@@ -632,9 +610,7 @@ def test_the_ca_block_tolerates_a_guest_without_the_tool() -> None:
     """A guest with no update-ca-certificates (NixOS manages its
     trust store) keeps booting: the CA is staged, the exports are
     written, and the miss lands on stderr (#424)."""
-    script = seed_script(
-        None, "ws-id", llm_token="t", llm_port=1, ca_pem=CA_PEM
-    )
+    script = seed_script(None, llm_token="t", llm_port=1, ca_pem=CA_PEM)
     assert "command -v update-ca-certificates" in script
     assert "staged and exported" in script
 
@@ -693,9 +669,7 @@ def test_the_ca_block_executes_on_a_nixos_shaped_sandbox(
         found = shutil.which(name)
         assert found, f"the seed's toolset needs {name}"
         (tools / name).symlink_to(found)
-    script = sandboxed(
-        seed_script(PUBLIC, "ws-id", "alice", ca_pem=CA_PEM), sandbox
-    )
+    script = sandboxed(seed_script(PUBLIC, "alice", ca_pem=CA_PEM), sandbox)
     done = subprocess.run(
         ["sh", "-c", script],
         env={"PATH": f"{stubs}:{tools}"},
@@ -751,11 +725,9 @@ def test_the_ca_block_executes_the_debian_link(tmp_path) -> None:
 def test_compose_user_data_carries_the_ca() -> None:
     """The composed document includes the CA wherever a seed script
     exists — with a key, and keyless with a token alone."""
-    with_key = compose_user_data(None, PUBLIC, "ws-id", ca_pem=CA_PEM)
+    with_key = compose_user_data(None, PUBLIC, ca_pem=CA_PEM)
     assert "ca_cert=" in with_key
-    keyless = compose_user_data(
-        None, None, "ws-id", llm_token="t", ca_pem=CA_PEM
-    )
+    keyless = compose_user_data(None, None, llm_token="t", ca_pem=CA_PEM)
     assert "ca_cert=" in keyless
     # Without key, token, or CA the operator payload travels alone.
-    assert compose_user_data("payload", None, "ws-id") == "payload"
+    assert compose_user_data("payload", None) == "payload"

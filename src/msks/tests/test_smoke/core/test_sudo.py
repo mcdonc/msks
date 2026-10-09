@@ -50,7 +50,7 @@ async def test_local_workspace_user_sudo() -> None:
         kernel=Path(VMLINUX),
         rootfs=Path(ROOTFS),
         initrd=Path(INITRD) if INITRD else None,
-        cmdline=CMDLINE or "console=hvc0 root=/dev/vda rw",
+        cmdline=CMDLINE or "console=ttyS0 root=/dev/vda rw",
         root_mib=2048,
         home_mib=256,
         egress=False,
@@ -59,7 +59,7 @@ async def test_local_workspace_user_sudo() -> None:
         await microvm.launch(spec)
         info = await microvm.info(wid)
         assert info.status.value == "running"
-        await await_guest_up(serial_log)
+        await await_guest_up(microvm, wid)
         # The pairing sudo checks first: a setuid (mode 4xxx),
         # uid-0-owned binary — wherever the image's sudo lives
         # (Debian's distro binary at /usr/bin/sudo, mode 4755;
@@ -83,7 +83,6 @@ async def test_local_workspace_user_sudo() -> None:
             wid,
             "sudo -n true && echo SUDO-$((6*7))",
             "SUDO-42",
-            user="msks",
         )
         await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
         final = await microvm.info(wid)

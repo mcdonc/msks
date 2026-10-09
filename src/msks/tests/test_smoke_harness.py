@@ -86,7 +86,7 @@ async def test_wedged_session_gets_a_fresh_one(monkeypatch, capsys) -> None:
     microvm = FakeMicrovm([wedged_session(), live])
     await test_smoke.run_in_console(microvm, "wid", "echo hi", "hi")
     assert microvm.opened == 2
-    assert live[1].written == b"echo hi\n"
+    assert live[1].written == b"\necho hi\n"
     # The abandoned session leaves its story in the log.
     assert "1/3" in capsys.readouterr().out
 
@@ -103,8 +103,8 @@ async def test_marker_stall_also_gets_a_fresh_session(monkeypatch) -> None:
     assert microvm.opened == 2
     # The command really ran twice: once into the stalled shell,
     # once into the fresh one.
-    assert stalled[1].written == b"echo hi\n"
-    assert live[1].written == b"echo hi\n"
+    assert stalled[1].written == b"\necho hi\n"
+    assert live[1].written == b"\necho hi\n"
 
 
 async def test_all_sessions_wedged_names_the_count(monkeypatch) -> None:
@@ -150,59 +150,3 @@ def stream(chunks: list[bytes], eof: bool = False) -> asyncio.StreamReader:
 
     asyncio.get_running_loop().create_task(Feed().run())
     return reader
-
-
-async def test_answer_passes_a_prompt_without_newline_through() -> None:
-    """A no-challenge guest's first bytes are the bracketed-paste
-    escape and a prompt — no newline anywhere. The detection is
-    byte-wise, so these bytes go back for the prompt wait instead of
-    stalling a line read (#123's smoke regression)."""
-    prompt = b"\x1b[?2004hroot@msks-guest:~# "
-    reader = stream([prompt])
-    writer = AnswerWriter()
-    await test_smoke.answer_console_auth(reader, writer, "ws", app=object())
-    assert writer.written == b""
-    assert await reader.read(4096) == prompt
-
-
-async def test_answer_assembles_a_split_challenge_and_rest() -> None:
-    """The challenge line may arrive split inside its prefix and
-    carry the AUTH OK's tail behind it: the exchange assembles the
-    line, answers, and puts the leftover back in order."""
-    nonce = b"0a" * 32
-    reader = stream(
-        [
-            b"AUTH CH",
-            b"ALLENGE " + nonce[:20],
-            nonce[20:] + b"\nAUTH O",
-            b"K\nprompt",
-        ]
-    )
-    writer = AnswerWriter()
-    await test_smoke.answer_console_auth(
-        reader, writer, "ws", app=object(), signer=lambda n: "c2ln"
-    )
-    assert writer.written == b"AUTH SIG c2ln\n"
-    assert await reader.read(4096) == b"prompt"
-
-
-async def test_answer_returns_quietly_at_eof() -> None:
-    """A stream that ends before any decidable byte: nothing is
-    sent, nothing is lost."""
-    reader = stream([], eof=True)
-    writer = AnswerWriter()
-    await test_smoke.answer_console_auth(reader, writer, "ws", app=object())
-    assert writer.written == b""
-
-
-async def test_answer_feeds_diverging_shell_bytes_back() -> None:
-    """Bytes that diverge from the prefix are the shell's own: they
-    return to the stream whole, with whatever followed them."""
-    reader = stream([b"ro", b"ot@msks-guest:~# "])
-    writer = AnswerWriter()
-    await test_smoke.answer_console_auth(reader, writer, "ws", app=object())
-    assert writer.written == b""
-    # The fed-back first chunk lands before the relay's second one.
-    got = await reader.read(4096)
-    got += await reader.read(4096)
-    assert got == b"root@msks-guest:~# "

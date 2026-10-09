@@ -44,7 +44,7 @@ async def test_local_vm_boot_and_shutdown() -> None:
         kernel=Path(VMLINUX),
         rootfs=Path(ROOTFS),
         initrd=Path(INITRD) if INITRD else None,
-        cmdline=CMDLINE or "console=hvc0 root=/dev/vda rw",
+        cmdline=CMDLINE or "console=ttyS0 root=/dev/vda rw",
         egress=False,
     )
     try:
@@ -56,7 +56,7 @@ async def test_local_vm_boot_and_shutdown() -> None:
         # once its logind is running — pressing earlier would drop the
         # event and time out against a VM that is running but not yet
         # listening.
-        await await_guest_up(serial_log)
+        await await_guest_up(microvm, wid)
         await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
         final = await microvm.info(wid)
         assert final.status.value in ("stopped", "absent")
@@ -93,7 +93,7 @@ async def test_local_persistence_across_restart_and_reset() -> None:
         kernel=Path(VMLINUX),
         rootfs=Path(ROOTFS),
         initrd=Path(INITRD) if INITRD else None,
-        cmdline=CMDLINE or "console=hvc0 root=/dev/vda rw",
+        cmdline=CMDLINE or "console=ttyS0 root=/dev/vda rw",
         root_mib=2048,
         home_mib=256,
         egress=False,
@@ -105,14 +105,13 @@ async def test_local_persistence_across_restart_and_reset() -> None:
         probe_commands: list[tuple[str, str]], app=None
     ) -> None:
         await microvm.launch(spec)
-        await await_guest_up(serial_log)
+        await await_guest_up(microvm, wid)
         for command, marker in probe_commands:
             await run_in_console(
                 microvm,
                 wid,
                 command,
                 marker,
-                app=app,
             )
         await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
 
@@ -137,18 +136,14 @@ async def test_local_persistence_across_restart_and_reset() -> None:
                     "WROTE-42",
                 ),
             ],
-            app=app,
         )
-        serial_log.unlink(missing_ok=True)
         await boot_and_probe(
             [
                 ("cat /root/probe", root_marker),
                 ("cat /home/probe", home_marker),
             ],
-            app=app,
         )
         # Factory reset: pristine root, same /home.
-        serial_log.unlink(missing_ok=True)
         await microvm.reset(wid)
         assert not persist.overlay_path(state_dir, wid).exists()
         assert persist.home_volume_path(state_dir, wid).is_file()
@@ -157,7 +152,6 @@ async def test_local_persistence_across_restart_and_reset() -> None:
                 ("cat /home/probe", home_marker),
                 ("test ! -e /root/probe && echo GONE-$((6*7))", "GONE-42"),
             ],
-            app=app,
         )
     except BaseException:
         collect_failure_evidence(state_dir, wid, serial_log)

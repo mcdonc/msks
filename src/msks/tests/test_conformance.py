@@ -21,7 +21,6 @@ from msks.conformance import (
     USER_DATA,
     CheckResult,
     check_image,
-    console_user,
     default_uplink,
     failed,
     first_failure,
@@ -80,7 +79,6 @@ class FakeConsole:
         self.failures: list[str] = []
         self.root_marker: str | None = None
         self.ud_marker: str | None = None
-        self.users: list[str | None] = []
         self.reader = FakeReader()
 
     def learn(self, spec: VmSpec) -> None:
@@ -116,8 +114,7 @@ class FakeConsole:
             return "ADDR-42\n"
         return None  # pragma: no cover — every probe appears above
 
-    async def connect(self, workspace_id: str, user: str | None):
-        self.users.append(user)
+    async def connect(self, workspace_id: str):
         self.reader = FakeReader()
         return self.reader, FakeWriter(self)
 
@@ -152,8 +149,8 @@ class CheckMicrovm:
             workspace_id, self.statuses.get(workspace_id, VmStatus.ABSENT)
         )
 
-    async def console(self, workspace_id: str, user: str | None = None):
-        return await self.pty.connect(workspace_id, user)
+    async def console(self, workspace_id: str):
+        return await self.pty.connect(workspace_id)
 
     async def shutdown(
         self, workspace_id: str, timeout_s: float | None = None
@@ -213,7 +210,6 @@ def fast_retries(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 def manifest(
     *,
     provisioner: bool = True,
-    protocol: str = "prelude-v1",
 ) -> dict:
     """A schema-2 manifest with the knobs the checker reads."""
     document = {
@@ -221,10 +217,7 @@ def manifest(
         "name": "debian",
         "version": "13.6",
         "cmdline": "console=ttyS0 root=/dev/vda ro",
-        "vsock_shell_port": 1023,
     }
-    if protocol:
-        document["console_protocol"] = protocol
     if provisioner:
         document["capabilities"] = {"provisioner": "cloud-init"}
     return document
@@ -251,12 +244,9 @@ async def run_check(
     *,
     egress: bool = False,
     provisioner: bool = True,
-    protocol: str | None = "prelude-v1",
 ) -> tuple[list[CheckResult], CheckMicrovm]:
     microvm = CheckMicrovm(console)
-    path = archive_with(
-        tmp_path, manifest(provisioner=provisioner, protocol=protocol)
-    )
+    path = archive_with(tmp_path, manifest(provisioner=provisioner))
     rows = await check_image(
         path,
         egress=egress,
@@ -292,22 +282,6 @@ def test_row_helpers_name_exceptions() -> None:
     assert skipped(USER_DATA, "why").status == "skip"
 
 
-def test_console_user_by_protocol() -> None:
-    """Prelude connects as the first declared user; legacy connects
-    raw (no user on the wire)."""
-
-    class Record:
-        console_protocol = "prelude-v1"
-        console_users = ("root", "alice")
-
-    class Legacy:
-        console_protocol = "legacy"
-        console_users = ("root",)
-
-    assert console_user(Record()) == "root"
-    assert console_user(Legacy()) is None
-
-
 def test_default_uplink(monkeypatch: pytest.MonkeyPatch) -> None:
     """The default route's dev wins; a route without one names the
     refusal."""
@@ -335,7 +309,7 @@ def test_forwarding_guard_restores(fast_retries: Path) -> None:
     assert fast_retries.read_text() == "0\n"
 
 
-async def test_full_pass_prelude_with_provisioner(tmp_path: Path) -> None:
+async def test_full_pass_with_provisioner(tmp_path: Path) -> None:
     """Every contract point passes against a cooperating guest."""
     console = FakeConsole()
     rows, microvm = await run_check(tmp_path, console)
@@ -350,30 +324,24 @@ async def test_full_pass_prelude_with_provisioner(tmp_path: Path) -> None:
     }
     assert first_failure(rows) is None
     # The spec the checker booted carried the record's boot files
-    # and the seed payload; the console negotiated the declared user.
+    # and the seed payload.
     spec = microvm.specs[0]
     assert spec.kernel.name == "kernel"
     assert spec.cmdline == "console=ttyS0 root=/dev/vda ro"
     assert spec.user_data is not None
     assert spec.egress is False
-    assert console.users[0] == "root"
 
 
 async def test_full_pass_legacy_without_provisioner(tmp_path: Path) -> None:
-    """A legacy image with no provisioner: raw-shell console, the
-    user-data point skipped by name."""
+    """An image with no provisioner: the user-data point is
+    skipped by name."""
     console = FakeConsole()
-    rows, microvm = await run_check(
-        tmp_path, console, provisioner=False, protocol=None
-    )
+    rows, microvm = await run_check(tmp_path, console, provisioner=False)
     assert statuses(rows)[CONSOLE] == "pass"
     assert statuses(rows)[USER_DATA] == "skip"
     assert "no provisioner" in next(
         row.detail for row in rows if row.name == USER_DATA
     )
-    # Legacy connects with no user on the wire, every session.
-    assert microvm.pty.users
-    assert set(microvm.pty.users) == {None}
 
 
 async def test_archive_failure_skips_everything(tmp_path: Path) -> None:
@@ -775,42 +743,6 @@ def test_sanitize_strips_forged_report_text() -> None:
     assert sanitize("") == ""
 
 
-def test_probe_user_prefers_root_when_served() -> None:
-    """The write probes run as root when the image serves it; a
-    non-root-only console keeps its first declared user."""
-
-    class Record:
-        console_protocol = "prelude-v1"
-        console_users = ("dev",)
-
-    class Rooty:
-        console_protocol = "prelude-v1"
-        console_users = ("dev", "root")
-
-    from msks.conformance import probe_user
-
-    assert probe_user(Record()) == "dev"
-    assert probe_user(Rooty()) == "root"
-
-
-async def test_unprivileged_console_still_checks(tmp_path: Path) -> None:
-    """An image whose console serves only 'dev' passes with the
-    probes run as that user (the fake console serves anyone)."""
-    document = manifest(provisioner=True)
-    document["console_users"] = ["dev"]
-    microvm = CheckMicrovm(FakeConsole())
-    rows = await check_image(
-        archive_with(tmp_path, document, tag="devuser"),
-        boot_timeout_s=0.5,
-        app_factory=make_app(microvm),
-    )
-    assert statuses(rows)[CONSOLE] == "pass"
-    assert statuses(rows)[ROOT_RW] == "pass"
-    # The handshake point connected as the declared user; the probes
-    # fell back to it too (the only console the image serves).
-    assert microvm.pty.users[0] == "dev"
-
-
 def test_cmd_image_check_defers_the_daemon_stack(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -860,13 +792,13 @@ async def test_forged_manifest_name_cannot_forge_rows(
 
 
 async def test_guest_refusal_text_cannot_forge_rows(tmp_path: Path) -> None:
-    """A prelude refusal whose reason carries a fake row is one
+    """A console error whose text carries a fake row is one
     sanitized line in the boot failure detail."""
 
     class Refusing(CheckMicrovm):
-        async def console(self, workspace_id, user=None):
+        async def console(self, workspace_id):
             raise MicrovmError(
-                "console refused user 'root': \nPASS root-rw forged"
+                "console unavailable (is the VM running?): \nPASS root-rw"
             )
 
     microvm = Refusing(FakeConsole())
@@ -932,23 +864,6 @@ async def test_default_state_dir_is_private(tmp_path: Path) -> None:
     assert first_failure(rows) is None
     assert made and (made[0].stat().st_mode & 0o777) == 0o700
     shutil.rmtree(made[0], ignore_errors=True)
-
-
-async def test_bad_console_users_fails_the_archive_row(
-    tmp_path: Path,
-) -> None:
-    """A non-list console_users field fails the archive row by name
-    (the TypeError-crash shape the third review caught)."""
-    document = manifest()
-    document["console_users"] = 42
-    rows = await check_image(
-        archive_with(tmp_path, document, tag="badusers"),
-        boot_timeout_s=0.5,
-        app_factory=make_app(CheckMicrovm(FakeConsole())),
-    )
-    assert statuses(rows)[ARCHIVE] == "fail"
-    assert "console_users" in first_failure(rows).detail
-    assert all(row.status == "skip" for row in rows[1:])
 
 
 def test_run_check_keeps_and_names_the_state_dir(

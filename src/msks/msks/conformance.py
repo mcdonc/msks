@@ -41,7 +41,7 @@ from pathlib import Path
 from .app import App, build_app
 from .conformance_args import CheckOptions, check_arguments
 from .imagestore import ImageError, ImageRecord, import_archive
-from .microvm import VmSpec
+from .microvm import VmSpec, close_console_stream
 from .settings import (
     NetSettings,
     ServerSettings,
@@ -166,9 +166,8 @@ async def probe(
     workspace_id: str,
     command: str,
     marker: str,
-    user: str | None,
 ) -> None:
-    """One shell command over the vsock console, marker round-trip
+    """One shell command over the console getty, marker round-trip
     — retried on a fresh session while the shell behind the pty
     stalls (#75: the line discipline echoes while the shell never
     reaches its first prompt, and a wedged session answers nothing
@@ -179,16 +178,18 @@ async def probe(
     last: BaseException = TimeoutError("no attempt was made")
     for _ in range(PROBE_ATTEMPTS):
         try:
-            reader, writer = await microvm.console(workspace_id, user=user)
+            reader, writer = await microvm.console(workspace_id)
             try:
                 writer.write(command.encode() + b"\n")
                 await writer.drain()
                 await read_until(reader, marker.encode(), PROBE_TIMEOUT_S)
                 return
             finally:
-                writer.close()
-                with contextlib.suppress(Exception):
-                    await writer.wait_closed()
+                # The half-close teardown keeps the VMM's serial
+                # manager alive across this checker's own session
+                # churn (close_console_stream names the upstream
+                # defect a plain close triggers).
+                await close_console_stream(reader, writer)
         except (OSError, TimeoutError) as exc:
             last = exc
             await asyncio.sleep(RETRY_SLEEP_S)
@@ -198,7 +199,6 @@ async def probe(
 async def await_console(
     microvm,
     workspace_id: str,
-    user: str | None,
     deadline_s: float,
 ) -> float:
     """Wait for a console marker round-trip inside the deadline.
@@ -218,7 +218,6 @@ async def await_console(
                 workspace_id,
                 f"echo CONF-$(({6 * 7}))",
                 "CONF-42",
-                user,
             )
             return time.monotonic() - started
         except (OSError, TimeoutError, ConnectionError) as exc:
@@ -234,7 +233,6 @@ async def await_marker(
     workspace_id: str,
     command: str,
     marker: str,
-    user: str | None,
     deadline_s: float,
 ) -> None:
     """Poll one probe until its marker arrives or the deadline ends.
@@ -247,7 +245,7 @@ async def await_marker(
     last: BaseException = TimeoutError("no attempt was made")
     while time.monotonic() - started < deadline_s:
         try:
-            await probe(microvm, workspace_id, command, marker, user)
+            await probe(microvm, workspace_id, command, marker)
             return
         except (OSError, TimeoutError, ConnectionError) as exc:
             last = exc
@@ -257,24 +255,12 @@ async def await_marker(
     )
 
 
-def console_user(record: ImageRecord) -> str | None:
-    """The user the console point connects as.
-
-    Prelude images negotiate the user in-band, so the first declared
-    ``console_users`` entry exercises the handshake; legacy images
-    serve the raw root shell and ignore the name on the wire.
-    """
-    if record.console_protocol == "prelude-v1":
-        return record.console_users[0] if record.console_users else "root"
-    return None
-
-
 def sanitize(text: str) -> str:
     """One printable line from anything that reaches a row detail.
 
     Every row constructor runs this: the image author controls the
-    manifest strings (name, version, kernel_version,
-    console_users), and the guest controls refusal text that rides
+    manifest strings (name, version, kernel_version), and the guest
+    controls refusal text that rides
     exceptions back — the report is the tool's whole product, so a
     forged row (embedded newlines, ANSI escapes) must not survive
     into it from ANY channel.
@@ -288,28 +274,7 @@ def sanitize(text: str) -> str:
 
 
 def console_detail(record: ImageRecord) -> str:
-    if record.console_protocol == "prelude-v1":
-        return (
-            f"prelude-v1 handshake as {sanitize(console_user(record) or '')!r}"
-        )
-    return "legacy raw root shell"
-
-
-def probe_user(record: ImageRecord) -> str | None:
-    """The user the write/read probes connect as.
-
-    The probes touch root-owned paths (the /root markers, the
-    seed's file), so they run over a root console whenever the
-    image serves one; an image whose ``console_users`` names only
-    other users gets its first declared user instead — the probes
-    then report what that account can actually reach. Legacy
-    images serve the raw root shell (no user on the wire).
-    """
-    if record.console_protocol != "prelude-v1":
-        return None
-    if "root" in record.console_users:
-        return "root"
-    return console_user(record)
+    return "root autologin getty on the console port"
 
 
 def default_uplink() -> str:
@@ -408,7 +373,6 @@ async def boot_rows(
     microvm,
     record: ImageRecord,
     workspace_id: str,
-    user: str | None,
     results: list[CheckResult],
     *,
     boot_timeout_s: float,
@@ -416,9 +380,7 @@ async def boot_rows(
     """Wait for the guest to answer the console; report boot and
     console. Returns whether the boot succeeded."""
     try:
-        elapsed = await await_console(
-            microvm, workspace_id, user, boot_timeout_s
-        )
+        elapsed = await await_console(microvm, workspace_id, boot_timeout_s)
     except Exception as exc:
         append_failure(results, exc, BOOT, *CORE_POINTS[1:])
         return False
@@ -436,7 +398,6 @@ async def boot_rows(
 async def write_markers(
     microvm,
     workspace_id: str,
-    user: str | None,
     root_marker: str,
     *,
     boot_timeout_s: float,
@@ -454,7 +415,6 @@ async def write_markers(
             f"echo {root_marker} > /root/.msks-conformance "
             f"&& echo WROTE-$(({6 * 7}))",
             "WROTE-42",
-            user,
         )
     except Exception as exc:
         root_exc = exc
@@ -467,7 +427,6 @@ async def write_markers(
             f"&& touch /home/probe "
             f"&& echo HOME-MOUNTED-$(({6 * 7}))",
             "HOME-MOUNTED-42",
-            user,
             boot_timeout_s,
         )
     except Exception as exc:
@@ -478,7 +437,6 @@ async def write_markers(
 async def user_data_row(
     microvm,
     workspace_id: str,
-    user: str | None,
     ud_marker: str | None,
     results: list[CheckResult],
     *,
@@ -494,7 +452,6 @@ async def user_data_row(
             workspace_id,
             "cat /root/msks-conformance-ud",
             ud_marker,
-            user,
             boot_timeout_s,
         )
         results.append(passed(USER_DATA, "seed payload ran on first boot"))
@@ -520,7 +477,6 @@ def verdict_row(
 async def persistence_rows(
     microvm,
     spec: VmSpec,
-    user: str | None,
     root_marker: str,
     root_exc: BaseException | None,
     home_exc: BaseException | None,
@@ -532,7 +488,7 @@ async def persistence_rows(
     (overlay) and the /home volume must survive the cycle."""
     try:
         await microvm.launch(spec)
-        await await_console(microvm, spec.workspace_id, user, boot_timeout_s)
+        await await_console(microvm, spec.workspace_id, boot_timeout_s)
     except Exception as exc:
         results.append(failed(ROOT_RW, f"second boot failed: {exc}"))
         results.append(failed(HOME_LABEL, f"second boot failed: {exc}"))
@@ -545,7 +501,6 @@ async def persistence_rows(
             spec.workspace_id,
             "cat /root/.msks-conformance",
             root_marker,
-            user,
             boot_timeout_s,
         )
     except Exception as exc:
@@ -556,7 +511,6 @@ async def persistence_rows(
             spec.workspace_id,
             "test -f /home/probe && echo HOME-$((6*7))",
             "HOME-42",
-            user,
             boot_timeout_s,
         )
     except Exception as exc:
@@ -598,8 +552,6 @@ async def run_core_pass(
     the throwaway state dir and is discarded with it.
     """
     microvm = app.state.microvm
-    user = console_user(record)
-    probes = probe_user(record)
     ud_marker = (
         f"UD-{uuid.uuid4().hex[:8]}"
         if record.provisioner == "cloud-init"
@@ -621,7 +573,6 @@ async def run_core_pass(
             microvm,
             record,
             spec.workspace_id,
-            user,
             results,
             boot_timeout_s=boot_timeout_s,
         ):
@@ -629,14 +580,12 @@ async def run_core_pass(
         root_exc, home_exc = await write_markers(
             microvm,
             spec.workspace_id,
-            probes,
             root_marker,
             boot_timeout_s=boot_timeout_s,
         )
         await user_data_row(
             microvm,
             spec.workspace_id,
-            probes,
             ud_marker,
             results,
             boot_timeout_s=boot_timeout_s,
@@ -647,7 +596,6 @@ async def run_core_pass(
         await persistence_rows(
             microvm,
             spec,
-            probes,
             root_marker,
             root_exc,
             home_exc,
@@ -678,7 +626,6 @@ async def run_egress_pass(
     """Boot with a NIC through the daemon's net stack; the guest
     must take a global address over DHCP."""
     microvm = app.state.microvm
-    user = probe_user(record)
     spec = vm_spec(
         record,
         f"conf-eg-{uuid.uuid4().hex[:8]}",
@@ -692,16 +639,13 @@ async def run_egress_pass(
             await app.state.net.start()
             try:
                 await microvm.launch(spec)
-                await await_console(
-                    microvm, spec.workspace_id, user, boot_timeout_s
-                )
+                await await_console(microvm, spec.workspace_id, boot_timeout_s)
                 await probe(
                     microvm,
                     spec.workspace_id,
                     f"ip -4 -o addr show scope global | grep -q . "
                     f"&& echo ADDR-$(({6 * 7}))",
                     "ADDR-42",
-                    user,
                 )
                 results.append(
                     passed(
@@ -732,7 +676,6 @@ def settings_for(
     return Settings(
         vmm=VmmSettings(
             state_dir=state_dir,
-            vsock_shell_port=record.vsock_shell_port,
         ),
         server=ServerSettings(db_path=state_dir / "conf.db"),
         net=net,

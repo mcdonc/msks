@@ -30,6 +30,7 @@ import asyncio
 import base64
 import contextlib
 import os
+import shlex
 import shutil
 import signal
 import ssl
@@ -41,7 +42,6 @@ from pathlib import Path
 import httpx
 import pytest
 import websockets
-from msks.client import consoleauth
 from msks.client.console import ws_url
 
 from test_smoke import (
@@ -89,8 +89,8 @@ async def console_exec_as(
     timeout_s: float = NIX_PROBE_TIMEOUT_S,
 ) -> None:
     """One console probe through the daemon's websocket, as a named
-    session user — the same #75 fresh-session rule ``console_exec``
-    holds, with the user riding the request's query string and a
+    user via su from the root getty (#481) — the same #75
+    fresh-session rule ``console_exec`` holds, with a
     per-call budget (a nix command is minutes of guest work, not the
     console's own interactivity window).
 
@@ -107,7 +107,8 @@ async def console_exec_as(
     its end fails the probe with the session's tail, and the
     command's own redirected output rides a follow-up probe.
     """
-    address = ws_url(url, workspace_id, user=user)
+    command = f"su - {user} -c {shlex.quote(command)}"
+    address = ws_url(url, workspace_id)
     for _ in range(CONSOLE_ATTEMPTS):
         try:
             async with websockets.connect(
@@ -116,12 +117,20 @@ async def console_exec_as(
                 ssl=ssl_ctx,
                 max_size=2**22,
             ) as ws:
-                lead = await consoleauth.auth_exchange(
-                    ws, workspace_id, url, token, ssl_ctx
-                )
-                buf = lead.encode() if isinstance(lead, str) else bytes(lead)
-                if marker in buf:
-                    return
+                buf = b""
+                # The idle shell renders its prompt on a newline
+                # (#481: a serial prompt prints only to a
+                # connected client).
+                await ws.send(b"\n")
+                prompt_deadline = asyncio.get_running_loop().time() + timeout_s
+                while b":~#" not in buf:
+                    lead = await asyncio.wait_for(ws.recv(), 10)
+                    buf += lead.encode() if isinstance(lead, str) else lead
+                    if asyncio.get_running_loop().time() > prompt_deadline:
+                        raise AssertionError(
+                            "console prompt never appeared; tail: "
+                            f"{buf[-500:]!r}"
+                        )
                 # The liveness ping: a reading shell answers a
                 # builtin instantly, however loaded the guest is —
                 # and the echoed command text cannot contain the
@@ -229,14 +238,12 @@ async def test_nixos_user_nix_e2e() -> None:
         response = await client.post("/api/v1/workspaces", json={"name": wid})
         assert response.status_code == 201, response.text
         minted = response.json()["id"]
-        serial_log = state_dir / "vms" / minted / "serial.log"
         response = await client.post(f"/api/v1/workspaces/{wid}/start")
         assert response.status_code == 200, response.text
 
         # Item 1, the presence half: the shipped /etc/nixos — the
-        # entry, the module chain, the shrinkwrap pair, the console
-        # helper's sources at the ../src path the module's relative
-        # imports resolve through — on the created workspace's own
+        # entry, the module chain, the shrinkwrap pair — on the
+        # created workspace's own
         # root, before any rebuild ran. (The activation half — that
         # this configuration evaluates and activates — is the fold
         # e2e's nixos-rebuild switch in the same lane.)
@@ -247,10 +254,8 @@ async def test_nixos_user_nix_e2e() -> None:
             wid,
             "test -f /etc/nixos/configuration.nix "
             "&& test -f /etc/nixos/nix/guest-nixos-configuration.nix "
-            "&& test -f /etc/nixos/nix/console-helper-pkg.nix "
             "&& test -f /etc/nixos/nix/agent-toolchain.nix "
             "&& test -f /etc/nixos/nix/pi-shrinkwrap-patch.py "
-            "&& test -f /etc/nixos/src/console-helper/Cargo.toml "
             "&& echo CFG-$((6*7))",
             b"CFG-42",
             "root",
@@ -363,7 +368,7 @@ async def test_nixos_user_nix_e2e() -> None:
         assert response.status_code == 200, response.text
     except BaseException:
         if minted is not None:
-            collect_failure_evidence(state_dir, minted, serial_log)
+            collect_failure_evidence(state_dir, minted)
         print(daemon_log_tail(state_dir))
         raise
     finally:

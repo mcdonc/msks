@@ -25,7 +25,6 @@ from msks.imagestore import (
     default_image,
     import_archive,
     list_images,
-    record_from,
     remove,
     rename_image,
     resolve,
@@ -63,7 +62,6 @@ def build_containerdisk(
                 "name": name,
                 "version": version,
                 "cmdline": "console=ttyS0 root=/dev/vda ro",
-                "vsock_shell_port": 1023,
             }
             payload = dict(payload)
             payload["disk/image.json"] = json.dumps(manifest).encode()
@@ -346,7 +344,6 @@ def test_gzip_layer_supported(tmp_path: Path) -> None:
                     "name": "gz",
                     "version": "1",
                     "cmdline": "c",
-                    "vsock_shell_port": 1,
                 }
             ).encode(),
         }.items():
@@ -415,8 +412,8 @@ def test_import_of_the_real_built_nixos_image(tmp_path: Path) -> None:
     """The `msks-build-guest nixos` containerDisk (#250), when
     present, imports through the same schema — and the capabilities
     carry the whole NixOS-vs-Debian difference the daemon acts on:
-    the same declared cloud-init provisioner, the same prelude-v1
-    console. The ceiling lifts for the same reason as the Debian
+    the same declared cloud-init provisioner, the same serial
+    console getty. The ceiling lifts for the same reason as the Debian
     twin's: the toolchain bake (#268) grew the archive past the
     suite's 30 s copy budget on CI runners' disks."""
 
@@ -428,7 +425,6 @@ def test_import_of_the_real_built_nixos_image(tmp_path: Path) -> None:
     assert record.kernel.stat().st_size > 1_000_000
     assert record.rootfs.stat().st_size > 1_000_000_000
     assert record.provisioner == "cloud-init"
-    assert record.console_protocol == "prelude-v1"
     with tarfile.open(archives[-1]) as tf:
         tag = json.load(tf.extractfile("manifest.json"))[0]["RepoTags"][0]
     assert "'" not in tag and "''" not in tag, tag
@@ -539,7 +535,7 @@ async def test_create_explicit_artifacts_without_catalog(tmp_path) -> None:
         assert made.status_code == 201, made.text
         row = made.json()
         assert row["initrd"] is None
-        assert row["cmdline"] == "console=hvc0 root=/dev/vda rw"
+        assert row["cmdline"] == "console=ttyS0 root=/dev/vda rw"
         explicit = client.post(
             "/api/v1/workspaces",
             json={
@@ -1147,7 +1143,6 @@ def test_image_json_carries_kernel_facts(tmp_path: Path) -> None:
                 "name": "kv",
                 "version": "1",
                 "cmdline": "c",
-                "vsock_shell_port": 1,
                 "kernel_version": "6.12.107+deb13-amd64",
                 "kernel_format": "bzImage",
             }
@@ -1310,7 +1305,6 @@ def test_foreign_archive_has_no_fabricated_kernel_format(
                 "name": "foreign",
                 "version": "9",
                 "cmdline": "c",
-                "vsock_shell_port": 1023,
             }
         ).encode()
         info = tarfile.TarInfo("./disk/image.json")
@@ -1347,7 +1341,6 @@ def test_provisioner_round_trip(tmp_path: Path) -> None:
                     "name": "debian",
                     "version": "13.6",
                     "cmdline": "console=ttyS0 root=/dev/vda ro",
-                    "vsock_shell_port": 1023,
                     "capabilities": {"provisioner": "cloud-init"},
                 }
             ).encode(),
@@ -1378,7 +1371,6 @@ def test_unknown_provisioner_is_a_named_import_error(tmp_path: Path) -> None:
                     "name": "debian",
                     "version": "13.6",
                     "cmdline": "console=ttyS0 root=/dev/vda ro",
-                    "vsock_shell_port": 1023,
                     "capabilities": {"provisioner": "cloudinit!"},
                 }
             ).encode(),
@@ -1408,7 +1400,6 @@ def test_non_object_capabilities_is_a_named_import_error(
                     "name": "debian",
                     "version": "13.6",
                     "cmdline": "console=ttyS0 root=/dev/vda ro",
-                    "vsock_shell_port": 1023,
                     "capabilities": ["cloud-init"],
                 }
             ).encode(),
@@ -1454,7 +1445,6 @@ def test_capabilities_without_provisioner_reads_as_none(
                     "name": "debian",
                     "version": "13.6",
                     "cmdline": "console=ttyS0 root=/dev/vda ro",
-                    "vsock_shell_port": 1023,
                     "capabilities": {"future-key": True},
                 }
             ).encode(),
@@ -1466,27 +1456,11 @@ def test_capabilities_without_provisioner_reads_as_none(
 # --- console identity markers (#63) -----------------------------------
 
 
-def test_record_defaults_to_legacy_console(tmp_path: Path) -> None:
-    record = record_from(tmp_path, "h", minimal_manifest())
-    assert record.console_protocol == "legacy"
-    assert record.console_users == ("root",)
-
-
-def test_record_reads_console_markers(tmp_path: Path) -> None:
-    manifest = minimal_manifest()
-    manifest["console_protocol"] = "prelude-v1"
-    manifest["console_users"] = ["root", "msks"]
-    record = record_from(tmp_path, "h", manifest)
-    assert record.console_protocol == "prelude-v1"
-    assert record.console_users == ("root", "msks")
-
-
 def minimal_manifest() -> dict:
     return {
         "name": "debian",
         "version": "13.6",
         "cmdline": "console=ttyS0 root=/dev/vda rw",
-        "vsock_shell_port": 1023,
     }
 
 
@@ -1736,40 +1710,6 @@ def test_api_import_from_url_names_fetch_failures(
             assert "answered 404" in made.json()["detail"]
     finally:
         monkey.undo()
-
-
-# --- review fixes (#261) -------------------------------------------------
-
-
-def port_archive(tmp_path: Path, port) -> Path:
-    """A valid containerDisk whose manifest carries a bad port."""
-    members = {
-        "boot/vmlinuz": b"kernel-bytes",
-        "boot/initrd.img": b"initrd-bytes",
-        "disk/rootfs.ext4": b"rootfs-bytes",
-        "disk/image.json": json.dumps(
-            {
-                "schema": 2,
-                "name": "badport",
-                "version": "1.0",
-                "cmdline": "console=ttyS0",
-                "vsock_shell_port": port,
-            }
-        ).encode(),
-    }
-    path = tmp_path / "badport.tar"
-    build_containerdisk(path, schema=False, members=members)
-    return path
-
-
-@pytest.mark.parametrize("port", ["not-a-port", True, 0, -1, 1 << 32])
-def test_import_rejects_a_bad_vsock_port(tmp_path: Path, port) -> None:
-    """A non-integer or out-of-range vsock_shell_port fails the
-    import by name, with nothing installed (the poisoned-entry
-    shape a bare ValueError used to leave behind)."""
-    with pytest.raises(ImageError, match="vsock_shell_port"):
-        import_archive(port_archive(tmp_path, port), tmp_path)
-    assert list_images(tmp_path) == []
 
 
 def test_stream_to_enforces_the_overall_deadline(

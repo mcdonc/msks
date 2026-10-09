@@ -90,23 +90,21 @@ precedence above.
 A config-file key is its `MSKSD_*` variable with the prefix stripped
 and lowercased — one rule, no lookup table:
 
-| Environment variable     | Config-file key    |
-| ------------------------ | ------------------ |
-| `MSKSD_PORT`             | `port`             |
-| `MSKSD_VSOCK_SHELL_PORT` | `vsock_shell_port` |
-| `MSKSD_EGRESS_SUBNET`    | `egress_subnet`    |
-| `MSKSD_STATE_DIR`        | `state_dir`        |
+| Environment variable  | Config-file key |
+| --------------------- | --------------- |
+| `MSKSD_PORT`          | `port`          |
+| `MSKSD_EGRESS_SUBNET` | `egress_subnet` |
+| `MSKSD_STATE_DIR`     | `state_dir`     |
 
 The file is flat — one key per setting, no sections. For example:
 
 ```yaml
 host: 0.0.0.0
 port: 8660
-vsock_shell_port: 1023
 ```
 
 sets the same settings `MSKSD_HOST`, `MSKSD_PORT`, and
-`MSKSD_VSOCK_SHELL_PORT` would. Either spelling is recoverable from
+`MSKSD_CONSOLE_WAIT_TIMEOUT_S` would. Either spelling is recoverable from
 the other by the rule, and the daemon enforces it in code: the
 key↔variable table is derived mechanically, so the two forms cannot
 drift apart.
@@ -186,10 +184,9 @@ the file itself carries them all at one level.
 | `socket_wait_timeout_s`   | `MSKSD_SOCKET_WAIT_TIMEOUT_S`   | float  | `10.0`                 | Seconds the driver waits for the VMM's API socket at workspace start.                                                                                                                                                                                                  |
 | `request_timeout_s`       | `MSKSD_REQUEST_TIMEOUT_S`       | float  | `5.0`                  | Seconds per cloud-hypervisor API request.                                                                                                                                                                                                                              |
 | `shutdown_timeout_s`      | `MSKSD_SHUTDOWN_TIMEOUT_S`      | float  | `20.0`                 | Seconds a workspace stop waits for the guest to power off.                                                                                                                                                                                                             |
-| `vsock_shell_port`        | `MSKSD_VSOCK_SHELL_PORT`        | int    | `1023`                 | The vsock port the guest's console shell listens on.                                                                                                                                                                                                                   |
-| `vsock_wait_timeout_s`    | `MSKSD_VSOCK_WAIT_TIMEOUT_S`    | float  | `15.0`                 | Seconds to wait for the guest's vsock console at boot (generous: nested-virt guests arm the device slower).                                                                                                                                                            |
+| `console_wait_timeout_s`  | `MSKSD_CONSOLE_WAIT_TIMEOUT_S`  | float  | `15.0`                 | Seconds to wait for the guest's console device at boot (generous: nested-virt guests arm the device slower).                                                                                                                                                           |
 | `forward_wait_timeout_s`  | `MSKSD_FORWARD_WAIT_TIMEOUT_S`  | float  | `15.0`                 | Seconds a forward websocket retries its guest dial at boot (a freshly booted guest races DHCP against its services); past the deadline the refusal names the cause.                                                                                                    |
-| `console_stall_timeout_s` | `MSKSD_CONSOLE_STALL_TIMEOUT_S` | float  | `60.0`                 | Seconds a console session stays open after client input drew no guest bytes; then the websocket closes with 4502. `0` disables the close. An idle session (no input) never trips it. Keep below the guest helper's own 300 s teardown so the close stays named.        |
+| `console_stall_timeout_s` | `MSKSD_CONSOLE_STALL_TIMEOUT_S` | float  | `60.0`                 | Seconds a console session stays open after client input drew no guest bytes; then the websocket closes with 4502. `0` disables the close. An idle session (no input) never trips it.                                                                                   |
 | `move_wait_timeout_s`     | `MSKSD_MOVE_WAIT_TIMEOUT_S`     | float  | `120.0`                | Seconds a boot or volume move waits for the workspace's other volume move (a stalled export reader holds its lock as long as its connection lives); the waiter answers a named 409 past the bound instead of hanging. `0` is fail-fast.                                |
 | `default_image`           | `MSKSD_DEFAULT_IMAGE`           | string | _(unset)_              | A container-image tar imported into the catalog and designated default on first boot.                                                                                                                                                                                  |
 | `seed_images`             | `MSKSD_SEED_IMAGES`             | list   | _(unset)_              | Container-image tars imported into the catalog at every start, warm when unchanged; never designated default. A bare-name image reference resolves the newest version, with import recency breaking ties between builds whose versions carry the same leading numbers. |

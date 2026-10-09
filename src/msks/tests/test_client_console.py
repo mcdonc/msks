@@ -89,93 +89,23 @@ def test_env_token_present(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_ws_url_schemes() -> None:
     assert (
         ws_url("https://h:1", "wid")
-        == "wss://h:1/api/v1/workspaces/wid/console?user=root"
+        == "wss://h:1/api/v1/workspaces/wid/console"
     )
     assert (
-        ws_url("http://h:1", "wid")
-        == "ws://h:1/api/v1/workspaces/wid/console?user=root"
+        ws_url("http://h:1", "wid") == "ws://h:1/api/v1/workspaces/wid/console"
     )
     # A bare host:port (no scheme) means the TLS shape.
     assert ws_url("h:1", "wid").startswith("wss://h:1/")
 
 
-def test_tty_size_reads_ioctl(monkeypatch: pytest.MonkeyPatch) -> None:
-    import fcntl as fcntl_mod
-    import struct as struct_mod
-
-    from msks.client import console as console_mod
-
-    def fake_ioctl(fd, request, packed):
-        return struct_mod.pack("HHHH", 34, 120, 0, 0)
-
-    monkeypatch.setattr(fcntl_mod, "ioctl", fake_ioctl)
-    assert console_mod.tty_size(0) == (34, 120)
-
-
-def test_tty_size_zero_geometry_is_none(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import fcntl as fcntl_mod
-    import struct as struct_mod
-
-    from msks.client import console as console_mod
-
-    def fake_ioctl(fd, request, packed):
-        return struct_mod.pack("HHHH", 0, 0, 0, 0)
-
-    monkeypatch.setattr(fcntl_mod, "ioctl", fake_ioctl)
-    assert console_mod.tty_size(0) is None
-
-
-def test_tty_size_without_a_terminal_is_none() -> None:
-    import os
-
-    from msks.client.console import tty_size
-
-    r, w = os.pipe()
-    try:
-        assert tty_size(r) is None
-    finally:
-        os.close(r)
-        os.close(w)
-
-
-def test_ws_url_carries_user_and_size() -> None:
-    url = ws_url("https://d", "ws 1", user="msks", size=(34, 120))
-    assert "user=msks" in url
-    assert "rows=34" in url
-    assert "cols=120" in url
-
-
-def test_ws_url_carries_term() -> None:
-    url = ws_url("https://d", "ws-1", term="tmux-256color")
-    assert "term=tmux-256color" in url
-
-
-def test_ws_url_omits_term_when_absent() -> None:
-    assert "term=" not in ws_url("https://d", "ws-1")
-
-
-def test_ws_url_default_user_root_without_size() -> None:
-    url = ws_url("https://d", "ws-1")
-    assert "user=root" in url
-    assert "rows=" not in url
-
-
-def test_ws_url_quotes_user() -> None:
-    url = ws_url("https://d", "ws-1", user="a b")
-    assert "user=a+b" in url
-
-
 def test_ws_url_holds_no_token() -> None:
     # The token never rides the URL: it travels in the handshake's
     # Authorization header instead (#216).
-    url = ws_url("https://h:1", "w id", user="a+b&c=d%e")
+    url = ws_url("https://h:1", "w id")
     assert "token=" not in url
     # The id is a PATH segment: a space must encode as %20 (a + would
     # reach the server literally, since paths percent-decode only).
-    assert url.startswith("wss://h:1/api/v1/workspaces/w%20id/")
-    assert url.endswith("?user=a%2Bb%26c%3Dd%25e")
+    assert url == "wss://h:1/api/v1/workspaces/w%20id/console"
 
 
 def test_ssl_context_unverified_warns(
@@ -496,6 +426,8 @@ async def test_run_shell_names_a_4401_refusal(
     # the close-code table.
     ws = FakeWs()
     monkeypatch.setattr(console.websockets, "connect", ConnectStub(ws))
+    pipe = PipeStdin()
+    monkeypatch.setattr(sys, "stdin", pipe)
     monkeypatch.setattr(sys, "stdout", FakeStdout())
 
     async def refused():
@@ -549,6 +481,8 @@ async def test_run_shell_names_a_preauth_close(
     # operator sees which code arrived instead of the session.
     ws = FakeWs()
     monkeypatch.setattr(console.websockets, "connect", ConnectStub(ws))
+    pipe = PipeStdin()
+    monkeypatch.setattr(sys, "stdin", pipe)
     monkeypatch.setattr(sys, "stdout", FakeStdout())
 
     async def closed():
@@ -618,12 +552,9 @@ def test_main_raw_mode_cycle(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MSKSC_TOKEN", "t")
     monkeypatch.setattr(console, "require_tty", lambda: None)
     monkeypatch.setattr(console, "ensure_running", preflight)
-    stub_login_user(monkeypatch, "root")
     restored: list = []
 
-    async def fake_run(
-        wid, url, token, ssl_ctx, user="root", size=None, term=None
-    ):
+    async def fake_run(wid, url, token, ssl_ctx):
         return 7
 
     monkeypatch.setattr(console, "run_shell", fake_run)
@@ -650,16 +581,13 @@ def test_main_without_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MSKSC_TOKEN", "t")
     monkeypatch.setattr(console, "require_tty", lambda: None)
     monkeypatch.setattr(console, "ensure_running", async_noop)
-    stub_login_user(monkeypatch, "root")
     monkeypatch.setattr(
         console.termios,
         "tcgetattr",
         lambda fd: (_ for _ in ()).throw(termios.error()),
     )
 
-    async def fake_run(
-        wid, url, token, ssl_ctx, user="root", size=None, term=None
-    ):
+    async def fake_run(wid, url, token, ssl_ctx):
         return 0
 
     monkeypatch.setattr(console, "run_shell", fake_run)
@@ -680,29 +608,19 @@ def test_module_entry_runs(monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
 
-def stub_login_user(monkeypatch: pytest.MonkeyPatch, user: str | None) -> None:
-    """Pin the workspace-row fetch behind the console's default-user
-    resolution (#248): ``user`` is the row's login_user (None for a
-    pre-#248 row, which must fall back to the legacy user)."""
-
-    async def fake_row(workspace_id, url, token, ssl_ctx=None, transport=None):
-        return {"id": workspace_id, "status": "running", "login_user": user}
-
-    monkeypatch.setattr(console, "workspace_row", fake_row)
-
-
 def _closed(code: int, reason: str = ""):
 
     close = console.websockets.Close(code, reason)
     return console.websockets.ConnectionClosed(close, None)
 
 
-def test_report_close_4400() -> None:
+def test_report_close_unmapped_code_is_a_clean_end() -> None:
+    """Only the mapped refusals fail the client (#481 dropped
+    the 4400 user gate; a code outside the map ends the session
+    cleanly, exit 0, like a normal detach)."""
     closed = _closed(4400, "console user 'x' is not served")
-    with pytest.raises(SystemExit) as caught:
-        console._report_close(closed)
-    assert "console refused" in str(caught.value)
-    assert "'x'" in str(caught.value)
+    # Raises nothing: the function returns on an unmapped code.
+    console._report_close(closed)
 
 
 def test_report_close_4401() -> None:
@@ -796,7 +714,6 @@ def test_run_workspace_shell_preflights_boot(
     monkeypatch.setenv("MSKSC_URL", "u")
     monkeypatch.setattr(console, "require_tty", lambda: None)
     monkeypatch.setattr(console, "ensure_running", fake_ensure)
-    stub_login_user(monkeypatch, "root")
     monkeypatch.setattr(console, "ssl_context", lambda: "ctx")
     monkeypatch.setattr(
         console.termios,
@@ -804,9 +721,7 @@ def test_run_workspace_shell_preflights_boot(
         lambda fd: (_ for _ in ()).throw(termios.error()),
     )
 
-    async def fake_run(
-        wid, url, token, ssl_ctx, user="root", size=None, term=None
-    ):
+    async def fake_run(wid, url, token, ssl_ctx):
         return 0
 
     monkeypatch.setattr(console, "run_shell", fake_run)
@@ -820,93 +735,3 @@ def test_run_workspace_shell_preflights_boot(
 
 
 # --- the default login user (#248) ---
-
-
-def test_console_login_user_reads_the_row(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The console default is the workspace's recorded login user —
-    the same name ``msks ssh`` logs in as, read from the same row
-    the daemon serves the identity fetch from."""
-    stub_login_user(monkeypatch, "alice")
-    assert console.console_login_user("wid", "https://d", "tok", None) == (
-        "alice"
-    )
-
-
-def test_console_login_user_falls_back_to_the_legacy_user(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A row without a login user (a pre-#248 workspace) keeps the
-    image's own account — and a daemon predating the field serves
-    no key at all, answered the same way."""
-
-    async def row_without_field(workspace_id, url, token, ssl_ctx=None):
-        return {"id": workspace_id, "status": "running"}
-
-    monkeypatch.setattr(console, "workspace_row", row_without_field)
-    assert (
-        console.console_login_user("wid", "https://d", "tok", None) == "msks"
-    )
-
-
-def test_run_workspace_shell_defaults_to_the_recorded_user(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """No --user: the session opens as the workspace's login user —
-    root stays the explicit recovery shell."""
-    monkeypatch.setattr(sys, "stdin", FdOnly())
-    monkeypatch.setenv("MSKSC_TOKEN", "t")
-    monkeypatch.setattr(console, "require_tty", lambda: None)
-    monkeypatch.setattr(console, "ensure_running", async_noop)
-    stub_login_user(monkeypatch, "alice")
-    monkeypatch.setattr(console, "ssl_context", lambda: "ctx")
-    monkeypatch.setattr(
-        console.termios,
-        "tcgetattr",
-        lambda fd: (_ for _ in ()).throw(termios.error()),
-    )
-    seen: dict = {}
-
-    async def fake_run(
-        wid, url, token, ssl_ctx, user=None, size=None, term=None
-    ):
-        seen["user"] = user
-        return 0
-
-    monkeypatch.setattr(console, "run_shell", fake_run)
-    assert console.run_workspace_shell("wid") == 0
-    assert seen["user"] == "alice"
-
-
-def test_run_workspace_shell_keeps_an_explicit_user(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """--user root skips the resolution entirely: the recovery
-    shell never waits on a row fetch."""
-    monkeypatch.setattr(sys, "stdin", FdOnly())
-    monkeypatch.setenv("MSKSC_TOKEN", "t")
-    monkeypatch.setattr(console, "require_tty", lambda: None)
-    monkeypatch.setattr(console, "ensure_running", async_noop)
-
-    def no_fetch(*args, **kwargs):
-        raise AssertionError("an explicit user resolves nothing")
-
-    monkeypatch.setattr(console, "console_login_user", no_fetch)
-    monkeypatch.setattr(console, "ssl_context", lambda: "ctx")
-    monkeypatch.setattr(
-        console.termios,
-        "tcgetattr",
-        lambda fd: (_ for _ in ()).throw(termios.error()),
-    )
-    seen: dict = {}
-
-    async def fake_run(
-        wid, url, token, ssl_ctx, user=None, size=None, term=None
-    ):
-        seen["user"] = user
-        return 0
-
-    monkeypatch.setattr(console, "run_shell", fake_run)
-    assert console.run_workspace_shell("wid", "root") == 0
-    assert seen["user"] == "root"

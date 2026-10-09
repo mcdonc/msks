@@ -21,7 +21,7 @@ reports, per run and as a p50:
 | ----------- | --------------------------------------------------------------- |
 | `t_vmm`     | VMM spawn + VM create + boot accepted                           |
 | `t_kernel`  | first serial output — the kernel is decompressed and printing   |
-| `t_console` | the vsock console handshake completes (the service answers)     |
+| `t_console` | the console device's socket accepts a connection                |
 | `t_prompt`  | the shell rendered its first prompt — **the readiness number**  |
 | `t_login`   | the serial getty prompt (the last unit of the boot, diagnostic) |
 
@@ -33,7 +33,7 @@ guest**: cloud-hypervisor maps guest memory on demand, so an idle
 workspace costs the host only what the guest actually touched.
 
 The console and the login prompt are measured concurrently on
-purpose: the vsock console is the readiness path and answers long
+purpose: the console getty is the readiness path and answers long
 before the boot's last unit renders the serial prompt.
 
 ## Where the time goes
@@ -87,24 +87,24 @@ and done in tens of milliseconds.
 
 The runtime module tree is equally closed over: the guest's tree
 is the `modprobe --show-depends` closure of the modules its
-runtime loads (vsock console, virtio_net, virtio_blk, the ACPI
+runtime loads (the console port, virtio_net, virtio_blk, the ACPI
 button pair, isofs for the seed disk), asserted at build time.
 
 When swapping the kernel or module tree: the Debian deb ships its
 modules **without depmod metadata** (its package postinst generates
 it on the target). The build runs `depmod` itself; a tree without
 `modules.dep` boots looking healthy while every `modprobe` — the
-vsock console's module load included — silently fails.
+console port's module load included — silently fails.
 
 ### A console that starts before the boot finishes
 
-`msks-console.service` sets `DefaultDependencies=no` and orders
-only after the module load, so it listens as soon as the vsock
-device exists instead of waiting for the full target chain. A start
-that lands too early self-heals (`Restart=always`, short
-`RestartSec`) — with `StartLimitIntervalSec=0`, because a fast-fail
-loop would otherwise exhaust systemd's default burst limit and end
-the retries permanently.
+The console is the root autologin getty on the serial port
+(`serial-getty@ttyS0.service` with an autologin drop-in, #481):
+the stock template carries `Restart=always` and short
+`RestartSec`, so a start that lands before the shell's dependencies
+are ready respawns a fresh getty on its own. The drop-in pins
+`TERM=xterm` so the shell's line discipline matches what the
+client terminal sends.
 
 The same principle applies to anything a workspace image wants on
 the critical path: order it after exactly what it needs, not after

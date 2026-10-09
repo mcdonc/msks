@@ -25,7 +25,6 @@ on:
       - nix/pi-shrinkwrap-integrity.json
       - nix/guest-nixos.nix
       - nix/guest-nixos-configuration.nix
-      - nix/console-helper-pkg.nix
       - nix/image-archive.nix
       - scripts/build-guest.sh
       - src/msks/msks/**
@@ -49,7 +48,6 @@ on:
       - nix/pi-shrinkwrap-integrity.json
       - nix/guest-nixos.nix
       - nix/guest-nixos-configuration.nix
-      - nix/console-helper-pkg.nix
       - nix/image-archive.nix
       - scripts/build-guest.sh
       - src/msks/msks/**

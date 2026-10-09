@@ -102,7 +102,6 @@ from pathlib import Path
 
 import httpx
 import websockets
-from msks.client import consoleauth
 from msks.client.console import ws_url
 from msks.net import dnsmsg
 from msks.net.dns import covers
@@ -1604,16 +1603,11 @@ class Console:
             return None
 
     async def authed_lead(self, ws) -> bytes:
-        """The console's own #123 auth exchange, and the bytes it
-        left on the wire."""
-        lead = await consoleauth.auth_exchange(
-            ws,
-            self.workspace_id,
-            self.daemon.url,
-            self.daemon.token,
-            self.ctx(),
-        )
-        return lead if isinstance(lead, bytes) else lead.encode()
+        """The first bytes the console shell leaves on the wire
+        (#481): no challenge exchange — a newline makes the idle
+        shell render its prompt, and those bytes open the session."""
+        await ws.send(b"\n")
+        return await self.next_chunk(ws)
 
     async def wait_prompt(self, ws, buf: bytes) -> bytes:
         """Drain until the shell prompt arrives (#75): readline

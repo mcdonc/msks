@@ -54,8 +54,8 @@ async def test_local_sshd_and_rsync() -> None:
     login still matches after a stop/start cycle (the key lives on
     the persistent root overlay, so the reconnect must not see a
     changed key), and ``rsync -e ssh`` lands a directory in the
-    guest. A workspace without egress keeps its vsock console
-    untouched by all of this — the no-NIC smokes above run that
+    guest. A workspace without egress keeps its console untouched
+    by all of this — the no-NIC smokes above run that
     posture on the same image.
     """
     nft_tool = os.environ.get("TEST_NFT") or shutil.which("nft") or "nft"
@@ -87,7 +87,7 @@ async def test_local_sshd_and_rsync() -> None:
         kernel=Path(VMLINUX),
         rootfs=Path(ROOTFS),
         initrd=Path(INITRD) if INITRD else None,
-        cmdline=CMDLINE or "console=hvc0 root=/dev/vda rw",
+        cmdline=CMDLINE or "console=ttyS0 root=/dev/vda rw",
         egress=True,
     )
     workdir = state_dir / "ssh-work"
@@ -237,7 +237,7 @@ async def test_local_sshd_and_rsync() -> None:
     async def boot_and_wait_sshd(app=None) -> None:
         await microvm.launch(spec)
         await app.state.model.set_status(wid, "running")
-        await await_guest_up(serial_log)
+        await await_guest_up(microvm, wid)
         # sshd listens once its interface has the address (#110's
         # ordering). Each unit is probed by itself — multi-unit
         # is-active is ANY-active semantics, under which an absent
@@ -254,7 +254,6 @@ async def test_local_sshd_and_rsync() -> None:
             "systemctl is-active msks-wait-address >/dev/null 2>&1 "
             "&& systemctl is-active ssh >/dev/null 2>&1 && echo U-$((6*7))",
             "U-42",
-            app=app,
         )
 
     async def assert_sshd_posture(app=None) -> None:
@@ -278,7 +277,6 @@ async def test_local_sshd_and_rsync() -> None:
             "in prohibit-password|without-password) true;; *) false;; esac "
             "&& echo P-$((6*7))",
             "P-42",
-            app=app,
         )
 
     try:
@@ -337,7 +335,6 @@ async def test_local_sshd_and_rsync() -> None:
             f"&& printf '%s\\n' '{public}' > /root/.ssh/authorized_keys "
             f"&& chmod 600 /root/.ssh/authorized_keys && echo K-$((6*7))",
             "K-42",
-            app=app,
         )
         # The guest names its host key on its own disk: the file rides
         # the overlay, so the second boot compares against the first
@@ -348,7 +345,6 @@ async def test_local_sshd_and_rsync() -> None:
             "ssh-keygen -lf /etc/ssh/ssh_host_ecdsa_key.pub > /root/host-fp "
             "&& echo N-$((6*7))",
             "N-42",
-            app=app,
         )
 
         # Login through the forward (#109 transport, #110 listener):
@@ -392,7 +388,6 @@ async def test_local_sshd_and_rsync() -> None:
             wid,
             "cat /root/synced/sentinel.txt",
             sync_marker,
-            app=app,
         )
         await assert_sshd_posture(app=app)
 
@@ -415,7 +410,6 @@ async def test_local_sshd_and_rsync() -> None:
             '= "$(ssh-keygen -lf /etc/ssh/ssh_host_ecdsa_key.pub)" '
             "&& echo SAME-$((6*7))",
             "SAME-42",
-            app=app,
         )
         # The SAME local port: the recorded known_hosts entry is
         # per [host]:port, so the reconnect meets the first boot's key.
