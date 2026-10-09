@@ -59,7 +59,7 @@ async def test_local_workspace_user_sudo() -> None:
         await microvm.launch(spec)
         info = await microvm.info(wid)
         assert info.status.value == "running"
-        await await_guest_up(serial_log)
+        await await_guest_up(microvm, wid)
         # The pairing sudo checks first: a setuid (mode 4xxx),
         # uid-0-owned binary — wherever the image's sudo lives
         # (Debian's distro binary at /usr/bin/sudo, mode 4755;

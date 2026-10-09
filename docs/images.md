@@ -80,17 +80,18 @@ boots. A guest image must:
 - **Boot a kernel with direct-kernel boot support.** cloud-hypervisor
   loads the bzImage and initrd itself and passes `cmdline`; the guest
   never runs its own bootloader. Stock Debian/Ubuntu kernels work.
-- **Serve a root getty on the virtio-console port.** `msks console`
-  bridges the client to the guest's hvc0 through the VMM's console
-  socket, so the guest needs `virtio_console` (module or built-in)
-  and an autologin root getty on `/dev/hvc0` — the shipped images
-  run `serial-getty@hvc0` with an autologin drop-in, the same shape
-  the ttyS0 debug console carries. The console is the failsafe path
-  (#481): authentication is the daemon's TLS + token listener, the
-  stream is raw bytes with no in-band protocol, and the session
-  keeps the getty's own terminal geometry for its life (a workspace
-  user's shell with the client's terminal size rides ssh through
-  the forward seam, #108–#112).
+- **Serve a root getty on the serial console.** `msks console`
+  bridges the client to the guest's ttyS0 through the VMM's serial
+  socket, so the guest needs an autologin root getty on its serial
+  console — the shipped images run `serial-getty@ttyS0` with an
+  autologin drop-in. The kernel console (`console=ttyS0`) shares
+  the port: kernel messages interleave with the session, which is
+  exactly what a failsafe console wants (#481). Authentication is
+  the daemon's TLS + token listener, the stream is raw bytes with
+  no in-band protocol, and the session keeps the getty's own
+  terminal geometry for its life (a workspace user's shell with
+  the client's terminal size rides ssh through the forward seam,
+  #108–#112).
 - **Take an address over DHCP when a NIC is present.** Workspaces
   are networked by default (#52): the VM boots with a virtio-net NIC
   — Debian's kernel ships `virtio_net`, and the shipped overlay loads

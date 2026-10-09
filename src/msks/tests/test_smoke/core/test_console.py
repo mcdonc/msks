@@ -58,7 +58,7 @@ async def test_local_console_identity_drop() -> None:
                 ssh_pubkey=public,
             )
         )
-        await await_guest_up(serial_log, hostname=wid)
+        await await_guest_up(microvm, wid, hostname=wid)
         # The identity seed made the home before any console connect
         # (#171): owned by the user — and cloud-init created no
         # `debian` account alongside the shipped msks one. The

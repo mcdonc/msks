@@ -60,7 +60,7 @@ async def test_local_agent_toolchain() -> None:
         await microvm.launch(spec)
         info = await microvm.info(wid)
         assert info.status.value == "running"
-        await await_guest_up(serial_log)
+        await await_guest_up(microvm, wid)
         # The whole toolchain answers, as root. The version checks
         # pin the shared pins (pi, herdr, claude carry the same
         # versions in both images) and Node's major (the Debian

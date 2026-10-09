@@ -56,7 +56,7 @@ async def test_local_vm_boot_and_shutdown() -> None:
         # once its logind is running — pressing earlier would drop the
         # event and time out against a VM that is running but not yet
         # listening.
-        await await_guest_up(serial_log)
+        await await_guest_up(microvm, wid)
         await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
         final = await microvm.info(wid)
         assert final.status.value in ("stopped", "absent")
@@ -105,7 +105,7 @@ async def test_local_persistence_across_restart_and_reset() -> None:
         probe_commands: list[tuple[str, str]], app=None
     ) -> None:
         await microvm.launch(spec)
-        await await_guest_up(serial_log)
+        await await_guest_up(microvm, wid)
         for command, marker in probe_commands:
             await run_in_console(
                 microvm,
@@ -137,7 +137,6 @@ async def test_local_persistence_across_restart_and_reset() -> None:
                 ),
             ],
         )
-        serial_log.unlink(missing_ok=True)
         await boot_and_probe(
             [
                 ("cat /root/probe", root_marker),
@@ -145,7 +144,6 @@ async def test_local_persistence_across_restart_and_reset() -> None:
             ],
         )
         # Factory reset: pristine root, same /home.
-        serial_log.unlink(missing_ok=True)
         await microvm.reset(wid)
         assert not persist.overlay_path(state_dir, wid).exists()
         assert persist.home_volume_path(state_dir, wid).is_file()

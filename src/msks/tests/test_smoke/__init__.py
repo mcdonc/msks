@@ -71,7 +71,7 @@ needs_local = pytest.mark.skipif(
     reason="set TEST_VMLINUX/TEST_ROOTFS with /dev/kvm access",
 )
 
-#: The serial autologin's root-shell prompt: the last line the
+#: The console getty's root-shell prompt: the last line the
 #: Debian boot produces (#30) and the "guest is usable" marker —
 #: the logind that answers host-side shutdowns is up by then too.
 #: The prompt, not the getty's login banner above it (#75): the
@@ -89,7 +89,7 @@ IMAGE_HOSTNAME = "msks-guest"
 
 
 def guest_up_marker(hostname: str | None = None) -> str:
-    """The serial-log "guest is usable" prompt for one hostname."""
+    """The console getty's "guest is usable" prompt for one hostname."""
     return f"root@{hostname or IMAGE_HOSTNAME}:~#"
 
 
@@ -113,7 +113,7 @@ def created_id(result) -> str:
     """The daemon-minted id from a CLI create's confirmation line
     (#246): ``created <name> (id <10-hex-digits>)``.
 
-    The smoke suites key artifacts (the serial log, the client data
+    The smoke suites key artifacts (the client data
     root) on the immutable id the daemon mints — the typed name
     addresses the workspace but never names its directories."""
     match = re.search(r"created \S+ \(id ([0-9a-f]+)\)", result.stdout)
@@ -125,18 +125,20 @@ def created_id(result) -> str:
 
 
 def serial_tail(serial_log: Path, limit: int = 2000) -> str:
-    """The end of the guest's serial log, for failure messages."""
+    """The end of the guest's serial log, when one exists (#481: the
+    serial device rides the console socket, so a pre-#481 artifact
+    or nothing at all is normal); kept for failure messages."""
     if not serial_log.exists():
         return "(no serial log)"
     return serial_log.read_text(encoding="utf-8", errors="replace")[-limit:]
 
 
 def collect_failure_evidence(
-    state_dir: Path, wid: str, serial_log: Path
+    state_dir: Path, wid: str, serial_log: Path | None = None
 ) -> None:
     """On a smoke failure, print and keep the guest's own story.
 
-    The console service's state is on the serial log (systemd names
+    The console getty's state is on the raw console probe (systemd names
     failed/restarting units there); a raw console probe tells whether
     the guest's getty is answering at all; and the vm dir is
     copied out before the finally-clause cleanup deletes it, for the
@@ -202,22 +204,32 @@ def collect_failure_evidence(
 
 
 async def await_guest_up(
-    serial_log: Path,
+    microvm,
+    workspace_id: str,
     timeout_s: float | None = None,
     hostname: str | None = None,
 ) -> None:
-    """Block until the guest announces itself on the serial console."""
-    marker = guest_up_marker(hostname)
+    """Block until the guest's console answers a shell round-trip
+    (#481: the serial device is the console — a marker echo is the
+    guest-up announcement the serial log used to carry)."""
     timeout_s = timeout_s if timeout_s is not None else GUEST_UP_TIMEOUT_S
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout_s
-    while loop.time() < deadline:
-        if marker in serial_tail(serial_log):
+    deadline = asyncio.get_running_loop().time() + timeout_s
+    last: BaseException | None = None
+    while asyncio.get_running_loop().time() < deadline:
+        try:
+            await run_in_console(
+                microvm,
+                workspace_id,
+                "echo UP-$((6*7))",
+                "UP-42",
+                hostname=hostname,
+            )
             return
-        await asyncio.sleep(0.2)
+        except AssertionError as exc:
+            last = exc
+            await asyncio.sleep(0.2)
     raise AssertionError(
-        f"guest serial never showed {marker!r} within {timeout_s}s; "
-        f"serial log tail:\n{serial_tail(serial_log)}"
+        f"guest console never answered within {timeout_s}s: {last}"
     )
 
 

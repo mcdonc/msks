@@ -152,17 +152,13 @@ def test_vm_config_matches_v52_schema(tmp_path: Path) -> None:
             mem_mib=2048,
         ),
         disk_entries(tmp_path, WID),
-        tmp_path / "serial.log",
     )
     assert config["cpus"] == {"boot_vcpus": 4, "max_vcpus": 4}
     assert config["memory"] == {"size": 2048 * 1024 * 1024}
     assert config["payload"]["kernel"] == str(tmp_path / "k")
     assert config["payload"]["cmdline"] == "console=hvc0 root=/dev/vda rw"
     assert config["disks"] == disk_entries(tmp_path, WID)
-    assert config["serial"] == {
-        "mode": "File",
-        "file": str(tmp_path / "serial.log"),
-    }
+    assert config["serial"] == {"mode": "Off"}
     assert config["console"] == {"mode": "Off"}
     assert "initramfs" not in config["payload"]
 
@@ -193,7 +189,6 @@ def test_vm_config_with_initrd(tmp_path: Path) -> None:
             initrd=tmp_path / "i",
         ),
         disk_entries(tmp_path, WID),
-        tmp_path / "serial.log",
     )
     assert config["payload"]["initramfs"] == str(tmp_path / "i")
 
@@ -800,13 +795,13 @@ def test_vm_config_with_console_socket(tmp_path: Path) -> None:
     config = vm_config(
         VmSpec(workspace_id=WID, kernel=tmp_path / "k", rootfs=tmp_path / "r"),
         disk_entries(tmp_path, WID),
-        tmp_path / "serial.log",
         console_socket=tmp_path / "vms" / WID / "console.sock",
     )
-    assert config["console"] == {
+    assert config["serial"] == {
         "mode": "Socket",
         "socket": str(tmp_path / "vms" / WID / "console.sock"),
     }
+    assert config["console"] == {"mode": "Off"}
 
 
 async def _fake_console_server(path: Path):
@@ -1109,7 +1104,6 @@ def test_vm_config_carries_the_net_device(tmp_path: Path) -> None:
     config = vm_config(
         VmSpec(workspace_id=WID, kernel=tmp_path / "k", rootfs=tmp_path / "r"),
         disk_entries(tmp_path, WID),
-        tmp_path / "serial.log",
         net={"tap": "msks-abc123", "mac": "02:11:22:33:44:55"},
     )
     assert config["net"] == [
@@ -1119,7 +1113,6 @@ def test_vm_config_carries_the_net_device(tmp_path: Path) -> None:
     plain = vm_config(
         VmSpec(workspace_id=WID, kernel=tmp_path / "k", rootfs=tmp_path / "r"),
         disk_entries(tmp_path, WID),
-        tmp_path / "serial.log",
     )
     assert "net" not in plain
 

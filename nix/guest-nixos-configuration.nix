@@ -182,7 +182,7 @@ in
   boot.initrd.compressor = "gzip";
 
   # The runtime module set — the same closure the Debian image
-  # ships (#96, #82): the console port's driver (#481), the
+  # ships (#96, #82): the egress NIC driver (#52), the
   # egress NIC driver (#52), the ACPI button pair logind
   # answers the graceful shutdown with (#25), isofs (the
   # NoCloud seed disk is iso9660), crc32c-intel (ext4's
@@ -192,7 +192,6 @@ in
   # own unit: the flavor depends on the host CPU, and a failed
   # modules-load entry leaves a degraded boot.
   boot.kernelModules = [
-    "virtio_console"
     "virtio_net"
     "button"
     "evdev"
@@ -207,14 +206,13 @@ in
     "nf_conntrack"
   ];
 
-  # The console (#481): an autologin root getty on hvc0 — the
-  # virtio-console port the daemon's console socket bridges to
-  # the client. The same posture as the Debian image's hvc0 getty
-  # and the ttyS0 debug console; TERM rides agetty's own argument
-  # (#61).
-  systemd.services."serial-getty@hvc0" = {
+  # The console (#481): ttyS0 carries both the kernel console
+  # (console=ttyS0 above) and an autologin root getty — the daemon
+  # bridges the serial device's socket to the client. TERM rides
+  # agetty's own argument (#61).
+  systemd.services."serial-getty@ttyS0" = {
     wantedBy = [ "multi-user.target" ];
-    serviceConfig.ExecStart = "-${pkgs.util-linux}/sbin/agetty --autologin root --noclear hvc0 xterm";
+    serviceConfig.ExecStart = "-${pkgs.util-linux}/sbin/agetty --autologin root --noclear ttyS0 xterm";
   };
 
   # Nested KVM (#82): the flavor depends on the host CPU; a
@@ -364,8 +362,8 @@ in
   };
 
   # The serial console is the guest's debug channel: autologin
-  # root on ttyS0 (the hvc0 console above is the supported interactive
-  # path), the same parity the Debian image ships. NixOS's getty
+  # root on ttyS0 — the same getty the console unit above pins;
+  # NixOS's getty module bakes --autologin into the template. NixOS's getty
   # module bakes --autologin into the getty/serial-getty/console-
   # getty templates; systemd's getty-generator instantiates
   # serial-getty@ttyS0 from console=ttyS0.

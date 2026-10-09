@@ -238,9 +238,9 @@ let
   # derivations through its system profile.
   toolchain = pkgs.callPackage ./agent-toolchain.nix { };
 
-  # The msks additions, staged as an overlay tree: the console
-  # getty autologin on hvc0 and serial-console autologin on ttyS0
-  # (#481), the net module load, the nested-KVM module and
+  # The msks additions, staged as an overlay tree: the
+  # serial-console autologin on ttyS0 (#481), the net module
+  # load, the nested-KVM module and
   # inner-egress stack a workspace running msksd itself needs
   # (#82), a stable hostname, the DHCP client an egress workspace
   # (#52) brings up, the sshd posture + rsync the TCP service
@@ -565,22 +565,6 @@ let
         rm -f $out/etc/resolv.conf
         ln -s /run/systemd/resolve/stub-resolv.conf $out/etc/resolv.conf
 
-        # The console (#481): an autologin root getty on hvc0 — the
-        # virtio-console port the daemon's console socket bridges to
-        # the client. The same drop-in shape ttyS0 gets below; the
-        # wants symlink makes the getty deterministic (the systemd
-        # generator would only spawn one for a console= device, and
-        # the kernel console stays on ttyS0). TERM is pinned because
-        # systemd hands services none at all — readline turns off
-        # without it (#61).
-        ln -s /lib/systemd/system/serial-getty@.service \
-          $out/etc/systemd/system/serial-getty@hvc0.service
-        printf '%s\n' \
-          '[Service]' \
-          'Environment=TERM=xterm' \
-          'ExecStart=' \
-          'ExecStart=-/sbin/agetty --autologin root --noclear %I $TERM' \
-          > $out/etc/systemd/system/serial-getty@hvc0.service.d/autologin.conf
 
         # grub-common records successful boots into /boot — harmless
         # under the #14 overlay, but a direct-boot VM has no grub to
@@ -599,11 +583,14 @@ let
         # confines nothing in a pristine workspace VM.
         ln -s /dev/null $out/etc/systemd/system/apparmor.service
 
-        # The serial console is the guest's debug channel: autologin root
-        # on ttyS0 (the hvc0 console above is the supported interactive
-        # path).
+        # The console (#481): ttyS0 carries both the kernel console
+        # and an autologin root getty — the daemon bridges the
+        # serial device's socket to the client. TERM is pinned
+        # because a bare drop-in inherits none; readline turns off
+        # without it (#61).
         printf '%s\n' \
           '[Service]' \
+          'Environment=TERM=xterm' \
           'ExecStart=' \
           'ExecStart=-/sbin/agetty --autologin root --noclear %I $TERM' \
           > $out/etc/systemd/system/serial-getty@ttyS0.service.d/autologin.conf
@@ -1001,7 +988,6 @@ let
 
         # The generic kernel's module tree (#96): the guest's runtime
         # needs are the modprobe closure of the modules it loads —
-        # virtio_console (the console port, #481),
         # virtio_net (egress NICs, #52), virtio_blk (udev alias
         # probing; the initrd loads it before root anyway), the
         # ACPI power-button pair (button + evdev: logind answers the
@@ -1034,7 +1020,6 @@ let
         # modules becomes twenty-nine files (isofs's own cdrom
         # dependency included).
         runtimeModules="
-          virtio_console
           virtio_net
           virtio_blk
           button
@@ -1542,7 +1527,7 @@ pkgs.runCommand "msks-guest"
       "cmdline": "${kernelCmdline}",
       "vmlinux": "vmlinux",
       "initrd": "initrd",
-      "rootfs": "rootfs.ext4",
+      "rootfs": "rootfs.ext4"
     }
     EOF
   ''

@@ -484,8 +484,8 @@ def test_the_nixos_image_is_rebuild_ready() -> None:
     assert "nix-instantiate --eval-only" in build
     assert "-A config.system.build.toplevel.outPath" in build
     # The console getty (#481): the image enables a serial getty on
-    # hvc0 — the build fails if the unit stops being wanted.
-    assert "serial-getty@hvc0" in build
+    # ttyS0 — the build fails if the unit stops being wanted.
+    assert "serial-getty@ttyS0" in build
 
 
 def test_the_nixos_image_folds_the_interceptor_ca() -> None:

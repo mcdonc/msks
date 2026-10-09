@@ -5,9 +5,9 @@ Per-workspace layout under ``<state_dir>/vms/<workspace_id>/``:
 - ``api.sock``  — the CH REST socket this process serves
 - ``ch.pid``    — the CH process id (restart-surviving kill path)
 - ``ch.log``    — the VMM's own stderr
-- ``serial.log``— the guest serial console (file-backed serial device)
-- ``console.sock``— the virtio-console device's unix socket (the
-                 console shim behind it negotiates the prelude, #481)
+- ``console.sock``— the serial device's unix socket (the guest's
+                 autologin root getty on ttyS0 speaks through it,
+                 #481)
 
 Shutdown model, matching how the VMM really behaves: a bare
 ``cloud-hypervisor --api-socket`` is a daemon that keeps running after
@@ -130,7 +130,6 @@ POWER_REPRESS_S = 5.0
 def vm_config(
     spec: VmSpec,
     disks: list[dict],
-    serial_log: Path,
     console_socket: Path | None = None,
     net: dict | None = None,
 ) -> dict:
@@ -141,10 +140,11 @@ def vm_config(
     and the disks arrive as their own entries (#14): the root overlay
     first, the home volume second — position makes the root device.
 
-    ``console_socket`` turns the virtio-console device on (#481):
-    cloud-hypervisor LISTENS on that unix path, and the guest's
-    hvc0 — an autologin root getty — speaks through it. Without it
-    the device stays off: no getty would sit on hvc0.
+    ``console_socket`` puts the serial device in socket mode
+    (#481): cloud-hypervisor LISTENS on that unix path, and the
+    guest's ttyS0 — kernel console and autologin root getty —
+    speaks through it, bidirectionally. Without it the serial
+    device stays off.
 
     ``net`` adds the virtio-net device (#52): ``tap`` names the
     per-VM interface the daemon already created and addressed (a
@@ -163,12 +163,12 @@ def vm_config(
         "memory": {"size": spec.mem_mib * 1024 * 1024},
         "payload": payload,
         "disks": disks,
-        "serial": {"mode": "File", "file": str(serial_log)},
-        "console": (
+        "serial": (
             {"mode": "Socket", "socket": str(console_socket)}
             if console_socket is not None
             else {"mode": "Off"}
         ),
+        "console": {"mode": "Off"},
     }
     if net is not None:
         vm["net"] = [net]
@@ -395,7 +395,6 @@ class LocalCloudHypervisor(MicrovmDriver):
             spec, vmm, self._settings().llm.port, self.interceptor_ca_pem(spec)
         )
         socket_path = vm_dir / "api.sock"
-        serial_log = vm_dir / "serial.log"
         proc = await self._spawn(
             vmm.cloud_hypervisor, socket_path, vm_dir / "ch.log"
         )
@@ -417,7 +416,6 @@ class LocalCloudHypervisor(MicrovmDriver):
                     ssh_pubkey=spec.ssh_pubkey,
                 ),
                 socket_path,
-                serial_log,
                 vmm.request_timeout_s,
                 console_socket=vm_dir / "console.sock",
                 net=vm_net(attachment),
@@ -498,16 +496,13 @@ class LocalCloudHypervisor(MicrovmDriver):
         spec,
         disks,
         socket_path,
-        serial_log,
         timeout_s,
         console_socket=None,
         net=None,
     ) -> None:
         api = CloudHypervisorApi(socket_path, timeout_s)
         try:
-            await api.create(
-                vm_config(spec, disks, serial_log, console_socket, net)
-            )
+            await api.create(vm_config(spec, disks, console_socket, net))
             await api.boot()
         finally:
             await api.aclose()

@@ -275,7 +275,7 @@ let
         # enable flipped off, the wantedBy lost) fails the build
         # here, not a workspace's first boot.
         test -x "$toplevel"/init
-        test -e "$toplevel"/etc/systemd/system/multi-user.target.wants/serial-getty@hvc0.service
+        test -e "$toplevel"/etc/systemd/system/multi-user.target.wants/serial-getty@ttyS0.service
         test -e "$toplevel"/etc/systemd/system/multi-user.target.wants/cloud-init.service
         test -e "$toplevel"/etc/systemd/system/multi-user.target.wants/sshd.service
         # Sanity: the baked agent toolchain (#266, #268) — an
@@ -562,7 +562,7 @@ pkgs.runCommand "msks-guest-nixos"
       "cmdline": "${kernelCmdline}",
       "vmlinux": "vmlinux",
       "initrd": "initrd",
-      "rootfs": "rootfs.ext4",
+      "rootfs": "rootfs.ext4"
     }
     EOF
   ''

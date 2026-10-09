@@ -89,7 +89,6 @@ async def test_local_egress_boot() -> None:
     # the workspace row, #70 review).
     app.state.model.migrate()
     wid = f"smoke-{uuid.uuid4().hex[:8]}"
-    serial_log = state_dir / "vms" / wid / "serial.log"
     spec = VmSpec(
         workspace_id=wid,
         kernel=Path(VMLINUX),
@@ -108,7 +107,7 @@ async def test_local_egress_boot() -> None:
         await app.state.net.start()
         await app.state.model.create_workspace(spec)
         await microvm.launch(spec)
-        await await_guest_up(serial_log)
+        await await_guest_up(microvm, wid)
         # DHCP: the /30's guest address and the tap as the gateway.
         # Every marker is guest-computed ($((6*7)) → 42, gated on the
         # probe's exit status by &&): the pty echoes the sent bytes,
@@ -244,7 +243,6 @@ async def test_local_egress_git_out() -> None:
     app = build_app(settings)
     microvm = app.state.microvm
     wid = f"smoke-{uuid.uuid4().hex[:8]}"
-    serial_log = state_dir / "vms" / wid / "serial.log"
     spec = VmSpec(
         workspace_id=wid,
         kernel=Path(VMLINUX),
@@ -359,7 +357,7 @@ async def test_local_egress_git_out() -> None:
 
     async def wait_sshd(app=None) -> None:
         """Until the guest's address and ssh services are up."""
-        await await_guest_up(serial_log)
+        await await_guest_up(microvm, wid)
         await run_in_console(
             microvm,
             wid,
@@ -866,7 +864,7 @@ async def test_local_egress_git_out() -> None:
         final = await microvm.info(wid)
         assert final.status.value in ("stopped", "absent")
     except BaseException:
-        collect_failure_evidence(state_dir, wid, serial_log)
+        collect_failure_evidence(state_dir, wid)
         with contextlib.suppress(Exception):
             await microvm.kill(wid)
         raise
@@ -927,7 +925,6 @@ async def boot_consent_workspace(
     app = build_app(settings)
     app.state.model.migrate()
     wid = f"smoke-{uuid.uuid4().hex[:8]}"
-    serial_log = state_dir / "vms" / wid / "serial.log"
     spec = VmSpec(
         workspace_id=wid,
         kernel=Path(VMLINUX),
@@ -941,8 +938,8 @@ async def boot_consent_workspace(
     await app.state.net.start()
     await app.state.model.create_workspace(spec)
     await app.state.microvm.launch(spec)
-    await await_guest_up(serial_log)
-    return app, wid, serial_log
+    await await_guest_up(app.state.microvm, wid)
+    return app, wid
 
 
 async def shutdown_workspace(app, wid: str) -> None:

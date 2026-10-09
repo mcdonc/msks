@@ -237,7 +237,7 @@ async def test_local_sshd_and_rsync() -> None:
     async def boot_and_wait_sshd(app=None) -> None:
         await microvm.launch(spec)
         await app.state.model.set_status(wid, "running")
-        await await_guest_up(serial_log)
+        await await_guest_up(microvm, wid)
         # sshd listens once its interface has the address (#110's
         # ordering). Each unit is probed by itself — multi-unit
         # is-active is ANY-active semantics, under which an absent

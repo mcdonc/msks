@@ -96,7 +96,7 @@ async def test_local_dev_workspace_bootstrap() -> None:
         await app.state.net.start()
         await app.state.model.create_workspace(spec)
         await microvm.launch(spec)
-        await await_guest_up(serial_log, hostname=wid)
+        await await_guest_up(microvm, wid, hostname=wid)
         # First boot: the seed runs in cloud-final; poll its state
         # trail to "done" (each tool's marker gated on its presence).
         await await_dev_state(microvm, app, wid, b"done", hostname=wid)
@@ -112,7 +112,7 @@ async def test_local_dev_workspace_bootstrap() -> None:
         await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
         serial_log.unlink(missing_ok=True)
         await microvm.launch(spec)
-        await await_guest_up(serial_log, hostname=wid)
+        await await_guest_up(microvm, wid, hostname=wid)
         await await_dev_state(microvm, app, wid, b"done", hostname=wid)
         # Console-readiness after the reboot plus the persistence
         # proof: the venv survives, and the rerun log does not exist

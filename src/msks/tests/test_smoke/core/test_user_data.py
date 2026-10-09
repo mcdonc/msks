@@ -61,7 +61,7 @@ async def test_local_user_data_provisioning() -> None:
 
     async def boot_and_probe(expected_count: int, app=None) -> None:
         await microvm.launch(spec)
-        await await_guest_up(serial_log, hostname=wid)
+        await await_guest_up(microvm, wid, hostname=wid)
         # Payloads run in cloud-final, which can lag the login getty;
         # wait for cloud-init to be done before asserting on files it
         # was supposed to write.
@@ -172,7 +172,7 @@ async def test_local_user_data_cloud_config() -> None:
     )
     try:
         await microvm.launch(spec)
-        await await_guest_up(serial_log, hostname=wid)
+        await await_guest_up(microvm, wid, hostname=wid)
         await run_in_console(
             microvm,
             wid,
