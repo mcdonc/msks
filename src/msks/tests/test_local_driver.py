@@ -910,6 +910,55 @@ async def test_close_console_stream_tolerates_socketless_writers() -> None:
     assert writer.closed
 
 
+async def test_close_console_stream_half_closes_through_pseudo_sockets(
+    env, tmp_path: Path
+) -> None:
+    """uvloop's get_extra_info("socket") is a PseudoSocket that
+    answers shutdown with TypeError but carries the fd (#481 CI:
+    the daemon's teardown crashed on it). The half-close goes
+    through the fd, and the peer still sees a clean EOF.
+    """
+    app, state_dir, _ = env
+    sock = state_dir / "vms" / WID / "console.sock"
+    sock.parent.mkdir(parents=True, exist_ok=True)
+    stub_vm = await spawn_stub_vmm(app)
+    sock.parent.joinpath("ch.pid").write_text(str(stub_vm.pid))
+    seen_eof = asyncio.Event()
+
+    async def handle(reader, writer):
+        await reader.read()  # b"" once the client half-closes
+        seen_eof.set()
+        writer.close()
+
+    server = await asyncio.start_unix_server(handle, str(sock))
+    try:
+        reader, writer = await app.state.microvm.console(WID)
+
+        class PseudoSocket:
+            """The uvloop shape: fileno yes, shutdown no."""
+
+            def __init__(self, fd):
+                self.fd = fd
+
+            def fileno(self):
+                return self.fd
+
+            def shutdown(self, how):
+                raise TypeError("transport sockets do not support shutdown()")
+
+        real_fd = writer.get_extra_info("socket").fileno()
+        writer.get_extra_info = lambda name: (
+            PseudoSocket(real_fd) if name == "socket" else None
+        )
+        await close_console_stream(reader, writer)
+        assert seen_eof.is_set(), "the fd-wrapped half-close never landed"
+    finally:
+        stub_vm.kill()
+        await stub_vm.wait()
+        server.close()
+        await server.wait_closed()
+
+
 async def test_console_without_vm_fails_fast(env, monkeypatch) -> None:
     app, _, _ = env
     app.state.settings.vmm.console_wait_timeout_s = 0.1

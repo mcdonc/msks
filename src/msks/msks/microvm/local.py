@@ -114,6 +114,34 @@ async def console_attempt(socket_path: Path):
         raise _ConsoleRetry(f"console socket unreachable: {exc}") from exc
 
 
+def half_close_raw_socket(writer) -> None:
+    """SHUT_WR on the stream's real socket, whatever event loop
+    runs it.
+
+    Stock asyncio's ``get_extra_info("socket")`` returns a real
+    socket; uvloop's PseudoSocket answers ``shutdown`` with
+    TypeError but still carries the fd — a socket object wrapped
+    around that fd does the half-close. Fakes that model no
+    socket at all are skipped.
+    """
+    get = getattr(writer, "get_extra_info", None)
+    if get is None:
+        return
+    raw = get("socket")
+    if raw is None:
+        return
+    try:
+        raw.shutdown(socket.SHUT_WR)
+        return
+    except TypeError:
+        pass
+    wrapped = socket.socket(fileno=raw.fileno())
+    try:
+        wrapped.shutdown(socket.SHUT_WR)
+    finally:
+        wrapped.detach()
+
+
 async def close_console_stream(reader, writer) -> None:
     """Tear down a console socket session so the VMM survives it.
 
@@ -130,10 +158,7 @@ async def close_console_stream(reader, writer) -> None:
     empties this side's receive queue so the final close carries
     no unread data.
     """
-    with contextlib.suppress(OSError, AttributeError):
-        raw = writer.get_extra_info("socket")
-        if raw is not None:
-            raw.shutdown(socket.SHUT_WR)
+    half_close_raw_socket(writer)
     # Read the tail in flight (prompt redraws, escape sequences)
     # until the stream reaches EOF; each slice is capped so a
     # chatty guest cannot hold the detach hostage.
