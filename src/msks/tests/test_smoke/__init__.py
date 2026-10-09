@@ -125,11 +125,11 @@ def created_id(result) -> str:
     return match.group(1)
 
 
-def serial_tail(serial_log: Path, limit: int = 2000) -> str:
+def serial_tail(serial_log: Path | None, limit: int = 2000) -> str:
     """The end of the guest's serial log, when one exists (#481: the
     serial device rides the console socket, so a pre-#481 artifact
     or nothing at all is normal); kept for failure messages."""
-    if not serial_log.exists():
+    if serial_log is None or not serial_log.exists():
         return "(no serial log)"
     return serial_log.read_text(encoding="utf-8", errors="replace")[-limit:]
 
@@ -440,6 +440,11 @@ async def await_dev_state(
         try:
             reader, writer = await microvm.console(workspace_id)
             try:
+                # The idle shell renders its prompt on a newline
+                # (#481: a serial prompt prints only to whoever
+                # was connected when it appeared).
+                writer.write(b"\n")
+                await writer.drain()
                 await read_until(reader, root_prompt_needle(hostname))
                 writer.write(
                     b"cat /root/.msks-bootstrap/state "
@@ -549,6 +554,11 @@ async def await_guest_trail(
         try:
             reader, writer = await microvm.console(workspace_id)
             try:
+                # The idle shell renders its prompt on a newline
+                # (#481: a serial prompt prints only to whoever
+                # was connected when it appeared).
+                writer.write(b"\n")
+                await writer.drain()
                 await read_until(reader, root_prompt_needle(hostname))
                 writer.write(f"{probe}; echo E-$((21*2))\n".encode())
                 await writer.drain()

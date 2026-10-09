@@ -1000,7 +1000,7 @@ async def test_local_egress_consent_interactive() -> None:
     app = None
     wid = None
     try:
-        app, wid, _serial = await boot_consent_workspace(
+        app, wid = await boot_consent_workspace(
             settings, state_dir, "interactive", (".deb.debian.org",)
         )
         microvm = app.state.microvm
@@ -1111,7 +1111,7 @@ async def test_local_egress_consent_static() -> None:
     app = None
     wid = None
     try:
-        app, wid, _serial = await boot_consent_workspace(
+        app, wid = await boot_consent_workspace(
             settings, state_dir, "static", (".deb.debian.org",)
         )
         microvm = app.state.microvm

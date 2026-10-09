@@ -231,7 +231,7 @@ async def test_local_minted_identity() -> None:
         assert stopped.returncode == 0, stopped.stderr
 
     async def boot_and_wait(app=None) -> None:
-        await await_guest_up(microvm, wid, hostname=wid)
+        await await_guest_up(microvm, vm_id, hostname=wid)
         # The seed's script runs in cloud-init's user-scripts stage
         # (cloud_final); wait for cloud-init to be done before any
         # login or authorized_keys assertion, so the stage's ordering
@@ -773,7 +773,7 @@ async def test_local_client_minted_identity() -> None:
         # authorized_keys carry the client's line.
         started = await cli("start", wid)
         assert started.returncode == 0, started.stderr
-        await await_guest_up(microvm, wid, hostname=wid)
+        await await_guest_up(microvm, vm_id, hostname=wid)
         await run_in_console(
             microvm,
             vm_id,
@@ -1020,7 +1020,7 @@ async def test_local_operator_pubkey() -> None:
 
         started = await cli("start", wid)
         assert started.returncode == 0, started.stderr
-        await await_guest_up(microvm, wid, hostname=wid)
+        await await_guest_up(microvm, vm_id, hostname=wid)
         await run_in_console(
             microvm,
             vm_id,
