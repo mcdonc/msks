@@ -35,18 +35,15 @@ workspace-<name>-<version>.tar
 
 `disk/image.json` is what msksd reads; schema 2:
 
-| Field              | Meaning                                                                                        |
-| ------------------ | ---------------------------------------------------------------------------------------------- |
-| `schema`           | `2`                                                                                            |
-| `name`             | Catalog name, e.g. `debian`                                                                    |
-| `version`          | Catalog version, e.g. `13.6`; numeric segments sort correctly                                  |
-| `cmdline`          | Kernel command line for workspace boots                                                        |
-| `vsock_shell_port` | AF_VSOCK port the guest's console service listens on                                           |
-| `kernel_version`   | e.g. `6.12.107+deb13-amd64` (informational)                                                    |
-| `kernel_format`    | `bzImage` (informational)                                                                      |
-| `console_protocol` | Console handshake: `prelude-v1` (identity prelude) or `legacy` (raw root shell; default)       |
-| `console_users`    | Users `msks console --user` may request beyond the row's login user (#248); default `["root"]` |
-| `capabilities`     | Optional capability object; `provisioner` names the seed consumer (below)                      |
+| Field            | Meaning                                                                   |
+| ---------------- | ------------------------------------------------------------------------- |
+| `schema`         | `2`                                                                       |
+| `name`           | Catalog name, e.g. `debian`                                               |
+| `version`        | Catalog version, e.g. `13.6`; numeric segments sort correctly             |
+| `cmdline`        | Kernel command line for workspace boots                                   |
+| `kernel_version` | e.g. `6.12.107+deb13-amd64` (informational)                               |
+| `kernel_format`  | `bzImage` (informational)                                                 |
+| `capabilities`   | Optional capability object; `provisioner` names the seed consumer (below) |
 
 The manifest is self-describing: importing the archive needs nothing
 beside the archive itself.
@@ -56,8 +53,8 @@ beside the archive itself.
 Every workspace artifact the guest touches is owned by msksd at
 runtime: the root and home volumes and the cidata seed disks are
 created under the state dir (`MSKSD_STATE_DIR`, the one relocation
-variable), and the console reaches the guest over AF_VSOCK through
-the VMM msksd launched — both deployment shapes (the NixOS module
+variable), and the console reaches the guest over the
+virtio-console port of the VMM msksd launched — both deployment shapes (the NixOS module
 and the dev daemon) deliver this without host-side scripting. The
 host itself provides four things, all configuration:
 
@@ -83,31 +80,17 @@ boots. A guest image must:
 - **Boot a kernel with direct-kernel boot support.** cloud-hypervisor
   loads the bzImage and initrd itself and passes `cmdline`; the guest
   never runs its own bootloader. Stock Debian/Ubuntu kernels work.
-- **Ship a virtio console service.** `msks console` connects over
-  AF_VSOCK, so the guest needs `vmw_vsock_virtio_transport` (module
-  or built-in) and a service that binds the vsock port and spawns
-  login shells — the shipped image runs `msks-console-helper` (a
-  static Rust binary the image builds from `src/console-helper`) as
-  `msks-console.service`, `Restart=always`. The helper accepts
-  host-originated connections only, and each connection negotiates
-  the identity prelude (#63): the requested user, the client
-  terminal's size and TERM, then an `MSKS OK` reply (or a named
-  refusal) before the helper allocates the pty at the client's
-  geometry, drops to that user through the full
-  setgroups/setgid/setuid sequence, and execs the user's login
-  shell with a passwd-built environment. The pty is a plain
-  canonical terminal — the line discipline echoes and edits input —
-  and it keeps its connect-time size for the session's life (live
-  resizes ride an ssh session through the forward, #108–#112). An
-  image whose manifest sets `console_protocol` to `legacy` (the
-  default) serves the raw root shell instead: the user, size, and
-  TERM never reach the guest, and the manifest's `console_users`
-  still gates which users `msks console --user` may request. For
-  both protocols, the workspace's recorded login user (#248) is
-  served beside the manifest's list: the first-boot seed
-  provisions that account, so the console accepts it even though
-  the image never shipped it (a `legacy` image still ignores the
-  name on the wire — its console is the raw root shell).
+- **Serve a root getty on the virtio-console port.** `msks console`
+  bridges the client to the guest's hvc0 through the VMM's console
+  socket, so the guest needs `virtio_console` (module or built-in)
+  and an autologin root getty on `/dev/hvc0` — the shipped images
+  run `serial-getty@hvc0` with an autologin drop-in, the same shape
+  the ttyS0 debug console carries. The console is the failsafe path
+  (#481): authentication is the daemon's TLS + token listener, the
+  stream is raw bytes with no in-band protocol, and the session
+  keeps the getty's own terminal geometry for its life (a workspace
+  user's shell with the client's terminal size rides ssh through
+  the forward seam, #108–#112).
 - **Take an address over DHCP when a NIC is present.** Workspaces
   are networked by default (#52): the VM boots with a virtio-net NIC
   — Debian's kernel ships `virtio_net`, and the shipped overlay loads
@@ -275,13 +258,12 @@ msks-build-guest nixos
 
 builds the second catalog image (`workspace-nixos-<version>.tar`)
 from a NixOS system evaluated against the same pinned nixpkgs the
-development shell uses — the guest's console helper, cloud-init,
-sshd, and rsync are built by nixpkgs instead of fetched as Debian
-artifacts. The root filesystem is the whole system closure packed
+development shell uses — the guest's cloud-init, sshd, and rsync
+are built by nixpkgs instead of fetched as Debian artifacts. The root filesystem is the whole system closure packed
 into a fresh ext4 (the same `mke2fs -d` under fakeroot; no cloud
 image exists to extract), and every store path resolves from the
 image itself. The archive carries the same `image.json` schema with
-the same declared capabilities (`cloud-init`, `prelude-v1`): the
+the same declared capabilities (`cloud-init`): the
 daemon serves it with nothing keyed off the image's name. The
 output lands under `.devenv/state/guest-nixos/`
 (`GUEST_NIXOS_DIR` relocates it); `nix/guest-nixos.nix`
@@ -312,8 +294,8 @@ against:
 - **`/etc/nixos/configuration.nix`.** It imports
   `nix/guest-nixos-configuration.nix` — the very module the image
   build evaluated — with the module's whole import chain (its
-  package files, the shrinkwrap pair, the console helper's
-  sources) shipped beside it at the same relative paths, and the
+  package files, the shrinkwrap pair) shipped beside it at the
+  same relative paths, and the
   image build evaluates the shipped chain exactly as a rebuild
   does, so a configuration a rebuild cannot evaluate fails the
   build, not a workspace's first boot. A rebuild re-evaluates the
@@ -341,7 +323,7 @@ against:
   fully on reboot.
 
 A rebuild that changes nothing but re-activates keeps every msks
-contract item — the vsock console, the sshd posture, cloud-init
+contract item — the console getty, the sshd posture, cloud-init
 seed handling, the agent toolchain on PATH — because the
 configuration it evaluates is the one that shipped. nix works the
 same way for the unprivileged workspace user logged in on the
@@ -394,8 +376,8 @@ image. The outline, using a distro's own cloud image as the source:
 2. Produce a raw ext4 of the guest root filesystem
    (`qemu-img convert` + partition extraction, or unpack the
    cloud image's root archive directly).
-3. Install the console service and enable it; make sure the vsock
-   module is present and `/dev/vsock` is created at boot.
+3. Enable an autologin root getty on `/dev/hvc0`; make sure the
+   `virtio_console` module is present so the device exists at boot.
 4. Bring up networking. Workspaces boot with a virtio-net NIC by
    default (#52), so the image must be able to configure one — how is
    the distro's choice:
@@ -431,9 +413,8 @@ image. The outline, using a distro's own cloud image as the source:
    image whose guest runs no cloud-init still accepts `user_data` at
    create, but nothing executes it — the daemon cannot tell.
 
-6. Write `disk/image.json` describing your kernel, cmdline, and
-   vsock port, and declare `"capabilities": {"provisioner":
-"cloud-init"}`.
+6. Write `disk/image.json` describing your kernel and cmdline,
+   and declare `"capabilities": {"provisioner": "cloud-init"}`.
 7. Lay out `boot/` and `disk/` as the layer tree and wrap it:
 
 ```bash
@@ -460,9 +441,9 @@ state dir under `/tmp`) and reports each contract point by name:
 
 ```text
 $ msks image check workspace-mine-1.0.tar
-PASS archive        imported mine:1.0 (1d6a5e782fc0), prelude-v1 handshake as 'root'
+PASS archive        imported mine:1.0 (1d6a5e782fc0)
 PASS boot           guest answered the console in 3.4s (kernel 6.12.107+deb13-amd64)
-PASS console        prelude-v1 handshake as 'root'
+PASS console        root autologin getty on the console port
 PASS user-data      seed payload ran on first boot
 PASS acpi-shutdown  clean shutdown within 120s
 PASS root-rw        root is writable and the write survived a stop/start (overlay)
@@ -472,8 +453,7 @@ PASS home-label     /home mounted by label msks-home and its write survived a st
 Any host with `/dev/kvm` runs it — nothing else from msks is
 needed (no daemon, no state). The points map one-to-one onto "What
 a guest must provide" above: the archive layout and manifest, a
-guest that answers the vsock console under the protocol the
-manifest declares, a root that accepts writes through the overlay,
+guest whose console getty answers, a root that accepts writes through the overlay,
 `/home` mounted by its label (both surviving a stop/start cycle),
 the seed payload running on first boot (checked when the manifest
 declares a provisioner; a provisioner-less image reports the point
@@ -494,9 +474,7 @@ the real daemon: both bind the same privileged DHCP and DNS
 ports. The no-NIC half of the posture is
 the core pass itself: it boots without a NIC and requires a usable
 login. The write probes (`root-rw`, `home-label`, `user-data`)
-run over a root console whenever the image serves one
-(`console_users`); an image whose console serves other users only
-gets those users' reach reported.
+run over the root console.
 
 ## Registering an image
 
@@ -700,7 +678,7 @@ The rules worth knowing:
   boots with two disks and no added cost: cloud-init finds no seed,
   applies nothing, and the interactive budget is unchanged (~3.0s
   start→shell).
-- **Failure posture is cloud-init's.** The vsock console starts
+- **Failure posture is cloud-init's.** The console getty starts
   before cloud-init runs (the interactive budget is unaffected —
   the shipped image measures ~3.0s start→shell), and payloads run
   in cloud-init's final stage: a slow or hanging payload delays

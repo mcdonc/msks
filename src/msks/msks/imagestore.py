@@ -87,7 +87,6 @@ class ImageRecord:
     origin_name: str
     origin_version: str
     cmdline: str
-    vsock_shell_port: int
     kernel_version: str
     kernel_format: str
     kernel: Path
@@ -100,13 +99,6 @@ class ImageRecord:
     # The image's declared first-boot provisioner (#41): None (the
     # field is absent) or one of PROVISIONERS.
     provisioner: str | None = None
-    #: The guest console protocol (#63): "prelude-v1" images negotiate
-    #: the user and window size in-band; "legacy" images (and every
-    #: image whose manifest predates the field) speak raw bytes.
-    console_protocol: str = "legacy"
-    #: The users the image's console will serve; the daemon validates
-    #: --user against this list before anything reaches the guest.
-    console_users: tuple[str, ...] = ("root",)
 
     @property
     def ref(self) -> str:
@@ -325,56 +317,13 @@ def validate_manifest(layer: tarfile.TarFile) -> dict:
     # import with nothing installed, not leave an invisible cache
     # behind the 400.
     provisioner_of(raw)
-    vsock_port_of(raw)
-    console_users_of(raw)
     return raw
-
-
-def console_users_of(manifest: dict) -> tuple[str, ...]:
-    """The manifest's console users, validated (#261): a list of
-    strings — the one manifest field the old import never
-    type-checked, so a non-list surfaced as a bare TypeError after
-    the cache was renamed into place."""
-    users = manifest.get("console_users")
-    if users is None:
-        return ("root",)
-    if not isinstance(users, list) or not all(
-        isinstance(user, str) for user in users
-    ):
-        raise ImageError(
-            "image.json console_users must be a list of strings, "
-            f"got {users!r}"
-        )
-    return tuple(users)
-
-
-def vsock_port_of(manifest: dict) -> int:
-    """The manifest's vsock port, validated (#258): an integer in
-    the vsock range, named when it is not — a non-numeric port
-    used to surface as a bare ValueError after the cache was
-    already renamed into place, poisoning the catalog entry."""
-    raw_port = manifest["vsock_shell_port"]
-    if isinstance(raw_port, bool) or not isinstance(raw_port, (int, str)):
-        raise ImageError(
-            f"image.json vsock_shell_port must be an integer, got {raw_port!r}"
-        )
-    try:
-        port = int(raw_port)
-    except ValueError as exc:
-        raise ImageError(
-            f"image.json vsock_shell_port must be an integer, got {raw_port!r}"
-        ) from exc
-    if not 0 < port < 1 << 32:
-        raise ImageError(f"image.json vsock_shell_port out of range: {port}")
-    return port
 
 
 def require_fields(raw: dict) -> None:
     """Raise unless every schema-2 field is present."""
     missing = [
-        field
-        for field in ("name", "version", "cmdline", "vsock_shell_port")
-        if field not in raw
+        field for field in ("name", "version", "cmdline") if field not in raw
     ]
     if missing:
         raise ImageError(f"image.json missing {missing[0]!r}")
@@ -683,13 +632,8 @@ def record_from(
         origin_name=manifest["name"],
         origin_version=str(manifest["version"]),
         cmdline=manifest["cmdline"],
-        vsock_shell_port=int(manifest["vsock_shell_port"]),
         kernel_version=str(manifest.get("kernel_version", "")),
         kernel_format=str(manifest.get("kernel_format", "")),
-        console_protocol=str(manifest.get("console_protocol", "legacy")),
-        console_users=tuple(
-            str(user) for user in manifest.get("console_users", ("root",))
-        ),
         kernel=cache / "kernel",
         initrd=cache / "initrd",
         rootfs=cache / "rootfs.ext4",

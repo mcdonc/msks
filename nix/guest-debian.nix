@@ -7,8 +7,7 @@
 #
 # The root filesystem is Debian 13 (trixie), straight from Debian's
 # official genericcloud cloud image (#30, #41): real Debian with
-# PID 1, apt, Debian's own modules — and Debian's own socat (built
-# WITH_VSOCK) serving the vsock console. The kernel is Debian's
+# PID 1, apt, and Debian's own modules. The kernel is Debian's
 # *generic* flavor of the same upstream version (#96) — it builds
 # virtio-pci in and carries the KVM modules, so one pin serves the
 # workspace guest and its nested-KVM workspaces. The minimal
@@ -69,11 +68,6 @@ let
     ];
     hash = "sha512:8ea9faae810043a0b35b0149f05014f26705c2339ffb11ead308f33e844a87cc3ef46ec81d5262b38817b6a88af404874d48a5857ebe072ef6a31dfb6e371f50";
   };
-
-  # The port the guest's vsock console listens on; the daemon dials
-  # it after the CONNECT handshake (#21). Fixed, recorded in the
-  # manifest, matched by the systemd unit below.
-  vsockShellPort = 1023;
 
   # First-boot provisioning (#41): the image's declared seed-disk
   # consumer — cloud-init, shipped by the genericcloud source. Both
@@ -225,11 +219,6 @@ let
         rm -rf "$out"/tree
       '';
 
-  # The console identity helper (#63): shared with every guest
-  # build (#250) — nix/console-helper-pkg.nix carries the why (the
-  # static link, the NSS note).
-  consoleHelper = pkgs.callPackage ./console-helper-pkg.nix { };
-
   # The agent toolchain's Node pin (#266): the official standalone
   # release, digest-pinned, that the overlay stages under
   # /usr/local. Distro Node is older than pi's engines floor on
@@ -249,20 +238,18 @@ let
   # derivations through its system profile.
   toolchain = pkgs.callPackage ./agent-toolchain.nix { };
 
-  # The msks additions, staged as an overlay tree: the vsock console
-  # service, serial-console autologin (the debug console), the vsock
-  # and net module loads, the nested-KVM module and inner-egress
-  # stack a workspace running msksd itself needs (#82), a stable
-  # hostname, the DHCP client an egress workspace (#52) brings up,
-  # the sshd posture + rsync the TCP service plane rides (#110),
-  # the sudoers grant behind the workspace user's sudo (#169), the
-  # console helper binary, and the agent toolchain (#266): pinned
+  # The msks additions, staged as an overlay tree: the console
+  # getty autologin on hvc0 and serial-console autologin on ttyS0
+  # (#481), the net module load, the nested-KVM module and
+  # inner-egress stack a workspace running msksd itself needs
+  # (#82), a stable hostname, the DHCP client an egress workspace
+  # (#52) brings up, the sshd posture + rsync the TCP service
+  # plane rides (#110), the sudoers grant behind the workspace
+  # user's sudo (#169), and the agent toolchain (#266): pinned
   # Node, pi, herdr, and Claude Code under /usr/local, and the pi
   # model-discovery
   # extension planted for root and in /etc/skel for every account
   # the identity seed provisions from it.
-  # Debian's socat 1.8.x is built WITH_VSOCK, so nothing is
-  # cross-compiled in.
   guestOverlay =
     pkgs.runCommand "msks-guest-overlay" { nativeBuildInputs = [ pkgs.gnutar ]; }
       ''
@@ -282,13 +269,6 @@ let
           $out/etc/modules-load.d
 
         printf 'msks-guest\n' > $out/etc/hostname
-
-        # The console helper (#63): the only privileged listener in the
-        # image. Mode 0755 — it drops privileges itself; it is never
-        # setuid.
-        cp "${consoleHelper}/bin/msks-console-helper" \
-          $out/usr/bin/msks-console-helper
-        chmod 0755 $out/usr/bin/msks-console-helper
 
         # The agent toolchain (#266): pinned Node from the official
         # tarball and pi in npm's global layout, both under /usr/local —
@@ -490,12 +470,6 @@ let
           'LABEL=msks-home /home ext4 defaults,nofail,x-systemd.device-timeout=30s 0 2' \
           > $out/etc/fstab
 
-        printf '%s\n' \
-          '# The vsock console transport: the module name on Debian' \
-          '# is vmw_vsock_virtio_transport (#21).' \
-          'vmw_vsock_virtio_transport' \
-          > $out/etc/modules-load.d/msks-vsock.conf
-
         # Egress networking (#52): a workspace created with egress boots
         # with a virtio-net NIC; everything else presents none. The
         # module loads at boot either way (udev would autoload it on
@@ -591,41 +565,22 @@ let
         rm -f $out/etc/resolv.conf
         ln -s /run/systemd/resolve/stub-resolv.conf $out/etc/resolv.conf
 
-        # Escape the default basic.target ordering (#37): the console
-        # starts as soon as the vsock module is loaded, not after the
-        # whole boot. A too-early start self-heals through Restart=
-        # always, and StartLimitIntervalSec=0 keeps systemd's default
-        # burst limit from ending those retries.
-        #
-        # The helper (#63) owns the listener the socat line used to: it
-        # accepts host-originated connections only, reads the identity
-        # prelude (user, window size), and execs the requested user's
-        # login shell on a fresh pty sized to the client's tty (#61's
-        # 0x0 fix). A fresh pty slave's default termios — ECHO, ICANON,
-        # ISIG, OPOST/ONLCR — is what programs that read stdin directly
-        # get, and bash's readline takes over editing while it is active;
-        # the helper sends TERM=xterm because systemd hands services
-        # TERM=dumb, which turns readline off (#61).
+        # The console (#481): an autologin root getty on hvc0 — the
+        # virtio-console port the daemon's console socket bridges to
+        # the client. The same drop-in shape ttyS0 gets below; the
+        # wants symlink makes the getty deterministic (the systemd
+        # generator would only spawn one for a console= device, and
+        # the kernel console stays on ttyS0). TERM is pinned because
+        # systemd hands services none at all — readline turns off
+        # without it (#61).
+        ln -s /lib/systemd/system/serial-getty@.service \
+          $out/etc/systemd/system/serial-getty@hvc0.service
         printf '%s\n' \
-          '[Unit]' \
-          'Description=msks vsock console (one negotiated shell per connection)' \
-          'Documentation=https://github.com/mcdonc/msks' \
-          'ConditionPathExists=/dev/vsock' \
-          'After=systemd-modules-load.service dev-pts.mount' \
-          'DefaultDependencies=no' \
-          'StartLimitIntervalSec=0' \
-          ''' \
           '[Service]' \
-          'ExecStart=/usr/bin/msks-console-helper ${toString vsockShellPort}' \
-          'Restart=always' \
-          'RestartSec=0.1' \
-          'StandardInput=null' \
-          ''' \
-          '[Install]' \
-          'WantedBy=multi-user.target' \
-          > $out/etc/systemd/system/msks-console.service
-        ln -s ../msks-console.service \
-          $out/etc/systemd/system/multi-user.target.wants/msks-console.service
+          'Environment=TERM=xterm' \
+          'ExecStart=' \
+          'ExecStart=-/sbin/agetty --autologin root --noclear %I $TERM' \
+          > $out/etc/systemd/system/serial-getty@hvc0.service.d/autologin.conf
 
         # grub-common records successful boots into /boot — harmless
         # under the #14 overlay, but a direct-boot VM has no grub to
@@ -645,7 +600,8 @@ let
         ln -s /dev/null $out/etc/systemd/system/apparmor.service
 
         # The serial console is the guest's debug channel: autologin root
-        # on ttyS0 (the vsock console is the supported interactive path).
+        # on ttyS0 (the hvc0 console above is the supported interactive
+        # path).
         printf '%s\n' \
           '[Service]' \
           'ExecStart=' \
@@ -1002,9 +958,8 @@ let
         # The msks overlay.
         cp -a --no-preserve=ownership ${guestOverlay}/. "$root"/
 
-        # The console workspace user (#63): uid/gid 1000, locked
-        # password (no sign-in — the console helper is the only way
-        # in), home on the persistent /home volume (#14) — the
+        # The msks workspace user (#63): uid/gid 1000, locked
+        # password (no sign-in — ssh keys are the road in), home on the persistent /home volume (#14) — the
         # identity seed creates it from /etc/skel on first boot
         # (#171), and the console helper creates a bare one if a
         # session ever precedes the seed — and bash as the shell.
@@ -1046,7 +1001,7 @@ let
 
         # The generic kernel's module tree (#96): the guest's runtime
         # needs are the modprobe closure of the modules it loads —
-        # vmw_vsock_virtio_transport (the vsock console, #21),
+        # virtio_console (the console port, #481),
         # virtio_net (egress NICs, #52), virtio_blk (udev alias
         # probing; the initrd loads it before root anyway), the
         # ACPI power-button pair (button + evdev: logind answers the
@@ -1079,7 +1034,7 @@ let
         # modules becomes twenty-nine files (isofs's own cdrom
         # dependency included).
         runtimeModules="
-          vmw_vsock_virtio_transport
+          virtio_console
           virtio_net
           virtio_blk
           button
@@ -1132,7 +1087,7 @@ let
         cp "${genericKernel}"/boot/config-* "$root"/boot/
 
         # Runtime depmod over the shipped subset: modprobe — the
-        # vsock console's module load, udev alias lookups — must
+        # console port's module load, udev alias lookups — must
         # resolve within the tree the image actually carries.
         find "$root"/usr/lib/modules -type d -exec chmod u+w {} +
         depmod -b "$root" "$kver"
@@ -1267,8 +1222,6 @@ let
 
         # Sanity: this must be a bootable Debian.
         test -x "$root"/sbin/init
-        test -x "$root"/usr/bin/socat
-        test -x "$root"/usr/bin/msks-console-helper
         test -x "$root"/usr/bin/rsync
         test -x "$root"/usr/bin/fdfind
         test -x "$root"/usr/bin/rg
@@ -1498,7 +1451,6 @@ let
           imageName
           imageVersion
           kernelCmdline
-          vsockShellPort
           ;
       }
       ''
@@ -1525,9 +1477,6 @@ let
           "name": "${imageName}",
           "version": "${imageVersion}",
           "cmdline": "${kernelCmdline}",
-          "vsock_shell_port": ${toString vsockShellPort},
-          "console_protocol": "prelude-v1",
-          "console_users": ["root", "msks"],
           "kernel_version": "$kernel_version",
           "kernel_format": "bzImage",
           "capabilities": {"provisioner": "${imageProvisioner}"}
@@ -1565,7 +1514,6 @@ pkgs.runCommand "msks-guest"
         ;
       inherit
         kernelCmdline
-        vsockShellPort
         ;
     };
   }
@@ -1585,7 +1533,7 @@ pkgs.runCommand "msks-guest"
     printf '%s' "workspace-''${imageName}-''${imageVersion}.tar" > "$out"/image-archive-name
     printf '%s' "$version" > "$out"/kernel-version
     # An unquoted heredoc: $version expands in the shell; the
-    # cmdline and port were interpolated by nix at eval time.
+    # cmdline was interpolated by nix at eval time.
     cat > "$out"/guest-manifest.json <<EOF
     {
       "schema": 1,
@@ -1595,9 +1543,6 @@ pkgs.runCommand "msks-guest"
       "vmlinux": "vmlinux",
       "initrd": "initrd",
       "rootfs": "rootfs.ext4",
-      "vsock_shell_port": ${toString vsockShellPort},
-      "console_protocol": "prelude-v1",
-      "console_users": ["root", "msks"]
     }
     EOF
   ''

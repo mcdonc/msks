@@ -67,11 +67,11 @@ no web frontend yet.
   forward). The setcap'd-helper idea from the appliance era is
   superseded by it. `/dev/kvm`, memfd shared memory, and unix sockets
   remain the daemon's whole hardware footprint.
-- **Guests have no NIC at first.** The guest agent talks over
-  **virtio-vsock**; a VM with no network device is also the strongest
-  default egress posture. Taps arrived with the consent work (#52).
+- **Guests have no NIC at first.** A VM with no network device is
+  the strongest default egress posture. Taps arrived with the
+  consent work (#52).
 - **Interactive access rides stock SSH over the forward seam
-  (#108–#112); the vsock console stays the failsafe.** Each workspace
+  (#108–#112); the console getty stays the failsafe.** Each workspace
   runs an sshd in the guest image (#110: `PasswordAuthentication no`,
   key-only logins, rsync shipped, host keys in the persistent overlay)
   and the workspace identity defaults to one operator key across
@@ -93,10 +93,14 @@ no web frontend yet.
   rsync/sftp, and `-L`/`-R`; msks stays a byte pipe. `msks ssh`
   (#112) wraps this with the ssh-config alias + ProxyCommand, so ssh
   rides the daemon's single authenticated listener and the daemon
-  stays the only inbound path to a workspace. The vsock console
-  (#21) settles into the serial-console role: present on every
-  workspace, the path an operator uses when sshd is dead or the image
-  needs boot-level debugging.
+  stays the only inbound path to a workspace. The console
+  settles into the serial-console role (#21, #481): an autologin
+  root getty on the virtio-console port — present on every
+  workspace, the path an operator uses when sshd is dead or the
+  image needs boot-level debugging. The Rust guest helper and the
+  #123 in-guest SSHSIG challenge were removed with #481: the
+  daemon's TLS + token listener is the console's whole
+  authentication boundary.
   In the klangk integration (#50's link-don't-dial direction), ssh is
   server-side plumbing, not the client protocol. klangkd hosts the
   forward seam and the workspace keys, and bridges its existing
@@ -159,8 +163,8 @@ without egress.
    the `/api/v1` skeleton with auth (tokens + TLS with a trust story),
    and the WSS event channel. This is the milestone gate: no UI work
    before it.
-6. **Guest agent + terminal** — vsock agent serving PTYs; exposed
-   through the API as a WSS terminal stream.
+6. **Guest agent + terminal** — the console getty exposed through
+   the API as a WSS terminal stream.
 7. **Networking + egress consent** — pre-created tap pool, per-VM
    nftables/NFQUEUE, consent requests and decisions as API events,
    audit rows.

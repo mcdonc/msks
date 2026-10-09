@@ -112,7 +112,6 @@ async def test_local_persistence_across_restart_and_reset() -> None:
                 wid,
                 command,
                 marker,
-                app=app,
             )
         await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
 
@@ -137,7 +136,6 @@ async def test_local_persistence_across_restart_and_reset() -> None:
                     "WROTE-42",
                 ),
             ],
-            app=app,
         )
         serial_log.unlink(missing_ok=True)
         await boot_and_probe(
@@ -145,7 +143,6 @@ async def test_local_persistence_across_restart_and_reset() -> None:
                 ("cat /root/probe", root_marker),
                 ("cat /home/probe", home_marker),
             ],
-            app=app,
         )
         # Factory reset: pristine root, same /home.
         serial_log.unlink(missing_ok=True)
@@ -157,7 +154,6 @@ async def test_local_persistence_across_restart_and_reset() -> None:
                 ("cat /home/probe", home_marker),
                 ("test ! -e /root/probe && echo GONE-$((6*7))", "GONE-42"),
             ],
-            app=app,
         )
     except BaseException:
         collect_failure_evidence(state_dir, wid, serial_log)

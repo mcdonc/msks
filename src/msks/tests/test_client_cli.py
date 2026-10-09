@@ -2142,7 +2142,6 @@ def test_image_info_prints_the_record(
     assert "hash     " + "c" * 64 in out
     assert "kernel   6.12.107+deb13 (raw)" in out
     assert "cmdline  console=hvc0 root=/dev/vda rw" in out
-    assert "console  vsock port 1073741826" in out
     assert "seed     provisioner - (none declared)" in out
     assert "default  no" in out
 

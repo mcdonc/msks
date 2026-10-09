@@ -56,11 +56,6 @@
 }:
 
 let
-  # The port the guest's vsock console listens on; the daemon dials
-  # it after the CONNECT handshake (#21). Same fixed port, same
-  # manifest field, as the Debian image.
-  vsockShellPort = 1023;
-
   # First-boot provisioning (#41): the seed-disk consumer is
   # NixOS's own cloud-init (nixpkgs builds it) — the declared
   # provisioner stays cloud-init, and the create-time contract
@@ -69,20 +64,10 @@ let
 
   imageName = "nixos";
 
-  # The console helper's sources, filtered for the store hop the
-  # /etc/nixos bake (#274) makes: nothing but VCS noise and Rust's
-  # target/ may ride along, or the image would embed whatever a
-  # dev tree happened to have built.
-  consoleHelperSrc = lib.cleanSourceWith {
-    src = ../src/console-helper;
-    filter =
-      path: type: lib.cleanSourceFilter path type && baseNameOf path != "target";
-  };
-
   # The /etc/nixos entry point (#274): imports the module the
-  # image itself evaluated. The module, its package files, and the
-  # console helper's sources ship beside it in the rootfs tree
-  # below — a workspace rebuild evaluates exactly what the image
+  # image itself evaluated. The module and its package files ship
+  # beside it in the rootfs tree below — a workspace rebuild
+  # evaluates exactly what the image
   # build did. The _module.args line (#433): the module declares
   # the imageBuild marker (the flag its CA assertion switches on)
   # as a module argument, and the rebuild-side evaluation supplies
@@ -190,11 +175,8 @@ let
           toplevel
           channelSources
           configurationEntry
-          consoleHelperSrc
-          vsockShellPort
           ;
         guestConfiguration = ./guest-nixos-configuration.nix;
-        consoleHelperPkgFile = ./console-helper-pkg.nix;
         agentToolchainFile = ./agent-toolchain.nix;
         piExtensionFile = ./guest-pi-extension.ts;
         shrinkwrapPatchFile = ./pi-shrinkwrap-patch.py;
@@ -273,12 +255,10 @@ let
         # basenames, so each copy names its destination; the
         # u+w pass leaves the files editable for a workspace
         # user's own rebuild edits.
-        mkdir -p "$root"/etc/nixos/nix "$root"/etc/nixos/src/console-helper
+        mkdir -p "$root"/etc/nixos/nix
         cp "$configurationEntry" "$root"/etc/nixos/configuration.nix
         cp "$guestConfiguration" \
           "$root"/etc/nixos/nix/guest-nixos-configuration.nix
-        cp "$consoleHelperPkgFile" \
-          "$root"/etc/nixos/nix/console-helper-pkg.nix
         cp "$agentToolchainFile" \
           "$root"/etc/nixos/nix/agent-toolchain.nix
         cp "$piExtensionFile" \
@@ -287,7 +267,6 @@ let
           "$root"/etc/nixos/nix/pi-shrinkwrap-patch.py
         cp "$shrinkwrapTableFile" \
           "$root"/etc/nixos/nix/pi-shrinkwrap-integrity.json
-        cp -a "$consoleHelperSrc"/. "$root"/etc/nixos/src/console-helper/
         chmod -R u+w "$root"/etc/nixos
 
         # A bootable tree: stage-2 init present, and the units the
@@ -296,18 +275,9 @@ let
         # enable flipped off, the wantedBy lost) fails the build
         # here, not a workspace's first boot.
         test -x "$toplevel"/init
-        test -e "$toplevel"/etc/systemd/system/multi-user.target.wants/msks-console.service
+        test -e "$toplevel"/etc/systemd/system/multi-user.target.wants/serial-getty@hvc0.service
         test -e "$toplevel"/etc/systemd/system/multi-user.target.wants/cloud-init.service
         test -e "$toplevel"/etc/systemd/system/multi-user.target.wants/sshd.service
-        grep -q msks-console-helper "$closureInfo"/store-paths
-        # The vsock port the module declares must match the one the
-        # image manifest advertises (#274 review): vsockShellPort is
-        # defined in both files after the extraction, and a drift
-        # would silently break workspace connects. The module's
-        # value lands in the console service's ExecStart; the
-        # build's value is $vsockShellPort.
-        grep -q "msks-console-helper $vsockShellPort" \
-          "$toplevel"/etc/systemd/system/msks-console.service
         # Sanity: the baked agent toolchain (#266, #268) — an
         # upstream package or profile change must fail the build
         # here, not boot a workspace with a broken agent (the #36
@@ -366,12 +336,10 @@ let
         grep -q '_module.args.imageBuild = false' \
           "$root"/etc/nixos/configuration.nix
         test -f "$root"/etc/nixos/nix/guest-nixos-configuration.nix
-        test -f "$root"/etc/nixos/nix/console-helper-pkg.nix
         test -f "$root"/etc/nixos/nix/agent-toolchain.nix
         test -f "$root"/etc/nixos/nix/guest-pi-extension.ts
         test -f "$root"/etc/nixos/nix/pi-shrinkwrap-patch.py
         test -f "$root"/etc/nixos/nix/pi-shrinkwrap-integrity.json
-        test -f "$root"/etc/nixos/src/console-helper/Cargo.toml
         # The shipped chain must evaluate as a guest rebuild
         # evaluates it (#433): the nixos-system entrypoint with
         # nixos-config pointed at the tree's copy — the lookup pair
@@ -518,7 +486,6 @@ let
           imageName
           imageVersion
           kernelCmdline
-          vsockShellPort
           kernelVersion
           ;
         vmlinuz = "${kernel}/${kernelFile}";
@@ -532,17 +499,13 @@ let
         # Self-describing (#40): the archive alone builds a boot
         # spec. The capabilities carry the whole NixOS-vs-Debian
         # difference the daemon acts on — the same declared
-        # cloud-init provisioner, the same prelude-v1 console, the
-        # same bzImage direct boot.
+        # cloud-init provisioner, the same bzImage direct boot.
         cat > "$out"/disk/image.json <<EOF
         {
           "schema": 2,
           "name": "${imageName}",
           "version": "${imageVersion}",
           "cmdline": "${kernelCmdline}",
-          "vsock_shell_port": ${toString vsockShellPort},
-          "console_protocol": "prelude-v1",
-          "console_users": ["root", "msks"],
           "kernel_version": "${kernelVersion}",
           "kernel_format": "bzImage",
           "capabilities": {"provisioner": "${imageProvisioner}"}
@@ -578,7 +541,6 @@ pkgs.runCommand "msks-guest-nixos"
         ;
       inherit
         kernelCmdline
-        vsockShellPort
         ;
     };
   }
@@ -601,9 +563,6 @@ pkgs.runCommand "msks-guest-nixos"
       "vmlinux": "vmlinux",
       "initrd": "initrd",
       "rootfs": "rootfs.ext4",
-      "vsock_shell_port": ${toString vsockShellPort},
-      "console_protocol": "prelude-v1",
-      "console_users": ["root", "msks"]
     }
     EOF
   ''

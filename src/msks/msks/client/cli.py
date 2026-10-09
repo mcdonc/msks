@@ -517,15 +517,9 @@ def console(
     workspace_id: str = typer.Argument(
         ..., help="the workspace to attach to (name or id)"
     ),
-    user: str | None = typer.Option(
-        None,
-        "--user",
-        help="shell user (default: the workspace's login user, #248; "
-        "--user root is the recovery shell)",
-    ),
 ) -> int:
-    """Interactive shell in a workspace."""
-    return run_workspace_shell(workspace_id, user)
+    """Interactive root shell in a workspace."""
+    return run_workspace_shell(workspace_id)
 
 
 @app.command("forward")

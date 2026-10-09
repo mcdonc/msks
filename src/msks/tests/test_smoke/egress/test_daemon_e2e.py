@@ -27,7 +27,6 @@ from pathlib import Path
 
 import httpx
 import websockets
-from msks.client import consoleauth
 from msks.client.console import ws_url
 
 from test_smoke import (
@@ -142,14 +141,18 @@ async def console_exec(
                 ssl=ssl_ctx,
                 max_size=2**22,
             ) as ws:
-                lead = await consoleauth.auth_exchange(
-                    ws, workspace_id, url, token, ssl_ctx
+                buf = b""
+                prompt_deadline = (
+                    asyncio.get_running_loop().time() + CONSOLE_TIMEOUT_S
                 )
-                if isinstance(lead, str):
-                    lead = lead.encode()
-                buf = bytes(lead)
-                if marker in buf:
-                    return
+                while b":~#" not in buf:
+                    lead = await asyncio.wait_for(ws.recv(), 10)
+                    buf += lead.encode() if isinstance(lead, str) else lead
+                    if asyncio.get_running_loop().time() > prompt_deadline:
+                        raise AssertionError(
+                            "console prompt never appeared; tail: "
+                            f"{buf[-500:]!r}"
+                        )
                 await ws.send(command.encode() + b"\n")
                 deadline = (
                     asyncio.get_running_loop().time() + CONSOLE_TIMEOUT_S

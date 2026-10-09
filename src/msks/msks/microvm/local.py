@@ -6,8 +6,8 @@ Per-workspace layout under ``<state_dir>/vms/<workspace_id>/``:
 - ``ch.pid``    — the CH process id (restart-surviving kill path)
 - ``ch.log``    — the VMM's own stderr
 - ``serial.log``— the guest serial console (file-backed serial device)
-- ``vsock.sock``— the vsock device's unix socket (the console proxy
-                 dials it with the CONNECT handshake, #21)
+- ``console.sock``— the virtio-console device's unix socket (the
+                 console shim behind it negotiates the prelude, #481)
 
 Shutdown model, matching how the VMM really behaves: a bare
 ``cloud-hypervisor --api-socket`` is a daemon that keeps running after
@@ -39,9 +39,6 @@ from ..spec.vm import VmInfo, VmSpec, VmStatus
 from .chapi import API_ROOT, CloudHypervisorApi
 from .driver import MicrovmDriver
 from .errors import MicrovmError, MicrovmTimeoutError
-
-# Bound on the OK reply once the handshake bytes are sent.
-VSOCK_REPLY_S = 5.0
 
 
 def socket_stale(path: Path) -> bool:
@@ -96,138 +93,26 @@ def cmdline_is_vmm(cmdline: bytes, binary: str, sock: Path) -> bool:
     )
 
 
-class _VsockRetry(Exception):
+class _ConsoleRetry(Exception):
     """A retryable console bring-up state, carrying its human cause."""
 
 
-class _UserRetry(Exception):
-    """The guest refused the login user (#248) — retried like a
-    boot-state refusal, because the daemon's own gate already
-    admitted the name (the image's console users or the row's
-    login_user) and the refusal is usually transient: a freshly
-    booted guest refuses until the first-boot seed creates the
-    account. The one permanent shape — a name that landed on a
-    system account the image ships — answers the same way; the
-    error the retry deadline raises names both causes without
-    distinguishing them (the daemon cannot see the guest's
-    passwd)."""
+async def console_attempt(socket_path: Path):
+    """One connect against the console device's unix socket.
 
-
-async def vsock_attempt(socket_path: Path, port: int):
-    """One connect+CONNECT attempt against the vsock unix socket.
-
-    The socket carries a small handshake before raw bytes: the dialer
-    sends ``CONNECT <port>\n``, cloud-hypervisor answers
-    ``OK <local_port>\n`` once the guest accepts. Raises _VsockRetry
-    for every state that a still-booting guest can present (missing
-    socket, refused or silent handshake); returns the established
-    stream otherwise.
+    cloud-hypervisor listens on the path; the guest's autologin
+    getty on hvc0 (#481) speaks through it. Raises _ConsoleRetry
+    for every state a still-booting guest can present (missing
+    socket, refused connect, hostile path).
     """
     try:
-        reader, writer = await asyncio.open_unix_connection(str(socket_path))
+        return await asyncio.open_unix_connection(str(socket_path))
     except OSError as exc:
-        # FileNotFoundError/ConnectionRefusedError while the guest
+        # FileNotFoundError/ConnectionRefusedError while the VMM
         # brings the device up, PermissionError on a hostile path,
         # and friends: all retryable-shaped, all carrying their errno.
-        raise _VsockRetry(f"vsock socket unreachable: {exc}") from exc
-    try:
-        writer.write(f"CONNECT {port}\n".encode())
-        await writer.drain()
-        reply = await asyncio.wait_for(reader.readline(), VSOCK_REPLY_S)
-    except TimeoutError as exc:
-        writer.close()
-        raise _VsockRetry("handshake reply never arrived") from exc
-    except OSError as exc:
-        # A VMM dying mid-handshake resets the stream; that is the
-        # same boot-window flakiness the retry exists to absorb.
-        writer.close()
-        raise _VsockRetry(f"handshake stream died: {exc}") from exc
-    if not reply.startswith(b"OK"):
-        writer.close()
-        raise _VsockRetry(f"handshake refused: {reply.strip()!r}")
-    return reader, writer
+        raise _ConsoleRetry(f"console socket unreachable: {exc}") from exc
 
-
-async def _vsock_handshake(
-    socket_path: Path,
-    port: int,
-    user: str | None = None,
-    rows: int = 0,
-    cols: int = 0,
-    term: str = "xterm",
-):
-    """One established console stream, with the identity prelude
-    (#63) negotiated in-band when ``user`` is given."""
-    reader, writer = await vsock_attempt(socket_path, port)
-    if user is not None:
-        await negotiate_prelude(
-            reader, writer, user, rows or 24, cols or 80, term
-        )
-    return reader, writer
-
-
-#: The console identity prelude's protocol version (#63).
-PRELUDE_VERSION = 1
-
-#: The deadline for the helper's prelude reply once GO is sent: it
-#: answers one line immediately, so anything slower is a dead or
-#: legacy guest.
-PRELUDE_REPLY_S = 5.0
-
-
-async def negotiate_prelude(
-    reader, writer, user: str, rows: int, cols: int, term: str = "xterm"
-) -> None:
-    """Send the identity prelude and require its OK (#63).
-
-    Prelude images answer ``MSKS OK <user>`` and then speak raw
-    bytes. Every other reply — a named refusal (``MSKS ERR
-    <reason>``), silence, or garbage — raises: the daemon never falls
-    back to a root shell on an image that negotiated. The client's
-    TERM rides the same prelude so the login shell's environment
-    matches the client's terminal type.
-    """
-    prelude = (
-        f"HELLO {PRELUDE_VERSION}\nUSER {user}\nTERM {term}\n"
-        f"WINSZ {rows} {cols}\nGO\n"
-    )
-    try:
-        writer.write(prelude.encode())
-        await writer.drain()
-        reply = await asyncio.wait_for(reader.readline(), PRELUDE_REPLY_S)
-    except (TimeoutError, OSError) as exc:
-        writer.close()
-        raise MicrovmError(
-            f"console prelude to {user!r} failed: {exc}"
-        ) from exc
-    line = reply.strip()
-    if line == f"MSKS OK {user}".encode():
-        return
-    if line.startswith(b"MSKS ERR "):
-        reason = line[len(b"MSKS ERR ") :].decode(errors="replace")
-        writer.close()
-        if reason == "user":
-            # The helper's absent-or-system account refusal: the
-            # seed that provisions the login user lands with the
-            # same boot (cloud-init), so the caller retries within
-            # its vsock deadline rather than refusing a first-boot
-            # console. The message fits the websocket close-reason
-            # budget (123 bytes) at the charset's longest name —
-            # close_reason truncates at 120, and a refusal cut
-            # mid-sentence names nothing.
-            raise _UserRetry(
-                f"console refused user {user!r}: the image serves no "
-                "such account, or its seed has not run yet"
-            )
-        raise MicrovmError(f"console refused user {user!r}: {reason}")
-    writer.close()
-    raise MicrovmError(f"console prelude reply unrecognized: {line[:80]!r}")
-
-
-# The guest-side CID cloud-hypervisor reports for the vsock device.
-# CIDs are per-VMM (each workspace has its own), so a constant is
-# unambiguous.
-VSOCK_CID = 3
 
 CH_STATE_TO_STATUS = {
     "Created": VmStatus.STARTING,
@@ -246,7 +131,7 @@ def vm_config(
     spec: VmSpec,
     disks: list[dict],
     serial_log: Path,
-    vsock_socket: Path | None = None,
+    console_socket: Path | None = None,
     net: dict | None = None,
 ) -> dict:
     """The ``PUT /api/v1/vm.create`` body for one spec (v52 schema).
@@ -256,11 +141,10 @@ def vm_config(
     and the disks arrive as their own entries (#14): the root overlay
     first, the home volume second — position makes the root device.
 
-    ``vsock_socket`` adds the virtio-vsock device: cloud-hypervisor
-    LISTENS on that unix path, and each host-side connection maps to
-    one vsock connection into the guest after the ``CONNECT <port>``
-    handshake (#21). The CID is per-VMM — every workspace runs its
-    own cloud-hypervisor with its own socket, so a constant works.
+    ``console_socket`` turns the virtio-console device on (#481):
+    cloud-hypervisor LISTENS on that unix path, and the guest's
+    hvc0 — an autologin root getty — speaks through it. Without it
+    the device stays off: no getty would sit on hvc0.
 
     ``net`` adds the virtio-net device (#52): ``tap`` names the
     per-VM interface the daemon already created and addressed (a
@@ -280,12 +164,12 @@ def vm_config(
         "payload": payload,
         "disks": disks,
         "serial": {"mode": "File", "file": str(serial_log)},
-        # No virtio-console device: the default leaves a second,
-        # non-autologin getty (hvc0) writing into the VMM log.
-        "console": {"mode": "Off"},
+        "console": (
+            {"mode": "Socket", "socket": str(console_socket)}
+            if console_socket is not None
+            else {"mode": "Off"}
+        ),
     }
-    if vsock_socket is not None:
-        vm["vsock"] = {"cid": VSOCK_CID, "socket": str(vsock_socket)}
     if net is not None:
         vm["net"] = [net]
     return vm
@@ -368,13 +252,7 @@ def map_ch_state(state: str | None) -> VmStatus:
 
 
 def console_retry_error(workspace_id: str, retry: Exception) -> MicrovmError:
-    """The named error for a console retry whose deadline passed, by
-    what was being retried: a bring-up state (socket, handshake)
-    names the VM's availability; a login-user refusal (#248) keeps
-    its own message — the guest never grew such an account within
-    the wait."""
-    if isinstance(retry, _UserRetry):
-        return MicrovmError(str(retry))
+    """The named error for a console retry whose deadline passed."""
     return MicrovmError(
         f"console unavailable for {workspace_id} (is the VM running?): {retry}"
     )
@@ -474,7 +352,7 @@ class LocalCloudHypervisor(MicrovmDriver):
         """Remove residue a hard kill left behind (#151).
 
         A VMM killed without cleanup (host crash, a hard
-        stop) leaves ``api.sock`` and ``vsock.sock`` in place; the
+        stop) leaves ``api.sock`` and ``console.sock`` in place; the
         next spawn then dies binding them -- the VMM at
         ``CreateApiServerSocket: AddrInUse`` before a byte of
         serial, vm.boot at ``Error binding to the host-side Unix
@@ -485,7 +363,7 @@ class LocalCloudHypervisor(MicrovmDriver):
         worse than the residue; the test fake pre-binds exactly such
         a socket and rides this same path).
         """
-        for name in ("api.sock", "vsock.sock", "ch.pid"):
+        for name in ("api.sock", "console.sock", "ch.pid"):
             self._sweep_one_residue(vm_dir, name)
 
     def _sweep_one_residue(self, vm_dir: Path, name: str) -> None:
@@ -541,7 +419,7 @@ class LocalCloudHypervisor(MicrovmDriver):
                 socket_path,
                 serial_log,
                 vmm.request_timeout_s,
-                vsock_socket=vm_dir / "vsock.sock",
+                console_socket=vm_dir / "console.sock",
                 net=vm_net(attachment),
             )
         except BaseException:
@@ -622,44 +500,33 @@ class LocalCloudHypervisor(MicrovmDriver):
         socket_path,
         serial_log,
         timeout_s,
-        vsock_socket=None,
+        console_socket=None,
         net=None,
     ) -> None:
         api = CloudHypervisorApi(socket_path, timeout_s)
         try:
             await api.create(
-                vm_config(spec, disks, serial_log, vsock_socket, net)
+                vm_config(spec, disks, serial_log, console_socket, net)
             )
             await api.boot()
         finally:
             await api.aclose()
 
-    async def console(
-        self,
-        workspace_id: str,
-        user: str | None = None,
-        rows: int = 0,
-        cols: int = 0,
-        term: str = "xterm",
-    ):
+    async def console(self, workspace_id: str):
         """(reader, writer): one interactive stream into the VM.
 
-        A freshly booted workspace refuses the console three ways, in
-        order: the unix socket appears only when the GUEST's driver
-        activates the device (seconds after vm.boot reported success),
-        even then the first CONNECT can meet a guest kernel whose
-        shell server has not called listen() yet — the kernel answers
-        RST and cloud-hypervisor closes the unix stream — and a
-        workspace with a seeded login user (#248) can reach the
-        helper before the first-boot seed created the account. The
-        whole connect+handshake is retried under one deadline; a dead
-        VMM fails fast instead of waiting it out.
+        The unix socket appears only when the VMM activates the
+        console device — seconds after vm.boot reported success —
+        so the connect is retried under one deadline; a dead VMM
+        fails fast instead of waiting it out. The stream is raw
+        bytes: the guest side is an autologin root getty on hvc0
+        (#481), and whatever it prints is the session's first
+        output.
         """
-        socket_path = self._dir(workspace_id) / "vsock.sock"
+        socket_path = self._dir(workspace_id) / "console.sock"
         settings = self._settings().vmm
-        port = settings.vsock_shell_port
         deadline = (
-            asyncio.get_running_loop().time() + settings.vsock_wait_timeout_s
+            asyncio.get_running_loop().time() + settings.console_wait_timeout_s
         )
         while True:
             if not self._vmm_reachable(workspace_id):
@@ -667,10 +534,8 @@ class LocalCloudHypervisor(MicrovmDriver):
                     f"workspace {workspace_id} has no live VMM for a console"
                 )
             try:
-                return await _vsock_handshake(
-                    socket_path, port, user, rows, cols, term
-                )
-            except (_VsockRetry, _UserRetry) as retry:
+                return await console_attempt(socket_path)
+            except _ConsoleRetry as retry:
                 if asyncio.get_running_loop().time() >= deadline:
                     raise console_retry_error(workspace_id, retry) from retry
             await asyncio.sleep(POLL_INTERVAL_S)

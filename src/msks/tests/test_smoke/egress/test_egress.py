@@ -119,14 +119,12 @@ async def test_local_egress_boot() -> None:
             wid,
             "ip -4 addr | grep 172.31 && echo ADDR-$((6*7))",
             "ADDR-42",
-            app=app,
         )
         await run_in_console(
             microvm,
             wid,
             "ip route | grep default",
             "default via 172.31",
-            app=app,
         )
         # DNS: through the daemon's forwarder (the offered resolver).
         await run_in_console(
@@ -134,7 +132,6 @@ async def test_local_egress_boot() -> None:
             wid,
             "getent hosts deb.debian.org && echo DNS-$((6*7))",
             "DNS-42",
-            app=app,
         )
         # Egress: a TCP connection out through the NAT'd uplink.
         await run_in_console(
@@ -143,7 +140,6 @@ async def test_local_egress_boot() -> None:
             "timeout 5 bash -c '</dev/tcp/deb.debian.org/80' "
             "&& echo TCP-$((6*7))",
             "TCP-42",
-            app=app,
         )
         # Containment: the tap's input chain lets DHCP and DNS
         # through and nothing else — every host-side service must
@@ -155,7 +151,6 @@ async def test_local_egress_boot() -> None:
             'timeout 3 bash -c "</dev/tcp/$G/8660" 2>/dev/null '
             "&& echo API-$((2+2)) || echo API-$((6*7))",
             "API-42",
-            app=app,
         )
         await microvm.shutdown(wid, timeout_s=60)
         final = await microvm.info(wid)
@@ -375,7 +370,6 @@ async def test_local_egress_git_out() -> None:
             "systemctl is-active msks-wait-address >/dev/null 2>&1 "
             "&& systemctl is-active ssh >/dev/null 2>&1 && echo U-$((6*7))",
             "U-42",
-            app=app,
         )
 
     async def widen_input(port: int) -> None:
@@ -645,7 +639,6 @@ async def test_local_egress_git_out() -> None:
             f"&& printf '%s\\n' '{public}' > /root/.ssh/authorized_keys "
             f"&& chmod 600 /root/.ssh/authorized_keys && echo K-$((6*7))",
             "K-42",
-            app=app,
         )
 
         # The DHCP lease's resolver is the daemon's forwarder: the
@@ -660,7 +653,6 @@ async def test_local_egress_git_out() -> None:
             "( resolvectl dns 2>/dev/null || cat /etc/resolv.conf ) "
             "| grep -q '172\\.31\\.' && echo R-$((6*7))",
             "R-42",
-            app=app,
         )
 
         # Substitutes in, over egress, destinations the seed never
@@ -717,7 +709,6 @@ async def test_local_egress_git_out() -> None:
             "' >>/root/.gitout/run.log 2>&1 </dev/null & } "
             "&& disown && echo BG-$((6*7))",
             "BG-42",
-            app=app,
         )
         trail_probe = (
             "cat /root/.gitout/trail 2>/dev/null; "
@@ -743,7 +734,6 @@ async def test_local_egress_git_out() -> None:
             wid,
             "test -s /root/.gitout/remote && echo Z-$((6*7))",
             "Z-42",
-            app=app,
         )
 
         # The commit the guest pushes: made inside, identity local
@@ -759,7 +749,6 @@ async def test_local_egress_git_out() -> None:
             "&& git -C /root/push-src commit -qm 'git-out probe' "
             "&& echo C-$((6*7))",
             "C-42",
-            app=app,
         )
 
         # git-out: log in through the forward with -A (the agent
@@ -859,7 +848,6 @@ async def test_local_egress_git_out() -> None:
             "grep -q msks-git-cred /root/.gitout/agent-list "
             "&& echo A-$((6*7))",
             "A-42",
-            app=app,
         )
 
         # The landing: the bare repo's HEAD is the guest's commit,
@@ -1030,7 +1018,6 @@ async def test_local_egress_consent_interactive() -> None:
             "timeout 5 bash -c '</dev/tcp/deb.debian.org/80' "
             "&& echo ALLOW-$((6*7))",
             "ALLOW-42",
-            app=app,
         )
         rows = await app.state.model.egress_consent.list_requests(wid)
         assert rows == []  # nothing prompted
@@ -1044,7 +1031,6 @@ async def test_local_egress_consent_interactive() -> None:
                 "timeout 25 bash -c '</dev/tcp/example.com/443' "
                 "&& echo HOLD-$((6*7))",
                 "HOLD-42",
-                app=app,
             )
         )
         request = await pending_request(app, wid, "example.com")
@@ -1062,7 +1048,6 @@ async def test_local_egress_consent_interactive() -> None:
                 "timeout 15 bash -c '</dev/tcp/example.org/443' "
                 "&& echo DENY-$((2+2)) || echo DENY-$((6*7))",
                 "DENY-42",
-                app=app,
             )
         )
         request = await pending_request(app, wid, "example.org")
@@ -1078,7 +1063,6 @@ async def test_local_egress_consent_interactive() -> None:
                 "timeout 25 bash -c '</dev/tcp/1.1.1.1/443' "
                 "&& echo RAW-$((6*7))",
                 "RAW-42",
-                app=app,
             )
         )
         request = await pending_request(app, wid, "1.1.1.1")
@@ -1092,7 +1076,6 @@ async def test_local_egress_consent_interactive() -> None:
             "timeout 5 bash -c '</dev/tcp/8.8.8.8/53' "
             "&& echo LOCK-$((2+2)) || echo LOCK-$((6*7))",
             "LOCK-42",
-            app=app,
         )
         await shutdown_workspace(app, wid)
     except BaseException:
@@ -1141,7 +1124,6 @@ async def test_local_egress_consent_static() -> None:
             "timeout 5 bash -c '</dev/tcp/deb.debian.org/80' "
             "&& echo STATIC-$((6*7))",
             "STATIC-42",
-            app=app,
         )
         # Off-list: NXDOMAIN (getent finds nothing), and the row
         # records the policy denial.
@@ -1151,7 +1133,6 @@ async def test_local_egress_consent_static() -> None:
             "getent hosts off-list.example && echo OFF-$((2+2)) "
             "|| echo OFF-$((6*7))",
             "OFF-42",
-            app=app,
         )
         rows = await app.state.model.egress_consent.list_requests(wid)
         assert [row["dest_host"] for row in rows] == ["off-list.example"]

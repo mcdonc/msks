@@ -78,7 +78,7 @@ needs_local = pytest.mark.skipif(
 #: banner only says the getty started, while the prompt proves a
 #: whole shell started, ran its rc files, and answered — the
 #: strongest guest-side signal the console probes can build on
-#: (the vsock console's own shell can stall behind an echo-alive
+#: (the console's own shell can stall behind an echo-alive
 #: pty on a slow nested-KVM boot, long after its service started).
 #
 #: Every needle's hostname is the workspace's creation name (#370)
@@ -101,7 +101,7 @@ GUEST_UP_TIMEOUT_S = float(os.environ.get("TEST_GUEST_UP_TIMEOUT_S", "60"))
 CONSOLE_TIMEOUT_S = float(os.environ.get("TEST_CONSOLE_TIMEOUT_S", "30"))
 SHUTDOWN_TIMEOUT_S = float(os.environ.get("TEST_SHUTDOWN_TIMEOUT_S", "60"))
 
-#: Fresh console sessions per command (#75): the vsock console can
+#: Fresh console sessions per command (#75): the console can
 #: accept a connection and echo — the pty's line discipline answers
 #: while the shell behind it never reaches its first prompt on a
 #: slow nested-KVM boot. One wedged session must not fail the test;
@@ -137,8 +137,8 @@ def collect_failure_evidence(
     """On a smoke failure, print and keep the guest's own story.
 
     The console service's state is on the serial log (systemd names
-    failed/restarting units there); a raw CONNECT probe tells whether
-    the guest's vsock listener is answering at all; and the vm dir is
+    failed/restarting units there); a raw console probe tells whether
+    the guest's getty is answering at all; and the vm dir is
     copied out before the finally-clause cleanup deletes it, for the
     CI artifact upload (``/tmp/msks-smoke-failed/``).
     """
@@ -148,14 +148,12 @@ def collect_failure_evidence(
         flush=True,
     )
     vm_dir = state_dir / "vms" / wid
-    vsock = vm_dir / "vsock.sock"
-    if vsock.exists():
+    console_sock = vm_dir / "console.sock"
+    if console_sock.exists():
         try:
             sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             sock.settimeout(5)
-            sock.connect(str(vsock))
-            sock.sendall(b"CONNECT 1023\n")
-            reply = sock.recv(100)
+            sock.connect(str(console_sock))
             sock.settimeout(15)
             sock.sendall(b"\n")
             try:
@@ -163,13 +161,14 @@ def collect_failure_evidence(
             except TimeoutError:
                 data = b"<no bytes within 15s>"
             print(
-                f"smoke failure evidence — raw vsock probe: "
-                f"handshake={reply!r} after-newline={data!r}",
+                f"smoke failure evidence — raw console probe: "
+                f"after-newline={data!r}",
                 flush=True,
             )
         except OSError as exc:
             print(
-                f"smoke failure evidence — raw vsock probe: {exc}", flush=True
+                f"smoke failure evidence — raw console probe: {exc}",
+                flush=True,
             )
         finally:
             with contextlib.suppress(OSError):
@@ -181,7 +180,7 @@ def collect_failure_evidence(
     with contextlib.suppress(OSError):
         keep.chmod(0o755)
     # The driver's own filenames (local.py: ch.log, ch.pid): the
-    # vsock socket is a socket, never a file, so it stays out — the
+    # console socket is a socket, never a file, so it stays out — the
     # copy list once carried names nothing writes, and the VMM's own
     # log (the one line that names device and config errors) never
     # reached the CI artifact.
@@ -227,7 +226,7 @@ async def read_until(
 ) -> bytes:
     """Read the stream until it carries ``needle``; return the bytes.
 
-    The vsock console is an echoing pty: the sent command comes
+    The console is an echoing pty: the sent command comes
     back too, so ``needle`` must be guest-computed output — never a
     substring of the sent bytes, which the pty echoes verbatim
     (see run_in_console).
@@ -264,18 +263,18 @@ async def read_until(
 #: The root shell's PS1 tail (``root@msks-guest:/# ``): the guest's
 #: bash, with #62's real TERM, runs readline — and readline discards
 #: typeahead that arrived before it started. A client that writes
-#: the instant the vsock connects loses its first line to that
+#: the instant the console connects loses its first line to that
 #: flush; an interactive user never notices (the prompt is on screen
 #: before fingers move). The tests wait for the prompt first.
 PROMPT_NEEDLE = b"root@msks-guest:/# "
 
 
 def root_prompt_needle(hostname: str | None = None) -> bytes:
-    """The vsock console's first root prompt (#63): the prelude
-    helper execs a login shell with cwd=$HOME, so a fresh session's
-    prompt reads ~, not / — and bash's interactive rc files may
-    emit terminal control sequences around it, which read_until's
-    contains-scan tolerates."""
+    """The console getty's first root prompt (#481): the autologin
+    shell's cwd is $HOME, so a fresh session's prompt reads ~, not
+    / — and bash's interactive rc files may emit terminal control
+    sequences around it, which read_until's contains-scan
+    tolerates."""
     return f"root@{hostname or IMAGE_HOSTNAME}:~# ".encode()
 
 
@@ -284,81 +283,14 @@ def root_prompt_needle(hostname: str | None = None) -> bytes:
 CONSOLE_PROMPT_NEEDLE = root_prompt_needle()
 
 
-def user_prompt_needle(user: str, hostname: str | None = None) -> bytes:
-    """The first-prompt needle for any non-root session (#248): a
-    login user's prompt carries ITS name — same shape, same
-    hostname, the user the session negotiated."""
-    return f"{user}@{hostname or IMAGE_HOSTNAME}:~$ ".encode()
-
-
-#: The same prompt for the image's workspace user (#63): a login
-#: shell as uid 1000 whose HOME is /home/msks.
-USER_CONSOLE_PROMPT_NEEDLE = user_prompt_needle("msks")
-
-
-async def answer_console_auth(
-    reader, writer, workspace_id, app, signer=None
-) -> None:
-    """Answer a #123 console challenge on a raw vsock stream.
-
-    A seeded guest challenges before any prompt; a guest without the
-    trust store speaks the shell's own first bytes — the bracketed-
-    paste escape and a prompt that carries no newline, so a line
-    read would stall forever. The detection is byte-wise against the
-    challenge prefix; bytes that are not the challenge go back for
-    the marker wait. The key record comes straight from the daemon's
-    model — the harness runs in-process with it.
-    """
-    from msks.client import consoleauth  # allow-deferred-import
-
-    prefix = b"AUTH CHALLENGE "
-    seen = b""
-    while True:
-        chunk = await asyncio.wait_for(reader.read(4096), 30)
-        seen += chunk
-        if not chunk:
-            # EOF: nothing to answer, and nothing more will come.
-            if seen:
-                reader.feed_data(seen)
-            return
-        if seen.startswith(prefix):
-            if b"\n" in seen:
-                break
-            continue  # the challenge line is still arriving
-        if prefix.startswith(seen):
-            continue  # a prefix-sized first chunk: not decidable yet
-        # The shell's own bytes: put everything back and let the
-        # prompt wait read them.
-        if seen:
-            reader.feed_data(seen)
-        return
-    line, _, rest = seen.partition(b"\n")
-    if rest and rest != b"":
-        reader.feed_data(rest)
-    nonce = bytes.fromhex(line[len(prefix) :].strip().decode())
-    if signer is None:
-        key = await app.state.model.get_ssh_key(workspace_id)
-        assert key is not None and key["public_key"] is not None, (
-            f"guest challenged but {workspace_id} has no identity key"
-        )
-        signer, _public = consoleauth.signer_for_key(key, workspace_id)
-    writer.write(b"AUTH SIG " + signer(nonce).encode() + b"\n")
-    await writer.drain()
-    reply = await asyncio.wait_for(reader.readline(), 30)
-    assert reply.startswith(b"AUTH OK"), f"console auth refused: {reply!r}"
-
-
 async def run_in_console(
     microvm,
     workspace_id: str,
     command: str,
     marker: str,
-    user: str = "root",
-    app=None,
-    signer=None,
     hostname: str | None = None,
 ) -> None:
-    """Run one shell command over the vsock console and wait for its
+    """Run one shell command over the console getty and wait for its
     marker, in a fresh guest shell session per attempt (#75).
 
     The prompt wait is where a slow boot bites: the console service
@@ -380,20 +312,9 @@ async def run_in_console(
     """
     for attempt in range(1, CONSOLE_ATTEMPTS + 1):
         try:
-            reader, writer = await microvm.console(workspace_id, user=user)
+            reader, writer = await microvm.console(workspace_id)
             try:
-                if app is not None or signer is not None:
-                    # The console challenge (#123): answer it with the
-                    # workspace key before any prompt appears.
-                    await answer_console_auth(
-                        reader, writer, workspace_id, app, signer
-                    )
-                needle = (
-                    root_prompt_needle(hostname)
-                    if user in (None, "root")
-                    else user_prompt_needle(user, hostname)
-                )
-                await read_until(reader, needle)
+                await read_until(reader, root_prompt_needle(hostname))
                 writer.write(command.encode() + b"\n")
                 await writer.drain()
                 await read_until(reader, marker.encode())
@@ -500,12 +421,8 @@ async def await_dev_state(
     last = b""
     while loop.time() < deadline:
         try:
-            # user="root": the prelude-v1 helper refuses prelude-less
-            # connections (MSKS ERR timeout after its read deadline),
-            # so the raw console() default cannot speak to it.
-            reader, writer = await microvm.console(workspace_id, user="root")
+            reader, writer = await microvm.console(workspace_id)
             try:
-                await answer_console_auth(reader, writer, workspace_id, app)
                 await read_until(reader, root_prompt_needle(hostname))
                 writer.write(
                     b"cat /root/.msks-bootstrap/state "
@@ -615,9 +532,8 @@ async def await_guest_trail(
     last = b""
     while loop.time() < deadline:
         try:
-            reader, writer = await microvm.console(workspace_id, user="root")
+            reader, writer = await microvm.console(workspace_id)
             try:
-                await answer_console_auth(reader, writer, workspace_id, app)
                 await read_until(reader, root_prompt_needle(hostname))
                 writer.write(f"{probe}; echo E-$((21*2))\n".encode())
                 await writer.drain()

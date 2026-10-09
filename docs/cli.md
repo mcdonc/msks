@@ -56,8 +56,8 @@ expands; an empty value counts as unset).
 
 `MSKSC_IDENTITY_FILE` names a file, not a directory: your own
 private key, read in place. msks derives the public half from it
-at create and stages the private half in memory for `msks ssh`,
-`msks rsync`, and the console's key challenge — the key file
+at create and stages the private half in memory for `msks ssh`
+and `msks rsync` — the key file
 itself is never copied into msks's state. The key must be an
 unencrypted OpenSSH-format key msks can stage (`ed25519`, `ecdsa`
 P-256/P-384/P-521, or `rsa`): msks never types a passphrase, and
@@ -640,8 +640,8 @@ appended (see `terminal_open_cmd` below), and the tree keeps
 running beside the window — the spawned shell inherits the tree's
 resolved connection, so it reaches the same daemon, and it rides
 ssh rather than the console because a fresh window gets resized:
-the console sizes its guest pty once, at connect, while ssh
-carries every resize to the guest. The action runs on a stopped
+the console keeps the getty's geometry, while ssh carries every
+resize to the guest. The action runs on a stopped
 workspace too: the spawned `msks ssh` boots the workspace itself
 (it carries the workspace's id, and the window reads the pre-flight's
 `msks: <id> is stopped; starting it`) and the same-terminal fallback
@@ -891,11 +891,9 @@ A later create prints an `identity:` line with the minted file's
 path; a create with `identity_file: ~/.ssh/id_ed25519` set prints
 that line with the named file's expanded path instead.
 
-`msks ssh`, `msks rsync`, and the console's key challenge resolve
-the same order at session time, so a workspace re-created under the
-same name keeps your access — a new id, the same key (the console
-additionally consults your ssh-agent, `$SSH_AUTH_SOCK`, when no
-file holds the half). A key msks stages for its own sessions must
+`msks ssh` and `msks rsync` resolve the same order at session
+time, so a workspace re-created under the same name keeps your
+access — a new id, the same key. A key msks stages for its own sessions must
 be an unencrypted OpenSSH-format key — `ed25519`, `ecdsa`
 (P-256/P-384/P-521), or `rsa`; an `identity_file` naming a key
 outside that set is refused with a line saying so. `--pubkey`
@@ -918,10 +916,9 @@ created my-workspace (id 9f2c41ab77)
 client identity (mode 0600): /home/you/.local/share/msks/9f2c41ab77/identity
 ```
 
-Losing that file loses ssh to the workspace and the console with
-it (a seeded guest challenges the console with the same key) —
-unless the operator's ssh-agent holds that key, which the console
-consults next; move it somewhere safe or keep backups. The file lives
+Losing that file loses ssh to the workspace — unless the
+operator's ssh-agent holds that key; move it somewhere safe or
+keep backups. The file lives
 under the data root, not the cache, so cache sweeps leave it alone.
 A client-minted workspace answers `msks key` with its public half
 only. A _minted_ key's type is the machine's choice from the
@@ -1352,26 +1349,21 @@ msks: my-workspace running
 (workspace prompt)
 ```
 
-The session runs as the workspace's **login user** by default
-(#248 — the name `msks create --user` recorded; the image's own
-`msks` account for a workspace created before #248).
-`--user root` is the recovery shell, and `--user` accepts any
-name the workspace serves — the image's console users or its
-recorded login user, which the first-boot seed provisions. A user
-neither serves is refused by name before any shell starts, and
-the session's terminal
-geometry rides the same request (the guest pty matches the client's
-size at attach):
+The session is a root shell (#481): the console is the failsafe
+path, served by the guest's autologin root getty on the
+virtio-console port — a raw byte stream over the daemon's
+authenticated websocket, with no user selection and no in-band
+protocol. Reach a workspace user's shell with `su - <name>` inside
+the session, or over ssh for the full interactive posture:
 
 ```text
-$ msks console my-workspace --user root
+$ msks console my-workspace
 (workspace prompt, as root)
 ```
 
-The guest pty keeps the size it was given at attach for the
-session's life: the console stream is a raw byte pipe, so a window
-resized mid-session does not reach it — reconnect for the new size.
-Full-screen work (editors, tmux) belongs to an ssh session through
+The getty keeps its own terminal geometry for the session's life:
+the console stream is a raw byte pipe, so a window resized
+mid-session does not reach it. Full-screen work (editors, tmux) belongs to an ssh session through
 the forward (#108–#112): ssh's window-change channel resizes its
 pty live.
 

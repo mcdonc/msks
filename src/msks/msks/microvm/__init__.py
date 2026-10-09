@@ -67,18 +67,9 @@ class Microvm:
         """Factory-reset one workspace (drop the overlay, keep /home)."""
         await self.driver.reset(workspace_id)
 
-    async def console(
-        self,
-        workspace_id: str,
-        user: str | None = None,
-        rows: int = 0,
-        cols: int = 0,
-        term: str = "xterm",
-    ):
-        """An interactive byte stream into a running workspace.
-
-        Prelude images (#63) negotiate ``user`` and the terminal
-        geometry and type in-band; legacy images serve the raw root
-        shell.
+    async def console(self, workspace_id: str):
+        """An interactive byte stream into a running workspace: raw
+        bytes both ways — the guest side is the image's autologin
+        root getty on the virtio-console port (#481).
         """
-        return await self.driver.console(workspace_id, user, rows, cols, term)
+        return await self.driver.console(workspace_id)

@@ -24,7 +24,6 @@ on:
       - devenv.lock
       - nix/guest.nix
       - nix/guest-debian.nix
-      - nix/console-helper-pkg.nix
       - nix/image-archive.nix
       - scripts/build-guest.sh
       - src/msks/msks/**
@@ -39,7 +38,6 @@ on:
       - devenv.lock
       - nix/guest.nix
       - nix/guest-debian.nix
-      - nix/console-helper-pkg.nix
       - nix/image-archive.nix
       - scripts/build-guest.sh
       - src/msks/msks/**

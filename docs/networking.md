@@ -435,7 +435,7 @@ trusts its own first-boot host keys instead of refusing the first
 instance's.
 A workspace without egress carries the same image unchanged: its
 forward is refused at the API with close code 4501 before any dial,
-and its console is the vsock one.
+and its console is the virtio-console getty.
 
 ### The minted workspace identity
 
@@ -587,57 +587,22 @@ material gone. The key type is the client's choice at create
 (`--key-type`: `ed25519` by default, `ecdsa`, `rsa`), independent
 of the daemon's `MSKSD_SSH_KEY_TYPE` setting.
 
-This is the ssh half of the client-held-secrets posture: the
-daemon host keeps every capability the console and forward grant,
-but no longer holds a private key that opens the workspace's ssh. The console challenge-response half is #123.
+This is the client-held-secrets posture: the daemon host keeps
+every capability the console and forward grant, but holds no
+private key that opens the workspace's ssh.
 
-### The console challenge
+### The console's authentication boundary
 
-Every workspace seeded with an identity carries a second trust
-store: `/etc/msks/console.allowed_signers`, planted beside
-`authorized_keys` by the same first-boot script (issue #123). Its
-presence turns the vsock console into a challenge-response channel:
-
-1. After the daemon's prelude, the guest helper emits
-   `AUTH CHALLENGE <nonce>` — 32 fresh bytes per connection, so a
-   captured exchange cannot be replayed.
-2. The client answers with an SSHSIG signature over the nonce in the
-   `msks-console` namespace.
-3. The guest verifies with its own ssh-keygen against the trust
-   store, principal-bound to the workspace id, and execs the shell
-   only on success. Anything else — silence, a wrong key, a
-   signature for another purpose — draws one refusal line and a
-   closed session.
-
-The daemon relays both lines and can answer for neither: it sees a
-public half and a signature, never the private half a client-held
-key keeps. ssh and console share the keypair, so the creating client
-signs transparently (`msks console` resolves the key the way
-`msks ssh` does: the daemon-mint escrow, the client data root, or
-the operator's ssh-agent — a hardware key works, and msks never
-reads a half the agent holds).
-
-A guest without the trust store — an image or workspace seeded
-before this change — serves no challenge and keeps the earlier
-behavior; the extension is opt-in per workspace by what its seed
-planted.
-
-A refusal that arrives with no challenge served names a broken
-trust store: the seed created the file but no identity line landed
-in it. The workspace key still opens sshd, so the recovery is to
-ssh in and restore the line — the same public key that
-`authorized_keys` carries, with the workspace id as the principal
-— or to re-create the workspace.
-
-The signature covers the nonce alone, so one signature authorizes
-exactly one session: the daemon always brokers every console
-connection, and a hostile daemon could relay its own session's
-challenge to a concurrently-connecting client — within the model
-that declared the daemon trusted to connect clients at all. The
-host-root attacker the challenge answers is the passive one: it
-holds the workspace's public half, the database, and every relayed
-byte, but cannot produce the signature a client-held half writes.
-A host-root attacker watching a live session still sees the tty.
+The console is the failsafe path (#481): the guest serves an
+autologin root getty on the virtio-console port, and the
+authentication boundary is the daemon's single TLS + token
+listener — the same gate every REST and forward call passes. The
+port accepts host-side connections only: nothing on any network
+reaches it. A leaked daemon token (or a compromised msksd) opens
+the console; the earlier in-guest SSHSIG challenge (#123, retired
+with the Rust helper) was the one boundary the daemon itself could
+not bypass. ssh remains the interactive path with the full
+key-authenticated posture.
 
 ### An operator-supplied key
 

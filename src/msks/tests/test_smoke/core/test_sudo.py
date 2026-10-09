@@ -83,7 +83,6 @@ async def test_local_workspace_user_sudo() -> None:
             wid,
             "sudo -n true && echo SUDO-$((6*7))",
             "SUDO-42",
-            user="msks",
         )
         await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
         final = await microvm.info(wid)

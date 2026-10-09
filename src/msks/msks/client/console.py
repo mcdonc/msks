@@ -12,35 +12,30 @@ Input is read in chunks and sent one frame per chunk: interactive
 typing is unchanged, while a large paste becomes a few frames
 instead of one per byte.
 
-The client's terminal geometry rides the console request (#63): the
-guest pty is created at the client's size (the #61 "0x0" evidence).
-Live resizes during a session are not propagated yet — the prelude
-carries the size at connect, and an out-of-band resize channel can
-reuse the same negotiation later.
+The session is a raw byte stream (#481): the guest side is an
+autologin root getty on the virtio-console port — no identity
+negotiation, no terminal geometry on the wire. The console is the
+failsafe path; ``msks ssh`` is the interactive one.
 """
 
 import asyncio
 import contextlib
-import fcntl
-import os
 import ssl
-import struct
 import sys
 import termios
 import tty
-from urllib.parse import quote, quote_plus
+from urllib.parse import quote
 
 import websockets
 
-from ..identity import LEGACY_LOGIN_USER
-from . import consoleauth, wsauth
+from . import wsauth
 from .env import (
     DEFAULT_URL,  # noqa: F401  (re-exported for callers/tests)
     env_token,
     env_url,
     ssl_context,
 )
-from .rest import ensure_running, workspace_row
+from .rest import ensure_running
 
 # Re-exported for the tests and for callers that expect the client's
 # env/TLS helpers on the console module (they live in env.py).
@@ -59,52 +54,21 @@ READ_CHUNK = 4096
 ESCAPE_WINDOW = 0.05
 
 
-def tty_size(fd: int) -> tuple[int, int] | None:
-    """(rows, cols) of the terminal on fd, None when it has none.
-
-    The console request carries the size so the guest pty starts at
-    the client's geometry instead of 0x0 (#61's evidence); a client
-    without a measurable terminal omits it and the guest defaults.
-    """
-    packed = struct.pack("HHHH", 0, 0, 0, 0)
-    try:
-        packed = fcntl.ioctl(fd, termios.TIOCGWINSZ, packed)
-    except OSError:
-        return None
-    rows, cols = struct.unpack("HHHH", packed)[:2]
-    if rows < 1 or cols < 1:
-        return None
-    return rows, cols
-
-
-def ws_url(
-    base_url: str,
-    workspace_id: str,
-    user: str = "root",
-    size: tuple[int, int] | None = None,
-    term: str | None = None,
-) -> str:
-    """The console websocket's URL — the request's parameters ride
-    the query string; the token never does: it travels in the
-    handshake's Authorization header instead (#216).
-
-    The id is a path segment: quote with no safe chars (a space must
-    become %20, not + — the server percent-decodes paths only),
-    while the user is a query value where + means space.
+def ws_url(base_url: str, workspace_id: str) -> str:
+    """The console websocket's URL — the token never rides it: it
+    travels in the handshake's Authorization header instead
+    (#216). The id is a path segment: quote with no safe chars (a
+    space must become %20, not + — the server percent-decodes
+    paths only).
     """
     scheme, sep, rest = base_url.partition("://")
     if sep:
         scheme = "wss" if scheme == "https" else "ws"
     else:
         scheme, rest = "wss", base_url
-    query = f"user={quote_plus(user)}"
-    if size is not None:
-        query += f"&rows={size[0]}&cols={size[1]}"
-    if term is not None:
-        query += f"&term={quote_plus(term)}"
     return (
         f"{scheme}://{rest}/api/v1/workspaces/{quote(workspace_id, safe='')}"
-        f"/console?{query}"
+        "/console"
     )
 
 
@@ -222,19 +186,14 @@ async def run_shell(
     url: str,
     token: str,
     ssl_ctx,
-    user: str = "root",
-    size: tuple[int, int] | None = None,
-    term: str | None = None,
 ) -> int:
     """One interactive session; 0 on clean detach or session end.
 
     A token the daemon does not hold closes the websocket 4401 at
     the first receive — the close-code table below names it."""
-    address = ws_url(url, workspace_id, user=user, size=size, term=term)
+    address = ws_url(url, workspace_id)
     ws = await dial(address, token, ssl_ctx, url)
     async with ws:
-        if not await open_session(ws, workspace_id, url, token, ssl_ctx):
-            return 0
         loop = asyncio.get_running_loop()
         stdin = asyncio.StreamReader()
         reader_protocol = asyncio.StreamReaderProtocol(stdin)
@@ -258,47 +217,9 @@ async def run_shell(
     return 0
 
 
-async def open_session(
-    ws, workspace_id: str, url: str, token: str, ssl_ctx
-) -> bool:
-    """The session's console challenge (#123): a guest whose seed
-    planted the trust store demands a signature before any shell; a
-    pre-#123 guest's first bytes pass straight through to the pump.
-    The shell's first output lands on stdout; False is a closed
-    session (named refusals report, a clean close is a clean end).
-    """
-    try:
-        lead = await consoleauth.auth_exchange(
-            ws, workspace_id, url, token, ssl_ctx
-        )
-    except websockets.ConnectionClosed as closed:
-        _report_close(closed)
-        return False
-    if isinstance(lead, str):
-        # A text frame from the relay: bytes are bytes on a tty.
-        lead = lead.encode()
-    if lead.startswith(b"MSKS ERR "):
-        # A guest that refused before any challenge: its trust store
-        # is broken (a half-seeded state), and the recovery is
-        # documented beside the challenge itself.
-        raise SystemExit(
-            f"msks console: {workspace_id} refused the session "
-            f"({lead.decode(errors='replace').strip()}) — the guest's "
-            "console trust store is broken. ssh still works with the "
-            "workspace key: restore the identity line in "
-            "/etc/msks/console.allowed_signers, or re-create the "
-            "workspace (docs/networking.md, The console challenge)."
-        )
-    if lead:
-        sys.stdout.buffer.write(lead)
-        sys.stdout.buffer.flush()
-    return True
-
-
 CLOSE_CODE_REASONS = {
     4400: "console refused (unknown user or bad request)",
     4401: wsauth.AUTH_FAILED_MESSAGE,
-    4403: "console refused by the guest (auth)",
     4404: "no such workspace",
     # The daemon's own message names the real cause (a refused
     # user, a dead VMM, a wedged stream); the parenthetical hint
@@ -371,56 +292,29 @@ def restore(old, had: bool) -> None:
         termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old)
 
 
-def console_login_user(
-    workspace_id: str, url: str, token: str, ssl_ctx
-) -> str:
-    """The console's default login user (#248): the workspace row's
-    recorded user, falling back the way the identity fetch does for
-    a row (or daemon) created before per-workspace users — so the
-    console and ``msks ssh`` answer the same name for the same
-    workspace.
+def run_workspace_shell(workspace_id: str) -> int:
+    """One interactive root-shell session, from tty setup to
+    restore.
 
-    The row (not the identity fetch) is the source on purpose: a
-    workspace predating the minted identity entirely still has a
-    row, and its console must keep working.
-    """
-    row = asyncio.run(workspace_row(workspace_id, url, token, ssl_ctx))
-    return row.get("login_user") or LEGACY_LOGIN_USER
-
-
-def run_workspace_shell(workspace_id: str, user: str | None = None) -> int:
-    """One interactive shell session, from tty setup to restore.
-
-    ``user`` is the requested console user; None (the ``msks
-    console`` default) resolves to the workspace's recorded login
-    user — ``--user root`` stays the recovery shell.
-
-    Argument dispatch (``msks console`` vs the other subcommands) lives
-    in :mod:`msks.client.cli`; this is the console command's body.
+    The console is the failsafe path (#481): the guest serves an
+    autologin root getty on the virtio-console port, and the
+    session is a raw byte stream. Argument dispatch (``msks
+    console`` vs the other subcommands) lives in
+    :mod:`msks.client.cli`; this is the console command's body.
     """
     require_tty()
     token = env_token()
     url = env_url()
-    # One TLS context serves the whole command — the login-user
-    # fetch below included — so its unverified-mode warning prints
-    # once. It is built BEFORE raw mode: setraw clears OPOST, so a
-    # plain \n printed mid-session would leave the cursor
-    # mid-column; the pre-flight calls that follow share the same
-    # reason (their notices land on stderr before the tty goes
-    # raw).
+    # One TLS context serves the whole command, so its
+    # unverified-mode warning prints once. It is built BEFORE raw
+    # mode: setraw clears OPOST, so a plain \n printed mid-session
+    # would leave the cursor mid-column.
     ssl_ctx = ssl_context()
-    if user is None:
-        user = console_login_user(workspace_id, url, token, ssl_ctx)
     try:
         old = termios.tcgetattr(sys.stdin.fileno())
     except termios.error:
         old = None
     asyncio.run(ensure_running(workspace_id, url, token, ssl_ctx=ssl_ctx))
-    size = tty_size(sys.stdin.fileno())
-    # The client's terminal type rides the request (#63): the login
-    # shell's environment matches the client's terminfo instead of a
-    # hardcoded xterm.
-    term = os.environ.get("TERM")
     try:
         if old is not None:
             tty.setraw(sys.stdin.fileno())
@@ -430,9 +324,6 @@ def run_workspace_shell(workspace_id: str, user: str | None = None) -> int:
                 url,
                 token,
                 ssl_ctx,
-                user=user,
-                size=size,
-                term=term,
             )
         )
     finally:

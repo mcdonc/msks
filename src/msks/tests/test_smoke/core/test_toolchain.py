@@ -140,7 +140,6 @@ async def test_local_agent_toolchain() -> None:
             "command -v node pi herdr claude >/dev/null "
             "&& echo UPATH-$((6*7))",
             "UPATH-42",
-            user="msks",
         )
         await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
         final = await microvm.info(wid)

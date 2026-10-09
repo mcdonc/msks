@@ -297,7 +297,6 @@ async def create_seed(
             compose_user_data(
                 spec.user_data,
                 spec.ssh_pubkey,
-                spec.workspace_id,
                 spec.login_user,
                 spec.llm_token,
                 llm_port,

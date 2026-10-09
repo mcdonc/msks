@@ -94,7 +94,9 @@ settings = 2
 [snapshot.client]
 configio = 3
 conformance_args = 8
-identity = 11
+# #481: the console dropped its identity negotiation — the
+# challenge signer and the login-user resolver went with it.
+identity = 9
 spec = 3
 
 [snapshot.config]
@@ -154,14 +156,18 @@ app = 2
 # daemon will actually exec.
 config = 4
 events = 4
-identity = 8
+# #481: the console endpoint's identity-validation gate went with
+# the prelude.
+identity = 6
 # #448: the lifespan runs the catalog's startup sweep itself (the
 # seed bootstrap imports beside the default's, and debris from
-# either must clear whichever setting pointed at it). #470: the
+# either must clear whichever setting pointed it there). #470: the
 # workspace listing joins the catalog — each row's image
 # reference resolves through the imagestore (resolve_hash beside
-# the listing's aliased list_images).
-imagestore = 29
+# the listing's aliased list_images). #481: the console endpoint's
+# image-policy gate went with the prelude — the manifest's console
+# markers no longer cross this edge.
+imagestore = 26
 llm = 2
 microvm = 10
 model = 7

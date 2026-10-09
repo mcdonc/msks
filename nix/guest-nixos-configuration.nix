@@ -10,8 +10,8 @@
 # the image build runs, not a workspace's first boot.
 #
 # The module must stay guest-evaluable: it references only nix/
-# files that ship beside it (./console-helper-pkg.nix,
-# ./agent-toolchain.nix, ./guest-pi-extension.ts and the shrinkwrap
+# files that ship beside it (./agent-toolchain.nix,
+# ./guest-pi-extension.ts and the shrinkwrap
 # pair the toolchain build reads) and sources under ../src that
 # ship the same way — the image bakes the whole import chain into
 # /etc/nixos.
@@ -29,13 +29,6 @@
 }:
 
 let
-  # The port the guest's vsock console listens on; the daemon dials
-  # it after the CONNECT handshake (#21). Same fixed port, same
-  # manifest field, as the Debian image.
-  vsockShellPort = 1023;
-
-  consoleHelper = pkgs.callPackage ./console-helper-pkg.nix { };
-
   # The agent toolchain (#266, #268): the shared pins and offline
   # builds — pi, herdr, Claude Code — staged the NixOS way, through
   # the system profile. One file (nix/agent-toolchain.nix) owns
@@ -189,7 +182,7 @@ in
   boot.initrd.compressor = "gzip";
 
   # The runtime module set — the same closure the Debian image
-  # ships (#96, #82): the vsock console transport (#21), the
+  # ships (#96, #82): the console port's driver (#481), the
   # egress NIC driver (#52), the ACPI button pair logind
   # answers the graceful shutdown with (#25), isofs (the
   # NoCloud seed disk is iso9660), crc32c-intel (ext4's
@@ -199,7 +192,7 @@ in
   # own unit: the flavor depends on the host CPU, and a failed
   # modules-load entry leaves a degraded boot.
   boot.kernelModules = [
-    "vmw_vsock_virtio_transport"
+    "virtio_console"
     "virtio_net"
     "button"
     "evdev"
@@ -214,38 +207,14 @@ in
     "nf_conntrack"
   ];
 
-  # The vsock console (#63): the helper binary plus the unit
-  # shape the Debian image ships — DefaultDependencies=no so
-  # the console starts as soon as the vsock module lands (#37's
-  # escape from basic.target ordering), Restart=always +
-  # StartLimitIntervalSec=0 so a too-early start self-heals.
-  # TERM is the helper's own business (#61).
-  systemd.services.msks-console = {
-    description = "msks vsock console (one negotiated shell per connection)";
-    documentation = [ "https://github.com/mcdonc/msks" ];
-    after = [
-      "systemd-modules-load.service"
-      "dev-pts.mount"
-    ];
+  # The console (#481): an autologin root getty on hvc0 — the
+  # virtio-console port the daemon's console socket bridges to
+  # the client. The same posture as the Debian image's hvc0 getty
+  # and the ttyS0 debug console; TERM rides agetty's own argument
+  # (#61).
+  systemd.services."serial-getty@hvc0" = {
     wantedBy = [ "multi-user.target" ];
-    unitConfig = {
-      ConditionPathExists = "/dev/vsock";
-      DefaultDependencies = "no";
-      StartLimitIntervalSec = 0;
-    };
-    serviceConfig = {
-      ExecStart = "${consoleHelper}/bin/msks-console-helper ${toString vsockShellPort}";
-      # The helper's auth (#123) shells out to `ssh-keygen`,
-      # and the session shells it execs inherit this unit's
-      # environment — a system service gets none of the profile
-      # PATHs a login shell builds, so name the system profile
-      # explicitly (the Debian image's /usr/bin needs no such
-      # help).
-      Environment = [ "PATH=/run/current-system/sw/bin:/bin" ];
-      Restart = "always";
-      RestartSec = "0.1";
-      StandardInput = "null";
-    };
+    serviceConfig.ExecStart = "-${pkgs.util-linux}/sbin/agetty --autologin root --noclear hvc0 xterm";
   };
 
   # Nested KVM (#82): the flavor depends on the host CPU; a
@@ -395,7 +364,7 @@ in
   };
 
   # The serial console is the guest's debug channel: autologin
-  # root on ttyS0 (the vsock console is the supported interactive
+  # root on ttyS0 (the hvc0 console above is the supported interactive
   # path), the same parity the Debian image ships. NixOS's getty
   # module bakes --autologin into the getty/serial-getty/console-
   # getty templates; systemd's getty-generator instantiates
@@ -449,23 +418,18 @@ in
   ];
 
   # The sync half of the TCP service plane (#110): nixpkgs'
-  # own rsync. The console helper rides the system profile too,
-  # so `msks-console-helper` is on PATH like Debian's
-  # /usr/bin copy. cloud-init/util-linux/iproute2 put the
+  # own rsync. cloud-init/util-linux/iproute2 put the
   # operator-facing tools the Debian image ships in every PATH
   # (`cloud-init status`, blkid, ip) — the cloud-init units
   # carry their own job PATH, but a workspace console is a
   # login shell, not a cloud-init job.
   environment.systemPackages = [
-    consoleHelper
     pkgs.rsync
     pkgs.cloud-init
     pkgs.util-linux
     pkgs.iproute2
-    # The console helper's auth (#123) shells out to
-    # `ssh-keygen -Y verify`; the Debian image's openssh
-    # carries it in /usr/bin, so it rides the profile here too
-    # (the helper is static and PATH-inherits from its service).
+    # ssh-keygen for the workspace's own key handling (the
+    # Debian image's openssh carries it in /usr/bin).
     pkgs.openssh
     # The agent toolchain (#266, #268): nixpkgs' Node — the
     # platform's own packaging, current enough for pi's

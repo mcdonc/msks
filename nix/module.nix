@@ -206,7 +206,7 @@ in
           The egress-consent stack: per-VM taps,
           nftables/NFQUEUE enforcement, DHCP, DNS, and NAT, all
           daemon-managed with the service's ambient CAP_NET_ADMIN.
-          Disabling it keeps workspaces vsock-only (the strongest
+          Disabling it keeps workspaces without a NIC (the strongest
           default egress posture) and drops the capability grant and
           host IP forwarding with it.
         '';

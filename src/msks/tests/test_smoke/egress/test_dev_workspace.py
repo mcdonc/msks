@@ -89,7 +89,6 @@ async def test_local_dev_workspace_bootstrap() -> None:
             wid,
             f"{probe_cmd} && echo {marker_prefix}-$((6*7))",
             f"{marker_prefix}-42",
-            app=app,
             hostname=wid,
         )
 
@@ -134,7 +133,6 @@ async def test_local_dev_workspace_bootstrap() -> None:
             "sh /mnt/cidata/user-data >/root/.msks-bootstrap/rerun.log 2>&1; "
             "echo R-$?",
             "R-0",
-            app=app,
             hostname=wid,
         )
         await await_dev_state(microvm, app, wid, b"done", hostname=wid)
@@ -163,7 +161,6 @@ async def test_local_dev_workspace_bootstrap() -> None:
             "echo done-$? >/root/.msks-bootstrap/unit-tests.rc' "
             ">/dev/null 2>&1 & echo BG-$((6*7)); fi",
             "BG-42",
-            app=app,
             hostname=wid,
         )
         await await_dev_state(microvm, app, wid, b"done-0", hostname=wid)

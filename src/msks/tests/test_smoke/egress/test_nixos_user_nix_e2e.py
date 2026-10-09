@@ -41,7 +41,6 @@ from pathlib import Path
 import httpx
 import pytest
 import websockets
-from msks.client import consoleauth
 from msks.client.console import ws_url
 
 from test_smoke import (
@@ -89,8 +88,8 @@ async def console_exec_as(
     timeout_s: float = NIX_PROBE_TIMEOUT_S,
 ) -> None:
     """One console probe through the daemon's websocket, as a named
-    session user — the same #75 fresh-session rule ``console_exec``
-    holds, with the user riding the request's query string and a
+    user via su from the root getty (#481) — the same #75
+    fresh-session rule ``console_exec`` holds, with a
     per-call budget (a nix command is minutes of guest work, not the
     console's own interactivity window).
 
@@ -107,7 +106,7 @@ async def console_exec_as(
     its end fails the probe with the session's tail, and the
     command's own redirected output rides a follow-up probe.
     """
-    address = ws_url(url, workspace_id, user=user)
+    address = ws_url(url, workspace_id)
     for _ in range(CONSOLE_ATTEMPTS):
         try:
             async with websockets.connect(
@@ -116,12 +115,16 @@ async def console_exec_as(
                 ssl=ssl_ctx,
                 max_size=2**22,
             ) as ws:
-                lead = await consoleauth.auth_exchange(
-                    ws, workspace_id, url, token, ssl_ctx
-                )
-                buf = lead.encode() if isinstance(lead, str) else bytes(lead)
-                if marker in buf:
-                    return
+                buf = b""
+                prompt_deadline = asyncio.get_running_loop().time() + timeout_s
+                while b":~#" not in buf:
+                    lead = await asyncio.wait_for(ws.recv(), 10)
+                    buf += lead.encode() if isinstance(lead, str) else lead
+                    if asyncio.get_running_loop().time() > prompt_deadline:
+                        raise AssertionError(
+                            "console prompt never appeared; tail: "
+                            f"{buf[-500:]!r}"
+                        )
                 # The liveness ping: a reading shell answers a
                 # builtin instantly, however loaded the guest is —
                 # and the echoed command text cannot contain the

@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Measure workspace boot: start -> interactive vsock shell.
+"""Measure workspace boot: start -> interactive console shell.
 
 The clock starts immediately before ``microvm.launch`` (the local
-backend's equivalent of ``POST .../start``) and stops when the vsock
+backend's equivalent of ``POST .../start``) and stops when the
 console answers with a shell prompt — the same readiness definition
 as #37. Per-run breakdown:
 
 - t_vmm          launch() returned (CH spawn + create + boot accepted)
 - t_kernel       first serial byte (kernel decompressed and printing)
 - t_login        serial shows the login getty (last userspace unit)
-- t_console      vsock handshake completed (console service listening)
+- t_console      console socket connected (device up)
 - t_prompt       the shell rendered its first prompt (interactive)
 
-Guest-internal systemd timings are collected through the vsock shell
+Guest-internal systemd timings are collected through the console
 (``systemd-analyze``) and printed once per run.
 
 Usage (from the repo root, inside the devenv shell):
@@ -199,11 +199,11 @@ async def measure_boot(microvm, spec, serial_log, result: dict) -> tuple:
     await microvm.launch(spec)
     result["t_vmm"] = time.perf_counter() - t0
     result["t_kernel"] = (await first_serial_byte(serial_log)) - t0
-    # The console is the readiness path (#37 definition) — measured
-    # CONCURRENTLY with the serial getty: the vsock console answers
-    # long before the login prompt renders.
+    # The console is the readiness path (#37 definition) — the
+    # hvc0 getty's prompt is the interactive-ready moment; the
+    # socket connect (t_console) only proves the device is up.
     login_task = asyncio.create_task(wait_marker(serial_log, LOGIN_MARKER))
-    reader, writer = await microvm.console(spec.workspace_id, user="root")
+    reader, writer = await microvm.console(spec.workspace_id)
     result["t_console"] = time.perf_counter() - t0
     result["t_prompt"] = (await read_until_prompt(reader)) - t0
     await collect_guest_memory(reader, writer, result)
@@ -239,7 +239,7 @@ def setup_run(assets) -> tuple:
 
 
 async def collect_blame(microvm, wid: str) -> list[str]:
-    reader, writer = await microvm.console(wid, user="root")
+    reader, writer = await microvm.console(wid)
     blame = await run_shell_command(
         reader, writer, "systemd-analyze blame | head -12"
     )

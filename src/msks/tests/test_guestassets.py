@@ -442,14 +442,6 @@ def test_the_nixos_image_is_rebuild_ready() -> None:
         '          "$root"/etc/nixos/nix/guest-nixos-configuration.nix'
         in build
     )
-    assert (
-        'cp -a "$consoleHelperSrc"/. "$root"/etc/nixos/src/console-helper/'
-        in build
-    )
-    assert (
-        'baseNameOf path != "target"'
-        in build  # the source filter keeps Rust builds out
-    )
     # The sanity battery: nix and nixos-rebuild on the profile, the
     # db registering exactly the shipped closure, the profiles
     # resolving, and the /etc/nixos chain present — a rebuild
@@ -491,11 +483,9 @@ def test_the_nixos_image_is_rebuild_ready() -> None:
     # build, not the fold unit on a workspace's first boot.
     assert "nix-instantiate --eval-only" in build
     assert "-A config.system.build.toplevel.outPath" in build
-    # The vsock port guard (#274 review): the extraction duplicated
-    # vsockShellPort across two files — the build asserts the
-    # module's service unit carries the same port the manifest
-    # advertises, so a drift fails the build.
-    assert "msks-console-helper $vsockShellPort" in build
+    # The console getty (#481): the image enables a serial getty on
+    # hvc0 — the build fails if the unit stops being wanted.
+    assert "serial-getty@hvc0" in build
 
 
 def test_the_nixos_image_folds_the_interceptor_ca() -> None:
