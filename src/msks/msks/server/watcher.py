@@ -46,9 +46,13 @@ async def scan_once(app, hub: EventHub) -> int:
 async def scan_workspace(app, hub: EventHub, row: dict) -> bool:
     """Reconcile one workspace; a failing one starves no other.
 
-    A freshly created row (never started) reports ``created`` while
-    the seam says ``absent`` — that is the steady state until the
-    first start, not a transition: neither written nor published.
+    A freshly created row (never started) reports ``created`` while the
+    seam says ``absent`` or ``stopped`` — prepare makes the vm directory
+    at create, so a never-started workspace is the directory present with
+    no socket, which the seam reads as ``stopped``. Both are the steady
+    state until the first start, not a transition: neither written nor
+    published. A row that started and then stopped is at ``running`` when
+    the seam says ``stopped``, so that transition still fires.
     """
     try:
         info = await app.state.microvm.info(row["id"])
@@ -58,7 +62,7 @@ async def scan_workspace(app, hub: EventHub, row: dict) -> bool:
     status = SEAM_TO_MODEL_STATUS[info.status]
     if status == row["status"]:
         return False
-    if status == "absent" and row["status"] == "created":
+    if row["status"] == "created" and status in ("absent", "stopped"):
         return False
     return await publish_transition(app, hub, row["id"], status)
 
